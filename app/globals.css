@@ -1,0 +1,10 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: dark; }
+body { @apply bg-[#050505] text-white transition-colors duration-300; }
+.light body { @apply bg-white text-[#111111]; }
+.panel { @apply rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl; }
+.light .panel { @apply border-black/10 bg-black/5; }
+.neon { box-shadow: 0 0 20px rgba(122,44,255,.35); }

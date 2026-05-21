@@ -1,0 +1,2 @@
+import Link from "next/link";import { RouteShell } from "@/components/route-shell";import { products } from "@/lib/data";
+export default function Page(){return <RouteShell title="Tienda CLOUVA" subtitle="Catálogo premium con filtros extensibles"><div className="mt-4 grid gap-4 md:grid-cols-2">{products.map(p=><Link key={p.id} className="panel p-4" href={`/producto/${p.slug}`}><p>{p.category}</p><h2 className="text-xl">{p.name}</h2><p>${p.price}</p><p>Stock {p.stock}</p></Link>)}</div></RouteShell>}
