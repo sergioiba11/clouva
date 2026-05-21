@@ -1,1 +1,9 @@
-export default function Page(){return <div className="panel p-6"><h1 className="text-2xl font-bold">admin/pedidos</h1><p className="mt-2 text-white/70 light:text-black/70">Módulo listo para conectar con Supabase y lógica real.</p></div>}
+"use client";
+import { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabase";
+
+export default function AdminOrders(){
+  const [orders, setOrders] = useState<Array<{id:string;status:string;total:number}>>([]);
+  useEffect(()=>{supabase.from("orders").select("id,status,total").then(({data})=>setOrders((data as any[])??[]));},[]);
+  return <div className="panel p-6"><h2 className="text-xl">Pedidos</h2><ul className="mt-4 space-y-2">{orders.map(o=><li key={o.id}>#{o.id.slice(0,8)} · {o.status} · ${o.total}</li>)}</ul></div>;
+}

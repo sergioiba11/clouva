@@ -1,1 +1,9 @@
-export default function Page(){return <div className="panel p-6"><h1 className="text-2xl font-bold">admin/clientes</h1><p className="mt-2 text-white/70 light:text-black/70">Módulo listo para conectar con Supabase y lógica real.</p></div>}
+"use client";
+import { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabase";
+
+export default function AdminUsers(){
+  const [users, setUsers] = useState<Array<{id:string;email:string;role:string}>>([]);
+  useEffect(()=>{supabase.from("profiles").select("id,email,role").then(({data})=>setUsers((data as any[])??[]));},[]);
+  return <div className="panel p-6"><h2 className="text-xl">Usuarios</h2><ul className="mt-4 space-y-2">{users.map(u=><li key={u.id}>{u.email} · {u.role}</li>)}</ul></div>;
+}

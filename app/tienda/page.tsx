@@ -1,8 +1,18 @@
+"use client";
 import { MainFooter, MainNav } from "@/components/layout";
 import { ProductCard, SectionTitle } from "@/components/ui";
-import { products } from "@/lib/data";
+import { useEffect, useState } from "react";
+import { supabase } from "@/lib/supabase";
+
+type Product = { id: string; slug: string; name: string; price: number; category: string };
 
 export default function ShopPage() {
+  const [products, setProducts] = useState<Product[]>([]);
+
+  useEffect(() => {
+    supabase.from("products").select("id,slug,name,price,category").order("created_at", { ascending: false }).then(({ data }) => setProducts((data as Product[]) ?? []));
+  }, []);
+
   return (
     <main>
       <MainNav />
