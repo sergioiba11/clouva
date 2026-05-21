@@ -1,2 +1,18 @@
-import Link from "next/link";import { RouteShell } from "@/components/route-shell";import { products } from "@/lib/data";
-export default function Page(){return <RouteShell title="Tienda CLOUVA" subtitle="Catálogo premium con filtros extensibles"><div className="mt-4 grid gap-4 md:grid-cols-2">{products.map(p=><Link key={p.id} className="panel p-4" href={`/producto/${p.slug}`}><p>{p.category}</p><h2 className="text-xl">{p.name}</h2><p>${p.price}</p><p>Stock {p.stock}</p></Link>)}</div></RouteShell>}
+import { MainFooter, MainNav } from "@/components/layout";
+import { ProductCard, SectionTitle } from "@/components/ui";
+import { products } from "@/lib/data";
+
+export default function ShopPage() {
+  return (
+    <main>
+      <MainNav />
+      <section className="mx-auto w-full max-w-7xl px-4 py-14 md:px-8">
+        <SectionTitle overline="Shop" title="Catálogo CLOUVA" subtitle="Dark premium essentials con construcción técnica." />
+        <div className="mt-8 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+          {products.map((p) => <ProductCard key={p.id} name={p.name} price={p.price} href={`/producto/${p.slug}`} category={p.category} />)}
+        </div>
+      </section>
+      <MainFooter />
+    </main>
+  );
+}

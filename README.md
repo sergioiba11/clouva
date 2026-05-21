@@ -1,19 +1,24 @@
-# CLOUVA Official App
+# CLOUVA PRO
 
-Base real de producción con 3 mundos:
-- Tienda pública
-- Panel Admin
-- Mi Flow (owner)
+Frontend premium cyber/y2k underground con Next.js + TypeScript + Tailwind + Framer Motion.
 
-## Stack
-Next.js + TypeScript + Tailwind + Supabase.
+## Variables de entorno en Vercel
+Configurar en **Project Settings → Environment Variables**:
 
-## Rutas
-Incluye rutas públicas, admin y Mi Flow solicitadas.
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 
-## Seguridad
-- Guards de rol en layout admin y mi-flow (mock para primera entrega)
-- SQL con RLS para productos, órdenes y módulos Flow owner-only.
+Sin esas variables, la app mantiene placeholders y no rompe deploy.
 
-## Deploy
-Preparado para Vercel y dominio `clouva.com.ar`.
+## Estructura PRO incluida
+- Home (`/`)
+- Productos (`/productos`)
+- Universo (`/universo`)
+- Galería (`/galeria`)
+- Login (`/login`)
+- Registro (`/registro`)
+- Perfil (`/perfil`)
+
+## Notas
+- Cliente Supabase en `lib/supabase.ts` con fallback seguro cuando faltan variables.
+- Base lista para tablas: `products`, `users`, `favorites`, `drops`.
