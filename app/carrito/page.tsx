@@ -1,0 +1,4 @@
+import { MainNav } from "@/components/layout";
+import { products } from "@/lib/data";
+import Link from "next/link";
+export default function Page(){const items=products.slice(0,2); const total=items.reduce((a,b)=>a+b.price,0);return <main><MainNav/><section className="mx-auto max-w-5xl p-6"><h1 className="text-3xl font-bold">Carrito</h1><div className="mt-4 grid gap-4 lg:grid-cols-[1fr_320px]"><div className="space-y-3">{items.map(i=><div key={i.id} className="panel flex items-center justify-between p-4"><div><p>{i.name}</p><p className="text-sm text-white/60">{i.category}</p></div><p>${i.price}</p></div>)}</div><aside className="panel p-4"><p>Total</p><p className="text-2xl font-bold">${total}</p><Link href="/checkout" className="mt-4 block rounded-xl bg-violet-600 p-3 text-center">Ir a checkout</Link></aside></div></section></main>}

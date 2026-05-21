@@ -1,0 +1,14 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: dark; }
+html,body { min-height:100%; scroll-behavior:smooth; }
+body { @apply bg-[#050505] text-white transition-colors duration-300; background-image: radial-gradient(circle at 20% 10%, rgba(122,44,255,.24), transparent 35%), radial-gradient(circle at 80% 30%, rgba(56,189,248,.16), transparent 30%); }
+.light body { @apply bg-[#f5f5f5] text-[#111111]; background-image: radial-gradient(circle at 20% 10%, rgba(122,44,255,.12), transparent 35%); }
+
+.panel { @apply rounded-2xl border border-white/10 bg-white/5 backdrop-blur-xl; }
+.light .panel { @apply border-black/10 bg-white/80; }
+.neon { box-shadow: 0 0 26px rgba(122,44,255,.28); }
+.grid-premium { background-image: linear-gradient(rgba(255,255,255,.05) 1px, transparent 1px),linear-gradient(90deg, rgba(255,255,255,.05) 1px, transparent 1px); background-size: 28px 28px; }
+.light .grid-premium { background-image: linear-gradient(rgba(0,0,0,.05) 1px, transparent 1px),linear-gradient(90deg, rgba(0,0,0,.05) 1px, transparent 1px); }

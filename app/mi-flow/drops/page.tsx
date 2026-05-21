@@ -1,0 +1,1 @@
+export default function Page(){return <div className="panel p-6"><h1 className="text-2xl font-bold">Drops</h1><p className="mt-2 text-white/70">Panel premium de drops con widgets y bloques listos para datos reales.</p></div>}

@@ -1,0 +1,2 @@
+import { products } from "@/lib/data";
+export default function Page(){return <div className="panel p-6"><h1 className="text-2xl font-bold">Cupones</h1><p className="mt-2 text-white/70">Módulo operativo con estructura CRUD lista para conectar a Supabase.</p><div className="mt-4 grid gap-2">{products.slice(0,3).map(p=><div key={p.id} className="rounded-xl border border-white/10 p-3">{p.name} · stock {p.stock}</div>)}</div></div>}
