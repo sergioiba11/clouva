@@ -17,3 +17,14 @@ body {
     linear-gradient(to bottom, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
   background-size: 36px 36px;
 }
+
+
+body::before {
+  content:"";position:fixed;inset:0;pointer-events:none;z-index:-1;
+  background: radial-gradient(circle at 15% 20%, rgba(104,181,255,.10), transparent 35%), radial-gradient(circle at 80% 10%, rgba(132,98,255,.10), transparent 40%);
+  animation: clouvaAmbient 9s ease-in-out infinite alternate;
+}
+@keyframes clouvaAmbient { from { transform: translateY(-6px);} to { transform: translateY(6px);} }
+
+input,button { -webkit-tap-highlight-color: transparent; }
+main { padding-bottom: env(safe-area-inset-bottom); }
