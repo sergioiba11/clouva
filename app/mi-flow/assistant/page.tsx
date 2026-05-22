@@ -1,0 +1,1 @@
+export default function Page(){return <section className="panel rounded-3xl p-6"><h1 className="text-2xl font-semibold">AI Assistant (Premium)</h1><p className="mt-2 text-white/70">Ideas, letras, prompts, copies, estrategias y organización contextual de CLOUVA OS.</p></section>}

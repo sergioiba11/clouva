@@ -1,0 +1,2 @@
+import { FlowModuleCrud } from "@/components/flow-module-crud";
+export default function Page(){return <FlowModuleCrud config={{table:"flow_visuals",title:"Visual",subtitle:"Portadas, prompts, artes, videos y conceptos.",createLabel:"Crear visual",fields:[{key:"title",label:"Título"},{key:"type",label:"Tipo"},{key:"prompt",label:"Prompt",type:"textarea"},{key:"image_url",label:"URL imagen"},{key:"notes",label:"Notas",type:"textarea"}]}}/>}

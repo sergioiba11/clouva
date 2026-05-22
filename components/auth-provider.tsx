@@ -3,6 +3,7 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { normalizeRole, type Role } from "@/lib/auth";
+import { saveAccount } from "@/lib/account-switcher";
 
 type Profile = {
   id: string;
@@ -38,7 +39,7 @@ async function ensureProfile(user: User): Promise<Profile | null> {
   if (!existing) {
     const { data } = await supabase
       .from("profiles")
-      .insert({ id: user.id, role: "customer", display_name: displayName })
+      .insert({ id: user.id, role: "cliente", display_name: displayName })
       .select("id, role, display_name")
       .maybeSingle();
     return data ?? null;
@@ -88,7 +89,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const profileData = await ensureProfile(nextSession.user);
         if (!alive) return;
         setProfile(profileData);
-        setRole(normalizeRole(profileData?.role_v2));
+        const nextRole = normalizeRole(profileData?.role);
+        setRole(nextRole);
+        if (nextSession.user.email) saveAccount({ id: nextSession.user.id, email: nextSession.user.email, display_name: profileData?.full_name ?? profileData?.display_name ?? nextSession.user.email.split("@")[0], avatar_url: profileData?.avatar_url ?? null, role: nextRole });
       } else {
         setProfile(null);
         setRole("cliente");
@@ -115,7 +118,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         void ensureProfile(nextSession.user).then((profileData) => {
           if (!alive) return;
           setProfile(profileData);
-          setRole(normalizeRole(profileData?.role_v2));
+          const nextRole = normalizeRole(profileData?.role);
+          setRole(nextRole);
+          if (nextSession.user.email) saveAccount({ id: nextSession.user.id, email: nextSession.user.email, display_name: profileData?.full_name ?? profileData?.display_name ?? nextSession.user.email.split("@")[0], avatar_url: profileData?.avatar_url ?? null, role: nextRole });
           setLoading(false);
         });
       });
