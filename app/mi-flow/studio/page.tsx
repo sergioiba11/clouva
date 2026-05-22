@@ -1,0 +1,2 @@
+import { FlowModuleCrud } from "@/components/flow-module-crud";
+export default function Page(){return <FlowModuleCrud config={{table:"flow_studio_sessions",title:"Studio",subtitle:"Sesiones, productores, beats, grabaciones y progreso.",createLabel:"Nueva sesión",fields:[{key:"title",label:"Título"},{key:"producer",label:"Productor"},{key:"date",label:"Fecha",type:"date"},{key:"status",label:"Estado"},{key:"notes",label:"Notas",type:"textarea"}]}}/>}
