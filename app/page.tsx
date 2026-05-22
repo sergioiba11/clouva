@@ -10,6 +10,8 @@ export default function Home() {
       <section className="hero-mobile-safe relative isolate flex min-h-[82svh] items-start border-b border-white/10 px-4 pb-8 pt-14 sm:min-h-[80svh] sm:pt-16 md:min-h-[92vh] md:items-end md:px-8 md:pb-14 md:pt-24">
         <div className="absolute inset-0 clouva-grid opacity-20" />
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_62%_47%,rgba(110,195,255,.20),transparent_22%),radial-gradient(circle_at_56%_58%,rgba(137,90,255,.35),transparent_18%)]" />
+        <div className="absolute left-1/2 top-[38%] h-[54vw] w-[54vw] max-h-[300px] max-w-[300px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[radial-gradient(circle,rgba(72,136,255,.30)_0%,rgba(95,64,222,.26)_36%,rgba(35,15,80,.08)_66%,transparent_82%)] blur-3xl animate-[pulse_9s_ease-in-out_infinite] md:top-[50%] md:h-[28rem] md:w-[28rem]" />
+        <div className="pointer-events-none absolute left-1/2 top-[42%] hidden -translate-x-1/2 -translate-y-1/2 text-[28vw] font-semibold tracking-[0.35em] text-white/[0.03] md:block md:text-[13rem]">CLOUVA</div>
         <div className="absolute inset-0 bg-[linear-gradient(to_top,rgba(3,3,6,1),rgba(3,3,6,.25))]" />
         <div className="hero-glow-pulse pointer-events-none absolute left-1/2 top-[40%] h-[280px] w-[280px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[radial-gradient(circle,rgba(64,126,255,0.35)_0%,rgba(123,66,255,0.26)_40%,rgba(6,8,14,0)_72%)] blur-3xl md:top-[52%] md:h-[460px] md:w-[460px]" />
         <div className="pointer-events-none absolute left-1/2 top-[42%] hidden -translate-x-1/2 -translate-y-1/2 text-[22vw] font-semibold tracking-[0.38em] text-white/[0.03] sm:block md:top-[50%] md:text-[16vw]">CLOUVA</div>
@@ -50,6 +52,18 @@ export default function Home() {
       </section>
 
       <MainFooter />
+      <style jsx>{`
+        @keyframes fadeUp {
+          from {
+            opacity: 0;
+            transform: translate3d(0, 16px, 0);
+          }
+          to {
+            opacity: 1;
+            transform: translate3d(0, 0, 0);
+          }
+        }
+      `}</style>
     </main>
   );
 }

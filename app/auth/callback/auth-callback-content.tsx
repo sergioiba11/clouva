@@ -58,11 +58,11 @@ export default function AuthCallbackContent() {
 
       const { data: profile } = await supabase
         .from("profiles")
-        .select("role")
+        .select("role_v2")
         .eq("id", user.id)
         .maybeSingle();
 
-      router.replace(getRedirectByRole(profile?.role));
+      router.replace(getRedirectByRole(profile?.role_v2));
     };
 
     void handleCallback();

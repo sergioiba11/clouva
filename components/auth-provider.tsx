@@ -88,7 +88,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const profileData = await ensureProfile(nextSession.user);
         if (!alive) return;
         setProfile(profileData);
-        setRole(normalizeRole(profileData?.role));
+        setRole(normalizeRole(profileData?.role_v2));
       } else {
         setProfile(null);
         setRole("cliente");
@@ -115,7 +115,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         void ensureProfile(nextSession.user).then((profileData) => {
           if (!alive) return;
           setProfile(profileData);
-          setRole(normalizeRole(profileData?.role));
+          setRole(normalizeRole(profileData?.role_v2));
           setLoading(false);
         });
       });
