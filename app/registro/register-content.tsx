@@ -36,7 +36,7 @@ export default function RegisterContent() {
 
     await supabase.from("profiles").upsert({
       id: data.user.id,
-      role: "cliente",
+      role: "customer",
       role_v2: "cliente",
       email,
       full_name: fullName,
