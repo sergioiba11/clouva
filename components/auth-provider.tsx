@@ -38,7 +38,7 @@ async function ensureProfile(user: User): Promise<Profile | null> {
   if (!existing) {
     const { data } = await supabase
       .from("profiles")
-      .insert({ id: user.id, role: "customer", display_name: displayName })
+      .insert({ id: user.id, role: "cliente", display_name: displayName })
       .select("id, role, display_name")
       .maybeSingle();
     return data ?? null;
@@ -88,7 +88,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const profileData = await ensureProfile(nextSession.user);
         if (!alive) return;
         setProfile(profileData);
-        setRole(normalizeRole(profileData?.role_v2));
+        setRole(normalizeRole(profileData?.role));
       } else {
         setProfile(null);
         setRole("cliente");
@@ -115,7 +115,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         void ensureProfile(nextSession.user).then((profileData) => {
           if (!alive) return;
           setProfile(profileData);
-          setRole(normalizeRole(profileData?.role_v2));
+          setRole(normalizeRole(profileData?.role));
           setLoading(false);
         });
       });

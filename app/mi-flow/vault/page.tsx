@@ -1,0 +1,2 @@
+import { FlowModuleCrud } from "@/components/flow-module-crud";
+export default function Page(){return <FlowModuleCrud config={{table:"flow_vault_files",title:"Vault",subtitle:"Demos, WAVs, stems, masters y backups.",createLabel:"Subir registro",fields:[{key:"title",label:"Título"},{key:"file_url",label:"URL"},{key:"file_type",label:"Tipo de archivo"},{key:"category",label:"Categoría"},{key:"notes",label:"Notas",type:"textarea"}]}}/>}

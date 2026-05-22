@@ -13,8 +13,8 @@ export default function AdminPage() {
         supabase.from("orders").select("id", { count: "exact", head: true }),
         supabase.from("products").select("id", { count: "exact", head: true }),
         supabase.from("customers").select("id", { count: "exact", head: true }),
-        supabase.from("profiles").select("id", { count: "exact", head: true }).eq("role", "owner"),
-        supabase.from("profiles").select("id", { count: "exact", head: true }).eq("role", "customer"),
+        supabase.from("profiles").select("id", { count: "exact", head: true }).eq("role", "empleado"),
+        supabase.from("profiles").select("id", { count: "exact", head: true }).eq("role", "vip"),
       ]);
       setStats({
         ventas: (pedidos.count ?? 0) * 100,
@@ -28,7 +28,7 @@ export default function AdminPage() {
     void load();
   }, []);
 
-  const modules = ["tienda", "contenido", "comunidad", "automatizaciones", "creative system", "life system", "IA futura"];
+  const modules = ["ventas","pedidos","productos","clientes","empleados","VIP","stock","medios de pago","actividad","flows","studio","vault","launch","visual","store","money","tasks","assistant","lore"];
 
   return (
     <div className="space-y-5">

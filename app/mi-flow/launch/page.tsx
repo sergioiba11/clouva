@@ -1,0 +1,2 @@
+import { FlowModuleCrud } from "@/components/flow-module-crud";
+export default function Page(){return <FlowModuleCrud config={{table:"flow_launches",title:"Launch",subtitle:"Calendario, checklist, promos y fechas de lanzamiento.",createLabel:"Nuevo lanzamiento",fields:[{key:"title",label:"Título"},{key:"release_date",label:"Fecha",type:"date"},{key:"status",label:"Estado"},{key:"notes",label:"Notas",type:"textarea"}]}}/>}
