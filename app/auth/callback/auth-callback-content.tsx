@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { normalizeRole, roleHome } from "@/lib/auth";
+import { getRedirectByRole } from "@/lib/auth";
 
 export default function AuthCallbackContent() {
   const router = useRouter();
@@ -50,8 +50,7 @@ export default function AuthCallbackContent() {
         .eq("id", user.id)
         .maybeSingle();
 
-      const role = normalizeRole(profile?.role);
-      router.replace(roleHome[role]);
+      router.replace(getRedirectByRole(profile?.role));
     };
 
     void handleCallback();

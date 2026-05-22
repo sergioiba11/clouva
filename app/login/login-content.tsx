@@ -4,7 +4,7 @@ import { FormEvent, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { MainFooter, MainNav } from "@/components/layout";
-import { normalizeRole, roleHome } from "@/lib/auth";
+import { getRedirectByRole } from "@/lib/auth";
 
 export default function LoginContent() {
   const [email, setEmail] = useState("");
@@ -30,9 +30,14 @@ export default function LoginContent() {
 
   const redirectByRole = async (userId: string) => {
     const { supabase } = await import("@/lib/supabase");
-    const { data } = await supabase.from("profiles").select("role").eq("id", userId).single();
-    const role = normalizeRole(data?.role);
-    router.push(roleHome[role]);
+    const { data: profile } = await supabase.from("profiles").select("role").eq("id", userId).maybeSingle();
+
+    if (!profile) {
+      await supabase.from("profiles").upsert({ id: userId, role: "cliente", role_v2: "cliente" }, { onConflict: "id" });
+    }
+
+    const redirectPath = getRedirectByRole(profile?.role ?? "cliente");
+    router.push(redirectPath);
   };
 
   const onSubmit = async (e: FormEvent<HTMLFormElement>) => {
