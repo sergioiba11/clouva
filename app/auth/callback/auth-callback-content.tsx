@@ -52,6 +52,11 @@ export default function AuthCallbackContent() {
         return;
       }
 
+      if (role === "employee") {
+        router.replace("/empleado");
+        return;
+      }
+
       router.replace("/cuenta");
     };
 

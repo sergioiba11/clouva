@@ -47,16 +47,14 @@ export default function LoginContent() {
   const onGoogle = async () => {
     setError(null);
     const { supabase } = await import("@/lib/supabase");
-    const origin =
-      typeof window !== "undefined"
-        ? window.location.origin
-        : process.env.NEXT_PUBLIC_SITE_URL;
+    const redirectTo =
+      process.env.NODE_ENV === "development"
+        ? "http://localhost:3000/auth/callback"
+        : "https://clouva.com.ar/auth/callback";
 
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
-      options: {
-        redirectTo: `${origin}/auth/callback`,
-      },
+      options: { redirectTo },
     });
     if (error) setError(error.message);
   };
