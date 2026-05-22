@@ -5,7 +5,6 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { MainFooter, MainNav } from "@/components/layout";
 import { normalizeRole, roleHome } from "@/lib/auth";
-import { getOAuthCallbackUrl } from "@/lib/site-url";
 
 export default function LoginContent() {
   const [email, setEmail] = useState("");
@@ -48,9 +47,16 @@ export default function LoginContent() {
   const onGoogle = async () => {
     setError(null);
     const { supabase } = await import("@/lib/supabase");
+    const origin =
+      typeof window !== "undefined"
+        ? window.location.origin
+        : process.env.NEXT_PUBLIC_SITE_URL;
+
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
-      options: { redirectTo: getOAuthCallbackUrl("/cuenta") },
+      options: {
+        redirectTo: `${origin}/auth/callback`,
+      },
     });
     if (error) setError(error.message);
   };

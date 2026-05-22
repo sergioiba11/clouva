@@ -14,7 +14,7 @@ export function getSiteUrl() {
     return PROD_ORIGIN;
   }
 
-  return "http://localhost:3000";
+  return PROD_ORIGIN;
 }
 
 export function getOAuthCallbackUrl(nextPath = "/cuenta") {
