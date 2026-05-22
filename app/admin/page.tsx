@@ -13,8 +13,8 @@ export default function AdminPage() {
         supabase.from("orders").select("id", { count: "exact", head: true }),
         supabase.from("products").select("id", { count: "exact", head: true }),
         supabase.from("customers").select("id", { count: "exact", head: true }),
-        supabase.from("profiles").select("id", { count: "exact", head: true }).eq("role", "employee"),
-        supabase.from("profiles").select("id", { count: "exact", head: true }).eq("role", "vip"),
+        supabase.from("profiles").select("id", { count: "exact", head: true }).eq("role_v2", "empleado"),
+        supabase.from("profiles").select("id", { count: "exact", head: true }).or("role_v2.eq.vip,is_vip.eq.true"),
       ]);
       setStats({
         ventas: (pedidos.count ?? 0) * 100,
