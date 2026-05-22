@@ -3,66 +3,34 @@
 import { MainNav } from "@/components/layout";
 import { useAuth } from "@/components/auth-provider";
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
 
 export default function PerfilPage() {
   const { user, profile, role } = useAuth();
-  const [clouvaId,setClouvaId]=useState("");
-  const [username,setUsername]=useState("");
-  const router = useRouter();
-  const [fullName, setFullName] = useState(profile?.full_name ?? "");
-  const [phone, setPhone] = useState("");
+  const [form, setForm] = useState({ clouva_id: "", username: "", bio: "", accent_color: "#8f7cff", full_name: profile?.full_name ?? "", phone: "" });
   const [saved, setSaved] = useState(false);
 
-  const loadExtras = async () => {
-    if (!user) return;
-    const { supabase } = await import("@/lib/supabase");
-    const { data } = await supabase.from("profiles").select("clouva_id,username").eq("id", user.id).maybeSingle();
-    setClouvaId(data?.clouva_id ?? "");
-    setUsername(data?.username ?? "");
-  };
-
-  const save = async () => {
-    if (!user) return;
-    const { supabase } = await import("@/lib/supabase");
-    await supabase.from("profiles").update({ full_name: fullName, phone, username }).eq("id", user.id);
-    setSaved(true);
-  };
-
-  const signOut = async () => {
-    const { supabase } = await import("@/lib/supabase");
-    await supabase.auth.signOut();
-    router.push("/login");
-  };
-
   useEffect(() => {
-    if (user) void loadExtras();
+    if (!user) return;
+    void (async () => {
+      const { supabase } = await import("@/lib/supabase");
+      const { data } = await supabase.from("profiles").select("clouva_id,username,bio,accent_color,full_name,phone").eq("id", user.id).maybeSingle();
+      if (data) setForm({ clouva_id: data.clouva_id ?? "", username: data.username ?? "", bio: data.bio ?? "", accent_color: data.accent_color ?? "#8f7cff", full_name: data.full_name ?? "", phone: data.phone ?? "" });
+    })();
   }, [user]);
 
-  return (
-    <main>
-      <MainNav />
-      <section className="mx-auto w-full max-w-4xl px-4 py-8">
-        <div className="panel rounded-3xl p-6">
-          <h1 className="text-2xl font-semibold">Perfil</h1>
-          <div className="mt-4 grid gap-3 md:grid-cols-2">
-            <label className="text-sm">Nombre<input className="mt-1 w-full rounded-xl border border-white/20 bg-transparent px-3 py-2" value={fullName} onChange={(e) => setFullName(e.target.value)} /></label>
-            <label className="text-sm">Teléfono<input className="mt-1 w-full rounded-xl border border-white/20 bg-transparent px-3 py-2" value={phone} onChange={(e) => setPhone(e.target.value)} /></label>
-            <div className="text-sm">Email: <span className="text-white/70">{user?.email}</span></div>
-            <div className="text-sm">Rol: <span className="rounded-full border border-white/20 px-2 py-0.5 text-xs">{role}</span></div>
-            <div className="text-sm">Estado VIP: <span className="text-white/70">{role === "vip" ? "Activo" : "No activo"}</span></div>
-            <div className="text-sm">Avatar: <span className="text-white/70">Listo para configurar en Mi Flow</span></div>
-            <div className="text-sm">CLOUVA ID: <span className="text-white/70">{clouvaId || "pendiente"}</span></div>
-            <label className="text-sm">Username público<input className="mt-1 w-full rounded-xl border border-white/20 bg-transparent px-3 py-2" value={username} onChange={(e) => setUsername(e.target.value)} /></label>
-            {user ? <div><img alt="QR" className="h-24 w-24" src={`https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(typeof window !== "undefined" ? window.location.origin + `/perfil-publico/${user.id}` : `/perfil-publico/${user.id}`)}`} /></div> : null}
-          </div>
-          <div className="mt-6 flex gap-2">
-            <button onClick={save} className="rounded-full bg-[#8f7cff]/25 px-4 py-2 text-sm">Guardar</button>
-            <button onClick={signOut} className="rounded-full border border-white/20 px-4 py-2 text-sm">Cerrar sesión</button>
-          </div>
-          {saved ? <p className="mt-3 text-sm text-emerald-300">Perfil actualizado.</p> : null}
-        </div>
-      </section>
-    </main>
-  );
+  const save = async () => { if (!user) return; const { supabase } = await import("@/lib/supabase"); await supabase.from("profiles").update(form).eq("id", user.id); setSaved(true); };
+  const publicUrl = form.username ? `https://clouva.ar/u/${form.username}` : "";
+
+  return <main><MainNav /><section className="mx-auto w-full max-w-4xl px-4 py-8"><div className="panel rounded-3xl p-6"><h1 className="text-2xl font-semibold">Perfil</h1><div className="mt-4 grid gap-3 md:grid-cols-2">
+    <label className="text-sm">Nombre<input className="mt-1 w-full rounded-xl border border-white/20 bg-transparent px-3 py-2" value={form.full_name} onChange={(e)=>setForm(v=>({...v,full_name:e.target.value}))} /></label>
+    <label className="text-sm">Teléfono<input className="mt-1 w-full rounded-xl border border-white/20 bg-transparent px-3 py-2" value={form.phone} onChange={(e)=>setForm(v=>({...v,phone:e.target.value}))} /></label>
+    <label className="text-sm">Username público<input className="mt-1 w-full rounded-xl border border-white/20 bg-transparent px-3 py-2" value={form.username} onChange={(e)=>setForm(v=>({...v,username:e.target.value.toLowerCase()}))} /></label>
+    <label className="text-sm">Bio corta<input className="mt-1 w-full rounded-xl border border-white/20 bg-transparent px-3 py-2" value={form.bio} onChange={(e)=>setForm(v=>({...v,bio:e.target.value}))} /></label>
+    <label className="text-sm">Accent color<input type="color" className="mt-1 h-10 w-full rounded-xl border border-white/20 bg-transparent p-1" value={form.accent_color} onChange={(e)=>setForm(v=>({...v,accent_color:e.target.value}))} /></label>
+    <div className="text-sm">CLOUVA ID: <span className="text-white/70">{form.clouva_id || "pendiente"}</span></div>
+    <div className="text-sm">Rol: <span className="rounded-full border border-white/20 px-2 py-0.5 text-xs">{role}</span></div>
+    <div className="text-sm">Estado VIP: <span className="text-white/70">{role === "vip" ? "Activo" : "No activo"}</span></div>
+    {publicUrl ? <div><img alt="QR" className="h-24 w-24" src={`https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(publicUrl)}`} /></div> : null}
+  </div><div className="mt-6 flex gap-2"><button onClick={save} className="rounded-full bg-[#8f7cff]/25 px-4 py-2 text-sm">Guardar</button><Link href="/perfil/configuracion" className="rounded-full border border-white/20 px-4 py-2 text-sm">Configuración</Link></div>{saved ? <p className="mt-3 text-sm text-emerald-300">Perfil actualizado.</p> : null}</div></section></main>;
 }
