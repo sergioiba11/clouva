@@ -3,64 +3,38 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: dark;
+  --bg: #f5f7fb;
+  --text: #0d1425;
+  --card: #ffffff;
+  --muted: #5a667e;
+  --line: rgba(78, 102, 154, 0.2);
+  --chip: rgba(131, 160, 255, 0.14);
+  --shadow-soft: 0 10px 35px rgba(43, 75, 148, 0.08);
+  --shadow-glow: 0 8px 35px rgba(115, 98, 255, 0.28);
+}
+
+.dark {
+  --bg: #03050b;
+  --text: #ecf1ff;
+  --card: rgba(10, 14, 25, 0.8);
+  --muted: #93a0be;
+  --line: rgba(135, 154, 255, 0.22);
+  --chip: rgba(123, 107, 255, 0.18);
+  --shadow-soft: 0 14px 45px rgba(0, 0, 0, 0.35);
+  --shadow-glow: 0 10px 40px rgba(97, 76, 255, 0.35);
 }
 
 body {
-  @apply bg-[#030306] text-white antialiased;
-  background-image: radial-gradient(circle at 20% 0%, rgba(83, 152, 255, 0.12), transparent 35%),
-    radial-gradient(circle at 82% 12%, rgba(144, 84, 255, 0.16), transparent 38%);
+  @apply antialiased transition-colors duration-300;
+  background: var(--bg);
+  color: var(--text);
+  background-image:
+    radial-gradient(circle at 14% 16%, rgba(84, 174, 255, 0.14), transparent 25%),
+    radial-gradient(circle at 82% 10%, rgba(148, 102, 255, 0.16), transparent 28%),
+    linear-gradient(rgba(130, 149, 196, 0.08) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(130, 149, 196, 0.08) 1px, transparent 1px);
+  background-size: auto, auto, 42px 42px, 42px 42px;
 }
 
-.clouva-grid {
-  background-image: linear-gradient(to right, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
-    linear-gradient(to bottom, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
-  background-size: 36px 36px;
-}
-
-.hero-fade-up {
-  animation: heroFadeUp 720ms cubic-bezier(0.2, 0.65, 0.2, 1) both;
-}
-
-.hero-glow-pulse {
-  animation: heroGlowPulse 8s ease-in-out infinite;
-}
-
-.hero-mobile-safe {
-  min-height: 82svh;
-}
-
-@supports not (height: 100svh) {
-  .hero-mobile-safe {
-    min-height: 82vh;
-  }
-}
-
-@media (min-width: 768px) {
-  .hero-mobile-safe {
-    min-height: 92vh;
-  }
-}
-
-@keyframes heroFadeUp {
-  from {
-    opacity: 0;
-    transform: translateY(20px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-@keyframes heroGlowPulse {
-  0%,
-  100% {
-    opacity: 0.75;
-    transform: translate(-50%, -50%) scale(0.96);
-  }
-  50% {
-    opacity: 1;
-    transform: translate(-50%, -50%) scale(1.05);
-  }
-}
+.os-card { @apply rounded-2xl border backdrop-blur-xl; border-color: var(--line); background: var(--card); box-shadow: var(--shadow-soft); }
+.panel { @apply os-card; }
