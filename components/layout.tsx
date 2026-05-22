@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/auth-provider";
+import { roleHome } from "@/lib/auth";
 
 const guestLinks = [
   { href: "/", label: "Home" },
@@ -44,8 +45,8 @@ export function MainNav() {
 
           {!loading && user ? (
             <>
-              <Link href="/mi-flow" className="transition hover:text-[#8f7cff]">
-                Mi Flow
+              <Link href={roleHome[role]} className="transition hover:text-[#8f7cff]">
+                {role === "admin" ? "Admin" : role === "empleado" ? "Empleado" : "Mi Flow"}
               </Link>
               <div className="flex items-center gap-2 text-[10px] normal-case tracking-normal text-white/90">
                 {avatarUrl ? (

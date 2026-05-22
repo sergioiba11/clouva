@@ -1,7 +1,27 @@
+"use client";
+
 import { MainNav } from "@/components/layout";
+import { useAuth } from "@/components/auth-provider";
+import { canAccessAdmin, roleHome } from "@/lib/auth";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useEffect } from "react";
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
+  const { user, role, loading } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (loading) return;
+    if (!user) {
+      router.replace("/login");
+      return;
+    }
+    if (!canAccessAdmin(role)) {
+      router.replace(roleHome[role]);
+    }
+  }, [loading, role, router, user]);
+
   const links = [
     "/admin",
     "/admin/tiendas",
@@ -17,6 +37,17 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     "/admin/emails",
     "/admin/configuracion",
   ];
+
+  if (loading) {
+    return (
+      <main>
+        <MainNav />
+        <div className="mx-auto max-w-7xl p-6 text-sm text-white/70">Cargando sesión...</div>
+      </main>
+    );
+  }
+
+  if (!user || !canAccessAdmin(role)) return null;
 
   return (
     <main>

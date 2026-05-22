@@ -15,6 +15,11 @@ export function normalizeRole(value: string | null | undefined): Role {
   return "cliente";
 }
 
+export function getRedirectByRole(role: string | null | undefined) {
+  const normalizedRole = normalizeRole(role);
+  return roleHome[normalizedRole];
+}
+
 export function canAccessAdmin(role: Role) {
   return role === "admin";
 }
