@@ -32,25 +32,38 @@ export default function AuthCallbackContent() {
       const defaultName = (user.user_metadata?.full_name as string | undefined) ?? null;
       const defaultAvatar = (user.user_metadata?.avatar_url as string | undefined) ?? null;
 
-      await supabase.from("profiles").upsert(
-        {
+      const { data: existing } = await supabase
+        .from("profiles")
+        .select("id, email, full_name, avatar_url")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      if (!existing) {
+        await supabase.from("profiles").insert({
           id: user.id,
           email: user.email ?? null,
           full_name: defaultName,
           avatar_url: defaultAvatar,
-          role: "cliente",
+          role: "customer",
           role_v2: "cliente",
-        },
-        { onConflict: "id" },
-      );
+        });
+      } else {
+        const updates: { email?: string; full_name?: string; avatar_url?: string } = {};
+        if (!existing.email && user.email) updates.email = user.email;
+        if (!existing.full_name && defaultName) updates.full_name = defaultName;
+        if (!existing.avatar_url && defaultAvatar) updates.avatar_url = defaultAvatar;
+        if (Object.keys(updates).length > 0) {
+          await supabase.from("profiles").update(updates).eq("id", user.id);
+        }
+      }
 
       const { data: profile } = await supabase
         .from("profiles")
-        .select("role")
+        .select("role_v2")
         .eq("id", user.id)
         .maybeSingle();
 
-      router.replace(getRedirectByRole(profile?.role));
+      router.replace(getRedirectByRole(profile?.role_v2));
     };
 
     void handleCallback();

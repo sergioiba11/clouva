@@ -7,6 +7,7 @@ import { normalizeRole, type Role } from "@/lib/auth";
 type Profile = {
   id: string;
   role: string | null;
+  role_v2: string | null;
   full_name: string | null;
   avatar_url: string | null;
 };
@@ -25,25 +26,45 @@ async function ensureProfile(user: User): Promise<Profile | null> {
   const { supabase } = await import("@/lib/supabase");
   const fullName = (user.user_metadata?.full_name as string | undefined) ?? null;
   const avatarUrl = (user.user_metadata?.avatar_url as string | undefined) ?? null;
+  const email = user.email ?? null;
 
-  await supabase.from("profiles").upsert(
-    {
-      id: user.id,
-      full_name: fullName,
-      avatar_url: avatarUrl,
-      role: "cliente",
-      role_v2: "cliente",
-    },
-    { onConflict: "id", ignoreDuplicates: false },
-  );
-
-  const { data } = await supabase
+  const { data: existing } = await supabase
     .from("profiles")
-    .select("id, role, full_name, avatar_url")
+    .select("id, role, role_v2, full_name, avatar_url, email")
     .eq("id", user.id)
     .maybeSingle();
 
-  return data ?? null;
+  if (!existing) {
+    const { data } = await supabase
+      .from("profiles")
+      .insert({ id: user.id, email, full_name: fullName, avatar_url: avatarUrl, role: "customer", role_v2: "cliente" })
+      .select("id, role, role_v2, full_name, avatar_url")
+      .maybeSingle();
+    return data ?? null;
+  }
+
+  const updates: { email?: string; full_name?: string; avatar_url?: string } = {};
+  if (!existing.email && email) updates.email = email;
+  if (!existing.full_name && fullName) updates.full_name = fullName;
+  if (!existing.avatar_url && avatarUrl) updates.avatar_url = avatarUrl;
+
+  if (Object.keys(updates).length > 0) {
+    const { data } = await supabase
+      .from("profiles")
+      .update(updates)
+      .eq("id", user.id)
+      .select("id, role, role_v2, full_name, avatar_url")
+      .maybeSingle();
+    return data ?? null;
+  }
+
+  return {
+    id: existing.id,
+    role: existing.role,
+    role_v2: existing.role_v2,
+    full_name: existing.full_name,
+    avatar_url: existing.avatar_url,
+  };
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -70,7 +91,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const profileData = await ensureProfile(nextSession.user);
         if (!alive) return;
         setProfile(profileData);
-        setRole(normalizeRole(profileData?.role));
+        setRole(normalizeRole(profileData?.role_v2));
       } else {
         setProfile(null);
         setRole("cliente");
@@ -97,7 +118,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         void ensureProfile(nextSession.user).then((profileData) => {
           if (!alive) return;
           setProfile(profileData);
-          setRole(normalizeRole(profileData?.role));
+          setRole(normalizeRole(profileData?.role_v2));
           setLoading(false);
         });
       });
