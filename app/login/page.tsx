@@ -1,11 +1,12 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { MainFooter, MainNav } from "@/components/layout";
 import { supabase } from "@/lib/supabase";
 import { normalizeRole, roleHome } from "@/lib/auth";
+import { getOAuthCallbackUrl } from "@/lib/site-url";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -13,6 +14,12 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
+  const searchParams = useSearchParams();
+
+  useEffect(() => {
+    const oauthError = searchParams.get("error");
+    if (oauthError) setError(oauthError);
+  }, [searchParams]);
 
   const redirectByRole = async (userId: string) => {
     const { data } = await supabase.from("profiles").select("role").eq("id", userId).single();
@@ -41,7 +48,7 @@ export default function LoginPage() {
     setError(null);
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
-      options: { redirectTo: `${window.location.origin}/cuenta` },
+      options: { redirectTo: getOAuthCallbackUrl("/cuenta") },
     });
     if (error) setError(error.message);
   };
