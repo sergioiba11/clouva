@@ -5,7 +5,6 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { MainFooter, MainNav } from "@/components/layout";
 import { normalizeRole, roleHome } from "@/lib/auth";
-import { getSiteUrl } from "@/lib/site-url";
 
 export default function LoginContent() {
   const [email, setEmail] = useState("");
@@ -18,6 +17,15 @@ export default function LoginContent() {
   useEffect(() => {
     const oauthError = searchParams.get("error");
     if (oauthError) setError(oauthError);
+
+    const checkSession = async () => {
+      const { supabase } = await import("@/lib/supabase");
+      const { data } = await supabase.auth.getSession();
+      const userId = data.session?.user?.id;
+      if (userId) await redirectByRole(userId);
+    };
+
+    void checkSession();
   }, [searchParams]);
 
   const redirectByRole = async (userId: string) => {
@@ -48,7 +56,7 @@ export default function LoginContent() {
   const onGoogle = async () => {
     setError(null);
     const { supabase } = await import("@/lib/supabase");
-    const redirectTo = `${getSiteUrl()}/auth/callback`;
+    const redirectTo = `${window.location.origin}/auth/callback`;
 
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",

@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { normalizeRole } from "@/lib/auth";
+import { normalizeRole, roleHome } from "@/lib/auth";
 
 export default function AuthCallbackContent() {
   const router = useRouter();
@@ -10,7 +10,6 @@ export default function AuthCallbackContent() {
 
   useEffect(() => {
     const handleCallback = async () => {
-      const next = searchParams.get("next");
       const code = searchParams.get("code");
       const { supabase } = await import("@/lib/supabase");
 
@@ -22,42 +21,37 @@ export default function AuthCallbackContent() {
         }
       }
 
-      if (next) {
-        router.replace(next);
-        return;
-      }
-
       const { data: sessionData } = await supabase.auth.getSession();
-      const userId = sessionData.session?.user?.id;
+      const user = sessionData.session?.user;
 
-      if (!userId) {
-        router.replace("/");
+      if (!user) {
+        router.replace("/login?error=No%20se%20pudo%20establecer%20la%20sesión");
         return;
       }
+
+      const defaultName = (user.user_metadata?.full_name as string | undefined) ?? null;
+      const defaultAvatar = (user.user_metadata?.avatar_url as string | undefined) ?? null;
+
+      await supabase.from("profiles").upsert(
+        {
+          id: user.id,
+          email: user.email ?? null,
+          full_name: defaultName,
+          avatar_url: defaultAvatar,
+          role: "cliente",
+          role_v2: "cliente",
+        },
+        { onConflict: "id" },
+      );
 
       const { data: profile } = await supabase
         .from("profiles")
         .select("role")
-        .eq("id", userId)
+        .eq("id", user.id)
         .maybeSingle();
 
-      if (!profile?.role) {
-        router.replace("/");
-        return;
-      }
-
-      const role = normalizeRole(profile.role);
-      if (role === "admin") {
-        router.replace("/admin");
-        return;
-      }
-
-      if (role === "employee") {
-        router.replace("/empleado");
-        return;
-      }
-
-      router.replace("/cuenta");
+      const role = normalizeRole(profile?.role);
+      router.replace(roleHome[role]);
     };
 
     void handleCallback();
