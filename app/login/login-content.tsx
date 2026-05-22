@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { MainFooter, MainNav } from "@/components/layout";
@@ -13,12 +13,14 @@ export default function LoginContent() {
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
   const searchParams = useSearchParams();
+  const isAddAccountMode = useMemo(() => searchParams.get("addAccount") === "1", [searchParams]);
 
   useEffect(() => {
     const oauthError = searchParams.get("error");
     if (oauthError) setError(oauthError);
 
     const checkSession = async () => {
+      if (isAddAccountMode) return;
       const { supabase } = await import("@/lib/supabase");
       const { data } = await supabase.auth.getSession();
       const userId = data.session?.user?.id;
@@ -26,9 +28,9 @@ export default function LoginContent() {
     };
 
     void checkSession();
-  }, [searchParams]);
+  }, [isAddAccountMode, searchParams]);
 
-  const redirectByRole = async (userId: string) => {
+  const redirectByRole = async (userId: string, forceSwitcher = false) => {
     const { supabase } = await import("@/lib/supabase");
     let { data: profile } = await supabase.from("profiles").select("role").eq("id", userId).maybeSingle();
 
@@ -42,6 +44,10 @@ export default function LoginContent() {
     }
 
     const redirectPath = getRedirectByRole(profile?.role ?? "customer");
+    if (forceSwitcher) {
+      router.push(`${redirectPath}?openAccountSwitcher=1`);
+      return;
+    }
     router.push(redirectPath);
   };
 
@@ -59,14 +65,14 @@ export default function LoginContent() {
       return;
     }
 
-    await redirectByRole(data.user.id);
+    await redirectByRole(data.user.id, isAddAccountMode);
     setLoading(false);
   };
 
   const onGoogle = async () => {
     setError(null);
     const { supabase } = await import("@/lib/supabase");
-    const redirectTo = `${window.location.origin}/auth/callback`;
+    const redirectTo = `${window.location.origin}/auth/callback${isAddAccountMode ? "?addAccount=1" : ""}`;
 
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
