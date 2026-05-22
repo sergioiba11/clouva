@@ -14,11 +14,75 @@ export function MainNav() {
   const [openMenu, setOpenMenu] = useState(false);
   const [openSwitch, setOpenSwitch] = useState(false);
   const [accounts, setAccounts] = useState<StoredAccount[]>([]);
+
   useEffect(() => setAccounts(getAccounts()), [openSwitch]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !user) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("openAccountSwitcher") === "1") setOpenSwitch(true);
+  }, [user]);
+
   const displayName = profile?.full_name ?? profile?.display_name ?? user?.email?.split("@")[0] ?? "Flow";
   const avatar = profile?.avatar_url ?? user?.user_metadata?.avatar_url;
 
-  return <header className="sticky top-0 z-50 border-b border-[var(--line)] bg-[var(--card)]/80 backdrop-blur-2xl"><div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 md:px-8"><Link href="/" className="text-sm font-semibold tracking-[0.3em]">CLOUVA OS</Link><div className="flex items-center gap-2"><ThemeToggle />{user?<div className="relative"><button onClick={()=>setOpenMenu(v=>!v)} className="flex items-center gap-2 rounded-full border border-[var(--line)] px-2 py-1">{avatar?<Image src={String(avatar)} alt={displayName} width={24} height={24} className="h-6 w-6 rounded-full"/>:<span className="inline-grid h-6 w-6 place-items-center rounded-full bg-[var(--chip)] text-xs">{displayName.charAt(0).toUpperCase()}</span>}<span className="text-xs">{displayName}</span></button>{openMenu?<div className="absolute right-0 mt-2 w-52 rounded-2xl border border-[var(--line)] bg-[var(--card)] p-2 text-sm shadow-[var(--shadow-glow)]"><Link href="/perfil" className="block rounded-lg px-3 py-2 hover:bg-[var(--chip)]">Perfil</Link><Link href="/mi-flow" className="block rounded-lg px-3 py-2 hover:bg-[var(--chip)]">Mi Flow</Link>{role==="admin"?<Link href="/admin" className="block rounded-lg px-3 py-2 hover:bg-[var(--chip)]">Admin</Link>:null}<button className="block w-full rounded-lg px-3 py-2 text-left hover:bg-[var(--chip)]" onClick={()=>{setOpenMenu(false);setOpenSwitch(true);}}>Cambiar cuenta</button><Link href="/login?addAccount=1" className="block rounded-lg px-3 py-2 hover:bg-[var(--chip)]">Agregar cuenta</Link><button onClick={async()=>{const {supabase}=await import('@/lib/supabase'); await supabase.auth.signOut(); router.push('/login');}} className="block w-full rounded-lg px-3 py-2 text-left text-rose-400 hover:bg-rose-500/10">Cerrar sesión</button></div>:null}</div>:<Link href="/login" className="rounded-full border border-[var(--line)] px-3 py-1 text-xs">Login</Link>}<Link href="/checkout" className="rounded-full bg-[#8f7cff] px-3 py-1 text-xs text-black">Drop</Link></div></div>{openSwitch?<div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4"><div className="os-card w-full max-w-md p-4"><h3 className="text-lg font-semibold">Cambiar cuenta</h3><div className="mt-3 space-y-2">{accounts.map(a=><button key={a.id} onClick={()=>void switchAccount(a.id)} className="w-full rounded-xl border border-[var(--line)] px-3 py-2 text-left"><p>{a.display_name}</p><p className="text-xs text-[var(--muted)]">{a.email}</p></button>)}</div><button onClick={()=>setOpenSwitch(false)} className="mt-3 rounded-full border border-[var(--line)] px-3 py-1 text-sm">Cerrar</button></div></div>:null}</header>
+  return (
+    <header className="sticky top-0 z-50 border-b border-[var(--line)] bg-[var(--card)]/80 backdrop-blur-2xl">
+      <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 md:px-8">
+        <Link href="/" className="text-sm font-semibold tracking-[0.3em]">CLOUVA OS</Link>
+        <div className="flex items-center gap-2">
+          <ThemeToggle />
+          {user ? (
+            <div className="relative">
+              <button onClick={() => setOpenMenu((v) => !v)} className="flex items-center gap-2 rounded-full border border-[var(--line)] px-2 py-1">
+                {avatar ? (
+                  <Image src={String(avatar)} alt={displayName} width={24} height={24} className="h-6 w-6 rounded-full" />
+                ) : (
+                  <span className="inline-grid h-6 w-6 place-items-center rounded-full bg-[var(--chip)] text-xs">{displayName.charAt(0).toUpperCase()}</span>
+                )}
+                <span className="text-xs">{displayName}</span>
+              </button>
+              {openMenu ? (
+                <div className="absolute right-0 mt-2 w-52 rounded-2xl border border-[var(--line)] bg-[var(--card)] p-2 text-sm shadow-[var(--shadow-glow)]">
+                  <Link href="/perfil" className="block rounded-lg px-3 py-2 hover:bg-[var(--chip)]">Perfil</Link>
+                  <Link href="/mi-flow" className="block rounded-lg px-3 py-2 hover:bg-[var(--chip)]">Mi Flow</Link>
+                  {role === "admin" ? <Link href="/admin" className="block rounded-lg px-3 py-2 hover:bg-[var(--chip)]">Admin</Link> : null}
+                  <button className="block w-full rounded-lg px-3 py-2 text-left hover:bg-[var(--chip)]" onClick={() => { setOpenMenu(false); setOpenSwitch(true); }}>
+                    Cambiar cuenta
+                  </button>
+                  <Link href="/login?addAccount=1" className="block rounded-lg px-3 py-2 hover:bg-[var(--chip)]">Agregar cuenta</Link>
+                  <button onClick={async () => { const { supabase } = await import("@/lib/supabase"); await supabase.auth.signOut(); router.push("/login"); }} className="block w-full rounded-lg px-3 py-2 text-left text-rose-400 hover:bg-rose-500/10">
+                    Cerrar sesión
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <Link href="/login" className="rounded-full border border-[var(--line)] px-3 py-1 text-xs">Login</Link>
+          )}
+          <Link href="/checkout" className="rounded-full bg-[#8f7cff] px-3 py-1 text-xs text-black">Drop</Link>
+        </div>
+      </div>
+      {openSwitch ? (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4">
+          <div className="os-card w-full max-w-md p-4">
+            <h3 className="text-lg font-semibold">Cambiar cuenta</h3>
+            <div className="mt-3 space-y-2">
+              {accounts.map((a) => (
+                <button key={a.id} onClick={() => void switchAccount(a.id)} className="w-full rounded-xl border border-[var(--line)] px-3 py-2 text-left">
+                  <p>{a.display_name}</p>
+                  <p className="text-xs text-[var(--muted)]">{a.email}</p>
+                </button>
+              ))}
+            </div>
+            <button onClick={() => setOpenSwitch(false)} className="mt-3 rounded-full border border-[var(--line)] px-3 py-1 text-sm">Cerrar</button>
+          </div>
+        </div>
+      ) : null}
+    </header>
+  );
 }
 
-export function MainFooter(){return <footer className="mx-auto max-w-7xl px-4 py-10 text-xs uppercase tracking-[0.18em] text-[var(--muted)] md:px-8">CLOUVA · Vida de flows</footer>}
+export function MainFooter() {
+  return <footer className="mx-auto max-w-7xl px-4 py-10 text-xs uppercase tracking-[0.18em] text-[var(--muted)] md:px-8">CLOUVA · Vida de flows</footer>;
+}
