@@ -19,10 +19,10 @@ export function MainNav() {
   useEffect(() => setAccounts(getAccounts()), [openSwitch]);
 
   useEffect(() => {
-    if (searchParams.get("openAccountSwitcher") === "1" && user) {
-      setOpenSwitch(true);
-    }
-  }, [searchParams, user]);
+    if (typeof window === "undefined" || !user) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("openAccountSwitcher") === "1") setOpenSwitch(true);
+  }, [user]);
 
   const displayName = profile?.full_name ?? profile?.display_name ?? user?.email?.split("@")[0] ?? "Flow";
   const avatar = profile?.avatar_url ?? user?.user_metadata?.avatar_url;
