@@ -25,6 +25,7 @@ export default function FlowLayout({ children }: { children: React.ReactNode }) 
     "/mi-flow/contenido",
     "/mi-flow/roadmap",
     "/mi-flow/music",
+    "/mi-flow/negocios",
     "/mi-flow/drops",
   ];
 

@@ -3,6 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useState } from "react";
 import { useAuth } from "@/components/auth-provider";
 import { roleHome } from "@/lib/auth";
 
@@ -17,6 +18,7 @@ const guestLinks = [
 export function MainNav() {
   const { user, profile, role, loading } = useAuth();
   const router = useRouter();
+  const [openMenu, setOpenMenu] = useState(false);
 
   const displayName =
     profile?.full_name ?? (user?.email ? user.email.split("@")[0] : "Mi perfil");
@@ -62,20 +64,25 @@ export function MainNav() {
                     {displayName.charAt(0).toUpperCase()}
                   </span>
                 )}
-                <span>{displayName}</span>
+                <span>{displayName}</span><span className="rounded-full border border-white/25 px-2 py-0.5 text-[9px] uppercase">{role}</span>
                 {role === "vip" ? (
                   <span className="rounded-full border border-amber-300/40 bg-amber-300/15 px-2 py-0.5 text-[9px] uppercase tracking-[0.18em] text-amber-200">
                     VIP
                   </span>
                 ) : null}
               </div>
-              <button
-                type="button"
-                onClick={onSignOut}
-                className="rounded-full border border-white/20 px-3 py-1.5 text-[10px] tracking-[0.14em] transition hover:border-white/40"
-              >
-                Cerrar sesión
-              </button>
+              <div className="relative">
+                <button type="button" onClick={() => setOpenMenu((v) => !v)} className="rounded-full border border-white/20 px-3 py-1.5 text-[10px] tracking-[0.14em]">Menú</button>
+                {openMenu ? (
+                  <div className="absolute right-0 mt-2 w-40 rounded-xl border border-white/15 bg-[#090b12] p-2 text-xs">
+                    <Link href="/perfil" className="block rounded px-2 py-1 hover:bg-white/10">Perfil</Link>
+                    <Link href="/mi-flow" className="block rounded px-2 py-1 hover:bg-white/10">Mi Flow</Link>
+                    {role === "admin" ? <Link href="/admin" className="block rounded px-2 py-1 hover:bg-white/10">Admin</Link> : null}
+                    {role === "empleado" ? <Link href="/empleado" className="block rounded px-2 py-1 hover:bg-white/10">Empleado</Link> : null}
+                    <button type="button" onClick={onSignOut} className="mt-1 w-full rounded px-2 py-1 text-left hover:bg-white/10">Cerrar sesión</button>
+                  </div>
+                ) : null}
+              </div>
             </>
           ) : null}
 
