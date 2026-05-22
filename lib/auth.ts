@@ -8,7 +8,7 @@ export const roleHome: Record<Role, string> = {
 };
 
 export function normalizeRole(value: string | null | undefined): Role {
-  if (value === "admin") return "admin";
+  if (value === "admin" || value === "owner") return "admin";
   if (value === "employee" || value === "empleado") return "empleado";
   if (value === "customer" || value === "cliente") return "cliente";
   if (value === "vip") return "vip";

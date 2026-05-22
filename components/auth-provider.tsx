@@ -7,9 +7,9 @@ import { normalizeRole, type Role } from "@/lib/auth";
 type Profile = {
   id: string;
   role: string | null;
-  role_v2: string | null;
-  full_name: string | null;
-  avatar_url: string | null;
+  display_name?: string | null;
+  full_name?: string | null;
+  avatar_url?: string | null;
 };
 
 type AuthContextType = {
@@ -24,36 +24,35 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 async function ensureProfile(user: User): Promise<Profile | null> {
   const { supabase } = await import("@/lib/supabase");
-  const fullName = (user.user_metadata?.full_name as string | undefined) ?? null;
-  const avatarUrl = (user.user_metadata?.avatar_url as string | undefined) ?? null;
-  const email = user.email ?? null;
+  const displayName =
+    (user.user_metadata?.full_name as string | undefined) ??
+    (user.email ? user.email.split("@")[0] : "Usuario") ??
+    "Usuario";
 
   const { data: existing } = await supabase
     .from("profiles")
-    .select("id, role, role_v2, full_name, avatar_url, email")
+    .select("id, role, display_name")
     .eq("id", user.id)
     .maybeSingle();
 
   if (!existing) {
     const { data } = await supabase
       .from("profiles")
-      .insert({ id: user.id, email, full_name: fullName, avatar_url: avatarUrl, role: "customer", role_v2: "cliente" })
-      .select("id, role, role_v2, full_name, avatar_url")
+      .insert({ id: user.id, role: "customer", display_name: displayName })
+      .select("id, role, display_name")
       .maybeSingle();
     return data ?? null;
   }
 
-  const updates: { email?: string; full_name?: string; avatar_url?: string } = {};
-  if (!existing.email && email) updates.email = email;
-  if (!existing.full_name && fullName) updates.full_name = fullName;
-  if (!existing.avatar_url && avatarUrl) updates.avatar_url = avatarUrl;
+  const updates: { display_name?: string } = {};
+  if (!existing.display_name && displayName) updates.display_name = displayName;
 
   if (Object.keys(updates).length > 0) {
     const { data } = await supabase
       .from("profiles")
       .update(updates)
       .eq("id", user.id)
-      .select("id, role, role_v2, full_name, avatar_url")
+      .select("id, role, display_name")
       .maybeSingle();
     return data ?? null;
   }
@@ -61,9 +60,7 @@ async function ensureProfile(user: User): Promise<Profile | null> {
   return {
     id: existing.id,
     role: existing.role,
-    role_v2: existing.role_v2,
-    full_name: existing.full_name,
-    avatar_url: existing.avatar_url,
+    display_name: existing.display_name,
   };
 }
 

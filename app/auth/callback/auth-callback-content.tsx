@@ -29,29 +29,28 @@ export default function AuthCallbackContent() {
         return;
       }
 
-      const defaultName = (user.user_metadata?.full_name as string | undefined) ?? null;
-      const defaultAvatar = (user.user_metadata?.avatar_url as string | undefined) ?? null;
+      const defaultName =
+        (user.user_metadata?.full_name as string | undefined) ??
+        (user.email ? user.email.split("@")[0] : "Usuario");
 
       const { data: existing } = await supabase
         .from("profiles")
-        .select("id, email, full_name, avatar_url")
+        .select("id, role, display_name")
         .eq("id", user.id)
         .maybeSingle();
+
+      const isSergio = user.email?.toLowerCase() === "sergio.iba.11@gmail.com";
 
       if (!existing) {
         await supabase.from("profiles").insert({
           id: user.id,
-          email: user.email ?? null,
-          full_name: defaultName,
-          avatar_url: defaultAvatar,
-          role: "customer",
-          role_v2: "cliente",
+          display_name: defaultName,
+          role: isSergio ? "admin" : "customer",
         });
       } else {
-        const updates: { email?: string; full_name?: string; avatar_url?: string } = {};
-        if (!existing.email && user.email) updates.email = user.email;
-        if (!existing.full_name && defaultName) updates.full_name = defaultName;
-        if (!existing.avatar_url && defaultAvatar) updates.avatar_url = defaultAvatar;
+        const updates: { display_name?: string; role?: string } = {};
+        if (!existing.display_name && defaultName) updates.display_name = defaultName;
+        if (isSergio && existing.role !== "admin" && existing.role !== "owner") updates.role = "admin";
         if (Object.keys(updates).length > 0) {
           await supabase.from("profiles").update(updates).eq("id", user.id);
         }

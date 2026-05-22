@@ -30,18 +30,18 @@ export default function LoginContent() {
 
   const redirectByRole = async (userId: string) => {
     const { supabase } = await import("@/lib/supabase");
-    let { data: profile } = await supabase.from("profiles").select("role_v2").eq("id", userId).maybeSingle();
+    let { data: profile } = await supabase.from("profiles").select("role").eq("id", userId).maybeSingle();
 
     if (!profile) {
       const { data: created } = await supabase
         .from("profiles")
-        .insert({ id: userId, role: "customer", role_v2: "cliente" })
-        .select("role_v2")
+        .insert({ id: userId, role: "customer" })
+        .select("role")
         .maybeSingle();
       profile = created;
     }
 
-    const redirectPath = getRedirectByRole(profile?.role_v2 ?? "cliente");
+    const redirectPath = getRedirectByRole(profile?.role ?? "customer");
     router.push(redirectPath);
   };
 
