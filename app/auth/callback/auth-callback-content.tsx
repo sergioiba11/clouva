@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getRedirectByRole } from "@/lib/auth";
 
 export default function AuthCallbackContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const isAddAccountMode = useMemo(() => searchParams.get("addAccount") === "1", [searchParams]);
 
   useEffect(() => {
     const handleCallback = async () => {
@@ -62,11 +63,12 @@ export default function AuthCallbackContent() {
         .eq("id", user.id)
         .maybeSingle();
 
-      router.replace(getRedirectByRole(profile?.role_v2));
+      const redirectPath = getRedirectByRole(profile?.role_v2);
+      router.replace(isAddAccountMode ? `${redirectPath}?openAccountSwitcher=1` : redirectPath);
     };
 
     void handleCallback();
-  }, [router, searchParams]);
+  }, [isAddAccountMode, router, searchParams]);
 
   return (
     <main className="mx-auto flex min-h-[60vh] w-full max-w-3xl items-center justify-center px-4 py-12">
