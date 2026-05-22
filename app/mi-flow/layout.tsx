@@ -1,7 +1,21 @@
+"use client";
+
 import { MainNav } from "@/components/layout";
+import { useAuth } from "@/components/auth-provider";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useEffect } from "react";
 
 export default function FlowLayout({ children }: { children: React.ReactNode }) {
+  const { user, loading } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (!loading && !user) {
+      router.replace("/login");
+    }
+  }, [loading, router, user]);
+
   const links = [
     "/mi-flow",
     "/mi-flow/avatar",
@@ -13,6 +27,18 @@ export default function FlowLayout({ children }: { children: React.ReactNode }) 
     "/mi-flow/music",
     "/mi-flow/drops",
   ];
+
+  if (loading) {
+    return (
+      <main>
+        <MainNav />
+        <div className="mx-auto max-w-7xl p-6 text-sm text-white/70">Cargando sesión...</div>
+      </main>
+    );
+  }
+
+  if (!user) return null;
+
   return (
     <main>
       <MainNav />
