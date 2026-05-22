@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { MainFooter, MainNav } from "@/components/layout";
 import { normalizeRole, roleHome } from "@/lib/auth";
+import { getSiteUrl } from "@/lib/site-url";
 
 export default function LoginContent() {
   const [email, setEmail] = useState("");
@@ -47,10 +48,7 @@ export default function LoginContent() {
   const onGoogle = async () => {
     setError(null);
     const { supabase } = await import("@/lib/supabase");
-    const redirectTo =
-      process.env.NODE_ENV === "development"
-        ? "http://localhost:3000/auth/callback"
-        : "https://clouva.com.ar/auth/callback";
+    const redirectTo = `${getSiteUrl()}/auth/callback`;
 
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "google",
