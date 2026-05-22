@@ -7,8 +7,9 @@ import { normalizeRole, type Role } from "@/lib/auth";
 type Profile = {
   id: string;
   role: string | null;
-  full_name: string | null;
-  avatar_url: string | null;
+  display_name?: string | null;
+  full_name?: string | null;
+  avatar_url?: string | null;
 };
 
 type AuthContextType = {
@@ -23,27 +24,44 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 async function ensureProfile(user: User): Promise<Profile | null> {
   const { supabase } = await import("@/lib/supabase");
-  const fullName = (user.user_metadata?.full_name as string | undefined) ?? null;
-  const avatarUrl = (user.user_metadata?.avatar_url as string | undefined) ?? null;
+  const displayName =
+    (user.user_metadata?.full_name as string | undefined) ??
+    (user.email ? user.email.split("@")[0] : "Usuario") ??
+    "Usuario";
 
-  await supabase.from("profiles").upsert(
-    {
-      id: user.id,
-      full_name: fullName,
-      avatar_url: avatarUrl,
-      role: "cliente",
-      role_v2: "cliente",
-    },
-    { onConflict: "id", ignoreDuplicates: false },
-  );
-
-  const { data } = await supabase
+  const { data: existing } = await supabase
     .from("profiles")
-    .select("id, role, full_name, avatar_url")
+    .select("id, role, display_name")
     .eq("id", user.id)
     .maybeSingle();
 
-  return data ?? null;
+  if (!existing) {
+    const { data } = await supabase
+      .from("profiles")
+      .insert({ id: user.id, role: "customer", display_name: displayName })
+      .select("id, role, display_name")
+      .maybeSingle();
+    return data ?? null;
+  }
+
+  const updates: { display_name?: string } = {};
+  if (!existing.display_name && displayName) updates.display_name = displayName;
+
+  if (Object.keys(updates).length > 0) {
+    const { data } = await supabase
+      .from("profiles")
+      .update(updates)
+      .eq("id", user.id)
+      .select("id, role, display_name")
+      .maybeSingle();
+    return data ?? null;
+  }
+
+  return {
+    id: existing.id,
+    role: existing.role,
+    display_name: existing.display_name,
+  };
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {

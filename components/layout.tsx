@@ -21,7 +21,7 @@ export function MainNav() {
   const [openMenu, setOpenMenu] = useState(false);
 
   const displayName =
-    profile?.full_name ?? (user?.email ? user.email.split("@")[0] : "Mi perfil");
+    profile?.full_name ?? profile?.display_name ?? (user?.email ? user.email.split("@")[0] : "Mi perfil");
   const avatarUrl = profile?.avatar_url ?? user?.user_metadata?.avatar_url;
 
   const onSignOut = async () => {
