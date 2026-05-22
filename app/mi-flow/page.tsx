@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/components/auth-provider";
 
+type Order={id:string;total_cents:number;payment_status:string;shipping_status:string};
 type DashboardData = {
   orders: number;
   products: number;
@@ -20,6 +21,7 @@ const levelNames = ["Fundamentos", "Automatización", "IA Contextual", "Sistema 
 export default function MiFlowPage() {
   const { user, profile, role } = useAuth();
   const [data, setData] = useState<DashboardData>({ orders: 0, products: 0, customers: 0, employees: 0, vipUsers: 0, tasks: 0, notes: 0, ideas: 0 });
+  const [ordersList,setOrdersList]=useState<Order[]>([]);
 
   useEffect(() => {
     if (!user) return;
@@ -36,6 +38,8 @@ export default function MiFlowPage() {
         supabase.from("flow_ideas").select("id", { count: "exact", head: true }).eq("owner_id", user.id),
       ]);
 
+      const { data: myOrders } = await supabase.from("orders").select("id,total_cents,payment_status,shipping_status").order("id",{ascending:false}).limit(5);
+      setOrdersList((myOrders ?? []) as Order[]);
       setData({
         orders: orders.count ?? 0,
         products: products.count ?? 0,
@@ -87,6 +91,8 @@ export default function MiFlowPage() {
         <h2 className="text-lg font-semibold">Progreso CLOUVA OS</h2>
         <div className="mt-4 grid gap-2 md:grid-cols-5">{levelNames.map((l, i) => <div key={l} className="rounded-xl border border-white/10 p-3 text-sm">Nivel {i + 1}: {l}</div>)}</div>
       </section>
+
+      <section className="panel rounded-3xl p-6"><h2 className="text-lg font-semibold">Mis pedidos</h2>{ordersList.length===0?<p className="mt-2 text-white/60">Todavía no tenés pedidos.</p>:<div className="mt-3 space-y-2">{ordersList.map((o)=><Link key={o.id} href={`/pedido/${o.id}`} className="block rounded-xl border border-white/10 p-3 text-sm">{o.id} · ${(o.total_cents/100).toLocaleString("es-AR")} · {o.payment_status} / {o.shipping_status}</Link>)}</div>}</section>
 
       {role === "admin" && (
         <section className="panel rounded-3xl border border-fuchsia-400/30 p-6">
