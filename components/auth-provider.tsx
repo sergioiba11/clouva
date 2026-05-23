@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { normalizeRole, type Role } from "@/lib/auth";
 import { saveAccount, setActiveAccountId } from "@/lib/account-switcher";
@@ -47,6 +47,11 @@ async function loadProfileByUserId(userId: string): Promise<Profile | null> {
   return data ?? null;
 }
 
+
+function getPostAuthRedirect(roleValue: string | null | undefined) {
+  return normalizeRole(roleValue) === "admin" ? "/admin" : "/mi-flow";
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
@@ -55,6 +60,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [hydrationReady, setHydrationReady] = useState(false);
   const [profileReady, setProfileReady] = useState(false);
+  const oauthHashDetectedRef = useRef(false);
 
   useEffect(() => {
     let alive = true;
@@ -78,6 +84,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await ensureProfile(nextSession.user);
       const profileData = await loadProfileByUserId(nextSession.user.id);
       if (!alive || currentRun !== runId) return;
+      if (oauthHashDetectedRef.current && !profileData) {
+        setProfile(null);
+        setRole("cliente");
+        setProfileReady(true);
+        setLoading(false);
+        oauthHashDetectedRef.current = false;
+        window.history.replaceState(null, "", "/login?error=auth_callback");
+        return;
+      }
+
       const nextRole = normalizeRole(profileData?.role);
       setProfile(profileData);
       setRole(nextRole);
@@ -85,6 +101,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         saveAccount({ id: nextSession.user.id, email: nextSession.user.email, display_name: profileData?.full_name ?? profileData?.display_name ?? nextSession.user.email.split("@")[0], avatar_url: profileData?.avatar_url ?? null, role: nextRole });
       }
       setActiveAccountId(nextSession.user.id);
+
+      if (oauthHashDetectedRef.current) {
+        const redirectPath = getPostAuthRedirect(profileData?.role);
+        window.history.replaceState(null, "", redirectPath);
+        oauthHashDetectedRef.current = false;
+      }
+
       setProfileReady(true);
       setLoading(false);
     };
@@ -93,7 +116,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const { supabase } = await import("@/lib/supabase");
 
       if (typeof window !== "undefined" && window.location.hash.includes("access_token")) {
-        await supabase.auth.getSession();
+        oauthHashDetectedRef.current = true;
+        const { data: callbackData } = await supabase.auth.getSession();
+        if (!callbackData.session?.user) {
+          oauthHashDetectedRef.current = false;
+          window.history.replaceState(null, "", "/login?error=auth_callback");
+          setHydrationReady(true);
+          setProfileReady(true);
+          setLoading(false);
+          return;
+        }
+        await supabase.auth.refreshSession();
       }
 
       const timeoutId = setTimeout(() => {
