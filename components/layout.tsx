@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
 import { getAccounts, switchAccount, type StoredAccount } from "@/lib/account-switcher";
@@ -11,7 +11,6 @@ import { ThemeToggle } from "@/components/theme-toggle";
 export function MainNav() {
   const { user, profile, role } = useAuth();
   const router = useRouter();
-  const searchParams = useSearchParams();
   const [openMenu, setOpenMenu] = useState(false);
   const [openSwitch, setOpenSwitch] = useState(false);
   const [accounts, setAccounts] = useState<StoredAccount[]>([]);
