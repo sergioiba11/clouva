@@ -33,7 +33,7 @@ export default function CarritoClient() {
                   <button onClick={() => update(items.map((x, ix) => (ix === i ? { ...x, qty: Math.max(1, x.qty - 1) } : x)))}>-</button>
                   <span>{it.qty}</span>
                   <button onClick={() => update(items.map((x, ix) => (ix === i ? { ...x, qty: x.qty + 1 } : x)))}>+</button>
-                  <button onClick={() => update(items.filter((_, ix) => ix !== i))} className="text-red-300">borrar</button>
+                  <button onClick={() => update(items.filter((_, ix) => ix !== i))} className="text-red-300">Eliminar</button>
                 </div>
               </div>
             ))
@@ -42,7 +42,7 @@ export default function CarritoClient() {
             <span>Total</span>
             <span className="text-[#95d8ff]">${(totalCents(items) / 100).toLocaleString("es-AR")}</span>
           </div>
-          <Link href="/checkout" className="mt-6 inline-block rounded-full bg-white px-6 py-3 text-sm text-black">Continuar checkout</Link>
+          <Link href="/checkout" className="mt-6 inline-block rounded-full bg-white px-6 py-3 text-sm text-black">Continuar a finalizar compra</Link>
         </div>
       </section>
       <MainFooter />
