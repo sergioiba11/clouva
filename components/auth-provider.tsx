@@ -29,6 +29,17 @@ function authDebugLog(message: string, payload?: Record<string, unknown>) {
   console.debug(`[auth-debug] ${message}`, payload ?? {});
 }
 
+function describeRole(role: unknown) {
+  return {
+    raw: role,
+    asString: role == null ? null : String(role),
+    type: role === null ? "null" : typeof role,
+    isNull: role === null,
+    isUndefined: typeof role === "undefined",
+    isObject: typeof role === "object" && role !== null,
+  };
+}
+
 async function ensureProfile(user: User): Promise<Profile | null> {
   const { supabase } = await import("@/lib/supabase");
   const displayName =
@@ -120,6 +131,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const profileData = await loadProfileByUserId(nextSession.user.id);
         if (!alive || currentRun !== authRunId) return;
         setProfile(profileData);
+        authDebugLog("profile:role:raw", {
+          userId: nextSession.user.id,
+          role: describeRole(profileData?.role),
+        });
         const nextRole = normalizeRole(profileData?.role);
         setRole(nextRole);
         authDebugLog("bootstrap:profileResolved", {
@@ -128,6 +143,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           profile: profileData,
           detectedRole: nextRole,
           role: nextRole,
+          roleDetails: describeRole(profileData?.role),
           loading: false,
           canAccessAdmin: nextRole === "admin",
         });
@@ -169,6 +185,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const profileData = await loadProfileByUserId(nextSession.user.id);
           if (!alive || currentRun !== authRunId) return;
           setProfile(profileData);
+          authDebugLog("profile:role:raw", {
+            userId: nextSession.user.id,
+            role: describeRole(profileData?.role),
+          });
           const nextRole = normalizeRole(profileData?.role);
           setRole(nextRole);
           authDebugLog("onAuthStateChange:profileResolved", {
@@ -177,6 +197,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             session: nextSession,
             profile: profileData,
             role: nextRole,
+            roleDetails: describeRole(profileData?.role),
             loading: false,
             canAccessAdmin: nextRole === "admin",
           });

@@ -4,9 +4,12 @@ import { MainNav } from "@/components/layout";
 import { useAuth } from "@/components/auth-provider";
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { normalizeRole } from "@/lib/auth";
 
 export default function PerfilPage() {
   const { user, profile, role } = useAuth();
+  const rawRole = profile?.role;
+  const normalizedFromRaw = normalizeRole(rawRole);
   const [form, setForm] = useState({ clouva_id: "", username: "", bio: "", accent_color: "#8f7cff", full_name: profile?.full_name ?? "", phone: "" });
   const [saved, setSaved] = useState(false);
 
@@ -29,7 +32,10 @@ export default function PerfilPage() {
     <label className="text-sm">Bio corta<input className="mt-1 w-full rounded-xl border border-white/20 bg-transparent px-3 py-2" value={form.bio} onChange={(e)=>setForm(v=>({...v,bio:e.target.value}))} /></label>
     <label className="text-sm">Accent color<input type="color" className="mt-1 h-10 w-full rounded-xl border border-white/20 bg-transparent p-1" value={form.accent_color} onChange={(e)=>setForm(v=>({...v,accent_color:e.target.value}))} /></label>
     <div className="text-sm">CLOUVA ID: <span className="text-white/70">{form.clouva_id || "pendiente"}</span></div>
-    <div className="text-sm">Rol: <span className="rounded-full border border-white/20 px-2 py-0.5 text-xs">{role}</span></div>
+    <div className="text-sm">Rol normalizado (context): <span className="rounded-full border border-white/20 px-2 py-0.5 text-xs">{role}</span></div>
+    <div className="text-sm">Rol REAL (Supabase): <span className="rounded-full border border-white/20 px-2 py-0.5 text-xs">{String(rawRole)}</span></div>
+    <div className="text-sm">Rol normalizado (desde rol real): <span className="rounded-full border border-white/20 px-2 py-0.5 text-xs">{normalizedFromRaw}</span></div>
+    <div className="text-sm">Tipo rol real: <span className="text-white/70">{rawRole === null ? "null" : typeof rawRole}</span></div>
     <div className="text-sm">Estado VIP: <span className="text-white/70">{role === "vip" ? "Activo" : "No activo"}</span></div>
     {publicUrl ? <div><img alt="QR" className="h-24 w-24" src={`https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(publicUrl)}`} /></div> : null}
   </div><div className="mt-6 flex gap-2"><button onClick={save} className="rounded-full bg-[#8f7cff]/25 px-4 py-2 text-sm">Guardar</button><Link href="/perfil/configuracion" className="rounded-full border border-white/20 px-4 py-2 text-sm">Configuración</Link></div>{saved ? <p className="mt-3 text-sm text-emerald-300">Perfil actualizado.</p> : null}</div></section></main>;

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { getRedirectByRole } from "@/lib/auth";
+import { getRedirectByRole, normalizeRole } from "@/lib/auth";
 
 export default function AuthCallbackContent() {
   const router = useRouter();
@@ -64,13 +64,15 @@ export default function AuthCallbackContent() {
         .maybeSingle();
 
       const redirectPath = getRedirectByRole(profile?.role);
+      const normalizedRole = normalizeRole(profile?.role);
       if (process.env.NEXT_PUBLIC_DEBUG_AUTH === "1") {
         console.debug("[auth-debug] callback:redirect", {
           userId: user.id,
           email: user.email ?? null,
           profile,
           detectedRole: profile?.role ?? null,
-          canAccessAdmin: profile?.role === "admin" || profile?.role === "owner",
+          normalizedRole,
+          canAccessAdmin: normalizedRole === "admin",
           redirectPath,
         });
       }
