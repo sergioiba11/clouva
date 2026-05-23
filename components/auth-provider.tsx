@@ -71,6 +71,22 @@ async function ensureProfile(user: User): Promise<Profile | null> {
   };
 }
 
+async function loadProfileByUserId(userId: string): Promise<Profile | null> {
+  const { supabase } = await import("@/lib/supabase");
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("id, role, display_name, full_name, avatar_url")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (error) {
+    authDebugLog("profile:load:error", { userId, error: error.message });
+    return null;
+  }
+
+  return data ?? null;
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
@@ -87,6 +103,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const { data } = await supabase.auth.getSession();
       const nextSession = data.session ?? null;
       authDebugLog("bootstrap:getSession", {
+        session: nextSession,
         hasSession: Boolean(nextSession),
         userId: nextSession?.user?.id ?? null,
         email: nextSession?.user?.email ?? null,
@@ -99,7 +116,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       if (nextSession?.user) {
         const currentRun = ++authRunId;
-        const profileData = await ensureProfile(nextSession.user);
+        await ensureProfile(nextSession.user);
+        const profileData = await loadProfileByUserId(nextSession.user.id);
         if (!alive || currentRun !== authRunId) return;
         setProfile(profileData);
         const nextRole = normalizeRole(profileData?.role);
@@ -109,6 +127,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           email: nextSession.user.email ?? null,
           profile: profileData,
           detectedRole: nextRole,
+          role: nextRole,
+          loading: false,
           canAccessAdmin: nextRole === "admin",
         });
         if (nextSession.user.email) saveAccount({ id: nextSession.user.id, email: nextSession.user.email, display_name: profileData?.full_name ?? profileData?.display_name ?? nextSession.user.email.split("@")[0], avatar_url: profileData?.avatar_url ?? null, role: nextRole });
@@ -116,7 +136,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } else {
         setProfile(null);
         setRole("cliente");
-        authDebugLog("bootstrap:noUser");
+        authDebugLog("bootstrap:noUser", { user: null, session: nextSession, profile: null, role: "cliente", loading: false });
       }
 
       setLoading(false);
@@ -129,6 +149,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const { data: subscription } = supabase.auth.onAuthStateChange((_event, nextSession) => {
         authDebugLog("onAuthStateChange", {
           event: _event,
+          session: nextSession,
           hasSession: Boolean(nextSession),
           userId: nextSession?.user?.id ?? null,
           email: nextSession?.user?.email ?? null,
@@ -144,7 +165,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         setLoading(true);
         const currentRun = ++authRunId;
-        void ensureProfile(nextSession.user).then((profileData) => {
+        void ensureProfile(nextSession.user).then(async () => {
+          const profileData = await loadProfileByUserId(nextSession.user.id);
           if (!alive || currentRun !== authRunId) return;
           setProfile(profileData);
           const nextRole = normalizeRole(profileData?.role);
@@ -152,8 +174,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           authDebugLog("onAuthStateChange:profileResolved", {
             userId: nextSession.user.id,
             email: nextSession.user.email ?? null,
+            session: nextSession,
             profile: profileData,
-            detectedRole: nextRole,
+            role: nextRole,
+            loading: false,
             canAccessAdmin: nextRole === "admin",
           });
           if (nextSession.user.email) saveAccount({ id: nextSession.user.id, email: nextSession.user.email, display_name: profileData?.full_name ?? profileData?.display_name ?? nextSession.user.email.split("@")[0], avatar_url: profileData?.avatar_url ?? null, role: nextRole });
