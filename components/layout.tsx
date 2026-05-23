@@ -14,6 +14,7 @@ export function MainNav() {
   const [openMenu, setOpenMenu] = useState(false);
   const [openSwitch, setOpenSwitch] = useState(false);
   const [accounts, setAccounts] = useState<StoredAccount[]>([]);
+  const [avatarBroken, setAvatarBroken] = useState(false);
 
   useEffect(() => setAccounts(getAccounts()), [openSwitch]);
 
@@ -35,12 +36,12 @@ export function MainNav() {
           {user ? (
             <div className="relative">
               <button onClick={() => setOpenMenu((v) => !v)} className="flex items-center gap-2 rounded-full border border-[var(--line)] px-2 py-1">
-                {avatar ? (
-                  <Image src={String(avatar)} alt={displayName} width={24} height={24} className="h-6 w-6 rounded-full" />
+                {avatar && !avatarBroken ? (
+                  <Image src={String(avatar)} alt={displayName} width={28} height={28} className="h-7 w-7 rounded-full border border-white/20 object-cover" onError={() => setAvatarBroken(true)} />
                 ) : (
-                  <span className="inline-grid h-6 w-6 place-items-center rounded-full bg-[var(--chip)] text-xs">{displayName.charAt(0).toUpperCase()}</span>
+                  <span className="inline-grid h-7 w-7 place-items-center rounded-full bg-gradient-to-br from-violet-500/60 to-cyan-400/40 text-xs font-semibold">{displayName.charAt(0).toUpperCase()}</span>
                 )}
-                <span className="text-xs">{displayName}</span>
+                <span className="text-xs font-medium">{displayName}</span>
               </button>
               {openMenu ? (
                 <div className="absolute right-0 mt-2 w-52 rounded-2xl border border-[var(--line)] bg-[var(--card)] p-2 text-sm shadow-[var(--shadow-glow)]">
@@ -69,7 +70,7 @@ export function MainNav() {
             <h3 className="text-lg font-semibold">Cambiar cuenta</h3>
             <div className="mt-3 space-y-2">
               {accounts.map((a) => (
-                <button key={a.id} onClick={() => void switchAccount(a.id)} className="w-full rounded-xl border border-[var(--line)] px-3 py-2 text-left">
+                <button key={a.id} onClick={() => { setOpenSwitch(false); void switchAccount(a.id); }} className="w-full rounded-xl border border-[var(--line)] px-3 py-2 text-left hover:bg-[var(--chip)]">
                   <p>{a.display_name}</p>
                   <p className="text-xs text-[var(--muted)]">{a.email}</p>
                 </button>

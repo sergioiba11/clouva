@@ -7,6 +7,7 @@ export type StoredAccount = {
 };
 
 const KEY = "clouva.accounts";
+const ACTIVE_KEY = "clouva.active_account";
 
 export function getAccounts(): StoredAccount[] {
   if (typeof window === "undefined") return [];
@@ -29,10 +30,21 @@ export function removeAccount(id: string) {
   localStorage.setItem(KEY, JSON.stringify(getAccounts().filter((a) => a.id !== id)));
 }
 
+export function getActiveAccountId() {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem(ACTIVE_KEY);
+}
+
+export function setActiveAccountId(id: string) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(ACTIVE_KEY, id);
+}
+
 export async function switchAccount(id: string) {
   const account = getAccounts().find((a) => a.id === id);
   if (!account) return false;
   if (typeof window !== "undefined") {
+    setActiveAccountId(id);
     localStorage.setItem("clouva.switch_target", id);
     window.location.href = "/login";
   }

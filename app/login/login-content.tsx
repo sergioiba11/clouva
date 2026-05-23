@@ -22,9 +22,17 @@ export default function LoginContent() {
     const checkSession = async () => {
       if (isAddAccountMode) return;
       const { supabase } = await import("@/lib/supabase");
+      const targetId = localStorage.getItem("clouva.switch_target");
       const { data } = await supabase.auth.getSession();
       const userId = data.session?.user?.id;
-      if (userId) await redirectByRole(userId);
+      if (userId && targetId && targetId !== userId) {
+        await supabase.auth.signOut();
+        return;
+      }
+      if (userId) {
+        localStorage.removeItem("clouva.switch_target");
+        await redirectByRole(userId);
+      }
     };
 
     void checkSession();
@@ -65,6 +73,7 @@ export default function LoginContent() {
       return;
     }
 
+    localStorage.removeItem("clouva.switch_target");
     await redirectByRole(data.user.id, isAddAccountMode);
     setLoading(false);
   };

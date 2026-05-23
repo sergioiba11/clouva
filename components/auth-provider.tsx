@@ -3,7 +3,7 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { normalizeRole, type Role } from "@/lib/auth";
-import { saveAccount } from "@/lib/account-switcher";
+import { saveAccount, setActiveAccountId } from "@/lib/account-switcher";
 
 type Profile = {
   id: string;
@@ -92,6 +92,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const nextRole = normalizeRole(profileData?.role);
         setRole(nextRole);
         if (nextSession.user.email) saveAccount({ id: nextSession.user.id, email: nextSession.user.email, display_name: profileData?.full_name ?? profileData?.display_name ?? nextSession.user.email.split("@")[0], avatar_url: profileData?.avatar_url ?? null, role: nextRole });
+        setActiveAccountId(nextSession.user.id);
       } else {
         setProfile(null);
         setRole("cliente");
@@ -121,6 +122,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const nextRole = normalizeRole(profileData?.role);
           setRole(nextRole);
           if (nextSession.user.email) saveAccount({ id: nextSession.user.id, email: nextSession.user.email, display_name: profileData?.full_name ?? profileData?.display_name ?? nextSession.user.email.split("@")[0], avatar_url: profileData?.avatar_url ?? null, role: nextRole });
+          setActiveAccountId(nextSession.user.id);
           setLoading(false);
         });
       });
