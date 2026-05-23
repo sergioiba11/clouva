@@ -9,7 +9,7 @@ import { getAccounts, switchAccount, type StoredAccount } from "@/lib/account-sw
 import { ThemeToggle } from "@/components/theme-toggle";
 
 export function MainNav() {
-  const { user, profile, role } = useAuth();
+  const { user, profile, role, loading } = useAuth();
   const router = useRouter();
   const [openMenu, setOpenMenu] = useState(false);
   const [openSwitch, setOpenSwitch] = useState(false);
@@ -33,7 +33,9 @@ export function MainNav() {
         <Link href="/" className="text-sm font-semibold tracking-[0.3em]">CLOUVA OS</Link>
         <div className="flex items-center gap-2">
           <ThemeToggle />
-          {user ? (
+          {loading ? (
+            <div className="h-9 w-28 animate-pulse rounded-full border border-[var(--line)] bg-white/[0.03]" />
+          ) : user ? (
             <div className="relative">
               <button onClick={() => setOpenMenu((v) => !v)} className="flex items-center gap-2 rounded-full border border-[var(--line)] px-2 py-1">
                 {avatar && !avatarBroken ? (
@@ -44,14 +46,13 @@ export function MainNav() {
                 <span className="text-xs font-medium">{displayName}</span>
               </button>
               {openMenu ? (
-                <div className="absolute right-0 mt-2 w-52 rounded-2xl border border-[var(--line)] bg-[var(--card)] p-2 text-sm shadow-[var(--shadow-glow)]">
+                <div className="absolute right-0 mt-3 w-60 rounded-2xl border border-[var(--line)] bg-[var(--card)] p-2 text-sm shadow-[var(--shadow-glow)] max-sm:right-[-8px] max-sm:w-[min(92vw,18rem)]">
                   <Link href="/perfil" className="block rounded-lg px-3 py-2 hover:bg-[var(--chip)]">Perfil</Link>
                   <Link href="/mi-flow" className="block rounded-lg px-3 py-2 hover:bg-[var(--chip)]">Mi Flow</Link>
                   {role === "admin" ? <Link href="/admin" className="block rounded-lg px-3 py-2 hover:bg-[var(--chip)]">Admin</Link> : null}
                   <button className="block w-full rounded-lg px-3 py-2 text-left hover:bg-[var(--chip)]" onClick={() => { setOpenMenu(false); setOpenSwitch(true); }}>
                     Cambiar cuenta
                   </button>
-                  <Link href="/login?addAccount=1" className="block rounded-lg px-3 py-2 hover:bg-[var(--chip)]">Agregar cuenta</Link>
                   <button onClick={async () => { const { supabase } = await import("@/lib/supabase"); await supabase.auth.signOut(); router.push("/login"); }} className="block w-full rounded-lg px-3 py-2 text-left text-rose-400 hover:bg-rose-500/10">
                     Cerrar sesión
                   </button>
