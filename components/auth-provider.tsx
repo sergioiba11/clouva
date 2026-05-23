@@ -22,6 +22,12 @@ type AuthContextType = {
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+const authDebugEnabled = process.env.NEXT_PUBLIC_DEBUG_AUTH === "1";
+
+function authDebugLog(message: string, payload?: Record<string, unknown>) {
+  if (!authDebugEnabled) return;
+  console.debug(`[auth-debug] ${message}`, payload ?? {});
+}
 
 async function ensureProfile(user: User): Promise<Profile | null> {
   const { supabase } = await import("@/lib/supabase");
@@ -74,11 +80,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let alive = true;
+    let authRunId = 0;
 
     const bootstrap = async () => {
       const { supabase } = await import("@/lib/supabase");
       const { data } = await supabase.auth.getSession();
       const nextSession = data.session ?? null;
+      authDebugLog("bootstrap:getSession", {
+        hasSession: Boolean(nextSession),
+        userId: nextSession?.user?.id ?? null,
+        email: nextSession?.user?.email ?? null,
+      });
 
       if (!alive) return;
 
@@ -86,16 +98,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(nextSession?.user ?? null);
 
       if (nextSession?.user) {
+        const currentRun = ++authRunId;
         const profileData = await ensureProfile(nextSession.user);
-        if (!alive) return;
+        if (!alive || currentRun !== authRunId) return;
         setProfile(profileData);
         const nextRole = normalizeRole(profileData?.role);
         setRole(nextRole);
+        authDebugLog("bootstrap:profileResolved", {
+          userId: nextSession.user.id,
+          email: nextSession.user.email ?? null,
+          profile: profileData,
+          detectedRole: nextRole,
+          canAccessAdmin: nextRole === "admin",
+        });
         if (nextSession.user.email) saveAccount({ id: nextSession.user.id, email: nextSession.user.email, display_name: profileData?.full_name ?? profileData?.display_name ?? nextSession.user.email.split("@")[0], avatar_url: profileData?.avatar_url ?? null, role: nextRole });
         setActiveAccountId(nextSession.user.id);
       } else {
         setProfile(null);
         setRole("cliente");
+        authDebugLog("bootstrap:noUser");
       }
 
       setLoading(false);
@@ -106,6 +127,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     let unsub: (() => void) | null = null;
     import("@/lib/supabase").then(({ supabase }) => {
       const { data: subscription } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+        authDebugLog("onAuthStateChange", {
+          event: _event,
+          hasSession: Boolean(nextSession),
+          userId: nextSession?.user?.id ?? null,
+          email: nextSession?.user?.email ?? null,
+        });
         setSession(nextSession);
         setUser(nextSession?.user ?? null);
         if (!nextSession?.user) {
@@ -116,11 +143,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
 
         setLoading(true);
+        const currentRun = ++authRunId;
         void ensureProfile(nextSession.user).then((profileData) => {
-          if (!alive) return;
+          if (!alive || currentRun !== authRunId) return;
           setProfile(profileData);
           const nextRole = normalizeRole(profileData?.role);
           setRole(nextRole);
+          authDebugLog("onAuthStateChange:profileResolved", {
+            userId: nextSession.user.id,
+            email: nextSession.user.email ?? null,
+            profile: profileData,
+            detectedRole: nextRole,
+            canAccessAdmin: nextRole === "admin",
+          });
           if (nextSession.user.email) saveAccount({ id: nextSession.user.id, email: nextSession.user.email, display_name: profileData?.full_name ?? profileData?.display_name ?? nextSession.user.email.split("@")[0], avatar_url: profileData?.avatar_url ?? null, role: nextRole });
           setActiveAccountId(nextSession.user.id);
           setLoading(false);

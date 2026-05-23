@@ -59,11 +59,21 @@ export default function AuthCallbackContent() {
 
       const { data: profile } = await supabase
         .from("profiles")
-        .select("role_v2")
+        .select("id, role, display_name")
         .eq("id", user.id)
         .maybeSingle();
 
-      const redirectPath = getRedirectByRole(profile?.role_v2);
+      const redirectPath = getRedirectByRole(profile?.role);
+      if (process.env.NEXT_PUBLIC_DEBUG_AUTH === "1") {
+        console.debug("[auth-debug] callback:redirect", {
+          userId: user.id,
+          email: user.email ?? null,
+          profile,
+          detectedRole: profile?.role ?? null,
+          canAccessAdmin: profile?.role === "admin" || profile?.role === "owner",
+          redirectPath,
+        });
+      }
       router.replace(isAddAccountMode ? `${redirectPath}?openAccountSwitcher=1` : redirectPath);
     };
 
