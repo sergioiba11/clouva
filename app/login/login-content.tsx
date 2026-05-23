@@ -60,13 +60,13 @@ export default function LoginContent() {
     if (!profile) {
       const { data: created } = await supabase
         .from("profiles")
-        .insert({ id: userId, role: "customer" })
+        .insert({ id: userId, role: "cliente" })
         .select("role")
         .maybeSingle();
       profile = created;
     }
 
-    const redirectPath = getRedirectByRole(profile?.role ?? "customer");
+    const redirectPath = getRedirectByRole(profile?.role ?? "cliente");
     if (forceSwitcher) {
       router.push(`${redirectPath}?openAccountSwitcher=1`);
       return;

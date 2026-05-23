@@ -44,7 +44,23 @@ export function getRedirectByRole(role: string | null | undefined) {
 }
 
 export function canAccessAdmin(role: Role) {
-  return normalizeRole(role) === "admin";
+  const normalized = normalizeRole(role);
+  return normalized === "admin";
+}
+
+export function normalizeRoleLoose(value: unknown): string | null {
+  const extracted = extractRoleValue(value);
+  if (!extracted) return null;
+  const normalized = extracted.trim().toLowerCase();
+  if (ADMIN_ALIASES.has(normalized)) return "admin";
+  if (normalized === "employee" || normalized === "empleado") return "empleado";
+  if (normalized === "customer" || normalized === "cliente") return "cliente";
+  if (normalized === "vip") return "vip";
+  return normalized;
+}
+
+export function canAccessAdminLoose(role: unknown) {
+  return normalizeRoleLoose(role) === "admin";
 }
 
 export function canAccessEmployee(role: Role) {

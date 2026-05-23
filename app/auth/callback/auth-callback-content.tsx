@@ -46,7 +46,7 @@ export default function AuthCallbackContent() {
         await supabase.from("profiles").insert({
           id: user.id,
           display_name: defaultName,
-          role: isSergio ? "admin" : "customer",
+          role: isSergio ? "admin" : "cliente",
         });
       } else {
         const updates: { display_name?: string; role?: string } = {};

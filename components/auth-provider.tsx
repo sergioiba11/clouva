@@ -19,82 +19,31 @@ type AuthContextType = {
   profile: Profile | null;
   role: Role;
   loading: boolean;
+  hydrationReady: boolean;
+  profileReady: boolean;
+  refreshSession: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
-const authDebugEnabled = process.env.NEXT_PUBLIC_DEBUG_AUTH === "1";
-
-function authDebugLog(message: string, payload?: Record<string, unknown>) {
-  if (!authDebugEnabled) return;
-  console.debug(`[auth-debug] ${message}`, payload ?? {});
-}
-
-function describeRole(role: unknown) {
-  return {
-    raw: role,
-    asString: role == null ? null : String(role),
-    type: role === null ? "null" : typeof role,
-    isNull: role === null,
-    isUndefined: typeof role === "undefined",
-    isObject: typeof role === "object" && role !== null,
-  };
-}
 
 async function ensureProfile(user: User): Promise<Profile | null> {
   const { supabase } = await import("@/lib/supabase");
-  const displayName =
-    (user.user_metadata?.full_name as string | undefined) ??
-    (user.email ? user.email.split("@")[0] : "Usuario") ??
-    "Usuario";
-
-  const { data: existing } = await supabase
-    .from("profiles")
-    .select("id, role, display_name")
-    .eq("id", user.id)
-    .maybeSingle();
-
+  const displayName = (user.user_metadata?.full_name as string | undefined) ?? (user.email ? user.email.split("@")[0] : "Usuario") ?? "Usuario";
+  const { data: existing } = await supabase.from("profiles").select("id, role, display_name").eq("id", user.id).maybeSingle();
   if (!existing) {
-    const { data } = await supabase
-      .from("profiles")
-      .insert({ id: user.id, role: "cliente", display_name: displayName })
-      .select("id, role, display_name")
-      .maybeSingle();
+    const { data } = await supabase.from("profiles").insert({ id: user.id, role: "cliente", display_name: displayName }).select("id, role, display_name").maybeSingle();
     return data ?? null;
   }
-
-  const updates: { display_name?: string } = {};
-  if (!existing.display_name && displayName) updates.display_name = displayName;
-
-  if (Object.keys(updates).length > 0) {
-    const { data } = await supabase
-      .from("profiles")
-      .update(updates)
-      .eq("id", user.id)
-      .select("id, role, display_name")
-      .maybeSingle();
+  if (!existing.display_name) {
+    const { data } = await supabase.from("profiles").update({ display_name: displayName }).eq("id", user.id).select("id, role, display_name").maybeSingle();
     return data ?? null;
   }
-
-  return {
-    id: existing.id,
-    role: existing.role,
-    display_name: existing.display_name,
-  };
+  return existing;
 }
 
 async function loadProfileByUserId(userId: string): Promise<Profile | null> {
   const { supabase } = await import("@/lib/supabase");
-  const { data, error } = await supabase
-    .from("profiles")
-    .select("id, role, display_name, full_name, avatar_url")
-    .eq("id", userId)
-    .maybeSingle();
-
-  if (error) {
-    authDebugLog("profile:load:error", { userId, error: error.message });
-    return null;
-  }
-
+  const { data } = await supabase.from("profiles").select("id, role, display_name, full_name, avatar_url").eq("id", userId).maybeSingle();
   return data ?? null;
 }
 
@@ -104,110 +53,74 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [role, setRole] = useState<Role>("cliente");
   const [loading, setLoading] = useState(true);
+  const [hydrationReady, setHydrationReady] = useState(false);
+  const [profileReady, setProfileReady] = useState(false);
 
   useEffect(() => {
     let alive = true;
-    let authRunId = 0;
+    let runId = 0;
 
-    const bootstrap = async () => {
-      const { supabase } = await import("@/lib/supabase");
-      const { data } = await supabase.auth.getSession();
-      const nextSession = data.session ?? null;
-      authDebugLog("bootstrap:getSession", {
-        session: nextSession,
-        hasSession: Boolean(nextSession),
-        userId: nextSession?.user?.id ?? null,
-        email: nextSession?.user?.email ?? null,
-      });
-
-      if (!alive) return;
-
+    const resolveFromSession = async (nextSession: Session | null) => {
+      const currentRun = ++runId;
       setSession(nextSession);
       setUser(nextSession?.user ?? null);
-
-      if (nextSession?.user) {
-        const currentRun = ++authRunId;
-        await ensureProfile(nextSession.user);
-        const profileData = await loadProfileByUserId(nextSession.user.id);
-        if (!alive || currentRun !== authRunId) return;
-        setProfile(profileData);
-        authDebugLog("profile:role:raw", {
-          userId: nextSession.user.id,
-          role: describeRole(profileData?.role),
-        });
-        const nextRole = normalizeRole(profileData?.role);
-        setRole(nextRole);
-        authDebugLog("bootstrap:profileResolved", {
-          userId: nextSession.user.id,
-          email: nextSession.user.email ?? null,
-          profile: profileData,
-          detectedRole: nextRole,
-          role: nextRole,
-          roleDetails: describeRole(profileData?.role),
-          loading: false,
-          canAccessAdmin: nextRole === "admin",
-        });
-        if (nextSession.user.email) saveAccount({ id: nextSession.user.id, email: nextSession.user.email, display_name: profileData?.full_name ?? profileData?.display_name ?? nextSession.user.email.split("@")[0], avatar_url: profileData?.avatar_url ?? null, role: nextRole });
-        setActiveAccountId(nextSession.user.id);
-      } else {
+      if (!nextSession?.user) {
+        if (!alive || currentRun !== runId) return;
         setProfile(null);
         setRole("cliente");
-        authDebugLog("bootstrap:noUser", { user: null, session: nextSession, profile: null, role: "cliente", loading: false });
+        setProfileReady(true);
+        setLoading(false);
+        return;
       }
 
+      setLoading(true);
+      setProfileReady(false);
+      await ensureProfile(nextSession.user);
+      const profileData = await loadProfileByUserId(nextSession.user.id);
+      if (!alive || currentRun !== runId) return;
+      const nextRole = normalizeRole(profileData?.role);
+      setProfile(profileData);
+      setRole(nextRole);
+      if (nextSession.user.email) {
+        saveAccount({ id: nextSession.user.id, email: nextSession.user.email, display_name: profileData?.full_name ?? profileData?.display_name ?? nextSession.user.email.split("@")[0], avatar_url: profileData?.avatar_url ?? null, role: nextRole });
+      }
+      setActiveAccountId(nextSession.user.id);
+      setProfileReady(true);
       setLoading(false);
     };
 
-    void bootstrap();
+    const bootstrap = async () => {
+      const { supabase } = await import("@/lib/supabase");
 
-    let unsub: (() => void) | null = null;
-    import("@/lib/supabase").then(({ supabase }) => {
-      const { data: subscription } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-        authDebugLog("onAuthStateChange", {
-          event: _event,
-          session: nextSession,
-          hasSession: Boolean(nextSession),
-          userId: nextSession?.user?.id ?? null,
-          email: nextSession?.user?.email ?? null,
-        });
-        setSession(nextSession);
-        setUser(nextSession?.user ?? null);
-        if (!nextSession?.user) {
-          setProfile(null);
-          setRole("cliente");
-          setLoading(false);
-          return;
+      if (typeof window !== "undefined" && window.location.hash.includes("access_token")) {
+        await supabase.auth.getSession();
+      }
+
+      const timeoutId = setTimeout(() => {
+        if (!alive) return;
+        setHydrationReady(true);
+        setProfileReady(true);
+        setLoading(false);
+      }, 5000);
+
+      const { data } = await supabase.auth.getSession();
+      if (!alive) return;
+      setHydrationReady(true);
+      clearTimeout(timeoutId);
+      await resolveFromSession(data.session ?? null);
+
+      const { data: subscription } = supabase.auth.onAuthStateChange((event, nextSession) => {
+        if (event === "SIGNED_IN" || event === "SIGNED_OUT" || event === "TOKEN_REFRESHED") {
+          void resolveFromSession(nextSession ?? null);
         }
-
-        setLoading(true);
-        const currentRun = ++authRunId;
-        void ensureProfile(nextSession.user).then(async () => {
-          const profileData = await loadProfileByUserId(nextSession.user.id);
-          if (!alive || currentRun !== authRunId) return;
-          setProfile(profileData);
-          authDebugLog("profile:role:raw", {
-            userId: nextSession.user.id,
-            role: describeRole(profileData?.role),
-          });
-          const nextRole = normalizeRole(profileData?.role);
-          setRole(nextRole);
-          authDebugLog("onAuthStateChange:profileResolved", {
-            userId: nextSession.user.id,
-            email: nextSession.user.email ?? null,
-            session: nextSession,
-            profile: profileData,
-            role: nextRole,
-            roleDetails: describeRole(profileData?.role),
-            loading: false,
-            canAccessAdmin: nextRole === "admin",
-          });
-          if (nextSession.user.email) saveAccount({ id: nextSession.user.id, email: nextSession.user.email, display_name: profileData?.full_name ?? profileData?.display_name ?? nextSession.user.email.split("@")[0], avatar_url: profileData?.avatar_url ?? null, role: nextRole });
-          setActiveAccountId(nextSession.user.id);
-          setLoading(false);
-        });
       });
 
-      unsub = () => subscription.subscription.unsubscribe();
+      return () => subscription.subscription.unsubscribe();
+    };
+
+    let unsub: (() => void) | undefined;
+    void bootstrap().then((u) => {
+      unsub = u;
     });
 
     return () => {
@@ -216,9 +129,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  const refreshSession = async () => {
+    const { supabase } = await import("@/lib/supabase");
+    await supabase.auth.refreshSession();
+    const { data } = await supabase.auth.getSession();
+    setSession(data.session ?? null);
+    setUser(data.session?.user ?? null);
+  };
+
   const value = useMemo(
-    () => ({ session, user, profile, role, loading }),
-    [loading, profile, role, session, user],
+    () => ({ session, user, profile, role, loading, hydrationReady, profileReady, refreshSession }),
+    [session, user, profile, role, loading, hydrationReady, profileReady],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
