@@ -11,7 +11,7 @@ import { useEffect } from "react";
 const links = ["/admin", "/admin/productos", "/admin/ventas", "/admin/stock", "/admin/clientes", "/admin/empleados", "/admin/pedidos", "/admin/configuracion"];
 
 export default function AdminLayoutClient({ children }: { children: React.ReactNode }) {
-  const { user, role, loading, profile } = useAuth();
+  const { user, session, role, loading, profile } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
 
@@ -19,15 +19,18 @@ export default function AdminLayoutClient({ children }: { children: React.ReactN
     if (loading) return;
     const hasAdminAccess = canAccessAdmin(role);
     if (process.env.NEXT_PUBLIC_DEBUG_AUTH === "1") {
+      const redirect = !user ? "/login" : hasAdminAccess ? null : roleHome[role];
       console.debug("[auth-debug] admin-layout:guard", {
-        pathname,
+        user,
+        session,
+        role,
         loading,
+        profile,
+        pathname,
         userId: user?.id ?? null,
         email: user?.email ?? null,
-        profile,
-        detectedRole: role,
         canAccessAdmin: hasAdminAccess,
-        redirectTarget: !user ? "/login" : hasAdminAccess ? null : roleHome[role],
+        redirect,
       });
     }
     if (!user) router.replace("/login");
