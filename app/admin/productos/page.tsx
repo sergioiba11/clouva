@@ -1,9 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-
-export default function Page(){
- const [items,setItems]=useState<any[]>([]);
- useEffect(()=>{void(async()=>{const {supabase}=await import("@/lib/supabase");const {data}=await supabase.from("products").select("id,name,slug,price_cents,active,category,status").order("name");setItems(data??[]);})();},[]);
- return <div className="panel p-6"><div className="flex justify-between"><h1 className="text-2xl font-bold">Productos</h1><Link href="/admin/productos/nuevo">Nuevo producto</Link></div><div className="mt-4 space-y-2">{items.map(p=><Link key={p.id} href={`/admin/productos/${p.id}`} className="block rounded border border-white/10 p-3">{p.name} · ${(p.price_cents/100).toLocaleString("es-AR")} · {p.active?"Activo":"Inactivo"}</Link>)}</div></div>
-}
+import { supabase } from "@/lib/supabase";
+import { productSelect, type Product } from "@/lib/store-data";
+import { money } from "@/lib/store-utils";
+export default function AdminProducts(){const [products,setProducts]=useState<Product[]>([]); const load=async()=>{const {data}=await supabase.from('products').select(productSelect).order('created_at',{ascending:false}); setProducts((data??[]) as Product[])}; useEffect(()=>{void load()},[]); return <div><div className="flex items-center justify-between"><h1 className="text-3xl font-semibold">Gestión de productos</h1><Link className="rounded-full bg-white px-5 py-3 text-black" href="/admin/productos/nuevo">Crear producto</Link></div><div className="mt-6 space-y-3">{products.map(p=><div key={p.id} className="grid gap-3 rounded-3xl border border-white/10 p-4 md:grid-cols-6"><span>{p.name}</span><span>{p.categories?.name}</span><span>{money(p.price)}</span><span>Stock {p.stock}</span><span>{p.active?'Activo':'Oculto'}</span><div className="flex gap-3"><Link href={`/admin/productos/${p.id}`} className="text-[#95d8ff]">Editar</Link><button onClick={async()=>{const { categories, product_images, id, created_at, ...copy } = p as any; await supabase.from('products').insert({...copy,name:p.name+' copia',slug:p.slug+'-copia-'+Date.now()}); await load();}}>Duplicar</button><button className="text-red-300" onClick={async()=>{await supabase.from('products').delete().eq('id',p.id); await load();}}>Eliminar</button></div></div>)}</div></div>}
