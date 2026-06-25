@@ -23,3 +23,5 @@ export function getOAuthCallbackUrl(nextPath = "/cuenta") {
   callbackUrl.searchParams.set("next", nextPath);
   return callbackUrl.toString();
 }
+
+export const siteUrl = getSiteUrl();

@@ -8,7 +8,7 @@ import { useRouter } from "next/navigation";
 import { usePathname } from "next/navigation";
 import { useEffect } from "react";
 
-const links = ["/admin", "/admin/productos", "/admin/ventas", "/admin/stock", "/admin/clientes", "/admin/empleados", "/admin/pedidos", "/admin/configuracion"];
+const links = ["/admin", "/admin/productos", "/admin/categorias", "/admin/banners", "/admin/ventas", "/admin/stock", "/admin/clientes", "/admin/empleados", "/admin/pedidos", "/admin/configuracion"];
 
 export default function AdminLayoutClient({ children }: { children: React.ReactNode }) {
   const { user, session, role, loading, profile, hydrationReady, profileReady } = useAuth();

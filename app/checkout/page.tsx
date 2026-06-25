@@ -1,10 +1,7 @@
-import { Suspense } from "react";
-import CheckoutClient from "./CheckoutClient";
+"use client";
+import { useState } from "react";
+import { MainFooter, MainNav } from "@/components/layout";
+import { useCart } from "@/lib/cart-store";
+import { money } from "@/lib/store-utils";
 
-export default function CheckoutPage() {
-  return (
-    <Suspense fallback={<div />}>
-      <CheckoutClient />
-    </Suspense>
-  );
-}
+export default function CheckoutPage(){const {items, subtotal, clear}=useCart(); const [customer,setCustomer]=useState({name:"",phone:"",email:"",address:""}); const [done,setDone]=useState(""); const submit=async()=>{const res=await fetch('/api/checkout',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({customer,items})}); const json=await res.json(); if(json.order){setDone(json.order.id); clear();}}; return <main><MainNav/><section className="mx-auto max-w-3xl px-4 py-14"><h1 className="text-4xl font-semibold">Checkout</h1>{done?<div className="mt-6 rounded-[2rem] border border-white/10 p-6">Pedido recibido: {done}. También podés cerrar por WhatsApp.</div>:<div className="mt-8 grid gap-3">{Object.entries({name:'Nombre',phone:'Teléfono',email:'Email',address:'Dirección'}).map(([k,label])=><input key={k} placeholder={label} value={(customer as any)[k]} onChange={(e)=>setCustomer({...customer,[k]:e.target.value})} className="rounded-2xl bg-white/10 px-4 py-3"/>)}<div className="text-xl">Total {money(subtotal())}</div><button onClick={submit} className="rounded-full bg-white px-5 py-3 font-semibold text-black">Guardar pedido</button><a className="rounded-full border border-white/15 px-5 py-3 text-center" href={`https://wa.me/?text=${encodeURIComponent('Hola, quiero comprar en Clouva por '+money(subtotal()))}`}>Checkout por WhatsApp</a></div>}</section><MainFooter/></main>}
