@@ -41,7 +41,7 @@ export default function Home() {
             }}
           >
             <p className="text-xs uppercase tracking-[0.2em] text-[var(--muted)]">Destacado</p>
-            <h1 className="mt-2 text-3xl font-semibold sm:text-5xl">{banner?.title ?? "CLOUVA OS"}</h1>
+            <h1 className="mt-2 font-stencil text-3xl tracking-wide sm:text-5xl">{banner?.title ?? "CLOUVA OS"}</h1>
             <p className="mt-3 max-w-xl text-sm text-[var(--muted)] sm:text-base">
               {banner?.subtitle ?? "Música, negocio y vida de flows — todo en un solo lugar."}
             </p>

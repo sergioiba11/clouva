@@ -38,3 +38,4 @@ body {
 
 .os-card { @apply rounded-2xl border backdrop-blur-xl; border-color: var(--line); background: var(--card); box-shadow: var(--shadow-soft); }
 .panel { @apply os-card; }
+.font-stencil { font-family: 'Anton', 'Arial Narrow', sans-serif; letter-spacing: 0.04em; }
