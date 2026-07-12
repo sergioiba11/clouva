@@ -46,18 +46,25 @@ export function MainNav() {
                 <span className="text-xs font-medium">{displayName}</span>
               </button>
               {openMenu ? (
-                <div className="absolute right-0 mt-3 w-60 rounded-2xl border border-[var(--line)] bg-[var(--card)]/95 p-2 text-sm shadow-[var(--shadow-glow)] backdrop-blur-2xl max-sm:right-[-8px] max-sm:w-[min(92vw,18rem)]">
-                  <Link href="/perfil" className="block rounded-lg px-3 py-2 hover:bg-[var(--chip)]">Perfil</Link>
-                  <Link href="/mi-flow" className="block rounded-lg px-3 py-2 hover:bg-[var(--chip)]">Mi Flow</Link>
-                  {role === "admin" ? <Link href="/admin" className="block rounded-lg px-3 py-2 hover:bg-[var(--chip)]">Admin</Link> : null}
-                  <Link href="/login?addAccount=1" className="block rounded-lg px-3 py-2 hover:bg-[var(--chip)]">Agregar cuenta</Link>
-                  <button className="block w-full rounded-lg px-3 py-2 text-left hover:bg-[var(--chip)]" onClick={() => { setOpenMenu(false); setOpenSwitch(true); }}>
-                    Cambiar cuenta
-                  </button>
-                  <button onClick={async () => { const { supabase } = await import("@/lib/supabase"); await supabase.auth.signOut(); router.push("/login"); }} className="block w-full rounded-lg px-3 py-2 text-left text-rose-400 hover:bg-rose-500/10">
-                    Cerrar sesión
-                  </button>
-                </div>
+                <>
+                  <button
+                    aria-label="Cerrar menú"
+                    className="fixed inset-0 z-[55] cursor-default"
+                    onClick={() => setOpenMenu(false)}
+                  />
+                  <div className="absolute right-0 top-full z-[60] mt-2 w-60 rounded-2xl border border-[var(--line)] p-2 text-sm shadow-[var(--shadow-glow)] max-sm:right-[-8px] max-sm:w-[min(92vw,18rem)]" style={{ background: "var(--bg)" }}>
+                    <Link href="/perfil" className="block rounded-lg px-3 py-2 hover:bg-[var(--chip)]" onClick={() => setOpenMenu(false)}>Perfil</Link>
+                    <Link href="/mi-flow" className="block rounded-lg px-3 py-2 hover:bg-[var(--chip)]" onClick={() => setOpenMenu(false)}>Mi Flow</Link>
+                    {role === "admin" ? <Link href="/admin" className="block rounded-lg px-3 py-2 hover:bg-[var(--chip)]" onClick={() => setOpenMenu(false)}>Admin</Link> : null}
+                    <Link href="/login?addAccount=1" className="block rounded-lg px-3 py-2 hover:bg-[var(--chip)]" onClick={() => setOpenMenu(false)}>Agregar cuenta</Link>
+                    <button className="block w-full rounded-lg px-3 py-2 text-left hover:bg-[var(--chip)]" onClick={() => { setOpenMenu(false); setOpenSwitch(true); }}>
+                      Cambiar cuenta
+                    </button>
+                    <button onClick={async () => { const { supabase } = await import("@/lib/supabase"); await supabase.auth.signOut(); router.push("/login"); }} className="block w-full rounded-lg px-3 py-2 text-left text-rose-400 hover:bg-rose-500/10">
+                      Cerrar sesión
+                    </button>
+                  </div>
+                </>
               ) : null}
             </div>
           ) : (

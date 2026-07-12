@@ -3,7 +3,12 @@
 import { useAuth } from "@/components/auth-provider";
 import { useEffect, useRef, useState } from "react";
 
-const RPM_URL = "https://demo.readyplayer.me/avatar?frameApi&bodyType=fullbody&quickStart=false&clearCache=true";
+// MetaPerson (Avatar SDK) reemplaza a Ready Player Me, que cerró el 31/01/2026.
+// Estas credenciales son de uso client-side por diseño de MetaPerson (se mandan
+// por postMessage al iframe), así que van directo acá, no como secreto de servidor.
+const METAPERSON_CLIENT_ID = "OtlogpdqwetcQeZ9GPGAiSMGCpnlBq8cdvXPsGNz";
+const METAPERSON_CLIENT_SECRET = "UD4Z4i03tLOSatjTBfzGFTl90YtkyQE04lxsfscXjTkWXRlgDY1dnqwsAn2D42WI8dZDfAXrwJeA7T3gyqY0K1w7QxbDYfN1r1ctDaibLz0hBJqpNY1hCDztiJMqKfpP";
+const METAPERSON_URL = "https://metaperson.avatarsdk.com/iframe.html";
 
 export default function AvatarPage() {
   const { user, profile } = useAuth();
@@ -17,24 +22,22 @@ export default function AvatarPage() {
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
 
   useEffect(() => {
-    function subscribe() {
-      iframeRef.current?.contentWindow?.postMessage(JSON.stringify({ target: "readyplayerme", type: "subscribe", eventName: "v1.**" }), "*");
-    }
-    function parse(event: MessageEvent) {
-      try {
-        return typeof event.data === "string" ? JSON.parse(event.data) : event.data;
-      } catch {
-        return null;
-      }
+    function authenticateAndConfigure() {
+      const target = iframeRef.current?.contentWindow;
+      if (!target) return;
+      target.postMessage({ eventName: "authenticate", clientId: METAPERSON_CLIENT_ID, clientSecret: METAPERSON_CLIENT_SECRET }, "*");
+      target.postMessage({ eventName: "set_export_parameters", format: "glb", lod: 1, textureProfile: "2K.png", useZip: false }, "*");
+      target.postMessage({ eventName: "set_ui_parameters", isExportButtonVisible: true, closeExportDialogWhenExportComlpeted: true }, "*");
     }
     function onMessage(event: MessageEvent) {
-      const json = parse(event);
-      if (!json) return;
-      if (json.eventName === "v1.frame.ready") {
-        subscribe();
+      const data = event.data;
+      if (!data || data.source !== "metaperson_creator") return;
+      const evtName = data.eventName;
+      if (evtName === "metaperson_creator_loaded") {
+        authenticateAndConfigure();
       }
-      if (json.eventName === "v1.avatar.exported") {
-        const url = json.data?.url as string;
+      if (evtName === "model_exported") {
+        const url = data.url as string | undefined;
         if (url) {
           setAvatar3dUrl(url);
           setCreating(false);
@@ -112,15 +115,15 @@ export default function AvatarPage() {
             ) : null}
             {saved ? <p className="text-sm text-emerald-300">Avatar guardado en tu perfil.</p> : null}
             <p className="text-xs text-white/50">
-              El creador es de Ready Player Me. Sacate una foto o elegí un estilo, personalizá, y tocá &quot;Listo&quot; — el avatar se va a
-              cargar automáticamente acá.
+              El creador es de MetaPerson (Avatar SDK). Sacate una foto o elegí un estilo, personalizá, y tocá el botón de exportar —
+              el avatar se va a cargar automáticamente acá.
             </p>
           </div>
         </div>
 
         {creating ? (
           <div className="mt-5 overflow-hidden rounded-2xl border border-white/10">
-            <iframe ref={iframeRef} src={RPM_URL} allow="camera *; microphone *" className="h-[560px] w-full" style={{ border: "none" }} />
+            <iframe ref={iframeRef} src={METAPERSON_URL} allow="camera *; microphone *; fullscreen" className="h-[560px] w-full" style={{ border: "none" }} />
           </div>
         ) : null}
       </section>
