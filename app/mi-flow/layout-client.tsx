@@ -7,7 +7,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
 
-const links = ["/mi-flow", "/mi-flow/flows", "/mi-flow/studio", "/mi-flow/vault", "/mi-flow/launch", "/mi-flow/visual", "/mi-flow/store", "/mi-flow/money", "/mi-flow/tasks", "/mi-flow/assistant", "/mi-flow/lore"];
+const links = ["/mi-flow", "/mi-flow/agenda", "/mi-flow/flows", "/mi-flow/studio", "/mi-flow/vault", "/mi-flow/launch", "/mi-flow/visual", "/mi-flow/store", "/mi-flow/money", "/mi-flow/tasks", "/mi-flow/assistant", "/mi-flow/lore"];
 
 export default function FlowLayoutClient({ children }: { children: React.ReactNode }) {
   const { user, loading, hydrationReady } = useAuth();
