@@ -60,9 +60,9 @@ export default function Home() {
         </div>
         <div className="mt-3 flex gap-3 overflow-x-auto pb-2">
           {explore.map((m) => (
-            <Link key={m} href="/mi-flow" className="flex-shrink-0">
+            <div key={m} className="flex-shrink-0">
               <ModuleCard title={m} href="/mi-flow" />
-            </Link>
+            </div>
           ))}
         </div>
       </section>
