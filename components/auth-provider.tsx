@@ -12,6 +12,7 @@ type Profile = {
   full_name?: string | null;
   avatar_url?: string | null;
   avatar_3d_url?: string | null;
+  spotify_url?: string | null;
 };
 
 type AuthContextType = {
@@ -44,7 +45,7 @@ async function ensureProfile(user: User): Promise<Profile | null> {
 
 async function loadProfileByUserId(userId: string): Promise<Profile | null> {
   const { supabase } = await import("@/lib/supabase");
-  const { data } = await supabase.from("profiles").select("id, role, display_name, full_name, avatar_url, avatar_3d_url").eq("id", userId).maybeSingle();
+  const { data } = await supabase.from("profiles").select("id, role, display_name, full_name, avatar_url, avatar_3d_url, spotify_url").eq("id", userId).maybeSingle();
   return data ?? null;
 }
 
