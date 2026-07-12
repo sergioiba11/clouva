@@ -23,7 +23,7 @@ export default function PerfilPage() {
   }, [user]);
 
   const save = async () => { if (!user) return; const { supabase } = await import("@/lib/supabase"); await supabase.from("profiles").update(form).eq("id", user.id); setSaved(true); };
-  const publicUrl = form.username ? `https://clouva.ar/u/${form.username}` : "";
+  const publicUrl = form.username ? `https://clouva.com.ar/u/${form.username}` : "";
 
   return <main><MainNav /><section className="mx-auto w-full max-w-4xl px-4 py-6 sm:py-8"><div className="panel rounded-3xl p-4 sm:p-6"><h1 className="text-2xl font-semibold">Perfil</h1>
     <div className="mt-4 flex flex-col items-center gap-4 sm:flex-row sm:items-start">
