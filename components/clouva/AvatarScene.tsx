@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Suspense, useState } from "react";
 import { AvatarModel } from "@/components/clouva/AvatarModel";
 import { CloverAIButton } from "@/components/clouva/CloverAIButton";
 import { CloverAIPanel } from "@/components/clouva/CloverAIPanel";
@@ -8,32 +8,38 @@ import { MinimalNavigation } from "@/components/clouva/MinimalNavigation";
 import { SpotifyMiniPlayer } from "@/components/clouva/SpotifyMiniPlayer";
 
 export function AvatarScene() {
+  const [interfaceVisible, setInterfaceVisible] = useState(false);
   const [aiOpen, setAiOpen] = useState(false);
-  const [navVisible, setNavVisible] = useState(false);
-  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const revealNav = () => {
-    setNavVisible(true);
-    if (hideTimer.current) clearTimeout(hideTimer.current);
-    hideTimer.current = setTimeout(() => setNavVisible(false), 4000);
+  const activateInterface = () => {
+    setInterfaceVisible(true);
+    setAiOpen(true);
   };
 
-  useEffect(() => () => {
-    if (hideTimer.current) clearTimeout(hideTimer.current);
-  }, []);
-
   return (
-    <main className="clouva-experience" onClick={revealNav} onPointerMove={() => navVisible && revealNav()}>
+    <main className="clouva-experience" aria-label="Universo CLOUVA">
+      <div className="clouva-atmosphere" aria-hidden="true" />
+      <div className="clouva-fog clouva-fog-one" aria-hidden="true" />
+      <div className="clouva-fog clouva-fog-two" aria-hidden="true" />
+      <div className="clouva-particles" aria-hidden="true" />
+      <div className="clouva-floor" aria-hidden="true" />
       <div className="clouva-vignette" aria-hidden="true" />
-      <section className="clouva-stage" aria-label="Experiencia principal CLOUVA">
-        <Suspense fallback={<div className="clouva-loader">Cargando avatar</div>}>
+
+      <section className="clouva-stage" aria-label="Personaje 3D CLOUVA">
+        <Suspense fallback={<div className="clouva-loader" aria-hidden="true" />}>
           <AvatarModel />
         </Suspense>
       </section>
-      <CloverAIButton open={aiOpen} onClick={() => setAiOpen((value) => !value)} />
-      <CloverAIPanel open={aiOpen} />
-      <SpotifyMiniPlayer />
-      <MinimalNavigation visible={navVisible} />
+
+      <CloverAIButton open={aiOpen} onClick={interfaceVisible ? () => setAiOpen((value) => !value) : activateInterface} />
+
+      {interfaceVisible ? (
+        <>
+          <CloverAIPanel open={aiOpen} />
+          <SpotifyMiniPlayer />
+          <MinimalNavigation visible />
+        </>
+      ) : null}
     </main>
   );
 }

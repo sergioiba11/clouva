@@ -9,7 +9,7 @@ export function AvatarModel() {
 
   if (fallback) {
     return (
-      <div className="clouva-avatar-fallback" aria-label="Placeholder 3D de avatar CLOUVA">
+      <div className="clouva-avatar-fallback" aria-label="Personaje 3D CLOUVA">
         <div className="clouva-avatar-halo" />
         <div className="clouva-avatar-head" />
         <div className="clouva-avatar-torso" />
@@ -24,24 +24,24 @@ export function AvatarModel() {
       src={MODEL_SRC}
       alt="Personaje 3D CLOUVA"
       camera-controls
-      touch-action="pan-y"
+      touch-action="none"
       interaction-prompt="none"
-      camera-orbit="0deg 82deg 2.25m"
-      min-camera-orbit="auto 58deg 1.55m"
-      max-camera-orbit="auto 98deg 3.4m"
-      field-of-view="28deg"
-      min-field-of-view="20deg"
-      max-field-of-view="42deg"
+      camera-orbit="0deg 80deg 1.72m"
+      min-camera-orbit="auto 58deg 1.28m"
+      max-camera-orbit="auto 96deg 2.65m"
+      field-of-view="20deg"
+      min-field-of-view="16deg"
+      max-field-of-view="32deg"
       auto-rotate
-      auto-rotate-delay="1400"
-      rotation-per-second="10deg"
-      shadow-intensity="0.75"
-      shadow-softness="0.92"
-      exposure="0.82"
+      auto-rotate-delay="0"
+      rotation-per-second="2.2deg"
+      shadow-intensity="0.58"
+      shadow-softness="0.96"
+      exposure="0.72"
       environment-image="neutral"
       ar={false}
       onError={() => setFallback(true)}
-      className="h-full w-full"
+      className="clouva-model-viewer h-full w-full"
       style={{ background: "transparent", minHeight: "100%" }}
     />
   );
