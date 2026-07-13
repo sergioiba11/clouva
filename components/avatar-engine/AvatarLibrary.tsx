@@ -31,6 +31,7 @@ export function AvatarLibrary() {
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [activatingId, setActivatingId] = useState<string | null>(null);
+  const [archivingId, setArchivingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [syncInfo, setSyncInfo] = useState<string | null>(null);
 
@@ -124,6 +125,26 @@ export function AvatarLibrary() {
     }
   };
 
+  const archive = async (avatarId: string) => {
+    if (!session?.access_token) return;
+    setArchivingId(avatarId);
+    setError(null);
+    try {
+      const response = await fetch("/api/avatar/library", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ avatarId, archived: true }),
+      });
+      const data = await response.json();
+      if (!response.ok || data.error) throw new Error(data.error || "No se pudo archivar el avatar.");
+      await fetchLibrary();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo archivar el avatar.");
+    } finally {
+      setArchivingId(null);
+    }
+  };
+
   return (
     <section className="mt-8 rounded-[2rem] border border-white/10 bg-black/25 p-5 sm:p-6">
       <div className="flex items-center justify-between gap-3">
@@ -182,6 +203,15 @@ export function AvatarLibrary() {
                     {activatingId === avatar.id ? "Activando…" : "Usar este avatar"}
                   </button>
                 ) : null}
+
+                <button
+                  type="button"
+                  onClick={() => void archive(avatar.id)}
+                  disabled={archivingId === avatar.id}
+                  className="mt-2 w-full rounded-2xl border border-white/10 px-4 py-2.5 text-xs text-white/50 disabled:opacity-50"
+                >
+                  {archivingId === avatar.id ? "Archivando…" : "Archivar (queda guardado, no se borra)"}
+                </button>
               </div>
             </article>
           );

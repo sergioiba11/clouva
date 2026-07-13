@@ -25,11 +25,17 @@ export async function GET(request: NextRequest) {
   const auth = await getUser(request);
   if (!auth) return NextResponse.json({ error: "Invalid session" }, { status: 401 });
 
-  const { data, error } = await auth.supabase
+  const includeArchived = new URL(request.url).searchParams.get("includeArchived") === "1";
+
+  let query = auth.supabase
     .from("user_avatars")
-    .select("id,name,status,model_url,preview_image_url,meshy_task_id,is_active,front_rotation_y,created_at,updated_at")
+    .select("id,name,status,model_url,preview_image_url,meshy_task_id,is_active,front_rotation_y,archived_at,created_at,updated_at")
     .eq("user_id", auth.user.id)
     .order("created_at", { ascending: false });
+
+  if (!includeArchived) query = query.is("archived_at", null);
+
+  const { data, error } = await query;
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
   return NextResponse.json({ avatars: data ?? [] });
@@ -75,4 +81,25 @@ export async function POST(request: NextRequest) {
   await auth.supabase.from("profiles").update({ avatar_3d_url: active.model_url }).eq("id", auth.user.id);
 
   return NextResponse.json({ avatar: active });
+}
+
+export async function PATCH(request: NextRequest) {
+  const auth = await getUser(request);
+  if (!auth) return NextResponse.json({ error: "Invalid session" }, { status: 401 });
+
+  const body = await request.json();
+  const avatarId = typeof body?.avatarId === "string" ? body.avatarId : "";
+  const archived = Boolean(body?.archived);
+  if (!avatarId) return NextResponse.json({ error: "Missing avatarId" }, { status: 400 });
+
+  const { data, error } = await auth.supabase
+    .from("user_avatars")
+    .update({ archived_at: archived ? new Date().toISOString() : null, is_active: archived ? false : undefined })
+    .eq("id", avatarId)
+    .eq("user_id", auth.user.id)
+    .select("id,archived_at,is_active")
+    .single();
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json({ avatar: data });
 }
