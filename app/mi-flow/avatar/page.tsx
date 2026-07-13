@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { AvatarCanvas } from "@/components/avatar-engine/AvatarCanvas";
 import { AvatarControls } from "@/components/avatar-engine/AvatarControls";
@@ -11,6 +11,9 @@ import type { AvatarCategory } from "@/lib/avatar-engine/types";
 export default function AvatarPage() {
   const [active, setActive] = useState<Exclude<AvatarCategory, "body">>("hair");
   const config = useAvatarStore((state) => state.config);
+  const hydrate = useAvatarStore((state) => state.hydrate);
+
+  useEffect(() => { void hydrate(); }, [hydrate]);
 
   return (
     <main className="avatar-engine-page" aria-label="CLOUVA Avatar Engine">

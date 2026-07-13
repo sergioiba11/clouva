@@ -12,7 +12,7 @@ export function AvatarCanvas({ config }: { config: AvatarConfig }) {
     <section className="avatar-canvas" aria-label="Vista 3D del avatar CLOUVA">
       <div className="avatar-canvas-lights" />
       <Suspense fallback={<div className="avatar-loader">Cargando avatar…</div>}>
-        <AvatarModelViewer modelUrl={modelUrl} className="avatar-engine-viewer" alt="Personaje humanoide CLOUVA configurado" />
+        <AvatarModelViewer modelUrl={modelUrl} config={config} className="avatar-engine-viewer" alt="Personaje humanoide CLOUVA configurado" />
       </Suspense>
       <div className="avatar-canvas-note">Arrastrá para girar · Pinch/scroll para zoom limitado</div>
     </section>

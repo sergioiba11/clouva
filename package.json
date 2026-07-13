@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests-avatar-engine.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.8",
@@ -19,9 +20,7 @@
     "react": "19.0.0",
     "react-dom": "19.0.0",
     "zustand": "^5.0.1",
-    "three": "^0.178.0",
-    "@react-three/fiber": "^9.1.2",
-    "@react-three/drei": "^10.5.1"
+    "three": "^0.178.0"
   },
   "devDependencies": {
     "@types/node": "^22.9.0",

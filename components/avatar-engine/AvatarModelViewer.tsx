@@ -1,91 +1,27 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { AmbientLight, AnimationMixer, Clock, DirectionalLight, PerspectiveCamera, Scene, WebGLRenderer } from "three";
+import { applyAvatarConfig } from "@/lib/avatar-engine/apply-avatar-config";
+import { getAvatarItem } from "@/lib/avatar-engine/catalog";
+import { analyzeObject, applyMaterialColors, applyMorphValues, loadAvatarPart, normalizeAvatarObject, setHairColor, setSkinTone, validateAvatarItemCompatibility } from "@/lib/avatar-engine/load-avatar-part";
+import type { AvatarConfig, BaseAvatarModel, LoadedAvatarPart } from "@/lib/avatar-engine/types";
 
 type ModelState = "idle" | "loading" | "ready" | "error";
+type Props = { modelUrl: string | null; config?: AvatarConfig; alt?: string; className?: string };
+const debug = process.env.NEXT_PUBLIC_AVATAR_DEBUG === "true";
 
-type ModelViewerElement = HTMLElement & {
-  updateFraming?: () => Promise<void> | void;
-  cameraTarget?: string;
-  cameraOrbit?: string;
-  fieldOfView?: string;
-};
+function Fallback({ className }: { className: string }) { return <div className={`avatar-render-fallback ${className}`} data-avatar-source="fallback" aria-label="Preview temporal humanoide CLOUVA"><span className="avatar-render-silhouette" aria-hidden="true"><i className="avatar-fallback-glow" /><i className="avatar-fallback-hair" /><i className="avatar-fallback-head" /><i className="avatar-fallback-neck" /><i className="avatar-fallback-hood" /><i className="avatar-fallback-torso" /><i className="avatar-fallback-arm avatar-fallback-arm-left" /><i className="avatar-fallback-arm avatar-fallback-arm-right" /><i className="avatar-fallback-hand avatar-fallback-hand-left" /><i className="avatar-fallback-hand avatar-fallback-hand-right" /><i className="avatar-fallback-leg avatar-fallback-leg-left" /><i className="avatar-fallback-leg avatar-fallback-leg-right" /><i className="avatar-fallback-shoe avatar-fallback-shoe-left" /><i className="avatar-fallback-shoe avatar-fallback-shoe-right" /></span></div>; }
 
-type Props = {
-  modelUrl: string | null;
-  alt?: string;
-  className?: string;
-};
-
-export function AvatarModelViewer({ modelUrl, alt = "Avatar 3D CLOUVA", className = "" }: Props) {
-  const [state, setState] = useState<ModelState>(modelUrl ? "loading" : "idle");
-  const key = useMemo(() => modelUrl ?? "avatar-silhouette", [modelUrl]);
-
-  useEffect(() => {
-    setState(modelUrl ? "loading" : "idle");
-  }, [modelUrl]);
-
-  if (!modelUrl || state === "error") {
-    return (
-      <div className={`avatar-render-fallback ${className}`} data-avatar-source="fallback" aria-label="Preview temporal humanoide CLOUVA">
-        <span className="avatar-render-silhouette" aria-hidden="true">
-          <i className="avatar-fallback-glow" />
-          <i className="avatar-fallback-hair" />
-          <i className="avatar-fallback-head" />
-          <i className="avatar-fallback-neck" />
-          <i className="avatar-fallback-hood" />
-          <i className="avatar-fallback-torso" />
-          <i className="avatar-fallback-arm avatar-fallback-arm-left" />
-          <i className="avatar-fallback-arm avatar-fallback-arm-right" />
-          <i className="avatar-fallback-hand avatar-fallback-hand-left" />
-          <i className="avatar-fallback-hand avatar-fallback-hand-right" />
-          <i className="avatar-fallback-leg avatar-fallback-leg-left" />
-          <i className="avatar-fallback-leg avatar-fallback-leg-right" />
-          <i className="avatar-fallback-shoe avatar-fallback-shoe-left" />
-          <i className="avatar-fallback-shoe avatar-fallback-shoe-right" />
-        </span>
-        <span className="sr-only" data-avatar-source-state="fallback">Avatar fallback de desarrollo activo</span>
-      </div>
-    );
-  }
-
-  return (
-    <div className={`avatar-render-shell ${className}`} data-state={state} data-avatar-source="glb">
-      {state === "loading" ? <div className="avatar-loader">Cargando avatar…</div> : null}
-      <model-viewer
-        key={key}
-        src={modelUrl}
-        alt={alt}
-        camera-controls
-        disable-pan
-        interaction-prompt="none"
-        touch-action="none"
-        auto-rotate
-        auto-rotate-delay="3200"
-        rotation-per-second="8deg"
-        camera-target="0m 1.35m 0m"
-        camera-orbit="0deg 78deg 3.15m"
-        min-camera-orbit="-180deg 58deg 2.35m"
-        max-camera-orbit="180deg 92deg 4.15m"
-        min-field-of-view="18deg"
-        max-field-of-view="32deg"
-        field-of-view="23deg"
-        shadow-intensity="0.72"
-        shadow-softness="0.95"
-        exposure="1.05"
-        environment-image="neutral"
-        ar={false}
-        onLoad={(event) => {
-          const viewer = event.currentTarget as ModelViewerElement;
-          void viewer.updateFraming?.();
-          setState("ready");
-        }}
-        onError={(error) => {
-          if (process.env.NODE_ENV === "development") console.error("Avatar model failed to load", error);
-          setState("error");
-        }}
-        className="avatar-model-viewer"
-      />
-    </div>
-  );
+export function AvatarModelViewer({ modelUrl, config, className = "" }: Props) {
+  const mount = useRef<HTMLDivElement>(null); const [state, setState] = useState<ModelState>(modelUrl ? "loading" : "idle"); const [base, setBase] = useState<BaseAvatarModel | null>(null);
+  useEffect(() => { if (!modelUrl || !config || !mount.current) return; let disposed = false; const scene = new Scene(); const camera = new PerspectiveCamera(28, 1, 0.01, 100); const renderer = new WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" }); const clock = new Clock(); let mixer: AnimationMixer | null = null; let raf = 0; const loadedParts: Record<string, LoadedAvatarPart> = {};
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, window.innerWidth < 768 ? 1.25 : 1.5)); mount.current.appendChild(renderer.domElement); scene.add(new AmbientLight(0xffffff, 1.7)); const light = new DirectionalLight(0xffffff, 2.5); light.position.set(2, 4, 3); scene.add(light);
+    const resize = () => { const rect = mount.current?.getBoundingClientRect(); if (!rect) return; camera.aspect = rect.width / Math.max(rect.height, 1); camera.updateProjectionMatrix(); renderer.setSize(rect.width, rect.height); }; window.addEventListener("resize", resize); resize();
+    const animate = () => { if (document.hidden) { raf = requestAnimationFrame(animate); return; } mixer?.update(clock.getDelta()); renderer.render(scene, camera); raf = requestAnimationFrame(animate); }; raf = requestAnimationFrame(animate);
+    (async () => { setState("loading"); const item = getAvatarItem(config.bodyId); if (!item) throw new Error("No hay body GLB ready"); const body = await loadAvatarPart(item, null); if (disposed) return; normalizeAvatarObject(body.object); const a = analyzeObject(body.object); scene.add(body.object); camera.position.set(0, Math.max(1.2, a.size.y * 0.55), Math.max(2.2, a.size.y * 1.65)); camera.lookAt(0, a.size.y * 0.5, 0); mixer = new AnimationMixer(body.object); const model: BaseAvatarModel = { object: body.object, skeletonId: body.skeletonId, boneNames: a.boneNames, materialNames: a.materialNames, morphNames: a.morphNames, animations: body.animations, height: a.size.y, center: { x: a.center.x, y: a.center.y, z: a.center.z } }; setBase(model); applyMaterialColors(body.object, config.materialColors); setSkinTone(body.object, config.skinTone); setHairColor(body.object, config.hairColor); applyMorphValues(body.object, config.morphValues); const clip = body.animations.find((c:any)=>String(c.name).toLowerCase().includes(String(config.activeAnimation ?? "idle"))) ?? body.animations[0]; if (clip) mixer.clipAction(clip).fadeIn(0.25).play(); await applyAvatarConfig(config, model); for (const id of [config.faceId, config.hairId, config.topId, config.bottomId, config.shoesId, ...config.accessoryIds].filter(Boolean) as string[]) { const partItem = getAvatarItem(id); if (!partItem || !validateAvatarItemCompatibility(partItem, model).compatible) continue; const part = await loadAvatarPart(partItem, model); loadedParts[id] = part; scene.add(part.object); applyMaterialColors(part.object, config.materialColors); setHairColor(part.object, config.hairColor); applyMorphValues(part.object, config.morphValues); } setState("ready"); })().catch((error) => { if (process.env.NODE_ENV === "development") console.error("Avatar model failed to load", error); setState("error"); });
+    return () => { disposed = true; cancelAnimationFrame(raf); window.removeEventListener("resize", resize); Object.values(loadedParts).forEach((part) => part.dispose()); renderer.dispose(); mount.current?.replaceChildren(); };
+  }, [modelUrl, config]);
+  if (!modelUrl || !config || state === "error") return <Fallback className={className} />;
+  return <div className={`avatar-render-shell ${className}`} data-state={state} data-avatar-source="glb">{state === "loading" ? <div className="avatar-loader">Cargando avatar…</div> : null}<div ref={mount} className="avatar-model-viewer" />{debug && base ? <pre className="avatar-debug-panel">{JSON.stringify({ source: "glb", baseUrl: modelUrl, skeletonId: base.skeletonId, bones: base.boneNames, clips: base.animations.map((c:any) => c.name), morphs: base.morphNames, materials: base.materialNames, config }, null, 2)}</pre> : null}</div>;
 }

@@ -1,87 +1,56 @@
+import { supabase } from "@/lib/supabase";
+import { resolveAvatarAssetUrl } from "./assets";
 import type { AvatarCategory, AvatarConfig, AvatarItem } from "./types";
 import { CLOUVA_SKELETON_ID } from "./types";
 
 const envUrl = (value: string | undefined) => value?.trim() || null;
-
-export const avatarAssetUrls = {
-  base: envUrl(process.env.NEXT_PUBLIC_AVATAR_BASE_URL),
-  hair: envUrl(process.env.NEXT_PUBLIC_AVATAR_HAIR_URL),
-  top: envUrl(process.env.NEXT_PUBLIC_AVATAR_TOP_URL),
-  bottom: envUrl(process.env.NEXT_PUBLIC_AVATAR_BOTTOM_URL),
-  shoes: envUrl(process.env.NEXT_PUBLIC_AVATAR_SHOES_URL),
-};
-
+export const avatarAssetUrls = { base: envUrl(process.env.NEXT_PUBLIC_AVATAR_BASE_URL) };
 export const avatarDemoMode = process.env.NEXT_PUBLIC_AVATAR_DEMO_MODE === "true";
+const ready = (item: AvatarItem) => (item.status ?? "ready") === "ready" && Boolean(resolveAvatarAssetUrl(item));
 
-const item = (id: string, name: string, category: AvatarCategory, modelUrl: string | null, thumbnailUrl: string, colors: string[]): AvatarItem | null => {
-  if (!modelUrl) return null;
-  return { id, name, category, modelUrl, thumbnailUrl, free: true, compatibleSkeleton: CLOUVA_SKELETON_ID, colors };
-};
+const mock = (id: string, name: string, category: AvatarCategory, modelUrl: string | null, thumbnailUrl: string, colors: string[] = []): AvatarItem | null => modelUrl ? ({ id, name, category, modelUrl, thumbnailUrl, previewImage: thumbnailUrl, free: true, compatibleSkeleton: CLOUVA_SKELETON_ID, skeletonId: CLOUVA_SKELETON_ID, status: "ready", colors, tags: [], materialNames: [], supportedMorphs: [], supportedAnimations: ["idle"], version: "mock-env" }) : null;
 
-export const avatarCatalog: AvatarItem[] = [
-  item("base-remote", "Humanoide CLOUVA", "body", avatarAssetUrls.base, "/avatar-engine/base/remote.svg", ["#8D6E63", "#C58C6D", "#F1C27D"]),
-  ...(avatarDemoMode ? [] : [
-    item("hair-remote", "Pelo remoto", "hair", avatarAssetUrls.hair, "/avatar-engine/hair/remote.svg", ["#111111", "#3B2F2F", "#8B5CF6"]),
-    item("top-remote", "Top remoto", "top", avatarAssetUrls.top, "/avatar-engine/tops/remote.svg", ["#0B0B10", "#7C3AED"]),
-    item("bottom-remote", "Bottom remoto", "bottom", avatarAssetUrls.bottom, "/avatar-engine/bottoms/remote.svg", ["#111111", "#2D2A32"]),
-    item("shoes-remote", "Zapatillas remotas", "shoes", avatarAssetUrls.shoes, "/avatar-engine/shoes/remote.svg", ["#F5F3FF", "#8B5CF6"]),
-  ]),
-].filter((entry): entry is AvatarItem => Boolean(entry));
+export const mockAvatarCatalog: AvatarItem[] = [mock("base-remote", "Humanoide CLOUVA", "body", avatarAssetUrls.base, "/avatar-engine/base/remote.svg", ["#8D6E63", "#C58C6D", "#F1C27D"])].filter((entry): entry is AvatarItem => Boolean(entry));
+export let avatarCatalog: AvatarItem[] = mockAvatarCatalog.filter(ready);
 
 export const avatarCategories: { id: Exclude<AvatarCategory, "body">; label: string }[] = [
-  { id: "hair", label: "Pelo" },
-  { id: "top", label: "Parte superior" },
-  { id: "bottom", label: "Pantalón" },
-  { id: "shoes", label: "Zapatillas" },
-  { id: "accessory", label: "Accesorios" },
-  { id: "color", label: "Colores" },
-  { id: "animation", label: "Animaciones" },
+  { id: "hair", label: "Pelo" }, { id: "top", label: "Parte superior" }, { id: "bottom", label: "Pantalón" }, { id: "shoes", label: "Zapatillas" }, { id: "accessory", label: "Accesorios" }, { id: "color", label: "Colores" }, { id: "animation", label: "Animaciones" },
 ];
 
 const firstByCategory = (category: AvatarCategory) => avatarCatalog.find((entry) => entry.category === category)?.id ?? null;
+export const defaultAvatarConfig: AvatarConfig = { bodyId: firstByCategory("body") ?? "base-remote", faceId: null, hairId: null, topId: null, bottomId: null, shoesId: null, accessoryIds: [], skinTone: "#C58C6D", hairColor: "#111111", materialColors: {}, morphValues: {}, activeAnimation: "idle" };
 
-export const defaultAvatarConfig: AvatarConfig = {
-  bodyId: firstByCategory("body") ?? "base-remote",
-  hairId: avatarDemoMode ? null : firstByCategory("hair"),
-  topId: avatarDemoMode ? null : firstByCategory("top"),
-  bottomId: avatarDemoMode ? null : firstByCategory("bottom"),
-  shoesId: avatarDemoMode ? null : firstByCategory("shoes"),
-  accessoryIds: [],
-  skinTone: "#C58C6D",
-  hairColor: "#111111",
-  materialColors: { top: "#0B0B10", bottom: "#111111", shoes: "#F5F3FF", glow: "#8B5CF6" },
-  morphValues: {},
-};
-
-export function getAvatarItemsByCategory(category: AvatarCategory) {
-  return avatarCatalog.filter((entry) => entry.category === category);
+function fromRow(row: any): AvatarItem {
+  const meta = (row.metadata ?? {}) as Record<string, any>;
+  return { id: row.id, name: row.name, category: row.category, modelUrl: row.model_url ?? meta.modelUrl ?? null, thumbnailUrl: row.thumbnail_url ?? null, previewImage: meta.previewImage ?? row.thumbnail_url ?? null, free: row.free ?? true, compatibleSkeleton: row.compatible_skeleton ?? meta.skeletonId ?? CLOUVA_SKELETON_ID, skeletonId: meta.skeletonId ?? row.compatible_skeleton ?? CLOUVA_SKELETON_ID, status: meta.status ?? row.status ?? "ready", colors: meta.colors ?? [], tags: meta.tags ?? [], materialNames: meta.materialNames ?? [], supportedMorphs: meta.supportedMorphs ?? [], supportedAnimations: meta.supportedAnimations ?? [], version: meta.version, metadata: meta };
 }
 
-export function hasAvatarAssetsForCategory(category: AvatarCategory) {
-  return getAvatarItemsByCategory(category).length > 0;
+export async function loadAvatarCatalog() {
+  try {
+    const { data, error } = await supabase.from("avatar_items").select("*");
+    if (error) throw error;
+    const remote = (data ?? []).map(fromRow).filter(ready);
+    avatarCatalog = remote.length ? remote : mockAvatarCatalog.filter(ready);
+  } catch (error) {
+    if (process.env.NODE_ENV === "development") console.warn("Using avatar mock catalog fallback", error);
+    avatarCatalog = mockAvatarCatalog.filter(ready);
+  }
+  return avatarCatalog;
 }
 
-export function getAvatarItem(id: string | null) {
-  return id ? avatarCatalog.find((entry) => entry.id === id) ?? null : null;
-}
+export function getAvatarItemsByCategory(category: AvatarCategory) { return avatarCatalog.filter((entry) => entry.category === category && ready(entry)); }
+export function hasAvatarAssetsForCategory(category: AvatarCategory) { return getAvatarItemsByCategory(category).length > 0; }
+export function getAvatarItem(id: string | null | undefined) { return id ? avatarCatalog.find((entry) => entry.id === id && ready(entry)) ?? null : null; }
+export function getRenderableAvatarUrl(config: AvatarConfig = defaultAvatarConfig) { return resolveAvatarAssetUrl(getAvatarItem(config.bodyId)) ?? avatarAssetUrls.base; }
 
-export function getRenderableAvatarUrl(config: AvatarConfig = defaultAvatarConfig) {
-  return getAvatarItem(config.bodyId)?.modelUrl ?? avatarAssetUrls.base;
-}
-
-export function generateAvatarConfig(prompt: string): AvatarConfig {
-  const text = prompt.toLowerCase();
-  const next: AvatarConfig = { ...defaultAvatarConfig, accessoryIds: [] };
-  const availableHair = getAvatarItemsByCategory("hair");
-  const availableTops = getAvatarItemsByCategory("top");
-  const availableBottoms = getAvatarItemsByCategory("bottom");
-  const availableShoes = getAvatarItemsByCategory("shoes");
-
-  next.hairId = availableHair[0]?.id ?? null;
-  next.topId = availableTops[0]?.id ?? null;
-  next.bottomId = availableBottoms[0]?.id ?? null;
-  next.shoesId = availableShoes[0]?.id ?? null;
-  next.materialColors = { ...defaultAvatarConfig.materialColors, top: text.includes("violeta") ? "#2A124A" : "#0B0B10", glow: "#8B5CF6" };
-
+export function generateAvatarConfig(prompt: string, current: AvatarConfig = defaultAvatarConfig): AvatarConfig {
+  const text = prompt.toLowerCase(); const next: AvatarConfig = { ...current, materialColors: { ...current.materialColors }, morphValues: { ...current.morphValues }, accessoryIds: [...current.accessoryIds] };
+  const pick = (category: AvatarCategory, words: string[]) => getAvatarItemsByCategory(category).find((item) => words.some((word) => `${item.name} ${item.tags?.join(" ")}`.toLowerCase().includes(word)));
+  const hair = pick("hair", ["pelo", "hair", "desordenado"]); if (hair) next.hairId = hair.id;
+  const top = pick("top", ["hoodie", "buzo", "top", "remera"]); if (top) next.topId = top.id;
+  const bottom = pick("bottom", ["baggy", "pantalón", "bottom"]); if (bottom) next.bottomId = bottom.id;
+  const shoes = pick("shoes", ["zapat", "shoes"]); if (shoes) next.shoesId = shoes.id;
+  const violet = text.includes("violeta") || text.includes("purple"); if (violet) next.materialColors = { ...next.materialColors, Hoodie_Accent: "#7C3AED", Hair_Main: next.hairColor };
+  if (text.includes("oscuro") || text.includes("dark")) next.materialColors = { ...next.materialColors, Hoodie_Main: "#080808" };
   return next;
 }
