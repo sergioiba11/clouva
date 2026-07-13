@@ -124,7 +124,14 @@ export function AvatarModelViewer({
     window.addEventListener("resize", resize);
 
     const loader = new GLTFLoader();
-    loader.setMeshoptDecoder(MeshoptDecoder);
+    let loaderReady: Promise<void> = Promise.resolve();
+    if (MeshoptDecoder && typeof (MeshoptDecoder as any).ready?.then === "function") {
+      loaderReady = (MeshoptDecoder as any).ready.then(() => {
+        loader.setMeshoptDecoder(MeshoptDecoder);
+      });
+    } else {
+      loader.setMeshoptDecoder(MeshoptDecoder);
+    }
 
     const attachModel = (object: Object3D, animations: any[], isFallback: boolean) => {
       if (disposed) return;
@@ -153,6 +160,7 @@ export function AvatarModelViewer({
     };
 
     const loadUrl = async (url: string, isFallback: boolean) => {
+      await loaderReady;
       const gltf = await loader.loadAsync(url);
       attachModel(gltf.scene, gltf.animations, isFallback);
     };
@@ -171,6 +179,7 @@ export function AvatarModelViewer({
       setErrorMessage(null);
       try {
         if (modelData) {
+          await loaderReady;
           const gltf = await loader.parseAsync(modelData.slice(0), "");
           attachModel(gltf.scene, gltf.animations, false);
           return;
