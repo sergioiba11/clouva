@@ -20,8 +20,6 @@ export const OFFICIAL_CLOUVA_MODEL_URL = supabaseUrl
   ? `${supabaseUrl}/storage/v1/object/public/avatars/official/clouva-official-v1.glb`
   : "/models/clouva/clouva-official-v1.glb";
 
-export const TEMPORARY_RIG_URL = "/models/base-body.glb";
-
 export const OFFICIAL_CLOUVA_AVATAR: ActiveAvatar = {
   id: "clouva-official-v1",
   source: "official",
@@ -42,6 +40,16 @@ type ActiveAvatarStore = {
   loadActiveAvatar: (userId?: string | null) => Promise<void>;
 };
 
+const mapAvatar = (data: any): ActiveAvatar => ({
+  id: data.id,
+  source: data.source === "uploaded" ? "uploaded" : "generated",
+  modelUrl: data.model_url,
+  fallbackUrl: null,
+  status: "ready",
+  frontRotationY: Number(data.front_rotation_y ?? 0),
+  updatedAt: data.updated_at ?? new Date().toISOString(),
+});
+
 export const useActiveAvatarStore = create<ActiveAvatarStore>((set, get) => ({
   avatar: OFFICIAL_CLOUVA_AVATAR,
   hydratedUserId: null,
@@ -59,36 +67,44 @@ export const useActiveAvatarStore = create<ActiveAvatarStore>((set, get) => ({
     set({ loading: true });
     try {
       const { supabase } = await import("@/lib/supabase");
-      const { data, error } = await supabase
+      const columns = "id,source,status,model_url,front_rotation_y,updated_at";
+
+      const { data: active, error: activeError } = await supabase
         .from("user_avatars")
-        .select("id,source,status,model_url,front_rotation_y,updated_at")
+        .select(columns)
         .eq("user_id", userId)
         .eq("is_active", true)
+        .eq("status", "ready")
+        .not("model_url", "is", null)
         .order("updated_at", { ascending: false })
         .limit(1)
         .maybeSingle();
 
-      if (error) throw error;
-      if (!data?.model_url || data.status !== "ready") {
-        set({ avatar: OFFICIAL_CLOUVA_AVATAR, hydratedUserId: userId, loading: false });
-        return;
+      if (activeError) throw activeError;
+
+      let selected = active;
+      if (!selected?.model_url) {
+        const { data: firstCreated, error: firstError } = await supabase
+          .from("user_avatars")
+          .select(columns)
+          .eq("user_id", userId)
+          .eq("status", "ready")
+          .not("model_url", "is", null)
+          .order("updated_at", { ascending: true })
+          .limit(1)
+          .maybeSingle();
+
+        if (firstError) throw firstError;
+        selected = firstCreated;
       }
 
       set({
-        avatar: {
-          id: data.id,
-          source: data.source === "uploaded" ? "uploaded" : "generated",
-          modelUrl: data.model_url,
-          fallbackUrl: null,
-          status: "ready",
-          frontRotationY: Number(data.front_rotation_y ?? 0),
-          updatedAt: data.updated_at ?? new Date().toISOString(),
-        },
+        avatar: selected?.model_url ? mapAvatar(selected) : OFFICIAL_CLOUVA_AVATAR,
         hydratedUserId: userId,
         loading: false,
       });
     } catch (error) {
-      console.error("Could not load active avatar", error);
+      console.error("Could not load CLOUVA avatar", error);
       set({ avatar: OFFICIAL_CLOUVA_AVATAR, hydratedUserId: userId, loading: false });
     }
   },
