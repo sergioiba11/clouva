@@ -1,83 +1,63 @@
-import { BoxGeometry, CapsuleGeometry, ConeGeometry, CylinderGeometry, Group, Mesh, MeshStandardMaterial, SphereGeometry, TorusGeometry } from "three";
+import { BoxGeometry, CapsuleGeometry, ConeGeometry, Group, Mesh, MeshStandardMaterial, SphereGeometry, TorusGeometry } from "three";
 import type { AvatarConfig } from "./types";
 
-const material = (color: string, roughness = 0.92, metalness = 0.04) => new MeshStandardMaterial({ color, roughness, metalness });
-const add = (group: Group, mesh: Mesh, position: [number, number, number], scale: [number, number, number] = [1, 1, 1], rotation: [number, number, number] = [0, 0, 0]) => {
-  mesh.position.set(...position);
-  mesh.scale.set(...scale);
-  mesh.rotation.set(...rotation);
-  group.add(mesh);
+const mat = (color: string, roughness = 0.95, metalness = 0.03) => new MeshStandardMaterial({ color, roughness, metalness });
+const add = (g: Group, mesh: Mesh, p: [number, number, number], s: [number, number, number] = [1, 1, 1], r: [number, number, number] = [0, 0, 0]) => {
+  mesh.position.set(...p); mesh.scale.set(...s); mesh.rotation.set(...r); g.add(mesh); return mesh;
 };
 
 export function buildProceduralClouvaAvatar(config: AvatarConfig) {
   const root = new Group();
-  root.name = "CLOUVA_Procedural_Avatar";
+  root.name = "CLOUVA_Hooded_Prototype";
 
-  const skin = material(config.skinTone || "#b97b5c");
-  const hair = material(config.hairColor || "#211712", 0.97);
-  const hoodie = material(config.materialColors.Hoodie_Main || "#070708", 0.98);
-  const cargo = material("#0d0e10", 0.98);
-  const panel = material("#191b1f", 0.96);
-  const shoe = material("#09090b");
-  const sole = material("#c8c4ba");
-  const metal = material("#b9b9b9", 0.25, 0.9);
-  const olive = material("#6f7938");
-  const eye = material("#090909", 0.5);
+  const black = mat(config.materialColors.Hoodie_Main || "#070708", 0.99);
+  const black2 = mat("#111216", 0.98);
+  const shadow = mat("#020203", 1);
+  const cargo = mat("#0a0b0d", 0.99);
+  const olive = mat("#747b3b", 0.88);
+  const sole = mat("#cbc6ba", 0.9);
+  const metal = mat("#b9bbc4", 0.28, 0.84);
 
-  add(root, new Mesh(new CylinderGeometry(0.065, 0.075, 0.16, 12), skin), [0, 2.02, 0]);
-  add(root, new Mesh(new SphereGeometry(0.175, 24, 18), skin), [0, 2.23, 0], [0.86, 1.06, 0.84]);
-  add(root, new Mesh(new SphereGeometry(0.016, 10, 8), eye), [-0.06, 2.26, 0.15], [1, 0.6, 0.45]);
-  add(root, new Mesh(new SphereGeometry(0.016, 10, 8), eye), [0.06, 2.26, 0.15], [1, 0.6, 0.45]);
+  // Oversized hood with face mostly hidden.
+  add(root, new Mesh(new SphereGeometry(0.16, 20, 16), shadow), [0, 2.2, 0], [0.9, 1.05, 0.85]);
+  add(root, new Mesh(new SphereGeometry(0.25, 22, 16), black), [0, 2.31, -0.08], [1.08, 0.75, 0.94]);
+  add(root, new Mesh(new TorusGeometry(0.25, 0.105, 12, 30, Math.PI * 1.45), black), [0, 2.19, -0.02], [1.05, 1.12, 0.95], [Math.PI / 2, 0, -0.25]);
 
-  const hairGroup = new Group();
-  hairGroup.name = "hair";
-  root.add(hairGroup);
-  add(hairGroup, new Mesh(new SphereGeometry(0.19, 20, 14), hair), [0, 2.36, -0.01], [1.02, 0.56, 0.95]);
-  const strands: Array<[number, number, number, number]> = [
-    [-0.13, 2.39, 0.08, -0.38],
-    [0.13, 2.39, 0.08, 0.38],
-    [-0.06, 2.44, 0.1, -0.15],
-    [0.06, 2.44, 0.1, 0.15],
-    [0, 2.4, 0.13, 0],
-  ];
-  strands.forEach(([x, y, z, rz]) => add(hairGroup, new Mesh(new ConeGeometry(0.042, 0.24, 7), hair), [x, y, z], [1, 1, 1], [0, 0, rz]));
+  const hair = new Group(); hair.name = "hair"; root.add(hair);
+  [-0.11, -0.04, 0.04, 0.11].forEach((x, i) => add(hair, new Mesh(new ConeGeometry(0.035, 0.19 + (i % 2) * 0.035, 7), black2), [x, 2.18, 0.14], [1, 1, 1], [0, 0, x * 1.7]));
 
-  const top = new Group();
-  top.name = "top";
-  root.add(top);
-  add(top, new Mesh(new CapsuleGeometry(0.27, 0.78, 10, 20), hoodie), [0, 1.53, 0], [1.18, 1.04, 0.82]);
-  add(top, new Mesh(new BoxGeometry(0.68, 0.1, 0.32), panel), [0, 1.8, 0]);
-  add(top, new Mesh(new TorusGeometry(0.19, 0.06, 10, 26, Math.PI * 1.25), hoodie), [0, 1.91, -0.03], [1.05, 1, 0.85], [Math.PI / 2, 0, 0.2]);
-  add(top, new Mesh(new BoxGeometry(0.13, 0.1, 0.025), olive), [0.1, 1.5, 0.28]);
+  // Wide hoodie torso and long sleeves.
+  const top = new Group(); top.name = "top"; root.add(top);
+  add(top, new Mesh(new CapsuleGeometry(0.34, 0.62, 10, 20), black), [0, 1.56, 0], [1.32, 1, 0.84]);
+  add(top, new Mesh(new BoxGeometry(0.84, 0.13, 0.34), black2), [0, 1.82, 0]);
+  add(top, new Mesh(new BoxGeometry(0.26, 0.18, 0.04), black2), [0.1, 1.5, 0.3], [1, 1, 1], [0, 0, -0.12]);
+  add(root, new Mesh(new CapsuleGeometry(0.09, 0.82, 8, 16), black), [-0.42, 1.47, 0], [1.15, 1, 1], [0, 0, 0.04]);
+  add(root, new Mesh(new CapsuleGeometry(0.09, 0.82, 8, 16), black), [0.42, 1.47, 0], [1.15, 1, 1], [0, 0, -0.04]);
+  add(root, new Mesh(new SphereGeometry(0.075, 14, 10), shadow), [-0.45, 0.96, 0.02], [0.9, 1.08, 0.9]);
+  add(root, new Mesh(new SphereGeometry(0.075, 14, 10), shadow), [0.45, 0.96, 0.02], [0.9, 1.08, 0.9]);
 
-  add(root, new Mesh(new CapsuleGeometry(0.083, 0.74, 8, 14), hoodie), [-0.35, 1.48, 0], [1, 1, 1], [0, 0, 0.07]);
-  add(root, new Mesh(new CapsuleGeometry(0.083, 0.74, 8, 14), hoodie), [0.35, 1.48, 0], [1, 1, 1], [0, 0, -0.07]);
-  add(root, new Mesh(new SphereGeometry(0.072, 14, 10), skin), [-0.39, 1.02, 0.01], [0.9, 1.1, 0.9]);
-  add(root, new Mesh(new SphereGeometry(0.072, 14, 10), skin), [0.39, 1.02, 0.01], [0.9, 1.1, 0.9]);
+  // Extremely baggy cargo silhouette.
+  const bottom = new Group(); bottom.name = "bottom"; root.add(bottom);
+  add(bottom, new Mesh(new BoxGeometry(0.48, 0.22, 0.32), cargo), [0, 1.03, 0]);
+  add(bottom, new Mesh(new CapsuleGeometry(0.19, 0.92, 8, 16), cargo), [-0.17, 0.5, 0], [1.32, 1, 1.08]);
+  add(bottom, new Mesh(new CapsuleGeometry(0.19, 0.92, 8, 16), cargo), [0.17, 0.5, 0], [1.32, 1, 1.08]);
+  add(bottom, new Mesh(new BoxGeometry(0.18, 0.24, 0.08), black2), [-0.31, 0.68, 0.17]);
+  add(bottom, new Mesh(new BoxGeometry(0.18, 0.24, 0.08), black2), [0.31, 0.68, 0.17]);
+  add(bottom, new Mesh(new BoxGeometry(0.045, 0.62, 0.035), olive), [-0.34, 0.48, 0.13]);
+  add(bottom, new Mesh(new BoxGeometry(0.045, 0.62, 0.035), olive), [0.34, 0.48, 0.13]);
 
-  const bottom = new Group();
-  bottom.name = "bottom";
-  root.add(bottom);
-  add(bottom, new Mesh(new BoxGeometry(0.42, 0.22, 0.3), cargo), [0, 1.01, 0]);
-  add(bottom, new Mesh(new CapsuleGeometry(0.14, 0.9, 8, 16), cargo), [-0.14, 0.52, 0], [1.2, 1, 1.03]);
-  add(bottom, new Mesh(new CapsuleGeometry(0.14, 0.9, 8, 16), cargo), [0.14, 0.52, 0], [1.2, 1, 1.03]);
-  add(bottom, new Mesh(new BoxGeometry(0.15, 0.2, 0.075), panel), [-0.26, 0.7, 0.16]);
-  add(bottom, new Mesh(new BoxGeometry(0.15, 0.2, 0.075), panel), [0.26, 0.7, 0.16]);
+  // Olive platform sneakers.
+  const shoes = new Group(); shoes.name = "shoes"; root.add(shoes);
+  add(shoes, new Mesh(new BoxGeometry(0.31, 0.16, 0.56), olive), [-0.17, 0.02, 0.1]);
+  add(shoes, new Mesh(new BoxGeometry(0.31, 0.16, 0.56), olive), [0.17, 0.02, 0.1]);
+  add(shoes, new Mesh(new BoxGeometry(0.325, 0.05, 0.58), sole), [-0.17, -0.055, 0.1]);
+  add(shoes, new Mesh(new BoxGeometry(0.325, 0.05, 0.58), sole), [0.17, -0.055, 0.1]);
 
-  const shoes = new Group();
-  shoes.name = "shoes";
-  root.add(shoes);
-  add(shoes, new Mesh(new BoxGeometry(0.27, 0.13, 0.52), shoe), [-0.14, 0.01, 0.09]);
-  add(shoes, new Mesh(new BoxGeometry(0.27, 0.13, 0.52), shoe), [0.14, 0.01, 0.09]);
-  add(shoes, new Mesh(new BoxGeometry(0.285, 0.045, 0.54), sole), [-0.14, -0.05, 0.09]);
-  add(shoes, new Mesh(new BoxGeometry(0.285, 0.045, 0.54), sole), [0.14, -0.05, 0.09]);
-
-  const accessories = new Group();
-  accessories.name = "accessory";
-  root.add(accessories);
-  add(accessories, new Mesh(new TorusGeometry(0.155, 0.009, 8, 30, Math.PI), metal), [0, 1.77, 0.255], [1, 1.2, 1], [0, 0, Math.PI]);
-  add(accessories, new Mesh(new TorusGeometry(0.12, 0.007, 8, 28, Math.PI), metal), [0, 1.72, 0.265], [1, 1.18, 1], [0, 0, Math.PI]);
-  add(accessories, new Mesh(new SphereGeometry(0.028, 12, 10), olive), [0, 1.57, 0.285]);
+  // Layered chains.
+  const acc = new Group(); acc.name = "accessory"; root.add(acc);
+  add(acc, new Mesh(new TorusGeometry(0.18, 0.011, 8, 32, Math.PI), metal), [0, 1.78, 0.28], [1, 1.2, 1], [0, 0, Math.PI]);
+  add(acc, new Mesh(new TorusGeometry(0.135, 0.008, 8, 30, Math.PI), metal), [0, 1.71, 0.29], [1, 1.2, 1], [0, 0, Math.PI]);
+  add(acc, new Mesh(new BoxGeometry(0.045, 0.08, 0.02), olive), [0, 1.55, 0.3]);
 
   root.rotation.y = Math.PI;
   return root;
