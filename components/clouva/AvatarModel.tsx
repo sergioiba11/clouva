@@ -4,21 +4,32 @@ import { useState } from "react";
 
 const TEMPORARY_REMOTE_AVATAR_URL = "https://modelviewer.dev/shared-assets/models/Astronaut.glb";
 
-export const AVATAR_MODEL_URL = process.env.NEXT_PUBLIC_AVATAR_MODEL_URL || "/models/clouva-avatar.glb";
+export const AVATAR_MODEL_URL = process.env.NEXT_PUBLIC_AVATAR_MODEL_URL || process.env.NEXT_PUBLIC_SUPABASE_AVATAR_MODEL_URL || "/models/clouva-avatar.glb";
 
 export function AvatarModel({ className = "" }: { className?: string }) {
   const [modelUrl, setModelUrl] = useState(AVATAR_MODEL_URL);
   const [visualFallback, setVisualFallback] = useState(false);
 
   if (visualFallback) {
-    return <div className={`clouva-avatar-fallback ${className}`} aria-label="Personaje humanoide temporal CLOUVA" />;
+    return (
+      <div className={`clouva-avatar-fallback ${className}`} aria-label="Personaje CLOUVA streetwear original">
+        <span className="clouva-avatar-hair" />
+        <span className="clouva-avatar-head" />
+        <span className="clouva-avatar-hoodie"><i>☘</i></span>
+        <span className="clouva-avatar-chain" />
+        <span className="clouva-avatar-leg clouva-avatar-leg-left" />
+        <span className="clouva-avatar-leg clouva-avatar-leg-right" />
+        <span className="clouva-avatar-shoe clouva-avatar-shoe-left" />
+        <span className="clouva-avatar-shoe clouva-avatar-shoe-right" />
+      </div>
+    );
   }
 
   return (
     <model-viewer
       key={modelUrl}
       src={modelUrl}
-      alt="Personaje 3D CLOUVA"
+      alt="Personaje 3D CLOUVA con streetwear oscuro, cadenas y trébol"
       camera-controls
       touch-action="pan-y"
       interaction-prompt="none"
@@ -31,9 +42,9 @@ export function AvatarModel({ className = "" }: { className?: string }) {
       auto-rotate
       auto-rotate-delay="2400"
       rotation-per-second="1.6deg"
-      shadow-intensity="0.5"
+      shadow-intensity="0.68"
       shadow-softness="0.95"
-      exposure="0.9"
+      exposure="0.82"
       environment-image="neutral"
       ar={false}
       onError={() => {
