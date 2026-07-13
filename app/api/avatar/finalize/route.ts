@@ -4,13 +4,22 @@ import { createClient } from "@supabase/supabase-js";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const MAX_GLB_BYTES = 25 * 1024 * 1024;
+const MAX_GLB_BYTES = 75 * 1024 * 1024;
 
 function getAdminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceRole = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !serviceRole) throw new Error("Missing Supabase server credentials");
   return createClient(url, serviceRole, { auth: { persistSession: false, autoRefreshToken: false } });
+}
+
+async function ensureAvatarBucketLimit(supabase: ReturnType<typeof getAdminClient>) {
+  const { error } = await supabase.storage.updateBucket("avatars", {
+    public: true,
+    fileSizeLimit: MAX_GLB_BYTES,
+    allowedMimeTypes: ["model/gltf-binary", "image/png", "image/jpeg", "image/webp"],
+  });
+  if (error) throw error;
 }
 
 export async function POST(request: NextRequest) {
@@ -40,10 +49,10 @@ export async function POST(request: NextRequest) {
     if (!remote.ok) return NextResponse.json({ error: `Could not download Meshy GLB (${remote.status})` }, { status: 502 });
 
     const contentLength = Number(remote.headers.get("content-length") || 0);
-    if (contentLength > MAX_GLB_BYTES) return NextResponse.json({ error: "Generated GLB exceeds 25 MB" }, { status: 413 });
+    if (contentLength > MAX_GLB_BYTES) return NextResponse.json({ error: "Generated GLB exceeds 75 MB" }, { status: 413 });
 
     const bytes = await remote.arrayBuffer();
-    if (bytes.byteLength > MAX_GLB_BYTES) return NextResponse.json({ error: "Generated GLB exceeds 25 MB" }, { status: 413 });
+    if (bytes.byteLength > MAX_GLB_BYTES) return NextResponse.json({ error: "Generated GLB exceeds 75 MB" }, { status: 413 });
     if (Buffer.from(bytes).subarray(0, 4).toString("ascii") !== "glTF") {
       return NextResponse.json({ error: "Meshy did not return a valid GLB" }, { status: 422 });
     }
@@ -59,6 +68,8 @@ export async function POST(request: NextRequest) {
 
     const avatarId = pendingAvatar?.id ?? crypto.randomUUID();
     const storagePath = `${userData.user.id}/${avatarId}/avatar.glb`;
+
+    await ensureAvatarBucketLimit(supabase);
 
     const { error: uploadError } = await supabase.storage.from("avatars").upload(storagePath, bytes, {
       contentType: "model/gltf-binary",
