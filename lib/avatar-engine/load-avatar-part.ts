@@ -1,6 +1,6 @@
 import { Box3, Color, Material, Mesh, Object3D, SkinnedMesh, Vector3 } from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { SkeletonUtils } from "three/examples/jsm/utils/SkeletonUtils.js";
+import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { resolveAvatarAssetUrl } from "./assets";
 import { CLOUVA_SKELETON_ID, type AvatarCompatibilityStatus, type AvatarItem, type BaseAvatarModel, type LoadedAvatarPart } from "./types";
 
@@ -97,7 +97,7 @@ export async function loadAvatarPart(item: AvatarItem, baseModel?: BaseAvatarMod
   const modelUrl = resolveAvatarAssetUrl(item); if (!modelUrl) throw new Error(`Avatar part ${item.id} has no modelUrl`);
   const loader = new GLTFLoader();
   const gltf = await (gltfCache.get(modelUrl) ?? gltfCache.set(modelUrl, loader.loadAsync(modelUrl)).get(modelUrl)!);
-  const object = SkeletonUtils.clone(gltf.scene) as typeof gltf.scene;
+  const object = cloneSkeleton(gltf.scene) as typeof gltf.scene;
   cloneMaterials(object);
   const analysis = analyzeObject(object);
   if (item.category !== "body" && baseModel?.boneNames.length && analysis.skinnedMeshNames.length && !analysis.boneNames.some((bone) => baseModel.boneNames.includes(bone))) throw new Error(`Avatar part ${item.id} does not share base bones`);

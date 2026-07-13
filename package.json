@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test": "node --test tests-avatar-engine.mjs"
+    "test": "node --import tsx --test tests-avatar-engine.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.8",
@@ -19,18 +19,20 @@
     "next-themes": "^0.4.6",
     "react": "19.0.0",
     "react-dom": "19.0.0",
-    "zustand": "^5.0.1",
-    "three": "^0.178.0"
+    "three": "^0.178.0",
+    "zustand": "^5.0.1"
   },
   "devDependencies": {
     "@types/node": "^22.9.0",
     "@types/react": "^19.0.1",
     "@types/react-dom": "^19.0.1",
+    "@types/three": "^0.185.1",
     "autoprefixer": "^10.4.20",
     "eslint": "^9.14.0",
     "eslint-config-next": "15.1.0",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.14",
+    "tsx": "^4.23.1",
     "typescript": "^5.6.3"
   }
 }
