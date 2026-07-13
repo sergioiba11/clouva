@@ -22,13 +22,19 @@ import { buildProceduralClouvaAvatar } from "@/lib/avatar-engine/procedural-clou
 import type { AvatarConfig } from "@/lib/avatar-engine/types";
 
 type ModelState = "loading" | "ready" | "fallback" | "error";
-type Props = { modelUrl: string | null; config?: AvatarConfig; alt?: string; className?: string };
+type Props = {
+  modelUrl: string | null;
+  modelData?: ArrayBuffer | null;
+  config?: AvatarConfig;
+  alt?: string;
+  className?: string;
+};
 
 function normalizeModel(object: Object3D, targetHeight = 2.15) {
   object.updateMatrixWorld(true);
-  const initialBox = new Box3().setFromObject(object);
-  const initialSize = initialBox.getSize(new Vector3());
-  const scale = initialSize.y > 0 ? targetHeight / initialSize.y : 1;
+  const firstBox = new Box3().setFromObject(object);
+  const firstSize = firstBox.getSize(new Vector3());
+  const scale = firstSize.y > 0 ? targetHeight / firstSize.y : 1;
   object.scale.multiplyScalar(scale);
   object.updateMatrixWorld(true);
   const box = new Box3().setFromObject(object);
@@ -62,7 +68,7 @@ function frameModel(camera: PerspectiveCamera, object: Object3D, aspect: number)
   return { center, distance };
 }
 
-export function AvatarModelViewer({ modelUrl, config, className = "" }: Props) {
+export function AvatarModelViewer({ modelUrl, modelData, config, className = "" }: Props) {
   const mount = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<ModelState>("loading");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -144,42 +150,49 @@ export function AvatarModelViewer({ modelUrl, config, className = "" }: Props) {
     resizeObserver.observe(mount.current);
     window.addEventListener("resize", resize);
 
-    const useFallback = () => {
+    const showModel = (object: Object3D) => {
+      if (disposed) return;
+      normalizeModel(object);
+      object.rotation.y = Math.PI;
+      currentModel = object;
+      scene.add(object);
+      setState("ready");
+      resize();
+    };
+
+    const showError = (error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("GLB load failed", error);
+      setErrorMessage(message || "Error desconocido leyendo el GLB");
+      setState("error");
+      const fallback = buildProceduralClouvaAvatar(config);
+      normalizeModel(fallback);
+      currentModel = fallback;
+      scene.add(fallback);
+      resize();
+    };
+
+    const loader = new GLTFLoader();
+    loader.setMeshoptDecoder(MeshoptDecoder);
+    setState("loading");
+    setErrorMessage(null);
+
+    if (modelData) {
+      loader.parse(
+        modelData.slice(0),
+        "",
+        (gltf) => showModel(gltf.scene),
+        (error) => showError(error),
+      );
+    } else if (modelUrl) {
+      loader.load(modelUrl, (gltf) => showModel(gltf.scene), undefined, (error) => showError(error));
+    } else {
       const fallback = buildProceduralClouvaAvatar(config);
       normalizeModel(fallback);
       currentModel = fallback;
       scene.add(fallback);
       setState("fallback");
       resize();
-    };
-
-    const loader = new GLTFLoader();
-    loader.setMeshoptDecoder(MeshoptDecoder);
-
-    setState("loading");
-    setErrorMessage(null);
-
-    if (modelUrl) {
-      loader.load(
-        modelUrl,
-        (gltf) => {
-          if (disposed) return;
-          const object = gltf.scene;
-          normalizeModel(object);
-          object.rotation.y = Math.PI;
-          currentModel = object;
-          scene.add(object);
-          setState("ready");
-          resize();
-        },
-        undefined,
-        (error) => {
-          console.error("GLB load failed", error);
-          if (!disposed) useFallback();
-        },
-      );
-    } else {
-      useFallback();
     }
 
     const animate = () => {
@@ -201,7 +214,7 @@ export function AvatarModelViewer({ modelUrl, config, className = "" }: Props) {
       renderer.dispose();
       mount.current?.replaceChildren();
     };
-  }, [modelUrl, config]);
+  }, [modelUrl, modelData, config]);
 
   if (!config) return null;
 
@@ -213,8 +226,16 @@ export function AvatarModelViewer({ modelUrl, config, className = "" }: Props) {
       style={{ position: "absolute", inset: 0, width: "100%", height: "100%", minHeight: "100dvh" }}
     >
       {state === "loading" ? <div className="avatar-loader">Cargando CLOUVA 3D…</div> : null}
-      {state === "error" ? <div className="avatar-loader">No se pudo cargar el avatar: {errorMessage}</div> : null}
-      <div ref={mount} className="avatar-model-viewer" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", minHeight: "100dvh", touchAction: "none" }} />
+      {state === "error" ? (
+        <div className="avatar-loader" style={{ maxWidth: "88vw", textAlign: "center", zIndex: 30 }}>
+          Error GLB: {errorMessage}
+        </div>
+      ) : null}
+      <div
+        ref={mount}
+        className="avatar-model-viewer"
+        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", minHeight: "100dvh", touchAction: "none" }}
+      />
     </div>
   );
 }
