@@ -22,38 +22,46 @@ export async function GET() {
 
     const { data: admins, error: adminError } = await supabase
       .from("profiles")
-      .select("id,avatar_3d_url,updated_at")
+      .select("id,role,avatar_3d_url")
       .eq("role", "admin")
-      .order("updated_at", { ascending: false })
-      .limit(10);
+      .limit(20);
 
     if (adminError) throw adminError;
 
-    const directProfileAvatar = admins?.find((profile) => profile.avatar_3d_url)?.avatar_3d_url;
-    if (directProfileAvatar) {
+    const adminWithProfileAvatar = admins?.find((profile) => Boolean(profile.avatar_3d_url));
+    if (adminWithProfileAvatar?.avatar_3d_url) {
       return NextResponse.json(
-        { modelUrl: directProfileAvatar, source: "admin-profile" },
+        {
+          modelUrl: adminWithProfileAvatar.avatar_3d_url,
+          source: "admin-profile",
+          adminId: adminWithProfileAvatar.id,
+        },
         { headers: { "Cache-Control": "no-store, max-age=0" } },
       );
     }
 
     const adminIds = (admins ?? []).map((profile) => profile.id).filter(Boolean);
     if (adminIds.length) {
-      const { data: activeAvatar, error: activeError } = await supabase
+      const { data: avatars, error: avatarError } = await supabase
         .from("user_avatars")
-        .select("id,model_url,updated_at")
+        .select("id,user_id,model_url,is_active,status,updated_at")
         .in("user_id", adminIds)
         .eq("status", "ready")
         .not("model_url", "is", null)
-        .order("is_active", { ascending: false })
         .order("updated_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
+        .limit(50);
 
-      if (activeError) throw activeError;
-      if (activeAvatar?.model_url) {
+      if (avatarError) throw avatarError;
+
+      const selected = avatars?.find((avatar) => avatar.is_active) ?? avatars?.[0];
+      if (selected?.model_url) {
         return NextResponse.json(
-          { modelUrl: activeAvatar.model_url, source: "admin-avatar", avatarId: activeAvatar.id },
+          {
+            modelUrl: selected.model_url,
+            source: "admin-avatar",
+            avatarId: selected.id,
+            adminId: selected.user_id,
+          },
           { headers: { "Cache-Control": "no-store, max-age=0" } },
         );
       }
@@ -66,7 +74,11 @@ export async function GET() {
   } catch (error) {
     console.error("Could not resolve CLOUVA admin avatar", error);
     return NextResponse.json(
-      { modelUrl: `${officialFallbackUrl()}?v=${Date.now()}`, source: "official-fallback" },
+      {
+        modelUrl: `${officialFallbackUrl()}?v=${Date.now()}`,
+        source: "official-fallback",
+        error: error instanceof Error ? error.message : String(error),
+      },
       { headers: { "Cache-Control": "no-store, max-age=0" } },
     );
   }
