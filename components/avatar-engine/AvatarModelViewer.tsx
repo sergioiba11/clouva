@@ -5,16 +5,13 @@ import {
   ACESFilmicToneMapping,
   AmbientLight,
   AnimationMixer,
-  Box3,
   Clock,
   DirectionalLight,
   HemisphereLight,
-  MathUtils,
   Object3D,
   PerspectiveCamera,
   Scene,
   SRGBColorSpace,
-  Vector3,
   WebGLRenderer,
 } from "three";
 import { applyAvatarConfig } from "@/lib/avatar-engine/apply-avatar-config";
@@ -48,21 +45,18 @@ function Fallback({ className }: { className: string }) {
   );
 }
 
-function frameObject(camera: PerspectiveCamera, object: Object3D, aspect: number) {
-  object.updateMatrixWorld(true);
-  const box = new Box3().setFromObject(object);
-  const size = box.getSize(new Vector3());
-  const center = box.getCenter(new Vector3());
-  const verticalFov = MathUtils.degToRad(camera.fov);
-  const horizontalFov = 2 * Math.atan(Math.tan(verticalFov / 2) * Math.max(aspect, 0.1));
-  const distanceForHeight = size.y / (2 * Math.tan(verticalFov / 2));
-  const distanceForWidth = size.x / (2 * Math.tan(horizontalFov / 2));
-  const distance = Math.max(distanceForHeight, distanceForWidth, size.z * 2, 2) * 1.18;
+function frameHumanoid(camera: PerspectiveCamera, aspect: number) {
+  camera.aspect = Math.max(aspect, 0.1);
+  camera.fov = 30;
+  camera.near = 0.05;
+  camera.far = 100;
 
-  camera.near = Math.max(distance / 100, 0.01);
-  camera.far = Math.max(distance * 20, 100);
-  camera.position.set(center.x, center.y + size.y * 0.02, center.z + distance);
-  camera.lookAt(center.x, center.y + size.y * 0.02, center.z);
+  const portraitDistance = 4.8;
+  const landscapeDistance = 3.9;
+  const distance = aspect < 0.8 ? portraitDistance : landscapeDistance;
+
+  camera.position.set(0, 1.02, distance);
+  camera.lookAt(0, 0.92, 0);
   camera.updateProjectionMatrix();
 }
 
@@ -77,7 +71,7 @@ export function AvatarModelViewer({ modelUrl, config, className = "" }: Props) {
 
     let disposed = false;
     const scene = new Scene();
-    const camera = new PerspectiveCamera(32, 1, 0.01, 100);
+    const camera = new PerspectiveCamera(30, 1, 0.05, 100);
     const renderer = new WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
     const clock = new Clock();
     let mixer: AnimationMixer | null = null;
@@ -109,10 +103,8 @@ export function AvatarModelViewer({ modelUrl, config, className = "" }: Props) {
       if (!rect) return;
       const width = Math.max(rect.width, 1);
       const height = Math.max(rect.height, 1);
-      camera.aspect = width / height;
-      camera.updateProjectionMatrix();
       renderer.setSize(width, height, false);
-      if (bodyObject) frameObject(camera, bodyObject, camera.aspect);
+      frameHumanoid(camera, width / height);
     };
 
     const resizeObserver = new ResizeObserver(resize);
@@ -139,12 +131,12 @@ export function AvatarModelViewer({ modelUrl, config, className = "" }: Props) {
       const body = await loadAvatarPart(item, null);
       if (disposed) return;
 
-      normalizeAvatarObject(body.object);
+      normalizeAvatarObject(body.object, 1.85);
       bodyObject = body.object;
       scene.add(body.object);
 
       const analysis = analyzeObject(body.object);
-      frameObject(camera, body.object, camera.aspect);
+      frameHumanoid(camera, camera.aspect);
 
       mixer = new AnimationMixer(body.object);
       const model: BaseAvatarModel = {
