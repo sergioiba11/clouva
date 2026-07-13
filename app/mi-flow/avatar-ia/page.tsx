@@ -5,53 +5,11 @@ import Link from "next/link";
 import { useAuth } from "@/components/auth-provider";
 import { useActiveAvatarStore } from "@/lib/avatar-engine/active-avatar-store";
 
-type StylePreset = {
-  id: string;
-  label: string;
-  description: string;
-  prompt: string;
-  artStyle: "realistic" | "cartoon";
-};
+type Phase = "idle" | "uploading" | "generating" | "saving" | "done" | "error";
 
-const STYLES: StylePreset[] = [
-  {
-    id: "streetwear",
-    label: "Streetwear oscuro",
-    description: "Oversize, cargos y actitud underground.",
-    prompt:
-      "A stylized 3D character, young person wearing an oversized black hoodie and black cargo pants with straps and chains, dark streetwear aesthetic, full body, T-pose, clean topology, video game character model",
-    artStyle: "cartoon",
-  },
-  {
-    id: "futurista",
-    label: "Futurista",
-    description: "Techwear, detalles luminosos y silueta cyber.",
-    prompt:
-      "A stylized 3D character wearing sleek futuristic techwear clothing, cyberpunk streetwear, glowing accents, full body, T-pose, clean topology, video game character model",
-    artStyle: "cartoon",
-  },
-  {
-    id: "deportivo",
-    label: "Urbano deportivo",
-    description: "Conjunto, sneakers y estética de calle.",
-    prompt:
-      "A stylized 3D character wearing an athletic tracksuit and sneakers, urban sporty streetwear look, full body, T-pose, clean topology, video game character model",
-    artStyle: "cartoon",
-  },
-  {
-    id: "realista",
-    label: "Realista",
-    description: "Proporciones humanas y acabado natural.",
-    prompt:
-      "A realistic 3D character, young person wearing a black hoodie and dark pants, full body, T-pose, clean topology, game-ready character model",
-    artStyle: "realistic",
-  },
-];
-
-type Phase = "idle" | "preview" | "refining" | "saving" | "done" | "error";
-
-type GenerationResult = {
+type TaskResult = {
   status: string;
+  progress?: number;
   model_urls?: { glb?: string };
   task_error?: { message?: string };
 };
@@ -59,24 +17,33 @@ type GenerationResult = {
 export default function AvatarIaPage() {
   const { user, session } = useAuth();
   const setActiveAvatar = useActiveAvatarStore((state) => state.setActiveAvatar);
-  const [styleId, setStyleId] = useState(STYLES[0].id);
+  const [reference, setReference] = useState<File | null>(null);
+  const [referencePreview, setReferencePreview] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
   const [progress, setProgress] = useState(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [resultUrl, setResultUrl] = useState<string | null>(null);
 
-  const selectedStyle = STYLES.find((style) => style.id === styleId) ?? STYLES[0];
-  const busy = phase === "preview" || phase === "refining" || phase === "saving";
+  const busy = phase === "uploading" || phase === "generating" || phase === "saving";
 
-  const poll = async (taskId: string): Promise<GenerationResult> => {
+  const pollTask = async (taskId: string): Promise<TaskResult> => {
     while (true) {
       await new Promise((resolve) => setTimeout(resolve, 4000));
-      const response = await fetch(`/api/meshy/status?taskId=${taskId}`);
+      const response = await fetch(`/api/meshy/status?taskId=${taskId}&kind=multi-image`);
       const data = await response.json();
       if (data.error) throw new Error(data.error);
       if (typeof data.progress === "number") setProgress(data.progress);
       if (["SUCCEEDED", "FAILED", "EXPIRED"].includes(data.status)) return data;
     }
+  };
+
+  const chooseReference = (file: File | null) => {
+    if (referencePreview) URL.revokeObjectURL(referencePreview);
+    setReference(file);
+    setReferencePreview(file ? URL.createObjectURL(file) : null);
+    setResultUrl(null);
+    setErrorMsg(null);
+    setPhase("idle");
   };
 
   const generate = async () => {
@@ -85,62 +52,48 @@ export default function AvatarIaPage() {
     setProgress(0);
 
     try {
-      if (!user || !session?.access_token) {
-        throw new Error("Iniciá sesión para crear y guardar tu avatar.");
-      }
+      if (!user || !session?.access_token) throw new Error("Iniciá sesión para guardar el avatar.");
+      if (!reference) throw new Error("Subí una imagen de referencia.");
 
-      setPhase("preview");
-      const createResponse = await fetch("/api/meshy/create", {
+      setPhase("uploading");
+      const form = new FormData();
+      form.append("image", reference);
+
+      const createResponse = await fetch("/api/avatar/from-image", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: selectedStyle.prompt, artStyle: selectedStyle.artStyle }),
+        headers: { Authorization: `Bearer ${session.access_token}` },
+        body: form,
       });
       const created = await createResponse.json();
       if (!createResponse.ok || created.error || !created.taskId) {
-        throw new Error(created.error || "No se pudo iniciar la creación.");
+        throw new Error(created.error || "No se pudo enviar la referencia.");
       }
 
-      const previewResult = await poll(created.taskId);
-      if (previewResult.status !== "SUCCEEDED") {
-        throw new Error(previewResult.task_error?.message || "No se pudo crear la base del avatar.");
-      }
-
-      setPhase("refining");
-      setProgress(0);
-      const refineResponse = await fetch("/api/meshy/create", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: "refine", previewTaskId: created.taskId }),
-      });
-      const refined = await refineResponse.json();
-      if (!refineResponse.ok || refined.error || !refined.taskId) {
-        throw new Error(refined.error || "No se pudo completar el avatar.");
-      }
-
-      const refineResult = await poll(refined.taskId);
-      if (refineResult.status !== "SUCCEEDED" || !refineResult.model_urls?.glb) {
-        throw new Error(refineResult.task_error?.message || "No se pudo terminar el personaje.");
+      setPhase("generating");
+      const generated = await pollTask(created.taskId);
+      if (generated.status !== "SUCCEEDED" || !generated.model_urls?.glb) {
+        throw new Error(generated.task_error?.message || "No se pudo crear el modelo 3D.");
       }
 
       setPhase("saving");
-      const finalizeResponse = await fetch("/api/avatar/finalize", {
+      const saveResponse = await fetch("/api/avatar/finalize", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({
-          modelUrl: refineResult.model_urls.glb,
-          meshyTaskId: refined.taskId,
-          name: `Avatar ${selectedStyle.label}`,
+          modelUrl: generated.model_urls.glb,
+          meshyTaskId: created.taskId,
+          name: "Avatar oficial CLOUVA",
         }),
       });
-      const finalized = await finalizeResponse.json();
-      if (!finalizeResponse.ok || finalized.error || !finalized.avatar?.model_url) {
-        throw new Error(finalized.error || "No se pudo guardar el avatar.");
+      const saved = await saveResponse.json();
+      if (!saveResponse.ok || saved.error || !saved.avatar?.model_url) {
+        throw new Error(saved.error || "No se pudo guardar el avatar.");
       }
 
-      const avatar = finalized.avatar;
+      const avatar = saved.avatar;
       setResultUrl(avatar.model_url);
       setActiveAvatar({
         id: avatar.id,
@@ -158,87 +111,59 @@ export default function AvatarIaPage() {
     }
   };
 
-  const buttonLabel = {
-    idle: "Crear mi avatar",
-    preview: `Construyendo personaje… ${progress}%`,
-    refining: `Terminando detalles… ${progress}%`,
+  const label = {
+    idle: "Crear personaje 3D",
+    uploading: "Subiendo referencia…",
+    generating: `Creando modelo 3D… ${progress}%`,
     saving: "Guardando en tu cuenta…",
     done: "Crear otra versión",
     error: "Volver a intentar",
   }[phase];
 
   return (
-    <main className="mx-auto min-h-screen w-full max-w-5xl px-4 pb-24 pt-5 sm:px-6">
+    <main className="mx-auto min-h-screen w-full max-w-4xl px-4 pb-24 pt-5 sm:px-6">
       <div className="mb-6 flex items-center justify-between gap-3">
-        <Link
-          href="/mi-flow/avatar"
-          className="rounded-full border border-white/10 bg-black/30 px-4 py-2 text-sm text-white/75 backdrop-blur-xl transition hover:border-white/25 hover:text-white"
-        >
+        <Link href="/mi-flow/avatar" className="rounded-full border border-white/10 bg-black/30 px-4 py-2 text-sm text-white/75">
           ← Volver
         </Link>
-        <span className="text-[11px] font-medium uppercase tracking-[0.25em] text-white/40">CLOUVA Avatar</span>
+        <span className="text-[11px] uppercase tracking-[0.25em] text-white/40">CLOUVA Avatar</span>
       </div>
 
-      <section className="overflow-hidden rounded-[2rem] border border-white/10 bg-[radial-gradient(circle_at_top,rgba(126,87,255,0.24),transparent_48%),rgba(6,6,12,0.88)] p-5 shadow-2xl shadow-violet-950/30 sm:p-8">
-        <div className="max-w-2xl">
-          <p className="mb-3 text-xs font-semibold uppercase tracking-[0.24em] text-violet-300/80">Tu identidad 3D</p>
-          <h1 className="text-3xl font-semibold tracking-tight text-white sm:text-5xl">Creá tu personaje CLOUVA</h1>
-          <p className="mt-3 max-w-xl text-sm leading-6 text-white/60 sm:text-base">
-            Elegí una dirección visual. CLOUVA construye una versión 3D única y la deja activa automáticamente en tu cuenta.
-          </p>
-        </div>
+      <section className="rounded-[2rem] border border-white/10 bg-[radial-gradient(circle_at_top,rgba(126,87,255,0.24),transparent_48%),rgba(6,6,12,0.9)] p-5 sm:p-8">
+        <p className="text-xs font-semibold uppercase tracking-[0.24em] text-violet-300/80">Referencia a 3D</p>
+        <h1 className="mt-3 text-3xl font-semibold text-white sm:text-5xl">Creá el personaje desde una imagen</h1>
+        <p className="mt-3 max-w-2xl text-sm leading-6 text-white/60 sm:text-base">
+          Subí el diseño del personaje. CLOUVA usa esa imagen como referencia visual para generar el modelo 3D y guardarlo en tu cuenta.
+        </p>
 
-        <div className="mt-8 grid gap-3 sm:grid-cols-2">
-          {STYLES.map((style) => {
-            const active = style.id === styleId;
-            return (
-              <button
-                key={style.id}
-                type="button"
-                onClick={() => setStyleId(style.id)}
-                disabled={busy}
-                className={`min-h-28 rounded-3xl border p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-60 ${
-                  active
-                    ? "border-violet-400/80 bg-violet-400/15 shadow-lg shadow-violet-950/40"
-                    : "border-white/10 bg-white/[0.03] hover:border-white/25 hover:bg-white/[0.06]"
-                }`}
-              >
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <h2 className="font-medium text-white">{style.label}</h2>
-                    <p className="mt-2 text-sm leading-5 text-white/50">{style.description}</p>
-                  </div>
-                  <span
-                    className={`mt-1 h-4 w-4 shrink-0 rounded-full border ${
-                      active ? "border-violet-300 bg-violet-400 shadow-[0_0_18px_rgba(139,92,246,0.8)]" : "border-white/25"
-                    }`}
-                  />
-                </div>
-              </button>
-            );
-          })}
-        </div>
-
-        <div className="mt-6 rounded-3xl border border-white/10 bg-black/25 p-4 sm:flex sm:items-center sm:justify-between sm:gap-5">
-          <div>
-            <p className="text-sm font-medium text-white">{selectedStyle.label}</p>
-            <p className="mt-1 text-xs text-white/45">La creación puede demorar unos minutos. Podés dejar esta pantalla abierta.</p>
-          </div>
-          <button
-            type="button"
-            onClick={generate}
+        <label className="mt-7 block cursor-pointer overflow-hidden rounded-3xl border border-dashed border-violet-300/35 bg-black/25 p-4 text-center">
+          {referencePreview ? (
+            <img src={referencePreview} alt="Referencia seleccionada" className="mx-auto max-h-[520px] w-full rounded-2xl object-contain" />
+          ) : (
+            <div className="py-16">
+              <p className="text-lg font-medium text-white">Subir imagen</p>
+              <p className="mt-2 text-sm text-white/45">PNG, JPG o WEBP · máximo 8 MB</p>
+            </div>
+          )}
+          <input
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            className="hidden"
             disabled={busy}
-            className="mt-4 w-full rounded-2xl bg-violet-400 px-5 py-3.5 text-sm font-semibold text-black transition hover:bg-violet-300 disabled:cursor-wait disabled:opacity-65 sm:mt-0 sm:w-auto sm:min-w-56"
-          >
-            {buttonLabel}
-          </button>
-        </div>
+            onChange={(event) => chooseReference(event.target.files?.[0] ?? null)}
+          />
+        </label>
 
-        {errorMsg ? (
-          <div className="mt-4 rounded-2xl border border-rose-400/25 bg-rose-400/10 px-4 py-3 text-sm text-rose-200">
-            {errorMsg}
-          </div>
-        ) : null}
+        <button
+          type="button"
+          onClick={generate}
+          disabled={busy || !reference}
+          className="mt-5 w-full rounded-2xl bg-violet-400 px-5 py-4 text-sm font-semibold text-black disabled:opacity-50"
+        >
+          {label}
+        </button>
+
+        {errorMsg ? <div className="mt-4 rounded-2xl border border-rose-400/25 bg-rose-400/10 p-4 text-sm text-rose-200">{errorMsg}</div> : null}
 
         {resultUrl ? (
           <div className="mt-6 overflow-hidden rounded-3xl border border-violet-300/20 bg-black/35 p-3">
@@ -251,8 +176,8 @@ export default function AvatarIaPage() {
               style={{ width: "100%", height: "min(62vh, 540px)", borderRadius: "1.25rem" }}
             />
             <div className="px-2 pb-2 pt-3 text-center">
-              <p className="text-sm font-medium text-emerald-300">Tu avatar quedó guardado y activo ✓</p>
-              <Link href="/mi-flow/avatar" className="mt-2 inline-block text-sm text-white/55 underline underline-offset-4">
+              <p className="text-sm font-medium text-emerald-300">Guardado y activo ✓</p>
+              <Link href="/mi-flow/avatar" className="mt-2 inline-block text-sm text-white/55 underline">
                 Abrir en el editor
               </Link>
             </div>
