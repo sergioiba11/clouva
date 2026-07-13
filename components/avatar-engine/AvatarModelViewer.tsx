@@ -4,11 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import {
   ACESFilmicToneMapping,
   AmbientLight,
-  AnimationMixer,
-  Clock,
   DirectionalLight,
   HemisphereLight,
-  Object3D,
   PerspectiveCamera,
   Scene,
   SRGBColorSpace,
@@ -50,12 +47,7 @@ function frameHumanoid(camera: PerspectiveCamera, aspect: number) {
   camera.fov = 30;
   camera.near = 0.05;
   camera.far = 100;
-
-  const portraitDistance = 4.8;
-  const landscapeDistance = 3.9;
-  const distance = aspect < 0.8 ? portraitDistance : landscapeDistance;
-
-  camera.position.set(0, 1.02, distance);
+  camera.position.set(0, 1.02, aspect < 0.8 ? 4.8 : 3.9);
   camera.lookAt(0, 0.92, 0);
   camera.updateProjectionMatrix();
 }
@@ -73,10 +65,7 @@ export function AvatarModelViewer({ modelUrl, config, className = "" }: Props) {
     const scene = new Scene();
     const camera = new PerspectiveCamera(30, 1, 0.05, 100);
     const renderer = new WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
-    const clock = new Clock();
-    let mixer: AnimationMixer | null = null;
     let raf = 0;
-    let bodyObject: Object3D | null = null;
     const loadedParts: Record<string, LoadedAvatarPart> = {};
 
     renderer.outputColorSpace = SRGBColorSpace;
@@ -113,10 +102,7 @@ export function AvatarModelViewer({ modelUrl, config, className = "" }: Props) {
     resize();
 
     const animate = () => {
-      if (!document.hidden) {
-        mixer?.update(clock.getDelta());
-        renderer.render(scene, camera);
-      }
+      if (!document.hidden) renderer.render(scene, camera);
       raf = requestAnimationFrame(animate);
     };
     raf = requestAnimationFrame(animate);
@@ -132,13 +118,9 @@ export function AvatarModelViewer({ modelUrl, config, className = "" }: Props) {
       if (disposed) return;
 
       normalizeAvatarObject(body.object, 1.85);
-      bodyObject = body.object;
       scene.add(body.object);
-
       const analysis = analyzeObject(body.object);
-      frameHumanoid(camera, camera.aspect);
 
-      mixer = new AnimationMixer(body.object);
       const model: BaseAvatarModel = {
         object: body.object,
         skeletonId: body.skeletonId,
@@ -155,13 +137,6 @@ export function AvatarModelViewer({ modelUrl, config, className = "" }: Props) {
       setSkinTone(body.object, config.skinTone);
       setHairColor(body.object, config.hairColor);
       applyMorphValues(body.object, config.morphValues);
-
-      const clip =
-        body.animations.find((candidate: any) =>
-          String(candidate.name).toLowerCase().includes(String(config.activeAnimation ?? "idle").toLowerCase()),
-        ) ?? body.animations[0];
-      if (clip) mixer.clipAction(clip).reset().fadeIn(0.25).play();
-
       await applyAvatarConfig(config, model);
 
       for (const id of [config.faceId, config.hairId, config.topId, config.bottomId, config.shoesId, ...config.accessoryIds].filter(Boolean) as string[]) {
