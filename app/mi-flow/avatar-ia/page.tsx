@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/components/auth-provider";
+import { useActiveAvatarStore } from "@/lib/avatar-engine/active-avatar-store";
 
 type StylePreset = { id: string; label: string; prompt: string; artStyle: "realistic" | "cartoon" };
 
@@ -53,7 +54,8 @@ const OFFICIAL_CHARACTERS = [
 ];
 
 export default function AvatarIaPage() {
-  const { user } = useAuth();
+  const { user, session } = useAuth();
+  const setActiveAvatar = useActiveAvatarStore((state) => state.setActiveAvatar);
   const [styleId, setStyleId] = useState(STYLES[0].id);
   const [phase, setPhase] = useState<Phase>("idle");
   const [progress, setProgress] = useState(0);
@@ -120,6 +122,8 @@ export default function AvatarIaPage() {
     setResultUrl(null);
     setProgress(0);
     try {
+      if (!user || !session?.access_token) throw new Error("Tenés que iniciar sesión para guardar tu avatar");
+
       setPhase("preview");
       const createRes = await fetch("/api/meshy/create", {
         method: "POST",
@@ -145,14 +149,35 @@ export default function AvatarIaPage() {
         throw new Error(refineResult.task_error?.message || "Falló el texturizado");
       }
 
-      const glbUrl = refineResult.model_urls.glb;
-      setResultUrl(glbUrl);
-
-      if (user) {
-        setPhase("saving");
-        const { supabase } = await import("@/lib/supabase");
-        await supabase.from("profiles").update({ avatar_3d_url: glbUrl }).eq("id", user.id);
+      setPhase("saving");
+      const finalizeRes = await fetch("/api/avatar/finalize", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          modelUrl: refineResult.model_urls.glb,
+          meshyTaskId: refined.taskId,
+          name: `Avatar ${style.label}`,
+        }),
+      });
+      const finalized = await finalizeRes.json();
+      if (!finalizeRes.ok || finalized.error || !finalized.avatar?.model_url) {
+        throw new Error(finalized.error || "No se pudo guardar el avatar");
       }
+
+      const avatar = finalized.avatar;
+      setResultUrl(avatar.model_url);
+      setActiveAvatar({
+        id: avatar.id,
+        source: "generated",
+        modelUrl: avatar.model_url,
+        fallbackUrl: null,
+        status: "ready",
+        frontRotationY: Number(avatar.front_rotation_y ?? 0),
+        updatedAt: avatar.updated_at ?? new Date().toISOString(),
+      });
       setPhase("done");
     } catch (error) {
       setErrorMsg(error instanceof Error ? error.message : "Error desconocido");
@@ -224,7 +249,7 @@ export default function AvatarIaPage() {
           {phase === "idle" && "Generar personaje"}
           {phase === "preview" && `Generando boceto 3D… ${progress}%`}
           {phase === "refining" && `Aplicando textura… ${progress}%`}
-          {phase === "saving" && "Guardando en tu perfil…"}
+          {phase === "saving" && "Guardando en tu cuenta…"}
           {phase === "done" && "Generar otro"}
           {phase === "error" && "Reintentar"}
         </button>
@@ -240,7 +265,7 @@ export default function AvatarIaPage() {
               auto-rotate
               style={{ width: "100%", height: "360px", borderRadius: "1rem" }}
             />
-            {phase === "done" ? <p className="mt-2 text-sm text-emerald-300">Guardado en tu perfil ✓</p> : null}
+            {phase === "done" ? <p className="mt-2 text-sm text-emerald-300">Guardado y activado en tu cuenta ✓</p> : null}
           </div>
         ) : null}
       </section>
