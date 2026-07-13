@@ -32,41 +32,54 @@ export async function POST(request: NextRequest) {
       .not("meshy_task_id", "is", null);
     if (pendingError) throw pendingError;
 
-    const results: Array<{ id: string; status: string; error?: string }> = [];
+    const results: Array<{ id: string; status: string; remoteStatus?: string; progress?: number; error?: string }> = [];
 
     for (const avatar of pending ?? []) {
       try {
         const task = await getMultiImageTask(avatar.meshy_task_id);
 
         if (task.status === "FAILED" || task.status === "EXPIRED") {
+          const message = task.task_error?.message ?? task.status;
           await supabase
             .from("user_avatars")
             .update({
               status: "failed",
               updated_at: new Date().toISOString(),
-              metadata: { task_error: task.task_error?.message ?? task.status },
+              metadata: { task_error: message, remote_status: task.status },
             })
             .eq("id", avatar.id)
             .eq("user_id", userData.user.id);
-          results.push({ id: avatar.id, status: "failed" });
+          results.push({ id: avatar.id, status: "failed", remoteStatus: task.status, error: message });
           continue;
         }
 
-        if (task.status !== "SUCCEEDED" || !task.model_urls?.glb) {
-          results.push({ id: avatar.id, status: "generating" });
+        if (task.status !== "SUCCEEDED") {
+          await supabase
+            .from("user_avatars")
+            .update({
+              metadata: { remote_status: task.status, progress: task.progress ?? null },
+              updated_at: new Date().toISOString(),
+            })
+            .eq("id", avatar.id)
+            .eq("user_id", userData.user.id);
+          results.push({ id: avatar.id, status: "generating", remoteStatus: task.status, progress: task.progress });
           continue;
+        }
+
+        if (!task.model_urls?.glb) {
+          throw new Error("Meshy marcó la tarea como terminada pero no devolvió un GLB");
         }
 
         const remote = await fetch(task.model_urls.glb, { redirect: "follow", cache: "no-store" });
-        if (!remote.ok) throw new Error(`Could not download Meshy GLB (${remote.status})`);
+        if (!remote.ok) throw new Error(`No se pudo descargar el GLB de Meshy (${remote.status})`);
 
         const contentLength = Number(remote.headers.get("content-length") || 0);
-        if (contentLength > MAX_GLB_BYTES) throw new Error("Generated GLB exceeds 25 MB");
+        if (contentLength > MAX_GLB_BYTES) throw new Error(`El GLB pesa más de 25 MB (${Math.ceil(contentLength / 1024 / 1024)} MB)`);
 
         const bytes = await remote.arrayBuffer();
-        if (bytes.byteLength > MAX_GLB_BYTES) throw new Error("Generated GLB exceeds 25 MB");
+        if (bytes.byteLength > MAX_GLB_BYTES) throw new Error(`El GLB pesa más de 25 MB (${Math.ceil(bytes.byteLength / 1024 / 1024)} MB)`);
         if (Buffer.from(bytes).subarray(0, 4).toString("ascii") !== "glTF") {
-          throw new Error("Meshy did not return a valid GLB");
+          throw new Error("Meshy no devolvió un archivo GLB válido");
         }
 
         const storagePath = `${userData.user.id}/${avatar.id}/avatar.glb`;
@@ -88,18 +101,23 @@ export async function POST(request: NextRequest) {
             model_url: finalModelUrl,
             storage_path: storagePath,
             updated_at: now,
-            metadata: { original_meshy_url: task.model_urls.glb },
+            metadata: { original_meshy_url: task.model_urls.glb, remote_status: task.status },
           })
           .eq("id", avatar.id)
           .eq("user_id", userData.user.id);
 
-        results.push({ id: avatar.id, status: "ready" });
+        results.push({ id: avatar.id, status: "ready", remoteStatus: task.status, progress: 100 });
       } catch (error) {
-        results.push({
-          id: avatar.id,
-          status: "generating",
-          error: error instanceof Error ? error.message : "Sync failed",
-        });
+        const message = error instanceof Error ? error.message : "Sync failed";
+        await supabase
+          .from("user_avatars")
+          .update({
+            metadata: { sync_error: message },
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", avatar.id)
+          .eq("user_id", userData.user.id);
+        results.push({ id: avatar.id, status: "generating", error: message });
       }
     }
 
