@@ -5,12 +5,19 @@ import Link from "next/link";
 import { useAuth } from "@/components/auth-provider";
 import { useActiveAvatarStore } from "@/lib/avatar-engine/active-avatar-store";
 
-type StylePreset = { id: string; label: string; prompt: string; artStyle: "realistic" | "cartoon" };
+type StylePreset = {
+  id: string;
+  label: string;
+  description: string;
+  prompt: string;
+  artStyle: "realistic" | "cartoon";
+};
 
 const STYLES: StylePreset[] = [
   {
     id: "streetwear",
     label: "Streetwear oscuro",
+    description: "Oversize, cargos y actitud underground.",
     prompt:
       "A stylized 3D character, young person wearing an oversized black hoodie and black cargo pants with straps and chains, dark streetwear aesthetic, full body, T-pose, clean topology, video game character model",
     artStyle: "cartoon",
@@ -18,6 +25,7 @@ const STYLES: StylePreset[] = [
   {
     id: "futurista",
     label: "Futurista",
+    description: "Techwear, detalles luminosos y silueta cyber.",
     prompt:
       "A stylized 3D character wearing sleek futuristic techwear clothing, cyberpunk streetwear, glowing accents, full body, T-pose, clean topology, video game character model",
     artStyle: "cartoon",
@@ -25,6 +33,7 @@ const STYLES: StylePreset[] = [
   {
     id: "deportivo",
     label: "Urbano deportivo",
+    description: "Conjunto, sneakers y estética de calle.",
     prompt:
       "A stylized 3D character wearing an athletic tracksuit and sneakers, urban sporty streetwear look, full body, T-pose, clean topology, video game character model",
     artStyle: "cartoon",
@@ -32,6 +41,7 @@ const STYLES: StylePreset[] = [
   {
     id: "realista",
     label: "Realista",
+    description: "Proporciones humanas y acabado natural.",
     prompt:
       "A realistic 3D character, young person wearing a black hoodie and dark pants, full body, T-pose, clean topology, game-ready character model",
     artStyle: "realistic",
@@ -40,18 +50,11 @@ const STYLES: StylePreset[] = [
 
 type Phase = "idle" | "preview" | "refining" | "saving" | "done" | "error";
 
-const OFFICIAL_CHARACTERS = [
-  {
-    id: "male",
-    label: "Personaje oficial — masculino",
-    images: ["https://clouva.com.ar/reference/male-front.png", "https://clouva.com.ar/reference/male-back.png"],
-  },
-  {
-    id: "female",
-    label: "Personaje oficial — femenino",
-    images: ["https://clouva.com.ar/reference/female-front.png", "https://clouva.com.ar/reference/female-back.png"],
-  },
-];
+type GenerationResult = {
+  status: string;
+  model_urls?: { glb?: string };
+  task_error?: { message?: string };
+};
 
 export default function AvatarIaPage() {
   const { user, session } = useAuth();
@@ -61,96 +64,66 @@ export default function AvatarIaPage() {
   const [progress, setProgress] = useState(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [resultUrl, setResultUrl] = useState<string | null>(null);
-  const [officialBusy, setOfficialBusy] = useState<string | null>(null);
-  const [officialResults, setOfficialResults] = useState<Record<string, string>>({});
-  const [officialError, setOfficialError] = useState<Record<string, string>>({});
-  const [officialStatus, setOfficialStatus] = useState<Record<string, string>>({});
 
-  const pollMultiImage = async (taskId: string) => {
+  const selectedStyle = STYLES.find((style) => style.id === styleId) ?? STYLES[0];
+  const busy = phase === "preview" || phase === "refining" || phase === "saving";
+
+  const poll = async (taskId: string): Promise<GenerationResult> => {
     while (true) {
-      await new Promise((r) => setTimeout(r, 4000));
-      const res = await fetch(`/api/meshy/status?taskId=${taskId}&kind=multi-image`);
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      if (data.status === "SUCCEEDED" || data.status === "FAILED" || data.status === "EXPIRED") return data;
-    }
-  };
-
-  const generateOfficial = async (id: string, images: string[]) => {
-    setOfficialBusy(id);
-    setOfficialError((prev) => ({ ...prev, [id]: "" }));
-    setOfficialStatus((prev) => ({ ...prev, [id]: "Enviando fotos a Meshy…" }));
-    try {
-      const createRes = await fetch("/api/meshy/create", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode: "multi-image", imageUrls: images }),
-      });
-      const created = await createRes.json().catch(() => null);
-      if (!created) throw new Error(`Respuesta inválida del servidor (status ${createRes.status})`);
-      if (created.error) throw new Error(created.error);
-      if (!created.taskId) throw new Error("No se recibió taskId de Meshy");
-      setOfficialStatus((prev) => ({ ...prev, [id]: `Tarea creada (${created.taskId.slice(0, 8)}…), generando modelo 3D…` }));
-      const result = await pollMultiImage(created.taskId);
-      if (result.status !== "SUCCEEDED" || !result.model_urls?.glb) {
-        throw new Error(result.task_error?.message || `La tarea terminó con estado: ${result.status}`);
-      }
-      setOfficialResults((prev) => ({ ...prev, [id]: result.model_urls.glb }));
-      setOfficialStatus((prev) => ({ ...prev, [id]: "Listo ✓" }));
-    } catch (error) {
-      setOfficialError((prev) => ({ ...prev, [id]: error instanceof Error ? error.message : "Error desconocido" }));
-      setOfficialStatus((prev) => ({ ...prev, [id]: "" }));
-    } finally {
-      setOfficialBusy(null);
-    }
-  };
-
-  const poll = async (taskId: string): Promise<{ status: string; model_urls?: { glb?: string }; task_error?: { message?: string } }> => {
-    while (true) {
-      await new Promise((r) => setTimeout(r, 4000));
-      const res = await fetch(`/api/meshy/status?taskId=${taskId}`);
-      const data = await res.json();
+      await new Promise((resolve) => setTimeout(resolve, 4000));
+      const response = await fetch(`/api/meshy/status?taskId=${taskId}`);
+      const data = await response.json();
       if (data.error) throw new Error(data.error);
       if (typeof data.progress === "number") setProgress(data.progress);
-      if (data.status === "SUCCEEDED" || data.status === "FAILED" || data.status === "EXPIRED") return data;
+      if (["SUCCEEDED", "FAILED", "EXPIRED"].includes(data.status)) return data;
     }
   };
 
   const generate = async () => {
-    const style = STYLES.find((s) => s.id === styleId)!;
     setErrorMsg(null);
     setResultUrl(null);
     setProgress(0);
+
     try {
-      if (!user || !session?.access_token) throw new Error("Tenés que iniciar sesión para guardar tu avatar");
+      if (!user || !session?.access_token) {
+        throw new Error("Iniciá sesión para crear y guardar tu avatar.");
+      }
 
       setPhase("preview");
-      const createRes = await fetch("/api/meshy/create", {
+      const createResponse = await fetch("/api/meshy/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: style.prompt, artStyle: style.artStyle }),
+        body: JSON.stringify({ prompt: selectedStyle.prompt, artStyle: selectedStyle.artStyle }),
       });
-      const created = await createRes.json();
-      if (created.error) throw new Error(created.error);
+      const created = await createResponse.json();
+      if (!createResponse.ok || created.error || !created.taskId) {
+        throw new Error(created.error || "No se pudo iniciar la creación.");
+      }
+
       const previewResult = await poll(created.taskId);
-      if (previewResult.status !== "SUCCEEDED") throw new Error(previewResult.task_error?.message || "Falló el boceto 3D");
+      if (previewResult.status !== "SUCCEEDED") {
+        throw new Error(previewResult.task_error?.message || "No se pudo crear la base del avatar.");
+      }
 
       setPhase("refining");
       setProgress(0);
-      const refineRes = await fetch("/api/meshy/create", {
+      const refineResponse = await fetch("/api/meshy/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mode: "refine", previewTaskId: created.taskId }),
       });
-      const refined = await refineRes.json();
-      if (refined.error) throw new Error(refined.error);
+      const refined = await refineResponse.json();
+      if (!refineResponse.ok || refined.error || !refined.taskId) {
+        throw new Error(refined.error || "No se pudo completar el avatar.");
+      }
+
       const refineResult = await poll(refined.taskId);
       if (refineResult.status !== "SUCCEEDED" || !refineResult.model_urls?.glb) {
-        throw new Error(refineResult.task_error?.message || "Falló el texturizado");
+        throw new Error(refineResult.task_error?.message || "No se pudo terminar el personaje.");
       }
 
       setPhase("saving");
-      const finalizeRes = await fetch("/api/avatar/finalize", {
+      const finalizeResponse = await fetch("/api/avatar/finalize", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -159,12 +132,12 @@ export default function AvatarIaPage() {
         body: JSON.stringify({
           modelUrl: refineResult.model_urls.glb,
           meshyTaskId: refined.taskId,
-          name: `Avatar ${style.label}`,
+          name: `Avatar ${selectedStyle.label}`,
         }),
       });
-      const finalized = await finalizeRes.json();
-      if (!finalizeRes.ok || finalized.error || !finalized.avatar?.model_url) {
-        throw new Error(finalized.error || "No se pudo guardar el avatar");
+      const finalized = await finalizeResponse.json();
+      if (!finalizeResponse.ok || finalized.error || !finalized.avatar?.model_url) {
+        throw new Error(finalized.error || "No se pudo guardar el avatar.");
       }
 
       const avatar = finalized.avatar;
@@ -180,99 +153,112 @@ export default function AvatarIaPage() {
       });
       setPhase("done");
     } catch (error) {
-      setErrorMsg(error instanceof Error ? error.message : "Error desconocido");
+      setErrorMsg(error instanceof Error ? error.message : "Ocurrió un error inesperado.");
       setPhase("error");
     }
   };
 
-  const busy = phase === "preview" || phase === "refining" || phase === "saving";
+  const buttonLabel = {
+    idle: "Crear mi avatar",
+    preview: `Construyendo personaje… ${progress}%`,
+    refining: `Terminando detalles… ${progress}%`,
+    saving: "Guardando en tu cuenta…",
+    done: "Crear otra versión",
+    error: "Volver a intentar",
+  }[phase];
 
   return (
-    <div className="space-y-5">
-      <section className="panel rounded-3xl border border-white/10 p-5">
-        <h1 className="text-2xl font-semibold">Avatar con IA</h1>
-        <p className="text-sm text-white/70">Elegí un estilo y Meshy genera tu personaje 3D — tarda entre 1 y 3 minutos.</p>
-      </section>
-
-      <section className="panel rounded-3xl border border-emerald-400/30 p-5">
-        <h2 className="mb-1 text-sm uppercase tracking-[0.15em] text-white/70">Personajes oficiales CLOUVA</h2>
-        <p className="mb-4 text-xs text-white/50">Generados desde tus fotos de referencia reales (frente + espalda).</p>
-        <div className="grid gap-4 sm:grid-cols-2">
-          {OFFICIAL_CHARACTERS.map((c) => (
-            <div key={c.id} className="rounded-2xl border border-white/10 p-4">
-              <p className="mb-3 text-sm font-medium">{c.label}</p>
-              <button
-                onClick={() => generateOfficial(c.id, c.images)}
-                disabled={officialBusy === c.id}
-                className="rounded-full bg-emerald-400/90 px-4 py-2 text-sm font-medium text-black disabled:opacity-60"
-              >
-                {officialBusy === c.id ? "Generando…" : officialResults[c.id] ? "Generar de nuevo" : "Generar"}
-              </button>
-              {officialStatus[c.id] ? <p className="mt-2 text-xs text-white/60">{officialStatus[c.id]}</p> : null}
-              {officialError[c.id] ? <p className="mt-2 text-xs text-rose-400">Error: {officialError[c.id]}</p> : null}
-              {officialResults[c.id] ? (
-                <model-viewer
-                  src={officialResults[c.id]}
-                  alt={c.label}
-                  camera-controls
-                  auto-rotate
-                  style={{ width: "100%", height: "260px", borderRadius: "1rem", marginTop: "12px" }}
-                />
-              ) : null}
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="panel rounded-3xl border border-[#8f7cff]/20 p-5">
-        <h2 className="mb-3 text-sm uppercase tracking-[0.15em] text-white/70">Estilo</h2>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          {STYLES.map((s) => (
-            <button
-              key={s.id}
-              onClick={() => setStyleId(s.id)}
-              disabled={busy}
-              className={`rounded-2xl border p-3 text-left text-sm transition ${
-                styleId === s.id ? "border-[#8f7cff] bg-[#8f7cff]/15" : "border-white/10 hover:border-white/30"
-              }`}
-            >
-              {s.label}
-            </button>
-          ))}
-        </div>
-
-        <button
-          onClick={generate}
-          disabled={busy}
-          className="mt-5 rounded-full bg-[#8f7cff] px-5 py-2.5 text-sm font-medium text-black disabled:opacity-60"
+    <main className="mx-auto min-h-screen w-full max-w-5xl px-4 pb-24 pt-5 sm:px-6">
+      <div className="mb-6 flex items-center justify-between gap-3">
+        <Link
+          href="/mi-flow/avatar"
+          className="rounded-full border border-white/10 bg-black/30 px-4 py-2 text-sm text-white/75 backdrop-blur-xl transition hover:border-white/25 hover:text-white"
         >
-          {phase === "idle" && "Generar personaje"}
-          {phase === "preview" && `Generando boceto 3D… ${progress}%`}
-          {phase === "refining" && `Aplicando textura… ${progress}%`}
-          {phase === "saving" && "Guardando en tu cuenta…"}
-          {phase === "done" && "Generar otro"}
-          {phase === "error" && "Reintentar"}
-        </button>
+          ← Volver
+        </Link>
+        <span className="text-[11px] font-medium uppercase tracking-[0.25em] text-white/40">CLOUVA Avatar</span>
+      </div>
 
-        {errorMsg ? <p className="mt-3 text-sm text-rose-400">{errorMsg}</p> : null}
+      <section className="overflow-hidden rounded-[2rem] border border-white/10 bg-[radial-gradient(circle_at_top,rgba(126,87,255,0.24),transparent_48%),rgba(6,6,12,0.88)] p-5 shadow-2xl shadow-violet-950/30 sm:p-8">
+        <div className="max-w-2xl">
+          <p className="mb-3 text-xs font-semibold uppercase tracking-[0.24em] text-violet-300/80">Tu identidad 3D</p>
+          <h1 className="text-3xl font-semibold tracking-tight text-white sm:text-5xl">Creá tu personaje CLOUVA</h1>
+          <p className="mt-3 max-w-xl text-sm leading-6 text-white/60 sm:text-base">
+            Elegí una dirección visual. CLOUVA construye una versión 3D única y la deja activa automáticamente en tu cuenta.
+          </p>
+        </div>
+
+        <div className="mt-8 grid gap-3 sm:grid-cols-2">
+          {STYLES.map((style) => {
+            const active = style.id === styleId;
+            return (
+              <button
+                key={style.id}
+                type="button"
+                onClick={() => setStyleId(style.id)}
+                disabled={busy}
+                className={`min-h-28 rounded-3xl border p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                  active
+                    ? "border-violet-400/80 bg-violet-400/15 shadow-lg shadow-violet-950/40"
+                    : "border-white/10 bg-white/[0.03] hover:border-white/25 hover:bg-white/[0.06]"
+                }`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h2 className="font-medium text-white">{style.label}</h2>
+                    <p className="mt-2 text-sm leading-5 text-white/50">{style.description}</p>
+                  </div>
+                  <span
+                    className={`mt-1 h-4 w-4 shrink-0 rounded-full border ${
+                      active ? "border-violet-300 bg-violet-400 shadow-[0_0_18px_rgba(139,92,246,0.8)]" : "border-white/25"
+                    }`}
+                  />
+                </div>
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="mt-6 rounded-3xl border border-white/10 bg-black/25 p-4 sm:flex sm:items-center sm:justify-between sm:gap-5">
+          <div>
+            <p className="text-sm font-medium text-white">{selectedStyle.label}</p>
+            <p className="mt-1 text-xs text-white/45">La creación puede demorar unos minutos. Podés dejar esta pantalla abierta.</p>
+          </div>
+          <button
+            type="button"
+            onClick={generate}
+            disabled={busy}
+            className="mt-4 w-full rounded-2xl bg-violet-400 px-5 py-3.5 text-sm font-semibold text-black transition hover:bg-violet-300 disabled:cursor-wait disabled:opacity-65 sm:mt-0 sm:w-auto sm:min-w-56"
+          >
+            {buttonLabel}
+          </button>
+        </div>
+
+        {errorMsg ? (
+          <div className="mt-4 rounded-2xl border border-rose-400/25 bg-rose-400/10 px-4 py-3 text-sm text-rose-200">
+            {errorMsg}
+          </div>
+        ) : null}
 
         {resultUrl ? (
-          <div className="mt-6">
+          <div className="mt-6 overflow-hidden rounded-3xl border border-violet-300/20 bg-black/35 p-3">
             <model-viewer
               src={resultUrl}
-              alt="Personaje generado por IA"
+              alt="Avatar CLOUVA generado"
               camera-controls
               auto-rotate
-              style={{ width: "100%", height: "360px", borderRadius: "1rem" }}
+              shadow-intensity="1"
+              style={{ width: "100%", height: "min(62vh, 540px)", borderRadius: "1.25rem" }}
             />
-            {phase === "done" ? <p className="mt-2 text-sm text-emerald-300">Guardado y activado en tu cuenta ✓</p> : null}
+            <div className="px-2 pb-2 pt-3 text-center">
+              <p className="text-sm font-medium text-emerald-300">Tu avatar quedó guardado y activo ✓</p>
+              <Link href="/mi-flow/avatar" className="mt-2 inline-block text-sm text-white/55 underline underline-offset-4">
+                Abrir en el editor
+              </Link>
+            </div>
           </div>
         ) : null}
       </section>
-
-      <Link href="/mi-flow/avatar" className="inline-block text-sm text-white/60 underline">
-        Volver al editor de avatar
-      </Link>
-    </div>
+    </main>
   );
 }
