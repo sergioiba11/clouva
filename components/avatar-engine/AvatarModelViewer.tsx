@@ -1,10 +1,34 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { AmbientLight, AnimationMixer, Clock, DirectionalLight, PerspectiveCamera, Scene, WebGLRenderer } from "three";
+import {
+  ACESFilmicToneMapping,
+  AmbientLight,
+  AnimationMixer,
+  Box3,
+  Clock,
+  DirectionalLight,
+  HemisphereLight,
+  MathUtils,
+  Object3D,
+  PerspectiveCamera,
+  Scene,
+  SRGBColorSpace,
+  Vector3,
+  WebGLRenderer,
+} from "three";
 import { applyAvatarConfig } from "@/lib/avatar-engine/apply-avatar-config";
 import { getAvatarItem } from "@/lib/avatar-engine/catalog";
-import { analyzeObject, applyMaterialColors, applyMorphValues, loadAvatarPart, normalizeAvatarObject, setHairColor, setSkinTone, validateAvatarItemCompatibility } from "@/lib/avatar-engine/load-avatar-part";
+import {
+  analyzeObject,
+  applyMaterialColors,
+  applyMorphValues,
+  loadAvatarPart,
+  normalizeAvatarObject,
+  setHairColor,
+  setSkinTone,
+  validateAvatarItemCompatibility,
+} from "@/lib/avatar-engine/load-avatar-part";
 import type { AvatarConfig, BaseAvatarModel, LoadedAvatarPart } from "@/lib/avatar-engine/types";
 
 type ModelState = "idle" | "loading" | "ready" | "error";
@@ -19,24 +43,27 @@ function Fallback({ className }: { className: string }) {
       aria-label="Preview temporal humanoide CLOUVA"
       style={{ position: "absolute", inset: 0, width: "100%", height: "100%", minHeight: "100dvh" }}
     >
-      <span className="avatar-render-silhouette" aria-hidden="true">
-        <i className="avatar-fallback-glow" />
-        <i className="avatar-fallback-hair" />
-        <i className="avatar-fallback-head" />
-        <i className="avatar-fallback-neck" />
-        <i className="avatar-fallback-hood" />
-        <i className="avatar-fallback-torso" />
-        <i className="avatar-fallback-arm avatar-fallback-arm-left" />
-        <i className="avatar-fallback-arm avatar-fallback-arm-right" />
-        <i className="avatar-fallback-hand avatar-fallback-hand-left" />
-        <i className="avatar-fallback-hand avatar-fallback-hand-right" />
-        <i className="avatar-fallback-leg avatar-fallback-leg-left" />
-        <i className="avatar-fallback-leg avatar-fallback-leg-right" />
-        <i className="avatar-fallback-shoe avatar-fallback-shoe-left" />
-        <i className="avatar-fallback-shoe avatar-fallback-shoe-right" />
-      </span>
+      <span className="avatar-render-silhouette" aria-hidden="true" />
     </div>
   );
+}
+
+function frameObject(camera: PerspectiveCamera, object: Object3D, aspect: number) {
+  object.updateMatrixWorld(true);
+  const box = new Box3().setFromObject(object);
+  const size = box.getSize(new Vector3());
+  const center = box.getCenter(new Vector3());
+  const verticalFov = MathUtils.degToRad(camera.fov);
+  const horizontalFov = 2 * Math.atan(Math.tan(verticalFov / 2) * Math.max(aspect, 0.1));
+  const distanceForHeight = size.y / (2 * Math.tan(verticalFov / 2));
+  const distanceForWidth = size.x / (2 * Math.tan(horizontalFov / 2));
+  const distance = Math.max(distanceForHeight, distanceForWidth, size.z * 2, 2) * 1.18;
+
+  camera.near = Math.max(distance / 100, 0.01);
+  camera.far = Math.max(distance * 20, 100);
+  camera.position.set(center.x, center.y + size.y * 0.02, center.z + distance);
+  camera.lookAt(center.x, center.y + size.y * 0.02, center.z);
+  camera.updateProjectionMatrix();
 }
 
 export function AvatarModelViewer({ modelUrl, config, className = "" }: Props) {
@@ -50,32 +77,42 @@ export function AvatarModelViewer({ modelUrl, config, className = "" }: Props) {
 
     let disposed = false;
     const scene = new Scene();
-    const camera = new PerspectiveCamera(28, 1, 0.01, 100);
+    const camera = new PerspectiveCamera(32, 1, 0.01, 100);
     const renderer = new WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
     const clock = new Clock();
     let mixer: AnimationMixer | null = null;
     let raf = 0;
+    let bodyObject: Object3D | null = null;
     const loadedParts: Record<string, LoadedAvatarPart> = {};
 
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, window.innerWidth < 768 ? 1.25 : 1.5));
+    renderer.outputColorSpace = SRGBColorSpace;
+    renderer.toneMapping = ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.15;
+    renderer.setClearColor(0x000000, 0);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, window.innerWidth < 768 ? 1 : 1.5));
     renderer.domElement.style.width = "100%";
     renderer.domElement.style.height = "100%";
     renderer.domElement.style.display = "block";
     mount.current.appendChild(renderer.domElement);
 
-    scene.add(new AmbientLight(0xffffff, 1.7));
-    const light = new DirectionalLight(0xffffff, 2.5);
-    light.position.set(2, 4, 3);
-    scene.add(light);
+    scene.add(new HemisphereLight(0xffffff, 0x221133, 2.2));
+    scene.add(new AmbientLight(0xffffff, 1.1));
+    const key = new DirectionalLight(0xffffff, 3.2);
+    key.position.set(3, 5, 4);
+    scene.add(key);
+    const fill = new DirectionalLight(0x8b5cf6, 1.4);
+    fill.position.set(-3, 2, 2);
+    scene.add(fill);
 
     const resize = () => {
       const rect = mount.current?.getBoundingClientRect();
       if (!rect) return;
-      const width = Math.max(rect.width, window.innerWidth, 1);
-      const height = Math.max(rect.height, window.innerHeight, 1);
+      const width = Math.max(rect.width, 1);
+      const height = Math.max(rect.height, 1);
       camera.aspect = width / height;
       camera.updateProjectionMatrix();
       renderer.setSize(width, height, false);
+      if (bodyObject) frameObject(camera, bodyObject, camera.aspect);
     };
 
     const resizeObserver = new ResizeObserver(resize);
@@ -103,11 +140,11 @@ export function AvatarModelViewer({ modelUrl, config, className = "" }: Props) {
       if (disposed) return;
 
       normalizeAvatarObject(body.object);
-      const analysis = analyzeObject(body.object);
+      bodyObject = body.object;
       scene.add(body.object);
 
-      camera.position.set(0, Math.max(1.2, analysis.size.y * 0.55), Math.max(2.2, analysis.size.y * 1.65));
-      camera.lookAt(0, analysis.size.y * 0.5, 0);
+      const analysis = analyzeObject(body.object);
+      frameObject(camera, body.object, camera.aspect);
 
       mixer = new AnimationMixer(body.object);
       const model: BaseAvatarModel = {
@@ -131,7 +168,7 @@ export function AvatarModelViewer({ modelUrl, config, className = "" }: Props) {
         body.animations.find((candidate: any) =>
           String(candidate.name).toLowerCase().includes(String(config.activeAnimation ?? "idle").toLowerCase()),
         ) ?? body.animations[0];
-      if (clip) mixer.clipAction(clip).fadeIn(0.25).play();
+      if (clip) mixer.clipAction(clip).reset().fadeIn(0.25).play();
 
       await applyAvatarConfig(config, model);
 
