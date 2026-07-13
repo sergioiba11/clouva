@@ -11,12 +11,12 @@ export function AvatarModel({ className = "" }: { className?: string }) {
 
   useEffect(() => {
     let alive = true;
-    void fetch("/api/avatar/official", { cache: "no-store" })
+    void fetch("/api/avatar/clouva", { cache: "no-store" })
       .then((response) => response.json())
       .then((result) => {
         if (alive && result?.modelUrl) setModelUrl(result.modelUrl);
       })
-      .catch((error) => console.warn("Could not refresh official CLOUVA model", error));
+      .catch((error) => console.warn("Could not load the admin CLOUVA avatar", error));
     return () => {
       alive = false;
     };
