@@ -7,6 +7,7 @@ import { AvatarLibrary } from "@/components/avatar-engine/AvatarLibrary";
 import { useActiveAvatarStore } from "@/lib/avatar-engine/active-avatar-store";
 
 type Phase = "idle" | "uploading" | "generating" | "saving" | "done" | "error";
+type Side = "front" | "back";
 
 type TaskResult = {
   status: string;
@@ -18,8 +19,10 @@ type TaskResult = {
 export default function AvatarIaPage() {
   const { user, session } = useAuth();
   const setActiveAvatar = useActiveAvatarStore((state) => state.setActiveAvatar);
-  const [reference, setReference] = useState<File | null>(null);
-  const [referencePreview, setReferencePreview] = useState<string | null>(null);
+  const [front, setFront] = useState<File | null>(null);
+  const [back, setBack] = useState<File | null>(null);
+  const [frontPreview, setFrontPreview] = useState<string | null>(null);
+  const [backPreview, setBackPreview] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
   const [progress, setProgress] = useState(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -38,13 +41,20 @@ export default function AvatarIaPage() {
     }
   };
 
-  const chooseReference = (file: File | null) => {
-    if (referencePreview) URL.revokeObjectURL(referencePreview);
-    setReference(file);
-    setReferencePreview(file ? URL.createObjectURL(file) : null);
+  const chooseReference = (side: Side, file: File | null) => {
     setResultUrl(null);
     setErrorMsg(null);
     setPhase("idle");
+
+    if (side === "front") {
+      if (frontPreview) URL.revokeObjectURL(frontPreview);
+      setFront(file);
+      setFrontPreview(file ? URL.createObjectURL(file) : null);
+    } else {
+      if (backPreview) URL.revokeObjectURL(backPreview);
+      setBack(file);
+      setBackPreview(file ? URL.createObjectURL(file) : null);
+    }
   };
 
   const generate = async () => {
@@ -54,11 +64,12 @@ export default function AvatarIaPage() {
 
     try {
       if (!user || !session?.access_token) throw new Error("Iniciá sesión para guardar el avatar.");
-      if (!reference) throw new Error("Subí una imagen de referencia.");
+      if (!front || !back) throw new Error("Subí una imagen de frente y otra de espalda.");
 
       setPhase("uploading");
       const form = new FormData();
-      form.append("image", reference);
+      form.append("front", front);
+      form.append("back", back);
 
       const createResponse = await fetch("/api/avatar/from-image", {
         method: "POST",
@@ -67,7 +78,7 @@ export default function AvatarIaPage() {
       });
       const created = await createResponse.json();
       if (!createResponse.ok || created.error || !created.taskId) {
-        throw new Error(created.error || "No se pudo enviar la referencia.");
+        throw new Error(created.error || "No se pudieron enviar las referencias.");
       }
 
       setPhase("generating");
@@ -114,12 +125,34 @@ export default function AvatarIaPage() {
 
   const label = {
     idle: "Crear personaje 3D",
-    uploading: "Subiendo referencia…",
+    uploading: "Subiendo frente y espalda…",
     generating: `Creando modelo 3D… ${progress}%`,
     saving: "Guardando en tu cuenta…",
     done: "Crear otra versión",
     error: "Volver a intentar",
   }[phase];
+
+  const uploadCard = (side: Side, title: string, preview: string | null) => (
+    <label className="block cursor-pointer overflow-hidden rounded-3xl border border-dashed border-violet-300/35 bg-black/25 p-4 text-center">
+      {preview ? (
+        <img src={preview} alt={`Referencia ${title}`} className="mx-auto aspect-[3/4] w-full rounded-2xl object-contain" />
+      ) : (
+        <div className="flex aspect-[3/4] items-center justify-center">
+          <div>
+            <p className="text-lg font-medium text-white">{title}</p>
+            <p className="mt-2 text-sm text-white/45">Subir imagen</p>
+          </div>
+        </div>
+      )}
+      <input
+        type="file"
+        accept="image/png,image/jpeg,image/webp"
+        className="hidden"
+        disabled={busy}
+        onChange={(event) => chooseReference(side, event.target.files?.[0] ?? null)}
+      />
+    </label>
+  );
 
   return (
     <main className="mx-auto min-h-screen w-full max-w-4xl px-4 pb-24 pt-5 sm:px-6">
@@ -131,34 +164,23 @@ export default function AvatarIaPage() {
       </div>
 
       <section className="rounded-[2rem] border border-white/10 bg-[radial-gradient(circle_at_top,rgba(126,87,255,0.24),transparent_48%),rgba(6,6,12,0.9)] p-5 sm:p-8">
-        <p className="text-xs font-semibold uppercase tracking-[0.24em] text-violet-300/80">Referencia a 3D</p>
-        <h1 className="mt-3 text-3xl font-semibold text-white sm:text-5xl">Creá el personaje desde una imagen</h1>
+        <p className="text-xs font-semibold uppercase tracking-[0.24em] text-violet-300/80">Frente + espalda</p>
+        <h1 className="mt-3 text-3xl font-semibold text-white sm:text-5xl">Creá el personaje con dos vistas</h1>
         <p className="mt-3 max-w-2xl text-sm leading-6 text-white/60 sm:text-base">
-          Subí el diseño del personaje. CLOUVA usa esa imagen como referencia visual para generar el modelo 3D y guardarlo en tu cuenta.
+          Subí una imagen del frente y otra de la espalda. CLOUVA las envía juntas para que el modelo respete mejor la ropa, el logo y la silueta.
         </p>
 
-        <label className="mt-7 block cursor-pointer overflow-hidden rounded-3xl border border-dashed border-violet-300/35 bg-black/25 p-4 text-center">
-          {referencePreview ? (
-            <img src={referencePreview} alt="Referencia seleccionada" className="mx-auto max-h-[520px] w-full rounded-2xl object-contain" />
-          ) : (
-            <div className="py-16">
-              <p className="text-lg font-medium text-white">Subir imagen</p>
-              <p className="mt-2 text-sm text-white/45">PNG, JPG o WEBP · máximo 8 MB</p>
-            </div>
-          )}
-          <input
-            type="file"
-            accept="image/png,image/jpeg,image/webp"
-            className="hidden"
-            disabled={busy}
-            onChange={(event) => chooseReference(event.target.files?.[0] ?? null)}
-          />
-        </label>
+        <div className="mt-7 grid grid-cols-2 gap-3 sm:gap-5">
+          {uploadCard("front", "Frente", frontPreview)}
+          {uploadCard("back", "Espalda", backPreview)}
+        </div>
+
+        <p className="mt-3 text-center text-xs text-white/40">PNG, JPG o WEBP · máximo 8 MB por imagen</p>
 
         <button
           type="button"
           onClick={generate}
-          disabled={busy || !reference}
+          disabled={busy || !front || !back}
           className="mt-5 w-full rounded-2xl bg-violet-400 px-5 py-4 text-sm font-semibold text-black disabled:opacity-50"
         >
           {label}
