@@ -4,7 +4,7 @@ import type { AvatarConfig, BaseAvatarModel } from "./types";
 
 export function sanitizeAvatarConfig(config: AvatarConfig): AvatarConfig {
   const keep = (id: string | null | undefined, category: string) => { const item = getAvatarItem(id); return item?.category === category ? item.id : null; };
-  return { ...defaultAvatarConfig, ...config, bodyId: keep(config.bodyId, "body") ?? defaultAvatarConfig.bodyId, faceId: keep(config.faceId, "face"), hairId: keep(config.hairId, "hair"), topId: keep(config.topId, "top"), bottomId: keep(config.bottomId, "bottom"), shoesId: keep(config.shoesId, "shoes"), accessoryIds: (config.accessoryIds ?? []).filter((id) => getAvatarItem(id)?.category === "accessory") };
+  return { ...defaultAvatarConfig, ...config, bodyId: keep(config.bodyId, "body") ?? avatarCatalog.find((item) => item.category === "body")?.id ?? defaultAvatarConfig.bodyId, faceId: keep(config.faceId, "face"), hairId: keep(config.hairId, "hair"), topId: keep(config.topId, "top"), bottomId: keep(config.bottomId, "bottom"), shoesId: keep(config.shoesId, "shoes"), accessoryIds: (config.accessoryIds ?? []).filter((id) => getAvatarItem(id)?.category === "accessory") };
 }
 
 export async function applyAvatarConfig(config: AvatarConfig, baseModel?: BaseAvatarModel | null) {
