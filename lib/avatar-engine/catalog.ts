@@ -34,6 +34,8 @@ export const avatarCategories: { id: Exclude<AvatarCategory, "body">; label: str
   { id: "bottom", label: "Pantalón" },
   { id: "shoes", label: "Zapatillas" },
   { id: "accessory", label: "Accesorios" },
+  { id: "color", label: "Colores" },
+  { id: "animation", label: "Animaciones" },
 ];
 
 const firstByCategory = (category: AvatarCategory) => avatarCatalog.find((entry) => entry.category === category)?.id ?? null;
