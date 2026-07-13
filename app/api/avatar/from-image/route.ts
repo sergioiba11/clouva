@@ -46,8 +46,29 @@ export async function POST(request: NextRequest) {
     const { data: publicData } = supabase.storage.from("avatars").getPublicUrl(storagePath);
     const imageUrl = publicData.publicUrl;
     const taskId = await createMultiImageTask([imageUrl]);
+    const avatarId = crypto.randomUUID();
 
-    return NextResponse.json({ taskId, imageUrl });
+    const { data: avatar, error: insertError } = await supabase
+      .from("user_avatars")
+      .insert({
+        id: avatarId,
+        user_id: userData.user.id,
+        name: "Avatar desde referencia",
+        source: "generated",
+        status: "generating",
+        model_url: null,
+        storage_path: null,
+        preview_image_url: imageUrl,
+        meshy_task_id: taskId,
+        is_active: false,
+        config: {},
+        metadata: { generation_kind: "multi-image", reference_path: storagePath },
+      })
+      .select("id,user_id,name,status,preview_image_url,meshy_task_id,is_active,created_at,updated_at")
+      .single();
+    if (insertError) throw insertError;
+
+    return NextResponse.json({ taskId, imageUrl, avatar });
   } catch (error) {
     console.error("Image avatar generation failed", error);
     return NextResponse.json(
