@@ -15,6 +15,10 @@ function getAdminClient() {
   return createClient(url, serviceRole, { auth: { persistSession: false, autoRefreshToken: false } });
 }
 
+function extensionFor(file: File) {
+  return file.type === "image/png" ? "png" : file.type === "image/webp" ? "webp" : "jpg";
+}
+
 export async function POST(request: NextRequest) {
   try {
     const authorization = request.headers.get("authorization");
@@ -26,26 +30,38 @@ export async function POST(request: NextRequest) {
     if (userError || !userData.user) return NextResponse.json({ error: "Invalid session" }, { status: 401 });
 
     const form = await request.formData();
-    const file = form.get("image");
-    if (!(file instanceof File)) return NextResponse.json({ error: "Falta la imagen" }, { status: 400 });
-    if (!ALLOWED_TYPES.has(file.type)) return NextResponse.json({ error: "Usá PNG, JPG o WEBP" }, { status: 415 });
-    if (file.size > MAX_IMAGE_BYTES) return NextResponse.json({ error: "La imagen supera 8 MB" }, { status: 413 });
+    const front = form.get("front");
+    const back = form.get("back");
 
-    const extension = file.type === "image/png" ? "png" : file.type === "image/webp" ? "webp" : "jpg";
+    if (!(front instanceof File) || !(back instanceof File)) {
+      return NextResponse.json({ error: "Faltan las imágenes de frente y espalda" }, { status: 400 });
+    }
+
+    for (const file of [front, back]) {
+      if (!ALLOWED_TYPES.has(file.type)) return NextResponse.json({ error: "Usá PNG, JPG o WEBP" }, { status: 415 });
+      if (file.size > MAX_IMAGE_BYTES) return NextResponse.json({ error: "Cada imagen debe pesar menos de 8 MB" }, { status: 413 });
+    }
+
     const referenceId = crypto.randomUUID();
-    const storagePath = `${userData.user.id}/references/${referenceId}.${extension}`;
-    const bytes = await file.arrayBuffer();
+    const uploads = await Promise.all(
+      [
+        { key: "front", file: front },
+        { key: "back", file: back },
+      ].map(async ({ key, file }) => {
+        const storagePath = `${userData.user.id}/references/${referenceId}-${key}.${extensionFor(file)}`;
+        const { error: uploadError } = await supabase.storage.from("avatars").upload(storagePath, await file.arrayBuffer(), {
+          contentType: file.type,
+          cacheControl: "3600",
+          upsert: false,
+        });
+        if (uploadError) throw uploadError;
+        const { data } = supabase.storage.from("avatars").getPublicUrl(storagePath);
+        return { key, storagePath, publicUrl: data.publicUrl };
+      }),
+    );
 
-    const { error: uploadError } = await supabase.storage.from("avatars").upload(storagePath, bytes, {
-      contentType: file.type,
-      cacheControl: "3600",
-      upsert: false,
-    });
-    if (uploadError) throw uploadError;
-
-    const { data: publicData } = supabase.storage.from("avatars").getPublicUrl(storagePath);
-    const imageUrl = publicData.publicUrl;
-    const taskId = await createMultiImageTask([imageUrl]);
+    const imageUrls = uploads.map((item) => item.publicUrl);
+    const taskId = await createMultiImageTask(imageUrls);
     const avatarId = crypto.randomUUID();
 
     const { data: avatar, error: insertError } = await supabase
@@ -53,22 +69,26 @@ export async function POST(request: NextRequest) {
       .insert({
         id: avatarId,
         user_id: userData.user.id,
-        name: "Avatar desde referencia",
+        name: "Avatar frente + espalda",
         source: "generated",
         status: "generating",
         model_url: null,
         storage_path: null,
-        preview_image_url: imageUrl,
+        preview_image_url: imageUrls[0],
         meshy_task_id: taskId,
         is_active: false,
         config: {},
-        metadata: { generation_kind: "multi-image", reference_path: storagePath },
+        metadata: {
+          generation_kind: "multi-image",
+          reference_paths: uploads.map((item) => item.storagePath),
+          reference_urls: imageUrls,
+        },
       })
       .select("id,user_id,name,status,preview_image_url,meshy_task_id,is_active,created_at,updated_at")
       .single();
     if (insertError) throw insertError;
 
-    return NextResponse.json({ taskId, imageUrl, avatar });
+    return NextResponse.json({ taskId, imageUrls, avatar });
   } catch (error) {
     console.error("Image avatar generation failed", error);
     return NextResponse.json(
