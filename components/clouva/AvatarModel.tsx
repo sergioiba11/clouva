@@ -2,47 +2,49 @@
 
 import { useState } from "react";
 
-const MODEL_SRC = "/models/clouva-avatar.glb";
+const TEMPORARY_REMOTE_AVATAR_URL = "https://modelviewer.dev/shared-assets/models/Astronaut.glb";
 
-export function AvatarModel() {
-  const [fallback, setFallback] = useState(false);
+export const AVATAR_MODEL_URL = process.env.NEXT_PUBLIC_AVATAR_MODEL_URL || "/models/clouva-avatar.glb";
 
-  if (fallback) {
-    return (
-      <div className="clouva-avatar-fallback" aria-label="Personaje 3D CLOUVA">
-        <div className="clouva-avatar-halo" />
-        <div className="clouva-avatar-head" />
-        <div className="clouva-avatar-torso" />
-        <div className="clouva-avatar-leg clouva-avatar-leg-left" />
-        <div className="clouva-avatar-leg clouva-avatar-leg-right" />
-      </div>
-    );
+export function AvatarModel({ className = "" }: { className?: string }) {
+  const [modelUrl, setModelUrl] = useState(AVATAR_MODEL_URL);
+  const [visualFallback, setVisualFallback] = useState(false);
+
+  if (visualFallback) {
+    return <div className={`clouva-avatar-fallback ${className}`} aria-label="Personaje humanoide temporal CLOUVA" />;
   }
 
   return (
     <model-viewer
-      src={MODEL_SRC}
+      key={modelUrl}
+      src={modelUrl}
       alt="Personaje 3D CLOUVA"
       camera-controls
-      touch-action="none"
+      touch-action="pan-y"
       interaction-prompt="none"
-      camera-orbit="0deg 80deg 1.72m"
-      min-camera-orbit="auto 58deg 1.28m"
-      max-camera-orbit="auto 96deg 2.65m"
-      field-of-view="20deg"
-      min-field-of-view="16deg"
-      max-field-of-view="32deg"
+      camera-orbit="0deg 82deg 2.15m"
+      min-camera-orbit="-180deg 60deg 1.55m"
+      max-camera-orbit="180deg 96deg 2.85m"
+      field-of-view="24deg"
+      min-field-of-view="18deg"
+      max-field-of-view="34deg"
       auto-rotate
-      auto-rotate-delay="0"
-      rotation-per-second="2.2deg"
-      shadow-intensity="0.58"
-      shadow-softness="0.96"
-      exposure="0.72"
+      auto-rotate-delay="2400"
+      rotation-per-second="1.6deg"
+      shadow-intensity="0.5"
+      shadow-softness="0.95"
+      exposure="0.9"
       environment-image="neutral"
       ar={false}
-      onError={() => setFallback(true)}
-      className="clouva-model-viewer h-full w-full"
-      style={{ background: "transparent", minHeight: "100%" }}
+      onError={() => {
+        if (modelUrl !== TEMPORARY_REMOTE_AVATAR_URL) {
+          setModelUrl(TEMPORARY_REMOTE_AVATAR_URL);
+          return;
+        }
+        setVisualFallback(true);
+      }}
+      className={`clouva-model-viewer ${className}`}
+      style={{ background: "transparent", width: "100%", height: "100%", minHeight: "100%" }}
     />
   );
 }
