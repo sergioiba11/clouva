@@ -61,6 +61,8 @@ export default function AvatarIaPage() {
   const [resultUrl, setResultUrl] = useState<string | null>(null);
   const [officialBusy, setOfficialBusy] = useState<string | null>(null);
   const [officialResults, setOfficialResults] = useState<Record<string, string>>({});
+  const [officialError, setOfficialError] = useState<Record<string, string>>({});
+  const [officialStatus, setOfficialStatus] = useState<Record<string, string>>({});
 
   const pollMultiImage = async (taskId: string) => {
     while (true) {
@@ -74,21 +76,28 @@ export default function AvatarIaPage() {
 
   const generateOfficial = async (id: string, images: string[]) => {
     setOfficialBusy(id);
+    setOfficialError((prev) => ({ ...prev, [id]: "" }));
+    setOfficialStatus((prev) => ({ ...prev, [id]: "Enviando fotos a Meshy…" }));
     try {
       const createRes = await fetch("/api/meshy/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mode: "multi-image", imageUrls: images }),
       });
-      const created = await createRes.json();
+      const created = await createRes.json().catch(() => null);
+      if (!created) throw new Error(`Respuesta inválida del servidor (status ${createRes.status})`);
       if (created.error) throw new Error(created.error);
+      if (!created.taskId) throw new Error("No se recibió taskId de Meshy");
+      setOfficialStatus((prev) => ({ ...prev, [id]: `Tarea creada (${created.taskId.slice(0, 8)}…), generando modelo 3D…` }));
       const result = await pollMultiImage(created.taskId);
       if (result.status !== "SUCCEEDED" || !result.model_urls?.glb) {
-        throw new Error(result.task_error?.message || "Falló la generación");
+        throw new Error(result.task_error?.message || `La tarea terminó con estado: ${result.status}`);
       }
       setOfficialResults((prev) => ({ ...prev, [id]: result.model_urls.glb }));
+      setOfficialStatus((prev) => ({ ...prev, [id]: "Listo ✓" }));
     } catch (error) {
-      alert(error instanceof Error ? error.message : "Error desconocido");
+      setOfficialError((prev) => ({ ...prev, [id]: error instanceof Error ? error.message : "Error desconocido" }));
+      setOfficialStatus((prev) => ({ ...prev, [id]: "" }));
     } finally {
       setOfficialBusy(null);
     }
@@ -174,6 +183,8 @@ export default function AvatarIaPage() {
               >
                 {officialBusy === c.id ? "Generando…" : officialResults[c.id] ? "Generar de nuevo" : "Generar"}
               </button>
+              {officialStatus[c.id] ? <p className="mt-2 text-xs text-white/60">{officialStatus[c.id]}</p> : null}
+              {officialError[c.id] ? <p className="mt-2 text-xs text-rose-400">Error: {officialError[c.id]}</p> : null}
               {officialResults[c.id] ? (
                 <model-viewer
                   src={officialResults[c.id]}
