@@ -14,15 +14,6 @@ function getAdminClient() {
   return createClient(url, serviceRole, { auth: { persistSession: false, autoRefreshToken: false } });
 }
 
-async function ensureAvatarBucketLimit(supabase: ReturnType<typeof getAdminClient>) {
-  const { error } = await supabase.storage.updateBucket("avatars", {
-    public: true,
-    fileSizeLimit: MAX_GLB_BYTES,
-    allowedMimeTypes: ["model/gltf-binary", "image/png", "image/jpeg", "image/webp"],
-  });
-  if (error) throw error;
-}
-
 export async function POST(request: NextRequest) {
   try {
     const authorization = request.headers.get("authorization");
@@ -86,8 +77,6 @@ export async function POST(request: NextRequest) {
         const bytes = await remote.arrayBuffer();
         if (bytes.byteLength > MAX_GLB_BYTES) throw new Error(`El GLB pesa más de 75 MB (${Math.ceil(bytes.byteLength / 1024 / 1024)} MB)`);
         if (Buffer.from(bytes).subarray(0, 4).toString("ascii") !== "glTF") throw new Error("Meshy no devolvió un archivo GLB válido");
-
-        await ensureAvatarBucketLimit(supabase);
 
         const storagePath = `${userData.user.id}/${avatar.id}/avatar.glb`;
         const { error: uploadError } = await supabase.storage.from("avatars").upload(storagePath, bytes, {

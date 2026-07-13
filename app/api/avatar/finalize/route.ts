@@ -13,15 +13,6 @@ function getAdminClient() {
   return createClient(url, serviceRole, { auth: { persistSession: false, autoRefreshToken: false } });
 }
 
-async function ensureAvatarBucketLimit(supabase: ReturnType<typeof getAdminClient>) {
-  const { error } = await supabase.storage.updateBucket("avatars", {
-    public: true,
-    fileSizeLimit: MAX_GLB_BYTES,
-    allowedMimeTypes: ["model/gltf-binary", "image/png", "image/jpeg", "image/webp"],
-  });
-  if (error) throw error;
-}
-
 export async function POST(request: NextRequest) {
   try {
     const authorization = request.headers.get("authorization");
@@ -68,8 +59,6 @@ export async function POST(request: NextRequest) {
 
     const avatarId = pendingAvatar?.id ?? crypto.randomUUID();
     const storagePath = `${userData.user.id}/${avatarId}/avatar.glb`;
-
-    await ensureAvatarBucketLimit(supabase);
 
     const { error: uploadError } = await supabase.storage.from("avatars").upload(storagePath, bytes, {
       contentType: "model/gltf-binary",
