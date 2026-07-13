@@ -1,9 +1,14 @@
 import { NextResponse } from "next/server";
-import { createPreviewTask, createRefineTask } from "@/lib/meshy";
+import { createMultiImageTask, createPreviewTask, createRefineTask } from "@/lib/meshy";
 
 export async function POST(req: Request) {
   try {
     const body = await req.json();
+    if (body.mode === "multi-image") {
+      if (!body.imageUrls?.length) return NextResponse.json({ error: "Falta imageUrls" }, { status: 400 });
+      const taskId = await createMultiImageTask(body.imageUrls);
+      return NextResponse.json({ taskId });
+    }
     if (body.mode === "refine") {
       if (!body.previewTaskId) return NextResponse.json({ error: "Falta previewTaskId" }, { status: 400 });
       const taskId = await createRefineTask(body.previewTaskId);

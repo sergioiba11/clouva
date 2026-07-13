@@ -39,6 +39,19 @@ const STYLES: StylePreset[] = [
 
 type Phase = "idle" | "preview" | "refining" | "saving" | "done" | "error";
 
+const OFFICIAL_CHARACTERS = [
+  {
+    id: "male",
+    label: "Personaje oficial — masculino",
+    images: ["https://clouva.com.ar/reference/male-front.png", "https://clouva.com.ar/reference/male-back.png"],
+  },
+  {
+    id: "female",
+    label: "Personaje oficial — femenino",
+    images: ["https://clouva.com.ar/reference/female-front.png", "https://clouva.com.ar/reference/female-back.png"],
+  },
+];
+
 export default function AvatarIaPage() {
   const { user } = useAuth();
   const [styleId, setStyleId] = useState(STYLES[0].id);
@@ -46,6 +59,40 @@ export default function AvatarIaPage() {
   const [progress, setProgress] = useState(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [resultUrl, setResultUrl] = useState<string | null>(null);
+  const [officialBusy, setOfficialBusy] = useState<string | null>(null);
+  const [officialResults, setOfficialResults] = useState<Record<string, string>>({});
+
+  const pollMultiImage = async (taskId: string) => {
+    while (true) {
+      await new Promise((r) => setTimeout(r, 4000));
+      const res = await fetch(`/api/meshy/status?taskId=${taskId}&kind=multi-image`);
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      if (data.status === "SUCCEEDED" || data.status === "FAILED" || data.status === "EXPIRED") return data;
+    }
+  };
+
+  const generateOfficial = async (id: string, images: string[]) => {
+    setOfficialBusy(id);
+    try {
+      const createRes = await fetch("/api/meshy/create", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "multi-image", imageUrls: images }),
+      });
+      const created = await createRes.json();
+      if (created.error) throw new Error(created.error);
+      const result = await pollMultiImage(created.taskId);
+      if (result.status !== "SUCCEEDED" || !result.model_urls?.glb) {
+        throw new Error(result.task_error?.message || "Falló la generación");
+      }
+      setOfficialResults((prev) => ({ ...prev, [id]: result.model_urls.glb }));
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Error desconocido");
+    } finally {
+      setOfficialBusy(null);
+    }
+  };
 
   const poll = async (taskId: string): Promise<{ status: string; model_urls?: { glb?: string }; task_error?: { message?: string } }> => {
     while (true) {
@@ -111,6 +158,34 @@ export default function AvatarIaPage() {
       <section className="panel rounded-3xl border border-white/10 p-5">
         <h1 className="text-2xl font-semibold">Avatar con IA</h1>
         <p className="text-sm text-white/70">Elegí un estilo y Meshy genera tu personaje 3D — tarda entre 1 y 3 minutos.</p>
+      </section>
+
+      <section className="panel rounded-3xl border border-emerald-400/30 p-5">
+        <h2 className="mb-1 text-sm uppercase tracking-[0.15em] text-white/70">Personajes oficiales CLOUVA</h2>
+        <p className="mb-4 text-xs text-white/50">Generados desde tus fotos de referencia reales (frente + espalda).</p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          {OFFICIAL_CHARACTERS.map((c) => (
+            <div key={c.id} className="rounded-2xl border border-white/10 p-4">
+              <p className="mb-3 text-sm font-medium">{c.label}</p>
+              <button
+                onClick={() => generateOfficial(c.id, c.images)}
+                disabled={officialBusy === c.id}
+                className="rounded-full bg-emerald-400/90 px-4 py-2 text-sm font-medium text-black disabled:opacity-60"
+              >
+                {officialBusy === c.id ? "Generando…" : officialResults[c.id] ? "Generar de nuevo" : "Generar"}
+              </button>
+              {officialResults[c.id] ? (
+                <model-viewer
+                  src={officialResults[c.id]}
+                  alt={c.label}
+                  camera-controls
+                  auto-rotate
+                  style={{ width: "100%", height: "260px", borderRadius: "1rem", marginTop: "12px" }}
+                />
+              ) : null}
+            </div>
+          ))}
+        </div>
       </section>
 
       <section className="panel rounded-3xl border border-[#8f7cff]/20 p-5">
