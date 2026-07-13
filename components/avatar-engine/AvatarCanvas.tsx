@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import type { AvatarConfig } from "@/lib/avatar-engine/types";
 import { AvatarModelViewer } from "./AvatarModelViewer";
 
+const DEFAULT_BODY_URL = "/models/base-body-quaternius.glb";
 const DB_NAME = "clouva-avatar-db";
 const STORE_NAME = "models";
 const MODEL_KEY = "clouva-v1";
@@ -64,7 +65,7 @@ export function AvatarCanvas({ config }: { config: AvatarConfig }) {
     };
   }, []);
 
-  const modelUrl = null;
+  const modelUrl = modelData ? null : DEFAULT_BODY_URL;
 
   const onUpload = async (file?: File) => {
     if (!file) return;
