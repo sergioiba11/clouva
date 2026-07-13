@@ -1,7 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
-import { getRenderableAvatarUrl } from "@/lib/avatar-engine/catalog";
+import { Suspense, useEffect, useState } from "react";
 import type { AvatarConfig } from "@/lib/avatar-engine/types";
 import { AvatarModelViewer } from "./AvatarModelViewer";
 
@@ -45,7 +44,6 @@ async function loadModel(): Promise<Blob | null> {
 }
 
 export function AvatarCanvas({ config }: { config: AvatarConfig }) {
-  const fallbackUrl = getRenderableAvatarUrl(config);
   const [modelData, setModelData] = useState<ArrayBuffer | null>(null);
   const [status, setStatus] = useState("Subir avatar GLB");
 
@@ -66,7 +64,7 @@ export function AvatarCanvas({ config }: { config: AvatarConfig }) {
     };
   }, []);
 
-  const modelUrl = useMemo(() => (modelData ? null : fallbackUrl), [modelData, fallbackUrl]);
+  const modelUrl = null;
 
   const onUpload = async (file?: File) => {
     if (!file) return;
