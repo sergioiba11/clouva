@@ -30,6 +30,7 @@ type Props = {
   config?: AvatarConfig;
   alt?: string;
   className?: string;
+  playAnimations?: boolean;
 };
 
 export function AvatarModelViewer({
@@ -39,6 +40,7 @@ export function AvatarModelViewer({
   frontRotationY = 0,
   config,
   className = "",
+  playAnimations = true,
 }: Props) {
   const mount = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<ModelState>("loading");
@@ -106,9 +108,9 @@ export function AvatarModelViewer({
       renderer.setSize(width, height, false);
 
       if (currentModel) {
-        const framed = frameAvatar(camera, currentModel, width / height);
+        const framed = frameAvatar(camera, currentModel, width / height, 1.28);
         controls.target.copy(framed.center);
-        controls.minDistance = Math.max(framed.distance * 0.62, 1.1);
+        controls.minDistance = Math.max(framed.distance * 0.72, 1.1);
         controls.maxDistance = framed.distance * 1.75;
         controls.update();
       } else {
@@ -138,17 +140,16 @@ export function AvatarModelViewer({
       currentModel = object;
       scene.add(object);
 
-      if (animations.length) {
+      if (playAnimations && animations.length) {
         mixer = new AnimationMixer(object);
         const idle = animations.find((clip) => String(clip.name).toLowerCase() === "idle")
-          ?? animations.find((clip) => String(clip.name).toLowerCase().includes("idle"))
-          ?? animations[0];
+          ?? animations.find((clip) => String(clip.name).toLowerCase().includes("idle"));
         if (idle) mixer.clipAction(idle).reset().play();
       }
 
       setState(isFallback ? "fallback" : "ready");
       setErrorMessage(null);
-      resize();
+      requestAnimationFrame(resize);
     };
 
     const loadUrl = async (url: string, isFallback: boolean) => {
@@ -219,7 +220,7 @@ export function AvatarModelViewer({
       renderer.dispose();
       mount.current?.replaceChildren();
     };
-  }, [modelUrl, fallbackModelUrl, modelData, frontRotationY]);
+  }, [modelUrl, fallbackModelUrl, modelData, frontRotationY, playAnimations]);
 
   return (
     <div
