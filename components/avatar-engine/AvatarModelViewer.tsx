@@ -4,119 +4,89 @@ import { useEffect, useRef, useState } from "react";
 import {
   ACESFilmicToneMapping,
   AmbientLight,
-  Box3,
+  AnimationMixer,
+  Clock,
   DirectionalLight,
   HemisphereLight,
-  MathUtils,
   Object3D,
   PerspectiveCamera,
   Scene,
   SRGBColorSpace,
-  Vector3,
   WebGLRenderer,
 } from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
+import { frameAvatar, normalizeAvatarObject } from "@/lib/avatar-engine/frame-avatar";
 import { buildProceduralClouvaAvatar } from "@/lib/avatar-engine/procedural-clouva";
 import type { AvatarConfig } from "@/lib/avatar-engine/types";
 
 type ModelState = "loading" | "ready" | "fallback" | "error";
 type Props = {
   modelUrl: string | null;
+  fallbackModelUrl?: string | null;
   modelData?: ArrayBuffer | null;
+  frontRotationY?: number;
   config?: AvatarConfig;
   alt?: string;
   className?: string;
 };
 
-function normalizeModel(object: Object3D, targetHeight = 2.15) {
-  object.updateMatrixWorld(true);
-  const firstBox = new Box3().setFromObject(object);
-  const firstSize = firstBox.getSize(new Vector3());
-  const scale = firstSize.y > 0 ? targetHeight / firstSize.y : 1;
-  object.scale.multiplyScalar(scale);
-  object.updateMatrixWorld(true);
-  const box = new Box3().setFromObject(object);
-  const center = box.getCenter(new Vector3());
-  object.position.x -= center.x;
-  object.position.z -= center.z;
-  object.position.y -= box.min.y;
-  object.updateMatrixWorld(true);
-}
-
-function frameModel(camera: PerspectiveCamera, object: Object3D, aspect: number) {
-  object.updateMatrixWorld(true);
-  const box = new Box3().setFromObject(object);
-  const size = box.getSize(new Vector3());
-  const center = box.getCenter(new Vector3());
-  const vFov = MathUtils.degToRad(camera.fov);
-  const hFov = 2 * Math.atan(Math.tan(vFov / 2) * Math.max(aspect, 0.1));
-  const distance = Math.max(
-    size.y / (2 * Math.tan(vFov / 2)),
-    size.x / (2 * Math.tan(hFov / 2)),
-    size.z * 2,
-    2.5,
-  ) * 1.25;
-
-  camera.aspect = aspect;
-  camera.near = Math.max(distance / 100, 0.02);
-  camera.far = Math.max(distance * 20, 100);
-  camera.position.set(center.x, center.y + size.y * 0.03, center.z + distance);
-  camera.lookAt(center.x, center.y, center.z);
-  camera.updateProjectionMatrix();
-  return { center, distance };
-}
-
-export function AvatarModelViewer({ modelUrl, modelData, config, className = "" }: Props) {
+export function AvatarModelViewer({
+  modelUrl,
+  fallbackModelUrl = null,
+  modelData,
+  frontRotationY = 0,
+  config,
+  className = "",
+}: Props) {
   const mount = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<ModelState>("loading");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!config || !mount.current) return;
+    if (!mount.current) return;
 
     let disposed = false;
     let raf = 0;
     let currentModel: Object3D | null = null;
+    let mixer: AnimationMixer | null = null;
     let resumeTimer: ReturnType<typeof setTimeout> | null = null;
+    const clock = new Clock();
 
     const scene = new Scene();
-    const camera = new PerspectiveCamera(32, 1, 0.02, 100);
+    const camera = new PerspectiveCamera(31, 1, 0.02, 100);
     const renderer = new WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
 
     renderer.outputColorSpace = SRGBColorSpace;
     renderer.toneMapping = ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 1.2;
+    renderer.toneMappingExposure = 1.18;
     renderer.setClearColor(0x000000, 0);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, window.innerWidth < 768 ? 1 : 1.5));
-    renderer.domElement.style.width = "100%";
-    renderer.domElement.style.height = "100%";
-    renderer.domElement.style.display = "block";
-    renderer.domElement.style.touchAction = "none";
+    Object.assign(renderer.domElement.style, { width: "100%", height: "100%", display: "block", touchAction: "none" });
     mount.current.appendChild(renderer.domElement);
 
-    scene.add(new HemisphereLight(0xffffff, 0x1b1029, 2.4));
-    scene.add(new AmbientLight(0xffffff, 1.15));
-    const key = new DirectionalLight(0xffffff, 3.3);
+    scene.add(new HemisphereLight(0xffffff, 0x160b25, 2.25));
+    scene.add(new AmbientLight(0xffffff, 0.95));
+    const key = new DirectionalLight(0xffffff, 3.1);
     key.position.set(3, 5, 4);
     scene.add(key);
-    const rim = new DirectionalLight(0x8b5cf6, 1.8);
-    rim.position.set(-3, 2, -2);
+    const rim = new DirectionalLight(0x8b5cf6, 2.1);
+    rim.position.set(-3, 2.5, -3);
     scene.add(rim);
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
-    controls.dampingFactor = 0.08;
+    controls.dampingFactor = 0.075;
     controls.enablePan = false;
     controls.enableRotate = true;
     controls.enableZoom = true;
     controls.rotateSpeed = 0.72;
-    controls.zoomSpeed = 0.85;
+    controls.zoomSpeed = 0.82;
     controls.minPolarAngle = Math.PI * 0.2;
     controls.maxPolarAngle = Math.PI * 0.78;
     controls.autoRotate = true;
-    controls.autoRotateSpeed = 0.45;
+    controls.autoRotateSpeed = 0.35;
 
     controls.addEventListener("start", () => {
       controls.autoRotate = false;
@@ -125,7 +95,7 @@ export function AvatarModelViewer({ modelUrl, modelData, config, className = "" 
     controls.addEventListener("end", () => {
       resumeTimer = setTimeout(() => {
         controls.autoRotate = true;
-      }, 2200);
+      }, 2600);
     });
 
     const resize = () => {
@@ -134,11 +104,12 @@ export function AvatarModelViewer({ modelUrl, modelData, config, className = "" 
       const width = Math.max(rect.width, 1);
       const height = Math.max(rect.height, 1);
       renderer.setSize(width, height, false);
+
       if (currentModel) {
-        const framed = frameModel(camera, currentModel, width / height);
+        const framed = frameAvatar(camera, currentModel, width / height);
         controls.target.copy(framed.center);
-        controls.minDistance = Math.max(framed.distance * 0.62, 1.2);
-        controls.maxDistance = framed.distance * 1.8;
+        controls.minDistance = Math.max(framed.distance * 0.62, 1.1);
+        controls.maxDistance = framed.distance * 1.75;
         controls.update();
       } else {
         camera.aspect = width / height;
@@ -150,53 +121,86 @@ export function AvatarModelViewer({ modelUrl, modelData, config, className = "" 
     resizeObserver.observe(mount.current);
     window.addEventListener("resize", resize);
 
-    const showModel = (object: Object3D) => {
-      if (disposed) return;
-      normalizeModel(object);
-      object.rotation.y = Math.PI;
-      currentModel = object;
-      scene.add(object);
-      setState("ready");
-      resize();
-    };
-
-    const showError = (error: unknown) => {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error("GLB load failed", error);
-      setErrorMessage(message || "Error desconocido leyendo el GLB");
-      setState("error");
-      const fallback = buildProceduralClouvaAvatar(config);
-      normalizeModel(fallback);
-      currentModel = fallback;
-      scene.add(fallback);
-      resize();
-    };
-
     const loader = new GLTFLoader();
     loader.setMeshoptDecoder(MeshoptDecoder);
-    setState("loading");
-    setErrorMessage(null);
 
-    if (modelData) {
-      loader.parse(
-        modelData.slice(0),
-        "",
-        (gltf) => showModel(gltf.scene),
-        (error) => showError(error),
-      );
-    } else if (modelUrl) {
-      loader.load(modelUrl, (gltf) => showModel(gltf.scene), undefined, (error) => showError(error));
-    } else {
-      const fallback = buildProceduralClouvaAvatar(config);
-      normalizeModel(fallback);
-      currentModel = fallback;
-      scene.add(fallback);
-      setState("fallback");
+    const attachModel = (object: Object3D, animations: any[], isFallback: boolean) => {
+      if (disposed) return;
+      normalizeAvatarObject(object, { targetHeight: 2.05, frontRotationY });
+      object.traverse((child: any) => {
+        if (child.isMesh || child.isSkinnedMesh) {
+          child.visible = true;
+          child.frustumCulled = false;
+          child.castShadow = true;
+          child.receiveShadow = true;
+        }
+      });
+      currentModel = object;
+      scene.add(object);
+
+      if (animations.length) {
+        mixer = new AnimationMixer(object);
+        const idle = animations.find((clip) => String(clip.name).toLowerCase() === "idle")
+          ?? animations.find((clip) => String(clip.name).toLowerCase().includes("idle"))
+          ?? animations[0];
+        if (idle) mixer.clipAction(idle).reset().play();
+      }
+
+      setState(isFallback ? "fallback" : "ready");
+      setErrorMessage(null);
       resize();
-    }
+    };
+
+    const loadUrl = async (url: string, isFallback: boolean) => {
+      const gltf = await loader.loadAsync(url);
+      attachModel(gltf.scene, gltf.animations, isFallback);
+    };
+
+    const useTechnicalFallback = () => {
+      if (!config) {
+        setState("error");
+        return;
+      }
+      const fallback = buildProceduralClouvaAvatar(config);
+      attachModel(fallback, [], true);
+    };
+
+    const load = async () => {
+      setState("loading");
+      setErrorMessage(null);
+      try {
+        if (modelData) {
+          const gltf = await loader.parseAsync(modelData.slice(0), "");
+          attachModel(gltf.scene, gltf.animations, false);
+          return;
+        }
+        if (modelUrl) {
+          await loadUrl(modelUrl, false);
+          return;
+        }
+        throw new Error("No active avatar URL");
+      } catch (primaryError) {
+        console.warn("Primary avatar failed", primaryError);
+        if (fallbackModelUrl && fallbackModelUrl !== modelUrl) {
+          try {
+            await loadUrl(fallbackModelUrl, true);
+            return;
+          } catch (fallbackError) {
+            console.error("Temporary rig failed", fallbackError);
+            setErrorMessage(fallbackError instanceof Error ? fallbackError.message : String(fallbackError));
+          }
+        } else {
+          setErrorMessage(primaryError instanceof Error ? primaryError.message : String(primaryError));
+        }
+        useTechnicalFallback();
+      }
+    };
+
+    void load();
 
     const animate = () => {
       if (!document.hidden) {
+        mixer?.update(clock.getDelta());
         controls.update();
         renderer.render(scene, camera);
       }
@@ -210,25 +214,24 @@ export function AvatarModelViewer({ modelUrl, modelData, config, className = "" 
       if (resumeTimer) clearTimeout(resumeTimer);
       resizeObserver.disconnect();
       window.removeEventListener("resize", resize);
+      mixer?.stopAllAction();
       controls.dispose();
       renderer.dispose();
       mount.current?.replaceChildren();
     };
-  }, [modelUrl, modelData, config]);
-
-  if (!config) return null;
+  }, [modelUrl, fallbackModelUrl, modelData, frontRotationY]);
 
   return (
     <div
       className={`avatar-render-shell ${className}`}
       data-state={state}
-      data-avatar-source={state === "ready" ? "glb" : "procedural"}
+      data-avatar-source={state === "ready" ? "glb" : "fallback"}
       style={{ position: "absolute", inset: 0, width: "100%", height: "100%", minHeight: "100dvh" }}
     >
-      {state === "loading" ? <div className="avatar-loader">Cargando CLOUVA 3D…</div> : null}
+      {state === "loading" ? <div className="avatar-loader">Cargando CLOUVA…</div> : null}
       {state === "error" ? (
         <div className="avatar-loader" style={{ maxWidth: "88vw", textAlign: "center", zIndex: 30 }}>
-          Error GLB: {errorMessage}
+          Error de avatar: {errorMessage}
         </div>
       ) : null}
       <div
