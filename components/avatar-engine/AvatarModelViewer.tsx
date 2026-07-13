@@ -188,7 +188,10 @@ export function AvatarModelViewer({
           await loadUrl(modelUrl, false);
           return;
         }
-        throw new Error("No active avatar URL");
+        // Todavía no llegó ninguna URL real (ej. esperando la respuesta de
+        // /api/avatar/clouva) — nos quedamos en "loading" en silencio, sin
+        // mostrar el personaje de respaldo, para evitar el parpadeo.
+        return;
       } catch (primaryError) {
         console.warn("Primary avatar failed", primaryError);
         if (fallbackModelUrl && fallbackModelUrl !== modelUrl) {
