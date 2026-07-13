@@ -20,7 +20,29 @@ function publicModelUrl() {
 }
 
 export async function GET() {
-  return NextResponse.json({ modelUrl: publicModelUrl(), objectPath: OBJECT_PATH });
+  const baseUrl = publicModelUrl();
+  if (!baseUrl) {
+    return NextResponse.json({ modelUrl: null, objectPath: OBJECT_PATH }, { headers: { "Cache-Control": "no-store" } });
+  }
+
+  let version = Date.now();
+  try {
+    const supabase = getAdminClient();
+    const { data } = await supabase.storage.from(BUCKET).list("official", {
+      search: "clouva-official-v1.glb",
+      limit: 10,
+    });
+    const file = data?.find((entry) => entry.name === "clouva-official-v1.glb");
+    const stamp = file?.updated_at || file?.created_at;
+    if (stamp) version = new Date(stamp).getTime();
+  } catch (error) {
+    console.warn("Could not resolve official avatar version", error);
+  }
+
+  return NextResponse.json(
+    { modelUrl: `${baseUrl}?v=${version}`, objectPath: OBJECT_PATH },
+    { headers: { "Cache-Control": "no-store, max-age=0" } },
+  );
 }
 
 export async function POST(request: NextRequest) {
@@ -58,7 +80,7 @@ export async function POST(request: NextRequest) {
     const { error } = await supabase.storage.from(BUCKET).upload(OBJECT_PATH, bytes, {
       upsert: true,
       contentType: "model/gltf-binary",
-      cacheControl: "3600",
+      cacheControl: "60",
     });
     if (error) throw error;
 
