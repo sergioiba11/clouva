@@ -27,15 +27,30 @@ export function AvatarModelViewer({ modelUrl, alt = "Avatar 3D CLOUVA", classNam
 
   if (!modelUrl || state === "error") {
     return (
-      <div className={`avatar-render-fallback ${className}`} aria-label="Silueta temporal del avatar CLOUVA">
-        <span className="avatar-render-silhouette" />
-        <p>{modelUrl ? "No pudimos cargar el modelo. Probá otra URL." : "Configurá NEXT_PUBLIC_AVATAR_BASE_URL para ver el humanoide 3D."}</p>
+      <div className={`avatar-render-fallback ${className}`} data-avatar-source="fallback" aria-label="Preview temporal humanoide CLOUVA">
+        <span className="avatar-render-silhouette" aria-hidden="true">
+          <i className="avatar-fallback-glow" />
+          <i className="avatar-fallback-hair" />
+          <i className="avatar-fallback-head" />
+          <i className="avatar-fallback-neck" />
+          <i className="avatar-fallback-hood" />
+          <i className="avatar-fallback-torso" />
+          <i className="avatar-fallback-arm avatar-fallback-arm-left" />
+          <i className="avatar-fallback-arm avatar-fallback-arm-right" />
+          <i className="avatar-fallback-hand avatar-fallback-hand-left" />
+          <i className="avatar-fallback-hand avatar-fallback-hand-right" />
+          <i className="avatar-fallback-leg avatar-fallback-leg-left" />
+          <i className="avatar-fallback-leg avatar-fallback-leg-right" />
+          <i className="avatar-fallback-shoe avatar-fallback-shoe-left" />
+          <i className="avatar-fallback-shoe avatar-fallback-shoe-right" />
+        </span>
+        <span className="sr-only" data-avatar-source-state="fallback">Avatar fallback de desarrollo activo</span>
       </div>
     );
   }
 
   return (
-    <div className={`avatar-render-shell ${className}`} data-state={state}>
+    <div className={`avatar-render-shell ${className}`} data-state={state} data-avatar-source="glb">
       {state === "loading" ? <div className="avatar-loader">Cargando avatar…</div> : null}
       <model-viewer
         key={key}
@@ -44,13 +59,17 @@ export function AvatarModelViewer({ modelUrl, alt = "Avatar 3D CLOUVA", classNam
         camera-controls
         disable-pan
         interaction-prompt="none"
-        touch-action="pan-y"
-        camera-orbit="0deg 78deg auto"
-        min-camera-orbit="-180deg 58deg auto"
-        max-camera-orbit="180deg 98deg auto"
+        touch-action="none"
+        auto-rotate
+        auto-rotate-delay="3200"
+        rotation-per-second="8deg"
+        camera-target="0m 1.35m 0m"
+        camera-orbit="0deg 78deg 3.15m"
+        min-camera-orbit="-180deg 58deg 2.35m"
+        max-camera-orbit="180deg 92deg 4.15m"
         min-field-of-view="18deg"
-        max-field-of-view="34deg"
-        field-of-view="24deg"
+        max-field-of-view="32deg"
+        field-of-view="23deg"
         shadow-intensity="0.72"
         shadow-softness="0.95"
         exposure="1.05"

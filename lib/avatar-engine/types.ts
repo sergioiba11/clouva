@@ -1,4 +1,4 @@
-export type AvatarCategory = "body" | "hair" | "top" | "bottom" | "shoes" | "accessory";
+export type AvatarCategory = "body" | "hair" | "top" | "bottom" | "shoes" | "accessory" | "color" | "animation";
 
 export interface AvatarItem {
   id: string;
