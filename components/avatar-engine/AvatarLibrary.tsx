@@ -21,30 +21,49 @@ export function AvatarLibrary() {
   const setActiveAvatar = useActiveAvatarStore((state) => state.setActiveAvatar);
   const [avatars, setAvatars] = useState<AvatarRecord[]>([]);
   const [loading, setLoading] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [activatingId, setActivatingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const load = async () => {
+  const fetchLibrary = async () => {
+    if (!session?.access_token) return [] as AvatarRecord[];
+    const response = await fetch("/api/avatar/library", {
+      headers: { Authorization: `Bearer ${session.access_token}` },
+      cache: "no-store",
+    });
+    const data = await response.json();
+    if (!response.ok || data.error) throw new Error(data.error || "No se pudo cargar la biblioteca.");
+    const next = data.avatars ?? [];
+    setAvatars(next);
+    return next as AvatarRecord[];
+  };
+
+  const refresh = async () => {
     if (!session?.access_token) return;
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch("/api/avatar/library", {
-        headers: { Authorization: `Bearer ${session.access_token}` },
-        cache: "no-store",
-      });
-      const data = await response.json();
-      if (!response.ok || data.error) throw new Error(data.error || "No se pudo cargar la biblioteca.");
-      setAvatars(data.avatars ?? []);
+      const current = await fetchLibrary();
+      if (current.some((avatar) => avatar.status === "generating")) {
+        setSyncing(true);
+        const syncResponse = await fetch("/api/avatar/sync", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        });
+        const syncData = await syncResponse.json();
+        if (!syncResponse.ok || syncData.error) throw new Error(syncData.error || "No se pudo actualizar la generación.");
+        await fetchLibrary();
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo cargar la biblioteca.");
     } finally {
+      setSyncing(false);
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    void load();
+    void refresh();
   }, [session?.access_token]);
 
   const activate = async (avatar: AvatarRecord) => {
@@ -72,7 +91,7 @@ export function AvatarLibrary() {
         frontRotationY: Number(data.avatar.front_rotation_y ?? 0),
         updatedAt: data.avatar.updated_at ?? new Date().toISOString(),
       });
-      await load();
+      await fetchLibrary();
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo activar el avatar.");
     } finally {
@@ -87,13 +106,17 @@ export function AvatarLibrary() {
           <p className="text-xs font-semibold uppercase tracking-[0.22em] text-violet-300/70">Biblioteca</p>
           <h2 className="mt-2 text-xl font-semibold text-white">Tus avatares</h2>
         </div>
-        <button type="button" onClick={() => void load()} className="rounded-full border border-white/10 px-3 py-2 text-xs text-white/60">
-          Actualizar
+        <button
+          type="button"
+          onClick={() => void refresh()}
+          disabled={loading || syncing}
+          className="rounded-full border border-white/10 px-3 py-2 text-xs text-white/60 disabled:opacity-50"
+        >
+          {syncing ? "Revisando…" : "Actualizar"}
         </button>
       </div>
 
       {error ? <div className="mt-4 rounded-2xl border border-rose-400/25 bg-rose-400/10 p-3 text-sm text-rose-200">{error}</div> : null}
-
       {loading && avatars.length === 0 ? <p className="mt-5 text-sm text-white/45">Cargando avatares…</p> : null}
       {!loading && avatars.length === 0 ? <p className="mt-5 text-sm text-white/45">Todavía no hay generaciones guardadas.</p> : null}
 
