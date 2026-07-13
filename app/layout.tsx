@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
 import { AuthProvider } from "@/components/auth-provider";
+import { ActiveAvatarHydrator } from "@/components/avatar-engine/ActiveAvatarHydrator";
 
 export const metadata: Metadata = {
   title: "CLOUVA | Premium Underground",
@@ -22,7 +23,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <script type="module" src="https://unpkg.com/@google/model-viewer@3.5.0/dist/model-viewer.min.js" async />
       </head>
       <body>
-        <ThemeProvider><AuthProvider>{children}</AuthProvider></ThemeProvider>
+        <ThemeProvider>
+          <AuthProvider>
+            <ActiveAvatarHydrator />
+            {children}
+          </AuthProvider>
+        </ThemeProvider>
       </body>
     </html>
   );
