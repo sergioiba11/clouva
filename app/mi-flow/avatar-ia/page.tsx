@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useAuth } from "@/components/auth-provider";
+import { AvatarLibrary } from "@/components/avatar-engine/AvatarLibrary";
 import { useActiveAvatarStore } from "@/lib/avatar-engine/active-avatar-store";
 
 type Phase = "idle" | "uploading" | "generating" | "saving" | "done" | "error";
@@ -184,6 +185,8 @@ export default function AvatarIaPage() {
           </div>
         ) : null}
       </section>
+
+      <AvatarLibrary />
     </main>
   );
 }
