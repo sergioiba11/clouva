@@ -16,6 +16,14 @@ type AvatarRecord = {
   updated_at: string;
 };
 
+type SyncResult = {
+  id: string;
+  status: string;
+  remoteStatus?: string;
+  progress?: number;
+  error?: string;
+};
+
 export function AvatarLibrary() {
   const { session } = useAuth();
   const setActiveAvatar = useActiveAvatarStore((state) => state.setActiveAvatar);
@@ -24,6 +32,7 @@ export function AvatarLibrary() {
   const [syncing, setSyncing] = useState(false);
   const [activatingId, setActivatingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [syncInfo, setSyncInfo] = useState<string | null>(null);
 
   const fetchLibrary = async () => {
     if (!session?.access_token) return [] as AvatarRecord[];
@@ -42,6 +51,7 @@ export function AvatarLibrary() {
     if (!session?.access_token) return;
     setLoading(true);
     setError(null);
+    setSyncInfo(null);
     try {
       const current = await fetchLibrary();
       if (current.some((avatar) => avatar.status === "generating")) {
@@ -52,6 +62,21 @@ export function AvatarLibrary() {
         });
         const syncData = await syncResponse.json();
         if (!syncResponse.ok || syncData.error) throw new Error(syncData.error || "No se pudo actualizar la generación.");
+
+        const results = (syncData.results ?? []) as SyncResult[];
+        const failed = results.find((result) => result.error);
+        if (failed?.error) {
+          setError(failed.error);
+        } else {
+          const pending = results.find((result) => result.status === "generating");
+          if (pending) {
+            const remote = pending.remoteStatus ? `Meshy: ${pending.remoteStatus}` : "Meshy todavía la está procesando";
+            const progress = typeof pending.progress === "number" ? ` · ${pending.progress}%` : "";
+            setSyncInfo(`${remote}${progress}`);
+          } else if (results.some((result) => result.status === "ready")) {
+            setSyncInfo("La generación terminó y ya fue guardada.");
+          }
+        }
         await fetchLibrary();
       }
     } catch (err) {
@@ -117,6 +142,7 @@ export function AvatarLibrary() {
       </div>
 
       {error ? <div className="mt-4 rounded-2xl border border-rose-400/25 bg-rose-400/10 p-3 text-sm text-rose-200">{error}</div> : null}
+      {syncInfo ? <div className="mt-4 rounded-2xl border border-violet-400/20 bg-violet-400/10 p-3 text-sm text-violet-100">{syncInfo}</div> : null}
       {loading && avatars.length === 0 ? <p className="mt-5 text-sm text-white/45">Cargando avatares…</p> : null}
       {!loading && avatars.length === 0 ? <p className="mt-5 text-sm text-white/45">Todavía no hay generaciones guardadas.</p> : null}
 
