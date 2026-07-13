@@ -18,7 +18,6 @@ import {
   applyMaterialColors,
   applyMorphValues,
   loadAvatarPart,
-  normalizeAvatarObject,
   setHairColor,
   setSkinTone,
   validateAvatarItemCompatibility,
@@ -44,11 +43,11 @@ function Fallback({ className }: { className: string }) {
 
 function frameHumanoid(camera: PerspectiveCamera, aspect: number) {
   camera.aspect = Math.max(aspect, 0.1);
-  camera.fov = 30;
+  camera.fov = 32;
   camera.near = 0.05;
   camera.far = 100;
-  camera.position.set(0, 1.02, aspect < 0.8 ? 4.8 : 3.9);
-  camera.lookAt(0, 0.92, 0);
+  camera.position.set(0, 1.05, aspect < 0.8 ? 3.8 : 3.2);
+  camera.lookAt(0, 0.95, 0);
   camera.updateProjectionMatrix();
 }
 
@@ -63,7 +62,7 @@ export function AvatarModelViewer({ modelUrl, config, className = "" }: Props) {
 
     let disposed = false;
     const scene = new Scene();
-    const camera = new PerspectiveCamera(30, 1, 0.05, 100);
+    const camera = new PerspectiveCamera(32, 1, 0.05, 100);
     const renderer = new WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
     let raf = 0;
     const loadedParts: Record<string, LoadedAvatarPart> = {};
@@ -117,10 +116,13 @@ export function AvatarModelViewer({ modelUrl, config, className = "" }: Props) {
       const body = await loadAvatarPart(item, null);
       if (disposed) return;
 
-      normalizeAvatarObject(body.object, 1.85);
+      body.object.position.set(0, 0, 0);
+      body.object.scale.set(1, 1, 1);
+      body.object.rotation.set(0, 0, 0);
+      body.object.updateMatrixWorld(true);
       scene.add(body.object);
-      const analysis = analyzeObject(body.object);
 
+      const analysis = analyzeObject(body.object);
       const model: BaseAvatarModel = {
         object: body.object,
         skeletonId: body.skeletonId,
@@ -197,6 +199,8 @@ export function AvatarModelViewer({ modelUrl, config, className = "" }: Props) {
               source: "glb",
               baseUrl: modelUrl,
               skeletonId: base.skeletonId,
+              height: base.height,
+              center: base.center,
               bones: base.boneNames,
               clips: base.animations.map((candidate: any) => candidate.name),
               morphs: base.morphNames,
