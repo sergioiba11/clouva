@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { getRenderableAvatarUrl } from "@/lib/avatar-engine/catalog";
 import type { AvatarConfig } from "@/lib/avatar-engine/types";
 import { AvatarModelViewer } from "./AvatarModelViewer";
@@ -17,7 +17,7 @@ function openDb(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME);
     };
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    request.onerror = () => reject(request.error ?? new Error("No se pudo abrir IndexedDB"));
   });
 }
 
@@ -27,7 +27,8 @@ async function saveModel(file: File) {
     const tx = db.transaction(STORE_NAME, "readwrite");
     tx.objectStore(STORE_NAME).put(file, MODEL_KEY);
     tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
+    tx.onerror = () => reject(tx.error ?? new Error("No se pudo guardar el GLB"));
+    tx.onabort = () => reject(tx.error ?? new Error("Se canceló el guardado del GLB"));
   });
   db.close();
 }
@@ -38,7 +39,7 @@ async function loadModel(): Promise<Blob | null> {
     const tx = db.transaction(STORE_NAME, "readonly");
     const request = tx.objectStore(STORE_NAME).get(MODEL_KEY);
     request.onsuccess = () => resolve((request.result as Blob | undefined) ?? null);
-    request.onerror = () => reject(request.error);
+    request.onerror = () => reject(request.error ?? new Error("No se pudo leer el GLB guardado"));
   });
   db.close();
   return blob;
@@ -47,21 +48,24 @@ async function loadModel(): Promise<Blob | null> {
 export function AvatarCanvas({ config }: { config: AvatarConfig }) {
   const fallbackUrl = getRenderableAvatarUrl(config);
   const [localUrl, setLocalUrl] = useState<string | null>(null);
-  const [uploading, setUploading] = useState(false);
+  const [status, setStatus] = useState<string>("Subir avatar GLB");
+  const currentObjectUrl = useRef<string | null>(null);
 
   useEffect(() => {
     let active = true;
-    let objectUrl: string | null = null;
     loadModel()
       .then((blob) => {
         if (!active || !blob) return;
-        objectUrl = URL.createObjectURL(blob);
-        setLocalUrl(objectUrl);
+        const url = URL.createObjectURL(blob);
+        currentObjectUrl.current = url;
+        setLocalUrl(url);
+        setStatus("Cambiar avatar GLB");
       })
       .catch(() => undefined);
+
     return () => {
       active = false;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      if (currentObjectUrl.current) URL.revokeObjectURL(currentObjectUrl.current);
     };
   }, []);
 
@@ -70,16 +74,24 @@ export function AvatarCanvas({ config }: { config: AvatarConfig }) {
   const onUpload = async (file?: File) => {
     if (!file) return;
     if (!file.name.toLowerCase().endsWith(".glb")) {
-      alert("Elegí un archivo .glb");
+      setStatus("El archivo debe ser .glb");
       return;
     }
-    setUploading(true);
+
+    const immediateUrl = URL.createObjectURL(file);
+    if (currentObjectUrl.current) URL.revokeObjectURL(currentObjectUrl.current);
+    currentObjectUrl.current = immediateUrl;
+    setLocalUrl(immediateUrl);
+    setStatus("Cargando avatar…");
+
     try {
       await saveModel(file);
-      if (localUrl) URL.revokeObjectURL(localUrl);
-      setLocalUrl(URL.createObjectURL(file));
-    } finally {
-      setUploading(false);
+      setStatus("Avatar cargado ✓");
+      window.setTimeout(() => setStatus("Cambiar avatar GLB"), 1800);
+    } catch (error) {
+      console.error("No se pudo guardar el avatar en el navegador", error);
+      setStatus("Cargado, pero no guardado");
+      window.setTimeout(() => setStatus("Cambiar avatar GLB"), 2400);
     }
   };
 
@@ -109,10 +121,19 @@ export function AvatarCanvas({ config }: { config: AvatarConfig }) {
           fontSize: 13,
           fontWeight: 700,
           backdropFilter: "blur(12px)",
+          whiteSpace: "nowrap",
         }}
       >
-        {uploading ? "Guardando avatar…" : localUrl ? "Cambiar avatar GLB" : "Subir avatar GLB"}
-        <input type="file" accept=".glb,model/gltf-binary" hidden onChange={(event) => onUpload(event.target.files?.[0])} />
+        {status}
+        <input
+          type="file"
+          accept=".glb,model/gltf-binary"
+          hidden
+          onChange={(event) => {
+            void onUpload(event.target.files?.[0]);
+            event.currentTarget.value = "";
+          }}
+        />
       </label>
 
       <div className="avatar-canvas-note">Arrastrá para girar · Pinch/scroll para zoom limitado</div>
