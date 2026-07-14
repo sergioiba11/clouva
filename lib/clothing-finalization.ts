@@ -49,37 +49,49 @@ async function fetchGlb(url: string, label: string) {
 
 async function rigWithWorker(modelUrl: string, category: string, artUrl: string | null, color: string | null) {
   const workerUrl = process.env.GARMENT_RIG_WORKER_URL?.replace(/\/$/, "");
-  if (!workerUrl) return null;
+  if (!workerUrl) return { bytes: null as ArrayBuffer | null, error: "GARMENT_RIG_WORKER_URL no está configurada" };
 
-  const response = await fetch(`${workerUrl}/rig`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(process.env.GARMENT_RIG_WORKER_TOKEN
-        ? { Authorization: `Bearer ${process.env.GARMENT_RIG_WORKER_TOKEN}` }
-        : {}),
-    },
-    body: JSON.stringify({
-      avatar_url: officialAvatarUrl(),
-      garment_url: modelUrl,
-      category,
-      art_url: artUrl,
-      color,
-    }),
-    signal: AbortSignal.timeout(8 * 60 * 1000),
-  });
+  try {
+    const response = await fetch(`${workerUrl}/rig`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(process.env.GARMENT_RIG_WORKER_TOKEN
+          ? { Authorization: `Bearer ${process.env.GARMENT_RIG_WORKER_TOKEN}` }
+          : {}),
+      },
+      body: JSON.stringify({
+        avatar_url: officialAvatarUrl(),
+        garment_url: modelUrl,
+        category,
+        art_url: artUrl,
+        color,
+      }),
+      signal: AbortSignal.timeout(8 * 60 * 1000),
+    });
 
-  if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(`Automatic rigging failed (${response.status}): ${detail.slice(0, 1200)}`);
+    if (!response.ok) {
+      const detail = await response.text();
+      return {
+        bytes: null,
+        error: `Automatic rigging failed (${response.status}): ${detail.slice(0, 1200)}`,
+      };
+    }
+
+    const bytes = await response.arrayBuffer();
+    if (bytes.byteLength > MAX_GLB_BYTES) {
+      return { bytes: null, error: "Rigged GLB exceeds 75 MB" };
+    }
+    if (Buffer.from(bytes).subarray(0, 4).toString("ascii") !== "glTF") {
+      return { bytes: null, error: "Rig worker did not return a valid GLB" };
+    }
+    return { bytes, error: null as string | null };
+  } catch (error) {
+    return {
+      bytes: null,
+      error: error instanceof Error ? error.message : "Unknown rigging error",
+    };
   }
-
-  const bytes = await response.arrayBuffer();
-  if (bytes.byteLength > MAX_GLB_BYTES) throw new Error("Rigged GLB exceeds 75 MB");
-  if (Buffer.from(bytes).subarray(0, 4).toString("ascii") !== "glTF") {
-    throw new Error("Rig worker did not return a valid GLB");
-  }
-  return bytes;
 }
 
 export async function finalizeClothingItem({
@@ -93,9 +105,10 @@ export async function finalizeClothingItem({
 }: FinalizeInput) {
   const artUrl = typeof metadata.art_url === "string" && metadata.art_url ? metadata.art_url : null;
 
-  const riggedBytes = await rigWithWorker(modelUrl, category, artUrl, color);
+  const rigResult = await rigWithWorker(modelUrl, category, artUrl, color);
+  const riggedBytes = rigResult.bytes;
   const bytes = riggedBytes ?? (await fetchGlb(modelUrl, "Meshy GLB"));
-  const storagePath = `${userId}/clothing/${itemId}/${riggedBytes ? "rigged-textured" : "garment"}.glb`;
+  const storagePath = `${userId}/clothing/${itemId}/${riggedBytes ? "rigged-textured" : "garment-fallback"}.glb`;
 
   const { error: uploadError } = await supabase.storage.from("avatars").upload(storagePath, bytes, {
     contentType: "model/gltf-binary",
@@ -115,6 +128,8 @@ export async function finalizeClothingItem({
     texture_source: artUrl,
     generation_stage: "ready",
     generation_progress: 100,
+    compatibility_warning: riggedBytes ? null : "La pieza quedó disponible sin rigging automático.",
+    rigging_last_error: riggedBytes ? null : rigResult.error,
   };
 
   const { data: item, error: updateError } = await supabase
@@ -135,5 +150,6 @@ export async function finalizeClothingItem({
     item,
     rigged: Boolean(riggedBytes),
     textured: Boolean(riggedBytes && artUrl),
+    warning: riggedBytes ? null : "La pieza quedó disponible sin rigging automático.",
   };
 }
