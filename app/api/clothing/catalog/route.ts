@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
 
   const { data, error } = await supabase
     .from("clothing_items")
-    .select("id,user_id,name,category,fit,color,status,model_url,thumbnail_url,created_at")
+    .select("id,user_id,name,category,fit,color,status,model_url,thumbnail_url,created_at,fit_status,rigged,wearable,hood_supported,hood_state,hood_up_model_url,hood_down_model_url")
     .eq("status", "ready")
     .not("model_url", "is", null)
     .not("thumbnail_url", "is", null)
