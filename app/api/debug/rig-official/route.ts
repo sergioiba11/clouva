@@ -7,6 +7,7 @@ export const dynamic = "force-dynamic";
 
 const OWNER_EMAIL = (process.env.CLOUVA_OWNER_EMAIL || "esian0116@gmail.com").trim().toLowerCase();
 const RIG_JOB_KEY = "official_avatar_rig_job";
+const RIGGED_FILENAME = "clouva-official-rigged.glb";
 
 function getAdminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -57,15 +58,20 @@ function readRigJob(user: { app_metadata?: Record<string, unknown> | null }) {
   return { taskId: job.taskId, startedAt: job.startedAt };
 }
 
+function taskErrorMessage(task: { task_error?: { message?: string }; error?: string }) {
+  return task.task_error?.message || task.error || "Meshy no pudo riggear el avatar";
+}
+
 export async function POST(request: NextRequest) {
   try {
     const { supabase, profile, user } = await requireOwner(request);
     const body = await request.json();
     const action = String(body?.action ?? "");
+    const alreadyRigged = Boolean(profile.avatar_3d_url?.includes(RIGGED_FILENAME));
 
     if (action === "create") {
       if (!profile.avatar_3d_url) throw new Error("No hay avatar oficial activo");
-      if (profile.avatar_3d_url.includes("clouva-official-rigged.glb")) {
+      if (alreadyRigged) {
         await saveRigJob(supabase, profile.id, null);
         return NextResponse.json({ alreadyRigged: true, newAvatarUrl: profile.avatar_3d_url });
       }
@@ -85,9 +91,31 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === "current") {
+      if (alreadyRigged) {
+        await saveRigJob(supabase, profile.id, null);
+        return NextResponse.json({
+          active: false,
+          alreadyRigged: true,
+          status: "SUCCEEDED",
+          newAvatarUrl: profile.avatar_3d_url,
+        });
+      }
+
       const job = readRigJob(user);
-      if (!job) return NextResponse.json({ active: false });
+      if (!job) return NextResponse.json({ active: false, status: "NOT_STARTED" });
       const task = await getRiggingTask(job.taskId);
+
+      if (task.status === "FAILED" || task.status === "EXPIRED") {
+        return NextResponse.json({
+          active: false,
+          status: task.status,
+          taskId: job.taskId,
+          startedAt: job.startedAt,
+          error: taskErrorMessage(task),
+          task,
+        });
+      }
+
       return NextResponse.json({ active: true, taskId: job.taskId, startedAt: job.startedAt, task });
     }
 
@@ -116,7 +144,7 @@ export async function POST(request: NextRequest) {
         throw new Error("Meshy no devolvió un GLB válido");
       }
 
-      const storagePath = `${profile.id}/official/clouva-official-rigged.glb`;
+      const storagePath = `${profile.id}/official/${RIGGED_FILENAME}`;
       const { error: uploadError } = await supabase.storage.from("avatars").upload(storagePath, bytes, {
         contentType: "model/gltf-binary",
         cacheControl: "3600",
@@ -132,7 +160,7 @@ export async function POST(request: NextRequest) {
       if (updateError) throw updateError;
 
       await saveRigJob(supabase, profile.id, null);
-      return NextResponse.json({ ok: true, newAvatarUrl: publicData.publicUrl });
+      return NextResponse.json({ ok: true, status: "SUCCEEDED", completedAt: Date.now(), newAvatarUrl: publicData.publicUrl });
     }
 
     if (action === "clear") {
