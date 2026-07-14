@@ -28,6 +28,9 @@ export default function AvatarPage() {
       <Link href="/mi-flow/crear-prenda" style={{ position: "absolute", top: 130, left: 16, zIndex: 20 }} className="avatar-back">
         Crear prenda
       </Link>
+      <Link href="/mi-flow/armario" style={{ position: "absolute", top: 130, right: 16, zIndex: 20 }} className="avatar-back">
+        Mi armario
+      </Link>
       <AvatarCanvas config={config} />
       <AvatarControls active={active} onActiveChange={setActive} />
     </main>
