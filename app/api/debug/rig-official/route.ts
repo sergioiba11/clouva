@@ -5,6 +5,8 @@ import { createRiggingTask, getRiggingTask } from "@/lib/meshy";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const OWNER_EMAIL = (process.env.CLOUVA_OWNER_EMAIL || "esian0116@gmail.com").trim().toLowerCase();
+
 function getAdminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceRole = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -12,7 +14,7 @@ function getAdminClient() {
   return createClient(url, serviceRole, { auth: { persistSession: false, autoRefreshToken: false } });
 }
 
-async function requireAdmin(request: NextRequest) {
+async function requireOwner(request: NextRequest) {
   const authorization = request.headers.get("authorization");
   const accessToken = authorization?.startsWith("Bearer ") ? authorization.slice(7) : null;
   if (!accessToken) throw new Error("Missing access token");
@@ -27,14 +29,18 @@ async function requireAdmin(request: NextRequest) {
     .eq("id", userData.user.id)
     .single();
   if (profileError || !profile) throw new Error("Perfil no encontrado");
-  if (profile.role !== "admin" && profile.role !== "owner") throw new Error("Solo el administrador puede hacer esto");
+
+  const email = (userData.user.email || "").trim().toLowerCase();
+  const role = String(profile.role || "").trim().toLowerCase();
+  const allowed = email === OWNER_EMAIL || role === "admin" || role === "owner" || role === "super_admin";
+  if (!allowed) throw new Error("Solo el propietario puede hacer esto");
 
   return { supabase, profile };
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const { supabase, profile } = await requireAdmin(request);
+    const { supabase, profile } = await requireOwner(request);
     const body = await request.json();
     const action = String(body?.action ?? "");
 
@@ -91,7 +97,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Acción inválida" }, { status: 400 });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Error desconocido";
-    const status = message.includes("Missing access") || message.includes("Invalid session") ? 401 : message.includes("Solo el administrador") ? 403 : 500;
+    const status = message.includes("Missing access") || message.includes("Invalid session") ? 401 : message.includes("Solo el propietario") ? 403 : 500;
     return NextResponse.json({ error: message }, { status });
   }
 }
