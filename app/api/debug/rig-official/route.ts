@@ -6,6 +6,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const OWNER_EMAIL = (process.env.CLOUVA_OWNER_EMAIL || "esian0116@gmail.com").trim().toLowerCase();
+const RIG_JOB_KEY = "official_avatar_rig_job";
 
 function getAdminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -35,33 +36,72 @@ async function requireOwner(request: NextRequest) {
   const allowed = email === OWNER_EMAIL || role === "admin" || role === "owner" || role === "super_admin";
   if (!allowed) throw new Error("Solo el propietario puede hacer esto");
 
-  return { supabase, profile };
+  return { supabase, profile, user: userData.user };
+}
+
+async function saveRigJob(supabase: ReturnType<typeof getAdminClient>, userId: string, job: Record<string, unknown> | null) {
+  const { data } = await supabase.auth.admin.getUserById(userId);
+  const current = data.user?.app_metadata ?? {};
+  const next = { ...current } as Record<string, unknown>;
+  if (job) next[RIG_JOB_KEY] = job;
+  else delete next[RIG_JOB_KEY];
+  const { error } = await supabase.auth.admin.updateUserById(userId, { app_metadata: next });
+  if (error) throw error;
+}
+
+function readRigJob(user: { app_metadata?: Record<string, unknown> | null }) {
+  const raw = user.app_metadata?.[RIG_JOB_KEY];
+  if (!raw || typeof raw !== "object") return null;
+  const job = raw as { taskId?: unknown; startedAt?: unknown };
+  if (typeof job.taskId !== "string" || typeof job.startedAt !== "number") return null;
+  return { taskId: job.taskId, startedAt: job.startedAt };
 }
 
 export async function POST(request: NextRequest) {
   try {
-    const { supabase, profile } = await requireOwner(request);
+    const { supabase, profile, user } = await requireOwner(request);
     const body = await request.json();
     const action = String(body?.action ?? "");
 
     if (action === "create") {
       if (!profile.avatar_3d_url) throw new Error("No hay avatar oficial activo");
       if (profile.avatar_3d_url.includes("clouva-official-rigged.glb")) {
+        await saveRigJob(supabase, profile.id, null);
         return NextResponse.json({ alreadyRigged: true, newAvatarUrl: profile.avatar_3d_url });
       }
+
+      const existing = readRigJob(user);
+      if (existing) {
+        const existingTask = await getRiggingTask(existing.taskId);
+        if (existingTask.status !== "FAILED" && existingTask.status !== "EXPIRED") {
+          return NextResponse.json({ taskId: existing.taskId, startedAt: existing.startedAt, resumed: true });
+        }
+      }
+
       const taskId = await createRiggingTask(profile.avatar_3d_url, 1.8);
-      return NextResponse.json({ taskId, sourceUrl: profile.avatar_3d_url });
+      const startedAt = Date.now();
+      await saveRigJob(supabase, profile.id, { taskId, startedAt });
+      return NextResponse.json({ taskId, startedAt, sourceUrl: profile.avatar_3d_url });
+    }
+
+    if (action === "current") {
+      const job = readRigJob(user);
+      if (!job) return NextResponse.json({ active: false });
+      const task = await getRiggingTask(job.taskId);
+      return NextResponse.json({ active: true, taskId: job.taskId, startedAt: job.startedAt, task });
     }
 
     if (action === "status") {
-      const taskId = String(body?.taskId ?? "");
+      const stored = readRigJob(user);
+      const taskId = String(body?.taskId ?? stored?.taskId ?? "");
       if (!taskId) return NextResponse.json({ error: "Falta taskId" }, { status: 400 });
       const task = await getRiggingTask(taskId);
-      return NextResponse.json(task);
+      return NextResponse.json({ ...task, taskId, startedAt: stored?.startedAt ?? null });
     }
 
     if (action === "finalize") {
-      const taskId = String(body?.taskId ?? "");
+      const stored = readRigJob(user);
+      const taskId = String(body?.taskId ?? stored?.taskId ?? "");
       if (!taskId) return NextResponse.json({ error: "Falta taskId" }, { status: 400 });
 
       const task = await getRiggingTask(taskId);
@@ -91,7 +131,13 @@ export async function POST(request: NextRequest) {
         .eq("id", profile.id);
       if (updateError) throw updateError;
 
+      await saveRigJob(supabase, profile.id, null);
       return NextResponse.json({ ok: true, newAvatarUrl: publicData.publicUrl });
+    }
+
+    if (action === "clear") {
+      await saveRigJob(supabase, profile.id, null);
+      return NextResponse.json({ ok: true });
     }
 
     return NextResponse.json({ error: "Acción inválida" }, { status: 400 });
