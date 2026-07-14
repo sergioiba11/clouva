@@ -32,6 +32,7 @@ export async function POST(request: NextRequest) {
     const form = await request.formData();
     const front = form.get("front");
     const back = form.get("back");
+    const prompt = typeof form.get("prompt") === "string" ? String(form.get("prompt")) : "";
 
     if (!(front instanceof File) || !(back instanceof File)) {
       return NextResponse.json({ error: "Faltan las imágenes de frente y espalda" }, { status: 400 });
@@ -61,7 +62,7 @@ export async function POST(request: NextRequest) {
     );
 
     const imageUrls = uploads.map((item) => item.publicUrl);
-    const taskId = await createMultiImageTask(imageUrls);
+    const taskId = await createMultiImageTask(imageUrls, prompt);
     const avatarId = crypto.randomUUID();
 
     const { data: avatar, error: insertError } = await supabase
@@ -82,6 +83,7 @@ export async function POST(request: NextRequest) {
           generation_kind: "multi-image",
           reference_paths: uploads.map((item) => item.storagePath),
           reference_urls: imageUrls,
+          texture_prompt: prompt || null,
         },
       })
       .select("id,user_id,name,status,preview_image_url,meshy_task_id,is_active,created_at,updated_at")

@@ -23,6 +23,7 @@ export default function AvatarIaPage() {
   const [back, setBack] = useState<File | null>(null);
   const [frontPreview, setFrontPreview] = useState<string | null>(null);
   const [backPreview, setBackPreview] = useState<string | null>(null);
+  const [prompt, setPrompt] = useState("");
   const [phase, setPhase] = useState<Phase>("idle");
   const [progress, setProgress] = useState(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -70,6 +71,7 @@ export default function AvatarIaPage() {
       const form = new FormData();
       form.append("front", front);
       form.append("back", back);
+      if (prompt.trim()) form.append("prompt", prompt.trim());
 
       const createResponse = await fetch("/api/avatar/from-image", {
         method: "POST",
@@ -176,6 +178,22 @@ export default function AvatarIaPage() {
         </div>
 
         <p className="mt-3 text-center text-xs text-white/40">PNG, JPG o WEBP · máximo 8 MB por imagen</p>
+
+        <label className="mt-5 block">
+          <span className="text-xs font-medium uppercase tracking-[0.18em] text-white/50">
+            Describí detalles (opcional)
+          </span>
+          <textarea
+            value={prompt}
+            onChange={(event) => setPrompt(event.target.value)}
+            disabled={busy}
+            maxLength={600}
+            rows={3}
+            placeholder='Ej: "cadena plateada más gruesa colgando suelta", "el trébol violeta más brillante", "pelo más largo"'
+            className="mt-2 w-full rounded-2xl border border-white/10 bg-black/25 p-3 text-sm text-white placeholder:text-white/30 disabled:opacity-50"
+          />
+          <span className="mt-1 block text-right text-[10px] text-white/30">{prompt.length}/600</span>
+        </label>
 
         <button
           type="button"

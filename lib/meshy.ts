@@ -61,10 +61,12 @@ async function meshyFetchAbsolute(url: string, init?: RequestInit) {
   return data;
 }
 
-export async function createMultiImageTask(imageUrls: string[]) {
+export async function createMultiImageTask(imageUrls: string[], texturePrompt?: string) {
+  const body: Record<string, unknown> = { image_urls: imageUrls, should_texture: true, enable_pbr: true, target_formats: ["glb"] };
+  if (texturePrompt?.trim()) body.texture_prompt = texturePrompt.trim().slice(0, 600);
   const data = await meshyFetchAbsolute(MESHY_MULTI_IMAGE_BASE, {
     method: "POST",
-    body: JSON.stringify({ image_urls: imageUrls, should_texture: true, enable_pbr: true, target_formats: ["glb"] }),
+    body: JSON.stringify(body),
   });
   return data.result as string;
 }
