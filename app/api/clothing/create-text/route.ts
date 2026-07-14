@@ -51,7 +51,7 @@ export async function POST(request: NextRequest) {
 
     const prompt = `Create one ${garment} for a stylized mobile-game avatar. Fit: ${fit}. Shape and construction: ${description}. ${dimensions} Generate only the wearable object as a separate mesh. Do not generate a body, mannequin, person, floor, environment or floating symbols. Keep the object upright, centered at world origin, symmetrical when appropriate, mobile-friendly, complete from front/back/side, with practical clearance for wearing over the avatar. ${texture}`;
 
-    const taskId = await createPreviewTask(prompt, "cartoon");
+    const taskId = await createPreviewTask(prompt, "realistic");
     const itemId = crypto.randomUUID();
 
     const { data: item, error: insertError } = await supabase
