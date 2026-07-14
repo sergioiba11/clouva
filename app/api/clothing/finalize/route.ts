@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { finalizeClothingItem } from "@/lib/clothing-finalization";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-const MAX_GLB_BYTES = 75 * 1024 * 1024;
 
 type ItemMetadata = Record<string, unknown>;
 
@@ -13,67 +12,6 @@ function getAdminClient() {
   const serviceRole = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !serviceRole) throw new Error("Missing Supabase server credentials");
   return createClient(url, serviceRole, { auth: { persistSession: false, autoRefreshToken: false } });
-}
-
-function officialAvatarUrl() {
-  const base = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, "");
-  if (!base) throw new Error("Missing Supabase URL for official avatar");
-  return `${base}/storage/v1/object/public/avatars/official/clouva-official-v1.glb`;
-}
-
-async function fetchGlb(url: string, label: string) {
-  const response = await fetch(url, { redirect: "follow", cache: "no-store" });
-  if (!response.ok) throw new Error(`${label} download failed (${response.status})`);
-
-  const contentLength = Number(response.headers.get("content-length") || 0);
-  if (contentLength > MAX_GLB_BYTES) throw new Error(`${label} exceeds 75 MB`);
-
-  const bytes = await response.arrayBuffer();
-  if (bytes.byteLength > MAX_GLB_BYTES) throw new Error(`${label} exceeds 75 MB`);
-  if (Buffer.from(bytes).subarray(0, 4).toString("ascii") !== "glTF") {
-    throw new Error(`${label} is not a valid GLB`);
-  }
-  return bytes;
-}
-
-async function rigWithWorker(
-  modelUrl: string,
-  category: string,
-  artUrl: string | null,
-  color: string | null,
-) {
-  const workerUrl = process.env.GARMENT_RIG_WORKER_URL?.replace(/\/$/, "");
-  if (!workerUrl) return null;
-
-  const response = await fetch(`${workerUrl}/rig`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(process.env.GARMENT_RIG_WORKER_TOKEN
-        ? { Authorization: `Bearer ${process.env.GARMENT_RIG_WORKER_TOKEN}` }
-        : {}),
-    },
-    body: JSON.stringify({
-      avatar_url: officialAvatarUrl(),
-      garment_url: modelUrl,
-      category,
-      art_url: artUrl,
-      color,
-    }),
-    signal: AbortSignal.timeout(8 * 60 * 1000),
-  });
-
-  if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(`Automatic rigging failed (${response.status}): ${detail.slice(0, 1200)}`);
-  }
-
-  const bytes = await response.arrayBuffer();
-  if (bytes.byteLength > MAX_GLB_BYTES) throw new Error("Rigged GLB exceeds 75 MB");
-  if (Buffer.from(bytes).subarray(0, 4).toString("ascii") !== "glTF") {
-    throw new Error("Rig worker did not return a valid GLB");
-  }
-  return bytes;
 }
 
 export async function POST(request: NextRequest) {
@@ -101,7 +39,7 @@ export async function POST(request: NextRequest) {
 
     const { data: sourceItem, error: sourceError } = await supabase
       .from("clothing_items")
-      .select("id,category,color,metadata")
+      .select("id,category,color,metadata,status")
       .eq("id", itemId)
       .eq("user_id", userData.user.id)
       .single();
@@ -110,56 +48,32 @@ export async function POST(request: NextRequest) {
     const metadata = sourceItem.metadata && typeof sourceItem.metadata === "object"
       ? (sourceItem.metadata as ItemMetadata)
       : {};
-    const artUrl = typeof metadata.art_url === "string" && metadata.art_url ? metadata.art_url : null;
-    const color = typeof sourceItem.color === "string" ? sourceItem.color : null;
 
     await supabase
       .from("clothing_items")
-      .update({ status: "rigging", updated_at: new Date().toISOString() })
-      .eq("id", itemId)
-      .eq("user_id", userData.user.id);
-
-    const riggedBytes = await rigWithWorker(modelUrl, sourceItem.category, artUrl, color);
-    const bytes = riggedBytes ?? (await fetchGlb(modelUrl, "Meshy GLB"));
-    const storagePath = `${userData.user.id}/clothing/${itemId}/${riggedBytes ? "rigged-textured" : "garment"}.glb`;
-
-    const { error: uploadError } = await supabase.storage.from("avatars").upload(storagePath, bytes, {
-      contentType: "model/gltf-binary",
-      cacheControl: "3600",
-      upsert: true,
-    });
-    if (uploadError) throw uploadError;
-
-    const { data: publicData } = supabase.storage.from("avatars").getPublicUrl(storagePath);
-
-    const { data: item, error: updateError } = await supabase
-      .from("clothing_items")
       .update({
-        status: "ready",
-        model_url: publicData.publicUrl,
+        status: "rigging",
         updated_at: new Date().toISOString(),
         metadata: {
           ...metadata,
-          rigged: Boolean(riggedBytes),
-          rig_pipeline: riggedBytes ? "blender-nearest-surface-uv-v2" : "viewer-fit-fallback",
-          official_avatar: "clouva-official-v1",
-          uv_generated: Boolean(riggedBytes),
-          textured: Boolean(riggedBytes && artUrl),
-          texture_source: artUrl,
+          generation_stage: "rigging",
+          generation_progress: 99,
         },
       })
       .eq("id", itemId)
-      .eq("user_id", userData.user.id)
-      .select("id,name,category,status,model_url,thumbnail_url,metadata")
-      .single();
-    if (updateError) throw updateError;
+      .eq("user_id", userData.user.id);
 
-    return NextResponse.json({
-      ok: true,
-      item,
-      rigged: Boolean(riggedBytes),
-      textured: Boolean(riggedBytes && artUrl),
+    const result = await finalizeClothingItem({
+      supabase,
+      userId: userData.user.id,
+      itemId,
+      modelUrl,
+      category: sourceItem.category,
+      color: typeof sourceItem.color === "string" ? sourceItem.color : null,
+      metadata,
     });
+
+    return NextResponse.json({ ok: true, ...result });
   } catch (error) {
     console.error("Clothing finalization failed", error);
     return NextResponse.json(
