@@ -4,9 +4,14 @@ const MESHY_RIGGING_BASE = "https://api.meshy.ai/openapi/v1/rigging";
 
 type MeshyTask = {
   id?: string;
-  status: "PENDING" | "IN_PROGRESS" | "SUCCEEDED" | "FAILED" | "EXPIRED";
+  status: "PENDING" | "IN_PROGRESS" | "SUCCEEDED" | "FAILED" | "EXPIRED" | "CANCELED";
   progress?: number;
   model_urls?: { glb?: string; fbx?: string; obj?: string };
+  result?: {
+    rigged_character_glb_url?: string;
+    rigged_character_fbx_url?: string;
+    basic_animations?: Record<string, string>;
+  } | null;
   thumbnail_url?: string;
   task_error?: { message?: string };
 };
