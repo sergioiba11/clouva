@@ -17,6 +17,8 @@ import {
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
+import { App as CapacitorApp } from "@capacitor/app";
+import { Capacitor } from "@capacitor/core";
 import { frameAvatar, normalizeAvatarObject } from "@/lib/avatar-engine/frame-avatar";
 import { buildProceduralClouvaAvatar } from "@/lib/avatar-engine/procedural-clouva";
 import type { AvatarConfig } from "@/lib/avatar-engine/types";
@@ -64,7 +66,14 @@ export function AvatarModelViewer({
     renderer.toneMapping = ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.18;
     renderer.setClearColor(0x000000, 0);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, window.innerWidth < 768 ? 1 : 1.5));
+    // Detección simple de gama baja: pocos núcleos o poca RAM reportada.
+    const deviceMemory = (navigator as any).deviceMemory as number | undefined;
+    const isLowEnd = (navigator.hardwareConcurrency ?? 4) <= 4 || (deviceMemory !== undefined && deviceMemory <= 3);
+    const maxPixelRatio = isLowEnd ? 1 : window.innerWidth < 768 ? 1.25 : 1.5;
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, maxPixelRatio));
+    // Sombras dinámicas apagadas a propósito (renderer.shadowMap.enabled queda
+    // en false por defecto): en celulares de gama media/baja el costo de
+    // sombras en tiempo real no vale la pena para este visor de avatar.
     Object.assign(renderer.domElement.style, { width: "100%", height: "100%", display: "block", touchAction: "none" });
     mount.current.appendChild(renderer.domElement);
 
@@ -211,8 +220,20 @@ export function AvatarModelViewer({
 
     void load();
 
+    // A nivel nativo (Capacitor), esto es más confiable que solo
+    // document.hidden para saber si la app pasó a segundo plano.
+    let nativeBackground = false;
+    let appStateListener: { remove: () => void } | null = null;
+    if (Capacitor.isNativePlatform()) {
+      CapacitorApp.addListener("appStateChange", ({ isActive }) => {
+        nativeBackground = !isActive;
+      }).then((handle) => {
+        appStateListener = handle;
+      });
+    }
+
     const animate = () => {
-      if (!document.hidden) {
+      if (!document.hidden && !nativeBackground) {
         mixer?.update(clock.getDelta());
         controls.update();
         renderer.render(scene, camera);
@@ -227,6 +248,7 @@ export function AvatarModelViewer({
       if (resumeTimer) clearTimeout(resumeTimer);
       resizeObserver.disconnect();
       window.removeEventListener("resize", resize);
+      appStateListener?.remove();
       mixer?.stopAllAction();
       controls.dispose();
       renderer.dispose();
