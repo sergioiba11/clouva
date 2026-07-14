@@ -6,15 +6,6 @@ export type AvatarFrameResult = {
   distance: number;
 };
 
-/**
- * Los GLB generados por IA (Meshy, etc.) a veces traen fragmentos de malla
- * sueltos y lejanos del cuerpo principal (ej. un pedazo de mano flotando).
- * Si se usa la caja englobante de TODO el objeto, ese fragmento lejano
- * infla la caja y la cámara se aleja muchísimo, dejando el personaje
- * real como un punto diminuto. Esta función arma la caja a partir de
- * los meshes con más vértices (el "cuerpo principal"), ignorando
- * fragmentos chicos y lejanos, sin borrar nada de la escena.
- */
 function mainBodyBox(object: Object3D): Box3 {
   const meshEntries: { mesh: Mesh; box: Box3; vertexCount: number }[] = [];
   object.traverse((child) => {
@@ -22,7 +13,7 @@ function mainBodyBox(object: Object3D): Box3 {
       const mesh = child as Mesh;
       const geometry = mesh.geometry;
       const vertexCount = geometry?.attributes?.position?.count ?? 0;
-      if (vertexCount < 8) return; // ignora artefactos microscópicos
+      if (vertexCount < 8) return;
       const box = new Box3().setFromObject(mesh);
       if (box.isEmpty()) return;
       meshEntries.push({ mesh, box, vertexCount });
@@ -31,10 +22,7 @@ function mainBodyBox(object: Object3D): Box3 {
 
   if (meshEntries.length === 0) return new Box3().setFromObject(object);
 
-  const totalVertices = meshEntries.reduce((sum, e) => sum + e.vertexCount, 0);
-  // El "cuerpo principal" son los meshes que juntos suman la mayoría de los
-  // vértices, ordenados de mayor a menor. Un fragmento suelto suele tener
-  // muy pocos vértices en comparación con el cuerpo real.
+  const totalVertices = meshEntries.reduce((sum, entry) => sum + entry.vertexCount, 0);
   meshEntries.sort((a, b) => b.vertexCount - a.vertexCount);
   const mainBox = new Box3();
   let accumulated = 0;
@@ -97,14 +85,8 @@ export function frameAvatar(
   return { center, size, distance };
 }
 
-export type BodyPartMatch = { meshName: string; box: Box3 };
+export type BodyPartMatch = { meshName: string; box: Box3; object: Object3D };
 
-/**
- * Busca, dentro del avatar ya cargado, la malla correspondiente a una
- * categoría de prenda (ej. 'hoodie' -> torso) y devuelve su caja
- * englobante REAL en espacio de mundo — estas son medidas del GLB de
- * verdad, no una suposición.
- */
 export function findAvatarBodyPart(avatarObject: Object3D, meshNames: string[]): BodyPartMatch | null {
   const result: { match: { mesh: Object3D; box: Box3 } | null } = { match: null };
   avatarObject.updateMatrixWorld(true);
@@ -115,37 +97,56 @@ export function findAvatarBodyPart(avatarObject: Object3D, meshNames: string[]):
       if (!box.isEmpty()) result.match = { mesh: child, box };
     }
   });
-  return result.match ? { meshName: result.match.mesh.name, box: result.match.box } : null;
+  return result.match
+    ? { meshName: result.match.mesh.name, box: result.match.box, object: result.match.mesh }
+    : null;
 }
 
+export type GarmentFitOptions = {
+  paddingScale?: number;
+  widthPadding?: number;
+  depthPadding?: number;
+  verticalOffset?: number;
+};
+
 /**
- * Escala y posiciona una prenda (ya con su propia geometría/escala
- * original) para que su caja englobante coincida con la de la parte
- * del cuerpo real del avatar (ej. el torso), en vez de solo igualar
- * la altura total del avatar completo. Esto es lo que hace que una
- * prenda generada por separado "calce" razonablemente en vez de
- * quedar del tamaño equivocado.
+ * Conformado determinista para el avatar oficial de CLOUVA.
+ * Ajusta ancho, alto y profundidad por separado, centra la pieza sobre la
+ * zona corporal real y deja una pequeña cámara de aire para evitar clipping.
  */
-export function fitGarmentToBodyPart(garment: Object3D, bodyPartBox: Box3, options: { paddingScale?: number } = {}) {
+export function fitGarmentToBodyPart(
+  garment: Object3D,
+  bodyPartBox: Box3,
+  options: GarmentFitOptions = {},
+) {
   garment.updateMatrixWorld(true);
-  const garmentBox = new Box3().setFromObject(garment);
+  const garmentBox = mainBodyBox(garment);
   const garmentSize = garmentBox.getSize(new Vector3());
   const bodySize = bodyPartBox.getSize(new Vector3());
 
-  if (garmentSize.y < 0.0001) return;
+  if (garmentSize.x < 0.0001 || garmentSize.y < 0.0001 || garmentSize.z < 0.0001) return;
 
-  // Escala uniforme basada en la altura de la parte del cuerpo (la
-  // dimensión más estable para prendas de torso/piernas/pies).
-  const scale = (bodySize.y / garmentSize.y) * (options.paddingScale ?? 1.06);
-  garment.scale.multiplyScalar(scale);
+  const uniformPadding = options.paddingScale ?? 1;
+  const widthPadding = options.widthPadding ?? 1.08;
+  const depthPadding = options.depthPadding ?? 1.12;
+
+  const sx = (bodySize.x / garmentSize.x) * widthPadding * uniformPadding;
+  const sy = (bodySize.y / garmentSize.y) * uniformPadding;
+  const sz = (bodySize.z / garmentSize.z) * depthPadding * uniformPadding;
+
+  garment.scale.set(
+    garment.scale.x * sx,
+    garment.scale.y * sy,
+    garment.scale.z * sz,
+  );
 
   garment.updateMatrixWorld(true);
-  const rescaledBox = new Box3().setFromObject(garment);
-  const rescaledCenter = rescaledBox.getCenter(new Vector3());
+  const conformedBox = mainBodyBox(garment);
+  const conformedCenter = conformedBox.getCenter(new Vector3());
   const bodyCenter = bodyPartBox.getCenter(new Vector3());
 
-  garment.position.x += bodyCenter.x - rescaledCenter.x;
-  garment.position.y += bodyCenter.y - rescaledCenter.y;
-  garment.position.z += bodyCenter.z - rescaledCenter.z;
+  garment.position.x += bodyCenter.x - conformedCenter.x;
+  garment.position.y += bodyCenter.y - conformedCenter.y + (options.verticalOffset ?? 0);
+  garment.position.z += bodyCenter.z - conformedCenter.z;
   garment.updateMatrixWorld(true);
 }
