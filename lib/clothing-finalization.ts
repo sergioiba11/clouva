@@ -1,12 +1,23 @@
-import { createClient } from "@supabase/supabase-js";
-
 const MAX_GLB_BYTES = 75 * 1024 * 1024;
 
-type AdminClient = ReturnType<typeof createClient>;
 type ItemMetadata = Record<string, unknown>;
 
+type FinalizationClient = {
+  storage: {
+    from: (bucket: string) => {
+      upload: (
+        path: string,
+        body: ArrayBuffer,
+        options: { contentType: string; cacheControl: string; upsert: boolean },
+      ) => Promise<{ error: { message?: string } | null }>;
+      getPublicUrl: (path: string) => { data: { publicUrl: string } };
+    };
+  };
+  from: (table: string) => any;
+};
+
 type FinalizeInput = {
-  supabase: AdminClient;
+  supabase: FinalizationClient;
   userId: string;
   itemId: string;
   modelUrl: string;
