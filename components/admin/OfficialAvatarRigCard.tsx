@@ -16,7 +16,7 @@ type StoredRigJob = {
 };
 
 const STORAGE_KEY = "clouva:official-avatar-rig-job";
-const UI_VERSION = "rig-progress-v3-server-persisted";
+const UI_VERSION = "rig-progress-v4-visible-result";
 
 function sleep(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -42,14 +42,26 @@ function clearStoredJob() {
   window.localStorage.removeItem(STORAGE_KEY);
 }
 
+function formatTime(value: number | null) {
+  if (!value) return null;
+  try {
+    return new Intl.DateTimeFormat("es-AR", { dateStyle: "short", timeStyle: "short" }).format(new Date(value));
+  } catch {
+    return null;
+  }
+}
+
 export function OfficialAvatarRigCard() {
   const { session } = useAuth();
   const [running, setRunning] = useState(false);
   const [checking, setChecking] = useState(true);
   const [progress, setProgress] = useState(0);
-  const [message, setMessage] = useState("Buscando un proceso de rigging activo…");
+  const [message, setMessage] = useState("Buscando el estado del rigging…");
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  const [lastStatus, setLastStatus] = useState<"pending" | "running" | "success" | "failed">("pending");
+  const [lastCheckedAt, setLastCheckedAt] = useState<number | null>(null);
+  const [taskId, setTaskId] = useState<string | null>(null);
   const resumingRef = useRef(false);
 
   const call = async (body: Record<string, unknown>) => {
@@ -68,31 +80,52 @@ export function OfficialAvatarRigCard() {
     return data;
   };
 
+  const markSuccess = (text: string) => {
+    clearStoredJob();
+    setProgress(100);
+    setDone(true);
+    setRunning(false);
+    setError(null);
+    setLastStatus("success");
+    setLastCheckedAt(Date.now());
+    setMessage(text);
+  };
+
+  const markFailure = (text: string) => {
+    clearStoredJob();
+    setRunning(false);
+    setDone(false);
+    setError(text);
+    setLastStatus("failed");
+    setLastCheckedAt(Date.now());
+    setMessage("El último intento de rigging falló.");
+  };
+
   const followJob = async (job: StoredRigJob) => {
     setRunning(true);
     setChecking(false);
     setError(null);
     setDone(false);
+    setTaskId(job.taskId);
+    setLastStatus("running");
     setMessage("Reconectando con el proceso de Meshy…");
 
     try {
       while (Date.now() - job.startedAt < 20 * 60 * 1000) {
         const status = (await call({ action: "status", taskId: job.taskId })) as RigStatus;
+        setLastCheckedAt(Date.now());
         const current = Math.max(0, Math.min(99, Math.round(status.progress ?? 0)));
         setProgress(current);
         setMessage(current >= 95 ? "Meshy está terminando el esqueleto…" : `Riggeando avatar oficial… ${current}%`);
 
         if (status.status === "FAILED" || status.status === "EXPIRED") {
-          throw new Error(status.task_error?.message || "Meshy no pudo riggear el avatar");
+          throw new Error(status.task_error?.message || status.error || "Meshy no pudo riggear el avatar");
         }
 
         if (status.status === "SUCCEEDED") {
           setMessage("Guardando el avatar riggeado como base oficial…");
           await call({ action: "finalize", taskId: job.taskId });
-          clearStoredJob();
-          setProgress(100);
-          setDone(true);
-          setMessage("Avatar oficial riggeado. Las prendas nuevas ya pueden copiar sus pesos correctamente.");
+          markSuccess("Rigging completado. El avatar oficial ya tiene esqueleto y quedó guardado correctamente.");
           return;
         }
 
@@ -101,64 +134,79 @@ export function OfficialAvatarRigCard() {
 
       throw new Error("El rigging superó el tiempo máximo de 20 minutos");
     } catch (cause) {
-      clearStoredJob();
-      setError(cause instanceof Error ? cause.message : "Error inesperado");
-      setMessage("No se pudo completar el rigging.");
+      markFailure(cause instanceof Error ? cause.message : "Error inesperado");
     } finally {
       setRunning(false);
       resumingRef.current = false;
     }
   };
 
-  useEffect(() => {
+  const refreshStatus = async () => {
     if (!session?.access_token || resumingRef.current) return;
     resumingRef.current = true;
 
-    void (async () => {
-      try {
-        setChecking(true);
-        setMessage("Buscando un proceso de rigging activo…");
-        const current = await call({ action: "current" });
+    try {
+      setChecking(true);
+      setError(null);
+      setMessage("Buscando el estado del rigging…");
+      const current = await call({ action: "current" });
+      setLastCheckedAt(Date.now());
 
-        if (current.active && current.taskId) {
-          const job = {
-            taskId: String(current.taskId),
-            startedAt: Number(current.startedAt || Date.now()),
-          };
-          saveStoredJob(job);
-          const task = current.task as RigStatus | undefined;
-          if (task?.status === "SUCCEEDED") {
-            setRunning(true);
-            setProgress(99);
-            setMessage("Rigging terminado. Guardando el avatar oficial…");
-            await call({ action: "finalize", taskId: job.taskId });
-            clearStoredJob();
-            setProgress(100);
-            setDone(true);
-            setMessage("Avatar oficial riggeado. Las prendas nuevas ya pueden copiar sus pesos correctamente.");
-            setRunning(false);
-            resumingRef.current = false;
-            return;
-          }
-          await followJob(job);
-          return;
-        }
-
-        const localJob = readStoredJob();
-        if (localJob) {
-          await followJob(localJob);
-          return;
-        }
-
-        setMessage("El avatar oficial necesita esqueleto para que las mangas y la ropa se deformen correctamente.");
-      } catch (cause) {
-        setError(cause instanceof Error ? cause.message : "No se pudo consultar el estado");
-        setMessage("No se pudo consultar el proceso de rigging.");
-      } finally {
-        setChecking(false);
-        if (!running) resumingRef.current = false;
+      if (current.alreadyRigged || current.status === "SUCCEEDED") {
+        markSuccess("Rigging completado. El avatar oficial ya tiene esqueleto y está guardado como modelo activo.");
+        resumingRef.current = false;
+        return;
       }
-    })();
+
+      if (current.status === "FAILED" || current.status === "EXPIRED") {
+        setTaskId(current.taskId ? String(current.taskId) : null);
+        markFailure(String(current.error || "Meshy no pudo riggear el avatar"));
+        resumingRef.current = false;
+        return;
+      }
+
+      if (current.active && current.taskId) {
+        const job = {
+          taskId: String(current.taskId),
+          startedAt: Number(current.startedAt || Date.now()),
+        };
+        saveStoredJob(job);
+        setTaskId(job.taskId);
+        const task = current.task as RigStatus | undefined;
+        if (task?.status === "SUCCEEDED") {
+          setRunning(true);
+          setProgress(99);
+          setLastStatus("running");
+          setMessage("Rigging terminado. Guardando el avatar oficial…");
+          await call({ action: "finalize", taskId: job.taskId });
+          markSuccess("Rigging completado. El avatar oficial ya tiene esqueleto y quedó guardado correctamente.");
+          resumingRef.current = false;
+          return;
+        }
+        await followJob(job);
+        return;
+      }
+
+      const localJob = readStoredJob();
+      if (localJob) {
+        await followJob(localJob);
+        return;
+      }
+
+      setProgress(0);
+      setDone(false);
+      setLastStatus("pending");
+      setMessage("Todavía no hay un rigging completado ni un proceso activo.");
+    } catch (cause) {
+      markFailure(cause instanceof Error ? cause.message : "No se pudo consultar el estado");
+    } finally {
+      setChecking(false);
+      if (!running) resumingRef.current = false;
+    }
+  };
+
+  useEffect(() => {
+    void refreshStatus();
   }, [session?.access_token]);
 
   const start = async () => {
@@ -167,33 +215,39 @@ export function OfficialAvatarRigCard() {
     setError(null);
     setDone(false);
     setProgress(0);
+    setLastStatus("running");
+    setTaskId(null);
 
     try {
       setMessage("Enviando el avatar oficial a Meshy…");
       const created = await call({ action: "create" });
       if (created.alreadyRigged) {
-        clearStoredJob();
-        setProgress(100);
-        setDone(true);
-        setMessage("El avatar oficial ya tiene rigging.");
+        markSuccess("El avatar oficial ya estaba riggeado y sigue guardado correctamente.");
         return;
       }
 
-      const taskId = String(created.taskId ?? "");
-      if (!taskId) throw new Error("Meshy no devolvió un taskId");
+      const createdTaskId = String(created.taskId ?? "");
+      if (!createdTaskId) throw new Error("Meshy no devolvió un taskId");
 
-      const job = { taskId, startedAt: Number(created.startedAt || Date.now()) };
+      const job = { taskId: createdTaskId, startedAt: Number(created.startedAt || Date.now()) };
+      setTaskId(createdTaskId);
       saveStoredJob(job);
       resumingRef.current = true;
       await followJob(job);
     } catch (cause) {
-      clearStoredJob();
-      setError(cause instanceof Error ? cause.message : "Error inesperado");
-      setMessage("No se pudo completar el rigging.");
-      setRunning(false);
+      markFailure(cause instanceof Error ? cause.message : "Error inesperado");
       resumingRef.current = false;
     }
   };
+
+  const badge = done ? "Listo" : running ? "Procesando" : checking ? "Consultando" : lastStatus === "failed" ? "Falló" : "Pendiente";
+  const badgeClass = done
+    ? "bg-emerald-400/15 text-emerald-300"
+    : lastStatus === "failed"
+      ? "bg-rose-400/15 text-rose-300"
+      : running || checking
+        ? "bg-violet-400/15 text-violet-200"
+        : "bg-white/10 text-white/50";
 
   return (
     <section className="rounded-3xl border border-white/10 bg-white/[0.03] p-5" data-ui-version={UI_VERSION}>
@@ -203,9 +257,13 @@ export function OfficialAvatarRigCard() {
           <h2 className="mt-1 text-xl font-semibold">Rigging del avatar oficial</h2>
           <p className="mt-2 max-w-xl text-sm text-white/55">{message}</p>
         </div>
-        <span className={`rounded-full px-3 py-1 text-xs ${done ? "bg-emerald-400/15 text-emerald-300" : running || checking ? "bg-violet-400/15 text-violet-200" : "bg-white/10 text-white/50"}`}>
-          {done ? "Listo" : running ? "Procesando" : checking ? "Consultando" : "Pendiente"}
-        </span>
+        <span className={`rounded-full px-3 py-1 text-xs ${badgeClass}`}>{badge}</span>
+      </div>
+
+      <div className="mt-4 grid gap-2 rounded-2xl border border-white/8 bg-black/20 p-3 text-xs text-white/50 sm:grid-cols-3">
+        <div><span className="block text-white/30">Resultado</span><strong className="text-white/75">{badge}</strong></div>
+        <div><span className="block text-white/30">Última consulta</span><strong className="text-white/75">{formatTime(lastCheckedAt) || "—"}</strong></div>
+        <div><span className="block text-white/30">Proceso Meshy</span><strong className="break-all text-white/75">{taskId ? taskId.slice(0, 12) : "—"}</strong></div>
       </div>
 
       {running || progress > 0 ? (
@@ -221,16 +279,27 @@ export function OfficialAvatarRigCard() {
         </div>
       ) : null}
 
-      {error ? <p className="mt-3 rounded-xl border border-rose-400/20 bg-rose-400/10 p-3 text-sm text-rose-300">{error}</p> : null}
+      {done ? <p className="mt-3 rounded-xl border border-emerald-400/20 bg-emerald-400/10 p-3 text-sm text-emerald-300">✓ El rigging terminó y el modelo riggeado está activo.</p> : null}
+      {error ? <p className="mt-3 rounded-xl border border-rose-400/20 bg-rose-400/10 p-3 text-sm text-rose-300">✕ {error}</p> : null}
 
-      <button
-        type="button"
-        onClick={start}
-        disabled={running || checking || done || !session?.access_token}
-        className="mt-4 rounded-2xl bg-violet-400 px-5 py-3 text-sm font-semibold text-black disabled:cursor-not-allowed disabled:opacity-45"
-      >
-        {done ? "Avatar ya riggeado" : running ? "Riggeando…" : checking ? "Consultando estado…" : "Riggear avatar oficial"}
-      </button>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={start}
+          disabled={running || checking || done || !session?.access_token}
+          className="rounded-2xl bg-violet-400 px-5 py-3 text-sm font-semibold text-black disabled:cursor-not-allowed disabled:opacity-45"
+        >
+          {done ? "Avatar ya riggeado" : running ? "Riggeando…" : checking ? "Consultando estado…" : error ? "Reintentar rigging" : "Riggear avatar oficial"}
+        </button>
+        <button
+          type="button"
+          onClick={() => void refreshStatus()}
+          disabled={running || checking || !session?.access_token}
+          className="rounded-2xl border border-white/10 px-4 py-3 text-sm text-white/70 disabled:cursor-not-allowed disabled:opacity-45"
+        >
+          Actualizar estado
+        </button>
+      </div>
     </section>
   );
 }
