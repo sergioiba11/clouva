@@ -50,7 +50,16 @@ jobs:
           npx cap sync android 2>&1 | tee /tmp/cap-sync.log
           exit ${PIPESTATUS[0]}
 
-      - name: Guardar log de diagnóstico si algo falló
+      - name: Dar permiso de ejecución a gradlew
+        run: chmod +x android/gradlew
+
+      - name: Compilar APK de debug
+        working-directory: android
+        run: |
+          ./gradlew assembleDebug --stacktrace 2>&1 | tee /tmp/gradle-build.log
+          exit ${PIPESTATUS[0]}
+
+      - name: Guardar logs de diagnóstico si algo falló
         if: failure()
         run: |
           git config user.email "ci@clouva.com.ar"
@@ -58,17 +67,11 @@ jobs:
           git fetch origin
           git checkout -B debug/ci-logs
           mkdir -p .ci-debug
-          cp /tmp/cap-sync.log .ci-debug/cap-sync-${{ github.run_id }}.log
+          cp /tmp/cap-sync.log .ci-debug/cap-sync-${{ github.run_id }}.log 2>/dev/null || true
+          cp /tmp/gradle-build.log .ci-debug/gradle-build-${{ github.run_id }}.log 2>/dev/null || true
           git add .ci-debug
           git commit -m "Debug log run ${{ github.run_id }}"
           git push --force "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" debug/ci-logs
-
-      - name: Dar permiso de ejecución a gradlew
-        run: chmod +x android/gradlew
-
-      - name: Compilar APK de debug
-        working-directory: android
-        run: ./gradlew assembleDebug --stacktrace
 
       - name: Subir APK como artifact descargable
         uses: actions/upload-artifact@v4
