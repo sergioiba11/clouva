@@ -1,0 +1,3 @@
+Deploy rig state persistence v3.
+Backend commit: cdba2c455ff7e7d661764ca288eb76c520b96aa6
+UI commit: 85a17022214ae3fba8c1ff42d25c273cf3b539a9
