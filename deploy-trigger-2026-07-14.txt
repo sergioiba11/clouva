@@ -1,0 +1,2 @@
+Trigger Vercel production deployment for rig progress persistence and hoodie hood controls.
+Latest feature commit: 1d71f7efb88b09de0096c7d02528a58a6c6401ff
