@@ -40,12 +40,16 @@ export async function POST(request: NextRequest) {
     const fit = String(body.fit || "Normal").slice(0, 30);
     const color = String(body.color || "#111111").slice(0, 20);
     const description = String(body.description || "").trim().slice(0, 600);
-    if (!description) return NextResponse.json({ error: "Describí la pieza" }, { status: 400 });
+    const textureDetails = String(body.textureDetails || "").trim().slice(0, 400);
+    if (!description) return NextResponse.json({ error: "Describí la forma de la pieza" }, { status: 400 });
 
     const m = body.measurements || {};
     const dimensions = `Target avatar measurements in normalized meters: full avatar height ${Number(m.height || 2.05).toFixed(3)}, target slot width ${Number(m.slotWidth || m.width || 0.65).toFixed(3)}, slot height ${Number(m.slotHeight || 0.8).toFixed(3)}, slot depth ${Number(m.slotDepth || m.depth || 0.35).toFixed(3)}.`;
+    const textureInstruction = textureDetails
+      ? `Material and texture: base color ${color}. ${textureDetails}. Treat logos, embroidery, patches and prints only as surface details; never turn them into separate geometry.`
+      : `Material and texture: clean premium fabric in ${color}, subtle textile detail, no logos.`;
 
-    const prompt = `Create a ${garment} for the CLOUVA stylized game avatar. Fit: ${fit}. Main color: ${color}. Artist description: ${description}. ${dimensions} Generate ONLY the wearable object as a separate mesh, never a character or mannequin. Respect the avatar proportions and leave practical clearance so it can be placed over the body without severe clipping. Keep the object centered at world origin, upright, symmetrical where appropriate, game-ready, mobile-friendly, clean topology, complete front/back/side volume, no floor, no environment, no floating logos, no body parts.`;
+    const prompt = `Create a ${garment} for the CLOUVA stylized game avatar. Fit: ${fit}. Shape and construction: ${description}. ${dimensions} Generate ONLY the wearable object as a separate mesh, never a character or mannequin. Respect the avatar proportions and leave practical clearance so it can be placed over the body without severe clipping. Keep the object centered at world origin, upright, symmetrical where appropriate, game-ready, mobile-friendly, clean topology, complete front/back/side volume, no floor, no environment, no floating logos, no body parts. ${textureInstruction}`;
 
     const taskId = await createPreviewTask(prompt, "cartoon");
     const itemId = crypto.randomUUID();
@@ -65,6 +69,9 @@ export async function POST(request: NextRequest) {
         metadata: {
           generation_source: "meshy_text_to_3d",
           avatar_measurements: m,
+          geometry_description: description,
+          texture_details: textureDetails || null,
+          texture_stage_enabled: true,
           artwork_enabled: false,
           openai_enabled: false,
         },
