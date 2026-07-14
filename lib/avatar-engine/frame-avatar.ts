@@ -102,6 +102,39 @@ export function findAvatarBodyPart(avatarObject: Object3D, meshNames: string[]):
     : null;
 }
 
+export type WearableCategory = "hoodie" | "shirt" | "jacket" | "pants" | "shorts" | "shoes" | "accessory";
+
+/**
+ * Crea una zona corporal estable aunque el GLB no use nombres como
+ * Casual_Body/Casual_Legs. Esto es clave para avatares generados por Meshy:
+ * usa proporciones del cuerpo completo normalizado, no nombres de malla.
+ */
+export function inferAvatarBodyPartBox(avatarObject: Object3D, category: WearableCategory): Box3 {
+  avatarObject.updateMatrixWorld(true);
+  const full = mainBodyBox(avatarObject);
+  const size = full.getSize(new Vector3());
+  const center = full.getCenter(new Vector3());
+
+  const make = (width: number, yMin: number, yMax: number, depth: number) => {
+    const halfW = size.x * width * 0.5;
+    const halfD = size.z * depth * 0.5;
+    return new Box3(
+      new Vector3(center.x - halfW, full.min.y + size.y * yMin, center.z - halfD),
+      new Vector3(center.x + halfW, full.min.y + size.y * yMax, center.z + halfD),
+    );
+  };
+
+  switch (category) {
+    case "hoodie": return make(0.86, 0.43, 0.89, 0.78);
+    case "shirt": return make(0.80, 0.48, 0.84, 0.72);
+    case "jacket": return make(0.90, 0.42, 0.90, 0.82);
+    case "pants": return make(0.58, 0.06, 0.55, 0.62);
+    case "shorts": return make(0.58, 0.30, 0.56, 0.62);
+    case "shoes": return make(0.62, 0.00, 0.14, 0.92);
+    default: return make(0.46, 0.45, 0.78, 0.55);
+  }
+}
+
 export type GarmentFitOptions = {
   paddingScale?: number;
   widthPadding?: number;
@@ -109,11 +142,6 @@ export type GarmentFitOptions = {
   verticalOffset?: number;
 };
 
-/**
- * Conformado determinista para el avatar oficial de CLOUVA.
- * Ajusta ancho, alto y profundidad por separado, centra la pieza sobre la
- * zona corporal real y deja una pequeña cámara de aire para evitar clipping.
- */
 export function fitGarmentToBodyPart(
   garment: Object3D,
   bodyPartBox: Box3,
