@@ -31,6 +31,7 @@ type Props = {
   alt?: string;
   className?: string;
   playAnimations?: boolean;
+  onReady?: (object: Object3D) => void;
 };
 
 export function AvatarModelViewer({
@@ -41,6 +42,7 @@ export function AvatarModelViewer({
   config,
   className = "",
   playAnimations = true,
+  onReady,
 }: Props) {
   const mount = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<ModelState>("loading");
@@ -156,6 +158,7 @@ export function AvatarModelViewer({
 
       setState(isFallback ? "fallback" : "ready");
       setErrorMessage(null);
+      if (!isFallback) onReady?.(object);
       requestAnimationFrame(resize);
     };
 

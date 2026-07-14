@@ -22,6 +22,9 @@ export default function AvatarPage() {
       <Link href="/mi-flow/avatar-ia" style={{ position: "absolute", top: 78, right: 16, zIndex: 20 }} className="avatar-back">
         Generar con IA
       </Link>
+      <Link href="/mi-flow/avatar-customizer" style={{ position: "absolute", top: 78, left: 96, zIndex: 20 }} className="avatar-back">
+        Personalizar
+      </Link>
       <AvatarCanvas config={config} />
       <AvatarControls active={active} onActiveChange={setActive} />
     </main>
