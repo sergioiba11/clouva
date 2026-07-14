@@ -25,6 +25,8 @@ type ClothingRow = {
   wearable?: boolean;
   hood_supported?: boolean;
   hood_state?: string;
+  hood_up_model_url?: string | null;
+  hood_down_model_url?: string | null;
   processing_error?: string | null;
 };
 
@@ -191,7 +193,7 @@ export async function GET(request: NextRequest) {
   );
 
   const finalSelect =
-    "id,name,category,fit,color,status,model_url,thumbnail_url,front_reference_url,meshy_task_id,created_at,processing_started_at,metadata,fit_status,rigged,wearable,hood_supported,hood_state,processing_error";
+    "id,name,category,fit,color,status,model_url,thumbnail_url,front_reference_url,meshy_task_id,created_at,processing_started_at,metadata,fit_status,rigged,wearable,hood_supported,hood_state,hood_up_model_url,hood_down_model_url,processing_error";
   const { data: refreshed, error: refreshedError } = await supabase
     .from("clothing_items")
     .select(finalSelect)
