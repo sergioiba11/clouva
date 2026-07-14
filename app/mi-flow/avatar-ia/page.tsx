@@ -162,7 +162,9 @@ export default function AvatarIaPage() {
         <Link href="/mi-flow/avatar" className="rounded-full border border-white/10 bg-black/30 px-4 py-2 text-sm text-white/75">
           ← Volver
         </Link>
-        <span className="text-[11px] uppercase tracking-[0.25em] text-white/40">CLOUVA Avatar</span>
+        <Link href="/mi-flow/crear-prenda" className="rounded-full border border-violet-400/30 bg-violet-400/10 px-4 py-2 text-sm text-violet-200">
+          Crear prenda →
+        </Link>
       </div>
 
       <section className="rounded-[2rem] border border-white/10 bg-[radial-gradient(circle_at_top,rgba(126,87,255,0.24),transparent_48%),rgba(6,6,12,0.9)] p-5 sm:p-8">
