@@ -58,14 +58,14 @@ export function OfficialAvatarRigCard() {
     let lastError: unknown;
     for (let attempt = 0; attempt < 60; attempt += 1) {
       try {
-        await call({ action: "finalize", taskId: id });
+        await request("/api/debug/rig-official/finalize", { taskId: id });
         return;
       } catch (cause) {
         lastError = cause;
         if (!(cause instanceof Error) || !cause.message.includes("todavía no terminó")) throw cause;
         setCheckedAt(Date.now());
         setProgress(99);
-        setMessage("Meshy terminó el rigging y está publicando el archivo 3D…");
+        setMessage("Meshy terminó el rigging y CLOUVA está guardando el archivo 3D…");
         await sleep(5000);
       }
     }
@@ -85,7 +85,7 @@ export function OfficialAvatarRigCard() {
         const value = Math.max(0, Math.min(99, Math.round(status.progress ?? 0)));
         setProgress(value);
         setMessage(value >= 95 ? "Meshy está terminando el esqueleto…" : `Riggeando avatar oficial… ${value}%`);
-        if (status.status === "FAILED" || status.status === "EXPIRED") throw new Error(status.task_error?.message || status.error || "Meshy no pudo riggear el avatar");
+        if (status.status === "FAILED" || status.status === "EXPIRED" || status.status === "CANCELED") throw new Error(status.task_error?.message || status.error || "Meshy no pudo riggear el avatar");
         if (status.status === "SUCCEEDED") {
           setMessage("Guardando el avatar riggeado…");
           await finalize(job.taskId);
@@ -109,7 +109,7 @@ export function OfficialAvatarRigCard() {
       const current = await call({ action: "current" });
       setCheckedAt(Date.now());
       if (current.alreadyRigged || current.status === "SUCCEEDED") return success("Rigging completado. El modelo riggeado está activo.");
-      if (current.status === "FAILED" || current.status === "EXPIRED") return fail(String(current.failureMessage || current.error || "Meshy no pudo riggear el avatar"));
+      if (current.status === "FAILED" || current.status === "EXPIRED" || current.status === "CANCELED") return fail(String(current.failureMessage || current.error || "Meshy no pudo riggear el avatar"));
       if (current.active && current.taskId) return void follow({ taskId: String(current.taskId), startedAt: Number(current.startedAt || Date.now()) });
       const raw = localStorage.getItem(KEY);
       if (raw) return void follow(JSON.parse(raw) as Job);
@@ -149,7 +149,7 @@ export function OfficialAvatarRigCard() {
   const disabled = state === "running" || state === "checking" || state === "success" || !session?.access_token;
 
   return (
-    <section className="rounded-3xl border border-white/10 bg-white/[0.03] p-5" data-ui-version="rig-progress-v8-wait-for-glb">
+    <section className="rounded-3xl border border-white/10 bg-white/[0.03] p-5" data-ui-version="rig-progress-v9-correct-meshy-result">
       <div className="flex items-start justify-between gap-4">
         <div><p className="text-xs uppercase tracking-[0.18em] text-violet-300">Avatar Engine</p><h2 className="mt-1 text-xl font-semibold">Rigging del avatar oficial</h2><p className="mt-2 text-sm text-white/55">{message}</p></div>
         <span className="rounded-full bg-white/10 px-3 py-1 text-xs">{label}</span>
