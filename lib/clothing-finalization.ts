@@ -26,10 +26,18 @@ type FinalizeInput = {
   metadata: ItemMetadata;
 };
 
-function officialAvatarUrl() {
-  const base = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, "");
-  if (!base) throw new Error("Missing Supabase URL for official avatar");
-  return `${base}/storage/v1/object/public/avatars/official/clouva-official-v1.glb`;
+async function officialAvatarUrl(supabase: FinalizationClient) {
+  const { data, error } = await supabase
+    .from("profiles")
+    .select("avatar_3d_url")
+    .eq("role", "admin")
+    .not("avatar_3d_url", "is", null)
+    .limit(1)
+    .maybeSingle();
+  if (error || !data?.avatar_3d_url) {
+    throw new Error("No hay avatar oficial activo configurado (profiles.avatar_3d_url del admin)");
+  }
+  return data.avatar_3d_url as string;
 }
 
 async function fetchGlb(url: string, label: string) {
@@ -47,11 +55,12 @@ async function fetchGlb(url: string, label: string) {
   return bytes;
 }
 
-async function rigWithWorker(modelUrl: string, category: string, artUrl: string | null, color: string | null) {
+async function rigWithWorker(supabase: FinalizationClient, modelUrl: string, category: string, artUrl: string | null, color: string | null) {
   const workerUrl = process.env.GARMENT_RIG_WORKER_URL?.replace(/\/$/, "");
   if (!workerUrl) return { bytes: null as ArrayBuffer | null, error: "GARMENT_RIG_WORKER_URL no está configurada" };
 
   try {
+    const avatarUrl = await officialAvatarUrl(supabase);
     const response = await fetch(`${workerUrl}/rig`, {
       method: "POST",
       headers: {
@@ -61,7 +70,7 @@ async function rigWithWorker(modelUrl: string, category: string, artUrl: string 
           : {}),
       },
       body: JSON.stringify({
-        avatar_url: officialAvatarUrl(),
+        avatar_url: avatarUrl,
         garment_url: modelUrl,
         category,
         art_url: artUrl,
@@ -105,7 +114,7 @@ export async function finalizeClothingItem({
 }: FinalizeInput) {
   const artUrl = typeof metadata.art_url === "string" && metadata.art_url ? metadata.art_url : null;
 
-  const rigResult = await rigWithWorker(modelUrl, category, artUrl, color);
+  const rigResult = await rigWithWorker(supabase, modelUrl, category, artUrl, color);
   const riggedBytes = rigResult.bytes;
   const bytes = riggedBytes ?? (await fetchGlb(modelUrl, "Meshy GLB"));
   const storagePath = `${userId}/clothing/${itemId}/${riggedBytes ? "rigged-textured" : "garment-fallback"}.glb`;
