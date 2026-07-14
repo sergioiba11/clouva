@@ -22,7 +22,15 @@ export default function FlowLayoutClient({ children }: { children: React.ReactNo
 
   if (loading || !hydrationReady) return <main><MainNav /><div className="mx-auto max-w-7xl p-6">Cargando sesión...</div></main>;
   if (!user) return null;
-  if (pathname === "/mi-flow/avatar" || pathname === "/mi-flow/menu") return <>{children}</>;
+  const fullScreenPages = [
+    "/mi-flow/avatar",
+    "/mi-flow/menu",
+    "/mi-flow/avatar-ia",
+    "/mi-flow/avatar-customizer",
+    "/mi-flow/crear-prenda",
+    "/mi-flow/armario",
+  ];
+  if (fullScreenPages.includes(pathname)) return <>{children}</>;
 
   return (
     <main className="pb-24 md:pb-0">
