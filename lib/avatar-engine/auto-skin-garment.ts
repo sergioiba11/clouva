@@ -2,6 +2,7 @@ import {
   Bone,
   BufferAttribute,
   BufferGeometry,
+  Group,
   Matrix4,
   Mesh,
   Object3D,
@@ -73,19 +74,13 @@ function bakeGeometryToAvatarSpace(mesh: Mesh, avatar: Object3D) {
   return geometry;
 }
 
-/**
- * Convierte las mallas estáticas generadas por Meshy en SkinnedMesh vinculadas
- * al esqueleto del avatar. Los pesos se calculan por proximidad a los huesos
- * relevantes para cada categoría, permitiendo que mangas y piernas acompañen
- * hombros, codos, cadera y rodillas durante la animación.
- */
 export function autoSkinGarmentToAvatar(
   avatar: Object3D,
   garment: Object3D,
   category: WearableCategory,
-): boolean {
+): Object3D | null {
   const skeleton = findAvatarSkeleton(avatar);
-  if (!skeleton || skeleton.bones.length === 0) return false;
+  if (!skeleton || skeleton.bones.length === 0) return null;
 
   avatar.updateMatrixWorld(true);
   garment.updateMatrixWorld(true);
@@ -97,7 +92,11 @@ export function autoSkinGarmentToAvatar(
   garment.traverse((child) => {
     if ((child as Mesh).isMesh && !(child as SkinnedMesh).isSkinnedMesh) meshes.push(child as Mesh);
   });
-  if (meshes.length === 0) return false;
+  if (meshes.length === 0) return null;
+
+  const group = new Group();
+  group.name = `${garment.name || "garment"}-autoskin-group`;
+  avatar.add(group);
 
   for (const mesh of meshes) {
     const geometry = bakeGeometryToAvatarSpace(mesh, avatar);
@@ -130,10 +129,9 @@ export function autoSkinGarmentToAvatar(
     skinned.receiveShadow = mesh.receiveShadow;
     skinned.frustumCulled = false;
     skinned.bind(skeleton, avatar.matrixWorld);
-    avatar.add(skinned);
-    mesh.removeFromParent();
+    group.add(skinned);
   }
 
   garment.removeFromParent();
-  return true;
+  return group.children.length > 0 ? group : null;
 }
