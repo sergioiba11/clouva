@@ -139,10 +139,14 @@ export async function finalizeClothingItem({
       model_url: publicData.publicUrl,
       updated_at: new Date().toISOString(),
       metadata: nextMetadata,
+      rigged: Boolean(riggedBytes),
+      fit_status: riggedBytes ? "fitted" : "fallback",
+      wearable: Boolean(riggedBytes),
+      processing_error: riggedBytes ? null : rigResult.error,
     })
     .eq("id", itemId)
     .eq("user_id", userId)
-    .select("id,name,category,status,model_url,thumbnail_url,metadata")
+    .select("id,name,category,status,model_url,thumbnail_url,metadata,fit_status,rigged,wearable")
     .single();
   if (updateError) throw updateError;
 

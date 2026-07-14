@@ -42,6 +42,21 @@ export async function POST(request: NextRequest) {
     if (slot in body) patch[slot] = body[slot] ?? null;
   }
 
+  const idsToVerify = Object.values(patch).filter((value): value is string => Boolean(value));
+  if (idsToVerify.length > 0) {
+    const { data: candidates, error: verifyError } = await supabase
+      .from("clothing_items")
+      .select("id,wearable,fit_status,rigged,user_id")
+      .in("id", idsToVerify);
+    if (verifyError) return NextResponse.json({ error: verifyError.message }, { status: 500 });
+    const invalid = (candidates ?? []).find(
+      (row) => row.user_id !== userData.user.id || !row.wearable || row.fit_status !== "fitted" || !row.rigged,
+    );
+    if (invalid) {
+      return NextResponse.json({ error: "Esta pieza todavía no pasó el ajuste automático, no se puede equipar." }, { status: 409 });
+    }
+  }
+
   const { data, error } = await supabase
     .from("user_outfits")
     .upsert({ user_id: userData.user.id, ...patch, updated_at: new Date().toISOString() })

@@ -19,6 +19,12 @@ type ClothingItem = {
   meshy_progress?: number;
   meshy_status?: string;
   metadata?: Record<string, unknown> | null;
+  fit_status?: string;
+  rigged?: boolean;
+  wearable?: boolean;
+  hood_supported?: boolean;
+  hood_state?: string;
+  processing_error?: string | null;
 };
 
 type Outfit = { top_id: string | null; bottom_id: string | null; shoes_id: string | null; accessory_id: string | null };
@@ -67,8 +73,18 @@ function generationLabel(item: ClothingItem, progress: number) {
   return "Procesando materiales";
 }
 
-function isPreFitted(item: ClothingItem) {
-  return item.metadata?.rigged === true || item.metadata?.uv_generated === true;
+type WearState =
+  | { canEquip: true }
+  | { canEquip: false; label: "Adaptando al avatar" | "No se pudo ajustar" | "Vista experimental" | "Falta procesar el molde" };
+
+function wearState(item: ClothingItem): WearState {
+  if (item.status === "generating" || item.status === "rigging") return { canEquip: false, label: "Adaptando al avatar" };
+  if (item.status === "failed") return { canEquip: false, label: "No se pudo ajustar" };
+  if (item.status !== "ready" || !item.model_url) return { canEquip: false, label: "Falta procesar el molde" };
+  // Listo, con model_url — pero solo se puede equipar si de verdad pasó el
+  // fitting real (riggeado por el worker de Blender), no solo generado.
+  if (item.wearable === true && item.fit_status === "fitted" && item.rigged === true) return { canEquip: true };
+  return { canEquip: false, label: "Vista experimental" };
 }
 
 export default function ArmarioPage() {
@@ -159,7 +175,7 @@ export default function ArmarioPage() {
         url: item.model_url as string,
         visible: true,
         category: item.category,
-        preFitted: isPreFitted(item),
+        preFitted: item.fit_status === "fitted" && item.rigged === true,
       }));
   }, [allKnownItems, equippedIds]);
 
@@ -171,7 +187,7 @@ export default function ArmarioPage() {
       url: item.model_url,
       visible: true,
       category: item.category,
-      preFitted: isPreFitted(item),
+      preFitted: item.fit_status === "fitted" && item.rigged === true,
     }];
   }, [allKnownItems, previewId]);
 
@@ -236,11 +252,17 @@ export default function ArmarioPage() {
                     </p>
                   </div>
                 ) : !ready ? (
-                  <p className="mt-1.5 text-[10px] text-red-300">{item.status === "failed" ? "No se pudo generar" : item.status}</p>
+                  <p className="mt-1.5 text-[10px] text-red-300">{item.status === "failed" ? (item.processing_error || "No se pudo generar") : item.status}</p>
                 ) : slot ? (
-                  <button onClick={() => equip(item)} disabled={busySlot === slot} className={`mt-1.5 w-full rounded-full py-1.5 text-[11px] font-medium ${equipped ? "bg-white/10 text-white/70" : "bg-violet-400 text-black"}`}>
-                    {equipped ? "Quitar" : "Elegir esta pieza"}
-                  </button>
+                  wearState(item).canEquip ? (
+                    <button onClick={() => equip(item)} disabled={busySlot === slot} className={`mt-1.5 w-full rounded-full py-1.5 text-[11px] font-medium ${equipped ? "bg-white/10 text-white/70" : "bg-violet-400 text-black"}`}>
+                      {equipped ? "Quitar" : "Elegir esta pieza"}
+                    </button>
+                  ) : (
+                    <p className="mt-1.5 rounded-full border border-amber-300/25 bg-amber-300/5 py-1.5 text-center text-[10px] text-amber-200">
+                      {(wearState(item) as { label: string }).label}
+                    </p>
+                  )
                 ) : null}
               </div>
             </div>

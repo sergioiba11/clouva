@@ -43,7 +43,7 @@ export default function GarmentFlowClient() {
   const [phase, setPhase] = useState<Phase>("idle");
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<{ id: string; modelUrl: string } | null>(null);
+  const [result, setResult] = useState<{ id: string; modelUrl: string; rigged?: boolean; fitStatus?: string } | null>(null);
 
   const busy = ["creating", "preview", "refining", "rigging"].includes(phase);
 
@@ -147,7 +147,7 @@ export default function GarmentFlowClient() {
         throw new Error(saved.error || "No se pudo guardar y riggear la prenda.");
       }
 
-      setResult({ id: saved.item.id, modelUrl: saved.item.model_url });
+      setResult({ id: saved.item.id, modelUrl: saved.item.model_url, rigged: saved.item.rigged, fitStatus: saved.item.fit_status });
       setPhase("done");
       setProgress(100);
     } catch (cause) {
@@ -237,7 +237,7 @@ export default function GarmentFlowClient() {
         <section className="rounded-3xl border border-white/10 bg-white/[0.03] p-5">
           <h1 className="mb-3 text-xl font-semibold">Prenda 3D lista ✓</h1>
           <div className="h-[430px] overflow-hidden rounded-2xl border border-white/10 bg-black/40">
-            <OutfitPreview avatarUrl={avatar.modelUrl} layers={[{ id: result.id, url: result.modelUrl, visible: true, category }]} />
+            <OutfitPreview avatarUrl={avatar.modelUrl} layers={[{ id: result.id, url: result.modelUrl, visible: true, category, preFitted: result.fitStatus === "fitted" && result.rigged === true }]} />
           </div>
           <Link href="/mi-flow/armario" className="mt-3 block w-full rounded-2xl bg-violet-400 py-3 text-center text-sm font-semibold text-black">Ver en mis piezas</Link>
           <button type="button" onClick={() => { setResult(null); setPhase("idle"); setProgress(0); }} className="mt-2 w-full rounded-2xl border border-white/15 py-3 text-sm">Crear otra pieza</button>

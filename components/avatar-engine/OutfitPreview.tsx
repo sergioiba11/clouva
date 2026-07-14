@@ -4,12 +4,14 @@ import { useEffect, useRef, useState } from "react";
 import {
   ACESFilmicToneMapping,
   AmbientLight,
+  Box3,
   DirectionalLight,
   HemisphereLight,
   Object3D,
   PerspectiveCamera,
   Scene,
   SRGBColorSpace,
+  Vector3,
   WebGLRenderer,
 } from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
@@ -132,6 +134,18 @@ export function OutfitPreview({ avatarUrl, layers, className = "" }: Props) {
 
             if (bodyPart) {
               fitGarmentToBodyPart(obj, bodyPart.box, layer.category ? CATEGORY_FIT[layer.category] : undefined);
+              const fittedBox = new Box3().setFromObject(obj);
+              const fittedSize = fittedBox.getSize(new Vector3());
+              const bodySize = bodyPart.box.getSize(new Vector3());
+              const oversized = fittedSize.y > bodySize.y * 1.8 || fittedSize.x > bodySize.x * 1.8;
+              if (oversized) {
+                // Algo salió mal en el ajuste automático (bounds absurdos) —
+                // no la mostramos equipada para evitar el efecto "prenda
+                // gigante flotando" que ya vimos antes.
+                obj.visible = false;
+                loadedRef.current[layer.id] = obj;
+                continue;
+              }
               scene.add(obj);
               avatarObj.attach(obj);
             } else {

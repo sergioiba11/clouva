@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { createMultiImageTask, createPreviewTask } from "@/lib/meshy";
+import { checkOfficialTemplate } from "@/lib/garment-templates";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -97,6 +98,7 @@ export async function POST(request: NextRequest) {
       if (!description) return NextResponse.json({ error: "Describí la prenda que querés crear" }, { status: 400 });
 
       const prompt = garmentPrompt(category, fit, color, description);
+      const templateCheck = await checkOfficialTemplate(category);
       const taskId = await createPreviewTask(prompt, "cartoon");
       const itemId = crypto.randomUUID();
 
@@ -112,11 +114,15 @@ export async function POST(request: NextRequest) {
           status: "generating",
           prompt,
           meshy_task_id: taskId,
+          processing_started_at: new Date().toISOString(),
+          fit_status: "pending",
           metadata: {
             generation_kind: "text-to-3d",
             generation_stage: "preview",
             isolated_garment_prompt_version: 3,
             official_avatar: "clouva-official-v1",
+            template_available: templateCheck.available,
+            template_note: templateCheck.available ? null : templateCheck.message,
           },
         })
         .select("id,name,category,status,thumbnail_url,meshy_task_id,created_at")
@@ -145,6 +151,7 @@ export async function POST(request: NextRequest) {
       const itemId = crypto.randomUUID();
       const artUpload = await uploadOptionalArt(supabase, userData.user.id, itemId, art instanceof File ? art : null);
       const prompt = garmentPrompt(category, fit, color, description);
+      const templateCheck = await checkOfficialTemplate(category);
       const taskId = await createPreviewTask(prompt, "cartoon");
 
       const { data: item, error: insertError } = await supabase
@@ -160,6 +167,8 @@ export async function POST(request: NextRequest) {
           prompt,
           thumbnail_url: artUpload?.publicUrl ?? null,
           meshy_task_id: taskId,
+          processing_started_at: new Date().toISOString(),
+          fit_status: "pending",
           metadata: {
             generation_kind: "text-to-3d",
             generation_stage: "preview",
@@ -168,6 +177,8 @@ export async function POST(request: NextRequest) {
             art_usage: artUpload ? "texture-source" : null,
             isolated_garment_prompt_version: 3,
             official_avatar: "clouva-official-v1",
+            template_available: templateCheck.available,
+            template_note: templateCheck.available ? null : templateCheck.message,
           },
         })
         .select("id,name,category,status,thumbnail_url,meshy_task_id,created_at")
@@ -207,6 +218,7 @@ export async function POST(request: NextRequest) {
     if (!frontUpload) throw new Error("No se pudo guardar la portada de la pieza");
 
     const prompt = garmentPrompt(category, fit, color, description);
+    const templateCheck = await checkOfficialTemplate(category);
     const taskId = await createMultiImageTask(uploads.map((upload) => upload.publicUrl), prompt);
     const itemId = crypto.randomUUID();
 
@@ -226,10 +238,14 @@ export async function POST(request: NextRequest) {
         side_reference_url: uploads.find((upload) => upload.key === "side")?.publicUrl ?? null,
         thumbnail_url: frontUpload.publicUrl,
         meshy_task_id: taskId,
+        processing_started_at: new Date().toISOString(),
+        fit_status: "pending",
         metadata: {
           generation_kind: "multi-image",
           reference_paths: uploads.map((upload) => upload.storagePath),
           isolated_garment_prompt_version: 3,
+          template_available: templateCheck.available,
+          template_note: templateCheck.available ? null : templateCheck.message,
         },
       })
       .select("id,name,category,status,thumbnail_url,meshy_task_id,created_at")

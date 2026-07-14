@@ -18,8 +18,22 @@ type ClothingRow = {
   front_reference_url: string | null;
   meshy_task_id: string | null;
   created_at: string;
+  processing_started_at: string | null;
   metadata: Record<string, unknown> | null;
+  fit_status?: string;
+  rigged?: boolean;
+  wearable?: boolean;
+  hood_supported?: boolean;
+  hood_state?: string;
+  processing_error?: string | null;
 };
+
+const MAX_PROCESSING_MS = 15 * 60 * 1000;
+
+function isTimedOut(item: ClothingRow) {
+  const startedAt = item.processing_started_at ?? item.created_at;
+  return Date.now() - new Date(startedAt).getTime() > MAX_PROCESSING_MS;
+}
 
 function getAdminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -47,7 +61,7 @@ export async function GET(request: NextRequest) {
   const { data: userData, error: userError } = await supabase.auth.getUser(accessToken);
   if (userError || !userData.user) return NextResponse.json({ error: "Invalid session" }, { status: 401 });
 
-  const select = "id,name,category,fit,color,status,model_url,thumbnail_url,front_reference_url,meshy_task_id,created_at,metadata";
+  const select = "id,name,category,fit,color,status,model_url,thumbnail_url,front_reference_url,meshy_task_id,created_at,processing_started_at,metadata";
   const { data, error } = await supabase
     .from("clothing_items")
     .select(select)
@@ -66,6 +80,23 @@ export async function GET(request: NextRequest) {
   await Promise.allSettled(
     active.map(async (item) => {
       const metadata = item.metadata ?? {};
+
+      if (isTimedOut(item)) {
+        await supabase
+          .from("clothing_items")
+          .update({
+            status: "failed",
+            fit_status: "failed",
+            wearable: false,
+            processing_error: "Se superó el tiempo máximo de generación (15 min).",
+            updated_at: new Date().toISOString(),
+            metadata: { ...metadata, generation_stage: "timeout" },
+          })
+          .eq("id", item.id)
+          .eq("user_id", userData.user.id);
+        return;
+      }
+
       try {
         let modelUrl = typeof metadata.meshy_model_url === "string" ? metadata.meshy_model_url : null;
         let taskStatus = item.status === "rigging" ? "SUCCEEDED" : undefined;
@@ -85,6 +116,9 @@ export async function GET(request: NextRequest) {
               .from("clothing_items")
               .update({
                 status: "failed",
+                fit_status: "failed",
+                wearable: false,
+                processing_error: `Meshy: ${task.status}`,
                 updated_at: new Date().toISOString(),
                 metadata: {
                   ...metadata,
@@ -138,6 +172,7 @@ export async function GET(request: NextRequest) {
               .from("clothing_items")
               .update({
                 status: "rigging",
+                processing_error: message.slice(0, 500),
                 updated_at: new Date().toISOString(),
                 metadata: {
                   ...rigMetadata,
@@ -155,9 +190,11 @@ export async function GET(request: NextRequest) {
     }),
   );
 
+  const finalSelect =
+    "id,name,category,fit,color,status,model_url,thumbnail_url,front_reference_url,meshy_task_id,created_at,processing_started_at,metadata,fit_status,rigged,wearable,hood_supported,hood_state,processing_error";
   const { data: refreshed, error: refreshedError } = await supabase
     .from("clothing_items")
-    .select(select)
+    .select(finalSelect)
     .eq("user_id", userData.user.id)
     .order("created_at", { ascending: false });
 
