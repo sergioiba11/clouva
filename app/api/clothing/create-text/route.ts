@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
       ? `Surface finish: base color ${color}. ${textureDetails}. Logos, embroidery, prints and patches must remain surface details and must not become separate geometry.`
       : `Surface finish: clean premium fabric in ${color}, subtle textile detail, no logos.`;
 
-    const prompt = `Create one ${garment} for a stylized mobile-game avatar. Fit: ${fit}. Shape and construction: ${description}. ${dimensions} Generate only the wearable object as a separate mesh. Do not generate a body, mannequin, person, floor, environment or floating symbols. Keep the object upright, centered at world origin, symmetrical when appropriate, mobile-friendly, complete from front/back/side, with practical clearance for wearing over the avatar. ${texture}`;
+    const prompt = `Create one ${garment} for a stylized mobile-game avatar. Fit: ${fit}. Shape and construction: ${description}. ${dimensions} Generate only the wearable object as a separate mesh. It must be animation-ready and suitable for automatic skinning to a humanoid skeleton: clean continuous topology, sensible edge flow around shoulders, elbows, hips and knees, separate but connected sleeves or legs where applicable, no fused body parts, no mannequin and no character. Keep the garment in a neutral A-pose compatible shape, upright, centered at world origin, symmetrical when appropriate, mobile-friendly, complete from front/back/side, with practical clearance for wearing over the avatar. Do not generate a floor, environment or floating symbols. ${texture}`;
 
     const taskId = await createPreviewTask(prompt, "realistic");
     const itemId = crypto.randomUUID();
@@ -71,6 +71,8 @@ export async function POST(request: NextRequest) {
           avatar_measurements: measurements,
           geometry_description: description,
           texture_details: textureDetails || null,
+          animation_ready_requested: true,
+          auto_skin_enabled: true,
           openai_enabled: false,
         },
       })
