@@ -64,10 +64,18 @@ export async function createPreviewTask(prompt: string, artStyle: "realistic" | 
   return data.result as string;
 }
 
-export async function createRefineTask(previewTaskId: string) {
+export async function createRefineTask(previewTaskId: string, texturePrompt?: string) {
+  const body: Record<string, unknown> = {
+    mode: "refine",
+    preview_task_id: previewTaskId,
+    enable_pbr: true,
+    target_formats: ["glb"],
+  };
+  if (texturePrompt?.trim()) body.texture_prompt = texturePrompt.trim().slice(0, 600);
+
   const data = await meshyFetch("", {
     method: "POST",
-    body: JSON.stringify({ mode: "refine", preview_task_id: previewTaskId, enable_pbr: true, target_formats: ["glb"] }),
+    body: JSON.stringify(body),
   });
   return data.result as string;
 }
