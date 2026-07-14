@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { getMultiImageTask, getTask } from "@/lib/meshy";
+import { finalizeClothingItem } from "@/lib/clothing-finalization";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -55,7 +56,8 @@ export async function GET(request: NextRequest) {
   await Promise.allSettled(
     active.map(async (item) => {
       try {
-        const generationKind = item.metadata?.generation_kind;
+        const metadata = item.metadata ?? {};
+        const generationKind = metadata.generation_kind;
         const task = generationKind === "multi-image"
           ? await getMultiImageTask(item.meshy_task_id as string)
           : await getTask(item.meshy_task_id as string);
@@ -65,10 +67,51 @@ export async function GET(request: NextRequest) {
           progressById[item.id] = Math.max(0, Math.min(task.status === "SUCCEEDED" ? 100 : 99, Math.round(task.progress)));
         }
 
+        if (task.status === "SUCCEEDED" && task.model_urls?.glb) {
+          const { data: claimed } = await supabase
+            .from("clothing_items")
+            .update({
+              status: "rigging",
+              updated_at: new Date().toISOString(),
+              metadata: {
+                ...metadata,
+                generation_stage: "rigging",
+                generation_progress: 99,
+              },
+            })
+            .eq("id", item.id)
+            .eq("user_id", userData.user.id)
+            .eq("status", "generating")
+            .select("id")
+            .maybeSingle();
+
+          if (claimed) {
+            await finalizeClothingItem({
+              supabase,
+              userId: userData.user.id,
+              itemId: item.id,
+              modelUrl: task.model_urls.glb,
+              category: item.category,
+              color: item.color,
+              metadata,
+            });
+          }
+          progressById[item.id] = 100;
+          return;
+        }
+
         if (task.status === "FAILED" || task.status === "EXPIRED") {
           await supabase
             .from("clothing_items")
-            .update({ status: "failed", updated_at: new Date().toISOString() })
+            .update({
+              status: "failed",
+              updated_at: new Date().toISOString(),
+              metadata: {
+                ...metadata,
+                generation_stage: "failed",
+                generation_progress: progressById[item.id] ?? 0,
+              },
+            })
             .eq("id", item.id)
             .eq("user_id", userData.user.id);
         }
@@ -78,10 +121,23 @@ export async function GET(request: NextRequest) {
     }),
   );
 
-  const items = rows.map((item) => ({
+  const { data: refreshed, error: refreshedError } = await supabase
+    .from("clothing_items")
+    .select(select)
+    .eq("user_id", userData.user.id)
+    .order("created_at", { ascending: false });
+
+  if (refreshedError) return NextResponse.json({ error: refreshedError.message }, { status: 500 });
+
+  const items = ((refreshed ?? []) as ClothingRow[]).map((item) => ({
     ...item,
     thumbnail_url: item.thumbnail_url || item.front_reference_url,
-    meshy_progress: item.status === "ready" ? 100 : progressById[item.id],
+    meshy_progress:
+      item.status === "ready"
+        ? 100
+        : item.status === "rigging"
+          ? 99
+          : progressById[item.id],
     meshy_status: meshyStatusById[item.id],
   }));
 
