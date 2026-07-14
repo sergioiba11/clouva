@@ -28,6 +28,16 @@ function getAdminClient() {
   return createClient(url, serviceRole, { auth: { persistSession: false, autoRefreshToken: false } });
 }
 
+async function getMeshyModel(item: ClothingRow) {
+  if (!item.meshy_task_id) return null;
+  const metadata = item.metadata ?? {};
+  const generationKind = metadata.generation_kind;
+  const task = generationKind === "multi-image"
+    ? await getMultiImageTask(item.meshy_task_id)
+    : await getTask(item.meshy_task_id);
+  return task;
+}
+
 export async function GET(request: NextRequest) {
   const authorization = request.headers.get("authorization");
   const accessToken = authorization?.startsWith("Bearer ") ? authorization.slice(7) : null;
@@ -50,70 +60,94 @@ export async function GET(request: NextRequest) {
   const progressById: Record<string, number> = {};
   const meshyStatusById: Record<string, string> = {};
   const active = rows
-    .filter((item) => item.status === "generating" && item.meshy_task_id)
+    .filter((item) => (item.status === "generating" || item.status === "rigging") && item.meshy_task_id)
     .slice(0, 8);
 
   await Promise.allSettled(
     active.map(async (item) => {
+      const metadata = item.metadata ?? {};
       try {
-        const metadata = item.metadata ?? {};
-        const generationKind = metadata.generation_kind;
-        const task = generationKind === "multi-image"
-          ? await getMultiImageTask(item.meshy_task_id as string)
-          : await getTask(item.meshy_task_id as string);
+        let modelUrl = typeof metadata.meshy_model_url === "string" ? metadata.meshy_model_url : null;
+        let taskStatus = item.status === "rigging" ? "SUCCEEDED" : undefined;
 
-        meshyStatusById[item.id] = task.status;
-        if (typeof task.progress === "number") {
-          progressById[item.id] = Math.max(0, Math.min(task.status === "SUCCEEDED" ? 100 : 99, Math.round(task.progress)));
+        if (!modelUrl) {
+          const task = await getMeshyModel(item);
+          if (!task) return;
+
+          taskStatus = task.status;
+          meshyStatusById[item.id] = task.status;
+          if (typeof task.progress === "number") {
+            progressById[item.id] = Math.max(0, Math.min(task.status === "SUCCEEDED" ? 100 : 99, Math.round(task.progress)));
+          }
+
+          if (task.status === "FAILED" || task.status === "EXPIRED") {
+            await supabase
+              .from("clothing_items")
+              .update({
+                status: "failed",
+                updated_at: new Date().toISOString(),
+                metadata: {
+                  ...metadata,
+                  generation_stage: "failed",
+                  generation_progress: progressById[item.id] ?? 0,
+                },
+              })
+              .eq("id", item.id)
+              .eq("user_id", userData.user.id);
+            return;
+          }
+
+          if (task.status !== "SUCCEEDED" || !task.model_urls?.glb) return;
+          modelUrl = task.model_urls.glb;
         }
 
-        if (task.status === "SUCCEEDED" && task.model_urls?.glb) {
-          const { data: claimed } = await supabase
+        if (taskStatus === "SUCCEEDED" || modelUrl) {
+          const rigMetadata = {
+            ...metadata,
+            meshy_model_url: modelUrl,
+            generation_stage: "rigging",
+            generation_progress: 99,
+            rigging_last_error: null,
+          };
+
+          await supabase
             .from("clothing_items")
             .update({
               status: "rigging",
               updated_at: new Date().toISOString(),
-              metadata: {
-                ...metadata,
-                generation_stage: "rigging",
-                generation_progress: 99,
-              },
+              metadata: rigMetadata,
             })
             .eq("id", item.id)
-            .eq("user_id", userData.user.id)
-            .eq("status", "generating")
-            .select("id")
-            .maybeSingle();
+            .eq("user_id", userData.user.id);
 
-          if (claimed) {
+          try {
             await finalizeClothingItem({
               supabase,
               userId: userData.user.id,
               itemId: item.id,
-              modelUrl: task.model_urls.glb,
+              modelUrl,
               category: item.category,
               color: item.color,
-              metadata,
+              metadata: rigMetadata,
             });
+            progressById[item.id] = 100;
+          } catch (finalizeError) {
+            const message = finalizeError instanceof Error ? finalizeError.message : "Rigging failed";
+            console.error(`Could not finalize clothing item ${item.id}`, finalizeError);
+            await supabase
+              .from("clothing_items")
+              .update({
+                status: "rigging",
+                updated_at: new Date().toISOString(),
+                metadata: {
+                  ...rigMetadata,
+                  rigging_last_error: message.slice(0, 500),
+                  rigging_retry_at: new Date().toISOString(),
+                },
+              })
+              .eq("id", item.id)
+              .eq("user_id", userData.user.id);
           }
-          progressById[item.id] = 100;
-          return;
-        }
-
-        if (task.status === "FAILED" || task.status === "EXPIRED") {
-          await supabase
-            .from("clothing_items")
-            .update({
-              status: "failed",
-              updated_at: new Date().toISOString(),
-              metadata: {
-                ...metadata,
-                generation_stage: "failed",
-                generation_progress: progressById[item.id] ?? 0,
-              },
-            })
-            .eq("id", item.id)
-            .eq("user_id", userData.user.id);
         }
       } catch (taskError) {
         console.error(`Could not synchronize clothing item ${item.id}`, taskError);
