@@ -14,12 +14,14 @@ import {
 } from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { frameAvatar, normalizeAvatarObject, findAvatarBodyPart, fitGarmentToBodyPart } from "@/lib/avatar-engine/frame-avatar";
+import {
+  frameAvatar,
+  normalizeAvatarObject,
+  findAvatarBodyPart,
+  fitWearableToBodyPart,
+  type WearableCategory,
+} from "@/lib/avatar-engine/frame-avatar";
 
-// Mapeo de categoría de prenda -> nombre(s) de malla real del avatar
-// actual (hoodie-character.glb). Si el avatar activo es otro modelo,
-// simplemente no se encuentra ninguna malla y se usa el respaldo por
-// altura total (ver más abajo).
 const CATEGORY_BODY_MESHES: Record<string, string[]> = {
   hoodie: ["Casual_Body"],
   shirt: ["Casual_Body"],
@@ -27,6 +29,7 @@ const CATEGORY_BODY_MESHES: Record<string, string[]> = {
   pants: ["Casual_Legs"],
   shorts: ["Casual_Legs"],
   shoes: ["Casual_Feet"],
+  accessory: ["Casual_Body"],
 };
 
 export type OutfitLayer = { id: string; url: string; visible: boolean; category?: string };
@@ -36,6 +39,10 @@ type Props = {
   layers: OutfitLayer[];
   className?: string;
 };
+
+function isWearableCategory(value?: string): value is WearableCategory {
+  return Boolean(value && value in CATEGORY_BODY_MESHES);
+}
 
 export function OutfitPreview({ avatarUrl, layers, className = "" }: Props) {
   const mount = useRef<HTMLDivElement>(null);
@@ -48,6 +55,7 @@ export function OutfitPreview({ avatarUrl, layers, className = "" }: Props) {
     let raf = 0;
     let mainModel: Object3D | null = null;
 
+    setStatus("loading");
     const scene = new Scene();
     const camera = new PerspectiveCamera(31, 1, 0.02, 100);
     const renderer = new WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
@@ -84,11 +92,7 @@ export function OutfitPreview({ avatarUrl, layers, className = "" }: Props) {
     resizeObserver.observe(mount.current);
 
     const loader = new GLTFLoader();
-
-    const loadRaw = async (url: string) => {
-      const gltf = await loader.loadAsync(url);
-      return gltf.scene;
-    };
+    const loadRaw = async (url: string) => (await loader.loadAsync(url)).scene;
 
     (async () => {
       try {
@@ -101,22 +105,20 @@ export function OutfitPreview({ avatarUrl, layers, className = "" }: Props) {
         for (const layer of layers) {
           if (disposed) return;
           const obj = await loadRaw(layer.url);
-          const bodyMeshNames = layer.category ? CATEGORY_BODY_MESHES[layer.category] : undefined;
-          const bodyPart = bodyMeshNames ? findAvatarBodyPart(avatarObj, bodyMeshNames) : null;
-          if (bodyPart) {
-            // Calce real: escala/posiciona contra la medida verdadera
-            // de esa parte del cuerpo en el GLB del avatar.
-            fitGarmentToBodyPart(obj, bodyPart.box);
+          const category = isWearableCategory(layer.category) ? layer.category : null;
+          const bodyPart = category ? findAvatarBodyPart(avatarObj, CATEGORY_BODY_MESHES[category]) : null;
+
+          if (category && bodyPart) {
+            fitWearableToBodyPart(obj, bodyPart.box, category);
           } else {
-            // Respaldo: no sabemos qué malla del avatar corresponde
-            // (categoría desconocida o modelo de avatar distinto), así
-            // que al menos igualamos la altura total como antes.
             normalizeAvatarObject(obj, { targetHeight: 2.05 });
           }
+
           scene.add(obj);
           obj.visible = layer.visible;
           loadedRef.current[layer.id] = obj;
         }
+
         if (disposed) return;
         setStatus("ready");
         requestAnimationFrame(resize);
@@ -144,15 +146,14 @@ export function OutfitPreview({ avatarUrl, layers, className = "" }: Props) {
       mount.current?.replaceChildren();
       loadedRef.current = {};
     };
-  }, [avatarUrl, layers.map((l) => l.url).join(",")]);
+  }, [avatarUrl, layers.map((layer) => `${layer.url}:${layer.category ?? ""}`).join(",")]);
 
-  // Actualiza visibilidad de capas ya cargadas sin recargar toda la escena.
   useEffect(() => {
     for (const layer of layers) {
       const obj = loadedRef.current[layer.id];
       if (obj) obj.visible = layer.visible;
     }
-  }, [layers.map((l) => `${l.id}:${l.visible}`).join(",")]);
+  }, [layers.map((layer) => `${layer.id}:${layer.visible}`).join(",")]);
 
   return (
     <div className={`relative h-full w-full ${className}`}>
