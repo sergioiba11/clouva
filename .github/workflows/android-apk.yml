@@ -9,6 +9,8 @@ on:
 jobs:
   build-apk:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -41,7 +43,25 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Capacitor sync (Android)
-        run: npx cap sync android
+        run: |
+          echo "node: $(node --version)"
+          echo "npm: $(npm --version)"
+          echo "JAVA_HOME: $JAVA_HOME"
+          npx cap sync android --verbose 2>&1 | tee /tmp/cap-sync.log
+          exit ${PIPESTATUS[0]}
+
+      - name: Guardar log de diagnóstico si algo falló
+        if: failure()
+        run: |
+          git config user.email "ci@clouva.com.ar"
+          git config user.name "CI Debug"
+          git fetch origin
+          git checkout -B debug/ci-logs
+          mkdir -p .ci-debug
+          cp /tmp/cap-sync.log .ci-debug/cap-sync-${{ github.run_id }}.log
+          git add .ci-debug
+          git commit -m "Debug log run ${{ github.run_id }}"
+          git push --force "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" debug/ci-logs
 
       - name: Dar permiso de ejecución a gradlew
         run: chmod +x android/gradlew
