@@ -1,12 +1,37 @@
-FROM linuxserver/blender:4.2.3
+FROM python:3.11-slim-bookworm
 
-USER root
-RUN apt-get update && apt-get install -y --no-install-recommends python3-pip && rm -rf /var/lib/apt/lists/*
-RUN pip3 install --break-system-packages fastapi uvicorn pydantic
+# Blender, corriendo siempre en modo --background, necesita estas
+# librerías compartidas para arrancar, pero NO necesita ningún
+# servidor X11/VNC ni entorno de escritorio real.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    wget \
+    xz-utils \
+    libxi6 \
+    libxrender1 \
+    libxrandr2 \
+    libxfixes3 \
+    libxcursor1 \
+    libxinerama1 \
+    libxkbcommon0 \
+    libgl1 \
+    libegl1 \
+    libsm6 \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV BLENDER_VERSION=4.2.3
+ENV BLENDER_URL=https://download.blender.org/release/Blender4.2/blender-${BLENDER_VERSION}-linux-x64.tar.xz
+
+RUN wget -q "$BLENDER_URL" -O /tmp/blender.tar.xz \
+    && mkdir -p /opt/blender \
+    && tar -xJf /tmp/blender.tar.xz -C /opt/blender --strip-components=1 \
+    && rm /tmp/blender.tar.xz \
+    && ln -s /opt/blender/blender /usr/local/bin/blender
+
+RUN pip install --no-cache-dir --break-system-packages fastapi uvicorn pydantic
 
 WORKDIR /app
 COPY app.py rig_garment.py ./
 
-ENV BLENDER_BIN=/usr/bin/blender
+ENV BLENDER_BIN=/usr/local/bin/blender
 EXPOSE 8000
 CMD ["python3", "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
