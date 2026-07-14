@@ -19,9 +19,9 @@ export function OfficialAvatarRigCard() {
   const [checkedAt, setCheckedAt] = useState<number | null>(null);
   const busy = useRef(false);
 
-  const call = async (body: Record<string, unknown>) => {
+  const request = async (url: string, body: Record<string, unknown>) => {
     if (!session?.access_token) throw new Error("Iniciá sesión como administrador");
-    const response = await fetch("/api/debug/rig-official", {
+    const response = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
       body: JSON.stringify(body),
@@ -31,6 +31,8 @@ export function OfficialAvatarRigCard() {
     if (!response.ok) throw new Error(data.error || `Error ${response.status}`);
     return data;
   };
+
+  const call = (body: Record<string, unknown>) => request("/api/debug/rig-official", body);
 
   const fail = (text: string) => {
     localStorage.removeItem(KEY);
@@ -125,13 +127,12 @@ export function OfficialAvatarRigCard() {
     setProgress(0);
     setError(null);
     setTaskId(null);
-    setMessage(retrying ? "Limpiando el intento anterior y creando uno nuevo…" : "Enviando el avatar oficial a Meshy…");
+    setMessage(retrying ? "Creando un proceso nuevo en Meshy…" : "Enviando el avatar oficial a Meshy…");
     try {
-      if (retrying) {
-        localStorage.removeItem(KEY);
-        await call({ action: "clear" });
-      }
-      const created = await call({ action: "create" });
+      localStorage.removeItem(KEY);
+      const created = retrying
+        ? await request("/api/debug/rig-official/retry", {})
+        : await call({ action: "create" });
       if (created.alreadyRigged) return success("El avatar oficial ya estaba riggeado.");
       const id = String(created.taskId || "");
       if (!id) throw new Error("Meshy no devolvió un taskId");
@@ -145,7 +146,7 @@ export function OfficialAvatarRigCard() {
   const disabled = state === "running" || state === "checking" || state === "success" || !session?.access_token;
 
   return (
-    <section className="rounded-3xl border border-white/10 bg-white/[0.03] p-5" data-ui-version="rig-progress-v6-new-retry-task">
+    <section className="rounded-3xl border border-white/10 bg-white/[0.03] p-5" data-ui-version="rig-progress-v7-forced-retry-endpoint">
       <div className="flex items-start justify-between gap-4">
         <div><p className="text-xs uppercase tracking-[0.18em] text-violet-300">Avatar Engine</p><h2 className="mt-1 text-xl font-semibold">Rigging del avatar oficial</h2><p className="mt-2 text-sm text-white/55">{message}</p></div>
         <span className="rounded-full bg-white/10 px-3 py-1 text-xs">{label}</span>
