@@ -4,7 +4,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { MainFooter, MainNav } from "@/components/layout";
-import { getRedirectByRole, roleHome } from "@/lib/auth";
+import { roleHome } from "@/lib/auth";
 import { useAuth } from "@/components/auth-provider";
 
 function oauthBaseUrl() {
@@ -28,50 +28,7 @@ export default function LoginContent() {
   useEffect(() => {
     const oauthError = searchParams.get("error");
     if (oauthError) setError(oauthError);
-
-    let active = true;
-    const safetyTimer = window.setTimeout(() => {
-      if (active) setCheckingSession(false);
-    }, 6000);
-
-    const checkSession = async () => {
-      if (isAddAccountMode) {
-        if (active) setCheckingSession(false);
-        return;
-      }
-
-      try {
-        const { supabase } = await import("@/lib/supabase");
-        const targetId = localStorage.getItem("clouva.switch_target");
-        const { data, error: sessionError } = await supabase.auth.getSession();
-        if (sessionError) throw sessionError;
-
-        const userId = data.session?.user?.id;
-        if (userId && targetId && targetId !== userId) {
-          await supabase.auth.signOut();
-          if (active) setCheckingSession(false);
-          return;
-        }
-
-        if (userId) {
-          localStorage.removeItem("clouva.switch_target");
-          router.replace(roleHome[role] || "/mi-flow");
-          return;
-        }
-      } catch (sessionError) {
-        console.error("Login session check failed", sessionError);
-        if (active) setError("No se pudo comprobar la sesión. Volvé a intentar.");
-      } finally {
-        if (active) setCheckingSession(false);
-      }
-    };
-
-    void checkSession();
-    return () => {
-      active = false;
-      window.clearTimeout(safetyTimer);
-    };
-  }, [isAddAccountMode, searchParams, router, role]);
+  }, [searchParams]);
 
   useEffect(() => {
     if (authLoading || isAddAccountMode) return;
@@ -82,22 +39,10 @@ export default function LoginContent() {
     setCheckingSession(false);
   }, [authLoading, isAddAccountMode, router, role, user]);
 
-  const redirectByRole = async (userId: string, forceSwitcher = false) => {
-    const { supabase } = await import("@/lib/supabase");
-    let { data: profile } = await supabase.from("profiles").select("role").eq("id", userId).maybeSingle();
-
-    if (!profile) {
-      const { data: created } = await supabase
-        .from("profiles")
-        .insert({ id: userId, role: "cliente" })
-        .select("role")
-        .maybeSingle();
-      profile = created;
-    }
-
-    const redirectPath = getRedirectByRole(profile?.role ?? "cliente") || "/mi-flow";
-    router.push(forceSwitcher ? `${redirectPath}?openAccountSwitcher=1` : redirectPath);
-  };
+  useEffect(() => {
+    const timer = window.setTimeout(() => setCheckingSession(false), 5000);
+    return () => window.clearTimeout(timer);
+  }, []);
 
   const onSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -107,13 +52,14 @@ export default function LoginContent() {
     try {
       const { supabase } = await import("@/lib/supabase");
       const { data, error: signInError } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
-      if (signInError || !data.user) throw signInError || new Error("No se pudo iniciar sesión.");
+      if (signInError) throw signInError;
+      if (!data.session?.user) throw new Error("No se pudo establecer la sesión.");
 
       localStorage.removeItem("clouva.switch_target");
-      await redirectByRole(data.user.id, isAddAccountMode);
+      const target = isAddAccountMode ? "/mi-flow?openAccountSwitcher=1" : "/mi-flow";
+      window.location.assign(target);
     } catch (signInError) {
       setError(signInError instanceof Error ? signInError.message : "No se pudo iniciar sesión.");
-    } finally {
       setLoading(false);
     }
   };
@@ -124,10 +70,7 @@ export default function LoginContent() {
     try {
       const { supabase } = await import("@/lib/supabase");
       const redirectTo = `${oauthBaseUrl()}/auth/callback${isAddAccountMode ? "?addAccount=1" : ""}`;
-      const { error: oauthError } = await supabase.auth.signInWithOAuth({
-        provider: "google",
-        options: { redirectTo },
-      });
+      const { error: oauthError } = await supabase.auth.signInWithOAuth({ provider: "google", options: { redirectTo } });
       if (oauthError) throw oauthError;
     } catch (oauthError) {
       setError(oauthError instanceof Error ? oauthError.message : "No se pudo iniciar con Google.");
@@ -154,11 +97,11 @@ export default function LoginContent() {
             <h1 className="text-3xl">Iniciar sesión</h1>
             <p className="mt-3 text-white/70">Acceso con email/contraseña o Google.</p>
             <form onSubmit={onSubmit} className="mt-6 space-y-3 rounded-3xl border border-white/10 bg-white/[0.03] p-6">
-              <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" className="w-full rounded-xl border border-white/20 bg-black/30 px-4 py-3" />
-              <input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Contraseña" className="w-full rounded-xl border border-white/20 bg-black/30 px-4 py-3" />
-              <button disabled={loading} className="w-full rounded-xl bg-white px-4 py-3 text-black disabled:opacity-60">{loading ? "Ingresando..." : "Ingresar"}</button>
+              <input type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email" className="w-full rounded-xl border border-white/20 bg-black/30 px-4 py-3" />
+              <input type="password" autoComplete="current-password" required value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Contraseña" className="w-full rounded-xl border border-white/20 bg-black/30 px-4 py-3" />
+              <button disabled={loading} className="w-full rounded-xl bg-white px-4 py-3 text-black disabled:opacity-60">{loading ? "Ingresando…" : "Ingresar"}</button>
               <button type="button" disabled={loading} onClick={onGoogle} className="w-full rounded-xl border border-white/20 px-4 py-3 disabled:opacity-60">Continuar con Google</button>
-              {error ? <p className="text-sm text-red-300">{error}</p> : null}
+              {error ? <p className="rounded-xl bg-red-400/10 p-3 text-sm text-red-300">{error}</p> : null}
             </form>
             <Link href="/registro" className="mt-4 inline-block text-xs uppercase tracking-[0.15em] text-[#95d8ff]">Crear cuenta</Link>
           </>
