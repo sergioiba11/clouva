@@ -1,0 +1,14 @@
+✔ Copying web assets from www to android/app/src/main/assets/public in 2.63ms
+✔ Creating capacitor.config.json in android/app/src/main/assets in 441.38μs
+✔ copy android in 15.99ms
+✔ Updating Android plugins in 4.57ms
+[info] Found 7 Capacitor plugins for android:
+       @capacitor/app@8.1.0
+       @capacitor/camera@8.2.1
+       @capacitor/filesystem@8.1.2
+       @capacitor/haptics@8.0.2
+       @capacitor/local-notifications@8.2.0
+       @capacitor/push-notifications@8.1.1
+       @capacitor/splash-screen@8.0.1
+✔ update android in 31.50ms
+[info] Sync finished in 0.067s
