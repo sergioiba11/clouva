@@ -85,13 +85,13 @@ export default function ArmarioPage() {
   const previewLayers: OutfitLayer[] = useMemo(() => {
     return items
       .filter((i) => equippedIds.has(i.id) && i.model_url)
-      .map((i) => ({ id: i.id, url: i.model_url as string, visible: true }));
+      .map((i) => ({ id: i.id, url: i.model_url as string, visible: true, category: i.category }));
   }, [items, equippedIds]);
 
   const singlePreview: OutfitLayer[] = useMemo(() => {
     const item = items.find((i) => i.id === previewId);
     if (!item?.model_url) return [];
-    return [{ id: item.id, url: item.model_url, visible: true }];
+    return [{ id: item.id, url: item.model_url, visible: true, category: item.category }];
   }, [items, previewId]);
 
   return (

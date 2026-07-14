@@ -96,3 +96,56 @@ export function frameAvatar(
 
   return { center, size, distance };
 }
+
+export type BodyPartMatch = { meshName: string; box: Box3 };
+
+/**
+ * Busca, dentro del avatar ya cargado, la malla correspondiente a una
+ * categoría de prenda (ej. 'hoodie' -> torso) y devuelve su caja
+ * englobante REAL en espacio de mundo — estas son medidas del GLB de
+ * verdad, no una suposición.
+ */
+export function findAvatarBodyPart(avatarObject: Object3D, meshNames: string[]): BodyPartMatch | null {
+  const result: { match: { mesh: Object3D; box: Box3 } | null } = { match: null };
+  avatarObject.updateMatrixWorld(true);
+  avatarObject.traverse((child) => {
+    if (result.match) return;
+    if (meshNames.includes(child.name)) {
+      const box = new Box3().setFromObject(child);
+      if (!box.isEmpty()) result.match = { mesh: child, box };
+    }
+  });
+  return result.match ? { meshName: result.match.mesh.name, box: result.match.box } : null;
+}
+
+/**
+ * Escala y posiciona una prenda (ya con su propia geometría/escala
+ * original) para que su caja englobante coincida con la de la parte
+ * del cuerpo real del avatar (ej. el torso), en vez de solo igualar
+ * la altura total del avatar completo. Esto es lo que hace que una
+ * prenda generada por separado "calce" razonablemente en vez de
+ * quedar del tamaño equivocado.
+ */
+export function fitGarmentToBodyPart(garment: Object3D, bodyPartBox: Box3, options: { paddingScale?: number } = {}) {
+  garment.updateMatrixWorld(true);
+  const garmentBox = new Box3().setFromObject(garment);
+  const garmentSize = garmentBox.getSize(new Vector3());
+  const bodySize = bodyPartBox.getSize(new Vector3());
+
+  if (garmentSize.y < 0.0001) return;
+
+  // Escala uniforme basada en la altura de la parte del cuerpo (la
+  // dimensión más estable para prendas de torso/piernas/pies).
+  const scale = (bodySize.y / garmentSize.y) * (options.paddingScale ?? 1.06);
+  garment.scale.multiplyScalar(scale);
+
+  garment.updateMatrixWorld(true);
+  const rescaledBox = new Box3().setFromObject(garment);
+  const rescaledCenter = rescaledBox.getCenter(new Vector3());
+  const bodyCenter = bodyPartBox.getCenter(new Vector3());
+
+  garment.position.x += bodyCenter.x - rescaledCenter.x;
+  garment.position.y += bodyCenter.y - rescaledCenter.y;
+  garment.position.z += bodyCenter.z - rescaledCenter.z;
+  garment.updateMatrixWorld(true);
+}

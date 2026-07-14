@@ -14,9 +14,22 @@ import {
 } from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { frameAvatar, normalizeAvatarObject } from "@/lib/avatar-engine/frame-avatar";
+import { frameAvatar, normalizeAvatarObject, findAvatarBodyPart, fitGarmentToBodyPart } from "@/lib/avatar-engine/frame-avatar";
 
-export type OutfitLayer = { id: string; url: string; visible: boolean };
+// Mapeo de categoría de prenda -> nombre(s) de malla real del avatar
+// actual (hoodie-character.glb). Si el avatar activo es otro modelo,
+// simplemente no se encuentra ninguna malla y se usa el respaldo por
+// altura total (ver más abajo).
+const CATEGORY_BODY_MESHES: Record<string, string[]> = {
+  hoodie: ["Casual_Body"],
+  shirt: ["Casual_Body"],
+  jacket: ["Casual_Body"],
+  pants: ["Casual_Legs"],
+  shorts: ["Casual_Legs"],
+  shoes: ["Casual_Feet"],
+};
+
+export type OutfitLayer = { id: string; url: string; visible: boolean; category?: string };
 
 type Props = {
   avatarUrl: string | null;
@@ -72,24 +85,35 @@ export function OutfitPreview({ avatarUrl, layers, className = "" }: Props) {
 
     const loader = new GLTFLoader();
 
-    const loadLayer = async (url: string, isMain: boolean) => {
+    const loadRaw = async (url: string) => {
       const gltf = await loader.loadAsync(url);
-      const object = gltf.scene;
-      // Todas las capas se normalizan a la misma altura/origen que el
-      // avatar base, para que queden alineadas razonablemente encima.
-      normalizeAvatarObject(object, { targetHeight: 2.05 });
-      scene.add(object);
-      if (isMain) mainModel = object;
-      return object;
+      return gltf.scene;
     };
 
     (async () => {
       try {
-        const avatarObj = await loadLayer(avatarUrl, true);
+        const avatarObj = await loadRaw(avatarUrl);
+        normalizeAvatarObject(avatarObj, { targetHeight: 2.05 });
+        scene.add(avatarObj);
+        mainModel = avatarObj;
         loadedRef.current["__avatar"] = avatarObj;
+
         for (const layer of layers) {
           if (disposed) return;
-          const obj = await loadLayer(layer.url, false);
+          const obj = await loadRaw(layer.url);
+          const bodyMeshNames = layer.category ? CATEGORY_BODY_MESHES[layer.category] : undefined;
+          const bodyPart = bodyMeshNames ? findAvatarBodyPart(avatarObj, bodyMeshNames) : null;
+          if (bodyPart) {
+            // Calce real: escala/posiciona contra la medida verdadera
+            // de esa parte del cuerpo en el GLB del avatar.
+            fitGarmentToBodyPart(obj, bodyPart.box);
+          } else {
+            // Respaldo: no sabemos qué malla del avatar corresponde
+            // (categoría desconocida o modelo de avatar distinto), así
+            // que al menos igualamos la altura total como antes.
+            normalizeAvatarObject(obj, { targetHeight: 2.05 });
+          }
+          scene.add(obj);
           obj.visible = layer.visible;
           loadedRef.current[layer.id] = obj;
         }

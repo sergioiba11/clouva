@@ -34,7 +34,7 @@ export default function CrearPrendaPage() {
   const [phase, setPhase] = useState<Phase>("idle");
   const [progress, setProgress] = useState(0);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [result, setResult] = useState<{ id: string; modelUrl: string } | null>(null);
+  const [result, setResult] = useState<{ id: string; modelUrl: string; category: string } | null>(null);
   const [showOnAvatar, setShowOnAvatar] = useState(true);
 
   const busy = phase === "uploading" || phase === "generating" || phase === "saving";
@@ -97,7 +97,7 @@ export default function CrearPrendaPage() {
       const saved = await finalizeRes.json();
       if (!finalizeRes.ok || saved.error || !saved.item?.model_url) throw new Error(saved.error || "No se pudo guardar la prenda.");
 
-      setResult({ id: saved.item.id, modelUrl: saved.item.model_url });
+      setResult({ id: saved.item.id, modelUrl: saved.item.model_url, category });
       setPhase("done");
     } catch (error) {
       setErrorMsg(error instanceof Error ? error.message : "Error inesperado.");
@@ -203,7 +203,7 @@ export default function CrearPrendaPage() {
           <div className="mb-4 h-[420px] overflow-hidden rounded-2xl border border-white/10 bg-black/40">
             <OutfitPreview
               avatarUrl={activeAvatar.modelUrl}
-              layers={showOnAvatar ? [{ id: result.id, url: result.modelUrl, visible: true }] : []}
+              layers={showOnAvatar ? [{ id: result.id, url: result.modelUrl, visible: true, category: result.category }] : []}
             />
           </div>
           <button
