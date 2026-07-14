@@ -45,9 +45,9 @@ const CATEGORY_SLOT: Record<string, keyof Outfit> = {
 };
 
 function estimatedProgress(item: ClothingItem, now: number) {
-  if (typeof item.meshy_progress === "number") return item.meshy_progress;
   if (item.status === "ready" && item.model_url) return 100;
-  if (item.status === "rigging") return 99;
+  if (item.status === "rigging" || item.meshy_status === "SUCCEEDED") return 99;
+  if (typeof item.meshy_progress === "number") return Math.min(99, item.meshy_progress);
   if (item.status !== "generating") return 0;
 
   const startedAt = item.created_at ? new Date(item.created_at).getTime() : now;
@@ -60,7 +60,7 @@ function estimatedProgress(item: ClothingItem, now: number) {
 }
 
 function generationLabel(item: ClothingItem, progress: number) {
-  if (item.status === "rigging") return "Adaptando y riggeando";
+  if (item.status === "rigging" || item.meshy_status === "SUCCEEDED") return "Adaptando y riggeando";
   if (progress >= 99) return "Meshy está terminando";
   if (progress < 30) return "Preparando generación";
   if (progress < 80) return "Generando modelo 3D";
@@ -232,7 +232,7 @@ export default function ArmarioPage() {
                       <div className={`h-full rounded-full bg-violet-400 transition-[width] duration-700 ease-out ${progress >= 99 ? "animate-pulse" : ""}`} style={{ width: `${progress}%` }} />
                     </div>
                     <p className="mt-1.5 text-[9px] leading-tight text-white/35">
-                      {progress >= 99 ? "Meshy está empaquetando o CLOUVA está adaptando la pieza." : "El progreso se sincroniza con la generación real."}
+                      {progress >= 99 ? "La forma ya está lista. CLOUVA está procesando el GLB final." : "El progreso se sincroniza con la generación real."}
                     </p>
                   </div>
                 ) : !ready ? (
