@@ -194,12 +194,12 @@ def validate(garment):
         raise RuntimeError("Not enough vertices received skin weights")
 
 
-def export(output_path, avatar_objects, garment, armature):
+def export(output_path, garment, armature):
+    # El avatar se usa como molde y fuente de pesos, pero no se exporta.
+    # Exportarlo duplicaba el cuerpo completo dentro de cada prenda.
     bpy.ops.object.select_all(action="DESELECT")
-    for obj in avatar_objects:
-        obj.select_set(True)
-    garment.select_set(True)
     armature.select_set(True)
+    garment.select_set(True)
     bpy.context.view_layer.objects.active = armature
     bpy.ops.export_scene.gltf(
         filepath=output_path,
@@ -237,7 +237,7 @@ def main():
     garment.matrix_parent_inverse = armature.matrix_world.inverted()
 
     validate(garment)
-    export(output_path, avatar_objects, garment, armature)
+    export(output_path, garment, armature)
 
 
 if __name__ == "__main__":
