@@ -1,4 +1,5 @@
 import bpy
+import os
 import sys
 from mathutils import Vector
 from mathutils.kdtree import KDTree
@@ -6,8 +7,8 @@ from mathutils.kdtree import KDTree
 
 def args():
     values = sys.argv[sys.argv.index("--") + 1 :]
-    if len(values) != 4:
-        raise RuntimeError("Expected avatar.glb garment.glb output.glb category")
+    if len(values) != 6:
+        raise RuntimeError("Expected avatar.glb garment.glb output.glb category art.png color")
     return values
 
 
@@ -110,6 +111,81 @@ def copy_weights(body, garment):
         vertex.co = garment_inverse @ world_position
 
 
+def hex_to_rgba(value):
+    value = (value or "#0a0a0a").strip().lstrip("#")
+    if len(value) != 6:
+        value = "0a0a0a"
+    return tuple(int(value[index:index + 2], 16) / 255.0 for index in (0, 2, 4)) + (1.0,)
+
+
+def select_only(obj):
+    if bpy.context.object and bpy.context.object.mode != "OBJECT":
+        bpy.ops.object.mode_set(mode="OBJECT")
+    bpy.ops.object.select_all(action="DESELECT")
+    obj.select_set(True)
+    bpy.context.view_layer.objects.active = obj
+
+
+def ensure_uv_map(obj):
+    select_only(obj)
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    bpy.ops.uv.smart_project(
+        angle_limit=1.15192,
+        island_margin=0.02,
+        area_weight=0.0,
+        correct_aspect=True,
+        scale_to_bounds=True,
+    )
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+
+def apply_material(garment, art_path, color):
+    ensure_uv_map(garment)
+
+    material = bpy.data.materials.new(name="CLOUVA_Garment_Material")
+    material.use_nodes = True
+    nodes = material.node_tree.nodes
+    links = material.node_tree.links
+    nodes.clear()
+
+    output = nodes.new("ShaderNodeOutputMaterial")
+    output.location = (700, 0)
+    shader = nodes.new("ShaderNodeBsdfPrincipled")
+    shader.location = (420, 0)
+    shader.inputs["Roughness"].default_value = 0.72
+    shader.inputs["Base Color"].default_value = hex_to_rgba(color)
+    links.new(shader.outputs["BSDF"], output.inputs["Surface"])
+
+    if art_path and os.path.exists(art_path):
+        uv_node = nodes.new("ShaderNodeUVMap")
+        uv_node.location = (-700, 0)
+        mapping = nodes.new("ShaderNodeMapping")
+        mapping.location = (-500, 0)
+        texture = nodes.new("ShaderNodeTexImage")
+        texture.location = (-280, 0)
+        texture.image = bpy.data.images.load(art_path, check_existing=False)
+        texture.extension = "REPEAT"
+        tint = nodes.new("ShaderNodeRGB")
+        tint.location = (-260, -180)
+        tint.outputs[0].default_value = hex_to_rgba(color)
+        multiply = nodes.new("ShaderNodeMixRGB")
+        multiply.location = (100, 0)
+        multiply.blend_type = "MULTIPLY"
+        multiply.inputs["Fac"].default_value = 1.0
+        links.new(uv_node.outputs["UV"], mapping.inputs["Vector"])
+        links.new(mapping.outputs["Vector"], texture.inputs["Vector"])
+        links.new(texture.outputs["Color"], multiply.inputs[1])
+        links.new(tint.outputs["Color"], multiply.inputs[2])
+        links.new(multiply.outputs["Color"], shader.inputs["Base Color"])
+        if texture.outputs.get("Alpha"):
+            links.new(texture.outputs["Alpha"], shader.inputs["Alpha"])
+            material.surface_render_method = "DITHERED"
+
+    garment.data.materials.clear()
+    garment.data.materials.append(material)
+
+
 def validate(garment):
     if len(garment.data.vertices) < 50:
         raise RuntimeError("Garment mesh is too small")
@@ -133,11 +209,12 @@ def export(output_path, avatar_objects, garment, armature):
         export_animations=True,
         export_skins=True,
         export_all_influences=False,
+        export_materials="EXPORT",
     )
 
 
 def main():
-    avatar_path, garment_path, output_path, category = args()
+    avatar_path, garment_path, output_path, category, art_path, color = args()
     clear_scene()
 
     avatar_objects = import_glb(avatar_path)
@@ -152,6 +229,7 @@ def main():
 
     fit_to_body(garment, body, category)
     copy_weights(body, garment)
+    apply_material(garment, art_path, color)
 
     modifier = garment.modifiers.new(name="CLOUVA Armature", type="ARMATURE")
     modifier.object = armature
