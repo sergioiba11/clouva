@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
 
 type RigStatus = {
@@ -10,8 +10,35 @@ type RigStatus = {
   error?: string;
 };
 
+type StoredRigJob = {
+  taskId: string;
+  startedAt: number;
+};
+
+const STORAGE_KEY = "clouva:official-avatar-rig-job";
+
 function sleep(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function readStoredJob(): StoredRigJob | null {
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as StoredRigJob;
+    if (!parsed?.taskId || !parsed?.startedAt) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function saveStoredJob(job: StoredRigJob) {
+  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(job));
+}
+
+function clearStoredJob() {
+  window.localStorage.removeItem(STORAGE_KEY);
 }
 
 export function OfficialAvatarRigCard() {
@@ -21,6 +48,7 @@ export function OfficialAvatarRigCard() {
   const [message, setMessage] = useState("El avatar oficial necesita esqueleto para que las mangas y la ropa se deformen correctamente.");
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  const resumingRef = useRef(false);
 
   const call = async (body: Record<string, unknown>) => {
     if (!session?.access_token) throw new Error("Iniciá sesión como administrador");
@@ -38,6 +66,55 @@ export function OfficialAvatarRigCard() {
     return data;
   };
 
+  const followJob = async (job: StoredRigJob) => {
+    setRunning(true);
+    setError(null);
+    setDone(false);
+    setMessage("Reconectando con el proceso de Meshy…");
+
+    try {
+      while (Date.now() - job.startedAt < 20 * 60 * 1000) {
+        const status = (await call({ action: "status", taskId: job.taskId })) as RigStatus;
+        const current = Math.max(0, Math.min(99, Math.round(status.progress ?? 0)));
+        setProgress(current);
+        setMessage(current >= 95 ? "Meshy está terminando el esqueleto…" : `Riggeando avatar oficial… ${current}%`);
+
+        if (status.status === "FAILED" || status.status === "EXPIRED") {
+          throw new Error(status.task_error?.message || "Meshy no pudo riggear el avatar");
+        }
+
+        if (status.status === "SUCCEEDED") {
+          setMessage("Guardando el avatar riggeado como base oficial…");
+          await call({ action: "finalize", taskId: job.taskId });
+          clearStoredJob();
+          setProgress(100);
+          setDone(true);
+          setMessage("Avatar oficial riggeado. Las prendas nuevas ya pueden copiar sus pesos correctamente.");
+          return;
+        }
+
+        await sleep(5000);
+      }
+
+      throw new Error("El rigging superó el tiempo máximo de 20 minutos");
+    } catch (cause) {
+      clearStoredJob();
+      setError(cause instanceof Error ? cause.message : "Error inesperado");
+      setMessage("No se pudo completar el rigging.");
+    } finally {
+      setRunning(false);
+      resumingRef.current = false;
+    }
+  };
+
+  useEffect(() => {
+    if (!session?.access_token || resumingRef.current || running || done) return;
+    const stored = readStoredJob();
+    if (!stored) return;
+    resumingRef.current = true;
+    void followJob(stored);
+  }, [session?.access_token]);
+
   const start = async () => {
     setRunning(true);
     setError(null);
@@ -48,6 +125,7 @@ export function OfficialAvatarRigCard() {
       setMessage("Enviando el avatar oficial a Meshy…");
       const created = await call({ action: "create" });
       if (created.alreadyRigged) {
+        clearStoredJob();
         setProgress(100);
         setDone(true);
         setMessage("El avatar oficial ya tiene rigging.");
@@ -57,30 +135,16 @@ export function OfficialAvatarRigCard() {
       const taskId = String(created.taskId ?? "");
       if (!taskId) throw new Error("Meshy no devolvió un taskId");
 
-      const startedAt = Date.now();
-      while (Date.now() - startedAt < 20 * 60 * 1000) {
-        await sleep(5000);
-        const status = (await call({ action: "status", taskId })) as RigStatus;
-        const current = Math.max(0, Math.min(99, Math.round(status.progress ?? 0)));
-        setProgress(current);
-        setMessage(current >= 95 ? "Meshy está terminando el esqueleto…" : `Riggeando avatar oficial… ${current}%`);
-
-        if (status.status === "FAILED" || status.status === "EXPIRED") {
-          throw new Error(status.task_error?.message || "Meshy no pudo riggear el avatar");
-        }
-        if (status.status === "SUCCEEDED") break;
-      }
-
-      setMessage("Guardando el avatar riggeado como base oficial…");
-      await call({ action: "finalize", taskId });
-      setProgress(100);
-      setDone(true);
-      setMessage("Avatar oficial riggeado. Las prendas nuevas ya pueden copiar sus pesos correctamente.");
+      const job = { taskId, startedAt: Date.now() };
+      saveStoredJob(job);
+      resumingRef.current = true;
+      await followJob(job);
     } catch (cause) {
+      clearStoredJob();
       setError(cause instanceof Error ? cause.message : "Error inesperado");
       setMessage("No se pudo completar el rigging.");
-    } finally {
       setRunning(false);
+      resumingRef.current = false;
     }
   };
 
@@ -106,6 +170,7 @@ export function OfficialAvatarRigCard() {
           <div className="h-2 overflow-hidden rounded-full bg-white/10">
             <div className="h-full rounded-full bg-violet-400 transition-all" style={{ width: `${Math.max(progress, 3)}%` }} />
           </div>
+          {running ? <p className="mt-2 text-xs text-white/35">Podés salir de esta página. Al volver, CLOUVA retomará el seguimiento automáticamente.</p> : null}
         </div>
       ) : null}
 
