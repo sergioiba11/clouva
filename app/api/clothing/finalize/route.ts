@@ -26,6 +26,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const itemId = typeof body?.itemId === "string" ? body.itemId : "";
     const modelUrl = typeof body?.modelUrl === "string" ? body.modelUrl : "";
+    const thumbnailUrl = typeof body?.thumbnailUrl === "string" && body.thumbnailUrl.startsWith("https://") ? body.thumbnailUrl : null;
     if (!itemId || !modelUrl) return NextResponse.json({ error: "Faltan itemId o modelUrl" }, { status: 400 });
 
     let parsedUrl: URL;
@@ -57,10 +58,16 @@ export async function POST(request: NextRequest) {
     if (uploadError) throw uploadError;
 
     const { data: publicData } = supabase.storage.from("avatars").getPublicUrl(storagePath);
+    const update: Record<string, unknown> = {
+      status: "ready",
+      model_url: publicData.publicUrl,
+      updated_at: new Date().toISOString(),
+    };
+    if (thumbnailUrl) update.thumbnail_url = thumbnailUrl;
 
     const { data: item, error: updateError } = await supabase
       .from("clothing_items")
-      .update({ status: "ready", model_url: publicData.publicUrl, updated_at: new Date().toISOString() })
+      .update(update)
       .eq("id", itemId)
       .eq("user_id", userData.user.id)
       .select("id,name,category,status,model_url,thumbnail_url")
