@@ -4,6 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import {
   ACESFilmicToneMapping,
   AmbientLight,
+  AnimationMixer,
+  Bone,
+  Clock,
   DirectionalLight,
   HemisphereLight,
   Object3D,
@@ -32,6 +35,16 @@ const CATEGORY_BODY_MESHES: Record<string, string[]> = {
   accessory: ["Casual_Body"],
 };
 
+const CATEGORY_BONE_HINTS: Record<WearableCategory, string[]> = {
+  hoodie: ["chest", "spine2", "spine_02", "upperchest", "spine1", "spine"],
+  shirt: ["chest", "spine2", "spine_02", "upperchest", "spine1", "spine"],
+  jacket: ["chest", "spine2", "spine_02", "upperchest", "spine1", "spine"],
+  pants: ["hips", "pelvis", "root"],
+  shorts: ["hips", "pelvis", "root"],
+  shoes: ["hips", "pelvis", "root"],
+  accessory: ["chest", "head", "spine"],
+};
+
 export type OutfitLayer = { id: string; url: string; visible: boolean; category?: string };
 
 type Props = {
@@ -44,6 +57,34 @@ function isWearableCategory(value?: string): value is WearableCategory {
   return Boolean(value && value in CATEGORY_BODY_MESHES);
 }
 
+function findAttachmentBone(avatar: Object3D, category: WearableCategory): Bone | null {
+  const hints = CATEGORY_BONE_HINTS[category];
+  let exact: Bone | null = null;
+  let partial: Bone | null = null;
+
+  avatar.traverse((child) => {
+    if (!(child as Bone).isBone || exact) return;
+    const name = child.name.toLowerCase().replace(/[^a-z0-9]/g, "");
+    for (const hint of hints) {
+      const normalizedHint = hint.toLowerCase().replace(/[^a-z0-9]/g, "");
+      if (name === normalizedHint) {
+        exact = child as Bone;
+        return;
+      }
+      if (!partial && name.includes(normalizedHint)) partial = child as Bone;
+    }
+  });
+
+  return exact ?? partial;
+}
+
+function attachPreservingWorld(child: Object3D, parent: Object3D) {
+  child.updateMatrixWorld(true);
+  parent.updateMatrixWorld(true);
+  parent.attach(child);
+  child.updateMatrixWorld(true);
+}
+
 export function OutfitPreview({ avatarUrl, layers, className = "" }: Props) {
   const mount = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -54,6 +95,8 @@ export function OutfitPreview({ avatarUrl, layers, className = "" }: Props) {
     let disposed = false;
     let raf = 0;
     let mainModel: Object3D | null = null;
+    let mixer: AnimationMixer | null = null;
+    const clock = new Clock();
 
     setStatus("loading");
     const scene = new Scene();
@@ -92,19 +135,25 @@ export function OutfitPreview({ avatarUrl, layers, className = "" }: Props) {
     resizeObserver.observe(mount.current);
 
     const loader = new GLTFLoader();
-    const loadRaw = async (url: string) => (await loader.loadAsync(url)).scene;
 
     (async () => {
       try {
-        const avatarObj = await loadRaw(avatarUrl);
+        const avatarGltf = await loader.loadAsync(avatarUrl);
+        const avatarObj = avatarGltf.scene;
         normalizeAvatarObject(avatarObj, { targetHeight: 2.05 });
         scene.add(avatarObj);
         mainModel = avatarObj;
         loadedRef.current["__avatar"] = avatarObj;
 
+        if (avatarGltf.animations.length > 0) {
+          mixer = new AnimationMixer(avatarObj);
+          mixer.clipAction(avatarGltf.animations[0]).reset().fadeIn(0.25).play();
+        }
+
         for (const layer of layers) {
           if (disposed) return;
-          const obj = await loadRaw(layer.url);
+          const garmentGltf = await loader.loadAsync(layer.url);
+          const obj = garmentGltf.scene;
           const category = isWearableCategory(layer.category) ? layer.category : null;
           const bodyPart = category ? findAvatarBodyPart(avatarObj, CATEGORY_BODY_MESHES[category]) : null;
 
@@ -115,6 +164,11 @@ export function OutfitPreview({ avatarUrl, layers, className = "" }: Props) {
           }
 
           scene.add(obj);
+          if (category) {
+            const attachmentBone = findAttachmentBone(avatarObj, category);
+            if (attachmentBone) attachPreservingWorld(obj, attachmentBone);
+          }
+
           obj.visible = layer.visible;
           loadedRef.current[layer.id] = obj;
         }
@@ -130,8 +184,12 @@ export function OutfitPreview({ avatarUrl, layers, className = "" }: Props) {
 
     const animate = () => {
       if (!document.hidden) {
+        const delta = Math.min(clock.getDelta(), 0.05);
+        mixer?.update(delta);
         controls.update();
         renderer.render(scene, camera);
+      } else {
+        clock.getDelta();
       }
       raf = requestAnimationFrame(animate);
     };
@@ -142,6 +200,7 @@ export function OutfitPreview({ avatarUrl, layers, className = "" }: Props) {
       cancelAnimationFrame(raf);
       resizeObserver.disconnect();
       controls.dispose();
+      mixer?.stopAllAction();
       renderer.dispose();
       mount.current?.replaceChildren();
       loadedRef.current = {};
