@@ -5,6 +5,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
+const IMAGE_MODEL = "gpt-image-1.5";
+
 const CATEGORY_LABELS: Record<string, string> = {
   hoodie: "complete hoodie",
   shirt: "complete T-shirt",
@@ -42,15 +44,16 @@ async function generateFront(prompt: string) {
   const response = await fetch("https://api.openai.com/v1/images/generations", {
     method: "POST",
     headers: { Authorization: `Bearer ${openAiKey()}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model: "gpt-image-2", prompt, size: "1024x1024", quality: "medium", output_format: "png" }),
+    body: JSON.stringify({ model: IMAGE_MODEL, prompt, size: "1024x1024", quality: "medium", output_format: "png" }),
   });
   return parseImageResponse(response);
 }
 
 async function generateMatchingView(frontBytes: Buffer, prompt: string) {
   const form = new FormData();
-  form.append("model", "gpt-image-2");
-  form.append("image[]", new Blob([frontBytes], { type: "image/png" }), "front-reference.png");
+  const safeBytes = Uint8Array.from(frontBytes);
+  form.append("model", IMAGE_MODEL);
+  form.append("image", new Blob([safeBytes], { type: "image/png" }), "front-reference.png");
   form.append("prompt", prompt);
   form.append("size", "1024x1024");
   form.append("quality", "medium");
