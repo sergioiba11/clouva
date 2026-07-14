@@ -14,12 +14,14 @@ import {
 } from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { frameAvatar, normalizeAvatarObject, findAvatarBodyPart, fitGarmentToBodyPart } from "@/lib/avatar-engine/frame-avatar";
+import {
+  frameAvatar,
+  normalizeAvatarObject,
+  findAvatarBodyPart,
+  fitGarmentToBodyPart,
+  type GarmentFitOptions,
+} from "@/lib/avatar-engine/frame-avatar";
 
-// Mapeo de categoría de prenda -> nombre(s) de malla real del avatar
-// actual (hoodie-character.glb). Si el avatar activo es otro modelo,
-// simplemente no se encuentra ninguna malla y se usa el respaldo por
-// altura total (ver más abajo).
 const CATEGORY_BODY_MESHES: Record<string, string[]> = {
   hoodie: ["Casual_Body"],
   shirt: ["Casual_Body"],
@@ -27,6 +29,15 @@ const CATEGORY_BODY_MESHES: Record<string, string[]> = {
   pants: ["Casual_Legs"],
   shorts: ["Casual_Legs"],
   shoes: ["Casual_Feet"],
+};
+
+const CATEGORY_FIT: Record<string, GarmentFitOptions> = {
+  hoodie: { paddingScale: 1.03, widthPadding: 1.12, depthPadding: 1.16, verticalOffset: 0.01 },
+  shirt: { paddingScale: 1.01, widthPadding: 1.07, depthPadding: 1.10, verticalOffset: 0.015 },
+  jacket: { paddingScale: 1.05, widthPadding: 1.14, depthPadding: 1.18, verticalOffset: 0.01 },
+  pants: { paddingScale: 1.02, widthPadding: 1.10, depthPadding: 1.12, verticalOffset: -0.015 },
+  shorts: { paddingScale: 1.02, widthPadding: 1.09, depthPadding: 1.11, verticalOffset: 0 },
+  shoes: { paddingScale: 1.01, widthPadding: 1.06, depthPadding: 1.10, verticalOffset: 0.005 },
 };
 
 export type OutfitLayer = { id: string; url: string; visible: boolean; category?: string };
@@ -103,17 +114,19 @@ export function OutfitPreview({ avatarUrl, layers, className = "" }: Props) {
           const obj = await loadRaw(layer.url);
           const bodyMeshNames = layer.category ? CATEGORY_BODY_MESHES[layer.category] : undefined;
           const bodyPart = bodyMeshNames ? findAvatarBodyPart(avatarObj, bodyMeshNames) : null;
+
           if (bodyPart) {
-            // Calce real: escala/posiciona contra la medida verdadera
-            // de esa parte del cuerpo en el GLB del avatar.
-            fitGarmentToBodyPart(obj, bodyPart.box);
+            fitGarmentToBodyPart(obj, bodyPart.box, layer.category ? CATEGORY_FIT[layer.category] : undefined);
+            scene.add(obj);
+            // Conserva el calce calculado en espacio de mundo, pero deja la
+            // prenda dentro de la jerarquía del avatar para que acompañe sus
+            // transformaciones globales y futuras animaciones del personaje.
+            avatarObj.attach(obj);
           } else {
-            // Respaldo: no sabemos qué malla del avatar corresponde
-            // (categoría desconocida o modelo de avatar distinto), así
-            // que al menos igualamos la altura total como antes.
             normalizeAvatarObject(obj, { targetHeight: 2.05 });
+            avatarObj.add(obj);
           }
-          scene.add(obj);
+
           obj.visible = layer.visible;
           loadedRef.current[layer.id] = obj;
         }
@@ -144,15 +157,14 @@ export function OutfitPreview({ avatarUrl, layers, className = "" }: Props) {
       mount.current?.replaceChildren();
       loadedRef.current = {};
     };
-  }, [avatarUrl, layers.map((l) => l.url).join(",")]);
+  }, [avatarUrl, layers.map((layer) => `${layer.url}:${layer.category ?? ""}`).join(",")]);
 
-  // Actualiza visibilidad de capas ya cargadas sin recargar toda la escena.
   useEffect(() => {
     for (const layer of layers) {
       const obj = loadedRef.current[layer.id];
       if (obj) obj.visible = layer.visible;
     }
-  }, [layers.map((l) => `${l.id}:${l.visible}`).join(",")]);
+  }, [layers.map((layer) => `${layer.id}:${layer.visible}`).join(",")]);
 
   return (
     <div className={`relative h-full w-full ${className}`}>
