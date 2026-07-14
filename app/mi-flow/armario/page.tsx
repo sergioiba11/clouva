@@ -16,6 +16,9 @@ type ClothingItem = {
   thumbnail_url: string | null;
   created_at?: string;
   is_owned?: boolean;
+  meshy_progress?: number;
+  meshy_status?: string;
+  metadata?: Record<string, unknown> | null;
 };
 
 type Outfit = { top_id: string | null; bottom_id: string | null; shoes_id: string | null; accessory_id: string | null };
@@ -41,13 +44,14 @@ const CATEGORY_SLOT: Record<string, keyof Outfit> = {
   accessory: "accessory_id",
 };
 
-function generationProgress(item: ClothingItem, now: number) {
+function estimatedProgress(item: ClothingItem, now: number) {
+  if (typeof item.meshy_progress === "number") return item.meshy_progress;
   if (item.status === "ready" && item.model_url) return 100;
+  if (item.status === "rigging") return 99;
   if (item.status !== "generating") return 0;
 
   const startedAt = item.created_at ? new Date(item.created_at).getTime() : now;
   const elapsedSeconds = Math.max(0, (now - startedAt) / 1000);
-
   if (elapsedSeconds < 15) return Math.round(10 + (elapsedSeconds / 15) * 20);
   if (elapsedSeconds < 60) return Math.round(30 + ((elapsedSeconds - 15) / 45) * 25);
   if (elapsedSeconds < 150) return Math.round(55 + ((elapsedSeconds - 60) / 90) * 25);
@@ -55,12 +59,16 @@ function generationProgress(item: ClothingItem, now: number) {
   return 92;
 }
 
-function generationLabel(progress: number) {
-  if (progress < 30) return "Preparando imagen";
-  if (progress < 55) return "Enviando a Meshy";
+function generationLabel(item: ClothingItem, progress: number) {
+  if (item.status === "rigging") return "Adaptando y riggeando";
+  if (progress >= 99) return "Meshy está terminando";
+  if (progress < 30) return "Preparando generación";
   if (progress < 80) return "Generando modelo 3D";
-  if (progress < 92) return "Procesando materiales";
-  return "Finalizando pieza";
+  return "Procesando materiales";
+}
+
+function isPreFitted(item: ClothingItem) {
+  return item.metadata?.rigged === true || item.metadata?.uv_generated === true;
 }
 
 export default function ArmarioPage() {
@@ -82,9 +90,9 @@ export default function ArmarioPage() {
     try {
       const headers = { Authorization: `Bearer ${session.access_token}` };
       const [itemsRes, catalogRes, outfitRes] = await Promise.all([
-        fetch("/api/clothing/library", { headers, cache: "no-store" }),
-        fetch("/api/clothing/catalog", { headers, cache: "no-store" }),
-        fetch("/api/clothing/equip", { headers, cache: "no-store" }),
+        fetch(`/api/clothing/library?t=${Date.now()}`, { headers, cache: "no-store" }),
+        fetch(`/api/clothing/catalog?t=${Date.now()}`, { headers, cache: "no-store" }),
+        fetch(`/api/clothing/equip?t=${Date.now()}`, { headers, cache: "no-store" }),
       ]);
       const [itemsData, catalogData, outfitData] = await Promise.all([
         itemsRes.json(),
@@ -103,10 +111,10 @@ export default function ArmarioPage() {
     void load();
   }, [session?.access_token]);
 
-  const hasGeneratingItems = myItems.some((item) => item.status === "generating");
+  const hasActiveItems = myItems.some((item) => item.status === "generating" || item.status === "rigging");
 
   useEffect(() => {
-    if (!hasGeneratingItems || !session?.access_token) return;
+    if (!hasActiveItems || !session?.access_token) return;
 
     const clock = window.setInterval(() => setNow(Date.now()), 1000);
     const poll = window.setInterval(() => void load(true), 5000);
@@ -115,7 +123,7 @@ export default function ArmarioPage() {
       window.clearInterval(clock);
       window.clearInterval(poll);
     };
-  }, [hasGeneratingItems, session?.access_token]);
+  }, [hasActiveItems, session?.access_token]);
 
   const equip = async (item: ClothingItem) => {
     if (!session?.access_token) return;
@@ -146,13 +154,25 @@ export default function ArmarioPage() {
   const previewLayers: OutfitLayer[] = useMemo(() => {
     return allKnownItems
       .filter((item) => equippedIds.has(item.id) && item.model_url)
-      .map((item) => ({ id: item.id, url: item.model_url as string, visible: true, category: item.category }));
+      .map((item) => ({
+        id: item.id,
+        url: item.model_url as string,
+        visible: true,
+        category: item.category,
+        preFitted: isPreFitted(item),
+      }));
   }, [allKnownItems, equippedIds]);
 
   const singlePreview: OutfitLayer[] = useMemo(() => {
     const item = allKnownItems.find((candidate) => candidate.id === previewId);
     if (!item?.model_url) return [];
-    return [{ id: item.id, url: item.model_url, visible: true, category: item.category }];
+    return [{
+      id: item.id,
+      url: item.model_url,
+      visible: true,
+      category: item.category,
+      preFitted: isPreFitted(item),
+    }];
   }, [allKnownItems, previewId]);
 
   return (
@@ -171,27 +191,15 @@ export default function ArmarioPage() {
       </p>
 
       <div className="mb-5 grid grid-cols-2 rounded-2xl border border-white/10 bg-white/[0.03] p-1">
-        <button
-          onClick={() => { setViewMode("mine"); setPreviewId(null); }}
-          className={`rounded-xl py-2 text-sm ${viewMode === "mine" ? "bg-violet-400 text-black" : "text-white/55"}`}
-        >
-          Mis piezas
-        </button>
-        <button
-          onClick={() => { setViewMode("catalog"); setPreviewId(null); }}
-          className={`rounded-xl py-2 text-sm ${viewMode === "catalog" ? "bg-violet-400 text-black" : "text-white/55"}`}
-        >
-          Base general
-        </button>
+        <button onClick={() => { setViewMode("mine"); setPreviewId(null); }} className={`rounded-xl py-2 text-sm ${viewMode === "mine" ? "bg-violet-400 text-black" : "text-white/55"}`}>Mis piezas</button>
+        <button onClick={() => { setViewMode("catalog"); setPreviewId(null); }} className={`rounded-xl py-2 text-sm ${viewMode === "catalog" ? "bg-violet-400 text-black" : "text-white/55"}`}>Base general</button>
       </div>
 
       {loading ? <p className="text-sm text-white/40">Cargando piezas…</p> : null}
       {!loading && items.length === 0 ? (
         <div className="rounded-3xl border border-dashed border-white/15 p-8 text-center">
           <p className="text-sm text-white/50">No hay piezas disponibles todavía.</p>
-          <Link href="/mi-flow/crear-prenda" className="mt-3 inline-block rounded-full bg-violet-400 px-4 py-2 text-sm font-medium text-black">
-            Crear la primera
-          </Link>
+          <Link href="/mi-flow/crear-prenda" className="mt-3 inline-block rounded-full bg-violet-400 px-4 py-2 text-sm font-medium text-black">Crear la primera</Link>
         </div>
       ) : null}
 
@@ -201,51 +209,37 @@ export default function ArmarioPage() {
           const slot = CATEGORY_SLOT[item.category];
           const equipped = slot ? outfit[slot] === item.id : false;
           const selected = previewId === item.id;
-          const progress = generationProgress(item, now);
-          const isGenerating = item.status === "generating";
-          const isDelayed = isGenerating && progress >= 92;
+          const progress = estimatedProgress(item, now);
+          const isActive = item.status === "generating" || item.status === "rigging";
 
           return (
             <div key={item.id} className={`overflow-hidden rounded-2xl border ${equipped || selected ? "border-violet-400" : "border-white/10"} bg-white/[0.03]`}>
-              <button onClick={() => setPreviewId(item.id)} className="relative block aspect-square w-full bg-black/30">
-                {item.thumbnail_url ? (
-                  <img src={item.thumbnail_url} alt={item.name} className="h-full w-full object-cover" />
-                ) : (
-                  <div className="grid h-full place-items-center text-xs text-white/30">Sin portada</div>
-                )}
-                {viewMode === "catalog" && item.is_owned ? (
-                  <span className="absolute left-2 top-2 rounded-full bg-black/70 px-2 py-1 text-[9px] uppercase tracking-wide text-violet-200">Tuya</span>
-                ) : null}
+              <button onClick={() => ready && setPreviewId(item.id)} className="relative block aspect-square w-full bg-black/30">
+                {item.thumbnail_url ? <img src={item.thumbnail_url} alt={item.name} className="h-full w-full object-cover" /> : <div className="grid h-full place-items-center text-xs text-white/30">Sin portada</div>}
+                {viewMode === "catalog" && item.is_owned ? <span className="absolute left-2 top-2 rounded-full bg-black/70 px-2 py-1 text-[9px] uppercase tracking-wide text-violet-200">Tuya</span> : null}
               </button>
               <div className="p-2.5">
                 <p className="truncate text-xs font-medium">{item.name}</p>
                 <p className="text-[10px] text-white/40">{CATEGORY_LABEL[item.category] ?? item.category}</p>
 
-                {isGenerating ? (
+                {isActive ? (
                   <div className="mt-2">
                     <div className="mb-1 flex items-center justify-between gap-2 text-[10px]">
-                      <span className="truncate text-amber-200">{generationLabel(progress)}</span>
+                      <span className="truncate text-amber-200">{generationLabel(item, progress)}</span>
                       <span className="font-semibold tabular-nums text-violet-200">{progress}%</span>
                     </div>
                     <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
-                      <div
-                        className="h-full rounded-full bg-violet-400 transition-[width] duration-700 ease-out"
-                        style={{ width: `${progress}%` }}
-                      />
+                      <div className={`h-full rounded-full bg-violet-400 transition-[width] duration-700 ease-out ${progress >= 99 ? "animate-pulse" : ""}`} style={{ width: `${progress}%` }} />
                     </div>
                     <p className="mt-1.5 text-[9px] leading-tight text-white/35">
-                      {isDelayed ? "Está tardando más de lo normal, pero sigue activa." : "Puede tardar entre 2 y 5 minutos."}
+                      {progress >= 99 ? "Meshy está empaquetando o CLOUVA está adaptando la pieza." : "El progreso se sincroniza con la generación real."}
                     </p>
                   </div>
                 ) : !ready ? (
                   <p className="mt-1.5 text-[10px] text-red-300">{item.status === "failed" ? "No se pudo generar" : item.status}</p>
                 ) : slot ? (
-                  <button
-                    onClick={() => equip(item)}
-                    disabled={busySlot === slot}
-                    className={`mt-1.5 w-full rounded-full py-1.5 text-[11px] font-medium ${equipped ? "bg-white/10 text-white/70" : "bg-violet-400 text-black"}`}
-                  >
-                    {equipped ? "Quitar" : "Elegir por esta imagen"}
+                  <button onClick={() => equip(item)} disabled={busySlot === slot} className={`mt-1.5 w-full rounded-full py-1.5 text-[11px] font-medium ${equipped ? "bg-white/10 text-white/70" : "bg-violet-400 text-black"}`}>
+                    {equipped ? "Quitar" : "Elegir esta pieza"}
                   </button>
                 ) : null}
               </div>
