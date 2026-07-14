@@ -42,7 +42,7 @@ async function meshyFetch(path: string, init?: RequestInit) {
   return parseMeshyResponse(res);
 }
 
-export async function createPreviewTask(prompt: string) {
+export async function createPreviewTask(prompt: string, _legacyArtStyle?: "realistic" | "cartoon") {
   const data = await meshyFetch("", {
     method: "POST",
     body: JSON.stringify({
