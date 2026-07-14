@@ -39,6 +39,7 @@ export default function GarmentFlowClient() {
   const [fit, setFit] = useState("Oversized");
   const [color, setColor] = useState("#0a0a0a");
   const [description, setDescription] = useState("");
+  const [textureDetails, setTextureDetails] = useState("");
   const [phase, setPhase] = useState<Phase>("idle");
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -64,7 +65,7 @@ export default function GarmentFlowClient() {
       if (!session?.access_token) throw new Error("Iniciá sesión.");
       if (!avatar.modelUrl) throw new Error("No hay un avatar GLB activo.");
       if (!name.trim()) throw new Error("Poné un nombre para la pieza.");
-      if (!description.trim()) throw new Error("Describí cómo querés la pieza.");
+      if (!description.trim()) throw new Error("Describí la forma de la pieza.");
 
       setPhase("measuring");
       const measured = await measureAvatar(avatar.modelUrl, category);
@@ -73,7 +74,7 @@ export default function GarmentFlowClient() {
       const createResponse = await fetch("/api/clothing/create-text", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
-        body: JSON.stringify({ category, name, fit, color, description, measurements: measured }),
+        body: JSON.stringify({ category, name, fit, color, description, textureDetails, measurements: measured }),
       });
       const created = await createResponse.json();
       if (!createResponse.ok || created.error) throw new Error(created.error || "No se pudo iniciar Meshy.");
@@ -112,13 +113,13 @@ export default function GarmentFlowClient() {
     }
   };
 
-  const buttonText = phase === "measuring" ? "Analizando el GLB del avatar…" : phase === "previewing" ? `Meshy creando la forma · ${progress}%` : phase === "refining" ? `Meshy refinando el objeto · ${progress}%` : phase === "saving" ? "Guardando la pieza…" : "Crear objeto 3D";
+  const buttonText = phase === "measuring" ? "Analizando el GLB del avatar…" : phase === "previewing" ? `Meshy creando la forma · ${progress}%` : phase === "refining" ? `Meshy aplicando textura y refinando · ${progress}%` : phase === "saving" ? "Guardando la pieza…" : "Crear objeto 3D";
 
   return <main className="mx-auto min-h-screen w-full max-w-2xl px-4 pb-24 pt-5 text-white">
     <div className="mb-4 flex items-center justify-between"><Link href="/mi-flow/avatar" className="text-sm text-white/60">← Volver</Link><span className="rounded-full border border-violet-400/25 bg-violet-400/10 px-3 py-1 text-[10px] tracking-[0.18em] text-violet-200">MESHY 3D</span></div>
 
     {!result ? <section className="rounded-[28px] border border-white/10 bg-white/[0.035] p-4 sm:p-6">
-      <div className="mb-5"><p className="mb-1 text-xs font-medium uppercase tracking-[0.22em] text-violet-300">Nueva pieza</p><h1 className="text-2xl font-semibold leading-tight">Crear directamente sobre el molde del avatar</h1><p className="mt-2 text-sm leading-relaxed text-white/45">Por ahora no se usa OpenAI ni imágenes. La categoría, el fit, el color, tu descripción y las medidas del GLB definen el objeto.</p></div>
+      <div className="mb-5"><p className="mb-1 text-xs font-medium uppercase tracking-[0.22em] text-violet-300">Nueva pieza</p><h1 className="text-2xl font-semibold leading-tight">Crear directamente sobre el molde del avatar</h1><p className="mt-2 text-sm leading-relaxed text-white/45">Sin OpenAI. Meshy crea la forma con las medidas del GLB y después aplica color y textura.</p></div>
 
       <div className="mb-5 grid grid-cols-3 gap-2">{CATEGORIES.map(([value, label]) => <button key={value} disabled={busy} onClick={() => setCategory(value)} className={`min-h-12 rounded-2xl border px-2 py-2 text-xs ${category === value ? "border-violet-400 bg-violet-400/15 text-white" : "border-white/10 bg-black/15 text-white/55"}`}>{label}</button>)}</div>
 
@@ -126,7 +127,8 @@ export default function GarmentFlowClient() {
         <input value={name} disabled={busy} onChange={(e) => setName(e.target.value)} placeholder="Nombre de la pieza" className="w-full rounded-2xl border border-white/10 bg-black/30 p-4 text-sm outline-none" />
         <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-black/30 p-3"><div><p className="text-sm">Color base</p><p className="text-[11px] text-white/35">Material principal</p></div><input aria-label="Color base" type="color" value={color} disabled={busy} onChange={(e) => setColor(e.target.value)} className="h-11 w-14 bg-transparent" /></div>
         <div className="grid grid-cols-4 gap-2">{FITS.map((item) => <button key={item} disabled={busy} onClick={() => setFit(item)} className={`rounded-xl border px-2 py-2 text-[11px] ${fit === item ? "border-violet-400 bg-violet-400/15" : "border-white/10 text-white/50"}`}>{item}</button>)}</div>
-        <textarea value={description} disabled={busy} onChange={(e) => setDescription(e.target.value)} rows={6} maxLength={600} placeholder="Ej: hoodie oversized negro, capucha profunda, mangas anchas, bolsillo canguro, puños ajustados, estilo streetwear futurista…" className="w-full resize-none rounded-2xl border border-white/10 bg-black/30 p-4 text-sm outline-none" />
+        <label className="block"><span className="mb-1.5 block text-xs text-white/55">Forma de la pieza</span><textarea value={description} disabled={busy} onChange={(e) => setDescription(e.target.value)} rows={5} maxLength={600} placeholder="Ej: hoodie oversized, capucha profunda, mangas anchas, bolsillo canguro, puños ajustados…" className="w-full resize-none rounded-2xl border border-white/10 bg-black/30 p-4 text-sm outline-none" /></label>
+        <label className="block"><span className="mb-1.5 block text-xs text-white/55">Textura y detalles opcionales</span><textarea value={textureDetails} disabled={busy} onChange={(e) => setTextureDetails(e.target.value)} rows={4} maxLength={400} placeholder="Ej: algodón pesado mate, costuras violetas, logo pequeño bordado adelante, estampado grande atrás…" className="w-full resize-none rounded-2xl border border-violet-400/20 bg-violet-400/[0.04] p-4 text-sm outline-none" /><p className="mt-1 text-[10px] text-white/30">Los detalles se aplican a la superficie; no cambian la forma del objeto.</p></label>
       </div>
 
       <button onClick={generate3D} disabled={busy} className="my-4 w-full rounded-2xl bg-violet-400 py-4 font-semibold text-black disabled:opacity-50">{buttonText}</button>
