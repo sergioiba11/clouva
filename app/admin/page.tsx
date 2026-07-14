@@ -3,11 +3,19 @@
 import { useEffect, useState } from "react";
 import { ActivityFeed, PremiumCard, StatCard } from "@/components/os-ui";
 import { OfficialAvatarRigCard } from "@/components/admin/OfficialAvatarRigCard";
+import { useAuth } from "@/components/auth-provider";
+
+const OWNER_EMAIL = "esian0116@gmail.com";
 
 export default function AdminPage() {
+  const { role, user, loading, profileReady } = useAuth();
   const [stats, setStats] = useState({ ventas: 0, pedidos: 0, productos: 0, clientes: 0, empleados: 0, vip: 0 });
 
+  const allowed = role === "admin" || (user?.email || "").toLowerCase() === OWNER_EMAIL;
+
   useEffect(() => {
+    if (loading || !profileReady || !allowed) return;
+
     void (async () => {
       const { supabase } = await import("@/lib/supabase");
       const [pedidos, productos, clientes, empleados, vip] = await Promise.all([
@@ -26,7 +34,21 @@ export default function AdminPage() {
         vip: vip.count ?? 0,
       });
     })();
-  }, []);
+  }, [allowed, loading, profileReady]);
+
+  if (loading || !profileReady) {
+    return <div className="grid min-h-[60vh] place-items-center text-sm text-white/50">Verificando acceso…</div>;
+  }
+
+  if (!allowed) {
+    return (
+      <div className="mx-auto max-w-xl rounded-3xl border border-rose-400/20 bg-rose-400/10 p-6 text-white">
+        <h1 className="text-xl font-semibold">Acceso restringido</h1>
+        <p className="mt-2 text-sm text-white/60">Esta cuenta no tiene rol administrador.</p>
+        <a href="/mi-flow" className="mt-4 inline-block rounded-xl bg-white px-4 py-2 text-sm font-semibold text-black">Volver a Mi Flow</a>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
