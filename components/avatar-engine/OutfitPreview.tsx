@@ -24,6 +24,7 @@ import {
   fitWearableToBodyPart,
   type WearableCategory,
 } from "@/lib/avatar-engine/frame-avatar";
+import { autoSkinGarmentToAvatar } from "@/lib/avatar-engine/auto-skin-garment";
 
 const CATEGORY_BODY_MESHES: Record<string, string[]> = {
   hoodie: ["Casual_Body"],
@@ -164,13 +165,20 @@ export function OutfitPreview({ avatarUrl, layers, className = "" }: Props) {
           }
 
           scene.add(obj);
+
+          let visibleRoot: Object3D = obj;
           if (category) {
-            const attachmentBone = findAttachmentBone(avatarObj, category);
-            if (attachmentBone) attachPreservingWorld(obj, attachmentBone);
+            const skinnedRoot = autoSkinGarmentToAvatar(avatarObj, obj, category);
+            if (skinnedRoot) {
+              visibleRoot = skinnedRoot;
+            } else {
+              const attachmentBone = findAttachmentBone(avatarObj, category);
+              if (attachmentBone) attachPreservingWorld(obj, attachmentBone);
+            }
           }
 
-          obj.visible = layer.visible;
-          loadedRef.current[layer.id] = obj;
+          visibleRoot.visible = layer.visible;
+          loadedRef.current[layer.id] = visibleRoot;
         }
 
         if (disposed) return;
