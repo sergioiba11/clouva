@@ -16,6 +16,7 @@ type StoredRigJob = {
 };
 
 const STORAGE_KEY = "clouva:official-avatar-rig-job";
+const UI_VERSION = "rig-progress-v2";
 
 function sleep(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -149,7 +150,7 @@ export function OfficialAvatarRigCard() {
   };
 
   return (
-    <section className="rounded-3xl border border-white/10 bg-white/[0.03] p-5">
+    <section className="rounded-3xl border border-white/10 bg-white/[0.03] p-5" data-ui-version={UI_VERSION}>
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className="text-xs uppercase tracking-[0.18em] text-violet-300">Avatar Engine</p>
