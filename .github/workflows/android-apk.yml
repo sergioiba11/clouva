@@ -47,7 +47,7 @@ jobs:
           echo "node: $(node --version)"
           echo "npm: $(npm --version)"
           echo "JAVA_HOME: $JAVA_HOME"
-          npx cap sync android --verbose 2>&1 | tee /tmp/cap-sync.log
+          npx cap sync android 2>&1 | tee /tmp/cap-sync.log
           exit ${PIPESTATUS[0]}
 
       - name: Guardar log de diagnóstico si algo falló
