@@ -18,6 +18,8 @@ class RigRequest(BaseModel):
     avatar_url: HttpUrl
     garment_url: HttpUrl
     category: str
+    art_url: HttpUrl | None = None
+    color: str | None = None
 
 
 def download(url: str, destination: Path) -> None:
@@ -39,10 +41,13 @@ def rig(request: RigRequest):
     avatar_path = job_dir / "avatar.glb"
     garment_path = job_dir / "garment.glb"
     output_path = job_dir / "rigged.glb"
+    art_path = job_dir / "art.png"
 
     try:
         download(str(request.avatar_url), avatar_path)
         download(str(request.garment_url), garment_path)
+        if request.art_url:
+            download(str(request.art_url), art_path)
 
         command = [
             BLENDER_BIN,
@@ -55,13 +60,15 @@ def rig(request: RigRequest):
             str(garment_path),
             str(output_path),
             request.category,
+            str(art_path) if art_path.exists() else "",
+            request.color or "#0a0a0a",
         ]
         result = subprocess.run(command, capture_output=True, text=True, timeout=420)
         if result.returncode != 0 or not output_path.exists():
             raise HTTPException(
                 status_code=422,
                 detail={
-                    "message": "Automatic rigging failed",
+                    "message": "Automatic rigging or texturing failed",
                     "stderr": result.stderr[-4000:],
                     "stdout": result.stdout[-2000:],
                 },
