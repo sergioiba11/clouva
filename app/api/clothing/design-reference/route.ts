@@ -6,6 +6,8 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 const IMAGE_MODEL = "gpt-image-1.5";
+const MAX_ARTWORK_BYTES = 8 * 1024 * 1024;
+const ALLOWED_ARTWORK_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 
 const CATEGORY_LABELS: Record<string, string> = {
   hoodie: "complete hoodie",
@@ -30,17 +32,25 @@ function openAiKey() {
   return key;
 }
 
+function friendlyOpenAiError(message: string) {
+  const normalized = message.toLowerCase();
+  if (normalized.includes("billing hard limit") || normalized.includes("insufficient_quota")) {
+    return "La cuenta de OpenAI API llegó al límite de facturación. Aumentá el presupuesto o agregá saldo en la plataforma de OpenAI y volvé a intentar.";
+  }
+  return message;
+}
+
 async function parseImageResponse(response: Response) {
   const raw = await response.text();
   let data: any = {};
   try { data = JSON.parse(raw); } catch { data = { error: { message: raw } }; }
-  if (!response.ok) throw new Error(data?.error?.message || `OpenAI respondió ${response.status}`);
+  if (!response.ok) throw new Error(friendlyOpenAiError(data?.error?.message || `OpenAI respondió ${response.status}`));
   const b64 = data?.data?.[0]?.b64_json;
   if (!b64) throw new Error("OpenAI no devolvió la imagen de referencia");
   return Buffer.from(b64, "base64");
 }
 
-async function generateFront(prompt: string) {
+async function generateImage(prompt: string) {
   const response = await fetch("https://api.openai.com/v1/images/generations", {
     method: "POST",
     headers: { Authorization: `Bearer ${openAiKey()}`, "Content-Type": "application/json" },
@@ -49,11 +59,10 @@ async function generateFront(prompt: string) {
   return parseImageResponse(response);
 }
 
-async function generateMatchingView(frontBytes: Buffer, prompt: string) {
+async function editFromImage(imageBytes: Uint8Array, imageType: string, filename: string, prompt: string) {
   const form = new FormData();
-  const safeBytes = Uint8Array.from(frontBytes);
   form.append("model", IMAGE_MODEL);
-  form.append("image", new Blob([safeBytes], { type: "image/png" }), "front-reference.png");
+  form.append("image", new Blob([imageBytes], { type: imageType }), filename);
   form.append("prompt", prompt);
   form.append("size", "1024x1024");
   form.append("quality", "medium");
@@ -71,32 +80,57 @@ export async function POST(request: NextRequest) {
   try {
     const token = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
     if (!token) return NextResponse.json({ error: "Iniciá sesión" }, { status: 401 });
+
     const supabase = adminClient();
     const { data: auth, error: authError } = await supabase.auth.getUser(token);
     if (authError || !auth.user) return NextResponse.json({ error: "Sesión inválida" }, { status: 401 });
 
-    const body = await request.json();
-    const category = String(body.category || "hoodie");
+    const form = await request.formData();
+    const category = String(form.get("category") || "hoodie");
     const garment = CATEGORY_LABELS[category] || CATEGORY_LABELS.accessory;
-    const name = String(body.name || "CLOUVA wearable").slice(0, 80);
-    const fit = String(body.fit || "Normal").slice(0, 30);
-    const color = String(body.color || "#111111").slice(0, 20);
-    const description = String(body.description || "").slice(0, 600);
-    const m = body.measurements || {};
+    const name = String(form.get("name") || "CLOUVA wearable").slice(0, 80);
+    const fit = String(form.get("fit") || "Normal").slice(0, 30);
+    const color = String(form.get("color") || "#111111").slice(0, 20);
+    const description = String(form.get("description") || "").slice(0, 600);
+    const artwork = form.get("artwork");
+
+    let m: any = {};
+    try { m = JSON.parse(String(form.get("measurements") || "{}")); } catch { m = {}; }
+
+    if (artwork instanceof File) {
+      if (!ALLOWED_ARTWORK_TYPES.has(artwork.type)) return NextResponse.json({ error: "La imagen de detalle debe ser PNG, JPG o WEBP" }, { status: 415 });
+      if (artwork.size > MAX_ARTWORK_BYTES) return NextResponse.json({ error: "La imagen de detalle debe pesar menos de 8 MB" }, { status: 413 });
+    }
+
     const measurementText = `Avatar mold dimensions in normalized meters: full height ${Number(m.height || 2.05).toFixed(3)}, body width ${Number(m.width || 0.65).toFixed(3)}, body depth ${Number(m.depth || 0.35).toFixed(3)}, target slot width ${Number(m.slotWidth || m.width || 0.65).toFixed(3)}, slot height ${Number(m.slotHeight || 0.8).toFixed(3)}, slot depth ${Number(m.slotDepth || m.depth || 0.35).toFixed(3)}.`;
     const designId = crypto.randomUUID();
+    const commonRules = `The CATEGORY defines the complete physical object. The uploaded image is ONLY an artwork, logo, print, patch, embroidery, texture or visual-detail reference. Never turn the uploaded image into the whole object. Show the entire wearable from edge to edge. No isolated logo, no floating symbol, no poster, no graphic-only output. Neutral light-gray background, even studio lighting, no person, mannequin, hanger, labels, floor or dramatic perspective. Keep the design suitable for multi-view 3D reconstruction.`;
 
-    const commonRules = `The CATEGORY defines the complete physical object. The artist description defines construction, silhouette, materials and visual details. Any logo, symbol, lettering or graphic mentioned by the artist is ONLY decoration printed, embroidered, patched or attached onto the garment; it must NEVER become the object itself. Show the entire wearable from edge to edge, including all sleeves, openings, soles, waistbands or straps that belong to it. No isolated logo, no floating symbol, no poster, no graphic-only output. The object must be suitable for multi-view 3D reconstruction, centered on a neutral light-gray background, evenly lit, with no person, mannequin, body parts, hanger, text labels, floor or dramatic perspective.`;
+    const frontPrompt = `Create the MASTER FRONT reference for one ${garment}, design name ${name}. Strict orthographic FRONT view. Fit: ${fit}. Main color: ${color}. Artist request: ${description || "minimal premium CLOUVA streetwear"}. ${measurementText} ${commonRules} Apply the uploaded artwork only where the artist request logically places it. The complete garment must remain the dominant subject.`;
 
-    const frontPrompt = `Create the MASTER FRONT reference for one ${garment}, design name ${name}. Strict orthographic FRONT view. Fit: ${fit}. Main color: ${color}. Artist request: ${description || "minimal premium CLOUVA streetwear"}. ${measurementText} ${commonRules} Make the complete garment shape the dominant subject. This front image will be used as the canonical design reference for the other views, so make every seam, panel, pocket, hood, lace, sole and decorative placement clear and production-friendly.`;
-    const frontBytes = await generateFront(frontPrompt);
+    let artworkPath: string | null = null;
+    let artworkUrl: string | null = null;
+    let frontBytes: Buffer;
 
-    const backPrompt = `Using the supplied front image as the canonical design reference, generate the exact SAME ${garment} from a strict orthographic BACK view. Preserve the same silhouette, proportions, material, color palette, seams, panels and construction. Infer a physically plausible back while keeping all artist-requested graphics in their correct role as decoration on the garment. Do not output a logo alone. Show the complete object, centered, neutral light-gray background, even studio light, no person, mannequin, body parts, hanger, text labels, floor or perspective distortion.`;
-    const sidePrompt = `Using the supplied front image as the canonical design reference, generate the exact SAME ${garment} from a strict orthographic LEFT SIDE view. Preserve the same silhouette, thickness, proportions, material, color palette, seams, panels and construction. Infer realistic depth for the avatar mold. Graphics remain decoration only and must not replace the wearable. Show the complete object, centered, neutral light-gray background, even studio light, no person, mannequin, body parts, hanger, text labels, floor or perspective distortion.`;
+    if (artwork instanceof File) {
+      const artworkBytes = new Uint8Array(await artwork.arrayBuffer());
+      frontBytes = await editFromImage(artworkBytes, artwork.type, artwork.name || "artwork.png", frontPrompt);
+      const extension = artwork.type === "image/png" ? "png" : artwork.type === "image/webp" ? "webp" : "jpg";
+      artworkPath = `${auth.user.id}/clothing-artwork/${designId}.${extension}`;
+      const { error: artworkUploadError } = await supabase.storage.from("avatars").upload(artworkPath, artworkBytes, { contentType: artwork.type, cacheControl: "3600", upsert: false });
+      if (artworkUploadError) throw artworkUploadError;
+      artworkUrl = supabase.storage.from("avatars").getPublicUrl(artworkPath).data.publicUrl;
+    } else {
+      frontBytes = await generateImage(frontPrompt);
+    }
 
+    const backPrompt = `Using the supplied front image as the canonical design reference, generate the exact SAME ${garment} from a strict orthographic BACK view. Preserve silhouette, proportions, material, color, seams and construction. Respect the artist request for placement of logos or artwork. Graphics remain decoration only. Show the complete object on the same neutral background.`;
+    const sidePrompt = `Using the supplied front image as the canonical design reference, generate the exact SAME ${garment} from a strict orthographic LEFT SIDE view. Preserve silhouette, thickness, proportions, material, color, seams and construction. Respect the artwork as decoration only. Show the complete object on the same neutral background.`;
+
+    const safeFront = Uint8Array.from(frontBytes);
     const [backBytes, sideBytes] = await Promise.all([
-      generateMatchingView(frontBytes, backPrompt),
-      generateMatchingView(frontBytes, sidePrompt),
+      editFromImage(safeFront, "image/png", "front-reference.png", backPrompt),
+      editFromImage(safeFront, "image/png", "front-reference.png", sidePrompt),
     ]);
 
     const outputs = [
@@ -116,8 +150,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       designId,
       references: Object.fromEntries(generated.map((item) => [item.view, item.url])),
+      artworkUrl,
+      artworkPath,
       measurements: m,
-      generationMode: "openai-master-front-plus-consistent-edits",
+      generationMode: artworkUrl ? "artwork-conditioned-master-front" : "text-master-front",
     });
   } catch (error) {
     console.error("AI clothing reference generation failed", error);
