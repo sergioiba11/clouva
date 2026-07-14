@@ -16,7 +16,7 @@ type StoredRigJob = {
 };
 
 const STORAGE_KEY = "clouva:official-avatar-rig-job";
-const UI_VERSION = "rig-progress-v2";
+const UI_VERSION = "rig-progress-v3-server-persisted";
 
 function sleep(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -45,8 +45,9 @@ function clearStoredJob() {
 export function OfficialAvatarRigCard() {
   const { session } = useAuth();
   const [running, setRunning] = useState(false);
+  const [checking, setChecking] = useState(true);
   const [progress, setProgress] = useState(0);
-  const [message, setMessage] = useState("El avatar oficial necesita esqueleto para que las mangas y la ropa se deformen correctamente.");
+  const [message, setMessage] = useState("Buscando un proceso de rigging activo…");
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
   const resumingRef = useRef(false);
@@ -69,6 +70,7 @@ export function OfficialAvatarRigCard() {
 
   const followJob = async (job: StoredRigJob) => {
     setRunning(true);
+    setChecking(false);
     setError(null);
     setDone(false);
     setMessage("Reconectando con el proceso de Meshy…");
@@ -109,15 +111,59 @@ export function OfficialAvatarRigCard() {
   };
 
   useEffect(() => {
-    if (!session?.access_token || resumingRef.current || running || done) return;
-    const stored = readStoredJob();
-    if (!stored) return;
+    if (!session?.access_token || resumingRef.current) return;
     resumingRef.current = true;
-    void followJob(stored);
+
+    void (async () => {
+      try {
+        setChecking(true);
+        setMessage("Buscando un proceso de rigging activo…");
+        const current = await call({ action: "current" });
+
+        if (current.active && current.taskId) {
+          const job = {
+            taskId: String(current.taskId),
+            startedAt: Number(current.startedAt || Date.now()),
+          };
+          saveStoredJob(job);
+          const task = current.task as RigStatus | undefined;
+          if (task?.status === "SUCCEEDED") {
+            setRunning(true);
+            setProgress(99);
+            setMessage("Rigging terminado. Guardando el avatar oficial…");
+            await call({ action: "finalize", taskId: job.taskId });
+            clearStoredJob();
+            setProgress(100);
+            setDone(true);
+            setMessage("Avatar oficial riggeado. Las prendas nuevas ya pueden copiar sus pesos correctamente.");
+            setRunning(false);
+            resumingRef.current = false;
+            return;
+          }
+          await followJob(job);
+          return;
+        }
+
+        const localJob = readStoredJob();
+        if (localJob) {
+          await followJob(localJob);
+          return;
+        }
+
+        setMessage("El avatar oficial necesita esqueleto para que las mangas y la ropa se deformen correctamente.");
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "No se pudo consultar el estado");
+        setMessage("No se pudo consultar el proceso de rigging.");
+      } finally {
+        setChecking(false);
+        if (!running) resumingRef.current = false;
+      }
+    })();
   }, [session?.access_token]);
 
   const start = async () => {
     setRunning(true);
+    setChecking(false);
     setError(null);
     setDone(false);
     setProgress(0);
@@ -136,7 +182,7 @@ export function OfficialAvatarRigCard() {
       const taskId = String(created.taskId ?? "");
       if (!taskId) throw new Error("Meshy no devolvió un taskId");
 
-      const job = { taskId, startedAt: Date.now() };
+      const job = { taskId, startedAt: Number(created.startedAt || Date.now()) };
       saveStoredJob(job);
       resumingRef.current = true;
       await followJob(job);
@@ -157,21 +203,21 @@ export function OfficialAvatarRigCard() {
           <h2 className="mt-1 text-xl font-semibold">Rigging del avatar oficial</h2>
           <p className="mt-2 max-w-xl text-sm text-white/55">{message}</p>
         </div>
-        <span className={`rounded-full px-3 py-1 text-xs ${done ? "bg-emerald-400/15 text-emerald-300" : running ? "bg-violet-400/15 text-violet-200" : "bg-white/10 text-white/50"}`}>
-          {done ? "Listo" : running ? "Procesando" : "Pendiente"}
+        <span className={`rounded-full px-3 py-1 text-xs ${done ? "bg-emerald-400/15 text-emerald-300" : running || checking ? "bg-violet-400/15 text-violet-200" : "bg-white/10 text-white/50"}`}>
+          {done ? "Listo" : running ? "Procesando" : checking ? "Consultando" : "Pendiente"}
         </span>
       </div>
 
       {running || progress > 0 ? (
         <div className="mt-4">
           <div className="mb-1 flex justify-between text-xs text-white/45">
-            <span>Progreso</span>
+            <span>Progreso real de Meshy</span>
             <span>{progress}%</span>
           </div>
           <div className="h-2 overflow-hidden rounded-full bg-white/10">
             <div className="h-full rounded-full bg-violet-400 transition-all" style={{ width: `${Math.max(progress, 3)}%` }} />
           </div>
-          {running ? <p className="mt-2 text-xs text-white/35">Podés salir de esta página. Al volver, CLOUVA retomará el seguimiento automáticamente.</p> : null}
+          {running ? <p className="mt-2 text-xs text-white/35">Podés recargar o salir. El estado se guarda en tu cuenta y reaparece al volver.</p> : null}
         </div>
       ) : null}
 
@@ -180,10 +226,10 @@ export function OfficialAvatarRigCard() {
       <button
         type="button"
         onClick={start}
-        disabled={running || done || !session?.access_token}
+        disabled={running || checking || done || !session?.access_token}
         className="mt-4 rounded-2xl bg-violet-400 px-5 py-3 text-sm font-semibold text-black disabled:cursor-not-allowed disabled:opacity-45"
       >
-        {done ? "Avatar ya riggeado" : running ? "Riggeando…" : "Riggear avatar oficial"}
+        {done ? "Avatar ya riggeado" : running ? "Riggeando…" : checking ? "Consultando estado…" : "Riggear avatar oficial"}
       </button>
     </section>
   );
