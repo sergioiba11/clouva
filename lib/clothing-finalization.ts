@@ -113,6 +113,9 @@ export async function finalizeClothingItem({
   metadata,
 }: FinalizeInput) {
   const artUrl = typeof metadata.art_url === "string" && metadata.art_url ? metadata.art_url : null;
+  const hoodUpModelUrl = typeof metadata.hood_up_model_url === "string" && metadata.hood_up_model_url ? metadata.hood_up_model_url : null;
+  const hoodDownModelUrl = typeof metadata.hood_down_model_url === "string" && metadata.hood_down_model_url ? metadata.hood_down_model_url : null;
+  const hoodSupported = Boolean(hoodUpModelUrl && hoodDownModelUrl && (category === "hoodie" || category === "jacket"));
 
   const rigResult = await rigWithWorker(supabase, modelUrl, category, artUrl, color);
   const riggedBytes = rigResult.bytes;
@@ -139,6 +142,8 @@ export async function finalizeClothingItem({
     generation_progress: 100,
     compatibility_warning: riggedBytes ? null : "La pieza quedó disponible sin rigging automático.",
     rigging_last_error: riggedBytes ? null : rigResult.error,
+    hood_supported: hoodSupported,
+    hood_note: hoodSupported ? null : "Falta generar y subir la variante hood_up además de hood_down.",
   };
 
   const { data: item, error: updateError } = await supabase
@@ -152,10 +157,14 @@ export async function finalizeClothingItem({
       fit_status: riggedBytes ? "fitted" : "fallback",
       wearable: Boolean(riggedBytes),
       processing_error: riggedBytes ? null : rigResult.error,
+      hood_supported: hoodSupported,
+      hood_state: hoodSupported ? "down" : null,
+      hood_up_model_url: hoodUpModelUrl,
+      hood_down_model_url: hoodDownModelUrl,
     })
     .eq("id", itemId)
     .eq("user_id", userId)
-    .select("id,name,category,status,model_url,thumbnail_url,metadata,fit_status,rigged,wearable")
+    .select("id,name,category,status,model_url,thumbnail_url,metadata,fit_status,rigged,wearable,hood_supported,hood_state,hood_up_model_url,hood_down_model_url")
     .single();
   if (updateError) throw updateError;
 
@@ -163,6 +172,7 @@ export async function finalizeClothingItem({
     item,
     rigged: Boolean(riggedBytes),
     textured: Boolean(riggedBytes && artUrl),
+    hoodSupported,
     warning: riggedBytes ? null : "La pieza quedó disponible sin rigging automático.",
   };
 }
