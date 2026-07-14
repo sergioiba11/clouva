@@ -40,7 +40,13 @@ const CATEGORY_FIT: Record<string, GarmentFitOptions> = {
   shoes: { paddingScale: 1.01, widthPadding: 1.06, depthPadding: 1.10, verticalOffset: 0.005 },
 };
 
-export type OutfitLayer = { id: string; url: string; visible: boolean; category?: string };
+export type OutfitLayer = {
+  id: string;
+  url: string;
+  visible: boolean;
+  category?: string;
+  preFitted?: boolean;
+};
 
 type Props = {
   avatarUrl: string | null;
@@ -112,19 +118,26 @@ export function OutfitPreview({ avatarUrl, layers, className = "" }: Props) {
         for (const layer of layers) {
           if (disposed) return;
           const obj = await loadRaw(layer.url);
-          const bodyMeshNames = layer.category ? CATEGORY_BODY_MESHES[layer.category] : undefined;
-          const bodyPart = bodyMeshNames ? findAvatarBodyPart(avatarObj, bodyMeshNames) : null;
 
-          if (bodyPart) {
-            fitGarmentToBodyPart(obj, bodyPart.box, layer.category ? CATEGORY_FIT[layer.category] : undefined);
+          if (layer.preFitted) {
+            // Las prendas procesadas por Blender ya vienen posicionadas y riggeadas
+            // en el espacio del avatar oficial. Solo copiamos la normalización global.
+            obj.position.copy(avatarObj.position);
+            obj.rotation.copy(avatarObj.rotation);
+            obj.scale.copy(avatarObj.scale);
             scene.add(obj);
-            // Conserva el calce calculado en espacio de mundo, pero deja la
-            // prenda dentro de la jerarquía del avatar para que acompañe sus
-            // transformaciones globales y futuras animaciones del personaje.
-            avatarObj.attach(obj);
           } else {
-            normalizeAvatarObject(obj, { targetHeight: 2.05 });
-            avatarObj.add(obj);
+            const bodyMeshNames = layer.category ? CATEGORY_BODY_MESHES[layer.category] : undefined;
+            const bodyPart = bodyMeshNames ? findAvatarBodyPart(avatarObj, bodyMeshNames) : null;
+
+            if (bodyPart) {
+              fitGarmentToBodyPart(obj, bodyPart.box, layer.category ? CATEGORY_FIT[layer.category] : undefined);
+              scene.add(obj);
+              avatarObj.attach(obj);
+            } else {
+              normalizeAvatarObject(obj, { targetHeight: 2.05 });
+              avatarObj.add(obj);
+            }
           }
 
           obj.visible = layer.visible;
@@ -157,7 +170,7 @@ export function OutfitPreview({ avatarUrl, layers, className = "" }: Props) {
       mount.current?.replaceChildren();
       loadedRef.current = {};
     };
-  }, [avatarUrl, layers.map((layer) => `${layer.url}:${layer.category ?? ""}`).join(",")]);
+  }, [avatarUrl, layers.map((layer) => `${layer.url}:${layer.category ?? ""}:${layer.preFitted ? 1 : 0}`).join(",")]);
 
   useEffect(() => {
     for (const layer of layers) {
