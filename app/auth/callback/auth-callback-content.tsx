@@ -2,12 +2,20 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { getRedirectByRole } from "@/lib/auth";
 
-const CALLBACK_TIMEOUT_MS = 15000;
+const STEP_TIMEOUT_MS = 8000;
 
 function redirect(path: string) {
   window.location.replace(path);
+}
+
+async function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      window.setTimeout(() => reject(new Error(`${label} tardó demasiado`)), STEP_TIMEOUT_MS),
+    ),
+  ]);
 }
 
 export default function AuthCallbackContent() {
@@ -21,83 +29,70 @@ export default function AuthCallbackContent() {
     if (startedRef.current) return;
     startedRef.current = true;
 
-    const timeout = window.setTimeout(() => {
-      setMessage("El inicio de sesión tardó demasiado. Volviendo a intentar...");
-      redirect("/login?error=El%20inicio%20de%20sesión%20tardó%20demasiado");
-    }, CALLBACK_TIMEOUT_MS);
-
     const handleCallback = async () => {
       try {
-        const { supabase } = await import("@/lib/supabase");
+        const { supabase } = await withTimeout(import("@/lib/supabase"), "La aplicación");
 
         if (code) {
-          const { error } = await supabase.auth.exchangeCodeForSession(code);
-          if (error && !error.message.toLowerCase().includes("code verifier")) {
-            throw error;
+          const result = await withTimeout(supabase.auth.exchangeCodeForSession(code), "El inicio de sesión");
+          if (result.error && !result.error.message.toLowerCase().includes("code verifier")) {
+            throw result.error;
           }
         }
 
-        const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
-        if (sessionError) throw sessionError;
+        const sessionResult = await withTimeout(supabase.auth.getSession(), "La sesión");
+        if (sessionResult.error) throw sessionResult.error;
 
-        const user = sessionData.session?.user;
+        const user = sessionResult.data.session?.user;
         if (!user) throw new Error("No se pudo establecer la sesión");
 
-        const defaultName =
-          (user.user_metadata?.full_name as string | undefined) ??
-          (user.email ? user.email.split("@")[0] : "Usuario");
+        const isAdmin = user.email?.toLowerCase() === "sergio.iba.11@gmail.com";
+        const destination = isAdmin ? "/admin" : "/mi-flow";
 
-        const { data: existing, error: profileReadError } = await supabase
-          .from("profiles")
-          .select("id, role, display_name")
-          .eq("id", user.id)
-          .maybeSingle();
+        setMessage("Sesión iniciada. Entrando...");
 
-        if (profileReadError) {
-          console.error("Could not read auth profile", profileReadError);
-        }
+        // El perfil se sincroniza en segundo plano y nunca bloquea la entrada.
+        void (async () => {
+          try {
+            const defaultName =
+              (user.user_metadata?.full_name as string | undefined) ??
+              (user.email ? user.email.split("@")[0] : "Usuario");
 
-        const isSergio = user.email?.toLowerCase() === "sergio.iba.11@gmail.com";
+            const { data: existing } = await supabase
+              .from("profiles")
+              .select("id, role, display_name")
+              .eq("id", user.id)
+              .maybeSingle();
 
-        if (!profileReadError) {
-          if (!existing) {
-            const { error: insertError } = await supabase.from("profiles").insert({
-              id: user.id,
-              display_name: defaultName,
-              role: isSergio ? "admin" : "cliente",
-            });
-            if (insertError) console.error("Could not create auth profile", insertError);
-          } else {
-            const updates: { display_name?: string; role?: string } = {};
-            if (!existing.display_name && defaultName) updates.display_name = defaultName;
-            if (isSergio && existing.role !== "admin" && existing.role !== "owner") updates.role = "admin";
-            if (Object.keys(updates).length > 0) {
-              const { error: updateError } = await supabase.from("profiles").update(updates).eq("id", user.id);
-              if (updateError) console.error("Could not update auth profile", updateError);
+            if (!existing) {
+              await supabase.from("profiles").insert({
+                id: user.id,
+                display_name: defaultName,
+                role: isAdmin ? "admin" : "cliente",
+              });
+            } else {
+              const updates: { display_name?: string; role?: string } = {};
+              if (!existing.display_name && defaultName) updates.display_name = defaultName;
+              if (isAdmin && existing.role !== "admin" && existing.role !== "owner") updates.role = "admin";
+              if (Object.keys(updates).length > 0) {
+                await supabase.from("profiles").update(updates).eq("id", user.id);
+              }
             }
+          } catch (error) {
+            console.error("Profile sync after login failed", error);
           }
-        }
+        })();
 
-        const { data: profile } = await supabase
-          .from("profiles")
-          .select("role")
-          .eq("id", user.id)
-          .maybeSingle();
-
-        window.clearTimeout(timeout);
-        const redirectPath = getRedirectByRole(profile?.role ?? existing?.role);
-        redirect(isAddAccountMode ? `${redirectPath}?openAccountSwitcher=1` : redirectPath);
+        redirect(isAddAccountMode ? `${destination}?openAccountSwitcher=1` : destination);
       } catch (error) {
-        window.clearTimeout(timeout);
-        const message = error instanceof Error ? error.message : "No se pudo completar el inicio de sesión";
+        const errorMessage = error instanceof Error ? error.message : "No se pudo completar el inicio de sesión";
         console.error("Auth callback failed", error);
-        redirect(`/login?error=${encodeURIComponent(message)}`);
+        setMessage("No se pudo completar. Volviendo al login...");
+        redirect(`/login?error=${encodeURIComponent(errorMessage)}`);
       }
     };
 
     void handleCallback();
-
-    return () => window.clearTimeout(timeout);
   }, [code, isAddAccountMode]);
 
   return (
