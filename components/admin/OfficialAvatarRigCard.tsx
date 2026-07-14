@@ -56,17 +56,20 @@ export function OfficialAvatarRigCard() {
 
   const finalize = async (id: string) => {
     let lastError: unknown;
-    for (let attempt = 0; attempt < 6; attempt += 1) {
+    for (let attempt = 0; attempt < 60; attempt += 1) {
       try {
         await call({ action: "finalize", taskId: id });
         return;
       } catch (cause) {
         lastError = cause;
         if (!(cause instanceof Error) || !cause.message.includes("todavía no terminó")) throw cause;
-        await sleep(3000);
+        setCheckedAt(Date.now());
+        setProgress(99);
+        setMessage("Meshy terminó el rigging y está publicando el archivo 3D…");
+        await sleep(5000);
       }
     }
-    throw lastError instanceof Error ? lastError : new Error("No se pudo finalizar el rigging");
+    throw lastError instanceof Error ? lastError : new Error("Meshy no publicó el archivo riggeado a tiempo");
   };
 
   const follow = async (job: Job) => {
@@ -76,7 +79,7 @@ export function OfficialAvatarRigCard() {
     setError(null);
     localStorage.setItem(KEY, JSON.stringify(job));
     try {
-      while (Date.now() - job.startedAt < 20 * 60 * 1000) {
+      while (Date.now() - job.startedAt < 30 * 60 * 1000) {
         const status = (await call({ action: "status", taskId: job.taskId })) as Status;
         setCheckedAt(Date.now());
         const value = Math.max(0, Math.min(99, Math.round(status.progress ?? 0)));
@@ -91,7 +94,7 @@ export function OfficialAvatarRigCard() {
         }
         await sleep(5000);
       }
-      throw new Error("El rigging superó el tiempo máximo de 20 minutos");
+      throw new Error("El rigging superó el tiempo máximo de 30 minutos");
     } catch (cause) {
       fail(cause instanceof Error ? cause.message : "Error inesperado");
     }
@@ -146,7 +149,7 @@ export function OfficialAvatarRigCard() {
   const disabled = state === "running" || state === "checking" || state === "success" || !session?.access_token;
 
   return (
-    <section className="rounded-3xl border border-white/10 bg-white/[0.03] p-5" data-ui-version="rig-progress-v7-forced-retry-endpoint">
+    <section className="rounded-3xl border border-white/10 bg-white/[0.03] p-5" data-ui-version="rig-progress-v8-wait-for-glb">
       <div className="flex items-start justify-between gap-4">
         <div><p className="text-xs uppercase tracking-[0.18em] text-violet-300">Avatar Engine</p><h2 className="mt-1 text-xl font-semibold">Rigging del avatar oficial</h2><p className="mt-2 text-sm text-white/55">{message}</p></div>
         <span className="rounded-full bg-white/10 px-3 py-1 text-xs">{label}</span>
