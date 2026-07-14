@@ -9,8 +9,25 @@ const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const ALLOWED_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 const CATEGORIES = new Set(["hoodie", "shirt", "jacket", "pants", "shorts", "shoes", "accessory"]);
 
-const BASE_STYLE_PROMPT =
-  "Clean, game-ready streetwear garment for a stylized 3D avatar. Flat, even, well-lit texture. No visible mannequin or body parts in the texture.";
+const CATEGORY_PROMPTS: Record<string, string> = {
+  hoodie: "A standalone hoodie garment only, hollow inside, with a clean neck opening, two sleeves, torso shell, cuffs and hem. No human body.",
+  shirt: "A standalone T-shirt garment only, hollow inside, with neck opening, sleeves and torso shell. No human body.",
+  jacket: "A standalone jacket garment only, hollow inside, with openable front, sleeves, cuffs and collar. No human body.",
+  pants: "Standalone pants only, hollow inside, with waistband and two separated pant legs. No human body.",
+  shorts: "Standalone shorts only, hollow inside, with waistband and two separated leg openings. No human body.",
+  shoes: "A standalone matched pair of shoes only. No feet, legs or human body.",
+  accessory: "A standalone wearable accessory only. No mannequin, no human body and no unrelated geometry.",
+};
+
+const BASE_STYLE_PROMPT = [
+  "Create ONLY the requested wearable garment as an isolated 3D asset.",
+  "Do not generate a person, mannequin, skin, head, hair, face, hands, arms, legs, feet or full body.",
+  "The garment must be hollow and wearable, centered at the world origin, upright, symmetrical and facing forward.",
+  "Use clean connected topology, realistic cloth thickness, closed seams and no floating fragments.",
+  "Game-ready stylized streetwear for a cute mobile-game avatar.",
+  "Preserve the exact front, back and side design from the reference images.",
+  "Do not merge the garment with an invisible body and do not create a robe-like solid sheet.",
+].join(" ");
 
 function getAdminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -81,7 +98,11 @@ export async function POST(request: NextRequest) {
     const imageUrls = uploads.map((upload) => upload.publicUrl);
     const fitLabel = fit ? `Fit: ${fit}.` : "";
     const colorLabel = color ? `Main color: ${color}.` : "";
-    const texturePrompt = [BASE_STYLE_PROMPT, fitLabel, colorLabel, description].filter(Boolean).join(" ").slice(0, 600);
+    const categoryPrompt = CATEGORY_PROMPTS[category] ?? CATEGORY_PROMPTS.accessory;
+    const texturePrompt = [BASE_STYLE_PROMPT, categoryPrompt, fitLabel, colorLabel, description]
+      .filter(Boolean)
+      .join(" ")
+      .slice(0, 1000);
 
     const taskId = await createMultiImageTask(imageUrls, texturePrompt);
     const itemId = crypto.randomUUID();
@@ -100,8 +121,6 @@ export async function POST(request: NextRequest) {
         front_reference_url: frontUpload.publicUrl,
         back_reference_url: uploads.find((upload) => upload.key === "back")?.publicUrl,
         side_reference_url: uploads.find((upload) => upload.key === "side")?.publicUrl ?? null,
-        // La vista frontal aprobada, generada por OpenAI o subida manualmente,
-        // queda como portada oficial de la pieza y se guarda en la base.
         thumbnail_url: frontUpload.publicUrl,
         meshy_task_id: taskId,
         metadata: {
@@ -109,6 +128,7 @@ export async function POST(request: NextRequest) {
           cover_image_url: frontUpload.publicUrl,
           cover_source: coverSource,
           cover_view: "front",
+          isolated_garment_prompt_version: 2,
         },
       })
       .select("id,name,category,status,thumbnail_url,meshy_task_id,created_at")
