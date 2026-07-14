@@ -119,13 +119,18 @@ export function OfficialAvatarRigCard() {
   useEffect(() => { void refresh(); }, [session?.access_token]);
 
   const start = async () => {
+    const retrying = state === "failed";
     busy.current = true;
     setState("running");
     setProgress(0);
     setError(null);
     setTaskId(null);
-    setMessage("Enviando el avatar oficial a Meshy…");
+    setMessage(retrying ? "Limpiando el intento anterior y creando uno nuevo…" : "Enviando el avatar oficial a Meshy…");
     try {
+      if (retrying) {
+        localStorage.removeItem(KEY);
+        await call({ action: "clear" });
+      }
       const created = await call({ action: "create" });
       if (created.alreadyRigged) return success("El avatar oficial ya estaba riggeado.");
       const id = String(created.taskId || "");
@@ -140,7 +145,7 @@ export function OfficialAvatarRigCard() {
   const disabled = state === "running" || state === "checking" || state === "success" || !session?.access_token;
 
   return (
-    <section className="rounded-3xl border border-white/10 bg-white/[0.03] p-5" data-ui-version="rig-progress-v5-retry-fixed">
+    <section className="rounded-3xl border border-white/10 bg-white/[0.03] p-5" data-ui-version="rig-progress-v6-new-retry-task">
       <div className="flex items-start justify-between gap-4">
         <div><p className="text-xs uppercase tracking-[0.18em] text-violet-300">Avatar Engine</p><h2 className="mt-1 text-xl font-semibold">Rigging del avatar oficial</h2><p className="mt-2 text-sm text-white/55">{message}</p></div>
         <span className="rounded-full bg-white/10 px-3 py-1 text-xs">{label}</span>
