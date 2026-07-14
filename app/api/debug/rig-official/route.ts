@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { createRiggingTask, getRiggingTask } from "@/lib/meshy";
 
@@ -12,46 +12,65 @@ function getAdminClient() {
   return createClient(url, serviceRole, { auth: { persistSession: false, autoRefreshToken: false } });
 }
 
-export async function GET(req: Request) {
-  const { searchParams } = new URL(req.url);
-  const step = searchParams.get("step");
-  const supabase = getAdminClient();
+async function requireAdmin(request: NextRequest) {
+  const authorization = request.headers.get("authorization");
+  const accessToken = authorization?.startsWith("Bearer ") ? authorization.slice(7) : null;
+  if (!accessToken) throw new Error("Missing access token");
 
+  const supabase = getAdminClient();
+  const { data: userData, error: userError } = await supabase.auth.getUser(accessToken);
+  if (userError || !userData.user) throw new Error("Invalid session");
+
+  const { data: profile, error: profileError } = await supabase
+    .from("profiles")
+    .select("id, role, avatar_3d_url")
+    .eq("id", userData.user.id)
+    .single();
+  if (profileError || !profile) throw new Error("Perfil no encontrado");
+  if (profile.role !== "admin" && profile.role !== "owner") throw new Error("Solo el administrador puede hacer esto");
+
+  return { supabase, profile };
+}
+
+export async function POST(request: NextRequest) {
   try {
-    if (step === "create") {
-      const { data, error } = await supabase
-        .from("profiles")
-        .select("id, avatar_3d_url")
-        .eq("role", "admin")
-        .not("avatar_3d_url", "is", null)
-        .limit(1)
-        .maybeSingle();
-      if (error || !data?.avatar_3d_url) throw new Error("No hay avatar oficial activo");
-      const taskId = await createRiggingTask(data.avatar_3d_url, 1.8);
-      return NextResponse.json({ taskId, sourceUrl: data.avatar_3d_url, adminId: data.id });
+    const { supabase, profile } = await requireAdmin(request);
+    const body = await request.json();
+    const action = String(body?.action ?? "");
+
+    if (action === "create") {
+      if (!profile.avatar_3d_url) throw new Error("No hay avatar oficial activo");
+      if (profile.avatar_3d_url.includes("clouva-official-rigged.glb")) {
+        return NextResponse.json({ alreadyRigged: true, newAvatarUrl: profile.avatar_3d_url });
+      }
+      const taskId = await createRiggingTask(profile.avatar_3d_url, 1.8);
+      return NextResponse.json({ taskId, sourceUrl: profile.avatar_3d_url });
     }
 
-    if (step === "status") {
-      const taskId = searchParams.get("taskId");
+    if (action === "status") {
+      const taskId = String(body?.taskId ?? "");
       if (!taskId) return NextResponse.json({ error: "Falta taskId" }, { status: 400 });
       const task = await getRiggingTask(taskId);
       return NextResponse.json(task);
     }
 
-    if (step === "finalize") {
-      const taskId = searchParams.get("taskId");
-      const adminId = searchParams.get("adminId");
-      if (!taskId || !adminId) return NextResponse.json({ error: "Falta taskId o adminId" }, { status: 400 });
+    if (action === "finalize") {
+      const taskId = String(body?.taskId ?? "");
+      if (!taskId) return NextResponse.json({ error: "Falta taskId" }, { status: 400 });
+
       const task = await getRiggingTask(taskId);
       if (task.status !== "SUCCEEDED" || !task.model_urls?.glb) {
         return NextResponse.json({ error: "Rigging todavía no terminó", task }, { status: 409 });
       }
+
       const remote = await fetch(task.model_urls.glb, { cache: "no-store" });
       if (!remote.ok) throw new Error(`No se pudo descargar el GLB riggeado (${remote.status})`);
       const bytes = await remote.arrayBuffer();
-      if (Buffer.from(bytes).subarray(0, 4).toString("ascii") !== "glTF") throw new Error("Meshy no devolvió un GLB válido");
+      if (Buffer.from(bytes).subarray(0, 4).toString("ascii") !== "glTF") {
+        throw new Error("Meshy no devolvió un GLB válido");
+      }
 
-      const storagePath = `${adminId}/official/clouva-official-rigged.glb`;
+      const storagePath = `${profile.id}/official/clouva-official-rigged.glb`;
       const { error: uploadError } = await supabase.storage.from("avatars").upload(storagePath, bytes, {
         contentType: "model/gltf-binary",
         cacheControl: "3600",
@@ -63,14 +82,16 @@ export async function GET(req: Request) {
       const { error: updateError } = await supabase
         .from("profiles")
         .update({ avatar_3d_url: publicData.publicUrl })
-        .eq("id", adminId);
+        .eq("id", profile.id);
       if (updateError) throw updateError;
 
       return NextResponse.json({ ok: true, newAvatarUrl: publicData.publicUrl });
     }
 
-    return NextResponse.json({ error: "step debe ser create, status o finalize" }, { status: 400 });
+    return NextResponse.json({ error: "Acción inválida" }, { status: 400 });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Error desconocido" }, { status: 500 });
+    const message = error instanceof Error ? error.message : "Error desconocido";
+    const status = message.includes("Missing access") || message.includes("Invalid session") ? 401 : message.includes("Solo el administrador") ? 403 : 500;
+    return NextResponse.json({ error: message }, { status });
   }
 }
