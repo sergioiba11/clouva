@@ -54,13 +54,23 @@ export default function GarmentFlowClient() {
   const [previews, setPreviews] = useState<Record<Side, string | null>>({ front: null, back: null, side: null });
   const [result, setResult] = useState<{ id: string; modelUrl: string } | null>(null);
   const busy = ["measuring", "designing", "uploading", "generating", "saving"].includes(phase);
+  const referencesReady = Boolean(files.front && files.back && files.side);
+
+  const invalidateDesign = () => {
+    if (previews.front || previews.back || previews.side) {
+      setFiles({ front: null, back: null, side: null });
+      setPreviews({ front: null, back: null, side: null });
+      setMeasurements(null);
+      setPhase("idle");
+    }
+  };
 
   const generateDesign = async () => {
     setError(null);
     try {
       if (!session?.access_token) throw new Error("Iniciá sesión.");
       if (!avatar.modelUrl) throw new Error("No hay un avatar GLB activo.");
-      if (!description.trim()) throw new Error("Describí el diseño que querés crear.");
+      if (!description.trim()) throw new Error("Describí cómo querés la pieza.");
       setPhase("measuring");
       const measured = await measureAvatar(avatar.modelUrl, category);
       setMeasurements(measured);
@@ -100,13 +110,13 @@ export default function GarmentFlowClient() {
   const generate3D = async () => {
     setError(null); setProgress(0);
     try {
-      if (!session?.access_token || !files.front || !files.back) throw new Error("Primero generá y aprobá las referencias.");
+      if (!session?.access_token || !files.front || !files.back || !files.side) throw new Error("Necesitás aprobar frente, espalda y lateral.");
       setPhase("uploading");
       const form = new FormData();
-      form.append("front", files.front); form.append("back", files.back);
-      if (files.side) form.append("side", files.side);
+      form.append("front", files.front); form.append("back", files.back); form.append("side", files.side);
       form.append("category", category); form.append("name", name || "Prenda CLOUVA");
       form.append("fit", fit); form.append("color", color); form.append("description", description);
+      form.append("coverSource", "openai");
       if (measurements) form.append("measurements", JSON.stringify(measurements));
       const createResponse = await fetch("/api/clothing/create", { method: "POST", headers: { Authorization: `Bearer ${session.access_token}` }, body: form });
       const created = await createResponse.json();
@@ -130,8 +140,9 @@ export default function GarmentFlowClient() {
     }
   };
 
-  const upload = (side: Side, label: string) => <label className="block cursor-pointer rounded-2xl border border-dashed border-white/15 bg-black/25 p-2 text-center">
-    {previews[side] ? <img src={previews[side]!} alt={label} className="aspect-square w-full rounded-xl object-contain" /> : <div className="grid aspect-square place-items-center text-xs text-white/45">{label}<br/>Subir manualmente</div>}
+  const upload = (side: Side, label: string, subtitle: string) => <label className="relative block cursor-pointer overflow-hidden rounded-2xl border border-white/10 bg-black/30 p-2 text-center">
+    <div className="mb-2 flex items-center justify-between px-1"><span className="text-xs font-medium">{label}</span><span className="text-[10px] text-white/35">{subtitle}</span></div>
+    {previews[side] ? <img src={previews[side]!} alt={label} className="aspect-square w-full rounded-xl bg-white/5 object-contain" /> : <div className="grid aspect-square place-items-center rounded-xl border border-dashed border-white/10 text-xs text-white/35">Se genera con IA<br/>o tocá para reemplazar</div>}
     <input className="hidden" type="file" accept="image/png,image/jpeg,image/webp" disabled={busy} onChange={(e) => {
       const file = e.target.files?.[0] || null;
       setFiles((v) => ({ ...v, [side]: file }));
@@ -141,20 +152,22 @@ export default function GarmentFlowClient() {
   </label>;
 
   return <main className="mx-auto min-h-screen w-full max-w-2xl px-4 pb-24 pt-5 text-white">
-    <div className="mb-5 flex justify-between"><Link href="/mi-flow/avatar" className="text-sm text-white/60">← Volver</Link><span className="text-xs text-white/40">GARMENT FLOW</span></div>
-    {!result ? <section className="rounded-3xl border border-white/10 bg-white/[0.03] p-5">
-      <h1 className="text-2xl font-semibold">Crear sobre el molde del avatar</h1>
-      <p className="mb-4 mt-1 text-sm text-white/45">GLB → medidas → referencias con IA → Meshy → calce en el visor.</p>
-      <div className="mb-4 grid grid-cols-3 gap-2 sm:grid-cols-4">{CATEGORIES.map(([value, label]) => <button key={value} onClick={() => setCategory(value)} className={`rounded-xl border px-2 py-2 text-xs ${category === value ? "border-violet-400 bg-violet-400/15" : "border-white/10 text-white/60"}`}>{label}</button>)}</div>
-      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nombre de la prenda" className="mb-3 w-full rounded-xl border border-white/10 bg-black/25 p-3 text-sm" />
-      <div className="mb-3 flex items-center gap-3"><span className="text-xs text-white/50">Color</span><input type="color" value={color} onChange={(e) => setColor(e.target.value)} /></div>
-      <div className="mb-3 flex flex-wrap gap-2">{FITS.map((item) => <button key={item} onClick={() => setFit(item)} className={`rounded-full border px-3 py-1.5 text-xs ${fit === item ? "border-violet-400 bg-violet-400/15" : "border-white/10 text-white/60"}`}>{item}</button>)}</div>
-      <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={4} placeholder="Ej: buzo negro oversized, trébol plateado adelante, diseño grande violeta atrás, mangas anchas y capucha profunda..." className="mb-4 w-full rounded-xl border border-white/10 bg-black/25 p-3 text-sm" />
-      <button onClick={generateDesign} disabled={busy} className="mb-4 w-full rounded-2xl bg-violet-400 py-3 font-semibold text-black disabled:opacity-50">{phase === "measuring" ? "Analizando medidas del GLB…" : phase === "designing" ? "Creando frente, espalda y lateral…" : previews.front ? "Regenerar diseño con IA" : "Crear referencias con IA"}</button>
-      {measurements ? <p className="mb-3 rounded-xl bg-white/5 p-3 text-xs text-white/50">Molde: {measurements.slotWidth.toFixed(2)} × {measurements.slotHeight.toFixed(2)} × {measurements.slotDepth.toFixed(2)} m</p> : null}
-      <div className="mb-4 grid grid-cols-3 gap-2">{upload("front", "Frente")}{upload("back", "Espalda")}{upload("side", "Lateral")}</div>
-      {previews.front && previews.back ? <button onClick={generate3D} disabled={busy} className="w-full rounded-2xl bg-white py-3 font-semibold text-black disabled:opacity-50">{phase === "uploading" ? "Preparando Meshy…" : phase === "generating" ? `Moldeando objeto 3D… ${progress}%` : phase === "saving" ? "Guardando GLB…" : "Aprobar diseño y generar 3D"}</button> : null}
-      {error ? <p className="mt-3 text-sm text-rose-400">{error}</p> : null}
+    <div className="mb-4 flex items-center justify-between"><Link href="/mi-flow/avatar" className="text-sm text-white/60">← Volver</Link><span className="rounded-full border border-violet-400/25 bg-violet-400/10 px-3 py-1 text-[10px] tracking-[0.18em] text-violet-200">CREADOR 3D</span></div>
+    {!result ? <section className="rounded-[28px] border border-white/10 bg-white/[0.035] p-4 shadow-2xl shadow-violet-950/20 sm:p-6">
+      <div className="mb-5"><p className="mb-1 text-xs font-medium uppercase tracking-[0.22em] text-violet-300">Nueva pieza</p><h1 className="text-2xl font-semibold leading-tight">Diseñá una pieza para tu avatar</h1><p className="mt-2 text-sm leading-relaxed text-white/45">Elegís la forma. OpenAI crea las vistas. Meshy construye el objeto 3D.</p></div>
+      <div className="mb-5 grid grid-cols-3 gap-2">{CATEGORIES.map(([value, label]) => <button key={value} onClick={() => { invalidateDesign(); setCategory(value); }} className={`min-h-12 rounded-2xl border px-2 py-2 text-xs ${category === value ? "border-violet-400 bg-violet-400/15 text-white" : "border-white/10 bg-black/15 text-white/55"}`}>{label}</button>)}</div>
+      <div className="space-y-3 rounded-3xl border border-white/8 bg-black/20 p-3">
+        <input value={name} onChange={(e) => { invalidateDesign(); setName(e.target.value); }} placeholder="Nombre de la pieza" className="w-full rounded-2xl border border-white/10 bg-black/30 p-4 text-sm outline-none focus:border-violet-400/70" />
+        <div className="flex items-center justify-between rounded-2xl border border-white/10 bg-black/30 p-3"><div><p className="text-sm">Color base</p><p className="text-[11px] text-white/35">Define el material principal</p></div><input aria-label="Color base" type="color" value={color} onChange={(e) => { invalidateDesign(); setColor(e.target.value); }} className="h-11 w-14 rounded-xl border-0 bg-transparent" /></div>
+        <div className="grid grid-cols-4 gap-2">{FITS.map((item) => <button key={item} onClick={() => { invalidateDesign(); setFit(item); }} className={`rounded-xl border px-2 py-2 text-[11px] ${fit === item ? "border-violet-400 bg-violet-400/15" : "border-white/10 text-white/50"}`}>{item}</button>)}</div>
+        <textarea value={description} onChange={(e) => { invalidateDesign(); setDescription(e.target.value); }} rows={5} placeholder="Describí la pieza completa: forma, materiales, bolsillos, capucha, logo adelante, diseño atrás..." className="w-full resize-none rounded-2xl border border-white/10 bg-black/30 p-4 text-sm outline-none focus:border-violet-400/70" />
+      </div>
+      <button onClick={generateDesign} disabled={busy} className="my-4 w-full rounded-2xl bg-violet-400 py-4 font-semibold text-black transition disabled:opacity-50">{phase === "measuring" ? "1/3 Analizando el GLB…" : phase === "designing" ? "2/3 Creando las tres vistas…" : previews.front ? "Regenerar las tres vistas" : "Generar diseño con IA"}</button>
+      {measurements ? <div className="mb-4 flex items-center justify-between rounded-2xl border border-white/8 bg-white/[0.035] px-4 py-3 text-xs"><span className="text-white/45">Molde detectado</span><span className="font-medium text-white/70">{measurements.slotWidth.toFixed(2)} × {measurements.slotHeight.toFixed(2)} × {measurements.slotDepth.toFixed(2)} m</span></div> : null}
+      <div className="mb-3 flex items-center justify-between"><div><p className="text-sm font-medium">Referencias para Meshy</p><p className="text-[11px] text-white/35">Las tres deben mostrar la misma pieza completa</p></div>{referencesReady ? <span className="rounded-full bg-emerald-400/15 px-2.5 py-1 text-[10px] text-emerald-300">LISTAS</span> : null}</div>
+      <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3">{upload("front", "Frente", "PORTADA")}{upload("back", "Espalda", "VISTA 2")}{upload("side", "Lateral", "VISTA 3")}</div>
+      {previews.front || previews.back || previews.side ? <button onClick={generate3D} disabled={busy || !referencesReady} className="w-full rounded-2xl bg-white py-4 font-semibold text-black disabled:cursor-not-allowed disabled:opacity-30">{phase === "uploading" ? "Preparando referencias…" : phase === "generating" ? `Meshy está creando el 3D · ${progress}%` : phase === "saving" ? "Guardando pieza y portada…" : referencesReady ? "Aprobar vistas y crear objeto 3D" : "Falta completar las tres vistas"}</button> : null}
+      {error ? <p className="mt-3 rounded-xl bg-rose-500/10 p-3 text-sm text-rose-300">{error}</p> : null}
     </section> : <section className="rounded-3xl border border-white/10 bg-white/[0.03] p-5">
       <h1 className="mb-3 text-xl font-semibold">Objeto 3D listo ✓</h1>
       <div className="h-[430px] overflow-hidden rounded-2xl border border-white/10 bg-black/40"><OutfitPreview avatarUrl={avatar.modelUrl} layers={[{ id: result.id, url: result.modelUrl, visible: true, category }]} /></div>
