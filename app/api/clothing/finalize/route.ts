@@ -6,6 +6,8 @@ export const dynamic = "force-dynamic";
 
 const MAX_GLB_BYTES = 75 * 1024 * 1024;
 
+type ItemMetadata = Record<string, unknown>;
+
 function getAdminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceRole = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -34,7 +36,12 @@ async function fetchGlb(url: string, label: string) {
   return bytes;
 }
 
-async function rigWithWorker(modelUrl: string, category: string) {
+async function rigWithWorker(
+  modelUrl: string,
+  category: string,
+  artUrl: string | null,
+  color: string | null,
+) {
   const workerUrl = process.env.GARMENT_RIG_WORKER_URL?.replace(/\/$/, "");
   if (!workerUrl) return null;
 
@@ -50,6 +57,8 @@ async function rigWithWorker(modelUrl: string, category: string) {
       avatar_url: officialAvatarUrl(),
       garment_url: modelUrl,
       category,
+      art_url: artUrl,
+      color,
     }),
     signal: AbortSignal.timeout(8 * 60 * 1000),
   });
@@ -92,11 +101,17 @@ export async function POST(request: NextRequest) {
 
     const { data: sourceItem, error: sourceError } = await supabase
       .from("clothing_items")
-      .select("id,category")
+      .select("id,category,color,metadata")
       .eq("id", itemId)
       .eq("user_id", userData.user.id)
       .single();
     if (sourceError || !sourceItem) return NextResponse.json({ error: "Clothing item not found" }, { status: 404 });
+
+    const metadata = sourceItem.metadata && typeof sourceItem.metadata === "object"
+      ? (sourceItem.metadata as ItemMetadata)
+      : {};
+    const artUrl = typeof metadata.art_url === "string" && metadata.art_url ? metadata.art_url : null;
+    const color = typeof sourceItem.color === "string" ? sourceItem.color : null;
 
     await supabase
       .from("clothing_items")
@@ -104,9 +119,9 @@ export async function POST(request: NextRequest) {
       .eq("id", itemId)
       .eq("user_id", userData.user.id);
 
-    const riggedBytes = await rigWithWorker(modelUrl, sourceItem.category);
+    const riggedBytes = await rigWithWorker(modelUrl, sourceItem.category, artUrl, color);
     const bytes = riggedBytes ?? (await fetchGlb(modelUrl, "Meshy GLB"));
-    const storagePath = `${userData.user.id}/clothing/${itemId}/${riggedBytes ? "rigged" : "garment"}.glb`;
+    const storagePath = `${userData.user.id}/clothing/${itemId}/${riggedBytes ? "rigged-textured" : "garment"}.glb`;
 
     const { error: uploadError } = await supabase.storage.from("avatars").upload(storagePath, bytes, {
       contentType: "model/gltf-binary",
@@ -124,9 +139,13 @@ export async function POST(request: NextRequest) {
         model_url: publicData.publicUrl,
         updated_at: new Date().toISOString(),
         metadata: {
+          ...metadata,
           rigged: Boolean(riggedBytes),
-          rig_pipeline: riggedBytes ? "blender-nearest-surface-v1" : "viewer-fit-fallback",
+          rig_pipeline: riggedBytes ? "blender-nearest-surface-uv-v2" : "viewer-fit-fallback",
           official_avatar: "clouva-official-v1",
+          uv_generated: Boolean(riggedBytes),
+          textured: Boolean(riggedBytes && artUrl),
+          texture_source: artUrl,
         },
       })
       .eq("id", itemId)
@@ -135,7 +154,12 @@ export async function POST(request: NextRequest) {
       .single();
     if (updateError) throw updateError;
 
-    return NextResponse.json({ ok: true, item, rigged: Boolean(riggedBytes) });
+    return NextResponse.json({
+      ok: true,
+      item,
+      rigged: Boolean(riggedBytes),
+      textured: Boolean(riggedBytes && artUrl),
+    });
   } catch (error) {
     console.error("Clothing finalization failed", error);
     return NextResponse.json(
