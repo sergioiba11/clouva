@@ -2,6 +2,7 @@
 
 import { MainNav } from "@/components/layout";
 import { Sidebar } from "@/components/os-ui";
+import { CloverIcon } from "@/components/clover-icon";
 import { useAuth } from "@/components/auth-provider";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -21,7 +22,25 @@ export default function FlowLayoutClient({ children }: { children: React.ReactNo
 
   if (loading || !hydrationReady) return <main><MainNav /><div className="mx-auto max-w-7xl p-6">Cargando sesión...</div></main>;
   if (!user) return null;
-  if (pathname === "/mi-flow/avatar") return <>{children}</>;
+  if (pathname === "/mi-flow/avatar" || pathname === "/mi-flow/menu") return <>{children}</>;
 
-  return <main className="pb-20 md:pb-0"><MainNav /><div className="mx-auto grid max-w-7xl gap-4 p-4 md:grid-cols-[240px_1fr] md:p-6"><Sidebar links={links} /><section>{children}</section></div><nav className="fixed bottom-3 left-1/2 z-20 flex w-[95%] -translate-x-1/2 gap-2 overflow-x-auto rounded-2xl border border-[var(--line)] bg-[var(--card)]/90 p-2 backdrop-blur md:hidden">{links.slice(0, 6).map((l) => <Link key={l} href={l} className={`whitespace-nowrap rounded-xl px-3 py-2 text-xs ${pathname === l ? "bg-[var(--chip)]" : "bg-transparent"}`}>{l.split("/").pop()}</Link>)}</nav></main>;
+  return (
+    <main className="pb-24 md:pb-0">
+      <MainNav />
+      <div className="mx-auto grid max-w-7xl gap-4 p-4 md:grid-cols-[240px_1fr] md:p-6">
+        <Sidebar links={links} />
+        <section>{children}</section>
+      </div>
+      <nav className="fixed bottom-3 left-1/2 z-20 flex w-[88%] max-w-xs -translate-x-1/2 items-center justify-around rounded-2xl border border-[var(--line)] bg-[var(--card)]/90 p-2 backdrop-blur md:hidden">
+        <Link href="/" className="flex flex-col items-center gap-1 px-6 py-1 text-[10px] text-white/70">
+          <span className="text-xl leading-none">🏠</span>
+          Home
+        </Link>
+        <Link href="/mi-flow/menu" className="flex flex-col items-center gap-1 px-6 py-1 text-[10px] text-white/70">
+          <CloverIcon size={20} />
+          Todo
+        </Link>
+      </nav>
+    </main>
+  );
 }
