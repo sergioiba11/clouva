@@ -16,6 +16,7 @@ type ClothingRow = {
   status: string;
   model_url: string | null;
   thumbnail_url: string | null;
+  front_reference_url: string | null;
   meshy_task_id: string | null;
   created_at: string;
 };
@@ -71,7 +72,7 @@ export async function GET(request: NextRequest) {
   const { data: userData, error: userError } = await supabase.auth.getUser(accessToken);
   if (userError || !userData.user) return NextResponse.json({ error: "Invalid session" }, { status: 401 });
 
-  const select = "id,name,category,fit,color,status,model_url,thumbnail_url,meshy_task_id,created_at";
+  const select = "id,name,category,fit,color,status,model_url,thumbnail_url,front_reference_url,meshy_task_id,created_at";
   const { data: initialData, error: initialError } = await supabase
     .from("clothing_items")
     .select(select)
@@ -119,6 +120,7 @@ export async function GET(request: NextRequest) {
 
   const items = ((data ?? []) as ClothingRow[]).map((item) => ({
     ...item,
+    thumbnail_url: item.thumbnail_url || item.front_reference_url,
     meshy_progress: item.status === "ready" ? 100 : progressById[item.id],
   }));
 
