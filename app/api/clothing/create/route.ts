@@ -9,8 +9,6 @@ const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
 const ALLOWED_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 const CATEGORIES = new Set(["hoodie", "shirt", "jacket", "pants", "shorts", "shoes", "accessory"]);
 
-// Guía de estilo/textura (NO de geometría — Meshy solo usa esto para texturizar,
-// la forma sale de las fotos subidas, no de este texto).
 const BASE_STYLE_PROMPT =
   "Clean, game-ready streetwear garment for a stylized 3D avatar. Flat, even, well-lit texture. No visible mannequin or body parts in the texture.";
 
@@ -44,11 +42,13 @@ export async function POST(request: NextRequest) {
     const fit = String(form.get("fit") ?? "");
     const color = String(form.get("color") ?? "");
     const name = String(form.get("name") ?? "").trim().slice(0, 80) || "Prenda sin nombre";
+    const coverSource = String(form.get("coverSource") ?? "manual") === "openai" ? "openai" : "manual";
 
     if (!CATEGORIES.has(category)) return NextResponse.json({ error: "Categoría inválida" }, { status: 400 });
     if (!(front instanceof File) || !(back instanceof File)) {
       return NextResponse.json({ error: "Faltan las imágenes de frente y espalda" }, { status: 400 });
     }
+
     const files: { key: string; file: File }[] = [
       { key: "front", file: front },
       { key: "back", file: back },
@@ -75,7 +75,10 @@ export async function POST(request: NextRequest) {
       }),
     );
 
-    const imageUrls = uploads.map((u) => u.publicUrl);
+    const frontUpload = uploads.find((upload) => upload.key === "front");
+    if (!frontUpload) throw new Error("No se pudo guardar la portada de la pieza");
+
+    const imageUrls = uploads.map((upload) => upload.publicUrl);
     const fitLabel = fit ? `Fit: ${fit}.` : "";
     const colorLabel = color ? `Main color: ${color}.` : "";
     const texturePrompt = [BASE_STYLE_PROMPT, fitLabel, colorLabel, description].filter(Boolean).join(" ").slice(0, 600);
@@ -94,18 +97,25 @@ export async function POST(request: NextRequest) {
         color: color || null,
         status: "generating",
         prompt: texturePrompt,
-        front_reference_url: uploads.find((u) => u.key === "front")?.publicUrl,
-        back_reference_url: uploads.find((u) => u.key === "back")?.publicUrl,
-        side_reference_url: uploads.find((u) => u.key === "side")?.publicUrl ?? null,
-        thumbnail_url: uploads.find((u) => u.key === "front")?.publicUrl,
+        front_reference_url: frontUpload.publicUrl,
+        back_reference_url: uploads.find((upload) => upload.key === "back")?.publicUrl,
+        side_reference_url: uploads.find((upload) => upload.key === "side")?.publicUrl ?? null,
+        // La vista frontal aprobada, generada por OpenAI o subida manualmente,
+        // queda como portada oficial de la pieza y se guarda en la base.
+        thumbnail_url: frontUpload.publicUrl,
         meshy_task_id: taskId,
-        metadata: { reference_paths: uploads.map((u) => u.storagePath) },
+        metadata: {
+          reference_paths: uploads.map((upload) => upload.storagePath),
+          cover_image_url: frontUpload.publicUrl,
+          cover_source: coverSource,
+          cover_view: "front",
+        },
       })
       .select("id,name,category,status,thumbnail_url,meshy_task_id,created_at")
       .single();
     if (insertError) throw insertError;
 
-    return NextResponse.json({ taskId, item });
+    return NextResponse.json({ taskId, item, coverUrl: frontUpload.publicUrl });
   } catch (error) {
     console.error("Clothing generation failed", error);
     return NextResponse.json(
