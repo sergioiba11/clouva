@@ -51,7 +51,7 @@ export default function AdminPage() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" data-admin-version="2026-07-14-rig">
       <PremiumCard className="p-6">
         <h1 className="text-3xl font-semibold">Centro de Control CLOUVA</h1>
         <p className="text-[var(--muted)]">Business OS · Analytics · Operación</p>
