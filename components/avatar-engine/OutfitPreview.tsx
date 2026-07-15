@@ -7,13 +7,13 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { frameAvatar, normalizeAvatarObject, inferAvatarBodyPartBox, fitGarmentToBodyPart, type GarmentFitOptions, type WearableCategory } from "@/lib/avatar-engine/frame-avatar";
 
 const CATEGORY_FIT: Record<WearableCategory, GarmentFitOptions> = {
-  hoodie: { paddingScale: 0.98, widthPadding: 1.08, depthPadding: 1.10, verticalOffset: -0.015 },
-  shirt: { paddingScale: 0.98, widthPadding: 1.04, depthPadding: 1.06, verticalOffset: -0.01 },
-  jacket: { paddingScale: 0.99, widthPadding: 1.10, depthPadding: 1.12, verticalOffset: -0.015 },
-  pants: { paddingScale: 1, widthPadding: 1.06, depthPadding: 1.08, verticalOffset: 0 },
-  shorts: { paddingScale: 1, widthPadding: 1.06, depthPadding: 1.08, verticalOffset: 0 },
-  shoes: { paddingScale: 1, widthPadding: 1.04, depthPadding: 1.08, verticalOffset: 0 },
-  accessory: { paddingScale: 1, widthPadding: 1, depthPadding: 1, verticalOffset: 0 },
+  hoodie: { paddingScale: 0.98, widthPadding: 1.07, depthPadding: 1.08, verticalOffset: -0.025, forwardOffset: 0.008, minAxisRatio: 0.76, maxAxisRatio: 1.20 },
+  shirt: { paddingScale: 0.96, widthPadding: 1.03, depthPadding: 1.05, verticalOffset: -0.018, forwardOffset: 0.006, minAxisRatio: 0.78, maxAxisRatio: 1.18 },
+  jacket: { paddingScale: 1, widthPadding: 1.10, depthPadding: 1.12, verticalOffset: -0.025, forwardOffset: 0.01, minAxisRatio: 0.75, maxAxisRatio: 1.22 },
+  pants: { paddingScale: 1, widthPadding: 1.06, depthPadding: 1.08, verticalOffset: 0, forwardOffset: 0.004, minAxisRatio: 0.78, maxAxisRatio: 1.20 },
+  shorts: { paddingScale: 1, widthPadding: 1.06, depthPadding: 1.08, verticalOffset: 0, forwardOffset: 0.004, minAxisRatio: 0.78, maxAxisRatio: 1.20 },
+  shoes: { paddingScale: 1, widthPadding: 1.04, depthPadding: 1.08, verticalOffset: 0, forwardOffset: 0.008, minAxisRatio: 0.72, maxAxisRatio: 1.25 },
+  accessory: { paddingScale: 1, widthPadding: 1, depthPadding: 1, verticalOffset: 0, forwardOffset: 0, minAxisRatio: 0.75, maxAxisRatio: 1.25 },
 };
 
 export type OutfitLayer = { id: string; url: string; visible: boolean; category?: string; preFitted?: boolean };
@@ -30,7 +30,12 @@ function invalidFit(object: Object3D, target: Box3) {
   const targetSize = target.getSize(new Vector3());
   const center = box.getCenter(new Vector3());
   const targetCenter = target.getCenter(new Vector3());
-  return size.x > targetSize.x * 1.45 || size.y > targetSize.y * 1.45 || size.z > targetSize.z * 1.65 || center.distanceTo(targetCenter) > targetSize.y * 0.65;
+  return !Number.isFinite(size.x + size.y + size.z)
+    || size.x > targetSize.x * 1.55
+    || size.y > targetSize.y * 1.32
+    || size.z > targetSize.z * 1.55
+    || size.y < targetSize.y * 0.58
+    || center.distanceTo(targetCenter) > targetSize.y * 0.55;
 }
 
 function resetRootTransform(object: Object3D) {
@@ -99,24 +104,24 @@ export function OutfitPreview({ avatarUrl, layers, className = "" }: Props) {
           const obj = (await loader.loadAsync(layer.url)).scene;
           const category = categoryOf(layer.category);
           if (category) {
-            // Se usa una zona proporcional estable en lugar de confiar en nombres
-            // como Casual_Body, porque algunos avatares incluyen cabeza y torso en
-            // la misma malla y elevaban el cuello de la hoodie hasta la cara.
             const target = inferAvatarBodyPartBox(avatarObj, category);
             resetRootTransform(obj);
             fitGarmentToBodyPart(obj, target, CATEGORY_FIT[category]);
 
-            scene.add(obj);
-            avatarObj.attach(obj);
-
+            // La validación y el segundo intento ocurren todavía en espacio de
+            // mundo. Antes se reintentaba después de parentar al avatar, mezclando
+            // coordenadas locales y mundiales y levantando la pieza hacia el cuello.
             if (invalidFit(obj, target)) {
               resetRootTransform(obj);
               fitGarmentToBodyPart(obj, target, {
                 ...CATEGORY_FIT[category],
-                paddingScale: (CATEGORY_FIT[category].paddingScale ?? 1) * 0.9,
+                widthPadding: (CATEGORY_FIT[category].widthPadding ?? 1) * 0.94,
+                depthPadding: (CATEGORY_FIT[category].depthPadding ?? 1) * 0.94,
               });
-              avatarObj.attach(obj);
             }
+
+            scene.add(obj);
+            avatarObj.attach(obj);
             if (invalidFit(obj, target)) obj.visible = false;
           } else {
             normalizeAvatarObject(obj, { targetHeight: 0.65 });
