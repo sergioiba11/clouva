@@ -27,6 +27,7 @@ export function MainNav() {
 
   const displayName = profile?.full_name ?? profile?.display_name ?? user?.email?.split("@")[0] ?? "Flow";
   const avatar = profile?.avatar_url ?? user?.user_metadata?.avatar_url;
+  const canAdmin = role === "admin" || role === "owner";
 
   return (
     <header className="sticky top-0 z-50 border-b border-[var(--line)] bg-[var(--card)]/80 backdrop-blur-2xl">
@@ -51,22 +52,15 @@ export function MainNav() {
               </button>
               {openMenu ? (
                 <>
-                  <button
-                    aria-label="Cerrar menú"
-                    className="fixed inset-0 z-[55] cursor-default"
-                    onClick={() => setOpenMenu(false)}
-                  />
+                  <button aria-label="Cerrar menú" className="fixed inset-0 z-[55] cursor-default" onClick={() => setOpenMenu(false)} />
                   <div className="absolute right-0 top-full z-[60] mt-2 w-60 rounded-2xl border border-[var(--line)] p-2 text-sm shadow-[var(--shadow-glow)] max-sm:right-[-8px] max-sm:w-[min(92vw,18rem)]" style={{ background: "var(--bg)" }}>
                     <Link href="/perfil" className="block rounded-lg px-3 py-2 hover:bg-[var(--chip)]" onClick={() => setOpenMenu(false)}>Perfil</Link>
                     <Link href="/mi-flow" className="block rounded-lg px-3 py-2 hover:bg-[var(--chip)]" onClick={() => setOpenMenu(false)}>Mi Flow</Link>
-                    {role === "admin" ? <Link href="/admin" className="block rounded-lg px-3 py-2 hover:bg-[var(--chip)]" onClick={() => setOpenMenu(false)}>Admin</Link> : null}
+                    <Link href="/creator-studio" className="block rounded-lg px-3 py-2 text-violet-200 hover:bg-violet-500/10" onClick={() => setOpenMenu(false)}>Creator Studio</Link>
+                    {canAdmin ? <Link href="/admin" className="block rounded-lg px-3 py-2 text-amber-200 hover:bg-amber-500/10" onClick={() => setOpenMenu(false)}>Admin</Link> : null}
                     <Link href="/login?addAccount=1" className="block rounded-lg px-3 py-2 hover:bg-[var(--chip)]" onClick={() => setOpenMenu(false)}>Agregar cuenta</Link>
-                    <button className="block w-full rounded-lg px-3 py-2 text-left hover:bg-[var(--chip)]" onClick={() => { setOpenMenu(false); setOpenSwitch(true); }}>
-                      Cambiar cuenta
-                    </button>
-                    <button onClick={async () => { const { supabase } = await import("@/lib/supabase"); await supabase.auth.signOut(); router.push("/login"); }} className="block w-full rounded-lg px-3 py-2 text-left text-rose-400 hover:bg-rose-500/10">
-                      Cerrar sesión
-                    </button>
+                    <button className="block w-full rounded-lg px-3 py-2 text-left hover:bg-[var(--chip)]" onClick={() => { setOpenMenu(false); setOpenSwitch(true); }}>Cambiar cuenta</button>
+                    <button onClick={async () => { const { supabase } = await import("@/lib/supabase"); await supabase.auth.signOut(); router.push("/login"); }} className="block w-full rounded-lg px-3 py-2 text-left text-rose-400 hover:bg-rose-500/10">Cerrar sesión</button>
                   </div>
                 </>
               ) : null}
