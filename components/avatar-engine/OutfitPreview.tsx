@@ -1,7 +1,22 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ACESFilmicToneMapping, AmbientLight, Box3, DirectionalLight, HemisphereLight, Object3D, PerspectiveCamera, Scene, SRGBColorSpace, Vector3, WebGLRenderer } from "three";
+import {
+  ACESFilmicToneMapping,
+  AmbientLight,
+  Box3,
+  Clock,
+  DirectionalLight,
+  Euler,
+  HemisphereLight,
+  Object3D,
+  PerspectiveCamera,
+  Quaternion,
+  Scene,
+  SRGBColorSpace,
+  Vector3,
+  WebGLRenderer,
+} from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { frameAvatar, normalizeAvatarObject, inferAvatarBodyPartBox, fitGarmentToBodyPart, type GarmentFitOptions, type WearableCategory } from "@/lib/avatar-engine/frame-avatar";
@@ -15,6 +30,22 @@ const CATEGORY_FIT: Record<WearableCategory, GarmentFitOptions> = {
   shoes: { paddingScale: 1, widthPadding: 1.04, depthPadding: 1.08, verticalOffset: 0, forwardOffset: 0.008, minAxisRatio: 0.72, maxAxisRatio: 1.25 },
   accessory: { paddingScale: 1, widthPadding: 1, depthPadding: 1, verticalOffset: 0, forwardOffset: 0, minAxisRatio: 0.75, maxAxisRatio: 1.25 },
 };
+
+const IDLE_BONES = {
+  hips: ["Hips", "mixamorig:Hips", "pelvis", "Pelvis"],
+  spine: ["Spine", "Spine01", "Spine1", "mixamorig:Spine"],
+  chest: ["Spine02", "Spine2", "mixamorig:Spine2", "Chest", "chest"],
+  neck: ["Neck", "neck", "mixamorig:Neck"],
+  head: ["Head", "head", "mixamorig:Head"],
+  leftShoulder: ["LeftShoulder", "mixamorig:LeftShoulder", "shoulder.L", "Shoulder_L"],
+  rightShoulder: ["RightShoulder", "mixamorig:RightShoulder", "shoulder.R", "Shoulder_R"],
+  leftArm: ["LeftArm", "mixamorig:LeftArm", "upper_arm.L", "UpperArm_L"],
+  rightArm: ["RightArm", "mixamorig:RightArm", "upper_arm.R", "UpperArm_R"],
+} as const;
+
+type IdleBoneKey = keyof typeof IDLE_BONES;
+type IdleBone = { object: Object3D; base: Quaternion };
+type IdleRig = Partial<Record<IdleBoneKey, IdleBone>>;
 
 export type OutfitLayer = { id: string; url: string; visible: boolean; category?: string; preFitted?: boolean };
 type Props = { avatarUrl: string | null; layers: OutfitLayer[]; className?: string };
@@ -52,6 +83,49 @@ function copyNormalizedAvatarTransform(garment: Object3D, avatar: Object3D) {
   garment.updateMatrixWorld(true);
 }
 
+function findNamedBone(root: Object3D, aliases: readonly string[]) {
+  let found: Object3D | null = null;
+  root.traverse((object) => {
+    if (!found && aliases.includes(object.name)) found = object;
+  });
+  return found;
+}
+
+function collectIdleRig(root: Object3D): IdleRig {
+  const rig: IdleRig = {};
+  for (const [key, aliases] of Object.entries(IDLE_BONES) as [IdleBoneKey, readonly string[]][]) {
+    const object = findNamedBone(root, aliases);
+    if (object) rig[key] = { object, base: object.quaternion.clone() };
+  }
+  return rig;
+}
+
+const idleEuler = new Euler();
+const idleQuaternion = new Quaternion();
+
+function rotateIdleBone(bone: IdleBone | undefined, x: number, y: number, z: number) {
+  if (!bone) return;
+  idleEuler.set(x, y, z, "XYZ");
+  idleQuaternion.setFromEuler(idleEuler);
+  bone.object.quaternion.copy(bone.base).multiply(idleQuaternion);
+}
+
+function applyIdlePose(rig: IdleRig, time: number) {
+  const breath = Math.sin(time * 1.65);
+  const slow = Math.sin(time * 0.62);
+  const sway = Math.sin(time * 0.38);
+
+  rotateIdleBone(rig.hips, 0, sway * 0.012, -slow * 0.008);
+  rotateIdleBone(rig.spine, breath * 0.010, sway * 0.010, slow * 0.006);
+  rotateIdleBone(rig.chest, breath * 0.018, -sway * 0.008, -slow * 0.006);
+  rotateIdleBone(rig.neck, -breath * 0.004, sway * 0.018, slow * 0.007);
+  rotateIdleBone(rig.head, breath * 0.004, sway * 0.025, slow * 0.010);
+  rotateIdleBone(rig.leftShoulder, 0, 0, breath * 0.010);
+  rotateIdleBone(rig.rightShoulder, 0, 0, -breath * 0.010);
+  rotateIdleBone(rig.leftArm, breath * 0.008, 0, slow * 0.012);
+  rotateIdleBone(rig.rightArm, breath * 0.008, 0, -slow * 0.012);
+}
+
 export function OutfitPreview({ avatarUrl, layers, className = "" }: Props) {
   const mount = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -62,6 +136,9 @@ export function OutfitPreview({ avatarUrl, layers, className = "" }: Props) {
     let disposed = false;
     let raf = 0;
     let mainModel: Object3D | null = null;
+    let avatarBaseY = 0;
+    const idleRigs: IdleRig[] = [];
+    const clock = new Clock();
     const scene = new Scene();
     const camera = new PerspectiveCamera(31, 1, 0.02, 100);
     const renderer = new WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
@@ -104,6 +181,8 @@ export function OutfitPreview({ avatarUrl, layers, className = "" }: Props) {
         normalizeAvatarObject(avatarObj, { targetHeight: 2.05 });
         scene.add(avatarObj);
         mainModel = avatarObj;
+        avatarBaseY = avatarObj.position.y;
+        idleRigs.push(collectIdleRig(avatarObj));
         loadedRef.current.__avatar = avatarObj;
 
         for (const layer of layers) {
@@ -131,9 +210,8 @@ export function OutfitPreview({ avatarUrl, layers, className = "" }: Props) {
 
             scene.add(obj);
             avatarObj.attach(obj);
+            idleRigs.push(collectIdleRig(obj));
 
-            // Nunca ocultamos una pieza que el usuario equipó. La validación sirve
-            // para elegir el mejor ajuste, no para convertirla en invisible.
             if (invalidFit(obj, target)) {
               console.warn("CLOUVA wearable fit outside expected bounds", {
                 layerId: layer.id,
@@ -160,7 +238,13 @@ export function OutfitPreview({ avatarUrl, layers, className = "" }: Props) {
     })();
 
     const animate = () => {
-      if (!document.hidden) { controls.update(); renderer.render(scene, camera); }
+      if (!document.hidden) {
+        const elapsed = clock.getElapsedTime();
+        for (const rig of idleRigs) applyIdlePose(rig, elapsed);
+        if (mainModel) mainModel.position.y = avatarBaseY + Math.sin(elapsed * 1.65) * 0.004;
+        controls.update();
+        renderer.render(scene, camera);
+      }
       raf = requestAnimationFrame(animate);
     };
     raf = requestAnimationFrame(animate);
@@ -186,6 +270,7 @@ export function OutfitPreview({ avatarUrl, layers, className = "" }: Props) {
   return <div className={`relative h-full w-full ${className}`}>
     {status === "loading" ? <div className="absolute inset-0 grid place-items-center text-sm text-white/40">Cargando…</div> : null}
     {status === "error" ? <div className="absolute inset-0 grid place-items-center text-sm text-rose-400">No se pudo cargar la vista previa</div> : null}
+    {status === "ready" ? <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded-full border border-white/10 bg-black/35 px-3 py-1 text-[10px] uppercase tracking-[0.18em] text-white/45 backdrop-blur">Idle activo · rig en prueba</div> : null}
     <div ref={mount} className="h-full w-full" />
   </div>;
 }
