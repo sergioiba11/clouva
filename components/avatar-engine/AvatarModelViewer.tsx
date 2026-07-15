@@ -10,6 +10,7 @@ import {
   DirectionalLight,
   Euler,
   HemisphereLight,
+  MathUtils,
   Object3D,
   PerspectiveCamera,
   Quaternion,
@@ -39,7 +40,23 @@ type Props = {
   onReady?: (object: Object3D) => void;
 };
 
-type RigKey = "hips" | "spine" | "chest" | "neck" | "head" | "leftArm" | "rightArm" | "leftForeArm" | "rightForeArm" | "leftUpLeg" | "rightUpLeg";
+type RigKey =
+  | "hips"
+  | "spine"
+  | "chest"
+  | "neck"
+  | "head"
+  | "leftShoulder"
+  | "rightShoulder"
+  | "leftArm"
+  | "rightArm"
+  | "leftForeArm"
+  | "rightForeArm"
+  | "leftUpLeg"
+  | "rightUpLeg"
+  | "leftLeg"
+  | "rightLeg";
+
 type RigBone = { bone: Bone; base: Quaternion };
 type DanceRig = Partial<Record<RigKey, RigBone>>;
 
@@ -49,12 +66,16 @@ const RIG_ALIASES: Record<RigKey, readonly string[]> = {
   chest: ["spine02", "spine2", "chest", "upperchest"],
   neck: ["neck"],
   head: ["head"],
-  leftArm: ["leftarm", "upperarml", "upperarmleft", "shoulderl"],
-  rightArm: ["rightarm", "upperarmr", "upperarmright", "shoulderr"],
+  leftShoulder: ["leftshoulder", "shoulderl", "claviclel", "leftclavicle"],
+  rightShoulder: ["rightshoulder", "shoulderr", "clavicler", "rightclavicle"],
+  leftArm: ["leftarm", "upperarml", "upperarmleft"],
+  rightArm: ["rightarm", "upperarmr", "upperarmright"],
   leftForeArm: ["leftforearm", "forearml", "lowerarml"],
   rightForeArm: ["rightforearm", "forearmr", "lowerarmr"],
   leftUpLeg: ["leftupleg", "thighl", "upperlegl"],
   rightUpLeg: ["rightupleg", "thighr", "upperlegr"],
+  leftLeg: ["leftleg", "calfl", "lowerlegl", "shinl"],
+  rightLeg: ["rightleg", "calfr", "lowerlegr", "shinr"],
 };
 
 function cleanName(value: string): string {
@@ -92,6 +113,16 @@ function poseRigBone(entry: RigBone | undefined, x: number, y: number, z: number
   entry.bone.quaternion.copy(entry.base).multiply(danceQuaternion);
 }
 
+function safe(value: number, min: number, max: number): number {
+  return MathUtils.clamp(value, min, max);
+}
+
+/**
+ * Movimiento procedural de validación pensado para el cuerpo CLOUVA.
+ * Mantiene los codos por fuera del torso y evita aducción excesiva de hombros.
+ * No reemplaza la corrección de weights en Blender, pero impide que la prueba web
+ * fuerce el rig a poses incompatibles con las proporciones del avatar.
+ */
 function applyDance(rig: DanceRig, elapsed: number, active: boolean): void {
   const beat = Math.sin(elapsed * 4.2);
   const halfBeat = Math.sin(elapsed * 2.1);
@@ -103,26 +134,42 @@ function applyDance(rig: DanceRig, elapsed: number, active: boolean): void {
     poseRigBone(rig.chest, Math.sin(elapsed * 1.5) * 0.012, 0, 0);
     poseRigBone(rig.neck, 0, 0, 0);
     poseRigBone(rig.head, 0, 0, 0);
+    poseRigBone(rig.leftShoulder, 0, 0, 0);
+    poseRigBone(rig.rightShoulder, 0, 0, 0);
     poseRigBone(rig.leftArm, 0, 0, 0);
     poseRigBone(rig.rightArm, 0, 0, 0);
     poseRigBone(rig.leftForeArm, 0, 0, 0);
     poseRigBone(rig.rightForeArm, 0, 0, 0);
     poseRigBone(rig.leftUpLeg, 0, 0, 0);
     poseRigBone(rig.rightUpLeg, 0, 0, 0);
+    poseRigBone(rig.leftLeg, 0, 0, 0);
+    poseRigBone(rig.rightLeg, 0, 0, 0);
     return;
   }
 
-  poseRigBone(rig.hips, 0, side * 0.12, halfBeat * 0.08);
-  poseRigBone(rig.spine, beat * 0.04, -side * 0.08, -halfBeat * 0.05);
-  poseRigBone(rig.chest, -beat * 0.06, side * 0.1, halfBeat * 0.07);
-  poseRigBone(rig.neck, 0, -side * 0.09, beat * 0.03);
-  poseRigBone(rig.head, beat * 0.03, side * 0.14, -halfBeat * 0.05);
-  poseRigBone(rig.leftArm, -0.12 + beat * 0.08, 0, 0.34 + halfBeat * 0.22);
-  poseRigBone(rig.rightArm, -0.12 - beat * 0.08, 0, -0.34 - halfBeat * 0.22);
-  poseRigBone(rig.leftForeArm, 0, beat * 0.1, 0.28 + halfBeat * 0.18);
-  poseRigBone(rig.rightForeArm, 0, -beat * 0.1, -0.28 - halfBeat * 0.18);
-  poseRigBone(rig.leftUpLeg, halfBeat * 0.08, 0, side * 0.05);
-  poseRigBone(rig.rightUpLeg, -halfBeat * 0.08, 0, -side * 0.05);
+  poseRigBone(rig.hips, 0, safe(side * 0.07, -0.08, 0.08), safe(halfBeat * 0.035, -0.04, 0.04));
+  poseRigBone(rig.spine, safe(beat * 0.025, -0.03, 0.03), safe(-side * 0.04, -0.05, 0.05), safe(-halfBeat * 0.025, -0.03, 0.03));
+  poseRigBone(rig.chest, safe(-beat * 0.035, -0.04, 0.04), safe(side * 0.055, -0.06, 0.06), safe(halfBeat * 0.035, -0.04, 0.04));
+  poseRigBone(rig.neck, 0, safe(-side * 0.055, -0.06, 0.06), safe(beat * 0.018, -0.02, 0.02));
+  poseRigBone(rig.head, safe(beat * 0.018, -0.02, 0.02), safe(side * 0.08, -0.09, 0.09), safe(-halfBeat * 0.025, -0.03, 0.03));
+
+  // Clavículas abiertas: el brazo parte separado del pecho.
+  poseRigBone(rig.leftShoulder, 0, safe(-side * 0.025, -0.03, 0.03), 0.08);
+  poseRigBone(rig.rightShoulder, 0, safe(side * 0.025, -0.03, 0.03), -0.08);
+
+  // Sin giro Y en brazos: ese giro era el que llevaba codos y manos hacia el abdomen.
+  poseRigBone(rig.leftArm, safe(-0.045 + beat * 0.035, -0.09, 0.01), 0, safe(0.16 + halfBeat * 0.07, 0.08, 0.23));
+  poseRigBone(rig.rightArm, safe(-0.045 - beat * 0.035, -0.09, 0.01), 0, safe(-0.16 - halfBeat * 0.07, -0.23, -0.08));
+
+  // Flexión suave y lateral, nunca cruzando la línea central del torso.
+  poseRigBone(rig.leftForeArm, 0, safe(beat * 0.025, -0.03, 0.03), safe(0.09 + halfBeat * 0.045, 0.04, 0.14));
+  poseRigBone(rig.rightForeArm, 0, safe(-beat * 0.025, -0.03, 0.03), safe(-0.09 - halfBeat * 0.045, -0.14, -0.04));
+
+  // Paso corto: reduce cruces de muslos y pies.
+  poseRigBone(rig.leftUpLeg, safe(halfBeat * 0.035, -0.04, 0.04), 0, safe(side * 0.018, -0.02, 0.02));
+  poseRigBone(rig.rightUpLeg, safe(-halfBeat * 0.035, -0.04, 0.04), 0, safe(-side * 0.018, -0.02, 0.02));
+  poseRigBone(rig.leftLeg, safe(Math.max(0, -halfBeat) * 0.025, 0, 0.03), 0, 0);
+  poseRigBone(rig.rightLeg, safe(Math.max(0, halfBeat) * 0.025, 0, 0.03), 0, 0);
 }
 
 export function AvatarModelViewer({
@@ -236,6 +283,7 @@ export function AvatarModelViewer({
           child.frustumCulled = false;
           child.castShadow = true;
           child.receiveShadow = true;
+          if (child.isSkinnedMesh) child.normalizeSkinWeights?.();
         }
       });
       currentModel = object;
@@ -313,7 +361,7 @@ export function AvatarModelViewer({
           const active = motionTestRef.current;
           applyDance(danceRig, elapsed, active);
           const breath = Math.sin(elapsed * 1.5);
-          currentModel.position.y = baseY + breath * 0.0025 + (active ? Math.abs(Math.sin(elapsed * 4.2)) * 0.012 : 0);
+          currentModel.position.y = baseY + breath * 0.0025 + (active ? Math.abs(Math.sin(elapsed * 4.2)) * 0.006 : 0);
           currentModel.scale.y = 1 + breath * 0.002;
           currentModel.scale.x = 1 - breath * 0.001;
           currentModel.scale.z = 1 - breath * 0.001;
