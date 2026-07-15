@@ -35,7 +35,14 @@ function invalidFit(object: Object3D, target: Box3) {
   const targetSize = target.getSize(new Vector3());
   const center = box.getCenter(new Vector3());
   const targetCenter = target.getCenter(new Vector3());
-  return size.x > targetSize.x * 1.65 || size.y > targetSize.y * 1.65 || size.z > targetSize.z * 1.9 || center.distanceTo(targetCenter) > targetSize.y;
+  return size.x > targetSize.x * 1.65 || size.y > targetSize.y * 1.65 || size.z > targetSize.z * 1.9 || center.distanceTo(targetCenter) > targetSize.y * 0.55;
+}
+
+function resetRootTransform(object: Object3D) {
+  object.position.set(0, 0, 0);
+  object.rotation.set(0, 0, 0);
+  object.scale.set(1, 1, 1);
+  object.updateMatrixWorld(true);
 }
 
 export function OutfitPreview({ avatarUrl, layers, className = "" }: Props) {
@@ -99,16 +106,25 @@ export function OutfitPreview({ avatarUrl, layers, className = "" }: Props) {
           if (category) {
             const named = findAvatarBodyPart(avatarObj, CATEGORY_BODY_MESHES[category]);
             const target = named?.box ?? inferAvatarBodyPartBox(avatarObj, category);
-            if (layer.preFitted) {
-              obj.position.copy(avatarObj.position);
-              obj.rotation.copy(avatarObj.rotation);
-              obj.scale.copy(avatarObj.scale);
-              obj.updateMatrixWorld(true);
-              if (invalidFit(obj, target)) fitGarmentToBodyPart(obj, target, CATEGORY_FIT[category]);
-              scene.add(obj);
-            } else {
+
+            // Los GLB generados por Meshy suelen conservar offsets, escala o un
+            // armature propio en la raíz. Copiar el transform del avatar hacía
+            // que una prenda marcada como fitted pudiera quedar sobre la cabeza.
+            // Para la vista previa siempre partimos de una raíz neutra y la
+            // ajustamos contra la zona corporal real del avatar.
+            resetRootTransform(obj);
+            fitGarmentToBodyPart(obj, target, CATEGORY_FIT[category]);
+
+            // Attach conserva el transform mundial calculado y hace que la pieza
+            // acompañe al avatar al rotarlo en el visor.
+            scene.add(obj);
+            avatarObj.attach(obj);
+
+            // Una segunda validación evita mostrar assets rotos o con geometría
+            // residual muy alejada del cuerpo.
+            if (invalidFit(obj, target)) {
+              resetRootTransform(obj);
               fitGarmentToBodyPart(obj, target, CATEGORY_FIT[category]);
-              scene.add(obj);
               avatarObj.attach(obj);
             }
             if (invalidFit(obj, target)) obj.visible = false;
