@@ -48,8 +48,59 @@ def bbox_world(obj):
     return mins, maxs
 
 
-def fit_to_body(garment, body, category):
+# Nombres reales de huesos del avatar oficial actual, con alias comunes
+# por si el rig cambia en el futuro (ej. prefijo mixamorig:, variantes
+# Spine1/Spine01). No asumimos un único nombre fijo.
+BONE_ALIASES = {
+    "hips": ["Hips", "mixamorig:Hips", "pelvis", "Pelvis"],
+    "spine_top": ["Spine02", "Spine2", "Spine1", "Spine01", "mixamorig:Spine2", "chest", "Chest"],
+    "neck": ["neck", "Neck", "mixamorig:Neck"],
+    "left_shoulder": ["LeftShoulder", "mixamorig:LeftShoulder", "shoulder.L", "Shoulder_L"],
+    "left_up_leg": ["LeftUpLeg", "mixamorig:LeftUpLeg", "thigh.L", "UpLeg_L"],
+    "left_foot": ["LeftFoot", "mixamorig:LeftFoot", "foot.L", "Foot_L"],
+    "left_toe": ["LeftToeBase", "mixamorig:LeftToeBase", "toe.L"],
+}
+
+
+def find_bone_head_world(armature, aliases):
+    for name in aliases:
+        bone = armature.pose.bones.get(name)
+        if bone is not None:
+            return armature.matrix_world @ bone.head
+    return None
+
+
+def body_region_bbox(body, armature, category):
+    """Caja englobante de la ZONA anatómica real que le corresponde a
+    esta categoría de prenda, usando las posiciones reales de los
+    huesos del avatar oficial — no un porcentaje inventado del cuerpo
+    entero. Si no encuentra los huesos esperados, cae al cuerpo entero
+    (mejor que romper, pero se documenta como caso de emergencia)."""
     body_min, body_max = bbox_world(body)
+    hips = find_bone_head_world(armature, BONE_ALIASES["hips"])
+    spine_top = find_bone_head_world(armature, BONE_ALIASES["spine_top"])
+    neck = find_bone_head_world(armature, BONE_ALIASES["neck"])
+    shoulder = find_bone_head_world(armature, BONE_ALIASES["left_shoulder"])
+    up_leg = find_bone_head_world(armature, BONE_ALIASES["left_up_leg"])
+    foot = find_bone_head_world(armature, BONE_ALIASES["left_foot"])
+    toe = find_bone_head_world(armature, BONE_ALIASES["left_toe"])
+
+    if category in ("hoodie", "shirt", "jacket") and hips and (neck or shoulder):
+        top_z = (neck or shoulder).z
+        return Vector((body_min.x, body_min.y, hips.z)), Vector((body_max.x, body_max.y, top_z))
+    if category in ("pants", "shorts") and hips and (foot or up_leg):
+        bottom_z = (foot or body_min).z
+        return Vector((body_min.x, body_min.y, bottom_z)), Vector((body_max.x, body_max.y, hips.z))
+    if category == "shoes" and (foot or toe):
+        bottom = (toe or foot)
+        return Vector((body_min.x, body_min.y, body_min.z)), Vector((body_max.x, body_max.y, bottom.z + 0.15 * (body_max.z - body_min.z)))
+    # Respaldo: no se encontraron los huesos esperados para esta
+    # categoría — usar el cuerpo entero es peor, pero evita romper.
+    return body_min, body_max
+
+
+def fit_to_body(garment, body, armature, category):
+    body_min, body_max = body_region_bbox(body, armature, category)
     garment_min, garment_max = bbox_world(garment)
     body_size = body_max - body_min
     garment_size = garment_max - garment_min
@@ -227,7 +278,7 @@ def main():
         if obj != garment:
             bpy.data.objects.remove(obj, do_unlink=True)
 
-    fit_to_body(garment, body, category)
+    fit_to_body(garment, body, armature, category)
     copy_weights(body, garment)
     apply_material(garment, art_path, color)
 
