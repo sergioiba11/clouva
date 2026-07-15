@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { getRedirectByRole } from "@/lib/auth";
 
-const STEP_TIMEOUT_MS = 12000;
+const STEP_TIMEOUT_MS = 30000;
 
 function redirect(path: string) {
   window.location.replace(path);
@@ -20,11 +20,11 @@ async function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
 }
 
 async function waitForSession(supabase: any) {
-  for (let attempt = 0; attempt < 8; attempt += 1) {
+  for (let attempt = 0; attempt < 12; attempt += 1) {
     const result = await supabase.auth.getSession();
     if (result.error) throw result.error;
     if (result.data.session?.user) return result.data.session;
-    await new Promise((resolve) => window.setTimeout(resolve, 350));
+    await new Promise((resolve) => window.setTimeout(resolve, 400));
   }
   return null;
 }
@@ -49,10 +49,12 @@ export default function AuthCallbackContent() {
         if (oauthError) throw new Error(oauthError);
 
         const { supabase } = await withTimeout(import("@/lib/supabase"), "La aplicación");
-        let sessionResult = await withTimeout(supabase.auth.getSession(), "La sesión");
-        if (sessionResult.error) throw sessionResult.error;
+        const initialSession = await withTimeout(supabase.auth.getSession(), "La sesión");
+        if (initialSession.error) throw initialSession.error;
 
-        if (!sessionResult.data.session && code) {
+        let session = initialSession.data.session;
+
+        if (!session && code) {
           const exchange = await withTimeout(
             supabase.auth.exchangeCodeForSession(code),
             "El inicio de sesión con Google",
@@ -66,9 +68,14 @@ export default function AuthCallbackContent() {
               normalized.includes("already been used");
             if (!alreadyHandled) throw exchange.error;
           }
+
+          session = exchange.data.session ?? null;
         }
 
-        const session = await withTimeout(waitForSession(supabase), "La sesión de Google");
+        if (!session) {
+          session = await withTimeout(waitForSession(supabase), "La sesión de Google");
+        }
+
         const user = session?.user;
         if (!user) {
           throw new Error("Google autorizó el acceso, pero CLOUVA no recibió una sesión válida. Volvé a intentarlo.");
