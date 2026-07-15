@@ -4,20 +4,15 @@ import { useEffect, useRef, useState } from "react";
 import { ACESFilmicToneMapping, AmbientLight, Box3, DirectionalLight, HemisphereLight, Object3D, PerspectiveCamera, Scene, SRGBColorSpace, Vector3, WebGLRenderer } from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { frameAvatar, normalizeAvatarObject, findAvatarBodyPart, inferAvatarBodyPartBox, fitGarmentToBodyPart, type GarmentFitOptions, type WearableCategory } from "@/lib/avatar-engine/frame-avatar";
-
-const CATEGORY_BODY_MESHES: Record<WearableCategory, string[]> = {
-  hoodie: ["Casual_Body"], shirt: ["Casual_Body"], jacket: ["Casual_Body"],
-  pants: ["Casual_Legs"], shorts: ["Casual_Legs"], shoes: ["Casual_Feet"], accessory: ["Casual_Body"],
-};
+import { frameAvatar, normalizeAvatarObject, inferAvatarBodyPartBox, fitGarmentToBodyPart, type GarmentFitOptions, type WearableCategory } from "@/lib/avatar-engine/frame-avatar";
 
 const CATEGORY_FIT: Record<WearableCategory, GarmentFitOptions> = {
-  hoodie: { paddingScale: 1.01, widthPadding: 1.10, depthPadding: 1.14, verticalOffset: 0.01 },
-  shirt: { paddingScale: 1, widthPadding: 1.06, depthPadding: 1.09, verticalOffset: 0.01 },
-  jacket: { paddingScale: 1.02, widthPadding: 1.12, depthPadding: 1.16, verticalOffset: 0.01 },
-  pants: { paddingScale: 1, widthPadding: 1.08, depthPadding: 1.10, verticalOffset: -0.01 },
-  shorts: { paddingScale: 1, widthPadding: 1.08, depthPadding: 1.10, verticalOffset: 0 },
-  shoes: { paddingScale: 1, widthPadding: 1.05, depthPadding: 1.10, verticalOffset: 0.005 },
+  hoodie: { paddingScale: 0.98, widthPadding: 1.08, depthPadding: 1.10, verticalOffset: -0.015 },
+  shirt: { paddingScale: 0.98, widthPadding: 1.04, depthPadding: 1.06, verticalOffset: -0.01 },
+  jacket: { paddingScale: 0.99, widthPadding: 1.10, depthPadding: 1.12, verticalOffset: -0.015 },
+  pants: { paddingScale: 1, widthPadding: 1.06, depthPadding: 1.08, verticalOffset: 0 },
+  shorts: { paddingScale: 1, widthPadding: 1.06, depthPadding: 1.08, verticalOffset: 0 },
+  shoes: { paddingScale: 1, widthPadding: 1.04, depthPadding: 1.08, verticalOffset: 0 },
   accessory: { paddingScale: 1, widthPadding: 1, depthPadding: 1, verticalOffset: 0 },
 };
 
@@ -25,7 +20,7 @@ export type OutfitLayer = { id: string; url: string; visible: boolean; category?
 type Props = { avatarUrl: string | null; layers: OutfitLayer[]; className?: string };
 
 function categoryOf(value?: string): WearableCategory | null {
-  return value && value in CATEGORY_BODY_MESHES ? value as WearableCategory : null;
+  return value && value in CATEGORY_FIT ? value as WearableCategory : null;
 }
 
 function invalidFit(object: Object3D, target: Box3) {
@@ -35,7 +30,7 @@ function invalidFit(object: Object3D, target: Box3) {
   const targetSize = target.getSize(new Vector3());
   const center = box.getCenter(new Vector3());
   const targetCenter = target.getCenter(new Vector3());
-  return size.x > targetSize.x * 1.65 || size.y > targetSize.y * 1.65 || size.z > targetSize.z * 1.9 || center.distanceTo(targetCenter) > targetSize.y * 0.55;
+  return size.x > targetSize.x * 1.45 || size.y > targetSize.y * 1.45 || size.z > targetSize.z * 1.65 || center.distanceTo(targetCenter) > targetSize.y * 0.65;
 }
 
 function resetRootTransform(object: Object3D) {
@@ -104,27 +99,22 @@ export function OutfitPreview({ avatarUrl, layers, className = "" }: Props) {
           const obj = (await loader.loadAsync(layer.url)).scene;
           const category = categoryOf(layer.category);
           if (category) {
-            const named = findAvatarBodyPart(avatarObj, CATEGORY_BODY_MESHES[category]);
-            const target = named?.box ?? inferAvatarBodyPartBox(avatarObj, category);
-
-            // Los GLB generados por Meshy suelen conservar offsets, escala o un
-            // armature propio en la raíz. Copiar el transform del avatar hacía
-            // que una prenda marcada como fitted pudiera quedar sobre la cabeza.
-            // Para la vista previa siempre partimos de una raíz neutra y la
-            // ajustamos contra la zona corporal real del avatar.
+            // Se usa una zona proporcional estable en lugar de confiar en nombres
+            // como Casual_Body, porque algunos avatares incluyen cabeza y torso en
+            // la misma malla y elevaban el cuello de la hoodie hasta la cara.
+            const target = inferAvatarBodyPartBox(avatarObj, category);
             resetRootTransform(obj);
             fitGarmentToBodyPart(obj, target, CATEGORY_FIT[category]);
 
-            // Attach conserva el transform mundial calculado y hace que la pieza
-            // acompañe al avatar al rotarlo en el visor.
             scene.add(obj);
             avatarObj.attach(obj);
 
-            // Una segunda validación evita mostrar assets rotos o con geometría
-            // residual muy alejada del cuerpo.
             if (invalidFit(obj, target)) {
               resetRootTransform(obj);
-              fitGarmentToBodyPart(obj, target, CATEGORY_FIT[category]);
+              fitGarmentToBodyPart(obj, target, {
+                ...CATEGORY_FIT[category],
+                paddingScale: (CATEGORY_FIT[category].paddingScale ?? 1) * 0.9,
+              });
               avatarObj.attach(obj);
             }
             if (invalidFit(obj, target)) obj.visible = false;
