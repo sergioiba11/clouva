@@ -43,10 +43,11 @@ export async function GET(req: Request) {
       const adminId = searchParams.get("adminId");
       if (!taskId || !adminId) return NextResponse.json({ error: "Falta taskId o adminId" }, { status: 400 });
       const task = await getRiggingTask(taskId);
-      if (task.status !== "SUCCEEDED" || !task.model_urls?.glb) {
+      const riggedUrl = (task as any).result?.rigged_character_glb_url;
+      if (task.status !== "SUCCEEDED" || !riggedUrl) {
         return NextResponse.json({ error: "Rigging todavía no terminó", task }, { status: 409 });
       }
-      const remote = await fetch(task.model_urls.glb, { cache: "no-store" });
+      const remote = await fetch(riggedUrl, { cache: "no-store" });
       if (!remote.ok) throw new Error(`No se pudo descargar el GLB riggeado (${remote.status})`);
       const bytes = await remote.arrayBuffer();
       if (Buffer.from(bytes).subarray(0, 4).toString("ascii") !== "glTF") throw new Error("Meshy no devolvió un GLB válido");
