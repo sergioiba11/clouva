@@ -54,7 +54,7 @@ export default function AvatarPage() {
           <Link href="/creator-studio" className="flex whitespace-nowrap rounded-full px-3 py-1.5 text-xs text-violet-200 hover:bg-violet-500/20">
             <WandSparkles className="mr-1 h-3.5 w-3.5" /> Creator Studio
           </Link>
-          {role === "admin" || role === "owner" ? (
+          {role === "admin" ? (
             <Link href="/admin" className="flex whitespace-nowrap rounded-full px-3 py-1.5 text-xs text-amber-200 hover:bg-amber-500/20">
               <Shield className="mr-1 h-3.5 w-3.5" /> Admin
             </Link>
