@@ -64,6 +64,8 @@ def rig(request: RigRequest):
             request.color or "#0a0a0a",
         ]
         result = subprocess.run(command, capture_output=True, text=True, timeout=420)
+        print("[blender stdout]\n" + result.stdout[-4000:], flush=True)
+        print("[blender stderr]\n" + result.stderr[-2000:], flush=True)
         if result.returncode != 0 or not output_path.exists():
             raise HTTPException(
                 status_code=422,
