@@ -3,6 +3,7 @@ import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
 import { AuthProvider } from "@/components/auth-provider";
 import { ActiveAvatarHydrator } from "@/components/avatar-engine/ActiveAvatarHydrator";
+import { GlobalSpotifyPlayer } from "@/components/GlobalSpotifyPlayer";
 
 export const metadata: Metadata = {
   title: "CLOUVA | Premium Underground",
@@ -27,6 +28,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <AuthProvider>
             <ActiveAvatarHydrator />
             {children}
+            <GlobalSpotifyPlayer />
           </AuthProvider>
         </ThemeProvider>
       </body>
