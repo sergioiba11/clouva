@@ -113,11 +113,6 @@ export function OutfitPreview({ avatarUrl, layers, className = "" }: Props) {
           if (category) {
             const target = inferAvatarBodyPartBox(avatarObj, category);
 
-            // Un GLB confirmado como fitted/rigged por el backend ya fue generado
-            // contra el avatar oficial. Primero respetamos ese sistema de
-            // coordenadas y aplicamos exactamente la misma normalización que al
-            // avatar. Solo usamos el fitting visual si el resultado sigue fuera
-            // de la zona corporal esperada.
             if (layer.preFitted) copyNormalizedAvatarTransform(obj, avatarObj);
 
             if (!layer.preFitted || invalidFit(obj, target)) {
@@ -136,12 +131,22 @@ export function OutfitPreview({ avatarUrl, layers, className = "" }: Props) {
 
             scene.add(obj);
             avatarObj.attach(obj);
-            if (invalidFit(obj, target)) obj.visible = false;
+
+            // Nunca ocultamos una pieza que el usuario equipó. La validación sirve
+            // para elegir el mejor ajuste, no para convertirla en invisible.
+            if (invalidFit(obj, target)) {
+              console.warn("CLOUVA wearable fit outside expected bounds", {
+                layerId: layer.id,
+                category,
+                preFitted: layer.preFitted,
+              });
+            }
           } else {
             normalizeAvatarObject(obj, { targetHeight: 0.65 });
             avatarObj.add(obj);
           }
-          obj.visible = obj.visible !== false && layer.visible;
+
+          obj.visible = layer.visible;
           loadedRef.current[layer.id] = obj;
         }
         if (!disposed) {
