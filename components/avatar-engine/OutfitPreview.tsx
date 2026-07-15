@@ -23,10 +23,10 @@ import {
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import {
-  frameAvatar,
-  normalizeAvatarObject,
-  inferAvatarBodyPartBox,
   fitGarmentToBodyPart,
+  frameAvatar,
+  inferAvatarBodyPartBox,
+  normalizeAvatarObject,
   type GarmentFitOptions,
   type WearableCategory,
 } from "@/lib/avatar-engine/frame-avatar";
@@ -54,7 +54,6 @@ const IDLE_BONES = {
 } as const;
 
 const MIN_SHARED_BONES = 8;
-
 type IdleBoneKey = keyof typeof IDLE_BONES;
 type IdleBone = { object: Object3D; base: Quaternion };
 type IdleRig = Partial<Record<IdleBoneKey, IdleBone>>;
@@ -69,7 +68,7 @@ export type OutfitLayer = {
 
 type Props = { avatarUrl: string | null; layers: OutfitLayer[]; className?: string };
 
-function normalizeBoneName(name: string) {
+function normalizeBoneName(name: string): string {
   return name.toLowerCase().replace(/^mixamorig:/, "").replace(/[^a-z0-9]/g, "");
 }
 
@@ -77,7 +76,7 @@ function categoryOf(value?: string): WearableCategory | null {
   return value && value in CATEGORY_FIT ? (value as WearableCategory) : null;
 }
 
-function invalidFit(object: Object3D, target: Box3) {
+function invalidFit(object: Object3D, target: Box3): boolean {
   object.updateMatrixWorld(true);
   const box = new Box3().setFromObject(object);
   const size = box.getSize(new Vector3());
@@ -92,24 +91,24 @@ function invalidFit(object: Object3D, target: Box3) {
     || center.distanceTo(targetCenter) > targetSize.y * 0.55;
 }
 
-function resetRootTransform(object: Object3D) {
+function resetRootTransform(object: Object3D): void {
   object.position.set(0, 0, 0);
   object.rotation.set(0, 0, 0);
   object.scale.set(1, 1, 1);
   object.updateMatrixWorld(true);
 }
 
-function copyNormalizedAvatarTransform(garment: Object3D, avatar: Object3D) {
+function copyNormalizedAvatarTransform(garment: Object3D, avatar: Object3D): void {
   garment.position.copy(avatar.position);
   garment.quaternion.copy(avatar.quaternion);
   garment.scale.copy(avatar.scale);
   garment.updateMatrixWorld(true);
 }
 
-function findNamedBone(root: Object3D, aliases: readonly string[]) {
+function findNamedBone(root: Object3D, aliases: readonly string[]): Object3D | null {
   let found: Object3D | null = null;
-  root.traverse((object) => {
-    if (!found && aliases.includes(object.name)) found = object;
+  root.traverse((candidate: Object3D) => {
+    if (found === null && aliases.includes(candidate.name)) found = candidate;
   });
   return found;
 }
@@ -117,65 +116,53 @@ function findNamedBone(root: Object3D, aliases: readonly string[]) {
 function collectIdleRig(root: Object3D): IdleRig {
   const rig: IdleRig = {};
   for (const [key, aliases] of Object.entries(IDLE_BONES) as [IdleBoneKey, readonly string[]][]) {
-    const object = findNamedBone(root, aliases);
-    if (object) rig[key] = { object, base: object.quaternion.clone() };
+    const foundBone: Object3D | null = findNamedBone(root, aliases);
+    if (foundBone !== null) {
+      rig[key] = { object: foundBone, base: foundBone.quaternion.clone() };
+    }
   }
   return rig;
 }
 
-function collectAvatarBones(root: Object3D) {
+function collectAvatarBones(root: Object3D): Map<string, Bone> {
   const bones = new Map<string, Bone>();
-  root.traverse((object) => {
-    if (!(object as Bone).isBone || !object.name) return;
+  root.traverse((object: Object3D) => {
     const bone = object as Bone;
-    bones.set(object.name, bone);
-    bones.set(normalizeBoneName(object.name), bone);
+    if (!bone.isBone || !bone.name) return;
+    bones.set(bone.name, bone);
+    bones.set(normalizeBoneName(bone.name), bone);
   });
   return bones;
 }
 
-function shareAvatarSkeleton(garment: Object3D, avatar: Object3D) {
+function shareAvatarSkeleton(garment: Object3D, avatar: Object3D): { ok: boolean; reason: string; sharedBones: number } {
   const avatarBones = collectAvatarBones(avatar);
   const meshes: SkinnedMesh[] = [];
-  garment.traverse((object) => {
-    if ((object as SkinnedMesh).isSkinnedMesh) meshes.push(object as SkinnedMesh);
+  garment.traverse((object: Object3D) => {
+    const mesh = object as SkinnedMesh;
+    if (mesh.isSkinnedMesh) meshes.push(mesh);
   });
 
-  if (meshes.length === 0) {
-    return { ok: false, reason: "La pieza no contiene ninguna malla riggeada", sharedBones: 0 };
-  }
+  if (meshes.length === 0) return { ok: false, reason: "La pieza no contiene ninguna malla riggeada", sharedBones: 0 };
 
   let lowestSharedCount = Number.POSITIVE_INFINITY;
   for (const mesh of meshes) {
     const mappedBones: Bone[] = [];
     const missing: string[] = [];
-
     for (const sourceBone of mesh.skeleton.bones) {
       const match = avatarBones.get(sourceBone.name) ?? avatarBones.get(normalizeBoneName(sourceBone.name));
-      if (!match) missing.push(sourceBone.name || "(sin nombre)");
-      else mappedBones.push(match);
+      if (match) mappedBones.push(match);
+      else missing.push(sourceBone.name || "(sin nombre)");
     }
 
     if (missing.length > 0 || mappedBones.length !== mesh.skeleton.bones.length) {
-      return {
-        ok: false,
-        reason: `Rig incompatible: faltan huesos ${missing.slice(0, 6).join(", ")}`,
-        sharedBones: mappedBones.length,
-      };
+      return { ok: false, reason: `Rig incompatible: faltan huesos ${missing.slice(0, 6).join(", ")}`, sharedBones: mappedBones.length };
     }
-
     if (mappedBones.length < MIN_SHARED_BONES) {
-      return {
-        ok: false,
-        reason: `Rig incompleto: solo comparte ${mappedBones.length} huesos`,
-        sharedBones: mappedBones.length,
-      };
+      return { ok: false, reason: `Rig incompleto: solo comparte ${mappedBones.length} huesos`, sharedBones: mappedBones.length };
     }
 
-    const sharedSkeleton = new Skeleton(
-      mappedBones,
-      mesh.skeleton.boneInverses.map((inverse) => inverse.clone()),
-    );
+    const sharedSkeleton = new Skeleton(mappedBones, mesh.skeleton.boneInverses.map((inverse) => inverse.clone()));
     mesh.bind(sharedSkeleton, mesh.bindMatrix.clone());
     mesh.normalizeSkinWeights();
     lowestSharedCount = Math.min(lowestSharedCount, mappedBones.length);
@@ -186,15 +173,14 @@ function shareAvatarSkeleton(garment: Object3D, avatar: Object3D) {
 
 const idleEuler = new Euler();
 const idleQuaternion = new Quaternion();
-
-function rotateIdleBone(bone: IdleBone | undefined, x: number, y: number, z: number) {
+function rotateIdleBone(bone: IdleBone | undefined, x: number, y: number, z: number): void {
   if (!bone) return;
   idleEuler.set(x, y, z, "XYZ");
   idleQuaternion.setFromEuler(idleEuler);
   bone.object.quaternion.copy(bone.base).multiply(idleQuaternion);
 }
 
-function applyIdlePose(rig: IdleRig, time: number) {
+function applyIdlePose(rig: IdleRig, time: number): void {
   const breath = Math.sin(time * 1.65);
   const slow = Math.sin(time * 0.62);
   const sway = Math.sin(time * 0.38);
@@ -261,7 +247,7 @@ export function OutfitPreview({ avatarUrl, layers, className = "" }: Props) {
     observer.observe(mount.current);
     const loader = new GLTFLoader();
 
-    (async () => {
+    void (async () => {
       try {
         const avatarObj = (await loader.loadAsync(avatarUrl)).scene;
         normalizeAvatarObject(avatarObj, { targetHeight: 2.05 });
@@ -278,14 +264,13 @@ export function OutfitPreview({ avatarUrl, layers, className = "" }: Props) {
 
           if (category) {
             const target = inferAvatarBodyPartBox(avatarObj, category);
-
             if (layer.preFitted) {
               copyNormalizedAvatarTransform(obj, avatarObj);
-              const rig = shareAvatarSkeleton(obj, avatarObj);
-              if (!rig.ok || invalidFit(obj, target)) {
+              const rigResult = shareAvatarSkeleton(obj, avatarObj);
+              if (!rigResult.ok || invalidFit(obj, target)) {
                 obj.visible = false;
-                setRigError(`La pieza “${layer.id}” fue bloqueada: ${rig.ok ? "el ajuste exportado está fuera del avatar" : rig.reason}. No vuelvas a gastar créditos con esta variante.`);
-                console.error("CLOUVA rejected incompatible wearable", { layerId: layer.id, category, ...rig });
+                setRigError(`La pieza “${layer.id}” fue bloqueada: ${rigResult.ok ? "el ajuste exportado está fuera del avatar" : rigResult.reason}. No vuelvas a gastar créditos con esta variante.`);
+                console.error("CLOUVA rejected incompatible wearable", { layerId: layer.id, category, ...rigResult });
                 continue;
               }
             } else {
@@ -294,11 +279,9 @@ export function OutfitPreview({ avatarUrl, layers, className = "" }: Props) {
               if (invalidFit(obj, target)) {
                 obj.visible = false;
                 setRigError(`La pieza “${layer.id}” no pasó el ajuste automático y fue bloqueada para evitar que aparezca gigante.`);
-                console.error("CLOUVA rejected unfitted wearable", { layerId: layer.id, category });
                 continue;
               }
             }
-
             scene.add(obj);
             avatarObj.attach(obj);
           } else {
@@ -350,11 +333,13 @@ export function OutfitPreview({ avatarUrl, layers, className = "" }: Props) {
     }
   }, [layers.map((layer) => `${layer.id}:${layer.visible}`).join(",")]);
 
-  return <div className={`relative h-full w-full ${className}`}>
-    {status === "loading" ? <div className="absolute inset-0 grid place-items-center text-sm text-white/40">Cargando…</div> : null}
-    {status === "error" ? <div className="absolute inset-0 grid place-items-center text-sm text-rose-400">No se pudo cargar la vista previa</div> : null}
-    {rigError ? <div className="absolute left-3 right-3 top-3 z-20 rounded-2xl border border-rose-400/30 bg-rose-950/80 px-4 py-3 text-xs leading-relaxed text-rose-100 backdrop-blur">{rigError}</div> : null}
-    {status === "ready" && !rigError ? <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded-full border border-emerald-300/20 bg-black/35 px-3 py-1 text-[10px] uppercase tracking-[0.18em] text-emerald-200/70 backdrop-blur">Rig validado · esqueleto compartido</div> : null}
-    <div ref={mount} className="h-full w-full" />
-  </div>;
+  return (
+    <div className={`relative h-full w-full ${className}`}>
+      {status === "loading" ? <div className="absolute inset-0 grid place-items-center text-sm text-white/40">Cargando…</div> : null}
+      {status === "error" ? <div className="absolute inset-0 grid place-items-center text-sm text-rose-400">No se pudo cargar la vista previa</div> : null}
+      {rigError ? <div className="absolute left-3 right-3 top-3 z-20 rounded-2xl border border-rose-400/30 bg-rose-950/80 px-4 py-3 text-xs leading-relaxed text-rose-100 backdrop-blur">{rigError}</div> : null}
+      {status === "ready" && !rigError ? <div className="pointer-events-none absolute bottom-3 left-3 z-10 rounded-full border border-emerald-300/20 bg-black/35 px-3 py-1 text-[10px] uppercase tracking-[0.18em] text-emerald-200/70 backdrop-blur">Rig validado · esqueleto compartido</div> : null}
+      <div ref={mount} className="h-full w-full" />
+    </div>
+  );
 }
