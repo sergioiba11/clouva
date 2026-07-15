@@ -45,6 +45,13 @@ function resetRootTransform(object: Object3D) {
   object.updateMatrixWorld(true);
 }
 
+function copyNormalizedAvatarTransform(garment: Object3D, avatar: Object3D) {
+  garment.position.copy(avatar.position);
+  garment.quaternion.copy(avatar.quaternion);
+  garment.scale.copy(avatar.scale);
+  garment.updateMatrixWorld(true);
+}
+
 export function OutfitPreview({ avatarUrl, layers, className = "" }: Props) {
   const mount = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -105,19 +112,26 @@ export function OutfitPreview({ avatarUrl, layers, className = "" }: Props) {
           const category = categoryOf(layer.category);
           if (category) {
             const target = inferAvatarBodyPartBox(avatarObj, category);
-            resetRootTransform(obj);
-            fitGarmentToBodyPart(obj, target, CATEGORY_FIT[category]);
 
-            // La validación y el segundo intento ocurren todavía en espacio de
-            // mundo. Antes se reintentaba después de parentar al avatar, mezclando
-            // coordenadas locales y mundiales y levantando la pieza hacia el cuello.
-            if (invalidFit(obj, target)) {
+            // Un GLB confirmado como fitted/rigged por el backend ya fue generado
+            // contra el avatar oficial. Primero respetamos ese sistema de
+            // coordenadas y aplicamos exactamente la misma normalización que al
+            // avatar. Solo usamos el fitting visual si el resultado sigue fuera
+            // de la zona corporal esperada.
+            if (layer.preFitted) copyNormalizedAvatarTransform(obj, avatarObj);
+
+            if (!layer.preFitted || invalidFit(obj, target)) {
               resetRootTransform(obj);
-              fitGarmentToBodyPart(obj, target, {
-                ...CATEGORY_FIT[category],
-                widthPadding: (CATEGORY_FIT[category].widthPadding ?? 1) * 0.94,
-                depthPadding: (CATEGORY_FIT[category].depthPadding ?? 1) * 0.94,
-              });
+              fitGarmentToBodyPart(obj, target, CATEGORY_FIT[category]);
+
+              if (invalidFit(obj, target)) {
+                resetRootTransform(obj);
+                fitGarmentToBodyPart(obj, target, {
+                  ...CATEGORY_FIT[category],
+                  widthPadding: (CATEGORY_FIT[category].widthPadding ?? 1) * 0.94,
+                  depthPadding: (CATEGORY_FIT[category].depthPadding ?? 1) * 0.94,
+                });
+              }
             }
 
             scene.add(obj);
