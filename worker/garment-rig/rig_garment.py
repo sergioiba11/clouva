@@ -145,15 +145,38 @@ def copy_weights(body, garment):
     kd = build_body_kdtree(body)
     garment_inverse = garment.matrix_world.inverted()
 
+    # Antes: se tomaba el vértice del cuerpo MÁS CERCANO, uno solo, y se
+    # le copiaba su distribución de pesos tal cual. En ropa floja/oversize
+    # (mangas anchas, por ejemplo) un vértice de la prenda puede terminar
+    # geométricamente más cerca de un punto del torso que del brazo real,
+    # heredando el peso equivocado — la manga no sigue bien el brazo.
+    #
+    # Ahora: se promedian los K vecinos más cercanos, ponderados por
+    # 1/distancia (más peso a los más cercanos), antes de decidir qué
+    # huesos influyen. Esto suaviza el resultado y es mucho más robusto
+    # en zonas con espacio entre la tela y el cuerpo.
+    neighbors_k = 6
+
     for vertex in garment.data.vertices:
         world_position = garment.matrix_world @ vertex.co
-        _, body_index, _ = kd.find(world_position)
-        source = body.data.vertices[body_index]
-        influences = []
-        for membership in source.groups:
-            name = body_groups.get(membership.group)
-            if name and membership.weight > 0.0001:
-                influences.append((name, membership.weight))
+        neighbors = kd.find_n(world_position, neighbors_k)
+
+        blended = {}
+        total_neighbor_weight = 0.0
+        for _, body_index, distance in neighbors:
+            source = body.data.vertices[body_index]
+            neighbor_weight = 1.0 / max(distance, 1e-4) ** 2
+            total_neighbor_weight += neighbor_weight
+            for membership in source.groups:
+                name = body_groups.get(membership.group)
+                if not name or membership.weight <= 0.0001:
+                    continue
+                blended[name] = blended.get(name, 0.0) + membership.weight * neighbor_weight
+
+        if total_neighbor_weight <= 0:
+            continue
+
+        influences = [(name, weight / total_neighbor_weight) for name, weight in blended.items()]
         influences.sort(key=lambda item: item[1], reverse=True)
         influences = influences[:4]
         total = sum(weight for _, weight in influences) or 1.0
