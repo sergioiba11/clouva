@@ -76,6 +76,7 @@ def body_region_bbox(body, armature, category):
     huesos del avatar oficial — no un porcentaje inventado del cuerpo
     entero. Si no encuentra los huesos esperados, cae al cuerpo entero
     (mejor que romper, pero se documenta como caso de emergencia)."""
+    bpy.context.view_layer.update()
     body_min, body_max = bbox_world(body)
     hips = find_bone_head_world(armature, BONE_ALIASES["hips"])
     spine_top = find_bone_head_world(armature, BONE_ALIASES["spine_top"])
@@ -87,15 +88,19 @@ def body_region_bbox(body, armature, category):
 
     if category in ("hoodie", "shirt", "jacket") and hips and (neck or shoulder):
         top_z = (neck or shoulder).z
+        print(f"[fit-debug] category={category} hips.z={hips.z:.4f} top_z={top_z:.4f} body_min.z={body_min.z:.4f} body_max.z={body_max.z:.4f}")
         return Vector((body_min.x, body_min.y, hips.z)), Vector((body_max.x, body_max.y, top_z))
     if category in ("pants", "shorts") and hips and (foot or up_leg):
         bottom_z = (foot or body_min).z
+        print(f"[fit-debug] category={category} hips.z={hips.z:.4f} bottom_z={bottom_z:.4f}")
         return Vector((body_min.x, body_min.y, bottom_z)), Vector((body_max.x, body_max.y, hips.z))
     if category == "shoes" and (foot or toe):
         bottom = (toe or foot)
+        print(f"[fit-debug] category={category} bottom.z={bottom.z:.4f}")
         return Vector((body_min.x, body_min.y, body_min.z)), Vector((body_max.x, body_max.y, bottom.z + 0.15 * (body_max.z - body_min.z)))
     # Respaldo: no se encontraron los huesos esperados para esta
     # categoría — usar el cuerpo entero es peor, pero evita romper.
+    print(f"[fit-debug] category={category} FALLBACK a cuerpo entero (no se encontraron huesos: hips={hips} neck={neck} shoulder={shoulder} up_leg={up_leg} foot={foot} toe={toe})")
     return body_min, body_max
 
 
@@ -292,6 +297,7 @@ def main():
     clear_scene()
 
     avatar_objects = import_glb(avatar_path)
+    bpy.context.view_layer.update()
     armature = find_armature(avatar_objects)
     body = largest_mesh([obj for obj in avatar_objects if obj.type == "MESH" and obj.find_armature() == armature] or avatar_objects)
 
