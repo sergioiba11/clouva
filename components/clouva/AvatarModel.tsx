@@ -24,28 +24,40 @@ export function AvatarModel({ className = "" }: { className?: string }) {
   }, []);
 
   return (
-    <>
+    <div className={`relative h-full min-h-[100dvh] w-full ${className}`}>
       <AvatarModelViewer
         modelUrl={modelUrl}
         fallbackModelUrl={null}
         frontRotationY={0}
         config={config}
         alt="CLOUVA oficial"
-        className={className}
         playAnimations={false}
         motionTest={motionTest}
       />
 
-      <button
-        type="button"
-        aria-pressed={motionTest}
-        onPointerDown={(event) => event.stopPropagation()}
-        onClick={() => setMotionTest((value) => !value)}
-        className="absolute bottom-24 left-1/2 z-30 flex -translate-x-1/2 items-center gap-2 rounded-full border border-white/15 bg-black/55 px-4 py-2 text-xs font-medium uppercase tracking-[0.14em] text-white/80 shadow-lg backdrop-blur-md transition hover:bg-black/70 active:scale-95"
-      >
-        <Activity className="h-4 w-4" />
-        {motionTest ? "Detener movimiento" : "Probar movimiento"}
-      </button>
-    </>
+      <div className="fixed bottom-20 left-1/2 z-[9999] flex -translate-x-1/2 flex-col items-center gap-2">
+        <button
+          type="button"
+          aria-pressed={motionTest}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            setMotionTest((value) => !value);
+          }}
+          className={`flex min-w-[190px] items-center justify-center gap-2 rounded-full border px-5 py-3 text-xs font-semibold uppercase tracking-[0.12em] shadow-2xl backdrop-blur-md transition active:scale-95 ${
+            motionTest
+              ? "border-violet-300/60 bg-violet-600/80 text-white"
+              : "border-white/25 bg-black/80 text-white"
+          }`}
+        >
+          <Activity className={`h-4 w-4 ${motionTest ? "animate-pulse" : ""}`} />
+          {motionTest ? "Detener movimiento" : "Probar movimiento"}
+        </button>
+
+        <span className="rounded-full border border-white/10 bg-black/65 px-3 py-1 text-[10px] uppercase tracking-[0.12em] text-white/65 backdrop-blur">
+          {motionTest ? "Prueba del rig activa" : "Respiración activa"}
+        </span>
+      </div>
+    </div>
   );
 }
