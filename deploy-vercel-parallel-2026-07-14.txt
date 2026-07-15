@@ -1,0 +1,1 @@
+Parallel Vercel deployment attempt while Railway configuration is being completed.

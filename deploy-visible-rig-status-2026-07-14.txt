@@ -1,0 +1,2 @@
+Single deployment trigger for visible official rig result/status UI.
+Includes commits 21d576e47ae1719117875fd2e9835a5dc183d77c and b27f19e7f9c66b1433b437988be7fc481f669a2a.

@@ -23,7 +23,9 @@ type ClothingItem = {
   rigged?: boolean;
   wearable?: boolean;
   hood_supported?: boolean;
-  hood_state?: string;
+  hood_state?: "up" | "down" | string;
+  hood_up_model_url?: string | null;
+  hood_down_model_url?: string | null;
   processing_error?: string | null;
 };
 
@@ -49,6 +51,18 @@ const CATEGORY_SLOT: Record<string, keyof Outfit> = {
   shoes: "shoes_id",
   accessory: "accessory_id",
 };
+
+function currentModelUrl(item: ClothingItem) {
+  if (item.hood_supported) {
+    if (item.hood_state === "up" && item.hood_up_model_url) return item.hood_up_model_url;
+    if (item.hood_state !== "up" && item.hood_down_model_url) return item.hood_down_model_url;
+  }
+  return item.model_url;
+}
+
+function hasWorkingHood(item: ClothingItem) {
+  return Boolean(item.hood_supported && item.hood_up_model_url && item.hood_down_model_url);
+}
 
 function estimatedProgress(item: ClothingItem, now: number) {
   if (item.status === "ready" && item.model_url) return 100;
@@ -81,8 +95,6 @@ function wearState(item: ClothingItem): WearState {
   if (item.status === "generating" || item.status === "rigging") return { canEquip: false, label: "Adaptando al avatar" };
   if (item.status === "failed") return { canEquip: false, label: "No se pudo ajustar" };
   if (item.status !== "ready" || !item.model_url) return { canEquip: false, label: "Falta procesar el molde" };
-  // Listo, con model_url — pero solo se puede equipar si de verdad pasó el
-  // fitting real (riggeado por el worker de Blender), no solo generado.
   if (item.wearable === true && item.fit_status === "fitted" && item.rigged === true) return { canEquip: true };
   return { canEquip: false, label: "Vista experimental" };
 }
@@ -97,6 +109,7 @@ export default function ArmarioPage() {
   const [loading, setLoading] = useState(true);
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [busySlot, setBusySlot] = useState<string | null>(null);
+  const [busyHood, setBusyHood] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
   const load = async (silent = false) => {
@@ -158,6 +171,23 @@ export default function ArmarioPage() {
     setBusySlot(null);
   };
 
+  const toggleHood = async (item: ClothingItem) => {
+    if (!session?.access_token || !hasWorkingHood(item)) return;
+    const nextState = item.hood_state === "up" ? "down" : "up";
+    setBusyHood(item.id);
+    const response = await fetch("/api/clothing/hood", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+      body: JSON.stringify({ itemId: item.id, hoodState: nextState }),
+    });
+    const data = await response.json();
+    if (response.ok && data.item) {
+      setMyItems((current) => current.map((candidate) => candidate.id === item.id ? { ...candidate, ...data.item } : candidate));
+      setCatalogItems((current) => current.map((candidate) => candidate.id === item.id ? { ...candidate, ...data.item } : candidate));
+    }
+    setBusyHood(null);
+  };
+
   const items = viewMode === "mine" ? myItems : catalogItems;
   const allKnownItems = useMemo(() => {
     const map = new Map<string, ClothingItem>();
@@ -169,10 +199,10 @@ export default function ArmarioPage() {
 
   const previewLayers: OutfitLayer[] = useMemo(() => {
     return allKnownItems
-      .filter((item) => equippedIds.has(item.id) && item.model_url)
+      .filter((item) => equippedIds.has(item.id) && currentModelUrl(item))
       .map((item) => ({
         id: item.id,
-        url: item.model_url as string,
+        url: currentModelUrl(item) as string,
         visible: true,
         category: item.category,
         preFitted: item.fit_status === "fitted" && item.rigged === true,
@@ -181,10 +211,11 @@ export default function ArmarioPage() {
 
   const singlePreview: OutfitLayer[] = useMemo(() => {
     const item = allKnownItems.find((candidate) => candidate.id === previewId);
-    if (!item?.model_url) return [];
+    const modelUrl = item ? currentModelUrl(item) : null;
+    if (!item || !modelUrl) return [];
     return [{
       id: item.id,
-      url: item.model_url,
+      url: modelUrl,
       visible: true,
       category: item.category,
       preFitted: item.fit_status === "fitted" && item.rigged === true,
@@ -221,12 +252,13 @@ export default function ArmarioPage() {
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         {items.map((item) => {
-          const ready = item.status === "ready" && item.model_url;
+          const ready = item.status === "ready" && currentModelUrl(item);
           const slot = CATEGORY_SLOT[item.category];
           const equipped = slot ? outfit[slot] === item.id : false;
           const selected = previewId === item.id;
           const progress = estimatedProgress(item, now);
           const isActive = item.status === "generating" || item.status === "rigging";
+          const hoodReady = hasWorkingHood(item);
 
           return (
             <div key={item.id} className={`overflow-hidden rounded-2xl border ${equipped || selected ? "border-violet-400" : "border-white/10"} bg-white/[0.03]`}>
@@ -255,9 +287,19 @@ export default function ArmarioPage() {
                   <p className="mt-1.5 text-[10px] text-red-300">{item.status === "failed" ? (item.processing_error || "No se pudo generar") : item.status}</p>
                 ) : slot ? (
                   wearState(item).canEquip ? (
-                    <button onClick={() => equip(item)} disabled={busySlot === slot} className={`mt-1.5 w-full rounded-full py-1.5 text-[11px] font-medium ${equipped ? "bg-white/10 text-white/70" : "bg-violet-400 text-black"}`}>
-                      {equipped ? "Quitar" : "Elegir esta pieza"}
-                    </button>
+                    <div className="mt-1.5 space-y-1.5">
+                      <button onClick={() => equip(item)} disabled={busySlot === slot} className={`w-full rounded-full py-1.5 text-[11px] font-medium ${equipped ? "bg-white/10 text-white/70" : "bg-violet-400 text-black"}`}>
+                        {equipped ? "Quitar" : "Elegir esta pieza"}
+                      </button>
+                      {hoodReady && (equipped || selected) ? (
+                        <button onClick={() => toggleHood(item)} disabled={busyHood === item.id} className="w-full rounded-full border border-violet-300/30 bg-violet-300/10 py-1.5 text-[11px] font-medium text-violet-200 disabled:opacity-50">
+                          {busyHood === item.id ? "Cambiando…" : item.hood_state === "up" ? "Bajar capucha" : "Ponerse la capucha"}
+                        </button>
+                      ) : null}
+                      {(item.category === "hoodie" || item.category === "jacket") && !hoodReady ? (
+                        <p className="text-center text-[9px] leading-tight text-white/30">Esta pieza todavía no tiene variante de capucha arriba.</p>
+                      ) : null}
+                    </div>
                   ) : (
                     <p className="mt-1.5 rounded-full border border-amber-300/25 bg-amber-300/5 py-1.5 text-center text-[10px] text-amber-200">
                       {(wearState(item) as { label: string }).label}

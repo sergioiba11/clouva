@@ -1,0 +1,2 @@
+Single production deployment trigger for the persisted official avatar rig status.
+Includes commits cdba2c455ff7e7d661764ca288eb76c520b96aa6 and 85a17022214ae3fba8c1ff42d25c273cf3b539a9.
