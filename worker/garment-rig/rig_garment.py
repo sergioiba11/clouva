@@ -1,8 +1,29 @@
 import bpy
 import os
 import sys
+import tempfile
 from mathutils import Vector
 from mathutils.kdtree import KDTree
+
+
+VALID_CATEGORIES = {"hoodie", "shirt", "jacket", "pants", "shorts", "shoes", "accessory"}
+
+BONE_ALIASES = {
+    "hips": ["Hips", "mixamorig:Hips", "pelvis", "Pelvis"],
+    "spine": ["Spine", "Spine01", "Spine1", "mixamorig:Spine"],
+    "chest": ["Spine02", "Spine2", "mixamorig:Spine2", "chest", "Chest"],
+    "neck": ["neck", "Neck", "mixamorig:Neck"],
+    "left_shoulder": ["LeftShoulder", "mixamorig:LeftShoulder", "shoulder.L", "Shoulder_L"],
+    "right_shoulder": ["RightShoulder", "mixamorig:RightShoulder", "shoulder.R", "Shoulder_R"],
+    "left_up_leg": ["LeftUpLeg", "mixamorig:LeftUpLeg", "thigh.L", "UpLeg_L"],
+    "left_foot": ["LeftFoot", "mixamorig:LeftFoot", "foot.L", "Foot_L"],
+    "left_toe": ["LeftToeBase", "mixamorig:LeftToeBase", "toe.L"],
+}
+
+EXCLUDED_BODY_TOKENS = {
+    "hair", "eye", "brow", "lash", "teeth", "tongue", "mouth", "shoe", "sock",
+    "hoodie", "shirt", "jacket", "pants", "short", "cloth", "garment", "accessory",
+}
 
 
 def args():
@@ -13,32 +34,21 @@ def args():
 
 
 def clear_scene():
+    if bpy.context.object and bpy.context.object.mode != "OBJECT":
+        bpy.ops.object.mode_set(mode="OBJECT")
     bpy.ops.object.select_all(action="SELECT")
     bpy.ops.object.delete(use_global=False)
+    for datablocks in (bpy.data.meshes, bpy.data.armatures, bpy.data.materials, bpy.data.images):
+        for datablock in list(datablocks):
+            if datablock.users == 0:
+                datablocks.remove(datablock)
 
 
 def import_glb(path):
     before = set(bpy.context.scene.objects)
     bpy.ops.import_scene.gltf(filepath=path)
+    bpy.context.view_layer.update()
     return [obj for obj in bpy.context.scene.objects if obj not in before]
-
-
-def mesh_objects(objects):
-    return [obj for obj in objects if obj.type == "MESH"]
-
-
-def largest_mesh(objects):
-    meshes = mesh_objects(objects)
-    if not meshes:
-        raise RuntimeError("No mesh found")
-    return max(meshes, key=lambda obj: len(obj.data.vertices))
-
-
-def find_armature(objects):
-    armatures = [obj for obj in objects if obj.type == "ARMATURE"]
-    if not armatures:
-        raise RuntimeError("Official avatar has no armature")
-    return max(armatures, key=lambda obj: len(obj.data.bones))
 
 
 def select_only(obj):
@@ -49,25 +59,92 @@ def select_only(obj):
     bpy.context.view_layer.objects.active = obj
 
 
-def prepare_garment(objects):
-    """Conserva y une todas las partes reales de una prenda.
+def find_armature(objects):
+    armatures = [obj for obj in objects if obj.type == "ARMATURE"]
+    if not armatures:
+        raise RuntimeError("Official avatar has no armature")
+    return max(armatures, key=lambda obj: len(obj.data.bones))
 
-    Muchos GLB llegan separados en torso, mangas, capucha, puños, etc. El
-    código anterior elegía solamente la malla con más vértices y borraba las
-    demás. Si esa malla eran las mangas, luego se escalaban como si fueran el
-    buzo completo y aparecían gigantes sobre la cabeza.
-    """
-    meshes = [obj for obj in mesh_objects(objects) if len(obj.data.vertices) >= 3]
+
+def bbox_world(obj):
+    corners = [obj.matrix_world @ Vector(corner) for corner in obj.bound_box]
+    return (
+        Vector((min(v.x for v in corners), min(v.y for v in corners), min(v.z for v in corners))),
+        Vector((max(v.x for v in corners), max(v.y for v in corners), max(v.z for v in corners))),
+    )
+
+
+def combined_bbox(objects):
+    points = []
+    for obj in objects:
+        points.extend(obj.matrix_world @ Vector(corner) for corner in obj.bound_box)
+    if not points:
+        raise RuntimeError("Cannot calculate an empty bounding box")
+    return (
+        Vector((min(v.x for v in points), min(v.y for v in points), min(v.z for v in points))),
+        Vector((max(v.x for v in points), max(v.y for v in points), max(v.z for v in points))),
+    )
+
+
+def find_bone_world(armature, aliases):
+    for name in aliases:
+        pose_bone = armature.pose.bones.get(name)
+        if pose_bone is not None:
+            return armature.matrix_world @ pose_bone.head
+    return None
+
+
+def body_meshes_for_rig(objects, armature):
+    candidates = []
+    for obj in objects:
+        if obj.type != "MESH" or len(obj.data.vertices) < 20:
+            continue
+        if obj.find_armature() != armature:
+            continue
+        lowered = obj.name.lower()
+        if any(token in lowered for token in EXCLUDED_BODY_TOKENS):
+            continue
+        if len(obj.vertex_groups) == 0:
+            continue
+        candidates.append(obj)
+
+    if not candidates:
+        candidates = [
+            obj for obj in objects
+            if obj.type == "MESH" and obj.find_armature() == armature and len(obj.vertex_groups) > 0
+        ]
+    if not candidates:
+        raise RuntimeError("Official avatar has no usable skinned body meshes")
+
+    print("[rig] body meshes:", [(obj.name, len(obj.data.vertices), len(obj.vertex_groups)) for obj in candidates], flush=True)
+    return candidates
+
+
+def remove_small_islands(obj):
+    """Remove tiny disconnected fragments without deleting sleeves or hood pieces."""
+    select_only(obj)
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="DESELECT")
+    bpy.ops.mesh.select_loose()
+    bpy.ops.object.mode_set(mode="OBJECT")
+
+    selected = [v for v in obj.data.vertices if v.select]
+    threshold = max(8, int(len(obj.data.vertices) * 0.002))
+    if 0 < len(selected) <= threshold:
+        bpy.ops.object.mode_set(mode="EDIT")
+        bpy.ops.mesh.delete(type="VERT")
+        bpy.ops.object.mode_set(mode="OBJECT")
+
+
+def prepare_garment(objects):
+    meshes = [obj for obj in objects if obj.type == "MESH" and len(obj.data.vertices) >= 3]
     if not meshes:
         raise RuntimeError("Garment GLB has no usable mesh")
 
-    # Desvincular cada pieza de empties/armatures importados sin alterar su
-    # posición mundial. También quitamos rigs y pesos anteriores: CLOUVA
-    # vuelve a calcularlos contra el avatar oficial.
     for obj in meshes:
-        world_matrix = obj.matrix_world.copy()
+        world = obj.matrix_world.copy()
         obj.parent = None
-        obj.matrix_world = world_matrix
+        obj.matrix_world = world
         for modifier in list(obj.modifiers):
             if modifier.type == "ARMATURE":
                 obj.modifiers.remove(modifier)
@@ -77,9 +154,6 @@ def prepare_garment(objects):
         obj.hide_render = False
 
     bpy.context.view_layer.update()
-
-    # Unir las piezas en coordenadas mundiales para obtener una sola caja
-    # englobante coherente y aplicar el mismo fitting a torso/mangas/capucha.
     bpy.ops.object.select_all(action="DESELECT")
     active = max(meshes, key=lambda obj: len(obj.data.vertices))
     for obj in meshes:
@@ -87,311 +161,238 @@ def prepare_garment(objects):
     bpy.context.view_layer.objects.active = active
     if len(meshes) > 1:
         bpy.ops.object.join()
+
     garment = bpy.context.view_layer.objects.active
     garment.name = "CLOUVA_Garment"
-
-    # Fijar rotación y escala importadas dentro de la geometría. La ubicación
-    # se conserva para poder centrarla después mediante coordenadas mundiales.
     select_only(garment)
     bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
-    bpy.context.view_layer.update()
 
-    # Ya no hacen falta armatures, empties ni cámaras del GLB de la prenda.
     for obj in list(objects):
         if obj != garment and obj.name in bpy.data.objects:
             bpy.data.objects.remove(obj, do_unlink=True)
 
-    print(
-        f"[fit-debug] garment_parts={len(meshes)} joined_vertices={len(garment.data.vertices)} "
-        f"location={tuple(round(v, 4) for v in garment.location)}",
-        flush=True,
-    )
+    remove_small_islands(garment)
+    select_only(garment)
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    bpy.ops.mesh.remove_doubles(threshold=0.00001)
+    bpy.ops.mesh.normals_make_consistent(inside=False)
+    bpy.ops.object.mode_set(mode="OBJECT")
+    bpy.context.view_layer.update()
+
+    print(f"[rig] garment parts={len(meshes)} vertices={len(garment.data.vertices)}", flush=True)
     return garment
 
 
-def bbox_world(obj):
-    corners = [obj.matrix_world @ Vector(corner) for corner in obj.bound_box]
-    mins = Vector((min(v.x for v in corners), min(v.y for v in corners), min(v.z for v in corners)))
-    maxs = Vector((max(v.x for v in corners), max(v.y for v in corners), max(v.z for v in corners)))
-    return mins, maxs
+def body_region(body_meshes, armature, category):
+    body_min, body_max = combined_bbox(body_meshes)
+    height = body_max.z - body_min.z
+    hips = find_bone_world(armature, BONE_ALIASES["hips"])
+    chest = find_bone_world(armature, BONE_ALIASES["chest"])
+    neck = find_bone_world(armature, BONE_ALIASES["neck"])
+    left_shoulder = find_bone_world(armature, BONE_ALIASES["left_shoulder"])
+    right_shoulder = find_bone_world(armature, BONE_ALIASES["right_shoulder"])
+    up_leg = find_bone_world(armature, BONE_ALIASES["left_up_leg"])
+    foot = find_bone_world(armature, BONE_ALIASES["left_foot"])
+    toe = find_bone_world(armature, BONE_ALIASES["left_toe"])
 
+    if category in {"hoodie", "shirt", "jacket"}:
+        bottom_z = hips.z if hips else body_min.z + height * 0.43
+        top_anchor = neck or left_shoulder or chest
+        top_z = top_anchor.z if top_anchor else body_min.z + height * 0.82
+        if left_shoulder and right_shoulder:
+            center_x = (left_shoulder.x + right_shoulder.x) * 0.5
+            half_width = abs(right_shoulder.x - left_shoulder.x) * 0.72
+            min_x, max_x = center_x - half_width, center_x + half_width
+        else:
+            min_x, max_x = body_min.x, body_max.x
+        depth_center = (body_min.y + body_max.y) * 0.5
+        depth_half = (body_max.y - body_min.y) * 0.36
+        return Vector((min_x, depth_center - depth_half, bottom_z)), Vector((max_x, depth_center + depth_half, top_z))
 
-def bbox_vertices_in_z(obj, bottom_z, top_z):
-    """BBox mundial usando solo geometría situada dentro del rango vertical.
+    if category in {"pants", "shorts"}:
+        top_z = hips.z if hips else body_min.z + height * 0.48
+        bottom_z = (foot.z if foot else body_min.z)
+        if category == "shorts":
+            thigh_z = up_leg.z if up_leg else body_min.z + height * 0.33
+            bottom_z = thigh_z - (top_z - thigh_z) * 0.35
+        return Vector((body_min.x, body_min.y, bottom_z)), Vector((body_max.x, body_max.y, top_z))
 
-    Así una remera no toma el ancho de pies, pelo o manos que quedan fuera del
-    torso. Se deja un pequeño margen para no perder vértices de borde.
-    """
-    height = max(top_z - bottom_z, 1e-6)
-    margin = height * 0.04
-    matrix = obj.matrix_world
-    points = []
-    for vertex in obj.data.vertices:
-        point = matrix @ vertex.co
-        if bottom_z - margin <= point.z <= top_z + margin:
-            points.append(point)
+    if category == "shoes":
+        top_z = (toe.z if toe else (foot.z if foot else body_min.z)) + height * 0.10
+        return Vector((body_min.x, body_min.y, body_min.z)), Vector((body_max.x, body_max.y, top_z))
 
-    if len(points) < 8:
-        fallback_min, fallback_max = bbox_world(obj)
-        return (
-            Vector((fallback_min.x, fallback_min.y, bottom_z)),
-            Vector((fallback_max.x, fallback_max.y, top_z)),
-        )
-
-    mins = Vector((min(v.x for v in points), min(v.y for v in points), bottom_z))
-    maxs = Vector((max(v.x for v in points), max(v.y for v in points), top_z))
-    return mins, maxs
-
-
-# Nombres reales de huesos del avatar oficial actual, con alias comunes
-# por si el rig cambia en el futuro.
-BONE_ALIASES = {
-    "hips": ["Hips", "mixamorig:Hips", "pelvis", "Pelvis"],
-    "spine_top": ["Spine02", "Spine2", "Spine1", "Spine01", "mixamorig:Spine2", "chest", "Chest"],
-    "neck": ["neck", "Neck", "mixamorig:Neck"],
-    "left_shoulder": ["LeftShoulder", "mixamorig:LeftShoulder", "shoulder.L", "Shoulder_L"],
-    "left_up_leg": ["LeftUpLeg", "mixamorig:LeftUpLeg", "thigh.L", "UpLeg_L"],
-    "left_foot": ["LeftFoot", "mixamorig:LeftFoot", "foot.L", "Foot_L"],
-    "left_toe": ["LeftToeBase", "mixamorig:LeftToeBase", "toe.L"],
-}
-
-
-def find_bone_head_world(armature, aliases):
-    for name in aliases:
-        bone = armature.pose.bones.get(name)
-        if bone is not None:
-            return armature.matrix_world @ bone.head
-    return None
-
-
-def body_region_bbox(body, armature, category):
-    """Caja de la zona anatómica real correspondiente a la prenda."""
-    bpy.context.view_layer.update()
-    body_min, body_max = bbox_world(body)
-    hips = find_bone_head_world(armature, BONE_ALIASES["hips"])
-    spine_top = find_bone_head_world(armature, BONE_ALIASES["spine_top"])
-    neck = find_bone_head_world(armature, BONE_ALIASES["neck"])
-    shoulder = find_bone_head_world(armature, BONE_ALIASES["left_shoulder"])
-    up_leg = find_bone_head_world(armature, BONE_ALIASES["left_up_leg"])
-    foot = find_bone_head_world(armature, BONE_ALIASES["left_foot"])
-    toe = find_bone_head_world(armature, BONE_ALIASES["left_toe"])
-
-    if category in ("hoodie", "shirt", "jacket") and hips and (neck or shoulder or spine_top):
-        top_z = (neck or shoulder or spine_top).z
-        bottom_z = hips.z
-        region_min, region_max = bbox_vertices_in_z(body, bottom_z, top_z)
-        print(
-            f"[fit-debug] category={category} torso_z=({bottom_z:.4f},{top_z:.4f}) "
-            f"region=({tuple(round(v, 4) for v in region_min)}, {tuple(round(v, 4) for v in region_max)})",
-            flush=True,
-        )
-        return region_min, region_max
-
-    if category in ("pants", "shorts") and hips and (foot or up_leg):
-        bottom_z = (foot or body_min).z
-        if category == "shorts" and up_leg:
-            bottom_z = up_leg.z - (hips.z - up_leg.z) * 0.45
-        region_min, region_max = bbox_vertices_in_z(body, bottom_z, hips.z)
-        print(f"[fit-debug] category={category} legs_z=({bottom_z:.4f},{hips.z:.4f})", flush=True)
-        return region_min, region_max
-
-    if category == "shoes" and (foot or toe):
-        top_z = (toe or foot).z + 0.15 * (body_max.z - body_min.z)
-        region_min, region_max = bbox_vertices_in_z(body, body_min.z, top_z)
-        print(f"[fit-debug] category={category} shoes_z=({body_min.z:.4f},{top_z:.4f})", flush=True)
-        return region_min, region_max
-
-    print(
-        f"[fit-debug] category={category} FALLBACK cuerpo entero "
-        f"hips={hips} neck={neck} shoulder={shoulder} up_leg={up_leg} foot={foot} toe={toe}",
-        flush=True,
-    )
     return body_min, body_max
 
 
-def fit_to_body(garment, body, armature, category):
-    body_min, body_max = body_region_bbox(body, armature, category)
+def fit_to_body(garment, body_meshes, armature, category):
+    target_min, target_max = body_region(body_meshes, armature, category)
+    target_size = target_max - target_min
     garment_min, garment_max = bbox_world(garment)
-    body_size = body_max - body_min
     garment_size = garment_max - garment_min
-
-    if min(garment_size) <= 1e-6 or min(body_size) <= 1e-6:
-        raise RuntimeError("Garment or body region has invalid dimensions")
+    if min(target_size) <= 1e-6 or min(garment_size) <= 1e-6:
+        raise RuntimeError("Garment or target body region has invalid dimensions")
 
     padding = {
-        "hoodie": (1.10, 1.05, 1.08),
-        "shirt": (1.06, 1.03, 1.06),
-        "jacket": (1.12, 1.07, 1.10),
-        "pants": (1.08, 1.04, 1.08),
-        "shorts": (1.07, 1.04, 1.07),
-        "shoes": (1.06, 1.03, 1.06),
-        "accessory": (1.05, 1.05, 1.05),
+        "hoodie": Vector((1.18, 1.24, 1.06)),
+        "shirt": Vector((1.10, 1.16, 1.03)),
+        "jacket": Vector((1.22, 1.28, 1.08)),
+        "pants": Vector((1.10, 1.14, 1.04)),
+        "shorts": Vector((1.10, 1.14, 1.03)),
+        "shoes": Vector((1.10, 1.15, 1.04)),
+        "accessory": Vector((1.05, 1.05, 1.05)),
     }[category]
 
-    factors = Vector((
-        body_size.x / garment_size.x * padding[0],
-        body_size.y / garment_size.y * padding[1],
-        body_size.z / garment_size.z * padding[2],
-    ))
+    desired = Vector((target_size.x * padding.x, target_size.y * padding.y, target_size.z * padding.z))
 
-    # Evitar que una pieza corrupta o con ejes casi planos se convierta en un
-    # bloque enorme. Las prendas válidas siguen pudiendo cambiar mucho de
-    # unidad (cm, m, etc.), pero no deformarse cientos de veces entre ejes.
-    median_factor = sorted((factors.x, factors.y, factors.z))[1]
-    minimum = median_factor * 0.35
-    maximum = median_factor * 2.85
-    factors.x = max(minimum, min(factors.x, maximum))
-    factors.y = max(minimum, min(factors.y, maximum))
-    factors.z = max(minimum, min(factors.z, maximum))
-
-    garment.scale = Vector((
-        garment.scale.x * factors.x,
-        garment.scale.y * factors.y,
-        garment.scale.z * factors.z,
-    ))
+    # Height is the most stable signal for CLOUVA garments. Use a uniform base
+    # scale first, then only small bounded X/Y corrections. This prevents a Meshy
+    # hoodie from being stretched into a broken crop-top or giant shoulder ring.
+    uniform = desired.z / garment_size.z
+    x_correction = max(0.78, min((desired.x / (garment_size.x * uniform)), 1.28))
+    y_correction = max(0.78, min((desired.y / (garment_size.y * uniform)), 1.28))
+    garment.scale = Vector((uniform * x_correction, uniform * y_correction, uniform))
     bpy.context.view_layer.update()
 
     garment_min, garment_max = bbox_world(garment)
     garment_center = (garment_min + garment_max) * 0.5
-    body_center = (body_min + body_max) * 0.5
-    offset = body_center - garment_center
+    target_center = (target_min + target_max) * 0.5
+
+    if category in {"hoodie", "shirt", "jacket"}:
+        # Anchor upper garments at shoulders/neck, while preserving their full
+        # generated length. This fixes the previous upward collapse.
+        target_top = target_max.z
+        offset_z = target_top - garment_max.z
+        offset = Vector((target_center.x - garment_center.x, target_center.y - garment_center.y, offset_z))
+    elif category in {"pants", "shorts"}:
+        offset = Vector((target_center.x - garment_center.x, target_center.y - garment_center.y, target_max.z - garment_max.z))
+    elif category == "shoes":
+        offset = Vector((target_center.x - garment_center.x, target_center.y - garment_center.y, target_min.z - garment_min.z))
+    else:
+        offset = target_center - garment_center
+
     garment.location += offset
+    bpy.context.view_layer.update()
+    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
     bpy.context.view_layer.update()
 
     final_min, final_max = bbox_world(garment)
     print(
-        f"[fit-debug] garment_before_size={tuple(round(v, 4) for v in garment_size)} "
-        f"body_size={tuple(round(v, 4) for v in body_size)} "
-        f"scale={tuple(round(v, 4) for v in factors)} offset={tuple(round(v, 4) for v in offset)} "
-        f"final_bbox=({tuple(round(v, 4) for v in final_min)}, {tuple(round(v, 4) for v in final_max)})",
+        f"[rig] fit category={category} target={tuple(round(v,4) for v in target_size)} "
+        f"source={tuple(round(v,4) for v in garment_size)} uniform={uniform:.5f} "
+        f"xy=({x_correction:.3f},{y_correction:.3f}) offset={tuple(round(v,4) for v in offset)} "
+        f"final=({tuple(round(v,4) for v in final_min)}, {tuple(round(v,4) for v in final_max)})",
         flush=True,
     )
+    return target_min, target_max
 
 
-def build_body_kdtree(body):
-    matrix = body.matrix_world
-    kd = KDTree(len(body.data.vertices))
-    for index, vertex in enumerate(body.data.vertices):
-        kd.insert(matrix @ vertex.co, index)
+def build_weight_kdtree(body_meshes):
+    total_vertices = sum(len(obj.data.vertices) for obj in body_meshes)
+    kd = KDTree(total_vertices)
+    records = []
+    index = 0
+    for obj in body_meshes:
+        group_names = {group.index: group.name for group in obj.vertex_groups}
+        matrix = obj.matrix_world
+        for vertex in obj.data.vertices:
+            kd.insert(matrix @ vertex.co, index)
+            records.append((vertex, group_names))
+            index += 1
     kd.balance()
-    return kd
+    return kd, records
 
 
-def copy_weights(body, garment):
-    body_groups = {group.index: group.name for group in body.vertex_groups}
-    if not body_groups:
+def copy_weights(body_meshes, garment):
+    all_names = sorted({group.name for obj in body_meshes for group in obj.vertex_groups})
+    if not all_names:
         raise RuntimeError("Avatar body has no vertex groups")
-
     garment.vertex_groups.clear()
-    garment_groups = {name: garment.vertex_groups.new(name=name) for name in body_groups.values()}
-    kd = build_body_kdtree(body)
-    garment_inverse = garment.matrix_world.inverted()
-    neighbors_k = 6
+    destination = {name: garment.vertex_groups.new(name=name) for name in all_names}
+    kd, records = build_weight_kdtree(body_meshes)
 
     for vertex in garment.data.vertices:
         world_position = garment.matrix_world @ vertex.co
-        neighbors = kd.find_n(world_position, neighbors_k)
-
+        neighbors = kd.find_n(world_position, 8)
         blended = {}
-        total_neighbor_weight = 0.0
-        for _, body_index, distance in neighbors:
-            source = body.data.vertices[body_index]
-            neighbor_weight = 1.0 / max(distance, 1e-4) ** 2
-            total_neighbor_weight += neighbor_weight
-            for membership in source.groups:
-                name = body_groups.get(membership.group)
-                if not name or membership.weight <= 0.0001:
-                    continue
-                blended[name] = blended.get(name, 0.0) + membership.weight * neighbor_weight
+        total_distance_weight = 0.0
+        for _position, record_index, distance in neighbors:
+            source_vertex, names = records[record_index]
+            distance_weight = 1.0 / max(distance, 1e-5) ** 2
+            total_distance_weight += distance_weight
+            for membership in source_vertex.groups:
+                name = names.get(membership.group)
+                if name and membership.weight > 0.0001:
+                    blended[name] = blended.get(name, 0.0) + membership.weight * distance_weight
 
-        if total_neighbor_weight <= 0:
+        if not blended or total_distance_weight <= 0:
             continue
-
-        influences = [(name, weight / total_neighbor_weight) for name, weight in blended.items()]
-        influences.sort(key=lambda item: item[1], reverse=True)
-        influences = influences[:4]
-        total = sum(weight for _, weight in influences) or 1.0
-        for name, weight in influences:
-            garment_groups[name].add([vertex.index], weight / total, "REPLACE")
-        vertex.co = garment_inverse @ world_position
+        influences = sorted(
+            ((name, value / total_distance_weight) for name, value in blended.items()),
+            key=lambda item: item[1],
+            reverse=True,
+        )[:4]
+        total = sum(value for _, value in influences) or 1.0
+        for name, value in influences:
+            destination[name].add([vertex.index], value / total, "REPLACE")
 
 
 def hex_to_rgba(value):
     value = (value or "#0a0a0a").strip().lstrip("#")
     if len(value) != 6:
         value = "0a0a0a"
-    return tuple(int(value[index:index + 2], 16) / 255.0 for index in (0, 2, 4)) + (1.0,)
+    return tuple(int(value[i:i + 2], 16) / 255.0 for i in (0, 2, 4)) + (1.0,)
 
 
 def ensure_uv_map(obj):
+    if obj.data.uv_layers:
+        return
     select_only(obj)
     bpy.ops.object.mode_set(mode="EDIT")
     bpy.ops.mesh.select_all(action="SELECT")
-    bpy.ops.uv.smart_project(
-        angle_limit=1.15192,
-        island_margin=0.02,
-        area_weight=0.0,
-        correct_aspect=True,
-        scale_to_bounds=True,
-    )
+    bpy.ops.uv.smart_project(angle_limit=1.15192, island_margin=0.02, scale_to_bounds=True)
     bpy.ops.object.mode_set(mode="OBJECT")
 
 
 def apply_material(garment, art_path, color):
     ensure_uv_map(garment)
-
     material = bpy.data.materials.new(name="CLOUVA_Garment_Material")
     material.use_nodes = True
-    nodes = material.node_tree.nodes
-    links = material.node_tree.links
-    nodes.clear()
-
-    output = nodes.new("ShaderNodeOutputMaterial")
-    output.location = (700, 0)
-    shader = nodes.new("ShaderNodeBsdfPrincipled")
-    shader.location = (420, 0)
-    shader.inputs["Roughness"].default_value = 0.72
+    shader = material.node_tree.nodes.get("Principled BSDF")
     shader.inputs["Base Color"].default_value = hex_to_rgba(color)
-    links.new(shader.outputs["BSDF"], output.inputs["Surface"])
+    shader.inputs["Roughness"].default_value = 0.72
 
     if art_path and os.path.exists(art_path):
-        uv_node = nodes.new("ShaderNodeUVMap")
-        uv_node.location = (-700, 0)
-        mapping = nodes.new("ShaderNodeMapping")
-        mapping.location = (-500, 0)
-        texture = nodes.new("ShaderNodeTexImage")
-        texture.location = (-280, 0)
+        texture = material.node_tree.nodes.new("ShaderNodeTexImage")
         texture.image = bpy.data.images.load(art_path, check_existing=False)
-        texture.extension = "REPEAT"
-        tint = nodes.new("ShaderNodeRGB")
-        tint.location = (-260, -180)
-        tint.outputs[0].default_value = hex_to_rgba(color)
-        multiply = nodes.new("ShaderNodeMixRGB")
-        multiply.location = (100, 0)
-        multiply.blend_type = "MULTIPLY"
-        multiply.inputs["Fac"].default_value = 1.0
-        links.new(uv_node.outputs["UV"], mapping.inputs["Vector"])
-        links.new(mapping.outputs["Vector"], texture.inputs["Vector"])
-        links.new(texture.outputs["Color"], multiply.inputs[1])
-        links.new(tint.outputs["Color"], multiply.inputs[2])
-        links.new(multiply.outputs["Color"], shader.inputs["Base Color"])
+        material.node_tree.links.new(texture.outputs["Color"], shader.inputs["Base Color"])
         if texture.outputs.get("Alpha"):
-            links.new(texture.outputs["Alpha"], shader.inputs["Alpha"])
+            material.node_tree.links.new(texture.outputs["Alpha"], shader.inputs["Alpha"])
             material.surface_render_method = "DITHERED"
 
     garment.data.materials.clear()
     garment.data.materials.append(material)
 
 
-def validate(garment):
-    if len(garment.data.vertices) < 50:
+def validate_before_export(garment, armature, target_min, target_max):
+    vertex_count = len(garment.data.vertices)
+    if vertex_count < 50:
         raise RuntimeError("Garment mesh is too small")
     weighted = sum(1 for vertex in garment.data.vertices if len(vertex.groups) > 0)
-    if weighted / len(garment.data.vertices) < 0.98:
-        raise RuntimeError("Not enough vertices received skin weights")
+    if weighted / vertex_count < 0.995:
+        raise RuntimeError(f"Only {weighted}/{vertex_count} garment vertices received skin weights")
+    if garment.find_armature() != armature:
+        raise RuntimeError("Garment is not connected to the official avatar armature")
+
+    garment_min, garment_max = bbox_world(garment)
+    target_size = target_max - target_min
+    garment_size = garment_max - garment_min
+    ratios = Vector((garment_size.x / target_size.x, garment_size.y / target_size.y, garment_size.z / target_size.z))
+    if ratios.x > 2.0 or ratios.y > 2.2 or ratios.z > 1.65:
+        raise RuntimeError(f"Garment remains outside safe target bounds: ratios={tuple(round(v,3) for v in ratios)}")
 
 
-def export(output_path, garment, armature):
+def export_glb(output_path, garment, armature):
     bpy.ops.object.select_all(action="DESELECT")
     armature.select_set(True)
     garment.select_set(True)
@@ -408,39 +409,52 @@ def export(output_path, garment, armature):
     )
 
 
+def validate_export_roundtrip(output_path):
+    if not os.path.exists(output_path) or os.path.getsize(output_path) < 1024:
+        raise RuntimeError("Exported GLB is missing or empty")
+
+    with tempfile.TemporaryDirectory(prefix="clouva-validate-"):
+        clear_scene()
+        imported = import_glb(output_path)
+        armatures = [obj for obj in imported if obj.type == "ARMATURE"]
+        meshes = [obj for obj in imported if obj.type == "MESH"]
+        skinned = [obj for obj in meshes if obj.find_armature() is not None]
+        if len(armatures) != 1:
+            raise RuntimeError(f"Exported GLB must contain exactly one armature, found {len(armatures)}")
+        if not skinned:
+            raise RuntimeError("Exported GLB has no skinned garment mesh")
+        if sum(len(obj.data.vertices) for obj in skinned) < 50:
+            raise RuntimeError("Exported skinned garment is unexpectedly small")
+        print(f"[rig] roundtrip ok armatures={len(armatures)} skinned_meshes={len(skinned)}", flush=True)
+
+
 def main():
     avatar_path, garment_path, output_path, category, art_path, color = args()
-    clear_scene()
+    if category not in VALID_CATEGORIES:
+        raise RuntimeError(f"Invalid category: {category}")
 
+    clear_scene()
     avatar_objects = import_glb(avatar_path)
-    bpy.context.view_layer.update()
     armature = find_armature(avatar_objects)
-    body = largest_mesh(
-        [obj for obj in avatar_objects if obj.type == "MESH" and obj.find_armature() == armature]
-        or avatar_objects
-    )
+    body_meshes = body_meshes_for_rig(avatar_objects, armature)
 
     garment_objects = import_glb(garment_path)
     garment = prepare_garment(garment_objects)
-
-    fit_to_body(garment, body, armature, category)
-    copy_weights(body, garment)
+    target_min, target_max = fit_to_body(garment, body_meshes, armature, category)
+    copy_weights(body_meshes, garment)
     apply_material(garment, art_path, color)
 
     modifier = garment.modifiers.new(name="CLOUVA Armature", type="ARMATURE")
     modifier.object = armature
-
-    # Preservar exactamente la transformación mundial al parentear. Hacerlo
-    # explícitamente evita saltos al origen o a la cabeza por matrices locales
-    # heredadas del GLB original.
-    world_matrix = garment.matrix_world.copy()
+    world = garment.matrix_world.copy()
     garment.parent = armature
     garment.matrix_parent_inverse = armature.matrix_world.inverted()
-    garment.matrix_world = world_matrix
+    garment.matrix_world = world
     bpy.context.view_layer.update()
 
-    validate(garment)
-    export(output_path, garment, armature)
+    validate_before_export(garment, armature, target_min, target_max)
+    export_glb(output_path, garment, armature)
+    validate_export_roundtrip(output_path)
 
 
 if __name__ == "__main__":
