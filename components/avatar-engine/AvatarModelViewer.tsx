@@ -5,11 +5,14 @@ import {
   ACESFilmicToneMapping,
   AmbientLight,
   AnimationMixer,
+  Bone,
   Clock,
   DirectionalLight,
+  Euler,
   HemisphereLight,
   Object3D,
   PerspectiveCamera,
+  Quaternion,
   Scene,
   SRGBColorSpace,
   WebGLRenderer,
@@ -36,6 +39,92 @@ type Props = {
   onReady?: (object: Object3D) => void;
 };
 
+type RigKey = "hips" | "spine" | "chest" | "neck" | "head" | "leftArm" | "rightArm" | "leftForeArm" | "rightForeArm" | "leftUpLeg" | "rightUpLeg";
+type RigBone = { bone: Bone; base: Quaternion };
+type DanceRig = Partial<Record<RigKey, RigBone>>;
+
+const RIG_ALIASES: Record<RigKey, readonly string[]> = {
+  hips: ["hips", "pelvis"],
+  spine: ["spine", "spine01", "spine1"],
+  chest: ["spine02", "spine2", "chest", "upperchest"],
+  neck: ["neck"],
+  head: ["head"],
+  leftArm: ["leftarm", "upperarml", "upperarmleft", "shoulderl"],
+  rightArm: ["rightarm", "upperarmr", "upperarmright", "shoulderr"],
+  leftForeArm: ["leftforearm", "forearml", "lowerarml"],
+  rightForeArm: ["rightforearm", "forearmr", "lowerarmr"],
+  leftUpLeg: ["leftupleg", "thighl", "upperlegl"],
+  rightUpLeg: ["rightupleg", "thighr", "upperlegr"],
+};
+
+function cleanName(value: string): string {
+  return value.toLowerCase().replace(/^mixamorig:/, "").replace(/[^a-z0-9]/g, "");
+}
+
+function collectDanceRig(root: Object3D): DanceRig {
+  const candidates: Bone[] = [];
+  root.traverse((object: Object3D) => {
+    const bone = object as Bone;
+    if (bone.isBone) candidates.push(bone);
+  });
+
+  const rig: DanceRig = {};
+  for (const key of Object.keys(RIG_ALIASES) as RigKey[]) {
+    const aliases = RIG_ALIASES[key];
+    const exact = candidates.find((bone) => aliases.includes(cleanName(bone.name)));
+    const partial = candidates.find((bone) => {
+      const name = cleanName(bone.name);
+      return aliases.some((alias) => name.includes(alias) || alias.includes(name));
+    });
+    const bone = exact ?? partial;
+    if (bone) rig[key] = { bone, base: bone.quaternion.clone() };
+  }
+  return rig;
+}
+
+const danceEuler = new Euler();
+const danceQuaternion = new Quaternion();
+
+function poseRigBone(entry: RigBone | undefined, x: number, y: number, z: number): void {
+  if (!entry) return;
+  danceEuler.set(x, y, z, "XYZ");
+  danceQuaternion.setFromEuler(danceEuler);
+  entry.bone.quaternion.copy(entry.base).multiply(danceQuaternion);
+}
+
+function applyDance(rig: DanceRig, elapsed: number, active: boolean): void {
+  const beat = Math.sin(elapsed * 4.2);
+  const halfBeat = Math.sin(elapsed * 2.1);
+  const side = Math.sin(elapsed * 1.5);
+
+  if (!active) {
+    poseRigBone(rig.hips, 0, 0, 0);
+    poseRigBone(rig.spine, Math.sin(elapsed * 1.5) * 0.006, 0, 0);
+    poseRigBone(rig.chest, Math.sin(elapsed * 1.5) * 0.012, 0, 0);
+    poseRigBone(rig.neck, 0, 0, 0);
+    poseRigBone(rig.head, 0, 0, 0);
+    poseRigBone(rig.leftArm, 0, 0, 0);
+    poseRigBone(rig.rightArm, 0, 0, 0);
+    poseRigBone(rig.leftForeArm, 0, 0, 0);
+    poseRigBone(rig.rightForeArm, 0, 0, 0);
+    poseRigBone(rig.leftUpLeg, 0, 0, 0);
+    poseRigBone(rig.rightUpLeg, 0, 0, 0);
+    return;
+  }
+
+  poseRigBone(rig.hips, 0, side * 0.12, halfBeat * 0.08);
+  poseRigBone(rig.spine, beat * 0.04, -side * 0.08, -halfBeat * 0.05);
+  poseRigBone(rig.chest, -beat * 0.06, side * 0.1, halfBeat * 0.07);
+  poseRigBone(rig.neck, 0, -side * 0.09, beat * 0.03);
+  poseRigBone(rig.head, beat * 0.03, side * 0.14, -halfBeat * 0.05);
+  poseRigBone(rig.leftArm, -0.12 + beat * 0.08, 0, 0.34 + halfBeat * 0.22);
+  poseRigBone(rig.rightArm, -0.12 - beat * 0.08, 0, -0.34 - halfBeat * 0.22);
+  poseRigBone(rig.leftForeArm, 0, beat * 0.1, 0.28 + halfBeat * 0.18);
+  poseRigBone(rig.rightForeArm, 0, -beat * 0.1, -0.28 - halfBeat * 0.18);
+  poseRigBone(rig.leftUpLeg, halfBeat * 0.08, 0, side * 0.05);
+  poseRigBone(rig.rightUpLeg, -halfBeat * 0.08, 0, -side * 0.05);
+}
+
 export function AvatarModelViewer({
   modelUrl,
   fallbackModelUrl = null,
@@ -48,8 +137,13 @@ export function AvatarModelViewer({
   onReady,
 }: Props) {
   const mount = useRef<HTMLDivElement>(null);
+  const motionTestRef = useRef(motionTest);
   const [state, setState] = useState<ModelState>("loading");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    motionTestRef.current = motionTest;
+  }, [motionTest]);
 
   useEffect(() => {
     if (!mount.current) return;
@@ -58,9 +152,9 @@ export function AvatarModelViewer({
     let raf = 0;
     let currentModel: Object3D | null = null;
     let mixer: AnimationMixer | null = null;
+    let danceRig: DanceRig = {};
     let resumeTimer: ReturnType<typeof setTimeout> | null = null;
     let baseY = 0;
-    let baseRotationY = 0;
     const clock = new Clock();
 
     const scene = new Scene();
@@ -146,7 +240,7 @@ export function AvatarModelViewer({
       });
       currentModel = object;
       baseY = object.position.y;
-      baseRotationY = object.rotation.y;
+      danceRig = collectDanceRig(object);
       scene.add(object);
 
       if (playAnimations && animations.length) {
@@ -216,13 +310,13 @@ export function AvatarModelViewer({
         mixer?.update(delta);
 
         if (currentModel && !mixer) {
+          const active = motionTestRef.current;
+          applyDance(danceRig, elapsed, active);
           const breath = Math.sin(elapsed * 1.5);
-          currentModel.position.y = baseY + breath * 0.0025;
+          currentModel.position.y = baseY + breath * 0.0025 + (active ? Math.abs(Math.sin(elapsed * 4.2)) * 0.012 : 0);
           currentModel.scale.y = 1 + breath * 0.002;
           currentModel.scale.x = 1 - breath * 0.001;
           currentModel.scale.z = 1 - breath * 0.001;
-          currentModel.rotation.y = baseRotationY + (motionTest ? Math.sin(elapsed * 0.7) * 0.08 : 0);
-          currentModel.rotation.z = motionTest ? Math.sin(elapsed * 0.9) * 0.018 : 0;
         }
 
         controls.update();
@@ -243,7 +337,7 @@ export function AvatarModelViewer({
       renderer.dispose();
       mount.current?.replaceChildren();
     };
-  }, [modelUrl, fallbackModelUrl, modelData, frontRotationY, playAnimations, motionTest]);
+  }, [modelUrl, fallbackModelUrl, modelData, frontRotationY, playAnimations]);
 
   return (
     <div
