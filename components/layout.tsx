@@ -27,7 +27,7 @@ export function MainNav() {
 
   const displayName = profile?.full_name ?? profile?.display_name ?? user?.email?.split("@")[0] ?? "Flow";
   const avatar = profile?.avatar_url ?? user?.user_metadata?.avatar_url;
-  const canAdmin = role === "admin" || role === "owner";
+  const canAdmin = role === "admin";
 
   return (
     <header className="sticky top-0 z-50 border-b border-[var(--line)] bg-[var(--card)]/80 backdrop-blur-2xl">
