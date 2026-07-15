@@ -105,9 +105,9 @@ export function findAvatarBodyPart(avatarObject: Object3D, meshNames: string[]):
 export type WearableCategory = "hoodie" | "shirt" | "jacket" | "pants" | "shorts" | "shoes" | "accessory";
 
 /**
- * Crea una zona corporal estable aunque el GLB no use nombres como
- * Casual_Body/Casual_Legs. Esto es clave para avatares generados por Meshy:
- * usa proporciones del cuerpo completo normalizado, no nombres de malla.
+ * Devuelve una zona corporal estable basada en proporciones del avatar completo.
+ * No confía en nombres de mallas porque algunos GLB agrupan cabeza, torso y brazos
+ * en una sola malla y eso hacía que el cuello del buzo terminara sobre la cara.
  */
 export function inferAvatarBodyPartBox(avatarObject: Object3D, category: WearableCategory): Box3 {
   avatarObject.updateMatrixWorld(true);
@@ -125,13 +125,13 @@ export function inferAvatarBodyPartBox(avatarObject: Object3D, category: Wearabl
   };
 
   switch (category) {
-    case "hoodie": return make(0.86, 0.43, 0.89, 0.78);
-    case "shirt": return make(0.80, 0.48, 0.84, 0.72);
-    case "jacket": return make(0.90, 0.42, 0.90, 0.82);
-    case "pants": return make(0.58, 0.06, 0.55, 0.62);
-    case "shorts": return make(0.58, 0.30, 0.56, 0.62);
-    case "shoes": return make(0.62, 0.00, 0.14, 0.92);
-    default: return make(0.46, 0.45, 0.78, 0.55);
+    case "hoodie": return make(0.82, 0.39, 0.74, 0.70);
+    case "shirt": return make(0.76, 0.43, 0.70, 0.66);
+    case "jacket": return make(0.86, 0.38, 0.76, 0.74);
+    case "pants": return make(0.56, 0.07, 0.52, 0.58);
+    case "shorts": return make(0.56, 0.29, 0.52, 0.58);
+    case "shoes": return make(0.60, 0.00, 0.12, 0.88);
+    default: return make(0.42, 0.44, 0.70, 0.50);
   }
 }
 
@@ -142,6 +142,12 @@ export type GarmentFitOptions = {
   verticalOffset?: number;
 };
 
+/**
+ * Ajusta una prenda conservando sus proporciones originales. Antes se aplicaba
+ * una escala distinta en X/Y/Z; eso convertía una hoodie de Meshy en una forma
+ * inflada y elevaba hombros/cuello. Ahora se usa una sola escala, se limita el
+ * tamaño máximo y se ancla la parte superior al torso.
+ */
 export function fitGarmentToBodyPart(
   garment: Object3D,
   bodyPartBox: Box3,
@@ -154,27 +160,31 @@ export function fitGarmentToBodyPart(
 
   if (garmentSize.x < 0.0001 || garmentSize.y < 0.0001 || garmentSize.z < 0.0001) return;
 
-  const uniformPadding = options.paddingScale ?? 1;
-  const widthPadding = options.widthPadding ?? 1.08;
-  const depthPadding = options.depthPadding ?? 1.12;
+  const padding = options.paddingScale ?? 1;
+  const desiredX = bodySize.x * (options.widthPadding ?? 1.06) * padding;
+  const desiredY = bodySize.y * padding;
+  const desiredZ = bodySize.z * (options.depthPadding ?? 1.08) * padding;
 
-  const sx = (bodySize.x / garmentSize.x) * widthPadding * uniformPadding;
-  const sy = (bodySize.y / garmentSize.y) * uniformPadding;
-  const sz = (bodySize.z / garmentSize.z) * depthPadding * uniformPadding;
+  const scaleX = desiredX / garmentSize.x;
+  const scaleY = desiredY / garmentSize.y;
+  const scaleZ = desiredZ / garmentSize.z;
 
-  garment.scale.set(
-    garment.scale.x * sx,
-    garment.scale.y * sy,
-    garment.scale.z * sz,
-  );
-
+  // La menor escala evita que una dimensión defectuosa de Meshy infle las otras.
+  const uniformScale = Math.min(scaleX, scaleY, scaleZ);
+  garment.scale.multiplyScalar(uniformScale);
   garment.updateMatrixWorld(true);
-  const conformedBox = mainBodyBox(garment);
-  const conformedCenter = conformedBox.getCenter(new Vector3());
+
+  const fittedBox = mainBodyBox(garment);
+  const fittedSize = fittedBox.getSize(new Vector3());
+  const fittedCenter = fittedBox.getCenter(new Vector3());
   const bodyCenter = bodyPartBox.getCenter(new Vector3());
 
-  garment.position.x += bodyCenter.x - conformedCenter.x;
-  garment.position.y += bodyCenter.y - conformedCenter.y + (options.verticalOffset ?? 0);
-  garment.position.z += bodyCenter.z - conformedCenter.z;
+  const targetCenter = bodyCenter.clone();
+  // Prendas del torso se alinean por arriba para que el cuello quede debajo de la cabeza.
+  targetCenter.y = bodyPartBox.max.y - fittedSize.y * 0.5 + (options.verticalOffset ?? 0);
+
+  garment.position.x += targetCenter.x - fittedCenter.x;
+  garment.position.y += targetCenter.y - fittedCenter.y;
+  garment.position.z += targetCenter.z - fittedCenter.z;
   garment.updateMatrixWorld(true);
 }
