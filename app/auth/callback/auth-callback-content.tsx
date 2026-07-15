@@ -2,31 +2,16 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { getRedirectByRole } from "@/lib/auth";
-
-const STEP_TIMEOUT_MS = 30000;
 
 function redirect(path: string) {
   window.location.replace(path);
 }
 
-async function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
+async function raceTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
   return Promise.race([
     promise,
-    new Promise<T>((_, reject) =>
-      window.setTimeout(() => reject(new Error(`${label} tardó demasiado`)), STEP_TIMEOUT_MS),
-    ),
+    new Promise<T>((_, reject) => window.setTimeout(() => reject(new Error(message)), ms)),
   ]);
-}
-
-async function waitForSession(supabase: any) {
-  for (let attempt = 0; attempt < 12; attempt += 1) {
-    const result = await supabase.auth.getSession();
-    if (result.error) throw result.error;
-    if (result.data.session?.user) return result.data.session;
-    await new Promise((resolve) => window.setTimeout(resolve, 400));
-  }
-  return null;
 }
 
 export default function AuthCallbackContent() {
@@ -44,93 +29,80 @@ export default function AuthCallbackContent() {
     if (startedRef.current) return;
     startedRef.current = true;
 
+    const emergencyRedirect = window.setTimeout(() => {
+      redirect(isAddAccountMode ? "/mi-flow?openAccountSwitcher=1" : "/perfil");
+    }, 9000);
+
     const handleCallback = async () => {
       try {
         if (oauthError) throw new Error(oauthError);
 
-        const { supabase } = await withTimeout(import("@/lib/supabase"), "La aplicación");
-        const initialSession = await withTimeout(supabase.auth.getSession(), "La sesión");
-        if (initialSession.error) throw initialSession.error;
-
-        let session = initialSession.data.session;
+        const { supabase } = await import("@/lib/supabase");
+        let session = (await supabase.auth.getSession()).data.session;
 
         if (!session && code) {
-          const exchange = await withTimeout(
+          const exchange = await raceTimeout(
             supabase.auth.exchangeCodeForSession(code),
-            "El inicio de sesión con Google",
+            8000,
+            "El acceso con Google tardó demasiado",
           );
-
-          if (exchange.error) {
-            const normalized = exchange.error.message.toLowerCase();
-            const alreadyHandled =
-              normalized.includes("code verifier") ||
-              normalized.includes("auth code") ||
-              normalized.includes("already been used");
-            if (!alreadyHandled) throw exchange.error;
-          }
-
-          session = exchange.data.session ?? null;
+          if (exchange.error) throw exchange.error;
+          session = exchange.data.session;
         }
 
-        if (!session) {
-          session = await withTimeout(waitForSession(supabase), "La sesión de Google");
+        if (!session?.user) {
+          const retry = await raceTimeout(supabase.auth.getSession(), 3000, "La sesión tardó demasiado");
+          session = retry.data.session;
         }
 
-        const user = session?.user;
-        if (!user) {
-          throw new Error("Google autorizó el acceso, pero CLOUVA no recibió una sesión válida. Volvé a intentarlo.");
+        if (!session?.user) {
+          throw new Error("No se pudo crear la sesión de Google.");
         }
 
-        const defaultName =
-          (user.user_metadata?.full_name as string | undefined) ??
-          (user.user_metadata?.name as string | undefined) ??
-          (user.email ? user.email.split("@")[0] : "Usuario");
-        const avatarUrl =
-          (user.user_metadata?.avatar_url as string | undefined) ??
-          (user.user_metadata?.picture as string | undefined) ??
-          null;
+        const user = session.user;
+        const isAdmin = user.email?.toLowerCase() === "sergio.iba.11@gmail.com";
+        const destination = isAdmin ? "/admin" : "/perfil";
 
-        let { data: profile } = await supabase
-          .from("profiles")
-          .select("id, role, display_name, full_name")
-          .eq("id", user.id)
-          .maybeSingle();
-
-        if (!profile) {
-          const { data: created } = await supabase
-            .from("profiles")
-            .insert({
-              id: user.id,
-              display_name: defaultName,
-              full_name: defaultName,
-              avatar_url: avatarUrl,
-              role: "cliente",
-            })
-            .select("id, role, display_name, full_name")
-            .maybeSingle();
-          profile = created;
-        } else {
-          const updates: Record<string, string> = {};
-          if (!profile.display_name && defaultName) updates.display_name = defaultName;
-          if (!profile.full_name && defaultName) updates.full_name = defaultName;
-          if (Object.keys(updates).length > 0) {
-            await supabase.from("profiles").update(updates).eq("id", user.id);
-          }
-        }
-
-        localStorage.removeItem("clouva.switch_target");
-        const destination = getRedirectByRole(profile?.role ?? "cliente");
         setMessage("Sesión iniciada. Entrando a CLOUVA...");
+        window.clearTimeout(emergencyRedirect);
+
+        void (async () => {
+          try {
+            const defaultName =
+              (user.user_metadata?.full_name as string | undefined) ??
+              (user.user_metadata?.name as string | undefined) ??
+              (user.email ? user.email.split("@")[0] : "Usuario");
+
+            const { data: existing } = await supabase
+              .from("profiles")
+              .select("id, role, display_name, full_name")
+              .eq("id", user.id)
+              .maybeSingle();
+
+            if (!existing) {
+              await supabase.from("profiles").insert({
+                id: user.id,
+                display_name: defaultName,
+                full_name: defaultName,
+                role: isAdmin ? "admin" : "cliente",
+              });
+            }
+          } catch (profileError) {
+            console.error("Profile sync after Google login failed", profileError);
+          }
+        })();
+
         redirect(isAddAccountMode ? `${destination}?openAccountSwitcher=1` : destination);
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : "No se pudo completar el inicio de sesión";
-        console.error("Auth callback failed", error);
-        setMessage("No se pudo completar. Volviendo al login...");
-        window.setTimeout(() => redirect(`/login?error=${encodeURIComponent(errorMessage)}`), 900);
+        window.clearTimeout(emergencyRedirect);
+        const text = error instanceof Error ? error.message : "No se pudo iniciar sesión con Google";
+        console.error("Google callback failed", error);
+        redirect(`/login?error=${encodeURIComponent(text)}`);
       }
     };
 
     void handleCallback();
+    return () => window.clearTimeout(emergencyRedirect);
   }, [code, isAddAccountMode, oauthError]);
 
   return (
