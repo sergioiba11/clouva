@@ -1,25 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useRef } from "react";
-import {
-  Bone,
-  Box3,
-  BoxGeometry,
-  CylinderGeometry,
-  DoubleSide,
-  Group,
-  Mesh,
-  MeshPhysicalMaterial,
-  Object3D,
-  SphereGeometry,
-  Texture,
-  TextureLoader,
-  TorusGeometry,
-  Vector3,
-} from "three";
+import { Bone, Box3, Mesh, Object3D, Texture, TextureLoader, Vector3 } from "three";
 import { CreatorStudioAvatarViewer, type CreatorPoseMode } from "@/components/creator-studio/CreatorStudioAvatarViewer";
 import { useActiveAvatarStore } from "@/lib/avatar-engine/active-avatar-store";
 import { defaultAvatarConfig } from "@/lib/avatar-engine/catalog";
+import {
+  createBaseGarmentTemplate,
+  disposeBaseGarmentTemplate,
+  type BaseGarmentCategory,
+  type BaseGarmentTemplate,
+} from "@/lib/creator-studio/base-garment-library";
 
 export type TryOnAdjustments = {
   scale: number;
@@ -54,23 +45,21 @@ type Rig = {
   hips?: Bone;
   chest?: Bone;
   head?: Bone;
+  leftUpperArm?: Bone;
+  rightUpperArm?: Bone;
+  leftLowerArm?: Bone;
+  rightLowerArm?: Bone;
+  leftHand?: Bone;
+  rightHand?: Bone;
   leftHip?: Bone;
   rightHip?: Bone;
   leftKnee?: Bone;
   rightKnee?: Bone;
 };
 
-type Parts = {
-  root: Group;
-  torso?: Mesh;
-  leftLeg?: Mesh;
-  rightLeg?: Mesh;
-  accessory?: Mesh;
-};
-
 const p1 = new Vector3();
 const p2 = new Vector3();
-const center = new Vector3();
+const midpoint = new Vector3();
 const direction = new Vector3();
 const size = new Vector3();
 const yAxis = new Vector3(0, 1, 0);
@@ -97,6 +86,12 @@ function collectRig(root: Object3D): Rig {
     hips: findBone(bones, ["hips", "pelvis", "jbiphips"]),
     chest: findBone(bones, ["upperchest", "chest", "spine2", "jbipupperchest", "jbipchest"]),
     head: findBone(bones, ["head", "jbiphead"]),
+    leftUpperArm: findBone(bones, ["leftupperarm", "upperarml", "jbiplupperarm", "lupperarm"]),
+    rightUpperArm: findBone(bones, ["rightupperarm", "upperarmr", "jbiprupperarm", "rupperarm"]),
+    leftLowerArm: findBone(bones, ["leftlowerarm", "leftforearm", "lowerarml", "jbipllowerarm", "forearml"]),
+    rightLowerArm: findBone(bones, ["rightlowerarm", "rightforearm", "lowerarmr", "jbiprlowerarm", "forearmr"]),
+    leftHand: findBone(bones, ["lefthand", "handl", "jbiplhand"]),
+    rightHand: findBone(bones, ["righthand", "handr", "jbiprhand"]),
     leftHip: findBone(bones, ["leftupperleg", "leftupleg", "thighl", "upperlegl", "jbiplupperleg"]),
     rightHip: findBone(bones, ["rightupperleg", "rightupleg", "thighr", "upperlegr", "jbiprupperleg"]),
     leftKnee: findBone(bones, ["leftlowerleg", "leftleg", "calfl", "lowerlegl", "jbipllowerleg"]),
@@ -104,90 +99,40 @@ function collectRig(root: Object3D): Rig {
   };
 }
 
-function makeMaterial(texture: Texture | null) {
-  return new MeshPhysicalMaterial({
-    color: texture ? 0xffffff : 0x7b4dd4,
-    map: texture,
-    roughness: 0.82,
-    metalness: 0,
-    clearcoat: 0.02,
-    side: DoubleSide,
-    transparent: true,
-    opacity: 0.94,
-  });
-}
-
-function make(name: string, geometry: BoxGeometry | CylinderGeometry | SphereGeometry | TorusGeometry, material: MeshPhysicalMaterial) {
-  const mesh = new Mesh(geometry, material);
-  mesh.name = name;
-  mesh.castShadow = true;
-  mesh.frustumCulled = false;
-  return mesh;
-}
-
-function createParts(category: string, texture: Texture | null): Parts {
-  const root = new Group();
-  const material = makeMaterial(texture);
-  const parts: Parts = { root };
-
-  if (["hoodie", "campera", "remera"].includes(category)) {
-    // Vista previa estable del volumen principal. Las mangas y capucha reales
-    // deben provenir del GLB generado/ajustado, no de huesos inferidos.
-    parts.torso = make("garmentTorso", new CylinderGeometry(0.76, 0.64, 1.2, 32, 4, false), material);
-    root.add(parts.torso);
-  } else if (category === "baggy") {
-    parts.torso = make("waist", new CylinderGeometry(0.82, 0.76, 0.42, 24), material);
-    parts.leftLeg = make("leftLeg", new CylinderGeometry(0.78, 0.62, 1, 20), material);
-    parts.rightLeg = make("rightLeg", new CylinderGeometry(0.78, 0.62, 1, 20), material);
-    root.add(parts.torso, parts.leftLeg, parts.rightLeg);
-  } else if (category === "zapatillas") {
-    parts.leftLeg = make("leftShoe", new BoxGeometry(1, 0.7, 1.7), material);
-    parts.rightLeg = make("rightShoe", new BoxGeometry(1, 0.7, 1.7), material);
-    root.add(parts.leftLeg, parts.rightLeg);
-  } else if (category === "gorra") {
-    parts.accessory = make("cap", new SphereGeometry(1, 24, 16, 0, Math.PI * 2, 0, Math.PI * 0.58), material);
-    root.add(parts.accessory);
-  } else if (category === "cadena") {
-    parts.accessory = make("chain", new TorusGeometry(1, 0.08, 10, 42), material);
-    root.add(parts.accessory);
-  }
-
-  return parts;
-}
-
-function between(item: Mesh | undefined, start: Object3D | undefined, end: Object3D | undefined, radius: number, multiplier = 1) {
+function attachBetween(
+  item: Mesh | undefined,
+  start: Object3D | undefined,
+  end: Object3D | undefined,
+  radius: number,
+  lengthMultiplier = 1,
+) {
   if (!item || !start || !end) {
     if (item) item.visible = false;
     return false;
   }
   start.getWorldPosition(p1);
   end.getWorldPosition(p2);
-  center.copy(p1).add(p2).multiplyScalar(0.5);
+  midpoint.copy(p1).add(p2).multiplyScalar(0.5);
   direction.copy(p2).sub(p1);
-  const length = Math.max(direction.length() * multiplier, 0.01);
+  const length = Math.max(direction.length() * lengthMultiplier, 0.01);
   direction.normalize();
   item.visible = true;
-  item.position.copy(center);
+  item.position.copy(midpoint);
   item.quaternion.setFromUnitVectors(yAxis, direction);
-  item.scale.set(radius, length * 0.5, radius * 0.95);
+  item.scale.set(radius, length * 0.72, radius);
   return true;
 }
 
-function dispose(parts: Parts | null) {
-  if (!parts) return;
-  parts.root.traverse((object: any) => {
-    object.geometry?.dispose?.();
-    if (Array.isArray(object.material)) object.material.forEach((value: any) => value.dispose?.());
-    else object.material?.dispose?.();
-  });
-  parts.root.removeFromParent();
+function normalizeCategory(category: string): BaseGarmentCategory | null {
+  if (category === "hoodie" || category === "remera" || category === "campera" || category === "baggy") return category;
+  return null;
 }
 
 export function SmartTryOnViewer({ category, fit, pose, view, background, showBody, garmentOnly, adjustments, imageUrl }: Props) {
   const avatar = useActiveAvatarStore((state) => state.avatar);
   const avatarRef = useRef<Object3D | null>(null);
   const rigRef = useRef<Rig>({});
-  const partsRef = useRef<Parts | null>(null);
+  const templateRef = useRef<BaseGarmentTemplate | null>(null);
   const textureRef = useRef<Texture | null>(null);
   const frameRef = useRef(0);
   const currentRef = useRef({ fit, showBody, garmentOnly, adjustments });
@@ -199,9 +144,12 @@ export function SmartTryOnViewer({ category, fit, pose, view, background, showBo
   function rebuild(root: Object3D) {
     avatarRef.current = root;
     rigRef.current = collectRig(root);
-    dispose(partsRef.current);
-    partsRef.current = createParts(category, textureRef.current);
-    (root.parent ?? root).add(partsRef.current.root);
+    disposeBaseGarmentTemplate(templateRef.current);
+    const baseCategory = normalizeCategory(category);
+    templateRef.current = baseCategory
+      ? createBaseGarmentTemplate(baseCategory, { map: textureRef.current })
+      : null;
+    if (templateRef.current) (root.parent ?? root).add(templateRef.current.root);
   }
 
   useEffect(() => {
@@ -211,83 +159,110 @@ export function SmartTryOnViewer({ category, fit, pose, view, background, showBo
       if (avatarRef.current) rebuild(avatarRef.current);
       return;
     }
-    new TextureLoader().load(imageUrl, (texture) => {
-      texture.colorSpace = "srgb" as any;
-      textureRef.current = texture;
-      if (avatarRef.current) rebuild(avatarRef.current);
-    });
+    const loader = new TextureLoader();
+    loader.load(
+      imageUrl,
+      (texture) => {
+        texture.colorSpace = "srgb" as any;
+        textureRef.current = texture;
+        if (avatarRef.current) rebuild(avatarRef.current);
+      },
+      undefined,
+      () => {
+        textureRef.current = null;
+        if (avatarRef.current) rebuild(avatarRef.current);
+      },
+    );
   }, [imageUrl, category]);
 
   useEffect(() => {
     const update = () => {
       const avatarRoot = avatarRef.current;
-      const parts = partsRef.current;
-      if (avatarRoot && parts) {
+      const template = templateRef.current;
+      if (avatarRoot && template) {
         const current = currentRef.current;
         avatarRoot.updateMatrixWorld(true);
         avatarRoot.traverse((object) => {
           if ((object as Mesh).isMesh) object.visible = current.showBody && !current.garmentOnly;
         });
 
-        const box = new Box3().setFromObject(avatarRoot);
-        box.getSize(size);
+        const bounds = new Box3().setFromObject(avatarRoot);
+        bounds.getSize(size);
         const avatarHeight = Math.max(size.y, 1.5);
-        const bodyCenter = box.getCenter(center);
+        const avatarCenter = bounds.getCenter(midpoint);
         const rig = rigRef.current;
-        const fitScale = current.fit === "Slim" ? 0.92 : current.fit === "Oversize" ? 1.08 : 1;
-        const width = Math.min(Math.max(current.adjustments.width / 100, 0.65), 1.35);
-        const length = Math.min(Math.max(current.adjustments.length / 100, 0.65), 1.3);
-        const depth = Math.min(Math.max(1 + current.adjustments.distance / 300, 0.88), 1.15);
+        const fitScale = current.fit === "Slim" ? 0.93 : current.fit === "Oversize" ? 1.11 : 1;
+        const width = Math.min(Math.max(current.adjustments.width / 100, 0.7), 1.35);
+        const length = Math.min(Math.max(current.adjustments.length / 100, 0.72), 1.3);
+        const sleeveLength = Math.min(Math.max(current.adjustments.sleeveLength / 100, 0.72), 1.16);
+        const depth = Math.min(Math.max(1 + current.adjustments.distance / 320, 0.92), 1.16);
 
-        if (parts.torso && ["hoodie", "campera", "remera"].includes(category)) {
-          parts.torso.visible = true;
+        if (template.torso) {
           if (rig.chest && rig.hips) {
             rig.chest.getWorldPosition(p1);
             rig.hips.getWorldPosition(p2);
-            parts.torso.position.copy(p1).lerp(p2, 0.5);
+            template.torso.position.copy(p1).lerp(p2, category === "baggy" ? 0.8 : 0.52);
           } else {
-            parts.torso.position.set(bodyCenter.x, box.min.y + avatarHeight * 0.61, bodyCenter.z);
+            template.torso.position.set(
+              avatarCenter.x,
+              bounds.min.y + avatarHeight * (category === "baggy" ? 0.47 : 0.61),
+              avatarCenter.z,
+            );
           }
-          parts.torso.scale.set(
-            avatarHeight * 0.108 * fitScale * width,
-            avatarHeight * 0.18 * length,
-            avatarHeight * 0.058 * fitScale * depth,
-          );
-        }
-
-        if (category === "baggy") {
-          if (parts.torso) {
-            parts.torso.visible = true;
-            parts.torso.position.set(bodyCenter.x, box.min.y + avatarHeight * 0.47, bodyCenter.z);
-            parts.torso.scale.set(avatarHeight * 0.09 * width, avatarHeight * 0.055, avatarHeight * 0.06 * depth);
+          if (category === "baggy") {
+            template.torso.scale.set(avatarHeight * 0.16 * width, avatarHeight * 0.13, avatarHeight * 0.12 * depth);
+          } else {
+            template.torso.scale.set(
+              avatarHeight * 0.23 * fitScale * width,
+              avatarHeight * 0.25 * length,
+              avatarHeight * 0.20 * fitScale * depth,
+            );
           }
-          between(parts.leftLeg, rig.leftHip, rig.leftKnee, avatarHeight * 0.045 * fitScale, Math.min(current.adjustments.legLength / 100, 1.08));
-          between(parts.rightLeg, rig.rightHip, rig.rightKnee, avatarHeight * 0.045 * fitScale, Math.min(current.adjustments.legLength / 100, 1.08));
         }
 
-        if (category === "gorra" && parts.accessory) {
-          parts.accessory.visible = true;
-          if (rig.head) rig.head.getWorldPosition(parts.accessory.position);
-          else parts.accessory.position.set(bodyCenter.x, box.min.y + avatarHeight * 0.88, bodyCenter.z);
-          parts.accessory.position.y += avatarHeight * 0.045;
-          parts.accessory.scale.set(avatarHeight * 0.075, avatarHeight * 0.04, avatarHeight * 0.075);
+        if (category !== "baggy") {
+          const sleeveRadius = avatarHeight * 0.14 * fitScale * width;
+          attachBetween(template.leftUpperSleeve, rig.leftUpperArm, rig.leftLowerArm, sleeveRadius, sleeveLength);
+          attachBetween(template.rightUpperSleeve, rig.rightUpperArm, rig.rightLowerArm, sleeveRadius, sleeveLength);
+          attachBetween(template.leftLowerSleeve, rig.leftLowerArm, rig.leftHand, sleeveRadius * 0.88, sleeveLength);
+          attachBetween(template.rightLowerSleeve, rig.rightLowerArm, rig.rightHand, sleeveRadius * 0.88, sleeveLength);
+
+          const chestPosition = rig.chest?.getWorldPosition(new Vector3())
+            ?? new Vector3(avatarCenter.x, bounds.min.y + avatarHeight * 0.7, avatarCenter.z);
+
+          if (template.collar) {
+            template.collar.visible = true;
+            template.collar.position.copy(chestPosition).add(new Vector3(0, avatarHeight * 0.055, avatarHeight * 0.005));
+            const neck = avatarHeight * 0.21 * Math.min(Math.max(current.adjustments.neckSize / 50, 0.65), 1.35);
+            template.collar.scale.set(neck, neck, neck * 0.72);
+          }
+
+          if (template.hood) {
+            const headPosition = rig.head?.getWorldPosition(new Vector3())
+              ?? new Vector3(avatarCenter.x, bounds.min.y + avatarHeight * 0.84, avatarCenter.z);
+            template.hood.visible = true;
+            template.hood.position.copy(headPosition).add(new Vector3(0, -avatarHeight * 0.075, -avatarHeight * 0.045));
+            const hood = avatarHeight * 0.25 * Math.min(Math.max(current.adjustments.hoodSize / 50, 0.65), 1.35);
+            template.hood.scale.set(hood, hood, hood);
+          }
+
+          if (template.pocket && template.torso) {
+            template.pocket.visible = category === "hoodie";
+            template.pocket.position.copy(template.torso.position).add(new Vector3(0, -avatarHeight * 0.085, avatarHeight * 0.105));
+            template.pocket.scale.set(avatarHeight * 0.18 * width, avatarHeight * 0.12 * length, 1);
+          }
+        } else {
+          attachBetween(template.leftLeg, rig.leftHip, rig.leftKnee, avatarHeight * 0.15 * fitScale * width, Math.min(current.adjustments.legLength / 100, 1.12));
+          attachBetween(template.rightLeg, rig.rightHip, rig.rightKnee, avatarHeight * 0.15 * fitScale * width, Math.min(current.adjustments.legLength / 100, 1.12));
         }
 
-        if (category === "cadena" && parts.accessory) {
-          parts.accessory.visible = true;
-          const chest = rig.chest?.getWorldPosition(new Vector3()) ?? new Vector3(bodyCenter.x, box.min.y + avatarHeight * 0.68, bodyCenter.z);
-          parts.accessory.position.copy(chest).add(new Vector3(0, -avatarHeight * 0.025, avatarHeight * 0.025));
-          parts.accessory.rotation.x = Math.PI / 2;
-          parts.accessory.scale.setScalar(avatarHeight * 0.055);
-        }
-
-        parts.root.position.set(
+        template.root.position.set(
           current.adjustments.x / 100,
           (current.adjustments.y + current.adjustments.height) / 100,
-          current.adjustments.distance / 500,
+          current.adjustments.distance / 600,
         );
-        parts.root.rotation.y = (current.adjustments.rotation * Math.PI) / 180;
-        parts.root.scale.setScalar(Math.min(Math.max(current.adjustments.scale / 100, 0.55), 1.5));
+        template.root.rotation.y = (current.adjustments.rotation * Math.PI) / 180;
+        template.root.scale.setScalar(Math.min(Math.max(current.adjustments.scale / 100, 0.6), 1.45));
       }
       frameRef.current = requestAnimationFrame(update);
     };
@@ -297,7 +272,7 @@ export function SmartTryOnViewer({ category, fit, pose, view, background, showBo
   }, [category]);
 
   useEffect(() => () => {
-    dispose(partsRef.current);
+    disposeBaseGarmentTemplate(templateRef.current);
     textureRef.current?.dispose();
   }, []);
 
