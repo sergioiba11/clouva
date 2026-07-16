@@ -145,8 +145,9 @@ export async function POST(request: Request) {
       if (error || !data) throw new Error(error?.message ?? "No se pudo crear la conversación.");
       conversationId = data.id;
     }
+    if (!conversationId) throw new Error("No se pudo resolver la conversación activa.");
 
-    const activeConversationId = conversationId;
+    const activeConversationId: string = conversationId;
 
     await supabase.from("ai_messages").insert({
       conversation_id: activeConversationId,
