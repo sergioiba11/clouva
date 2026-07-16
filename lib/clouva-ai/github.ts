@@ -17,37 +17,69 @@ function githubConfig() {
   return { token, owner, repo, branch };
 }
 
+function friendlyGitHubError(status: number, raw: string, data: unknown) {
+  const contentTypeLooksHtml = /<!doctype html|<html|<head|<body/i.test(raw);
+
+  if (status === 401) return "GitHub rechazó el token configurado. Revisá GITHUB_TOKEN en Railway.";
+  if (status === 403) return "GitHub bloqueó temporalmente la solicitud o se alcanzó un límite. Esperá unos segundos y reintentá.";
+  if (status === 404) return "GitHub no encontró el repositorio o archivo solicitado.";
+  if (status === 409) return "GitHub detectó un conflicto al actualizar el archivo. Volvé a leerlo y reintentá.";
+  if (status === 422) return "GitHub rechazó el cambio porque los datos o la versión del archivo ya no coinciden.";
+  if (status >= 500 || contentTypeLooksHtml) {
+    return "GitHub está temporalmente fuera de servicio. No se modificó ningún archivo. Reintentá en unos minutos.";
+  }
+
+  if (typeof data === "object" && data && "message" in data) {
+    return String((data as { message?: string }).message ?? `GitHub respondió HTTP ${status}`);
+  }
+
+  return `GitHub respondió HTTP ${status}`;
+}
+
 async function githubFetch(path: string, init?: RequestInit) {
   const { token } = githubConfig();
-  const response = await fetch(`https://api.github.com${path}`, {
-    ...init,
-    headers: {
-      Accept: "application/vnd.github+json",
-      Authorization: `Bearer ${token}`,
-      "X-GitHub-Api-Version": "2022-11-28",
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {}),
-    },
-    cache: "no-store",
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20_000);
 
-  const raw = await response.text();
-  let data: unknown = null;
   try {
-    data = raw ? JSON.parse(raw) : null;
-  } catch {
-    data = raw;
-  }
+    const response = await fetch(`https://api.github.com${path}`, {
+      ...init,
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${token}`,
+        "X-GitHub-Api-Version": "2022-11-28",
+        "Content-Type": "application/json",
+        ...(init?.headers ?? {}),
+      },
+      cache: "no-store",
+      signal: controller.signal,
+    });
 
-  if (!response.ok) {
-    const message =
-      typeof data === "object" && data && "message" in data
-        ? String((data as { message?: string }).message)
-        : raw || `GitHub respondió HTTP ${response.status}`;
-    throw new Error(message);
-  }
+    const raw = await response.text();
+    let data: unknown = null;
+    try {
+      data = raw ? JSON.parse(raw) : null;
+    } catch {
+      data = null;
+    }
 
-  return data;
+    if (!response.ok) {
+      throw new Error(friendlyGitHubError(response.status, raw, data));
+    }
+
+    if (raw && data === null) {
+      throw new Error("GitHub devolvió una respuesta inválida. Reintentá en unos minutos.");
+    }
+
+    return data;
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error("GitHub tardó demasiado en responder. No se modificó ningún archivo.");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export async function getRepositoryStatus() {
@@ -103,7 +135,7 @@ export async function writeRepositoryFile(args: {
     existingSha = existing.sha || undefined;
   } catch (error) {
     const message = error instanceof Error ? error.message.toLowerCase() : "";
-    if (!message.includes("not found")) throw error;
+    if (!message.includes("no encontró")) throw error;
   }
 
   const body: Record<string, unknown> = {
