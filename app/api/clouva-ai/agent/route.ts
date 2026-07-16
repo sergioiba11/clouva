@@ -39,6 +39,15 @@ async function requireAdmin(request: Request) {
   return { supabase, user: data.user };
 }
 
+function selectedModelFromRequest(request: Request) {
+  const cookie = request.headers.get("cookie") ?? "";
+  const match = cookie.match(/(?:^|;\s*)clouva_gemini_model=([^;]+)/);
+  const selected = match ? decodeURIComponent(match[1]) : "";
+
+  if (/^gemini-[a-z0-9._-]+$/i.test(selected)) return selected;
+  return process.env.GEMINI_MODEL ?? "gemini-3.5-flash";
+}
+
 const tools = [{
   functionDeclarations: [
     {
@@ -146,7 +155,7 @@ export async function POST(request: Request) {
     if (!message) return NextResponse.json({ error: "Escribí un mensaje." }, { status: 400 });
 
     const apiKey = process.env.GEMINI_API_KEY;
-    const preferredModel = process.env.GEMINI_MODEL ?? "gemini-3.5-flash";
+    const preferredModel = selectedModelFromRequest(request);
     if (!apiKey) throw new Error("Falta GEMINI_API_KEY en Railway.");
 
     const { data: memories } = await supabase
