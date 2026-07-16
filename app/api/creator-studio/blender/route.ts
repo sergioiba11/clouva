@@ -54,6 +54,19 @@ function buildJob(payload: BlenderRequest) {
   };
 }
 
+function workerErrorMessage(data: Record<string, unknown>, status: number) {
+  const detail = data.detail;
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (detail && typeof detail === "object") {
+    const object = detail as Record<string, unknown>;
+    if (typeof object.message === "string" && object.message.trim()) return object.message;
+    try { return JSON.stringify(object); } catch { /* ignore */ }
+  }
+  if (typeof data.message === "string" && data.message.trim()) return data.message;
+  if (typeof data.error === "string" && data.error.trim()) return data.error;
+  return `El Garment/Blender Worker rechazó el trabajo (HTTP ${status}).`;
+}
+
 export async function POST(request: Request) {
   try {
     const contentType = request.headers.get("content-type") ?? "";
@@ -115,8 +128,10 @@ export async function POST(request: Request) {
     }
 
     if (!response.ok) {
+      const message = workerErrorMessage(data, response.status);
       return NextResponse.json({
-        error: "El Garment/Blender Worker rechazó el trabajo.",
+        error: message,
+        summary: "El Garment/Blender Worker rechazó el trabajo.",
         status: response.status,
         workerUrl,
         details: data,
