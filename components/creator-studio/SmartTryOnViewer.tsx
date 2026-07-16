@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef } from "react";
-import { Box3, Mesh, Object3D, Vector3 } from "three";
+import { Box3, Group, Mesh, Object3D, Vector3 } from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 import { CreatorStudioAvatarViewer, type CreatorPoseMode } from "@/components/creator-studio/CreatorStudioAvatarViewer";
@@ -40,9 +40,8 @@ type Props = {
 };
 
 type LoadedReference = {
-  root: Object3D;
+  root: Group;
   originalSize: Vector3;
-  originalCenter: Vector3;
 };
 
 const avatarSize = new Vector3();
@@ -128,9 +127,8 @@ export function SmartTryOnViewer({
 
     void loader.loadAsync(referenceModelUrl).then((gltf) => {
       if (cancelled || !avatarRef.current) return;
-      const root = gltf.scene;
-      root.name = "CLOUVA_REFERENCE_ASSET";
-      root.traverse((object: any) => {
+      const model = gltf.scene;
+      model.traverse((object: any) => {
         if (object.isMesh || object.isSkinnedMesh) {
           object.visible = true;
           object.frustumCulled = false;
@@ -138,12 +136,16 @@ export function SmartTryOnViewer({
           object.receiveShadow = true;
         }
       });
-      const box = new Box3().setFromObject(root);
+      const box = new Box3().setFromObject(model);
       const size = box.getSize(new Vector3());
       const center = box.getCenter(new Vector3());
-      root.position.sub(center);
+      model.position.sub(center);
+
+      const root = new Group();
+      root.name = "CLOUVA_REFERENCE_ASSET";
+      root.add(model);
       avatarRef.current.parent?.add(root);
-      referenceRef.current = { root, originalSize: size, originalCenter: center };
+      referenceRef.current = { root, originalSize: size };
       onReferenceStatus?.("✓ GLB real cargado. Ajustalo con escala, ancho, largo y posición.");
     }).catch((error) => {
       console.error("Reference GLB failed", error);
