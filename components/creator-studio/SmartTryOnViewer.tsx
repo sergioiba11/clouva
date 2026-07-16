@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Box3, Group, Mesh, Object3D, Vector3 } from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
@@ -101,6 +101,7 @@ export function SmartTryOnViewer({
   const avatarRef = useRef<Object3D | null>(null);
   const referenceRef = useRef<LoadedReference | null>(null);
   const frameRef = useRef(0);
+  const [avatarReadyVersion, setAvatarReadyVersion] = useState(0);
   const currentRef = useRef({ category, fit, showBody, garmentOnly, adjustments });
   currentRef.current = { category, fit, showBody, garmentOnly, adjustments };
 
@@ -109,6 +110,7 @@ export function SmartTryOnViewer({
 
   function attachAvatar(root: Object3D) {
     avatarRef.current = root;
+    setAvatarReadyVersion((value) => value + 1);
   }
 
   useEffect(() => {
@@ -116,8 +118,13 @@ export function SmartTryOnViewer({
     disposeReference(referenceRef.current);
     referenceRef.current = null;
 
-    if (!referenceModelUrl || !avatarRef.current) {
+    if (!referenceModelUrl) {
       onReferenceStatus?.("Subí o elegí un GLB de referencia para verlo sobre el avatar.");
+      return;
+    }
+
+    if (!avatarRef.current) {
+      onReferenceStatus?.("Esperando que termine de cargar el avatar…");
       return;
     }
 
@@ -128,28 +135,41 @@ export function SmartTryOnViewer({
     void loader.loadAsync(referenceModelUrl).then((gltf) => {
       if (cancelled || !avatarRef.current) return;
       const model = gltf.scene;
+      let meshCount = 0;
+
       model.traverse((object: any) => {
         if (object.isMesh || object.isSkinnedMesh) {
+          meshCount += 1;
           object.visible = true;
           object.frustumCulled = false;
           object.castShadow = true;
           object.receiveShadow = true;
         }
       });
+
+      if (meshCount === 0) throw new Error("El GLB no contiene ninguna malla visible.");
+
+      model.updateMatrixWorld(true);
       const box = new Box3().setFromObject(model);
       const size = box.getSize(new Vector3());
       const center = box.getCenter(new Vector3());
+
+      if (!Number.isFinite(size.x + size.y + size.z) || size.lengthSq() < 1e-12) {
+        throw new Error("El GLB tiene dimensiones inválidas o está vacío.");
+      }
+
       model.position.sub(center);
+      model.updateMatrixWorld(true);
 
       const root = new Group();
       root.name = "CLOUVA_REFERENCE_ASSET";
       root.add(model);
       avatarRef.current.parent?.add(root);
       referenceRef.current = { root, originalSize: size };
-      onReferenceStatus?.("✓ GLB real cargado. Ajustalo con escala, ancho, largo y posición.");
+      onReferenceStatus?.(`✓ GLB real cargado (${meshCount} malla${meshCount === 1 ? "" : "s"}). Ajustalo con escala, ancho, largo y posición.`);
     }).catch((error) => {
       console.error("Reference GLB failed", error);
-      onReferenceStatus?.("No se pudo abrir este GLB. Probá exportarlo nuevamente desde Blender.");
+      onReferenceStatus?.(error instanceof Error ? `No se pudo mostrar el GLB: ${error.message}` : "No se pudo abrir este GLB. Probá exportarlo nuevamente desde Blender.");
     });
 
     return () => {
@@ -157,7 +177,7 @@ export function SmartTryOnViewer({
       disposeReference(referenceRef.current);
       referenceRef.current = null;
     };
-  }, [referenceModelUrl, onReferenceStatus]);
+  }, [referenceModelUrl, avatarReadyVersion, onReferenceStatus]);
 
   useEffect(() => {
     const update = () => {
