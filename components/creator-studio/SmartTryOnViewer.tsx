@@ -113,15 +113,14 @@ function applyPreviewPose(preview: Group, category: string, pose: Props["pose"],
   const right = preview.getObjectByName("rightSleeve");
   if (!left || !right) return;
 
-  const sleeveScale = sleeveLength / 100;
-  left.scale.y = sleeveScale;
-  right.scale.y = sleeveScale;
+  left.scale.y = sleeveLength / 100;
+  right.scale.y = sleeveLength / 100;
 
   if (pose === "T-Pose") {
     left.position.set(-h * 0.25, h * 0.61, 0);
     right.position.set(h * 0.25, h * 0.61, 0);
-    left.rotation.z = Math.PI / 2;
-    right.rotation.z = -Math.PI / 2;
+    left.rotation.set(0, 0, Math.PI / 2);
+    right.rotation.set(0, 0, -Math.PI / 2);
   } else if (pose === "Walk") {
     left.position.set(-h * 0.15, h * 0.55, h * 0.015);
     right.position.set(h * 0.15, h * 0.55, -h * 0.015);
@@ -151,20 +150,19 @@ export function SmartTryOnViewer({ category, fit, pose, view, background, showBo
   const previewRef = useRef<Group | null>(null);
   const textureRef = useRef<Texture | null>(null);
 
-  const frontRotationY = useMemo(() => {
-    const viewRotation = view === "Frente" ? 0 : view === "Lateral" ? -Math.PI / 2 : Math.PI;
-    return avatar.frontRotationY + viewRotation;
-  }, [avatar.frontRotationY, view]);
-
+  const viewRotation = useMemo(() => view === "Frente" ? 0 : view === "Lateral" ? -Math.PI / 2 : Math.PI, [view]);
+  const frontRotationY = avatar.frontRotationY + viewRotation;
   const poseMode: AvatarPoseMode = pose === "T-Pose" ? "tpose" : pose === "Walk" ? "walk" : "idle";
 
   const rebuildPreview = useCallback((root: Object3D) => {
     avatarObjectRef.current = root;
     disposeGroup(previewRef.current);
-    previewRef.current = createPreview(category, textureRef.current);
-    applyPreviewPose(previewRef.current, category, pose, adjustments.sleeveLength);
-    root.add(previewRef.current);
-  }, [category, pose, adjustments.sleeveLength]);
+    const preview = createPreview(category, textureRef.current);
+    applyPreviewPose(preview, category, pose, adjustments.sleeveLength);
+    preview.rotation.y = frontRotationY + (adjustments.rotation * Math.PI) / 180;
+    previewRef.current = preview;
+    (root.parent ?? root).add(preview);
+  }, [category, pose, adjustments.sleeveLength, adjustments.rotation, frontRotationY]);
 
   useEffect(() => {
     textureRef.current?.dispose();
@@ -189,21 +187,23 @@ export function SmartTryOnViewer({ category, fit, pose, view, background, showBo
     const root = avatarObjectRef.current;
     const preview = previewRef.current;
     if (!preview) return;
+
     if (root) {
       root.traverse((object) => {
-        if ((object as Mesh).isMesh && !preview.getObjectById(object.id)) object.visible = showBody && !garmentOnly;
+        if ((object as Mesh).isMesh) object.visible = showBody && !garmentOnly;
       });
     }
+
     const fitScale = fit === "Slim" ? 0.92 : fit === "Oversize" ? 1.12 : 1;
     preview.position.set(adjustments.x / 100, (adjustments.y + adjustments.height) / 100, adjustments.distance / 250);
-    preview.rotation.y = (adjustments.rotation * Math.PI) / 180;
+    preview.rotation.y = frontRotationY + (adjustments.rotation * Math.PI) / 180;
     preview.scale.set(
       (adjustments.width / 100) * (adjustments.scale / 100) * fitScale,
       (adjustments.length / 100) * (adjustments.scale / 100),
       (1 + adjustments.distance / 100) * (adjustments.scale / 100) * fitScale,
     );
     applyPreviewPose(preview, category, pose, adjustments.sleeveLength);
-  }, [adjustments, fit, showBody, garmentOnly, category, pose]);
+  }, [adjustments, fit, showBody, garmentOnly, category, pose, frontRotationY]);
 
   useEffect(() => () => {
     disposeGroup(previewRef.current);
@@ -217,8 +217,8 @@ export function SmartTryOnViewer({ category, fit, pose, view, background, showBo
         fallbackModelUrl={avatar.fallbackUrl}
         frontRotationY={frontRotationY}
         config={defaultAvatarConfig}
-        playAnimations={poseMode === "idle"}
-        motionTest={poseMode === "walk"}
+        playAnimations={false}
+        motionTest={false}
         poseMode={poseMode}
         className="h-full min-h-[500px] w-full"
         alt="Vista previa 3D sobre el avatar CLOUVA"
