@@ -86,7 +86,7 @@ async function callGemini(args: {
   contents: Array<Record<string, unknown>>;
   includeTools?: boolean;
 }) {
-  const fallbackModel = process.env.GEMINI_FALLBACK_MODEL ?? "gemini-2.5-flash";
+  const fallbackModel = process.env.GEMINI_FALLBACK_MODEL ?? "gemini-3.1-flash-lite";
   const models = Array.from(new Set([args.model, fallbackModel]));
   let lastError = "Gemini no respondió.";
 
