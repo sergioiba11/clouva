@@ -1,8 +1,5 @@
 FROM python:3.11-slim-bookworm
 
-# Blender, corriendo siempre en modo --background, necesita estas
-# librerías compartidas para arrancar, pero NO necesita ningún
-# servidor X11/VNC ni entorno de escritorio real.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     xz-utils \
@@ -27,7 +24,7 @@ RUN wget -q "$BLENDER_URL" -O /tmp/blender.tar.xz \
     && rm /tmp/blender.tar.xz \
     && ln -s /opt/blender/blender /usr/local/bin/blender
 
-RUN pip install --no-cache-dir --break-system-packages fastapi uvicorn pydantic
+RUN pip install --no-cache-dir --break-system-packages fastapi uvicorn pydantic python-multipart
 
 WORKDIR /app
 COPY app.py rig_garment.py ./
