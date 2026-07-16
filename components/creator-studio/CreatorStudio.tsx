@@ -18,6 +18,7 @@ import {
   UserRound,
   WandSparkles,
 } from "lucide-react";
+import { SmartTryOnViewer, type TryOnAdjustments } from "@/components/creator-studio/SmartTryOnViewer";
 
 const pipeline = [
   "Descargando modelo",
@@ -38,21 +39,7 @@ const pipeline = [
   "Generando miniaturas",
 ];
 
-const categories = [
-  "hoodie",
-  "remera",
-  "campera",
-  "baggy",
-  "zapatillas",
-  "gorra",
-  "cadena",
-  "lentes",
-  "mochila",
-  "aros",
-  "guantes",
-  "pulseras",
-  "anillos",
-];
+const categories = ["hoodie", "remera", "campera", "baggy", "zapatillas", "gorra", "cadena", "lentes", "mochila", "aros", "guantes", "pulseras", "anillos"];
 
 const anchorByCategory: Record<string, string> = {
   hoodie: "Torso + brazos",
@@ -75,6 +62,22 @@ type Fit = "Slim" | "Regular" | "Oversize";
 type Pose = "T-Pose" | "Idle" | "Walk";
 type View = "Frente" | "Lateral" | "Espalda";
 
+const initialAdjustments: TryOnAdjustments = {
+  scale: 100,
+  length: 100,
+  width: 100,
+  x: 0,
+  y: 0,
+  rotation: 0,
+  height: 0,
+  distance: 8,
+  sleeveLength: 100,
+  legLength: 100,
+  waistHeight: 50,
+  neckSize: 50,
+  hoodSize: 50,
+};
+
 export function CreatorStudio() {
   const [prompt, setPrompt] = useState("");
   const [category, setCategory] = useState("hoodie");
@@ -82,9 +85,9 @@ export function CreatorStudio() {
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
   const [imageName, setImageName] = useState<string | null>(null);
+  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
   const [message, setMessage] = useState("Listo para crear un nuevo modelo");
   const [generated, setGenerated] = useState(false);
-
   const [fit, setFit] = useState<Fit>("Regular");
   const [pose, setPose] = useState<Pose>("Idle");
   const [view, setView] = useState<View>("Frente");
@@ -93,35 +96,14 @@ export function CreatorStudio() {
   const [garmentOnly, setGarmentOnly] = useState(false);
   const [rotation, setRotation] = useState(0);
   const [zoom, setZoom] = useState(1);
-  const [adjustments, setAdjustments] = useState({
-    scale: 100,
-    length: 100,
-    width: 100,
-    x: 0,
-    y: 0,
-    rotation: 0,
-    height: 0,
-    distance: 8,
-    sleeveLength: 100,
-    legLength: 100,
-    waistHeight: 50,
-    neckSize: 50,
-    hoodSize: 50,
-  });
+  const [adjustments, setAdjustments] = useState<TryOnAdjustments>(initialAdjustments);
 
   const currentStep = useMemo(
     () => Math.min(Math.floor((progress / 100) * pipeline.length), pipeline.length - 1),
     [progress],
   );
 
-  const previewTransform = useMemo(() => {
-    const viewRotation = view === "Frente" ? 0 : view === "Lateral" ? 90 : 180;
-    return `translate(${adjustments.x}px, ${-adjustments.y - adjustments.height}px) rotate(${adjustments.rotation + rotation + viewRotation}deg) scale(${(adjustments.scale / 100) * zoom})`;
-  }, [adjustments, rotation, view, zoom]);
-
-  const fitScale = fit === "Slim" ? 0.92 : fit === "Oversize" ? 1.12 : 1;
-
-  function updateAdjustment(key: keyof typeof adjustments, value: number) {
+  function updateAdjustment(key: keyof TryOnAdjustments, value: number) {
     setAdjustments((current) => ({ ...current, [key]: value }));
   }
 
@@ -133,21 +115,21 @@ export function CreatorStudio() {
     setZoom(1);
     setShowBody(true);
     setGarmentOnly(false);
-    setAdjustments({
-      scale: 100,
-      length: 100,
-      width: 100,
-      x: 0,
-      y: 0,
-      rotation: 0,
-      height: 0,
-      distance: 8,
-      sleeveLength: 100,
-      legLength: 100,
-      waistHeight: 50,
-      neckSize: 50,
-      hoodSize: 50,
+    setAdjustments(initialAdjustments);
+  }
+
+  function resetProject() {
+    setPrompt("");
+    setImageName(null);
+    setImagePreviewUrl((current) => {
+      if (current) URL.revokeObjectURL(current);
+      return null;
     });
+    setProgress(0);
+    setGenerated(false);
+    resetPreview();
+    setTab("create");
+    setMessage("Nuevo proyecto creado");
   }
 
   async function generateModel() {
@@ -171,11 +153,7 @@ export function CreatorStudio() {
       if (!response.ok) throw new Error(data.error || "No se pudo iniciar Meshy");
       setGenerated(true);
       setProgress(35);
-      setMessage(
-        data.mock
-          ? "Vista previa aprobada. Falta configurar MESHY_API_KEY para generar el modelo real."
-          : `Meshy iniciado: ${data.taskId}`,
-      );
+      setMessage(data.mock ? "Vista previa aprobada. Falta configurar MESHY_API_KEY para generar el modelo real." : `Meshy iniciado: ${data.taskId}`);
       setTab("viewer");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Error inesperado");
@@ -212,11 +190,7 @@ export function CreatorStudio() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Falló Blender Worker");
       setProgress(100);
-      setMessage(
-        data.mock
-          ? "Pipeline validado. Configurá BLENDER_WORKER_URL para procesar el archivo real."
-          : `Trabajo Blender iniciado: ${data.jobId}`,
-      );
+      setMessage(data.mock ? "Pipeline validado. Configurá BLENDER_WORKER_URL para procesar el archivo real." : `Trabajo Blender iniciado: ${data.jobId}`);
       setTab("publish");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Error inesperado");
@@ -226,15 +200,15 @@ export function CreatorStudio() {
   }
 
   return (
-    <main style={{ minHeight: "100dvh", background: "radial-gradient(circle at 20% 0%, #271045 0, #0b0711 38%, #050507 100%)", color: "white", padding: "22px", fontFamily: "Inter, system-ui, sans-serif" }}>
+    <main style={{ minHeight: "100dvh", background: "radial-gradient(circle at 20% 0%, #271045 0, #0b0711 38%, #050507 100%)", color: "white", padding: 22, fontFamily: "Inter, system-ui, sans-serif" }}>
       <div style={{ maxWidth: 1440, margin: "0 auto" }}>
         <header style={{ display: "flex", justifyContent: "space-between", gap: 18, alignItems: "center", marginBottom: 22, flexWrap: "wrap" }}>
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: 10, color: "#c4a7ff", fontWeight: 800, letterSpacing: 1.5 }}><WandSparkles size={18}/> CLOUVA</div>
             <h1 style={{ margin: "5px 0 3px", fontSize: "clamp(28px, 5vw, 52px)", lineHeight: 1 }}>Creator Studio</h1>
-            <p style={{ margin: 0, color: "#aaa3b5" }}>Referencia → Vista previa inteligente → Meshy → Blender → Marketplace</p>
+            <p style={{ margin: 0, color: "#aaa3b5" }}>Referencia → Vista previa 3D real → Meshy → Blender → Marketplace</p>
           </div>
-          <button onClick={() => { setPrompt(""); setProgress(0); setGenerated(false); resetPreview(); setTab("create"); setMessage("Nuevo proyecto creado"); }} style={primaryButton}><Sparkles size={18}/> Nuevo modelo</button>
+          <button onClick={resetProject} style={primaryButton}><Sparkles size={18}/> Nuevo modelo</button>
         </header>
 
         <section style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 18 }}>
@@ -242,11 +216,7 @@ export function CreatorStudio() {
         </section>
 
         <nav style={{ display: "flex", gap: 8, overflowX: "auto", marginBottom: 16 }}>
-          {(["create","preview","viewer","process","publish"] as const).map((item, index) => (
-            <button key={item} onClick={() => setTab(item)} style={{ ...tabButton, ...(tab === item ? activeTab : {}) }}>
-              {index + 1}. {item === "create" ? "Referencia" : item === "preview" ? "Probar en mi avatar" : item === "viewer" ? "Modelo generado" : item === "process" ? "Blender Worker" : "Marketplace"}
-            </button>
-          ))}
+          {(["create","preview","viewer","process","publish"] as const).map((item, index) => <button key={item} onClick={() => setTab(item)} style={{ ...tabButton, ...(tab === item ? activeTab : {}) }}>{index + 1}. {item === "create" ? "Referencia" : item === "preview" ? "Probar en mi avatar" : item === "viewer" ? "Modelo generado" : item === "process" ? "Blender Worker" : "Marketplace"}</button>)}
         </nav>
 
         <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1.5fr) minmax(280px, .7fr)", gap: 16 }} className="creator-grid">
@@ -254,13 +224,23 @@ export function CreatorStudio() {
             {tab === "create" && <div>
               <h2 style={title}><ImagePlus/> Referencia inicial</h2>
               <label style={label}>Imagen de referencia</label>
-              <label style={{ ...dropzone, borderColor: imageName ? "#8b5cf6" : "#40364b" }}><Upload/><span>{imageName ?? "Tocá para subir PNG, JPG o WEBP"}</span><input hidden type="file" accept="image/*" onChange={(event) => setImageName(event.target.files?.[0]?.name ?? null)}/></label>
+              <label style={{ ...dropzone, borderColor: imageName ? "#8b5cf6" : "#40364b" }}>
+                <Upload/><span>{imageName ?? "Tocá para subir PNG, JPG o WEBP"}</span>
+                <input hidden type="file" accept="image/*" onChange={(event) => {
+                  const file = event.target.files?.[0];
+                  setImageName(file?.name ?? null);
+                  setImagePreviewUrl((current) => {
+                    if (current) URL.revokeObjectURL(current);
+                    return file ? URL.createObjectURL(file) : null;
+                  });
+                }}/>
+              </label>
               <label style={label}>Prompt</label>
               <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="Ejemplo: hoodie oversize violeta y negro, tela gruesa, logo CLOUVA bordado…" style={{ ...input, minHeight: 125, resize: "vertical" }}/>
               <div style={formGrid}>
                 <Field label="Categoría"><select value={category} onChange={(event) => setCategory(event.target.value)} style={input}>{categories.map((item) => <option key={item}>{item}</option>)}</select></Field>
                 <Field label="Zona automática"><div style={readonlyField}>{anchorByCategory[category]}</div></Field>
-                <Field label="Estilo"><select style={input}><option>CLOUVA</option><option>Anime</option><option>NLB</option><option>Realista</option></select></Field>
+                <Field label="Costo de vista previa"><div style={readonlyField}>0 créditos</div></Field>
               </div>
               <button disabled={!prompt && !imageName} onClick={() => setTab("preview")} style={{ ...primaryButton, width: "100%", justifyContent: "center", opacity: !prompt && !imageName ? .5 : 1 }}><UserRound/> Probar en mi avatar</button>
             </div>}
@@ -270,13 +250,18 @@ export function CreatorStudio() {
               <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1.2fr) minmax(250px,.8fr)", gap: 16 }} className="preview-grid">
                 <div>
                   <div style={{ ...smartViewer, background }}>
-                    <div style={{ transform: `rotateY(${rotation}deg) scale(${zoom})`, transition: "transform .2s", transformStyle: "preserve-3d" }}>
-                      {showBody && !garmentOnly ? <div style={{ ...avatarBody, opacity: .95 }}><div style={avatarHead}/><div style={avatarTorso}/><div style={avatarLegs}/></div> : null}
-                      <div style={{ ...garmentBase, transform: previewTransform, width: `${150 * fitScale * (adjustments.width / 100)}px`, height: `${165 * (adjustments.length / 100)}px`, borderRadius: category === "gorra" ? "70px 70px 20px 20px" : 28, top: category === "baggy" ? 235 : category === "zapatillas" ? 385 : category === "gorra" ? 45 : category === "cadena" || category === "lentes" ? 105 : 145 }}>
-                        <span>{generated ? "Modelo 3D" : category.toUpperCase()}</span>
-                      </div>
-                    </div>
-                    <div style={viewerBadge}>{generated ? "Modelo generado" : "Vista previa aproximada"}</div>
+                    <SmartTryOnViewer
+                      category={category}
+                      fit={fit}
+                      pose={pose}
+                      view={view}
+                      background={background}
+                      showBody={showBody}
+                      garmentOnly={garmentOnly}
+                      adjustments={{ ...adjustments, rotation: adjustments.rotation + rotation, scale: adjustments.scale * zoom }}
+                      imageUrl={imagePreviewUrl}
+                    />
+                    <div style={viewerBadge}>{generated ? "Modelo generado" : "Vista previa estimada · 0 créditos"}</div>
                   </div>
 
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>
@@ -314,7 +299,8 @@ export function CreatorStudio() {
                   {category === "hoodie" ? <Range label="Tamaño de capucha" value={adjustments.hoodSize} min={20} max={120} onChange={(value) => updateAdjustment("hoodSize", value)} /> : null}
                 </div>
               </div>
-              <button disabled={running} onClick={generateModel} style={{ ...primaryButton, width: "100%", justifyContent: "center", marginTop: 18 }}><Sparkles/> {running ? "Generando…" : "Generar modelo 3D"}</button>
+              <div style={{ marginTop: 14, padding: 12, borderRadius: 12, background: "#16101c", border: "1px solid #3a2c46", color: "#cfc3db" }}>La vista previa no consume créditos. El costo real de Meshy debe cargarse desde la API antes de confirmar.</div>
+              <button disabled={running} onClick={generateModel} style={{ ...primaryButton, width: "100%", justifyContent: "center", marginTop: 14 }}><Sparkles/> {running ? "Generando…" : "Generar modelo 3D"}</button>
             </div>}
 
             {tab === "viewer" && <div style={{ height: "100%" }}>
@@ -323,7 +309,6 @@ export function CreatorStudio() {
                 <div style={viewer}><div style={{ textAlign: "center" }}><UserRound size={58} strokeWidth={1}/><h3>Vista previa aprobada</h3><p style={{ color: "#978fa3" }}>{category} · {fit} · {anchorByCategory[category]}</p></div></div>
                 <div style={viewer}><div style={{ textAlign: "center" }}><Layers3 size={58} strokeWidth={1}/><h3>Modelo generado por Meshy</h3><p style={{ color: "#978fa3" }}>Se reemplaza automáticamente cuando Meshy devuelve el GLB real.</p></div></div>
               </div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 12 }}>{["Rotar","Zoom","Wireframe","Materiales","Normales","UV","Huesos","Colisiones","Clipping","HDR"].map((tool) => <button key={tool} style={toolButton}>{tool}</button>)}</div>
               <button onClick={processInBlender} disabled={running} style={{ ...primaryButton, width: "100%", justifyContent: "center", marginTop: 14 }}><Play/> Enviar a Blender</button>
             </div>}
 
@@ -336,7 +321,6 @@ export function CreatorStudio() {
             {tab === "publish" && <div>
               <h2 style={title}><Download/> Publicar y exportar</h2>
               <div style={successBox}><CheckCircle2 size={42}/><div><strong>Modelo preparado para CLOUVA</strong><p style={{ margin: "5px 0 0", color: "#b8c9bd" }}>Compatible con clouva_base_v1, body masks, slots y animaciones.</p></div></div>
-              <div style={formGrid}><Field label="Nombre"><input style={input} defaultValue="Nuevo modelo CLOUVA"/></Field><Field label="Precio"><input style={input} type="number" defaultValue={0}/></Field><Field label="Licencia"><select style={input}><option>Gratis</option><option>Premium</option></select></Field><Field label="Versión"><input style={input} defaultValue="1.0.0"/></Field></div>
               <div style={{ display: "flex", gap: 9, flexWrap: "wrap" }}>{["GLB","FBX","OBJ","BLEND","PNG","Render 360°","GIF"].map((format) => <button key={format} style={toolButton}><Download size={15}/>{format}</button>)}</div>
               <button style={{ ...primaryButton, width: "100%", justifyContent: "center", marginTop: 18 }}>Publicar en Marketplace</button>
             </div>}
@@ -348,10 +332,7 @@ export function CreatorStudio() {
             <h3>Estado</h3>
             <div style={{ padding: 14, background: "#100c14", borderRadius: 14, color: "#c9bfd3", lineHeight: 1.5 }}>{message}</div>
             <div style={{ marginTop: 14, color: "#91899b", fontSize: 13 }}>Progreso general: {progress}%</div>
-            <div style={{ marginTop: 14, padding: 12, borderRadius: 12, border: "1px solid #30243a", background: "#0e0a12" }}>
-              <strong style={{ display: "block", marginBottom: 6 }}>Anclaje detectado</strong>
-              <span style={{ color: "#bda2ff" }}>{anchorByCategory[category]}</span>
-            </div>
+            <div style={{ marginTop: 14, padding: 12, borderRadius: 12, border: "1px solid #30243a", background: "#0e0a12" }}><strong style={{ display: "block", marginBottom: 6 }}>Anclaje detectado</strong><span style={{ color: "#bda2ff" }}>{anchorByCategory[category]}</span></div>
           </aside>
         </div>
       </div>
@@ -381,12 +362,7 @@ const readonlyField: React.CSSProperties = { ...input, color: "#cbb7ef", minHeig
 const dropzone: React.CSSProperties = { minHeight: 130, border: "1px dashed", borderRadius: 16, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 8, color: "#aaa1b4", cursor: "pointer", background: "#0c0910" };
 const formGrid: React.CSSProperties = { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(180px,1fr))", gap: 12, marginBottom: 18 };
 const viewer: React.CSSProperties = { minHeight: 330, borderRadius: 18, background: "radial-gradient(circle,#2a1b3b,#09070b 65%)", border: "1px solid #31253b", display: "grid", placeItems: "center", color: "#b79ed1", padding: 18 };
-const smartViewer: React.CSSProperties = { minHeight: 500, borderRadius: 18, border: "1px solid #31253b", display: "grid", placeItems: "center", position: "relative", overflow: "hidden", perspective: 900 };
-const avatarBody: React.CSSProperties = { position: "relative", width: 180, height: 410, margin: "0 auto", transition: "all .2s" };
-const avatarHead: React.CSSProperties = { position: "absolute", left: 55, top: 10, width: 70, height: 85, borderRadius: "48%", background: "linear-gradient(#f0d4c2,#dcb8a5)" };
-const avatarTorso: React.CSSProperties = { position: "absolute", left: 40, top: 95, width: 100, height: 150, borderRadius: "42px 42px 28px 28px", background: "linear-gradient(#efd0bd,#d8ad98)" };
-const avatarLegs: React.CSSProperties = { position: "absolute", left: 52, top: 235, width: 76, height: 170, borderRadius: "25px", background: "linear-gradient(90deg,#d9af9b 0 44%,transparent 44% 56%,#d9af9b 56%)" };
-const garmentBase: React.CSSProperties = { position: "absolute", left: "50%", marginLeft: -75, display: "grid", placeItems: "center", background: "linear-gradient(145deg,rgba(129,80,210,.92),rgba(36,16,62,.95))", border: "1px solid rgba(220,190,255,.55)", boxShadow: "0 18px 50px rgba(80,32,140,.35)", transformOrigin: "center", transition: "all .16s ease", color: "white", fontSize: 12, fontWeight: 800, letterSpacing: 1.2, zIndex: 3 };
-const viewerBadge: React.CSSProperties = { position: "absolute", left: 14, bottom: 14, padding: "7px 10px", borderRadius: 99, background: "rgba(0,0,0,.55)", border: "1px solid rgba(255,255,255,.14)", fontSize: 12 };
+const smartViewer: React.CSSProperties = { minHeight: 500, borderRadius: 18, border: "1px solid #31253b", position: "relative", overflow: "hidden" };
+const viewerBadge: React.CSSProperties = { position: "absolute", left: 14, bottom: 14, padding: "7px 10px", borderRadius: 99, background: "rgba(0,0,0,.55)", border: "1px solid rgba(255,255,255,.14)", fontSize: 12, zIndex: 5 };
 const toolButton: React.CSSProperties = { border: "1px solid #3a2c46", background: "#16101c", color: "#d3cadb", borderRadius: 11, padding: "9px 11px", display: "inline-flex", gap: 6, alignItems: "center", cursor: "pointer" };
 const successBox: React.CSSProperties = { display: "flex", gap: 14, alignItems: "center", padding: 18, background: "#132018", border: "1px solid #2c6640", borderRadius: 16, color: "#81e3a3", marginBottom: 16 };
