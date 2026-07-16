@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   ACESFilmicToneMapping,
   AmbientLight,
+  Bone,
   Box3,
   DirectionalLight,
   HemisphereLight,
@@ -34,12 +35,138 @@ type Props = {
   onValidation: (validation: RigValidation) => void;
 };
 
+type BoneSegment = {
+  parent: Bone;
+  child: Bone;
+  start: Vector3;
+  end: Vector3;
+  midpoint: Vector3;
+  direction: Vector3;
+  length: number;
+};
+
 function clean(value: string) {
   return value.toLowerCase().replace(/^mixamorig:/, "").replace(/[^a-z0-9]/g, "");
 }
 
 function hasAny(names: string[], aliases: string[]) {
   return names.some((name) => aliases.some((alias) => name === alias || name.includes(alias)));
+}
+
+function isBone(object: Object3D): object is Bone {
+  return (object as Bone).isBone === true;
+}
+
+function getBoneChildren(bone: Bone) {
+  return bone.children.filter(isBone);
+}
+
+function collectSegments(bones: Bone[]) {
+  const segments: BoneSegment[] = [];
+  for (const parent of bones) {
+    for (const child of getBoneChildren(parent)) {
+      const start = parent.getWorldPosition(new Vector3());
+      const end = child.getWorldPosition(new Vector3());
+      const direction = end.clone().sub(start);
+      const length = direction.length();
+      if (length < 0.0001) continue;
+      segments.push({
+        parent,
+        child,
+        start,
+        end,
+        midpoint: start.clone().add(end).multiplyScalar(0.5),
+        direction: direction.normalize(),
+        length,
+      });
+    }
+  }
+  return segments;
+}
+
+function detectHumanoidByHierarchy(model: Object3D, bones: Bone[]) {
+  model.updateMatrixWorld(true);
+  const box = new Box3().setFromObject(model);
+  const size = box.getSize(new Vector3());
+  const height = Math.max(size.y, 0.001);
+  const centerX = (box.min.x + box.max.x) * 0.5;
+  const segments = collectSegments(bones);
+
+  const relativeY = (point: Vector3) => (point.y - box.min.y) / height;
+  const relativeX = (point: Vector3) => (point.x - centerX) / height;
+
+  const centralSegments = segments.filter((segment) => {
+    const y = relativeY(segment.midpoint);
+    return Math.abs(relativeX(segment.midpoint)) < 0.12 && y > 0.28 && y < 0.86;
+  });
+
+  const hasHips = centralSegments.some((segment) => {
+    const y = relativeY(segment.midpoint);
+    const children = getBoneChildren(segment.parent).length;
+    return y > 0.3 && y < 0.58 && children >= 2;
+  }) || centralSegments.some((segment) => {
+    const y = relativeY(segment.midpoint);
+    return y > 0.35 && y < 0.55;
+  });
+
+  function detectArm(side: -1 | 1) {
+    const sideSegments = segments.filter((segment) => {
+      const y = relativeY(segment.midpoint);
+      const x = relativeX(segment.midpoint) * side;
+      const mostlyHorizontal = Math.abs(segment.direction.x) > Math.abs(segment.direction.y) * 0.35;
+      return y > 0.43 && y < 0.82 && x > 0.035 && mostlyHorizontal;
+    });
+
+    for (const upper of sideSegments) {
+      const lower = segments.find((segment) => segment.parent === upper.child);
+      if (!lower) continue;
+      const lowerY = relativeY(lower.midpoint);
+      const lowerX = relativeX(lower.midpoint) * side;
+      const extendsOutward = lowerX >= relativeX(upper.midpoint) * side - 0.035;
+      if (lowerY > 0.34 && lowerY < 0.82 && lowerX > 0.045 && extendsOutward) {
+        return { upper, lower };
+      }
+    }
+
+    // Some rigs place shoulder as a tiny vertical segment. In that case,
+    // accept a two-bone chain on the correct side of the upper torso.
+    for (const first of segments) {
+      const y = relativeY(first.midpoint);
+      const x = relativeX(first.midpoint) * side;
+      if (y < 0.48 || y > 0.82 || x < 0.04) continue;
+      const second = segments.find((segment) => segment.parent === first.child);
+      if (!second) continue;
+      const secondX = relativeX(second.midpoint) * side;
+      const secondY = relativeY(second.midpoint);
+      if (secondX > 0.05 && secondY > 0.35 && secondY < 0.82) return { upper: first, lower: second };
+    }
+    return null;
+  }
+
+  function detectLeg(side: -1 | 1) {
+    const candidates = segments.filter((segment) => {
+      const y = relativeY(segment.midpoint);
+      const x = relativeX(segment.midpoint) * side;
+      const mostlyVertical = Math.abs(segment.direction.y) > Math.abs(segment.direction.x) * 0.55;
+      return y > 0.08 && y < 0.58 && x > 0.008 && mostlyVertical;
+    });
+    for (const upper of candidates) {
+      const lower = segments.find((segment) => segment.parent === upper.child);
+      if (!lower) continue;
+      const lowerY = relativeY(lower.midpoint);
+      const lowerX = relativeX(lower.midpoint) * side;
+      if (lowerY > 0.02 && lowerY < 0.48 && lowerX > -0.025) return { upper, lower };
+    }
+    return null;
+  }
+
+  return {
+    hips: hasHips,
+    leftArm: Boolean(detectArm(-1)),
+    rightArm: Boolean(detectArm(1)),
+    leftLeg: Boolean(detectLeg(-1)),
+    rightLeg: Boolean(detectLeg(1)),
+  };
 }
 
 export function OfficialAvatarRigPreview({ url, onValidation }: Props) {
@@ -111,34 +238,59 @@ export function OfficialAvatarRigPreview({ url, onValidation }: Props) {
       if (disposed) return;
       model = gltf.scene;
       scene.add(model);
+      model.updateMatrixWorld(true);
 
-      const boneNames = new Set<string>();
+      const boneMap = new Map<string, Bone>();
       let skinnedMeshes = 0;
       model.traverse((object: any) => {
-        if (object.isBone) boneNames.add(clean(object.name));
+        if (object.isBone) boneMap.set(object.uuid, object as Bone);
         if (object.isSkinnedMesh) {
           skinnedMeshes += 1;
-          for (const bone of object.skeleton?.bones ?? []) boneNames.add(clean(bone.name));
+          for (const bone of object.skeleton?.bones ?? []) boneMap.set(bone.uuid, bone as Bone);
         }
       });
 
+      const bones = [...boneMap.values()];
+      const names = bones.map((bone) => clean(bone.name));
+      const hierarchy = detectHumanoidByHierarchy(model, bones);
+
       helper = new SkeletonHelper(model);
-      helper.visible = showSkeleton && boneNames.size > 0;
+      helper.visible = showSkeleton && bones.length > 0;
       scene.add(helper);
 
-      const names = [...boneNames];
-      const checks: Array<[string, string[]]> = [
-        ["cadera", ["hips", "pelvis", "jbiphips"]],
-        ["brazo izquierdo", ["leftupperarm", "upperarml", "jbiplupperarm"]],
-        ["brazo derecho", ["rightupperarm", "upperarmr", "jbiprupperarm"]],
-        ["antebrazo izquierdo", ["leftlowerarm", "leftforearm", "jbipllowerarm"]],
-        ["antebrazo derecho", ["rightlowerarm", "rightforearm", "jbiprlowerarm"]],
-        ["pierna izquierda", ["leftupperleg", "leftupleg", "jbiplupperleg"]],
-        ["pierna derecha", ["rightupperleg", "rightupleg", "jbiprupperleg"]],
-      ];
-      const missing = checks.filter(([, aliases]) => !hasAny(names, aliases)).map(([label]) => label);
-      const valid = boneNames.size >= 15 && skinnedMeshes > 0 && missing.length === 0;
-      onValidation({ loading: false, valid, bones: boneNames.size, skinnedMeshes, animations: gltf.animations.length, missing });
+      const namedHips = hasAny(names, ["hips", "pelvis", "jbiphips"]);
+      const namedLeftArm = hasAny(names, ["leftupperarm", "upperarml", "jbiplupperarm", "leftarm", "arml", "upperarmleft"]);
+      const namedRightArm = hasAny(names, ["rightupperarm", "upperarmr", "jbiprupperarm", "rightarm", "armr", "upperarmright"]);
+      const namedLeftForearm = hasAny(names, ["leftlowerarm", "leftforearm", "jbipllowerarm", "forearml", "lowerarml"]);
+      const namedRightForearm = hasAny(names, ["rightlowerarm", "rightforearm", "jbiprlowerarm", "forearmr", "lowerarmr"]);
+      const namedLeftLeg = hasAny(names, ["leftupperleg", "leftupleg", "jbiplupperleg", "thighl", "upperlegl"]);
+      const namedRightLeg = hasAny(names, ["rightupperleg", "rightupleg", "jbiprupperleg", "thighr", "upperlegr"]);
+
+      const detected = {
+        hips: namedHips || hierarchy.hips,
+        leftArm: (namedLeftArm && namedLeftForearm) || hierarchy.leftArm,
+        rightArm: (namedRightArm && namedRightForearm) || hierarchy.rightArm,
+        leftLeg: namedLeftLeg || hierarchy.leftLeg,
+        rightLeg: namedRightLeg || hierarchy.rightLeg,
+      };
+
+      const missing: string[] = [];
+      if (!detected.hips) missing.push("cadera");
+      if (!detected.leftArm) missing.push("brazo izquierdo");
+      if (!detected.rightArm) missing.push("brazo derecho");
+      if (!detected.leftLeg) missing.push("pierna izquierda");
+      if (!detected.rightLeg) missing.push("pierna derecha");
+
+      const valid = bones.length >= 15 && skinnedMeshes > 0 && missing.length === 0;
+      console.info("[Official avatar rig validation]", {
+        bones: bones.length,
+        skinnedMeshes,
+        animations: gltf.animations.length,
+        detected,
+        missing,
+        boneNames: names,
+      });
+      onValidation({ loading: false, valid, bones: bones.length, skinnedMeshes, animations: gltf.animations.length, missing });
       resize();
     }).catch((error) => {
       if (disposed) return;
