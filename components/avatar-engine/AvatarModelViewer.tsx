@@ -52,21 +52,21 @@ type RigBone = { bone: Bone; base: Quaternion };
 type Rig = Partial<Record<RigKey, RigBone>>;
 
 const ALIASES: Record<RigKey, readonly string[]> = {
-  hips: ["hips", "pelvis"],
-  spine: ["spine", "spine01", "spine1"],
-  chest: ["spine02", "spine2", "chest", "upperchest"],
-  neck: ["neck"],
-  head: ["head"],
-  leftShoulder: ["leftshoulder", "shoulderl", "claviclel", "leftclavicle"],
-  rightShoulder: ["rightshoulder", "shoulderr", "clavicler", "rightclavicle"],
-  leftArm: ["leftarm", "upperarml", "upperarmleft"],
-  rightArm: ["rightarm", "upperarmr", "upperarmright"],
-  leftForeArm: ["leftforearm", "forearml", "lowerarml"],
-  rightForeArm: ["rightforearm", "forearmr", "lowerarmr"],
-  leftUpLeg: ["leftupleg", "thighl", "upperlegl"],
-  rightUpLeg: ["rightupleg", "thighr", "upperlegr"],
-  leftLeg: ["leftleg", "calfl", "lowerlegl", "shinl"],
-  rightLeg: ["rightleg", "calfr", "lowerlegr", "shinr"],
+  hips: ["hips", "pelvis", "jbiphips", "jbipc hips".replace(" ", "")],
+  spine: ["spine", "spine01", "spine1", "jbipspine"],
+  chest: ["spine02", "spine2", "chest", "upperchest", "jbipchest", "jbipupperchest"],
+  neck: ["neck", "jbipneck"],
+  head: ["head", "jbiphead"],
+  leftShoulder: ["leftshoulder", "shoulderl", "claviclel", "leftclavicle", "jbiplshoulder"],
+  rightShoulder: ["rightshoulder", "shoulderr", "clavicler", "rightclavicle", "jbiprshoulder"],
+  leftArm: ["leftarm", "upperarml", "upperarmleft", "jbiplupperarm"],
+  rightArm: ["rightarm", "upperarmr", "upperarmright", "jbiprupperarm"],
+  leftForeArm: ["leftforearm", "forearml", "lowerarml", "jbipllowerarm"],
+  rightForeArm: ["rightforearm", "forearmr", "lowerarmr", "jbiprlowerarm"],
+  leftUpLeg: ["leftupleg", "thighl", "upperlegl", "jbiplupperleg"],
+  rightUpLeg: ["rightupleg", "thighr", "upperlegr", "jbiprupperleg"],
+  leftLeg: ["leftleg", "calfl", "lowerlegl", "shinl", "jbipllowerleg"],
+  rightLeg: ["rightleg", "calfr", "lowerlegr", "shinr", "jbiprlowerleg"],
 };
 
 function cleanName(value: string) {
@@ -84,7 +84,7 @@ function collectRig(root: Object3D): Rig {
   for (const key of Object.keys(ALIASES) as RigKey[]) {
     const aliases = ALIASES[key];
     const bone = bones.find((candidate) => aliases.includes(cleanName(candidate.name)))
-      ?? bones.find((candidate) => aliases.some((alias) => cleanName(candidate.name).includes(alias)));
+      ?? bones.find((candidate) => aliases.some((alias) => cleanName(candidate.name).includes(alias) || alias.includes(cleanName(candidate.name))));
     if (bone) rig[key] = { bone, base: bone.quaternion.clone() };
   }
   return rig;
@@ -139,14 +139,14 @@ function applyWalk(rig: Rig, elapsed: number) {
   poseBone(rig.chest, safe(halfStep * 0.03, -0.035, 0.035), 0, 0);
   poseBone(rig.leftShoulder, 0, 0, 0.08);
   poseBone(rig.rightShoulder, 0, 0, -0.08);
-  poseBone(rig.leftArm, safe(-step * 0.2, -0.22, 0.22), 0, 0.14);
-  poseBone(rig.rightArm, safe(step * 0.2, -0.22, 0.22), 0, -0.14);
+  poseBone(rig.leftArm, safe(-step * 0.24, -0.26, 0.26), 0, 0.14);
+  poseBone(rig.rightArm, safe(step * 0.24, -0.26, 0.26), 0, -0.14);
   poseBone(rig.leftForeArm, 0, 0, 0.08);
   poseBone(rig.rightForeArm, 0, 0, -0.08);
-  poseBone(rig.leftUpLeg, safe(step * 0.22, -0.24, 0.24), 0, 0);
-  poseBone(rig.rightUpLeg, safe(-step * 0.22, -0.24, 0.24), 0, 0);
-  poseBone(rig.leftLeg, safe(Math.max(0, -step) * 0.18, 0, 0.2), 0, 0);
-  poseBone(rig.rightLeg, safe(Math.max(0, step) * 0.18, 0, 0.2), 0, 0);
+  poseBone(rig.leftUpLeg, safe(step * 0.25, -0.28, 0.28), 0, 0);
+  poseBone(rig.rightUpLeg, safe(-step * 0.25, -0.28, 0.28), 0, 0);
+  poseBone(rig.leftLeg, safe(Math.max(0, -step) * 0.2, 0, 0.22), 0, 0);
+  poseBone(rig.rightLeg, safe(Math.max(0, step) * 0.2, 0, 0.22), 0, 0);
 }
 
 export function AvatarModelViewer({
