@@ -67,11 +67,12 @@ export async function POST(request: NextRequest) {
     const { supabase, profile, user } = await requireOwner(request);
     const body = await request.json();
     const action = String(body?.action ?? "");
+    const force = Boolean(body?.force);
     const alreadyRigged = Boolean(profile.avatar_3d_url?.includes(RIGGED_FILENAME));
 
     if (action === "create") {
       if (!profile.avatar_3d_url) throw new Error("No hay avatar oficial activo");
-      if (alreadyRigged) {
+      if (alreadyRigged && !force) {
         await saveRigJob(supabase, profile.id, null);
         return NextResponse.json({ alreadyRigged: true, newAvatarUrl: profile.avatar_3d_url });
       }
@@ -87,7 +88,7 @@ export async function POST(request: NextRequest) {
       const taskId = await createRiggingTask(profile.avatar_3d_url, 1.8);
       const startedAt = Date.now();
       await saveRigJob(supabase, profile.id, { taskId, startedAt });
-      return NextResponse.json({ taskId, startedAt, sourceUrl: profile.avatar_3d_url });
+      return NextResponse.json({ taskId, startedAt, sourceUrl: profile.avatar_3d_url, forced: force });
     }
 
     if (action === "current") {
@@ -102,7 +103,7 @@ export async function POST(request: NextRequest) {
       }
 
       const job = readRigJob(user);
-      if (!job) return NextResponse.json({ active: false, status: "NOT_STARTED" });
+      if (!job) return NextResponse.json({ active: false, status: "NOT_STARTED", newAvatarUrl: profile.avatar_3d_url || null });
       const task = await getRiggingTask(job.taskId);
 
       if (task.status === "FAILED" || task.status === "EXPIRED") {
@@ -113,10 +114,11 @@ export async function POST(request: NextRequest) {
           startedAt: job.startedAt,
           error: taskErrorMessage(task),
           task,
+          newAvatarUrl: profile.avatar_3d_url || null,
         });
       }
 
-      return NextResponse.json({ active: true, taskId: job.taskId, startedAt: job.startedAt, task });
+      return NextResponse.json({ active: true, taskId: job.taskId, startedAt: job.startedAt, task, newAvatarUrl: profile.avatar_3d_url || null });
     }
 
     if (action === "status") {
