@@ -18,15 +18,18 @@ type AgentPayload = {
   error?: string;
 };
 
+type StoredMessage = Message & {
+  metadata?: { pendingAction?: PendingAction | null } | null;
+};
+
+const WELCOME =
+  "Soy CLOUVA AI. Puedo leer el repositorio real, revisar archivos y preparar cambios. Antes de escribir código siempre te voy a pedir confirmación.";
+
 export function ClouvaAIChat() {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      role: "assistant",
-      content:
-        "Soy CLOUVA AI. Puedo leer el repositorio real, revisar archivos y preparar cambios. Antes de escribir código siempre te voy a pedir confirmación.",
-    },
-  ]);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [conversationId, setConversationId] = useState<string | null>(null);
   const [input, setInput] = useState("");
+  const [loadingHistory, setLoadingHistory] = useState(true);
   const [loading, setLoading] = useState(false);
   const [applying, setApplying] = useState(false);
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
@@ -34,14 +37,109 @@ export function ClouvaAIChat() {
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    void loadLatestConversation();
+  }, []);
+
+  useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading, pendingAction]);
 
-  async function getAccessToken() {
+  async function getSession() {
     const { data } = await supabase.auth.getSession();
-    const token = data.session?.access_token;
-    if (!token) throw new Error("Iniciá sesión en CLOUVA para usar el agente del repositorio.");
-    return token;
+    const session = data.session;
+    if (!session) throw new Error("Iniciá sesión en CLOUVA para usar el agente del repositorio.");
+    return session;
+  }
+
+  async function loadLatestConversation() {
+    setLoadingHistory(true);
+    setError(null);
+
+    try {
+      const session = await getSession();
+      const { data: conversation, error: conversationError } = await supabase
+        .from("ai_conversations")
+        .select("id")
+        .eq("user_id", session.user.id)
+        .eq("project_key", "clouva")
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (conversationError) throw conversationError;
+
+      if (!conversation) {
+        setMessages([{ role: "assistant", content: WELCOME }]);
+        return;
+      }
+
+      const { data: storedMessages, error: messagesError } = await supabase
+        .from("ai_messages")
+        .select("role,content,metadata,created_at")
+        .eq("conversation_id", conversation.id)
+        .eq("user_id", session.user.id)
+        .order("created_at", { ascending: true });
+
+      if (messagesError) throw messagesError;
+
+      const restored = (storedMessages ?? []) as StoredMessage[];
+      setConversationId(conversation.id);
+      setMessages(
+        restored.length
+          ? restored.map(({ role, content }) => ({ role, content }))
+          : [{ role: "assistant", content: WELCOME }],
+      );
+
+      const lastPending = [...restored]
+        .reverse()
+        .find((item) => item.role === "assistant" && item.metadata?.pendingAction)
+        ?.metadata?.pendingAction;
+      setPendingAction(lastPending ?? null);
+    } catch (caught) {
+      setMessages([{ role: "assistant", content: WELCOME }]);
+      setError(caught instanceof Error ? caught.message : "No se pudo cargar el historial.");
+    } finally {
+      setLoadingHistory(false);
+    }
+  }
+
+  async function ensureConversation(userId: string, firstMessage: string) {
+    if (conversationId) return conversationId;
+
+    const { data, error: createError } = await supabase
+      .from("ai_conversations")
+      .insert({
+        user_id: userId,
+        project_key: "clouva",
+        title: firstMessage.slice(0, 72),
+      })
+      .select("id")
+      .single();
+
+    if (createError || !data) {
+      throw new Error(createError?.message ?? "No se pudo crear la conversación.");
+    }
+
+    setConversationId(data.id);
+    return data.id as string;
+  }
+
+  async function saveMessage(args: {
+    conversationId: string;
+    userId: string;
+    role: "user" | "assistant";
+    content: string;
+    metadata?: Record<string, unknown>;
+  }) {
+    const { error: insertError } = await supabase.from("ai_messages").insert({
+      conversation_id: args.conversationId,
+      user_id: args.userId,
+      role: args.role,
+      content: args.content,
+      metadata: args.metadata ?? {},
+    });
+
+    if (insertError) throw new Error(insertError.message);
   }
 
   async function sendMessage(event: FormEvent) {
@@ -53,16 +151,31 @@ export function ClouvaAIChat() {
     setError(null);
     setPendingAction(null);
     setLoading(true);
-    const nextMessages = [...messages, { role: "user" as const, content: message }];
-    setMessages(nextMessages);
+    setMessages((current) => [...current, { role: "user", content: message }]);
 
     try {
-      const token = await getAccessToken();
+      const session = await getSession();
+      const activeConversationId = await ensureConversation(session.user.id, message);
+
+      await saveMessage({
+        conversationId: activeConversationId,
+        userId: session.user.id,
+        role: "user",
+        content: message,
+        metadata: {
+          screenContext: {
+            page: window.location.pathname,
+            url: window.location.href,
+            capturedAt: new Date().toISOString(),
+          },
+        },
+      });
+
       const response = await fetch("/api/clouva-ai/agent", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+          Authorization: `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({
           message,
@@ -80,17 +193,28 @@ export function ClouvaAIChat() {
       if (!response.ok) throw new Error(payload.error ?? "No se pudo consultar CLOUVA AI.");
       if (!payload.message) throw new Error("CLOUVA AI no devolvió una respuesta.");
 
+      await saveMessage({
+        conversationId: activeConversationId,
+        userId: session.user.id,
+        role: "assistant",
+        content: payload.message,
+        metadata: {
+          provider: "gemini",
+          pendingAction: payload.pendingAction ?? null,
+        },
+      });
+
       setMessages((current) => [
         ...current,
         { role: "assistant", content: payload.message! },
       ]);
       setPendingAction(payload.pendingAction ?? null);
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : "Error inesperado.";
-      setError(message);
+      const failure = caught instanceof Error ? caught.message : "Error inesperado.";
+      setError(failure);
       setMessages((current) => [
         ...current,
-        { role: "assistant", content: `No pude completar la consulta: ${message}` },
+        { role: "assistant", content: `No pude completar la consulta: ${failure}` },
       ]);
     } finally {
       setLoading(false);
@@ -103,12 +227,12 @@ export function ClouvaAIChat() {
     setError(null);
 
     try {
-      const token = await getAccessToken();
+      const session = await getSession();
       const response = await fetch("/api/clouva-ai/github", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+          Authorization: `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({
           action: "write",
@@ -125,14 +249,19 @@ export function ClouvaAIChat() {
       };
       if (!response.ok) throw new Error(payload.error ?? "No se pudo aplicar el cambio.");
 
-      const sha = payload.result?.commitSha?.slice(0, 7) ?? "creado";
-      setMessages((current) => [
-        ...current,
-        {
+      const text = `Cambio aplicado en \`${payload.result?.path ?? pendingAction.path}\`. Commit \`${payload.result?.commitSha?.slice(0, 7) ?? "creado"}\` sobre \`${payload.result?.branch ?? "main"}\`. Railway debería iniciar el deploy automático.`;
+
+      if (conversationId) {
+        await saveMessage({
+          conversationId,
+          userId: session.user.id,
           role: "assistant",
-          content: `Cambio aplicado en \`${payload.result?.path ?? pendingAction.path}\`. Commit \`${sha}\` sobre \`${payload.result?.branch ?? "main"}\`. Railway debería iniciar el deploy automático.`,
-        },
-      ]);
+          content: text,
+          metadata: { commit: payload.result ?? {}, pendingAction: null },
+        });
+      }
+
+      setMessages((current) => [...current, { role: "assistant", content: text }]);
       setPendingAction(null);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "No se pudo aplicar el cambio.");
@@ -142,11 +271,11 @@ export function ClouvaAIChat() {
   }
 
   function newConversation() {
+    setConversationId(null);
     setMessages([
       {
         role: "assistant",
-        content:
-          "Nueva conversación. Puedo inspeccionar el repositorio real y preparar cambios confirmables.",
+        content: "Nueva conversación. La conversación anterior quedó guardada en Supabase.",
       },
     ]);
     setPendingAction(null);
@@ -160,30 +289,38 @@ export function ClouvaAIChat() {
           <div>
             <p className="text-xs uppercase tracking-[0.32em] text-violet-300">Centro de comando</p>
             <h1 className="text-2xl font-semibold">CLOUVA AI</h1>
-            <p className="mt-1 text-sm text-white/55">GitHub real, memoria y cambios con confirmación.</p>
+            <p className="mt-1 text-sm text-white/55">GitHub real, memoria y chats guardados en Supabase.</p>
           </div>
           <button
             type="button"
             onClick={newConversation}
-            className="rounded-full border border-white/15 px-4 py-2 text-sm text-white/75 transition hover:border-violet-400/60 hover:text-white"
+            disabled={loadingHistory || loading || applying}
+            className="rounded-full border border-white/15 px-4 py-2 text-sm text-white/75 transition hover:border-violet-400/60 hover:text-white disabled:opacity-40"
           >
             Nueva conversación
           </button>
         </header>
 
         <div className="flex-1 space-y-4 overflow-y-auto rounded-3xl border border-white/10 bg-white/[0.025] p-4 shadow-2xl shadow-violet-950/20 sm:p-6">
-          {messages.map((message, index) => (
-            <article
-              key={`${message.role}-${index}`}
-              className={`max-w-[88%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-6 ${
-                message.role === "user"
-                  ? "ml-auto bg-violet-600 text-white"
-                  : "border border-white/10 bg-white/[0.055] text-white/85"
-              }`}
-            >
-              {message.content}
+          {loadingHistory ? (
+            <article className="flex items-center gap-3 rounded-2xl border border-violet-400/20 bg-violet-500/10 px-4 py-3 text-sm text-violet-100">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Recuperando la última conversación desde Supabase…
             </article>
-          ))}
+          ) : (
+            messages.map((message, index) => (
+              <article
+                key={`${message.role}-${index}`}
+                className={`max-w-[88%] whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-6 ${
+                  message.role === "user"
+                    ? "ml-auto bg-violet-600 text-white"
+                    : "border border-white/10 bg-white/[0.055] text-white/85"
+                }`}
+              >
+                {message.content}
+              </article>
+            ))
+          )}
 
           {loading && (
             <article className="flex max-w-[88%] items-center gap-3 rounded-2xl border border-violet-400/20 bg-violet-500/10 px-4 py-3 text-sm text-violet-100">
@@ -248,7 +385,7 @@ export function ClouvaAIChat() {
               <p className="px-2 text-xs text-white/35">Enter para enviar · Shift + Enter para nueva línea</p>
               <button
                 type="submit"
-                disabled={loading || applying || !input.trim()}
+                disabled={loadingHistory || loading || applying || !input.trim()}
                 className="rounded-full bg-violet-600 px-5 py-2 text-sm font-medium text-white transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 Enviar
