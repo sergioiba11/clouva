@@ -60,13 +60,23 @@ function makeMaterial(texture: Texture | null) {
   });
 }
 
-function add(group: Group, geometry: any, material: MeshPhysicalMaterial, position: [number, number, number], scale: [number, number, number] = [1, 1, 1], rotation: [number, number, number] = [0, 0, 0]) {
+function add(
+  group: Group,
+  name: string,
+  geometry: any,
+  material: MeshPhysicalMaterial,
+  position: [number, number, number],
+  scale: [number, number, number] = [1, 1, 1],
+  rotation: [number, number, number] = [0, 0, 0],
+) {
   const mesh = new Mesh(geometry, material);
+  mesh.name = name;
   mesh.position.set(...position);
   mesh.scale.set(...scale);
   mesh.rotation.set(...rotation);
   mesh.castShadow = true;
   group.add(mesh);
+  return mesh;
 }
 
 function createPreview(category: string, texture: Texture | null) {
@@ -76,32 +86,62 @@ function createPreview(category: string, texture: Texture | null) {
   const h = 2.05;
 
   if (["hoodie", "campera", "remera"].includes(category)) {
-    add(group, new CapsuleGeometry(h * 0.11, h * 0.18, 8, 18), material, [0, h * 0.55, h * 0.02], [1.35, 1, 0.72]);
-    add(group, new CapsuleGeometry(h * 0.045, h * 0.16, 6, 12), material, [-h * 0.145, h * 0.55, 0], [0.8, 1, 0.8], [0, 0, 0.1]);
-    add(group, new CapsuleGeometry(h * 0.045, h * 0.16, 6, 12), material, [h * 0.145, h * 0.55, 0], [0.8, 1, 0.8], [0, 0, -0.1]);
-    if (category === "hoodie") add(group, new SphereGeometry(h * 0.105, 20, 16), material, [0, h * 0.75, -h * 0.05], [1, 1.05, 0.78]);
+    add(group, "torso", new CapsuleGeometry(h * 0.11, h * 0.18, 8, 18), material, [0, h * 0.55, h * 0.02], [1.35, 1, 0.72]);
+    add(group, "leftSleeve", new CapsuleGeometry(h * 0.045, h * 0.16, 6, 12), material, [-h * 0.145, h * 0.55, 0], [0.8, 1, 0.8]);
+    add(group, "rightSleeve", new CapsuleGeometry(h * 0.045, h * 0.16, 6, 12), material, [h * 0.145, h * 0.55, 0], [0.8, 1, 0.8]);
+    if (category === "hoodie") add(group, "hood", new SphereGeometry(h * 0.105, 20, 16), material, [0, h * 0.75, -h * 0.05], [1, 1.05, 0.78]);
   } else if (category === "baggy") {
-    add(group, new CylinderGeometry(h * 0.145, h * 0.17, h * 0.12, 24), material, [0, h * 0.42, 0]);
-    add(group, new CapsuleGeometry(h * 0.072, h * 0.25, 8, 16), material, [-h * 0.075, h * 0.255, 0], [1.18, 1, 1.05]);
-    add(group, new CapsuleGeometry(h * 0.072, h * 0.25, 8, 16), material, [h * 0.075, h * 0.255, 0], [1.18, 1, 1.05]);
+    add(group, "waist", new CylinderGeometry(h * 0.145, h * 0.17, h * 0.12, 24), material, [0, h * 0.42, 0]);
+    add(group, "leftLeg", new CapsuleGeometry(h * 0.072, h * 0.25, 8, 16), material, [-h * 0.075, h * 0.255, 0], [1.18, 1, 1.05]);
+    add(group, "rightLeg", new CapsuleGeometry(h * 0.072, h * 0.25, 8, 16), material, [h * 0.075, h * 0.255, 0], [1.18, 1, 1.05]);
   } else if (category === "zapatillas") {
-    add(group, new BoxGeometry(h * 0.12, h * 0.06, h * 0.22), material, [-h * 0.07, h * 0.035, h * 0.05]);
-    add(group, new BoxGeometry(h * 0.12, h * 0.06, h * 0.22), material, [h * 0.07, h * 0.035, h * 0.05]);
+    add(group, "leftShoe", new BoxGeometry(h * 0.12, h * 0.06, h * 0.22), material, [-h * 0.07, h * 0.035, h * 0.05]);
+    add(group, "rightShoe", new BoxGeometry(h * 0.12, h * 0.06, h * 0.22), material, [h * 0.07, h * 0.035, h * 0.05]);
   } else if (category === "gorra") {
-    add(group, new SphereGeometry(h * 0.105, 24, 14), material, [0, h * 0.86, 0], [1.12, 0.72, 1.08]);
-    add(group, new BoxGeometry(h * 0.16, h * 0.018, h * 0.07), material, [0, h * 0.82, h * 0.085]);
+    add(group, "cap", new SphereGeometry(h * 0.105, 24, 14), material, [0, h * 0.86, 0], [1.12, 0.72, 1.08]);
+    add(group, "visor", new BoxGeometry(h * 0.16, h * 0.018, h * 0.07), material, [0, h * 0.82, h * 0.085]);
   } else if (category === "cadena") {
-    add(group, new TorusGeometry(h * 0.09, h * 0.009, 10, 40), material, [0, h * 0.69, h * 0.055], [1, 1.25, 0.7], [Math.PI / 2, 0, 0]);
+    add(group, "chain", new TorusGeometry(h * 0.09, h * 0.009, 10, 40), material, [0, h * 0.69, h * 0.055], [1, 1.25, 0.7], [Math.PI / 2, 0, 0]);
   } else if (category === "lentes") {
-    add(group, new TorusGeometry(h * 0.045, h * 0.006, 8, 24), material, [-h * 0.05, h * 0.8, h * 0.09]);
-    add(group, new TorusGeometry(h * 0.045, h * 0.006, 8, 24), material, [h * 0.05, h * 0.8, h * 0.09]);
+    add(group, "leftLens", new TorusGeometry(h * 0.045, h * 0.006, 8, 24), material, [-h * 0.05, h * 0.8, h * 0.09]);
+    add(group, "rightLens", new TorusGeometry(h * 0.045, h * 0.006, 8, 24), material, [h * 0.05, h * 0.8, h * 0.09]);
   } else if (category === "mochila") {
-    add(group, new CapsuleGeometry(h * 0.11, h * 0.2, 8, 18), material, [0, h * 0.55, -h * 0.12], [1.05, 1, 0.62]);
+    add(group, "backpack", new CapsuleGeometry(h * 0.11, h * 0.2, 8, 18), material, [0, h * 0.55, -h * 0.12], [1.05, 1, 0.62]);
   } else {
-    add(group, new SphereGeometry(h * 0.04, 16, 12), material, [0, h * 0.5, 0]);
+    add(group, "accessory", new SphereGeometry(h * 0.04, 16, 12), material, [0, h * 0.5, 0]);
   }
 
   return group;
+}
+
+function applyPreviewPose(preview: Group, category: string, pose: Props["pose"], sleeveLength: number) {
+  if (!["hoodie", "campera", "remera"].includes(category)) return;
+
+  const h = 2.05;
+  const left = preview.getObjectByName("leftSleeve");
+  const right = preview.getObjectByName("rightSleeve");
+  if (!left || !right) return;
+
+  const sleeveScale = sleeveLength / 100;
+  left.scale.y = sleeveScale;
+  right.scale.y = sleeveScale;
+
+  if (pose === "T-Pose") {
+    left.position.set(-h * 0.25, h * 0.61, 0);
+    right.position.set(h * 0.25, h * 0.61, 0);
+    left.rotation.z = Math.PI / 2;
+    right.rotation.z = -Math.PI / 2;
+  } else if (pose === "Walk") {
+    left.position.set(-h * 0.15, h * 0.55, h * 0.015);
+    right.position.set(h * 0.15, h * 0.55, -h * 0.015);
+    left.rotation.set(0.22, 0, 0.11);
+    right.rotation.set(-0.22, 0, -0.11);
+  } else {
+    left.position.set(-h * 0.15, h * 0.55, 0);
+    right.position.set(h * 0.15, h * 0.55, 0);
+    left.rotation.set(0, 0, 0.1);
+    right.rotation.set(0, 0, -0.1);
+  }
 }
 
 function disposeGroup(group: Group | null) {
@@ -134,6 +174,7 @@ export function SmartTryOnViewer({ category, fit, pose, view, background, showBo
       if (!root) return;
       disposeGroup(previewRef.current);
       previewRef.current = createPreview(category, textureRef.current);
+      applyPreviewPose(previewRef.current, category, pose, adjustments.sleeveLength);
       root.add(previewRef.current);
     };
 
@@ -148,13 +189,22 @@ export function SmartTryOnViewer({ category, fit, pose, view, background, showBo
       textureRef.current = texture;
       rebuild();
     }, undefined, rebuild);
-  }, [category, imageUrl]);
+  }, [category, imageUrl, pose, adjustments.sleeveLength]);
 
   useEffect(() => {
     const root = avatarObjectRef.current;
     const preview = previewRef.current;
-    if (root) root.visible = showBody && !garmentOnly;
     if (!preview) return;
+
+    // No ocultamos el root completo porque la prenda está colgada del mismo avatar.
+    // Ocultamos solo las mallas originales y mantenemos visible la vista previa.
+    if (root) {
+      root.traverse((object) => {
+        if ((object as Mesh).isMesh && !preview.getObjectById(object.id)) {
+          object.visible = showBody && !garmentOnly;
+        }
+      });
+    }
 
     const fitScale = fit === "Slim" ? 0.92 : fit === "Oversize" ? 1.12 : 1;
     preview.position.set(adjustments.x / 100, (adjustments.y + adjustments.height) / 100, adjustments.distance / 250);
@@ -164,7 +214,8 @@ export function SmartTryOnViewer({ category, fit, pose, view, background, showBo
       (adjustments.length / 100) * (adjustments.scale / 100),
       (1 + adjustments.distance / 100) * (adjustments.scale / 100) * fitScale,
     );
-  }, [adjustments, fit, showBody, garmentOnly]);
+    applyPreviewPose(preview, category, pose, adjustments.sleeveLength);
+  }, [adjustments, fit, showBody, garmentOnly, category, pose]);
 
   useEffect(() => () => {
     disposeGroup(previewRef.current);
@@ -186,6 +237,7 @@ export function SmartTryOnViewer({ category, fit, pose, view, background, showBo
           avatarObjectRef.current = object;
           disposeGroup(previewRef.current);
           previewRef.current = createPreview(category, textureRef.current);
+          applyPreviewPose(previewRef.current, category, pose, adjustments.sleeveLength);
           object.add(previewRef.current);
         }}
       />
