@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ChevronDown, ChevronUp, ExternalLink, Music2, X } from "lucide-react";
+import { ChevronDown, ExternalLink, Music2, X } from "lucide-react";
 
 const SPOTIFY_ALBUM_ID = "6dtuD2cWFty44bX6uZiptN";
 const SPOTIFY_ALBUM_URL = `https://open.spotify.com/album/${SPOTIFY_ALBUM_ID}`;
@@ -11,13 +11,16 @@ const STORAGE_KEY = "clouva:spotify-player-state";
 type PlayerState = "expanded" | "compact" | "hidden";
 
 export function GlobalSpotifyPlayer() {
-  const [state, setState] = useState<PlayerState>("compact");
+  const [state, setState] = useState<PlayerState>("hidden");
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
     const saved = window.localStorage.getItem(STORAGE_KEY);
-    if (saved === "expanded" || saved === "compact" || saved === "hidden") {
-      setState(saved);
+    if (saved === "expanded") {
+      setState("expanded");
+    } else {
+      setState("hidden");
+      window.localStorage.setItem(STORAGE_KEY, "hidden");
     }
     setMounted(true);
   }, []);
@@ -29,21 +32,19 @@ export function GlobalSpotifyPlayer() {
 
   if (!mounted) return null;
 
-  if (state === "hidden") {
+  if (state !== "expanded") {
     return (
       <button
         type="button"
-        onClick={() => updateState("compact")}
-        aria-label="Mostrar reproductor de Spotify"
-        className="fixed bottom-4 right-4 z-[100] flex h-12 items-center gap-2 rounded-full border border-white/15 bg-black/90 px-4 text-sm font-semibold text-white shadow-2xl backdrop-blur-xl transition hover:scale-[1.02] hover:border-[#1ed760]/70"
+        onClick={() => updateState("expanded")}
+        aria-label="Abrir reproductor de música"
+        title="CLOUVA Music"
+        className="fixed bottom-4 right-4 z-[100] flex h-12 w-12 items-center justify-center rounded-full border border-white/15 bg-black/90 text-white shadow-2xl backdrop-blur-xl transition hover:scale-105 hover:border-[#1ed760]/70"
       >
-        <Music2 className="h-5 w-5 text-[#1ed760]" />
-        <span>CLOUVA MUSIC</span>
+        <Music2 className="h-6 w-6 text-[#1ed760]" />
       </button>
     );
   }
-
-  const expanded = state === "expanded";
 
   return (
     <aside
@@ -53,8 +54,8 @@ export function GlobalSpotifyPlayer() {
       <div className="flex min-h-14 items-center gap-3 px-3 py-2">
         <button
           type="button"
-          onClick={() => updateState(expanded ? "compact" : "expanded")}
-          aria-label={expanded ? "Minimizar reproductor" : "Abrir reproductor"}
+          onClick={() => updateState("hidden")}
+          aria-label="Minimizar reproductor"
           className="flex min-w-0 flex-1 items-center gap-3 rounded-xl text-left"
         >
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#1ed760] text-black">
@@ -66,7 +67,7 @@ export function GlobalSpotifyPlayer() {
             </span>
             <span className="block truncate text-sm font-semibold">Clover en Spotify</span>
           </span>
-          {expanded ? <ChevronDown className="h-5 w-5 text-white/60" /> : <ChevronUp className="h-5 w-5 text-white/60" />}
+          <ChevronDown className="h-5 w-5 text-white/60" />
         </button>
 
         <a
@@ -81,14 +82,14 @@ export function GlobalSpotifyPlayer() {
         <button
           type="button"
           onClick={() => updateState("hidden")}
-          aria-label="Ocultar reproductor"
+          aria-label="Cerrar reproductor"
           className="rounded-full p-2 text-white/60 transition hover:bg-white/10 hover:text-white"
         >
           <X className="h-4 w-4" />
         </button>
       </div>
 
-      <div className={expanded ? "block border-t border-white/10" : "hidden"}>
+      <div className="border-t border-white/10">
         <iframe
           title="Clover en Spotify"
           src={SPOTIFY_EMBED_URL}
