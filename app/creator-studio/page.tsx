@@ -1,4 +1,4 @@
-import { CreatorStudio } from "@/components/creator-studio/CreatorStudio";
+import { CreatorStudioBootstrap } from "@/components/creator-studio/CreatorStudioBootstrap";
 
 export const metadata = {
   title: "CLOUVA Creator Studio",
@@ -6,5 +6,5 @@ export const metadata = {
 };
 
 export default function CreatorStudioPage() {
-  return <CreatorStudio />;
+  return <CreatorStudioBootstrap />;
 }
