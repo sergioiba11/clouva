@@ -84,9 +84,6 @@ export function ReferenceAssetLibrary({ selectedAssetId, onSelect, onCategoryCha
 
   useEffect(() => {
     void refresh();
-    return () => {
-      if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
-    };
   }, []);
 
   const categoryCounts = useMemo(() => {
