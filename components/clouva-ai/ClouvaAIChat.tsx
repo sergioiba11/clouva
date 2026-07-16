@@ -14,6 +14,19 @@ type ChatPayload = {
   error?: string;
 };
 
+type GitHubStatusPayload = {
+  ok?: boolean;
+  status?: {
+    connected?: boolean;
+    repository?: string;
+    branch?: string;
+    private?: boolean;
+    url?: string;
+    pushedAt?: string;
+  };
+  error?: string;
+};
+
 const wait = (milliseconds: number) =>
   new Promise((resolve) => setTimeout(resolve, milliseconds));
 
@@ -54,7 +67,44 @@ export function ClouvaAIChat() {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading, retrying]);
 
+  async function getGitHubContext(accessToken: string) {
+    try {
+      const response = await fetch("/api/clouva-ai/github", {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+        cache: "no-store",
+      });
+
+      const payload = (await response.json().catch(() => ({}))) as GitHubStatusPayload;
+
+      if (!response.ok || !payload.status?.connected) {
+        return {
+          connected: false,
+          error: payload.error ?? "No se pudo comprobar GitHub.",
+        };
+      }
+
+      return {
+        connected: true,
+        repository: payload.status.repository,
+        branch: payload.status.branch,
+        private: payload.status.private,
+        url: payload.status.url,
+        pushedAt: payload.status.pushedAt,
+      };
+    } catch (caught) {
+      return {
+        connected: false,
+        error: caught instanceof Error ? caught.message : "Error al consultar GitHub.",
+      };
+    }
+  }
+
   async function requestChat(message: string, accessToken: string) {
+    const github = await getGitHubContext(accessToken);
+
     const requestBody = JSON.stringify({
       message,
       conversationId,
@@ -64,6 +114,14 @@ export function ClouvaAIChat() {
         url: window.location.href,
         viewport: { width: window.innerWidth, height: window.innerHeight },
         capturedAt: new Date().toISOString(),
+        github,
+        capabilities: {
+          githubStatus: true,
+          githubRead: true,
+          githubWrite: true,
+          githubWriteRequiresConfirmation: true,
+          railwayDeploysFromMainAutomatically: true,
+        },
       },
     });
 
@@ -92,7 +150,10 @@ export function ClouvaAIChat() {
       }
 
       lastError = payload.error ?? `CLOUVA AI respondió con error ${response.status}.`;
-      const retryable = response.status === 429 || response.status >= 500 || isTemporaryGeminiError(lastError);
+      const retryable =
+        response.status === 429 ||
+        response.status >= 500 ||
+        isTemporaryGeminiError(lastError);
 
       if (!retryable) break;
     }
@@ -205,7 +266,7 @@ export function ClouvaAIChat() {
             <article className="max-w-[88%] rounded-2xl border border-violet-400/20 bg-violet-500/10 px-4 py-3 text-sm text-violet-100">
               {retrying
                 ? "Gemini está ocupado. Reintentando automáticamente…"
-                : "Analizando el proyecto…"}
+                : "Analizando el proyecto y comprobando servicios…"}
             </article>
           )}
           <div ref={endRef} />
