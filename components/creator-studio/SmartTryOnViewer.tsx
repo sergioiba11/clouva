@@ -17,7 +17,7 @@ import {
   TorusGeometry,
   Vector3,
 } from "three";
-import { AvatarModelViewer, type AvatarPoseMode } from "@/components/avatar-engine/AvatarModelViewer";
+import { CreatorStudioAvatarViewer, type CreatorPoseMode } from "@/components/creator-studio/CreatorStudioAvatarViewer";
 import { useActiveAvatarStore } from "@/lib/avatar-engine/active-avatar-store";
 import { defaultAvatarConfig } from "@/lib/avatar-engine/catalog";
 
@@ -209,7 +209,7 @@ export function SmartTryOnViewer({ category, fit, pose, view, background, showBo
   currentRef.current = { fit, showBody, garmentOnly, adjustments };
 
   const viewRotation = useMemo(() => view === "Frente" ? 0 : view === "Lateral" ? -Math.PI / 2 : Math.PI, [view]);
-  const poseMode: AvatarPoseMode = pose === "T-Pose" ? "tpose" : pose === "Walk" ? "walk" : "idle";
+  const poseMode: CreatorPoseMode = pose === "T-Pose" ? "tpose" : pose === "Walk" ? "walk" : "idle";
 
   function rebuild(root: Object3D) {
     avatarRef.current = root;
@@ -310,16 +310,13 @@ export function SmartTryOnViewer({ category, fit, pose, view, background, showBo
 
   return (
     <div style={{ width: "100%", height: "100%", minHeight: 500, background }}>
-      <AvatarModelViewer
+      <CreatorStudioAvatarViewer
         modelUrl={avatar.modelUrl}
         fallbackModelUrl={avatar.fallbackUrl}
         frontRotationY={avatar.frontRotationY + viewRotation}
         config={defaultAvatarConfig}
-        playAnimations
-        motionTest={false}
         poseMode={poseMode}
         className="h-full min-h-[500px] w-full"
-        alt="Vista previa 3D con ropa vinculada al avatar CLOUVA"
         onReady={rebuild}
       />
     </div>
