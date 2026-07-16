@@ -79,21 +79,9 @@ export async function POST(request: Request) {
       payload = (await request.json()) as BlenderRequest;
     }
 
-    const workerUrl = process.env.GARMENT_WORKER_URL ?? process.env.BLENDER_WORKER_URL;
+    const workerUrl = process.env.GARMENT_WORKER_URL ?? process.env.BLENDER_WORKER_URL ?? "https://rig.clouva.com.ar";
     const workerToken = process.env.GARMENT_WORKER_TOKEN ?? process.env.BLENDER_WORKER_TOKEN;
     const job = buildJob(payload);
-
-    if (!workerUrl) {
-      return NextResponse.json({
-        ok: true,
-        mock: true,
-        jobId: `blender_preview_${Date.now()}`,
-        status: "PENDING_CONFIGURATION",
-        pipeline: job,
-        receivedFile: sourceFile ? { name: sourceFile.name, size: sourceFile.size } : null,
-        message: "El Auto Rig está preparado, pero falta GARMENT_WORKER_URL o BLENDER_WORKER_URL en Railway.",
-      });
-    }
 
     let response: Response;
     if (sourceFile) {
@@ -118,20 +106,37 @@ export async function POST(request: Request) {
       });
     }
 
-    const data = await response.json().catch(() => ({}));
+    const rawText = await response.text();
+    let data: Record<string, unknown> = {};
+    try {
+      data = rawText ? JSON.parse(rawText) as Record<string, unknown> : {};
+    } catch {
+      data = { message: rawText };
+    }
+
     if (!response.ok) {
-      return NextResponse.json({ error: "El Garment/Blender Worker rechazó el trabajo.", details: data }, { status: response.status });
+      return NextResponse.json({
+        error: "El Garment/Blender Worker rechazó el trabajo.",
+        status: response.status,
+        workerUrl,
+        details: data,
+      }, { status: response.status });
     }
 
     return NextResponse.json({
       ok: true,
       mock: false,
+      workerUrl,
       jobId: data.jobId ?? data.id,
       status: data.status ?? "queued",
       resultUrl: data.resultUrl ?? data.outputUrl ?? null,
+      message: data.message ?? "El trabajo fue enviado al Garment Worker.",
       raw: data,
     });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Error inesperado al conectar con Garment/Blender Worker." }, { status: 500 });
+    return NextResponse.json({
+      error: error instanceof Error ? error.message : "Error inesperado al conectar con Garment/Blender Worker.",
+      workerUrl: process.env.GARMENT_WORKER_URL ?? process.env.BLENDER_WORKER_URL ?? "https://rig.clouva.com.ar",
+    }, { status: 500 });
   }
 }
