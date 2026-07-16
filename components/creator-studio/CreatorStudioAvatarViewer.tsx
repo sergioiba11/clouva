@@ -8,6 +8,7 @@ import {
   AnimationClip,
   AnimationMixer,
   Bone,
+  Box3,
   Clock,
   DirectionalLight,
   HemisphereLight,
@@ -15,6 +16,7 @@ import {
   PerspectiveCamera,
   Quaternion,
   Scene,
+  SkinnedMesh,
   SRGBColorSpace,
   Vector3,
   WebGLRenderer,
@@ -50,11 +52,11 @@ type HumanRig = {
   base: Map<Bone, Quaternion>;
 };
 
-const left = new Vector3(-1, 0, 0);
-const right = new Vector3(1, 0, 0);
-const down = new Vector3(0, -1, 0);
-const tmpStart = new Vector3();
-const tmpEnd = new Vector3();
+const LEFT = new Vector3(-1, 0, 0);
+const RIGHT = new Vector3(1, 0, 0);
+const DOWN = new Vector3(0, -1, 0);
+const tmpA = new Vector3();
+const tmpB = new Vector3();
 const tmpCurrent = new Vector3();
 const tmpDesired = new Vector3();
 const tmpParentQ = new Quaternion();
@@ -65,17 +67,30 @@ function clean(name: string) {
   return name.toLowerCase().replace(/^mixamorig:/, "").replace(/[^a-z0-9]/g, "");
 }
 
+function uniqueBones(root: Object3D) {
+  const result = new Set<Bone>();
+  root.traverse((object: any) => {
+    if (object.isBone) result.add(object as Bone);
+    if (object.isSkinnedMesh) {
+      for (const bone of (object as SkinnedMesh).skeleton?.bones ?? []) result.add(bone);
+    }
+  });
+  return [...result];
+}
+
 function findByName(bones: Bone[], names: string[]) {
   return bones.find((bone) => names.includes(clean(bone.name)))
     ?? bones.find((bone) => names.some((name) => clean(bone.name).includes(name)));
 }
 
 async function resolveVrmBones(gltf: GLTF) {
-  const ext = gltf.userData?.gltfExtensions ?? {};
   const map = new Map<string, Bone>();
-  const parser = gltf.parser;
+  const parser: any = gltf.parser;
+  const jsonExtensions = parser?.json?.extensions ?? {};
+  const userExtensions = gltf.userData?.gltfExtensions ?? {};
+  const extensions = { ...jsonExtensions, ...userExtensions };
 
-  const vrm1 = ext.VRMC_vrm?.humanoid?.humanBones;
+  const vrm1 = extensions.VRMC_vrm?.humanoid?.humanBones;
   if (vrm1 && parser) {
     for (const [name, entry] of Object.entries(vrm1) as Array<[string, { node?: number }]>) {
       if (typeof entry?.node !== "number") continue;
@@ -84,7 +99,7 @@ async function resolveVrmBones(gltf: GLTF) {
     }
   }
 
-  const vrm0 = ext.VRM?.humanoid?.humanBones;
+  const vrm0 = extensions.VRM?.humanoid?.humanBones;
   if (Array.isArray(vrm0) && parser) {
     for (const entry of vrm0) {
       if (typeof entry?.node !== "number" || !entry?.bone) continue;
@@ -92,29 +107,83 @@ async function resolveVrmBones(gltf: GLTF) {
       if ((node as Bone)?.isBone) map.set(entry.bone, node as Bone);
     }
   }
-
   return map;
 }
 
-async function collectRig(gltf: GLTF, root: Object3D): Promise<HumanRig> {
-  const bones: Bone[] = [];
-  root.traverse((object) => {
-    if ((object as Bone).isBone) bones.push(object as Bone);
+function firstBoneChild(bone: Bone | undefined) {
+  return bone?.children.find((child: any) => child.isBone) as Bone | undefined;
+}
+
+function geometricFallback(root: Object3D, bones: Bone[]) {
+  root.updateMatrixWorld(true);
+  const box = new Box3().setFromObject(root);
+  const height = Math.max(box.max.y - box.min.y, 1);
+  const centerX = (box.min.x + box.max.x) * 0.5;
+
+  const segments = bones.flatMap((bone) => {
+    const child = firstBoneChild(bone);
+    if (!child) return [];
+    bone.getWorldPosition(tmpA);
+    child.getWorldPosition(tmpB);
+    return [{ bone, child, mid: tmpA.clone().add(tmpB).multiplyScalar(0.5) }];
   });
+
+  function arm(side: -1 | 1) {
+    const candidates = segments
+      .filter((segment) => {
+        const y = (segment.mid.y - box.min.y) / height;
+        const sideX = (segment.mid.x - centerX) * side;
+        return y > 0.43 && y < 0.78 && sideX > height * 0.045;
+      })
+      .sort((a, b) => b.mid.y - a.mid.y || Math.abs(a.mid.x - centerX) - Math.abs(b.mid.x - centerX));
+    const upper = candidates[0];
+    const lower = upper ? segments.find((segment) => segment.bone === upper.child) : undefined;
+    return { upper: upper?.bone, lower: lower?.bone ?? upper?.child };
+  }
+
+  function leg(side: -1 | 1) {
+    const candidates = segments
+      .filter((segment) => {
+        const y = (segment.mid.y - box.min.y) / height;
+        const sideX = (segment.mid.x - centerX) * side;
+        return y > 0.12 && y < 0.55 && sideX > height * 0.015;
+      })
+      .sort((a, b) => b.mid.y - a.mid.y);
+    const upper = candidates[0];
+    const lower = upper ? segments.find((segment) => segment.bone === upper.child) : undefined;
+    return { upper: upper?.bone, lower: lower?.bone ?? upper?.child };
+  }
+
+  return { leftArm: arm(-1), rightArm: arm(1), leftLeg: leg(-1), rightLeg: leg(1) };
+}
+
+async function collectRig(gltf: GLTF, root: Object3D): Promise<HumanRig> {
+  const bones = uniqueBones(root);
   const vrm = await resolveVrmBones(gltf);
   const pick = (vrmName: string, aliases: string[]) => vrm.get(vrmName) ?? findByName(bones, aliases);
+  const geo = geometricFallback(root, bones);
+
   const rig: HumanRig = {
-    leftUpperArm: pick("leftUpperArm", ["leftupperarm", "upperarml", "jbiplupperarm"]),
-    rightUpperArm: pick("rightUpperArm", ["rightupperarm", "upperarmr", "jbiprupperarm"]),
-    leftLowerArm: pick("leftLowerArm", ["leftlowerarm", "leftforearm", "lowerarml", "jbipllowerarm"]),
-    rightLowerArm: pick("rightLowerArm", ["rightlowerarm", "rightforearm", "lowerarmr", "jbiprlowerarm"]),
-    leftUpperLeg: pick("leftUpperLeg", ["leftupperleg", "leftupleg", "thighl", "jbiplupperleg"]),
-    rightUpperLeg: pick("rightUpperLeg", ["rightupperleg", "rightupleg", "thighr", "jbiprupperleg"]),
-    leftLowerLeg: pick("leftLowerLeg", ["leftlowerleg", "leftleg", "calfl", "jbipllowerleg"]),
-    rightLowerLeg: pick("rightLowerLeg", ["rightlowerleg", "rightleg", "calfr", "jbiprlowerleg"]),
+    leftUpperArm: pick("leftUpperArm", ["leftupperarm", "upperarml", "jbiplupperarm", "lupperarm"]) ?? geo.leftArm.upper,
+    rightUpperArm: pick("rightUpperArm", ["rightupperarm", "upperarmr", "jbiprupperarm", "rupperarm"]) ?? geo.rightArm.upper,
+    leftLowerArm: pick("leftLowerArm", ["leftlowerarm", "leftforearm", "lowerarml", "jbipllowerarm", "lforearm"]) ?? geo.leftArm.lower,
+    rightLowerArm: pick("rightLowerArm", ["rightlowerarm", "rightforearm", "lowerarmr", "jbiprlowerarm", "rforearm"]) ?? geo.rightArm.lower,
+    leftUpperLeg: pick("leftUpperLeg", ["leftupperleg", "leftupleg", "thighl", "jbiplupperleg"]) ?? geo.leftLeg.upper,
+    rightUpperLeg: pick("rightUpperLeg", ["rightupperleg", "rightupleg", "thighr", "jbiprupperleg"]) ?? geo.rightLeg.upper,
+    leftLowerLeg: pick("leftLowerLeg", ["leftlowerleg", "leftleg", "calfl", "jbipllowerleg"]) ?? geo.leftLeg.lower,
+    rightLowerLeg: pick("rightLowerLeg", ["rightlowerleg", "rightleg", "calfr", "jbiprlowerleg"]) ?? geo.rightLeg.lower,
     base: new Map(),
   };
   for (const bone of bones) rig.base.set(bone, bone.quaternion.clone());
+  console.info("[Creator Studio rig]", {
+    bones: bones.length,
+    leftUpperArm: rig.leftUpperArm?.name,
+    rightUpperArm: rig.rightUpperArm?.name,
+    leftLowerArm: rig.leftLowerArm?.name,
+    rightLowerArm: rig.rightLowerArm?.name,
+    leftUpperLeg: rig.leftUpperLeg?.name,
+    rightUpperLeg: rig.rightUpperLeg?.name,
+  });
   return rig;
 }
 
@@ -124,12 +193,12 @@ function resetRig(rig: HumanRig) {
 
 function aimBone(root: Object3D, bone: Bone | undefined, targetLocal: Vector3) {
   if (!bone) return;
-  const child = bone.children.find((item) => (item as Bone).isBone) as Bone | undefined;
+  const child = firstBoneChild(bone);
   if (!child) return;
 
-  bone.getWorldPosition(tmpStart);
-  child.getWorldPosition(tmpEnd);
-  tmpCurrent.copy(tmpEnd).sub(tmpStart).normalize();
+  bone.getWorldPosition(tmpA);
+  child.getWorldPosition(tmpB);
+  tmpCurrent.copy(tmpB).sub(tmpA).normalize();
 
   root.getWorldQuaternion(tmpRootQ);
   tmpDesired.copy(targetLocal).applyQuaternion(tmpRootQ).normalize();
@@ -146,30 +215,32 @@ function aimBone(root: Object3D, bone: Bone | undefined, targetLocal: Vector3) {
 
 function applyProceduralPose(root: Object3D, rig: HumanRig, mode: CreatorPoseMode, elapsed: number) {
   resetRig(rig);
+  root.updateMatrixWorld(true);
+
   if (mode === "tpose") {
-    aimBone(root, rig.leftUpperArm, left);
-    aimBone(root, rig.leftLowerArm, left);
-    aimBone(root, rig.rightUpperArm, right);
-    aimBone(root, rig.rightLowerArm, right);
+    aimBone(root, rig.leftUpperArm, LEFT);
+    aimBone(root, rig.leftLowerArm, LEFT);
+    aimBone(root, rig.rightUpperArm, RIGHT);
+    aimBone(root, rig.rightLowerArm, RIGHT);
     return;
   }
 
   if (mode === "walk") {
     const step = Math.sin(elapsed * 4.2);
-    aimBone(root, rig.leftUpperArm, new Vector3(-0.16, -0.96, step * 0.28).normalize());
-    aimBone(root, rig.rightUpperArm, new Vector3(0.16, -0.96, -step * 0.28).normalize());
-    aimBone(root, rig.leftLowerArm, new Vector3(-0.1, -0.99, step * 0.1).normalize());
-    aimBone(root, rig.rightLowerArm, new Vector3(0.1, -0.99, -step * 0.1).normalize());
-    aimBone(root, rig.leftUpperLeg, new Vector3(-0.05, -0.98, -step * 0.24).normalize());
-    aimBone(root, rig.rightUpperLeg, new Vector3(0.05, -0.98, step * 0.24).normalize());
-    aimBone(root, rig.leftLowerLeg, down);
-    aimBone(root, rig.rightLowerLeg, down);
+    aimBone(root, rig.leftUpperArm, new Vector3(-0.18, -0.95, step * 0.3).normalize());
+    aimBone(root, rig.rightUpperArm, new Vector3(0.18, -0.95, -step * 0.3).normalize());
+    aimBone(root, rig.leftLowerArm, new Vector3(-0.12, -0.98, step * 0.12).normalize());
+    aimBone(root, rig.rightLowerArm, new Vector3(0.12, -0.98, -step * 0.12).normalize());
+    aimBone(root, rig.leftUpperLeg, new Vector3(-0.05, -0.96, -step * 0.28).normalize());
+    aimBone(root, rig.rightUpperLeg, new Vector3(0.05, -0.96, step * 0.28).normalize());
+    aimBone(root, rig.leftLowerLeg, DOWN);
+    aimBone(root, rig.rightLowerLeg, DOWN);
     return;
   }
 
-  const sway = Math.sin(elapsed * 1.4) * 0.02;
-  aimBone(root, rig.leftUpperArm, new Vector3(-0.14, -0.99, sway).normalize());
-  aimBone(root, rig.rightUpperArm, new Vector3(0.14, -0.99, -sway).normalize());
+  const sway = Math.sin(elapsed * 1.4) * 0.025;
+  aimBone(root, rig.leftUpperArm, new Vector3(-0.15, -0.98, sway).normalize());
+  aimBone(root, rig.rightUpperArm, new Vector3(0.15, -0.98, -sway).normalize());
 }
 
 function findClip(clips: AnimationClip[], mode: CreatorPoseMode) {
@@ -210,7 +281,9 @@ export function CreatorStudioAvatarViewer({ modelUrl, fallbackModelUrl, frontRot
 
     scene.add(new HemisphereLight(0xffffff, 0x160b25, 2.2));
     scene.add(new AmbientLight(0xffffff, 0.9));
-    const light = new DirectionalLight(0xffffff, 3); light.position.set(3, 5, 4); scene.add(light);
+    const light = new DirectionalLight(0xffffff, 3);
+    light.position.set(3, 5, 4);
+    scene.add(light);
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
@@ -259,7 +332,8 @@ export function CreatorStudioAvatarViewer({ modelUrl, fallbackModelUrl, frontRot
           const fallback = buildProceduralClouvaAvatar(config);
           await attach({ scene: fallback, scenes: [fallback], animations: [], cameras: [], asset: {}, parser: undefined as never, userData: {} });
         }
-      } catch {
+      } catch (error) {
+        console.warn("Creator Studio avatar failed", error);
         const fallback = buildProceduralClouvaAvatar(config);
         await attach({ scene: fallback, scenes: [fallback], animations: [], cameras: [], asset: {}, parser: undefined as never, userData: {} });
       }
@@ -270,6 +344,7 @@ export function CreatorStudioAvatarViewer({ modelUrl, fallbackModelUrl, frontRot
       const delta = clock.getDelta();
       const elapsed = clock.elapsedTime;
       const mode = poseRef.current;
+
       if (mode !== activeMode) {
         action?.stop();
         action = null;
@@ -282,8 +357,10 @@ export function CreatorStudioAvatarViewer({ modelUrl, fallbackModelUrl, frontRot
         }
         activeMode = mode;
       }
+
       if (action && mixer) mixer.update(delta);
       else if (model && rig) applyProceduralPose(model, rig, mode, elapsed);
+
       if (model) model.position.y = baseY + (mode === "walk" ? Math.abs(Math.sin(elapsed * 4.2)) * 0.006 : 0);
       controls.update();
       renderer.render(scene, camera);
