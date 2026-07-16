@@ -7,12 +7,10 @@ import {
   BoxGeometry,
   CylinderGeometry,
   DoubleSide,
-  Euler,
   Group,
   Mesh,
   MeshPhysicalMaterial,
   Object3D,
-  Quaternion,
   SphereGeometry,
   Texture,
   TextureLoader,
@@ -52,18 +50,23 @@ type Props = {
   imageUrl?: string | null;
 };
 
-type RigKey =
-  | "hips" | "chest" | "neck" | "head"
-  | "leftShoulder" | "rightShoulder"
-  | "leftUpperArm" | "rightUpperArm"
-  | "leftLowerArm" | "rightLowerArm"
-  | "leftHand" | "rightHand"
-  | "leftUpperLeg" | "rightUpperLeg"
-  | "leftLowerLeg" | "rightLowerLeg";
+type Rig = {
+  hips?: Bone;
+  chest?: Bone;
+  head?: Bone;
+  leftShoulder?: Bone;
+  rightShoulder?: Bone;
+  leftElbow?: Bone;
+  rightElbow?: Bone;
+  leftHand?: Bone;
+  rightHand?: Bone;
+  leftHip?: Bone;
+  rightHip?: Bone;
+  leftKnee?: Bone;
+  rightKnee?: Bone;
+};
 
-type RigEntry = { bone: Bone; base: Quaternion };
-type Rig = Partial<Record<RigKey, RigEntry>>;
-type GarmentParts = {
+type Parts = {
   root: Group;
   torso?: Mesh;
   hood?: Mesh;
@@ -75,135 +78,48 @@ type GarmentParts = {
   rightLeg?: Mesh;
 };
 
-const aliases: Record<RigKey, string[]> = {
-  hips: ["hips", "pelvis", "jbiphips"],
-  chest: ["upperchest", "chest", "spine2", "spine02", "jbipupperchest", "jbipchest"],
-  neck: ["neck", "jbipneck"],
-  head: ["head", "jbiphead"],
-  leftShoulder: ["leftshoulder", "lshoulder", "shoulderl", "claviclel", "jbiplshoulder"],
-  rightShoulder: ["rightshoulder", "rshoulder", "shoulderr", "clavicler", "jbiprshoulder"],
-  leftUpperArm: ["leftupperarm", "upperarml", "lupperarm", "leftarm", "jbiplupperarm"],
-  rightUpperArm: ["rightupperarm", "upperarmr", "rupperarm", "rightarm", "jbiprupperarm"],
-  leftLowerArm: ["leftlowerarm", "lowerarml", "leftforearm", "lforearm", "jbipllowerarm"],
-  rightLowerArm: ["rightlowerarm", "lowerarmr", "rightforearm", "rforearm", "jbiprlowerarm"],
-  leftHand: ["lefthand", "handl", "lhand", "jbiplhand"],
-  rightHand: ["righthand", "handr", "rhand", "jbiprhand"],
-  leftUpperLeg: ["leftupperleg", "upperlegl", "thighl", "jbiplupperleg"],
-  rightUpperLeg: ["rightupperleg", "upperlegr", "thighr", "jbiprupperleg"],
-  leftLowerLeg: ["leftlowerleg", "lowerlegl", "calfl", "jbipllowerleg"],
-  rightLowerLeg: ["rightlowerleg", "lowerlegr", "calfr", "jbiprlowerleg"],
-};
-
-const a = new Vector3();
-const b = new Vector3();
-const mid = new Vector3();
-const dir = new Vector3();
-const size = new Vector3();
+const p1 = new Vector3();
+const p2 = new Vector3();
+const center = new Vector3();
+const direction = new Vector3();
+const boundsSize = new Vector3();
 const yAxis = new Vector3(0, 1, 0);
-const q = new Quaternion();
-const e = new Euler();
 
 function clean(value: string) {
   return value.toLowerCase().replace(/^mixamorig:/, "").replace(/[^a-z0-9]/g, "");
 }
 
-function entry(bone: Bone | undefined): RigEntry | undefined {
-  return bone ? { bone, base: bone.quaternion.clone() } : undefined;
+function findBone(bones: Bone[], names: string[]) {
+  return bones.find((bone) => names.includes(clean(bone.name)))
+    ?? bones.find((bone) => names.some((name) => clean(bone.name).includes(name)));
 }
 
 function collectRig(root: Object3D): Rig {
-  root.updateMatrixWorld(true);
   const bones: Bone[] = [];
   root.traverse((object) => {
     const bone = object as Bone;
     if (bone.isBone) bones.push(bone);
   });
-
-  const rig: Rig = {};
-  for (const key of Object.keys(aliases) as RigKey[]) {
-    const names = aliases[key];
-    const found = bones.find((bone) => names.includes(clean(bone.name)))
-      ?? bones.find((bone) => names.some((name) => clean(bone.name).includes(name)));
-    if (found) rig[key] = entry(found);
-  }
-
-  if (!bones.length) return rig;
-
-  const bounds = new Box3().setFromObject(root);
-  bounds.getSize(size);
-  const minY = bounds.min.y;
-  const height = Math.max(size.y, 1);
-  const position = (bone: Bone) => bone.getWorldPosition(new Vector3());
-  const segments = bones.flatMap((parent) => parent.children
-    .filter((child): child is Bone => (child as Bone).isBone)
-    .map((child) => {
-      const p1 = position(parent);
-      const p2 = position(child);
-      return { parent, child, p1, p2, midpoint: p1.clone().add(p2).multiplyScalar(0.5), delta: p2.clone().sub(p1) };
-    }));
-
-  const armSegments = segments.filter((segment) => {
-    const relativeY = (segment.midpoint.y - minY) / height;
-    return relativeY > 0.48 && Math.abs(segment.delta.x) > Math.abs(segment.delta.y) * 0.35;
-  });
-
-  function arm(side: "left" | "right") {
-    const sign = side === "left" ? -1 : 1;
-    const sideSegments = armSegments
-      .filter((segment) => segment.midpoint.x * sign > 0)
-      .sort((first, second) => Math.abs(first.midpoint.x) - Math.abs(second.midpoint.x));
-    const upper = sideSegments[0];
-    const lower = upper ? sideSegments.find((segment) => segment.parent === upper.child) : undefined;
-    return { shoulder: upper?.parent, upper: upper?.child, lower: lower?.child, hand: lower?.child.children.find((child) => (child as Bone).isBone) as Bone | undefined };
-  }
-
-  const leftArm = arm("left");
-  const rightArm = arm("right");
-  rig.leftShoulder ??= entry(leftArm.shoulder);
-  rig.rightShoulder ??= entry(rightArm.shoulder);
-  rig.leftUpperArm ??= entry(leftArm.upper);
-  rig.rightUpperArm ??= entry(rightArm.upper);
-  rig.leftLowerArm ??= entry(leftArm.lower);
-  rig.rightLowerArm ??= entry(rightArm.lower);
-  rig.leftHand ??= entry(leftArm.hand);
-  rig.rightHand ??= entry(rightArm.hand);
-
-  const legSegments = segments.filter((segment) => {
-    const relativeY = (segment.midpoint.y - minY) / height;
-    return relativeY < 0.55 && Math.abs(segment.delta.y) > Math.abs(segment.delta.x) * 0.7;
-  });
-
-  function leg(side: "left" | "right") {
-    const sign = side === "left" ? -1 : 1;
-    const candidates = legSegments
-      .filter((segment) => segment.midpoint.x * sign > 0)
-      .sort((first, second) => second.midpoint.y - first.midpoint.y);
-    const upper = candidates[0];
-    const lower = upper ? candidates.find((segment) => segment.parent === upper.child) : undefined;
-    return { upper: upper?.child, lower: lower?.child };
-  }
-
-  const leftLeg = leg("left");
-  const rightLeg = leg("right");
-  rig.leftUpperLeg ??= entry(leftLeg.upper);
-  rig.rightUpperLeg ??= entry(rightLeg.upper);
-  rig.leftLowerLeg ??= entry(leftLeg.lower);
-  rig.rightLowerLeg ??= entry(rightLeg.lower);
-
-  const central = bones
-    .map((bone) => ({ bone, point: position(bone) }))
-    .filter(({ point }) => Math.abs(point.x) < height * 0.08)
-    .sort((first, second) => first.point.y - second.point.y);
-  rig.hips ??= entry(central.find(({ point }) => (point.y - minY) / height > 0.35)?.bone);
-  rig.chest ??= entry(central.find(({ point }) => (point.y - minY) / height > 0.62)?.bone);
-  rig.neck ??= entry(central.find(({ point }) => (point.y - minY) / height > 0.76)?.bone);
-  rig.head ??= entry(central.at(-1)?.bone);
-  return rig;
+  return {
+    hips: findBone(bones, ["hips", "pelvis", "jbiphips"]),
+    chest: findBone(bones, ["upperchest", "chest", "spine2", "jbipupperchest", "jbipchest"]),
+    head: findBone(bones, ["head", "jbiphead"]),
+    leftShoulder: findBone(bones, ["leftshoulder", "shoulderl", "jbiplshoulder", "leftupperarm", "jbiplupperarm"]),
+    rightShoulder: findBone(bones, ["rightshoulder", "shoulderr", "jbiprshoulder", "rightupperarm", "jbiprupperarm"]),
+    leftElbow: findBone(bones, ["leftlowerarm", "leftforearm", "lowerarml", "jbipllowerarm"]),
+    rightElbow: findBone(bones, ["rightlowerarm", "rightforearm", "lowerarmr", "jbiprlowerarm"]),
+    leftHand: findBone(bones, ["lefthand", "handl", "jbiplhand"]),
+    rightHand: findBone(bones, ["righthand", "handr", "jbiprhand"]),
+    leftHip: findBone(bones, ["leftupperleg", "leftupleg", "thighl", "jbiplupperleg"]),
+    rightHip: findBone(bones, ["rightupperleg", "rightupleg", "thighr", "jbiprupperleg"]),
+    leftKnee: findBone(bones, ["leftlowerleg", "leftleg", "calfl", "jbipllowerleg"]),
+    rightKnee: findBone(bones, ["rightlowerleg", "rightleg", "calfr", "jbiprlowerleg"]),
+  };
 }
 
-function previewMaterial(texture: Texture | null) {
+function material(texture: Texture | null) {
   return new MeshPhysicalMaterial({
-    color: texture ? 0xffffff : 0x7d4bd1,
+    color: texture ? 0xffffff : 0x7b4dd4,
     map: texture,
     roughness: 0.72,
     metalness: 0.02,
@@ -214,108 +130,65 @@ function previewMaterial(texture: Texture | null) {
   });
 }
 
-function makeMesh(name: string, geometry: BoxGeometry | CylinderGeometry | SphereGeometry | TorusGeometry, material: MeshPhysicalMaterial) {
-  const item = new Mesh(geometry, material);
+function make(name: string, geometry: BoxGeometry | CylinderGeometry | SphereGeometry | TorusGeometry, mat: MeshPhysicalMaterial) {
+  const item = new Mesh(geometry, mat);
   item.name = name;
-  item.visible = false;
   item.castShadow = true;
   item.frustumCulled = false;
   return item;
 }
 
-function createGarment(category: string, texture: Texture | null): GarmentParts {
+function createParts(category: string, texture: Texture | null): Parts {
   const root = new Group();
-  root.name = "clouva-rigged-preview";
-  const material = previewMaterial(texture);
-  const parts: GarmentParts = { root };
+  const mat = material(texture);
+  const parts: Parts = { root };
 
   if (["hoodie", "campera", "remera"].includes(category)) {
-    parts.torso = makeMesh("torso", new SphereGeometry(1, 28, 20), material);
-    parts.leftUpperSleeve = makeMesh("leftUpperSleeve", new CylinderGeometry(1, 1, 1, 18), material);
-    parts.rightUpperSleeve = makeMesh("rightUpperSleeve", new CylinderGeometry(1, 1, 1, 18), material);
-    parts.leftLowerSleeve = makeMesh("leftLowerSleeve", new CylinderGeometry(1, 1, 1, 18), material);
-    parts.rightLowerSleeve = makeMesh("rightLowerSleeve", new CylinderGeometry(1, 1, 1, 18), material);
+    parts.torso = make("torso", new SphereGeometry(1, 28, 20), mat);
+    parts.leftUpperSleeve = make("leftUpperSleeve", new CylinderGeometry(1, 1, 1, 18), mat);
+    parts.rightUpperSleeve = make("rightUpperSleeve", new CylinderGeometry(1, 1, 1, 18), mat);
+    parts.leftLowerSleeve = make("leftLowerSleeve", new CylinderGeometry(1, 1, 1, 18), mat);
+    parts.rightLowerSleeve = make("rightLowerSleeve", new CylinderGeometry(1, 1, 1, 18), mat);
     root.add(parts.torso, parts.leftUpperSleeve, parts.rightUpperSleeve, parts.leftLowerSleeve, parts.rightLowerSleeve);
     if (category === "hoodie") {
-      parts.hood = makeMesh("hood", new SphereGeometry(1, 24, 18), material);
+      parts.hood = make("hood", new SphereGeometry(1, 24, 18), mat);
       root.add(parts.hood);
     }
   } else if (category === "baggy") {
-    parts.torso = makeMesh("waist", new CylinderGeometry(1, 1.12, 1, 22), material);
-    parts.leftLeg = makeMesh("leftLeg", new CylinderGeometry(1, 1.12, 1, 18), material);
-    parts.rightLeg = makeMesh("rightLeg", new CylinderGeometry(1, 1.12, 1, 18), material);
+    parts.torso = make("waist", new CylinderGeometry(1, 1.12, 1, 22), mat);
+    parts.leftLeg = make("leftLeg", new CylinderGeometry(1, 1.12, 1, 18), mat);
+    parts.rightLeg = make("rightLeg", new CylinderGeometry(1, 1.12, 1, 18), mat);
     root.add(parts.torso, parts.leftLeg, parts.rightLeg);
   } else if (category === "zapatillas") {
-    parts.leftLeg = makeMesh("leftShoe", new BoxGeometry(1, 1, 1.6), material);
-    parts.rightLeg = makeMesh("rightShoe", new BoxGeometry(1, 1, 1.6), material);
+    parts.leftLeg = make("leftShoe", new BoxGeometry(1, 1, 1.6), mat);
+    parts.rightLeg = make("rightShoe", new BoxGeometry(1, 1, 1.6), mat);
     root.add(parts.leftLeg, parts.rightLeg);
   } else if (category === "gorra") {
-    parts.hood = makeMesh("cap", new SphereGeometry(1, 24, 16), material);
+    parts.hood = make("cap", new SphereGeometry(1, 24, 16), mat);
     root.add(parts.hood);
   } else if (category === "cadena") {
-    parts.torso = makeMesh("chain", new TorusGeometry(1, 0.1, 10, 42), material);
+    parts.torso = make("chain", new TorusGeometry(1, 0.1, 10, 42), mat);
     root.add(parts.torso);
   }
   return parts;
 }
 
-function poseBone(target: RigEntry | undefined, x: number, y: number, z: number) {
-  if (!target) return;
-  e.set(x, y, z, "XYZ");
-  q.setFromEuler(e);
-  target.bone.quaternion.copy(target.base).multiply(q);
-}
-
-function applyPose(rig: Rig, pose: Pose, elapsed: number) {
-  const step = Math.sin(elapsed * 4.2);
-  const breath = Math.sin(elapsed * 1.5);
-  if (pose === "T-Pose") {
-    poseBone(rig.leftUpperArm, 0, 0, Math.PI / 2 - 0.05);
-    poseBone(rig.rightUpperArm, 0, 0, -Math.PI / 2 + 0.05);
-    poseBone(rig.leftLowerArm, 0, 0, 0);
-    poseBone(rig.rightLowerArm, 0, 0, 0);
-    poseBone(rig.leftUpperLeg, 0, 0, 0);
-    poseBone(rig.rightUpperLeg, 0, 0, 0);
-  } else if (pose === "Walk") {
-    poseBone(rig.leftUpperArm, -step * 0.38, 0, 0.1);
-    poseBone(rig.rightUpperArm, step * 0.38, 0, -0.1);
-    poseBone(rig.leftLowerArm, 0, 0, 0.08);
-    poseBone(rig.rightLowerArm, 0, 0, -0.08);
-    poseBone(rig.leftUpperLeg, step * 0.32, 0, 0);
-    poseBone(rig.rightUpperLeg, -step * 0.32, 0, 0);
-    poseBone(rig.leftLowerLeg, Math.max(0, -step) * 0.25, 0, 0);
-    poseBone(rig.rightLowerLeg, Math.max(0, step) * 0.25, 0, 0);
-    poseBone(rig.chest, -step * 0.025, 0, 0);
-  } else {
-    poseBone(rig.leftUpperArm, -0.02, 0, 0.1);
-    poseBone(rig.rightUpperArm, -0.02, 0, -0.1);
-    poseBone(rig.leftLowerArm, 0, 0, 0.04);
-    poseBone(rig.rightLowerArm, 0, 0, -0.04);
-    poseBone(rig.leftUpperLeg, 0, 0, 0);
-    poseBone(rig.rightUpperLeg, 0, 0, 0);
-    poseBone(rig.chest, breath * 0.012, 0, 0);
-    poseBone(rig.head, breath * 0.006, 0, 0);
-  }
-}
-
-function placeBetween(item: Mesh | undefined, start: Object3D | undefined, end: Object3D | undefined, radius: number, multiplier: number) {
-  if (!item || !start || !end) {
-    if (item) item.visible = false;
-    return;
-  }
-  start.getWorldPosition(a);
-  end.getWorldPosition(b);
-  mid.copy(a).add(b).multiplyScalar(0.5);
-  dir.copy(b).sub(a);
-  const length = Math.max(dir.length() * multiplier, 0.01);
-  dir.normalize();
+function between(item: Mesh | undefined, start: Object3D | undefined, end: Object3D | undefined, radius: number, multiplier = 1) {
+  if (!item || !start || !end) return false;
+  start.getWorldPosition(p1);
+  end.getWorldPosition(p2);
+  center.copy(p1).add(p2).multiplyScalar(0.5);
+  direction.copy(p2).sub(p1);
+  const length = Math.max(direction.length() * multiplier, 0.01);
+  direction.normalize();
   item.visible = true;
-  item.position.copy(mid);
-  item.quaternion.setFromUnitVectors(yAxis, dir);
+  item.position.copy(center);
+  item.quaternion.setFromUnitVectors(yAxis, direction);
   item.scale.set(radius, length * 0.5, radius);
+  return true;
 }
 
-function dispose(parts: GarmentParts | null) {
+function dispose(parts: Parts | null) {
   if (!parts) return;
   parts.root.traverse((object: any) => {
     object.geometry?.dispose?.();
@@ -329,23 +202,21 @@ export function SmartTryOnViewer({ category, fit, pose, view, background, showBo
   const avatar = useActiveAvatarStore((state) => state.avatar);
   const avatarRef = useRef<Object3D | null>(null);
   const rigRef = useRef<Rig>({});
-  const garmentRef = useRef<GarmentParts | null>(null);
+  const partsRef = useRef<Parts | null>(null);
   const textureRef = useRef<Texture | null>(null);
   const frameRef = useRef(0);
-  const propsRef = useRef({ fit, pose, showBody, garmentOnly, adjustments });
-  propsRef.current = { fit, pose, showBody, garmentOnly, adjustments };
+  const currentRef = useRef({ fit, showBody, garmentOnly, adjustments });
+  currentRef.current = { fit, showBody, garmentOnly, adjustments };
 
   const viewRotation = useMemo(() => view === "Frente" ? 0 : view === "Lateral" ? -Math.PI / 2 : Math.PI, [view]);
-  const frontRotationY = avatar.frontRotationY + viewRotation;
   const poseMode: AvatarPoseMode = pose === "T-Pose" ? "tpose" : pose === "Walk" ? "walk" : "idle";
 
   function rebuild(root: Object3D) {
     avatarRef.current = root;
     rigRef.current = collectRig(root);
-    dispose(garmentRef.current);
-    const garment = createGarment(category, textureRef.current);
-    garmentRef.current = garment;
-    (root.parent ?? root).add(garment.root);
+    dispose(partsRef.current);
+    partsRef.current = createParts(category, textureRef.current);
+    (root.parent ?? root).add(partsRef.current.root);
   }
 
   useEffect(() => {
@@ -363,64 +234,68 @@ export function SmartTryOnViewer({ category, fit, pose, view, background, showBo
   }, [imageUrl, category]);
 
   useEffect(() => {
-    const started = performance.now();
     const update = () => {
       const avatarRoot = avatarRef.current;
-      const garment = garmentRef.current;
-      if (avatarRoot && garment) {
-        const current = propsRef.current;
-        const rig = rigRef.current;
-        const elapsed = (performance.now() - started) / 1000;
-        applyPose(rig, current.pose, elapsed);
-        avatarRoot.position.y += current.pose === "Walk" ? Math.abs(Math.sin(elapsed * 4.2)) * 0.0015 : 0;
+      const parts = partsRef.current;
+      if (avatarRoot && parts) {
+        const current = currentRef.current;
         avatarRoot.updateMatrixWorld(true);
-
         avatarRoot.traverse((object) => {
           if ((object as Mesh).isMesh) object.visible = current.showBody && !current.garmentOnly;
         });
 
-        const bounds = new Box3().setFromObject(avatarRoot);
-        bounds.getSize(size);
-        const height = Math.max(size.y, 1.5);
+        const box = new Box3().setFromObject(avatarRoot);
+        box.getSize(boundsSize);
+        const height = Math.max(boundsSize.y, 1.5);
         const fitScale = current.fit === "Slim" ? 0.92 : current.fit === "Oversize" ? 1.12 : 1;
         const radius = height * 0.034 * fitScale * (current.adjustments.width / 100);
         const sleeve = current.adjustments.sleeveLength / 100;
+        const rig = rigRef.current;
 
-        placeBetween(garment.leftUpperSleeve, rig.leftShoulder?.bone ?? rig.leftUpperArm?.bone, rig.leftLowerArm?.bone, radius, sleeve);
-        placeBetween(garment.rightUpperSleeve, rig.rightShoulder?.bone ?? rig.rightUpperArm?.bone, rig.rightLowerArm?.bone, radius, sleeve);
-        placeBetween(garment.leftLowerSleeve, rig.leftLowerArm?.bone, rig.leftHand?.bone, radius * 0.9, sleeve);
-        placeBetween(garment.rightLowerSleeve, rig.rightLowerArm?.bone, rig.rightHand?.bone, radius * 0.9, sleeve);
-        placeBetween(garment.leftLeg, rig.leftUpperLeg?.bone, rig.leftLowerLeg?.bone, height * 0.055 * fitScale, current.adjustments.legLength / 100);
-        placeBetween(garment.rightLeg, rig.rightUpperLeg?.bone, rig.rightLowerLeg?.bone, height * 0.055 * fitScale, current.adjustments.legLength / 100);
+        const leftUpperOk = between(parts.leftUpperSleeve, rig.leftShoulder, rig.leftElbow, radius, sleeve);
+        const rightUpperOk = between(parts.rightUpperSleeve, rig.rightShoulder, rig.rightElbow, radius, sleeve);
+        const leftLowerOk = between(parts.leftLowerSleeve, rig.leftElbow, rig.leftHand, radius * 0.9, sleeve);
+        const rightLowerOk = between(parts.rightLowerSleeve, rig.rightElbow, rig.rightHand, radius * 0.9, sleeve);
 
-        if (garment.torso) {
-          const chest = rig.chest?.bone;
-          const hips = rig.hips?.bone;
-          if (chest && hips) {
-            chest.getWorldPosition(a);
-            hips.getWorldPosition(b);
-            garment.torso.visible = true;
-            garment.torso.position.copy(a).lerp(b, 0.38);
-            garment.torso.scale.set(height * 0.13 * fitScale * (current.adjustments.width / 100), height * 0.19 * (current.adjustments.length / 100), height * 0.085 * fitScale * (1 + current.adjustments.distance / 100));
+        const bodyCenter = box.getCenter(center);
+        if (parts.torso) {
+          parts.torso.visible = true;
+          if (rig.chest && rig.hips) {
+            rig.chest.getWorldPosition(p1);
+            rig.hips.getWorldPosition(p2);
+            parts.torso.position.copy(p1).lerp(p2, 0.38);
           } else {
-            garment.torso.visible = false;
+            parts.torso.position.set(bodyCenter.x, box.min.y + height * 0.58, bodyCenter.z);
           }
+          parts.torso.scale.set(height * 0.13 * fitScale * (current.adjustments.width / 100), height * 0.19 * (current.adjustments.length / 100), height * 0.085 * fitScale * (1 + current.adjustments.distance / 100));
         }
 
-        if (garment.hood) {
-          const head = rig.head?.bone ?? rig.neck?.bone;
-          if (head) {
-            head.getWorldPosition(a);
-            garment.hood.visible = true;
-            garment.hood.position.copy(a).add(new Vector3(0, height * 0.005, -height * 0.035));
-            garment.hood.scale.set(height * 0.09, height * 0.105, height * 0.075);
-          } else {
-            garment.hood.visible = false;
-          }
+        if (parts.hood) {
+          parts.hood.visible = true;
+          if (rig.head) rig.head.getWorldPosition(parts.hood.position);
+          else parts.hood.position.set(bodyCenter.x, box.min.y + height * 0.82, bodyCenter.z - height * 0.03);
+          parts.hood.scale.set(height * 0.09, height * 0.105, height * 0.075);
         }
 
-        garment.root.position.set(current.adjustments.x / 100, (current.adjustments.y + current.adjustments.height) / 100, current.adjustments.distance / 250);
-        garment.root.rotation.y = (current.adjustments.rotation * Math.PI) / 180;
+        if (!leftUpperOk && parts.leftUpperSleeve) {
+          parts.leftUpperSleeve.visible = true;
+          parts.leftUpperSleeve.position.set(bodyCenter.x - height * 0.17, box.min.y + height * 0.59, bodyCenter.z);
+          parts.leftUpperSleeve.scale.set(radius, height * 0.13, radius);
+        }
+        if (!rightUpperOk && parts.rightUpperSleeve) {
+          parts.rightUpperSleeve.visible = true;
+          parts.rightUpperSleeve.position.set(bodyCenter.x + height * 0.17, box.min.y + height * 0.59, bodyCenter.z);
+          parts.rightUpperSleeve.scale.set(radius, height * 0.13, radius);
+        }
+        if (!leftLowerOk && parts.leftLowerSleeve) parts.leftLowerSleeve.visible = false;
+        if (!rightLowerOk && parts.rightLowerSleeve) parts.rightLowerSleeve.visible = false;
+
+        between(parts.leftLeg, rig.leftHip, rig.leftKnee, height * 0.055 * fitScale, current.adjustments.legLength / 100);
+        between(parts.rightLeg, rig.rightHip, rig.rightKnee, height * 0.055 * fitScale, current.adjustments.legLength / 100);
+
+        parts.root.position.set(current.adjustments.x / 100, (current.adjustments.y + current.adjustments.height) / 100, current.adjustments.distance / 250);
+        parts.root.rotation.y = (current.adjustments.rotation * Math.PI) / 180;
+        parts.root.scale.setScalar(current.adjustments.scale / 100);
       }
       frameRef.current = requestAnimationFrame(update);
     };
@@ -429,7 +304,7 @@ export function SmartTryOnViewer({ category, fit, pose, view, background, showBo
   }, []);
 
   useEffect(() => () => {
-    dispose(garmentRef.current);
+    dispose(partsRef.current);
     textureRef.current?.dispose();
   }, []);
 
@@ -438,9 +313,9 @@ export function SmartTryOnViewer({ category, fit, pose, view, background, showBo
       <AvatarModelViewer
         modelUrl={avatar.modelUrl}
         fallbackModelUrl={avatar.fallbackUrl}
-        frontRotationY={frontRotationY}
+        frontRotationY={avatar.frontRotationY + viewRotation}
         config={defaultAvatarConfig}
-        playAnimations={false}
+        playAnimations
         motionTest={false}
         poseMode={poseMode}
         className="h-full min-h-[500px] w-full"
