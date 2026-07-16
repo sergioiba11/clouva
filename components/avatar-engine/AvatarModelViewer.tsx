@@ -26,6 +26,7 @@ import { buildProceduralClouvaAvatar } from "@/lib/avatar-engine/procedural-clou
 import type { AvatarConfig } from "@/lib/avatar-engine/types";
 
 type ModelState = "loading" | "ready" | "fallback" | "error";
+export type AvatarPoseMode = "idle" | "tpose" | "walk";
 
 type Props = {
   modelUrl: string | null;
@@ -37,25 +38,15 @@ type Props = {
   className?: string;
   playAnimations?: boolean;
   motionTest?: boolean;
+  poseMode?: AvatarPoseMode;
   onReady?: (object: Object3D) => void;
 };
 
 type RigKey =
-  | "hips"
-  | "spine"
-  | "chest"
-  | "neck"
-  | "head"
-  | "leftShoulder"
-  | "rightShoulder"
-  | "leftArm"
-  | "rightArm"
-  | "leftForeArm"
-  | "rightForeArm"
-  | "leftUpLeg"
-  | "rightUpLeg"
-  | "leftLeg"
-  | "rightLeg";
+  | "hips" | "spine" | "chest" | "neck" | "head"
+  | "leftShoulder" | "rightShoulder" | "leftArm" | "rightArm"
+  | "leftForeArm" | "rightForeArm" | "leftUpLeg" | "rightUpLeg"
+  | "leftLeg" | "rightLeg";
 
 type RigBone = { bone: Bone; base: Quaternion };
 type DanceRig = Partial<Record<RigKey, RigBone>>;
@@ -78,17 +69,16 @@ const RIG_ALIASES: Record<RigKey, readonly string[]> = {
   rightLeg: ["rightleg", "calfr", "lowerlegr", "shinr"],
 };
 
-function cleanName(value: string): string {
+function cleanName(value: string) {
   return value.toLowerCase().replace(/^mixamorig:/, "").replace(/[^a-z0-9]/g, "");
 }
 
-function collectDanceRig(root: Object3D): DanceRig {
+function collectRig(root: Object3D): DanceRig {
   const candidates: Bone[] = [];
-  root.traverse((object: Object3D) => {
+  root.traverse((object) => {
     const bone = object as Bone;
     if (bone.isBone) candidates.push(bone);
   });
-
   const rig: DanceRig = {};
   for (const key of Object.keys(RIG_ALIASES) as RigKey[]) {
     const aliases = RIG_ALIASES[key];
@@ -103,73 +93,63 @@ function collectDanceRig(root: Object3D): DanceRig {
   return rig;
 }
 
-const danceEuler = new Euler();
-const danceQuaternion = new Quaternion();
+const poseEuler = new Euler();
+const poseQuaternion = new Quaternion();
 
-function poseRigBone(entry: RigBone | undefined, x: number, y: number, z: number): void {
+function poseBone(entry: RigBone | undefined, x: number, y: number, z: number) {
   if (!entry) return;
-  danceEuler.set(x, y, z, "XYZ");
-  danceQuaternion.setFromEuler(danceEuler);
-  entry.bone.quaternion.copy(entry.base).multiply(danceQuaternion);
+  poseEuler.set(x, y, z, "XYZ");
+  poseQuaternion.setFromEuler(poseEuler);
+  entry.bone.quaternion.copy(entry.base).multiply(poseQuaternion);
 }
 
-function safe(value: number, min: number, max: number): number {
-  return MathUtils.clamp(value, min, max);
+function resetRig(rig: DanceRig, elapsed = 0) {
+  poseBone(rig.hips, 0, 0, 0);
+  poseBone(rig.spine, Math.sin(elapsed * 1.5) * 0.006, 0, 0);
+  poseBone(rig.chest, Math.sin(elapsed * 1.5) * 0.012, 0, 0);
+  poseBone(rig.neck, 0, 0, 0);
+  poseBone(rig.head, 0, 0, 0);
+  poseBone(rig.leftShoulder, 0, 0, 0);
+  poseBone(rig.rightShoulder, 0, 0, 0);
+  poseBone(rig.leftArm, 0, 0, 0);
+  poseBone(rig.rightArm, 0, 0, 0);
+  poseBone(rig.leftForeArm, 0, 0, 0);
+  poseBone(rig.rightForeArm, 0, 0, 0);
+  poseBone(rig.leftUpLeg, 0, 0, 0);
+  poseBone(rig.rightUpLeg, 0, 0, 0);
+  poseBone(rig.leftLeg, 0, 0, 0);
+  poseBone(rig.rightLeg, 0, 0, 0);
 }
 
-/**
- * Movimiento procedural de validación pensado para el cuerpo CLOUVA.
- * Mantiene los codos por fuera del torso y evita aducción excesiva de hombros.
- * No reemplaza la corrección de weights en Blender, pero impide que la prueba web
- * fuerce el rig a poses incompatibles con las proporciones del avatar.
- */
-function applyDance(rig: DanceRig, elapsed: number, active: boolean): void {
+function applyTPose(rig: DanceRig) {
+  resetRig(rig);
+  poseBone(rig.leftShoulder, 0, 0, 0.06);
+  poseBone(rig.rightShoulder, 0, 0, -0.06);
+  poseBone(rig.leftArm, 0, 0, Math.PI / 2 - 0.08);
+  poseBone(rig.rightArm, 0, 0, -Math.PI / 2 + 0.08);
+  poseBone(rig.leftForeArm, 0, 0, 0);
+  poseBone(rig.rightForeArm, 0, 0, 0);
+}
+
+function applyWalk(rig: DanceRig, elapsed: number) {
   const beat = Math.sin(elapsed * 4.2);
   const halfBeat = Math.sin(elapsed * 2.1);
   const side = Math.sin(elapsed * 1.5);
+  const safe = (value: number, min: number, max: number) => MathUtils.clamp(value, min, max);
 
-  if (!active) {
-    poseRigBone(rig.hips, 0, 0, 0);
-    poseRigBone(rig.spine, Math.sin(elapsed * 1.5) * 0.006, 0, 0);
-    poseRigBone(rig.chest, Math.sin(elapsed * 1.5) * 0.012, 0, 0);
-    poseRigBone(rig.neck, 0, 0, 0);
-    poseRigBone(rig.head, 0, 0, 0);
-    poseRigBone(rig.leftShoulder, 0, 0, 0);
-    poseRigBone(rig.rightShoulder, 0, 0, 0);
-    poseRigBone(rig.leftArm, 0, 0, 0);
-    poseRigBone(rig.rightArm, 0, 0, 0);
-    poseRigBone(rig.leftForeArm, 0, 0, 0);
-    poseRigBone(rig.rightForeArm, 0, 0, 0);
-    poseRigBone(rig.leftUpLeg, 0, 0, 0);
-    poseRigBone(rig.rightUpLeg, 0, 0, 0);
-    poseRigBone(rig.leftLeg, 0, 0, 0);
-    poseRigBone(rig.rightLeg, 0, 0, 0);
-    return;
-  }
-
-  poseRigBone(rig.hips, 0, safe(side * 0.07, -0.08, 0.08), safe(halfBeat * 0.035, -0.04, 0.04));
-  poseRigBone(rig.spine, safe(beat * 0.025, -0.03, 0.03), safe(-side * 0.04, -0.05, 0.05), safe(-halfBeat * 0.025, -0.03, 0.03));
-  poseRigBone(rig.chest, safe(-beat * 0.035, -0.04, 0.04), safe(side * 0.055, -0.06, 0.06), safe(halfBeat * 0.035, -0.04, 0.04));
-  poseRigBone(rig.neck, 0, safe(-side * 0.055, -0.06, 0.06), safe(beat * 0.018, -0.02, 0.02));
-  poseRigBone(rig.head, safe(beat * 0.018, -0.02, 0.02), safe(side * 0.08, -0.09, 0.09), safe(-halfBeat * 0.025, -0.03, 0.03));
-
-  // Clavículas abiertas: el brazo parte separado del pecho.
-  poseRigBone(rig.leftShoulder, 0, safe(-side * 0.025, -0.03, 0.03), 0.08);
-  poseRigBone(rig.rightShoulder, 0, safe(side * 0.025, -0.03, 0.03), -0.08);
-
-  // Sin giro Y en brazos: ese giro era el que llevaba codos y manos hacia el abdomen.
-  poseRigBone(rig.leftArm, safe(-0.045 + beat * 0.035, -0.09, 0.01), 0, safe(0.16 + halfBeat * 0.07, 0.08, 0.23));
-  poseRigBone(rig.rightArm, safe(-0.045 - beat * 0.035, -0.09, 0.01), 0, safe(-0.16 - halfBeat * 0.07, -0.23, -0.08));
-
-  // Flexión suave y lateral, nunca cruzando la línea central del torso.
-  poseRigBone(rig.leftForeArm, 0, safe(beat * 0.025, -0.03, 0.03), safe(0.09 + halfBeat * 0.045, 0.04, 0.14));
-  poseRigBone(rig.rightForeArm, 0, safe(-beat * 0.025, -0.03, 0.03), safe(-0.09 - halfBeat * 0.045, -0.14, -0.04));
-
-  // Paso corto: reduce cruces de muslos y pies.
-  poseRigBone(rig.leftUpLeg, safe(halfBeat * 0.035, -0.04, 0.04), 0, safe(side * 0.018, -0.02, 0.02));
-  poseRigBone(rig.rightUpLeg, safe(-halfBeat * 0.035, -0.04, 0.04), 0, safe(-side * 0.018, -0.02, 0.02));
-  poseRigBone(rig.leftLeg, safe(Math.max(0, -halfBeat) * 0.025, 0, 0.03), 0, 0);
-  poseRigBone(rig.rightLeg, safe(Math.max(0, halfBeat) * 0.025, 0, 0.03), 0, 0);
+  poseBone(rig.hips, 0, safe(side * 0.07, -0.08, 0.08), safe(halfBeat * 0.035, -0.04, 0.04));
+  poseBone(rig.spine, safe(beat * 0.025, -0.03, 0.03), safe(-side * 0.04, -0.05, 0.05), safe(-halfBeat * 0.025, -0.03, 0.03));
+  poseBone(rig.chest, safe(-beat * 0.035, -0.04, 0.04), safe(side * 0.055, -0.06, 0.06), safe(halfBeat * 0.035, -0.04, 0.04));
+  poseBone(rig.leftShoulder, 0, 0, 0.08);
+  poseBone(rig.rightShoulder, 0, 0, -0.08);
+  poseBone(rig.leftArm, safe(-0.05 + beat * 0.08, -0.14, 0.04), 0, 0.16);
+  poseBone(rig.rightArm, safe(-0.05 - beat * 0.08, -0.14, 0.04), 0, -0.16);
+  poseBone(rig.leftForeArm, 0, 0, safe(0.1 + halfBeat * 0.05, 0.04, 0.16));
+  poseBone(rig.rightForeArm, 0, 0, safe(-0.1 - halfBeat * 0.05, -0.16, -0.04));
+  poseBone(rig.leftUpLeg, safe(halfBeat * 0.16, -0.18, 0.18), 0, 0);
+  poseBone(rig.rightUpLeg, safe(-halfBeat * 0.16, -0.18, 0.18), 0, 0);
+  poseBone(rig.leftLeg, safe(Math.max(0, -halfBeat) * 0.16, 0, 0.18), 0, 0);
+  poseBone(rig.rightLeg, safe(Math.max(0, halfBeat) * 0.16, 0, 0.18), 0, 0);
 }
 
 export function AvatarModelViewer({
@@ -181,16 +161,17 @@ export function AvatarModelViewer({
   className = "",
   playAnimations = true,
   motionTest = false,
+  poseMode = "idle",
   onReady,
 }: Props) {
   const mount = useRef<HTMLDivElement>(null);
   const motionTestRef = useRef(motionTest);
+  const poseModeRef = useRef<AvatarPoseMode>(poseMode);
   const [state, setState] = useState<ModelState>("loading");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  useEffect(() => {
-    motionTestRef.current = motionTest;
-  }, [motionTest]);
+  useEffect(() => { motionTestRef.current = motionTest; }, [motionTest]);
+  useEffect(() => { poseModeRef.current = poseMode; }, [poseMode]);
 
   useEffect(() => {
     if (!mount.current) return;
@@ -199,11 +180,10 @@ export function AvatarModelViewer({
     let raf = 0;
     let currentModel: Object3D | null = null;
     let mixer: AnimationMixer | null = null;
-    let danceRig: DanceRig = {};
+    let rig: DanceRig = {};
     let resumeTimer: ReturnType<typeof setTimeout> | null = null;
     let baseY = 0;
     const clock = new Clock();
-
     const scene = new Scene();
     const camera = new PerspectiveCamera(31, 1, 0.02, 100);
     const renderer = new WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
@@ -237,15 +217,12 @@ export function AvatarModelViewer({
     controls.maxPolarAngle = Math.PI * 0.78;
     controls.autoRotate = true;
     controls.autoRotateSpeed = 0.35;
-
     controls.addEventListener("start", () => {
       controls.autoRotate = false;
       if (resumeTimer) clearTimeout(resumeTimer);
     });
     controls.addEventListener("end", () => {
-      resumeTimer = setTimeout(() => {
-        controls.autoRotate = true;
-      }, 2600);
+      resumeTimer = setTimeout(() => { controls.autoRotate = true; }, 2600);
     });
 
     const resize = () => {
@@ -254,7 +231,6 @@ export function AvatarModelViewer({
       const width = Math.max(rect.width, 1);
       const height = Math.max(rect.height, 1);
       renderer.setSize(width, height, false);
-
       if (currentModel) {
         const framed = frameAvatar(camera, currentModel, width / height, 1.28);
         controls.target.copy(framed.center);
@@ -288,10 +264,10 @@ export function AvatarModelViewer({
       });
       currentModel = object;
       baseY = object.position.y;
-      danceRig = collectDanceRig(object);
+      rig = collectRig(object);
       scene.add(object);
 
-      if (playAnimations && animations.length) {
+      if (playAnimations && poseModeRef.current === "idle" && animations.length) {
         const idle = animations.find((clip) => String(clip.name).toLowerCase() === "idle")
           ?? animations.find((clip) => String(clip.name).toLowerCase().includes("idle"));
         if (idle) {
@@ -302,7 +278,7 @@ export function AvatarModelViewer({
 
       setState(isFallback ? "fallback" : "ready");
       setErrorMessage(null);
-      if (!isFallback) onReady?.(object);
+      onReady?.(object);
       requestAnimationFrame(resize);
     };
 
@@ -312,10 +288,7 @@ export function AvatarModelViewer({
     };
 
     const useTechnicalFallback = () => {
-      if (!config) {
-        setState("error");
-        return;
-      }
+      if (!config) { setState("error"); return; }
       attachModel(buildProceduralClouvaAvatar(config), [], true);
     };
 
@@ -332,14 +305,16 @@ export function AvatarModelViewer({
           await loadUrl(modelUrl, false);
           return;
         }
+        if (fallbackModelUrl) {
+          await loadUrl(fallbackModelUrl, true);
+          return;
+        }
+        useTechnicalFallback();
       } catch (primaryError) {
         console.warn("Primary avatar failed", primaryError);
         if (fallbackModelUrl && fallbackModelUrl !== modelUrl) {
-          try {
-            await loadUrl(fallbackModelUrl, true);
-            return;
-          } catch (fallbackError) {
-            console.error("Temporary rig failed", fallbackError);
+          try { await loadUrl(fallbackModelUrl, true); return; }
+          catch (fallbackError) {
             setErrorMessage(fallbackError instanceof Error ? fallbackError.message : String(fallbackError));
           }
         } else {
@@ -348,20 +323,24 @@ export function AvatarModelViewer({
         useTechnicalFallback();
       }
     };
-
     void load();
 
     const animate = () => {
       if (!document.hidden) {
         const delta = clock.getDelta();
         const elapsed = clock.elapsedTime;
-        mixer?.update(delta);
+        const mode = poseModeRef.current;
+
+        if (mode === "idle") mixer?.update(delta);
+        else if (mixer) { mixer.stopAllAction(); mixer = null; }
 
         if (currentModel && !mixer) {
-          const active = motionTestRef.current;
-          applyDance(danceRig, elapsed, active);
-          const breath = Math.sin(elapsed * 1.5);
-          currentModel.position.y = baseY + breath * 0.0025 + (active ? Math.abs(Math.sin(elapsed * 4.2)) * 0.006 : 0);
+          if (mode === "tpose") applyTPose(rig);
+          else if (mode === "walk" || motionTestRef.current) applyWalk(rig, elapsed);
+          else resetRig(rig, elapsed);
+
+          const breath = mode === "idle" ? Math.sin(elapsed * 1.5) : 0;
+          currentModel.position.y = baseY + breath * 0.0025 + (mode === "walk" ? Math.abs(Math.sin(elapsed * 4.2)) * 0.006 : 0);
           currentModel.scale.y = 1 + breath * 0.002;
           currentModel.scale.x = 1 - breath * 0.001;
           currentModel.scale.z = 1 - breath * 0.001;
@@ -385,7 +364,7 @@ export function AvatarModelViewer({
       renderer.dispose();
       mount.current?.replaceChildren();
     };
-  }, [modelUrl, fallbackModelUrl, modelData, frontRotationY, playAnimations]);
+  }, [modelUrl, fallbackModelUrl, modelData, frontRotationY, playAnimations, config, onReady]);
 
   return (
     <div
@@ -393,18 +372,11 @@ export function AvatarModelViewer({
       data-state={state}
       data-avatar-source={state === "ready" ? "glb" : "fallback"}
       style={{ position: "absolute", inset: 0, width: "100%", height: "100%", minHeight: "100dvh" }}
+      aria-label={alt}
     >
       {state === "loading" ? <div className="avatar-loader">Cargando CLOUVA…</div> : null}
-      {state === "error" ? (
-        <div className="avatar-loader" style={{ maxWidth: "88vw", textAlign: "center", zIndex: 30 }}>
-          Error de avatar: {errorMessage}
-        </div>
-      ) : null}
-      <div
-        ref={mount}
-        className="avatar-model-viewer"
-        style={{ position: "absolute", inset: 0, width: "100%", height: "100%", minHeight: "100dvh", touchAction: "none" }}
-      />
+      {state === "error" ? <div className="avatar-loader" style={{ maxWidth: "88vw", textAlign: "center", zIndex: 30 }}>Error de avatar: {errorMessage}</div> : null}
+      <div ref={mount} className="avatar-model-viewer" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", minHeight: "100dvh", touchAction: "none" }} />
     </div>
   );
 }
