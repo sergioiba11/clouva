@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Check, FileBox, Link2, Trash2, Upload } from "lucide-react";
+import { Check, FileBox, Link2, Loader2, Trash2, Upload } from "lucide-react";
 import {
   deleteReferenceAsset,
   listReferenceAssets,
@@ -26,7 +26,9 @@ export function ReferenceAssetLibrary({ selectedAssetId, onSelect, onCategoryCha
   const [license, setLicense] = useState("Free Standard");
   const [author, setAuthor] = useState("");
   const [message, setMessage] = useState("Subí un GLB real para usarlo como referencia antes de gastar créditos en Meshy.");
+  const [uploading, setUploading] = useState(false);
   const objectUrlRef = useRef<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   async function refresh() {
     try {
@@ -62,26 +64,51 @@ export function ReferenceAssetLibrary({ selectedAssetId, onSelect, onCategoryCha
   }
 
   async function handleFile(file: File | undefined) {
-    if (!file) return;
-    if (!file.name.toLowerCase().endsWith(".glb")) {
-      setMessage("Elegí el archivo model.glb. Si descargaste un ZIP, extraelo primero.");
+    if (!file) {
+      setMessage("No se seleccionó ningún archivo.");
       return;
     }
-    if (file.size > 80 * 1024 * 1024) {
-      setMessage("El GLB supera 80 MB. Conviene optimizarlo en Blender antes de usarlo en la web.");
-      return;
-    }
+
+    setUploading(true);
+    setMessage(`Leyendo ${file.name}…`);
+
     try {
-      const asset = makeReferenceAsset(file, category, { name, sourceUrl, license, author });
+      const normalizedName = file.name.trim().toLowerCase();
+      const looksLikeGlb = normalizedName.endsWith(".glb") || file.type === "model/gltf-binary" || file.type === "application/octet-stream";
+
+      if (!looksLikeGlb) {
+        throw new Error(`El archivo elegido es ${file.name}. Extraé el ZIP y seleccioná model.glb.`);
+      }
+      if (file.size === 0) {
+        throw new Error("El archivo está vacío o Android no pudo leerlo.");
+      }
+      if (file.size > 80 * 1024 * 1024) {
+        throw new Error("El GLB supera 80 MB. Conviene optimizarlo en Blender antes de usarlo en la web.");
+      }
+
+      const bytes = await file.arrayBuffer();
+      const magic = new TextDecoder().decode(bytes.slice(0, 4));
+      if (magic !== "glTF") {
+        throw new Error("El archivo no parece ser un GLB válido. Elegí el model.glb extraído, no el ZIP.");
+      }
+
+      const safeFile = new File([bytes], file.name.endsWith(".glb") ? file.name : `${file.name}.glb`, {
+        type: "model/gltf-binary",
+        lastModified: file.lastModified,
+      });
+      const asset = makeReferenceAsset(safeFile, category, { name, sourceUrl, license, author });
       await saveReferenceAsset(asset);
       setName("");
       setSourceUrl("");
       setAuthor("");
       await refresh();
       selectAsset(asset);
-      setMessage(`✓ ${asset.name} quedó guardado localmente en este dispositivo.`);
+      setMessage(`✓ ${asset.name} quedó guardado. Ya podés probarlo sobre el avatar.`);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "No se pudo guardar el archivo");
+      setMessage(error instanceof Error ? `Error: ${error.message}` : "No se pudo guardar el archivo");
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
     }
   }
 
@@ -90,6 +117,13 @@ export function ReferenceAssetLibrary({ selectedAssetId, onSelect, onCategoryCha
     if (selectedAssetId === asset.id) selectAsset(null);
     await refresh();
     setMessage(`${asset.name} fue eliminado de la biblioteca local.`);
+  }
+
+  function openPicker() {
+    if (uploading) return;
+    if (fileInputRef.current) fileInputRef.current.value = "";
+    setMessage("Elegí el archivo model.glb desde Descargas o Archivos.");
+    fileInputRef.current?.click();
   }
 
   return (
@@ -116,14 +150,20 @@ export function ReferenceAssetLibrary({ selectedAssetId, onSelect, onCategoryCha
       </div>
       <label><span style={label}><Link2 size={14}/> URL de origen</span><input value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} placeholder="https://sketchfab.com/3d-models/..." style={input}/></label>
 
-      <label style={dropzone}>
-        <Upload size={24}/>
-        <strong>Subir model.glb</strong>
-        <span style={muted}>Se guarda en este dispositivo. Acepta un GLB por vez.</span>
-        <input hidden type="file" accept=".glb,model/gltf-binary" onChange={(event) => void handleFile(event.target.files?.[0])}/>
-      </label>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="*/*"
+        style={{ position: "absolute", width: 1, height: 1, opacity: 0, pointerEvents: "none" }}
+        onChange={(event) => void handleFile(event.currentTarget.files?.[0])}
+      />
+      <button type="button" onClick={openPicker} disabled={uploading} style={{ ...dropzone, width: "100%", color: "white" }}>
+        {uploading ? <Loader2 size={24} className="animate-spin"/> : <Upload size={24}/>} 
+        <strong>{uploading ? "Guardando GLB…" : "Elegir y subir model.glb"}</strong>
+        <span style={muted}>Compatible con Android. Podés seleccionar el mismo archivo nuevamente.</span>
+      </button>
 
-      <div style={messageBox}>{message}</div>
+      <div style={{ ...messageBox, borderColor: message.startsWith("Error:") ? "#7f3342" : "#3b2b49" }}>{message}</div>
 
       <div style={{ display: "grid", gap: 8, marginTop: 12 }}>
         {assets.length === 0 ? <div style={empty}>Todavía no hay referencias cargadas.</div> : assets.map((asset) => (
@@ -151,7 +191,7 @@ const grid: React.CSSProperties = { display: "grid", gridTemplateColumns: "repea
 const label: React.CSSProperties = { display: "flex", gap: 5, alignItems: "center", color: "#aaa1b4", fontSize: 12, margin: "9px 0 5px" };
 const input: React.CSSProperties = { width: "100%", boxSizing: "border-box", background: "#09070c", border: "1px solid #33283e", borderRadius: 10, color: "white", padding: "10px 11px" };
 const dropzone: React.CSSProperties = { marginTop: 12, minHeight: 105, border: "1px dashed #5b3f79", borderRadius: 14, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 5, cursor: "pointer", background: "#110b17" };
-const messageBox: React.CSSProperties = { marginTop: 10, padding: 10, borderRadius: 10, background: "#17101e", color: "#cdbdde", fontSize: 13 };
+const messageBox: React.CSSProperties = { marginTop: 10, padding: 10, borderRadius: 10, background: "#17101e", border: "1px solid #3b2b49", color: "#cdbdde", fontSize: 13 };
 const empty: React.CSSProperties = { color: "#81798a", padding: 10, textAlign: "center" };
 const assetRow: React.CSSProperties = { display: "flex", alignItems: "center", border: "1px solid #292031", background: "#100c14", borderRadius: 12, overflow: "hidden" };
 const selectedRow: React.CSSProperties = { borderColor: "#8758c7", background: "#20122f" };
