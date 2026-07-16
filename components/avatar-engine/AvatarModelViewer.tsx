@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import {
   ACESFilmicToneMapping,
   AmbientLight,
+  AnimationAction,
+  AnimationClip,
   AnimationMixer,
   Bone,
   Clock,
@@ -42,34 +44,29 @@ type Props = {
   onReady?: (object: Object3D) => void;
 };
 
-type RigKey =
-  | "hips" | "spine" | "chest" | "neck" | "head"
-  | "leftShoulder" | "rightShoulder" | "leftArm" | "rightArm"
-  | "leftForeArm" | "rightForeArm" | "leftUpLeg" | "rightUpLeg"
-  | "leftLeg" | "rightLeg";
-
+type RigKey = "hips" | "spine" | "chest" | "neck" | "head" | "leftShoulder" | "rightShoulder" | "leftArm" | "rightArm" | "leftForeArm" | "rightForeArm" | "leftUpLeg" | "rightUpLeg" | "leftLeg" | "rightLeg";
 type RigBone = { bone: Bone; base: Quaternion };
 type Rig = Partial<Record<RigKey, RigBone>>;
 
-const ALIASES: Record<RigKey, readonly string[]> = {
-  hips: ["hips", "pelvis", "jbiphips", "jbipc hips".replace(" ", "")],
+const aliases: Record<RigKey, string[]> = {
+  hips: ["hips", "pelvis", "jbiphips"],
   spine: ["spine", "spine01", "spine1", "jbipspine"],
   chest: ["spine02", "spine2", "chest", "upperchest", "jbipchest", "jbipupperchest"],
   neck: ["neck", "jbipneck"],
   head: ["head", "jbiphead"],
   leftShoulder: ["leftshoulder", "shoulderl", "claviclel", "leftclavicle", "jbiplshoulder"],
   rightShoulder: ["rightshoulder", "shoulderr", "clavicler", "rightclavicle", "jbiprshoulder"],
-  leftArm: ["leftarm", "upperarml", "upperarmleft", "jbiplupperarm"],
-  rightArm: ["rightarm", "upperarmr", "upperarmright", "jbiprupperarm"],
-  leftForeArm: ["leftforearm", "forearml", "lowerarml", "jbipllowerarm"],
-  rightForeArm: ["rightforearm", "forearmr", "lowerarmr", "jbiprlowerarm"],
-  leftUpLeg: ["leftupleg", "thighl", "upperlegl", "jbiplupperleg"],
-  rightUpLeg: ["rightupleg", "thighr", "upperlegr", "jbiprupperleg"],
-  leftLeg: ["leftleg", "calfl", "lowerlegl", "shinl", "jbipllowerleg"],
-  rightLeg: ["rightleg", "calfr", "lowerlegr", "shinr", "jbiprlowerleg"],
+  leftArm: ["leftarm", "upperarml", "upperarmleft", "leftupperarm", "jbiplupperarm"],
+  rightArm: ["rightarm", "upperarmr", "upperarmright", "rightupperarm", "jbiprupperarm"],
+  leftForeArm: ["leftforearm", "forearml", "lowerarml", "leftlowerarm", "jbipllowerarm"],
+  rightForeArm: ["rightforearm", "forearmr", "lowerarmr", "rightlowerarm", "jbiprlowerarm"],
+  leftUpLeg: ["leftupleg", "thighl", "upperlegl", "leftupperleg", "jbiplupperleg"],
+  rightUpLeg: ["rightupleg", "thighr", "upperlegr", "rightupperleg", "jbiprupperleg"],
+  leftLeg: ["leftleg", "calfl", "lowerlegl", "shinl", "leftlowerleg", "jbipllowerleg"],
+  rightLeg: ["rightleg", "calfr", "lowerlegr", "shinr", "rightlowerleg", "jbiprlowerleg"],
 };
 
-function cleanName(value: string) {
+function clean(value: string) {
   return value.toLowerCase().replace(/^mixamorig:/, "").replace(/[^a-z0-9]/g, "");
 }
 
@@ -79,115 +76,94 @@ function collectRig(root: Object3D): Rig {
     const bone = object as Bone;
     if (bone.isBone) bones.push(bone);
   });
-
   const rig: Rig = {};
-  for (const key of Object.keys(ALIASES) as RigKey[]) {
-    const aliases = ALIASES[key];
-    const bone = bones.find((candidate) => aliases.includes(cleanName(candidate.name)))
-      ?? bones.find((candidate) => aliases.some((alias) => cleanName(candidate.name).includes(alias) || alias.includes(cleanName(candidate.name))));
+  for (const key of Object.keys(aliases) as RigKey[]) {
+    const names = aliases[key];
+    const bone = bones.find((candidate) => names.includes(clean(candidate.name)))
+      ?? bones.find((candidate) => names.some((name) => clean(candidate.name).includes(name)));
     if (bone) rig[key] = { bone, base: bone.quaternion.clone() };
   }
   return rig;
 }
 
-const poseEuler = new Euler();
-const poseQuaternion = new Quaternion();
-
+const euler = new Euler();
+const quaternion = new Quaternion();
 function poseBone(entry: RigBone | undefined, x: number, y: number, z: number) {
   if (!entry) return;
-  poseEuler.set(x, y, z, "XYZ");
-  poseQuaternion.setFromEuler(poseEuler);
-  entry.bone.quaternion.copy(entry.base).multiply(poseQuaternion);
+  euler.set(x, y, z, "XYZ");
+  quaternion.setFromEuler(euler);
+  entry.bone.quaternion.copy(entry.base).multiply(quaternion);
 }
 
-function applyIdle(rig: Rig, elapsed: number) {
+function idlePose(rig: Rig, elapsed: number) {
   const breath = Math.sin(elapsed * 1.5);
-  poseBone(rig.hips, 0, 0, 0);
-  poseBone(rig.spine, breath * 0.008, 0, 0);
   poseBone(rig.chest, breath * 0.014, 0, 0);
-  poseBone(rig.neck, 0, 0, 0);
   poseBone(rig.head, breath * 0.008, 0, 0);
-  poseBone(rig.leftShoulder, 0, 0, 0.045);
-  poseBone(rig.rightShoulder, 0, 0, -0.045);
-  poseBone(rig.leftArm, -0.025, 0, 0.11);
-  poseBone(rig.rightArm, -0.025, 0, -0.11);
-  poseBone(rig.leftForeArm, 0, 0, 0.035);
-  poseBone(rig.rightForeArm, 0, 0, -0.035);
+  poseBone(rig.leftArm, -0.02, 0, 0.1);
+  poseBone(rig.rightArm, -0.02, 0, -0.1);
+  poseBone(rig.leftForeArm, 0, 0, 0.04);
+  poseBone(rig.rightForeArm, 0, 0, -0.04);
   poseBone(rig.leftUpLeg, 0, 0, 0);
   poseBone(rig.rightUpLeg, 0, 0, 0);
-  poseBone(rig.leftLeg, 0, 0, 0);
-  poseBone(rig.rightLeg, 0, 0, 0);
 }
 
-function applyTPose(rig: Rig) {
-  applyIdle(rig, 0);
-  poseBone(rig.leftShoulder, 0, 0, 0.06);
-  poseBone(rig.rightShoulder, 0, 0, -0.06);
-  poseBone(rig.leftArm, 0, 0, Math.PI / 2 - 0.08);
-  poseBone(rig.rightArm, 0, 0, -Math.PI / 2 + 0.08);
+function tPose(rig: Rig) {
+  idlePose(rig, 0);
+  poseBone(rig.leftShoulder, 0, 0, 0.04);
+  poseBone(rig.rightShoulder, 0, 0, -0.04);
+  poseBone(rig.leftArm, 0, 0, Math.PI / 2 - 0.05);
+  poseBone(rig.rightArm, 0, 0, -Math.PI / 2 + 0.05);
   poseBone(rig.leftForeArm, 0, 0, 0);
   poseBone(rig.rightForeArm, 0, 0, 0);
 }
 
-function applyWalk(rig: Rig, elapsed: number) {
+function walkPose(rig: Rig, elapsed: number) {
   const step = Math.sin(elapsed * 4.2);
-  const halfStep = Math.sin(elapsed * 2.1);
-  const safe = (value: number, min: number, max: number) => MathUtils.clamp(value, min, max);
-
-  poseBone(rig.hips, 0, safe(step * 0.035, -0.04, 0.04), 0);
-  poseBone(rig.spine, safe(-halfStep * 0.025, -0.03, 0.03), 0, 0);
-  poseBone(rig.chest, safe(halfStep * 0.03, -0.035, 0.035), 0, 0);
-  poseBone(rig.leftShoulder, 0, 0, 0.08);
-  poseBone(rig.rightShoulder, 0, 0, -0.08);
-  poseBone(rig.leftArm, safe(-step * 0.24, -0.26, 0.26), 0, 0.14);
-  poseBone(rig.rightArm, safe(step * 0.24, -0.26, 0.26), 0, -0.14);
+  const clamp = (value: number, min: number, max: number) => MathUtils.clamp(value, min, max);
+  poseBone(rig.leftArm, clamp(-step * 0.32, -0.34, 0.34), 0, 0.1);
+  poseBone(rig.rightArm, clamp(step * 0.32, -0.34, 0.34), 0, -0.1);
   poseBone(rig.leftForeArm, 0, 0, 0.08);
   poseBone(rig.rightForeArm, 0, 0, -0.08);
-  poseBone(rig.leftUpLeg, safe(step * 0.25, -0.28, 0.28), 0, 0);
-  poseBone(rig.rightUpLeg, safe(-step * 0.25, -0.28, 0.28), 0, 0);
-  poseBone(rig.leftLeg, safe(Math.max(0, -step) * 0.2, 0, 0.22), 0, 0);
-  poseBone(rig.rightLeg, safe(Math.max(0, step) * 0.2, 0, 0.22), 0, 0);
+  poseBone(rig.leftUpLeg, clamp(step * 0.3, -0.32, 0.32), 0, 0);
+  poseBone(rig.rightUpLeg, clamp(-step * 0.3, -0.32, 0.32), 0, 0);
+  poseBone(rig.leftLeg, Math.max(0, -step) * 0.22, 0, 0);
+  poseBone(rig.rightLeg, Math.max(0, step) * 0.22, 0, 0);
 }
 
-export function AvatarModelViewer({
-  modelUrl,
-  fallbackModelUrl = null,
-  modelData,
-  frontRotationY = 0,
-  config,
-  alt,
-  className = "",
-  playAnimations = true,
-  motionTest = false,
-  poseMode = "idle",
-  onReady,
-}: Props) {
+function clipFor(clips: AnimationClip[], mode: AvatarPoseMode) {
+  const keywords = mode === "walk" ? ["walk", "walking", "jog", "run"] : ["idle", "breath", "stand"];
+  return clips.find((clip) => keywords.some((keyword) => clean(clip.name).includes(keyword))) ?? null;
+}
+
+export function AvatarModelViewer({ modelUrl, fallbackModelUrl = null, modelData, frontRotationY = 0, config, alt, className = "", playAnimations = true, motionTest = false, poseMode = "idle", onReady }: Props) {
   const mount = useRef<HTMLDivElement>(null);
-  const poseModeRef = useRef<AvatarPoseMode>(poseMode);
-  const motionTestRef = useRef(motionTest);
-  const onReadyRef = useRef(onReady);
+  const poseRef = useRef<AvatarPoseMode>(poseMode);
+  const motionRef = useRef(motionTest);
+  const readyRef = useRef(onReady);
   const [state, setState] = useState<ModelState>("loading");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  useEffect(() => { poseModeRef.current = poseMode; }, [poseMode]);
-  useEffect(() => { motionTestRef.current = motionTest; }, [motionTest]);
-  useEffect(() => { onReadyRef.current = onReady; }, [onReady]);
+  useEffect(() => { poseRef.current = poseMode; }, [poseMode]);
+  useEffect(() => { motionRef.current = motionTest; }, [motionTest]);
+  useEffect(() => { readyRef.current = onReady; }, [onReady]);
 
   useEffect(() => {
     if (!mount.current) return;
-
     let disposed = false;
     let raf = 0;
-    let currentModel: Object3D | null = null;
+    let model: Object3D | null = null;
     let rig: Rig = {};
     let baseY = 0;
+    let clips: AnimationClip[] = [];
+    let mixer: AnimationMixer | null = null;
+    let activeAction: AnimationAction | null = null;
+    let activeMode: AvatarPoseMode | null = null;
     let resumeTimer: ReturnType<typeof setTimeout> | null = null;
-    const mixerBox: { current: AnimationMixer | null } = { current: null };
+
     const clock = new Clock();
     const scene = new Scene();
     const camera = new PerspectiveCamera(31, 1, 0.02, 100);
     const renderer = new WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
-
     renderer.outputColorSpace = SRGBColorSpace;
     renderer.toneMapping = ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.18;
@@ -198,49 +174,29 @@ export function AvatarModelViewer({
 
     scene.add(new HemisphereLight(0xffffff, 0x160b25, 2.25));
     scene.add(new AmbientLight(0xffffff, 0.95));
-    const key = new DirectionalLight(0xffffff, 3.1);
-    key.position.set(3, 5, 4);
-    scene.add(key);
-    const rim = new DirectionalLight(0x8b5cf6, 2.1);
-    rim.position.set(-3, 2.5, -3);
-    scene.add(rim);
+    const key = new DirectionalLight(0xffffff, 3.1); key.position.set(3, 5, 4); scene.add(key);
+    const rim = new DirectionalLight(0x8b5cf6, 2.1); rim.position.set(-3, 2.5, -3); scene.add(rim);
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.enableDamping = true;
-    controls.dampingFactor = 0.075;
     controls.enablePan = false;
-    controls.rotateSpeed = 0.72;
-    controls.zoomSpeed = 0.82;
-    controls.minPolarAngle = Math.PI * 0.2;
-    controls.maxPolarAngle = Math.PI * 0.78;
     controls.autoRotate = true;
     controls.autoRotateSpeed = 0.35;
-    controls.addEventListener("start", () => {
-      controls.autoRotate = false;
-      if (resumeTimer) clearTimeout(resumeTimer);
-    });
-    controls.addEventListener("end", () => {
-      resumeTimer = setTimeout(() => { controls.autoRotate = true; }, 2600);
-    });
+    controls.addEventListener("start", () => { controls.autoRotate = false; if (resumeTimer) clearTimeout(resumeTimer); });
+    controls.addEventListener("end", () => { resumeTimer = setTimeout(() => { controls.autoRotate = true; }, 2600); });
 
     const resize = () => {
       const rect = mount.current?.getBoundingClientRect();
       if (!rect) return;
-      const width = Math.max(rect.width, 1);
-      const height = Math.max(rect.height, 1);
-      renderer.setSize(width, height, false);
-      if (currentModel) {
-        const framed = frameAvatar(camera, currentModel, width / height, 1.28);
+      renderer.setSize(Math.max(rect.width, 1), Math.max(rect.height, 1), false);
+      if (model) {
+        const framed = frameAvatar(camera, model, Math.max(rect.width, 1) / Math.max(rect.height, 1), 1.28);
         controls.target.copy(framed.center);
         controls.minDistance = Math.max(framed.distance * 0.72, 1.1);
         controls.maxDistance = framed.distance * 1.75;
         controls.update();
-      } else {
-        camera.aspect = width / height;
-        camera.updateProjectionMatrix();
       }
     };
-
     const resizeObserver = new ResizeObserver(resize);
     resizeObserver.observe(mount.current);
     window.addEventListener("resize", resize);
@@ -248,7 +204,7 @@ export function AvatarModelViewer({
     const loader = new GLTFLoader();
     loader.setMeshoptDecoder(MeshoptDecoder);
 
-    const attachModel = (object: Object3D, animations: any[], isFallback: boolean) => {
+    const attach = (object: Object3D, animations: AnimationClip[], fallback: boolean) => {
       if (disposed) return;
       normalizeAvatarObject(object, { targetHeight: 2.05, frontRotationY });
       object.traverse((child: any) => {
@@ -257,110 +213,78 @@ export function AvatarModelViewer({
           child.frustumCulled = false;
           child.castShadow = true;
           child.receiveShadow = true;
-          if (child.isSkinnedMesh) child.normalizeSkinWeights?.();
+          child.normalizeSkinWeights?.();
         }
       });
-
-      currentModel = object;
+      model = object;
       baseY = object.position.y;
+      clips = animations;
       rig = collectRig(object);
+      mixer = clips.length ? new AnimationMixer(object) : null;
       scene.add(object);
-
-      if (playAnimations && poseModeRef.current === "idle" && animations.length) {
-        const idle = animations.find((clip) => String(clip.name).toLowerCase() === "idle")
-          ?? animations.find((clip) => String(clip.name).toLowerCase().includes("idle"));
-        if (idle) {
-          mixerBox.current = new AnimationMixer(object);
-          mixerBox.current.clipAction(idle).reset().play();
-        }
-      }
-
-      setState(isFallback ? "fallback" : "ready");
+      setState(fallback ? "fallback" : "ready");
       setErrorMessage(null);
-      onReadyRef.current?.(object);
+      readyRef.current?.(object);
       requestAnimationFrame(resize);
     };
 
-    const loadUrl = async (url: string, isFallback: boolean) => {
+    const loadUrl = async (url: string, fallback: boolean) => {
       const gltf = await loader.loadAsync(url);
-      attachModel(gltf.scene, gltf.animations, isFallback);
+      attach(gltf.scene, gltf.animations, fallback);
     };
 
-    const useTechnicalFallback = () => {
-      if (!config) {
-        setState("error");
-        return;
-      }
-      attachModel(buildProceduralClouvaAvatar(config), [], true);
+    const technicalFallback = () => {
+      if (!config) { setState("error"); return; }
+      attach(buildProceduralClouvaAvatar(config), [], true);
     };
 
-    const load = async () => {
+    void (async () => {
       setState("loading");
-      setErrorMessage(null);
       try {
         if (modelData) {
           const gltf = await loader.parseAsync(modelData.slice(0), "");
-          attachModel(gltf.scene, gltf.animations, false);
-          return;
-        }
-        if (modelUrl) {
-          await loadUrl(modelUrl, false);
-          return;
-        }
-        if (fallbackModelUrl) {
-          await loadUrl(fallbackModelUrl, true);
-          return;
-        }
-        useTechnicalFallback();
-      } catch (primaryError) {
-        console.warn("Primary avatar failed", primaryError);
-        if (fallbackModelUrl && fallbackModelUrl !== modelUrl) {
-          try {
-            await loadUrl(fallbackModelUrl, true);
-            return;
-          } catch (fallbackError) {
-            setErrorMessage(fallbackError instanceof Error ? fallbackError.message : String(fallbackError));
-          }
-        } else {
-          setErrorMessage(primaryError instanceof Error ? primaryError.message : String(primaryError));
-        }
-        useTechnicalFallback();
+          attach(gltf.scene, gltf.animations, false);
+        } else if (modelUrl) await loadUrl(modelUrl, false);
+        else if (fallbackModelUrl) await loadUrl(fallbackModelUrl, true);
+        else technicalFallback();
+      } catch (error) {
+        console.warn("Avatar load failed", error);
+        setErrorMessage(error instanceof Error ? error.message : String(error));
+        technicalFallback();
       }
+    })();
+
+    const selectAction = (mode: AvatarPoseMode) => {
+      if (!playAnimations || !mixer || mode === "tpose") return null;
+      const clip = clipFor(clips, mode);
+      return clip ? mixer.clipAction(clip) : null;
     };
-    void load();
 
     const animate = () => {
-      if (!document.hidden) {
-        const delta = clock.getDelta();
-        const elapsed = clock.elapsedTime;
-        const mode = poseModeRef.current;
-        const mixer = mixerBox.current;
+      const delta = clock.getDelta();
+      const elapsed = clock.elapsedTime;
+      const mode = motionRef.current ? "walk" : poseRef.current;
 
-        if (mode === "idle" && mixer) {
-          mixer.update(delta);
-        } else {
-          if (mixer) {
-            mixer.stopAllAction();
-            mixerBox.current = null;
-          }
-          if (currentModel) {
-            if (mode === "tpose") applyTPose(rig);
-            else if (mode === "walk" || motionTestRef.current) applyWalk(rig, elapsed);
-            else applyIdle(rig, elapsed);
-          }
-        }
-
-        if (currentModel) {
-          const breath = mode === "idle" ? Math.sin(elapsed * 1.5) : 0;
-          currentModel.position.y = baseY + breath * 0.0025 + (mode === "walk" ? Math.abs(Math.sin(elapsed * 4.2)) * 0.006 : 0);
-          currentModel.scale.y = 1 + breath * 0.002;
-          currentModel.scale.x = 1 - breath * 0.001;
-          currentModel.scale.z = 1 - breath * 0.001;
-        }
-
-        controls.update();
-        renderer.render(scene, camera);
+      if (mode !== activeMode) {
+        activeAction?.fadeOut(0.15);
+        activeAction = selectAction(mode);
+        activeAction?.reset().fadeIn(0.15).play();
+        activeMode = mode;
       }
+
+      if (activeAction && mixer) mixer.update(delta);
+      else if (model) {
+        if (mode === "tpose") tPose(rig);
+        else if (mode === "walk") walkPose(rig, elapsed);
+        else idlePose(rig, elapsed);
+      }
+
+      if (model) {
+        const breath = mode === "idle" ? Math.sin(elapsed * 1.5) : 0;
+        model.position.y = baseY + breath * 0.0025 + (mode === "walk" ? Math.abs(Math.sin(elapsed * 4.2)) * 0.006 : 0);
+      }
+      controls.update();
+      renderer.render(scene, camera);
       raf = requestAnimationFrame(animate);
     };
     raf = requestAnimationFrame(animate);
@@ -371,7 +295,8 @@ export function AvatarModelViewer({
       if (resumeTimer) clearTimeout(resumeTimer);
       resizeObserver.disconnect();
       window.removeEventListener("resize", resize);
-      mixerBox.current?.stopAllAction();
+      activeAction?.stop();
+      mixer?.stopAllAction();
       controls.dispose();
       renderer.dispose();
       mount.current?.replaceChildren();
@@ -379,13 +304,7 @@ export function AvatarModelViewer({
   }, [modelUrl, fallbackModelUrl, modelData, frontRotationY, playAnimations, config]);
 
   return (
-    <div
-      className={`avatar-render-shell ${className}`}
-      data-state={state}
-      data-avatar-source={state === "ready" ? "glb" : "fallback"}
-      style={{ position: "absolute", inset: 0, width: "100%", height: "100%", minHeight: "100dvh" }}
-      aria-label={alt}
-    >
+    <div className={`avatar-render-shell ${className}`} data-state={state} data-avatar-source={state === "ready" ? "glb" : "fallback"} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", minHeight: "100dvh" }} aria-label={alt}>
       {state === "loading" ? <div className="avatar-loader">Cargando CLOUVA…</div> : null}
       {state === "error" ? <div className="avatar-loader" style={{ maxWidth: "88vw", textAlign: "center", zIndex: 30 }}>Error de avatar: {errorMessage}</div> : null}
       <div ref={mount} className="avatar-model-viewer" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", minHeight: "100dvh", touchAction: "none" }} />
