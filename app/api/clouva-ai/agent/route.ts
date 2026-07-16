@@ -43,7 +43,6 @@ function selectedModelFromRequest(request: Request) {
   const cookie = request.headers.get("cookie") ?? "";
   const match = cookie.match(/(?:^|;\s*)clouva_gemini_model=([^;]+)/);
   const selected = match ? decodeURIComponent(match[1]) : "";
-
   if (/^gemini-[a-z0-9._-]+$/i.test(selected)) return selected;
   return process.env.GEMINI_MODEL ?? "gemini-3.5-flash";
 }
@@ -72,8 +71,8 @@ const tools = [{
         properties: {
           path: { type: "STRING" },
           content: { type: "STRING" },
-          message: { type: "STRING", description: "Mensaje de commit" },
-          summary: { type: "STRING", description: "Resumen claro del cambio" },
+          message: { type: "STRING" },
+          summary: { type: "STRING" },
         },
         required: ["path", "content", "message", "summary"],
       },
@@ -81,70 +80,86 @@ const tools = [{
   ],
 }];
 
-const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
-function isTransientGeminiError(status: number, message: string) {
+function transient(status: number, message: string) {
   const value = message.toLowerCase();
-  return status === 429 || status >= 500 || value.includes("high demand") || value.includes("overloaded") || value.includes("temporarily") || value.includes("unavailable");
+  return status === 429 || status >= 500 || value.includes("high demand") || value.includes("temporarily") || value.includes("overloaded") || value.includes("unavailable");
 }
 
-async function callGemini(args: {
+async function generate(args: {
   apiKey: string;
   model: string;
   instruction: string;
   contents: Array<Record<string, unknown>>;
   includeTools?: boolean;
 }) {
-  const fallbackModel = process.env.GEMINI_FALLBACK_MODEL ?? "gemini-3.1-flash-lite";
-  const models = Array.from(new Set([args.model, fallbackModel]));
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 18_000);
+
+  try {
+    const response = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(args.model)}:generateContent`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-goog-api-key": args.apiKey },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: args.instruction }] },
+          contents: args.contents,
+          ...(args.includeTools === false ? {} : { tools }),
+          generationConfig: { temperature: 0.35, maxOutputTokens: 3072 },
+        }),
+        cache: "no-store",
+        signal: controller.signal,
+      },
+    );
+
+    const raw = await response.text();
+    const data = raw ? JSON.parse(raw) : {};
+    if (!response.ok) {
+      const message = data?.error?.message ?? `Gemini respondió HTTP ${response.status}`;
+      const error = new Error(message) as Error & { status?: number };
+      error.status = response.status;
+      throw error;
+    }
+    return data;
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error("El modelo tardó demasiado en responder.");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function generateWithFallback(args: {
+  apiKey: string;
+  selectedModel: string;
+  instruction: string;
+  contents: Array<Record<string, unknown>>;
+  includeTools?: boolean;
+}) {
+  const fallback = process.env.GEMINI_FALLBACK_MODEL ?? "gemini-3.1-flash-lite";
+  const models = Array.from(new Set([args.selectedModel, fallback]));
   let lastError = "Gemini no respondió.";
 
   for (const model of models) {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 45_000);
-
-      try {
-        if (attempt > 0) await wait(attempt === 1 ? 1200 : 3000);
-
-        const response = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json", "x-goog-api-key": args.apiKey },
-            body: JSON.stringify({
-              systemInstruction: { parts: [{ text: args.instruction }] },
-              contents: args.contents,
-              ...(args.includeTools === false ? {} : { tools }),
-              generationConfig: { temperature: 0.35, maxOutputTokens: 4096 },
-            }),
-            cache: "no-store",
-            signal: controller.signal,
-          },
-        );
-
-        const raw = await response.text();
-        let data: any = {};
-        try {
-          data = raw ? JSON.parse(raw) : {};
-        } catch {
-          throw new Error("Gemini devolvió una respuesta inválida.");
-        }
-
-        if (response.ok) return { data, model };
-
-        lastError = data?.error?.message ?? `Gemini respondió HTTP ${response.status}`;
-        if (!isTransientGeminiError(response.status, lastError)) throw new Error(lastError);
-      } catch (error) {
-        lastError = error instanceof Error ? error.message : "Gemini no respondió.";
-        if (error instanceof Error && error.name === "AbortError") lastError = "Gemini tardó demasiado en responder.";
-      } finally {
-        clearTimeout(timeout);
-      }
+    try {
+      const data = await generate({
+        apiKey: args.apiKey,
+        model,
+        instruction: args.instruction,
+        contents: args.contents,
+        includeTools: args.includeTools,
+      });
+      return { data, model };
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : "Gemini no respondió.";
+      const status = (error as Error & { status?: number }).status ?? 500;
+      if (!transient(status, lastError)) throw error;
     }
   }
 
-  throw new Error(`Gemini está temporalmente saturado. CLOUVA AI reintentó con dos modelos, pero todavía no respondió. ${lastError}`);
+  throw new Error(`Ninguno de los modelos respondió a tiempo. Último error: ${lastError}`);
 }
 
 export async function POST(request: Request) {
@@ -155,8 +170,8 @@ export async function POST(request: Request) {
     if (!message) return NextResponse.json({ error: "Escribí un mensaje." }, { status: 400 });
 
     const apiKey = process.env.GEMINI_API_KEY;
-    const preferredModel = selectedModelFromRequest(request);
     if (!apiKey) throw new Error("Falta GEMINI_API_KEY en Railway.");
+    const selectedModel = selectedModelFromRequest(request);
 
     const { data: memories } = await supabase
       .from("project_memory")
@@ -165,101 +180,89 @@ export async function POST(request: Request) {
       .eq("project_key", "clouva")
       .eq("status", "active")
       .order("importance", { ascending: false })
-      .limit(20);
+      .limit(12);
 
     const memoryText = (memories ?? [])
       .map((item) => `[${item.memory_type}] ${item.title}: ${item.content}`)
       .join("\n");
 
+    const instruction = `Sos CLOUVA AI, agente técnico del repo sergioiba11/clouva. Respondé en español rioplatense, directo y útil. Nunca digas que leíste un archivo sin usar la herramienta. Para modificar código, primero leé el archivo y después usá propose_file_change. Nunca escribas sin confirmación. Memoria:\n${memoryText || "Sin memoria guardada."}\nContexto:\n${JSON.stringify(body.screenContext ?? {})}`;
+
     const contents: Array<Record<string, unknown>> = [
-      ...(body.history ?? []).slice(-8).map((item) => ({
+      ...(body.history ?? []).slice(-6).map((item) => ({
         role: item.role === "assistant" ? "model" : "user",
         parts: [{ text: item.content }],
       })),
       { role: "user", parts: [{ text: message }] },
     ];
 
-    const instruction = `Sos CLOUVA AI, agente técnico del repo sergioiba11/clouva. Tenés herramientas reales para consultar estado y leer archivos. Nunca afirmes que leíste un archivo sin usar la herramienta. Si el usuario pide leer o analizar un archivo, usá read_repository_file y después SIEMPRE devolvé una explicación concreta. Para modificar código, primero leé los archivos relevantes y después usá propose_file_change. Esa herramienta NO escribe: genera una propuesta que el usuario confirma con un botón. No propongas cambios destructivos ni secretos. Respondé en español rioplatense, directo y útil. Memoria del proyecto:\n${memoryText || "Sin memoria guardada."}\nContexto de pantalla:\n${JSON.stringify(body.screenContext ?? {})}`;
-
     let pendingAction: PendingAction | null = null;
+    let usedModel = selectedModel;
     let finalText = "";
-    let usedTool = false;
-    let usedModel = preferredModel;
 
-    for (let step = 0; step < 6; step += 1) {
-      const result = await callGemini({ apiKey, model: preferredModel, instruction, contents });
-      usedModel = result.model;
-      const candidate = result.data?.candidates?.[0]?.content;
-      const parts = candidate?.parts ?? [];
-      const text = parts.map((part: { text?: string }) => part.text ?? "").join("").trim();
-      if (text) finalText = text;
+    const first = await generateWithFallback({
+      apiKey,
+      selectedModel,
+      instruction,
+      contents,
+    });
+    usedModel = first.model;
 
-      const functionCalls = parts
-        .filter((part: { functionCall?: FunctionCall }) => part.functionCall?.name)
-        .map((part: { functionCall?: FunctionCall }) => part.functionCall as FunctionCall);
+    const firstParts = first.data?.candidates?.[0]?.content?.parts ?? [];
+    finalText = firstParts.map((part: { text?: string }) => part.text ?? "").join("").trim();
 
-      if (!functionCalls.length) break;
-      usedTool = true;
-      contents.push({ role: "model", parts });
+    const calls = firstParts
+      .filter((part: { functionCall?: FunctionCall }) => part.functionCall?.name)
+      .map((part: { functionCall?: FunctionCall }) => part.functionCall as FunctionCall);
 
-      const responseParts: Array<Record<string, unknown>> = [];
+    if (calls.length) {
+      contents.push({ role: "model", parts: firstParts });
+      const responses: Array<Record<string, unknown>> = [];
 
-      for (const functionCall of functionCalls) {
-        let toolResult: unknown;
-
-        if (functionCall.name === "get_repository_status") {
-          toolResult = await getRepositoryStatus();
-        } else if (functionCall.name === "read_repository_file") {
-          const path = String(functionCall.args?.path ?? "").trim();
-          if (!path) throw new Error("CLOUVA AI intentó leer un archivo sin indicar la ruta.");
+      for (const call of calls) {
+        let result: unknown;
+        if (call.name === "get_repository_status") {
+          result = await getRepositoryStatus();
+        } else if (call.name === "read_repository_file") {
+          const path = String(call.args?.path ?? "").trim();
+          if (!path) throw new Error("El modelo no indicó qué archivo leer.");
           const file = await readRepositoryFile(path);
-          toolResult = { ...file, content: file.content.slice(0, 40000) };
-        } else if (functionCall.name === "propose_file_change") {
-          const proposedAction: PendingAction = {
+          result = { ...file, content: file.content.slice(0, 35000) };
+        } else if (call.name === "propose_file_change") {
+          pendingAction = {
             type: "write_file",
-            path: String(functionCall.args?.path ?? ""),
-            content: String(functionCall.args?.content ?? ""),
-            message: String(functionCall.args?.message ?? "chore: actualizar archivo"),
-            summary: String(functionCall.args?.summary ?? "Cambio propuesto por CLOUVA AI"),
+            path: String(call.args?.path ?? ""),
+            content: String(call.args?.content ?? ""),
+            message: String(call.args?.message ?? "chore: actualizar archivo"),
+            summary: String(call.args?.summary ?? "Cambio propuesto por CLOUVA AI"),
           };
-          pendingAction = proposedAction;
-          toolResult = { accepted: true, requires_confirmation: true, path: proposedAction.path };
+          result = { requires_confirmation: true, path: pendingAction.path };
         } else {
-          toolResult = { error: "Herramienta desconocida" };
+          result = { error: "Herramienta desconocida" };
         }
-
-        responseParts.push({ functionResponse: { name: functionCall.name, response: toolResult } });
+        responses.push({ functionResponse: { name: call.name, response: result } });
       }
 
-      contents.push({ role: "user", parts: responseParts });
-
-      const preparedAction = pendingAction as PendingAction | null;
-      if (preparedAction) {
-        finalText = `${preparedAction.summary}\n\nPreparé una propuesta para \`${preparedAction.path}\`. Revisala y tocá “Aplicar cambio” para crear el commit.`;
-        break;
+      if (pendingAction) {
+        finalText = `${pendingAction.summary}\n\nPreparé una propuesta para \`${pendingAction.path}\`. Revisala y tocá “Aplicar cambio”.`;
+      } else {
+        contents.push({ role: "user", parts: responses });
+        const second = await generateWithFallback({
+          apiKey,
+          selectedModel: usedModel,
+          instruction: instruction + "\nRespondé ahora con una conclusión final. No llames más herramientas.",
+          contents,
+          includeTools: false,
+        });
+        usedModel = second.model;
+        finalText = second.data?.candidates?.[0]?.content?.parts
+          ?.map((part: { text?: string }) => part.text ?? "")
+          .join("")
+          .trim() ?? "";
       }
     }
 
-    if (!finalText && usedTool && !pendingAction) {
-      contents.push({
-        role: "user",
-        parts: [{ text: "Con la información de las herramientas que ya recibiste, respondé ahora al pedido del usuario sin llamar más herramientas." }],
-      });
-      const result = await callGemini({
-        apiKey,
-        model: preferredModel,
-        instruction,
-        contents,
-        includeTools: false,
-      });
-      usedModel = result.model;
-      finalText = result.data?.candidates?.[0]?.content?.parts
-        ?.map((part: { text?: string }) => part.text ?? "")
-        .join("")
-        .trim() ?? "";
-    }
-
-    if (!finalText) throw new Error("CLOUVA AI no pudo completar el análisis.");
+    if (!finalText) throw new Error("El modelo no generó una respuesta útil.");
 
     return NextResponse.json({ ok: true, message: finalText, pendingAction, model: usedModel });
   } catch (error) {
