@@ -29,6 +29,17 @@ type AuthContextType = {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const AUTH_TIMEOUT_MS = 8000;
+
+function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = AUTH_TIMEOUT_MS): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => {
+      window.setTimeout(() => reject(new Error(`${label} tardó demasiado`)), timeoutMs);
+    }),
+  ]);
+}
+
 async function ensureProfile(user: User): Promise<Profile | null> {
   const { supabase } = await import("@/lib/supabase");
   const displayName = (user.user_metadata?.full_name as string | undefined) ?? (user.email ? user.email.split("@")[0] : "Usuario") ?? "Usuario";
@@ -49,7 +60,6 @@ async function loadProfileByUserId(userId: string): Promise<Profile | null> {
   const { data } = await supabase.from("profiles").select("id, role, display_name, full_name, avatar_url, avatar_3d_url, spotify_url, username").eq("id", userId).maybeSingle();
   return data ?? null;
 }
-
 
 function getPostAuthRedirect(roleValue: string | null | undefined) {
   return normalizeRole(roleValue) === "admin" ? "/admin" : "/mi-flow";
@@ -73,6 +83,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const currentRun = ++runId;
       setSession(nextSession);
       setUser(nextSession?.user ?? null);
+
       if (!nextSession?.user) {
         if (!alive || currentRun !== runId) return;
         setProfile(null);
@@ -84,24 +95,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       setLoading(true);
       setProfileReady(false);
-      await ensureProfile(nextSession.user);
-      const profileData = await loadProfileByUserId(nextSession.user.id);
+
+      let profileData: Profile | null = null;
+      try {
+        await withTimeout(ensureProfile(nextSession.user), "Crear o validar el perfil");
+        profileData = await withTimeout(loadProfileByUserId(nextSession.user.id), "Cargar el perfil");
+      } catch (error) {
+        console.error("Auth profile bootstrap failed", error);
+        // La sesión sigue siendo válida aunque Supabase tarde o falle al leer profiles.
+        // Dejamos entrar con rol cliente y permitimos que la app continúe cargando.
+      }
+
       if (!alive || currentRun !== runId) return;
+
       if (oauthHashDetectedRef.current && !profileData) {
-        setProfile(null);
-        setRole("cliente");
-        setProfileReady(true);
-        setLoading(false);
         oauthHashDetectedRef.current = false;
-        window.history.replaceState(null, "", "/login?error=auth_callback");
-        return;
       }
 
       const nextRole = normalizeRole(profileData?.role);
       setProfile(profileData);
       setRole(nextRole);
+
       if (nextSession.user.email) {
-        saveAccount({ id: nextSession.user.id, email: nextSession.user.email, display_name: profileData?.full_name ?? profileData?.display_name ?? nextSession.user.email.split("@")[0], avatar_url: profileData?.avatar_url ?? null, role: nextRole });
+        saveAccount({
+          id: nextSession.user.id,
+          email: nextSession.user.email,
+          display_name: profileData?.full_name ?? profileData?.display_name ?? nextSession.user.email.split("@")[0],
+          avatar_url: profileData?.avatar_url ?? null,
+          role: nextRole,
+        });
       }
       setActiveAccountId(nextSession.user.id);
 
@@ -116,42 +138,46 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
 
     const bootstrap = async () => {
-      const { supabase } = await import("@/lib/supabase");
+      try {
+        const { supabase } = await import("@/lib/supabase");
 
-      if (typeof window !== "undefined" && window.location.hash.includes("access_token")) {
-        oauthHashDetectedRef.current = true;
-        const { data: callbackData } = await supabase.auth.getSession();
-        if (!callbackData.session?.user) {
-          oauthHashDetectedRef.current = false;
-          window.history.replaceState(null, "", "/login?error=auth_callback");
+        if (typeof window !== "undefined" && window.location.hash.includes("access_token")) {
+          oauthHashDetectedRef.current = true;
+          const { data: callbackData } = await withTimeout(supabase.auth.getSession(), "Leer callback de acceso");
+          if (!callbackData.session?.user) {
+            oauthHashDetectedRef.current = false;
+            window.history.replaceState(null, "", "/login?error=auth_callback");
+            return;
+          }
+          await withTimeout(supabase.auth.refreshSession(), "Actualizar sesión");
+        }
+
+        const { data } = await withTimeout(supabase.auth.getSession(), "Cargar sesión");
+        if (!alive) return;
+        setHydrationReady(true);
+        await resolveFromSession(data.session ?? null);
+
+        const { data: subscription } = supabase.auth.onAuthStateChange((event, nextSession) => {
+          if (event === "SIGNED_IN" || event === "SIGNED_OUT" || event === "TOKEN_REFRESHED") {
+            void resolveFromSession(nextSession ?? null);
+          }
+        });
+
+        return () => subscription.subscription.unsubscribe();
+      } catch (error) {
+        console.error("Auth bootstrap failed", error);
+        if (!alive) return;
+        setSession(null);
+        setUser(null);
+        setProfile(null);
+        setRole("cliente");
+      } finally {
+        if (alive) {
           setHydrationReady(true);
           setProfileReady(true);
           setLoading(false);
-          return;
         }
-        await supabase.auth.refreshSession();
       }
-
-      const timeoutId = setTimeout(() => {
-        if (!alive) return;
-        setHydrationReady(true);
-        setProfileReady(true);
-        setLoading(false);
-      }, 5000);
-
-      const { data } = await supabase.auth.getSession();
-      if (!alive) return;
-      setHydrationReady(true);
-      clearTimeout(timeoutId);
-      await resolveFromSession(data.session ?? null);
-
-      const { data: subscription } = supabase.auth.onAuthStateChange((event, nextSession) => {
-        if (event === "SIGNED_IN" || event === "SIGNED_OUT" || event === "TOKEN_REFRESHED") {
-          void resolveFromSession(nextSession ?? null);
-        }
-      });
-
-      return () => subscription.subscription.unsubscribe();
     };
 
     let unsub: (() => void) | undefined;
@@ -167,8 +193,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const refreshSession = async () => {
     const { supabase } = await import("@/lib/supabase");
-    await supabase.auth.refreshSession();
-    const { data } = await supabase.auth.getSession();
+    await withTimeout(supabase.auth.refreshSession(), "Actualizar sesión");
+    const { data } = await withTimeout(supabase.auth.getSession(), "Leer sesión actualizada");
     setSession(data.session ?? null);
     setUser(data.session?.user ?? null);
   };
