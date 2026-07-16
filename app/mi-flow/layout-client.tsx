@@ -18,10 +18,11 @@ export default function FlowLayoutClient({ children }: { children: React.ReactNo
   useEffect(() => {
     if (loading || !hydrationReady) return;
     if (!user) router.replace("/login");
-  }, [loading, user, router]);
+  }, [loading, hydrationReady, user, router]);
 
   if (loading || !hydrationReady) return <main><MainNav /><div className="mx-auto max-w-7xl p-6">Cargando sesión...</div></main>;
   if (!user) return null;
+
   const fullScreenPages = [
     "/mi-flow/avatar",
     "/mi-flow/menu",
