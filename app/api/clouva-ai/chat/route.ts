@@ -146,8 +146,10 @@ export async function POST(request: Request) {
       conversationId = data.id;
     }
 
+    const activeConversationId = conversationId;
+
     await supabase.from("ai_messages").insert({
-      conversation_id: conversationId,
+      conversation_id: activeConversationId,
       user_id: userId,
       role: "user",
       content: message,
@@ -155,7 +157,7 @@ export async function POST(request: Request) {
     });
 
     const [{ data: recentMessages }, { data: memories }, { data: recentEvents }] = await Promise.all([
-      supabase.from("ai_messages").select("role,content,created_at").eq("conversation_id", conversationId).order("created_at", { ascending: false }).limit(16),
+      supabase.from("ai_messages").select("role,content,created_at").eq("conversation_id", activeConversationId).order("created_at", { ascending: false }).limit(16),
       supabase.from("project_memory").select("memory_type,title,content,importance,updated_at").eq("user_id", userId).eq("project_key", projectKey).eq("status", "active").order("importance", { ascending: false }).order("updated_at", { ascending: false }).limit(24),
       supabase.from("project_events").select("event_type,component,summary,payload,created_at").eq("user_id", userId).eq("project_key", projectKey).order("created_at", { ascending: false }).limit(12),
     ]);
@@ -180,28 +182,35 @@ Respondé en español rioplatense, directo y accionable. Cuando no tengas acceso
 
     await Promise.all([
       supabase.from("ai_messages").insert({
-        conversation_id: conversationId,
+        conversation_id: activeConversationId,
         user_id: userId,
         role: "assistant",
         content: assistantMessage,
         metadata: { model: process.env.OPENAI_MODEL ?? "gpt-5" },
       }),
-      supabase.from("ai_conversations").update({ updated_at: new Date().toISOString() }).eq("id", conversationId),
+      supabase.from("ai_conversations").update({ updated_at: new Date().toISOString() }).eq("id", activeConversationId),
       supabase.from("project_events").insert({
         user_id: userId,
         project_key: projectKey,
         event_type: "ai_interaction",
         component: typeof body.screenContext?.page === "string" ? body.screenContext.page : "clouva-ai",
         summary: message.slice(0, 240),
-        payload: { conversationId },
+        payload: { conversationId: activeConversationId },
       }),
     ]);
 
-    void captureMemory({ supabase, userId, projectKey, conversationId, userMessage: message, assistantMessage });
+    void captureMemory({
+      supabase,
+      userId,
+      projectKey,
+      conversationId: activeConversationId,
+      userMessage: message,
+      assistantMessage,
+    });
 
     return NextResponse.json({
       ok: true,
-      conversationId,
+      conversationId: activeConversationId,
       message: assistantMessage,
     });
   } catch (error) {
