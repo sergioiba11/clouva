@@ -173,8 +173,9 @@ export function SmartTryOnViewer(props: Props) {
       scene.add(previewRoot);
     };
 
-    const finalizeAvatar = (root: Object3D) => {
+    const showAvatar = (root: Object3D) => {
       if (disposed) return;
+      if (avatarRoot) scene.remove(avatarRoot);
       normalizeAvatarObject(root, { targetHeight: 2.05, frontRotationY: avatar.frontRotationY });
       avatarRoot = root;
       scene.add(root);
@@ -184,13 +185,16 @@ export function SmartTryOnViewer(props: Props) {
       rebuildPreview();
     };
 
+    // Mostrar una base inmediata para que nunca quede el visor vacío en celulares lentos.
+    showAvatar(buildProceduralClouvaAvatar(defaultAvatarConfig));
+
     const loader = new GLTFLoader();
     loader.setMeshoptDecoder(MeshoptDecoder);
     const modelUrl = avatar.modelUrl || avatar.fallbackUrl;
     if (modelUrl) {
-      loader.load(modelUrl, (gltf) => finalizeAvatar(gltf.scene), undefined, () => finalizeAvatar(buildProceduralClouvaAvatar(defaultAvatarConfig)));
-    } else {
-      finalizeAvatar(buildProceduralClouvaAvatar(defaultAvatarConfig));
+      loader.load(modelUrl, (gltf) => showAvatar(gltf.scene), undefined, () => {
+        // La base procedural ya está visible; no dejamos la pantalla en blanco.
+      });
     }
 
     const loadTexture = (url: string | null) => {
@@ -204,7 +208,7 @@ export function SmartTryOnViewer(props: Props) {
         loaded.colorSpace = SRGBColorSpace;
         texture = loaded;
         rebuildPreview();
-      });
+      }, undefined, () => rebuildPreview());
     };
     loadTexture(lastImageUrl);
 
