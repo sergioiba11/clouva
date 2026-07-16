@@ -50,6 +50,16 @@ const mapAvatar = (data: any): ActiveAvatar => ({
   updatedAt: data.updated_at ?? new Date().toISOString(),
 });
 
+const mapProfileAvatar = (userId: string, modelUrl: string, updatedAt?: string | null): ActiveAvatar => ({
+  id: `official-rigged-${userId}`,
+  source: "official",
+  modelUrl,
+  fallbackUrl: OFFICIAL_CLOUVA_MODEL_URL,
+  status: "ready",
+  frontRotationY: 0,
+  updatedAt: updatedAt ?? new Date().toISOString(),
+});
+
 export const useActiveAvatarStore = create<ActiveAvatarStore>((set, get) => ({
   avatar: OFFICIAL_CLOUVA_AVATAR,
   hydratedUserId: null,
@@ -67,8 +77,28 @@ export const useActiveAvatarStore = create<ActiveAvatarStore>((set, get) => ({
     set({ loading: true });
     try {
       const { supabase } = await import("@/lib/supabase");
-      const columns = "id,source,status,model_url,front_rotation_y,updated_at";
 
+      // The validated rigging flow stores the final GLB in profiles.avatar_3d_url.
+      // Prefer it over older/generated avatars so Creator Studio always receives
+      // the same 24-bone SkinnedMesh that was validated in /admin.
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("avatar_3d_url, updated_at")
+        .eq("id", userId)
+        .maybeSingle();
+
+      if (profileError) throw profileError;
+      const riggedProfileUrl = typeof profile?.avatar_3d_url === "string" ? profile.avatar_3d_url : null;
+      if (riggedProfileUrl?.includes("clouva-official-rigged.glb")) {
+        set({
+          avatar: mapProfileAvatar(userId, riggedProfileUrl, profile?.updated_at),
+          hydratedUserId: userId,
+          loading: false,
+        });
+        return;
+      }
+
+      const columns = "id,source,status,model_url,front_rotation_y,updated_at";
       const { data: active, error: activeError } = await supabase
         .from("user_avatars")
         .select(columns)
@@ -98,8 +128,12 @@ export const useActiveAvatarStore = create<ActiveAvatarStore>((set, get) => ({
         selected = firstCreated;
       }
 
+      const fallbackOfficial = riggedProfileUrl
+        ? mapProfileAvatar(userId, riggedProfileUrl, profile?.updated_at)
+        : OFFICIAL_CLOUVA_AVATAR;
+
       set({
-        avatar: selected?.model_url ? mapAvatar(selected) : OFFICIAL_CLOUVA_AVATAR,
+        avatar: selected?.model_url ? mapAvatar(selected) : fallbackOfficial,
         hydratedUserId: userId,
         loading: false,
       });
