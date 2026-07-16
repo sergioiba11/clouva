@@ -185,14 +185,15 @@ export async function POST(request: Request) {
           const file = await readRepositoryFile(path);
           toolResult = { ...file, content: file.content.slice(0, 40000) };
         } else if (functionCall.name === "propose_file_change") {
-          pendingAction = {
+          const proposedAction: PendingAction = {
             type: "write_file",
             path: String(functionCall.args?.path ?? ""),
             content: String(functionCall.args?.content ?? ""),
             message: String(functionCall.args?.message ?? "chore: actualizar archivo"),
             summary: String(functionCall.args?.summary ?? "Cambio propuesto por CLOUVA AI"),
           };
-          toolResult = { accepted: true, requires_confirmation: true, path: pendingAction.path };
+          pendingAction = proposedAction;
+          toolResult = { accepted: true, requires_confirmation: true, path: proposedAction.path };
         } else {
           toolResult = { error: "Herramienta desconocida" };
         }
@@ -204,8 +205,9 @@ export async function POST(request: Request) {
 
       contents.push({ role: "user", parts: responseParts });
 
-      if (pendingAction) {
-        finalText = `${pendingAction.summary}\n\nPreparé una propuesta para \`${pendingAction.path}\`. Revisala y tocá “Aplicar cambio” para crear el commit.`;
+      const preparedAction = pendingAction as PendingAction | null;
+      if (preparedAction) {
+        finalText = `${preparedAction.summary}\n\nPreparé una propuesta para \`${preparedAction.path}\`. Revisala y tocá “Aplicar cambio” para crear el commit.`;
         break;
       }
     }
