@@ -79,8 +79,8 @@ export async function POST(request: Request) {
       payload = (await request.json()) as BlenderRequest;
     }
 
-    const workerUrl = process.env.BLENDER_WORKER_URL;
-    const workerToken = process.env.BLENDER_WORKER_TOKEN;
+    const workerUrl = process.env.GARMENT_WORKER_URL ?? process.env.BLENDER_WORKER_URL;
+    const workerToken = process.env.GARMENT_WORKER_TOKEN ?? process.env.BLENDER_WORKER_TOKEN;
     const job = buildJob(payload);
 
     if (!workerUrl) {
@@ -91,7 +91,7 @@ export async function POST(request: Request) {
         status: "PENDING_CONFIGURATION",
         pipeline: job,
         receivedFile: sourceFile ? { name: sourceFile.name, size: sourceFile.size } : null,
-        message: "El auto rig ya está preparado en la app. Falta BLENDER_WORKER_URL en Vercel para ejecutar Blender en Railway.",
+        message: "El Auto Rig está preparado, pero falta GARMENT_WORKER_URL o BLENDER_WORKER_URL en Railway.",
       });
     }
 
@@ -120,7 +120,7 @@ export async function POST(request: Request) {
 
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-      return NextResponse.json({ error: "El Blender Worker rechazó el trabajo.", details: data }, { status: response.status });
+      return NextResponse.json({ error: "El Garment/Blender Worker rechazó el trabajo.", details: data }, { status: response.status });
     }
 
     return NextResponse.json({
@@ -132,6 +132,6 @@ export async function POST(request: Request) {
       raw: data,
     });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Error inesperado al conectar con Blender Worker." }, { status: 500 });
+    return NextResponse.json({ error: error instanceof Error ? error.message : "Error inesperado al conectar con Garment/Blender Worker." }, { status: 500 });
   }
 }
