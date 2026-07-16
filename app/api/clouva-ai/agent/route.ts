@@ -72,6 +72,13 @@ const tools = [{
   ],
 }];
 
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+function isTransientGeminiError(status: number, message: string) {
+  const value = message.toLowerCase();
+  return status === 429 || status >= 500 || value.includes("high demand") || value.includes("overloaded") || value.includes("temporarily") || value.includes("unavailable");
+}
+
 async function callGemini(args: {
   apiKey: string;
   model: string;
@@ -79,44 +86,56 @@ async function callGemini(args: {
   contents: Array<Record<string, unknown>>;
   includeTools?: boolean;
 }) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 45_000);
+  const fallbackModel = process.env.GEMINI_FALLBACK_MODEL ?? "gemini-2.5-flash";
+  const models = Array.from(new Set([args.model, fallbackModel]));
+  let lastError = "Gemini no respondió.";
 
-  try {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(args.model)}:generateContent`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-goog-api-key": args.apiKey },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: args.instruction }] },
-          contents: args.contents,
-          ...(args.includeTools === false ? {} : { tools }),
-          generationConfig: { temperature: 0.35, maxOutputTokens: 4096 },
-        }),
-        cache: "no-store",
-        signal: controller.signal,
-      },
-    );
+  for (const model of models) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 45_000);
 
-    const raw = await response.text();
-    let data: any = {};
-    try {
-      data = raw ? JSON.parse(raw) : {};
-    } catch {
-      throw new Error("Gemini devolvió una respuesta inválida.");
+      try {
+        if (attempt > 0) await wait(attempt === 1 ? 1200 : 3000);
+
+        const response = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "x-goog-api-key": args.apiKey },
+            body: JSON.stringify({
+              systemInstruction: { parts: [{ text: args.instruction }] },
+              contents: args.contents,
+              ...(args.includeTools === false ? {} : { tools }),
+              generationConfig: { temperature: 0.35, maxOutputTokens: 4096 },
+            }),
+            cache: "no-store",
+            signal: controller.signal,
+          },
+        );
+
+        const raw = await response.text();
+        let data: any = {};
+        try {
+          data = raw ? JSON.parse(raw) : {};
+        } catch {
+          throw new Error("Gemini devolvió una respuesta inválida.");
+        }
+
+        if (response.ok) return { data, model };
+
+        lastError = data?.error?.message ?? `Gemini respondió HTTP ${response.status}`;
+        if (!isTransientGeminiError(response.status, lastError)) throw new Error(lastError);
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : "Gemini no respondió.";
+        if (error instanceof Error && error.name === "AbortError") lastError = "Gemini tardó demasiado en responder.";
+      } finally {
+        clearTimeout(timeout);
+      }
     }
-
-    if (!response.ok) throw new Error(data?.error?.message ?? `Gemini respondió HTTP ${response.status}`);
-    return data;
-  } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
-      throw new Error("CLOUVA AI tardó demasiado en responder. Reintentá una vez.");
-    }
-    throw error;
-  } finally {
-    clearTimeout(timeout);
   }
+
+  throw new Error(`Gemini está temporalmente saturado. CLOUVA AI reintentó con dos modelos, pero todavía no respondió. ${lastError}`);
 }
 
 export async function POST(request: Request) {
@@ -127,7 +146,7 @@ export async function POST(request: Request) {
     if (!message) return NextResponse.json({ error: "Escribí un mensaje." }, { status: 400 });
 
     const apiKey = process.env.GEMINI_API_KEY;
-    const model = process.env.GEMINI_MODEL ?? "gemini-3.5-flash";
+    const preferredModel = process.env.GEMINI_MODEL ?? "gemini-3.5-flash";
     if (!apiKey) throw new Error("Falta GEMINI_API_KEY en Railway.");
 
     const { data: memories } = await supabase
@@ -156,10 +175,12 @@ export async function POST(request: Request) {
     let pendingAction: PendingAction | null = null;
     let finalText = "";
     let usedTool = false;
+    let usedModel = preferredModel;
 
     for (let step = 0; step < 6; step += 1) {
-      const data = await callGemini({ apiKey, model, instruction, contents });
-      const candidate = data?.candidates?.[0]?.content;
+      const result = await callGemini({ apiKey, model: preferredModel, instruction, contents });
+      usedModel = result.model;
+      const candidate = result.data?.candidates?.[0]?.content;
       const parts = candidate?.parts ?? [];
       const text = parts.map((part: { text?: string }) => part.text ?? "").join("").trim();
       if (text) finalText = text;
@@ -198,9 +219,7 @@ export async function POST(request: Request) {
           toolResult = { error: "Herramienta desconocida" };
         }
 
-        responseParts.push({
-          functionResponse: { name: functionCall.name, response: toolResult },
-        });
+        responseParts.push({ functionResponse: { name: functionCall.name, response: toolResult } });
       }
 
       contents.push({ role: "user", parts: responseParts });
@@ -217,24 +236,23 @@ export async function POST(request: Request) {
         role: "user",
         parts: [{ text: "Con la información de las herramientas que ya recibiste, respondé ahora al pedido del usuario sin llamar más herramientas." }],
       });
-      const fallback = await callGemini({
+      const result = await callGemini({
         apiKey,
-        model,
+        model: preferredModel,
         instruction,
         contents,
         includeTools: false,
       });
-      finalText = fallback?.candidates?.[0]?.content?.parts
+      usedModel = result.model;
+      finalText = result.data?.candidates?.[0]?.content?.parts
         ?.map((part: { text?: string }) => part.text ?? "")
         .join("")
         .trim() ?? "";
     }
 
-    if (!finalText) {
-      throw new Error("CLOUVA AI no pudo completar el análisis. Reintentá el mismo mensaje una vez.");
-    }
+    if (!finalText) throw new Error("CLOUVA AI no pudo completar el análisis.");
 
-    return NextResponse.json({ ok: true, message: finalText, pendingAction, model });
+    return NextResponse.json({ ok: true, message: finalText, pendingAction, model: usedModel });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Error inesperado en el agente." },
