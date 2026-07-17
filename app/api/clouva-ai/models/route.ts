@@ -12,19 +12,34 @@ type GeminiModel = {
   outputTokenLimit?: number;
 };
 
-function isChatCompatible(model: GeminiModel) {
-  const id = (model.name ?? "").replace(/^models\//, "");
-  const methods = model.supportedGenerationMethods ?? [];
+const CLOUVA_MODELS: Record<
+  string,
+  {
+    order: number;
+    recommendedFor: string;
+    tier: "principal" | "respaldo";
+  }
+> = {
+  "gemini-3.5-flash": {
+    order: 0,
+    tier: "principal",
+    recommendedFor: "Arquitectura, código, investigación y tareas complejas",
+  },
+  "gemini-3.1-flash-lite": {
+    order: 1,
+    tier: "respaldo",
+    recommendedFor: "Chat rápido, tareas livianas y menor costo",
+  },
+};
 
-  return (
-    id.startsWith("gemini-") &&
-    methods.includes("generateContent") &&
-    !id.includes("embedding") &&
-    !id.includes("image") &&
-    !id.includes("tts") &&
-    !id.includes("live") &&
-    !id.includes("robotics")
-  );
+function modelId(model: GeminiModel) {
+  return (model.name ?? "").replace(/^models\//, "");
+}
+
+function isAllowed(model: GeminiModel) {
+  const id = modelId(model);
+  const methods = model.supportedGenerationMethods ?? [];
+  return id in CLOUVA_MODELS && methods.includes("generateContent");
 }
 
 export async function GET() {
@@ -56,21 +71,36 @@ export async function GET() {
       );
     }
 
-    const models = (payload.models ?? [])
-      .filter(isChatCompatible)
-      .map((model) => ({
-        id: (model.name ?? "").replace(/^models\//, ""),
-        name: model.displayName ?? model.name ?? "Gemini",
-        description: model.description ?? "Modelo compatible con chat.",
-        inputTokenLimit: model.inputTokenLimit ?? null,
-        outputTokenLimit: model.outputTokenLimit ?? null,
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name));
+    const available = (payload.models ?? [])
+      .filter(isAllowed)
+      .map((model) => {
+        const id = modelId(model);
+        const config = CLOUVA_MODELS[id];
+        return {
+          id,
+          name: model.displayName ?? model.name ?? "Gemini",
+          description: model.description ?? "Modelo compatible con CLOUVA AI.",
+          inputTokenLimit: model.inputTokenLimit ?? null,
+          outputTokenLimit: model.outputTokenLimit ?? null,
+          recommendedFor: config.recommendedFor,
+          tier: config.tier,
+          order: config.order,
+        };
+      })
+      .sort((a, b) => a.order - b.order)
+      .map(({ order: _order, ...model }) => model);
+
+    const configuredDefault = process.env.GEMINI_MODEL ?? "gemini-3.5-flash";
+    const defaultModel = available.some((model) => model.id === configuredDefault)
+      ? configuredDefault
+      : available[0]?.id ?? configuredDefault;
 
     return NextResponse.json({
       ok: true,
-      models,
-      defaultModel: process.env.GEMINI_MODEL ?? "gemini-3.5-flash",
+      models: available,
+      defaultModel,
+      fallbackModel:
+        process.env.GEMINI_FALLBACK_MODEL ?? "gemini-3.1-flash-lite",
     });
   } catch (error) {
     return NextResponse.json(
