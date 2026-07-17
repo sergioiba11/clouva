@@ -5,6 +5,10 @@ import {
   listRepositoryFiles,
   readRepositoryFile,
 } from "@/lib/clouva-ai/github";
+import {
+  CLOUVA_PRODUCT_CONTEXT,
+  CLOUVA_REPOSITORY_AGENT_PROMPT,
+} from "@/lib/clouva-ai/vision";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -22,18 +26,121 @@ type PendingAction = {
   message: string;
   summary: string;
 };
-
+type RepositoryFile = { path: string; content: string };
 type RepositoryContext = {
   scope: "status" | "explicit" | "broad";
   status: unknown;
   tree: string[];
-  files: Array<{ path: string; content: string }>;
+  files: RepositoryFile[];
+  coverageAreas: string[];
 };
+type GeminiPayload = {
+  candidates?: Array<{
+    content?: { parts?: Array<{ text?: string }> };
+    finishReason?: string;
+  }>;
+  usageMetadata?: Record<string, unknown>;
+  error?: { message?: string };
+};
+
+const BROAD_REVIEW_GROUPS: Array<{
+  area: string;
+  patterns: RegExp[];
+}> = [
+  {
+    area: "visión y documentación",
+    patterns: [
+      /^docs\/CLOUVA_VISION\.md$/,
+      /^docs\/CLOUVA_PROJECT_AUDIT\.md$/,
+      /^README\.md$/,
+    ],
+  },
+  {
+    area: "configuración y deploy",
+    patterns: [
+      /^package\.json$/,
+      /^next\.config\./,
+      /^\.env\.example$/,
+      /^scripts\/prepare-clouva-model\.mjs$/,
+    ],
+  },
+  {
+    area: "identidad y permisos",
+    patterns: [
+      /^components\/auth-provider\.tsx$/,
+      /^lib\/auth\.ts$/,
+      /supabase\/migrations\/.*role/i,
+    ],
+  },
+  {
+    area: "home e identidad inmersiva",
+    patterns: [
+      /^components\/clouva\/AvatarScene\.tsx$/,
+      /^components\/clouva\/MinimalNavigation\.tsx$/,
+      /^app\/layout\.tsx$/,
+    ],
+  },
+  {
+    area: "perfil y comunidad",
+    patterns: [
+      /^app\/u\/\[username\]\/page\.tsx$/,
+      /^app\/mi-flow\/page\.tsx$/,
+      /follow/i,
+    ],
+  },
+  {
+    area: "avatar e inventario 3D",
+    patterns: [
+      /^components\/avatar-engine\/AvatarModelViewer\.tsx$/,
+      /^components\/avatar-engine\/OutfitPreview\.tsx$/,
+      /^lib\/avatar-engine\//,
+    ],
+  },
+  {
+    area: "Creator Studio",
+    patterns: [
+      /^components\/creator-studio\/CreatorStudio\.tsx$/,
+      /^components\/creator-studio\/SmartTryOnViewer\.tsx$/,
+      /^components\/creator-studio\/CreatorStudioV2Panel\.tsx$/,
+    ],
+  },
+  {
+    area: "pipeline Blender",
+    patterns: [
+      /^app\/api\/creator-studio\/blender\/route\.ts$/,
+      /^worker\/garment-rig\/app\.py$/,
+      /^worker\/garment-rig\/rig_garment\.py$/,
+    ],
+  },
+  {
+    area: "tienda y economía",
+    patterns: [
+      /^app\/tienda\//,
+      /^app\/catalogo\//,
+      /^lib\/store-/,
+      /editable_store\.sql$/,
+    ],
+  },
+  {
+    area: "música",
+    patterns: [/spotify/i, /music/i],
+  },
+  {
+    area: "Trébol y Gemini",
+    patterns: [
+      /^app\/api\/gemini\/route\.ts$/,
+      /^app\/api\/clouva-ai\/agent\/route\.ts$/,
+      /^components\/clouva-ai\/ClouvaAIChat\.tsx$/,
+    ],
+  },
+];
 
 function getSupabase(accessToken: string) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !anonKey) throw new Error("Faltan variables públicas de Supabase.");
+  if (!url || !anonKey) {
+    throw new Error("Faltan variables públicas de Supabase.");
+  }
 
   return createClient(url, anonKey, {
     global: { headers: { Authorization: `Bearer ${accessToken}` } },
@@ -60,7 +167,7 @@ async function requireAdmin(request: Request) {
 
   const email = data.user.email?.toLowerCase();
   if (!email || !allowed.includes(email)) {
-    throw new Error("Usuario no autorizado para el agente de código.");
+    throw new Error("Usuario no autorizado para el modo Proyecto.");
   }
 
   return { supabase, user: data.user };
@@ -82,7 +189,8 @@ function isTransient(status: number, message: string) {
     value.includes("high demand") ||
     value.includes("temporarily") ||
     value.includes("overloaded") ||
-    value.includes("unavailable")
+    value.includes("unavailable") ||
+    value.includes("tardó demasiado")
   );
 }
 
@@ -93,7 +201,7 @@ async function callGemini(args: {
   contents: Array<Record<string, unknown>>;
 }) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 22_000);
+  const timeout = setTimeout(() => controller.abort(), 18_000);
 
   try {
     const response = await fetch(
@@ -107,7 +215,10 @@ async function callGemini(args: {
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: args.instruction }] },
           contents: args.contents,
-          generationConfig: { temperature: 0.3, maxOutputTokens: 4096 },
+          generationConfig: {
+            temperature: 0.25,
+            maxOutputTokens: 6000,
+          },
         }),
         cache: "no-store",
         signal: controller.signal,
@@ -115,30 +226,43 @@ async function callGemini(args: {
     );
 
     const raw = await response.text();
-    let data: any = {};
+    let data: GeminiPayload = {};
     try {
-      data = raw ? JSON.parse(raw) : {};
+      data = raw ? (JSON.parse(raw) as GeminiPayload) : {};
     } catch {
       throw new Error("Gemini devolvió una respuesta inválida.");
     }
 
     if (!response.ok) {
       const error = new Error(
-        data?.error?.message ?? `Gemini respondió HTTP ${response.status}`,
+        data.error?.message ?? `Gemini respondió HTTP ${response.status}`,
       ) as Error & { status?: number };
       error.status = response.status;
       throw error;
     }
 
-    const text = data?.candidates?.[0]?.content?.parts
-      ?.map((part: { text?: string }) => part.text ?? "")
+    const text = data.candidates?.[0]?.content?.parts
+      ?.map((part) => part.text ?? "")
       .join("")
       .trim();
 
-    return text ?? "";
+    if (!text) {
+      const reason = data.candidates?.[0]?.finishReason;
+      throw new Error(
+        reason
+          ? `Gemini terminó sin informe (${reason}).`
+          : "Gemini respondió sin texto.",
+      );
+    }
+
+    return { text, usage: data.usageMetadata ?? null };
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
-      throw new Error("El modelo tardó demasiado en responder.");
+      const timeoutError = new Error(
+        `El modelo ${args.model} tardó demasiado en responder.`,
+      ) as Error & { status?: number };
+      timeoutError.status = 504;
+      throw timeoutError;
     }
     throw error;
   } finally {
@@ -159,9 +283,8 @@ async function generateWithFallback(args: {
 
   for (const model of models) {
     try {
-      const text = await callGemini({ ...args, model });
-      if (text) return { text, model };
-      lastError = "El modelo respondió sin texto.";
+      const result = await callGemini({ ...args, model });
+      return { ...result, model };
     } catch (error) {
       lastError = error instanceof Error ? error.message : lastError;
       const status = (error as Error & { status?: number }).status ?? 500;
@@ -174,88 +297,128 @@ async function generateWithFallback(args: {
 
 function explicitPaths(message: string) {
   const matches = message.match(
-    /(?:app|components|lib|pages|src|public|supabase|scripts|workers|types|hooks|config|docs)\/[A-Za-z0-9_./@-]+\.[A-Za-z0-9]+|package\.json|README\.md|Dockerfile/g,
+    /(?:app|components|lib|pages|src|public|supabase|scripts|worker|workers|types|hooks|config|docs)\/[A-Za-z0-9_./@\[\]-]+\.[A-Za-z0-9]+|package\.json|README\.md|Dockerfile|\.env\.example/g,
   );
-  return Array.from(new Set(matches ?? [])).slice(0, 6);
+  return Array.from(new Set(matches ?? [])).slice(0, 8);
 }
 
 function wantsBroadReview(message: string) {
-  return /(todo el proyecto|proyecto completo|revis[áa] el proyecto|analiz[áa] el proyecto|c[oó]mo avanzar|arquitectura|auditor[ií]a|estado general)/i.test(
+  return /(todo el proyecto|proyecto completo|revis[áa] el proyecto|analiz[áa] el proyecto|c[oó]mo avanzar|arquitectura|auditor[ií]a|estado general|visi[oó]n|roadmap|prioridades|investigaci[oó]n)/i.test(
     message,
   );
 }
 
-function priorityScore(path: string) {
-  const priorities = [
-    /^package\.json$/,
-    /^README\.md$/,
-    /^next\.config\./,
-    /^app\/page\.tsx$/,
-    /^app\/layout\.tsx$/,
-    /^app\/api\//,
-    /^components\/clouva-ai\//,
-    /^lib\/clouva-ai\//,
-    /avatar/i,
-    /rig/i,
-    /meshy/i,
-    /export/i,
-    /supabase/i,
-  ];
-
-  const index = priorities.findIndex((pattern) => pattern.test(path));
-  return index === -1 ? 999 : index;
+function isReadableSource(path: string, size: number) {
+  return (
+    size <= 150_000 &&
+    /\.(ts|tsx|js|jsx|mjs|json|md|sql|py)$/i.test(path) &&
+    !/(node_modules|\.next|package-lock\.json|public\/.*\.(glb|gltf|png|jpg|jpeg|webp|mp3|wav))/i.test(
+      path,
+    )
+  );
 }
 
-async function buildRepositoryContext(message: string): Promise<RepositoryContext> {
-  const status = await getRepositoryStatus();
-  const paths = explicitPaths(message);
+function chooseBroadReviewPaths(
+  files: Array<{ path: string; size: number }>,
+) {
+  const available = files.filter(({ path, size }) =>
+    isReadableSource(path, size),
+  );
+  const selected: string[] = [];
+  const coverageAreas: string[] = [];
 
-  if (paths.length) {
-    const files = await Promise.all(
-      paths.map(async (path) => {
-        const file = await readRepositoryFile(path);
-        return { path: file.path, content: file.content.slice(0, 28000) };
-      }),
-    );
+  for (const group of BROAD_REVIEW_GROUPS) {
+    const match = group.patterns
+      .map((pattern) => available.find((file) => pattern.test(file.path)))
+      .find(Boolean);
 
-    return { scope: "explicit", status, tree: paths, files };
+    if (match && !selected.includes(match.path)) {
+      selected.push(match.path);
+      coverageAreas.push(group.area);
+    }
   }
 
-  if (!wantsBroadReview(message)) {
-    return { scope: "status", status, tree: [], files: [] };
+  const required = [
+    "docs/CLOUVA_VISION.md",
+    "docs/CLOUVA_PROJECT_AUDIT.md",
+    "package.json",
+    "README.md",
+  ];
+
+  for (const path of required) {
+    if (
+      available.some((file) => file.path === path) &&
+      !selected.includes(path)
+    ) {
+      selected.unshift(path);
+    }
   }
 
-  const listing = await listRepositoryFiles();
-  const relevant = listing.files
-    .filter(
-      ({ path, size }) =>
-        size <= 100_000 &&
-        /\.(ts|tsx|js|jsx|mjs|json|md|sql)$/i.test(path) &&
-        !/(node_modules|\.next|package-lock\.json|public\/.*\.(glb|gltf|png|jpg|jpeg|webp|mp3|wav))/i.test(path),
-    )
-    .sort((a, b) => priorityScore(a.path) - priorityScore(b.path))
-    .slice(0, 10);
+  return {
+    paths: selected.slice(0, 14),
+    coverageAreas,
+  };
+}
 
-  const files = await Promise.all(
-    relevant.map(async ({ path }) => {
+async function readFiles(paths: string[], limit: number) {
+  return Promise.all(
+    paths.map(async (path): Promise<RepositoryFile> => {
       try {
         const file = await readRepositoryFile(path);
-        return { path, content: file.content.slice(0, 14000) };
+        return { path: file.path, content: file.content.slice(0, limit) };
       } catch (error) {
         return {
           path,
-          content: `[No se pudo leer: ${error instanceof Error ? error.message : "error"}]`,
+          content: `[No se pudo leer: ${
+            error instanceof Error ? error.message : "error desconocido"
+          }]`,
         };
       }
     }),
   );
+}
+
+async function buildRepositoryContext(
+  message: string,
+): Promise<RepositoryContext> {
+  const status = await getRepositoryStatus();
+  const paths = explicitPaths(message);
+
+  if (paths.length) {
+    return {
+      scope: "explicit",
+      status,
+      tree: paths,
+      files: await readFiles(paths, 30_000),
+      coverageAreas: ["archivos solicitados explícitamente"],
+    };
+  }
+
+  if (!wantsBroadReview(message)) {
+    return {
+      scope: "status",
+      status,
+      tree: [],
+      files: [],
+      coverageAreas: ["estado del repositorio"],
+    };
+  }
+
+  const listing = await listRepositoryFiles();
+  const selection = chooseBroadReviewPaths(listing.files);
 
   return {
     scope: "broad",
     status,
-    tree: listing.files.map((item) => item.path).slice(0, 400),
-    files,
+    tree: listing.files.map((item) => item.path).slice(0, 600),
+    files: await readFiles(selection.paths, 14_000),
+    coverageAreas: selection.coverageAreas,
   };
+}
+
+function deterministicFallback(context: RepositoryContext) {
+  const reviewed = context.files.map((file) => `- ${file.path}`).join("\n");
+  return `La lectura real de GitHub terminó, pero Gemini no produjo el informe.\n\nAlcance real: ${context.scope}.\nÁreas cubiertas: ${context.coverageAreas.join(", ") || "sin áreas adicionales"}.\n\nArchivos leídos:\n${reviewed || "- Ningún archivo; solamente estado del repositorio."}\n\nReintentá con una pregunta más acotada o pedí continuar por un área concreta. No se modificó ningún archivo.`;
 }
 
 export async function POST(request: Request) {
@@ -281,7 +444,7 @@ export async function POST(request: Request) {
         .eq("project_key", "clouva")
         .eq("status", "active")
         .order("importance", { ascending: false })
-        .limit(10),
+        .limit(12),
       buildRepositoryContext(message),
     ]);
 
@@ -289,32 +452,50 @@ export async function POST(request: Request) {
       .map((item) => `[${item.memory_type}] ${item.title}: ${item.content}`)
       .join("\n");
 
-    const instruction = `Sos CLOUVA AI, agente técnico del repositorio sergioiba11/clouva. Respondé en español rioplatense, directo y basado únicamente en evidencia real. No afirmes haber revisado archivos que no estén en el contexto. Para análisis amplios, indicá qué archivos revisaste, qué funciona, qué está incompleto, problemas principales y próximos pasos priorizados. No modifiques archivos en esta respuesta.\n\nMemoria:\n${memoryText || "Sin memoria guardada."}\n\nContexto real del repositorio:\n${JSON.stringify(repositoryContext)}\n\nContexto de pantalla:\n${JSON.stringify(body.screenContext ?? {})}`;
+    const instruction = `${CLOUVA_REPOSITORY_AGENT_PROMPT}\n\nMEMORIA PERSISTENTE DEL PROYECTO\n${memoryText || "Sin memoria adicional guardada."}\n\nALCANCE OBTENIDO EN ESTA CONSULTA\n${JSON.stringify({
+      scope: repositoryContext.scope,
+      coverageAreas: repositoryContext.coverageAreas,
+      repositoryStatus: repositoryContext.status,
+      filesReviewed: repositoryContext.files.map((file) => file.path),
+    })}\n\nCONTEXTO REAL DE GITHUB\n${JSON.stringify(repositoryContext)}\n\nCONTEXTO DE PANTALLA\n${JSON.stringify(body.screenContext ?? {})}\n\nRecordatorio de visión estable:\n${CLOUVA_PRODUCT_CONTEXT}`;
 
     const contents: Array<Record<string, unknown>> = [
-      ...(body.history ?? []).slice(-5).map((item) => ({
+      ...(body.history ?? []).slice(-6).map((item) => ({
         role: item.role === "assistant" ? "model" : "user",
-        parts: [{ text: item.content.slice(0, 5000) }],
+        parts: [{ text: item.content.slice(0, 6000) }],
       })),
       { role: "user", parts: [{ text: message }] },
     ];
 
-    const result = await generateWithFallback({
-      apiKey,
-      selectedModel,
-      instruction,
-      contents,
-    });
+    let result: {
+      text: string;
+      model: string;
+      usage: Record<string, unknown> | null;
+    } | null = null;
+
+    try {
+      result = await generateWithFallback({
+        apiKey,
+        selectedModel,
+        instruction,
+        contents,
+      });
+    } catch (error) {
+      if (!repositoryContext.files.length) throw error;
+    }
 
     const pendingAction: PendingAction | null = null;
 
     return NextResponse.json({
       ok: true,
-      message: result.text,
+      message: result?.text ?? deterministicFallback(repositoryContext),
       pendingAction,
-      model: result.model,
+      model: result?.model ?? selectedModel,
+      usage: result?.usage ?? null,
       analysisScope: repositoryContext.scope,
+      coverageAreas: repositoryContext.coverageAreas,
       filesReviewed: repositoryContext.files.map((file) => file.path),
+      assistant: "Trébol — CLOUVA AI",
     });
   } catch (error) {
     return NextResponse.json(
