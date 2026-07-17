@@ -38,10 +38,6 @@ export function buildBlenderJob(payload: BlenderRequest) {
     templateId: payload.templateId ?? null,
     templateMode,
     previewSettings: payload.previewSettings ?? {},
-    runner: {
-      script: "scripts/blender/rig_clothing.py",
-      blenderArguments: ["--background", "--python"],
-    },
     options: {
       cleanGeometry: true,
       repairNormals: true,
