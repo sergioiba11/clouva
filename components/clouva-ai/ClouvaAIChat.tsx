@@ -1,15 +1,29 @@
 "use client";
 
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { Check, GitBranch, Loader2, MessageCircle, X } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 
 type Message = { role: "user" | "assistant"; content: string };
-type GeminiPayload = { reply?: string; model?: string; error?: string };
+type Mode = "chat" | "project";
+type PendingAction = {
+  type: "write_file";
+  path: string;
+  content: string;
+  message: string;
+  summary: string;
+};
+type ApiPayload = {
+  reply?: string;
+  message?: string;
+  model?: string;
+  pendingAction?: PendingAction | null;
+  error?: string;
+};
 type StoredMessage = Message & { metadata?: Record<string, unknown> | null };
 
 const WELCOME =
-  "Soy CLOUVA AI. Este chat usa Gemini y guarda la conversación en Supabase. Por ahora funciona como asistente estable; después volveremos a sumar lectura y cambios de GitHub de forma separada.";
+  "Soy CLOUVA AI. Usá Chat para conversar rápido con Gemini o Proyecto para leer GitHub y preparar cambios con confirmación.";
 
 function deduplicate(messages: StoredMessage[]) {
   return messages.filter((message, index) => {
@@ -23,10 +37,13 @@ export function ClouvaAIChat() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [input, setInput] = useState("");
+  const [mode, setMode] = useState<Mode>("chat");
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [loading, setLoading] = useState(false);
+  const [applying, setApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeModel, setActiveModel] = useState<string | null>(null);
+  const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -35,7 +52,7 @@ export function ClouvaAIChat() {
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, loading]);
+  }, [messages, loading, pendingAction]);
 
   async function getSession() {
     const { data } = await supabase.auth.getSession();
@@ -100,10 +117,7 @@ export function ClouvaAIChat() {
       .select("id")
       .single();
 
-    if (error || !data) {
-      throw new Error(error?.message ?? "No se pudo crear la conversación.");
-    }
-
+    if (error || !data) throw new Error(error?.message ?? "No se pudo crear la conversación.");
     setConversationId(data.id);
     return data.id as string;
   }
@@ -122,61 +136,71 @@ export function ClouvaAIChat() {
       content,
       metadata,
     });
-
     if (error) throw new Error(error.message);
   }
 
   async function sendMessage(event: FormEvent) {
     event.preventDefault();
     const message = input.trim();
-    if (!message || loading) return;
+    if (!message || loading || applying) return;
 
     const previousMessages = messages;
     setInput("");
     setError(null);
+    setPendingAction(null);
     setLoading(true);
     setMessages((current) => [...current, { role: "user", content: message }]);
 
     try {
       const session = await getSession();
-
+      const endpoint = mode === "project" ? "/api/clouva-ai/agent" : "/api/gemini";
       const controller = new AbortController();
-      const timeout = window.setTimeout(() => controller.abort(), 35_000);
-      const response = await fetch("/api/gemini", {
+      const timeout = window.setTimeout(() => controller.abort(), mode === "project" ? 45_000 : 35_000);
+
+      const response = await fetch(endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(mode === "project" ? { Authorization: `Bearer ${session.access_token}` } : {}),
+        },
         body: JSON.stringify({
           message,
           history: previousMessages.slice(-8),
+          ...(mode === "project"
+            ? {
+                screenContext: {
+                  page: window.location.pathname,
+                  url: window.location.href,
+                  capturedAt: new Date().toISOString(),
+                },
+              }
+            : {}),
         }),
         signal: controller.signal,
         cache: "no-store",
       }).finally(() => window.clearTimeout(timeout));
 
-      const payload = (await response.json().catch(() => ({}))) as GeminiPayload;
-      if (!response.ok) throw new Error(payload.error ?? "Gemini no respondió.");
-      if (!payload.reply) throw new Error("Gemini respondió sin contenido.");
+      const payload = (await response.json().catch(() => ({}))) as ApiPayload;
+      if (!response.ok) throw new Error(payload.error ?? "CLOUVA AI no respondió.");
+
+      const answer = mode === "project" ? payload.message : payload.reply;
+      if (!answer) throw new Error("CLOUVA AI respondió sin contenido.");
 
       const activeConversationId = await ensureConversation(session.user.id, message);
       await saveMessage(activeConversationId, session.user.id, "user", message, {
         provider: "gemini",
+        mode,
       });
-      await saveMessage(
-        activeConversationId,
-        session.user.id,
-        "assistant",
-        payload.reply,
-        {
-          provider: "gemini",
-          model: payload.model ?? null,
-        },
-      );
+      await saveMessage(activeConversationId, session.user.id, "assistant", answer, {
+        provider: "gemini",
+        mode,
+        model: payload.model ?? null,
+        pendingAction: payload.pendingAction ?? null,
+      });
 
       setActiveModel(payload.model ?? null);
-      setMessages((current) => [
-        ...current,
-        { role: "assistant", content: payload.reply! },
-      ]);
+      setPendingAction(payload.pendingAction ?? null);
+      setMessages((current) => [...current, { role: "assistant", content: answer }]);
     } catch (caught) {
       const failure =
         caught instanceof Error && caught.name === "AbortError"
@@ -195,11 +219,56 @@ export function ClouvaAIChat() {
     }
   }
 
+  async function applyChange() {
+    if (!pendingAction || applying) return;
+    setApplying(true);
+    setError(null);
+
+    try {
+      const session = await getSession();
+      const response = await fetch("/api/clouva-ai/github", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({
+          action: "write",
+          path: pendingAction.path,
+          content: pendingAction.content,
+          message: pendingAction.message,
+          confirm: true,
+        }),
+      });
+
+      const payload = (await response.json().catch(() => ({}))) as {
+        result?: { commitSha?: string; path?: string; branch?: string };
+        error?: string;
+      };
+      if (!response.ok) throw new Error(payload.error ?? "No se pudo aplicar el cambio.");
+
+      const text = `Cambio aplicado en \`${payload.result?.path ?? pendingAction.path}\`. Commit \`${payload.result?.commitSha?.slice(0, 7) ?? "creado"}\` sobre \`${payload.result?.branch ?? "main"}\`.`;
+      if (conversationId) {
+        await saveMessage(conversationId, session.user.id, "assistant", text, {
+          provider: "github",
+          commit: payload.result ?? {},
+        });
+      }
+      setMessages((current) => [...current, { role: "assistant", content: text }]);
+      setPendingAction(null);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "No se pudo aplicar el cambio.");
+    } finally {
+      setApplying(false);
+    }
+  }
+
   function newConversation() {
     setConversationId(null);
     setMessages([{ role: "assistant", content: WELCOME }]);
     setError(null);
     setActiveModel(null);
+    setPendingAction(null);
   }
 
   return (
@@ -210,22 +279,43 @@ export function ClouvaAIChat() {
             <p className="text-xs uppercase tracking-[0.32em] text-violet-300">Asistente CLOUVA</p>
             <h1 className="text-2xl font-semibold">CLOUVA AI</h1>
             <p className="mt-1 text-sm text-white/55">
-              Chat Gemini estable con historial guardado en Supabase.
+              Chat rápido o acceso real al repositorio.
             </p>
-            {activeModel && (
-              <p className="mt-1 font-mono text-xs text-violet-300">Modelo activo: {activeModel}</p>
-            )}
+            {activeModel && <p className="mt-1 font-mono text-xs text-violet-300">Modelo activo: {activeModel}</p>}
           </div>
 
           <button
             type="button"
             onClick={newConversation}
-            disabled={loadingHistory || loading}
+            disabled={loadingHistory || loading || applying}
             className="rounded-full border border-white/15 px-4 py-2 text-sm text-white/75 transition hover:border-violet-400/60 hover:text-white disabled:opacity-40"
           >
             Nueva conversación
           </button>
         </header>
+
+        <div className="mb-4 grid grid-cols-2 gap-2 rounded-2xl border border-white/10 bg-zinc-950 p-1">
+          <button
+            type="button"
+            onClick={() => setMode("chat")}
+            disabled={loading || applying}
+            className={`flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-sm transition ${
+              mode === "chat" ? "bg-violet-600 text-white" : "text-white/55 hover:text-white"
+            }`}
+          >
+            <MessageCircle className="h-4 w-4" /> Chat
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode("project")}
+            disabled={loading || applying}
+            className={`flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-sm transition ${
+              mode === "project" ? "bg-violet-600 text-white" : "text-white/55 hover:text-white"
+            }`}
+          >
+            <GitBranch className="h-4 w-4" /> Proyecto
+          </button>
+        </div>
 
         <div className="flex-1 space-y-4 overflow-y-auto rounded-3xl border border-white/10 bg-white/[0.025] p-4 shadow-2xl shadow-violet-950/20 sm:p-6">
           {loadingHistory ? (
@@ -249,8 +339,37 @@ export function ClouvaAIChat() {
 
           {loading && (
             <article className="flex max-w-[88%] items-center gap-3 rounded-2xl border border-violet-400/20 bg-violet-500/10 px-4 py-3 text-sm text-violet-100">
-              <Loader2 className="h-4 w-4 animate-spin" /> Gemini está respondiendo…
+              <Loader2 className="h-4 w-4 animate-spin" />
+              {mode === "project" ? "Leyendo el repositorio…" : "Gemini está respondiendo…"}
             </article>
+          )}
+
+          {pendingAction && (
+            <section className="rounded-3xl border border-violet-400/30 bg-violet-500/10 p-4">
+              <p className="text-xs font-bold uppercase tracking-[0.2em] text-violet-300">Cambio preparado</p>
+              <h2 className="mt-2 break-all font-semibold">{pendingAction.path}</h2>
+              <p className="mt-2 text-sm leading-6 text-white/70">{pendingAction.summary}</p>
+              <p className="mt-2 text-xs text-white/40">Commit: {pendingAction.message}</p>
+              <div className="mt-4 flex gap-3">
+                <button
+                  type="button"
+                  onClick={applyChange}
+                  disabled={applying}
+                  className="flex flex-1 items-center justify-center gap-2 rounded-full bg-violet-600 px-4 py-3 text-sm font-semibold disabled:opacity-50"
+                >
+                  {applying ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                  {applying ? "Aplicando…" : "Aplicar cambio"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPendingAction(null)}
+                  disabled={applying}
+                  className="flex items-center gap-2 rounded-full border border-white/15 px-4 py-3 text-sm"
+                >
+                  <X className="h-4 w-4" /> Cancelar
+                </button>
+              </div>
+            </section>
           )}
 
           <div ref={endRef} />
@@ -268,15 +387,21 @@ export function ClouvaAIChat() {
                 }
               }}
               rows={3}
-              placeholder="Escribile a CLOUVA AI…"
+              placeholder={
+                mode === "project"
+                  ? "Ejemplo: Leé package.json y explicame los scripts"
+                  : "Escribile a CLOUVA AI…"
+              }
               className="w-full resize-none bg-transparent px-2 py-2 text-sm outline-none placeholder:text-white/30"
             />
 
             <div className="flex items-center justify-between gap-3">
-              <p className="px-2 text-xs text-white/35">Enter para enviar · Shift + Enter para salto de línea</p>
+              <p className="px-2 text-xs text-white/35">
+                {mode === "project" ? "Proyecto usa GitHub real" : "Chat rápido con Gemini"}
+              </p>
               <button
                 type="submit"
-                disabled={loadingHistory || loading || !input.trim()}
+                disabled={loadingHistory || loading || applying || !input.trim()}
                 className="rounded-full bg-violet-600 px-5 py-2 text-sm font-medium transition hover:bg-violet-500 disabled:opacity-40"
               >
                 {loading ? "Esperando…" : "Enviar"}
