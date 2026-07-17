@@ -13,7 +13,7 @@ from mathutils import Vector
 # category -> a lo largo de que extremo del bounding box (en Z, altura tras importar el GLB)
 # arranca el hueso raiz (el que despues se conecta al avatar).
 CATEGORY_RIG_CONFIG = {
-    "hat": {"attach_end": "min", "bone_count": 3},
+    "gorra": {"attach_end": "min", "bone_count": 3},
     "cadena": {"attach_end": "max", "bone_count": 3},
     "lentes": {"attach_end": "max", "bone_count": 2},
     "mochila": {"attach_end": "max", "bone_count": 3},

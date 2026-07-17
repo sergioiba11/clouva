@@ -22,7 +22,7 @@ BONE_ALIASES = {
 
 # categoria del frontend -> hueso canonico del avatar al que se conecta el ObjectRoot
 CATEGORY_TARGET_BONE = {
-    "hat": "head",
+    "gorra": "head",
     "cadena": "neck",
     "lentes": "head",
     "mochila": "chest",
