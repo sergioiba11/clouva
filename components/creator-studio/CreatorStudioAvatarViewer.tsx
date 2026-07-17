@@ -30,9 +30,12 @@ import type { AvatarConfig } from "@/lib/avatar-engine/types";
 
 export type CreatorPoseMode = "idle" | "tpose" | "walk";
 
+export type AnchorBoneKey = "head" | "neck" | "chest" | "upperChest" | "spine" | "leftHand" | "rightHand";
+
 export type CreatorStudioAvatarContext = {
   model: Object3D;
   headBone: Bone | null;
+  bones: Record<AnchorBoneKey, Bone | null>;
   refit: () => void;
 };
 
@@ -52,6 +55,11 @@ type BoneBase = { quaternion: Quaternion; position: Vector3 };
 type HumanRig = {
   head?: Bone;
   neck?: Bone;
+  chest?: Bone;
+  upperChest?: Bone;
+  spine?: Bone;
+  leftHand?: Bone;
+  rightHand?: Bone;
   leftUpperArm?: Bone;
   rightUpperArm?: Bone;
   leftUpperLeg?: Bone;
@@ -239,6 +247,11 @@ async function collectRig(gltf: GLTF, root: Object3D): Promise<HumanRig> {
   const rig: HumanRig = {
     head: pick("head", ["head", "jbipchead", "bip01head"]) ?? geo.head,
     neck: pick("neck", ["neck", "neck1", "jbipcneck"]),
+    chest: pick("chest", ["chest", "defchest", "mixamorigspine2"]),
+    upperChest: pick("upperChest", ["upperchest", "defupperchest", "mixamorigspine2"]),
+    spine: pick("spine", ["spine1", "spine", "defspine", "mixamorigspine1", "mixamorigspine"]),
+    leftHand: pick("leftHand", ["lefthand", "handl", "defhandl", "jbiplhand"]),
+    rightHand: pick("rightHand", ["righthand", "handr", "defhandr", "jbiprhand"]),
     leftUpperArm,
     rightUpperArm,
     leftUpperLeg,
@@ -255,6 +268,12 @@ async function collectRig(gltf: GLTF, root: Object3D): Promise<HumanRig> {
   console.info("[Creator Studio stable rig v3]", {
     bones: bones.length,
     head: rig.head?.name,
+    neck: rig.neck?.name,
+    chest: rig.chest?.name,
+    upperChest: rig.upperChest?.name,
+    spine: rig.spine?.name,
+    leftHand: rig.leftHand?.name,
+    rightHand: rig.rightHand?.name,
     leftUpperArm: rig.leftUpperArm?.name,
     rightUpperArm: rig.rightUpperArm?.name,
     leftUpperLeg: rig.leftUpperLeg?.name,
@@ -441,7 +460,20 @@ export function CreatorStudioAvatarViewer({
       rig = await collectRig(gltf, model);
       mixer = clips.length ? new AnimationMixer(model) : null;
       scene.add(model);
-      readyRef.current?.(model, { model, headBone: rig.head ?? null, refit });
+      readyRef.current?.(model, {
+        model,
+        headBone: rig.head ?? null,
+        bones: {
+          head: rig.head ?? null,
+          neck: rig.neck ?? null,
+          chest: rig.chest ?? null,
+          upperChest: rig.upperChest ?? null,
+          spine: rig.spine ?? null,
+          leftHand: rig.leftHand ?? null,
+          rightHand: rig.rightHand ?? null,
+        },
+        refit,
+      });
       resize();
     };
 

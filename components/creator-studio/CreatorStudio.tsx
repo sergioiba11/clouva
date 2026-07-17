@@ -15,7 +15,7 @@ import {
   UserRound,
   WandSparkles,
 } from "lucide-react";
-import { SmartTryOnViewer, type TryOnAdjustments } from "@/components/creator-studio/SmartTryOnViewer";
+import { SmartTryOnViewer, type AnchorBoneKey, type AnchorDiagnostics, type TryOnAdjustments } from "@/components/creator-studio/SmartTryOnViewer";
 import { ReferenceAssetLibrary } from "@/components/creator-studio/ReferenceAssetLibrary";
 import {
   getReferenceAssetById,
@@ -90,6 +90,27 @@ const anchorByCategory: Record<string, string> = {
 };
 
 const rigidCategories = new Set(["gorra", "cadena", "lentes", "mochila", "aros", "pulseras", "anillos"]);
+
+// Categorías con anclaje real a hueso implementado hoy. El resto de rigidCategories
+// (aros, guantes) sigue usando el posicionamiento aproximado por altura como antes.
+const SIDED_CATEGORIES = new Set(["pulseras", "anillos"]);
+
+function resolveAnchorBoneKey(category: string, side: "left" | "right"): AnchorBoneKey | null {
+  switch (category) {
+    case "gorra":
+    case "lentes":
+      return "head";
+    case "cadena":
+      return "neck";
+    case "mochila":
+      return "chest";
+    case "pulseras":
+    case "anillos":
+      return side === "left" ? "leftHand" : "rightHand";
+    default:
+      return null;
+  }
+}
 const requiredBonesByCategory: Record<string, string> = {
   hoodie: "Spine, Chest, Shoulders, Upper Arms",
   remera: "Spine, Chest, Shoulders",
@@ -199,6 +220,10 @@ export function CreatorStudio() {
   const [jobStage, setJobStage] = useState<string | null>(null);
   const [libraryVersion, setLibraryVersion] = useState(0);
   const [promoting, setPromoting] = useState(false);
+  const [side, setSide] = useState<"left" | "right">("right");
+  const [anchorDiagnostics, setAnchorDiagnostics] = useState<AnchorDiagnostics | null>(null);
+
+  const anchorBoneKey = useMemo(() => resolveAnchorBoneKey(category, side), [category, side]);
 
   const templateMode = Boolean(referenceAsset?.isTemplate);
   const pipeline = templateMode ? templatePipeline : rawPipeline;
@@ -215,8 +240,18 @@ export function CreatorStudio() {
       category,
       anchor: anchorByCategory[category],
       animationValidation: { loop: true, rootMotion: false },
+      // Anclaje real por hueso (o su fallback aproximado). rigMode/anchorBone reflejan
+      // lo que el visor efectivamente logró resolver, no solo lo solicitado.
+      rigMode: anchorDiagnostics?.mode ?? (anchorBoneKey ? "approx_fallback" : "approx_fallback"),
+      anchorBone: anchorDiagnostics?.anchorBoneKey ?? anchorBoneKey,
+      anchorBoneName: anchorDiagnostics?.boneName ?? null,
+      side: SIDED_CATEGORIES.has(category) ? side : null,
+      position: [adjustments.x / 100, (adjustments.y + adjustments.height) / 100, adjustments.distance / 100],
+      rotation: [0, ((rotation + adjustments.rotation) * Math.PI) / 180, 0],
+      scale: [adjustments.scale / 100, adjustments.scale / 100, adjustments.scale / 100],
+      presetVersion: 1,
     }),
-    [adjustments, category, fit, pose, view],
+    [adjustments, anchorBoneKey, anchorDiagnostics, category, fit, pose, rotation, side, view],
   );
 
   const updateAdjustment = (key: keyof TryOnAdjustments, value: number) => {
@@ -514,7 +549,9 @@ export function CreatorStudio() {
           scale: adjustments.scale * zoom,
         }}
         referenceModelUrl={options.objectUrl}
+        anchorBoneKey={options.objectOnly ? null : anchorBoneKey}
         onReferenceStatus={running ? undefined : setMessage}
+        onAnchorDiagnostics={setAnchorDiagnostics}
       />
       <div style={viewerBadge}>
         {options.objectUrl && referenceAsset
@@ -704,6 +741,14 @@ export function CreatorStudio() {
                             <option>Slim</option><option>Regular</option><option>Oversize</option>
                           </select>
                         </Field>
+                        {SIDED_CATEGORIES.has(category) && (
+                          <Field label="Lado">
+                            <select value={side} onChange={(event) => setSide(event.target.value as "left" | "right")} style={input}>
+                              <option value="right">Derecha</option>
+                              <option value="left">Izquierda</option>
+                            </select>
+                          </Field>
+                        )}
                         <Field label="Fondo"><input type="color" value={background} onChange={(event) => setBackground(event.target.value)} style={{ ...input, height: 46, padding: 5 }} /></Field>
                         <Range label="Escala" value={adjustments.scale} min={25} max={300} onChange={(value) => updateAdjustment("scale", value)} />
                         <Range label="Largo / altura" value={adjustments.length} min={35} max={240} onChange={(value) => updateAdjustment("length", value)} />
@@ -714,6 +759,23 @@ export function CreatorStudio() {
                         <Range label="Altura" value={adjustments.height} min={-100} max={100} onChange={(value) => updateAdjustment("height", value)} />
                         <Range label="Profundidad" value={adjustments.distance} min={-40} max={60} onChange={(value) => updateAdjustment("distance", value)} />
                       </div>
+                    </div>
+                    <div style={diagnosticGrid}>
+                      <Diagnostic
+                        title="Anclaje"
+                        value={anchorBoneKey ?? "Sin hueso (aproximado)"}
+                        state={anchorDiagnostics?.boneName ? `Hueso real: ${anchorDiagnostics.boneName}` : "Sin hueso detectado en este avatar"}
+                      />
+                      <Diagnostic
+                        title="Modo"
+                        value={anchorDiagnostics?.mode === "rigid_anchor" ? "Anclaje rígido" : "Aproximado por altura"}
+                        state={anchorDiagnostics?.mode === "rigid_anchor" ? "Sigue el hueso en cada frame" : "Fallback: no se encontró el hueso"}
+                      />
+                      <Diagnostic
+                        title="Seguimiento de animación"
+                        value={anchorDiagnostics?.mode === "rigid_anchor" ? "Activo" : "No disponible"}
+                        state={anchorDiagnostics?.mode === "rigid_anchor" ? "El objeto se mueve con el hueso" : "Puede desalinearse al animar"}
+                      />
                     </div>
                     <button onClick={() => { setPose("Idle"); setTab("animations"); }} style={{ ...primaryButton, width: "100%", justifyContent: "center", marginTop: 14 }}>
                       Probar animaciones

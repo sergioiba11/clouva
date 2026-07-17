@@ -6,11 +6,38 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 import {
   CreatorStudioAvatarViewer,
+  type AnchorBoneKey,
   type CreatorPoseMode,
   type CreatorStudioAvatarContext,
 } from "@/components/creator-studio/CreatorStudioAvatarViewer";
 import { useActiveAvatarStore } from "@/lib/avatar-engine/active-avatar-store";
 import { defaultAvatarConfig } from "@/lib/avatar-engine/catalog";
+
+export type { AnchorBoneKey };
+
+export type AnchorDiagnostics = {
+  anchorBoneKey: AnchorBoneKey | null;
+  boneFound: boolean;
+  boneName: string | null;
+  mode: "rigid_anchor" | "approx_fallback";
+};
+
+// Offset local al hueso (metros/radianes). Valores semilla a calibrar contra el avatar oficial.
+const CATEGORY_ANCHOR_PRESETS: Record<string, { x: number; y: number; z: number; rotationY: number }> = {
+  gorra: { x: 0, y: 0.12, z: 0, rotationY: 0 },
+  lentes: { x: 0, y: 0.02, z: 0.08, rotationY: 0 },
+  cadena: { x: 0, y: -0.05, z: 0.04, rotationY: 0 },
+  mochila: { x: 0, y: 0, z: -0.12, rotationY: Math.PI },
+  pulseras: { x: 0, y: 0.02, z: 0, rotationY: 0 },
+  anillos: { x: 0, y: 0, z: 0.03, rotationY: 0 },
+};
+
+function resolveAnchorBone(bones: CreatorStudioAvatarContext["bones"] | null, key: AnchorBoneKey | null): Bone | null {
+  if (!bones || !key) return null;
+  if (key === "neck") return bones.neck ?? bones.upperChest ?? bones.chest ?? null;
+  if (key === "chest") return bones.chest ?? bones.upperChest ?? bones.spine ?? null;
+  return bones[key] ?? null;
+}
 
 export type TryOnAdjustments = {
   scale: number;
@@ -40,12 +67,16 @@ type Props = {
   adjustments: TryOnAdjustments;
   imageUrl?: string | null;
   referenceModelUrl?: string | null;
+  anchorBoneKey?: AnchorBoneKey | null;
   onReferenceStatus?: (status: string) => void;
+  onAnchorDiagnostics?: (info: AnchorDiagnostics) => void;
 };
 
 type LoadedReference = {
   root: Group;
   originalSize: Vector3;
+  anchorBoneKey: AnchorBoneKey | null;
+  boneFound: boolean;
 };
 
 const avatarSize = new Vector3();
@@ -153,20 +184,25 @@ export function SmartTryOnViewer({
   garmentOnly,
   adjustments,
   referenceModelUrl,
+  anchorBoneKey = null,
   onReferenceStatus,
+  onAnchorDiagnostics,
 }: Props) {
   const avatar = useActiveAvatarStore((state) => state.avatar);
   const avatarRef = useRef<Object3D | null>(null);
   const headBoneRef = useRef<Bone | null>(null);
+  const bonesRef = useRef<CreatorStudioAvatarContext["bones"] | null>(null);
   const avatarBaseWorldQuaternionRef = useRef<Quaternion | null>(null);
   const headBaseLocalQuaternionRef = useRef<Quaternion | null>(null);
   const referenceRef = useRef<LoadedReference | null>(null);
   const frameRef = useRef(0);
   const statusRef = useRef(onReferenceStatus);
+  const diagnosticsRef = useRef(onAnchorDiagnostics);
   const [avatarReadyVersion, setAvatarReadyVersion] = useState(0);
   const currentRef = useRef({ category, fit, showBody, garmentOnly, adjustments });
   currentRef.current = { category, fit, showBody, garmentOnly, adjustments };
   statusRef.current = onReferenceStatus;
+  diagnosticsRef.current = onAnchorDiagnostics;
 
   const viewRotation = useMemo(() => view === "Frente" ? 0 : view === "Lateral" ? -Math.PI / 2 : Math.PI, [view]);
   const poseMode: CreatorPoseMode = pose === "T-Pose" ? "tpose" : pose === "Walk" ? "walk" : "idle";
@@ -174,6 +210,7 @@ export function SmartTryOnViewer({
   function attachAvatar(root: Object3D, context?: CreatorStudioAvatarContext) {
     avatarRef.current = root;
     headBoneRef.current = context?.headBone ?? findHeadBone(root);
+    bonesRef.current = context?.bones ?? null;
     root.updateMatrixWorld(true);
     avatarBaseWorldQuaternionRef.current = root.getWorldQuaternion(new Quaternion()).clone();
 
@@ -195,6 +232,7 @@ export function SmartTryOnViewer({
 
     if (!referenceModelUrl) {
       statusRef.current?.("Subí o elegí un GLB de referencia para verlo sobre el avatar.");
+      diagnosticsRef.current?.({ anchorBoneKey: null, boneFound: false, boneName: null, mode: "approx_fallback" });
       return;
     }
 
@@ -237,11 +275,25 @@ export function SmartTryOnViewer({
       model.updateMatrixWorld(true);
 
       const root = new Group();
-      root.name = "CLOUVA_REFERENCE_ASSET";
+      root.name = "CLOUVA_ASSET_ANCHOR";
       root.add(model);
-      avatarRef.current.parent?.add(root);
-      referenceRef.current = { root, originalSize: size };
-      statusRef.current?.(`✓ GLB real cargado (${meshCount} malla${meshCount === 1 ? "" : "s"}). Avatar y objeto ahora comparten vistas, pose y anclaje.`);
+
+      const resolvedBone = resolveAnchorBone(bonesRef.current, anchorBoneKey);
+      if (resolvedBone) resolvedBone.add(root);
+      else avatarRef.current.parent?.add(root);
+
+      referenceRef.current = { root, originalSize: size, anchorBoneKey, boneFound: Boolean(resolvedBone) };
+      diagnosticsRef.current?.({
+        anchorBoneKey,
+        boneFound: Boolean(resolvedBone),
+        boneName: resolvedBone?.name ?? null,
+        mode: resolvedBone ? "rigid_anchor" : "approx_fallback",
+      });
+      statusRef.current?.(
+        resolvedBone
+          ? `✓ GLB real cargado (${meshCount} malla${meshCount === 1 ? "" : "s"}). Anclado al hueso "${resolvedBone.name}" — sigue la animación automáticamente.`
+          : `✓ GLB real cargado (${meshCount} malla${meshCount === 1 ? "" : "s"}). No se encontró el hueso de anclaje: usando posicionamiento aproximado por altura.`,
+      );
     }).catch((error) => {
       console.error("Reference GLB failed", error);
       statusRef.current?.(error instanceof Error ? `No se pudo mostrar el GLB: ${error.message}` : "No se pudo abrir este GLB. Probá exportarlo nuevamente desde Blender.");
@@ -252,7 +304,7 @@ export function SmartTryOnViewer({
       disposeReference(referenceRef.current);
       referenceRef.current = null;
     };
-  }, [referenceModelUrl, avatarReadyVersion]);
+  }, [referenceModelUrl, avatarReadyVersion, anchorBoneKey]);
 
   useEffect(() => {
     const update = () => {
@@ -296,62 +348,79 @@ export function SmartTryOnViewer({
           uniformBase * userScale * fitScale * depth,
         );
 
-        avatarRoot.getWorldQuaternion(rootWorldQuaternion);
-        const baseRoot = avatarBaseWorldQuaternionRef.current;
-        if (baseRoot) {
-          rootBaseInverseQuaternion.copy(baseRoot).invert();
-          viewDeltaQuaternion.copy(rootWorldQuaternion).multiply(rootBaseInverseQuaternion);
+        if (reference.boneFound) {
+          // Anclaje real: el grupo cuelga del hueso, así que solo hace falta el offset
+          // local (metros/radianes). El scene graph propaga la animación del hueso solo.
+          const preset = CATEGORY_ANCHOR_PRESETS[current.category] ?? { x: 0, y: 0, z: 0, rotationY: 0 };
+          reference.root.position.set(
+            preset.x + current.adjustments.x / 100,
+            preset.y + (current.adjustments.y + current.adjustments.height) / 100,
+            preset.z + current.adjustments.distance / 100,
+          );
+          reference.root.quaternion.setFromAxisAngle(
+            Y_AXIS,
+            preset.rotationY + (current.adjustments.rotation * Math.PI) / 180,
+          );
+          reference.root.visible = true;
+          reference.root.updateMatrixWorld(true);
         } else {
-          viewDeltaQuaternion.identity();
-        }
-
-        userRotationQuaternion.setFromAxisAngle(Y_AXIS, (current.adjustments.rotation * Math.PI) / 180);
-
-        if (current.category === "gorra" && headBoneRef.current) {
-          const headBone = headBoneRef.current;
-          headBone.getWorldPosition(headPosition);
-          headBone.getWorldQuaternion(headWorldQuaternion);
-          rootWorldInverseQuaternion.copy(rootWorldQuaternion).invert();
-          headLocalQuaternion.copy(rootWorldInverseQuaternion).multiply(headWorldQuaternion);
-
-          const baseHead = headBaseLocalQuaternionRef.current;
-          if (baseHead) {
-            headBaseInverseQuaternion.copy(baseHead).invert();
-            headDeltaQuaternion.copy(headLocalQuaternion).multiply(headBaseInverseQuaternion);
+          avatarRoot.getWorldQuaternion(rootWorldQuaternion);
+          const baseRoot = avatarBaseWorldQuaternionRef.current;
+          if (baseRoot) {
+            rootBaseInverseQuaternion.copy(baseRoot).invert();
+            viewDeltaQuaternion.copy(rootWorldQuaternion).multiply(rootBaseInverseQuaternion);
           } else {
-            headDeltaQuaternion.identity();
+            viewDeltaQuaternion.identity();
           }
 
-          reference.root.quaternion.copy(viewDeltaQuaternion).multiply(headDeltaQuaternion).multiply(userRotationQuaternion);
+          userRotationQuaternion.setFromAxisAngle(Y_AXIS, (current.adjustments.rotation * Math.PI) / 180);
 
-          const headRelativeY = (headPosition.y - avatarBox.min.y) / height;
-          const automaticLift = Math.min(
-            Math.max((target.y - headRelativeY) * height, height * 0.035),
-            height * 0.16,
-          );
-          localOffset.set(
-            current.adjustments.x / 100,
-            automaticLift + (current.adjustments.y + current.adjustments.height) / 100,
-            current.adjustments.distance / 100,
-          ).applyQuaternion(viewDeltaQuaternion);
-          targetPosition.copy(headPosition).add(localOffset);
-        } else {
-          reference.root.quaternion.copy(viewDeltaQuaternion).multiply(userRotationQuaternion);
-          localOffset.set(
-            current.adjustments.x / 100,
-            0,
-            current.category === "gorra" ? current.adjustments.distance / 100 : 0,
-          ).applyQuaternion(viewDeltaQuaternion);
-          targetPosition.set(
-            avatarCenter.x,
-            avatarBox.min.y + height * target.y + (current.adjustments.y + current.adjustments.height) / 100,
-            avatarCenter.z + target.z,
-          ).add(localOffset);
+          if (current.category === "gorra" && headBoneRef.current) {
+            const headBone = headBoneRef.current;
+            headBone.getWorldPosition(headPosition);
+            headBone.getWorldQuaternion(headWorldQuaternion);
+            rootWorldInverseQuaternion.copy(rootWorldQuaternion).invert();
+            headLocalQuaternion.copy(rootWorldInverseQuaternion).multiply(headWorldQuaternion);
+
+            const baseHead = headBaseLocalQuaternionRef.current;
+            if (baseHead) {
+              headBaseInverseQuaternion.copy(baseHead).invert();
+              headDeltaQuaternion.copy(headLocalQuaternion).multiply(headBaseInverseQuaternion);
+            } else {
+              headDeltaQuaternion.identity();
+            }
+
+            reference.root.quaternion.copy(viewDeltaQuaternion).multiply(headDeltaQuaternion).multiply(userRotationQuaternion);
+
+            const headRelativeY = (headPosition.y - avatarBox.min.y) / height;
+            const automaticLift = Math.min(
+              Math.max((target.y - headRelativeY) * height, height * 0.035),
+              height * 0.16,
+            );
+            localOffset.set(
+              current.adjustments.x / 100,
+              automaticLift + (current.adjustments.y + current.adjustments.height) / 100,
+              current.adjustments.distance / 100,
+            ).applyQuaternion(viewDeltaQuaternion);
+            targetPosition.copy(headPosition).add(localOffset);
+          } else {
+            reference.root.quaternion.copy(viewDeltaQuaternion).multiply(userRotationQuaternion);
+            localOffset.set(
+              current.adjustments.x / 100,
+              0,
+              current.category === "gorra" ? current.adjustments.distance / 100 : 0,
+            ).applyQuaternion(viewDeltaQuaternion);
+            targetPosition.set(
+              avatarCenter.x,
+              avatarBox.min.y + height * target.y + (current.adjustments.y + current.adjustments.height) / 100,
+              avatarCenter.z + target.z,
+            ).add(localOffset);
+          }
+
+          reference.root.position.copy(targetPosition);
+          reference.root.visible = true;
+          reference.root.updateMatrixWorld(true);
         }
-
-        reference.root.position.copy(targetPosition);
-        reference.root.visible = true;
-        reference.root.updateMatrixWorld(true);
       }
 
       frameRef.current = requestAnimationFrame(update);
