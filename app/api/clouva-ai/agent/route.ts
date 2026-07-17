@@ -22,48 +22,19 @@ type PendingAction = {
   message: string;
   summary: string;
 };
-type FunctionCall = { name?: string; args?: Record<string, unknown> };
 
-type GeminiResult = {
-  data: any;
-  model: string;
+type RepositoryContext = {
+  scope: "status" | "explicit" | "broad";
+  status: unknown;
+  tree: string[];
+  files: Array<{ path: string; content: string }>;
 };
-
-const EDIT_TOOLS = [
-  {
-    functionDeclarations: [
-      {
-        name: "read_repository_file",
-        description: "Lee un archivo de texto real del repositorio CLOUVA.",
-        parameters: {
-          type: "OBJECT",
-          properties: { path: { type: "STRING" } },
-          required: ["path"],
-        },
-      },
-      {
-        name: "propose_file_change",
-        description:
-          "Propone crear o reemplazar un archivo. No escribe: requiere confirmación del usuario.",
-        parameters: {
-          type: "OBJECT",
-          properties: {
-            path: { type: "STRING" },
-            content: { type: "STRING" },
-            message: { type: "STRING" },
-            summary: { type: "STRING" },
-          },
-          required: ["path", "content", "message", "summary"],
-        },
-      },
-    ],
-  },
-];
 
 function getSupabase(accessToken: string) {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !anonKey) throw new Error("Faltan variables públicas de Supabase.");
+
   return createClient(url, anonKey, {
     global: { headers: { Authorization: `Bearer ${accessToken}` } },
     auth: { persistSession: false, autoRefreshToken: false },
@@ -75,6 +46,7 @@ async function requireAdmin(request: Request) {
   const accessToken = authorization.startsWith("Bearer ")
     ? authorization.slice(7)
     : "";
+
   if (!accessToken) throw new Error("Sesión requerida.");
 
   const supabase = getSupabase(accessToken);
@@ -85,6 +57,7 @@ async function requireAdmin(request: Request) {
     .split(",")
     .map((value) => value.trim().toLowerCase())
     .filter(Boolean);
+
   const email = data.user.email?.toLowerCase();
   if (!email || !allowed.includes(email)) {
     throw new Error("Usuario no autorizado para el agente de código.");
@@ -113,12 +86,11 @@ function isTransient(status: number, message: string) {
   );
 }
 
-async function generate(args: {
+async function callGemini(args: {
   apiKey: string;
   model: string;
   instruction: string;
   contents: Array<Record<string, unknown>>;
-  tools?: typeof EDIT_TOOLS;
 }) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 22_000);
@@ -135,7 +107,6 @@ async function generate(args: {
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: args.instruction }] },
           contents: args.contents,
-          ...(args.tools ? { tools: args.tools } : {}),
           generationConfig: { temperature: 0.3, maxOutputTokens: 4096 },
         }),
         cache: "no-store",
@@ -159,7 +130,12 @@ async function generate(args: {
       throw error;
     }
 
-    return data;
+    const text = data?.candidates?.[0]?.content?.parts
+      ?.map((part: { text?: string }) => part.text ?? "")
+      .join("")
+      .trim();
+
+    return text ?? "";
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
       throw new Error("El modelo tardó demasiado en responder.");
@@ -175,8 +151,7 @@ async function generateWithFallback(args: {
   selectedModel: string;
   instruction: string;
   contents: Array<Record<string, unknown>>;
-  tools?: typeof EDIT_TOOLS;
-}): Promise<GeminiResult> {
+}) {
   const fallback =
     process.env.GEMINI_FALLBACK_MODEL ?? "gemini-3.1-flash-lite";
   const models = Array.from(new Set([args.selectedModel, fallback]));
@@ -184,8 +159,9 @@ async function generateWithFallback(args: {
 
   for (const model of models) {
     try {
-      const data = await generate({ ...args, model });
-      return { data, model };
+      const text = await callGemini({ ...args, model });
+      if (text) return { text, model };
+      lastError = "El modelo respondió sin texto.";
     } catch (error) {
       lastError = error instanceof Error ? error.message : lastError;
       const status = (error as Error & { status?: number }).status ?? 500;
@@ -196,33 +172,15 @@ async function generateWithFallback(args: {
   throw new Error(`Ningún modelo respondió. Último error: ${lastError}`);
 }
 
-function extractText(data: any) {
-  return (
-    data?.candidates?.[0]?.content?.parts
-      ?.map((part: { text?: string }) => part.text ?? "")
-      .join("")
-      .trim() ?? ""
-  );
-}
-
 function explicitPaths(message: string) {
-  return Array.from(
-    new Set(
-      message.match(
-        /(?:app|components|lib|pages|src|public|supabase|scripts|workers|types|hooks|config|docs)\/[A-Za-z0-9_./@-]+\.[A-Za-z0-9]+|(?:^|\s)(package\.json|next\.config\.[A-Za-z0-9]+|README\.md|Dockerfile)/g,
-      ) ?? [],
-    ),
-  ).map((path) => path.trim());
+  const matches = message.match(
+    /(?:app|components|lib|pages|src|public|supabase|scripts|workers|types|hooks|config|docs)\/[A-Za-z0-9_./@-]+\.[A-Za-z0-9]+|package\.json|README\.md|Dockerfile/g,
+  );
+  return Array.from(new Set(matches ?? [])).slice(0, 6);
 }
 
 function wantsBroadReview(message: string) {
   return /(todo el proyecto|proyecto completo|revis[áa] el proyecto|analiz[áa] el proyecto|c[oó]mo avanzar|arquitectura|auditor[ií]a|estado general)/i.test(
-    message,
-  );
-}
-
-function wantsModification(message: string) {
-  return /(modific|cambi|implement|arregl|correg|cre[áa]|agreg|elimin|refactor|hacelo|aplic)/i.test(
     message,
   );
 }
@@ -243,49 +201,46 @@ function priorityScore(path: string) {
     /export/i,
     /supabase/i,
   ];
+
   const index = priorities.findIndex((pattern) => pattern.test(path));
   return index === -1 ? 999 : index;
 }
 
-async function buildRepositoryContext(message: string) {
+async function buildRepositoryContext(message: string): Promise<RepositoryContext> {
   const status = await getRepositoryStatus();
-  const requestedPaths = explicitPaths(message);
+  const paths = explicitPaths(message);
 
-  if (requestedPaths.length) {
+  if (paths.length) {
     const files = await Promise.all(
-      requestedPaths.slice(0, 6).map(async (path) => {
+      paths.map(async (path) => {
         const file = await readRepositoryFile(path);
-        return { path: file.path, content: file.content.slice(0, 30000) };
+        return { path: file.path, content: file.content.slice(0, 28000) };
       }),
     );
-    return {
-      status,
-      tree: requestedPaths,
-      files,
-      scope: "explicit",
-    };
+
+    return { scope: "explicit", status, tree: paths, files };
   }
 
   if (!wantsBroadReview(message)) {
-    return { status, tree: [], files: [], scope: "status" };
+    return { scope: "status", status, tree: [], files: [] };
   }
 
   const listing = await listRepositoryFiles();
   const relevant = listing.files
     .filter(
       ({ path, size }) =>
-        size <= 120_000 &&
+        size <= 100_000 &&
         /\.(ts|tsx|js|jsx|mjs|json|md|sql)$/i.test(path) &&
         !/(node_modules|\.next|package-lock\.json|public\/.*\.(glb|gltf|png|jpg|jpeg|webp|mp3|wav))/i.test(path),
     )
     .sort((a, b) => priorityScore(a.path) - priorityScore(b.path))
-    .slice(0, 12);
+    .slice(0, 10);
 
   const files = await Promise.all(
     relevant.map(async ({ path }) => {
       try {
         const file = await readRepositoryFile(path);
-        return { path, content: file.content.slice(0, 16000) };
+        return { path, content: file.content.slice(0, 14000) };
       } catch (error) {
         return {
           path,
@@ -296,11 +251,10 @@ async function buildRepositoryContext(message: string) {
   );
 
   return {
-    status,
-    tree: listing.files.map((item) => item.path).slice(0, 500),
-    files,
     scope: "broad",
-    truncated: listing.truncated,
+    status,
+    tree: listing.files.map((item) => item.path).slice(0, 400),
+    files,
   };
 }
 
@@ -309,12 +263,14 @@ export async function POST(request: Request) {
     const { supabase, user } = await requireAdmin(request);
     const body = (await request.json()) as RequestBody;
     const message = body.message?.trim();
+
     if (!message) {
       return NextResponse.json({ error: "Escribí un mensaje." }, { status: 400 });
     }
 
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) throw new Error("Falta GEMINI_API_KEY en Railway.");
+
     const selectedModel = selectedModelFromRequest(request);
 
     const [{ data: memories }, repositoryContext] = await Promise.all([
@@ -325,7 +281,7 @@ export async function POST(request: Request) {
         .eq("project_key", "clouva")
         .eq("status", "active")
         .order("importance", { ascending: false })
-        .limit(12),
+        .limit(10),
       buildRepositoryContext(message),
     ]);
 
@@ -333,110 +289,30 @@ export async function POST(request: Request) {
       .map((item) => `[${item.memory_type}] ${item.title}: ${item.content}`)
       .join("\n");
 
-    const repositoryText = JSON.stringify(repositoryContext);
-    const instruction = `Sos CLOUVA AI, agente técnico del repositorio sergioiba11/clouva. Respondé en español rioplatense, directo y basado únicamente en evidencia real. Ya recibiste un inventario y archivos reales del repositorio cuando eran necesarios. No afirmes haber revisado archivos que no aparecen en el contexto. Para análisis amplios: explicá qué revisaste, estado actual, problemas, prioridades y próximos pasos concretos. Si el alcance excede los archivos leídos, decilo y proponé la siguiente tanda. Para cambios de código, leé primero el archivo con la herramienta y después usá propose_file_change. Nunca escribas sin confirmación.\n\nMemoria del proyecto:\n${memoryText || "Sin memoria guardada."}\n\nContexto real del repositorio:\n${repositoryText}\n\nContexto de pantalla:\n${JSON.stringify(body.screenContext ?? {})}`;
+    const instruction = `Sos CLOUVA AI, agente técnico del repositorio sergioiba11/clouva. Respondé en español rioplatense, directo y basado únicamente en evidencia real. No afirmes haber revisado archivos que no estén en el contexto. Para análisis amplios, indicá qué archivos revisaste, qué funciona, qué está incompleto, problemas principales y próximos pasos priorizados. No modifiques archivos en esta respuesta.\n\nMemoria:\n${memoryText || "Sin memoria guardada."}\n\nContexto real del repositorio:\n${JSON.stringify(repositoryContext)}\n\nContexto de pantalla:\n${JSON.stringify(body.screenContext ?? {})}`;
 
     const contents: Array<Record<string, unknown>> = [
-      ...(body.history ?? []).slice(-6).map((item) => ({
+      ...(body.history ?? []).slice(-5).map((item) => ({
         role: item.role === "assistant" ? "model" : "user",
-        parts: [{ text: item.content.slice(0, 6000) }],
+        parts: [{ text: item.content.slice(0, 5000) }],
       })),
       { role: "user", parts: [{ text: message }] },
     ];
 
-    let pendingAction: PendingAction | null = null;
-    let usedModel = selectedModel;
-    let finalText = "";
+    const result = await generateWithFallback({
+      apiKey,
+      selectedModel,
+      instruction,
+      contents,
+    });
 
-    if (!wantsModification(message)) {
-      const result = await generateWithFallback({
-        apiKey,
-        selectedModel,
-        instruction,
-        contents,
-      });
-      usedModel = result.model;
-      finalText = extractText(result.data);
-    } else {
-      for (let step = 0; step < 3; step += 1) {
-        const result = await generateWithFallback({
-          apiKey,
-          selectedModel: usedModel,
-          instruction,
-          contents,
-          tools: EDIT_TOOLS,
-        });
-        usedModel = result.model;
-        const parts = result.data?.candidates?.[0]?.content?.parts ?? [];
-        const text = parts
-          .map((part: { text?: string }) => part.text ?? "")
-          .join("")
-          .trim();
-        if (text) finalText = text;
-
-        const calls = parts
-          .filter((part: { functionCall?: FunctionCall }) => part.functionCall?.name)
-          .map((part: { functionCall?: FunctionCall }) =>
-            part.functionCall as FunctionCall,
-          );
-        if (!calls.length) break;
-
-        contents.push({ role: "model", parts });
-        const responses: Array<Record<string, unknown>> = [];
-
-        for (const call of calls) {
-          let toolResult: unknown;
-          if (call.name === "read_repository_file") {
-            const path = String(call.args?.path ?? "").trim();
-            if (!path) throw new Error("El modelo no indicó qué archivo leer.");
-            const file = await readRepositoryFile(path);
-            toolResult = { ...file, content: file.content.slice(0, 35000) };
-          } else if (call.name === "propose_file_change") {
-            pendingAction = {
-              type: "write_file",
-              path: String(call.args?.path ?? ""),
-              content: String(call.args?.content ?? ""),
-              message: String(
-                call.args?.message ?? "chore: actualizar archivo",
-              ),
-              summary: String(
-                call.args?.summary ?? "Cambio propuesto por CLOUVA AI",
-              ),
-            };
-            toolResult = {
-              requires_confirmation: true,
-              path: pendingAction.path,
-            };
-          } else {
-            toolResult = { error: "Herramienta desconocida" };
-          }
-
-          responses.push({
-            functionResponse: { name: call.name, response: toolResult },
-          });
-        }
-
-        if (pendingAction) {
-          finalText = `${pendingAction.summary}\n\nPreparé una propuesta para \`${pendingAction.path}\`. Revisala y tocá “Aplicar cambio”.`;
-          break;
-        }
-
-        contents.push({ role: "user", parts: responses });
-      }
-    }
-
-    if (!finalText) {
-      finalText =
-        repositoryContext.scope === "broad"
-          ? "Pude leer el inventario del repositorio, pero el modelo no produjo el informe final. Probá nuevamente con una parte concreta, por ejemplo: ‘revisá arquitectura, avatar 3D y exportación’."
-          : "El modelo no produjo texto. Indicá un archivo o una tarea más concreta.";
-    }
+    const pendingAction: PendingAction | null = null;
 
     return NextResponse.json({
       ok: true,
-      message: finalText,
+      message: result.text,
       pendingAction,
-      model: usedModel,
+      model: result.model,
       analysisScope: repositoryContext.scope,
       filesReviewed: repositoryContext.files.map((file) => file.path),
     });
