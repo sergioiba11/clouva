@@ -42,7 +42,7 @@ jobs:
             echo "Web check ${attempt}/16"
             status="$(curl -L --connect-timeout 10 --max-time 25 -sS -o /tmp/creator-studio.html -w '%{http_code}' https://clouva.com.ar/creator-studio || true)"
             echo "HTTP ${status}"
-            if [[ "$status" =~ ^2|3 ]]; then
+            if [[ "$status" =~ ^[23][0-9][0-9]$ ]]; then
               echo "CLOUVA web deploy verified."
               exit 0
             fi
