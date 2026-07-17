@@ -35,14 +35,20 @@ jobs:
         run: python -m py_compile services/garment-worker/app.py scripts/blender/rig_clothing.py
 
       - name: Build Blender worker image
+        id: docker-build
         shell: bash
         run: |
           set +e
           docker build --progress=plain -f Dockerfile.worker -t clouva-garment-worker:test . > docker-build.log 2>&1
           status=$?
-          if [ "$status" -ne 0 ]; then
-            echo "Docker build failed. Last 100 lines:"
-            tail -n 100 docker-build.log
-            exit "$status"
-          fi
-          tail -n 30 docker-build.log
+          tail -n 120 docker-build.log > docker-build-tail.log
+          cat docker-build-tail.log
+          exit "$status"
+
+      - name: Upload Docker diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-build-diagnostics
+          path: docker-build-tail.log
+          if-no-files-found: error
