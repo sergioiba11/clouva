@@ -820,7 +820,7 @@ export function CreatorStudio() {
                     </div>
                     <div style={notice}>Revisá Frente, Lateral y Espalda en Idle y Walk. Si el objeto se separa del cuerpo, volvé a Rig del objeto. Si solo está desplazado, volvé a Ajustar al avatar.</div>
                     <button disabled={running} onClick={() => void rigReference()} style={{ ...primaryButton, width: "100%", justifyContent: "center", marginTop: 12, opacity: running ? 0.5 : 1 }}>
-                      <Settings2 /> {running ? "Procesando…" : templateMode ? "Validar plantilla con Blender" : "Crear rig y validar con Blender"}
+                      <Settings2 /> {running ? "Rigeando objeto…" : templateMode ? "Rigear objeto (validar plantilla)" : "Rigear objeto con Blender"}
                     </button>
                   </>
                 )}
