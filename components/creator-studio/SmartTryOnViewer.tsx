@@ -59,6 +59,7 @@ type Props = {
   referenceModelUrl?: string | null;
   anchorBoneKey?: AnchorBoneKey | null;
   showAnchorGizmo?: boolean;
+  showSkeleton?: boolean;
   onReferenceStatus?: (status: string) => void;
   onAnchorDiagnostics?: (info: AnchorDiagnostics) => void;
 };
@@ -181,6 +182,7 @@ export function SmartTryOnViewer({
   referenceModelUrl,
   anchorBoneKey = null,
   showAnchorGizmo = false,
+  showSkeleton = false,
   onReferenceStatus,
   onAnchorDiagnostics,
 }: Props) {
@@ -475,6 +477,7 @@ export function SmartTryOnViewer({
         config={defaultAvatarConfig}
         poseMode={poseMode}
         className="h-full min-h-[500px] w-full"
+        showSkeleton={showSkeleton}
         onReady={attachAvatar}
       />
     </div>

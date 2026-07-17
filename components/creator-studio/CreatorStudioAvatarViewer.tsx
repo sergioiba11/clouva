@@ -16,6 +16,7 @@ import {
   PerspectiveCamera,
   Quaternion,
   Scene,
+  SkeletonHelper,
   SkinnedMesh,
   SRGBColorSpace,
   Vector3,
@@ -47,6 +48,7 @@ type Props = {
   config: AvatarConfig;
   poseMode: CreatorPoseMode;
   className?: string;
+  showSkeleton?: boolean;
   onReady?: (object: Object3D, context?: CreatorStudioAvatarContext) => void;
 };
 
@@ -365,16 +367,19 @@ export function CreatorStudioAvatarViewer({
   config,
   poseMode,
   className = "",
+  showSkeleton = false,
   onReady,
 }: Props) {
   const mountRef = useRef<HTMLDivElement>(null);
   const poseRef = useRef(poseMode);
   const viewRef = useRef(viewRotationY);
   const readyRef = useRef(onReady);
+  const showSkeletonRef = useRef(showSkeleton);
 
   useEffect(() => { poseRef.current = poseMode; }, [poseMode]);
   useEffect(() => { viewRef.current = viewRotationY; }, [viewRotationY]);
   useEffect(() => { readyRef.current = onReady; }, [onReady]);
+  useEffect(() => { showSkeletonRef.current = showSkeleton; }, [showSkeleton]);
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -384,6 +389,7 @@ export function CreatorStudioAvatarViewer({
     let frame = 0;
     let model: Object3D | null = null;
     let rig: HumanRig | null = null;
+    let skeletonHelper: SkeletonHelper | null = null;
     let mixer: AnimationMixer | null = null;
     let action: AnimationAction | null = null;
     let clips: AnimationClip[] = [];
@@ -460,6 +466,10 @@ export function CreatorStudioAvatarViewer({
       rig = await collectRig(gltf, model);
       mixer = clips.length ? new AnimationMixer(model) : null;
       scene.add(model);
+      skeletonHelper?.dispose();
+      skeletonHelper = new SkeletonHelper(model);
+      skeletonHelper.visible = showSkeletonRef.current;
+      scene.add(skeletonHelper);
       readyRef.current?.(model, {
         model,
         headBone: rig.head ?? null,
@@ -535,6 +545,8 @@ export function CreatorStudioAvatarViewer({
         }
       }
 
+      if (skeletonHelper) skeletonHelper.visible = showSkeletonRef.current;
+
       controls.update();
       renderer.render(scene, camera);
       frame = requestAnimationFrame(animate);
@@ -547,6 +559,7 @@ export function CreatorStudioAvatarViewer({
       observer.disconnect();
       action?.stop();
       mixer?.stopAllAction();
+      skeletonHelper?.dispose();
       controls.dispose();
       renderer.dispose();
       mount.replaceChildren();
