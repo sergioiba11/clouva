@@ -40,25 +40,21 @@ function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = AUTH_TIM
   ]);
 }
 
-async function ensureProfile(user: User): Promise<Profile | null> {
+const PROFILE_COLUMNS = "id, role, display_name, full_name, avatar_url, avatar_3d_url, spotify_url, username";
+
+async function ensureAndLoadProfile(user: User): Promise<Profile | null> {
   const { supabase } = await import("@/lib/supabase");
   const displayName = (user.user_metadata?.full_name as string | undefined) ?? (user.email ? user.email.split("@")[0] : "Usuario") ?? "Usuario";
-  const { data: existing } = await supabase.from("profiles").select("id, role, display_name").eq("id", user.id).maybeSingle();
+  const { data: existing } = await supabase.from("profiles").select(PROFILE_COLUMNS).eq("id", user.id).maybeSingle();
   if (!existing) {
-    const { data } = await supabase.from("profiles").insert({ id: user.id, role: "cliente", display_name: displayName }).select("id, role, display_name").maybeSingle();
+    const { data } = await supabase.from("profiles").insert({ id: user.id, role: "cliente", display_name: displayName }).select(PROFILE_COLUMNS).maybeSingle();
     return data ?? null;
   }
   if (!existing.display_name) {
-    const { data } = await supabase.from("profiles").update({ display_name: displayName }).eq("id", user.id).select("id, role, display_name").maybeSingle();
-    return data ?? null;
+    const { data } = await supabase.from("profiles").update({ display_name: displayName }).eq("id", user.id).select(PROFILE_COLUMNS).maybeSingle();
+    return data ?? existing;
   }
   return existing;
-}
-
-async function loadProfileByUserId(userId: string): Promise<Profile | null> {
-  const { supabase } = await import("@/lib/supabase");
-  const { data } = await supabase.from("profiles").select("id, role, display_name, full_name, avatar_url, avatar_3d_url, spotify_url, username").eq("id", userId).maybeSingle();
-  return data ?? null;
 }
 
 function getPostAuthRedirect(roleValue: string | null | undefined) {
@@ -78,17 +74,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let alive = true;
     let runId = 0;
+    const loadedProfileUserIdRef = { current: null as string | null };
 
-    const resolveFromSession = async (nextSession: Session | null) => {
+    const resolveFromSession = async (nextSession: Session | null, skipIfSameUser = false) => {
       const currentRun = ++runId;
       setSession(nextSession);
       setUser(nextSession?.user ?? null);
 
       if (!nextSession?.user) {
         if (!alive || currentRun !== runId) return;
+        loadedProfileUserIdRef.current = null;
         setProfile(null);
         setRole("cliente");
         setProfileReady(true);
+        setLoading(false);
+        return;
+      }
+
+      if (skipIfSameUser && loadedProfileUserIdRef.current === nextSession.user.id) {
         setLoading(false);
         return;
       }
@@ -98,8 +101,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       let profileData: Profile | null = null;
       try {
-        await withTimeout(ensureProfile(nextSession.user), "Crear o validar el perfil");
-        profileData = await withTimeout(loadProfileByUserId(nextSession.user.id), "Cargar el perfil");
+        profileData = await withTimeout(ensureAndLoadProfile(nextSession.user), "Crear o validar el perfil");
+        loadedProfileUserIdRef.current = nextSession.user.id;
       } catch (error) {
         console.error("Auth profile bootstrap failed", error);
         // La sesión sigue siendo válida aunque Supabase tarde o falle al leer profiles.
@@ -159,7 +162,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         const { data: subscription } = supabase.auth.onAuthStateChange((event, nextSession) => {
           if (event === "SIGNED_IN" || event === "SIGNED_OUT" || event === "TOKEN_REFRESHED") {
-            void resolveFromSession(nextSession ?? null);
+            void resolveFromSession(nextSession ?? null, event === "TOKEN_REFRESHED");
           }
         });
 
