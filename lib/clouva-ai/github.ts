@@ -39,7 +39,7 @@ function friendlyGitHubError(status: number, raw: string, data: unknown) {
 async function githubFetch(path: string, init?: RequestInit) {
   const { token } = githubConfig();
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 20_000);
+  const timeout = setTimeout(() => controller.abort(), 10_000);
 
   try {
     const response = await fetch(`https://api.github.com${path}`, {
