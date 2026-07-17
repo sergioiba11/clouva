@@ -4,6 +4,7 @@ import {
   getRigPersistenceAdmin,
   RigPersistenceError,
 } from "@/lib/creator-studio/rig-persistence";
+import { resolveOfficialClouvaAvatar } from "@/lib/avatar-engine/official-clouva-avatar-server";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -12,7 +13,7 @@ type ResolvedUserAvatar = {
   userId: string;
   avatarId: string;
   avatarUrl: string;
-  avatarSource: "user_avatars" | "profiles";
+  avatarSource: "user_avatars" | "profiles" | "clouva_default";
 };
 
 function workerErrorMessage(data: Record<string, unknown>, status: number) {
@@ -153,10 +154,16 @@ async function resolveAvatarForReference(
     };
   }
 
-  throw new RigPersistenceError(
-    "Tu usuario no tiene un avatar 3D activo y riggeado. Crealo o seleccionalo en Avatar/Admin antes de procesar la prenda.",
-    409,
-  );
+  // A new account starts with CLOUVA, the creator/guide avatar published by
+  // the admin. It can be used as a fitting base until the person creates their
+  // own avatar, but it is never stored as their personal identity.
+  const official = await resolveOfficialClouvaAvatar(admin);
+  return {
+    userId,
+    avatarId: `clouva-default-${official.id}`,
+    avatarUrl: official.url,
+    avatarSource: "clouva_default",
+  };
 }
 
 export async function POST(request: Request) {
@@ -263,7 +270,11 @@ export async function POST(request: Request) {
       jobId: returnedJobId,
       status: data.status ?? "queued",
       resultUrl: proxiedResultUrl,
-      message: data.message ?? "El trabajo fue enviado al Garment Worker con el avatar activo del usuario.",
+      message:
+        data.message ??
+        (resolvedAvatar.avatarSource === "clouva_default"
+          ? "El trabajo fue enviado usando a CLOUVA como avatar inicial del usuario."
+          : "El trabajo fue enviado al Garment Worker con el avatar activo del usuario."),
       raw: data,
     });
   } catch (error) {
