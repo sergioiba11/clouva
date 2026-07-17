@@ -1,10 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Box3, Group, Mesh, Object3D, Vector3 } from "three";
+import { Bone, Box3, Group, Mesh, Object3D, Quaternion, Vector3 } from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
-import { CreatorStudioAvatarViewer, type CreatorPoseMode } from "@/components/creator-studio/CreatorStudioAvatarViewer";
+import {
+  CreatorStudioAvatarViewer,
+  type CreatorPoseMode,
+  type CreatorStudioAvatarContext,
+} from "@/components/creator-studio/CreatorStudioAvatarViewer";
 import { useActiveAvatarStore } from "@/lib/avatar-engine/active-avatar-store";
 import { defaultAvatarConfig } from "@/lib/avatar-engine/catalog";
 
@@ -47,7 +51,20 @@ type LoadedReference = {
 const avatarSize = new Vector3();
 const avatarCenter = new Vector3();
 const targetPosition = new Vector3();
+const headPosition = new Vector3();
+const localOffset = new Vector3();
+const rootWorldQuaternion = new Quaternion();
+const rootBaseInverseQuaternion = new Quaternion();
+const viewDeltaQuaternion = new Quaternion();
+const headWorldQuaternion = new Quaternion();
+const rootWorldInverseQuaternion = new Quaternion();
+const headLocalQuaternion = new Quaternion();
+const headBaseInverseQuaternion = new Quaternion();
+const headDeltaQuaternion = new Quaternion();
+const userRotationQuaternion = new Quaternion();
+const Y_AXIS = new Vector3(0, 1, 0);
 const HAIR_TOKENS = ["hair", "hairstyle", "pelo", "cabello", "fringe", "bangs", "bang", "scalp"];
+const HEAD_TOKENS = ["head", "jbipchead", "bip01head", "mixamorighead"];
 
 function cleanAssetName(value: unknown) {
   return String(value ?? "").toLowerCase().replace(/[^a-z0-9áéíóúüñ]/g, "");
@@ -61,6 +78,34 @@ function isHairMesh(object: any) {
   return HAIR_TOKENS.some((token) => joined.includes(cleanAssetName(token)));
 }
 
+function findHeadBone(root: Object3D) {
+  let exact: Bone | null = null;
+  const bones: Bone[] = [];
+  root.traverse((object: any) => {
+    if (!object.isBone) return;
+    const bone = object as Bone;
+    bones.push(bone);
+    const name = cleanAssetName(bone.name);
+    if (!exact && HEAD_TOKENS.some((token) => name === cleanAssetName(token) || name.includes(cleanAssetName(token)))) {
+      exact = bone;
+    }
+  });
+  if (exact) return exact;
+
+  root.updateMatrixWorld(true);
+  const box = new Box3().setFromObject(root);
+  const centerX = (box.min.x + box.max.x) * 0.5;
+  const height = Math.max(box.max.y - box.min.y, 0.001);
+  return bones
+    .map((bone) => ({ bone, position: bone.getWorldPosition(new Vector3()) }))
+    .filter(({ bone, position }) => {
+      const name = cleanAssetName(bone.name);
+      const excluded = ["eye", "jaw", "mouth", "finger", "hand"].some((token) => name.includes(token));
+      return !excluded && Math.abs(position.x - centerX) < height * 0.18;
+    })
+    .sort((a, b) => b.position.y - a.position.y)[0]?.bone ?? null;
+}
+
 function categoryTarget(category: string, height: number) {
   switch (category) {
     case "hoodie":
@@ -72,8 +117,7 @@ function categoryTarget(category: string, height: number) {
     case "zapatillas":
       return { width: height * 0.35, height: height * 0.13, depth: height * 0.38, y: 0.075, z: height * 0.035 };
     case "gorra":
-      // La gorra debe descansar sobre la coronilla, no centrarse dentro de la cabeza.
-      return { width: height * 0.29, height: height * 0.13, depth: height * 0.29, y: 0.94, z: 0 };
+      return { width: height * 0.29, height: height * 0.13, depth: height * 0.29, y: 0.925, z: 0 };
     case "cadena":
       return { width: height * 0.22, height: height * 0.2, depth: height * 0.09, y: 0.68, z: height * 0.065 };
     case "lentes":
@@ -113,17 +157,34 @@ export function SmartTryOnViewer({
 }: Props) {
   const avatar = useActiveAvatarStore((state) => state.avatar);
   const avatarRef = useRef<Object3D | null>(null);
+  const headBoneRef = useRef<Bone | null>(null);
+  const avatarBaseWorldQuaternionRef = useRef<Quaternion | null>(null);
+  const headBaseLocalQuaternionRef = useRef<Quaternion | null>(null);
   const referenceRef = useRef<LoadedReference | null>(null);
   const frameRef = useRef(0);
+  const statusRef = useRef(onReferenceStatus);
   const [avatarReadyVersion, setAvatarReadyVersion] = useState(0);
   const currentRef = useRef({ category, fit, showBody, garmentOnly, adjustments });
   currentRef.current = { category, fit, showBody, garmentOnly, adjustments };
+  statusRef.current = onReferenceStatus;
 
   const viewRotation = useMemo(() => view === "Frente" ? 0 : view === "Lateral" ? -Math.PI / 2 : Math.PI, [view]);
   const poseMode: CreatorPoseMode = pose === "T-Pose" ? "tpose" : pose === "Walk" ? "walk" : "idle";
 
-  function attachAvatar(root: Object3D) {
+  function attachAvatar(root: Object3D, context?: CreatorStudioAvatarContext) {
     avatarRef.current = root;
+    headBoneRef.current = context?.headBone ?? findHeadBone(root);
+    root.updateMatrixWorld(true);
+    avatarBaseWorldQuaternionRef.current = root.getWorldQuaternion(new Quaternion()).clone();
+
+    if (headBoneRef.current) {
+      root.getWorldQuaternion(rootWorldQuaternion);
+      rootWorldInverseQuaternion.copy(rootWorldQuaternion).invert();
+      headBoneRef.current.getWorldQuaternion(headWorldQuaternion);
+      headBaseLocalQuaternionRef.current = rootWorldInverseQuaternion.clone().multiply(headWorldQuaternion).clone();
+    } else {
+      headBaseLocalQuaternionRef.current = null;
+    }
     setAvatarReadyVersion((value) => value + 1);
   }
 
@@ -133,18 +194,18 @@ export function SmartTryOnViewer({
     referenceRef.current = null;
 
     if (!referenceModelUrl) {
-      onReferenceStatus?.("Subí o elegí un GLB de referencia para verlo sobre el avatar.");
+      statusRef.current?.("Subí o elegí un GLB de referencia para verlo sobre el avatar.");
       return;
     }
 
     if (!avatarRef.current) {
-      onReferenceStatus?.("Esperando que termine de cargar el avatar…");
+      statusRef.current?.("Esperando que termine de cargar el avatar…");
       return;
     }
 
     const loader = new GLTFLoader();
     loader.setMeshoptDecoder(MeshoptDecoder);
-    onReferenceStatus?.("Cargando GLB de referencia…");
+    statusRef.current?.("Cargando GLB de referencia…");
 
     void loader.loadAsync(referenceModelUrl).then((gltf) => {
       if (cancelled || !avatarRef.current) return;
@@ -180,10 +241,10 @@ export function SmartTryOnViewer({
       root.add(model);
       avatarRef.current.parent?.add(root);
       referenceRef.current = { root, originalSize: size };
-      onReferenceStatus?.(`✓ GLB real cargado (${meshCount} malla${meshCount === 1 ? "" : "s"}). Referencia visual lista para ajustar y validar con Blender.`);
+      statusRef.current?.(`✓ GLB real cargado (${meshCount} malla${meshCount === 1 ? "" : "s"}). Avatar y objeto ahora comparten vistas, pose y anclaje.`);
     }).catch((error) => {
       console.error("Reference GLB failed", error);
-      onReferenceStatus?.(error instanceof Error ? `No se pudo mostrar el GLB: ${error.message}` : "No se pudo abrir este GLB. Probá exportarlo nuevamente desde Blender.");
+      statusRef.current?.(error instanceof Error ? `No se pudo mostrar el GLB: ${error.message}` : "No se pudo abrir este GLB. Probá exportarlo nuevamente desde Blender.");
     });
 
     return () => {
@@ -191,7 +252,7 @@ export function SmartTryOnViewer({
       disposeReference(referenceRef.current);
       referenceRef.current = null;
     };
-  }, [referenceModelUrl, avatarReadyVersion, onReferenceStatus]);
+  }, [referenceModelUrl, avatarReadyVersion]);
 
   useEffect(() => {
     const update = () => {
@@ -200,6 +261,7 @@ export function SmartTryOnViewer({
       const current = currentRef.current;
 
       if (avatarRoot) {
+        avatarRoot.updateMatrixWorld(true);
         avatarRoot.traverse((object: any) => {
           if (!(object as Mesh).isMesh && !object.isSkinnedMesh) return;
           const hiddenByHat = current.category === "gorra" && isHairMesh(object);
@@ -234,17 +296,62 @@ export function SmartTryOnViewer({
           uniformBase * userScale * fitScale * depth,
         );
 
-        // Para gorra, "distancia" mueve el accesorio hacia delante/atrás;
-        // en las prendas flexibles conserva el comportamiento de profundidad.
-        const accessoryDepthOffset = current.category === "gorra" ? current.adjustments.distance / 100 : 0;
-        targetPosition.set(
-          avatarCenter.x + current.adjustments.x / 100,
-          avatarBox.min.y + height * target.y + (current.adjustments.y + current.adjustments.height) / 100,
-          avatarCenter.z + target.z + accessoryDepthOffset,
-        );
+        avatarRoot.getWorldQuaternion(rootWorldQuaternion);
+        const baseRoot = avatarBaseWorldQuaternionRef.current;
+        if (baseRoot) {
+          rootBaseInverseQuaternion.copy(baseRoot).invert();
+          viewDeltaQuaternion.copy(rootWorldQuaternion).multiply(rootBaseInverseQuaternion);
+        } else {
+          viewDeltaQuaternion.identity();
+        }
+
+        userRotationQuaternion.setFromAxisAngle(Y_AXIS, (current.adjustments.rotation * Math.PI) / 180);
+
+        if (current.category === "gorra" && headBoneRef.current) {
+          const headBone = headBoneRef.current;
+          headBone.getWorldPosition(headPosition);
+          headBone.getWorldQuaternion(headWorldQuaternion);
+          rootWorldInverseQuaternion.copy(rootWorldQuaternion).invert();
+          headLocalQuaternion.copy(rootWorldInverseQuaternion).multiply(headWorldQuaternion);
+
+          const baseHead = headBaseLocalQuaternionRef.current;
+          if (baseHead) {
+            headBaseInverseQuaternion.copy(baseHead).invert();
+            headDeltaQuaternion.copy(headLocalQuaternion).multiply(headBaseInverseQuaternion);
+          } else {
+            headDeltaQuaternion.identity();
+          }
+
+          reference.root.quaternion.copy(viewDeltaQuaternion).multiply(headDeltaQuaternion).multiply(userRotationQuaternion);
+
+          const headRelativeY = (headPosition.y - avatarBox.min.y) / height;
+          const automaticLift = Math.min(
+            Math.max((target.y - headRelativeY) * height, height * 0.035),
+            height * 0.16,
+          );
+          localOffset.set(
+            current.adjustments.x / 100,
+            automaticLift + (current.adjustments.y + current.adjustments.height) / 100,
+            current.adjustments.distance / 100,
+          ).applyQuaternion(viewDeltaQuaternion);
+          targetPosition.copy(headPosition).add(localOffset);
+        } else {
+          reference.root.quaternion.copy(viewDeltaQuaternion).multiply(userRotationQuaternion);
+          localOffset.set(
+            current.adjustments.x / 100,
+            0,
+            current.category === "gorra" ? current.adjustments.distance / 100 : 0,
+          ).applyQuaternion(viewDeltaQuaternion);
+          targetPosition.set(
+            avatarCenter.x,
+            avatarBox.min.y + height * target.y + (current.adjustments.y + current.adjustments.height) / 100,
+            avatarCenter.z + target.z,
+          ).add(localOffset);
+        }
+
         reference.root.position.copy(targetPosition);
-        reference.root.rotation.set(0, (current.adjustments.rotation * Math.PI) / 180, 0);
         reference.root.visible = true;
+        reference.root.updateMatrixWorld(true);
       }
 
       frameRef.current = requestAnimationFrame(update);
@@ -261,7 +368,8 @@ export function SmartTryOnViewer({
       <CreatorStudioAvatarViewer
         modelUrl={avatar.modelUrl}
         fallbackModelUrl={avatar.fallbackUrl}
-        frontRotationY={avatar.frontRotationY + viewRotation}
+        frontRotationY={avatar.frontRotationY}
+        viewRotationY={viewRotation}
         config={defaultAvatarConfig}
         poseMode={poseMode}
         className="h-full min-h-[500px] w-full"
