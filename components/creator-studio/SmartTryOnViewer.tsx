@@ -22,25 +22,6 @@ export type AnchorDiagnostics = {
   mode: "rigid_anchor" | "approx_fallback";
 };
 
-// Reglas de auto-ajuste: en vez de un offset fijo en metros (que rompe con cada GLB de
-// tamaño distinto), describen QUÉ BORDE del propio bounding box del objeto debe tocar el
-// origen del hueso. El desplazamiento real se calcula en cada carga a partir del tamaño
-// real del asset, así que un GLB grande o chico se auto-acomoda sin recalibrar constantes.
-type CategoryFitRule = {
-  verticalAlign: "top" | "center" | "bottom"; // borde del objeto que se apoya en el hueso
-  depthBias: number; // fracción del propio profundo del objeto para separarlo del cuerpo (+ adelante, - atrás)
-  rotationY: number; // orientación base, radianes
-};
-
-const CATEGORY_FIT_RULES: Record<string, CategoryFitRule> = {
-  gorra: { verticalAlign: "bottom", depthBias: 0, rotationY: 0 },
-  lentes: { verticalAlign: "center", depthBias: 0.5, rotationY: 0 },
-  cadena: { verticalAlign: "top", depthBias: 0.5, rotationY: 0 },
-  mochila: { verticalAlign: "top", depthBias: -0.5, rotationY: Math.PI },
-  pulseras: { verticalAlign: "center", depthBias: 0, rotationY: 0 },
-  anillos: { verticalAlign: "center", depthBias: 0, rotationY: 0 },
-};
-
 function resolveAnchorBone(bones: CreatorStudioAvatarContext["bones"] | null, key: AnchorBoneKey | null): Bone | null {
   if (!bones || !key) return null;
   if (key === "neck") return bones.neck ?? bones.upperChest ?? bones.chest ?? null;
@@ -95,6 +76,8 @@ const avatarCenter = new Vector3();
 const targetPosition = new Vector3();
 const headPosition = new Vector3();
 const boneWorldScale = new Vector3();
+const boneWorldQuaternionTmp = new Quaternion();
+const desiredWorldQuaternion = new Quaternion();
 const localOffset = new Vector3();
 const rootWorldQuaternion = new Quaternion();
 const rootBaseInverseQuaternion = new Quaternion();
@@ -383,36 +366,34 @@ export function SmartTryOnViewer({
         );
 
         if (reference.boneFound && reference.bone) {
-          // Anclaje real: el grupo cuelga del hueso, así que solo hace falta el offset
-          // local (metros/radianes). El scene graph propaga la animación del hueso solo.
-          // Como el hueso puede traer su propia escala (bind pose, rigs escalados en cm,
-          // etc.), se compensa dividiendo por su escala mundial para que el tamaño y el
-          // offset final queden en metros reales, sin heredar la escala del hueso.
+          // Anclaje real, pero sin adivinar la orientación local del hueso: se calcula el
+          // MISMO punto de mundo que ya usa el sistema aproximado (probado visualmente:
+          // relativo a la altura y proporciones reales del avatar) y se convierte al
+          // espacio local del hueso con worldToLocal/invert. El resultado visual es
+          // idéntico al modo aproximado, pero ahora el objeto queda prendido al hueso y
+          // sigue la animación solo, sin importar cómo esté rotado ese hueso en el rig.
           reference.bone.getWorldScale(boneWorldScale);
           const scaleGuard = Math.max(Math.abs(boneWorldScale.y) || 1, 1e-4);
-          const scaleX = (uniformBase * userScale * fitScale * width) / scaleGuard;
-          const scaleY = (uniformBase * userScale * length) / scaleGuard;
-          const scaleZ = (uniformBase * userScale * fitScale * depth) / scaleGuard;
-          reference.root.scale.set(scaleX, scaleY, scaleZ);
-
-          // Auto-ajuste: el offset sale del propio tamaño del objeto (medido en el espacio
-          // local del hueso, o sea ya multiplicado por scaleY/scaleZ), no de una constante
-          // fija. Así una gorra chica y una grande se acomodan solas sin recalibrar nada.
-          const rule = CATEGORY_FIT_RULES[current.category] ?? { verticalAlign: "center", depthBias: 0, rotationY: 0 };
-          const halfHeight = (reference.originalSize.y * scaleY) / 2;
-          const fullDepth = reference.originalSize.z * scaleZ;
-          const autoY = rule.verticalAlign === "bottom" ? halfHeight : rule.verticalAlign === "top" ? -halfHeight : 0;
-          const autoZ = rule.depthBias * fullDepth;
-
-          reference.root.position.set(
-            current.adjustments.x / 100 / scaleGuard,
-            autoY + (current.adjustments.y + current.adjustments.height) / 100 / scaleGuard,
-            autoZ + current.adjustments.distance / 100 / scaleGuard,
+          reference.root.scale.set(
+            (uniformBase * userScale * fitScale * width) / scaleGuard,
+            (uniformBase * userScale * length) / scaleGuard,
+            (uniformBase * userScale * fitScale * depth) / scaleGuard,
           );
-          reference.root.quaternion.setFromAxisAngle(
-            Y_AXIS,
-            rule.rotationY + (current.adjustments.rotation * Math.PI) / 180,
+
+          targetPosition.set(
+            avatarCenter.x + current.adjustments.x / 100,
+            avatarBox.min.y + height * target.y + (current.adjustments.y + current.adjustments.height) / 100,
+            avatarCenter.z + target.z + current.adjustments.distance / 100,
           );
+          reference.bone.worldToLocal(targetPosition);
+          reference.root.position.copy(targetPosition);
+
+          avatarRoot.getWorldQuaternion(rootWorldQuaternion);
+          userRotationQuaternion.setFromAxisAngle(Y_AXIS, (current.adjustments.rotation * Math.PI) / 180);
+          desiredWorldQuaternion.copy(rootWorldQuaternion).multiply(userRotationQuaternion);
+          reference.bone.getWorldQuaternion(boneWorldQuaternionTmp);
+          reference.root.quaternion.copy(boneWorldQuaternionTmp.invert().multiply(desiredWorldQuaternion));
+
           reference.root.visible = true;
           reference.root.updateMatrixWorld(true);
         } else {
