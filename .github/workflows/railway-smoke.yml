@@ -1,0 +1,52 @@
+name: Verify Railway Deploy
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: railway-smoke-main
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Wait for Blender Worker deployment
+        shell: bash
+        run: |
+          set -u
+          for attempt in $(seq 1 24); do
+            echo "Worker check ${attempt}/24"
+            body="$(curl --connect-timeout 10 --max-time 25 -fsS https://rig.clouva.com.ar/health || true)"
+            echo "$body"
+            if echo "$body" | grep -Eq '"per_job_avatar_supported"[[:space:]]*:[[:space:]]*true' \
+              && echo "$body" | grep -Eq '"template_processing_supported"[[:space:]]*:[[:space:]]*true'; then
+              echo "Blender Worker deploy verified."
+              exit 0
+            fi
+            sleep 30
+          done
+          echo "The Blender Worker did not expose the new health capabilities in time."
+          exit 1
+
+      - name: Verify CLOUVA web deployment
+        shell: bash
+        run: |
+          set -u
+          for attempt in $(seq 1 16); do
+            echo "Web check ${attempt}/16"
+            status="$(curl -L --connect-timeout 10 --max-time 25 -sS -o /tmp/creator-studio.html -w '%{http_code}' https://clouva.com.ar/creator-studio || true)"
+            echo "HTTP ${status}"
+            if [[ "$status" =~ ^2|3 ]]; then
+              echo "CLOUVA web deploy verified."
+              exit 0
+            fi
+            sleep 30
+          done
+          echo "CLOUVA web did not become reachable in time."
+          exit 1
