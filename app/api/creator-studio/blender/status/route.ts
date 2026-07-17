@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   evaluateRigJobWatchdog,
+  extractRigJobActivityAt,
   RIG_JOB_INACTIVITY_TIMEOUT_MS,
 } from "@/lib/creator-studio/job-watchdog";
 
@@ -8,6 +9,31 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const doneStates = new Set(["completed", "complete", "finished", "done", "success", "succeeded"]);
+const failedStates = new Set(["failed", "error", "cancelled", "canceled"]);
+
+type RuntimeJobActivity = {
+  firstSeenAt: number;
+  lastActivityAt: number;
+  fingerprint: string | null;
+};
+
+type WatchdogGlobal = typeof globalThis & {
+  __clouvaRigJobActivity?: Map<string, RuntimeJobActivity>;
+};
+
+function activityRegistry() {
+  const target = globalThis as WatchdogGlobal;
+  target.__clouvaRigJobActivity ??= new Map<string, RuntimeJobActivity>();
+  return target.__clouvaRigJobActivity;
+}
+
+function pruneActivityRegistry(now: number) {
+  const registry = activityRegistry();
+  const maximumAge = 60 * 60 * 1000;
+  for (const [jobId, activity] of registry) {
+    if (now - activity.lastActivityAt > maximumAge) registry.delete(jobId);
+  }
+}
 
 function normalizeStatus(data: Record<string, unknown>) {
   return String(data.status ?? data.state ?? "processing").toLowerCase();
@@ -18,6 +44,80 @@ function normalizeProgress(data: Record<string, unknown>) {
   return Number.isFinite(progressValue)
     ? Math.max(0, Math.min(100, progressValue))
     : 0;
+}
+
+function normalizedStage(data: Record<string, unknown>) {
+  const stage = data.stage ?? data.step ?? data.message ?? null;
+  return stage === null || stage === undefined ? null : String(stage);
+}
+
+function workerFingerprint(args: {
+  status: string;
+  progress: number;
+  stage: string | null;
+  hasResult: boolean;
+}) {
+  return JSON.stringify(args);
+}
+
+function runtimeActivity(jobId: string, now: number) {
+  const registry = activityRegistry();
+  const existing = registry.get(jobId);
+  if (existing) return existing;
+
+  const created: RuntimeJobActivity = {
+    firstSeenAt: now,
+    lastActivityAt: now,
+    fingerprint: null,
+  };
+  registry.set(jobId, created);
+  return created;
+}
+
+function evaluateActivity(args: {
+  jobId: string;
+  status: string;
+  progress: number;
+  stage: string | null;
+  data: Record<string, unknown>;
+  now: number;
+}) {
+  const hasResult = Boolean(args.data.resultUrl ?? args.data.outputUrl ?? args.data.downloadUrl);
+  const fingerprint = workerFingerprint({
+    status: args.status,
+    progress: args.progress,
+    stage: args.stage,
+    hasResult,
+  });
+  const activity = runtimeActivity(args.jobId, args.now);
+  const reportedActivityAt = extractRigJobActivityAt(args.data, args.now);
+
+  if (
+    activity.fingerprint === null ||
+    activity.fingerprint !== fingerprint ||
+    (reportedActivityAt !== null && reportedActivityAt > activity.lastActivityAt)
+  ) {
+    activity.lastActivityAt = args.now;
+    activity.fingerprint = fingerprint;
+  }
+
+  return evaluateRigJobWatchdog({
+    status: args.status,
+    data: {
+      ...args.data,
+      lastActivityAt: new Date(activity.lastActivityAt).toISOString(),
+    },
+    now: args.now,
+  });
+}
+
+function evaluateUnavailableWorker(jobId: string, now: number) {
+  const activity = runtimeActivity(jobId, now);
+  return evaluateRigJobWatchdog({
+    status: "processing",
+    data: { lastActivityAt: new Date(activity.lastActivityAt).toISOString() },
+    now,
+  });
 }
 
 function timeoutPayload(args: {
@@ -42,7 +142,22 @@ function timeoutPayload(args: {
   };
 }
 
+function timeoutResponse(args: {
+  jobId: string;
+  progress: number;
+  data: Record<string, unknown>;
+  watchdog: ReturnType<typeof evaluateRigJobWatchdog>;
+}) {
+  activityRegistry().delete(args.jobId);
+  return NextResponse.json(timeoutPayload(args), {
+    headers: { "Cache-Control": "private, no-store" },
+  });
+}
+
 export async function GET(request: Request) {
+  const now = Date.now();
+  pruneActivityRegistry(now);
+
   try {
     const { searchParams } = new URL(request.url);
     const jobId = searchParams.get("jobId")?.trim();
@@ -50,6 +165,8 @@ export async function GET(request: Request) {
     if (!jobId) {
       return NextResponse.json({ error: "Falta jobId." }, { status: 400 });
     }
+
+    runtimeActivity(jobId, now);
 
     const workerUrl =
       process.env.GARMENT_WORKER_URL ??
@@ -82,12 +199,11 @@ export async function GET(request: Request) {
     const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
     const status = normalizeStatus(data);
     const progress = normalizeProgress(data);
-    const watchdog = evaluateRigJobWatchdog({ status, data });
+    const stage = normalizedStage(data);
+    const watchdog = evaluateActivity({ jobId, status, progress, stage, data, now });
 
     if (watchdog.expired) {
-      return NextResponse.json(timeoutPayload({ jobId, progress, data, watchdog }), {
-        headers: { "Cache-Control": "private, no-store" },
-      });
+      return timeoutResponse({ jobId, progress, data, watchdog });
     }
 
     if (!response.ok) {
@@ -113,13 +229,17 @@ export async function GET(request: Request) {
       ? `/api/creator-studio/blender/result?jobId=${encodeURIComponent(jobId)}`
       : null;
 
+    if (doneStates.has(status) || failedStates.has(status)) {
+      activityRegistry().delete(jobId);
+    }
+
     return NextResponse.json(
       {
         ok: true,
         jobId,
         status,
         progress,
-        stage: data.stage ?? data.step ?? data.message ?? null,
+        stage,
         resultUrl,
         error: data.error ?? data.failureReason ?? null,
         riggingStrategy: data.riggingStrategy ?? null,
@@ -130,7 +250,22 @@ export async function GET(request: Request) {
       { headers: { "Cache-Control": "private, no-store" } },
     );
   } catch (error) {
+    const { searchParams } = new URL(request.url);
+    const jobId = searchParams.get("jobId")?.trim();
     const timedOut = error instanceof Error && error.name === "AbortError";
+
+    if (jobId) {
+      const watchdog = evaluateUnavailableWorker(jobId, now);
+      if (watchdog.expired) {
+        return timeoutResponse({
+          jobId,
+          progress: 0,
+          data: {},
+          watchdog,
+        });
+      }
+    }
+
     return NextResponse.json(
       {
         error: timedOut
