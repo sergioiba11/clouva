@@ -7,6 +7,7 @@ import {
 } from "@/lib/clouva-ai/github";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 type GitHubRequest = {
@@ -28,7 +29,7 @@ function getSupabase(accessToken: string) {
   });
 }
 
-async function requireAdmin(request: Request) {
+async function requireProjectAccess(request: Request) {
   const authorization = request.headers.get("authorization") ?? "";
   const accessToken = authorization.startsWith("Bearer ")
     ? authorization.slice(7)
@@ -47,7 +48,7 @@ async function requireAdmin(request: Request) {
 
   const email = data.user.email?.toLowerCase();
   if (!email || !allowedEmails.includes(email)) {
-    throw new Error("Tu usuario no está autorizado para modificar el repositorio.");
+    throw new Error("Tu usuario no está autorizado para acceder al repositorio de CLOUVA.");
   }
 
   return { user: data.user, supabase };
@@ -55,20 +56,23 @@ async function requireAdmin(request: Request) {
 
 export async function GET(request: Request) {
   try {
-    await requireAdmin(request);
+    await requireProjectAccess(request);
     const status = await getRepositoryStatus();
-    return NextResponse.json({ ok: true, status });
+    return NextResponse.json(
+      { ok: true, status },
+      { headers: { "Cache-Control": "private, no-store" } },
+    );
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Error de GitHub." },
-      { status: 403 },
+      { status: 403, headers: { "Cache-Control": "private, no-store" } },
     );
   }
 }
 
 export async function POST(request: Request) {
   try {
-    const { user, supabase } = await requireAdmin(request);
+    const { user, supabase } = await requireProjectAccess(request);
     const body = (await request.json()) as GitHubRequest;
 
     if (body.action === "status") {

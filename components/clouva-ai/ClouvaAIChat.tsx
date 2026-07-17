@@ -1,11 +1,28 @@
 "use client";
 
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { Check, Copy, GitBranch, Loader2, MessageCircle, X } from "lucide-react";
+import {
+  AlertTriangle,
+  Check,
+  CheckCircle2,
+  Copy,
+  GitBranch,
+  Loader2,
+  MessageCircle,
+  RefreshCw,
+  X,
+} from "lucide-react";
+import {
+  CLOUVA_AI_MODE_STORAGE_KEY,
+  DEFAULT_CLOUVA_AI_MODE,
+  endpointForClouvaAIMode,
+  normalizeClouvaAIMode,
+  projectAccessLabel,
+  type ClouvaAIMode,
+} from "@/lib/clouva-ai/project-access";
 import { supabase } from "@/lib/supabase";
 
 type Message = { role: "user" | "assistant"; content: string };
-type Mode = "chat" | "project";
 type PendingAction = {
   type: "write_file";
   path: string;
@@ -21,10 +38,37 @@ type ApiPayload = {
   error?: string;
 };
 type StoredMessage = Message & { metadata?: Record<string, unknown> | null };
+type ProjectAccessState = "checking" | "connected" | "unavailable" | "signed_out";
+type ProjectAccess = {
+  state: ProjectAccessState;
+  repository: string | null;
+  branch: string | null;
+  message: string | null;
+  checkedAt: number | null;
+};
+type ProjectStatusPayload = {
+  ok?: boolean;
+  status?: {
+    connected?: boolean;
+    repository?: string;
+    branch?: string;
+    private?: boolean;
+    url?: string;
+    pushedAt?: string;
+  };
+  error?: string;
+};
 
 const WELCOME =
-  "Soy Trébol — CLOUVA AI. Usá Chat para conversar sobre la visión de CLOUVA o Proyecto para investigar el repositorio real.";
+  "Soy Trébol — CLOUVA AI. Proyecto queda listo para investigar el repositorio real mientras tu sesión autorizada siga activa.";
 const INITIAL_VISIBLE_MESSAGES = 12;
+const INITIAL_PROJECT_ACCESS: ProjectAccess = {
+  state: "checking",
+  repository: null,
+  branch: null,
+  message: null,
+  checkedAt: null,
+};
 
 function deduplicate(messages: StoredMessage[]) {
   return messages.filter((message, index) => {
@@ -61,7 +105,8 @@ export function ClouvaAIChat() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [input, setInput] = useState("");
-  const [mode, setMode] = useState<Mode>("chat");
+  const [mode, setMode] = useState<ClouvaAIMode>(DEFAULT_CLOUVA_AI_MODE);
+  const [projectAccess, setProjectAccess] = useState<ProjectAccess>(INITIAL_PROJECT_ACCESS);
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [loading, setLoading] = useState(false);
   const [applying, setApplying] = useState(false);
@@ -71,13 +116,38 @@ export function ClouvaAIChat() {
   const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_MESSAGES);
   const [copiedMessageIndex, setCopiedMessageIndex] = useState<number | null>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
+  const projectCheckIdRef = useRef(0);
 
   const messageOffset = Math.max(messages.length - visibleCount, 0);
   const visibleMessages = messages.slice(messageOffset);
   const hiddenMessageCount = messageOffset;
+  const accessText = projectAccessLabel(projectAccess);
 
   useEffect(() => {
+    const storedMode = normalizeClouvaAIMode(
+      window.localStorage.getItem(CLOUVA_AI_MODE_STORAGE_KEY),
+    );
+    setMode(storedMode);
     void loadLatestConversation();
+    void refreshProjectAccess();
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!session) {
+        setProjectAccess({
+          state: "signed_out",
+          repository: null,
+          branch: null,
+          message: "Iniciá sesión para activar Proyecto",
+          checkedAt: Date.now(),
+        });
+        return;
+      }
+      void refreshProjectAccess(session.access_token);
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
   useEffect(() => {
@@ -98,6 +168,81 @@ export function ClouvaAIChat() {
     const { data } = await supabase.auth.getSession();
     if (!data.session) throw new Error("Iniciá sesión en CLOUVA.");
     return data.session;
+  }
+
+  async function refreshProjectAccess(accessToken?: string): Promise<boolean> {
+    const checkId = ++projectCheckIdRef.current;
+    setProjectAccess((current) => ({
+      ...current,
+      state: "checking",
+      message: null,
+    }));
+
+    try {
+      let token = accessToken;
+      if (!token) {
+        const { data } = await supabase.auth.getSession();
+        token = data.session?.access_token;
+      }
+
+      if (!token) {
+        if (projectCheckIdRef.current === checkId) {
+          setProjectAccess({
+            state: "signed_out",
+            repository: null,
+            branch: null,
+            message: "Iniciá sesión para activar Proyecto",
+            checkedAt: Date.now(),
+          });
+        }
+        return false;
+      }
+
+      const response = await fetch("/api/clouva-ai/github", {
+        method: "GET",
+        headers: { Authorization: `Bearer ${token}` },
+        cache: "no-store",
+      });
+      const payload = (await response.json().catch(() => ({}))) as ProjectStatusPayload;
+
+      if (!response.ok || !payload.status?.connected) {
+        throw new Error(payload.error || "GitHub no confirmó el acceso al repositorio.");
+      }
+
+      if (projectCheckIdRef.current === checkId) {
+        setProjectAccess({
+          state: "connected",
+          repository: payload.status.repository || "sergioiba11/clouva",
+          branch: payload.status.branch || "main",
+          message: null,
+          checkedAt: Date.now(),
+        });
+      }
+      return true;
+    } catch (caught) {
+      const message =
+        caught instanceof Error ? caught.message : "No se pudo verificar el acceso a GitHub.";
+      if (projectCheckIdRef.current === checkId) {
+        setProjectAccess({
+          state: "unavailable",
+          repository: null,
+          branch: null,
+          message,
+          checkedAt: Date.now(),
+        });
+      }
+      return false;
+    }
+  }
+
+  function changeMode(nextMode: ClouvaAIMode) {
+    setMode(nextMode);
+    window.localStorage.setItem(CLOUVA_AI_MODE_STORAGE_KEY, nextMode);
+    setError(null);
+
+    if (nextMode === "project" && projectAccess.state !== "connected") {
+      void refreshProjectAccess();
+    }
   }
 
   async function loadLatestConversation() {
@@ -230,7 +375,16 @@ export function ClouvaAIChat() {
 
     try {
       const session = await getSession();
-      const endpoint = mode === "project" ? "/api/clouva-ai/agent" : "/api/gemini";
+      if (mode === "project" && projectAccess.state !== "connected") {
+        const connected = await refreshProjectAccess(session.access_token);
+        if (!connected) {
+          throw new Error(
+            "Proyecto no pudo acceder a GitHub. Revisá la sesión o la conexión y reintentá.",
+          );
+        }
+      }
+
+      const endpoint = endpointForClouvaAIMode(mode);
       const controller = new AbortController();
       const timeout = window.setTimeout(
         () => controller.abort(),
@@ -252,6 +406,8 @@ export function ClouvaAIChat() {
                   page: window.location.pathname,
                   url: window.location.href,
                   capturedAt: new Date().toISOString(),
+                  repository: projectAccess.repository || "sergioiba11/clouva",
+                  branch: projectAccess.branch || "main",
                 },
               }
             : {}),
@@ -270,6 +426,8 @@ export function ClouvaAIChat() {
       await saveMessage(activeConversationId, session.user.id, "user", message, {
         provider: "gemini",
         mode,
+        repository: mode === "project" ? projectAccess.repository : null,
+        branch: mode === "project" ? projectAccess.branch : null,
       });
       await saveMessage(activeConversationId, session.user.id, "assistant", answer, {
         provider: "gemini",
@@ -306,6 +464,11 @@ export function ClouvaAIChat() {
 
     try {
       const session = await getSession();
+      if (projectAccess.state !== "connected") {
+        const connected = await refreshProjectAccess(session.access_token);
+        if (!connected) throw new Error("GitHub requiere reconexión antes de aplicar cambios.");
+      }
+
       const response = await fetch("/api/clouva-ai/github", {
         method: "POST",
         headers: {
@@ -336,6 +499,7 @@ export function ClouvaAIChat() {
       }
       setMessages((current) => [...current, { role: "assistant", content: text }]);
       setPendingAction(null);
+      void refreshProjectAccess(session.access_token);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "No se pudo aplicar el cambio.");
     } finally {
@@ -359,7 +523,7 @@ export function ClouvaAIChat() {
           <p className="text-[10px] uppercase tracking-[0.28em] text-violet-300">Asistente CLOUVA</p>
           <h1 className="text-xl font-semibold">Trébol — CLOUVA AI</h1>
           <p className="mt-0.5 truncate text-xs text-white/50">
-            {activeModel ? `Modelo activo: ${activeModel}` : "Chat o investigación real del proyecto"}
+            {activeModel ? `Modelo activo: ${activeModel}` : "Proyecto con acceso GitHub persistente"}
           </p>
         </div>
 
@@ -373,10 +537,10 @@ export function ClouvaAIChat() {
         </button>
       </header>
 
-      <div className="mb-3 grid shrink-0 grid-cols-2 gap-2 rounded-2xl border border-white/10 bg-zinc-950 p-1">
+      <div className="mb-2 grid shrink-0 grid-cols-2 gap-2 rounded-2xl border border-white/10 bg-zinc-950 p-1">
         <button
           type="button"
-          onClick={() => setMode("chat")}
+          onClick={() => changeMode("chat")}
           disabled={loading || applying}
           className={`flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-sm transition ${
             mode === "chat" ? "bg-violet-600 text-white" : "text-white/55 hover:text-white"
@@ -386,7 +550,7 @@ export function ClouvaAIChat() {
         </button>
         <button
           type="button"
-          onClick={() => setMode("project")}
+          onClick={() => changeMode("project")}
           disabled={loading || applying}
           className={`flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-sm transition ${
             mode === "project" ? "bg-violet-600 text-white" : "text-white/55 hover:text-white"
@@ -394,6 +558,35 @@ export function ClouvaAIChat() {
         >
           <GitBranch className="h-4 w-4" /> Proyecto
         </button>
+      </div>
+
+      <div
+        className={`mb-3 flex shrink-0 items-center gap-2 rounded-xl border px-3 py-2 text-xs ${
+          projectAccess.state === "connected"
+            ? "border-emerald-400/25 bg-emerald-500/10 text-emerald-200"
+            : projectAccess.state === "checking"
+              ? "border-violet-400/20 bg-violet-500/10 text-violet-200"
+              : "border-amber-400/25 bg-amber-500/10 text-amber-100"
+        }`}
+      >
+        {projectAccess.state === "connected" ? (
+          <CheckCircle2 className="h-4 w-4 shrink-0" />
+        ) : projectAccess.state === "checking" ? (
+          <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+        ) : (
+          <AlertTriangle className="h-4 w-4 shrink-0" />
+        )}
+        <span className="min-w-0 flex-1 truncate">{accessText}</span>
+        {(projectAccess.state === "unavailable" || projectAccess.state === "signed_out") && (
+          <button
+            type="button"
+            onClick={() => void refreshProjectAccess()}
+            disabled={loading || applying}
+            className="inline-flex shrink-0 items-center gap-1 rounded-full border border-current/20 px-2 py-1 font-medium disabled:opacity-40"
+          >
+            <RefreshCw className="h-3 w-3" /> Reintentar
+          </button>
+        )}
       </div>
 
       <div
@@ -471,7 +664,7 @@ export function ClouvaAIChat() {
               <button
                 type="button"
                 onClick={applyChange}
-                disabled={applying}
+                disabled={applying || projectAccess.state !== "connected"}
                 className="flex flex-1 items-center justify-center gap-2 rounded-full bg-violet-600 px-4 py-3 text-sm font-semibold disabled:opacity-50"
               >
                 {applying ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
@@ -512,7 +705,11 @@ export function ClouvaAIChat() {
 
           <div className="flex items-center justify-between gap-3">
             <p className="px-2 text-[11px] text-white/35">
-              {mode === "project" ? "Proyecto usa GitHub real" : "Chat usa la visión de CLOUVA"}
+              {mode === "project"
+                ? projectAccess.state === "connected"
+                  ? "Proyecto usa GitHub real"
+                  : "Proyecto verificará GitHub antes de responder"
+                : "Chat usa la visión de CLOUVA"}
             </p>
             <button
               type="submit"
