@@ -80,38 +80,26 @@ export function GeminiModelSelector() {
   );
 
   return (
-    <section className="mx-auto mb-4 w-full max-w-5xl px-4 pt-4 sm:px-6">
-      <div className="rounded-3xl border border-violet-500/20 bg-zinc-950/95 p-4 shadow-xl shadow-violet-950/20">
-        <div className="flex items-start gap-3">
-          <div className="rounded-2xl bg-violet-500/15 p-2 text-violet-300">
-            <Cpu className="h-5 w-5" />
+    <section className="mx-auto w-full max-w-5xl shrink-0 px-4 pt-3 sm:px-6">
+      <div className="rounded-2xl border border-violet-500/20 bg-zinc-950/95 p-3 shadow-lg shadow-violet-950/20">
+        <div className="flex items-center gap-3">
+          <div className="shrink-0 rounded-xl bg-violet-500/15 p-2 text-violet-300">
+            <Cpu className="h-4 w-4" />
           </div>
+
           <div className="min-w-0 flex-1">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-violet-300">
-                  Modelo de Gemini
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-violet-300">
+                Modelo Gemini
+              </p>
+              {current && (
+                <p className="max-w-[52%] truncate font-mono text-[10px] text-white/35">
+                  {current.id}
                 </p>
-                <p className="mt-1 text-sm text-white/55">
-                  Elegí qué modelo usa esta conversación.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => void loadModels()}
-                disabled={loading}
-                className="rounded-full border border-white/10 p-2 text-white/55 transition hover:border-violet-400/50 hover:text-white disabled:opacity-40"
-                aria-label="Actualizar modelos"
-              >
-                {loading ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <RefreshCw className="h-4 w-4" />
-                )}
-              </button>
+              )}
             </div>
 
-            <div className="relative mt-3">
+            <div className="relative mt-1.5">
               <select
                 value={selected}
                 onChange={(event) => {
@@ -120,7 +108,7 @@ export function GeminiModelSelector() {
                   saveModel(value);
                 }}
                 disabled={loading || models.length === 0}
-                className="w-full appearance-none rounded-2xl border border-white/10 bg-black px-4 py-3 pr-11 text-sm text-white outline-none transition focus:border-violet-400/60 disabled:opacity-50"
+                className="w-full appearance-none rounded-xl border border-white/10 bg-black px-3 py-2 pr-9 text-xs text-white outline-none transition focus:border-violet-400/60 disabled:opacity-50"
               >
                 {models.length === 0 ? (
                   <option value={defaultModel}>{defaultModel}</option>
@@ -132,30 +120,30 @@ export function GeminiModelSelector() {
                   ))
                 )}
               </select>
-              <ChevronDown className="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-white/45" />
+              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-white/45" />
             </div>
-
-            {current && (
-              <div className="mt-3 rounded-2xl bg-white/[0.035] px-3 py-3">
-                <p className="text-sm leading-5 text-white/70">
-                  {current.description}
-                </p>
-                <p className="mt-2 break-all font-mono text-xs text-violet-300">
-                  {current.id}
-                </p>
-                <p className="mt-1 text-xs text-white/35">
-                  Entrada: {current.inputTokenLimit?.toLocaleString() ?? "—"} tokens · Salida: {current.outputTokenLimit?.toLocaleString() ?? "—"} tokens
-                </p>
-              </div>
-            )}
-
-            {error && (
-              <p className="mt-3 rounded-2xl border border-red-400/20 bg-red-500/10 px-3 py-2 text-sm text-red-200">
-                {error}
-              </p>
-            )}
           </div>
+
+          <button
+            type="button"
+            onClick={() => void loadModels()}
+            disabled={loading}
+            className="shrink-0 rounded-full border border-white/10 p-2 text-white/55 transition hover:border-violet-400/50 hover:text-white disabled:opacity-40"
+            aria-label="Actualizar modelos"
+          >
+            {loading ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="h-3.5 w-3.5" />
+            )}
+          </button>
         </div>
+
+        {error && (
+          <p className="mt-2 rounded-xl border border-red-400/20 bg-red-500/10 px-3 py-2 text-xs text-red-200">
+            {error}
+          </p>
+        )}
       </div>
     </section>
   );
