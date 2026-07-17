@@ -4,9 +4,6 @@ import { useEffect, useRef } from "react";
 import {
   ACESFilmicToneMapping,
   AmbientLight,
-  AnimationAction,
-  AnimationClip,
-  AnimationMixer,
   Bone,
   Box3,
   Clock,
@@ -30,28 +27,45 @@ import type { AvatarConfig } from "@/lib/avatar-engine/types";
 
 export type CreatorPoseMode = "idle" | "tpose" | "walk";
 
+export type CreatorStudioAvatarContext = {
+  model: Object3D;
+  headBone: Bone | null;
+  refit: () => void;
+};
+
 type Props = {
   modelUrl: string | null;
   fallbackModelUrl?: string | null;
   frontRotationY?: number;
+  viewRotationY?: number;
   config: AvatarConfig;
   poseMode: CreatorPoseMode;
   className?: string;
-  onReady?: (object: Object3D) => void;
+  onReady?: (object: Object3D, context?: CreatorStudioAvatarContext) => void;
 };
 
+type BoneBase = { quaternion: Quaternion; position: Vector3 };
+
 type HumanRig = {
+  head?: Bone;
+  neck?: Bone;
   leftUpperArm?: Bone;
   rightUpperArm?: Bone;
+  leftLowerArm?: Bone;
+  rightLowerArm?: Bone;
   leftUpperLeg?: Bone;
   rightUpperLeg?: Bone;
-  base: Map<Bone, Quaternion>;
+  leftLowerLeg?: Bone;
+  rightLowerLeg?: Bone;
+  base: Map<Bone, BoneBase>;
 };
 
 type Segment = { bone: Bone; child: Bone; midpoint: Vector3; direction: Vector3 };
 
 const LEFT = new Vector3(-1, 0, 0);
 const RIGHT = new Vector3(1, 0, 0);
+const DOWN_LEFT = new Vector3(-0.11, -0.994, 0);
+const DOWN_RIGHT = new Vector3(0.11, -0.994, 0);
 const tmpA = new Vector3();
 const tmpB = new Vector3();
 const tmpCurrent = new Vector3();
@@ -109,6 +123,22 @@ function firstBoneChild(bone: Bone | undefined) {
   return bone?.children.find((child: any) => child.isBone) as Bone | undefined;
 }
 
+function highestCentralBone(root: Object3D, bones: Bone[]) {
+  root.updateMatrixWorld(true);
+  const box = new Box3().setFromObject(root);
+  const centerX = (box.min.x + box.max.x) * 0.5;
+  const height = Math.max(box.max.y - box.min.y, 0.001);
+  return bones
+    .map((bone) => ({ bone, point: bone.getWorldPosition(new Vector3()) }))
+    .filter(({ bone, point }) => {
+      const name = clean(bone.name);
+      const central = Math.abs(point.x - centerX) < height * 0.18;
+      const excluded = ["eye", "jaw", "mouth", "finger", "hand", "weapon"].some((token) => name.includes(token));
+      return central && !excluded;
+    })
+    .sort((a, b) => b.point.y - a.point.y)[0]?.bone;
+}
+
 function geometricFallback(root: Object3D, bones: Bone[]) {
   root.updateMatrixWorld(true);
   const box = new Box3().setFromObject(root);
@@ -130,30 +160,29 @@ function geometricFallback(root: Object3D, bones: Bone[]) {
   const relativeX = (point: Vector3) => (point.x - centerX) / height;
 
   function upperArm(side: -1 | 1) {
-    const candidates = segments
+    return segments
       .filter((segment) => {
         const y = relativeY(segment.midpoint);
         const x = relativeX(segment.midpoint) * side;
         const horizontal = Math.abs(segment.direction.x) > Math.abs(segment.direction.y) * 0.3;
         return y > 0.48 && y < 0.82 && x > 0.035 && horizontal;
       })
-      .sort((a, b) => Math.abs(relativeY(b.midpoint) - 0.67) - Math.abs(relativeY(a.midpoint) - 0.67));
-    return candidates[0]?.bone;
+      .sort((a, b) => Math.abs(relativeY(a.midpoint) - 0.67) - Math.abs(relativeY(b.midpoint) - 0.67))[0]?.bone;
   }
 
   function upperLeg(side: -1 | 1) {
-    const candidates = segments
+    return segments
       .filter((segment) => {
         const y = relativeY(segment.midpoint);
         const x = relativeX(segment.midpoint) * side;
         const vertical = Math.abs(segment.direction.y) > Math.abs(segment.direction.x) * 0.55;
         return y > 0.2 && y < 0.58 && x > 0.008 && vertical;
       })
-      .sort((a, b) => b.midpoint.y - a.midpoint.y);
-    return candidates[0]?.bone;
+      .sort((a, b) => b.midpoint.y - a.midpoint.y)[0]?.bone;
   }
 
   return {
+    head: highestCentralBone(root, bones),
     leftUpperArm: upperArm(-1),
     rightUpperArm: upperArm(1),
     leftUpperLeg: upperLeg(-1),
@@ -166,16 +195,33 @@ async function collectRig(gltf: GLTF, root: Object3D): Promise<HumanRig> {
   const vrm = await resolveVrmBones(gltf);
   const pick = (vrmName: string, aliases: string[]) => vrm.get(vrmName) ?? findByName(bones, aliases);
   const geo = geometricFallback(root, bones);
+
+  const leftUpperArm = pick("leftUpperArm", ["leftupperarm", "upperarml", "jbiplupperarm", "lupperarm"]) ?? geo.leftUpperArm;
+  const rightUpperArm = pick("rightUpperArm", ["rightupperarm", "upperarmr", "jbiprupperarm", "rupperarm"]) ?? geo.rightUpperArm;
+  const leftUpperLeg = pick("leftUpperLeg", ["leftupperleg", "leftupleg", "thighl", "jbiplupperleg", "upperlegl"]) ?? geo.leftUpperLeg;
+  const rightUpperLeg = pick("rightUpperLeg", ["rightupperleg", "rightupleg", "thighr", "jbiprupperleg", "upperlegr"]) ?? geo.rightUpperLeg;
+
   const rig: HumanRig = {
-    leftUpperArm: pick("leftUpperArm", ["leftupperarm", "upperarml", "jbiplupperarm", "lupperarm"]) ?? geo.leftUpperArm,
-    rightUpperArm: pick("rightUpperArm", ["rightupperarm", "upperarmr", "jbiprupperarm", "rupperarm"]) ?? geo.rightUpperArm,
-    leftUpperLeg: pick("leftUpperLeg", ["leftupperleg", "leftupleg", "thighl", "jbiplupperleg", "upperlegl"]) ?? geo.leftUpperLeg,
-    rightUpperLeg: pick("rightUpperLeg", ["rightupperleg", "rightupleg", "thighr", "jbiprupperleg", "upperlegr"]) ?? geo.rightUpperLeg,
+    head: pick("head", ["head", "jbipchead", "bip01head"]) ?? geo.head,
+    neck: pick("neck", ["neck", "neck1", "jbipcneck"]),
+    leftUpperArm,
+    rightUpperArm,
+    leftLowerArm: pick("leftLowerArm", ["leftlowerarm", "leftforearm", "lowerarml", "forearml"]) ?? firstBoneChild(leftUpperArm),
+    rightLowerArm: pick("rightLowerArm", ["rightlowerarm", "rightforearm", "lowerarmr", "forearmr"]) ?? firstBoneChild(rightUpperArm),
+    leftUpperLeg,
+    rightUpperLeg,
+    leftLowerLeg: pick("leftLowerLeg", ["leftlowerleg", "leftleg", "calfl", "shinl"]) ?? firstBoneChild(leftUpperLeg),
+    rightLowerLeg: pick("rightLowerLeg", ["rightlowerleg", "rightleg", "calfr", "shinr"]) ?? firstBoneChild(rightUpperLeg),
     base: new Map(),
   };
-  for (const bone of bones) rig.base.set(bone, bone.quaternion.clone());
-  console.info("[Creator Studio stable rig]", {
+
+  for (const bone of bones) {
+    rig.base.set(bone, { quaternion: bone.quaternion.clone(), position: bone.position.clone() });
+  }
+
+  console.info("[Creator Studio stable rig v2]", {
     bones: bones.length,
+    head: rig.head?.name,
     leftUpperArm: rig.leftUpperArm?.name,
     rightUpperArm: rig.rightUpperArm?.name,
     leftUpperLeg: rig.leftUpperLeg?.name,
@@ -185,13 +231,17 @@ async function collectRig(gltf: GLTF, root: Object3D): Promise<HumanRig> {
 }
 
 function resetRig(rig: HumanRig) {
-  for (const [bone, base] of rig.base) bone.quaternion.copy(base);
+  for (const [bone, base] of rig.base) {
+    bone.quaternion.copy(base.quaternion);
+    bone.position.copy(base.position);
+  }
 }
 
 function aimBone(root: Object3D, bone: Bone | undefined, targetLocal: Vector3) {
   if (!bone) return;
   const child = firstBoneChild(bone);
   if (!child) return;
+  root.updateMatrixWorld(true);
   bone.getWorldPosition(tmpA);
   child.getWorldPosition(tmpB);
   tmpCurrent.copy(tmpB).sub(tmpA).normalize();
@@ -211,37 +261,44 @@ function applyStableProceduralPose(root: Object3D, rig: HumanRig, mode: CreatorP
   root.updateMatrixWorld(true);
 
   if (mode === "tpose") {
-    // Sólo se orienta el brazo superior. El antebrazo, la mano y los dedos heredan
-    // la transformación y conservan la orientación original del rig.
     aimBone(root, rig.leftUpperArm, LEFT);
     aimBone(root, rig.rightUpperArm, RIGHT);
+    aimBone(root, rig.leftLowerArm, LEFT);
+    aimBone(root, rig.rightLowerArm, RIGHT);
     return;
   }
 
   if (mode === "walk") {
     const step = Math.sin(elapsed * 4.2);
-    aimBone(root, rig.leftUpperArm, new Vector3(-0.14, -0.97, step * 0.22).normalize());
-    aimBone(root, rig.rightUpperArm, new Vector3(0.14, -0.97, -step * 0.22).normalize());
-    aimBone(root, rig.leftUpperLeg, new Vector3(-0.04, -0.98, -step * 0.2).normalize());
-    aimBone(root, rig.rightUpperLeg, new Vector3(0.04, -0.98, step * 0.2).normalize());
+    aimBone(root, rig.leftUpperArm, new Vector3(-0.13, -0.982, step * 0.13).normalize());
+    aimBone(root, rig.rightUpperArm, new Vector3(0.13, -0.982, -step * 0.13).normalize());
+    aimBone(root, rig.leftUpperLeg, new Vector3(-0.035, -0.995, -step * 0.11).normalize());
+    aimBone(root, rig.rightUpperLeg, new Vector3(0.035, -0.995, step * 0.11).normalize());
     return;
   }
 
-  const sway = Math.sin(elapsed * 1.4) * 0.018;
-  aimBone(root, rig.leftUpperArm, new Vector3(-0.12, -0.99, sway).normalize());
-  aimBone(root, rig.rightUpperArm, new Vector3(0.12, -0.99, -sway).normalize());
+  const sway = Math.sin(elapsed * 1.25) * 0.012;
+  aimBone(root, rig.leftUpperArm, new Vector3(DOWN_LEFT.x, DOWN_LEFT.y, sway).normalize());
+  aimBone(root, rig.rightUpperArm, new Vector3(DOWN_RIGHT.x, DOWN_RIGHT.y, -sway).normalize());
 }
 
-function findClip(clips: AnimationClip[], mode: CreatorPoseMode) {
-  const words = mode === "walk" ? ["walk", "walking"] : ["idle", "stand", "breath"];
-  return clips.find((clip) => words.some((word) => clean(clip.name).includes(word))) ?? null;
-}
-
-export function CreatorStudioAvatarViewer({ modelUrl, fallbackModelUrl, frontRotationY = 0, config, poseMode, className = "", onReady }: Props) {
+export function CreatorStudioAvatarViewer({
+  modelUrl,
+  fallbackModelUrl,
+  frontRotationY = 0,
+  viewRotationY = 0,
+  config,
+  poseMode,
+  className = "",
+  onReady,
+}: Props) {
   const mountRef = useRef<HTMLDivElement>(null);
   const poseRef = useRef(poseMode);
+  const viewRef = useRef(viewRotationY);
   const readyRef = useRef(onReady);
+
   useEffect(() => { poseRef.current = poseMode; }, [poseMode]);
+  useEffect(() => { viewRef.current = viewRotationY; }, [viewRotationY]);
   useEffect(() => { readyRef.current = onReady; }, [onReady]);
 
   useEffect(() => {
@@ -251,11 +308,11 @@ export function CreatorStudioAvatarViewer({ modelUrl, fallbackModelUrl, frontRot
     let frame = 0;
     let model: Object3D | null = null;
     let rig: HumanRig | null = null;
-    let clips: AnimationClip[] = [];
-    let mixer: AnimationMixer | null = null;
-    let action: AnimationAction | null = null;
     let activeMode: CreatorPoseMode | null = null;
-    let baseY = 0;
+    let activeView = Number.NaN;
+    let baseRotationY = 0;
+    const basePosition = new Vector3();
+    let refitCountdown = 0;
 
     const scene = new Scene();
     const camera = new PerspectiveCamera(31, 1, 0.02, 100);
@@ -279,20 +336,27 @@ export function CreatorStudioAvatarViewer({ modelUrl, fallbackModelUrl, frontRot
     controls.minDistance = 1.2;
     controls.maxDistance = 8;
 
+    const refit = () => {
+      if (!model) return;
+      model.updateMatrixWorld(true);
+      const rect = mount.getBoundingClientRect();
+      const aspect = Math.max(rect.width, 1) / Math.max(rect.height, 1);
+      const framed = frameAvatar(camera, model, aspect, 1.28);
+      controls.target.copy(framed.center);
+      controls.update();
+    };
+
     const resize = () => {
       const rect = mount.getBoundingClientRect();
       renderer.setSize(Math.max(rect.width, 1), Math.max(rect.height, 1), false);
       camera.aspect = Math.max(rect.width, 1) / Math.max(rect.height, 1);
       camera.updateProjectionMatrix();
-      if (model) {
-        const framed = frameAvatar(camera, model, camera.aspect, 1.28);
-        controls.target.copy(framed.center);
-        controls.update();
-      }
+      refit();
     };
 
     const observer = new ResizeObserver(resize);
     observer.observe(mount);
+
     const loader = new GLTFLoader();
     loader.setMeshoptDecoder(MeshoptDecoder);
 
@@ -307,12 +371,11 @@ export function CreatorStudioAvatarViewer({ modelUrl, fallbackModelUrl, frontRot
         }
       });
       model = gltf.scene;
-      baseY = model.position.y;
-      clips = gltf.animations;
+      baseRotationY = model.rotation.y;
+      basePosition.copy(model.position);
       rig = await collectRig(gltf, model);
-      mixer = clips.length ? new AnimationMixer(model) : null;
       scene.add(model);
-      readyRef.current?.(model);
+      readyRef.current?.(model, { model, headBone: rig.head ?? null, refit });
       resize();
     };
 
@@ -333,26 +396,33 @@ export function CreatorStudioAvatarViewer({ modelUrl, fallbackModelUrl, frontRot
 
     const clock = new Clock();
     const animate = () => {
-      const delta = Math.min(clock.getDelta(), 1 / 20);
-      const elapsed = clock.elapsedTime;
+      const elapsed = clock.getElapsedTime();
       const mode = poseRef.current;
+      const view = viewRef.current;
 
-      if (mode !== activeMode) {
-        action?.stop();
-        action = null;
-        if (mode !== "tpose" && mixer) {
-          const clip = findClip(clips, mode);
-          if (clip) {
-            action = mixer.clipAction(clip);
-            action.reset().fadeIn(0.16).play();
-          }
+      if (model && rig) {
+        if (view !== activeView) {
+          model.rotation.y = baseRotationY + view;
+          activeView = view;
+          refitCountdown = 2;
         }
-        activeMode = mode;
+        if (mode !== activeMode) {
+          activeMode = mode;
+          refitCountdown = Math.max(refitCountdown, 2);
+        }
+
+        applyStableProceduralPose(model, rig, mode, elapsed);
+        model.position.x = basePosition.x;
+        model.position.z = basePosition.z;
+        model.position.y = basePosition.y + (mode === "walk" ? Math.abs(Math.sin(elapsed * 4.2)) * 0.006 : 0);
+        model.updateMatrixWorld(true);
       }
 
-      if (action && mixer) mixer.update(delta);
-      else if (model && rig) applyStableProceduralPose(model, rig, mode, elapsed);
-      if (model) model.position.y = baseY + (mode === "walk" ? Math.abs(Math.sin(elapsed * 4.2)) * 0.004 : 0);
+      if (refitCountdown > 0) {
+        refitCountdown -= 1;
+        if (refitCountdown === 0) refit();
+      }
+
       controls.update();
       renderer.render(scene, camera);
       frame = requestAnimationFrame(animate);
@@ -363,8 +433,6 @@ export function CreatorStudioAvatarViewer({ modelUrl, fallbackModelUrl, frontRot
       disposed = true;
       cancelAnimationFrame(frame);
       observer.disconnect();
-      action?.stop();
-      mixer?.stopAllAction();
       controls.dispose();
       renderer.dispose();
       mount.replaceChildren();
