@@ -34,6 +34,23 @@ test("plantilla conserva skinning y topología en el worker existente", () => {
   assert.equal(job.options.preserveTopology, true);
 });
 
+test("cada job transporta el avatar activo del usuario", () => {
+  const job = buildBlenderJob({
+    avatarId: "avatar-user-1",
+    avatarUrl: "https://cdn.clouva.test/user-1/avatar.glb",
+    avatarSource: "user_avatars",
+    userId: "user-1",
+  });
+
+  assert.equal(job.pipelineVersion, "base-mesh-v2-user-avatar");
+  assert.equal(job.avatarRig, "clouva_user_avatar");
+  assert.equal(job.avatarId, "avatar-user-1");
+  assert.equal(job.avatarUrl, "https://cdn.clouva.test/user-1/avatar.glb");
+  assert.equal(job.avatar_url, "https://cdn.clouva.test/user-1/avatar.glb");
+  assert.equal(job.avatarSource, "user_avatars");
+  assert.equal(job.userId, "user-1");
+});
+
 test("preserveExistingSkinning activa modo plantilla aunque falte templateMode", () => {
   const job = buildBlenderJob({ preserveExistingSkinning: true, autoWeight: true });
   assert.equal(job.templateMode, true);
