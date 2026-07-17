@@ -49,14 +49,14 @@ export function ReferenceAssetLibrary({ selectedAssetId, onSelect, onCategoryCha
   const [license, setLicense] = useState("Free Standard");
   const [author, setAuthor] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [message, setMessage] = useState("Subí tu primer GLB y después seleccionalo para acomodarlo sobre el avatar.");
+  const [message, setMessage] = useState("Elegí uno de los GLB que ya guardaste en Supabase.");
   const [uploading, setUploading] = useState(false);
   const objectUrlRef = useRef<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   async function refresh() {
     try { setAssets(await listReferenceAssets()); }
-    catch (error) { setMessage(error instanceof Error ? error.message : "No se pudo abrir la biblioteca local"); }
+    catch (error) { setMessage(error instanceof Error ? error.message : "No se pudo abrir la biblioteca online"); }
   }
 
   useEffect(() => { void refresh(); }, []);
@@ -73,7 +73,7 @@ export function ReferenceAssetLibrary({ selectedAssetId, onSelect, onCategoryCha
     return assets.filter((asset) => {
       if (filterCategory !== "all" && asset.category !== filterCategory) return false;
       if (!normalizedSearch) return true;
-      return [asset.name, asset.fileName, asset.author, asset.license]
+      return [asset.name, asset.fileName, asset.author, asset.license, asset.status]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(normalizedSearch));
     });
@@ -89,7 +89,9 @@ export function ReferenceAssetLibrary({ selectedAssetId, onSelect, onCategoryCha
     objectUrlRef.current = url;
     onSelect(asset, url);
     onCategoryChange?.(asset.category);
-    setMessage(`✓ ${asset.name} está listo. Tocá “Probar GLB en mi avatar” para ubicarlo y ajustarlo.`);
+    setMessage(asset.isTemplate
+      ? `✓ ${asset.name} es una plantilla base. CLOUVA conservará su rig y sus pesos.`
+      : `✓ ${asset.name} está listo para probar y Auto Rig con el worker existente.`);
   }
 
   async function handleFile(file: File | undefined) {
@@ -140,15 +142,15 @@ export function ReferenceAssetLibrary({ selectedAssetId, onSelect, onCategoryCha
     <section style={panel} className="glb-library-root">
       <header style={header}>
         <div>
-          <h3 style={heading}><FileBox size={20}/> Biblioteca GLB</h3>
-          <p style={muted}>Importá modelos desde Blender, guardalos por categoría y elegí cuál querés probar sobre tu avatar.</p>
+          <h3 style={heading}><FileBox size={20}/> Biblioteca GLB de Supabase</h3>
+          <p style={muted}>Las plantillas aparecen primero. Los demás objetos pueden pasar por Auto Rig usando el worker que ya está conectado.</p>
         </div>
         <div style={counter}><strong>{assets.length}</strong><span>assets guardados</span></div>
       </header>
 
       <div style={workspace} className="glb-library-workspace">
         <article style={uploadPanel} className="glb-upload-panel">
-          <div style={stepLabel}>1 · IMPORTAR MODELO</div>
+          <div style={stepLabel}>1 · AGREGAR OTRO MODELO</div>
           <label style={label}>¿Qué tipo de objeto es?</label>
           <select value={category} onChange={(event) => setCategory(event.target.value as ReferenceCategory)} style={input}>
             {REFERENCE_CATEGORIES.map((item) => <option key={item} value={item}>{CATEGORY_LABELS[item]}</option>)}
@@ -157,7 +159,7 @@ export function ReferenceAssetLibrary({ selectedAssetId, onSelect, onCategoryCha
           <button type="button" onClick={openPicker} disabled={uploading} style={dropzone}>
             {uploading ? <Loader2 size={28} className="animate-spin"/> : <Upload size={28}/>} 
             <strong>{uploading ? "Guardando GLB…" : "Elegir archivo .glb"}</strong>
-            <span>Máximo 80 MB · compatible con Blender y Android</span>
+            <span>Máximo 80 MB · se guarda en la biblioteca existente</span>
           </button>
           <button type="button" onClick={() => setShowAdvanced((value) => !value)} style={advancedButton}>
             Datos opcionales del modelo <ChevronDown size={16} style={{ transform: showAdvanced ? "rotate(180deg)" : "none" }}/>
@@ -175,8 +177,8 @@ export function ReferenceAssetLibrary({ selectedAssetId, onSelect, onCategoryCha
 
         <article style={libraryPanel} className="glb-assets-panel">
           <div style={libraryTop} className="glb-library-top">
-            <div><div style={stepLabel}>2 · ELEGIR DE LA BIBLIOTECA</div><strong>Seleccioná un GLB para acomodarlo</strong></div>
-            <div style={searchBox} className="glb-search"><Search size={16}/><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar modelo…"/></div>
+            <div><div style={stepLabel}>2 · ELEGIR DE LO QUE YA SUBISTE</div><strong>Seleccioná una referencia o plantilla</strong></div>
+            <div style={searchBox} className="glb-search"><Search size={16}/><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar modelo o estado…"/></div>
           </div>
           <div style={categories}>
             <button onClick={() => setFilterCategory("all")} style={{ ...categoryButton, ...(filterCategory === "all" ? activeCategory : {}) }}><FolderOpen size={16}/> Todos <span>{assets.length}</span></button>
@@ -185,7 +187,7 @@ export function ReferenceAssetLibrary({ selectedAssetId, onSelect, onCategoryCha
             ))}
           </div>
           {visibleAssets.length === 0 ? (
-            <div style={empty}><FileBox size={30}/><strong>No hay GLB en esta categoría</strong><span>Elegí una categoría y subí un archivo desde el panel de arriba.</span></div>
+            <div style={empty}><FileBox size={30}/><strong>No hay GLB en esta categoría</strong><span>Elegí otra categoría o agregá un modelo.</span></div>
           ) : (
             <div style={assetGrid} className="glb-asset-grid">
               {visibleAssets.map((asset) => {
@@ -193,10 +195,10 @@ export function ReferenceAssetLibrary({ selectedAssetId, onSelect, onCategoryCha
                 return (
                   <div key={asset.id} style={{ ...assetCard, ...(selected ? selectedCard : {}) }}>
                     <button onClick={() => selectAsset(asset)} style={assetMain}>
-                      <div style={assetPreview}><span style={{ fontSize: 34 }}>{CATEGORY_EMOJI[asset.category]}</span>{selected ? <span style={selectedBadge}><Check size={13}/> Seleccionado</span> : null}</div>
-                      <div style={assetInfo}><strong title={asset.name}>{asset.name}</strong><span>{CATEGORY_LABELS[asset.category]} · {(asset.size / 1024 / 1024).toFixed(1)} MB</span><small>{asset.author || "Autor sin registrar"}</small></div>
+                      <div style={assetPreview}><span style={{ fontSize: 34 }}>{CATEGORY_EMOJI[asset.category]}</span><span style={asset.isTemplate ? templateBadge : referenceBadge}>{asset.isTemplate ? "Plantilla base" : asset.status === "processing" ? "Procesando" : asset.status === "error" ? "Con error" : "Sin validar"}</span>{selected ? <span style={selectedBadge}><Check size={13}/> Seleccionado</span> : null}</div>
+                      <div style={assetInfo}><strong title={asset.name}>{asset.name}</strong><span>{CATEGORY_LABELS[asset.category]} · {(asset.size / 1024 / 1024).toFixed(1)} MB</span><small>{asset.isTemplate ? "Conservar rig y pesos" : "Disponible para Auto Rig"}</small></div>
                     </button>
-                    <div style={cardActions}><button onClick={() => selectAsset(asset)} style={useButton}>{selected ? "Listo para probar" : "Usar en el visor"}</button><button aria-label={`Eliminar ${asset.name}`} onClick={() => void removeAsset(asset)} style={trashButton}><Trash2 size={16}/></button></div>
+                    <div style={cardActions}><button onClick={() => selectAsset(asset)} style={useButton}>{selected ? "Listo para probar" : asset.isTemplate ? "Usar plantilla" : "Usar en Auto Rig"}</button><button aria-label={`Eliminar ${asset.name}`} onClick={() => void removeAsset(asset)} style={trashButton}><Trash2 size={16}/></button></div>
                   </div>
                 );
               })}
@@ -225,29 +227,31 @@ const header: React.CSSProperties = { display: "flex", justifyContent: "space-be
 const heading: React.CSSProperties = { margin: 0, display: "flex", alignItems: "center", gap: 8 };
 const muted: React.CSSProperties = { color: "#9f97a9", fontSize: 13, lineHeight: 1.45, margin: "5px 0 0" };
 const counter: React.CSSProperties = { display: "flex", alignItems: "baseline", gap: 7, border: "1px solid #33283e", borderRadius: 12, padding: "8px 11px", color: "#aaa1b4", fontSize: 12 };
-const workspace: React.CSSProperties = { display: "grid", gridTemplateColumns: "minmax(260px,.75fr) minmax(0,1.7fr)", gap: 12, minWidth: 0 };
-const uploadPanel: React.CSSProperties = { padding: 14, borderRadius: 16, background: "#0a080d", border: "1px solid #292031", minWidth: 0 };
-const libraryPanel: React.CSSProperties = { minWidth: 0, padding: 14, borderRadius: 16, background: "#0a080d", border: "1px solid #292031", overflow: "hidden" };
-const stepLabel: React.CSSProperties = { color: "#a879ef", fontSize: 11, fontWeight: 800, letterSpacing: 1.1, marginBottom: 7 };
-const label: React.CSSProperties = { display: "block", color: "#aaa1b4", fontSize: 12, margin: "8px 0 5px" };
-const input: React.CSSProperties = { width: "100%", boxSizing: "border-box", background: "#09070c", border: "1px solid #33283e", borderRadius: 10, color: "white", padding: "10px 11px", minWidth: 0 };
-const dropzone: React.CSSProperties = { width: "100%", boxSizing: "border-box", marginTop: 10, minHeight: 124, border: "1px dashed #6d4695", borderRadius: 14, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 6, cursor: "pointer", background: "linear-gradient(145deg,#171020,#0e0a12)", color: "white", textAlign: "center", padding: 14 };
-const advancedButton: React.CSSProperties = { width: "100%", marginTop: 9, display: "flex", alignItems: "center", justifyContent: "space-between", border: 0, background: "transparent", color: "#aaa1b4", padding: "8px 2px", cursor: "pointer" };
-const advancedGrid: React.CSSProperties = { display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 8 };
-const messageBox: React.CSSProperties = { marginTop: 9, padding: 10, borderRadius: 10, background: "#17101e", border: "1px solid #3b2b49", color: "#cdbdde", fontSize: 12, overflowWrap: "anywhere" };
-const libraryTop: React.CSSProperties = { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" };
-const searchBox: React.CSSProperties = { display: "flex", alignItems: "center", gap: 7, minWidth: 190, maxWidth: "100%", background: "#100c14", border: "1px solid #30243a", borderRadius: 10, padding: "8px 10px", color: "#8f8498", boxSizing: "border-box" };
-const categories: React.CSSProperties = { display: "flex", gap: 7, overflowX: "auto", maxWidth: "100%", padding: "12px 0 10px" };
-const categoryButton: React.CSSProperties = { flex: "0 0 auto", display: "inline-flex", alignItems: "center", gap: 6, border: "1px solid #30243a", background: "#120e16", color: "#aaa1b4", borderRadius: 999, padding: "7px 10px", cursor: "pointer", whiteSpace: "nowrap" };
-const activeCategory: React.CSSProperties = { borderColor: "#8b5cf6", color: "white", background: "#2c1742" };
-const assetGrid: React.CSSProperties = { display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(180px,1fr))", gap: 9, minWidth: 0 };
-const assetCard: React.CSSProperties = { overflow: "hidden", border: "1px solid #292031", borderRadius: 14, background: "#100c14", minWidth: 0 };
-const selectedCard: React.CSSProperties = { borderColor: "#9b6be3", boxShadow: "0 0 0 1px rgba(155,107,227,.2)" };
-const assetMain: React.CSSProperties = { width: "100%", border: 0, background: "transparent", color: "white", padding: 0, cursor: "pointer", textAlign: "left" };
-const assetPreview: React.CSSProperties = { position: "relative", minHeight: 92, display: "grid", placeItems: "center", background: "radial-gradient(circle at 50% 20%,#2a1b3c,#0b0810 70%)" };
-const selectedBadge: React.CSSProperties = { position: "absolute", left: 7, top: 7, display: "inline-flex", alignItems: "center", gap: 4, borderRadius: 999, padding: "4px 7px", background: "#7542b8", fontSize: 9 };
-const assetInfo: React.CSSProperties = { display: "grid", gap: 3, padding: 10, minWidth: 0, overflowWrap: "anywhere" };
-const cardActions: React.CSSProperties = { display: "flex", borderTop: "1px solid #292031" };
-const useButton: React.CSSProperties = { flex: 1, border: 0, background: "#1a1122", color: "#d7c3f4", padding: 9, cursor: "pointer", fontWeight: 700, fontSize: 11 };
-const trashButton: React.CSSProperties = { border: 0, borderLeft: "1px solid #292031", background: "#130e17", color: "#b49fbb", padding: "0 12px", cursor: "pointer" };
-const empty: React.CSSProperties = { minHeight: 180, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 6, color: "#81798a", textAlign: "center", border: "1px dashed #292031", borderRadius: 14, padding: 16, overflowWrap: "anywhere" };
+const workspace: React.CSSProperties = { display: "grid", gridTemplateColumns: "minmax(260px,.72fr) minmax(0,1.6fr)", gap: 14 };
+const uploadPanel: React.CSSProperties = { minWidth: 0, border: "1px solid #2f2438", borderRadius: 16, padding: 14, background: "#0c0910" };
+const libraryPanel: React.CSSProperties = { minWidth: 0, border: "1px solid #2f2438", borderRadius: 16, padding: 14, background: "#0c0910" };
+const libraryTop: React.CSSProperties = { display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" };
+const stepLabel: React.CSSProperties = { color: "#a883e7", fontSize: 11, fontWeight: 800, letterSpacing: ".08em", marginBottom: 6 };
+const label: React.CSSProperties = { display: "block", color: "#aaa1b4", fontSize: 13, margin: "13px 0 7px" };
+const input: React.CSSProperties = { width: "100%", boxSizing: "border-box", background: "#0d0a10", border: "1px solid #33283e", borderRadius: 12, color: "white", padding: "12px 13px", outline: "none" };
+const dropzone: React.CSSProperties = { width: "100%", marginTop: 12, border: "1px dashed #6c4994", borderRadius: 14, padding: "22px 12px", background: "#17101e", color: "#ded1f3", display: "grid", placeItems: "center", gap: 7, cursor: "pointer" };
+const advancedButton: React.CSSProperties = { marginTop: 10, width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center", border: "1px solid #31253b", borderRadius: 11, padding: "10px 12px", background: "#100c14", color: "#b9afc3", cursor: "pointer" };
+const advancedGrid: React.CSSProperties = { display: "grid", gridTemplateColumns: "repeat(2,minmax(0,1fr))", gap: 10 };
+const messageBox: React.CSSProperties = { marginTop: 12, border: "1px solid #3b2b49", borderRadius: 11, padding: 10, color: "#cbbfd4", fontSize: 12, lineHeight: 1.45 };
+const searchBox: React.CSSProperties = { minWidth: 220, flex: "1 1 240px", display: "flex", alignItems: "center", gap: 8, border: "1px solid #33283e", borderRadius: 11, padding: "9px 11px", color: "#8f8798", background: "#100c14" };
+const categories: React.CSSProperties = { display: "flex", gap: 7, overflowX: "auto", padding: "12px 0", marginBottom: 4 };
+const categoryButton: React.CSSProperties = { border: "1px solid #30253a", background: "#110d15", color: "#aaa1b3", borderRadius: 10, padding: "8px 10px", display: "inline-flex", alignItems: "center", gap: 6, whiteSpace: "nowrap", cursor: "pointer" };
+const activeCategory: React.CSSProperties = { background: "#2b1740", borderColor: "#7548ad", color: "white" };
+const empty: React.CSSProperties = { minHeight: 210, display: "grid", placeItems: "center", alignContent: "center", gap: 8, color: "#8f8799", textAlign: "center" };
+const assetGrid: React.CSSProperties = { display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(190px,1fr))", gap: 10 };
+const assetCard: React.CSSProperties = { minWidth: 0, border: "1px solid #2f2538", borderRadius: 14, overflow: "hidden", background: "#100c14" };
+const selectedCard: React.CSSProperties = { borderColor: "#9b6ee8", boxShadow: "0 0 0 1px #9b6ee8 inset" };
+const assetMain: React.CSSProperties = { display: "block", width: "100%", textAlign: "left", border: 0, padding: 0, background: "transparent", color: "white", cursor: "pointer" };
+const assetPreview: React.CSSProperties = { minHeight: 96, position: "relative", display: "grid", placeItems: "center", background: "linear-gradient(135deg,#20142e,#0d0a11)" };
+const selectedBadge: React.CSSProperties = { position: "absolute", right: 7, bottom: 7, borderRadius: 99, padding: "4px 7px", background: "#4c2c71", display: "inline-flex", alignItems: "center", gap: 4, fontSize: 10 };
+const templateBadge: React.CSSProperties = { position: "absolute", left: 7, top: 7, borderRadius: 99, padding: "4px 7px", background: "#173825", border: "1px solid #3c8658", color: "#91edb0", fontSize: 10, fontWeight: 800 };
+const referenceBadge: React.CSSProperties = { ...templateBadge, background: "#2b2036", border: "1px solid #73538d", color: "#d1b5e9" };
+const assetInfo: React.CSSProperties = { display: "grid", gap: 4, padding: 11, minWidth: 0 };
+const cardActions: React.CSSProperties = { display: "grid", gridTemplateColumns: "1fr auto", gap: 7, padding: "0 10px 10px" };
+const useButton: React.CSSProperties = { border: 0, borderRadius: 9, padding: "8px 9px", background: "#2d1942", color: "#dac8ef", cursor: "pointer" };
+const trashButton: React.CSSProperties = { border: "1px solid #4d2931", borderRadius: 9, padding: 8, background: "#211015", color: "#e58b9b", cursor: "pointer" };
