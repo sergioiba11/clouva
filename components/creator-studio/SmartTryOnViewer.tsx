@@ -47,6 +47,19 @@ type LoadedReference = {
 const avatarSize = new Vector3();
 const avatarCenter = new Vector3();
 const targetPosition = new Vector3();
+const HAIR_TOKENS = ["hair", "hairstyle", "pelo", "cabello", "fringe", "bangs", "bang", "scalp"];
+
+function cleanAssetName(value: unknown) {
+  return String(value ?? "").toLowerCase().replace(/[^a-z0-9áéíóúüñ]/g, "");
+}
+
+function isHairMesh(object: any) {
+  const values = [object?.name, object?.userData?.name];
+  const materials = Array.isArray(object?.material) ? object.material : object?.material ? [object.material] : [];
+  for (const material of materials) values.push(material?.name, material?.userData?.name);
+  const joined = values.map(cleanAssetName).join(" ");
+  return HAIR_TOKENS.some((token) => joined.includes(cleanAssetName(token)));
+}
 
 function categoryTarget(category: string, height: number) {
   switch (category) {
@@ -59,7 +72,8 @@ function categoryTarget(category: string, height: number) {
     case "zapatillas":
       return { width: height * 0.35, height: height * 0.13, depth: height * 0.38, y: 0.075, z: height * 0.035 };
     case "gorra":
-      return { width: height * 0.28, height: height * 0.15, depth: height * 0.28, y: 0.88, z: 0 };
+      // La gorra debe descansar sobre la coronilla, no centrarse dentro de la cabeza.
+      return { width: height * 0.29, height: height * 0.13, depth: height * 0.29, y: 0.94, z: 0 };
     case "cadena":
       return { width: height * 0.22, height: height * 0.2, depth: height * 0.09, y: 0.68, z: height * 0.065 };
     case "lentes":
@@ -166,7 +180,7 @@ export function SmartTryOnViewer({
       root.add(model);
       avatarRef.current.parent?.add(root);
       referenceRef.current = { root, originalSize: size };
-      onReferenceStatus?.(`✓ GLB real cargado (${meshCount} malla${meshCount === 1 ? "" : "s"}). Referencia visual sin rig; ajustala y mandala al Blender Worker para rig y pesos reales.`);
+      onReferenceStatus?.(`✓ GLB real cargado (${meshCount} malla${meshCount === 1 ? "" : "s"}). Referencia visual lista para ajustar y validar con Blender.`);
     }).catch((error) => {
       console.error("Reference GLB failed", error);
       onReferenceStatus?.(error instanceof Error ? `No se pudo mostrar el GLB: ${error.message}` : "No se pudo abrir este GLB. Probá exportarlo nuevamente desde Blender.");
@@ -186,8 +200,10 @@ export function SmartTryOnViewer({
       const current = currentRef.current;
 
       if (avatarRoot) {
-        avatarRoot.traverse((object) => {
-          if ((object as Mesh).isMesh) object.visible = current.showBody && !current.garmentOnly;
+        avatarRoot.traverse((object: any) => {
+          if (!(object as Mesh).isMesh && !object.isSkinnedMesh) return;
+          const hiddenByHat = current.category === "gorra" && isHairMesh(object);
+          object.visible = current.showBody && !current.garmentOnly && !hiddenByHat;
         });
       }
 
@@ -208,7 +224,9 @@ export function SmartTryOnViewer({
         const userScale = Math.min(Math.max(current.adjustments.scale / 100, 0.25), 3);
         const width = Math.min(Math.max(current.adjustments.width / 100, 0.35), 2.4);
         const length = Math.min(Math.max(current.adjustments.length / 100, 0.35), 2.4);
-        const depth = Math.min(Math.max(1 + current.adjustments.distance / 100, 0.5), 1.8);
+        const depth = current.category === "gorra"
+          ? 1
+          : Math.min(Math.max(1 + current.adjustments.distance / 100, 0.5), 1.8);
 
         reference.root.scale.set(
           uniformBase * userScale * fitScale * width,
@@ -216,10 +234,13 @@ export function SmartTryOnViewer({
           uniformBase * userScale * fitScale * depth,
         );
 
+        // Para gorra, "distancia" mueve el accesorio hacia delante/atrás;
+        // en las prendas flexibles conserva el comportamiento de profundidad.
+        const accessoryDepthOffset = current.category === "gorra" ? current.adjustments.distance / 100 : 0;
         targetPosition.set(
           avatarCenter.x + current.adjustments.x / 100,
           avatarBox.min.y + height * target.y + (current.adjustments.y + current.adjustments.height) / 100,
-          avatarCenter.z + target.z,
+          avatarCenter.z + target.z + accessoryDepthOffset,
         );
         reference.root.position.copy(targetPosition);
         reference.root.rotation.set(0, (current.adjustments.rotation * Math.PI) / 180, 0);
