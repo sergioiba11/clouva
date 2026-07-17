@@ -20,14 +20,14 @@ SCRIPT_PATH = Path(__file__).with_name("rig_garment.py")
 MAX_DOWNLOAD_BYTES = int(os.getenv("MAX_DOWNLOAD_BYTES", str(120 * 1024 * 1024)))
 BLENDER_TIMEOUT_SECONDS = int(os.getenv("BLENDER_TIMEOUT_SECONDS", "420"))
 CLOUVA_AVATAR_URL = os.getenv("CLOUVA_AVATAR_URL") or os.getenv("CLOUVA_BASE_AVATAR_URL")
-VALID_CATEGORIES = {"hoodie", "shirt", "jacket", "pants", "shorts", "shoes", "accessory"}
+VALID_CATEGORIES = {"hoodie", "shirt", "jacket", "pants", "shorts", "shoes", "hat", "accessory"}
 CATEGORY_MAP = {
     "hoodie": "hoodie",
     "remera": "shirt",
     "campera": "jacket",
     "baggy": "pants",
     "zapatillas": "shoes",
-    "gorra": "accessory",
+    "gorra": "hat",
     "cadena": "accessory",
     "lentes": "accessory",
     "mochila": "accessory",
@@ -77,9 +77,26 @@ def cleanup(path: Path) -> None:
     shutil.rmtree(path, ignore_errors=True)
 
 
-def run_blender_job(job_id: str, job_dir: Path, avatar_path: Path, garment_path: Path, output_path: Path, category: str, art_path: Path | None = None, color: str = "#0a0a0a") -> None:
+def run_blender_job(
+    job_id: str,
+    job_dir: Path,
+    avatar_path: Path,
+    garment_path: Path,
+    output_path: Path,
+    category: str,
+    art_path: Path | None = None,
+    color: str = "",
+    preview_settings: dict | None = None,
+) -> None:
     try:
-        set_job(job_id, status="processing", progress=12, stage="Importando en Blender")
+        set_job(
+            job_id,
+            status="processing",
+            progress=12,
+            stage="Analizando rig y pesos del objeto",
+            category=category,
+            riggingStrategy="retarget_existing_or_category_anchor",
+        )
         command = [
             BLENDER_BIN,
             "--background",
@@ -95,8 +112,15 @@ def run_blender_job(job_id: str, job_dir: Path, avatar_path: Path, garment_path:
             category,
             str(art_path) if art_path and art_path.exists() else "",
             color,
+            json.dumps(preview_settings or {}, separators=(",", ":")),
         ]
-        set_job(job_id, progress=30, stage="Alineando con clouva_base_v1")
+        set_job(
+            job_id,
+            progress=30,
+            stage="Remapeando el rig del objeto al armature del avatar"
+            if category != "hat"
+            else "Ajustando la gorra y vinculándola al hueso Head",
+        )
         result = subprocess.run(
             command,
             capture_output=True,
@@ -105,9 +129,13 @@ def run_blender_job(job_id: str, job_dir: Path, avatar_path: Path, garment_path:
             cwd=str(job_dir),
             env={**os.environ, "PYTHONUNBUFFERED": "1"},
         )
-        stdout = result.stdout[-12000:]
-        stderr = result.stderr[-8000:]
-        print(f"[worker] job={job_id} blender returncode={result.returncode}\n[stdout]\n{stdout}\n[stderr]\n{stderr}", flush=True)
+        stdout = result.stdout[-16000:]
+        stderr = result.stderr[-10000:]
+        print(
+            f"[worker] job={job_id} category={category} blender returncode={result.returncode}\n"
+            f"[stdout]\n{stdout}\n[stderr]\n{stderr}",
+            flush=True,
+        )
 
         if result.returncode != 0 or not output_path.exists() or output_path.stat().st_size < 1024:
             set_job(
@@ -115,14 +143,26 @@ def run_blender_job(job_id: str, job_dir: Path, avatar_path: Path, garment_path:
                 status="failed",
                 progress=100,
                 stage="Falló la validación del rig",
-                error="Automatic rigging validation failed",
+                error="Automatic rig retarget validation failed",
                 details={"returncode": result.returncode, "stderr": stderr, "stdout": stdout},
             )
             return
 
-        set_job(job_id, status="completed", progress=100, stage="GLB riggeado listo", resultUrl=f"/jobs/{job_id}/result")
+        set_job(
+            job_id,
+            status="completed",
+            progress=100,
+            stage="GLB adaptado al rig del avatar",
+            resultUrl=f"/jobs/{job_id}/result",
+        )
     except subprocess.TimeoutExpired:
-        set_job(job_id, status="failed", progress=100, stage="Blender agotó el tiempo máximo", error=f"Blender exceeded {BLENDER_TIMEOUT_SECONDS}s")
+        set_job(
+            job_id,
+            status="failed",
+            progress=100,
+            stage="Blender agotó el tiempo máximo",
+            error=f"Blender exceeded {BLENDER_TIMEOUT_SECONDS}s",
+        )
     except Exception as exc:
         set_job(job_id, status="failed", progress=100, stage="Error inesperado", error=str(exc))
 
@@ -135,6 +175,9 @@ def health():
         "blender": BLENDER_BIN,
         "script_exists": SCRIPT_PATH.exists(),
         "avatar_configured": bool(CLOUVA_AVATAR_URL),
+        "object_rig_retarget_supported": True,
+        "hat_head_anchor_supported": True,
+        "preview_transforms_supported": True,
     }
 
 
@@ -154,6 +197,10 @@ async def create_job(file: UploadFile = File(...), job: str = Form("{}")):
     category = CATEGORY_MAP.get(category_raw, category_raw)
     if category not in VALID_CATEGORIES:
         category = "accessory"
+
+    preview_settings = payload.get("previewSettings")
+    if not isinstance(preview_settings, dict):
+        preview_settings = {}
 
     job_id = uuid.uuid4().hex
     job_dir = Path(tempfile.mkdtemp(prefix=f"clouva-rig-{job_id}-"))
@@ -186,14 +233,27 @@ async def create_job(file: UploadFile = File(...), job: str = Form("{}")):
         error=None,
         job_dir=str(job_dir),
         output_path=str(output_path),
+        category=category,
+        riggingStrategy="retarget_existing_or_category_anchor",
     )
     thread = threading.Thread(
         target=run_blender_job,
         args=(job_id, job_dir, avatar_path, garment_path, output_path, category),
+        kwargs={
+            "color": str(payload.get("color") or ""),
+            "preview_settings": preview_settings,
+        },
         daemon=True,
     )
     thread.start()
-    return {"id": job_id, "jobId": job_id, "status": "queued", "progress": 5}
+    return {
+        "id": job_id,
+        "jobId": job_id,
+        "status": "queued",
+        "progress": 5,
+        "category": category,
+        "riggingStrategy": "retarget_existing_or_category_anchor",
+    }
 
 
 @app.get("/jobs/{job_id}")
@@ -222,7 +282,8 @@ def get_job_result(job_id: str):
 
 @app.post("/rig")
 def rig(request: RigRequest):
-    category = request.category.strip().lower()
+    category_raw = request.category.strip().lower()
+    category = CATEGORY_MAP.get(category_raw, category_raw)
     if category not in VALID_CATEGORIES:
         raise HTTPException(status_code=400, detail="Invalid category")
 
@@ -237,9 +298,19 @@ def rig(request: RigRequest):
         download(str(request.garment_url), garment_path)
         if request.art_url:
             download(str(request.art_url), art_path)
-        run_blender_job("legacy-sync", job_dir, avatar_path, garment_path, output_path, category, art_path, request.color or "#0a0a0a")
+        run_blender_job(
+            "legacy-sync",
+            job_dir,
+            avatar_path,
+            garment_path,
+            output_path,
+            category,
+            art_path,
+            request.color or "",
+            {},
+        )
         if not output_path.exists() or output_path.stat().st_size < 1024:
-            raise HTTPException(status_code=422, detail="Automatic rigging validation failed")
+            raise HTTPException(status_code=422, detail="Automatic rig retarget validation failed")
         return FileResponse(
             output_path,
             media_type="model/gltf-binary",
