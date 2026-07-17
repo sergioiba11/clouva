@@ -95,15 +95,21 @@ export async function POST(request: Request) {
       }, { status: response.status });
     }
 
+    const returnedJobId = data.jobId ?? data.id;
+    const workerReturnedResult = data.resultUrl ?? data.outputUrl;
+    const proxiedResultUrl = workerReturnedResult && returnedJobId
+      ? `/api/creator-studio/blender/result?jobId=${encodeURIComponent(String(returnedJobId))}`
+      : workerReturnedResult ?? null;
+
     return NextResponse.json({
       ok: true,
       mock: false,
       workerUrl,
       riggingStrategy: job.riggingStrategy,
       templateMode: job.templateMode,
-      jobId: data.jobId ?? data.id,
+      jobId: returnedJobId,
       status: data.status ?? "queued",
-      resultUrl: data.resultUrl ?? data.outputUrl ?? null,
+      resultUrl: proxiedResultUrl,
       message: data.message ?? "El trabajo fue enviado al Garment Worker.",
       raw: data,
     });
