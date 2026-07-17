@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { getRedirectByRole } from "@/lib/auth";
 
 function redirect(path: string) {
   window.location.replace(path);
@@ -29,21 +30,29 @@ export default function AuthCallbackContent() {
     if (startedRef.current) return;
     startedRef.current = true;
 
-    const emergencyRedirect = window.setTimeout(() => {
-      redirect(isAddAccountMode ? "/mi-flow?openAccountSwitcher=1" : "/perfil");
-    }, 9000);
+    let finished = false;
+    const failSafe = window.setTimeout(() => {
+      if (finished) return;
+      redirect(`/login?error=${encodeURIComponent("Google no pudo confirmar la sesión. Volvé a intentarlo.")}`);
+    }, 18000);
 
     const handleCallback = async () => {
       try {
         if (oauthError) throw new Error(oauthError);
 
         const { supabase } = await import("@/lib/supabase");
-        let session = (await supabase.auth.getSession()).data.session;
+        setMessage("Confirmando la sesión de Google...");
 
-        if (!session && code) {
+        let session = (await raceTimeout(
+          supabase.auth.getSession(),
+          4000,
+          "No se pudo leer la sesión de Google",
+        )).data.session;
+
+        if (!session?.user && code) {
           const exchange = await raceTimeout(
             supabase.auth.exchangeCodeForSession(code),
-            8000,
+            12000,
             "El acceso con Google tardó demasiado",
           );
           if (exchange.error) throw exchange.error;
@@ -51,50 +60,82 @@ export default function AuthCallbackContent() {
         }
 
         if (!session?.user) {
-          const retry = await raceTimeout(supabase.auth.getSession(), 3000, "La sesión tardó demasiado");
+          const retry = await raceTimeout(
+            supabase.auth.getSession(),
+            4000,
+            "La sesión de Google no quedó guardada",
+          );
           session = retry.data.session;
         }
 
-        if (!session?.user) {
-          throw new Error("No se pudo crear la sesión de Google.");
-        }
+        if (!session?.user) throw new Error("No se pudo crear la sesión de Google.");
 
         const user = session.user;
-        const isAdmin = user.email?.toLowerCase() === "sergio.iba.11@gmail.com";
-        const destination = isAdmin ? "/admin" : "/perfil";
+        setMessage("Cargando tu perfil de CLOUVA...");
 
-        setMessage("Sesión iniciada. Entrando a CLOUVA...");
-        window.clearTimeout(emergencyRedirect);
+        const defaultName =
+          (user.user_metadata?.full_name as string | undefined) ??
+          (user.user_metadata?.name as string | undefined) ??
+          (user.email ? user.email.split("@")[0] : "Usuario");
 
-        void (async () => {
-          try {
-            const defaultName =
-              (user.user_metadata?.full_name as string | undefined) ??
-              (user.user_metadata?.name as string | undefined) ??
-              (user.email ? user.email.split("@")[0] : "Usuario");
+        let { data: profile, error: profileError } = await raceTimeout(
+          supabase
+            .from("profiles")
+            .select("id, role, display_name, full_name")
+            .eq("id", user.id)
+            .maybeSingle(),
+          6000,
+          "El perfil tardó demasiado en cargar",
+        );
 
-            const { data: existing } = await supabase
+        if (profileError) throw profileError;
+
+        if (!profile) {
+          const created = await raceTimeout(
+            supabase
               .from("profiles")
-              .select("id, role, display_name, full_name")
-              .eq("id", user.id)
-              .maybeSingle();
-
-            if (!existing) {
-              await supabase.from("profiles").insert({
+              .insert({
                 id: user.id,
                 display_name: defaultName,
                 full_name: defaultName,
-                role: isAdmin ? "admin" : "cliente",
-              });
-            }
-          } catch (profileError) {
-            console.error("Profile sync after Google login failed", profileError);
-          }
-        })();
+                role: "cliente",
+              })
+              .select("id, role, display_name, full_name")
+              .single(),
+            6000,
+            "No se pudo crear el perfil",
+          );
+          if (created.error) throw created.error;
+          profile = created.data;
+        } else if (!profile.display_name || !profile.full_name) {
+          const updated = await raceTimeout(
+            supabase
+              .from("profiles")
+              .update({
+                display_name: profile.display_name || defaultName,
+                full_name: profile.full_name || defaultName,
+              })
+              .eq("id", user.id)
+              .select("id, role, display_name, full_name")
+              .single(),
+            6000,
+            "No se pudo completar el perfil",
+          );
+          if (updated.error) throw updated.error;
+          profile = updated.data;
+        }
 
-        redirect(isAddAccountMode ? `${destination}?openAccountSwitcher=1` : destination);
+        localStorage.removeItem("clouva.switch_target");
+        const destination = getRedirectByRole(profile?.role ?? "cliente");
+        const target = isAddAccountMode ? `${destination}?openAccountSwitcher=1` : destination;
+
+        finished = true;
+        window.clearTimeout(failSafe);
+        setMessage("Sesión iniciada. Entrando a CLOUVA...");
+        redirect(target);
       } catch (error) {
-        window.clearTimeout(emergencyRedirect);
+        finished = true;
+        window.clearTimeout(failSafe);
         const text = error instanceof Error ? error.message : "No se pudo iniciar sesión con Google";
         console.error("Google callback failed", error);
         redirect(`/login?error=${encodeURIComponent(text)}`);
@@ -102,7 +143,7 @@ export default function AuthCallbackContent() {
     };
 
     void handleCallback();
-    return () => window.clearTimeout(emergencyRedirect);
+    return () => window.clearTimeout(failSafe);
   }, [code, isAddAccountMode, oauthError]);
 
   return (
