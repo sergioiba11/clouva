@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import time
 import uuid
 from pathlib import Path
 from urllib.request import Request, urlopen
@@ -21,7 +22,17 @@ RIG_OBJECT_SCRIPT_PATH = Path(__file__).with_name("rig_object.py")
 ATTACH_OBJECT_SCRIPT_PATH = Path(__file__).with_name("attach_object.py")
 MAX_DOWNLOAD_BYTES = int(os.getenv("MAX_DOWNLOAD_BYTES", str(120 * 1024 * 1024)))
 BLENDER_TIMEOUT_SECONDS = int(os.getenv("BLENDER_TIMEOUT_SECONDS", "420"))
-CLOUVA_AVATAR_URL = os.getenv("CLOUVA_AVATAR_URL") or os.getenv("CLOUVA_BASE_AVATAR_URL")
+# CLOUVA_AVATAR_URL/CLOUVA_BASE_AVATAR_URL siguen funcionando como override manual fijo.
+# Si no están seteadas pero sí SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY +
+# CLOUVA_OFFICIAL_AVATAR_USER_ID, el avatar se resuelve dinámicamente consultando
+# user_avatars (is_active=true) en cada job, así que re-riggear el avatar oficial desde
+# /admin no requiere volver a tocar variables de entorno acá.
+CLOUVA_AVATAR_URL_STATIC = os.getenv("CLOUVA_AVATAR_URL") or os.getenv("CLOUVA_BASE_AVATAR_URL")
+SUPABASE_URL = (os.getenv("NEXT_PUBLIC_SUPABASE_URL") or os.getenv("SUPABASE_URL") or "").rstrip("/")
+SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+CLOUVA_OFFICIAL_AVATAR_USER_ID = os.getenv("CLOUVA_OFFICIAL_AVATAR_USER_ID")
+_AVATAR_URL_CACHE: dict[str, object] = {"url": None, "checked_at": 0.0}
+AVATAR_URL_CACHE_SECONDS = 20
 HAT_DEFAULT_LIFT_CM = float(os.getenv("HAT_DEFAULT_LIFT_CM", "12"))
 VALID_CATEGORIES = {"hoodie", "shirt", "jacket", "pants", "shorts", "shoes", "hat", "accessory"}
 CATEGORY_MAP = {
@@ -74,6 +85,45 @@ def download(url: str, destination: Path) -> None:
             output.write(chunk)
     if destination.stat().st_size < 16:
         raise RuntimeError(f"Downloaded file is empty: {url}")
+
+
+def fetch_active_avatar_url_from_supabase() -> str | None:
+    if not (SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY and CLOUVA_OFFICIAL_AVATAR_USER_ID):
+        return None
+    query = (
+        f"{SUPABASE_URL}/rest/v1/user_avatars"
+        f"?user_id=eq.{CLOUVA_OFFICIAL_AVATAR_USER_ID}"
+        "&is_active=eq.true&status=eq.ready&archived_at=is.null"
+        "&select=model_url&order=updated_at.desc&limit=1"
+    )
+    request = Request(
+        query,
+        headers={
+            "apikey": SUPABASE_SERVICE_ROLE_KEY,
+            "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+        },
+    )
+    with urlopen(request, timeout=15) as response:
+        rows = json.loads(response.read().decode("utf-8"))
+    if rows and rows[0].get("model_url"):
+        return str(rows[0]["model_url"])
+    return None
+
+
+def resolve_avatar_url() -> str | None:
+    if CLOUVA_AVATAR_URL_STATIC:
+        return CLOUVA_AVATAR_URL_STATIC
+    now = time.monotonic()
+    if now - float(_AVATAR_URL_CACHE["checked_at"]) < AVATAR_URL_CACHE_SECONDS:
+        return _AVATAR_URL_CACHE["url"]  # type: ignore[return-value]
+    try:
+        url = fetch_active_avatar_url_from_supabase()
+    except Exception as exc:
+        print(f"[worker] could not resolve active avatar from Supabase: {exc}", flush=True)
+        url = None
+    _AVATAR_URL_CACHE["url"] = url
+    _AVATAR_URL_CACHE["checked_at"] = now
+    return url
 
 
 def cleanup(path: Path) -> None:
@@ -367,8 +417,9 @@ class AttachObjectRequest(BaseModel):
 
 @app.post("/attach-object")
 def create_attach_object_job(request: AttachObjectRequest):
-    if not CLOUVA_AVATAR_URL:
-        raise HTTPException(status_code=503, detail="Falta CLOUVA_AVATAR_URL o CLOUVA_BASE_AVATAR_URL en Railway.")
+    avatar_url = resolve_avatar_url()
+    if not avatar_url:
+        raise HTTPException(status_code=503, detail="No se pudo resolver el avatar activo (revisá CLOUVA_AVATAR_URL o SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY/CLOUVA_OFFICIAL_AVATAR_USER_ID).")
 
     with JOBS_LOCK:
         source = JOBS.get(request.riggedObjectJobId)
@@ -387,7 +438,7 @@ def create_attach_object_job(request: AttachObjectRequest):
     output_path = job_dir / "combined.glb"
 
     try:
-        download(CLOUVA_AVATAR_URL, avatar_path)
+        download(avatar_url, avatar_path)
     except Exception as exc:
         cleanup(job_dir)
         raise HTTPException(status_code=502, detail=f"No se pudo descargar el avatar base: {exc}") from exc
@@ -421,7 +472,8 @@ def health():
         "service": "clouva-garment-rig",
         "blender": BLENDER_BIN,
         "script_exists": SCRIPT_PATH.exists(),
-        "avatar_configured": bool(CLOUVA_AVATAR_URL),
+        "avatar_configured": bool(resolve_avatar_url()),
+        "avatar_resolution": "static_env" if CLOUVA_AVATAR_URL_STATIC else ("supabase_active_avatar" if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY and CLOUVA_OFFICIAL_AVATAR_USER_ID else "unconfigured"),
         "object_rig_retarget_supported": True,
         "hat_head_anchor_supported": True,
         "hat_default_lift_cm": HAT_DEFAULT_LIFT_CM,
@@ -431,8 +483,9 @@ def health():
 
 @app.post("/jobs")
 async def create_job(file: UploadFile = File(...), job: str = Form("{}")):
-    if not CLOUVA_AVATAR_URL:
-        raise HTTPException(status_code=503, detail="Falta CLOUVA_AVATAR_URL o CLOUVA_BASE_AVATAR_URL en Railway.")
+    avatar_url = resolve_avatar_url()
+    if not avatar_url:
+        raise HTTPException(status_code=503, detail="No se pudo resolver el avatar activo (revisá CLOUVA_AVATAR_URL o SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY/CLOUVA_OFFICIAL_AVATAR_USER_ID).")
     if not file.filename or not file.filename.lower().endswith(".glb"):
         raise HTTPException(status_code=400, detail="El archivo debe ser .glb")
 
@@ -466,7 +519,7 @@ async def create_job(file: UploadFile = File(...), job: str = Form("{}")):
     garment_path.write_bytes(content)
 
     try:
-        download(CLOUVA_AVATAR_URL, avatar_path)
+        download(avatar_url, avatar_path)
     except Exception as exc:
         cleanup(job_dir)
         raise HTTPException(status_code=502, detail=f"No se pudo descargar el avatar base: {exc}") from exc
