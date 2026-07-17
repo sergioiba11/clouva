@@ -61,6 +61,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Avatar is not ready" }, { status: 409 });
   }
 
+  const { data: previousActive } = await auth.supabase
+    .from("user_avatars")
+    .select("id")
+    .eq("user_id", auth.user.id)
+    .eq("is_active", true)
+    .limit(1)
+    .maybeSingle();
+
   const now = new Date().toISOString();
   const { error: deactivateError } = await auth.supabase
     .from("user_avatars")
@@ -76,11 +84,28 @@ export async function POST(request: NextRequest) {
     .eq("user_id", auth.user.id)
     .select("id,name,status,model_url,preview_image_url,is_active,front_rotation_y,updated_at")
     .single();
-  if (activateError) return NextResponse.json({ error: activateError.message }, { status: 500 });
 
-  await auth.supabase.from("profiles").update({ avatar_3d_url: active.model_url }).eq("id", auth.user.id);
+  if (activateError || !active) {
+    if (previousActive?.id) {
+      await auth.supabase.from("user_avatars").update({ is_active: true }).eq("id", previousActive.id).eq("user_id", auth.user.id);
+    }
+    return NextResponse.json({ error: activateError?.message || "No se pudo activar el avatar" }, { status: 500 });
+  }
 
-  return NextResponse.json({ avatar: active });
+  const { error: profileError } = await auth.supabase
+    .from("profiles")
+    .update({ avatar_3d_url: active.model_url, updated_at: now })
+    .eq("id", auth.user.id);
+
+  if (profileError) {
+    await auth.supabase.from("user_avatars").update({ is_active: false }).eq("id", avatarId).eq("user_id", auth.user.id);
+    if (previousActive?.id && previousActive.id !== avatarId) {
+      await auth.supabase.from("user_avatars").update({ is_active: true }).eq("id", previousActive.id).eq("user_id", auth.user.id);
+    }
+    return NextResponse.json({ error: `No se pudo sincronizar el avatar activo: ${profileError.message}` }, { status: 500 });
+  }
+
+  return NextResponse.json({ avatar: active, profileSynced: true });
 }
 
 export async function PATCH(request: NextRequest) {
@@ -92,9 +117,12 @@ export async function PATCH(request: NextRequest) {
   const archived = Boolean(body?.archived);
   if (!avatarId) return NextResponse.json({ error: "Missing avatarId" }, { status: 400 });
 
+  const updates: Record<string, unknown> = { archived_at: archived ? new Date().toISOString() : null };
+  if (archived) updates.is_active = false;
+
   const { data, error } = await auth.supabase
     .from("user_avatars")
-    .update({ archived_at: archived ? new Date().toISOString() : null, is_active: archived ? false : undefined })
+    .update(updates)
     .eq("id", avatarId)
     .eq("user_id", auth.user.id)
     .select("id,archived_at,is_active")
