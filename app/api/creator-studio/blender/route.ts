@@ -1,58 +1,8 @@
 import { NextResponse } from "next/server";
+import { buildBlenderJob, type BlenderRequest } from "@/lib/creator-studio/blender-job";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
-
-type BlenderRequest = {
-  sourceUrl?: string;
-  category?: string;
-  rig?: string;
-  autoFix?: boolean;
-  autoWeight?: boolean;
-  autoExport?: boolean;
-  targetPolycount?: number;
-  maxFileSizeMb?: number;
-  textureResolution?: number;
-  formats?: string[];
-  previewSettings?: Record<string, unknown>;
-  referenceAssetName?: string | null;
-};
-
-function buildJob(payload: BlenderRequest) {
-  return {
-    type: "clouva_creator_pipeline",
-    operation: "fit_and_rig_reference",
-    avatarRig: payload.rig ?? "clouva_base_v1",
-    category: payload.category ?? "accessory",
-    sourceUrl: payload.sourceUrl ?? null,
-    referenceAssetName: payload.referenceAssetName ?? null,
-    previewSettings: payload.previewSettings ?? {},
-    options: {
-      cleanGeometry: true,
-      repairNormals: true,
-      applyTransforms: true,
-      centerModel: true,
-      fitToAvatar: true,
-      shrinkwrap: true,
-      surfaceDeform: true,
-      transferSkinWeights: payload.autoWeight ?? true,
-      transferVertexGroups: true,
-      attachArmature: true,
-      preserveMaterials: true,
-      removeClipping: payload.autoFix ?? true,
-      animationTests: ["tpose", "idle", "walk", "run"],
-      generateLod: true,
-      targetPolycount: payload.targetPolycount ?? 25000,
-      maxFileSizeMb: payload.maxFileSizeMb ?? 18,
-      textureResolution: payload.textureResolution ?? 2048,
-      compressMaterials: true,
-      generateThumbnails: true,
-      generateTurntable: true,
-      formats: payload.formats ?? ["glb"],
-      autoExport: payload.autoExport ?? true,
-    },
-  };
-}
 
 function workerErrorMessage(data: Record<string, unknown>, status: number) {
   const detail = data.detail;
@@ -88,13 +38,19 @@ export async function POST(request: Request) {
       if (sourceFile.size > 80 * 1024 * 1024) {
         return NextResponse.json({ error: "El GLB supera 80 MB." }, { status: 413 });
       }
+
+      const bytes = new Uint8Array(await sourceFile.slice(0, 4).arrayBuffer());
+      const magic = String.fromCharCode(...bytes);
+      if (magic !== "glTF") {
+        return NextResponse.json({ error: "El archivo no contiene un encabezado GLB válido." }, { status: 400 });
+      }
     } else {
       payload = (await request.json()) as BlenderRequest;
     }
 
     const workerUrl = process.env.GARMENT_WORKER_URL ?? process.env.BLENDER_WORKER_URL ?? "https://rig.clouva.com.ar";
     const workerToken = process.env.GARMENT_WORKER_TOKEN ?? process.env.BLENDER_WORKER_TOKEN;
-    const job = buildJob(payload);
+    const job = buildBlenderJob(payload);
 
     let response: Response;
     if (sourceFile) {
@@ -134,6 +90,7 @@ export async function POST(request: Request) {
         summary: "El Garment/Blender Worker rechazó el trabajo.",
         status: response.status,
         workerUrl,
+        riggingStrategy: job.riggingStrategy,
         details: data,
       }, { status: response.status });
     }
@@ -142,6 +99,8 @@ export async function POST(request: Request) {
       ok: true,
       mock: false,
       workerUrl,
+      riggingStrategy: job.riggingStrategy,
+      templateMode: job.templateMode,
       jobId: data.jobId ?? data.id,
       status: data.status ?? "queued",
       resultUrl: data.resultUrl ?? data.outputUrl ?? null,
