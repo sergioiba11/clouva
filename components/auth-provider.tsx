@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
-import type { Session, User } from "@supabase/supabase-js";
+import type { AuthChangeEvent, Session, User } from "@supabase/supabase-js";
 import { normalizeRole, type Role } from "@/lib/auth";
 import { saveAccount, setActiveAccountId } from "@/lib/account-switcher";
 
@@ -28,41 +28,68 @@ type AuthContextType = {
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+const AUTH_TIMEOUT_MS = 10000;
+const PROFILE_COLUMNS = "id, role, display_name, full_name, avatar_url, avatar_3d_url, spotify_url, username";
 
-const AUTH_TIMEOUT_MS = 8000;
-
-function withTimeout<T>(promise: Promise<T>, label: string, timeoutMs = AUTH_TIMEOUT_MS): Promise<T> {
+function withTimeout<T>(promise: PromiseLike<T>, label: string, timeoutMs = AUTH_TIMEOUT_MS): Promise<T> {
   return Promise.race([
-    promise,
+    Promise.resolve(promise),
     new Promise<T>((_, reject) => {
       window.setTimeout(() => reject(new Error(`${label} tardó demasiado`)), timeoutMs);
     }),
   ]);
 }
 
-async function ensureProfile(user: User): Promise<Profile | null> {
-  const { supabase } = await import("@/lib/supabase");
-  const displayName = (user.user_metadata?.full_name as string | undefined) ?? (user.email ? user.email.split("@")[0] : "Usuario") ?? "Usuario";
-  const { data: existing } = await supabase.from("profiles").select("id, role, display_name").eq("id", user.id).maybeSingle();
-  if (!existing) {
-    const { data } = await supabase.from("profiles").insert({ id: user.id, role: "cliente", display_name: displayName }).select("id, role, display_name").maybeSingle();
-    return data ?? null;
-  }
-  if (!existing.display_name) {
-    const { data } = await supabase.from("profiles").update({ display_name: displayName }).eq("id", user.id).select("id, role, display_name").maybeSingle();
-    return data ?? null;
-  }
-  return existing;
+function defaultDisplayName(user: User) {
+  return (
+    (user.user_metadata?.full_name as string | undefined) ??
+    (user.user_metadata?.name as string | undefined) ??
+    (user.email ? user.email.split("@")[0] : "Usuario")
+  );
 }
 
-async function loadProfileByUserId(userId: string): Promise<Profile | null> {
+async function loadOrCreateProfile(user: User): Promise<Profile> {
   const { supabase } = await import("@/lib/supabase");
-  const { data } = await supabase.from("profiles").select("id, role, display_name, full_name, avatar_url, avatar_3d_url, spotify_url, username").eq("id", userId).maybeSingle();
-  return data ?? null;
-}
+  const name = defaultDisplayName(user);
 
-function getPostAuthRedirect(roleValue: string | null | undefined) {
-  return normalizeRole(roleValue) === "admin" ? "/admin" : "/mi-flow";
+  const existing = await supabase
+    .from("profiles")
+    .select(PROFILE_COLUMNS)
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (existing.error) throw existing.error;
+
+  if (!existing.data) {
+    const created = await supabase
+      .from("profiles")
+      .insert({
+        id: user.id,
+        role: "cliente",
+        display_name: name,
+        full_name: name,
+      })
+      .select(PROFILE_COLUMNS)
+      .single();
+    if (created.error || !created.data) throw created.error ?? new Error("No se pudo crear el perfil");
+    return created.data as Profile;
+  }
+
+  if (!existing.data.display_name || !existing.data.full_name) {
+    const updated = await supabase
+      .from("profiles")
+      .update({
+        display_name: existing.data.display_name || name,
+        full_name: existing.data.full_name || name,
+      })
+      .eq("id", user.id)
+      .select(PROFILE_COLUMNS)
+      .single();
+    if (updated.error || !updated.data) throw updated.error ?? new Error("No se pudo completar el perfil");
+    return updated.data as Profile;
+  }
+
+  return existing.data as Profile;
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -73,130 +100,136 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [hydrationReady, setHydrationReady] = useState(false);
   const [profileReady, setProfileReady] = useState(false);
-  const oauthHashDetectedRef = useRef(false);
+
+  const profileRef = useRef<Profile | null>(null);
+  const resolvedUserIdRef = useRef<string | null>(null);
+  const pendingUserIdRef = useRef<string | null>(null);
+  const runRef = useRef(0);
 
   useEffect(() => {
     let alive = true;
-    let runId = 0;
+    let unsubscribe: (() => void) | undefined;
 
-    const resolveFromSession = async (nextSession: Session | null) => {
-      const currentRun = ++runId;
+    const clearAuth = () => {
+      runRef.current += 1;
+      pendingUserIdRef.current = null;
+      resolvedUserIdRef.current = null;
+      profileRef.current = null;
+      setSession(null);
+      setUser(null);
+      setProfile(null);
+      setRole("cliente");
+      setProfileReady(true);
+      setLoading(false);
+    };
+
+    const resolveSession = async (nextSession: Session | null, event: AuthChangeEvent | "INITIAL_SESSION") => {
+      if (!alive) return;
+
       setSession(nextSession);
       setUser(nextSession?.user ?? null);
+      setHydrationReady(true);
 
-      if (!nextSession?.user) {
-        if (!alive || currentRun !== runId) return;
-        setProfile(null);
-        setRole("cliente");
+      const nextUser = nextSession?.user;
+      if (!nextUser) {
+        clearAuth();
+        setHydrationReady(true);
+        return;
+      }
+
+      const userId = nextUser.id;
+
+      // Renovar el token no debe volver a borrar ni recargar un perfil que ya está listo.
+      if (resolvedUserIdRef.current === userId && profileRef.current?.id === userId) {
+        setProfile(profileRef.current);
+        setRole(normalizeRole(profileRef.current.role));
         setProfileReady(true);
         setLoading(false);
         return;
       }
 
+      // Supabase puede emitir SIGNED_IN y TOKEN_REFRESHED casi juntos. Si el mismo
+      // usuario ya se está cargando, conservamos esa tarea en vez de cancelarla.
+      if (pendingUserIdRef.current === userId) return;
+
+      const runId = ++runRef.current;
+      pendingUserIdRef.current = userId;
       setLoading(true);
       setProfileReady(false);
 
-      let profileData: Profile | null = null;
       try {
-        await withTimeout(ensureProfile(nextSession.user), "Crear o validar el perfil");
-        profileData = await withTimeout(loadProfileByUserId(nextSession.user.id), "Cargar el perfil");
-      } catch (error) {
-        console.error("Auth profile bootstrap failed", error);
-        // La sesión sigue siendo válida aunque Supabase tarde o falle al leer profiles.
-        // Dejamos entrar con rol cliente y permitimos que la app continúe cargando.
-      }
+        const profileData = await withTimeout(loadOrCreateProfile(nextUser), "Cargar el perfil de CLOUVA");
+        if (!alive || runId !== runRef.current) return;
 
-      if (!alive || currentRun !== runId) return;
+        profileRef.current = profileData;
+        resolvedUserIdRef.current = userId;
+        const nextRole = normalizeRole(profileData.role);
+        setProfile(profileData);
+        setRole(nextRole);
 
-      if (oauthHashDetectedRef.current && !profileData) {
-        oauthHashDetectedRef.current = false;
-      }
-
-      const nextRole = normalizeRole(profileData?.role);
-      setProfile(profileData);
-      setRole(nextRole);
-
-      if (nextSession.user.email) {
-        saveAccount({
-          id: nextSession.user.id,
-          email: nextSession.user.email,
-          display_name: profileData?.full_name ?? profileData?.display_name ?? nextSession.user.email.split("@")[0],
-          avatar_url: profileData?.avatar_url ?? null,
-          role: nextRole,
-        });
-      }
-      setActiveAccountId(nextSession.user.id);
-
-      if (oauthHashDetectedRef.current) {
-        const redirectPath = getPostAuthRedirect(profileData?.role);
-        window.history.replaceState(null, "", redirectPath);
-        oauthHashDetectedRef.current = false;
-      }
-
-      setProfileReady(true);
-      setLoading(false);
-    };
-
-    const bootstrap = async () => {
-      try {
-        const { supabase } = await import("@/lib/supabase");
-
-        if (typeof window !== "undefined" && window.location.hash.includes("access_token")) {
-          oauthHashDetectedRef.current = true;
-          const { data: callbackData } = await withTimeout(supabase.auth.getSession(), "Leer callback de acceso");
-          if (!callbackData.session?.user) {
-            oauthHashDetectedRef.current = false;
-            window.history.replaceState(null, "", "/login?error=auth_callback");
-            return;
-          }
-          await withTimeout(supabase.auth.refreshSession(), "Actualizar sesión");
+        if (nextUser.email) {
+          saveAccount({
+            id: userId,
+            email: nextUser.email,
+            display_name: profileData.full_name ?? profileData.display_name ?? nextUser.email.split("@")[0],
+            avatar_url: profileData.avatar_url ?? null,
+            role: nextRole,
+          });
         }
-
-        const { data } = await withTimeout(supabase.auth.getSession(), "Cargar sesión");
-        if (!alive) return;
-        setHydrationReady(true);
-        await resolveFromSession(data.session ?? null);
-
-        const { data: subscription } = supabase.auth.onAuthStateChange((event, nextSession) => {
-          if (event === "SIGNED_IN" || event === "SIGNED_OUT" || event === "TOKEN_REFRESHED") {
-            void resolveFromSession(nextSession ?? null);
-          }
-        });
-
-        return () => subscription.subscription.unsubscribe();
+        setActiveAccountId(userId);
       } catch (error) {
-        console.error("Auth bootstrap failed", error);
-        if (!alive) return;
-        setSession(null);
-        setUser(null);
+        console.error(`Auth profile bootstrap failed during ${event}`, error);
+        if (!alive || runId !== runRef.current) return;
+        profileRef.current = null;
+        resolvedUserIdRef.current = userId;
         setProfile(null);
         setRole("cliente");
       } finally {
-        if (alive) {
-          setHydrationReady(true);
+        if (pendingUserIdRef.current === userId) pendingUserIdRef.current = null;
+        if (alive && runId === runRef.current) {
           setProfileReady(true);
           setLoading(false);
         }
       }
     };
 
-    let unsub: (() => void) | undefined;
-    void bootstrap().then((u) => {
-      unsub = u;
-    });
+    const bootstrap = async () => {
+      try {
+        const { supabase } = await import("@/lib/supabase");
+        const sessionResult = await withTimeout(supabase.auth.getSession(), "Cargar sesión");
+        if (!alive) return;
+
+        await resolveSession(sessionResult.data.session ?? null, "INITIAL_SESSION");
+
+        const subscription = supabase.auth.onAuthStateChange((event, nextSession) => {
+          if (event === "SIGNED_IN" || event === "SIGNED_OUT" || event === "TOKEN_REFRESHED" || event === "USER_UPDATED") {
+            void resolveSession(nextSession ?? null, event);
+          }
+        });
+        unsubscribe = () => subscription.data.subscription.unsubscribe();
+      } catch (error) {
+        console.error("Auth bootstrap failed", error);
+        if (!alive) return;
+        clearAuth();
+        setHydrationReady(true);
+      }
+    };
+
+    void bootstrap();
 
     return () => {
       alive = false;
-      unsub?.();
+      runRef.current += 1;
+      unsubscribe?.();
     };
   }, []);
 
   const refreshSession = async () => {
     const { supabase } = await import("@/lib/supabase");
-    await withTimeout(supabase.auth.refreshSession(), "Actualizar sesión");
-    const { data } = await withTimeout(supabase.auth.getSession(), "Leer sesión actualizada");
-    setSession(data.session ?? null);
-    setUser(data.session?.user ?? null);
+    const refreshed = await withTimeout(supabase.auth.refreshSession(), "Actualizar sesión");
+    if (refreshed.error) throw refreshed.error;
+    setSession(refreshed.data.session ?? null);
+    setUser(refreshed.data.session?.user ?? null);
   };
 
   const value = useMemo(
