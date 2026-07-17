@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Bone, Box3, Group, Mesh, Object3D, Quaternion, Vector3 } from "three";
+import { AxesHelper, Bone, Box3, Group, Mesh, Object3D, Quaternion, Vector3 } from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 import {
@@ -77,6 +77,7 @@ type Props = {
   imageUrl?: string | null;
   referenceModelUrl?: string | null;
   anchorBoneKey?: AnchorBoneKey | null;
+  showAnchorGizmo?: boolean;
   onReferenceStatus?: (status: string) => void;
   onAnchorDiagnostics?: (info: AnchorDiagnostics) => void;
 };
@@ -196,6 +197,7 @@ export function SmartTryOnViewer({
   adjustments,
   referenceModelUrl,
   anchorBoneKey = null,
+  showAnchorGizmo = false,
   onReferenceStatus,
   onAnchorDiagnostics,
 }: Props) {
@@ -203,9 +205,12 @@ export function SmartTryOnViewer({
   const avatarRef = useRef<Object3D | null>(null);
   const headBoneRef = useRef<Bone | null>(null);
   const bonesRef = useRef<CreatorStudioAvatarContext["bones"] | null>(null);
+  const showAnchorGizmoRef = useRef(showAnchorGizmo);
+  showAnchorGizmoRef.current = showAnchorGizmo;
   const avatarBaseWorldQuaternionRef = useRef<Quaternion | null>(null);
   const headBaseLocalQuaternionRef = useRef<Quaternion | null>(null);
   const referenceRef = useRef<LoadedReference | null>(null);
+  const anchorHelperRef = useRef<AxesHelper | null>(null);
   const frameRef = useRef(0);
   const statusRef = useRef(onReferenceStatus);
   const diagnosticsRef = useRef(onAnchorDiagnostics);
@@ -293,6 +298,17 @@ export function SmartTryOnViewer({
       if (resolvedBone) resolvedBone.add(root);
       else avatarRef.current.parent?.add(root);
 
+      anchorHelperRef.current?.parent?.remove(anchorHelperRef.current);
+      anchorHelperRef.current?.dispose();
+      anchorHelperRef.current = null;
+      if (resolvedBone) {
+        const helper = new AxesHelper(0.15);
+        helper.name = "CLOUVA_ANCHOR_GIZMO";
+        helper.visible = showAnchorGizmoRef.current;
+        resolvedBone.add(helper);
+        anchorHelperRef.current = helper;
+      }
+
       referenceRef.current = { root, originalSize: size, anchorBoneKey, boneFound: Boolean(resolvedBone), bone: resolvedBone };
       diagnosticsRef.current?.({
         anchorBoneKey,
@@ -314,8 +330,15 @@ export function SmartTryOnViewer({
       cancelled = true;
       disposeReference(referenceRef.current);
       referenceRef.current = null;
+      anchorHelperRef.current?.parent?.remove(anchorHelperRef.current);
+      anchorHelperRef.current?.dispose();
+      anchorHelperRef.current = null;
     };
   }, [referenceModelUrl, avatarReadyVersion, anchorBoneKey]);
+
+  useEffect(() => {
+    if (anchorHelperRef.current) anchorHelperRef.current.visible = showAnchorGizmo;
+  }, [showAnchorGizmo]);
 
   useEffect(() => {
     const update = () => {

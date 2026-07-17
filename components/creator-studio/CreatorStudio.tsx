@@ -221,6 +221,7 @@ export function CreatorStudio() {
   const [libraryVersion, setLibraryVersion] = useState(0);
   const [promoting, setPromoting] = useState(false);
   const [side, setSide] = useState<"left" | "right">("right");
+  const [showAnchorGizmo, setShowAnchorGizmo] = useState(false);
   const [anchorDiagnostics, setAnchorDiagnostics] = useState<AnchorDiagnostics | null>(null);
 
   const anchorBoneKey = useMemo(() => resolveAnchorBoneKey(category, side), [category, side]);
@@ -550,6 +551,7 @@ export function CreatorStudio() {
         }}
         referenceModelUrl={options.objectUrl}
         anchorBoneKey={options.objectOnly ? null : anchorBoneKey}
+        showAnchorGizmo={showAnchorGizmo}
         onReferenceStatus={running ? undefined : setMessage}
         onAnchorDiagnostics={setAnchorDiagnostics}
       />
@@ -732,6 +734,9 @@ export function CreatorStudio() {
                           <button onClick={() => setZoom((value) => Math.min(2, value + 0.05))} style={toolButton}>Escala +</button>
                           <button onClick={() => setZoom((value) => Math.max(0.35, value - 0.05))} style={toolButton}>Escala −</button>
                           <button onClick={() => setShowBody((value) => !value)} style={toolButton}>{showBody ? "Ocultar cuerpo" : "Mostrar cuerpo"}</button>
+                          <button onClick={() => setShowAnchorGizmo((value) => !value)} style={{ ...toolButton, ...(showAnchorGizmo ? activeTool : {}) }}>
+                            {showAnchorGizmo ? "Ocultar hueso de anclaje" : "Ver hueso de anclaje"}
+                          </button>
                           <button onClick={resetPreview} style={toolButton}><RotateCcw size={15} /> Reiniciar</button>
                         </div>
                       </div>
