@@ -1,3 +1,5 @@
+import { resolveOfficialClouvaAvatar } from "@/lib/avatar-engine/official-clouva-avatar-server";
+
 const MAX_GLB_BYTES = 75 * 1024 * 1024;
 
 type ItemMetadata = Record<string, unknown>;
@@ -29,7 +31,7 @@ type FinalizeInput = {
 type ResolvedAvatar = {
   id: string;
   url: string;
-  source: "user_avatars" | "profiles";
+  source: "user_avatars" | "profiles" | "clouva_default";
 };
 
 function validAvatarUrl(value: unknown) {
@@ -89,7 +91,12 @@ async function userAvatar(supabase: FinalizationClient, userId: string): Promise
     return { id: String(ready.id), url: readyUrl, source: "user_avatars" };
   }
 
-  throw new Error("El usuario no tiene un avatar 3D activo y riggeado para procesar esta prenda");
+  const official = await resolveOfficialClouvaAvatar(supabase);
+  return {
+    id: `clouva-default-${official.id}`,
+    url: official.url,
+    source: "clouva_default",
+  };
 }
 
 async function fetchGlb(url: string, label: string) {
@@ -200,8 +207,8 @@ export async function finalizeClothingItem({
   const nextMetadata = {
     ...metadata,
     rigged: Boolean(riggedBytes),
-    rig_pipeline: riggedBytes ? "blender-nearest-surface-uv-v3-user-avatar" : "viewer-fit-fallback",
-    avatar_scope: "user",
+    rig_pipeline: riggedBytes ? "blender-nearest-surface-uv-v4-user-or-clouva" : "viewer-fit-fallback",
+    avatar_scope: rigResult.avatar?.source === "clouva_default" ? "clouva_default" : "user",
     avatar_id: rigResult.avatar?.id ?? null,
     avatar_source: rigResult.avatar?.source ?? null,
     uv_generated: Boolean(riggedBytes),
