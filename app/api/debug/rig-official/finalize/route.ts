@@ -9,11 +9,29 @@ const OWNER_EMAIL = (process.env.CLOUVA_OWNER_EMAIL || "esian0116@gmail.com").tr
 const RIG_JOB_KEY = "official_avatar_rig_job";
 const RIGGED_FILENAME = "clouva-official-rigged.glb";
 
+type RigJob = {
+  taskId?: unknown;
+  startedAt?: unknown;
+  sourceAvatarId?: unknown;
+  sourceAvatarUrl?: unknown;
+};
+
 function getAdminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceRole = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !serviceRole) throw new Error("Missing Supabase server credentials");
   return createClient(url, serviceRole, { auth: { persistSession: false, autoRefreshToken: false } });
+}
+
+function readRigJob(metadata: Record<string, unknown> | null | undefined) {
+  const raw = metadata?.[RIG_JOB_KEY];
+  if (!raw || typeof raw !== "object") return null;
+  const job = raw as RigJob;
+  return {
+    taskId: typeof job.taskId === "string" ? job.taskId : null,
+    sourceAvatarId: typeof job.sourceAvatarId === "string" ? job.sourceAvatarId : null,
+    sourceAvatarUrl: typeof job.sourceAvatarUrl === "string" ? job.sourceAvatarUrl : null,
+  };
 }
 
 export async function POST(request: NextRequest) {
@@ -40,7 +58,9 @@ export async function POST(request: NextRequest) {
     if (!allowed) throw new Error("Solo el propietario puede hacer esto");
 
     const body = await request.json();
-    const taskId = String(body?.taskId || "");
+    const freshUser = await supabase.auth.admin.getUserById(userId);
+    const storedJob = readRigJob(freshUser.data.user?.app_metadata);
+    const taskId = String(body?.taskId || storedJob?.taskId || "");
     if (!taskId) return NextResponse.json({ error: "Falta taskId" }, { status: 400 });
 
     const task = await getRiggingTask(taskId);
@@ -56,7 +76,22 @@ export async function POST(request: NextRequest) {
       throw new Error("Meshy no devolvió un GLB válido");
     }
 
-    const storagePath = `${userId}/official/${RIGGED_FILENAME}`;
+    let sourceAvatarId = storedJob?.sourceAvatarId ?? null;
+    if (!sourceAvatarId) {
+      const { data: active } = await supabase
+        .from("user_avatars")
+        .select("id")
+        .eq("user_id", userId)
+        .eq("is_active", true)
+        .eq("status", "ready")
+        .is("archived_at", null)
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      sourceAvatarId = active?.id ? String(active.id) : null;
+    }
+
+    const storagePath = `${userId}/${sourceAvatarId || "official"}/${RIGGED_FILENAME}`;
     const { error: uploadError } = await supabase.storage.from("avatars").upload(storagePath, bytes, {
       contentType: "model/gltf-binary",
       cacheControl: "3600",
@@ -65,22 +100,42 @@ export async function POST(request: NextRequest) {
     if (uploadError) throw uploadError;
 
     const { data: publicData } = supabase.storage.from("avatars").getPublicUrl(storagePath);
-    const { error: updateError } = await supabase
-      .from("profiles")
-      .update({ avatar_3d_url: publicData.publicUrl })
-      .eq("id", userId);
-    if (updateError) throw updateError;
+    const publicUrl = publicData.publicUrl;
+    const now = new Date().toISOString();
 
-    const { data: freshUser } = await supabase.auth.admin.getUserById(userId);
-    const metadata = { ...(freshUser.user?.app_metadata ?? {}) } as Record<string, unknown>;
+    if (sourceAvatarId) {
+      const { error: avatarUpdateError } = await supabase
+        .from("user_avatars")
+        .update({ model_url: publicUrl, status: "ready", is_active: true, updated_at: now })
+        .eq("id", sourceAvatarId)
+        .eq("user_id", userId);
+      if (avatarUpdateError) throw avatarUpdateError;
+    }
+
+    const { error: profileUpdateError } = await supabase
+      .from("profiles")
+      .update({ avatar_3d_url: publicUrl, updated_at: now })
+      .eq("id", userId);
+    if (profileUpdateError) throw profileUpdateError;
+
+    const metadata = { ...(freshUser.data.user?.app_metadata ?? {}) } as Record<string, unknown>;
     delete metadata[RIG_JOB_KEY];
     const { error: metadataError } = await supabase.auth.admin.updateUserById(userId, { app_metadata: metadata });
     if (metadataError) throw metadataError;
 
-    return NextResponse.json({ ok: true, status: "SUCCEEDED", newAvatarUrl: publicData.publicUrl });
+    return NextResponse.json({
+      ok: true,
+      status: "SUCCEEDED",
+      newAvatarUrl: publicUrl,
+      sourceAvatarId,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Error desconocido";
-    const status = message.includes("Missing access") || message.includes("Invalid session") ? 401 : message.includes("Solo el propietario") ? 403 : 500;
+    const status = message.includes("Missing access") || message.includes("Invalid session")
+      ? 401
+      : message.includes("Solo el propietario")
+        ? 403
+        : 500;
     return NextResponse.json({ error: message }, { status });
   }
 }
