@@ -3,6 +3,8 @@ import { NextResponse } from "next/server";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const doneStates = new Set(["completed", "complete", "finished", "done", "success", "succeeded"]);
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -49,6 +51,10 @@ export async function GET(request: Request) {
     const progress = Number.isFinite(progressValue)
       ? Math.max(0, Math.min(100, progressValue))
       : 0;
+    const workerHasResult = Boolean(data.resultUrl ?? data.outputUrl ?? data.downloadUrl);
+    const resultUrl = workerHasResult || doneStates.has(status)
+      ? `/api/creator-studio/blender/result?jobId=${encodeURIComponent(jobId)}`
+      : null;
 
     return NextResponse.json({
       ok: true,
@@ -56,8 +62,10 @@ export async function GET(request: Request) {
       status,
       progress,
       stage: data.stage ?? data.step ?? data.message ?? null,
-      resultUrl: data.resultUrl ?? data.outputUrl ?? data.downloadUrl ?? null,
+      resultUrl,
       error: data.error ?? data.failureReason ?? null,
+      riggingStrategy: data.riggingStrategy ?? null,
+      templateMode: Boolean(data.templateMode),
       raw: data,
     });
   } catch (error) {
