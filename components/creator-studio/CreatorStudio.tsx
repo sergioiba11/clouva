@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { SmartTryOnViewer, type AnchorBoneKey, type AnchorDiagnostics, type TryOnAdjustments } from "@/components/creator-studio/SmartTryOnViewer";
 import { ReferenceAssetLibrary } from "@/components/creator-studio/ReferenceAssetLibrary";
+import { ResultRigPreview, type ResultRigInfo } from "@/components/creator-studio/ResultRigPreview";
 import {
   getReferenceAssetById,
   markReferenceAssetError,
@@ -222,6 +223,8 @@ export function CreatorStudio() {
   const [promoting, setPromoting] = useState(false);
   const [side, setSide] = useState<"left" | "right">("right");
   const [showAnchorGizmo, setShowAnchorGizmo] = useState(false);
+  const [resultRigInfo, setResultRigInfo] = useState<ResultRigInfo | null>(null);
+  const handleResultRigInfo = useCallback((info: ResultRigInfo) => setResultRigInfo(info), []);
   const [anchorDiagnostics, setAnchorDiagnostics] = useState<AnchorDiagnostics | null>(null);
 
   const anchorBoneKey = useMemo(() => resolveAnchorBoneKey(category, side), [category, side]);
@@ -856,6 +859,32 @@ export function CreatorStudio() {
                   <a href={resultUrl} style={{ ...primaryButton, textDecoration: "none" }}><Download size={16} /> Descargar GLB riggeado</a>
                 ) : (
                   <button onClick={() => setTab(jobId ? "process" : "animations")} style={primaryButton}><Play size={16} /> {jobId ? "Ver seguimiento" : "Volver a animaciones"}</button>
+                )}
+                {resultUrl && (
+                  <>
+                    <ResultRigPreview url={resultUrl} onInfo={handleResultRigInfo} />
+                    <div style={diagnosticGrid}>
+                      <Diagnostic
+                        title="Huesos en el resultado"
+                        value={resultRigInfo?.loading ? "Cargando…" : String(resultRigInfo?.bones ?? 0)}
+                        state={resultRigInfo?.error ?? "Del armature del avatar exportado junto al objeto"}
+                      />
+                      <Diagnostic
+                        title="Objeto detectado"
+                        value={resultRigInfo?.objectMeshName ?? "No identificado"}
+                        state="Malla del GLB que subiste, ya unida al avatar"
+                      />
+                      <Diagnostic
+                        title="Hueso de anclaje real"
+                        value={resultRigInfo?.anchorBoneName ?? "Sin datos"}
+                        state={
+                          resultRigInfo?.weightedVertexRatio != null
+                            ? `${Math.round(resultRigInfo.weightedVertexRatio * 100)}% de la malla soldada a ese hueso`
+                            : "Blender no reportó pesos de skinning"
+                        }
+                      />
+                    </div>
+                  </>
                 )}
               </div>
             )}
