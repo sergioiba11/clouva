@@ -22,14 +22,23 @@ export type AnchorDiagnostics = {
   mode: "rigid_anchor" | "approx_fallback";
 };
 
-// Offset local al hueso (metros/radianes). Valores semilla a calibrar contra el avatar oficial.
-const CATEGORY_ANCHOR_PRESETS: Record<string, { x: number; y: number; z: number; rotationY: number }> = {
-  gorra: { x: 0, y: 0.12, z: 0, rotationY: 0 },
-  lentes: { x: 0, y: 0.02, z: 0.08, rotationY: 0 },
-  cadena: { x: 0, y: -0.05, z: 0.04, rotationY: 0 },
-  mochila: { x: 0, y: 0, z: -0.12, rotationY: Math.PI },
-  pulseras: { x: 0, y: 0.02, z: 0, rotationY: 0 },
-  anillos: { x: 0, y: 0, z: 0.03, rotationY: 0 },
+// Reglas de auto-ajuste: en vez de un offset fijo en metros (que rompe con cada GLB de
+// tamaño distinto), describen QUÉ BORDE del propio bounding box del objeto debe tocar el
+// origen del hueso. El desplazamiento real se calcula en cada carga a partir del tamaño
+// real del asset, así que un GLB grande o chico se auto-acomoda sin recalibrar constantes.
+type CategoryFitRule = {
+  verticalAlign: "top" | "center" | "bottom"; // borde del objeto que se apoya en el hueso
+  depthBias: number; // fracción del propio profundo del objeto para separarlo del cuerpo (+ adelante, - atrás)
+  rotationY: number; // orientación base, radianes
+};
+
+const CATEGORY_FIT_RULES: Record<string, CategoryFitRule> = {
+  gorra: { verticalAlign: "bottom", depthBias: 0, rotationY: 0 },
+  lentes: { verticalAlign: "center", depthBias: 0.5, rotationY: 0 },
+  cadena: { verticalAlign: "top", depthBias: 0.5, rotationY: 0 },
+  mochila: { verticalAlign: "top", depthBias: -0.5, rotationY: Math.PI },
+  pulseras: { verticalAlign: "center", depthBias: 0, rotationY: 0 },
+  anillos: { verticalAlign: "center", depthBias: 0, rotationY: 0 },
 };
 
 function resolveAnchorBone(bones: CreatorStudioAvatarContext["bones"] | null, key: AnchorBoneKey | null): Bone | null {
@@ -358,20 +367,28 @@ export function SmartTryOnViewer({
           // offset final queden en metros reales, sin heredar la escala del hueso.
           reference.bone.getWorldScale(boneWorldScale);
           const scaleGuard = Math.max(Math.abs(boneWorldScale.y) || 1, 1e-4);
-          const preset = CATEGORY_ANCHOR_PRESETS[current.category] ?? { x: 0, y: 0, z: 0, rotationY: 0 };
+          const scaleX = (uniformBase * userScale * fitScale * width) / scaleGuard;
+          const scaleY = (uniformBase * userScale * length) / scaleGuard;
+          const scaleZ = (uniformBase * userScale * fitScale * depth) / scaleGuard;
+          reference.root.scale.set(scaleX, scaleY, scaleZ);
+
+          // Auto-ajuste: el offset sale del propio tamaño del objeto (medido en el espacio
+          // local del hueso, o sea ya multiplicado por scaleY/scaleZ), no de una constante
+          // fija. Así una gorra chica y una grande se acomodan solas sin recalibrar nada.
+          const rule = CATEGORY_FIT_RULES[current.category] ?? { verticalAlign: "center", depthBias: 0, rotationY: 0 };
+          const halfHeight = (reference.originalSize.y * scaleY) / 2;
+          const fullDepth = reference.originalSize.z * scaleZ;
+          const autoY = rule.verticalAlign === "bottom" ? halfHeight : rule.verticalAlign === "top" ? -halfHeight : 0;
+          const autoZ = rule.depthBias * fullDepth;
+
           reference.root.position.set(
-            (preset.x + current.adjustments.x / 100) / scaleGuard,
-            (preset.y + (current.adjustments.y + current.adjustments.height) / 100) / scaleGuard,
-            (preset.z + current.adjustments.distance / 100) / scaleGuard,
-          );
-          reference.root.scale.set(
-            (uniformBase * userScale * fitScale * width) / scaleGuard,
-            (uniformBase * userScale * length) / scaleGuard,
-            (uniformBase * userScale * fitScale * depth) / scaleGuard,
+            current.adjustments.x / 100 / scaleGuard,
+            autoY + (current.adjustments.y + current.adjustments.height) / 100 / scaleGuard,
+            autoZ + current.adjustments.distance / 100 / scaleGuard,
           );
           reference.root.quaternion.setFromAxisAngle(
             Y_AXIS,
-            preset.rotationY + (current.adjustments.rotation * Math.PI) / 180,
+            rule.rotationY + (current.adjustments.rotation * Math.PI) / 180,
           );
           reference.root.visible = true;
           reference.root.updateMatrixWorld(true);
