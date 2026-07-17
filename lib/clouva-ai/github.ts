@@ -102,6 +102,22 @@ export async function getRepositoryStatus() {
   };
 }
 
+export async function listRepositoryFiles() {
+  const { owner, repo, branch } = githubConfig();
+  const data = (await githubFetch(
+    `/repos/${owner}/${repo}/git/trees/${encodeURIComponent(branch)}?recursive=1`,
+  )) as {
+    truncated?: boolean;
+    tree?: Array<{ path?: string; type?: string; size?: number }>;
+  };
+
+  const files = (data.tree ?? [])
+    .filter((item) => item.type === "blob" && item.path)
+    .map((item) => ({ path: item.path as string, size: item.size ?? 0 }));
+
+  return { files, truncated: Boolean(data.truncated), branch };
+}
+
 export async function readRepositoryFile(path: string) {
   const { owner, repo, branch } = githubConfig();
   const normalizedPath = path.replace(/^\/+/, "");
