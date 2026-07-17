@@ -1,0 +1,53 @@
+FROM python:3.11-slim-bookworm
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    APP_ROOT=/app \
+    CLOUVA_AVATAR_PATH=/app/models/clouva-base-rig-v1.glb \
+    CLOUVA_RIG_SCRIPT=/app/rig_clothing.py \
+    JOBS_ROOT=/tmp/clouva-garment-jobs
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        blender \
+        ca-certificates \
+        libgl1 \
+        libglib2.0-0 \
+        libx11-6 \
+        libxext6 \
+        libxi6 \
+        libxrender1 \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY services/garment-worker/requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
+
+COPY services/garment-worker/app.py /app/app.py
+COPY scripts/blender/rig_clothing.py /app/rig_clothing.py
+COPY assets/clouva-base-rig-v1 /app/avatar-parts
+
+RUN mkdir -p /app/models \
+    && python - <<'PY'
+from base64 import b64decode
+from pathlib import Path
+
+parts_dir = Path('/app/avatar-parts')
+parts = sorted(parts_dir.glob('*.b64'))
+if not parts:
+    raise SystemExit('No se encontraron partes .b64 del avatar CLOUVA')
+raw = b64decode(''.join(part.read_text(encoding='utf-8').strip() for part in parts))
+if raw[:4] != b'glTF':
+    raise SystemExit('El avatar reconstruido no tiene encabezado GLB válido')
+out = Path('/app/models/clouva-base-rig-v1.glb')
+out.write_bytes(raw)
+print(f'Avatar CLOUVA preparado: {out} ({len(raw)} bytes)')
+PY
+
+RUN blender --version | head -n 1 \
+    && python -m py_compile /app/app.py /app/rig_clothing.py
+
+EXPOSE 8080
+
+CMD ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port ${PORT:-8080}"]
