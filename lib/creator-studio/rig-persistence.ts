@@ -13,6 +13,7 @@ export type RigJobRow = {
   id: string;
   user_id: string;
   asset_id: string | null;
+  worker_key: string;
   worker_job_id: string | null;
   status: RigJobStatus;
   stage: string | null;
@@ -164,6 +165,7 @@ function databaseFailure(prefix: string, error: { message?: string } | null) {
 export async function createRigJob(input: {
   userId: string;
   assetId?: string | null;
+  workerKey?: string;
   riggingStrategy?: string | null;
   templateMode?: boolean;
   requestPayload?: Record<string, unknown>;
@@ -173,6 +175,7 @@ export async function createRigJob(input: {
     .insert({
       user_id: input.userId,
       asset_id: input.assetId ?? null,
+      worker_key: input.workerKey?.trim() || "garment-worker",
       status: "creating",
       stage: "Preparando trabajo",
       progress: 0,
@@ -192,6 +195,7 @@ export async function createRigJob(input: {
 export async function attachWorkerJob(input: {
   rigJobId: string;
   userId: string;
+  workerKey?: string;
   workerJobId: string;
   status?: unknown;
   stage?: string | null;
@@ -210,6 +214,7 @@ export async function attachWorkerJob(input: {
   const { data, error } = await getRigPersistenceAdmin()
     .from("rig_jobs")
     .update({
+      worker_key: input.workerKey?.trim() || "garment-worker",
       worker_job_id: input.workerJobId,
       status,
       stage:
