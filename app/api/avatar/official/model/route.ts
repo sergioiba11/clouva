@@ -21,16 +21,16 @@ export async function GET() {
       );
     }
 
-    return new Response(upstream.body, {
-      status: 200,
-      headers: {
-        "Content-Type": upstream.headers.get("content-type") || "model/gltf-binary",
-        "Content-Length": upstream.headers.get("content-length") || "",
-        "Cache-Control": "public, max-age=60, stale-while-revalidate=300",
-        "X-Clouva-Avatar-Id": avatar.id,
-        "X-Clouva-Avatar-Source": avatar.source,
-      },
+    const headers = new Headers({
+      "Content-Type": upstream.headers.get("content-type") || "model/gltf-binary",
+      "Cache-Control": "public, max-age=60, stale-while-revalidate=300",
+      "X-Clouva-Avatar-Id": avatar.id,
+      "X-Clouva-Avatar-Source": avatar.source,
     });
+    const contentLength = upstream.headers.get("content-length");
+    if (contentLength) headers.set("Content-Length", contentLength);
+
+    return new Response(upstream.body, { status: 200, headers });
   } catch (error) {
     return NextResponse.json(
       {
