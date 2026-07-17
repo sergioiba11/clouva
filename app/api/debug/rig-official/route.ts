@@ -8,6 +8,9 @@ export const dynamic = "force-dynamic";
 const OWNER_EMAIL = (process.env.CLOUVA_OWNER_EMAIL || "esian0116@gmail.com").trim().toLowerCase();
 const RIG_JOB_KEY = "official_avatar_rig_job";
 const RIGGED_FILENAME = "clouva-official-rigged.glb";
+const MAX_RIG_JOB_AGE_MS = 30 * 60 * 1000;
+const FAILED_TASK_STATES = new Set(["FAILED", "EXPIRED", "CANCELED"]);
+const ACTIVE_TASK_STATES = new Set(["PENDING", "IN_PROGRESS"]);
 
 function getAdminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -80,9 +83,23 @@ export async function POST(request: NextRequest) {
       const existing = readRigJob(user);
       if (existing) {
         const existingTask = await getRiggingTask(existing.taskId);
-        if (existingTask.status !== "FAILED" && existingTask.status !== "EXPIRED") {
+        const ageMs = Date.now() - existing.startedAt;
+
+        // Si Meshy ya terminó, damos una ventana nueva al frontend para descargar,
+        // guardar y validar el GLB en lugar de perder el resultado por el timeout local.
+        if (existingTask.status === "SUCCEEDED") {
+          const resumedAt = Date.now();
+          await saveRigJob(supabase, profile.id, { taskId: existing.taskId, startedAt: resumedAt });
+          return NextResponse.json({ taskId: existing.taskId, startedAt: resumedAt, resumed: true, completed: true });
+        }
+
+        // Solo se retoma un trabajo realmente activo, reciente y cuando no se pidió forzar.
+        if (!force && ACTIVE_TASK_STATES.has(existingTask.status) && ageMs < MAX_RIG_JOB_AGE_MS) {
           return NextResponse.json({ taskId: existing.taskId, startedAt: existing.startedAt, resumed: true });
         }
+
+        // Un trabajo vencido, cancelado o forzado no debe bloquear nuevos intentos.
+        await saveRigJob(supabase, profile.id, null);
       }
 
       const taskId = await createRiggingTask(profile.avatar_3d_url, 1.8);
@@ -106,7 +123,17 @@ export async function POST(request: NextRequest) {
       if (!job) return NextResponse.json({ active: false, status: "NOT_STARTED", newAvatarUrl: profile.avatar_3d_url || null });
       const task = await getRiggingTask(job.taskId);
 
-      if (task.status === "FAILED" || task.status === "EXPIRED") {
+      // Un resultado terminado sigue siendo aprovechable aunque el contador local haya vencido.
+      if (task.status === "SUCCEEDED") {
+        const resumedAt = Date.now() - job.startedAt >= MAX_RIG_JOB_AGE_MS ? Date.now() : job.startedAt;
+        if (resumedAt !== job.startedAt) {
+          await saveRigJob(supabase, profile.id, { taskId: job.taskId, startedAt: resumedAt });
+        }
+        return NextResponse.json({ active: true, taskId: job.taskId, startedAt: resumedAt, task, newAvatarUrl: profile.avatar_3d_url || null });
+      }
+
+      if (FAILED_TASK_STATES.has(task.status)) {
+        await saveRigJob(supabase, profile.id, null);
         return NextResponse.json({
           active: false,
           status: task.status,
@@ -114,6 +141,18 @@ export async function POST(request: NextRequest) {
           startedAt: job.startedAt,
           error: taskErrorMessage(task),
           task,
+          newAvatarUrl: profile.avatar_3d_url || null,
+        });
+      }
+
+      // Antes quedaba guardado para siempre y el botón Regenerar reabría el mismo job.
+      if (Date.now() - job.startedAt >= MAX_RIG_JOB_AGE_MS) {
+        await saveRigJob(supabase, profile.id, null);
+        return NextResponse.json({
+          active: false,
+          status: "NOT_STARTED",
+          staleCleared: true,
+          message: "Se descartó un proceso de rigging vencido. Ya podés generar uno nuevo.",
           newAvatarUrl: profile.avatar_3d_url || null,
         });
       }
