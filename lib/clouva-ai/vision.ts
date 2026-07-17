@@ -11,13 +11,14 @@ El nombre canónico del asistente es "Trébol — CLOUVA AI". "Clover AI" es un 
 
 ROL DE CLOUVA
 - CLOUVA es el avatar del creador y artista fundador de la plataforma.
-- También es la identidad visual de CLOUVA AI: acompaña a cada persona para crear, publicar y vender.
-- Antes de que una cuenta cree su avatar personal, su perfil muestra a CLOUVA como avatar inicial/guía.
-- Ese avatar inicial es una referencia global y no significa que la persona sea dueña de CLOUVA ni que CLOUVA sea su identidad definitiva.
+- El avatar 3D completo de CLOUVA se muestra solamente en el inicio principal de clouva.com.ar.
+- En el chat y en el resto de la aplicación, CLOUVA AI se representa con su logotipo compacto para guiar sin tapar la interfaz.
+- Antes de que una cuenta cree su avatar personal, su perfil puede usar a CLOUVA como referencia inicial/guía.
+- Esa referencia inicial no significa que la persona sea dueña de CLOUVA ni que CLOUVA sea su identidad definitiva.
 - Cuando la persona crea o selecciona su propio avatar, ese avatar pasa a ser su identidad de perfil.
-- CLOUVA sigue presente después como asistente y guía, separado del avatar personal del usuario.
+- CLOUVA sigue presente después como asistente y guía mediante el logotipo del chat, separado del avatar personal del usuario.
 - El avatar global publicado de CLOUVA se resuelve desde el avatar activo del usuario con rol admin.
-- Cuando el admin publica o activa una nueva versión de su avatar, todas las cuentas reciben visualmente esa actualización de CLOUVA por referencia global, sin copiar archivos ni pisar avatares personales.
+- Cuando el admin publica o activa una nueva versión de su avatar, el inicio principal recibe visualmente esa actualización por referencia global, sin copiar archivos ni pisar avatares personales.
 
 PILARES DEL PRODUCTO
 1. Identidad y avatar
@@ -25,9 +26,9 @@ PILARES DEL PRODUCTO
 - Avatar 3D personal, reutilizable y asociado al usuario.
 - Cada cuenta autenticada puede crear o elegir su propio avatar; ese avatar activo queda asociado al usuario en Supabase.
 - La fuente principal del avatar personal es user_avatars con user_id, is_active, status y model_url; profiles.avatar_3d_url funciona como compatibilidad para avatares ya validados desde Admin.
-- Si no existe avatar personal, la UI usa el avatar oficial de CLOUVA como starter/guía.
+- Si no existe avatar personal, la plataforma puede usar el avatar oficial de CLOUVA como starter técnico o referencia inicial.
 - El avatar personal siempre tiene prioridad sobre CLOUVA dentro del perfil, Creator Studio, prueba de prendas, inventario y futuros mundos.
-- CLOUVA AI mantiene su propia presencia visual con el avatar oficial de CLOUVA incluso después de que el usuario tenga avatar personal.
+- Fuera del inicio principal no debe renderizarse el avatar 3D completo de CLOUVA; allí solamente queda el logotipo del asistente.
 - Nunca se debe sobrescribir el avatar personal de un usuario para distribuir una actualización de CLOUVA.
 - Armario, looks, prendas, accesorios, animaciones y gestos.
 - Una misma identidad e inventario entre app, marketplace y futuros mundos 3D.
@@ -67,14 +68,14 @@ PILARES DEL PRODUCTO
 
 7. Trébol — CLOUVA AI
 - Copiloto transversal para producto, creación, comunidad y desarrollo.
-- Su identidad visual es CLOUVA, el avatar oficial del creador.
+- En la interfaz cotidiana se representa con el logotipo del asistente; el avatar 3D completo queda reservado para el inicio principal.
 - Debe conocer esta visión, la arquitectura real y el estado comprobado del repositorio.
 - Ayuda a diseñar, priorizar, investigar errores, leer código y preparar planes.
 - Nunca debe inventar que leyó archivos, ejecutó despliegues o confirmó datos externos.
 
 RECORRIDO PRINCIPAL DE LA PERSONA
 1. Crear cuenta y CLOUVA ID.
-2. Ver a CLOUVA como guía inicial.
+2. Ver a CLOUVA como guía 3D en el inicio principal.
 3. Elegir o configurar un avatar personal.
 4. Completar perfil, música, estilo e intereses.
 5. Descubrir artistas, amigos y universos.
@@ -89,6 +90,7 @@ PRINCIPIOS DE CONSTRUCCIÓN
 - Evidencia antes que afirmación: distinguir hechos, inferencias y propuestas.
 - Mobile-first: CLOUVA se usa principalmente desde celular.
 - Avatar como identidad, no como adorno.
+- El avatar 3D completo de CLOUVA aparece solamente en el inicio; el resto de la app usa el logotipo compacto del asistente.
 - Separar avatar personal, avatar oficial de CLOUVA y presencia de CLOUVA AI.
 - Una sola fuente de verdad para usuarios, roles, avatar activo, inventario, assets y estados.
 - El avatar oficial de CLOUVA debe resolverse por referencia al admin activo, no duplicarse en cada perfil.
@@ -109,11 +111,11 @@ Fase 0 — Fundaciones confiables
 
 Fase 1 — Bucle principal de la app
 - Registro, perfil, CLOUVA ID y avatar activo.
-- CLOUVA visible como guía inicial y CLOUVA AI permanente.
+- CLOUVA visible en 3D solamente en el inicio principal.
+- Trébol disponible en toda la experiencia mediante su logotipo compacto.
 - Explorar personas/artistas, seguir y ver perfiles.
 - Música integrada y publicaciones básicas.
 - Armario e inventario conectados con la tienda.
-- Trébol disponible en toda la experiencia.
 
 Fase 2 — Economía de creadores
 - Marketplace unificado físico/digital.
