@@ -228,6 +228,15 @@ export function CreatorStudio() {
   const handleResultRigInfo = useCallback((info: ResultRigInfo) => setResultRigInfo(info), []);
   const [anchorDiagnostics, setAnchorDiagnostics] = useState<AnchorDiagnostics | null>(null);
 
+  type TwoStepJobStatus = "idle" | "running" | "done" | "error";
+  const [objectRigJobId, setObjectRigJobId] = useState<string | null>(null);
+  const [objectRigStatus, setObjectRigStatus] = useState<TwoStepJobStatus>("idle");
+  const [objectRigResultUrl, setObjectRigResultUrl] = useState<string | null>(null);
+  const [objectRigMessage, setObjectRigMessage] = useState<string | null>(null);
+  const [attachStatus, setAttachStatus] = useState<TwoStepJobStatus>("idle");
+  const [attachResultUrl, setAttachResultUrl] = useState<string | null>(null);
+  const [attachMessage, setAttachMessage] = useState<string | null>(null);
+
   const anchorBoneKey = useMemo(() => resolveAnchorBoneKey(category, side), [category, side]);
 
   const templateMode = Boolean(referenceAsset?.isTemplate);
@@ -262,6 +271,90 @@ export function CreatorStudio() {
   const updateAdjustment = (key: keyof TryOnAdjustments, value: number) => {
     setAdjustments((current) => ({ ...current, [key]: value }));
   };
+
+  async function pollBlenderJob(jobId: string, onUpdate: (status: JobStatusResponse) => void): Promise<JobStatusResponse> {
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      const response = await fetch(`/api/creator-studio/blender/status?jobId=${encodeURIComponent(jobId)}`, { cache: "no-store" });
+      const data = (await response.json()) as JobStatusResponse;
+      onUpdate(data);
+      const status = String(data.status ?? "").toLowerCase();
+      if (doneStates.has(status) || failedStates.has(status) || data.resultUrl) return data;
+      await new Promise((resolve) => setTimeout(resolve, 3000));
+    }
+    throw new Error("El trabajo tardó demasiado y se agotó el tiempo de espera.");
+  }
+
+  async function rigObjectOwnSkeleton() {
+    if (!referenceAsset || objectRigStatus === "running") return;
+    setObjectRigStatus("running");
+    setObjectRigMessage("Enviando el objeto al Blender Worker para armar su esqueleto propio…");
+    setObjectRigResultUrl(null);
+    setObjectRigJobId(null);
+    setAttachStatus("idle");
+    setAttachResultUrl(null);
+    setAttachMessage(null);
+
+    try {
+      const form = new FormData();
+      form.set("file", referenceAsset.file, referenceAsset.fileName);
+      form.set("category", category);
+      const response = await fetch("/api/creator-studio/blender/rig-object", { method: "POST", body: form });
+      const data = await response.json();
+      if (!response.ok || !data.jobId) throw new Error(data.error || "No se pudo iniciar el rigeo del objeto.");
+      setObjectRigJobId(data.jobId);
+
+      const finalStatus = await pollBlenderJob(data.jobId, (status) => {
+        setObjectRigMessage(status.stage ?? status.status ?? null);
+      });
+
+      const normalized = String(finalStatus.status ?? "").toLowerCase();
+      if (failedStates.has(normalized)) {
+        setObjectRigStatus("error");
+        setObjectRigMessage(finalStatus.error ?? finalStatus.stage ?? "Falló el rigeo del objeto.");
+        return;
+      }
+      setObjectRigStatus("done");
+      setObjectRigResultUrl(finalStatus.resultUrl ?? null);
+      setObjectRigMessage("✓ Objeto rigeado con esqueleto propio.");
+    } catch (error) {
+      setObjectRigStatus("error");
+      setObjectRigMessage(error instanceof Error ? error.message : "Error inesperado al rigear el objeto.");
+    }
+  }
+
+  async function attachObjectToAvatar() {
+    if (!objectRigJobId || attachStatus === "running") return;
+    setAttachStatus("running");
+    setAttachMessage("Uniendo el esqueleto del objeto al del avatar…");
+    setAttachResultUrl(null);
+
+    try {
+      const response = await fetch("/api/creator-studio/blender/attach-object", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ riggedObjectJobId: objectRigJobId, category, side }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.jobId) throw new Error(data.error || "No se pudo iniciar la unión con el avatar.");
+
+      const finalStatus = await pollBlenderJob(data.jobId, (status) => {
+        setAttachMessage(status.stage ?? status.status ?? null);
+      });
+
+      const normalized = String(finalStatus.status ?? "").toLowerCase();
+      if (failedStates.has(normalized)) {
+        setAttachStatus("error");
+        setAttachMessage(finalStatus.error ?? finalStatus.stage ?? "Falló la unión con el avatar.");
+        return;
+      }
+      setAttachStatus("done");
+      setAttachResultUrl(finalStatus.resultUrl ?? null);
+      setAttachMessage("✓ Objeto unido al esqueleto del avatar.");
+    } catch (error) {
+      setAttachStatus("error");
+      setAttachMessage(error instanceof Error ? error.message : "Error inesperado al unir el objeto con el avatar.");
+    }
+  }
 
   const applyJobStatus = useCallback(
     async (
@@ -709,8 +802,51 @@ export function CreatorStudio() {
                         <CheckCircle2 size={17} /> {promoting ? "Guardando plantilla…" : "Este objeto ya tiene rig: conservarlo"}
                       </button>
                     )}
-                    <button onClick={() => setTab("fit")} style={{ ...primaryButton, width: "100%", justifyContent: "center", marginTop: 10 }}>
-                      Ajustar sobre el avatar
+
+                    <div style={{ ...notice, marginTop: 14 }}>
+                      Auto-rig real: le da al objeto un esqueleto PROPIO (una cadena de huesos), separado del avatar. Después se conecta con "Unir con el avatar".
+                    </div>
+                    <button
+                      disabled={objectRigStatus === "running"}
+                      onClick={() => void rigObjectOwnSkeleton()}
+                      style={{ ...primaryButton, width: "100%", justifyContent: "center", marginTop: 10, opacity: objectRigStatus === "running" ? 0.6 : 1 }}
+                    >
+                      <Settings2 /> {objectRigStatus === "running" ? "Rigeando objeto…" : "Rigear objeto (esqueleto propio)"}
+                    </button>
+                    {objectRigMessage && (
+                      <div style={{ ...notice, marginTop: 8, ...(objectRigStatus === "error" ? { borderColor: "#7a2b2b", color: "#ffb4b4" } : {}) }}>
+                        {objectRigMessage}
+                      </div>
+                    )}
+                    {objectRigResultUrl && (
+                      <>
+                        <ResultRigPreview url={objectRigResultUrl} />
+                        <button
+                          disabled={attachStatus === "running"}
+                          onClick={() => void attachObjectToAvatar()}
+                          style={{ ...primaryButton, width: "100%", justifyContent: "center", marginTop: 10, opacity: attachStatus === "running" ? 0.6 : 1 }}
+                        >
+                          <UserRound /> {attachStatus === "running" ? "Uniendo con el avatar…" : "Unir con el avatar"}
+                        </button>
+                      </>
+                    )}
+                    {attachMessage && (
+                      <div style={{ ...notice, marginTop: 8, ...(attachStatus === "error" ? { borderColor: "#7a2b2b", color: "#ffb4b4" } : {}) }}>
+                        {attachMessage}
+                      </div>
+                    )}
+                    {attachResultUrl && (
+                      <>
+                        <p style={sectionLead}>Resultado final: el objeto ya forma parte del mismo esqueleto que el avatar.</p>
+                        <ResultRigPreview url={attachResultUrl} />
+                        <a href={attachResultUrl} style={{ ...primaryButton, textDecoration: "none", width: "100%", justifyContent: "center", marginTop: 10 }}>
+                          <Download size={16} /> Descargar GLB final
+                        </a>
+                      </>
+                    )}
+
+                    <button onClick={() => setTab("fit")} style={{ ...secondaryButton, width: "100%", justifyContent: "center", marginTop: 14 }}>
+                      Ajustar sobre el avatar (preview instantáneo)
                     </button>
                   </>
                 )}
