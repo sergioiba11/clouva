@@ -27,7 +27,7 @@ RUN wget -q "$BLENDER_URL" -O /tmp/blender.tar.xz \
 RUN pip install --no-cache-dir --break-system-packages fastapi uvicorn pydantic python-multipart
 
 WORKDIR /app
-COPY app.py rig_garment.py ./
+COPY app.py rig_garment.py process_template.py ./
 
 ENV BLENDER_BIN=/usr/local/bin/blender
 EXPOSE 8000

@@ -17,9 +17,10 @@ app = FastAPI(title="CLOUVA Garment Rig Worker")
 
 BLENDER_BIN = os.getenv("BLENDER_BIN", "blender")
 SCRIPT_PATH = Path(__file__).with_name("rig_garment.py")
+TEMPLATE_SCRIPT_PATH = Path(__file__).with_name("process_template.py")
 MAX_DOWNLOAD_BYTES = int(os.getenv("MAX_DOWNLOAD_BYTES", str(120 * 1024 * 1024)))
 BLENDER_TIMEOUT_SECONDS = int(os.getenv("BLENDER_TIMEOUT_SECONDS", "420"))
-CLOUVA_AVATAR_URL = os.getenv("CLOUVA_AVATAR_URL") or os.getenv("CLOUVA_BASE_AVATAR_URL")
+CLOUVA_AVATAR_FALLBACK_URL = os.getenv("CLOUVA_AVATAR_URL") or os.getenv("CLOUVA_BASE_AVATAR_URL")
 VALID_CATEGORIES = {"hoodie", "shirt", "jacket", "pants", "shorts", "shoes", "accessory"}
 CATEGORY_MAP = {
     "hoodie": "hoodie",
@@ -47,6 +48,14 @@ class RigRequest(BaseModel):
     category: str
     art_url: HttpUrl | None = None
     color: str | None = None
+
+
+def as_bool(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
 
 
 def set_job(job_id: str, **changes) -> None:
@@ -77,26 +86,65 @@ def cleanup(path: Path) -> None:
     shutil.rmtree(path, ignore_errors=True)
 
 
-def run_blender_job(job_id: str, job_dir: Path, avatar_path: Path, garment_path: Path, output_path: Path, category: str, art_path: Path | None = None, color: str = "#0a0a0a") -> None:
+def run_blender_job(
+    job_id: str,
+    job_dir: Path,
+    avatar_path: Path,
+    garment_path: Path,
+    output_path: Path,
+    category: str,
+    art_path: Path | None = None,
+    color: str = "#0a0a0a",
+    template_mode: bool = False,
+    avatar_id: str | None = None,
+) -> None:
     try:
-        set_job(job_id, status="processing", progress=12, stage="Importando en Blender")
-        command = [
-            BLENDER_BIN,
-            "--background",
-            "--factory-startup",
-            "--python-exit-code",
-            "1",
-            "--python",
-            str(SCRIPT_PATH),
-            "--",
-            str(avatar_path),
-            str(garment_path),
-            str(output_path),
-            category,
-            str(art_path) if art_path and art_path.exists() else "",
-            color,
-        ]
-        set_job(job_id, progress=30, stage="Alineando con clouva_base_v1")
+        strategy = "preserve_existing_skinning" if template_mode else "transfer_from_avatar"
+        set_job(
+            job_id,
+            status="processing",
+            progress=12,
+            stage="Importando plantilla y avatar" if template_mode else "Importando en Blender",
+            riggingStrategy=strategy,
+            templateMode=template_mode,
+            avatarId=avatar_id,
+        )
+
+        if template_mode:
+            command = [
+                BLENDER_BIN,
+                "--background",
+                "--factory-startup",
+                "--python-exit-code",
+                "1",
+                "--python",
+                str(TEMPLATE_SCRIPT_PATH),
+                "--",
+                str(avatar_path),
+                str(garment_path),
+                str(output_path),
+                category,
+            ]
+            set_job(job_id, progress=30, stage="Conservando rig, pesos, topología y materiales")
+        else:
+            command = [
+                BLENDER_BIN,
+                "--background",
+                "--factory-startup",
+                "--python-exit-code",
+                "1",
+                "--python",
+                str(SCRIPT_PATH),
+                "--",
+                str(avatar_path),
+                str(garment_path),
+                str(output_path),
+                category,
+                str(art_path) if art_path and art_path.exists() else "",
+                color,
+            ]
+            set_job(job_id, progress=30, stage="Alineando con el avatar activo del usuario")
+
         result = subprocess.run(
             command,
             capture_output=True,
@@ -107,41 +155,60 @@ def run_blender_job(job_id: str, job_dir: Path, avatar_path: Path, garment_path:
         )
         stdout = result.stdout[-12000:]
         stderr = result.stderr[-8000:]
-        print(f"[worker] job={job_id} blender returncode={result.returncode}\n[stdout]\n{stdout}\n[stderr]\n{stderr}", flush=True)
+        print(
+            f"[worker] job={job_id} template={template_mode} avatar={avatar_id} "
+            f"blender returncode={result.returncode}\n[stdout]\n{stdout}\n[stderr]\n{stderr}",
+            flush=True,
+        )
 
         if result.returncode != 0 or not output_path.exists() or output_path.stat().st_size < 1024:
             set_job(
                 job_id,
                 status="failed",
                 progress=100,
-                stage="Falló la validación del rig",
-                error="Automatic rigging validation failed",
+                stage="Falló la validación de la plantilla" if template_mode else "Falló la validación del rig",
+                error="Template processing validation failed" if template_mode else "Automatic rigging validation failed",
                 details={"returncode": result.returncode, "stderr": stderr, "stdout": stdout},
             )
             return
 
-        set_job(job_id, status="completed", progress=100, stage="GLB riggeado listo", resultUrl=f"/jobs/{job_id}/result")
+        set_job(
+            job_id,
+            status="completed",
+            progress=100,
+            stage="Plantilla validada para tu avatar" if template_mode else "GLB riggeado listo",
+            resultUrl=f"/jobs/{job_id}/result",
+        )
     except subprocess.TimeoutExpired:
-        set_job(job_id, status="failed", progress=100, stage="Blender agotó el tiempo máximo", error=f"Blender exceeded {BLENDER_TIMEOUT_SECONDS}s")
+        set_job(
+            job_id,
+            status="failed",
+            progress=100,
+            stage="Blender agotó el tiempo máximo",
+            error=f"Blender exceeded {BLENDER_TIMEOUT_SECONDS}s",
+        )
     except Exception as exc:
         set_job(job_id, status="failed", progress=100, stage="Error inesperado", error=str(exc))
 
 
 @app.get("/health")
 def health():
+    fallback_configured = bool(CLOUVA_AVATAR_FALLBACK_URL)
     return {
         "ok": True,
         "service": "clouva-garment-rig",
         "blender": BLENDER_BIN,
         "script_exists": SCRIPT_PATH.exists(),
-        "avatar_configured": bool(CLOUVA_AVATAR_URL),
+        "template_script_exists": TEMPLATE_SCRIPT_PATH.exists(),
+        "per_job_avatar_supported": True,
+        "template_processing_supported": TEMPLATE_SCRIPT_PATH.exists(),
+        "avatar_fallback_configured": fallback_configured,
+        "avatar_configured": fallback_configured,
     }
 
 
 @app.post("/jobs")
 async def create_job(file: UploadFile = File(...), job: str = Form("{}")):
-    if not CLOUVA_AVATAR_URL:
-        raise HTTPException(status_code=503, detail="Falta CLOUVA_AVATAR_URL o CLOUVA_BASE_AVATAR_URL en Railway.")
     if not file.filename or not file.filename.lower().endswith(".glb"):
         raise HTTPException(status_code=400, detail="El archivo debe ser .glb")
 
@@ -149,6 +216,25 @@ async def create_job(file: UploadFile = File(...), job: str = Form("{}")):
         payload = json.loads(job or "{}")
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=400, detail="El campo job no contiene JSON válido") from exc
+
+    avatar_url = str(
+        payload.get("avatarUrl")
+        or payload.get("avatar_url")
+        or CLOUVA_AVATAR_FALLBACK_URL
+        or ""
+    ).strip()
+    if not avatar_url:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "El job no incluyó avatarUrl. Creator Studio debe resolver y enviar el avatar activo "
+                "del usuario; CLOUVA_AVATAR_URL queda solo como fallback opcional."
+            ),
+        )
+
+    template_mode = as_bool(payload.get("templateMode")) or as_bool(payload.get("preserveExistingSkinning"))
+    rigging_strategy = "preserve_existing_skinning" if template_mode else "transfer_from_avatar"
+    avatar_id = str(payload.get("avatarId") or "").strip() or None
 
     category_raw = str(payload.get("category") or "accessory").strip().lower()
     category = CATEGORY_MAP.get(category_raw, category_raw)
@@ -171,29 +257,49 @@ async def create_job(file: UploadFile = File(...), job: str = Form("{}")):
     garment_path.write_bytes(content)
 
     try:
-        download(CLOUVA_AVATAR_URL, avatar_path)
+        download(avatar_url, avatar_path)
     except Exception as exc:
         cleanup(job_dir)
-        raise HTTPException(status_code=502, detail=f"No se pudo descargar el avatar base: {exc}") from exc
+        raise HTTPException(
+            status_code=502,
+            detail=f"No se pudo descargar el avatar activo del usuario: {exc}",
+        ) from exc
 
     set_job(
         job_id,
         id=job_id,
         status="queued",
         progress=5,
-        stage="GLB recibido y en cola",
+        stage="Plantilla y avatar recibidos" if template_mode else "GLB y avatar recibidos",
         resultUrl=None,
         error=None,
         job_dir=str(job_dir),
         output_path=str(output_path),
+        avatarId=avatar_id,
+        avatarSource=payload.get("avatarSource"),
+        userId=payload.get("userId"),
+        templateMode=template_mode,
+        riggingStrategy=rigging_strategy,
     )
     thread = threading.Thread(
         target=run_blender_job,
         args=(job_id, job_dir, avatar_path, garment_path, output_path, category),
+        kwargs={
+            "template_mode": template_mode,
+            "avatar_id": avatar_id,
+        },
         daemon=True,
     )
     thread.start()
-    return {"id": job_id, "jobId": job_id, "status": "queued", "progress": 5}
+    return {
+        "id": job_id,
+        "jobId": job_id,
+        "status": "queued",
+        "progress": 5,
+        "avatarId": avatar_id,
+        "templateMode": template_mode,
+        "riggingStrategy": rigging_strategy,
+    }
 
 
 @app.get("/jobs/{job_id}")
@@ -237,7 +343,16 @@ def rig(request: RigRequest):
         download(str(request.garment_url), garment_path)
         if request.art_url:
             download(str(request.art_url), art_path)
-        run_blender_job("legacy-sync", job_dir, avatar_path, garment_path, output_path, category, art_path, request.color or "#0a0a0a")
+        run_blender_job(
+            "legacy-sync",
+            job_dir,
+            avatar_path,
+            garment_path,
+            output_path,
+            category,
+            art_path,
+            request.color or "#0a0a0a",
+        )
         if not output_path.exists() or output_path.stat().st_size < 1024:
             raise HTTPException(status_code=422, detail="Automatic rigging validation failed")
         return FileResponse(

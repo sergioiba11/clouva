@@ -13,6 +13,10 @@ PILARES DEL PRODUCTO
 1. Identidad y avatar
 - CLOUVA ID y perfil público.
 - Avatar 3D oficial, personalizable y reutilizable.
+- Cada cuenta autenticada crea o elige su propio avatar; ese avatar activo queda asociado al usuario en Supabase.
+- La fuente principal es user_avatars con user_id, is_active, status y model_url; profiles.avatar_3d_url funciona como compatibilidad para avatares ya validados desde Admin.
+- El mismo avatar activo del usuario debe usarse en el perfil, Creator Studio, prueba de prendas, Auto Rig, inventario y futuros mundos.
+- Nunca se debe reemplazar la identidad real del usuario por una URL global de avatar en producción.
 - Armario, looks, prendas, accesorios, animaciones y gestos.
 - Una misma identidad e inventario entre app, marketplace y futuros mundos 3D.
 
@@ -36,7 +40,11 @@ PILARES DEL PRODUCTO
 5. Creator Studio
 - Flujo para crear y validar prendas, accesorios, props, avatares y escenarios.
 - Meshy puede generar geometría; Blender Worker debe ajustar, riggear, transferir pesos, validar y exportar.
-- El resultado debe convertirse en un asset trazable, versionado, publicable y compatible con el avatar oficial.
+- Cada job de Blender debe recibir avatarId/avatarUrl resueltos desde el usuario dueño del asset, no depender de CLOUVA_AVATAR_URL como identidad global.
+- CLOUVA_AVATAR_URL o CLOUVA_BASE_AVATAR_URL pueden existir únicamente como fallback técnico opcional para pruebas o recuperación, nunca como fuente principal de identidad.
+- En Auto Rig de un objeto crudo, Blender transfiere pesos y Vertex Groups desde el avatar activo del usuario.
+- En "Procesar desde plantilla", Blender conserva el skinning, pesos, Vertex Groups, topología y materiales existentes; solo lo vuelve a vincular con el armature compatible del avatar activo y valida el resultado. No debe ejecutar autorig ni borrar pesos.
+- El resultado debe convertirse en un asset trazable, versionado, publicable y compatible con el avatar activo de su dueño.
 - Una preview visual no equivale a una validación técnica real.
 
 6. CLOUVA Worlds
@@ -66,7 +74,8 @@ PRINCIPIOS DE CONSTRUCCIÓN
 - Evidencia antes que afirmación: distinguir hechos, inferencias y propuestas.
 - Mobile-first: CLOUVA se usa principalmente desde celular.
 - Avatar como identidad, no como adorno.
-- Una sola fuente de verdad para usuarios, roles, inventario, assets y estados.
+- Una sola fuente de verdad para usuarios, roles, avatar activo, inventario, assets y estados.
+- El backend debe resolver el avatar por user_id/avatar_id y enviar su URL al worker dentro de cada job.
 - Los procesos pesados son trabajos persistentes y reanudables, no requests largos frágiles.
 - Los assets finales viven en almacenamiento externo y base de datos; el repositorio no es un depósito de binarios.
 - Ningún asset se publica sin validación técnica, estado y trazabilidad.
