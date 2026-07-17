@@ -77,12 +77,14 @@ type LoadedReference = {
   originalSize: Vector3;
   anchorBoneKey: AnchorBoneKey | null;
   boneFound: boolean;
+  bone: Bone | null;
 };
 
 const avatarSize = new Vector3();
 const avatarCenter = new Vector3();
 const targetPosition = new Vector3();
 const headPosition = new Vector3();
+const boneWorldScale = new Vector3();
 const localOffset = new Vector3();
 const rootWorldQuaternion = new Quaternion();
 const rootBaseInverseQuaternion = new Quaternion();
@@ -282,7 +284,7 @@ export function SmartTryOnViewer({
       if (resolvedBone) resolvedBone.add(root);
       else avatarRef.current.parent?.add(root);
 
-      referenceRef.current = { root, originalSize: size, anchorBoneKey, boneFound: Boolean(resolvedBone) };
+      referenceRef.current = { root, originalSize: size, anchorBoneKey, boneFound: Boolean(resolvedBone), bone: resolvedBone };
       diagnosticsRef.current?.({
         anchorBoneKey,
         boneFound: Boolean(resolvedBone),
@@ -348,14 +350,24 @@ export function SmartTryOnViewer({
           uniformBase * userScale * fitScale * depth,
         );
 
-        if (reference.boneFound) {
+        if (reference.boneFound && reference.bone) {
           // Anclaje real: el grupo cuelga del hueso, así que solo hace falta el offset
           // local (metros/radianes). El scene graph propaga la animación del hueso solo.
+          // Como el hueso puede traer su propia escala (bind pose, rigs escalados en cm,
+          // etc.), se compensa dividiendo por su escala mundial para que el tamaño y el
+          // offset final queden en metros reales, sin heredar la escala del hueso.
+          reference.bone.getWorldScale(boneWorldScale);
+          const scaleGuard = Math.max(Math.abs(boneWorldScale.y) || 1, 1e-4);
           const preset = CATEGORY_ANCHOR_PRESETS[current.category] ?? { x: 0, y: 0, z: 0, rotationY: 0 };
           reference.root.position.set(
-            preset.x + current.adjustments.x / 100,
-            preset.y + (current.adjustments.y + current.adjustments.height) / 100,
-            preset.z + current.adjustments.distance / 100,
+            (preset.x + current.adjustments.x / 100) / scaleGuard,
+            (preset.y + (current.adjustments.y + current.adjustments.height) / 100) / scaleGuard,
+            (preset.z + current.adjustments.distance / 100) / scaleGuard,
+          );
+          reference.root.scale.set(
+            (uniformBase * userScale * fitScale * width) / scaleGuard,
+            (uniformBase * userScale * length) / scaleGuard,
+            (uniformBase * userScale * fitScale * depth) / scaleGuard,
           );
           reference.root.quaternion.setFromAxisAngle(
             Y_AXIS,
