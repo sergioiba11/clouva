@@ -26,18 +26,70 @@ type FinalizeInput = {
   metadata: ItemMetadata;
 };
 
-async function officialAvatarUrl(supabase: FinalizationClient) {
-  const { data, error } = await supabase
-    .from("profiles")
-    .select("avatar_3d_url")
-    .eq("role", "admin")
-    .not("avatar_3d_url", "is", null)
+type ResolvedAvatar = {
+  id: string;
+  url: string;
+  source: "user_avatars" | "profiles";
+};
+
+function validAvatarUrl(value: unknown) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  try {
+    const parsed = new URL(value.trim());
+    return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+async function userAvatar(supabase: FinalizationClient, userId: string): Promise<ResolvedAvatar> {
+  const columns = "id,model_url,updated_at";
+  const { data: active, error: activeError } = await supabase
+    .from("user_avatars")
+    .select(columns)
+    .eq("user_id", userId)
+    .eq("is_active", true)
+    .eq("status", "ready")
+    .not("model_url", "is", null)
+    .order("updated_at", { ascending: false })
     .limit(1)
     .maybeSingle();
-  if (error || !data?.avatar_3d_url) {
-    throw new Error("No hay avatar oficial activo configurado (profiles.avatar_3d_url del admin)");
+
+  if (activeError) throw new Error(`No se pudo consultar el avatar activo del usuario: ${activeError.message}`);
+  const activeUrl = validAvatarUrl(active?.model_url);
+  if (active?.id && activeUrl) {
+    return { id: String(active.id), url: activeUrl, source: "user_avatars" };
   }
-  return data.avatar_3d_url as string;
+
+  const { data: profile, error: profileError } = await supabase
+    .from("profiles")
+    .select("avatar_3d_url")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (profileError) throw new Error(`No se pudo consultar el avatar del perfil: ${profileError.message}`);
+  const profileUrl = validAvatarUrl(profile?.avatar_3d_url);
+  if (profileUrl) {
+    return { id: `profile-${userId}`, url: profileUrl, source: "profiles" };
+  }
+
+  const { data: ready, error: readyError } = await supabase
+    .from("user_avatars")
+    .select(columns)
+    .eq("user_id", userId)
+    .eq("status", "ready")
+    .not("model_url", "is", null)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (readyError) throw new Error(`No se pudo buscar otro avatar listo del usuario: ${readyError.message}`);
+  const readyUrl = validAvatarUrl(ready?.model_url);
+  if (ready?.id && readyUrl) {
+    return { id: String(ready.id), url: readyUrl, source: "user_avatars" };
+  }
+
+  throw new Error("El usuario no tiene un avatar 3D activo y riggeado para procesar esta prenda");
 }
 
 async function fetchGlb(url: string, label: string) {
@@ -55,12 +107,25 @@ async function fetchGlb(url: string, label: string) {
   return bytes;
 }
 
-async function rigWithWorker(supabase: FinalizationClient, modelUrl: string, category: string, artUrl: string | null, color: string | null) {
+async function rigWithWorker(
+  supabase: FinalizationClient,
+  userId: string,
+  modelUrl: string,
+  category: string,
+  artUrl: string | null,
+  color: string | null,
+) {
   const workerUrl = process.env.GARMENT_RIG_WORKER_URL?.replace(/\/$/, "");
-  if (!workerUrl) return { bytes: null as ArrayBuffer | null, error: "GARMENT_RIG_WORKER_URL no está configurada" };
+  if (!workerUrl) {
+    return {
+      bytes: null as ArrayBuffer | null,
+      error: "GARMENT_RIG_WORKER_URL no está configurada",
+      avatar: null as ResolvedAvatar | null,
+    };
+  }
 
   try {
-    const avatarUrl = await officialAvatarUrl(supabase);
+    const avatar = await userAvatar(supabase, userId);
     const response = await fetch(`${workerUrl}/rig`, {
       method: "POST",
       headers: {
@@ -70,7 +135,7 @@ async function rigWithWorker(supabase: FinalizationClient, modelUrl: string, cat
           : {}),
       },
       body: JSON.stringify({
-        avatar_url: avatarUrl,
+        avatar_url: avatar.url,
         garment_url: modelUrl,
         category,
         art_url: artUrl,
@@ -84,21 +149,23 @@ async function rigWithWorker(supabase: FinalizationClient, modelUrl: string, cat
       return {
         bytes: null,
         error: `Automatic rigging failed (${response.status}): ${detail.slice(0, 1200)}`,
+        avatar,
       };
     }
 
     const bytes = await response.arrayBuffer();
     if (bytes.byteLength > MAX_GLB_BYTES) {
-      return { bytes: null, error: "Rigged GLB exceeds 75 MB" };
+      return { bytes: null, error: "Rigged GLB exceeds 75 MB", avatar };
     }
     if (Buffer.from(bytes).subarray(0, 4).toString("ascii") !== "glTF") {
-      return { bytes: null, error: "Rig worker did not return a valid GLB" };
+      return { bytes: null, error: "Rig worker did not return a valid GLB", avatar };
     }
-    return { bytes, error: null as string | null };
+    return { bytes, error: null as string | null, avatar };
   } catch (error) {
     return {
       bytes: null,
       error: error instanceof Error ? error.message : "Unknown rigging error",
+      avatar: null,
     };
   }
 }
@@ -117,7 +184,7 @@ export async function finalizeClothingItem({
   const hoodDownModelUrl = typeof metadata.hood_down_model_url === "string" && metadata.hood_down_model_url ? metadata.hood_down_model_url : null;
   const hoodSupported = Boolean(hoodUpModelUrl && hoodDownModelUrl && (category === "hoodie" || category === "jacket"));
 
-  const rigResult = await rigWithWorker(supabase, modelUrl, category, artUrl, color);
+  const rigResult = await rigWithWorker(supabase, userId, modelUrl, category, artUrl, color);
   const riggedBytes = rigResult.bytes;
   const bytes = riggedBytes ?? (await fetchGlb(modelUrl, "Meshy GLB"));
   const storagePath = `${userId}/clothing/${itemId}/${riggedBytes ? "rigged-textured" : "garment-fallback"}.glb`;
@@ -133,8 +200,10 @@ export async function finalizeClothingItem({
   const nextMetadata = {
     ...metadata,
     rigged: Boolean(riggedBytes),
-    rig_pipeline: riggedBytes ? "blender-nearest-surface-uv-v2" : "viewer-fit-fallback",
-    official_avatar: "clouva-official-v1",
+    rig_pipeline: riggedBytes ? "blender-nearest-surface-uv-v3-user-avatar" : "viewer-fit-fallback",
+    avatar_scope: "user",
+    avatar_id: rigResult.avatar?.id ?? null,
+    avatar_source: rigResult.avatar?.source ?? null,
     uv_generated: Boolean(riggedBytes),
     textured: Boolean(riggedBytes && artUrl),
     texture_source: artUrl,
