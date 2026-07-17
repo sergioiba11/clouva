@@ -8,9 +8,9 @@ function redirect(path: string) {
   window.location.replace(path);
 }
 
-async function raceTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+async function raceTimeout<T>(promise: PromiseLike<T>, ms: number, message: string): Promise<T> {
   return Promise.race([
-    promise,
+    Promise.resolve(promise),
     new Promise<T>((_, reject) => window.setTimeout(() => reject(new Error(message)), ms)),
   ]);
 }
