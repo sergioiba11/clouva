@@ -20,6 +20,7 @@ SCRIPT_PATH = Path(__file__).with_name("rig_garment.py")
 MAX_DOWNLOAD_BYTES = int(os.getenv("MAX_DOWNLOAD_BYTES", str(120 * 1024 * 1024)))
 BLENDER_TIMEOUT_SECONDS = int(os.getenv("BLENDER_TIMEOUT_SECONDS", "420"))
 CLOUVA_AVATAR_URL = os.getenv("CLOUVA_AVATAR_URL") or os.getenv("CLOUVA_BASE_AVATAR_URL")
+HAT_DEFAULT_LIFT_CM = float(os.getenv("HAT_DEFAULT_LIFT_CM", "12"))
 VALID_CATEGORIES = {"hoodie", "shirt", "jacket", "pants", "shorts", "shoes", "hat", "accessory"}
 CATEGORY_MAP = {
     "hoodie": "hoodie",
@@ -77,6 +78,28 @@ def cleanup(path: Path) -> None:
     shutil.rmtree(path, ignore_errors=True)
 
 
+def number_or(value, fallback: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def normalize_preview_settings(category: str, preview_settings: dict | None) -> dict:
+    settings = dict(preview_settings or {})
+    adjustments_raw = settings.get("adjustments")
+    adjustments = dict(adjustments_raw) if isinstance(adjustments_raw, dict) else {}
+
+    if category == "hat":
+        # El hueso Head suele comenzar cerca del cuello. Este desplazamiento coloca
+        # la gorra sobre la coronilla y sigue permitiendo afinarla con el slider Altura.
+        adjustments["height"] = number_or(adjustments.get("height"), 0.0) + HAT_DEFAULT_LIFT_CM
+        settings["hatOcclusionGroup"] = "hair_top"
+
+    settings["adjustments"] = adjustments
+    return settings
+
+
 def run_blender_job(
     job_id: str,
     job_dir: Path,
@@ -89,6 +112,7 @@ def run_blender_job(
     preview_settings: dict | None = None,
 ) -> None:
     try:
+        effective_preview_settings = normalize_preview_settings(category, preview_settings)
         set_job(
             job_id,
             status="processing",
@@ -96,6 +120,7 @@ def run_blender_job(
             stage="Analizando rig y pesos del objeto",
             category=category,
             riggingStrategy="retarget_existing_or_category_anchor",
+            effectivePreviewSettings=effective_preview_settings,
         )
         command = [
             BLENDER_BIN,
@@ -112,14 +137,14 @@ def run_blender_job(
             category,
             str(art_path) if art_path and art_path.exists() else "",
             color,
-            json.dumps(preview_settings or {}, separators=(",", ":")),
+            json.dumps(effective_preview_settings, separators=(",", ":")),
         ]
         set_job(
             job_id,
             progress=30,
             stage="Remapeando el rig del objeto al armature del avatar"
             if category != "hat"
-            else "Ajustando la gorra y vinculándola al hueso Head",
+            else "Levantando la gorra y vinculándola al hueso Head",
         )
         result = subprocess.run(
             command,
@@ -177,6 +202,7 @@ def health():
         "avatar_configured": bool(CLOUVA_AVATAR_URL),
         "object_rig_retarget_supported": True,
         "hat_head_anchor_supported": True,
+        "hat_default_lift_cm": HAT_DEFAULT_LIFT_CM,
         "preview_transforms_supported": True,
     }
 
