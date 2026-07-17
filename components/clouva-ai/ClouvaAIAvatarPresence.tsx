@@ -6,11 +6,11 @@ import { OFFICIAL_CLOUVA_MODEL_URL } from "@/lib/avatar-engine/active-avatar-sto
 export function ClouvaAIAvatarPresence() {
   return (
     <section className="mx-auto flex w-full max-w-5xl shrink-0 items-center gap-3 px-4 py-2 text-white sm:px-6">
-      <div className="h-16 w-14 shrink-0 overflow-hidden rounded-2xl border border-violet-400/25 bg-violet-500/10 shadow-lg shadow-violet-950/30">
+      <div className="relative h-16 w-14 shrink-0 overflow-hidden rounded-2xl border border-violet-400/25 bg-violet-500/10 shadow-lg shadow-violet-950/30">
         <AvatarModelViewer
           modelUrl={OFFICIAL_CLOUVA_MODEL_URL}
           alt="CLOUVA, artista y guía de la plataforma"
-          className="h-full w-full"
+          className="pointer-events-none !absolute !inset-0 !h-full !min-h-0 !w-full overflow-hidden [&_.avatar-model-viewer]:!min-h-0"
           playAnimations
           poseMode="idle"
         />
