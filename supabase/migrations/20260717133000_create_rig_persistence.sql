@@ -4,6 +4,8 @@ create table if not exists public.rig_jobs (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
   asset_id uuid,
+
+  worker_key text not null default 'garment-worker',
   worker_job_id text,
 
   status text not null default 'creating'
@@ -29,6 +31,9 @@ create table if not exists public.rig_jobs (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
 
+  constraint rig_jobs_id_user_unique unique (id, user_id),
+  constraint rig_jobs_worker_key_not_blank
+    check (length(btrim(worker_key)) > 0),
   constraint rig_jobs_worker_job_id_not_blank
     check (worker_job_id is null or length(btrim(worker_job_id)) > 0),
   constraint rig_jobs_finished_state_consistency
@@ -39,8 +44,8 @@ create table if not exists public.rig_jobs (
     )
 );
 
-create unique index if not exists rig_jobs_worker_job_id_unique_idx
-  on public.rig_jobs (worker_job_id)
+create unique index if not exists rig_jobs_worker_identity_unique_idx
+  on public.rig_jobs (worker_key, worker_job_id)
   where worker_job_id is not null;
 
 create index if not exists rig_jobs_user_status_created_idx
@@ -56,7 +61,7 @@ create index if not exists rig_jobs_active_activity_idx
 
 create table if not exists public.rig_logs (
   id uuid primary key default gen_random_uuid(),
-  rig_job_id uuid not null references public.rig_jobs(id) on delete cascade,
+  rig_job_id uuid not null,
   user_id uuid not null references auth.users(id) on delete cascade,
 
   level text not null default 'info'
@@ -69,6 +74,10 @@ create table if not exists public.rig_logs (
   dedupe_key text,
   created_at timestamptz not null default now(),
 
+  constraint rig_logs_job_owner_fk
+    foreign key (rig_job_id, user_id)
+    references public.rig_jobs(id, user_id)
+    on delete cascade,
   constraint rig_logs_message_not_blank
     check (length(btrim(message)) > 0),
   constraint rig_logs_dedupe_key_not_blank
@@ -82,8 +91,7 @@ create index if not exists rig_logs_user_created_idx
   on public.rig_logs (user_id, created_at desc);
 
 create unique index if not exists rig_logs_job_dedupe_unique_idx
-  on public.rig_logs (rig_job_id, dedupe_key)
-  where dedupe_key is not null;
+  on public.rig_logs (rig_job_id, dedupe_key);
 
 create or replace function public.set_rig_record_updated_at()
 returns trigger
@@ -107,6 +115,7 @@ alter table public.rig_logs enable row level security;
 
 revoke all on table public.rig_jobs from anon, authenticated;
 revoke all on table public.rig_logs from anon, authenticated;
+revoke all on function public.set_rig_record_updated_at() from public;
 
 grant select on table public.rig_jobs to authenticated;
 grant select on table public.rig_logs to authenticated;
@@ -129,6 +138,8 @@ comment on table public.rig_jobs is
   'Fuente de verdad persistente para trabajos de Auto Rig enviados a workers externos.';
 comment on column public.rig_jobs.id is
   'Identificador interno estable de CLOUVA. No depende del identificador del worker.';
+comment on column public.rig_jobs.worker_key is
+  'Identifica al proveedor o servicio de worker y permite migrar entre workers sin perder trazabilidad.';
 comment on column public.rig_jobs.worker_job_id is
   'Identificador externo devuelto por el worker de Blender/Railway.';
 comment on column public.rig_jobs.worker_fingerprint is
