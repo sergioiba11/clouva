@@ -77,10 +77,30 @@ export const useActiveAvatarStore = create<ActiveAvatarStore>((set, get) => ({
     set({ loading: true });
     try {
       const { supabase } = await import("@/lib/supabase");
+      const columns = "id,source,status,model_url,front_rotation_y,updated_at";
 
-      // The validated rigging flow stores the final GLB in profiles.avatar_3d_url.
-      // Prefer it over older/generated avatars so Creator Studio always receives
-      // the same 24-bone SkinnedMesh that was validated in /admin.
+      // La selección explícita del usuario es la fuente principal. Antes se leía
+      // profiles.avatar_3d_url primero y eso hacía reaparecer el rig viejo con pelo.
+      const { data: active, error: activeError } = await supabase
+        .from("user_avatars")
+        .select(columns)
+        .eq("user_id", userId)
+        .eq("is_active", true)
+        .eq("status", "ready")
+        .is("archived_at", null)
+        .not("model_url", "is", null)
+        .order("updated_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (activeError) throw activeError;
+      if (active?.model_url) {
+        set({ avatar: mapAvatar(active), hydratedUserId: userId, loading: false });
+        return;
+      }
+
+      // El perfil queda como respaldo para avatares oficiales antiguos que todavía
+      // no tienen una fila correspondiente en user_avatars.
       const { data: profile, error: profileError } = await supabase
         .from("profiles")
         .select("avatar_3d_url, updated_at")
@@ -88,52 +108,30 @@ export const useActiveAvatarStore = create<ActiveAvatarStore>((set, get) => ({
         .maybeSingle();
 
       if (profileError) throw profileError;
-      const riggedProfileUrl = typeof profile?.avatar_3d_url === "string" ? profile.avatar_3d_url : null;
-      if (riggedProfileUrl?.includes("clouva-official-rigged.glb")) {
+      const profileUrl = typeof profile?.avatar_3d_url === "string" ? profile.avatar_3d_url : null;
+      if (profileUrl) {
         set({
-          avatar: mapProfileAvatar(userId, riggedProfileUrl, profile?.updated_at),
+          avatar: mapProfileAvatar(userId, profileUrl, profile?.updated_at),
           hydratedUserId: userId,
           loading: false,
         });
         return;
       }
 
-      const columns = "id,source,status,model_url,front_rotation_y,updated_at";
-      const { data: active, error: activeError } = await supabase
+      const { data: firstCreated, error: firstError } = await supabase
         .from("user_avatars")
         .select(columns)
         .eq("user_id", userId)
-        .eq("is_active", true)
         .eq("status", "ready")
+        .is("archived_at", null)
         .not("model_url", "is", null)
         .order("updated_at", { ascending: false })
         .limit(1)
         .maybeSingle();
 
-      if (activeError) throw activeError;
-
-      let selected = active;
-      if (!selected?.model_url) {
-        const { data: firstCreated, error: firstError } = await supabase
-          .from("user_avatars")
-          .select(columns)
-          .eq("user_id", userId)
-          .eq("status", "ready")
-          .not("model_url", "is", null)
-          .order("updated_at", { ascending: true })
-          .limit(1)
-          .maybeSingle();
-
-        if (firstError) throw firstError;
-        selected = firstCreated;
-      }
-
-      const fallbackOfficial = riggedProfileUrl
-        ? mapProfileAvatar(userId, riggedProfileUrl, profile?.updated_at)
-        : OFFICIAL_CLOUVA_AVATAR;
-
+      if (firstError) throw firstError;
       set({
-        avatar: selected?.model_url ? mapAvatar(selected) : fallbackOfficial,
+        avatar: firstCreated?.model_url ? mapAvatar(firstCreated) : OFFICIAL_CLOUVA_AVATAR,
         hydratedUserId: userId,
         loading: false,
       });
