@@ -19,13 +19,17 @@ Variables recomendadas:
 
 ```text
 GARMENT_WORKER_TOKEN=<token largo y secreto>
+CLOUVA_AVATAR_URL=<URL pública o firmada del avatar GLB oficial en Supabase>
+CLOUVA_AVATAR_TOKEN=<opcional, solo si la URL requiere Bearer token>
 PUBLIC_BASE_URL=https://rig.clouva.com.ar
 CORS_ORIGINS=https://clouva.com.ar,https://www.clouva.com.ar
 BLENDER_JOB_TIMEOUT_SECONDS=900
 JOB_RETENTION_SECONDS=86400
 ```
 
-En Vercel, usar los mismos datos:
+`CLOUVA_AVATAR_URL` debe apuntar al mismo avatar base que usa Creator Studio. El worker lo descarga una sola vez al iniciar y valida que tenga encabezado `glTF` antes de aceptar trabajos.
+
+En Vercel, usar:
 
 ```text
 GARMENT_WORKER_URL=https://rig.clouva.com.ar
