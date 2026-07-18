@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Compass, Home, ShoppingBag, User, VenetianMask } from "lucide-react";
+import { Compass, Home, LibraryBig, ShoppingBag, User, VenetianMask } from "lucide-react";
 
 type MinimalNavigationProps = { visible: boolean };
 
@@ -9,6 +9,7 @@ const items = [
   { href: "/", label: "Inicio", Icon: Home },
   { href: "/lookbook", label: "Explorar", Icon: Compass },
   { href: "/mi-flow/avatar", label: "Avatar", Icon: VenetianMask },
+  { href: "/biblioteca", label: "Biblioteca", Icon: LibraryBig },
   { href: "/tienda", label: "Tienda", Icon: ShoppingBag },
   { href: "/perfil", label: "Perfil", Icon: User },
 ];
