@@ -3,21 +3,49 @@
 import { useEffect, useState } from "react";
 import { Activity } from "lucide-react";
 import { AvatarModelViewer } from "@/components/avatar-engine/AvatarModelViewer";
-import { useAvatarStore } from "@/lib/avatar-engine/avatar-store";
+import { OFFICIAL_CLOUVA_MODEL_URL } from "@/lib/avatar-engine/active-avatar-store";
+
+const HOME_AVATAR_CACHE_KEY = "clouva.home.officialAvatarUrl.v1";
+
+function getInitialModelUrl() {
+  if (typeof window === "undefined") return OFFICIAL_CLOUVA_MODEL_URL;
+
+  try {
+    const cachedUrl = window.localStorage.getItem(HOME_AVATAR_CACHE_KEY)?.trim();
+    if (cachedUrl && (cachedUrl.startsWith("https://") || cachedUrl.startsWith("http://") || cachedUrl.startsWith("/"))) {
+      return cachedUrl;
+    }
+  } catch {
+    // localStorage can be unavailable in private/restricted browser contexts.
+  }
+
+  return OFFICIAL_CLOUVA_MODEL_URL;
+}
 
 export function AvatarModel({ className = "" }: { className?: string }) {
-  const config = useAvatarStore((state) => state.config);
-  const [modelUrl, setModelUrl] = useState<string | null>(null);
+  // Start with the last real CLOUVA GLB (or the official GLB on first visit), so the
+  // shared viewer never enters its procedural fallback while /api/avatar/clouva refreshes.
+  const [modelUrl, setModelUrl] = useState<string>(getInitialModelUrl);
   const [motionTest, setMotionTest] = useState(false);
 
   useEffect(() => {
     let alive = true;
+
     void fetch("/api/avatar/clouva", { cache: "no-store" })
       .then((response) => response.json())
       .then((result) => {
-        if (alive && result?.modelUrl) setModelUrl(result.modelUrl);
+        const nextModelUrl = typeof result?.modelUrl === "string" ? result.modelUrl.trim() : "";
+        if (!alive || !nextModelUrl) return;
+
+        setModelUrl((current) => current === nextModelUrl ? current : nextModelUrl);
+        try {
+          window.localStorage.setItem(HOME_AVATAR_CACHE_KEY, nextModelUrl);
+        } catch {
+          // The real avatar still renders even when the browser blocks storage.
+        }
       })
-      .catch((error) => console.warn("Could not load the admin CLOUVA avatar", error));
+      .catch((error) => console.warn("Could not refresh the admin CLOUVA avatar", error));
+
     return () => {
       alive = false;
     };
@@ -27,9 +55,8 @@ export function AvatarModel({ className = "" }: { className?: string }) {
     <div className={`relative h-full min-h-[100dvh] w-full ${className}`}>
       <AvatarModelViewer
         modelUrl={modelUrl}
-        fallbackModelUrl={null}
+        fallbackModelUrl={OFFICIAL_CLOUVA_MODEL_URL}
         frontRotationY={0}
-        config={config}
         alt="CLOUVA oficial"
         playAnimations={false}
         motionTest={motionTest}
