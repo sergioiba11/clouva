@@ -1,7 +1,16 @@
 import math
+import sys
+from pathlib import Path
 
 import bpy
 from mathutils import Matrix
+
+# Blender ejecuta los scripts con --python desde un directorio temporal y no siempre
+# agrega /app (donde viven los scripts del Worker) a sys.path. Aseguramos que el
+# exportador base pueda importarse sin depender del cwd del job.
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
 import export_unreal as base
 
