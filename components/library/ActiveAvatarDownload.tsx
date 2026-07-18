@@ -1,6 +1,15 @@
 "use client";
 
-import { Box, CheckCircle2, Download, ExternalLink, Loader2, RefreshCw, TriangleAlert } from "lucide-react";
+import {
+  Box,
+  CheckCircle2,
+  Download,
+  ExternalLink,
+  Loader2,
+  RefreshCw,
+  TriangleAlert,
+  WandSparkles,
+} from "lucide-react";
 import { createElement, useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
 import { supabase } from "@/lib/supabase";
@@ -19,6 +28,16 @@ type StorageEntry = {
   metadata?: Record<string, unknown> | null;
 };
 
+type RigApiResponse = {
+  alreadyRigged?: boolean;
+  taskId?: string;
+  status?: string;
+  progress?: number;
+  newAvatarUrl?: string;
+  task_error?: { message?: string };
+  error?: string;
+};
+
 const URL_FIELDS = [
   "rigged_url",
   "processed_glb_url",
@@ -30,12 +49,19 @@ const URL_FIELDS = [
   "glb_url",
 ] as const;
 
+const FAILED_RIG_STATES = new Set(["FAILED", "EXPIRED", "CANCELED"]);
+const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
 function firstUrl(row: Record<string, unknown>) {
   for (const field of URL_FIELDS) {
     const value = row[field];
     if (typeof value === "string" && value.trim()) return { field, url: value.trim() };
   }
   return null;
+}
+
+function looksRigged(value: string) {
+  return /rigged|processed|final/i.test(value);
 }
 
 async function findGlbInFolder(basePath: string, depth = 0): Promise<string | null> {
@@ -71,10 +97,13 @@ async function signedAvatarUrl(path: string) {
 }
 
 export function ActiveAvatarDownload() {
-  const { user, profile, loading: authLoading } = useAuth();
+  const { user, profile, session, loading: authLoading } = useAuth();
   const [avatar, setAvatar] = useState<AvatarDownload | null>(null);
   const [loading, setLoading] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [rigging, setRigging] = useState(false);
+  const [rigProgress, setRigProgress] = useState(0);
+  const [rigMessage, setRigMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const loadActiveAvatar = useCallback(async () => {
@@ -111,13 +140,19 @@ export function ActiveAvatarDownload() {
           url: direct.url,
           path: null,
           status,
-          isRigged: /rigged|processed|final/i.test(direct.field),
+          isRigged: looksRigged(`${direct.field} ${direct.url}`),
         });
         return;
       }
 
       if (profile?.avatar_3d_url) {
-        setAvatar({ avatarId, url: profile.avatar_3d_url, path: null, status, isRigged: false });
+        setAvatar({
+          avatarId,
+          url: profile.avatar_3d_url,
+          path: null,
+          status,
+          isRigged: looksRigged(profile.avatar_3d_url),
+        });
         return;
       }
 
@@ -131,7 +166,7 @@ export function ActiveAvatarDownload() {
           url,
           path,
           status,
-          isRigged: /rigged|processed|final/i.test(path),
+          isRigged: looksRigged(path),
         });
         return;
       }
@@ -156,8 +191,121 @@ export function ActiveAvatarDownload() {
     return `clouva-avatar-${avatar?.avatarId.slice(0, 8) ?? "activo"}-${suffix}.glb`;
   }, [avatar]);
 
-  const downloadAvatar = async () => {
+  const requestRigApi = async (url: string, body: Record<string, unknown>) => {
+    if (!session?.access_token) throw new Error("Tu sesión venció. Volvé a iniciar sesión.");
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session.access_token}`,
+      },
+      body: JSON.stringify(body),
+      cache: "no-store",
+    });
+
+    const data = (await response.json().catch(() => ({}))) as RigApiResponse;
+    if (!response.ok) {
+      throw new Error(data.error || `No se pudo iniciar el Auto Rig (${response.status}).`);
+    }
+    return data;
+  };
+
+  const finalizeRig = async (taskId: string) => {
+    let lastError: unknown;
+
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      try {
+        return await requestRigApi("/api/debug/rig-official/finalize", { taskId });
+      } catch (cause) {
+        lastError = cause;
+        if (!(cause instanceof Error) || !cause.message.includes("todavía no terminó")) {
+          throw cause;
+        }
+
+        setRigProgress(99);
+        setRigMessage("Meshy terminó. CLOUVA está guardando el avatar riggeado…");
+        await sleep(5000);
+      }
+    }
+
+    throw lastError instanceof Error
+      ? lastError
+      : new Error("Meshy no publicó el avatar riggeado a tiempo.");
+  };
+
+  const startRigging = async () => {
     if (!avatar) return;
+
+    setRigging(true);
+    setRigProgress(0);
+    setRigMessage("Enviando tu avatar al Auto Rig…");
+    setError(null);
+
+    try {
+      const created = await requestRigApi("/api/debug/rig-official", {
+        action: "create",
+        force: false,
+      });
+
+      if (created.alreadyRigged) {
+        setRigProgress(100);
+        setRigMessage("El avatar riggeado ya estaba listo.");
+        await loadActiveAvatar();
+        return;
+      }
+
+      const taskId = String(created.taskId ?? "");
+      if (!taskId) throw new Error("Meshy no devolvió el identificador del Auto Rig.");
+
+      const startedAt = Date.now();
+      while (Date.now() - startedAt < 30 * 60 * 1000) {
+        const status = await requestRigApi("/api/debug/rig-official", {
+          action: "status",
+          taskId,
+        });
+
+        const progress = Math.max(0, Math.min(99, Math.round(status.progress ?? 0)));
+        setRigProgress(progress);
+        setRigMessage(
+          progress >= 95
+            ? "Meshy está terminando el esqueleto…"
+            : `Autoriggeando tu avatar… ${progress}%`,
+        );
+
+        if (FAILED_RIG_STATES.has(String(status.status ?? "").toUpperCase())) {
+          throw new Error(
+            status.task_error?.message ||
+              status.error ||
+              "Meshy no pudo autoriggear el avatar.",
+          );
+        }
+
+        if (status.status === "SUCCEEDED") {
+          setRigMessage("Guardando el avatar riggeado en tu cuenta…");
+          await finalizeRig(taskId);
+          await loadActiveAvatar();
+          setRigProgress(100);
+          setRigMessage("Avatar autoriggeado listo para descargar.");
+          return;
+        }
+
+        await sleep(5000);
+      }
+
+      throw new Error("El Auto Rig superó el tiempo máximo de 30 minutos.");
+    } catch (cause) {
+      console.error("Avatar rigging failed", cause);
+      setRigProgress(0);
+      setRigMessage(null);
+      setError(cause instanceof Error ? cause.message : "No se pudo autoriggear el avatar.");
+    } finally {
+      setRigging(false);
+    }
+  };
+
+  const downloadAvatar = async () => {
+    if (!avatar || !avatar.isRigged) return;
     setDownloading(true);
     setError(null);
 
@@ -189,7 +337,12 @@ export function ActiveAvatarDownload() {
       <div className={styles.glow} aria-hidden="true" />
       <div className={styles.topline}>
         <span><CheckCircle2 /> AVATAR ACTIVO</span>
-        <button type="button" onClick={() => void loadActiveAvatar()} aria-label="Actualizar avatar activo" disabled={loading}>
+        <button
+          type="button"
+          onClick={() => void loadActiveAvatar()}
+          aria-label="Actualizar avatar activo"
+          disabled={loading || rigging}
+        >
           <RefreshCw className={loading ? styles.spin : undefined} />
         </button>
       </div>
@@ -216,19 +369,46 @@ export function ActiveAvatarDownload() {
               <Box />
               <span>
                 <strong>Tu cuerpo 3D</strong>
-                <small>{avatar.isRigged ? "Versión procesada / riggeada" : "GLB base · todavía puede necesitar autorig"}</small>
+                <small>{avatar.isRigged ? "Versión procesada / riggeada" : "GLB base · listo para autoriggear"}</small>
               </span>
             </div>
             <code>{avatar.avatarId.slice(0, 8)}</code>
           </div>
 
-          <button className={styles.download} type="button" onClick={() => void downloadAvatar()} disabled={downloading}>
-            {downloading ? <Loader2 className={styles.spin} /> : <Download />}
-            {downloading ? "Preparando descarga…" : "DESCARGAR AVATAR .GLB"}
-          </button>
+          {!avatar.isRigged && rigMessage ? (
+            <div className={styles.rigStatus}>
+              <p>{rigMessage}</p>
+              <div className={styles.progressTrack} aria-label={`Progreso del Auto Rig: ${rigProgress}%`}>
+                <div className={styles.progressBar} style={{ width: `${Math.max(rigProgress, rigging ? 3 : 0)}%` }} />
+              </div>
+              <span>{rigProgress}%</span>
+            </div>
+          ) : null}
+
+          {avatar.isRigged ? (
+            <button
+              className={styles.download}
+              type="button"
+              onClick={() => void downloadAvatar()}
+              disabled={downloading}
+            >
+              {downloading ? <Loader2 className={styles.spin} /> : <Download />}
+              {downloading ? "Preparando descarga…" : "DESCARGAR AVATAR RIGGEADO"}
+            </button>
+          ) : (
+            <button
+              className={styles.download}
+              type="button"
+              onClick={() => void startRigging()}
+              disabled={rigging || !session?.access_token}
+            >
+              {rigging ? <Loader2 className={styles.spin} /> : <WandSparkles />}
+              {rigging ? `AUTORIGGEANDO ${rigProgress}%` : "AUTORIGGEAR AVATAR"}
+            </button>
+          )}
 
           <a className={styles.open} href={avatar.url} target="_blank" rel="noreferrer">
-            <ExternalLink /> Abrir archivo original
+            <ExternalLink /> {avatar.isRigged ? "Abrir archivo riggeado" : "Abrir GLB base"}
           </a>
         </>
       ) : (
