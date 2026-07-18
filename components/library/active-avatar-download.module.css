@@ -1,0 +1,235 @@
+.card {
+  position: fixed;
+  z-index: 80;
+  top: 88px;
+  right: 20px;
+  width: min(330px, calc(100vw - 32px));
+  overflow: hidden;
+  padding: 14px;
+  color: #fff;
+  border: 1px solid rgba(176, 131, 255, 0.45);
+  border-radius: 22px;
+  background:
+    linear-gradient(155deg, rgba(35, 22, 70, 0.97), rgba(10, 8, 22, 0.98));
+  box-shadow: 0 28px 70px rgba(0, 0, 0, 0.48), 0 0 0 1px rgba(115, 59, 230, 0.18);
+  backdrop-filter: blur(22px);
+}
+
+.glow {
+  position: absolute;
+  width: 220px;
+  height: 220px;
+  right: -90px;
+  top: -90px;
+  border-radius: 999px;
+  background: rgba(131, 70, 255, 0.24);
+  filter: blur(48px);
+  pointer-events: none;
+}
+
+.topline {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.topline > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #d8ffea;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.13em;
+}
+
+.topline > span svg {
+  width: 15px;
+  height: 15px;
+  color: #5ee49c;
+}
+
+.topline button {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  color: #cbb4f8;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+}
+
+.topline button svg { width: 15px; height: 15px; }
+.topline button:disabled { opacity: 0.5; cursor: default; }
+
+.preview {
+  position: relative;
+  z-index: 1;
+  height: 190px;
+  margin-top: 11px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at 50% 20%, rgba(137, 79, 255, 0.22), transparent 52%),
+    #080610;
+}
+
+.model {
+  width: 100%;
+  height: 100%;
+  display: block;
+  border: 0;
+  background: transparent;
+  --poster-color: transparent;
+}
+
+.info {
+  position: relative;
+  z-index: 1;
+  margin: 12px 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.info > div {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.info > div > svg {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  padding: 8px;
+  color: #c9abff;
+  border-radius: 11px;
+  background: rgba(139, 78, 255, 0.16);
+}
+
+.info span {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.info strong { font-size: 13px; }
+.info small {
+  overflow: hidden;
+  max-width: 205px;
+  color: #91899f;
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.info code {
+  flex: 0 0 auto;
+  padding: 5px 7px;
+  color: #a997bd;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.045);
+  font-size: 9px;
+}
+
+.download,
+.open {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  min-height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  border-radius: 14px;
+  text-decoration: none;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+}
+
+.download {
+  color: #fff;
+  border: 1px solid rgba(199, 165, 255, 0.56);
+  background: linear-gradient(135deg, #914eff, #6328dd);
+  box-shadow: 0 14px 32px rgba(99, 40, 221, 0.34);
+  cursor: pointer;
+}
+
+.download svg,
+.open svg { width: 17px; height: 17px; }
+.download:disabled { opacity: 0.65; cursor: wait; }
+
+.open {
+  min-height: 38px;
+  margin-top: 7px;
+  color: #b5abc3;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.025);
+  font-size: 10px;
+}
+
+.loading,
+.missing {
+  position: relative;
+  z-index: 1;
+  min-height: 180px;
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  color: #9a91aa;
+  text-align: center;
+}
+
+.loading svg,
+.missing > svg { width: 34px; height: 34px; color: #a77cff; }
+.missing strong { color: #fff; font-size: 13px; }
+.missing span { max-width: 230px; color: #8c8499; font-size: 10px; }
+
+.error {
+  position: relative;
+  z-index: 1;
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  color: #f2cfd7;
+  border: 1px solid rgba(255, 116, 143, 0.18);
+  border-radius: 10px;
+  background: rgba(154, 43, 70, 0.12);
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.spin { animation: spin 900ms linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 760px) {
+  .card {
+    top: auto;
+    right: 12px;
+    bottom: 12px;
+    left: 12px;
+    width: auto;
+    padding: 11px;
+    border-radius: 18px;
+  }
+
+  .preview { display: none; }
+  .info { margin: 9px 0; }
+  .download { min-height: 46px; }
+  .open { display: none; }
+  .loading,
+  .missing { min-height: 92px; }
+}
