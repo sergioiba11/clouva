@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 const { buildBlenderJob } = await import("./lib/creator-studio/blender-job.ts");
 const { resolveRigProfile, isDeformableCategory, isRigidCategory } = await import("./lib/creator-studio/rig-profiles.ts");
+const garmentWorkerSource = readFileSync("./worker/garment-rig/rig_garment_v5.py", "utf8");
+const garmentDockerfile = readFileSync("./worker/garment-rig/Dockerfile", "utf8");
 
 test("hoodie siempre se pesa de nuevo contra el avatar activo", () => {
   const job = buildBlenderJob({ category: "hoodie", templateMode: true, preserveExistingSkinning: true });
@@ -27,6 +30,15 @@ test("pantalón exige cintura en Hips y pesos separados para ambas piernas", () 
   assert.equal(job.options.validation.requireBilateralLegWeights, true);
   assert.equal(job.options.validation.requireWaistAtHips, true);
   assert.equal(job.options.validation.rejectTorsoAlignedPants, true);
+});
+
+test("el worker V9 normaliza ancho y profundidad sin un mínimo artificial", () => {
+  assert.match(garmentWorkerSource, /def snap_lower_garment\(garment, body_meshes, armature, category, preview_settings\)/);
+  assert.match(garmentWorkerSource, /desired_width/);
+  assert.match(garmentWorkerSource, /desired_depth/);
+  assert.match(garmentWorkerSource, /0\.03, 20\.0/);
+  assert.match(garmentWorkerSource, /clouvaCrossSectionNormalization/);
+  assert.match(garmentDockerfile, /CLOUVA_RIG_VERSION=v9/);
 });
 
 test("solo una plantilla rígida puede conservar skinning existente", () => {
