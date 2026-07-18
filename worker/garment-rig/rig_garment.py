@@ -357,6 +357,24 @@ def lower_landmarks(armature):
         (left_up.y + right_up.y + hips.y) / 3.0,
         max(left_up.z, right_up.z, hips.z),
     ))
+
+    # DIAGNOSTICO TEMPORAL: confirmar si armature.matrix_world / las posiciones locales de
+    # los huesos son la fuente de la altura objetivo de 6.07 vista en el pantalon.
+    hips_bone = resolve_bone(armature, "hips")
+    left_foot_bone = resolve_bone(armature, "left_foot")
+    print(
+        "[rig-diag] armature.matrix_world=" + repr(list(armature.matrix_world)) +
+        f" armature.scale={tuple(armature.scale)}" +
+        f" hips_bone_name={hips_bone.name if hips_bone else None}" +
+        f" hips_local_head={tuple(hips_bone.head) if hips_bone else None}" +
+        f" left_foot_bone_name={left_foot_bone.name if left_foot_bone else None}" +
+        f" left_foot_local_head={tuple(left_foot_bone.head) if left_foot_bone else None}" +
+        f" waist_world={tuple(waist_center)}" +
+        f" left_foot_world={tuple(left_foot)}" +
+        f" right_foot_world={tuple(right_foot)}",
+        flush=True,
+    )
+
     return {
         "hips": hips,
         "waist": waist_center,
