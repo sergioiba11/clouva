@@ -27,9 +27,9 @@ RUN wget -q "$BLENDER_URL" -O /tmp/blender.tar.xz \
 RUN pip install --no-cache-dir --break-system-packages fastapi uvicorn pydantic python-multipart
 
 WORKDIR /app
-COPY app.py app_v5.py rig_garment.py rig_garment_v5.py rig_garment_v10.py rig_garment_v11.py rig_garment_v12.py rig_garment_v13.py rig_garment_v14.py rig_garment_v15.py rig_object.py attach_object.py export_unreal.py ./
+COPY app.py app_v5.py app_v6.py rig_garment.py rig_garment_v5.py rig_garment_v10.py rig_garment_v11.py rig_garment_v12.py rig_garment_v13.py rig_garment_v14.py rig_garment_v15.py rig_object.py attach_object.py export_unreal.py ./
 RUN mv app.py app_legacy.py \
-    && mv app_v5.py app.py \
+    && mv app_v6.py app.py \
     && mv rig_garment.py rig_garment_legacy.py \
     && mv rig_garment_v5.py rig_garment_v9.py \
     && mv rig_garment_v10.py rig_garment_v10_base.py \
@@ -44,18 +44,16 @@ RUN mv app.py app_legacy.py \
     && sed -i 's/"rig_garment_v13.py"/"rig_garment_v13_base.py"/' /app/rig_garment_v14_base.py \
     && sed -i 's/"rig_garment_v14.py"/"rig_garment_v14_base.py"/' /app/rig_garment.py
 
-# Blender usa un Python embebido y puede ignorar PYTHONPATH cuando ejecuta --python.
-# Instalamos el módulo base dentro de la ruta nativa de módulos de Blender para que los
-# wrappers puedan importarlo sin depender del cwd, sys.path ni variables del proceso padre.
 RUN mkdir -p /opt/blender/4.2/scripts/modules \
     && cp /app/rig_garment_legacy.py /opt/blender/4.2/scripts/modules/rig_garment_legacy.py
 
 ENV PYTHONPATH=/app
-ENV CLOUVA_RIG_VERSION=v15
+ENV CLOUVA_RIG_VERSION=v16
 
-# Smoke test real: carga V15 y toda la cadena hasta el módulo legacy. Railway cancela
-# el build si falla el contrato basado en la malla corporal o cualquier wrapper anterior.
-RUN test -f /app/rig_garment.py \
+RUN test -f /app/app.py \
+    && test -f /app/app_v5.py \
+    && test -f /app/export_unreal.py \
+    && test -f /app/rig_garment.py \
     && test -f /app/rig_garment_v14_base.py \
     && test -f /app/rig_garment_v13_base.py \
     && test -f /app/rig_garment_v12_base.py \
@@ -63,9 +61,9 @@ RUN test -f /app/rig_garment.py \
     && test -f /app/rig_garment_v10_base.py \
     && test -f /app/rig_garment_v9.py \
     && test -f /app/rig_garment_legacy.py \
-    && test -f /app/export_unreal.py \
     && test -f /opt/blender/4.2/scripts/modules/rig_garment_legacy.py \
-    && /opt/blender/blender --background --factory-startup --python-expr "namespace={'__name__':'clouva_rig_import_test','__file__':'/app/rig_garment.py'}; exec(compile(open('/app/rig_garment.py', encoding='utf-8').read(), '/app/rig_garment.py', 'exec'), namespace); print('[clouva] Blender V15 wrapper import OK')"
+    && python3 -c "import app; assert any(getattr(route, 'path', '') == '/export/unreal-object' for route in app.app.routes); print('[clouva] Unreal object route OK')" \
+    && /opt/blender/blender --background --factory-startup --python-expr "namespace={'__name__':'clouva_rig_import_test','__file__':'/app/rig_garment.py'}; exec(compile(open('/app/rig_garment.py', encoding='utf-8').read(), '/app/rig_garment.py', 'exec'), namespace); print('[clouva] Blender V16 wrapper import OK')"
 
 ENV BLENDER_BIN=/usr/local/bin/blender
 EXPOSE 8000
