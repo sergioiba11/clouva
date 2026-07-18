@@ -222,8 +222,6 @@ export function CreatorStudioPro() {
     const combinedResult = await pollJob(String(attachData.jobId));
     if (!combinedResult.resultUrl) throw new Error("Blender terminó sin devolver la prueba combinada.");
 
-    // La biblioteca conserva el accesorio solo con su rig. El preview final puede mostrar
-    // avatar + accesorio, pero nunca guardamos ese avatar duplicado como si fuera el objeto.
     return {
       previewResultUrl: combinedResult.resultUrl,
       libraryResultUrl: riggedObject.resultUrl,
@@ -351,7 +349,7 @@ export function CreatorStudioPro() {
 
         {step === "result" && asset ? (
           <section className="mx-auto max-w-4xl">
-            {resultUrl ? <><div className="mb-4 rounded-3xl border border-emerald-400/25 bg-emerald-500/10 p-5 sm:p-7"><div className="flex gap-3"><CheckCircle2 className="mt-1 h-7 w-7 shrink-0 text-emerald-300" /><div><h1 className="text-2xl font-black">Asset listo y guardado</h1><p className="mt-1 text-sm leading-6 text-emerald-100/70">{status}</p></div></div></div><ResultRigPreview url={resultUrl} /><div className="mt-4 grid gap-3 sm:grid-cols-2"><a href={resultUrl} className="flex items-center justify-center gap-2 rounded-2xl bg-violet-600 px-5 py-4 font-black"><Download className="h-5 w-5" /> Descargar GLB final</a><button type="button" onClick={() => setStep("fit")} className="flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/[0.04] px-5 py-4 font-black"><Play className="h-5 w-5" /> Ajustar otra vez</button></div><button type="button" onClick={resetProject} className="mt-3 w-full rounded-xl px-4 py-3 text-sm font-bold text-white/50">Procesar otro modelo</button></> : <EmptyResult onBack={() => setStep("rig")} />}
+            {resultUrl ? <><div className="mb-4 rounded-3xl border border-emerald-400/25 bg-emerald-500/10 p-5 sm:p-7"><div className="flex gap-3"><CheckCircle2 className="mt-1 h-7 w-7 shrink-0 text-emerald-300" /><div><h1 className="text-2xl font-black">Asset listo y guardado</h1><p className="mt-1 text-sm leading-6 text-emerald-100/70">{status}</p></div></div></div><ResultRigPreview url={resultUrl} category={category} showAvatar={profile.mode === "deformable"} /><div className="mt-4 grid gap-3 sm:grid-cols-2"><a href={resultUrl} className="flex items-center justify-center gap-2 rounded-2xl bg-violet-600 px-5 py-4 font-black"><Download className="h-5 w-5" /> Descargar GLB final</a><button type="button" onClick={() => setStep("fit")} className="flex items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/[0.04] px-5 py-4 font-black"><Play className="h-5 w-5" /> Ajustar otra vez</button></div><button type="button" onClick={resetProject} className="mt-3 w-full rounded-xl px-4 py-3 text-sm font-bold text-white/50">Procesar otro modelo</button></> : <EmptyResult onBack={() => setStep("rig")} />}
           </section>
         ) : null}
       </div>
