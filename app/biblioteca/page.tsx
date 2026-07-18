@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { ActiveAvatarDownload } from "@/components/library/ActiveAvatarDownload";
 import { ClouvaLibrary } from "@/components/library/ClouvaLibrary";
+import { UnrealAvatarExport } from "@/components/library/UnrealAvatarExport";
 
 export const metadata: Metadata = {
   title: "Biblioteca | CLOUVA",
@@ -11,6 +12,7 @@ export default function BibliotecaPage() {
   return (
     <>
       <ActiveAvatarDownload />
+      <UnrealAvatarExport />
       <ClouvaLibrary />
     </>
   );
