@@ -28,7 +28,9 @@ import { useAuth } from "@/components/auth-provider";
 import { supabase } from "@/lib/supabase";
 import styles from "./clouva-library.module.css";
 
-type AssetKind = "3d" | "image" | "audio" | "video" | "other";
+type VisibleAssetKind = "3d" | "image" | "audio" | "video";
+type AssetKind = VisibleAssetKind | "other";
+type TabId = "all" | VisibleAssetKind;
 type ScopeFilter = "all" | "personal" | "shared";
 
 type StorageEntry = {
@@ -52,7 +54,7 @@ type PendingAsset = {
   name: string;
   path: string;
   bucket: string;
-  kind: AssetKind;
+  kind: VisibleAssetKind;
   extension: string;
   size: number | null;
   updatedAt: string | null;
@@ -66,7 +68,12 @@ type LibraryAsset = PendingAsset & {
   status: string | null;
 };
 
-const TABS: Array<{ id: "all" | AssetKind; label: string; Icon: typeof Box }> = [
+type AvatarState = {
+  active: boolean;
+  status: string | null;
+};
+
+const TABS: Array<{ id: TabId; label: string; Icon: typeof Box }> = [
   { id: "all", label: "Todo", Icon: LibraryBig },
   { id: "3d", label: "3D / GLB", Icon: Box },
   { id: "image", label: "Imágenes", Icon: ImageIcon },
@@ -116,12 +123,11 @@ function readableName(asset: Pick<LibraryAsset, "name" | "path">) {
   return asset.name.replace(/[-_]+/g, " ").replace(/\.[^.]+$/, "");
 }
 
-function kindLabel(kind: AssetKind) {
+function kindLabel(kind: VisibleAssetKind) {
   if (kind === "3d") return "Modelo 3D";
   if (kind === "image") return "Imagen";
   if (kind === "audio") return "Audio";
-  if (kind === "video") return "Video";
-  return "Archivo";
+  return "Video";
 }
 
 async function listFolderDeep(source: SourceConfig, currentPath = source.basePath, depth = 0): Promise<PendingAsset[]> {
@@ -138,17 +144,16 @@ async function listFolderDeep(source: SourceConfig, currentPath = source.basePat
     const fullPath = currentPath ? `${currentPath}/${entry.name}` : entry.name;
 
     if (isFolder(entry)) {
-      if (depth < source.maxDepth) {
-        files.push(...(await listFolderDeep(source, fullPath, depth + 1)));
-      }
+      if (depth < source.maxDepth) files.push(...(await listFolderDeep(source, fullPath, depth + 1)));
       continue;
     }
 
-    const metadata = entry.metadata ?? {};
-    const sizeValue = metadata.size;
-    const size = typeof sizeValue === "number" ? sizeValue : typeof sizeValue === "string" ? Number(sizeValue) : null;
     const kind = kindFromName(entry.name);
     if (kind === "other") continue;
+
+    const metadata = entry.metadata ?? {};
+    const rawSize = metadata.size;
+    const size = typeof rawSize === "number" ? rawSize : typeof rawSize === "string" ? Number(rawSize) : null;
 
     files.push({
       id: `${source.bucket}:${fullPath}`,
@@ -192,12 +197,11 @@ async function attachUrls(assets: PendingAsset[]) {
   return resolved;
 }
 
-function AssetIcon({ kind }: { kind: AssetKind }) {
+function AssetIcon({ kind }: { kind: VisibleAssetKind }) {
   if (kind === "3d") return <Box />;
   if (kind === "image") return <ImageIcon />;
   if (kind === "audio") return <Music2 />;
-  if (kind === "video") return <Video />;
-  return <FolderOpen />;
+  return <Video />;
 }
 
 function AssetPreview({ asset, compact = false }: { asset: LibraryAsset; compact?: boolean }) {
@@ -218,9 +222,9 @@ function AssetPreview({ asset, compact = false }: { asset: LibraryAsset; compact
     return <video className={styles.mediaPreview} controls={!compact} muted={compact} preload="metadata" src={asset.url} />;
   }
 
-  if (asset.kind === "3d") {
+  if (asset.extension === "glb" || asset.extension === "gltf") {
     return createElement("model-viewer", {
-      class: styles.modelPreview,
+      className: styles.modelPreview,
       src: asset.url,
       alt: readableName(asset),
       "camera-controls": compact ? undefined : true,
@@ -234,7 +238,8 @@ function AssetPreview({ asset, compact = false }: { asset: LibraryAsset; compact
 
   return (
     <div className={styles.fallbackPreview}>
-      <FolderOpen />
+      <Box />
+      {!compact ? <small>Vista previa disponible al convertir a GLB</small> : null}
     </div>
   );
 }
@@ -253,17 +258,14 @@ function creativeAdvice(asset: LibraryAsset | null) {
   if (asset.kind === "audio") {
     return "Podés asignarlo a un perfil, una sala, una prenda musical, una misión o una experiencia del Estudio 223.";
   }
-  if (asset.kind === "video") {
-    return "Podés usarlo como pantalla de mundo, videoclip, presentación de un drop o fondo cinematográfico.";
-  }
-  return "Este recurso puede organizarse dentro de una colección y vincularse a un proyecto creativo.";
+  return "Podés usarlo como pantalla de mundo, videoclip, presentación de un drop o fondo cinematográfico.";
 }
 
 export function ClouvaLibrary() {
   const { user, profile, loading: authLoading } = useAuth();
   const [assets, setAssets] = useState<LibraryAsset[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"all" | AssetKind>("all");
+  const [activeTab, setActiveTab] = useState<TabId>("all");
   const [scope, setScope] = useState<ScopeFilter>("all");
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
@@ -275,56 +277,73 @@ export function ClouvaLibrary() {
     setLoading(true);
     setNotice(null);
 
-    const sources: SourceConfig[] = [
-      { bucket: "avatars", basePath: user.id, label: "Avatares", scope: "personal", maxDepth: 3 },
-      { bucket: "creator-reference-assets", basePath: user.id, label: "Referencias", scope: "personal", maxDepth: 3 },
-      { bucket: "audio", basePath: user.id, label: "Audio", scope: "personal", maxDepth: 3 },
-      { bucket: "sounds", basePath: user.id, label: "Sonidos", scope: "personal", maxDepth: 3 },
-      { bucket: "music", basePath: user.id, label: "Música", scope: "personal", maxDepth: 3 },
-      { bucket: "videos", basePath: user.id, label: "Videos", scope: "personal", maxDepth: 3 },
-      { bucket: "media", basePath: user.id, label: "Multimedia", scope: "personal", maxDepth: 3 },
-      { bucket: "products", basePath: "", label: "Productos", scope: "shared", maxDepth: 2 },
-      { bucket: "product-images", basePath: "", label: "Imágenes de producto", scope: "shared", maxDepth: 2 },
-      { bucket: "brand-assets", basePath: "", label: "Marca CLOUVA", scope: "shared", maxDepth: 2 },
-    ];
+    try {
+      const avatarState = new Map<string, AvatarState>();
+      const avatarRows = await supabase.from("user_avatars").select("*").eq("user_id", user.id);
 
-    const results = await Promise.allSettled(sources.map((source) => listFolderDeep(source)));
-    const successful = results.filter((result): result is PromiseFulfilledResult<PendingAsset[]> => result.status === "fulfilled");
-    const pending = successful.flatMap((result) => result.value);
-    setSourceCount(successful.filter((result) => result.value.length > 0).length);
-
-    const avatarState = new Map<string, { active: boolean; status: string | null }>();
-    const avatarRows = await supabase.from("user_avatars").select("*").eq("user_id", user.id);
-    if (!avatarRows.error) {
-      for (const rawRow of avatarRows.data ?? []) {
-        const row = rawRow as Record<string, unknown>;
-        const id = typeof row.id === "string" ? row.id : null;
-        if (!id) continue;
-        avatarState.set(id, {
-          active: row.is_active === true,
-          status: typeof row.status === "string" ? row.status : null,
-        });
+      if (!avatarRows.error) {
+        for (const rawRow of avatarRows.data ?? []) {
+          const row = rawRow as Record<string, unknown>;
+          const id = typeof row.id === "string" ? row.id : null;
+          if (!id) continue;
+          avatarState.set(id, {
+            active: row.is_active === true,
+            status: typeof row.status === "string" ? row.status : null,
+          });
+        }
       }
-    }
 
-    const withUrls = await attachUrls(pending);
-    const nextAssets: LibraryAsset[] = withUrls
-      .map((asset) => {
-        const matchingAvatar = [...avatarState.entries()].find(([avatarId]) => asset.path.includes(avatarId));
-        return {
-          ...asset,
-          isActiveAvatar: matchingAvatar?.[1].active ?? false,
-          status: matchingAvatar?.[1].status ?? null,
-        };
-      })
-      .sort((a, b) => Number(b.isActiveAvatar) - Number(a.isActiveAvatar) || (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
+      const avatarSources: SourceConfig[] = [...avatarState.keys()].flatMap((avatarId) => [
+        { bucket: "avatars", basePath: avatarId, label: "Avatares", scope: "personal", maxDepth: 3 },
+        { bucket: "avatars", basePath: `${user.id}/${avatarId}`, label: "Avatares", scope: "personal", maxDepth: 3 },
+      ]);
 
-    setAssets(nextAssets);
-    setSelectedId((current) => (current && nextAssets.some((asset) => asset.id === current) ? current : nextAssets[0]?.id ?? null));
-    if (nextAssets.length === 0) {
-      setNotice("No encontramos archivos visibles todavía. La pantalla ya está lista para mostrarlos cuando estén disponibles en Storage.");
+      const sources: SourceConfig[] = [
+        ...avatarSources,
+        { bucket: "avatars", basePath: user.id, label: "Avatares", scope: "personal", maxDepth: 3 },
+        { bucket: "creator-reference-assets", basePath: user.id, label: "Referencias", scope: "personal", maxDepth: 3 },
+        { bucket: "creator-assets", basePath: user.id, label: "Creaciones", scope: "personal", maxDepth: 3 },
+        { bucket: "audio", basePath: user.id, label: "Audio", scope: "personal", maxDepth: 3 },
+        { bucket: "sounds", basePath: user.id, label: "Sonidos", scope: "personal", maxDepth: 3 },
+        { bucket: "music", basePath: user.id, label: "Música", scope: "personal", maxDepth: 3 },
+        { bucket: "videos", basePath: user.id, label: "Videos", scope: "personal", maxDepth: 3 },
+        { bucket: "media", basePath: user.id, label: "Multimedia", scope: "personal", maxDepth: 3 },
+        { bucket: "products", basePath: "", label: "Productos", scope: "shared", maxDepth: 2 },
+        { bucket: "product-images", basePath: "", label: "Imágenes de producto", scope: "shared", maxDepth: 2 },
+        { bucket: "brand-assets", basePath: "", label: "Marca CLOUVA", scope: "shared", maxDepth: 2 },
+      ];
+
+      const results = await Promise.allSettled(sources.map((source) => listFolderDeep(source)));
+      const successful = results.filter((result): result is PromiseFulfilledResult<PendingAsset[]> => result.status === "fulfilled");
+      setSourceCount(successful.filter((result) => result.value.length > 0).length);
+
+      const uniquePending = new Map<string, PendingAsset>();
+      successful.flatMap((result) => result.value).forEach((asset) => uniquePending.set(asset.id, asset));
+
+      const withUrls = await attachUrls([...uniquePending.values()]);
+      const nextAssets: LibraryAsset[] = withUrls
+        .map((asset) => {
+          const matchingAvatar = [...avatarState.entries()].find(([avatarId]) => asset.path.includes(avatarId));
+          return {
+            ...asset,
+            isActiveAvatar: matchingAvatar?.[1].active ?? false,
+            status: matchingAvatar?.[1].status ?? null,
+          };
+        })
+        .sort((a, b) => Number(b.isActiveAvatar) - Number(a.isActiveAvatar) || (b.updatedAt ?? "").localeCompare(a.updatedAt ?? ""));
+
+      setAssets(nextAssets);
+      setSelectedId((current) => (current && nextAssets.some((asset) => asset.id === current) ? current : nextAssets[0]?.id ?? null));
+
+      if (nextAssets.length === 0) {
+        setNotice("No encontramos archivos visibles todavía. La pantalla ya está lista para mostrarlos cuando estén disponibles en Storage.");
+      }
+    } catch (error) {
+      console.error("CLOUVA library load failed", error);
+      setNotice("La Biblioteca no pudo leer todos los recursos. Revisá permisos o tocá Actualizar.");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, [user]);
 
   useEffect(() => {
@@ -342,39 +361,37 @@ export function ClouvaLibrary() {
   }, [activeTab, assets, query, scope]);
 
   const selected = assets.find((asset) => asset.id === selectedId) ?? null;
-  const counts = useMemo(() => {
-    return {
-      all: assets.length,
-      "3d": assets.filter((asset) => asset.kind === "3d").length,
-      image: assets.filter((asset) => asset.kind === "image").length,
-      audio: assets.filter((asset) => asset.kind === "audio").length,
-      video: assets.filter((asset) => asset.kind === "video").length,
-    };
-  }, [assets]);
+  const counts = useMemo<Record<TabId, number>>(() => ({
+    all: assets.length,
+    "3d": assets.filter((asset) => asset.kind === "3d").length,
+    image: assets.filter((asset) => asset.kind === "image").length,
+    audio: assets.filter((asset) => asset.kind === "audio").length,
+    video: assets.filter((asset) => asset.kind === "video").length,
+  }), [assets]);
 
   const copyText = async (value: string, message: string) => {
-    await navigator.clipboard.writeText(value);
-    setNotice(message);
-    window.setTimeout(() => setNotice(null), 2600);
+    try {
+      await navigator.clipboard.writeText(value);
+      setNotice(message);
+      window.setTimeout(() => setNotice(null), 2600);
+    } catch {
+      setNotice("No se pudo copiar automáticamente. Abrí el archivo y copiá el enlace desde el navegador.");
+    }
   };
 
   const copyUnrealCommand = async () => {
     if (!selected) return;
-    const payload = JSON.stringify(
-      {
-        action: "import_asset",
-        asset: {
-          id: selected.id,
-          name: readableName(selected),
-          type: selected.kind,
-          url: selected.url,
-          source_bucket: selected.bucket,
-          source_path: selected.path,
-        },
+    const payload = JSON.stringify({
+      action: "import_asset",
+      asset: {
+        id: selected.id,
+        name: readableName(selected),
+        type: selected.kind,
+        url: selected.url,
+        source_bucket: selected.bucket,
+        source_path: selected.path,
       },
-      null,
-      2,
-    );
+    }, null, 2);
     await copyText(payload, "Comando para CLOUVA Unreal Bridge copiado.");
   };
 
@@ -467,7 +484,7 @@ export function ClouvaLibrary() {
           <button key={id} type="button" className={activeTab === id ? styles.activeTab : undefined} onClick={() => setActiveTab(id)}>
             <Icon />
             <span>{label}</span>
-            <small>{counts[id === "all" ? "all" : id]}</small>
+            <small>{counts[id]}</small>
           </button>
         ))}
       </div>
@@ -492,7 +509,7 @@ export function ClouvaLibrary() {
           <div className={styles.sideSection}>
             <p className={styles.sideLabel}>COLECCIONES INTELIGENTES</p>
             <button type="button" onClick={() => { setActiveTab("3d"); setQuery("avatar"); }}><Box />Avatares</button>
-            <button type="button" onClick={() => { setActiveTab("3d"); setQuery("clothing"); }}><Shirt />Prendas y objetos</button>
+            <button type="button" onClick={() => { setActiveTab("3d"); setQuery(""); }}><Shirt />Prendas y objetos</button>
             <button type="button" onClick={() => { setActiveTab("image"); setQuery(""); }}><ImageIcon />Visuales</button>
             <button type="button" onClick={() => { setActiveTab("audio"); setQuery(""); }}><Music2 />Música y sonido</button>
             <button type="button" onClick={() => { setActiveTab("video"); setQuery(""); }}><Video />Videos</button>
