@@ -10,12 +10,13 @@ const garmentWorkerV11Source = readFileSync("./worker/garment-rig/rig_garment_v1
 const garmentWorkerV12Source = readFileSync("./worker/garment-rig/rig_garment_v12.py", "utf8");
 const garmentWorkerV13Source = readFileSync("./worker/garment-rig/rig_garment_v13.py", "utf8");
 const garmentWorkerV14Source = readFileSync("./worker/garment-rig/rig_garment_v14.py", "utf8");
+const garmentWorkerV15Source = readFileSync("./worker/garment-rig/rig_garment_v15.py", "utf8");
 const garmentDockerfile = readFileSync("./worker/garment-rig/Dockerfile", "utf8");
 
 test("hoodie siempre se pesa de nuevo contra el avatar activo", () => {
   const job = buildBlenderJob({ category: "hoodie", templateMode: true, preserveExistingSkinning: true });
   assert.equal(job.operation, "fit_and_rig_reference");
-  assert.equal(job.pipelineVersion, "canonical-landmarks-v4");
+  assert.equal(job.pipelineVersion, "body-mesh-contract-v15");
   assert.equal(job.riggingStrategy, "fresh_transfer_from_active_avatar");
   assert.equal(job.templateMode, false);
   assert.equal(job.options.transferSkinWeights, true);
@@ -26,14 +27,16 @@ test("hoodie siempre se pesa de nuevo contra el avatar activo", () => {
   assert.equal(job.options.validation.requireBilateralSleeveWeights, true);
 });
 
-test("pantalón exige cintura en Hips y pesos separados para ambas piernas", () => {
+test("pantalón exige cuerpo real y pesos separados para ambas piernas", () => {
   const job = buildBlenderJob({ category: "pants", templateMode: true, preserveExistingSkinning: true });
   assert.equal(job.riggingStrategy, "fresh_transfer_from_active_avatar");
   assert.equal(job.options.fitUsesCanonicalLowerBodyLandmarks, true);
+  assert.equal(job.options.fitUsesBodyMeshVolume, true);
   assert.equal(job.options.weightTransfer.separateLeftRightLimbs, true);
   assert.equal(job.options.weightTransfer.sampleCount, 16);
   assert.equal(job.options.validation.requireBilateralLegWeights, true);
   assert.equal(job.options.validation.requireWaistAtHips, true);
+  assert.equal(job.options.validation.requireBodyMeshRoundtrip, true);
   assert.equal(job.options.validation.rejectTorsoAlignedPants, true);
 });
 
@@ -95,8 +98,19 @@ test("V14 acepta pelvis estilizadas sin quitar validación jerárquica", () => {
   assert.match(garmentWorkerV14Source, /clouvaStylizedPelvisCompatible/);
   assert.doesNotMatch(garmentWorkerV14Source, /Un muslo quedó demasiado lejos de Hips/);
   assert.doesNotMatch(garmentWorkerV14Source, /leg_length \* 0\.30/);
-  assert.match(garmentDockerfile, /CLOUVA_RIG_VERSION=v14/);
-  assert.match(garmentDockerfile, /rig_garment_v14\.py/);
+});
+
+test("V15 usa la malla corporal como fuente de verdad para escala y roundtrip", () => {
+  assert.match(garmentWorkerV15Source, /def lower_body_contract/);
+  assert.match(garmentWorkerV15Source, /body_points_world/);
+  assert.match(garmentWorkerV15Source, /clouvaAvatarBodyHeight/);
+  assert.match(garmentWorkerV15Source, /clouvaBodyTargetMin/);
+  assert.match(garmentWorkerV15Source, /clouvaBodyTargetMax/);
+  assert.match(garmentWorkerV15Source, /def validate_roundtrip_v15/);
+  assert.match(garmentWorkerV15Source, /El pantalón volvió a quedar gigante respecto del cuerpo real/);
+  assert.doesNotMatch(garmentWorkerV15Source, /waist\.z - left_foot\.z/);
+  assert.match(garmentDockerfile, /CLOUVA_RIG_VERSION=v15/);
+  assert.match(garmentDockerfile, /rig_garment_v15\.py/);
 });
 
 test("solo una plantilla rígida puede conservar skinning existente", () => {
