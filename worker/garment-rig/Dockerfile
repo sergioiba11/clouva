@@ -33,15 +33,22 @@ RUN mv app.py app_legacy.py \
     && mv rig_garment.py rig_garment_legacy.py \
     && mv rig_garment_v5.py rig_garment.py
 
-# Blender usa su propio Python embebido. Sin PYTHONPATH no siempre agrega el directorio
-# del script a sys.path, por lo que el wrapper V6 no podía importar rig_garment_legacy.
-ENV PYTHONPATH=/app
+# Blender usa un Python embebido y puede ignorar PYTHONPATH cuando ejecuta --python.
+# Instalamos el módulo base dentro de la ruta nativa de módulos de Blender para que el
+# wrapper pueda importarlo sin depender del cwd, sys.path ni variables del proceso padre.
+RUN mkdir -p /opt/blender/4.2/scripts/modules \
+    && cp /app/rig_garment_legacy.py /opt/blender/4.2/scripts/modules/rig_garment_legacy.py
 
-# Smoke test real con el mismo Python que ejecutará los trabajos. El build debe fallar
-# antes del deploy si el wrapper o su módulo legacy dejan de ser importables.
+ENV PYTHONPATH=/app
+ENV CLOUVA_RIG_VERSION=v8
+
+# Smoke test real: importa el módulo base desde la ruta nativa de Blender y ejecuta el
+# wrapper completo con un __name__ de prueba, evitando iniciar main(). Si cualquiera de
+# los dos archivos no puede cargarse, Railway cancela el build antes del deploy.
 RUN test -f /app/rig_garment.py \
     && test -f /app/rig_garment_legacy.py \
-    && /opt/blender/blender --background --python-expr "import sys; sys.path.insert(0, '/app'); import rig_garment_legacy; print('[clouva] Blender module import OK')"
+    && test -f /opt/blender/4.2/scripts/modules/rig_garment_legacy.py \
+    && /opt/blender/blender --background --factory-startup --python-expr "import rig_garment_legacy; namespace={'__name__':'clouva_rig_import_test','__file__':'/app/rig_garment.py'}; exec(compile(open('/app/rig_garment.py', encoding='utf-8').read(), '/app/rig_garment.py', 'exec'), namespace); print('[clouva] Blender wrapper import OK')"
 
 ENV BLENDER_BIN=/usr/local/bin/blender
 EXPOSE 8000
