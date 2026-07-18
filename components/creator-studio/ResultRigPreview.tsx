@@ -12,6 +12,7 @@ import {
   DirectionalLight,
   Group,
   HemisphereLight,
+  LoopRepeat,
   Object3D,
   PerspectiveCamera,
   Scene,
@@ -46,11 +47,16 @@ type Props = {
 type ClipOption = {
   id: string;
   label: string;
+  duration: number;
+  tracks: number;
 };
 
-type SyncedAction = {
-  garment: AnimationAction;
-  avatar: AnimationAction | null;
+type SyncedActionGroup = {
+  garment: AnimationAction[];
+  avatar: AnimationAction[];
+  signatures: Set<string>;
+  duration: number;
+  tracks: number;
 };
 
 const HIP_ALIASES = ["hips", "pelvis", "hip", "j_bip_c_hips", "cc_base_hip"];
@@ -172,10 +178,31 @@ function alignAvatarToResultRig(avatarRoot: Object3D, rigRoot: Object3D) {
   }
 
   const alignedAvatarHips = avatarHips.getWorldPosition(new Vector3());
-  const delta = rigHipPosition.sub(alignedAvatarHips);
-  avatarRoot.position.add(delta);
+  avatarRoot.position.add(rigHipPosition.clone().sub(alignedAvatarHips));
   avatarRoot.updateMatrixWorld(true);
   return true;
+}
+
+function clipSignature(trackNames: string[]) {
+  return trackNames.slice().sort().join("|");
+}
+
+function stopAction(action: AnimationAction) {
+  action.enabled = false;
+  action.paused = false;
+  action.stop();
+}
+
+function startAction(action: AnimationAction) {
+  action.stop();
+  action.reset();
+  action.enabled = true;
+  action.paused = false;
+  action.clampWhenFinished = false;
+  action.setEffectiveTimeScale(1);
+  action.setEffectiveWeight(1);
+  action.setLoop(LoopRepeat, Infinity);
+  action.play();
 }
 
 function disposeModel(root: Object3D | null) {
@@ -192,28 +219,37 @@ export function ResultRigPreview({ url, showAvatar = true, category, onInfo }: P
   const helperRef = useRef<SkeletonHelper | null>(null);
   const garmentMixerRef = useRef<AnimationMixer | null>(null);
   const avatarMixerRef = useRef<AnimationMixer | null>(null);
-  const actionsRef = useRef<Map<string, SyncedAction>>(new Map());
+  const actionsRef = useRef<Map<string, SyncedActionGroup>>(new Map());
   const avatar = useActiveAvatarStore((state) => state.avatar);
   const avatarUrl = useMemo(() => avatar.modelUrl ?? avatar.fallbackUrl, [avatar.fallbackUrl, avatar.modelUrl]);
   const [showSkeleton, setShowSkeleton] = useState(false);
   const [clips, setClips] = useState<ClipOption[]>([]);
   const [activeClip, setActiveClip] = useState<string | null>(null);
+  const [replayCount, setReplayCount] = useState(0);
 
   useEffect(() => {
     if (helperRef.current) helperRef.current.visible = showSkeleton;
   }, [showSkeleton]);
 
-  useEffect(() => {
-    const actions = actionsRef.current;
-    for (const pair of actions.values()) {
-      pair.garment.fadeOut(0.18);
-      pair.avatar?.fadeOut(0.18);
+  function playClip(id: string) {
+    const selected = actionsRef.current.get(id);
+    if (!selected) return;
+
+    for (const group of actionsRef.current.values()) {
+      group.garment.forEach(stopAction);
+      group.avatar.forEach(stopAction);
     }
-    if (!activeClip) return;
-    const next = actions.get(activeClip);
-    next?.garment.reset().fadeIn(0.18).play();
-    next?.avatar?.reset().fadeIn(0.18).play();
-  }, [activeClip]);
+
+    garmentMixerRef.current?.stopAllAction();
+    avatarMixerRef.current?.stopAllAction();
+    garmentMixerRef.current?.setTime(0);
+    avatarMixerRef.current?.setTime(0);
+
+    selected.garment.forEach(startAction);
+    selected.avatar.forEach(startAction);
+    setActiveClip(id);
+    setReplayCount((value) => value + 1);
+  }
 
   useEffect(() => {
     const mount = mountRef.current;
@@ -230,6 +266,7 @@ export function ResultRigPreview({ url, showAvatar = true, category, onInfo }: P
     const clock = new Clock();
     setClips([]);
     setActiveClip(null);
+    setReplayCount(0);
     setShowSkeleton(false);
     actionsRef.current = new Map();
     onInfo?.({ loading: true, bones: 0, objectMeshName: null, anchorBoneName: null, weightedVertexRatio: null, clips: [] });
@@ -322,23 +359,38 @@ export function ResultRigPreview({ url, showAvatar = true, category, onInfo }: P
       const avatarMixer = avatarModel ? new AnimationMixer(avatarModel) : null;
       garmentMixerRef.current = garmentMixer;
       avatarMixerRef.current = avatarMixer;
-      const actions = new Map<string, SyncedAction>();
-      const options: ClipOption[] = [];
-      const seenLabels = new Set<string>();
+
+      const groups = new Map<string, SyncedActionGroup>();
       rigGltf.animations.forEach((clip, index) => {
+        if (!(clip.duration > 0) || clip.tracks.length === 0) return;
         const label = friendlyClipLabel(clip.name, index);
-        if (seenLabels.has(label)) return;
-        seenLabels.add(label);
-        const id = `${clip.name || "clip"}:${index}`;
-        actions.set(id, {
-          garment: garmentMixer.clipAction(clip),
-          avatar: avatarMixer && avatarModel ? avatarMixer.clipAction(clip.clone()) : null,
-        });
-        options.push({ id, label });
+        const id = cleanName(label) || `movement${index + 1}`;
+        const signature = clipSignature(clip.tracks.map((track) => track.name));
+        const group = groups.get(id) ?? {
+          garment: [],
+          avatar: [],
+          signatures: new Set<string>(),
+          duration: 0,
+          tracks: 0,
+        };
+        if (group.signatures.has(signature)) return;
+        group.signatures.add(signature);
+        group.garment.push(garmentMixer.clipAction(clip));
+        if (avatarMixer && avatarModel) group.avatar.push(avatarMixer.clipAction(clip.clone()));
+        group.duration = Math.max(group.duration, clip.duration);
+        group.tracks += clip.tracks.length;
+        groups.set(id, group);
       });
-      actionsRef.current = actions;
+
+      actionsRef.current = groups;
+      const options = [...groups.entries()].map(([id, group]) => ({
+        id,
+        label: id === "probarmovimiento" ? "Probar movimiento" : friendlyClipLabel(id, 0),
+        duration: group.duration,
+        tracks: group.tracks,
+      }));
       setClips(options);
-      setActiveClip(options[0]?.id ?? null);
+      setActiveClip(null);
 
       const objectMesh = findObjectMesh(rigModel);
       const inspection = objectMesh ? inspectAnchorBone(objectMesh) : { anchorBoneName: null, weightedVertexRatio: null };
@@ -407,14 +459,27 @@ export function ResultRigPreview({ url, showAvatar = true, category, onInfo }: P
       </div>
       <div ref={mountRef} className="h-[430px] w-full sm:h-[600px]" />
       {clips.length > 0 ? (
-        <div className="flex gap-2 overflow-x-auto border-t border-white/10 p-3">
-          {clips.map((clip) => (
-            <button key={clip.id} type="button" onClick={() => setActiveClip(clip.id)} className={`shrink-0 rounded-xl border px-4 py-3 text-xs font-bold ${activeClip === clip.id ? "border-violet-400 bg-violet-500/20 text-white" : "border-white/10 text-white/50"}`}>
-              {clip.label}
-            </button>
-          ))}
+        <div className="border-t border-white/10 p-3">
+          <div className="flex gap-2 overflow-x-auto">
+            {clips.map((clip) => (
+              <button
+                key={clip.id}
+                type="button"
+                onClick={() => playClip(clip.id)}
+                aria-pressed={activeClip === clip.id}
+                className={`shrink-0 rounded-xl border px-4 py-3 text-xs font-bold transition active:scale-[0.98] ${activeClip === clip.id ? "border-violet-400 bg-violet-500/20 text-white" : "border-white/10 text-white/70"}`}
+              >
+                {activeClip === clip.id && replayCount > 0 ? "Reiniciar movimiento" : clip.label}
+              </button>
+            ))}
+          </div>
+          <p className="mt-2 text-[11px] text-white/35">
+            {activeClip ? "Movimiento activo. Tocá otra vez para reiniciarlo desde el comienzo." : "Tocá el botón para iniciar la animación."}
+          </p>
         </div>
-      ) : null}
+      ) : (
+        <div className="border-t border-white/10 p-3 text-xs text-amber-200/70">Este GLB no contiene un clip de movimiento reproducible.</div>
+      )}
     </div>
   );
 }
