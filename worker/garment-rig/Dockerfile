@@ -27,7 +27,11 @@ RUN wget -q "$BLENDER_URL" -O /tmp/blender.tar.xz \
 RUN pip install --no-cache-dir --break-system-packages fastapi uvicorn pydantic python-multipart
 
 WORKDIR /app
-COPY app.py rig_garment.py rig_object.py attach_object.py ./
+COPY app.py app_v5.py rig_garment.py rig_garment_v5.py rig_object.py attach_object.py ./
+RUN mv app.py app_legacy.py \
+    && mv app_v5.py app.py \
+    && mv rig_garment.py rig_garment_legacy.py \
+    && mv rig_garment_v5.py rig_garment.py
 
 ENV BLENDER_BIN=/usr/local/bin/blender
 EXPOSE 8000
