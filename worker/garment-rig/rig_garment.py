@@ -9,12 +9,14 @@ from math import radians
 from mathutils import Vector
 from mathutils.kdtree import KDTree
 
+
 VALID_CATEGORIES = {"hoodie", "shirt", "jacket", "pants", "shorts", "shoes", "hat", "accessory"}
 UPPER_GARMENTS = {"hoodie", "shirt", "jacket"}
 LOWER_GARMENTS = {"pants", "shorts"}
+DEFORMABLE_CATEGORIES = UPPER_GARMENTS | LOWER_GARMENTS | {"shoes"}
 
 BONE_ALIASES = {
-    "hips": ["Hips", "mixamorig:Hips", "pelvis", "Pelvis", "Root"],
+    "hips": ["Hips", "mixamorig:Hips", "pelvis", "Pelvis", "hips", "hips_ctrl"],
     "spine": ["Spine", "Spine01", "mixamorig:Spine", "spine_01"],
     "chest": ["Spine02", "Spine2", "Spine1", "mixamorig:Spine2", "chest", "Chest", "UpperChest"],
     "neck": ["neck", "Neck", "mixamorig:Neck"],
@@ -127,7 +129,54 @@ def infer_head_bone(armature):
     return max(candidates, key=lambda item: (item[0], item[1]))[2] if candidates else None
 
 
+def common_ancestor(left, right):
+    if left is None or right is None:
+        return None
+    left_ancestors = []
+    current = left
+    while current is not None:
+        left_ancestors.append(current)
+        current = current.parent
+    current = right
+    while current is not None:
+        if current in left_ancestors:
+            return current
+        current = current.parent
+    return None
+
+
+def infer_hips_bone(armature):
+    left = find_pose_bone(armature, BONE_ALIASES["left_up_leg"])
+    right = find_pose_bone(armature, BONE_ALIASES["right_up_leg"])
+    ancestor = common_ancestor(left, right)
+    if ancestor is not None:
+        cleaned = clean_bone_name(ancestor.name)
+        if "root" not in cleaned and "master" not in cleaned:
+            return ancestor
+
+    candidates = []
+    for bone in armature.pose.bones:
+        cleaned = clean_bone_name(bone.name)
+        if any(token in cleaned for token in ("pelvis", "hips", "hip")):
+            world = armature.matrix_world @ bone.head
+            candidates.append((len(bone.children), world.z, bone))
+    if candidates:
+        return max(candidates, key=lambda item: (item[0], item[1]))[2]
+
+    for bone in armature.pose.bones:
+        child_names = " ".join(clean_bone_name(child.name) for child in bone.children)
+        if "left" in child_names and "right" in child_names and ("leg" in child_names or "thigh" in child_names):
+            return bone
+    return None
+
+
 def resolve_bone(armature, canonical):
+    if canonical == "hips":
+        direct = find_pose_bone(armature, BONE_ALIASES["hips"])
+        if direct is not None and "root" not in clean_bone_name(direct.name):
+            return direct
+        return infer_hips_bone(armature)
+
     bone = find_pose_bone(armature, BONE_ALIASES[canonical])
     if bone is not None:
         return bone
@@ -139,9 +188,24 @@ def resolve_bone(armature, canonical):
     return None
 
 
-def bone_world(armature, canonical):
+def bone_head_world(armature, canonical):
     bone = resolve_bone(armature, canonical)
     return armature.matrix_world @ bone.head if bone is not None else None
+
+
+def bone_tail_world(armature, canonical):
+    bone = resolve_bone(armature, canonical)
+    return armature.matrix_world @ bone.tail if bone is not None else None
+
+
+def bone_center_world(armature, canonical):
+    head = bone_head_world(armature, canonical)
+    tail = bone_tail_world(armature, canonical)
+    if head is None:
+        return tail
+    if tail is None:
+        return head
+    return (head + tail) * 0.5
 
 
 def bbox_world(obj):
@@ -179,20 +243,20 @@ def body_meshes_for_rig(objects, armature):
         ]
     if not meshes:
         raise RuntimeError("Official avatar has no usable skinned body meshes")
-    print("[rig-v3] body meshes", [(obj.name, len(obj.data.vertices)) for obj in meshes], flush=True)
+    print("[rig-v4] body meshes", [(obj.name, len(obj.data.vertices)) for obj in meshes], flush=True)
     return meshes
 
 
-def prepare_garment(objects):
+def prepare_garment(objects, category):
     meshes = [obj for obj in objects if obj.type == "MESH" and len(obj.data.vertices) >= 3]
     source_armatures = [obj for obj in objects if obj.type == "ARMATURE"]
     if not meshes:
         raise RuntimeError("Garment GLB has no usable mesh")
 
     original_vertices = sum(len(obj.data.vertices) for obj in meshes)
-    source_groups = sorted({group.name for obj in meshes for group in obj.vertex_groups})
     for obj in meshes:
         world = obj.matrix_world.copy()
+        obj.animation_data_clear()
         obj.parent = None
         obj.matrix_world = world
         for modifier in list(obj.modifiers):
@@ -213,6 +277,7 @@ def prepare_garment(objects):
 
     garment = bpy.context.view_layer.objects.active
     garment.name = "CLOUVA_Garment"
+    garment.animation_data_clear()
     select_only(garment)
     bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
 
@@ -230,42 +295,101 @@ def prepare_garment(objects):
     garment.data.validate(verbose=False)
     bpy.context.view_layer.update()
 
+    if category in DEFORMABLE_CATEGORIES:
+        garment.vertex_groups.clear()
+
     for source_armature in source_armatures:
+        source_armature.animation_data_clear()
         if source_armature.name in bpy.data.objects:
             bpy.data.objects.remove(source_armature, do_unlink=True)
 
     final_vertices = len(garment.data.vertices)
     if final_vertices < max(50, int(original_vertices * 0.90)):
         raise RuntimeError(f"Garment geometry was unexpectedly reduced: {original_vertices} -> {final_vertices}")
-    print(
-        f"[rig-v3] garment parts={len(meshes)} vertices={final_vertices} source_groups={source_groups[:30]}",
-        flush=True,
-    )
+    print(f"[rig-v4] garment vertices={final_vertices} source_armatures={len(source_armatures)}", flush=True)
     return garment
+
+
+def orient_lower_garment(garment):
+    minimum, maximum = bbox_world(garment)
+    size = maximum - minimum
+    if size.z >= max(size.x, size.y) * 0.72:
+        return
+
+    if size.x >= size.y:
+        garment.rotation_euler.y += radians(90)
+        axis = "X→Z"
+    else:
+        garment.rotation_euler.x += radians(90)
+        axis = "Y→Z"
+    bpy.context.view_layer.update()
+    select_only(garment)
+    bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
+    print(f"[rig-v4] auto-oriented lower garment {axis}", flush=True)
+
+
+def lower_landmarks(armature):
+    hips = bone_center_world(armature, "hips")
+    left_up = bone_head_world(armature, "left_up_leg")
+    right_up = bone_head_world(armature, "right_up_leg")
+    left_knee = bone_head_world(armature, "left_leg")
+    right_knee = bone_head_world(armature, "right_leg")
+    left_foot = bone_head_world(armature, "left_foot")
+    right_foot = bone_head_world(armature, "right_foot")
+
+    if left_up is None or right_up is None:
+        raise RuntimeError("Avatar rig is missing left/right upper-leg bones")
+    if hips is None:
+        hips = (left_up + right_up) * 0.5
+    if left_knee is None:
+        left_knee = bone_tail_world(armature, "left_up_leg")
+    if right_knee is None:
+        right_knee = bone_tail_world(armature, "right_up_leg")
+    if left_foot is None:
+        left_foot = bone_tail_world(armature, "left_leg")
+    if right_foot is None:
+        right_foot = bone_tail_world(armature, "right_leg")
+    if left_knee is None or right_knee is None or left_foot is None or right_foot is None:
+        raise RuntimeError("Avatar rig is missing knee/foot landmarks required for pants")
+
+    waist_center = Vector((
+        (left_up.x + right_up.x + hips.x) / 3.0,
+        (left_up.y + right_up.y + hips.y) / 3.0,
+        max(left_up.z, right_up.z, hips.z),
+    ))
+    return {
+        "hips": hips,
+        "waist": waist_center,
+        "left_up": left_up,
+        "right_up": right_up,
+        "left_knee": left_knee,
+        "right_knee": right_knee,
+        "left_foot": left_foot,
+        "right_foot": right_foot,
+    }
 
 
 def body_region(body_meshes, armature, category):
     body_min, body_max = combined_bbox(body_meshes)
     height = max(body_max.z - body_min.z, 1e-6)
-    hips = bone_world(armature, "hips")
-    chest = bone_world(armature, "chest")
-    neck = bone_world(armature, "neck")
-    head = bone_world(armature, "head")
+    hips = bone_center_world(armature, "hips")
+    chest = bone_center_world(armature, "chest")
+    neck = bone_center_world(armature, "neck")
+    head = bone_center_world(armature, "head")
 
     if category in UPPER_GARMENTS:
         bottom_z = hips.z if hips else body_min.z + height * 0.43
         top_anchor = neck or chest or head
         top_z = top_anchor.z if top_anchor else body_min.z + height * 0.82
-
         arm_points = [
-            bone_world(armature, "left_shoulder"),
-            bone_world(armature, "right_shoulder"),
-            bone_world(armature, "left_upper_arm"),
-            bone_world(armature, "right_upper_arm"),
-            bone_world(armature, "left_lower_arm"),
-            bone_world(armature, "right_lower_arm"),
-            bone_world(armature, "left_hand"),
-            bone_world(armature, "right_hand"),
+            bone_head_world(armature, "left_shoulder"),
+            bone_head_world(armature, "right_shoulder"),
+            bone_head_world(armature, "left_upper_arm"),
+            bone_head_world(armature, "right_upper_arm"),
+            bone_head_world(armature, "left_lower_arm"),
+            bone_head_world(armature, "right_lower_arm"),
+            bone_head_world(armature, "left_hand"),
+            bone_head_world(armature, "right_hand"),
         ]
         arm_points = [point for point in arm_points if point is not None]
         if len(arm_points) >= 4:
@@ -274,33 +398,53 @@ def body_region(body_meshes, armature, category):
             max_x = max(point.x for point in arm_points) + margin
         else:
             min_x, max_x = body_min.x, body_max.x
-
         center_y = (body_min.y + body_max.y) * 0.5
         half_y = (body_max.y - body_min.y) * 0.43
+        return Vector((min_x, center_y - half_y, bottom_z)), Vector((max_x, center_y + half_y, top_z))
+
+    if category in LOWER_GARMENTS:
+        marks = lower_landmarks(armature)
+        leg_length = max(marks["waist"].z - min(marks["left_foot"].z, marks["right_foot"].z), height * 0.2)
+        top_z = marks["waist"].z + leg_length * 0.025
+        if category == "shorts":
+            knee_z = min(marks["left_knee"].z, marks["right_knee"].z)
+            bottom_z = knee_z + leg_length * 0.14
+        else:
+            bottom_z = min(marks["left_foot"].z, marks["right_foot"].z) + leg_length * 0.035
+
+        limb_x = [
+            marks["left_up"].x, marks["right_up"].x,
+            marks["left_knee"].x, marks["right_knee"].x,
+            marks["left_foot"].x, marks["right_foot"].x,
+        ]
+        margin_x = max(abs(marks["left_up"].x - marks["right_up"].x) * 0.42, height * 0.045)
+        min_x = min(limb_x) - margin_x
+        max_x = max(limb_x) + margin_x
+        center_y = marks["waist"].y
+        half_y = max((body_max.y - body_min.y) * 0.30, height * 0.07)
         print(
-            f"[rig-v3] upper target arm_span={max_x - min_x:.4f} bottom={bottom_z:.4f} top={top_z:.4f}",
+            f"[rig-v4] lower target waist={top_z:.4f} bottom={bottom_z:.4f} width={max_x-min_x:.4f}",
             flush=True,
         )
         return Vector((min_x, center_y - half_y, bottom_z)), Vector((max_x, center_y + half_y, top_z))
 
-    if category in LOWER_GARMENTS:
-        top_z = hips.z if hips else body_min.z + height * 0.48
-        feet = [bone_world(armature, "left_foot"), bone_world(armature, "right_foot")]
-        feet = [point for point in feet if point is not None]
-        bottom_z = min(point.z for point in feet) if feet else body_min.z
-        if category == "shorts":
-            thighs = [bone_world(armature, "left_up_leg"), bone_world(armature, "right_up_leg")]
-            thighs = [point for point in thighs if point is not None]
-            thigh_z = min(point.z for point in thighs) if thighs else body_min.z + height * 0.33
-            bottom_z = thigh_z - (top_z - thigh_z) * 0.35
-        return Vector((body_min.x, body_min.y, bottom_z)), Vector((body_max.x, body_max.y, top_z))
-
     if category == "shoes":
-        toes = [bone_world(armature, "left_toe"), bone_world(armature, "right_toe")]
-        feet = [bone_world(armature, "left_foot"), bone_world(armature, "right_foot")]
-        anchors = [point for point in toes + feet if point is not None]
-        top_z = (max(point.z for point in anchors) if anchors else body_min.z) + height * 0.10
-        return Vector((body_min.x, body_min.y, body_min.z)), Vector((body_max.x, body_max.y, top_z))
+        feet = [
+            bone_head_world(armature, "left_foot"),
+            bone_head_world(armature, "right_foot"),
+            bone_head_world(armature, "left_toe"),
+            bone_head_world(armature, "right_toe"),
+        ]
+        feet = [point for point in feet if point is not None]
+        if not feet:
+            raise RuntimeError("Avatar rig is missing foot bones")
+        min_x = min(point.x for point in feet) - height * 0.05
+        max_x = max(point.x for point in feet) + height * 0.05
+        min_z = min(point.z for point in feet) - height * 0.02
+        max_z = max(point.z for point in feet) + height * 0.10
+        center_y = sum(point.y for point in feet) / len(feet)
+        half_y = height * 0.11
+        return Vector((min_x, center_y - half_y, min_z)), Vector((max_x, center_y + half_y, max_z))
 
     if category == "hat":
         anchor = head or neck
@@ -314,6 +458,9 @@ def body_region(body_meshes, armature, category):
 
 
 def fit_to_body(garment, body_meshes, armature, category):
+    if category in LOWER_GARMENTS:
+        orient_lower_garment(garment)
+
     target_min, target_max = body_region(body_meshes, armature, category)
     target_size = target_max - target_min
     source_min, source_max = bbox_world(garment)
@@ -325,8 +472,8 @@ def fit_to_body(garment, body_meshes, armature, category):
         "hoodie": Vector((1.04, 1.18, 1.08)),
         "shirt": Vector((1.02, 1.12, 1.04)),
         "jacket": Vector((1.06, 1.22, 1.10)),
-        "pants": Vector((1.10, 1.14, 1.04)),
-        "shorts": Vector((1.10, 1.14, 1.03)),
+        "pants": Vector((1.08, 1.15, 1.00)),
+        "shorts": Vector((1.08, 1.15, 1.00)),
         "shoes": Vector((1.10, 1.15, 1.04)),
         "hat": Vector((1.12, 1.12, 1.03)),
         "accessory": Vector((1.05, 1.05, 1.05)),
@@ -342,9 +489,17 @@ def fit_to_body(garment, body_meshes, armature, category):
         garment.scale = Vector((uniform, uniform, uniform))
     else:
         uniform = desired.z / max(source_size.z, 1e-6)
-        x_limit = (0.72, 1.75) if category in UPPER_GARMENTS else (0.78, 1.45)
+        if category in LOWER_GARMENTS:
+            x_limit = (0.88, 1.22)
+            y_limit = (0.82, 1.28)
+        elif category in UPPER_GARMENTS:
+            x_limit = (0.72, 1.75)
+            y_limit = (0.75, 1.55)
+        else:
+            x_limit = (0.78, 1.45)
+            y_limit = (0.75, 1.55)
         x_fix = max(x_limit[0], min(desired.x / max(source_size.x * uniform, 1e-6), x_limit[1]))
-        y_fix = max(0.75, min(desired.y / max(source_size.y * uniform, 1e-6), 1.55))
+        y_fix = max(y_limit[0], min(desired.y / max(source_size.y * uniform, 1e-6), y_limit[1]))
         garment.scale = Vector((uniform * x_fix, uniform * y_fix, uniform))
 
     bpy.context.view_layer.update()
@@ -352,11 +507,20 @@ def fit_to_body(garment, body_meshes, armature, category):
     current_center = (current_min + current_max) * 0.5
     target_center = (target_min + target_max) * 0.5
     if category in UPPER_GARMENTS | LOWER_GARMENTS:
-        offset = Vector((target_center.x - current_center.x, target_center.y - current_center.y, target_max.z - current_max.z))
+        offset = Vector((
+            target_center.x - current_center.x,
+            target_center.y - current_center.y,
+            target_max.z - current_max.z,
+        ))
     elif category == "shoes":
-        offset = Vector((target_center.x - current_center.x, target_center.y - current_center.y, target_min.z - current_min.z))
+        offset = Vector((
+            target_center.x - current_center.x,
+            target_center.y - current_center.y,
+            target_min.z - current_min.z,
+        ))
     else:
         offset = target_center - current_center
+
     garment.location += offset
     bpy.context.view_layer.update()
     select_only(garment)
@@ -372,7 +536,7 @@ def clamp_number(value, minimum, maximum, fallback):
     return max(minimum, min(maximum, number))
 
 
-def apply_preview_adjustments(garment, preview_settings):
+def apply_preview_adjustments(garment, preview_settings, avatar_height):
     if not isinstance(preview_settings, dict):
         return
     adjustments = preview_settings.get("adjustments")
@@ -385,11 +549,11 @@ def apply_preview_adjustments(garment, preview_settings):
     width = clamp_number(adjustments.get("width"), 35, 240, 100) / 100.0
     length = clamp_number(adjustments.get("length"), 35, 240, 100) / 100.0
     depth = clamp_number(1 + clamp_number(adjustments.get("distance"), -40, 60, 8) / 100.0, 0.5, 1.8, 1.08)
-    x = clamp_number(adjustments.get("x"), -150, 150, 0) / 100.0
+    x = clamp_number(adjustments.get("x"), -150, 150, 0) / 100.0 * avatar_height
     vertical = (
         clamp_number(adjustments.get("y"), -150, 150, 0)
         + clamp_number(adjustments.get("height"), -100, 100, 0)
-    ) / 100.0
+    ) / 100.0 * avatar_height
     rotation = clamp_number(adjustments.get("rotation"), -180, 180, 0)
 
     garment.scale.x *= user_scale * fit_scale * width
@@ -401,83 +565,7 @@ def apply_preview_adjustments(garment, preview_settings):
     bpy.context.view_layer.update()
     select_only(garment)
     bpy.ops.object.transform_apply(location=False, rotation=True, scale=True)
-    print(
-        f"[rig-v3] preview fit={fit} scale={user_scale:.3f} width={width:.3f} length={length:.3f} depth={depth:.3f}",
-        flush=True,
-    )
-
-
-def target_bone_lookup(armature):
-    exact = {bone.name: bone.name for bone in armature.data.bones}
-    normalized = {clean_bone_name(bone.name): bone.name for bone in armature.data.bones}
-    aliases = {}
-    for canonical, names in BONE_ALIASES.items():
-        target = resolve_bone(armature, canonical)
-        if target is None:
-            continue
-        for name in [canonical, *names]:
-            aliases[clean_bone_name(name)] = target.name
-    return exact, normalized, aliases
-
-
-def resolve_target_bone_name(source_name, lookups):
-    exact, normalized, aliases = lookups
-    if source_name in exact:
-        return exact[source_name]
-    cleaned = clean_bone_name(source_name)
-    return normalized.get(cleaned) or aliases.get(cleaned)
-
-
-def mapped_weight_snapshot(garment, armature):
-    lookups = target_bone_lookup(armature)
-    group_names = {group.index: group.name for group in garment.vertex_groups}
-    snapshot = []
-    mapped_vertices = 0
-    for vertex in garment.data.vertices:
-        weights = {}
-        for membership in vertex.groups:
-            source_name = group_names.get(membership.group)
-            target_name = resolve_target_bone_name(source_name, lookups) if source_name else None
-            if target_name and membership.weight > 0.0001:
-                weights[target_name] = weights.get(target_name, 0.0) + membership.weight
-        if weights:
-            mapped_vertices += 1
-        snapshot.append(weights)
-    return snapshot, mapped_vertices / max(len(garment.data.vertices), 1)
-
-
-def apply_weight_snapshot(garment, snapshot):
-    garment.vertex_groups.clear()
-    names = sorted({name for weights in snapshot for name in weights})
-    groups = {name: garment.vertex_groups.new(name=name) for name in names}
-    for vertex, weights in zip(garment.data.vertices, snapshot):
-        influences = sorted(weights.items(), key=lambda item: item[1], reverse=True)[:4]
-        total = sum(value for _, value in influences)
-        if total <= 0:
-            continue
-        for name, value in influences:
-            groups[name].add([vertex.index], value / total, "REPLACE")
-
-
-def retarget_existing_weights(garment, armature):
-    if not garment.vertex_groups:
-        return False
-    snapshot, ratio = mapped_weight_snapshot(garment, armature)
-    print(f"[rig-v3] existing rig compatibility={ratio:.3f}", flush=True)
-    if ratio < 0.95:
-        return False
-    apply_weight_snapshot(garment, snapshot)
-    return True
-
-
-def assign_rigid_bone_weights(garment, armature, canonical):
-    bone = resolve_bone(armature, canonical)
-    if bone is None:
-        raise RuntimeError(f"Avatar rig is missing required {canonical} bone")
-    garment.vertex_groups.clear()
-    group = garment.vertex_groups.new(name=bone.name)
-    group.add(list(range(len(garment.data.vertices))), 1.0, "REPLACE")
-    print(f"[rig-v3] rigid anchor={bone.name} vertices={len(garment.data.vertices)}", flush=True)
+    print(f"[rig-v4] preview fit={fit} scale={user_scale:.3f}", flush=True)
 
 
 def build_weight_kdtree(body_meshes, armature):
@@ -501,6 +589,59 @@ def build_weight_kdtree(body_meshes, armature):
     return kd, records
 
 
+def canonical_bone_names(armature, canonicals):
+    names = set()
+    for canonical in canonicals:
+        bone = resolve_bone(armature, canonical)
+        if bone is not None:
+            names.add(bone.name)
+    return names
+
+
+def choose_leg_side(world, marks):
+    left_distance = abs(world.x - marks["left_up"].x)
+    right_distance = abs(world.x - marks["right_up"].x)
+    return "left" if left_distance <= right_distance else "right"
+
+
+def filter_influences(blended, armature, category, world):
+    if category in LOWER_GARMENTS:
+        marks = lower_landmarks(armature)
+        side = choose_leg_side(world, marks)
+        center_names = canonical_bone_names(armature, {"hips", "spine"})
+        left_names = canonical_bone_names(armature, {"left_up_leg", "left_leg", "left_foot", "left_toe"})
+        right_names = canonical_bone_names(armature, {"right_up_leg", "right_leg", "right_foot", "right_toe"})
+        allowed = center_names | (left_names if side == "left" else right_names)
+        filtered = {name: value for name, value in blended.items() if name in allowed}
+        if filtered:
+            return filtered, side
+        fallback = resolve_bone(armature, f"{side}_up_leg") or resolve_bone(armature, "hips")
+        return ({fallback.name: 1.0} if fallback else {}), side
+
+    if category == "shoes":
+        marks = lower_landmarks(armature)
+        side = choose_leg_side(world, marks)
+        names = canonical_bone_names(armature, {f"{side}_foot", f"{side}_toe"})
+        filtered = {name: value for name, value in blended.items() if name in names}
+        if filtered:
+            return filtered, side
+        fallback = resolve_bone(armature, f"{side}_foot")
+        return ({fallback.name: 1.0} if fallback else {}), side
+
+    if category in UPPER_GARMENTS:
+        allowed = canonical_bone_names(armature, {
+            "hips", "spine", "chest", "neck",
+            "left_shoulder", "right_shoulder",
+            "left_upper_arm", "right_upper_arm",
+            "left_lower_arm", "right_lower_arm",
+            "left_hand", "right_hand",
+        })
+        filtered = {name: value for name, value in blended.items() if name in allowed}
+        return filtered or blended, None
+
+    return blended, None
+
+
 def copy_weights(body_meshes, garment, armature, category):
     garment.vertex_groups.clear()
     kd, records = build_weight_kdtree(body_meshes, armature)
@@ -510,21 +651,26 @@ def copy_weights(body_meshes, garment, armature, category):
     if fallback_bone is None:
         raise RuntimeError("Avatar rig has no fallback body bone")
 
+    side_counts = {"left": 0, "right": 0}
     for vertex in garment.data.vertices:
         world = garment.matrix_world @ vertex.co
         blended = {}
         denominator = 0.0
-        for _position, record_index, distance in kd.find_n(world, 12):
+        for _position, record_index, distance in kd.find_n(world, 16):
             factor = 1.0 / max(distance, 1e-5) ** 2
             denominator += factor
             for name, weight in records[record_index]:
                 blended[name] = blended.get(name, 0.0) + weight * factor
 
-        influences = sorted(
-            ((name, value / denominator) for name, value in blended.items()),
-            key=lambda item: item[1],
-            reverse=True,
-        )[:4] if denominator and blended else [(fallback_bone.name, 1.0)]
+        normalized = (
+            {name: value / denominator for name, value in blended.items()}
+            if denominator and blended
+            else {fallback_bone.name: 1.0}
+        )
+        filtered, side = filter_influences(normalized, armature, category, world)
+        if side:
+            side_counts[side] += 1
+        influences = sorted(filtered.items(), key=lambda item: item[1], reverse=True)[:4]
         total = sum(value for _, value in influences) or 1.0
         for name, value in influences:
             group = destination.get(name)
@@ -533,7 +679,10 @@ def copy_weights(body_meshes, garment, armature, category):
                 destination[name] = group
             group.add([vertex.index], value / total, "REPLACE")
 
-    print(f"[rig-v3] transferred weights groups={len(destination)} vertices={len(garment.data.vertices)}", flush=True)
+    print(
+        f"[rig-v4] transferred groups={len(destination)} vertices={len(garment.data.vertices)} sides={side_counts}",
+        flush=True,
+    )
 
 
 def ensure_uv_map(obj):
@@ -555,7 +704,7 @@ def hex_to_rgba(value):
 
 def apply_material(garment, art_path, color):
     if not (art_path and os.path.exists(art_path)) and not str(color or "").strip():
-        print("[rig-v3] preserving original materials", flush=True)
+        print("[rig-v4] preserving original materials", flush=True)
         return
     ensure_uv_map(garment)
     material = bpy.data.materials.new(name="CLOUVA_Garment_Material")
@@ -583,6 +732,15 @@ def apply_material(garment, art_path, color):
     garment.data.materials.append(material)
 
 
+def assign_rigid_bone_weights(garment, armature, canonical):
+    bone = resolve_bone(armature, canonical)
+    if bone is None:
+        raise RuntimeError(f"Avatar rig is missing required {canonical} bone")
+    garment.vertex_groups.clear()
+    group = garment.vertex_groups.new(name=bone.name)
+    group.add(list(range(len(garment.data.vertices))), 1.0, "REPLACE")
+
+
 def attach_armature(garment, armature):
     for modifier in list(garment.modifiers):
         if modifier.type == "ARMATURE":
@@ -608,35 +766,72 @@ def group_vertex_count(garment, group_names, threshold=0.05):
     return count
 
 
-def validate_deformable_regions(garment, armature, category):
-    if category not in UPPER_GARMENTS:
-        return
-    left_names = {
-        bone.name for bone in [
-            resolve_bone(armature, "left_shoulder"),
-            resolve_bone(armature, "left_upper_arm"),
-            resolve_bone(armature, "left_lower_arm"),
-            resolve_bone(armature, "left_hand"),
-        ] if bone is not None
-    }
-    right_names = {
-        bone.name for bone in [
-            resolve_bone(armature, "right_shoulder"),
-            resolve_bone(armature, "right_upper_arm"),
-            resolve_bone(armature, "right_lower_arm"),
-            resolve_bone(armature, "right_hand"),
-        ] if bone is not None
-    }
+def validate_upper_weights(garment, armature):
+    left_names = canonical_bone_names(armature, {"left_shoulder", "left_upper_arm", "left_lower_arm", "left_hand"})
+    right_names = canonical_bone_names(armature, {"right_shoulder", "right_upper_arm", "right_lower_arm", "right_hand"})
     if not left_names or not right_names:
         raise RuntimeError("Avatar rig is missing arm bones required for sleeves")
+    minimum = max(8, int(len(garment.data.vertices) * 0.008))
     left_count = group_vertex_count(garment, left_names)
     right_count = group_vertex_count(garment, right_names)
-    minimum = max(8, int(len(garment.data.vertices) * 0.008))
-    print(f"[rig-v3] sleeve validation left={left_count} right={right_count} minimum={minimum}", flush=True)
     if left_count < minimum or right_count < minimum:
         raise RuntimeError(
             f"Sleeve weight validation failed: left={left_count}, right={right_count}, minimum={minimum}"
         )
+    return {"leftWeighted": left_count, "rightWeighted": right_count}
+
+
+def validate_lower_geometry_and_weights(garment, armature, category):
+    marks = lower_landmarks(armature)
+    garment_min, garment_max = bbox_world(garment)
+    waist_z = marks["waist"].z
+    feet_z = min(marks["left_foot"].z, marks["right_foot"].z)
+    knees_z = min(marks["left_knee"].z, marks["right_knee"].z)
+    leg_length = max(waist_z - feet_z, 1e-6)
+
+    waist_error = abs(garment_max.z - waist_z) / leg_length
+    center_z = (garment_min.z + garment_max.z) * 0.5
+    if waist_error > 0.16:
+        raise RuntimeError(
+            f"Waist alignment failed: garment_top={garment_max.z:.4f}, hips={waist_z:.4f}, error={waist_error:.3f}"
+        )
+    if center_z >= waist_z - leg_length * 0.12:
+        raise RuntimeError("Lower garment is centered above the legs instead of around them")
+    if category == "pants" and garment_min.z > knees_z + leg_length * 0.08:
+        raise RuntimeError(
+            f"Pants end above the knees: garment_bottom={garment_min.z:.4f}, knees={knees_z:.4f}"
+        )
+
+    garment_center_x = (garment_min.x + garment_max.x) * 0.5
+    legs_center_x = (marks["left_up"].x + marks["right_up"].x) * 0.5
+    hip_span = max(abs(marks["left_up"].x - marks["right_up"].x), leg_length * 0.08)
+    if abs(garment_center_x - legs_center_x) > hip_span * 0.55:
+        raise RuntimeError("Lower garment is horizontally displaced from the avatar hips")
+
+    margin = hip_span * 0.35
+    for label, point in (("left", marks["left_up"]), ("right", marks["right_up"])):
+        if not (garment_min.x - margin <= point.x <= garment_max.x + margin):
+            raise RuntimeError(f"{label} thigh is outside the garment bounds")
+
+    left_names = canonical_bone_names(armature, {"left_up_leg", "left_leg", "left_foot", "left_toe"})
+    right_names = canonical_bone_names(armature, {"right_up_leg", "right_leg", "right_foot", "right_toe"})
+    minimum = max(12, int(len(garment.data.vertices) * 0.02))
+    left_count = group_vertex_count(garment, left_names)
+    right_count = group_vertex_count(garment, right_names)
+    if left_count < minimum or right_count < minimum:
+        raise RuntimeError(
+            f"Leg weight validation failed: left={left_count}, right={right_count}, minimum={minimum}"
+        )
+
+    return {
+        "waistError": round(waist_error, 4),
+        "leftWeighted": left_count,
+        "rightWeighted": right_count,
+        "garmentTop": round(garment_max.z, 5),
+        "hipsZ": round(waist_z, 5),
+        "garmentBottom": round(garment_min.z, 5),
+        "kneesZ": round(knees_z, 5),
+    }
 
 
 def validate(garment, armature, target_min, target_max, category):
@@ -648,7 +843,12 @@ def validate(garment, armature, target_min, target_max, category):
         raise RuntimeError(f"Only {weighted}/{count} vertices received weights")
     if garment.find_armature() != armature:
         raise RuntimeError("Garment is not connected to official armature")
-    validate_deformable_regions(garment, armature, category)
+
+    metrics = {"weightedRatio": round(weighted / max(count, 1), 4)}
+    if category in UPPER_GARMENTS:
+        metrics.update(validate_upper_weights(garment, armature))
+    elif category in LOWER_GARMENTS:
+        metrics.update(validate_lower_geometry_and_weights(garment, armature, category))
 
     garment_min, garment_max = bbox_world(garment)
     target_size = target_max - target_min
@@ -658,8 +858,14 @@ def validate(garment, armature, target_min, target_max, category):
         garment_size.y / max(target_size.y, 1e-6),
         garment_size.z / max(target_size.z, 1e-6),
     ))
-    if ratios.x > 2.8 or ratios.y > 2.5 or ratios.z > 2.3:
+    if ratios.x > 2.3 or ratios.y > 2.2 or ratios.z > 1.8:
         raise RuntimeError(f"Garment outside safe bounds: {tuple(round(v, 3) for v in ratios)}")
+
+    garment["clouvaRigVersion"] = 4
+    garment["clouvaValidation"] = "passed"
+    garment["clouvaCategory"] = category
+    garment["clouvaMetrics"] = json.dumps(metrics, separators=(",", ":"))
+    print(f"[rig-v4] validation passed {metrics}", flush=True)
 
 
 def export_glb(output_path, garment, armature):
@@ -676,6 +882,7 @@ def export_glb(output_path, garment, armature):
         export_skins=True,
         export_all_influences=False,
         export_materials="EXPORT",
+        export_extras=True,
     )
 
 
@@ -689,8 +896,11 @@ def validate_roundtrip(output_path):
         skinned = [obj for obj in imported if obj.type == "MESH" and obj.find_armature()]
         if len(armatures) != 1 or not skinned:
             raise RuntimeError("Exported GLB is not a valid single-rig wearable")
+        garment = max(skinned, key=lambda obj: len(obj.data.vertices))
+        if int(garment.get("clouvaRigVersion", 0)) != 4:
+            raise RuntimeError("Exported GLB lost CLOUVA rig validation metadata")
         print(
-            f"[rig-v3] roundtrip ok meshes={len(skinned)} vertices={sum(len(obj.data.vertices) for obj in skinned)}",
+            f"[rig-v4] roundtrip ok meshes={len(skinned)} vertices={sum(len(obj.data.vertices) for obj in skinned)}",
             flush=True,
         )
 
@@ -704,28 +914,24 @@ def main():
     avatar_objects = import_glb(avatar_path)
     armature = find_armature(avatar_objects)
     body_meshes = body_meshes_for_rig(avatar_objects, armature)
+    body_min, body_max = combined_bbox(body_meshes)
+    avatar_height = max(body_max.z - body_min.z, 1e-6)
 
     garment_objects = import_glb(garment_path)
-    garment = prepare_garment(garment_objects)
+    garment = prepare_garment(garment_objects, category)
     target_min, target_max = fit_to_body(garment, body_meshes, armature, category)
-    apply_preview_adjustments(garment, preview_settings)
-
-    reused_rig = retarget_existing_weights(garment, armature)
-    strategy = "retarget_existing_weights" if reused_rig else "transfer_from_avatar_v3"
+    apply_preview_adjustments(garment, preview_settings, avatar_height)
 
     if category == "hat":
         assign_rigid_bone_weights(garment, armature, "head")
-        strategy = "rigid_head_anchor"
     elif category == "accessory":
         assign_rigid_bone_weights(garment, armature, "chest")
-        strategy = "rigid_chest_anchor"
-    elif not reused_rig:
+    else:
         copy_weights(body_meshes, garment, armature, category)
 
     apply_material(garment, art_path, color)
     attach_armature(garment, armature)
     validate(garment, armature, target_min, target_max, category)
-    print(f"[rig-v3] final strategy={strategy} category={category}", flush=True)
     export_glb(output_path, garment, armature)
     validate_roundtrip(output_path)
 

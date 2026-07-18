@@ -4,6 +4,8 @@ import { buildBlenderJob, type BlenderRequest } from "@/lib/creator-studio/blend
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
+const DEFORMABLE_CATEGORIES = new Set(["hoodie", "shirt", "jacket", "pants", "shorts", "shoes"]);
+
 function workerErrorMessage(data: Record<string, unknown>, status: number) {
   const detail = data.detail;
   if (typeof detail === "string" && detail.trim()) return detail;
@@ -15,6 +17,27 @@ function workerErrorMessage(data: Record<string, unknown>, status: number) {
   if (typeof data.message === "string" && data.message.trim()) return data.message;
   if (typeof data.error === "string" && data.error.trim()) return data.error;
   return `El Garment/Blender Worker rechazó el trabajo (HTTP ${status}).`;
+}
+
+function enforceCanonicalDeformableRig(payload: BlenderRequest): BlenderRequest {
+  const category = String(payload.category ?? "").trim().toLowerCase();
+  if (!DEFORMABLE_CATEGORIES.has(category)) return payload;
+
+  // Un asset marcado como ready puede venir de un pipeline viejo y tener el armature
+  // desplazado. Las prendas deformables siempre se desarman y se pesan otra vez contra
+  // el avatar activo; nunca se conserva un skinning solo por su estado en la biblioteca.
+  return {
+    ...payload,
+    autoWeight: true,
+    templateMode: false,
+    preserveExistingSkinning: false,
+    previewSettings: {
+      ...(payload.previewSettings ?? {}),
+      rigProfileVersion: 4,
+      forceWeightTransfer: true,
+      validationContract: "canonical-landmarks-v4",
+    },
+  };
 }
 
 export async function POST(request: Request) {
@@ -47,6 +70,8 @@ export async function POST(request: Request) {
     } else {
       payload = (await request.json()) as BlenderRequest;
     }
+
+    payload = enforceCanonicalDeformableRig(payload);
 
     const workerUrl = process.env.GARMENT_WORKER_URL ?? process.env.BLENDER_WORKER_URL ?? "https://rig.clouva.com.ar";
     const workerToken = process.env.GARMENT_WORKER_TOKEN ?? process.env.BLENDER_WORKER_TOKEN;

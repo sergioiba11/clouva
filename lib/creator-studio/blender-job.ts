@@ -22,16 +22,24 @@ export type BlenderRequest = {
 export type BlenderJob = ReturnType<typeof buildBlenderJob>;
 
 export function buildBlenderJob(payload: BlenderRequest) {
-  const templateMode = Boolean(payload.templateMode || payload.preserveExistingSkinning);
-  const transferSkinWeights = templateMode ? false : (payload.autoWeight ?? true);
   const category = payload.category ?? "accessory";
+  const deformable = ["hoodie", "shirt", "jacket", "pants", "shorts", "shoes"].includes(category);
+  const templateMode = deformable
+    ? false
+    : Boolean(payload.templateMode || payload.preserveExistingSkinning);
+  const transferSkinWeights = deformable ? true : (templateMode ? false : (payload.autoWeight ?? true));
   const upperGarment = category === "hoodie" || category === "shirt" || category === "jacket";
+  const lowerGarment = category === "pants" || category === "shorts";
 
   return {
     type: "clouva_creator_pipeline",
     operation: "fit_and_rig_reference",
-    pipelineVersion: "smart-rig-v3",
-    riggingStrategy: templateMode ? "preserve_existing_skinning" : "transfer_from_avatar",
+    pipelineVersion: "canonical-landmarks-v4",
+    riggingStrategy: deformable
+      ? "fresh_transfer_from_active_avatar"
+      : templateMode
+        ? "preserve_existing_skinning"
+        : "transfer_from_avatar",
     avatarRig: payload.rig ?? "clouva_base_v1",
     category,
     sourceUrl: payload.sourceUrl ?? null,
@@ -39,7 +47,10 @@ export function buildBlenderJob(payload: BlenderRequest) {
     referenceAssetName: payload.referenceAssetName ?? null,
     templateId: payload.templateId ?? null,
     templateMode,
-    previewSettings: payload.previewSettings ?? {},
+    previewSettings: {
+      ...(payload.previewSettings ?? {}),
+      rigProfileVersion: deformable ? 4 : payload.previewSettings?.rigProfileVersion,
+    },
     options: {
       cleanGeometry: true,
       repairNormals: true,
@@ -47,11 +58,12 @@ export function buildBlenderJob(payload: BlenderRequest) {
       centerModel: !templateMode,
       fitToAvatar: true,
       fitIncludesLimbSpan: upperGarment,
-      shrinkwrap: !templateMode,
-      surfaceDeform: !templateMode,
+      fitUsesCanonicalLowerBodyLandmarks: lowerGarment,
+      shrinkwrap: deformable && !templateMode,
+      surfaceDeform: deformable && !templateMode,
       transferSkinWeights,
-      transferVertexGroups: !templateMode,
-      attachArmature: !templateMode,
+      transferVertexGroups: deformable || !templateMode,
+      attachArmature: deformable || !templateMode,
       preserveExistingSkinning: templateMode,
       preserveTopology: templateMode,
       applyTemplateDeformations: templateMode,
@@ -64,16 +76,20 @@ export function buildBlenderJob(payload: BlenderRequest) {
         method: "nearest_surface_point",
         dataType: "VGROUP_WEIGHTS",
         mixMode: "REPLACE",
-        sampleCount: 12,
+        sampleCount: 16,
+        separateLeftRightLimbs: deformable,
         rayRadius: 0.02,
       },
       validation: {
         requireArmature: true,
         requireWeightedVertices: true,
         requireBilateralSleeveWeights: upperGarment,
+        requireBilateralLegWeights: lowerGarment,
+        requireWaistAtHips: lowerGarment,
+        rejectTorsoAlignedPants: lowerGarment,
         rejectMissingBones: true,
         rejectUnnormalizedWeights: true,
-        maxUnweightedVertexRatio: 0.01,
+        maxUnweightedVertexRatio: 0.005,
         animationTests: ["tpose", "idle", "walk", "run"],
       },
       animationTests: ["tpose", "idle", "walk", "run"],
