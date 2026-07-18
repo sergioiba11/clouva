@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { REFERENCE_CATEGORIES, type ReferenceCategory } from "@/lib/creator-studio/reference-assets";
+import { resolveRigProfile } from "@/lib/creator-studio/rig-profiles";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -6,7 +8,24 @@ export const maxDuration = 60;
 export async function POST(request: Request) {
   try {
     const form = await request.formData();
-    const category = String(form.get("category") ?? "accessory");
+    const rawCategory = String(form.get("category") ?? "").trim().toLowerCase();
+    if (!REFERENCE_CATEGORIES.includes(rawCategory as ReferenceCategory)) {
+      return NextResponse.json({ error: "La categoría del objeto no es válida." }, { status: 400 });
+    }
+
+    const category = rawCategory as ReferenceCategory;
+    const profile = resolveRigProfile(category);
+    if (profile.pipeline !== "object") {
+      return NextResponse.json(
+        {
+          error: `${profile.label} es una prenda deformable. Debe usar transferencia de pesos del avatar, no un esqueleto propio de accesorio.`,
+          expectedPipeline: "garment",
+          category,
+        },
+        { status: 409 },
+      );
+    }
+
     const file = form.get("file");
     if (!(file instanceof File) || file.size === 0) {
       return NextResponse.json({ error: "Falta el GLB del objeto." }, { status: 400 });
@@ -20,7 +39,7 @@ export async function POST(request: Request) {
 
     const workerForm = new FormData();
     workerForm.set("file", file, file.name);
-    workerForm.set("job", JSON.stringify({ category }));
+    workerForm.set("job", JSON.stringify({ category, rigProfileVersion: 3 }));
 
     const response = await fetch(`${workerUrl.replace(/\/$/, "")}/rig-object`, {
       method: "POST",
@@ -50,6 +69,8 @@ export async function POST(request: Request) {
       jobId: data.jobId ?? data.id,
       status: data.status ?? "queued",
       category,
+      rigMode: profile.mode,
+      anchor: profile.anchor,
     });
   } catch (error) {
     return NextResponse.json({

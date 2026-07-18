@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { useAuth } from "@/components/auth-provider";
-import { CreatorStudio } from "@/components/creator-studio/CreatorStudio";
+import { CreatorStudioPro } from "@/components/creator-studio/CreatorStudioPro";
 import { useActiveAvatarStore } from "@/lib/avatar-engine/active-avatar-store";
 
 export function CreatorStudioBootstrap() {
@@ -17,11 +17,11 @@ export function CreatorStudioBootstrap() {
 
   if (!profileReady || loadingAvatar) {
     return (
-      <div className="flex min-h-[70vh] items-center justify-center text-sm text-white/60">
+      <div className="flex min-h-[70vh] items-center justify-center bg-[#060408] text-sm text-white/60">
         Cargando avatar riggeado…
       </div>
     );
   }
 
-  return <CreatorStudio />;
+  return <CreatorStudioPro />;
 }
