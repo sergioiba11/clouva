@@ -46,6 +46,25 @@ function parseWorkerMetadata(response: Response) {
   }
 }
 
+function errorMessage(cause: unknown, fallback: string) {
+  if (cause instanceof Error && cause.message) return cause.message;
+  if (typeof cause === "string" && cause.trim()) return cause;
+  if (cause && typeof cause === "object") {
+    const value = cause as Record<string, unknown>;
+    for (const key of ["message", "error_description", "details", "detail", "error"]) {
+      const candidate = value[key];
+      if (typeof candidate === "string" && candidate.trim()) return candidate;
+    }
+    try {
+      const serialized = JSON.stringify(cause);
+      if (serialized && serialized !== "{}") return serialized.slice(0, 600);
+    } catch {
+      // Keep the user-facing fallback below.
+    }
+  }
+  return fallback;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const { supabase, user } = await requireUser(request);
@@ -63,7 +82,7 @@ export async function POST(request: NextRequest) {
       .limit(1)
       .maybeSingle();
 
-    if (avatarError) throw avatarError;
+    if (avatarError) throw new Error(errorMessage(avatarError, "No se pudo consultar el avatar activo"));
     if (!active?.id || !active.model_url) {
       return NextResponse.json({ error: "No encontramos el avatar activo procesado del usuario" }, { status: 404 });
     }
@@ -99,9 +118,11 @@ export async function POST(request: NextRequest) {
     const bytes = await workerResponse.arrayBuffer();
     if (bytes.byteLength < 1024) throw new Error("El FBX validado está vacío o incompleto");
 
-    const filename = `clouva-avatar-${String(active.id).slice(0, 8)}-unreal.fbx`;
-    const storagePath = `${user.id}/${active.id}/unreal/${filename}`;
     const exportedAt = new Date().toISOString();
+    const exportRevision = exportedAt.replace(/\D/g, "").slice(0, 14);
+    const filename = `clouva-avatar-${String(active.id).slice(0, 8)}-unreal.fbx`;
+    const storedFilename = `clouva-avatar-${String(active.id).slice(0, 8)}-unreal-${exportRevision}.fbx`;
+    const storagePath = `${user.id}/${active.id}/unreal/${storedFilename}`;
     const exportMetadata = {
       ...metadata,
       avatarId: active.id,
@@ -113,41 +134,46 @@ export async function POST(request: NextRequest) {
 
     const { error: uploadError } = await supabase.storage.from("avatars").upload(storagePath, bytes, {
       contentType: "application/octet-stream",
-      cacheControl: "3600",
-      upsert: true,
+      cacheControl: "0",
+      upsert: false,
     });
-    if (uploadError) throw uploadError;
+    if (uploadError) throw new Error(errorMessage(uploadError, "No se pudo guardar el FBX validado"));
 
-    // El bucket `avatars` está restringido a formatos 3D y rechaza application/json.
-    // La validación se conserva completa en `user_avatars.unreal_export_metadata`, sin
-    // crear un archivo JSON separado que pueda bloquear una exportación FBX válida.
     const { data: publicData } = supabase.storage.from("avatars").getPublicUrl(storagePath);
+    const downloadUrl = `${publicData.publicUrl}?v=${encodeURIComponent(exportRevision)}`;
 
+    // El FBX ya está validado y guardado. Persistir la URL/metadata es útil, pero no debe
+    // impedir que el usuario descargue un archivo correcto si la migración aún no se aplicó.
     const { error: updateError } = await supabase
       .from("user_avatars")
       .update({
-        unreal_model_url: publicData.publicUrl,
+        unreal_model_url: downloadUrl,
         unreal_export_metadata: exportMetadata,
         unreal_exported_at: exportedAt,
       })
       .eq("id", active.id)
       .eq("user_id", user.id);
-    if (updateError) throw updateError;
+
+    const metadataWarning = updateError
+      ? `El FBX se generó, pero no se pudo guardar su metadata: ${errorMessage(updateError, "error de base de datos")}`
+      : null;
+    if (updateError) console.warn("Unreal avatar metadata persistence failed", updateError);
 
     return NextResponse.json({
       ok: true,
       avatarId: active.id,
       filename,
       path: storagePath,
-      url: publicData.publicUrl,
+      url: downloadUrl,
       format: "fbx",
       target: "unreal",
       scale: "Import Uniform Scale = 1.0",
       validation: exportMetadata,
+      warning: metadataWarning,
     });
   } catch (cause) {
     console.error("Unreal avatar export failed", cause);
-    const message = cause instanceof Error ? cause.message : "No se pudo exportar el avatar para Unreal";
+    const message = errorMessage(cause, "No se pudo exportar el avatar para Unreal");
     const status = /sesión/i.test(message) ? 401 : 500;
     return NextResponse.json({ error: message }, { status });
   }
