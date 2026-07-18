@@ -16,7 +16,7 @@ const garmentDockerfile = readFileSync("./worker/garment-rig/Dockerfile", "utf8"
 test("hoodie siempre se pesa de nuevo contra el avatar activo", () => {
   const job = buildBlenderJob({ category: "hoodie", templateMode: true, preserveExistingSkinning: true });
   assert.equal(job.operation, "fit_and_rig_reference");
-  assert.equal(job.pipelineVersion, "canonical-landmarks-v4");
+  assert.equal(job.pipelineVersion, "body-mesh-contract-v15");
   assert.equal(job.riggingStrategy, "fresh_transfer_from_active_avatar");
   assert.equal(job.templateMode, false);
   assert.equal(job.options.transferSkinWeights, true);
@@ -27,14 +27,16 @@ test("hoodie siempre se pesa de nuevo contra el avatar activo", () => {
   assert.equal(job.options.validation.requireBilateralSleeveWeights, true);
 });
 
-test("pantalón exige cintura en Hips y pesos separados para ambas piernas", () => {
+test("pantalón exige cuerpo real y pesos separados para ambas piernas", () => {
   const job = buildBlenderJob({ category: "pants", templateMode: true, preserveExistingSkinning: true });
   assert.equal(job.riggingStrategy, "fresh_transfer_from_active_avatar");
   assert.equal(job.options.fitUsesCanonicalLowerBodyLandmarks, true);
+  assert.equal(job.options.fitUsesBodyMeshVolume, true);
   assert.equal(job.options.weightTransfer.separateLeftRightLimbs, true);
   assert.equal(job.options.weightTransfer.sampleCount, 16);
   assert.equal(job.options.validation.requireBilateralLegWeights, true);
   assert.equal(job.options.validation.requireWaistAtHips, true);
+  assert.equal(job.options.validation.requireBodyMeshRoundtrip, true);
   assert.equal(job.options.validation.rejectTorsoAlignedPants, true);
 });
 
