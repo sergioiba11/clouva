@@ -27,7 +27,7 @@ RUN wget -q "$BLENDER_URL" -O /tmp/blender.tar.xz \
 RUN pip install --no-cache-dir --break-system-packages fastapi uvicorn pydantic python-multipart
 
 WORKDIR /app
-COPY app.py app_v5.py rig_garment.py rig_garment_v5.py rig_garment_v10.py rig_garment_v11.py rig_garment_v12.py rig_garment_v13.py rig_object.py attach_object.py ./
+COPY app.py app_v5.py rig_garment.py rig_garment_v5.py rig_garment_v10.py rig_garment_v11.py rig_garment_v12.py rig_garment_v13.py rig_garment_v14.py rig_object.py attach_object.py ./
 RUN mv app.py app_legacy.py \
     && mv app_v5.py app.py \
     && mv rig_garment.py rig_garment_legacy.py \
@@ -35,10 +35,12 @@ RUN mv app.py app_legacy.py \
     && mv rig_garment_v10.py rig_garment_v10_base.py \
     && mv rig_garment_v11.py rig_garment_v11_base.py \
     && mv rig_garment_v12.py rig_garment_v12_base.py \
-    && mv rig_garment_v13.py rig_garment.py \
+    && mv rig_garment_v13.py rig_garment_v13_base.py \
+    && mv rig_garment_v14.py rig_garment.py \
     && sed -i 's/"rig_garment_v10.py"/"rig_garment_v10_base.py"/' /app/rig_garment_v11_base.py \
     && sed -i 's/"rig_garment_v11.py"/"rig_garment_v11_base.py"/' /app/rig_garment_v12_base.py \
-    && sed -i 's/"rig_garment_v12.py"/"rig_garment_v12_base.py"/' /app/rig_garment.py
+    && sed -i 's/"rig_garment_v12.py"/"rig_garment_v12_base.py"/' /app/rig_garment_v13_base.py \
+    && sed -i 's/"rig_garment_v13.py"/"rig_garment_v13_base.py"/' /app/rig_garment.py
 
 # Blender usa un Python embebido y puede ignorar PYTHONPATH cuando ejecuta --python.
 # Instalamos el módulo base dentro de la ruta nativa de módulos de Blender para que los
@@ -47,18 +49,19 @@ RUN mkdir -p /opt/blender/4.2/scripts/modules \
     && cp /app/rig_garment_legacy.py /opt/blender/4.2/scripts/modules/rig_garment_legacy.py
 
 ENV PYTHONPATH=/app
-ENV CLOUVA_RIG_VERSION=v13
+ENV CLOUVA_RIG_VERSION=v14
 
-# Smoke test real: carga V13 y toda la cadena hasta el módulo legacy. Railway cancela
-# el build si falla el resolver jerárquico o cualquiera de los wrappers anteriores.
+# Smoke test real: carga V14 y toda la cadena hasta el módulo legacy. Railway cancela
+# el build si falla el resolver jerárquico, REST pose o compatibilidad con pelvis estilizada.
 RUN test -f /app/rig_garment.py \
+    && test -f /app/rig_garment_v13_base.py \
     && test -f /app/rig_garment_v12_base.py \
     && test -f /app/rig_garment_v11_base.py \
     && test -f /app/rig_garment_v10_base.py \
     && test -f /app/rig_garment_v9.py \
     && test -f /app/rig_garment_legacy.py \
     && test -f /opt/blender/4.2/scripts/modules/rig_garment_legacy.py \
-    && /opt/blender/blender --background --factory-startup --python-expr "namespace={'__name__':'clouva_rig_import_test','__file__':'/app/rig_garment.py'}; exec(compile(open('/app/rig_garment.py', encoding='utf-8').read(), '/app/rig_garment.py', 'exec'), namespace); print('[clouva] Blender V13 wrapper import OK')"
+    && /opt/blender/blender --background --factory-startup --python-expr "namespace={'__name__':'clouva_rig_import_test','__file__':'/app/rig_garment.py'}; exec(compile(open('/app/rig_garment.py', encoding='utf-8').read(), '/app/rig_garment.py', 'exec'), namespace); print('[clouva] Blender V14 wrapper import OK')"
 
 ENV BLENDER_BIN=/usr/local/bin/blender
 EXPOSE 8000
