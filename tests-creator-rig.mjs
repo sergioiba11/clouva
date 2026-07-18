@@ -10,6 +10,7 @@ const garmentWorkerV11Source = readFileSync("./worker/garment-rig/rig_garment_v1
 const garmentWorkerV12Source = readFileSync("./worker/garment-rig/rig_garment_v12.py", "utf8");
 const garmentWorkerV13Source = readFileSync("./worker/garment-rig/rig_garment_v13.py", "utf8");
 const garmentWorkerV14Source = readFileSync("./worker/garment-rig/rig_garment_v14.py", "utf8");
+const garmentWorkerV15Source = readFileSync("./worker/garment-rig/rig_garment_v15.py", "utf8");
 const garmentDockerfile = readFileSync("./worker/garment-rig/Dockerfile", "utf8");
 
 test("hoodie siempre se pesa de nuevo contra el avatar activo", () => {
@@ -95,8 +96,19 @@ test("V14 acepta pelvis estilizadas sin quitar validación jerárquica", () => {
   assert.match(garmentWorkerV14Source, /clouvaStylizedPelvisCompatible/);
   assert.doesNotMatch(garmentWorkerV14Source, /Un muslo quedó demasiado lejos de Hips/);
   assert.doesNotMatch(garmentWorkerV14Source, /leg_length \* 0\.30/);
-  assert.match(garmentDockerfile, /CLOUVA_RIG_VERSION=v14/);
-  assert.match(garmentDockerfile, /rig_garment_v14\.py/);
+});
+
+test("V15 usa la malla corporal como fuente de verdad para escala y roundtrip", () => {
+  assert.match(garmentWorkerV15Source, /def lower_body_contract/);
+  assert.match(garmentWorkerV15Source, /body_points_world/);
+  assert.match(garmentWorkerV15Source, /clouvaAvatarBodyHeight/);
+  assert.match(garmentWorkerV15Source, /clouvaBodyTargetMin/);
+  assert.match(garmentWorkerV15Source, /clouvaBodyTargetMax/);
+  assert.match(garmentWorkerV15Source, /def validate_roundtrip_v15/);
+  assert.match(garmentWorkerV15Source, /El pantalón volvió a quedar gigante respecto del cuerpo real/);
+  assert.doesNotMatch(garmentWorkerV15Source, /waist\.z - left_foot\.z/);
+  assert.match(garmentDockerfile, /CLOUVA_RIG_VERSION=v15/);
+  assert.match(garmentDockerfile, /rig_garment_v15\.py/);
 });
 
 test("solo una plantilla rígida puede conservar skinning existente", () => {
