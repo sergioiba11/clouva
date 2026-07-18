@@ -100,9 +100,16 @@ export async function POST(request: NextRequest) {
     if (bytes.byteLength < 1024) throw new Error("El FBX validado está vacío o incompleto");
 
     const filename = `clouva-avatar-${String(active.id).slice(0, 8)}-unreal.fbx`;
-    const basePath = `${user.id}/${active.id}/unreal`;
-    const storagePath = `${basePath}/${filename}`;
-    const metadataPath = `${basePath}/${filename.replace(/\.fbx$/i, ".json")}`;
+    const storagePath = `${user.id}/${active.id}/unreal/${filename}`;
+    const exportedAt = new Date().toISOString();
+    const exportMetadata = {
+      ...metadata,
+      avatarId: active.id,
+      userId: user.id,
+      sourceUrl,
+      storagePath,
+      exportedAt,
+    };
 
     const { error: uploadError } = await supabase.storage.from("avatars").upload(storagePath, bytes, {
       contentType: "application/octet-stream",
@@ -111,22 +118,17 @@ export async function POST(request: NextRequest) {
     });
     if (uploadError) throw uploadError;
 
-    const { error: metadataUploadError } = await supabase.storage.from("avatars").upload(
-      metadataPath,
-      new TextEncoder().encode(JSON.stringify({ ...metadata, avatarId: active.id, userId: user.id, sourceUrl, exportedAt: new Date().toISOString() }, null, 2)),
-      { contentType: "application/json", cacheControl: "3600", upsert: true },
-    );
-    if (metadataUploadError) throw metadataUploadError;
-
+    // El bucket `avatars` está restringido a formatos 3D y rechaza application/json.
+    // La validación se conserva completa en `user_avatars.unreal_export_metadata`, sin
+    // crear un archivo JSON separado que pueda bloquear una exportación FBX válida.
     const { data: publicData } = supabase.storage.from("avatars").getPublicUrl(storagePath);
-    const { data: metadataPublicData } = supabase.storage.from("avatars").getPublicUrl(metadataPath);
 
     const { error: updateError } = await supabase
       .from("user_avatars")
       .update({
         unreal_model_url: publicData.publicUrl,
-        unreal_export_metadata: metadata,
-        unreal_exported_at: new Date().toISOString(),
+        unreal_export_metadata: exportMetadata,
+        unreal_exported_at: exportedAt,
       })
       .eq("id", active.id)
       .eq("user_id", user.id);
@@ -138,11 +140,10 @@ export async function POST(request: NextRequest) {
       filename,
       path: storagePath,
       url: publicData.publicUrl,
-      metadataUrl: metadataPublicData.publicUrl,
       format: "fbx",
       target: "unreal",
       scale: "Import Uniform Scale = 1.0",
-      validation: metadata,
+      validation: exportMetadata,
     });
   } catch (cause) {
     console.error("Unreal avatar export failed", cause);
