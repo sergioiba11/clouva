@@ -30,6 +30,47 @@ function sleep(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+function ReferenceInput({
+  label,
+  hint,
+  file,
+  preview,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  hint: string;
+  file: File | null;
+  preview: string | null;
+  disabled: boolean;
+  onChange: (file: File | null) => void;
+}) {
+  return (
+    <label className="flex min-h-44 cursor-pointer flex-col items-center justify-center overflow-hidden rounded-2xl border border-dashed border-white/15 bg-black/20 p-3 text-center transition hover:border-violet-400/60">
+      {preview ? (
+        <>
+          <img src={preview} alt={label} className="h-28 w-full rounded-xl object-contain" />
+          <strong className="mt-2 text-sm text-violet-200">{label} ✓</strong>
+          <span className="mt-1 max-w-full truncate text-xs text-white/35">{file?.name}</span>
+        </>
+      ) : (
+        <>
+          <span className="grid h-10 w-10 place-items-center rounded-xl bg-violet-500/15 text-xl text-violet-200">＋</span>
+          <strong className="mt-3 text-sm">{label}</strong>
+          <span className="mt-1 text-xs text-white/40">{hint}</span>
+        </>
+      )}
+      <input
+        className="hidden"
+        type="file"
+        accept="image/png,image/jpeg,image/webp"
+        disabled={disabled}
+        onChange={(event) => onChange(event.target.files?.[0] ?? null)}
+      />
+    </label>
+  );
+}
+
 export default function GarmentFlowClient() {
   const { session } = useAuth();
   const avatar = useActiveAvatarStore((state) => state.avatar);
@@ -38,6 +79,10 @@ export default function GarmentFlowClient() {
   const [fit, setFit] = useState("Oversized");
   const [color, setColor] = useState("#0a0a0a");
   const [description, setDescription] = useState("");
+  const [front, setFront] = useState<File | null>(null);
+  const [back, setBack] = useState<File | null>(null);
+  const [frontPreview, setFrontPreview] = useState<string | null>(null);
+  const [backPreview, setBackPreview] = useState<string | null>(null);
   const [art, setArt] = useState<File | null>(null);
   const [artPreview, setArtPreview] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>("idle");
@@ -46,6 +91,18 @@ export default function GarmentFlowClient() {
   const [result, setResult] = useState<{ id: string; modelUrl: string; rigged?: boolean; fitStatus?: string } | null>(null);
 
   const busy = ["creating", "preview", "refining", "rigging"].includes(phase);
+  const hasReferencePair = Boolean(front && back);
+  const hasIncompletePair = Boolean((front && !back) || (!front && back));
+
+  const updateReference = (side: "front" | "back", file: File | null) => {
+    if (side === "front") {
+      setFront(file);
+      setFrontPreview(file ? URL.createObjectURL(file) : null);
+    } else {
+      setBack(file);
+      setBackPreview(file ? URL.createObjectURL(file) : null);
+    }
+  };
 
   const poll = async (taskId: string): Promise<MeshyStatus> => {
     const startedAt = Date.now();
@@ -89,7 +146,8 @@ export default function GarmentFlowClient() {
     try {
       if (!session?.access_token) throw new Error("Iniciá sesión.");
       if (!avatar.modelUrl) throw new Error("No hay un avatar activo.");
-      if (!description.trim()) throw new Error("Describí cómo querés la prenda.");
+      if (hasIncompletePair) throw new Error("Para usar referencias necesitás subir la imagen de frente y la imagen de atrás.");
+      if (!hasReferencePair && !description.trim()) throw new Error("Describí cómo querés la prenda o subí las vistas de frente y atrás.");
 
       setPhase("creating");
       const form = new FormData();
@@ -98,6 +156,10 @@ export default function GarmentFlowClient() {
       form.append("fit", fit);
       form.append("color", color);
       form.append("description", description.trim());
+      if (front && back) {
+        form.append("front", front);
+        form.append("back", back);
+      }
       if (art) form.append("art", art);
 
       const createResponse = await fetch("/api/clothing/create", {
@@ -157,7 +219,7 @@ export default function GarmentFlowClient() {
   };
 
   const phaseLabel =
-    phase === "creating" ? "Enviando diseño a Meshy…" :
+    phase === "creating" ? (hasReferencePair ? "Enviando frente y atrás a Meshy…" : "Enviando diseño a Meshy…") :
     phase === "preview" && progress >= 99 ? "Meshy está cerrando la forma…" :
     phase === "preview" ? `Creando forma 3D… ${progress}%` :
     phase === "refining" && progress >= 99 ? "Meshy está terminando materiales…" :
@@ -176,7 +238,7 @@ export default function GarmentFlowClient() {
         <section className="rounded-3xl border border-white/10 bg-white/[0.03] p-5">
           <h1 className="text-2xl font-semibold">Crear una prenda para tu avatar</h1>
           <p className="mb-4 mt-1 text-sm text-white/45">
-            Elegís la pieza y el estilo. Meshy crea el objeto 3D y CLOUVA lo adapta al cuerpo.
+            Subí el frente y la espalda para que Meshy entienda mejor la forma. Después CLOUVA la adapta y la deja disponible para Unreal.
           </p>
 
           <div className="mb-4 grid grid-cols-3 gap-2 sm:grid-cols-4">
@@ -202,11 +264,27 @@ export default function GarmentFlowClient() {
             ))}
           </div>
 
-          <textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={5} placeholder="Ej: buzo negro oversized, mangas anchas, capucha profunda, costuras violetas y estética futurista…" className="mb-4 w-full rounded-xl border border-white/10 bg-black/25 p-3 text-sm" />
+          <textarea value={description} onChange={(event) => setDescription(event.target.value)} rows={4} placeholder="Ej: buzo negro oversized, mangas anchas, capucha profunda, costuras violetas y estética futurista…" className="mb-4 w-full rounded-xl border border-white/10 bg-black/25 p-3 text-sm" />
+
+          <div className="mb-4 rounded-2xl border border-violet-400/20 bg-violet-500/[0.05] p-4">
+            <div className="mb-3">
+              <p className="text-sm font-semibold">Referencias de forma 3D</p>
+              <p className="mt-1 text-xs text-white/45">Usá el mismo objeto, centrado, completo y con fondo limpio. Deben cargarse las dos vistas juntas.</p>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <ReferenceInput label="Imagen de frente" hint="Vista recta desde adelante" file={front} preview={frontPreview} disabled={busy} onChange={(file) => updateReference("front", file)} />
+              <ReferenceInput label="Imagen de atrás" hint="La misma pieza desde atrás" file={back} preview={backPreview} disabled={busy} onChange={(file) => updateReference("back", file)} />
+            </div>
+            {(front || back) ? (
+              <button type="button" onClick={() => { updateReference("front", null); updateReference("back", null); }} className="mt-3 text-xs text-white/45 underline" disabled={busy}>Quitar referencias</button>
+            ) : null}
+            {hasIncompletePair ? <p className="mt-2 text-xs text-amber-300">Falta cargar la otra vista.</p> : null}
+            {hasReferencePair ? <p className="mt-2 text-xs text-emerald-300">Listo: Meshy usará frente + espalda.</p> : null}
+          </div>
 
           <div className="mb-4 rounded-2xl border border-dashed border-white/15 bg-black/20 p-4">
             <p className="text-sm font-medium">Arte o logo opcional</p>
-            <p className="mb-3 mt-1 text-xs text-white/45">Subilo únicamente como arte para la textura. No define la forma de la prenda.</p>
+            <p className="mb-3 mt-1 text-xs text-white/45">Se usa como arte para la textura. Las imágenes de frente y atrás definen la forma.</p>
             <label className="block cursor-pointer rounded-xl border border-white/10 bg-white/[0.03] p-3 text-center text-sm text-white/60">
               {artPreview ? <img src={artPreview} alt="Arte para la prenda" className="mx-auto max-h-48 rounded-lg object-contain" /> : "Subir logo, portada o diseño"}
               <input className="hidden" type="file" accept="image/png,image/jpeg,image/webp" disabled={busy} onChange={(event) => {
@@ -218,7 +296,7 @@ export default function GarmentFlowClient() {
             {art ? <button type="button" onClick={() => { setArt(null); setArtPreview(null); }} className="mt-2 text-xs text-white/45 underline">Quitar arte</button> : null}
           </div>
 
-          <button type="button" onClick={generate3D} disabled={busy} className="w-full rounded-2xl bg-violet-400 py-3 font-semibold text-black disabled:opacity-50">
+          <button type="button" onClick={generate3D} disabled={busy || hasIncompletePair} className="w-full rounded-2xl bg-violet-400 py-3 font-semibold text-black disabled:opacity-50">
             {phaseLabel}
           </button>
 
@@ -235,11 +313,13 @@ export default function GarmentFlowClient() {
         </section>
       ) : (
         <section className="rounded-3xl border border-white/10 bg-white/[0.03] p-5">
-          <h1 className="mb-3 text-xl font-semibold">Prenda 3D lista ✓</h1>
+          <h1 className="mb-1 text-xl font-semibold">Prenda 3D lista ✓</h1>
+          <p className="mb-3 text-sm text-white/45">Quedó guardada en tus piezas y ya puede aparecer en Biblioteca para exportarla como FBX.</p>
           <div className="h-[430px] overflow-hidden rounded-2xl border border-white/10 bg-black/40">
             <OutfitPreview avatarUrl={avatar.modelUrl} layers={[{ id: result.id, url: result.modelUrl, visible: true, category, preFitted: result.fitStatus === "fitted" && result.rigged === true }]} />
           </div>
-          <Link href="/mi-flow/armario" className="mt-3 block w-full rounded-2xl bg-violet-400 py-3 text-center text-sm font-semibold text-black">Ver en mis piezas</Link>
+          <Link href="/biblioteca#unreal-objects" className="mt-3 block w-full rounded-2xl bg-violet-400 py-3 text-center text-sm font-semibold text-black">Ir a Biblioteca y exportar para Unreal</Link>
+          <Link href="/mi-flow/armario" className="mt-2 block w-full rounded-2xl border border-white/15 py-3 text-center text-sm">Ver en mis piezas</Link>
           <button type="button" onClick={() => { setResult(null); setPhase("idle"); setProgress(0); }} className="mt-2 w-full rounded-2xl border border-white/15 py-3 text-sm">Crear otra pieza</button>
         </section>
       )}

@@ -48,7 +48,7 @@ RUN mkdir -p /opt/blender/4.2/scripts/modules \
     && cp /app/rig_garment_legacy.py /opt/blender/4.2/scripts/modules/rig_garment_legacy.py
 
 ENV PYTHONPATH=/app
-ENV CLOUVA_RIG_VERSION=v19
+ENV CLOUVA_RIG_VERSION=v20
 
 RUN test -f /app/app.py \
     && test -f /app/app_v5.py \
@@ -57,9 +57,9 @@ RUN test -f /app/app.py \
     && test -f /app/export_unreal_clean.py \
     && test -f /app/rig_garment.py \
     && test -f /opt/blender/4.2/scripts/modules/rig_garment_legacy.py \
-    && python3 -c "import app; paths={getattr(route, 'path', '') for route in app.app.routes}; assert '/export/unreal-v2' in paths; assert '/export/unreal-object' in paths; assert app.EXPORT_UNREAL_SCRIPT_PATH.name == 'export_unreal_clean.py'; print('[clouva] Unreal clean exporter route OK')" \
-    && /opt/blender/blender --background --factory-startup --python-expr "import importlib.util; spec=importlib.util.spec_from_file_location('clouva_export_unreal_clean','/app/export_unreal_clean.py'); module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module); print('[clouva] Unreal clean exporter import OK')" \
-    && /opt/blender/blender --background --factory-startup --python-expr "namespace={'__name__':'clouva_rig_import_test','__file__':'/app/rig_garment.py'}; exec(compile(open('/app/rig_garment.py', encoding='utf-8').read(), '/app/rig_garment.py', 'exec'), namespace); print('[clouva] Blender V19 wrapper import OK')"
+    && python3 -c "import app; paths={getattr(route, 'path', '') for route in app.app.routes}; assert '/export/unreal-v2' in paths; assert '/export/unreal-object' in paths; assert app.EXPORT_UNREAL_SCRIPT_PATH.name == 'export_unreal_clean.py'; assert app.base.EXPORT_UNREAL_SCRIPT_PATH.name == 'export_unreal_clean.py'; print('[clouva] Avatar and object Unreal clean exporters OK')" \
+    && /opt/blender/blender --background --factory-startup --python-expr "import importlib.util; spec=importlib.util.spec_from_file_location('clouva_export_unreal_clean','/app/export_unreal_clean.py'); module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module); assert hasattr(module.base, 'prepare_wearable_object'); print('[clouva] Wearable object exporter import OK')" \
+    && /opt/blender/blender --background --factory-startup --python-expr "namespace={'__name__':'clouva_rig_import_test','__file__':'/app/rig_garment.py'}; exec(compile(open('/app/rig_garment.py', encoding='utf-8').read(), '/app/rig_garment.py', 'exec'), namespace); print('[clouva] Blender V20 wrapper import OK')"
 
 ENV BLENDER_BIN=/usr/local/bin/blender
 EXPOSE 8000

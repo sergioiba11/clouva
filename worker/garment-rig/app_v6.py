@@ -1,3 +1,4 @@
+import json
 import shutil
 import subprocess
 import tempfile
@@ -11,12 +12,16 @@ from pydantic import BaseModel, HttpUrl
 from starlette.background import BackgroundTask
 
 app = base.app
-EXPORT_UNREAL_SCRIPT_PATH = Path(__file__).with_name("export_unreal.py")
+CLEAN_EXPORT_SCRIPT_PATH = Path(__file__).with_name("export_unreal_clean.py")
+EXPORT_UNREAL_SCRIPT_PATH = CLEAN_EXPORT_SCRIPT_PATH if CLEAN_EXPORT_SCRIPT_PATH.exists() else Path(__file__).with_name("export_unreal.py")
 
 
 class UnrealObjectExportRequest(BaseModel):
     source_url: HttpUrl
     asset_name: str = "clouva-object.glb"
+    category: str = "prop"
+    target_height_cm: float = 175.0
+    wearable: bool = False
 
 
 def safe_name(value: str) -> str:
@@ -28,11 +33,14 @@ def safe_name(value: str) -> str:
 @app.post("/export/unreal-object")
 def export_object_for_unreal(request: UnrealObjectExportRequest):
     if not EXPORT_UNREAL_SCRIPT_PATH.exists():
-        raise HTTPException(status_code=500, detail="Falta export_unreal.py en el Blender Worker")
+        raise HTTPException(status_code=500, detail="Falta el exportador Unreal en el Blender Worker")
+    if request.target_height_cm < 80 or request.target_height_cm > 260:
+        raise HTTPException(status_code=400, detail="target_height_cm debe estar entre 80 y 260")
 
     job_dir = Path(tempfile.mkdtemp(prefix="clouva-unreal-object-"))
     input_path = job_dir / "object.glb"
     output_path = job_dir / "object-unreal.fbx"
+    metadata_path = job_dir / "object-unreal.json"
 
     try:
         legacy.download(str(request.source_url), input_path)
@@ -47,8 +55,11 @@ def export_object_for_unreal(request: UnrealObjectExportRequest):
             "--",
             str(input_path),
             str(output_path),
-            "180",
+            str(request.target_height_cm),
             "object",
+            str(metadata_path),
+            request.category,
+            "wearable" if request.wearable else "rigid",
         ]
         result = subprocess.run(
             command,
@@ -59,9 +70,17 @@ def export_object_for_unreal(request: UnrealObjectExportRequest):
         )
         if result.returncode != 0 or not output_path.exists() or output_path.stat().st_size < 1024:
             details = base.extract_validation_error({"stdout": result.stdout, "stderr": result.stderr})
-            raise RuntimeError(details or result.stderr[-1000:] or "Blender no pudo generar el FBX del objeto")
+            raise RuntimeError(details or result.stderr[-1400:] or "Blender no pudo generar el FBX del objeto")
+        if not metadata_path.exists():
+            raise RuntimeError("Blender no generó metadata del objeto Unreal")
+
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        if not metadata.get("readyForUnreal"):
+            raise RuntimeError(f"La validación del objeto Unreal fue rechazada: {metadata}")
 
         filename = f"{safe_name(request.asset_name)}-unreal.fbx"
+        calibrated = bool(metadata.get("calibratedToAvatar"))
+        compact_metadata = json.dumps(metadata, separators=(",", ":"))
         return FileResponse(
             output_path,
             media_type="application/octet-stream",
@@ -69,8 +88,10 @@ def export_object_for_unreal(request: UnrealObjectExportRequest):
             background=BackgroundTask(shutil.rmtree, job_dir, True),
             headers={
                 "X-Clouva-Target": "unreal-object",
-                "X-Clouva-Scale": "preserved",
+                "X-Clouva-Scale": "avatar-calibrated" if calibrated else "source-preserved",
                 "X-Clouva-Rig-Preserved": "true",
+                "X-Clouva-Metadata": compact_metadata,
+                "X-Clouva-Exporter": "wearable-object-v1",
             },
         )
     except HTTPException:

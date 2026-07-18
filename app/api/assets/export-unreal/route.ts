@@ -5,6 +5,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const ALLOWED_BUCKETS = new Set(["creator-assets"]);
+const DEFAULT_TARGET_HEIGHT_CM = 175;
 
 function getAdminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -13,53 +14,156 @@ function getAdminClient() {
   return createClient(url, serviceRole, { auth: { persistSession: false, autoRefreshToken: false } });
 }
 
+async function requireUser(request: NextRequest) {
+  const token = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+  if (!token) throw new Error("Sesión requerida");
+  const supabase = getAdminClient();
+  const { data, error } = await supabase.auth.getUser(token);
+  if (error || !data.user) throw new Error("Sesión inválida");
+  return { supabase, user: data.user };
+}
+
 function safeName(value: string) {
   return value.replace(/\.[^.]+$/, "").replace(/[^a-zA-Z0-9-_]+/g, "-").replace(/-+/g, "-").slice(0, 70) || "objeto";
 }
 
+function numericHeight(row: Record<string, unknown> | null | undefined) {
+  if (!row) return DEFAULT_TARGET_HEIGHT_CM;
+  for (const key of ["height_cm", "target_height_cm", "avatar_height_cm", "user_height_cm"]) {
+    const raw = row[key];
+    const value = typeof raw === "number" ? raw : Number(raw);
+    if (Number.isFinite(value) && value >= 80 && value <= 260) return value;
+  }
+  return DEFAULT_TARGET_HEIGHT_CM;
+}
+
+async function activeAvatarHeight(supabase: ReturnType<typeof getAdminClient>, userId: string) {
+  const { data } = await supabase
+    .from("user_avatars")
+    .select("*")
+    .eq("user_id", userId)
+    .eq("is_active", true)
+    .eq("status", "ready")
+    .is("archived_at", null)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return numericHeight(data as Record<string, unknown> | null);
+}
+
+function parseWorkerMetadata(response: Response) {
+  const raw = response.headers.get("x-clouva-metadata");
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+export async function GET(request: NextRequest) {
+  try {
+    const { supabase, user } = await requireUser(request);
+    const { data, error } = await supabase
+      .from("clothing_items")
+      .select("id,name,category,status,model_url,thumbnail_url,rigged,fit_status,updated_at")
+      .eq("user_id", user.id)
+      .eq("status", "ready")
+      .not("model_url", "is", null)
+      .order("updated_at", { ascending: false })
+      .limit(100);
+    if (error) throw error;
+
+    return NextResponse.json({
+      items: (data ?? []).map((item) => ({
+        id: item.id,
+        name: item.name || "Objeto CLOUVA",
+        category: item.category || "accessory",
+        modelUrl: item.model_url,
+        thumbnailUrl: item.thumbnail_url,
+        rigged: item.rigged === true,
+        fitStatus: item.fit_status,
+      })),
+    });
+  } catch (cause) {
+    const message = cause instanceof Error ? cause.message : "No se pudieron cargar los objetos";
+    const status = /sesión/i.test(message) ? 401 : 500;
+    return NextResponse.json({ error: message }, { status });
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
-    const token = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
-    if (!token) return NextResponse.json({ error: "Sesión requerida" }, { status: 401 });
+    const { supabase, user } = await requireUser(request);
+    const body = (await request.json()) as {
+      bucket?: string;
+      path?: string;
+      name?: string;
+      clothingItemId?: string;
+    };
 
-    const supabase = getAdminClient();
-    const { data: authData, error: authError } = await supabase.auth.getUser(token);
-    if (authError || !authData.user) return NextResponse.json({ error: "Sesión inválida" }, { status: 401 });
+    let sourceUrl = "";
+    let assetName = String(body.name || "objeto.glb");
+    let category = "prop";
+    let riggedWearable = false;
 
-    const body = (await request.json()) as { bucket?: string; path?: string; name?: string };
-    const bucket = String(body.bucket || "");
-    const path = String(body.path || "");
-    if (!ALLOWED_BUCKETS.has(bucket)) return NextResponse.json({ error: "Bucket no permitido" }, { status: 400 });
-    if (!path.startsWith(`${authData.user.id}/`) || !/\.glb$/i.test(path)) {
-      return NextResponse.json({ error: "El objeto no pertenece al usuario o no es GLB" }, { status: 400 });
+    if (body.clothingItemId) {
+      const { data: item, error: itemError } = await supabase
+        .from("clothing_items")
+        .select("id,name,category,status,model_url,rigged,fit_status")
+        .eq("id", body.clothingItemId)
+        .eq("user_id", user.id)
+        .single();
+      if (itemError || !item) return NextResponse.json({ error: "No encontramos esa pieza del usuario" }, { status: 404 });
+      if (item.status !== "ready" || !item.model_url) return NextResponse.json({ error: "La pieza todavía no está lista" }, { status: 409 });
+      sourceUrl = String(item.model_url);
+      assetName = String(item.name || body.name || "pieza-clouva");
+      category = String(item.category || "accessory");
+      riggedWearable = item.rigged === true || item.fit_status === "fitted";
+      if (!sourceUrl.startsWith("https://")) return NextResponse.json({ error: "La pieza no tiene una URL GLB válida" }, { status: 409 });
+    } else {
+      const bucket = String(body.bucket || "");
+      const path = String(body.path || "");
+      if (!ALLOWED_BUCKETS.has(bucket)) return NextResponse.json({ error: "Bucket no permitido" }, { status: 400 });
+      if (!path.startsWith(`${user.id}/`) || !/\.glb$/i.test(path)) {
+        return NextResponse.json({ error: "El objeto no pertenece al usuario o no es GLB" }, { status: 400 });
+      }
+      const signed = await supabase.storage.from(bucket).createSignedUrl(path, 60 * 15);
+      if (signed.error || !signed.data?.signedUrl) throw signed.error || new Error("No se pudo firmar el GLB");
+      sourceUrl = signed.data.signedUrl;
+      assetName = String(body.name || path.split("/").pop() || "objeto.glb");
     }
-
-    const signed = await supabase.storage.from(bucket).createSignedUrl(path, 60 * 15);
-    if (signed.error || !signed.data?.signedUrl) throw signed.error || new Error("No se pudo firmar el GLB");
 
     const workerUrl = process.env.BLENDER_WORKER_URL?.replace(/\/+$/, "");
     if (!workerUrl) return NextResponse.json({ error: "Falta BLENDER_WORKER_URL" }, { status: 503 });
 
+    const targetHeightCm = await activeAvatarHeight(supabase, user.id);
     const worker = await fetch(`${workerUrl}/export/unreal-object`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         ...(process.env.BLENDER_WORKER_TOKEN ? { Authorization: `Bearer ${process.env.BLENDER_WORKER_TOKEN}` } : {}),
       },
-      body: JSON.stringify({ source_url: signed.data.signedUrl, asset_name: body.name || path.split("/").pop() || "objeto.glb" }),
+      body: JSON.stringify({
+        source_url: sourceUrl,
+        asset_name: assetName,
+        category,
+        target_height_cm: targetHeightCm,
+        wearable: riggedWearable,
+      }),
       cache: "no-store",
     });
     if (!worker.ok) {
       const detail = await worker.text().catch(() => "");
-      throw new Error(`El Blender Worker rechazó el objeto (${worker.status})${detail ? `: ${detail.slice(0, 240)}` : ""}`);
+      throw new Error(`El Blender Worker rechazó el objeto (${worker.status})${detail ? `: ${detail.slice(0, 500)}` : ""}`);
     }
 
     const bytes = await worker.arrayBuffer();
     if (bytes.byteLength < 128) throw new Error("El FBX del objeto está vacío");
 
-    const base = safeName(body.name || path.split("/").pop() || "objeto");
+    const base = safeName(assetName);
     const filename = `${base}-unreal.fbx`;
-    const storagePath = `${authData.user.id}/unreal/${filename}`;
+    const storagePath = `${user.id}/unreal/${filename}`;
     const upload = await supabase.storage.from("creator-assets").upload(storagePath, bytes, {
       contentType: "application/octet-stream",
       cacheControl: "3600",
@@ -68,9 +172,22 @@ export async function POST(request: NextRequest) {
     if (upload.error) throw upload.error;
 
     const url = supabase.storage.from("creator-assets").getPublicUrl(storagePath).data.publicUrl;
-    return NextResponse.json({ ok: true, url, filename, path: storagePath, scale: "escala original · centímetros Unreal" });
+    const metadata = parseWorkerMetadata(worker);
+    const calibrated = metadata?.calibratedToAvatar === true || worker.headers.get("x-clouva-scale") === "avatar-calibrated";
+
+    return NextResponse.json({
+      ok: true,
+      url,
+      filename,
+      path: storagePath,
+      metadata,
+      scale: calibrated
+        ? `calibrado al avatar de ${targetHeightCm} cm · Import Scale 1`
+        : "escala original preservada · centímetros Unreal",
+    });
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : "No se pudo exportar el objeto para Unreal";
-    return NextResponse.json({ error: message }, { status: 500 });
+    const status = /sesión/i.test(message) ? 401 : 500;
+    return NextResponse.json({ error: message }, { status });
   }
 }
