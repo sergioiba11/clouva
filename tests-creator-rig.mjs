@@ -7,6 +7,7 @@ const { resolveRigProfile, isDeformableCategory, isRigidCategory } = await impor
 const garmentWorkerV9Source = readFileSync("./worker/garment-rig/rig_garment_v5.py", "utf8");
 const garmentWorkerV10Source = readFileSync("./worker/garment-rig/rig_garment_v10.py", "utf8");
 const garmentWorkerV11Source = readFileSync("./worker/garment-rig/rig_garment_v11.py", "utf8");
+const garmentWorkerV12Source = readFileSync("./worker/garment-rig/rig_garment_v12.py", "utf8");
 const garmentDockerfile = readFileSync("./worker/garment-rig/Dockerfile", "utf8");
 
 test("hoodie siempre se pesa de nuevo contra el avatar activo", () => {
@@ -58,8 +59,19 @@ test("V11 ajusta y valida contra una sola caja corporal", () => {
   assert.doesNotMatch(garmentWorkerV11Source, /leg_length \* 0\.10/);
   assert.match(garmentWorkerV11Source, /singleLowerBodyVolumeContract/);
   assert.match(garmentWorkerV11Source, /expectedRatios/);
-  assert.match(garmentDockerfile, /CLOUVA_RIG_VERSION=v11/);
-  assert.match(garmentDockerfile, /rig_garment_v11\.py/);
+});
+
+test("V12 no parenta la prenda a un armature escalado y valida el GLB reabierto", () => {
+  assert.match(garmentWorkerV12Source, /garment\.parent = None/);
+  assert.match(garmentWorkerV12Source, /armature_modifier_world_space/);
+  assert.match(garmentWorkerV12Source, /clouvaPreExportSize/);
+  assert.match(garmentWorkerV12Source, /clouvaPreExportCenter/);
+  assert.match(garmentWorkerV12Source, /def validate_roundtrip_v12/);
+  assert.match(garmentWorkerV12Source, /size_errors/);
+  assert.match(garmentWorkerV12Source, /center_errors/);
+  assert.match(garmentWorkerV12Source, /garment_height_ratio/);
+  assert.match(garmentDockerfile, /CLOUVA_RIG_VERSION=v12/);
+  assert.match(garmentDockerfile, /rig_garment_v12\.py/);
 });
 
 test("solo una plantilla rígida puede conservar skinning existente", () => {
