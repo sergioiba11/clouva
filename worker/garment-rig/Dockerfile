@@ -27,7 +27,7 @@ RUN wget -q "$BLENDER_URL" -O /tmp/blender.tar.xz \
 RUN pip install --no-cache-dir --break-system-packages fastapi uvicorn pydantic python-multipart
 
 WORKDIR /app
-COPY app.py app_v5.py app_v6.py app_v7.py rig_garment.py rig_garment_v5.py rig_garment_v10.py rig_garment_v11.py rig_garment_v12.py rig_garment_v13.py rig_garment_v14.py rig_garment_v15.py rig_object.py attach_object.py export_unreal.py export_unreal_clean.py ./
+COPY app.py app_v5.py app_v6.py app_v7.py rig_garment.py rig_garment_v5.py rig_garment_v10.py rig_garment_v11.py rig_garment_v12.py rig_garment_v13.py rig_garment_v14.py rig_garment_v15.py rig_object.py attach_object.py export_unreal.py export_unreal_clean.py test_export_unreal_units.py ./
 RUN mv app.py app_legacy.py \
     && mv app_v7.py app.py \
     && mv rig_garment.py rig_garment_legacy.py \
@@ -48,18 +48,20 @@ RUN mkdir -p /opt/blender/4.2/scripts/modules \
     && cp /app/rig_garment_legacy.py /opt/blender/4.2/scripts/modules/rig_garment_legacy.py
 
 ENV PYTHONPATH=/app
-ENV CLOUVA_RIG_VERSION=v20
+ENV CLOUVA_RIG_VERSION=v21
 
 RUN test -f /app/app.py \
     && test -f /app/app_v5.py \
     && test -f /app/app_v6.py \
     && test -f /app/export_unreal.py \
     && test -f /app/export_unreal_clean.py \
+    && test -f /app/test_export_unreal_units.py \
     && test -f /app/rig_garment.py \
     && test -f /opt/blender/4.2/scripts/modules/rig_garment_legacy.py \
     && python3 -c "import app; paths={getattr(route, 'path', '') for route in app.app.routes}; assert '/export/unreal-v2' in paths; assert '/export/unreal-object' in paths; assert app.EXPORT_UNREAL_SCRIPT_PATH.name == 'export_unreal_clean.py'; assert app.base.EXPORT_UNREAL_SCRIPT_PATH.name == 'export_unreal_clean.py'; print('[clouva] Avatar and object Unreal clean exporters OK')" \
-    && /opt/blender/blender --background --factory-startup --python-expr "import importlib.util; spec=importlib.util.spec_from_file_location('clouva_export_unreal_clean','/app/export_unreal_clean.py'); module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module); assert hasattr(module.base, 'prepare_wearable_object'); print('[clouva] Wearable object exporter import OK')" \
-    && /opt/blender/blender --background --factory-startup --python-expr "namespace={'__name__':'clouva_rig_import_test','__file__':'/app/rig_garment.py'}; exec(compile(open('/app/rig_garment.py', encoding='utf-8').read(), '/app/rig_garment.py', 'exec'), namespace); print('[clouva] Blender V20 wrapper import OK')"
+    && /opt/blender/blender --background --factory-startup --python-expr "import importlib.util; spec=importlib.util.spec_from_file_location('clouva_export_unreal_clean','/app/export_unreal_clean.py'); module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module); assert hasattr(module.base, 'run_export'); assert module.base.FBX_APPLY_UNIT_SCALE is True; assert module.base.FBX_APPLY_SCALE_OPTIONS == 'FBX_SCALE_UNITS'; assert module.base.FBX_DECLARED_UNIT_SCALE_CM == 100.0; print('[clouva] Metric Unreal exporter import OK')" \
+    && /opt/blender/blender --background --factory-startup --python /app/test_export_unreal_units.py \
+    && /opt/blender/blender --background --factory-startup --python-expr "namespace={'__name__':'clouva_rig_import_test','__file__':'/app/rig_garment.py'}; exec(compile(open('/app/rig_garment.py', encoding='utf-8').read(), '/app/rig_garment.py', 'exec'), namespace); print('[clouva] Blender V21 wrapper import OK')"
 
 ENV BLENDER_BIN=/usr/local/bin/blender
 EXPOSE 8000
