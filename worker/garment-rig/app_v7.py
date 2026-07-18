@@ -12,7 +12,7 @@ from pydantic import BaseModel, HttpUrl
 from starlette.background import BackgroundTask
 
 app = base.app
-EXPORT_UNREAL_SCRIPT_PATH = Path(__file__).with_name("export_unreal.py")
+EXPORT_UNREAL_SCRIPT_PATH = Path(__file__).with_name("export_unreal_clean.py")
 
 
 class ValidatedUnrealExportRequest(BaseModel):
@@ -25,7 +25,7 @@ class ValidatedUnrealExportRequest(BaseModel):
 @app.post("/export/unreal-v2")
 def export_avatar_for_unreal_v2(request: ValidatedUnrealExportRequest):
     if not EXPORT_UNREAL_SCRIPT_PATH.exists():
-        raise HTTPException(status_code=500, detail="Falta export_unreal.py en el Blender Worker")
+        raise HTTPException(status_code=500, detail="Falta export_unreal_clean.py en el Blender Worker")
 
     job_dir = Path(tempfile.mkdtemp(prefix="clouva-unreal-v2-"))
     input_path = job_dir / "avatar-rigged.glb"
@@ -78,6 +78,7 @@ def export_avatar_for_unreal_v2(request: ValidatedUnrealExportRequest):
                 "X-Clouva-Height-Cm": str(metadata.get("heightCm", request.target_height_cm)),
                 "X-Clouva-Ready": "true",
                 "X-Clouva-Metadata": compact_metadata,
+                "X-Clouva-Exporter": "mesh-data-scale-v2",
             },
         )
     except HTTPException:
