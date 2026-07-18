@@ -34,7 +34,7 @@ export function buildBlenderJob(payload: BlenderRequest) {
   return {
     type: "clouva_creator_pipeline",
     operation: "fit_and_rig_reference",
-    pipelineVersion: "canonical-landmarks-v4",
+    pipelineVersion: "body-mesh-contract-v15",
     riggingStrategy: deformable
       ? "fresh_transfer_from_active_avatar"
       : templateMode
@@ -49,7 +49,7 @@ export function buildBlenderJob(payload: BlenderRequest) {
     templateMode,
     previewSettings: {
       ...(payload.previewSettings ?? {}),
-      rigProfileVersion: deformable ? 4 : payload.previewSettings?.rigProfileVersion,
+      rigProfileVersion: deformable ? 15 : payload.previewSettings?.rigProfileVersion,
     },
     options: {
       cleanGeometry: true,
@@ -59,6 +59,7 @@ export function buildBlenderJob(payload: BlenderRequest) {
       fitToAvatar: true,
       fitIncludesLimbSpan: upperGarment,
       fitUsesCanonicalLowerBodyLandmarks: lowerGarment,
+      fitUsesBodyMeshVolume: lowerGarment,
       shrinkwrap: deformable && !templateMode,
       surfaceDeform: deformable && !templateMode,
       transferSkinWeights,
@@ -86,6 +87,7 @@ export function buildBlenderJob(payload: BlenderRequest) {
         requireBilateralSleeveWeights: upperGarment,
         requireBilateralLegWeights: lowerGarment,
         requireWaistAtHips: lowerGarment,
+        requireBodyMeshRoundtrip: lowerGarment,
         rejectTorsoAlignedPants: lowerGarment,
         rejectMissingBones: true,
         rejectUnnormalizedWeights: true,
