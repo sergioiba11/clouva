@@ -33,6 +33,16 @@ RUN mv app.py app_legacy.py \
     && mv rig_garment.py rig_garment_legacy.py \
     && mv rig_garment_v5.py rig_garment.py
 
+# Blender usa su propio Python embebido. Sin PYTHONPATH no siempre agrega el directorio
+# del script a sys.path, por lo que el wrapper V6 no podía importar rig_garment_legacy.
+ENV PYTHONPATH=/app
+
+# Smoke test real con el mismo Python que ejecutará los trabajos. El build debe fallar
+# antes del deploy si el wrapper o su módulo legacy dejan de ser importables.
+RUN test -f /app/rig_garment.py \
+    && test -f /app/rig_garment_legacy.py \
+    && /opt/blender/blender --background --python-expr "import sys; sys.path.insert(0, '/app'); import rig_garment_legacy; print('[clouva] Blender module import OK')"
+
 ENV BLENDER_BIN=/usr/local/bin/blender
 EXPOSE 8000
 CMD ["python3", "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
