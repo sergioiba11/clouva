@@ -24,14 +24,16 @@ export type BlenderJob = ReturnType<typeof buildBlenderJob>;
 export function buildBlenderJob(payload: BlenderRequest) {
   const templateMode = Boolean(payload.templateMode || payload.preserveExistingSkinning);
   const transferSkinWeights = templateMode ? false : (payload.autoWeight ?? true);
+  const category = payload.category ?? "accessory";
+  const upperGarment = category === "hoodie" || category === "shirt" || category === "jacket";
 
   return {
     type: "clouva_creator_pipeline",
     operation: "fit_and_rig_reference",
-    pipelineVersion: "base-mesh-v1",
+    pipelineVersion: "smart-rig-v3",
     riggingStrategy: templateMode ? "preserve_existing_skinning" : "transfer_from_avatar",
     avatarRig: payload.rig ?? "clouva_base_v1",
-    category: payload.category ?? "accessory",
+    category,
     sourceUrl: payload.sourceUrl ?? null,
     sourceStoragePath: payload.sourceStoragePath ?? null,
     referenceAssetName: payload.referenceAssetName ?? null,
@@ -44,6 +46,7 @@ export function buildBlenderJob(payload: BlenderRequest) {
       applyTransforms: true,
       centerModel: !templateMode,
       fitToAvatar: true,
+      fitIncludesLimbSpan: upperGarment,
       shrinkwrap: !templateMode,
       surfaceDeform: !templateMode,
       transferSkinWeights,
@@ -61,11 +64,13 @@ export function buildBlenderJob(payload: BlenderRequest) {
         method: "nearest_surface_point",
         dataType: "VGROUP_WEIGHTS",
         mixMode: "REPLACE",
+        sampleCount: 12,
         rayRadius: 0.02,
       },
       validation: {
         requireArmature: true,
         requireWeightedVertices: true,
+        requireBilateralSleeveWeights: upperGarment,
         rejectMissingBones: true,
         rejectUnnormalizedWeights: true,
         maxUnweightedVertexRatio: 0.01,
