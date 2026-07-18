@@ -40,7 +40,7 @@ RUN mkdir -p /opt/blender/4.2/scripts/modules \
     && cp /app/rig_garment_legacy.py /opt/blender/4.2/scripts/modules/rig_garment_legacy.py
 
 ENV PYTHONPATH=/app
-ENV CLOUVA_RIG_VERSION=v8
+ENV CLOUVA_RIG_VERSION=v9
 
 # Smoke test real: importa el módulo base desde la ruta nativa de Blender y ejecuta el
 # wrapper completo con un __name__ de prueba, evitando iniciar main(). Si cualquiera de
