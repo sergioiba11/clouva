@@ -61,17 +61,49 @@ def root_objects(objects):
     return [obj for obj in objects if obj.parent is None or obj.parent not in object_set]
 
 
-def apply_uniform_scale(objects, factor: float):
+def apply_scale_to_selection(objects, active=None):
+    bpy.ops.object.select_all(action="DESELECT")
+    for obj in objects:
+        obj.select_set(True)
+    bpy.context.view_layer.objects.active = active or objects[0]
+    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+    bpy.context.view_layer.update()
+
+
+def apply_uniform_scale(objects, meshes, armatures, factor: float):
     roots = root_objects(objects)
     for obj in roots:
         obj.scale = tuple(value * factor for value in obj.scale)
     bpy.context.view_layer.update()
 
-    bpy.ops.object.select_all(action="DESELECT")
-    for obj in roots:
-        obj.select_set(True)
-    bpy.context.view_layer.objects.active = next((obj for obj in roots if obj.type == "ARMATURE"), roots[0])
-    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+    # First bake the normalization into the hierarchy root (normally the Armature).
+    apply_scale_to_selection(
+        roots,
+        next((obj for obj in roots if obj.type == "ARMATURE"), roots[0]),
+    )
+
+    # Applying the parent scale can leave child skinned meshes with a compensating
+    # local scale (for example 0.625). Bake that scale into the mesh geometry too,
+    # preserving vertex groups, Armature modifiers and skin weights. Unreal then
+    # receives both the Skeletal Mesh and Armature at exactly 1,1,1.
+    dirty_meshes = [
+        mesh
+        for mesh in meshes
+        if any(not math.isclose(float(value), 1.0, abs_tol=1e-6) for value in mesh.scale)
+    ]
+    for mesh in dirty_meshes:
+        apply_scale_to_selection([mesh], mesh)
+
+    # Rare GLBs can contain nested Armatures. Clean any remaining local scale without
+    # multiplying the already-normalized world dimensions a second time.
+    dirty_armatures = [
+        armature
+        for armature in armatures
+        if any(not math.isclose(float(value), 1.0, abs_tol=1e-6) for value in armature.scale)
+    ]
+    for armature in dirty_armatures:
+        apply_scale_to_selection([armature], armature)
+
     bpy.context.view_layer.update()
 
 
@@ -235,7 +267,7 @@ def main():
         if current_height <= 0.001:
             raise RuntimeError("Avatar height is invalid")
         scale_factor = target_height_cm / current_height
-        apply_uniform_scale(objects, scale_factor)
+        apply_uniform_scale(objects, meshes, armatures, scale_factor)
         ground_feet(objects, meshes)
         metadata = validate(objects, meshes, armatures, target_height_cm)
         metadata.update({
