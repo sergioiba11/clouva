@@ -5,6 +5,7 @@ import {
   ACESFilmicToneMapping,
   AmbientLight,
   AnimationAction,
+  AnimationClip,
   AnimationMixer,
   Bone,
   Box3,
@@ -15,10 +16,13 @@ import {
   LoopRepeat,
   Object3D,
   PerspectiveCamera,
+  Quaternion,
   Scene,
+  Skeleton,
   SkeletonHelper,
   SkinnedMesh,
   SRGBColorSpace,
+  Uint32BufferAttribute,
   Vector3,
   WebGLRenderer,
 } from "three";
@@ -49,6 +53,7 @@ type ClipOption = {
   label: string;
   duration: number;
   tracks: number;
+  procedural?: boolean;
 };
 
 type SyncedActionGroup = {
@@ -57,11 +62,31 @@ type SyncedActionGroup = {
   signatures: Set<string>;
   duration: number;
   tracks: number;
+  motionScore: number;
+};
+
+type BoneSnapshot = {
+  bone: Bone;
+  quaternion: Quaternion;
+  position: Vector3;
+};
+
+type ProceduralMotion = {
+  update: (time: number) => void;
+  reset: () => void;
+  usable: boolean;
 };
 
 const HIP_ALIASES = ["hips", "pelvis", "hip", "j_bip_c_hips", "cc_base_hip"];
+const LEFT_UP_LEG_ALIASES = ["leftupleg", "leftupperleg", "thighl", "upperlegl", "mixamorigleftupleg", "j_bip_l_upperleg"];
+const RIGHT_UP_LEG_ALIASES = ["rightupleg", "rightupperleg", "thighr", "upperlegr", "mixamorigrightupleg", "j_bip_r_upperleg"];
+const LEFT_LEG_ALIASES = ["leftleg", "leftlowerleg", "calfl", "shinl", "lowerlegl", "mixamorigleftleg", "j_bip_l_lowerleg"];
+const RIGHT_LEG_ALIASES = ["rightleg", "rightlowerleg", "calfr", "shinr", "lowerlegr", "mixamorigrightleg", "j_bip_r_lowerleg"];
 const LEFT_FOOT_ALIASES = ["leftfoot", "footl", "lfoot", "mixamorigleftfoot", "j_bip_l_foot"];
 const RIGHT_FOOT_ALIASES = ["rightfoot", "footr", "rfoot", "mixamorigrightfoot", "j_bip_r_foot"];
+const LEFT_ARM_ALIASES = ["leftarm", "leftupperarm", "upperarml", "mixamorigleftarm", "j_bip_l_upperarm"];
+const RIGHT_ARM_ALIASES = ["rightarm", "rightupperarm", "upperarmr", "mixamorigrightarm", "j_bip_r_upperarm"];
+const X_AXIS = new Vector3(1, 0, 0);
 
 function cleanName(value: unknown) {
   return String(value ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -73,6 +98,17 @@ function findObjectMesh(root: Object3D): SkinnedMesh | null {
     if (object.isSkinnedMesh) candidates.push(object as SkinnedMesh);
   });
   return candidates.find((mesh) => /garment|object|cloth|wearable/i.test(mesh.name)) ?? candidates[0] ?? null;
+}
+
+function collectBones(root: Object3D) {
+  const bones = new Map<string, Bone>();
+  root.traverse((object: any) => {
+    if (!object.isBone) return;
+    const bone = object as Bone;
+    const key = cleanName(bone.name);
+    if (key && !bones.has(key)) bones.set(key, bone);
+  });
+  return bones;
 }
 
 function findBone(root: Object3D, aliases: string[]): Bone | null {
@@ -122,7 +158,7 @@ function friendlyClipLabel(name: string, index: number) {
   if (normalized.includes("run")) return "Correr";
   if (normalized.includes("idle") || normalized.includes("breath")) return "Respiración";
   if (normalized.includes("tpose")) return "T-Pose";
-  if (index === 0 || normalized.includes("baselayer") || normalized.includes("clip0")) return "Probar movimiento";
+  if (index === 0 || normalized.includes("baselayer") || normalized.includes("clip0")) return "Movimiento exportado";
   return `Movimiento ${index + 1}`;
 }
 
@@ -183,8 +219,139 @@ function alignAvatarToResultRig(avatarRoot: Object3D, rigRoot: Object3D) {
   return true;
 }
 
+function isLowerBodyBoneName(value: string) {
+  const name = cleanName(value);
+  if (/arm|hand|finger|thumb|shoulder/.test(name)) return false;
+  return /hips|pelvis|upleg|upperleg|thigh|lowerleg|calf|shin|leftleg|rightleg/.test(name);
+}
+
+function isFootBoneName(value: string) {
+  return /foot|toe/.test(cleanName(value));
+}
+
+function vertexWeightForBones(mesh: SkinnedMesh, vertex: number, boneIndexes: Set<number>) {
+  const skinIndex = mesh.geometry.getAttribute("skinIndex");
+  const skinWeight = mesh.geometry.getAttribute("skinWeight");
+  if (!skinIndex || !skinWeight) return 0;
+  const indexes = [skinIndex.getX(vertex), skinIndex.getY(vertex), skinIndex.getZ(vertex), skinIndex.getW(vertex)];
+  const weights = [skinWeight.getX(vertex), skinWeight.getY(vertex), skinWeight.getZ(vertex), skinWeight.getW(vertex)];
+  let total = 0;
+  for (let index = 0; index < indexes.length; index += 1) {
+    if (boneIndexes.has(indexes[index])) total += weights[index];
+  }
+  return total;
+}
+
+function clipAvatarBodyUnderBaggy(root: Object3D, category: string | undefined) {
+  if (category !== "baggy") return 0;
+  let clippedMeshes = 0;
+
+  root.traverse((object: any) => {
+    if (!object.isSkinnedMesh) return;
+    const mesh = object as SkinnedMesh;
+    const geometry = mesh.geometry;
+    const position = geometry.getAttribute("position");
+    const skinIndex = geometry.getAttribute("skinIndex");
+    const skinWeight = geometry.getAttribute("skinWeight");
+    if (!position || !skinIndex || !skinWeight || !mesh.skeleton?.bones.length) return;
+
+    const lowerIndexes = new Set<number>();
+    const footIndexes = new Set<number>();
+    mesh.skeleton.bones.forEach((bone, index) => {
+      if (isLowerBodyBoneName(bone.name)) lowerIndexes.add(index);
+      if (isFootBoneName(bone.name)) footIndexes.add(index);
+    });
+    if (lowerIndexes.size < 2) return;
+
+    const sourceIndex = geometry.index
+      ? Array.from(geometry.index.array as ArrayLike<number>)
+      : Array.from({ length: position.count }, (_, index) => index);
+    const sourceGroups = geometry.groups.length > 0
+      ? geometry.groups
+      : [{ start: 0, count: sourceIndex.length, materialIndex: 0 }];
+    const nextIndex: number[] = [];
+    const nextGroups: Array<{ start: number; count: number; materialIndex: number }> = [];
+
+    for (const group of sourceGroups) {
+      const start = nextIndex.length;
+      const end = Math.min(group.start + group.count, sourceIndex.length);
+      for (let offset = group.start; offset + 2 < end; offset += 3) {
+        const triangle = [sourceIndex[offset], sourceIndex[offset + 1], sourceIndex[offset + 2]];
+        const lowerWeight = triangle.reduce((sum, vertex) => sum + vertexWeightForBones(mesh, vertex, lowerIndexes), 0) / 3;
+        const footWeight = triangle.reduce((sum, vertex) => sum + vertexWeightForBones(mesh, vertex, footIndexes), 0) / 3;
+        const hideInsidePants = lowerWeight >= 0.34 && footWeight < 0.22;
+        if (!hideInsidePants) nextIndex.push(...triangle);
+      }
+      const count = nextIndex.length - start;
+      if (count > 0) nextGroups.push({ start, count, materialIndex: group.materialIndex ?? 0 });
+    }
+
+    if (nextIndex.length >= sourceIndex.length * 0.95 || nextIndex.length < 6) return;
+    const clipped = geometry.clone();
+    clipped.setIndex(new Uint32BufferAttribute(nextIndex, 1));
+    clipped.clearGroups();
+    nextGroups.forEach((group) => clipped.addGroup(group.start, group.count, group.materialIndex));
+    mesh.geometry = clipped;
+    mesh.frustumCulled = false;
+    geometry.dispose();
+    clippedMeshes += 1;
+  });
+
+  return clippedMeshes;
+}
+
+function rebindAvatarMeshesToRig(avatarRoot: Object3D, rigRoot: Object3D) {
+  const rigBones = collectBones(rigRoot);
+  let reboundMeshes = 0;
+
+  avatarRoot.updateMatrixWorld(true);
+  rigRoot.updateMatrixWorld(true);
+  avatarRoot.traverse((object: any) => {
+    if (!object.isSkinnedMesh) return;
+    const mesh = object as SkinnedMesh;
+    const originalBones = mesh.skeleton?.bones ?? [];
+    if (originalBones.length === 0) return;
+
+    let mappedCount = 0;
+    const mappedBones = originalBones.map((bone) => {
+      const mapped = rigBones.get(cleanName(bone.name));
+      if (mapped) mappedCount += 1;
+      return mapped ?? bone;
+    });
+    if (mappedCount / originalBones.length < 0.65) return;
+
+    const sharedSkeleton = new Skeleton(mappedBones);
+    sharedSkeleton.calculateInverses();
+    mesh.bind(sharedSkeleton, mesh.matrixWorld.clone());
+    mesh.normalizeSkinWeights();
+    mesh.frustumCulled = false;
+    reboundMeshes += 1;
+  });
+
+  return reboundMeshes;
+}
+
 function clipSignature(trackNames: string[]) {
   return trackNames.slice().sort().join("|");
+}
+
+function clipMotionScore(clip: AnimationClip) {
+  let score = 0;
+  for (const track of clip.tracks) {
+    const name = cleanName(track.name);
+    if (!/hips|pelvis|upleg|upperleg|thigh|lowerleg|calf|shin|arm|shoulder/.test(name)) continue;
+    const values = Array.from(track.values as ArrayLike<number>);
+    if (values.length < 2) continue;
+    let minimum = Number.POSITIVE_INFINITY;
+    let maximum = Number.NEGATIVE_INFINITY;
+    for (const value of values) {
+      if (!Number.isFinite(value)) continue;
+      minimum = Math.min(minimum, value);
+      maximum = Math.max(maximum, value);
+    }
+    if (Number.isFinite(minimum) && Number.isFinite(maximum)) score += maximum - minimum;
+  }
+  return score;
 }
 
 function stopAction(action: AnimationAction) {
@@ -205,6 +372,50 @@ function startAction(action: AnimationAction) {
   action.play();
 }
 
+function snapshotBone(root: Object3D, aliases: string[]): BoneSnapshot | null {
+  const bone = findBone(root, aliases);
+  return bone ? { bone, quaternion: bone.quaternion.clone(), position: bone.position.clone() } : null;
+}
+
+function applyBoneRotation(snapshot: BoneSnapshot | null, angle: number) {
+  if (!snapshot) return;
+  const rotation = new Quaternion().setFromAxisAngle(X_AXIS, angle);
+  snapshot.bone.quaternion.copy(snapshot.quaternion).multiply(rotation);
+}
+
+function createProceduralMotion(root: Object3D): ProceduralMotion {
+  const hips = snapshotBone(root, HIP_ALIASES);
+  const leftUpperLeg = snapshotBone(root, LEFT_UP_LEG_ALIASES);
+  const rightUpperLeg = snapshotBone(root, RIGHT_UP_LEG_ALIASES);
+  const leftLeg = snapshotBone(root, LEFT_LEG_ALIASES);
+  const rightLeg = snapshotBone(root, RIGHT_LEG_ALIASES);
+  const leftArm = snapshotBone(root, LEFT_ARM_ALIASES);
+  const rightArm = snapshotBone(root, RIGHT_ARM_ALIASES);
+  const snapshots = [hips, leftUpperLeg, rightUpperLeg, leftLeg, rightLeg, leftArm, rightArm].filter(Boolean) as BoneSnapshot[];
+
+  return {
+    usable: Boolean(hips && leftUpperLeg && rightUpperLeg),
+    update(time: number) {
+      const phase = Math.sin(time * 2.7);
+      const opposite = Math.sin(time * 2.7 + Math.PI);
+      const bob = Math.abs(Math.sin(time * 5.4)) * 0.018;
+      if (hips) hips.bone.position.copy(hips.position).add(new Vector3(0, bob, 0));
+      applyBoneRotation(leftUpperLeg, phase * 0.38);
+      applyBoneRotation(rightUpperLeg, opposite * 0.38);
+      applyBoneRotation(leftLeg, Math.max(0, -phase) * 0.48);
+      applyBoneRotation(rightLeg, Math.max(0, -opposite) * 0.48);
+      applyBoneRotation(leftArm, opposite * 0.24);
+      applyBoneRotation(rightArm, phase * 0.24);
+    },
+    reset() {
+      snapshots.forEach((snapshot) => {
+        snapshot.bone.quaternion.copy(snapshot.quaternion);
+        snapshot.bone.position.copy(snapshot.position);
+      });
+    },
+  };
+}
+
 function disposeModel(root: Object3D | null) {
   root?.traverse((object: any) => {
     object.geometry?.dispose?.();
@@ -220,33 +431,54 @@ export function ResultRigPreview({ url, showAvatar = true, category, onInfo }: P
   const garmentMixerRef = useRef<AnimationMixer | null>(null);
   const avatarMixerRef = useRef<AnimationMixer | null>(null);
   const actionsRef = useRef<Map<string, SyncedActionGroup>>(new Map());
+  const proceduralMotionsRef = useRef<ProceduralMotion[]>([]);
+  const proceduralActiveRef = useRef(false);
+  const proceduralTimeRef = useRef(0);
   const avatar = useActiveAvatarStore((state) => state.avatar);
   const avatarUrl = useMemo(() => avatar.modelUrl ?? avatar.fallbackUrl, [avatar.fallbackUrl, avatar.modelUrl]);
   const [showSkeleton, setShowSkeleton] = useState(false);
   const [clips, setClips] = useState<ClipOption[]>([]);
   const [activeClip, setActiveClip] = useState<string | null>(null);
   const [replayCount, setReplayCount] = useState(0);
+  const [previewStatus, setPreviewStatus] = useState("Tocá Probar movimiento para verificar el rig.");
 
   useEffect(() => {
     if (helperRef.current) helperRef.current.visible = showSkeleton;
   }, [showSkeleton]);
 
-  function playClip(id: string) {
-    const selected = actionsRef.current.get(id);
-    if (!selected) return;
-
+  function stopAllMotion() {
     for (const group of actionsRef.current.values()) {
       group.garment.forEach(stopAction);
       group.avatar.forEach(stopAction);
     }
-
     garmentMixerRef.current?.stopAllAction();
     avatarMixerRef.current?.stopAllAction();
     garmentMixerRef.current?.setTime(0);
     avatarMixerRef.current?.setTime(0);
+    proceduralActiveRef.current = false;
+    proceduralTimeRef.current = 0;
+    proceduralMotionsRef.current.forEach((motion) => motion.reset());
+  }
 
-    selected.garment.forEach(startAction);
-    selected.avatar.forEach(startAction);
+  function playClip(id: string) {
+    stopAllMotion();
+    const option = clips.find((clip) => clip.id === id);
+    const selected = actionsRef.current.get(id);
+
+    if (option?.procedural || !selected || selected.motionScore < 0.02) {
+      const usable = proceduralMotionsRef.current.some((motion) => motion.usable);
+      if (!usable) {
+        setPreviewStatus("El rig no expone huesos suficientes para la prueba de movimiento.");
+        return;
+      }
+      proceduralActiveRef.current = true;
+      setPreviewStatus("Movimiento de prueba activo: cadera, piernas, rodillas y brazos.");
+    } else {
+      selected.garment.forEach(startAction);
+      selected.avatar.forEach(startAction);
+      setPreviewStatus("Animación exportada activa.");
+    }
+
     setActiveClip(id);
     setReplayCount((value) => value + 1);
   }
@@ -268,7 +500,11 @@ export function ResultRigPreview({ url, showAvatar = true, category, onInfo }: P
     setActiveClip(null);
     setReplayCount(0);
     setShowSkeleton(false);
+    setPreviewStatus("Tocá Probar movimiento para verificar el rig.");
     actionsRef.current = new Map();
+    proceduralMotionsRef.current = [];
+    proceduralActiveRef.current = false;
+    proceduralTimeRef.current = 0;
     onInfo?.({ loading: true, bones: 0, objectMeshName: null, anchorBoneName: null, weightedVertexRatio: null, clips: [] });
 
     const scene = new Scene();
@@ -334,9 +570,12 @@ export function ResultRigPreview({ url, showAvatar = true, category, onInfo }: P
       displayGroup.rotation.y = Number.isFinite(avatar.frontRotationY) ? avatar.frontRotationY : 0;
       scene.add(displayGroup);
 
+      let reboundMeshes = 0;
       if (avatarModel) {
         hideConflictingAvatarClothes(avatarModel, category);
         alignAvatarToResultRig(avatarModel, rigModel);
+        clipAvatarBodyUnderBaggy(avatarModel, category);
+        reboundMeshes = rebindAvatarMeshesToRig(avatarModel, rigModel);
         displayGroup.add(avatarModel);
       }
       displayGroup.add(rigModel);
@@ -356,7 +595,7 @@ export function ResultRigPreview({ url, showAvatar = true, category, onInfo }: P
       displayGroup.add(helper);
 
       const garmentMixer = new AnimationMixer(rigModel);
-      const avatarMixer = avatarModel ? new AnimationMixer(avatarModel) : null;
+      const avatarMixer = avatarModel && reboundMeshes === 0 ? new AnimationMixer(avatarModel) : null;
       garmentMixerRef.current = garmentMixer;
       avatarMixerRef.current = avatarMixer;
 
@@ -372,6 +611,7 @@ export function ResultRigPreview({ url, showAvatar = true, category, onInfo }: P
           signatures: new Set<string>(),
           duration: 0,
           tracks: 0,
+          motionScore: 0,
         };
         if (group.signatures.has(signature)) return;
         group.signatures.add(signature);
@@ -379,16 +619,30 @@ export function ResultRigPreview({ url, showAvatar = true, category, onInfo }: P
         if (avatarMixer && avatarModel) group.avatar.push(avatarMixer.clipAction(clip.clone()));
         group.duration = Math.max(group.duration, clip.duration);
         group.tracks += clip.tracks.length;
+        group.motionScore += clipMotionScore(clip);
         groups.set(id, group);
       });
 
       actionsRef.current = groups;
-      const options = [...groups.entries()].map(([id, group]) => ({
-        id,
-        label: id === "probarmovimiento" ? "Probar movimiento" : friendlyClipLabel(id, 0),
-        duration: group.duration,
-        tracks: group.tracks,
-      }));
+      proceduralMotionsRef.current = [createProceduralMotion(rigModel)];
+      if (avatarModel && reboundMeshes === 0) proceduralMotionsRef.current.push(createProceduralMotion(avatarModel));
+
+      const options: ClipOption[] = [{
+        id: "procedural-walk-test",
+        label: "Probar movimiento",
+        duration: 0,
+        tracks: 0,
+        procedural: true,
+      }];
+      for (const [id, group] of groups.entries()) {
+        if (group.motionScore < 0.02) continue;
+        options.push({
+          id,
+          label: friendlyClipLabel(id, 0),
+          duration: group.duration,
+          tracks: group.tracks,
+        });
+      }
       setClips(options);
       setActiveClip(null);
 
@@ -420,6 +674,10 @@ export function ResultRigPreview({ url, showAvatar = true, category, onInfo }: P
       const delta = Math.min(clock.getDelta(), 0.05);
       garmentMixerRef.current?.update(delta);
       avatarMixerRef.current?.update(delta);
+      if (proceduralActiveRef.current) {
+        proceduralTimeRef.current += delta;
+        proceduralMotionsRef.current.forEach((motion) => motion.update(proceduralTimeRef.current));
+      }
       controls.update();
       renderer.render(scene, camera);
       raf = requestAnimationFrame(animate);
@@ -431,6 +689,9 @@ export function ResultRigPreview({ url, showAvatar = true, category, onInfo }: P
       cancelAnimationFrame(raf);
       observer.disconnect();
       controls.dispose();
+      proceduralMotionsRef.current.forEach((motion) => motion.reset());
+      proceduralMotionsRef.current = [];
+      proceduralActiveRef.current = false;
       garmentMixerRef.current?.stopAllAction();
       avatarMixerRef.current?.stopAllAction();
       garmentMixerRef.current = null;
@@ -451,35 +712,29 @@ export function ResultRigPreview({ url, showAvatar = true, category, onInfo }: P
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
         <div>
           <p className="text-xs uppercase tracking-[0.16em] text-violet-300">Tu avatar vestido</p>
-          <p className="text-xs text-white/45">Prenda, cuerpo y movimiento real de Blender</p>
+          <p className="text-xs text-white/45">Un solo rig para cuerpo y prenda</p>
         </div>
         <button type="button" onClick={() => setShowSkeleton((value) => !value)} className="rounded-xl border border-white/10 px-3 py-2 text-xs">
           {showSkeleton ? "Ocultar rig" : "Ver rig"}
         </button>
       </div>
       <div ref={mountRef} className="h-[430px] w-full sm:h-[600px]" />
-      {clips.length > 0 ? (
-        <div className="border-t border-white/10 p-3">
-          <div className="flex gap-2 overflow-x-auto">
-            {clips.map((clip) => (
-              <button
-                key={clip.id}
-                type="button"
-                onClick={() => playClip(clip.id)}
-                aria-pressed={activeClip === clip.id}
-                className={`shrink-0 rounded-xl border px-4 py-3 text-xs font-bold transition active:scale-[0.98] ${activeClip === clip.id ? "border-violet-400 bg-violet-500/20 text-white" : "border-white/10 text-white/70"}`}
-              >
-                {activeClip === clip.id && replayCount > 0 ? "Reiniciar movimiento" : clip.label}
-              </button>
-            ))}
-          </div>
-          <p className="mt-2 text-[11px] text-white/35">
-            {activeClip ? "Movimiento activo. Tocá otra vez para reiniciarlo desde el comienzo." : "Tocá el botón para iniciar la animación."}
-          </p>
+      <div className="border-t border-white/10 p-3">
+        <div className="flex gap-2 overflow-x-auto">
+          {clips.map((clip) => (
+            <button
+              key={clip.id}
+              type="button"
+              onClick={() => playClip(clip.id)}
+              aria-pressed={activeClip === clip.id}
+              className={`shrink-0 rounded-xl border px-4 py-3 text-xs font-bold transition active:scale-[0.98] ${activeClip === clip.id ? "border-violet-400 bg-violet-500/20 text-white" : "border-white/10 text-white/70"}`}
+            >
+              {activeClip === clip.id && replayCount > 0 ? "Reiniciar movimiento" : clip.label}
+            </button>
+          ))}
         </div>
-      ) : (
-        <div className="border-t border-white/10 p-3 text-xs text-amber-200/70">Este GLB no contiene un clip de movimiento reproducible.</div>
-      )}
+        <p className="mt-2 text-[11px] text-white/40">{previewStatus}</p>
+      </div>
     </div>
   );
 }
