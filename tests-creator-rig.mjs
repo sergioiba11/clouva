@@ -8,6 +8,7 @@ const garmentWorkerV9Source = readFileSync("./worker/garment-rig/rig_garment_v5.
 const garmentWorkerV10Source = readFileSync("./worker/garment-rig/rig_garment_v10.py", "utf8");
 const garmentWorkerV11Source = readFileSync("./worker/garment-rig/rig_garment_v11.py", "utf8");
 const garmentWorkerV12Source = readFileSync("./worker/garment-rig/rig_garment_v12.py", "utf8");
+const garmentWorkerV13Source = readFileSync("./worker/garment-rig/rig_garment_v13.py", "utf8");
 const garmentDockerfile = readFileSync("./worker/garment-rig/Dockerfile", "utf8");
 
 test("hoodie siempre se pesa de nuevo contra el avatar activo", () => {
@@ -70,8 +71,20 @@ test("V12 no parenta la prenda a un armature escalado y valida el GLB reabierto"
   assert.match(garmentWorkerV12Source, /size_errors/);
   assert.match(garmentWorkerV12Source, /center_errors/);
   assert.match(garmentWorkerV12Source, /garment_height_ratio/);
-  assert.match(garmentDockerfile, /CLOUVA_RIG_VERSION=v12/);
-  assert.match(garmentDockerfile, /rig_garment_v12\.py/);
+});
+
+test("V13 resuelve piernas por jerarquía y usa REST pose con cintura fija en Hips", () => {
+  assert.match(garmentWorkerV13Source, /def descendants_with_depth/);
+  assert.match(garmentWorkerV13Source, /head_local/);
+  assert.match(garmentWorkerV13Source, /tail_local/);
+  assert.match(garmentWorkerV13Source, /choose_descendant/);
+  assert.match(garmentWorkerV13Source, /left_up_leg/);
+  assert.match(garmentWorkerV13Source, /right_up_leg/);
+  assert.match(garmentWorkerV13Source, /hips\.z/);
+  assert.doesNotMatch(garmentWorkerV13Source, /max\(left_up\.z, right_up\.z, hips\.z\)/);
+  assert.match(garmentWorkerV13Source, /clouvaRestLowerLandmarks/);
+  assert.match(garmentDockerfile, /CLOUVA_RIG_VERSION=v13/);
+  assert.match(garmentDockerfile, /rig_garment_v13\.py/);
 });
 
 test("solo una plantilla rígida puede conservar skinning existente", () => {
