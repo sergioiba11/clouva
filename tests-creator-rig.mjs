@@ -4,11 +4,12 @@ import { test } from "node:test";
 const { buildBlenderJob } = await import("./lib/creator-studio/blender-job.ts");
 const { resolveRigProfile, isDeformableCategory, isRigidCategory } = await import("./lib/creator-studio/rig-profiles.ts");
 
-test("objeto crudo usa el worker para transferir pesos y vincular Armature", () => {
-  const job = buildBlenderJob({ category: "hoodie", templateMode: false, autoWeight: true });
+test("hoodie siempre se pesa de nuevo contra el avatar activo", () => {
+  const job = buildBlenderJob({ category: "hoodie", templateMode: true, preserveExistingSkinning: true });
   assert.equal(job.operation, "fit_and_rig_reference");
-  assert.equal(job.pipelineVersion, "smart-rig-v3");
-  assert.equal(job.riggingStrategy, "transfer_from_avatar");
+  assert.equal(job.pipelineVersion, "canonical-landmarks-v4");
+  assert.equal(job.riggingStrategy, "fresh_transfer_from_active_avatar");
+  assert.equal(job.templateMode, false);
   assert.equal(job.options.transferSkinWeights, true);
   assert.equal(job.options.transferVertexGroups, true);
   assert.equal(job.options.attachArmature, true);
@@ -17,38 +18,41 @@ test("objeto crudo usa el worker para transferir pesos y vincular Armature", () 
   assert.equal(job.options.validation.requireBilateralSleeveWeights, true);
 });
 
-test("plantilla conserva skinning y topología en el worker existente", () => {
+test("pantalón exige cintura en Hips y pesos separados para ambas piernas", () => {
+  const job = buildBlenderJob({ category: "pants", templateMode: true, preserveExistingSkinning: true });
+  assert.equal(job.riggingStrategy, "fresh_transfer_from_active_avatar");
+  assert.equal(job.options.fitUsesCanonicalLowerBodyLandmarks, true);
+  assert.equal(job.options.weightTransfer.separateLeftRightLimbs, true);
+  assert.equal(job.options.weightTransfer.sampleCount, 16);
+  assert.equal(job.options.validation.requireBilateralLegWeights, true);
+  assert.equal(job.options.validation.requireWaistAtHips, true);
+  assert.equal(job.options.validation.rejectTorsoAlignedPants, true);
+});
+
+test("solo una plantilla rígida puede conservar skinning existente", () => {
   const job = buildBlenderJob({
-    category: "hoodie",
+    category: "accessory",
     templateMode: true,
-    templateId: "hoodie-base-v1",
-    sourceStoragePath: "user/hoodie/base.glb",
+    preserveExistingSkinning: true,
+    templateId: "chain-base-v1",
   });
-  assert.equal(job.operation, "fit_and_rig_reference");
   assert.equal(job.riggingStrategy, "preserve_existing_skinning");
+  assert.equal(job.templateMode, true);
   assert.equal(job.options.transferSkinWeights, false);
-  assert.equal(job.options.transferVertexGroups, false);
-  assert.equal(job.options.attachArmature, false);
   assert.equal(job.options.preserveExistingSkinning, true);
   assert.equal(job.options.preserveTopology, true);
 });
 
-test("preserveExistingSkinning activa modo plantilla aunque falte templateMode", () => {
-  const job = buildBlenderJob({ preserveExistingSkinning: true, autoWeight: true });
-  assert.equal(job.templateMode, true);
-  assert.equal(job.options.transferSkinWeights, false);
-});
-
-test("la validación exige armature, pesos y poses", () => {
-  const job = buildBlenderJob({ category: "baggy" });
+test("la validación general exige armature, pesos normalizados y poses", () => {
+  const job = buildBlenderJob({ category: "pants" });
   assert.equal(job.options.validation.requireArmature, true);
   assert.equal(job.options.validation.requireWeightedVertices, true);
   assert.deepEqual(job.options.validation.animationTests, ["tpose", "idle", "walk", "run"]);
   assert.equal(job.options.maxBoneInfluences, 4);
-  assert.equal(job.options.weightTransfer.sampleCount, 12);
+  assert.equal(job.options.validation.maxUnweightedVertexRatio, 0.005);
 });
 
-test("hoodie activa el pipeline deformable con brazos y antebrazos", () => {
+test("hoodie activa el perfil deformable con brazos y antebrazos", () => {
   const profile = resolveRigProfile("hoodie");
   assert.equal(profile.pipeline, "garment");
   assert.equal(profile.mode, "deformable");
@@ -57,6 +61,15 @@ test("hoodie activa el pipeline deformable con brazos y antebrazos", () => {
   assert.ok(profile.requiredBones.includes("Lower Arms"));
   assert.equal(isDeformableCategory("hoodie"), true);
   assert.equal(isRigidCategory("hoodie"), false);
+});
+
+test("baggy se traduce al perfil de pantalón deformable", () => {
+  const profile = resolveRigProfile("baggy");
+  assert.equal(profile.pipeline, "garment");
+  assert.equal(profile.workerCategory, "pants");
+  assert.ok(profile.requiredBones.includes("Hips"));
+  assert.ok(profile.requiredBones.includes("Upper Legs"));
+  assert.ok(profile.requiredBones.includes("Lower Legs"));
 });
 
 test("gorra activa exclusivamente el pipeline rígido de cabeza", () => {
