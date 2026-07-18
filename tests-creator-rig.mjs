@@ -4,7 +4,8 @@ import { test } from "node:test";
 
 const { buildBlenderJob } = await import("./lib/creator-studio/blender-job.ts");
 const { resolveRigProfile, isDeformableCategory, isRigidCategory } = await import("./lib/creator-studio/rig-profiles.ts");
-const garmentWorkerSource = readFileSync("./worker/garment-rig/rig_garment_v5.py", "utf8");
+const garmentWorkerV9Source = readFileSync("./worker/garment-rig/rig_garment_v5.py", "utf8");
+const garmentWorkerV10Source = readFileSync("./worker/garment-rig/rig_garment_v10.py", "utf8");
 const garmentDockerfile = readFileSync("./worker/garment-rig/Dockerfile", "utf8");
 
 test("hoodie siempre se pesa de nuevo contra el avatar activo", () => {
@@ -32,13 +33,23 @@ test("pantalón exige cintura en Hips y pesos separados para ambas piernas", () 
   assert.equal(job.options.validation.rejectTorsoAlignedPants, true);
 });
 
-test("el worker V9 normaliza ancho y profundidad sin un mínimo artificial", () => {
-  assert.match(garmentWorkerSource, /def snap_lower_garment\(garment, body_meshes, armature, category, preview_settings\)/);
-  assert.match(garmentWorkerSource, /desired_width/);
-  assert.match(garmentWorkerSource, /desired_depth/);
-  assert.match(garmentWorkerSource, /0\.03, 20\.0/);
-  assert.match(garmentWorkerSource, /clouvaCrossSectionNormalization/);
-  assert.match(garmentDockerfile, /CLOUVA_RIG_VERSION=v9/);
+test("V9 contiene el ajuste corporal base que reutiliza V10", () => {
+  assert.match(garmentWorkerV9Source, /def snap_lower_garment\(garment, body_meshes, armature, category, preview_settings\)/);
+  assert.match(garmentWorkerV9Source, /desired_width/);
+  assert.match(garmentWorkerV9Source, /desired_depth/);
+  assert.match(garmentWorkerV9Source, /clouvaCrossSectionNormalization/);
+});
+
+test("V10 convierte unidades extremas sin pisos artificiales", () => {
+  assert.match(garmentWorkerV10Source, /def exact_scale_factor/);
+  assert.match(garmentWorkerV10Source, /1e-8 <= factor <= 1e8/);
+  assert.match(garmentWorkerV10Source, /def scale_vertices_in_world/);
+  assert.match(garmentWorkerV10Source, /for pass_index in range\(6\)/);
+  assert.match(garmentWorkerV10Source, /clouvaUnitScaleNormalization/);
+  assert.doesNotMatch(garmentWorkerV10Source, /0\.03, 20\.0/);
+  assert.doesNotMatch(garmentWorkerV10Source, /0\.5, 2\.0/);
+  assert.match(garmentDockerfile, /CLOUVA_RIG_VERSION=v10/);
+  assert.match(garmentDockerfile, /rig_garment_v10\.py/);
 });
 
 test("solo una plantilla rígida puede conservar skinning existente", () => {
