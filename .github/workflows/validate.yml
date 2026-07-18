@@ -37,7 +37,7 @@ jobs:
         run: npm test
 
       - name: Validate worker Python
-        run: python3 -m py_compile worker/garment-rig/app_v5.py worker/garment-rig/rig_garment_v5.py
+        run: python3 -m py_compile worker/garment-rig/app_v5.py worker/garment-rig/rig_garment_v5.py worker/garment-rig/rig_garment_v10.py
 
       - name: Build
         run: npm run build
