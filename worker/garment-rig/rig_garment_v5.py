@@ -143,8 +143,9 @@ def sanitize_preview_settings(category, preview_settings):
         settings["fit"] = settings.get("fit") if settings.get("fit") in {"Slim", "Regular", "Oversize"} else "Regular"
 
     settings["adjustments"] = adjustments
-    settings["rigProfileVersion"] = 6
+    settings["rigProfileVersion"] = 9
     settings["canonicalSnap"] = True
+    settings["crossSectionNormalization"] = True
     return settings
 
 
@@ -157,8 +158,29 @@ def apply_object_scale(garment, sx=1.0, sy=1.0, sz=1.0):
     bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
 
 
-def snap_lower_garment(garment, armature, category):
+def lower_fit_factors(preview_settings):
+    settings = preview_settings if isinstance(preview_settings, dict) else {}
+    adjustments = settings.get("adjustments")
+    adjustments = adjustments if isinstance(adjustments, dict) else {}
+    fit = str(settings.get("fit") or "Regular")
+
+    fit_width = {"Slim": 0.94, "Regular": 1.00, "Oversize": 1.12}.get(fit, 1.00)
+    fit_depth = {"Slim": 0.96, "Regular": 1.02, "Oversize": 1.12}.get(fit, 1.02)
+    manual_width = clamp(adjustments.get("width"), 90, 115, 100) / 100.0
+    manual_depth = clamp(
+        1.0 + clamp(adjustments.get("distance"), -5, 12, 5) / 100.0,
+        0.95,
+        1.12,
+        1.05,
+    )
+    return fit_width * manual_width, fit_depth * manual_depth
+
+
+def snap_lower_garment(garment, body_meshes, armature, category, preview_settings):
     marks = legacy.lower_landmarks(armature)
+    target_min, target_max = legacy.body_region(body_meshes, armature, category)
+    target_size = target_max - target_min
+
     waist_z = marks["waist"].z
     feet_z = min(marks["left_foot"].z, marks["right_foot"].z)
     knees_z = min(marks["left_knee"].z, marks["right_knee"].z)
@@ -169,33 +191,69 @@ def snap_lower_garment(garment, armature, category):
     target_height = max(target_top - target_bottom, leg_length * 0.25)
 
     garment_min, garment_max = legacy.bbox_world(garment)
-    current_height = max(garment_max.z - garment_min.z, 1e-6)
+    current_size = garment_max - garment_min
+    current_height = max(current_size.z, 1e-6)
     apply_object_scale(garment, sz=target_height / current_height)
 
-    leg_x = [
-        marks["left_up"].x, marks["right_up"].x,
-        marks["left_knee"].x, marks["right_knee"].x,
-        marks["left_foot"].x, marks["right_foot"].x,
-    ]
-    leg_span = max(leg_x) - min(leg_x)
-    hip_span = max(abs(marks["left_up"].x - marks["right_up"].x), leg_length * 0.08)
-    target_width = max(leg_span + hip_span * 0.72, hip_span * 1.55)
+    width_factor, depth_factor = lower_fit_factors(preview_settings)
+    desired_width = max(target_size.x * width_factor, leg_length * 0.12)
+    desired_depth = max(target_size.y * depth_factor, leg_length * 0.10)
+
     garment_min, garment_max = legacy.bbox_world(garment)
-    current_width = max(garment_max.x - garment_min.x, 1e-6)
-    if current_width < target_width:
-        apply_object_scale(garment, sx=min(target_width / current_width, 1.35))
+    current_size = garment_max - garment_min
+    sx = clamp(desired_width / max(current_size.x, 1e-6), 0.03, 20.0, 1.0)
+    sy = clamp(desired_depth / max(current_size.y, 1e-6), 0.03, 20.0, 1.0)
+    apply_object_scale(garment, sx=sx, sy=sy)
+
+    # Segunda pasada exacta: algunas mallas importadas traen jerarquías o transformaciones
+    # que introducen pequeñas diferencias después de aplicar la primera escala.
+    garment_min, garment_max = legacy.bbox_world(garment)
+    current_size = garment_max - garment_min
+    correction_x = desired_width / max(current_size.x, 1e-6)
+    correction_y = desired_depth / max(current_size.y, 1e-6)
+    if abs(correction_x - 1.0) > 0.01 or abs(correction_y - 1.0) > 0.01:
+        apply_object_scale(
+            garment,
+            sx=clamp(correction_x, 0.5, 2.0, 1.0),
+            sy=clamp(correction_y, 0.5, 2.0, 1.0),
+        )
 
     garment_min, garment_max = legacy.bbox_world(garment)
     garment_center = (garment_min + garment_max) * 0.5
     target_center_x = (marks["left_up"].x + marks["right_up"].x) * 0.5
-    target_center_y = marks["waist"].y
+    target_center_y = (target_min.y + target_max.y) * 0.5
     garment.location += Vector((
         target_center_x - garment_center.x,
         target_center_y - garment_center.y,
         target_top - garment_max.z,
     ))
     bpy.context.view_layer.update()
-    return {"targetTop": target_top, "targetBottom": target_bottom, "legLength": leg_length}
+
+    final_min, final_max = legacy.bbox_world(garment)
+    final_size = final_max - final_min
+    width_ratio = final_size.x / max(target_size.x, 1e-6)
+    depth_ratio = final_size.y / max(target_size.y, 1e-6)
+    height_ratio = final_size.z / max(target_size.z, 1e-6)
+    print(
+        "[rig-v9] lower cross-section "
+        f"category={category} sx={sx:.4f} sy={sy:.4f} "
+        f"ratios=({width_ratio:.3f}, {depth_ratio:.3f}, {height_ratio:.3f})",
+        flush=True,
+    )
+
+    if width_ratio > 1.45 or depth_ratio > 1.45:
+        raise RuntimeError(
+            "No se pudo normalizar el ancho/profundidad del pantalón: "
+            f"ratios=({width_ratio:.3f}, {depth_ratio:.3f}, {height_ratio:.3f})"
+        )
+
+    return {
+        "targetTop": target_top,
+        "targetBottom": target_bottom,
+        "legLength": leg_length,
+        "widthRatio": width_ratio,
+        "depthRatio": depth_ratio,
+    }
 
 
 def upper_landmarks(armature):
@@ -327,7 +385,7 @@ def validate_upper_weights_v6(garment, armature):
     return {"leftWeighted": left_count, "rightWeighted": right_count, "armAliasVersion": 6}
 
 
-def validate_lower_geometry_and_weights_v5(garment, armature, category):
+def validate_lower_geometry_and_weights_v9(garment, armature, category):
     marks = legacy.lower_landmarks(armature)
     garment_min, garment_max = legacy.bbox_world(garment)
     waist_z = marks["waist"].z
@@ -369,13 +427,14 @@ def validate_lower_geometry_and_weights_v5(garment, armature, category):
         "leftWeighted": left_count,
         "rightWeighted": right_count,
         "canonicalSnap": True,
+        "crossSectionVersion": 9,
     }
 
 
-def validate_roundtrip_v6(output_path):
+def validate_roundtrip_v9(output_path):
     if not os.path.exists(output_path) or os.path.getsize(output_path) < 1024:
         raise RuntimeError("El GLB exportado está vacío")
-    with tempfile.TemporaryDirectory(prefix="clouva-validate-v6-"):
+    with tempfile.TemporaryDirectory(prefix="clouva-validate-v9-"):
         legacy.clear_scene()
         imported = legacy.import_glb(output_path)
         armatures = [obj for obj in imported if obj.type == "ARMATURE"]
@@ -383,10 +442,10 @@ def validate_roundtrip_v6(output_path):
         if len(armatures) != 1 or not skinned:
             raise RuntimeError("El GLB exportado no contiene un único rig vestible")
         garment = max(skinned, key=lambda obj: len(obj.data.vertices))
-        if int(garment.get("clouvaRigVersion", 0)) < 6:
-            raise RuntimeError("El GLB perdió la metadata de validación CLOUVA V6")
+        if int(garment.get("clouvaRigVersion", 0)) < 9:
+            raise RuntimeError("El GLB perdió la metadata de validación CLOUVA V9")
         print(
-            f"[rig-v6] roundtrip ok meshes={len(skinned)} vertices={sum(len(obj.data.vertices) for obj in skinned)}",
+            f"[rig-v9] roundtrip ok meshes={len(skinned)} vertices={sum(len(obj.data.vertices) for obj in skinned)}",
             flush=True,
         )
 
@@ -396,7 +455,7 @@ def main():
     if category not in legacy.VALID_CATEGORIES:
         raise RuntimeError(f"Categoría inválida: {category}")
 
-    legacy.validate_lower_geometry_and_weights = validate_lower_geometry_and_weights_v5
+    legacy.validate_lower_geometry_and_weights = validate_lower_geometry_and_weights_v9
     legacy.validate_upper_weights = validate_upper_weights_v6
 
     legacy.clear_scene()
@@ -413,7 +472,7 @@ def main():
     safe_settings = sanitize_preview_settings(category, preview_settings)
     legacy.apply_preview_adjustments(garment, safe_settings, avatar_height)
     if category in LOWER_GARMENTS:
-        snap_lower_garment(garment, armature, category)
+        snap_lower_garment(garment, body_meshes, armature, category, safe_settings)
         target_min, target_max = legacy.body_region(body_meshes, armature, category)
     elif category in UPPER_GARMENTS:
         snap_upper_garment(garment, armature, category)
@@ -431,10 +490,11 @@ def main():
     legacy.apply_material(garment, art_path, color)
     legacy.attach_armature(garment, armature)
     legacy.validate(garment, armature, target_min, target_max, category)
-    garment["clouvaRigVersion"] = 6
+    garment["clouvaRigVersion"] = 9
     garment["clouvaCanonicalSnap"] = category in DEFORMABLE_CATEGORIES
+    garment["clouvaCrossSectionNormalization"] = category in LOWER_GARMENTS
     legacy.export_glb(output_path, garment, armature)
-    validate_roundtrip_v6(output_path)
+    validate_roundtrip_v9(output_path)
 
 
 if __name__ == "__main__":
