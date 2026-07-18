@@ -123,14 +123,12 @@ def snap_lower_garment_v11(garment, body_meshes, armature, category, preview_set
 v9.snap_lower_garment = snap_lower_garment_v11
 
 
-_original_export_glb = legacy.export_glb
-
-
 def export_glb_v11(output_path, garment, armature):
     garment["clouvaRigVersion"] = 11
     garment["clouvaUnitScaleNormalization"] = True
     garment["clouvaSingleLowerBodyVolumeContract"] = True
-    _original_export_glb(output_path, garment, armature)
+    # Saltamos el wrapper V10, que volvería a escribir clouvaRigVersion=10.
+    previous._original_export_glb(output_path, garment, armature)
 
 
 legacy.export_glb = export_glb_v11
