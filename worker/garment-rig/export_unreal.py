@@ -1,8 +1,12 @@
+import json
+import math
 import sys
 from pathlib import Path
 
 import bpy
 from mathutils import Vector
+
+TOLERANCE_CM = 2.0
 
 
 def args_after_separator():
@@ -19,59 +23,135 @@ def clear_scene():
 def import_glb(path: Path):
     bpy.ops.import_scene.gltf(filepath=str(path))
     objects = [obj for obj in bpy.context.scene.objects if obj.type in {"MESH", "ARMATURE"}]
-    if not objects:
-        raise RuntimeError("The GLB does not contain a mesh or armature")
-    return objects
+    meshes = [obj for obj in objects if obj.type == "MESH"]
+    armatures = [obj for obj in objects if obj.type == "ARMATURE"]
+    if not meshes:
+        raise RuntimeError("The GLB does not contain a mesh")
+    if not armatures:
+        raise RuntimeError("The processed avatar does not contain an armature")
+    return objects, meshes, armatures
 
 
-def world_bounds(objects):
+def world_bounds(meshes):
     points = []
-    for obj in objects:
-        if obj.type != "MESH":
-            continue
+    for obj in meshes:
         points.extend(obj.matrix_world @ Vector(corner) for corner in obj.bound_box)
     if not points:
-        raise RuntimeError("Could not calculate model dimensions")
+        raise RuntimeError("Could not calculate avatar dimensions")
     minimum = Vector((min(p.x for p in points), min(p.y for p in points), min(p.z for p in points)))
     maximum = Vector((max(p.x for p in points), max(p.y for p in points), max(p.z for p in points)))
     return minimum, maximum
 
 
-def set_rest_pose():
-    for obj in bpy.context.scene.objects:
-        if obj.type == "ARMATURE":
-            obj.data.pose_position = "REST"
-            obj.animation_data_clear()
+def dimensions(meshes):
+    minimum, maximum = world_bounds(meshes)
+    return minimum, maximum, maximum - minimum
 
 
-def scale_avatar_to_centimeters(objects, target_height_cm: float):
-    minimum, maximum = world_bounds(objects)
-    height = maximum.z - minimum.z
-    if height <= 0.001:
-        raise RuntimeError("Avatar height is invalid")
-    scale_factor = target_height_cm / height
-    roots = [obj for obj in objects if obj.parent is None or obj.parent not in objects]
+def set_rest_pose(armatures):
+    for armature in armatures:
+        armature.data.pose_position = "REST"
+        armature.animation_data_clear()
+        for pose_bone in armature.pose.bones:
+            pose_bone.scale = (1.0, 1.0, 1.0)
+
+
+def root_objects(objects):
+    object_set = set(objects)
+    return [obj for obj in objects if obj.parent is None or obj.parent not in object_set]
+
+
+def apply_uniform_scale(objects, factor: float):
+    roots = root_objects(objects)
     for obj in roots:
-        obj.scale = tuple(value * scale_factor for value in obj.scale)
+        obj.scale = tuple(value * factor for value in obj.scale)
     bpy.context.view_layer.update()
-    minimum, _ = world_bounds(objects)
+
+    bpy.ops.object.select_all(action="DESELECT")
+    for obj in roots:
+        obj.select_set(True)
+    bpy.context.view_layer.objects.active = next((obj for obj in roots if obj.type == "ARMATURE"), roots[0])
+    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+    bpy.context.view_layer.update()
+
+
+def ground_feet(objects, meshes):
+    minimum, _, _ = dimensions(meshes)
+    roots = root_objects(objects)
     for obj in roots:
         obj.location.z -= minimum.z
     bpy.context.view_layer.update()
-    return height, scale_factor
 
-
-def prepare_object(objects):
-    minimum, maximum = world_bounds(objects)
-    roots = [obj for obj in objects if obj.parent is None or obj.parent not in objects]
-    center = (minimum + maximum) * 0.5
+    bpy.ops.object.select_all(action="DESELECT")
     for obj in roots:
-        obj.location.x -= center.x
-        obj.location.y -= center.y
-        obj.location.z -= minimum.z
+        obj.select_set(True)
+    bpy.context.view_layer.objects.active = next((obj for obj in roots if obj.type == "ARMATURE"), roots[0])
+    bpy.ops.object.transform_apply(location=True, rotation=False, scale=False)
     bpy.context.view_layer.update()
-    size = maximum - minimum
-    return size
+
+
+def count_bones(armatures):
+    return sum(len(armature.data.bones) for armature in armatures)
+
+
+def has_root_bone(armatures):
+    for armature in armatures:
+        for bone in armature.data.bones:
+            if bone.parent is None or bone.name.lower() in {"root", "armature", "hips", "pelvis"}:
+                return True
+    return False
+
+
+def has_skin_weights(meshes):
+    for mesh in meshes:
+        if not mesh.vertex_groups:
+            continue
+        if any(vertex.groups for vertex in mesh.data.vertices):
+            return True
+    return False
+
+
+def clean_scale(obj):
+    return [round(float(value), 6) for value in obj.scale]
+
+
+def validate(objects, meshes, armatures, target_height_cm: float):
+    minimum, maximum, size = dimensions(meshes)
+    height_cm = float(size.z)
+    bone_count = count_bones(armatures)
+    mesh_scales = [clean_scale(mesh) for mesh in meshes]
+    armature_scales = [clean_scale(armature) for armature in armatures]
+    root_scales = [clean_scale(obj) for obj in root_objects(objects)]
+    all_scales = mesh_scales + armature_scales + root_scales
+    scales_clean = all(all(math.isclose(value, 1.0, abs_tol=1e-4) for value in scale) for scale in all_scales)
+    feet_grounded = abs(float(minimum.z)) <= 0.02
+    root_exists = has_root_bone(armatures)
+    skin_weights = has_skin_weights(meshes)
+    height_valid = abs(height_cm - target_height_cm) <= TOLERANCE_CM
+
+    metadata = {
+        "target": "unreal",
+        "heightCm": round(height_cm, 4),
+        "targetHeightCm": round(target_height_cm, 4),
+        "dimensionsCm": [round(float(size.x), 4), round(float(size.y), 4), round(float(size.z), 4)],
+        "boundsMinCm": [round(float(minimum.x), 4), round(float(minimum.y), 4), round(float(minimum.z), 4)],
+        "boundsMaxCm": [round(float(maximum.x), 4), round(float(maximum.y), 4), round(float(maximum.z), 4)],
+        "meshScale": mesh_scales[0] if len(mesh_scales) == 1 else mesh_scales,
+        "armatureScale": armature_scales[0] if len(armature_scales) == 1 else armature_scales,
+        "rootScale": root_scales[0] if len(root_scales) == 1 else root_scales,
+        "meshCount": len(meshes),
+        "armatureCount": len(armatures),
+        "boneCount": bone_count,
+        "rootBoneExists": root_exists,
+        "skinWeights": skin_weights,
+        "feetGrounded": feet_grounded,
+        "unit": "centimeter",
+        "importUniformScale": 1.0,
+        "readyForUnreal": bool(height_valid and scales_clean and feet_grounded and root_exists and skin_weights and bone_count > 0),
+    }
+    if not metadata["readyForUnreal"]:
+        raise RuntimeError(f"Unreal validation failed: {json.dumps(metadata, separators=(',', ':'))}")
+    return metadata
 
 
 def export_fbx(path: Path):
@@ -83,6 +163,7 @@ def export_fbx(path: Path):
             exportable.append(obj)
     if not exportable:
         raise RuntimeError("Nothing to export")
+
     bpy.context.view_layer.objects.active = next((obj for obj in exportable if obj.type == "ARMATURE"), exportable[0])
     bpy.ops.export_scene.fbx(
         filepath=str(path),
@@ -106,37 +187,69 @@ def export_fbx(path: Path):
     )
 
 
+def prepare_object(objects, meshes):
+    minimum, maximum, size = dimensions(meshes)
+    center = (minimum + maximum) * 0.5
+    roots = root_objects(objects)
+    for obj in roots:
+        obj.location.x -= center.x
+        obj.location.y -= center.y
+        obj.location.z -= minimum.z
+    bpy.context.view_layer.update()
+    return size
+
+
 def main():
     values = args_after_separator()
     if len(values) < 2:
-        raise RuntimeError("Usage: export_unreal.py input.glb output.fbx [target_height_cm] [mode]")
+        raise RuntimeError("Usage: export_unreal.py input.glb output.fbx [target_height_cm] [mode] [metadata.json]")
+
     source = Path(values[0]).resolve()
     output = Path(values[1]).resolve()
-    target_height_cm = float(values[2]) if len(values) > 2 else 180.0
+    target_height_cm = float(values[2]) if len(values) > 2 else 175.0
     mode = values[3].lower() if len(values) > 3 else "avatar"
+    metadata_path = Path(values[4]).resolve() if len(values) > 4 else output.with_suffix(".json")
 
     clear_scene()
-    objects = import_glb(source)
-    set_rest_pose()
+    objects, meshes, armatures = import_glb(source)
+    set_rest_pose(armatures)
+
     scene = bpy.context.scene
     scene.unit_settings.system = "METRIC"
     scene.unit_settings.length_unit = "CENTIMETERS"
     scene.unit_settings.scale_length = 0.01
 
     if mode == "object":
-        size = prepare_object(objects)
-        summary = f"object_size=({size.x:.4f},{size.y:.4f},{size.z:.4f}) scale=preserved"
+        size = prepare_object(objects, meshes)
+        metadata = {
+            "target": "unreal-object",
+            "dimensions": [round(float(size.x), 4), round(float(size.y), 4), round(float(size.z), 4)],
+            "unit": "source-preserved",
+            "readyForUnreal": True,
+        }
     else:
         if target_height_cm < 80 or target_height_cm > 260:
             raise RuntimeError("target_height_cm must be between 80 and 260")
-        original_height, scale_factor = scale_avatar_to_centimeters(objects, target_height_cm)
-        summary = f"original_height={original_height:.4f} target_height_cm={target_height_cm:.2f} scale_factor={scale_factor:.4f}"
+        _, _, before_size = dimensions(meshes)
+        current_height = float(before_size.z)
+        if current_height <= 0.001:
+            raise RuntimeError("Avatar height is invalid")
+        scale_factor = target_height_cm / current_height
+        apply_uniform_scale(objects, scale_factor)
+        ground_feet(objects, meshes)
+        metadata = validate(objects, meshes, armatures, target_height_cm)
+        metadata.update({
+            "sourceHeight": round(current_height, 6),
+            "normalizationScaleFactor": round(scale_factor, 8),
+        })
 
     output.parent.mkdir(parents=True, exist_ok=True)
+    metadata_path.parent.mkdir(parents=True, exist_ok=True)
     export_fbx(output)
     if not output.exists() or output.stat().st_size < 1024:
         raise RuntimeError("FBX export was empty")
-    print(f"[clouva-unreal] exported={output} mode={mode} {summary}", flush=True)
+    metadata_path.write_text(json.dumps(metadata, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"[clouva-unreal-metadata] {json.dumps(metadata, separators=(',', ':'))}", flush=True)
 
 
 if __name__ == "__main__":
