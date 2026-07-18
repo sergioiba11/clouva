@@ -6,19 +6,56 @@ import app_legacy as legacy
 app = legacy.app
 _original_run_blender_job = legacy.run_blender_job
 
+_GENERIC_BLENDER_LINES = (
+    "script failed",
+    "exiting",
+    "error: python: traceback",
+    "blender quit",
+)
+_EXCEPTION_PATTERN = re.compile(
+    r"^\s*(RuntimeError|ValueError|TypeError|AttributeError|KeyError|IndexError|"
+    r"ImportError|ModuleNotFoundError|AssertionError|OSError|Exception):\s*(.+?)\s*$",
+    re.MULTILINE,
+)
+
 
 def extract_validation_error(details):
     if not isinstance(details, dict):
         return None
+
     combined = "\n".join(
         str(details.get(key) or "")
-        for key in ("stderr", "stdout")
+        for key in ("stdout", "stderr")
     )
-    matches = re.findall(r"RuntimeError:\s*([^\n\r]+)", combined)
-    if matches:
-        return matches[-1].strip()
-    matches = re.findall(r"(?:Error|Exception):\s*([^\n\r]+)", combined)
-    return matches[-1].strip() if matches else None
+
+    # Blender siempre agrega al final una línea genérica como
+    # "Error: script failed, file: '/app/rig_garment.py', exiting". Esa línea no
+    # explica la causa. Priorizamos la última excepción real del traceback.
+    exceptions = [
+        f"{kind}: {message.strip()}"
+        for kind, message in _EXCEPTION_PATTERN.findall(combined)
+        if message.strip()
+    ]
+    if exceptions:
+        return exceptions[-1]
+
+    runtime_matches = re.findall(r"RuntimeError:\s*([^\n\r]+)", combined)
+    if runtime_matches:
+        return f"RuntimeError: {runtime_matches[-1].strip()}"
+
+    # Algunos errores de importación/sintaxis aparecen sin un traceback completo.
+    candidates = []
+    for raw_line in combined.splitlines():
+        line = raw_line.strip()
+        lowered = line.lower()
+        if not line or any(marker in lowered for marker in _GENERIC_BLENDER_LINES):
+            continue
+        if any(token in lowered for token in (
+            "traceback", "error", "exception", "failed", "missing", "invalid",
+            "no module named", "not found", "cannot", "could not",
+        )):
+            candidates.append(line)
+    return candidates[-1] if candidates else None
 
 
 def humanize_validation_error(message):
@@ -36,8 +73,15 @@ def humanize_validation_error(message):
         ("thigh is outside", "Uno de los muslos quedó fuera de la malla"),
         ("missing left/right upper-leg", "El avatar no tiene identificados los huesos de ambos muslos"),
         ("missing knee/foot landmarks", "El avatar no tiene identificadas correctamente rodillas y pies"),
+        ("Sleeve weight validation failed", "Una de las mangas no recibió pesos de brazo suficientes"),
+        ("missing arm bones", "El avatar no tiene identificados correctamente los huesos de ambos brazos"),
+        ("Upper garment", "La remera no pudo alinearse con el torso y los hombros"),
         ("outside safe bounds", "La escala final de la prenda quedó fuera de los límites seguros"),
         ("Only ", "Algunos vértices de la prenda quedaron sin pesos"),
+        ("No module named", "El worker de Blender no pudo cargar un módulo interno"),
+        ("ImportError", "El worker de Blender no pudo cargar un módulo interno"),
+        ("AttributeError", "El script de rig intentó usar una operación incompatible con este GLB"),
+        ("TypeError", "El GLB contiene una estructura que el rig automático todavía no pudo interpretar"),
     )
     for source, translated in translations:
         if source.lower() in message.lower():
