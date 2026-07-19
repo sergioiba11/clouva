@@ -4,7 +4,8 @@ import { createClient } from "@supabase/supabase-js";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const ALLOWED_BUCKETS = new Set(["creator-assets"]);
+const OUTPUT_BUCKET = "avatars";
+const ALLOWED_SOURCE_BUCKETS = new Set(["avatars", "creator-assets"]);
 const DEFAULT_TARGET_HEIGHT_CM = 175;
 
 function getAdminClient() {
@@ -24,7 +25,11 @@ async function requireUser(request: NextRequest) {
 }
 
 function safeName(value: string) {
-  return value.replace(/\.[^.]+$/, "").replace(/[^a-zA-Z0-9-_]+/g, "-").replace(/-+/g, "-").slice(0, 70) || "objeto";
+  return value
+    .replace(/\.[^.]+$/, "")
+    .replace(/[^a-zA-Z0-9-_]+/g, "-")
+    .replace(/-+/g, "-")
+    .slice(0, 70) || "objeto";
 }
 
 function numericHeight(row: Record<string, unknown> | null | undefined) {
@@ -61,6 +66,19 @@ function parseWorkerMetadata(response: Response) {
   }
 }
 
+function errorMessage(cause: unknown, fallback: string) {
+  if (cause instanceof Error && cause.message) return cause.message;
+  if (typeof cause === "string" && cause.trim()) return cause;
+  if (cause && typeof cause === "object") {
+    const value = cause as Record<string, unknown>;
+    for (const key of ["message", "error", "details", "detail", "hint"]) {
+      const candidate = value[key];
+      if (typeof candidate === "string" && candidate.trim()) return candidate;
+    }
+  }
+  return fallback;
+}
+
 export async function GET(request: NextRequest) {
   try {
     const { supabase, user } = await requireUser(request);
@@ -86,7 +104,7 @@ export async function GET(request: NextRequest) {
       })),
     });
   } catch (cause) {
-    const message = cause instanceof Error ? cause.message : "No se pudieron cargar los objetos";
+    const message = errorMessage(cause, "No se pudieron cargar los objetos");
     const status = /sesión/i.test(message) ? 401 : 500;
     return NextResponse.json({ error: message }, { status });
   }
@@ -114,35 +132,53 @@ export async function POST(request: NextRequest) {
         .eq("id", body.clothingItemId)
         .eq("user_id", user.id)
         .single();
-      if (itemError || !item) return NextResponse.json({ error: "No encontramos esa pieza del usuario" }, { status: 404 });
-      if (item.status !== "ready" || !item.model_url) return NextResponse.json({ error: "La pieza todavía no está lista" }, { status: 409 });
+
+      if (itemError || !item) {
+        return NextResponse.json({ error: "No encontramos esa pieza del usuario" }, { status: 404 });
+      }
+      if (item.status !== "ready" || !item.model_url) {
+        return NextResponse.json({ error: "La pieza todavía no está lista" }, { status: 409 });
+      }
+
       sourceUrl = String(item.model_url);
       assetName = String(item.name || body.name || "pieza-clouva");
       category = String(item.category || "accessory");
       riggedWearable = item.rigged === true || item.fit_status === "fitted";
-      if (!sourceUrl.startsWith("https://")) return NextResponse.json({ error: "La pieza no tiene una URL GLB válida" }, { status: 409 });
+
+      if (!sourceUrl.startsWith("https://")) {
+        return NextResponse.json({ error: "La pieza no tiene una URL GLB válida" }, { status: 409 });
+      }
     } else {
       const bucket = String(body.bucket || "");
       const path = String(body.path || "");
-      if (!ALLOWED_BUCKETS.has(bucket)) return NextResponse.json({ error: "Bucket no permitido" }, { status: 400 });
+      if (!ALLOWED_SOURCE_BUCKETS.has(bucket)) {
+        return NextResponse.json({ error: "Bucket no permitido" }, { status: 400 });
+      }
       if (!path.startsWith(`${user.id}/`) || !/\.glb$/i.test(path)) {
         return NextResponse.json({ error: "El objeto no pertenece al usuario o no es GLB" }, { status: 400 });
       }
+
       const signed = await supabase.storage.from(bucket).createSignedUrl(path, 60 * 15);
-      if (signed.error || !signed.data?.signedUrl) throw signed.error || new Error("No se pudo firmar el GLB");
+      if (signed.error || !signed.data?.signedUrl) {
+        throw signed.error || new Error("No se pudo firmar el GLB");
+      }
       sourceUrl = signed.data.signedUrl;
       assetName = String(body.name || path.split("/").pop() || "objeto.glb");
     }
 
     const workerUrl = process.env.BLENDER_WORKER_URL?.replace(/\/+$/, "");
-    if (!workerUrl) return NextResponse.json({ error: "Falta BLENDER_WORKER_URL" }, { status: 503 });
+    if (!workerUrl) {
+      return NextResponse.json({ error: "Falta BLENDER_WORKER_URL" }, { status: 503 });
+    }
 
     const targetHeightCm = await activeAvatarHeight(supabase, user.id);
     const worker = await fetch(`${workerUrl}/export/unreal-object`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(process.env.BLENDER_WORKER_TOKEN ? { Authorization: `Bearer ${process.env.BLENDER_WORKER_TOKEN}` } : {}),
+        ...(process.env.BLENDER_WORKER_TOKEN
+          ? { Authorization: `Bearer ${process.env.BLENDER_WORKER_TOKEN}` }
+          : {}),
       },
       body: JSON.stringify({
         source_url: sourceUrl,
@@ -153,9 +189,12 @@ export async function POST(request: NextRequest) {
       }),
       cache: "no-store",
     });
+
     if (!worker.ok) {
       const detail = await worker.text().catch(() => "");
-      throw new Error(`El Blender Worker rechazó el objeto (${worker.status})${detail ? `: ${detail.slice(0, 500)}` : ""}`);
+      throw new Error(
+        `El Blender Worker rechazó el objeto (${worker.status})${detail ? `: ${detail.slice(0, 500)}` : ""}`,
+      );
     }
 
     const bytes = await worker.arrayBuffer();
@@ -163,30 +202,35 @@ export async function POST(request: NextRequest) {
 
     const base = safeName(assetName);
     const filename = `${base}-unreal.fbx`;
-    const storagePath = `${user.id}/unreal/${filename}`;
-    const upload = await supabase.storage.from("creator-assets").upload(storagePath, bytes, {
+    const storagePath = `${user.id}/unreal-objects/${filename}`;
+    const upload = await supabase.storage.from(OUTPUT_BUCKET).upload(storagePath, bytes, {
       contentType: "application/octet-stream",
       cacheControl: "3600",
       upsert: true,
     });
-    if (upload.error) throw upload.error;
+    if (upload.error) {
+      throw new Error(errorMessage(upload.error, "No se pudo guardar el FBX en Supabase"));
+    }
 
-    const url = supabase.storage.from("creator-assets").getPublicUrl(storagePath).data.publicUrl;
+    const url = supabase.storage.from(OUTPUT_BUCKET).getPublicUrl(storagePath).data.publicUrl;
     const metadata = parseWorkerMetadata(worker);
-    const calibrated = metadata?.calibratedToAvatar === true || worker.headers.get("x-clouva-scale") === "avatar-calibrated";
+    const calibrated =
+      metadata?.calibratedToAvatar === true ||
+      worker.headers.get("x-clouva-scale") === "avatar-calibrated";
 
     return NextResponse.json({
       ok: true,
       url,
       filename,
       path: storagePath,
+      bucket: OUTPUT_BUCKET,
       metadata,
       scale: calibrated
         ? `calibrado al avatar de ${targetHeightCm} cm · Import Scale 1`
         : "escala original preservada · centímetros Unreal",
     });
   } catch (cause) {
-    const message = cause instanceof Error ? cause.message : "No se pudo exportar el objeto para Unreal";
+    const message = errorMessage(cause, "No se pudo exportar el objeto para Unreal");
     const status = /sesión/i.test(message) ? 401 : 500;
     return NextResponse.json({ error: message }, { status });
   }
