@@ -12,9 +12,8 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
-import { OutfitPreview } from "@/components/avatar-engine/OutfitPreview";
-import { useActiveAvatarStore } from "@/lib/avatar-engine/active-avatar-store";
 import { supabase } from "@/lib/supabase";
+import { StandaloneObjectPreview } from "./StandaloneObjectPreview";
 import styles from "./unreal-object-export.module.css";
 
 type StorageAsset = { id: string; kind: "storage"; name: string; path: string; label: string };
@@ -83,18 +82,12 @@ async function listGlbs(userId: string, path = userId, depth = 0): Promise<Stora
 
 export function UnrealObjectExport() {
   const { user, session, loading } = useAuth();
-  const avatar = useActiveAvatarStore((state) => state.avatar);
-  const loadActiveAvatar = useActiveAvatarStore((state) => state.loadActiveAvatar);
   const [objects, setObjects] = useState<ObjectAsset[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [loadingObjects, setLoadingObjects] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [result, setResult] = useState<ExportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    void loadActiveAvatar(user?.id ?? null);
-  }, [loadActiveAvatar, user?.id]);
 
   const refresh = useCallback(async () => {
     if (!user || !session?.access_token) return;
@@ -210,29 +203,18 @@ export function UnrealObjectExport() {
           </label>
 
           {selected?.kind === "clothing" ? (
-            <section className={styles.preview} aria-label={`Vista previa de ${selected.name}`}>
+            <section className={styles.preview} aria-label={`Vista previa del objeto ${selected.name}`}>
               <div className={styles.previewHeader}>
                 <p className={styles.previewTitle}>
                   <Eye />
-                  <span>VISTA PREVIA · {selected.name}</span>
+                  <span>OBJETO A EXPORTAR · {selected.name}</span>
                 </p>
-                <span className={styles.previewBadge}>{selected.rigged ? "RIGGEADA" : "OBJETO 3D"}</span>
+                <span className={styles.previewBadge}>{selected.rigged ? "RIGGEADO" : "GLB"}</span>
               </div>
 
               <div className={styles.previewViewport}>
-                {avatar.modelUrl && selected.modelUrl ? (
-                  <OutfitPreview
-                    avatarUrl={avatar.modelUrl}
-                    layers={[
-                      {
-                        id: selected.id,
-                        url: selected.modelUrl,
-                        visible: true,
-                        category: selected.category,
-                        preFitted: selected.fitStatus === "fitted" && selected.rigged === true,
-                      },
-                    ]}
-                  />
+                {selected.modelUrl ? (
+                  <StandaloneObjectPreview modelUrl={selected.modelUrl} />
                 ) : selected.thumbnailUrl ? (
                   <img
                     src={selected.thumbnailUrl}
@@ -248,7 +230,7 @@ export function UnrealObjectExport() {
 
               <div className={styles.previewFooter}>
                 <span>{CATEGORY_LABELS[selected.category] || "Objeto"}</span>
-                <span>Este es el objeto que se exportará</span>
+                <span>Solo se muestra la malla que irá al FBX</span>
               </div>
             </section>
           ) : null}
