@@ -11,6 +11,7 @@ from starlette.background import BackgroundTask
 
 
 app = base.app
+EXPORT_UNREAL_SCRIPT_PATH = base.EXPORT_UNREAL_SCRIPT_PATH
 RIG_ROUTE_VERSION = "v8-diagnostic-sync"
 
 
