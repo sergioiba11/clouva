@@ -1,13 +1,17 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Download, Loader2, RefreshCw, Shirt } from "lucide-react";
+import { Download, Eye, Loader2, RefreshCw, Shirt } from "lucide-react";
 import { useAuth } from "@/components/auth-provider";
+import { OutfitPreview } from "@/components/avatar-engine/OutfitPreview";
+import { useActiveAvatarStore } from "@/lib/avatar-engine/active-avatar-store";
 
 type ClothingItem = {
   id: string;
   name: string;
   category: string;
+  modelUrl?: string;
+  thumbnailUrl?: string;
   rigged: boolean;
   fitStatus?: string;
 };
@@ -38,6 +42,8 @@ const CATEGORY_LABELS: Record<string, string> = {
 
 export function DirectUnrealGarmentButton() {
   const { user, session, loading } = useAuth();
+  const avatar = useActiveAvatarStore((state) => state.avatar);
+  const loadActiveAvatar = useActiveAvatarStore((state) => state.loadActiveAvatar);
   const [items, setItems] = useState<ClothingItem[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [loadingItems, setLoadingItems] = useState(false);
@@ -49,6 +55,10 @@ export function DirectUnrealGarmentButton() {
     () => items.find((item) => item.id === selectedId) ?? null,
     [items, selectedId],
   );
+
+  useEffect(() => {
+    void loadActiveAvatar(user?.id ?? null);
+  }, [loadActiveAvatar, user?.id]);
 
   const loadItems = useCallback(async () => {
     if (!session?.access_token) return;
@@ -124,7 +134,7 @@ export function DirectUnrealGarmentButton() {
   if (loading || !user || !session?.access_token) return null;
 
   return (
-    <aside className="fixed bottom-24 left-4 right-4 z-[70] mx-auto max-w-xl rounded-2xl border border-white/15 bg-[#070707]/95 p-3 text-white shadow-[0_18px_60px_rgba(0,0,0,.65)] backdrop-blur-xl">
+    <aside className="fixed bottom-24 left-4 right-4 z-[70] mx-auto max-h-[78vh] max-w-xl overflow-y-auto rounded-2xl border border-white/15 bg-[#070707]/95 p-3 text-white shadow-[0_18px_60px_rgba(0,0,0,.65)] backdrop-blur-xl">
       <div className="mb-3 flex items-center justify-between gap-3 px-1">
         <div className="min-w-0">
           <p className="flex items-center gap-2 text-[10px] font-black tracking-[0.16em] text-violet-300">
@@ -165,6 +175,52 @@ export function DirectUnrealGarmentButton() {
             ))}
           </select>
         </label>
+      ) : null}
+
+      {selectedItem ? (
+        <section className="mb-3 overflow-hidden rounded-xl border border-violet-400/25 bg-[#0d0d12]">
+          <div className="flex items-center justify-between gap-3 border-b border-white/10 px-3 py-2">
+            <p className="flex min-w-0 items-center gap-2 text-xs font-bold text-violet-100">
+              <Eye className="h-4 w-4 shrink-0 text-violet-300" />
+              <span className="truncate">VISTA PREVIA · {selectedItem.name}</span>
+            </p>
+            <span className="shrink-0 rounded-full border border-white/10 px-2 py-1 text-[9px] font-bold text-white/45">
+              {selectedItem.rigged ? "RIGGEADA" : "OBJETO 3D"}
+            </span>
+          </div>
+
+          <div className="h-52 bg-[radial-gradient(circle_at_50%_35%,rgba(124,58,237,.18),transparent_55%),#050507]">
+            {avatar.modelUrl && selectedItem.modelUrl ? (
+              <OutfitPreview
+                avatarUrl={avatar.modelUrl}
+                layers={[
+                  {
+                    id: selectedItem.id,
+                    url: selectedItem.modelUrl,
+                    visible: true,
+                    category: selectedItem.category,
+                    preFitted: selectedItem.fitStatus === "fitted" && selectedItem.rigged === true,
+                  },
+                ]}
+              />
+            ) : selectedItem.thumbnailUrl ? (
+              <img
+                src={selectedItem.thumbnailUrl}
+                alt={`Vista previa de ${selectedItem.name}`}
+                className="h-full w-full object-contain p-3"
+              />
+            ) : (
+              <div className="grid h-full place-items-center px-6 text-center text-xs text-white/40">
+                Esta pieza no tiene una vista previa disponible, pero sigue lista para exportar.
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center justify-between gap-3 border-t border-white/10 px-3 py-2 text-[10px] text-white/45">
+            <span>{CATEGORY_LABELS[selectedItem.category] || "Objeto"}</span>
+            <span>Este es el objeto que se exportará</span>
+          </div>
+        </section>
       ) : null}
 
       <button
