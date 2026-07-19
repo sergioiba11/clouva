@@ -1,8 +1,19 @@
 "use client";
 
-import { Box, CheckCircle2, Download, Loader2, PackageOpen, RefreshCw, TriangleAlert } from "lucide-react";
+import {
+  Box,
+  CheckCircle2,
+  Download,
+  Eye,
+  Loader2,
+  PackageOpen,
+  RefreshCw,
+  TriangleAlert,
+} from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
+import { OutfitPreview } from "@/components/avatar-engine/OutfitPreview";
+import { useActiveAvatarStore } from "@/lib/avatar-engine/active-avatar-store";
 import { supabase } from "@/lib/supabase";
 import styles from "./unreal-object-export.module.css";
 
@@ -13,14 +24,25 @@ type ClothingAsset = {
   name: string;
   clothingItemId: string;
   category: string;
+  modelUrl?: string;
+  thumbnailUrl?: string;
   rigged: boolean;
+  fitStatus?: string;
   label: string;
 };
 type ObjectAsset = StorageAsset | ClothingAsset;
 type StorageEntry = { name: string; metadata?: Record<string, unknown> | null };
 type ExportResult = { url?: string; filename?: string; scale?: string; error?: string };
 type ClothingResponse = {
-  items?: Array<{ id: string; name: string; category: string; rigged: boolean; fitStatus?: string }>;
+  items?: Array<{
+    id: string;
+    name: string;
+    category: string;
+    modelUrl?: string;
+    thumbnailUrl?: string;
+    rigged: boolean;
+    fitStatus?: string;
+  }>;
   error?: string;
 };
 
@@ -61,12 +83,18 @@ async function listGlbs(userId: string, path = userId, depth = 0): Promise<Stora
 
 export function UnrealObjectExport() {
   const { user, session, loading } = useAuth();
+  const avatar = useActiveAvatarStore((state) => state.avatar);
+  const loadActiveAvatar = useActiveAvatarStore((state) => state.loadActiveAvatar);
   const [objects, setObjects] = useState<ObjectAsset[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [loadingObjects, setLoadingObjects] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [result, setResult] = useState<ExportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    void loadActiveAvatar(user?.id ?? null);
+  }, [loadActiveAvatar, user?.id]);
 
   const refresh = useCallback(async () => {
     if (!user || !session?.access_token) return;
@@ -89,7 +117,10 @@ export function UnrealObjectExport() {
         name: item.name,
         clothingItemId: item.id,
         category: item.category,
+        modelUrl: item.modelUrl,
+        thumbnailUrl: item.thumbnailUrl,
         rigged: item.rigged === true,
+        fitStatus: item.fitStatus,
         label: `${CATEGORY_LABELS[item.category] || "Objeto"} · ${item.name}${item.rigged ? " · ajustado" : ""}`,
       }));
 
@@ -105,7 +136,9 @@ export function UnrealObjectExport() {
     }
   }, [session?.access_token, user]);
 
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
 
   const exportObject = async () => {
     const selected = objects.find((item) => item.id === selectedId);
@@ -163,10 +196,63 @@ export function UnrealObjectExport() {
         <>
           <label className={styles.selector}>
             <span>Objeto guardado</span>
-            <select value={selectedId} onChange={(event) => setSelectedId(event.target.value)} disabled={exporting}>
+            <select
+              value={selectedId}
+              onChange={(event) => {
+                setSelectedId(event.target.value);
+                setResult(null);
+                setError(null);
+              }}
+              disabled={exporting}
+            >
               {objects.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
             </select>
           </label>
+
+          {selected?.kind === "clothing" ? (
+            <section className={styles.preview} aria-label={`Vista previa de ${selected.name}`}>
+              <div className={styles.previewHeader}>
+                <p className={styles.previewTitle}>
+                  <Eye />
+                  <span>VISTA PREVIA · {selected.name}</span>
+                </p>
+                <span className={styles.previewBadge}>{selected.rigged ? "RIGGEADA" : "OBJETO 3D"}</span>
+              </div>
+
+              <div className={styles.previewViewport}>
+                {avatar.modelUrl && selected.modelUrl ? (
+                  <OutfitPreview
+                    avatarUrl={avatar.modelUrl}
+                    layers={[
+                      {
+                        id: selected.id,
+                        url: selected.modelUrl,
+                        visible: true,
+                        category: selected.category,
+                        preFitted: selected.fitStatus === "fitted" && selected.rigged === true,
+                      },
+                    ]}
+                  />
+                ) : selected.thumbnailUrl ? (
+                  <img
+                    src={selected.thumbnailUrl}
+                    alt={`Vista previa de ${selected.name}`}
+                    className={styles.previewImage}
+                  />
+                ) : (
+                  <div className={styles.previewEmpty}>
+                    Esta pieza no tiene una vista previa disponible, pero sigue lista para exportar.
+                  </div>
+                )}
+              </div>
+
+              <div className={styles.previewFooter}>
+                <span>{CATEGORY_LABELS[selected.category] || "Objeto"}</span>
+                <span>Este es el objeto que se exportará</span>
+              </div>
+            </section>
+          ) : null}
+
           <div className={styles.specs}>
             <span><CheckCircle2 /> {selected?.kind === "clothing" && selected.rigged ? "Medidas calibradas al avatar activo" : "Escala original preservada"}</span>
             <span><CheckCircle2 /> Materiales embebidos</span>
