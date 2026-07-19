@@ -6,6 +6,7 @@ export const dynamic = "force-dynamic";
 
 const OUTPUT_BUCKET = "avatars";
 const ALLOWED_SOURCE_BUCKETS = new Set(["avatars", "creator-assets"]);
+const SKELETAL_CATEGORIES = new Set(["hoodie", "shirt", "jacket", "pants", "shorts", "shoes"]);
 const DEFAULT_TARGET_HEIGHT_CM = 175;
 
 function getAdminClient() {
@@ -93,15 +94,20 @@ export async function GET(request: NextRequest) {
     if (error) throw error;
 
     return NextResponse.json({
-      items: (data ?? []).map((item) => ({
-        id: item.id,
-        name: item.name || "Objeto CLOUVA",
-        category: item.category || "accessory",
-        modelUrl: item.model_url,
-        thumbnailUrl: item.thumbnail_url,
-        rigged: item.rigged === true,
-        fitStatus: item.fit_status,
-      })),
+      items: (data ?? []).map((item) => {
+        const category = String(item.category || "accessory");
+        const skeletalRequired = SKELETAL_CATEGORIES.has(category);
+        return {
+          id: item.id,
+          name: item.name || "Objeto CLOUVA",
+          category,
+          modelUrl: item.model_url,
+          thumbnailUrl: item.thumbnail_url,
+          rigged: skeletalRequired || item.rigged === true,
+          fitStatus: item.fit_status,
+          exportMode: skeletalRequired ? "skeletal" : "static",
+        };
+      }),
     });
   } catch (cause) {
     const message = errorMessage(cause, "No se pudieron cargar los objetos");
@@ -123,7 +129,7 @@ export async function POST(request: NextRequest) {
     let sourceUrl = "";
     let assetName = String(body.name || "objeto.glb");
     let category = "prop";
-    let riggedWearable = false;
+    let skeletalExport = false;
 
     if (body.clothingItemId) {
       const { data: item, error: itemError } = await supabase
@@ -143,7 +149,7 @@ export async function POST(request: NextRequest) {
       sourceUrl = String(item.model_url);
       assetName = String(item.name || body.name || "pieza-clouva");
       category = String(item.category || "accessory");
-      riggedWearable = item.rigged === true || item.fit_status === "fitted";
+      skeletalExport = SKELETAL_CATEGORIES.has(category) || item.rigged === true || item.fit_status === "fitted";
 
       if (!sourceUrl.startsWith("https://")) {
         return NextResponse.json({ error: "La pieza no tiene una URL GLB válida" }, { status: 409 });
@@ -185,7 +191,11 @@ export async function POST(request: NextRequest) {
         asset_name: assetName,
         category,
         target_height_cm: targetHeightCm,
-        wearable: riggedWearable,
+        wearable: skeletalExport,
+        require_skeletal: skeletalExport,
+        preserve_armature: skeletalExport,
+        preserve_skin_weights: skeletalExport,
+        export_object_types: skeletalExport ? ["MESH", "ARMATURE"] : ["MESH"],
       }),
       cache: "no-store",
     });
@@ -200,8 +210,13 @@ export async function POST(request: NextRequest) {
     const bytes = await worker.arrayBuffer();
     if (bytes.byteLength < 128) throw new Error("El FBX del objeto está vacío");
 
+    const metadata = parseWorkerMetadata(worker);
+    if (skeletalExport && metadata?.skeletal === false) {
+      throw new Error("El Blender Worker devolvió una malla estática. La prenda necesita Armature y skin weights para Unreal.");
+    }
+
     const base = safeName(assetName);
-    const filename = `${base}-unreal.fbx`;
+    const filename = `${base}-${skeletalExport ? "skeletal-" : ""}unreal.fbx`;
     const storagePath = `${user.id}/unreal-objects/${filename}`;
     const upload = await supabase.storage.from(OUTPUT_BUCKET).upload(storagePath, bytes, {
       contentType: "application/octet-stream",
@@ -213,7 +228,6 @@ export async function POST(request: NextRequest) {
     }
 
     const url = supabase.storage.from(OUTPUT_BUCKET).getPublicUrl(storagePath).data.publicUrl;
-    const metadata = parseWorkerMetadata(worker);
     const calibrated =
       metadata?.calibratedToAvatar === true ||
       worker.headers.get("x-clouva-scale") === "avatar-calibrated";
@@ -225,6 +239,7 @@ export async function POST(request: NextRequest) {
       path: storagePath,
       bucket: OUTPUT_BUCKET,
       metadata,
+      exportMode: skeletalExport ? "skeletal" : "static",
       scale: calibrated
         ? `calibrado al avatar de ${targetHeightCm} cm · Import Scale 1`
         : "escala original preservada · centímetros Unreal",
