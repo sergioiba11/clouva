@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { finalizeClothingItem } from "@/lib/clothing-finalization";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -97,15 +98,16 @@ export async function GET(request: NextRequest) {
       items: (data ?? []).map((item) => {
         const category = String(item.category || "accessory");
         const skeletalRequired = SKELETAL_CATEGORIES.has(category);
+        const actuallyRigged = item.rigged === true && item.fit_status === "fitted";
         return {
           id: item.id,
           name: item.name || "Objeto CLOUVA",
           category,
           modelUrl: item.model_url,
           thumbnailUrl: item.thumbnail_url,
-          rigged: skeletalRequired || item.rigged === true,
+          rigged: actuallyRigged,
           fitStatus: item.fit_status,
-          exportMode: skeletalRequired ? "skeletal" : "static",
+          exportMode: skeletalRequired ? (actuallyRigged ? "skeletal" : "auto-rig") : "static",
         };
       }),
     });
@@ -134,7 +136,7 @@ export async function POST(request: NextRequest) {
     if (body.clothingItemId) {
       const { data: item, error: itemError } = await supabase
         .from("clothing_items")
-        .select("id,name,category,status,model_url,rigged,fit_status")
+        .select("id,name,category,status,model_url,rigged,fit_status,color,metadata")
         .eq("id", body.clothingItemId)
         .eq("user_id", user.id)
         .single();
@@ -146,10 +148,33 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: "La pieza todavía no está lista" }, { status: 409 });
       }
 
-      sourceUrl = String(item.model_url);
       assetName = String(item.name || body.name || "pieza-clouva");
       category = String(item.category || "accessory");
-      skeletalExport = SKELETAL_CATEGORIES.has(category) || item.rigged === true || item.fit_status === "fitted";
+      skeletalExport = SKELETAL_CATEGORIES.has(category);
+      sourceUrl = String(item.model_url);
+
+      const actuallyRigged = item.rigged === true && item.fit_status === "fitted";
+      if (skeletalExport && !actuallyRigged) {
+        const rerigged = await finalizeClothingItem({
+          supabase,
+          userId: user.id,
+          itemId: String(item.id),
+          modelUrl: sourceUrl,
+          category,
+          color: typeof item.color === "string" ? item.color : null,
+          metadata: item.metadata && typeof item.metadata === "object"
+            ? (item.metadata as Record<string, unknown>)
+            : {},
+        });
+
+        if (!rerigged.rigged || !rerigged.item?.model_url) {
+          throw new Error(
+            rerigged.warning ||
+            "No se pudo riggear automáticamente la prenda con el esqueleto del avatar activo.",
+          );
+        }
+        sourceUrl = String(rerigged.item.model_url);
+      }
 
       if (!sourceUrl.startsWith("https://")) {
         return NextResponse.json({ error: "La pieza no tiene una URL GLB válida" }, { status: 409 });
