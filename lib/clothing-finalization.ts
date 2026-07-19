@@ -107,11 +107,12 @@ async function rigWithWorker(
   artUrl: string | null,
   color: string | null,
 ) {
-  const workerUrl = process.env.GARMENT_RIG_WORKER_URL?.replace(/\/$/, "");
+  const workerUrl = (process.env.GARMENT_RIG_WORKER_URL || process.env.BLENDER_WORKER_URL)?.replace(/\/+$/, "");
+  const workerToken = process.env.GARMENT_RIG_WORKER_TOKEN || process.env.BLENDER_WORKER_TOKEN;
   if (!workerUrl) {
     return {
       bytes: null as ArrayBuffer | null,
-      error: "GARMENT_RIG_WORKER_URL no está configurada",
+      error: "No está configurada GARMENT_RIG_WORKER_URL ni BLENDER_WORKER_URL",
       avatar: null as ResolvedAvatar | null,
     };
   }
@@ -122,9 +123,7 @@ async function rigWithWorker(
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        ...(process.env.GARMENT_RIG_WORKER_TOKEN
-          ? { Authorization: `Bearer ${process.env.GARMENT_RIG_WORKER_TOKEN}` }
-          : {}),
+        ...(workerToken ? { Authorization: `Bearer ${workerToken}` } : {}),
       },
       body: JSON.stringify({
         avatar_url: avatar.url,
@@ -225,7 +224,7 @@ export async function finalizeClothingItem({
     })
     .eq("id", itemId)
     .eq("user_id", userId)
-    .select("id,name,category,status,model_url,thumbnail_url,metadata,fit_status,rigged,wearable,hood_supported,hood_state,hood_up_model_url,hood_down_model_url")
+    .select("id,name,category,status,model_url,thumbnail_url,metadata,fit_status,rigged,wearable,processing_error,hood_supported,hood_state,hood_up_model_url,hood_down_model_url")
     .single();
   if (updateError) throw new Error(errorMessage(updateError, "No se pudo actualizar la pieza final"));
 
@@ -234,6 +233,6 @@ export async function finalizeClothingItem({
     rigged: Boolean(riggedBytes),
     textured: Boolean(riggedBytes && artUrl),
     hoodSupported,
-    warning: riggedBytes ? null : "La pieza quedó disponible sin rigging automático.",
+    warning: riggedBytes ? null : rigResult.error || "La pieza quedó disponible sin rigging automático.",
   };
 }
