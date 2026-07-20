@@ -44,7 +44,15 @@ function numericHeight(row: Record<string, unknown> | null | undefined) {
   return DEFAULT_TARGET_HEIGHT_CM;
 }
 
-async function activeAvatarHeight(supabase: ReturnType<typeof getAdminClient>, userId: string) {
+type ActiveAvatarContext = {
+  id: string | null;
+  targetHeightCm: number;
+};
+
+async function activeAvatarContext(
+  supabase: ReturnType<typeof getAdminClient>,
+  userId: string,
+): Promise<ActiveAvatarContext> {
   const { data } = await supabase
     .from("user_avatars")
     .select("*")
@@ -55,7 +63,11 @@ async function activeAvatarHeight(supabase: ReturnType<typeof getAdminClient>, u
     .order("updated_at", { ascending: false })
     .limit(1)
     .maybeSingle();
-  return numericHeight(data as Record<string, unknown> | null);
+
+  return {
+    id: data?.id ? String(data.id) : null,
+    targetHeightCm: numericHeight(data as Record<string, unknown> | null),
+  };
 }
 
 function parseWorkerMetadata(response: Response) {
@@ -132,6 +144,7 @@ export async function POST(request: NextRequest) {
     let assetName = String(body.name || "objeto.glb");
     let category = "prop";
     let skeletalExport = false;
+    let selectedClothingItemId: string | null = null;
 
     if (body.clothingItemId) {
       const { data: item, error: itemError } = await supabase
@@ -148,6 +161,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: "La pieza todavía no está lista" }, { status: 409 });
       }
 
+      selectedClothingItemId = String(item.id);
       assetName = String(item.name || body.name || "pieza-clouva");
       category = String(item.category || "accessory");
       skeletalExport = SKELETAL_CATEGORIES.has(category);
@@ -202,8 +216,34 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Falta BLENDER_WORKER_URL" }, { status: 503 });
     }
 
-    const targetHeightCm = await activeAvatarHeight(supabase, user.id);
-    const worker = await fetch(`${workerUrl}/export/unreal-object`, {
+    const avatar = await activeAvatarContext(supabase, user.id);
+    const targetHeightCm = avatar.targetHeightCm;
+    const workerEndpoint = skeletalExport ? "/export/unreal-v2" : "/export/unreal-object";
+    const workerPayload = skeletalExport
+      ? {
+          avatar_id: avatar.id || selectedClothingItemId || `garment-${user.id}`,
+          asset_id: selectedClothingItemId,
+          user_id: user.id,
+          source_url: sourceUrl,
+          target_height_cm: targetHeightCm,
+          asset_type: "garment",
+          category,
+          preserve_armature: true,
+          preserve_skin_weights: true,
+        }
+      : {
+          source_url: sourceUrl,
+          asset_name: assetName,
+          category,
+          target_height_cm: targetHeightCm,
+          wearable: false,
+          require_skeletal: false,
+          preserve_armature: false,
+          preserve_skin_weights: false,
+          export_object_types: ["MESH"],
+        };
+
+    const worker = await fetch(`${workerUrl}${workerEndpoint}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -211,17 +251,7 @@ export async function POST(request: NextRequest) {
           ? { Authorization: `Bearer ${process.env.BLENDER_WORKER_TOKEN}` }
           : {}),
       },
-      body: JSON.stringify({
-        source_url: sourceUrl,
-        asset_name: assetName,
-        category,
-        target_height_cm: targetHeightCm,
-        wearable: skeletalExport,
-        require_skeletal: skeletalExport,
-        preserve_armature: skeletalExport,
-        preserve_skin_weights: skeletalExport,
-        export_object_types: skeletalExport ? ["MESH", "ARMATURE"] : ["MESH"],
-      }),
+      body: JSON.stringify(workerPayload),
       cache: "no-store",
     });
 
@@ -236,6 +266,9 @@ export async function POST(request: NextRequest) {
     if (bytes.byteLength < 128) throw new Error("El FBX del objeto está vacío");
 
     const metadata = parseWorkerMetadata(worker);
+    if (skeletalExport && metadata?.readyForUnreal !== true) {
+      throw new Error("La prenda no superó la validación de escala y esqueleto para Unreal.");
+    }
     if (skeletalExport && metadata?.skeletal === false) {
       throw new Error("El Blender Worker devolvió una malla estática. La prenda necesita Armature y skin weights para Unreal.");
     }
@@ -254,6 +287,7 @@ export async function POST(request: NextRequest) {
 
     const url = supabase.storage.from(OUTPUT_BUCKET).getPublicUrl(storagePath).data.publicUrl;
     const calibrated =
+      (skeletalExport && metadata?.readyForUnreal === true) ||
       metadata?.calibratedToAvatar === true ||
       worker.headers.get("x-clouva-scale") === "avatar-calibrated";
 
@@ -264,7 +298,7 @@ export async function POST(request: NextRequest) {
       path: storagePath,
       bucket: OUTPUT_BUCKET,
       metadata,
-      exportMode: skeletalExport ? "skeletal" : "static",
+      exportMode: skeletalExport ? "skeletal-calibrated" : "static",
       scale: calibrated
         ? `calibrado al avatar de ${targetHeightCm} cm · Import Scale 1`
         : "escala original preservada · centímetros Unreal",
