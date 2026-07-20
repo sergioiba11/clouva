@@ -1,4 +1,4 @@
-import { Matrix4, Object3D, Quaternion, Skeleton, SkinnedMesh, Vector3 } from "three";
+import { Box3, Matrix4, Object3D, Quaternion, Skeleton, SkinnedMesh, Vector3 } from "three";
 import { RIG_ERROR, findBone } from "./result-rig-v39-core";
 
 const HIP_ALIASES = ["hips", "pelvis", "hip", "j_bip_c_hips", "cc_base_hip"];
@@ -6,12 +6,25 @@ const HEAD_ALIASES = ["head", "j_bip_c_head", "cc_base_head"];
 const NECK_ALIASES = ["neck", "j_bip_c_neck", "cc_base_necktwist01"];
 const LEFT_SIDE_ALIASES = ["leftarm", "leftupperarm", "upperarml", "mixamorigleftarm", "j_bip_l_upperarm", "leftupleg", "leftupperleg", "thighl"];
 const RIGHT_SIDE_ALIASES = ["rightarm", "rightupperarm", "upperarmr", "mixamorigrightarm", "j_bip_r_upperarm", "rightupleg", "rightupperleg", "thighr"];
+const LEFT_SHOULDER_ALIASES = ["leftshoulder", "shoulderl", "claviclel", "j_bip_l_clavicle", "leftarm", "leftupperarm"];
+const RIGHT_SHOULDER_ALIASES = ["rightshoulder", "shoulderr", "clavicler", "j_bip_r_clavicle", "rightarm", "rightupperarm"];
+const LEFT_FOOT_ALIASES = ["leftfoot", "footl", "mixamorigleftfoot", "j_bip_l_foot"];
+const RIGHT_FOOT_ALIASES = ["rightfoot", "footr", "mixamorigrightfoot", "j_bip_r_foot"];
+const UPPER_CATEGORIES = new Set(["hoodie", "shirt", "remera", "jacket", "campera"]);
+const LOWER_CATEGORIES = new Set(["pants", "baggy", "shorts"]);
 
 export type RuntimeRigAlignment = {
   scale: number;
   rotationRadians: number;
   sourceHips: [number, number, number];
   targetHips: [number, number, number];
+  surfaceCorrection: {
+    category: string | null;
+    scale: number;
+    offset: [number, number, number];
+    sourceCenter: [number, number, number] | null;
+    targetCenter: [number, number, number] | null;
+  };
 };
 
 type AlignmentAnchors = {
@@ -24,6 +37,11 @@ type AlignmentAnchors = {
 type BakedRestMesh = {
   mesh: SkinnedMesh;
   geometry: SkinnedMesh["geometry"];
+};
+
+type SurfaceTarget = {
+  center: Vector3;
+  height: number;
 };
 
 function finiteVector(vector: Vector3) {
@@ -60,12 +78,69 @@ function projectedDirection(vector: Vector3, normal: Vector3) {
   return projected.normalize();
 }
 
-/**
- * GLB can encode a non-trivial bind matrix even when its bones are canonical.
- * Before replacing those bones with the avatar bones, capture the exact surface
- * produced by the exported bind pose. This prevents the garment from jumping
- * below the avatar or stretching toward the hips when motion begins.
- */
+function readGarmentCategory(root: Object3D) {
+  let category: string | null = null;
+  root.traverse((object: any) => {
+    if (category) return;
+    const raw = object.userData?.clouvaCategory ?? object.userData?.category;
+    if (typeof raw === "string" && raw.trim()) category = raw.trim().toLowerCase();
+  });
+  if (category) return category;
+
+  const haystack: string[] = [];
+  root.traverse((object) => haystack.push(object.name.toLowerCase()));
+  const joined = haystack.join(" ");
+  for (const candidate of [...UPPER_CATEGORIES, ...LOWER_CATEGORIES, "shoes", "zapatillas"]) {
+    if (joined.includes(candidate)) return candidate;
+  }
+  return null;
+}
+
+function skinnedSurfaceBounds(root: Object3D) {
+  const box = new Box3();
+  root.updateMatrixWorld(true);
+  root.traverse((object: any) => {
+    if (!object.isSkinnedMesh || !object.visible) return;
+    object.computeBoundingBox?.();
+    const local = object.boundingBox ?? object.geometry?.boundingBox;
+    if (local) box.union(local.clone().applyMatrix4(object.matrixWorld));
+  });
+  return box;
+}
+
+function resolveSurfaceTarget(avatarRoot: Object3D, category: string | null): SurfaceTarget | null {
+  const hips = worldPosition(avatarRoot, HIP_ALIASES);
+  if (!hips) return null;
+
+  if (!category || UPPER_CATEGORIES.has(category)) {
+    const neck = worldPosition(avatarRoot, NECK_ALIASES) ?? worldPosition(avatarRoot, HEAD_ALIASES);
+    if (!neck) return null;
+    const torsoHeight = neck.distanceTo(hips);
+    if (!Number.isFinite(torsoHeight) || torsoHeight < 1e-5) return null;
+
+    const leftShoulder = worldPosition(avatarRoot, LEFT_SHOULDER_ALIASES);
+    const rightShoulder = worldPosition(avatarRoot, RIGHT_SHOULDER_ALIASES);
+    const shoulderCenter = leftShoulder && rightShoulder
+      ? leftShoulder.clone().add(rightShoulder).multiplyScalar(0.5)
+      : neck;
+    const center = hips.clone().lerp(shoulderCenter, 0.58);
+    return { center, height: torsoHeight * 1.12 };
+  }
+
+  if (LOWER_CATEGORIES.has(category)) {
+    const leftFoot = worldPosition(avatarRoot, LEFT_FOOT_ALIASES);
+    const rightFoot = worldPosition(avatarRoot, RIGHT_FOOT_ALIASES);
+    if (!leftFoot || !rightFoot) return null;
+    const feetCenter = leftFoot.clone().add(rightFoot).multiplyScalar(0.5);
+    const legHeight = hips.distanceTo(feetCenter);
+    if (!Number.isFinite(legHeight) || legHeight < 1e-5) return null;
+    return { center: hips.clone().lerp(feetCenter, 0.52), height: legHeight * 1.02 };
+  }
+
+  return null;
+}
+
+/** Capture the exact visible local surface produced by the exported bind pose. */
 function captureExportedRestSurface(root: Object3D): BakedRestMesh[] {
   const captured: BakedRestMesh[] = [];
   root.updateMatrixWorld(true);
@@ -104,9 +179,8 @@ function applyCapturedRestSurface(captured: BakedRestMesh[]) {
   for (const { mesh, geometry } of captured) {
     mesh.geometry = geometry;
     mesh.updateMatrixWorld(true);
+    mesh.bindMode = "detached";
 
-    // Neutral rest bind in the already-aligned coordinate space. The shared
-    // skeleton remap that follows can now preserve the visible exported shape.
     const neutralSkeleton = new Skeleton([...mesh.skeleton.bones]);
     neutralSkeleton.calculateInverses();
     mesh.bind(neutralSkeleton, mesh.matrixWorld.clone());
@@ -115,12 +189,69 @@ function applyCapturedRestSurface(captured: BakedRestMesh[]) {
   }
 }
 
-/**
- * The Worker output and the active web avatar may contain the same official bones under
- * different FBX/GLB root conversions. This computes one similarity transform from the
- * shared bind-pose landmarks and applies it to the complete rig scene before validation.
- * The garment and its exported armature remain together; they are never normalized alone.
- */
+function correctSurfacePlacement(rigRoot: Object3D, avatarRoot: Object3D) {
+  const category = readGarmentCategory(rigRoot);
+  const target = resolveSurfaceTarget(avatarRoot, category);
+  const sourceBounds = skinnedSurfaceBounds(rigRoot);
+  if (!target || sourceBounds.isEmpty()) {
+    return {
+      category,
+      scale: 1,
+      offset: [0, 0, 0] as [number, number, number],
+      sourceCenter: null,
+      targetCenter: null,
+    };
+  }
+
+  const sourceCenter = sourceBounds.getCenter(new Vector3());
+  const sourceSize = sourceBounds.getSize(new Vector3());
+  const sourceHeight = Math.max(sourceSize.y, 1e-5);
+  const rawScale = target.height / sourceHeight;
+  const scale = rawScale < 0.62 || rawScale > 1.65
+    ? Math.max(0.62, Math.min(1.65, rawScale))
+    : 1;
+  const offset = target.center.clone().sub(sourceCenter);
+
+  rigRoot.updateMatrixWorld(true);
+  rigRoot.traverse((object: any) => {
+    if (!object.isSkinnedMesh) return;
+    const mesh = object as SkinnedMesh;
+    const position = mesh.geometry.getAttribute("position");
+    if (!position) return;
+
+    const inverseWorld = mesh.matrixWorld.clone().invert();
+    const vertex = new Vector3();
+    for (let index = 0; index < position.count; index += 1) {
+      vertex.fromBufferAttribute(position, index);
+      vertex.applyMatrix4(mesh.matrixWorld);
+      vertex.sub(sourceCenter).multiplyScalar(scale).add(target.center);
+      vertex.applyMatrix4(inverseWorld);
+      position.setXYZ(index, vertex.x, vertex.y, vertex.z);
+    }
+    position.needsUpdate = true;
+    if (mesh.geometry.getAttribute("normal")) mesh.geometry.computeVertexNormals();
+    mesh.geometry.computeBoundingBox();
+    mesh.geometry.computeBoundingSphere();
+    mesh.frustumCulled = false;
+  });
+  rigRoot.updateMatrixWorld(true);
+
+  const correctedBounds = skinnedSurfaceBounds(rigRoot);
+  const correctedCenter = correctedBounds.getCenter(new Vector3());
+  if (correctedBounds.isEmpty() || correctedCenter.distanceTo(target.center) > target.height * 0.08) {
+    throw new Error(RIG_ERROR);
+  }
+
+  return {
+    category,
+    scale,
+    offset: [offset.x, offset.y, offset.z] as [number, number, number],
+    sourceCenter: [sourceCenter.x, sourceCenter.y, sourceCenter.z] as [number, number, number],
+    targetCenter: [target.center.x, target.center.y, target.center.z] as [number, number, number],
+  };
+}
+
+/** Align the exported armature, then place its visible garment on the matching avatar region. */
 export function alignRigToActiveAvatar(rigRoot: Object3D, avatarRoot: Object3D): RuntimeRigAlignment {
   const source = resolveAnchors(rigRoot);
   const target = resolveAnchors(avatarRoot);
@@ -174,10 +305,13 @@ export function alignRigToActiveAvatar(rigRoot: Object3D, avatarRoot: Object3D):
     throw new Error(RIG_ERROR);
   }
 
+  const surfaceCorrection = correctSurfacePlacement(rigRoot, avatarRoot);
+
   return {
     scale,
     rotationRadians,
     sourceHips: [source.hips.x, source.hips.y, source.hips.z],
     targetHips: [target.hips.x, target.hips.y, target.hips.z],
+    surfaceCorrection,
   };
 }
