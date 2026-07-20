@@ -1,1 +1,1 @@
-export { ResultRigPreview, type ResultRigInfo } from "./ResultRigPreviewV39";
+export { ResultRigPreview, type ResultRigInfo } from "./ResultRigPreviewV40";
