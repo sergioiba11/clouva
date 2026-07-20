@@ -1,4 +1,4 @@
-import { Matrix4, Object3D, Quaternion, Vector3 } from "three";
+import { Matrix4, Object3D, Quaternion, Skeleton, SkinnedMesh, Vector3 } from "three";
 import { RIG_ERROR, findBone } from "./result-rig-v39-core";
 
 const HIP_ALIASES = ["hips", "pelvis", "hip", "j_bip_c_hips", "cc_base_hip"];
@@ -19,6 +19,11 @@ type AlignmentAnchors = {
   upper: Vector3;
   left: Vector3;
   right: Vector3;
+};
+
+type BakedRestMesh = {
+  mesh: SkinnedMesh;
+  geometry: SkinnedMesh["geometry"];
 };
 
 function finiteVector(vector: Vector3) {
@@ -56,6 +61,61 @@ function projectedDirection(vector: Vector3, normal: Vector3) {
 }
 
 /**
+ * GLB can encode a non-trivial bind matrix even when its bones are canonical.
+ * Before replacing those bones with the avatar bones, capture the exact surface
+ * produced by the exported bind pose. This prevents the garment from jumping
+ * below the avatar or stretching toward the hips when motion begins.
+ */
+function captureExportedRestSurface(root: Object3D): BakedRestMesh[] {
+  const captured: BakedRestMesh[] = [];
+  root.updateMatrixWorld(true);
+
+  root.traverse((object: any) => {
+    if (!object.isSkinnedMesh) return;
+    const mesh = object as SkinnedMesh;
+    const skeleton = mesh.skeleton;
+    const position = mesh.geometry.getAttribute("position");
+    const skinIndex = mesh.geometry.getAttribute("skinIndex");
+    const skinWeight = mesh.geometry.getAttribute("skinWeight");
+    if (!skeleton?.bones.length || !position || !skinIndex || !skinWeight) return;
+
+    skeleton.update();
+    const geometry = mesh.geometry.clone();
+    const bakedPosition = geometry.getAttribute("position");
+    const vertex = new Vector3();
+
+    for (let index = 0; index < position.count; index += 1) {
+      vertex.fromBufferAttribute(position, index);
+      mesh.applyBoneTransform(index, vertex);
+      bakedPosition.setXYZ(index, vertex.x, vertex.y, vertex.z);
+    }
+
+    bakedPosition.needsUpdate = true;
+    if (geometry.getAttribute("normal")) geometry.computeVertexNormals();
+    geometry.computeBoundingBox();
+    geometry.computeBoundingSphere();
+    captured.push({ mesh, geometry });
+  });
+
+  return captured;
+}
+
+function applyCapturedRestSurface(captured: BakedRestMesh[]) {
+  for (const { mesh, geometry } of captured) {
+    mesh.geometry = geometry;
+    mesh.updateMatrixWorld(true);
+
+    // Neutral rest bind in the already-aligned coordinate space. The shared
+    // skeleton remap that follows can now preserve the visible exported shape.
+    const neutralSkeleton = new Skeleton([...mesh.skeleton.bones]);
+    neutralSkeleton.calculateInverses();
+    mesh.bind(neutralSkeleton, mesh.matrixWorld.clone());
+    mesh.normalizeSkinWeights();
+    mesh.frustumCulled = false;
+  }
+}
+
+/**
  * The Worker output and the active web avatar may contain the same official bones under
  * different FBX/GLB root conversions. This computes one similarity transform from the
  * shared bind-pose landmarks and applies it to the complete rig scene before validation.
@@ -64,6 +124,7 @@ function projectedDirection(vector: Vector3, normal: Vector3) {
 export function alignRigToActiveAvatar(rigRoot: Object3D, avatarRoot: Object3D): RuntimeRigAlignment {
   const source = resolveAnchors(rigRoot);
   const target = resolveAnchors(avatarRoot);
+  const capturedRestSurface = captureExportedRestSurface(rigRoot);
 
   const sourceUp = source.upper.clone().sub(source.hips);
   const targetUp = target.upper.clone().sub(target.hips);
@@ -104,6 +165,8 @@ export function alignRigToActiveAvatar(rigRoot: Object3D, avatarRoot: Object3D):
   const parentWorld = rigRoot.parent?.matrixWorld.clone() ?? new Matrix4().identity();
   const localAlignment = parentWorld.clone().invert().multiply(worldAlignment).multiply(parentWorld);
   rigRoot.applyMatrix4(localAlignment);
+  rigRoot.updateMatrixWorld(true);
+  applyCapturedRestSurface(capturedRestSurface);
   rigRoot.updateMatrixWorld(true);
 
   const alignedHips = worldPosition(rigRoot, HIP_ALIASES);
