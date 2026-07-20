@@ -119,9 +119,9 @@ test("V15 usa la malla corporal como fuente de verdad para escala y roundtrip", 
   assert.match(garmentDockerfile, /rig_garment_v15\.py/);
 });
 
-test("V28 normaliza la prenda con la malla visible del avatar activo", () => {
-  assert.match(garmentDockerfile, /CLOUVA_RIG_VERSION=v28/);
-  assert.match(garmentDockerfile, /v28-active-avatar-reference/);
+test("V43 conserva el molde corporal y activa la normalización canónica limpia", () => {
+  assert.match(garmentDockerfile, /CLOUVA_RIG_VERSION=v43/);
+  assert.match(garmentDockerfile, /CLOUVA_CLEAN_SOURCE_ATTEMPT=v43/);
   assert.match(garmentApiV8Source, /def run_fresh_garment_rig/);
   assert.match(garmentApiV8Source, /def resolve_user_avatar_url/);
   assert.match(garmentApiV8Source, /CLOUVA_AVATAR_REFERENCE_PATH/);
