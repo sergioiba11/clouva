@@ -8,6 +8,7 @@ import time
 import uuid
 from pathlib import Path
 from urllib.request import Request, urlopen
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -28,6 +29,10 @@ BLENDER_TIMEOUT_SECONDS = int(os.getenv("BLENDER_TIMEOUT_SECONDS", "420"))
 # user_avatars (is_active=true) en cada job, así que re-riggear el avatar oficial desde
 # /admin no requiere volver a tocar variables de entorno acá.
 CLOUVA_AVATAR_URL_STATIC = os.getenv("CLOUVA_AVATAR_URL") or os.getenv("CLOUVA_BASE_AVATAR_URL")
+CLOUVA_AVATAR_REFERENCE_URL = os.getenv("CLOUVA_AVATAR_REFERENCE_URL")
+CLOUVA_AVATAR_REFERENCE_METADATA_URL = os.getenv("CLOUVA_AVATAR_REFERENCE_METADATA_URL")
+CLOUVA_AVATAR_REFERENCE_PATH = os.getenv("CLOUVA_AVATAR_REFERENCE_PATH")
+CLOUVA_AVATAR_REFERENCE_METADATA_PATH = os.getenv("CLOUVA_AVATAR_REFERENCE_METADATA_PATH")
 SUPABASE_URL = (os.getenv("NEXT_PUBLIC_SUPABASE_URL") or os.getenv("SUPABASE_URL") or "").rstrip("/")
 SUPABASE_SERVICE_ROLE_KEY = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
 CLOUVA_OFFICIAL_AVATAR_USER_ID = os.getenv("CLOUVA_OFFICIAL_AVATAR_USER_ID")
@@ -69,6 +74,12 @@ def set_job(job_id: str, **changes) -> None:
 
 
 def download(url: str, destination: Path) -> None:
+    local_source = Path(url)
+    if local_source.is_file():
+        if local_source.stat().st_size > MAX_DOWNLOAD_BYTES:
+            raise RuntimeError(f"Local file exceeds {MAX_DOWNLOAD_BYTES} bytes")
+        shutil.copy2(local_source, destination)
+        return
     request = Request(url, headers={"User-Agent": "CLOUVA-Garment-Rig/1.0"})
     with urlopen(request, timeout=90) as response, destination.open("wb") as output:
         declared_size = response.headers.get("Content-Length")
@@ -111,6 +122,10 @@ def fetch_active_avatar_url_from_supabase() -> str | None:
 
 
 def resolve_avatar_url() -> str | None:
+    if CLOUVA_AVATAR_REFERENCE_PATH and Path(CLOUVA_AVATAR_REFERENCE_PATH).is_file():
+        return CLOUVA_AVATAR_REFERENCE_PATH
+    if CLOUVA_AVATAR_REFERENCE_URL:
+        return CLOUVA_AVATAR_REFERENCE_URL
     if CLOUVA_AVATAR_URL_STATIC:
         return CLOUVA_AVATAR_URL_STATIC
     now = time.monotonic()
@@ -124,6 +139,11 @@ def resolve_avatar_url() -> str | None:
     _AVATAR_URL_CACHE["url"] = url
     _AVATAR_URL_CACHE["checked_at"] = now
     return url
+
+
+def avatar_download_name(url: str) -> str:
+    suffix = Path(urlparse(url).path).suffix.lower()
+    return "AvatarReference.fbx" if suffix == ".fbx" else "avatar.glb"
 
 
 def cleanup(path: Path) -> None:
@@ -473,7 +493,8 @@ def health():
         "blender": BLENDER_BIN,
         "script_exists": SCRIPT_PATH.exists(),
         "avatar_configured": bool(resolve_avatar_url()),
-        "avatar_resolution": "static_env" if CLOUVA_AVATAR_URL_STATIC else ("supabase_active_avatar" if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY and CLOUVA_OFFICIAL_AVATAR_USER_ID else "unconfigured"),
+        "avatar_resolution": "bundled_unreal_fbx_reference" if CLOUVA_AVATAR_REFERENCE_PATH else ("unreal_fbx_reference" if CLOUVA_AVATAR_REFERENCE_URL else ("static_env" if CLOUVA_AVATAR_URL_STATIC else ("supabase_active_avatar" if SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY and CLOUVA_OFFICIAL_AVATAR_USER_ID else "unconfigured"))),
+        "avatar_reference_metadata_configured": bool(CLOUVA_AVATAR_REFERENCE_METADATA_PATH or CLOUVA_AVATAR_REFERENCE_METADATA_URL),
         "object_rig_retarget_supported": True,
         "hat_head_anchor_supported": True,
         "hat_default_lift_cm": HAT_DEFAULT_LIFT_CM,
@@ -505,7 +526,8 @@ async def create_job(file: UploadFile = File(...), job: str = Form("{}")):
 
     job_id = uuid.uuid4().hex
     job_dir = Path(tempfile.mkdtemp(prefix=f"clouva-rig-{job_id}-"))
-    avatar_path = job_dir / "avatar.glb"
+    avatar_path = job_dir / avatar_download_name(avatar_url)
+    avatar_metadata_path = job_dir / "clouva_avatar_data.json"
     garment_path = job_dir / "garment.glb"
     output_path = job_dir / "rigged.glb"
 
@@ -520,6 +542,9 @@ async def create_job(file: UploadFile = File(...), job: str = Form("{}")):
 
     try:
         download(avatar_url, avatar_path)
+        metadata_source = CLOUVA_AVATAR_REFERENCE_METADATA_PATH or CLOUVA_AVATAR_REFERENCE_METADATA_URL
+        if metadata_source:
+            download(metadata_source, avatar_metadata_path)
     except Exception as exc:
         cleanup(job_dir)
         raise HTTPException(status_code=502, detail=f"No se pudo descargar el avatar base: {exc}") from exc
@@ -529,7 +554,7 @@ async def create_job(file: UploadFile = File(...), job: str = Form("{}")):
         id=job_id,
         status="queued",
         progress=5,
-        stage="GLB recibido y en cola",
+        stage="Prenda recibida y molde oficial preparado",
         resultUrl=None,
         error=None,
         job_dir=str(job_dir),
