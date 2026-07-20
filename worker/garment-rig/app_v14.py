@@ -20,6 +20,8 @@ UNREAL_EXPORT_VERSION = current.UNREAL_EXPORT_VERSION
 EXPORT_UNREAL_SCRIPT_PATH = current.EXPORT_UNREAL_SCRIPT_PATH
 extract_blender_failure = current.extract_blender_failure
 user_facing_failure = current.user_facing_failure
+MAX_CONCURRENT_BLENDER_JOBS = current.MAX_CONCURRENT_BLENDER_JOBS
+BLENDER_SINGLE_FLIGHT_VERSION = current.BLENDER_SINGLE_FLIGHT_VERSION
 RIG_DIAGNOSTICS_VERSION = "v43-canonical-bind-diagnostics"
 CLEAN_ATTEMPT_VERSION = "v43-fresh-source-per-attempt"
 
