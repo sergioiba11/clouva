@@ -15,6 +15,9 @@ type Props = {
   accessToken: string;
   pose: RiggedReviewPose;
   view: RiggedReviewView;
+  showAvatar?: boolean;
+  showGarment?: boolean;
+  showRig?: boolean;
   onStatus: (status: string) => void;
   onProcessed: () => Promise<void> | void;
 };
@@ -35,6 +38,9 @@ export function RealGarmentReview({
   accessToken,
   pose,
   view,
+  showAvatar = true,
+  showGarment = true,
+  showRig = false,
   onStatus,
   onProcessed,
 }: Props) {
@@ -73,7 +79,15 @@ export function RealGarmentReview({
   if (rigged && modelUrl) {
     return (
       <div className={styles.riggedStage}>
-        <RiggedGarmentReviewViewer modelUrl={modelUrl} pose={pose} view={view} onStatus={onStatus} />
+        <RiggedGarmentReviewViewer
+          modelUrl={modelUrl}
+          pose={pose}
+          view={view}
+          showAvatar={showAvatar}
+          showGarment={showGarment}
+          showRig={showRig}
+          onStatus={onStatus}
+        />
         <span className={styles.realBadge}><ShieldCheck /> RIG REAL</span>
       </div>
     );
@@ -81,7 +95,7 @@ export function RealGarmentReview({
 
   return (
     <div className={styles.rawStage}>
-      <div className={styles.rawModel}>
+      <div className={styles.rawModel} style={{ opacity: showGarment ? 1 : 0.08 }}>
         {modelUrl ? (
           <StandaloneObjectPreview modelUrl={modelUrl} />
         ) : thumbnailUrl ? (
