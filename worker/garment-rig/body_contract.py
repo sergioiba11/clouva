@@ -29,13 +29,14 @@ def reset_scene() -> None:
 
 
 def import_avatar(path: Path) -> None:
+    header = path.read_bytes()[:32]
     suffix = path.suffix.lower()
-    if suffix in {".glb", ".gltf"}:
+    if header[:4] == b"glTF" or suffix in {".glb", ".gltf"}:
         bpy.ops.import_scene.gltf(filepath=str(path))
-    elif suffix == ".fbx":
+    elif header.startswith(b"Kaydara FBX Binary") or suffix == ".fbx":
         bpy.ops.import_scene.fbx(filepath=str(path), automatic_bone_orientation=False)
     else:
-        raise RuntimeError(f"Formato de avatar no soportado: {suffix}")
+        raise RuntimeError("El archivo del avatar no es un GLB, GLTF o FBX válido")
 
 
 def world_vertices() -> list[tuple[float, float, float]]:
