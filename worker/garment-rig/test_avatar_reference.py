@@ -3,6 +3,7 @@ import os
 
 import bpy
 from mathutils import Vector
+from avatar_reference import canonicalize_and_validate_bones
 
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -44,10 +45,8 @@ def main():
     assert meshes, "The Unreal FBX contains no body mesh"
     armature = armatures[0]
 
-    expected = {str(item["name"]) for item in metadata.get("bones", [])}
+    expected_parents = canonicalize_and_validate_bones(armature, metadata)
     actual = {bone.name for bone in armature.data.bones}
-    assert expected, "Rig metadata contains no bones"
-    assert expected == actual, f"Rig mismatch missing={sorted(expected-actual)} extra={sorted(actual-expected)}"
 
     vertices = sum(len(mesh.data.vertices) for mesh in meshes)
     weighted = sum(
@@ -69,7 +68,8 @@ def main():
     )
     print(
         "[clouva] Unreal AvatarReference validated "
-        f"bones={len(actual)} meshes={len(meshes)} vertices={vertices} weighted={weighted} "
+        f"bones={len(actual)}/{len(expected_parents)} meshes={len(meshes)} "
+        f"vertices={vertices} weighted={weighted} "
         f"height={blender_height:.6f} unrealHeightCm={unreal_height_cm:.6f}",
         flush=True,
     )

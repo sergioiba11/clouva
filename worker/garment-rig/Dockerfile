@@ -27,7 +27,7 @@ RUN wget -q "$BLENDER_URL" -O /tmp/blender.tar.xz \
 RUN pip install --no-cache-dir --break-system-packages fastapi uvicorn pydantic python-multipart
 
 WORKDIR /app
-COPY app.py app_v5.py app_v6.py app_v7.py app_v8.py app_v9.py app_v10.py rig_garment.py rig_garment_v5.py rig_garment_v10.py rig_garment_v11.py rig_garment_v12.py rig_garment_v13.py rig_garment_v14.py rig_garment_v15.py rig_garment_v16.py rig_garment_v17.py rig_garment_v18.py rig_garment_v19.py rig_garment_v20.py rig_object.py attach_object.py export_unreal.py export_unreal_clean.py export_unreal_v31.py inspect_garment.py test_export_unreal_units.py test_avatar_reference.py ./
+COPY app.py app_v5.py app_v6.py app_v7.py app_v8.py app_v9.py app_v10.py avatar_reference.py rig_garment.py rig_garment_v5.py rig_garment_v10.py rig_garment_v11.py rig_garment_v12.py rig_garment_v13.py rig_garment_v14.py rig_garment_v15.py rig_garment_v16.py rig_garment_v17.py rig_garment_v18.py rig_garment_v19.py rig_garment_v20.py rig_object.py attach_object.py export_unreal.py export_unreal_clean.py export_unreal_v31.py inspect_garment.py test_export_unreal_units.py test_avatar_reference.py ./
 COPY avatar-reference ./avatar-reference
 RUN mv app.py app_legacy.py \
     && mv app_v10.py app.py \
@@ -89,8 +89,8 @@ RUN test -f /app/app.py \
     && cd /tmp \
     && env -u PYTHONPATH /opt/blender/blender --background --factory-startup --python-expr "import importlib.util; spec=importlib.util.spec_from_file_location('clouva_export_unreal_v31','/app/export_unreal_v31.py'); module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module); assert module.BASE_EXPORT_PATH == module.SCRIPT_DIR / 'export_unreal_clean.py'; assert module.base.prepare_wearable_object.__name__ == 'prepare_wearable_object_v31'; assert module.base.validate_object.__name__ == 'validate_object_v31'; assert module.EXPORT_VERSION == 'v31-garment-mesh-target-height'; assert module.base.FBX_APPLY_UNIT_SCALE is True; print('[clouva] V31 absolute loader works outside /app without PYTHONPATH')" \
     && cd /app \
-    && /opt/blender/blender --background --factory-startup --python /app/test_export_unreal_units.py \
-    && /opt/blender/blender --background --factory-startup --python /app/test_avatar_reference.py \
+    && env PYTHONPATH=/app /opt/blender/blender --background --factory-startup --python-exit-code 1 --python /app/test_export_unreal_units.py \
+    && env PYTHONPATH=/app /opt/blender/blender --background --factory-startup --python-exit-code 1 --python /app/test_avatar_reference.py \
     && /opt/blender/blender --background --factory-startup --python-expr "import inspect; namespace={'__name__':'clouva_rig_import_test','__file__':'/app/rig_garment.py'}; exec(compile(open('/app/rig_garment.py', encoding='utf-8').read(), '/app/rig_garment.py', 'exec'), namespace); prepare=namespace['legacy'].prepare_garment; assert prepare.__name__ == 'prepare_garment_v17'; assert 'bake_visible_geometry' in prepare.__globals__; assert 'new_from_object' in inspect.getsource(prepare.__globals__['bake_visible_geometry']); print('[clouva] Blender V29 legacy recovery OK')"
 
 ENV BLENDER_BIN=/usr/local/bin/blender

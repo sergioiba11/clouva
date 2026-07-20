@@ -1,4 +1,5 @@
 import bpy
+from avatar_reference import canonicalize_and_validate_bones
 import json
 import os
 import re
@@ -94,18 +95,7 @@ def validate_unreal_avatar_reference(avatar_path, avatar_objects, armature, body
         metadata = json.load(handle)
     if metadata.get("schemaVersion") != 1:
         raise RuntimeError("Official Unreal avatar metadata has an unsupported schema")
-    expected_bones = {
-        str(item.get("name"))
-        for item in metadata.get("bones", [])
-        if isinstance(item, dict) and item.get("name")
-    }
-    actual_bones = {bone.name for bone in armature.data.bones}
-    missing = sorted(expected_bones - actual_bones)
-    if missing:
-        raise RuntimeError(
-            "Official Unreal avatar FBX does not match its rig metadata; missing bones: "
-            + ", ".join(missing[:12])
-        )
+    expected_bones = canonicalize_and_validate_bones(armature, metadata)
     for obj in avatar_objects:
         obj["clouvaAvatarReferenceSource"] = "unreal-fbx"
         obj["clouvaAvatarReferenceSchema"] = 1

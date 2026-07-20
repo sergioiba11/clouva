@@ -37,7 +37,7 @@ jobs:
         run: npm test
 
       - name: Validate worker Python
-        run: python3 -m py_compile worker/garment-rig/app.py worker/garment-rig/app_v5.py worker/garment-rig/rig_garment.py worker/garment-rig/rig_garment_v5.py worker/garment-rig/rig_garment_v10.py worker/garment-rig/rig_garment_v11.py worker/garment-rig/rig_garment_v12.py worker/garment-rig/rig_garment_v13.py worker/garment-rig/rig_garment_v14.py worker/garment-rig/rig_garment_v15.py worker/garment-rig/test_avatar_reference.py tools/unreal_avatar_export/export_clouva_avatar.py
+        run: python3 -m py_compile worker/garment-rig/app.py worker/garment-rig/app_v5.py worker/garment-rig/avatar_reference.py worker/garment-rig/rig_garment.py worker/garment-rig/rig_garment_v5.py worker/garment-rig/rig_garment_v10.py worker/garment-rig/rig_garment_v11.py worker/garment-rig/rig_garment_v12.py worker/garment-rig/rig_garment_v13.py worker/garment-rig/rig_garment_v14.py worker/garment-rig/rig_garment_v15.py worker/garment-rig/test_avatar_reference.py tools/unreal_avatar_export/export_clouva_avatar.py
 
       - name: Build and validate Blender worker image
         run: docker build --progress=plain -t clouva-garment-rig:test worker/garment-rig
