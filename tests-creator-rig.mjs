@@ -140,7 +140,7 @@ test("V30 evita doble rigging y separa Meshy original de prenda ajustada", () =>
   assert.match(garmentApiV8Source, /GARMENT_SOURCE_ROUTING_VERSION = "v30-single-pass"/);
   assert.match(garmentApiV8Source, /source_already_rigged: bool = False/);
   assert.match(garmentApiV8Source, /if not request\.source_already_rigged/);
-  assert.match(garmentApiV8Source, /preserve-existing-rig/);
+  assert.match(garmentApiV8Source, /X-Clouva-Fresh-Rig/);
   assert.match(unrealExportRouteSource, /source_already_rigged: sourceAlreadyRigged/);
   assert.match(unrealExportRouteSource, /single-pass-auto-rig/);
   assert.doesNotMatch(unrealExportRouteSource, /finalizeClothingItem/);
