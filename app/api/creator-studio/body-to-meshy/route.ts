@@ -9,13 +9,13 @@ export const maxDuration = 300;
 const CATEGORIES = new Set(["hoodie", "shirt", "jacket", "pants", "shorts", "shoes", "accessory"]);
 
 const CATEGORY_PROMPTS: Record<string, string> = {
-  hoodie: "A standalone hoodie garment only, hollow inside, with a clean neck opening, two sleeves, torso shell, cuffs and hem. No human body.",
-  shirt: "A standalone T-shirt garment only, hollow inside, with neck opening, sleeves and torso shell. No human body.",
-  jacket: "A standalone jacket garment only, hollow inside, with openable front, sleeves, cuffs and collar. No human body.",
-  pants: "Standalone pants only, hollow inside, with waistband and two separated pant legs. No human body.",
-  shorts: "Standalone shorts only, hollow inside, with waistband and two separated leg openings. No human body.",
-  shoes: "A standalone matched pair of shoes only. No feet, legs or human body.",
-  accessory: "A standalone wearable accessory only. No mannequin, no human body and no unrelated geometry.",
+  hoodie: "standalone hollow hoodie with neck opening, two sleeves, cuffs and hem",
+  shirt: "standalone hollow T-shirt with neck opening, sleeves and torso shell",
+  jacket: "standalone hollow jacket with sleeves, cuffs, collar and openable front",
+  pants: "standalone hollow pants with waistband and two separated pant legs",
+  shorts: "standalone hollow shorts with waistband and two separated leg openings",
+  shoes: "standalone matched pair of shoes without feet or legs",
+  accessory: "standalone wearable accessory without a mannequin or body",
 };
 
 type BodySection = {
@@ -127,26 +127,20 @@ async function requestBodyContract(avatarUrl: string, category: string): Promise
 }
 
 function number(value: unknown) {
-  return Number.isFinite(Number(value)) ? Number(value).toFixed(1) : "desconocido";
+  return Number.isFinite(Number(value)) ? Number(value).toFixed(1) : "unknown";
 }
 
 function bodyAwarePrompt(category: string, fit: string, color: string, description: string, contract: BodyContract) {
   const sections = contract.sections ?? {};
   const target = contract.garmentTarget ?? {};
   return [
-    "Create ONLY the requested wearable garment as an isolated 3D asset.",
-    "Do not generate a person, mannequin, skin, head, hair, face, hands, arms, legs, feet or full body.",
-    "The garment must be hollow, centered at world origin, upright, symmetrical, facing forward and easy to rig.",
-    "Use clean connected topology, realistic cloth thickness, closed seams and no floating fragments.",
-    CATEGORY_PROMPTS[category] ?? CATEGORY_PROMPTS.accessory,
-    `This garment is made for one exact stylized avatar measured by Blender: body height ${number(contract.heightCm)} cm, arm span ${number(contract.armSpanCm)} cm.`,
-    `Body sections: chest ${number(sections.chest?.widthCm)} x ${number(sections.chest?.depthCm)} cm, waist ${number(sections.waist?.widthCm)} x ${number(sections.waist?.depthCm)} cm, hips ${number(sections.hips?.widthCm)} x ${number(sections.hips?.depthCm)} cm, shoulders ${number(sections.shoulders?.widthCm)} cm wide.`,
-    `Target garment shell: chest width ${number(target.chestWidthCm)} cm, chest depth ${number(target.chestDepthCm)} cm, waist width ${number(target.waistWidthCm)} cm, hip width ${number(target.hipWidthCm)} cm, shoulder width ${number(target.shoulderWidthCm)} cm.`,
-    `Keep approximately ${number(contract.recommendedClearanceCm)} cm of clearance from the body surface.`,
-    fit ? `Fit: ${fit}.` : "",
-    color ? `Main color: ${color}.` : "",
-    description,
-  ].filter(Boolean).join(" ").slice(0, 1400);
+    `Create a ${CATEGORY_PROMPTS[category] ?? CATEGORY_PROMPTS.accessory}.`,
+    `Design: ${description}.`,
+    `Fit ${fit || "regular"}; color ${color || "black"}.`,
+    "Garment only: no person, mannequin, skin, head, hands, arms, legs or feet. Hollow, symmetrical, upright, clean connected topology and cloth thickness.",
+    `Blender body measurements in cm: height ${number(contract.heightCm)}, chest ${number(sections.chest?.widthCm)}x${number(sections.chest?.depthCm)}, waist ${number(sections.waist?.widthCm)}x${number(sections.waist?.depthCm)}, hips ${number(sections.hips?.widthCm)}x${number(sections.hips?.depthCm)}, shoulders ${number(sections.shoulders?.widthCm)}.`,
+    `Target shell in cm: chest ${number(target.chestWidthCm)}x${number(target.chestDepthCm)}, waist ${number(target.waistWidthCm)}, hips ${number(target.hipWidthCm)}, shoulders ${number(target.shoulderWidthCm)}; clearance ${number(contract.recommendedClearanceCm)}.`,
+  ].join(" ").slice(0, 600);
 }
 
 export async function POST(request: NextRequest) {
@@ -161,7 +155,7 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
     const category = String(body?.category ?? "hoodie").trim().toLowerCase();
-    const description = String(body?.description ?? "").trim().slice(0, 700);
+    const description = String(body?.description ?? "").trim().slice(0, 240);
     const fit = String(body?.fit ?? "Regular").trim().slice(0, 40);
     const color = String(body?.color ?? "black").trim().slice(0, 40);
     const name = String(body?.name ?? "Prueba cuerpo → Meshy").trim().slice(0, 80) || "Prueba cuerpo → Meshy";
