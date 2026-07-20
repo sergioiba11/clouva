@@ -17,6 +17,7 @@ export type BlenderRequest = {
   templateId?: string | null;
   sourceStoragePath?: string | null;
   preserveExistingSkinning?: boolean;
+  cleanSourceRetry?: boolean;
 };
 
 export type BlenderJob = ReturnType<typeof buildBlenderJob>;
@@ -32,11 +33,14 @@ export function buildBlenderJob(payload: BlenderRequest) {
   const lowerGarment = category === "pants" || category === "shorts";
   const automaticFit = deformable && payload.previewSettings?.automaticFit !== false;
   const manualCorrectionEnabled = deformable && Boolean(payload.previewSettings?.manualCorrectionEnabled);
+  const cleanSourceRetry = payload.cleanSourceRetry !== false;
 
   return {
     type: "clouva_creator_pipeline",
     operation: "fit_and_rig_reference",
     pipelineVersion: "body-mesh-contract-v15",
+    canonicalRigContract: deformable ? "unreal-rest-bind-v43" : null,
+    sourceIsolation: cleanSourceRetry ? "fresh-temp-copy" : "request-source",
     riggingStrategy: deformable
       ? "fresh_transfer_from_active_avatar"
       : templateMode
@@ -55,6 +59,8 @@ export function buildBlenderJob(payload: BlenderRequest) {
       rigProfileVersion: deformable ? 15 : payload.previewSettings?.rigProfileVersion,
       automaticFit,
       manualCorrectionEnabled,
+      cleanSourceRetry,
+      canonicalRigContract: deformable ? "unreal-rest-bind-v43" : null,
       avatarMoldSource: deformable ? "official-unreal-fbx" : payload.previewSettings?.avatarMoldSource,
     },
     options: {
@@ -68,6 +74,15 @@ export function buildBlenderJob(payload: BlenderRequest) {
       manualCorrectionOptional: deformable,
       manualCorrectionEnabled,
       normalizeSourcePose: deformable,
+      normalizeAvatarBeforeSkinning: deformable,
+      evaluateAvatarInRestPosition: deformable,
+      requireSharedOriginalArmature: deformable,
+      forbidPostSkinScale: deformable,
+      detectUnitsFromSceneAndBounds: deformable,
+      fixedScaleOverride: null,
+      cleanSourceRetry,
+      freshBlenderScene: true,
+      reusePartialScene: false,
       useOfficialAvatarMesh: deformable,
       useOfficialAvatarSkeleton: deformable,
       useOfficialAvatarWeights: deformable,
@@ -98,6 +113,10 @@ export function buildBlenderJob(payload: BlenderRequest) {
       validation: {
         requireArmature: true,
         requireWeightedVertices: true,
+        requireLocalScaleIdentity: deformable,
+        requireWorldMatrixIdentity: deformable,
+        requireBindPoseEqualsRestPose: deformable,
+        requireSameOriginalArmature: deformable,
         requireBilateralSleeveWeights: upperGarment,
         requireBilateralLegWeights: lowerGarment,
         requireWaistAtHips: lowerGarment,
