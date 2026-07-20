@@ -28,10 +28,10 @@ import {
   Wrench,
   XCircle,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
-import { SmartTryOnViewer, type TryOnAdjustments } from "@/components/creator-studio/SmartTryOnViewer";
 import { supabase } from "@/lib/supabase";
+import { RealGarmentReview } from "./RealGarmentReview";
 import { StandaloneObjectPreview } from "./StandaloneObjectPreview";
 import styles from "./unreal-object-export.module.css";
 
@@ -129,7 +129,6 @@ type WorkerDiagnostics = {
 
 type ReviewView = "Frente" | "Lateral" | "Espalda";
 type ReviewPose = "Idle" | "T-Pose" | "Walk";
-type ReviewFit = "Slim" | "Regular" | "Oversize";
 
 const CATEGORY_LABELS: Record<string, string> = {
   hoodie: "Buzo",
@@ -149,23 +148,7 @@ const STAGE_STATUS_LABELS: Record<DiagnosticStatus, string> = {
   info: "INFO",
 };
 
-const DEFAULT_ADJUSTMENTS: TryOnAdjustments = {
-  scale: 100,
-  length: 100,
-  width: 100,
-  x: 0,
-  y: 0,
-  rotation: 0,
-  height: 0,
-  distance: 0,
-  sleeveLength: 100,
-  legLength: 100,
-  waistHeight: 0,
-  neckSize: 100,
-  hoodSize: 100,
-};
-
-const APPROVAL_STORAGE_KEY = "clouva-unreal-visual-approvals-v1";
+const APPROVAL_STORAGE_KEY = "clouva-unreal-visual-approvals-v2";
 
 async function listGlbs(userId: string, path = userId, depth = 0): Promise<StorageAsset[]> {
   const { data, error } = await supabase.storage.from("creator-assets").list(path, {
@@ -209,14 +192,6 @@ function stageIcon(status: DiagnosticStatus) {
   return <CircleDot />;
 }
 
-function tryOnCategory(category: string) {
-  if (category === "shirt") return "remera";
-  if (category === "jacket") return "campera";
-  if (category === "pants" || category === "shorts") return "baggy";
-  if (category === "shoes") return "zapatillas";
-  return category;
-}
-
 function friendlyExportError(raw: string) {
   if (/module not found|modulenotfound/i.test(raw)) return "El exportador de Blender no terminó de cargar. Revisá el registro técnico.";
   if (/validation|validaci/i.test(raw)) return "Blender procesó la prenda, pero la validación final encontró algo para corregir.";
@@ -239,7 +214,6 @@ export function UnrealObjectExport() {
   const [error, setError] = useState<string | null>(null);
   const [reviewView, setReviewView] = useState<ReviewView>("Frente");
   const [reviewPose, setReviewPose] = useState<ReviewPose>("Idle");
-  const [reviewFit, setReviewFit] = useState<ReviewFit>("Regular");
   const [viewerRevision, setViewerRevision] = useState(0);
   const [previewStatus, setPreviewStatus] = useState("Esperando un objeto para revisar.");
   const [approvals, setApprovals] = useState<Record<string, boolean>>({});
@@ -278,7 +252,7 @@ export function UnrealObjectExport() {
         thumbnailUrl: item.thumbnailUrl,
         rigged: item.rigged === true,
         fitStatus: item.fitStatus,
-        label: `${CATEGORY_LABELS[item.category] || "Objeto"} · ${item.name}${item.rigged ? " · ajustado" : ""}`,
+        label: `${CATEGORY_LABELS[item.category] || "Objeto"} · ${item.name}${item.rigged ? " · rig real" : " · Meshy"}`,
       }));
 
       const next: ObjectAsset[] = [...clothingAssets, ...storageAssets];
@@ -306,8 +280,7 @@ export function UnrealObjectExport() {
     setShowDiagnostics(false);
     setReviewView("Frente");
     setReviewPose("Idle");
-    setReviewFit("Regular");
-    setPreviewStatus("Cargando vista sobre el avatar…");
+    setPreviewStatus("Cargando el objeto seleccionado…");
     setViewerRevision((value) => value + 1);
   };
 
@@ -372,13 +345,10 @@ export function UnrealObjectExport() {
 
   const selected = objects.find((item) => item.id === selectedId);
   const filteredObjects = objects.filter((item) => item.label.toLowerCase().includes(searchTerm.trim().toLowerCase()));
-  const approved = selected ? approvals[selected.id] === true : false;
-  const previewReady = selected?.kind !== "clothing"
-    || previewStatus.startsWith("✓")
-    || Boolean(selected?.thumbnailUrl);
-  const rigReady = selected?.kind === "clothing"
-    ? selected.rigged || diagnostics?.pipeline?.ok === true
-    : true;
+  const isRiggedClothing = selected?.kind === "clothing" && selected.rigged;
+  const approved = Boolean(isRiggedClothing && approvals[selected.id] === true);
+  const previewReady = selected?.kind !== "clothing" || Boolean(isRiggedClothing && previewStatus.startsWith("✓"));
+  const rigReady = selected?.kind === "clothing" ? selected.rigged : true;
   const workerReady = diagnostics?.ok === true;
   const sourceDimensions = diagnostics?.garment?.evaluatedBounds?.dimensionsCm;
   const rawDimensions = diagnostics?.garment?.rawBounds?.dimensionsCm;
@@ -387,11 +357,11 @@ export function UnrealObjectExport() {
     selected
     && !exporting
     && !diagnosing
-    && (selected.kind !== "clothing" || approved),
+    && (selected.kind !== "clothing" || (selected.rigged && approved)),
   );
 
   const toggleApproval = () => {
-    if (!selected || selected.kind !== "clothing" || !previewReady) return;
+    if (!selected || selected.kind !== "clothing" || !selected.rigged || !previewReady) return;
     const next = { ...approvals, [selected.id]: !approved };
     setApprovals(next);
     try {
@@ -411,9 +381,11 @@ export function UnrealObjectExport() {
 
   const exportLabel = result?.url
     ? "FBX listo"
-    : approved
-      ? "Aprobado para exportar"
-      : "Pendiente de aprobación";
+    : selected?.kind === "clothing" && !selected.rigged
+      ? "Falta rig real"
+      : approved
+        ? "Aprobado para exportar"
+        : "Pendiente de aprobación";
 
   return (
     <section id="unreal-objects" className={styles.card} aria-label="Estudio visual para exportar objetos a Unreal">
@@ -422,7 +394,7 @@ export function UnrealObjectExport() {
         <div>
           <small>ESTUDIO DE REVISIÓN CLOUVA</small>
           <h2>Revisar y exportar a Unreal</h2>
-          <p>Vestí el avatar, probá la prenda en movimiento, aprobala y recién después generá el FBX.</p>
+          <p>La prenda solo aparece vestida cuando Blender ya creó un rig real compatible con tu avatar.</p>
         </div>
         <button className={styles.refresh} type="button" onClick={() => void refresh()} disabled={loadingObjects} aria-label="Actualizar objetos">
           <RefreshCw className={loadingObjects ? styles.spin : undefined} />
@@ -467,7 +439,7 @@ export function UnrealObjectExport() {
                       <small>{item.kind === "clothing" ? CATEGORY_LABELS[item.category] || "Objeto" : "Archivo GLB"}</small>
                     </span>
                     {item.kind === "clothing" ? (
-                      <span className={item.rigged ? styles.itemReady : styles.itemRaw}>{item.rigged ? "AJUSTADO" : "MESHY"}</span>
+                      <span className={item.rigged ? styles.itemReady : styles.itemRaw}>{item.rigged ? "RIG REAL" : "MESHY"}</span>
                     ) : null}
                   </button>
                 ))}
@@ -475,72 +447,71 @@ export function UnrealObjectExport() {
               </div>
             </aside>
 
-            <section className={styles.visualReview} aria-label="Vista previa de la prenda sobre el avatar">
+            <section className={styles.visualReview} aria-label="Vista previa real de la prenda">
               <div className={styles.reviewHeader}>
                 <div>
                   <small>VISTA PREVIA PRINCIPAL</small>
-                  <h3>{selected?.kind === "clothing" ? "Prenda sobre el avatar" : "Objeto que irá al FBX"}</h3>
+                  <h3>{selected?.kind === "clothing" ? selected.rigged ? "Rig real sobre el avatar" : "Original de Meshy" : "Objeto que irá al FBX"}</h3>
                 </div>
                 {selected?.kind === "clothing" ? (
                   <span className={approved ? styles.approvedBadge : styles.pendingBadge}>
                     {approved ? <BadgeCheck /> : <CircleDot />}
-                    {approved ? "APROBADA" : "PENDIENTE"}
+                    {approved ? "APROBADA" : selected.rigged ? "PENDIENTE" : "SIN RIG"}
                   </span>
                 ) : null}
               </div>
 
               <div className={styles.mainViewport}>
-                {selected?.kind === "clothing" && selected.modelUrl ? (
-                  <SmartTryOnViewer
-                    key={`${selected.id}-${viewerRevision}`}
-                    category={tryOnCategory(selected.category)}
-                    fit={reviewFit}
+                {selected?.kind === "clothing" ? (
+                  <RealGarmentReview
+                    key={`${selected.id}-${viewerRevision}-${selected.rigged ? "rig" : "raw"}`}
+                    itemId={selected.clothingItemId}
+                    name={selected.name}
+                    modelUrl={selected.modelUrl}
+                    thumbnailUrl={selected.thumbnailUrl}
+                    rigged={selected.rigged}
+                    accessToken={session?.access_token || ""}
                     pose={reviewPose}
                     view={reviewView}
-                    background="#05030a"
-                    showBody
-                    garmentOnly={false}
-                    adjustments={DEFAULT_ADJUSTMENTS}
-                    referenceModelUrl={selected.modelUrl}
-                    onReferenceStatus={setPreviewStatus}
+                    onStatus={setPreviewStatus}
+                    onProcessed={async () => {
+                      await refresh();
+                      setViewerRevision((value) => value + 1);
+                    }}
                   />
-                ) : selected?.kind === "clothing" && selected.thumbnailUrl ? (
-                  <img src={selected.thumbnailUrl} alt={`Vista previa de ${selected.name}`} className={styles.previewImage} />
                 ) : selected?.kind === "storage" ? (
                   <StandaloneObjectPreview key={`${selected.id}-${viewerRevision}`} modelUrl={supabase.storage.from("creator-assets").getPublicUrl(selected.path).data.publicUrl} />
                 ) : (
                   <div className={styles.previewEmpty}>Elegí un objeto de la biblioteca para empezar la revisión.</div>
                 )}
-                <div className={styles.viewportHint}><Eye /> Arrastrá para girar · rueda para acercar</div>
+                {selected?.kind !== "clothing" || selected.rigged ? (
+                  <div className={styles.viewportHint}><Eye /> Arrastrá para girar · rueda para acercar</div>
+                ) : null}
               </div>
 
               {selected?.kind === "clothing" ? (
                 <>
-                  <div className={styles.controlRows}>
-                    <div className={styles.controlGroup}>
-                      <span>Vista</span>
-                      {(["Frente", "Lateral", "Espalda"] as ReviewView[]).map((view) => (
-                        <button key={view} type="button" className={reviewView === view ? styles.controlActive : ""} onClick={() => setReviewView(view)}>{view === "Lateral" ? "Costado" : view}</button>
-                      ))}
+                  {selected.rigged ? (
+                    <div className={styles.controlRows}>
+                      <div className={styles.controlGroup}>
+                        <span>Vista</span>
+                        {(["Frente", "Lateral", "Espalda"] as ReviewView[]).map((view) => (
+                          <button key={view} type="button" className={reviewView === view ? styles.controlActive : ""} onClick={() => setReviewView(view)}>{view === "Lateral" ? "Costado" : view}</button>
+                        ))}
+                      </div>
+                      <div className={styles.controlGroup}>
+                        <span>Pose real</span>
+                        {([
+                          ["Idle", "A pose"],
+                          ["T-Pose", "T pose"],
+                          ["Walk", "Caminar"],
+                        ] as Array<[ReviewPose, string]>).map(([pose, label]) => (
+                          <button key={pose} type="button" className={reviewPose === pose ? styles.controlActive : ""} onClick={() => setReviewPose(pose)}>{pose === "Walk" ? <Play /> : null}{label}</button>
+                        ))}
+                      </div>
+                      <button className={styles.resetViewer} type="button" onClick={() => setViewerRevision((value) => value + 1)}><RotateCcw /> Restablecer</button>
                     </div>
-                    <div className={styles.controlGroup}>
-                      <span>Pose</span>
-                      {([
-                        ["Idle", "A pose"],
-                        ["T-Pose", "T pose"],
-                        ["Walk", "Caminar"],
-                      ] as Array<[ReviewPose, string]>).map(([pose, label]) => (
-                        <button key={pose} type="button" className={reviewPose === pose ? styles.controlActive : ""} onClick={() => setReviewPose(pose)}>{pose === "Walk" ? <Play /> : null}{label}</button>
-                      ))}
-                    </div>
-                    <div className={styles.controlGroup}>
-                      <span>Calce visual</span>
-                      {(["Slim", "Regular", "Oversize"] as ReviewFit[]).map((fit) => (
-                        <button key={fit} type="button" className={reviewFit === fit ? styles.controlActive : ""} onClick={() => setReviewFit(fit)}>{fit}</button>
-                      ))}
-                    </div>
-                    <button className={styles.resetViewer} type="button" onClick={() => setViewerRevision((value) => value + 1)}><RotateCcw /> Restablecer</button>
-                  </div>
+                  ) : null}
                   <div className={styles.previewMessage}>
                     <CircleDot />
                     <span>{previewStatus}</span>
@@ -556,8 +527,8 @@ export function UnrealObjectExport() {
               <span>{selected?.kind === "clothing" ? CATEGORY_LABELS[selected.category] || "Objeto" : "GLB"} · {selected?.name}</span>
             </div>
             <div className={styles.reviewChecks}>
-              <article className={rigReady ? styles.checkReady : styles.checkPending}><CheckCircle2 /><div><small>Fitting</small><strong>{rigReady ? "Hecho" : "Se hará al exportar"}</strong></div></article>
-              <article className={rigReady ? styles.checkReady : styles.checkPending}><Bone /><div><small>Rig y pesos</small><strong>{rigReady ? "Aplicados" : "Pendientes"}</strong></div></article>
+              <article className={rigReady ? styles.checkReady : styles.checkPending}><CheckCircle2 /><div><small>Fitting</small><strong>{rigReady ? "Hecho" : "Falta procesar"}</strong></div></article>
+              <article className={rigReady ? styles.checkReady : styles.checkPending}><Bone /><div><small>Rig y pesos</small><strong>{rigReady ? "Aplicados" : "Sin rig real"}</strong></div></article>
               <article className={styles.checkReady}><FileCheck2 /><div><small>Materiales</small><strong>Embebidos</strong></div></article>
               <article className={styles.checkReady}><Ruler /><div><small>Escala Unreal</small><strong>Uniform Scale = 1</strong></div></article>
               <article className={approved ? styles.checkReady : styles.checkPending}><BadgeCheck /><div><small>Aprobación visual</small><strong>{approved ? "Aprobada" : "Pendiente"}</strong></div></article>
@@ -571,8 +542,8 @@ export function UnrealObjectExport() {
                 </button>
               ) : null}
               {selected?.kind === "clothing" ? (
-                <button className={`${styles.approveAction} ${approved ? styles.approveActionActive : ""}`} type="button" onClick={toggleApproval} disabled={!previewReady || exporting || diagnosing}>
-                  <BadgeCheck /> {approved ? "APROBACIÓN LISTA" : "APROBAR PRENDA"}
+                <button className={`${styles.approveAction} ${approved ? styles.approveActionActive : ""}`} type="button" onClick={toggleApproval} disabled={!selected.rigged || !previewReady || exporting || diagnosing}>
+                  <BadgeCheck /> {approved ? "APROBACIÓN LISTA" : selected.rigged ? "APROBAR PRENDA" : "PRIMERO GENERÁ EL RIG REAL"}
                 </button>
               ) : null}
               <button className={styles.exportButton} type="button" onClick={() => void exportObject()} disabled={!canExport}>
@@ -580,7 +551,11 @@ export function UnrealObjectExport() {
                 {exporting ? "BLENDER ESTÁ PREPARANDO EL FBX…" : "EXPORTAR A UNREAL"}
               </button>
             </div>
-            {selected?.kind === "clothing" && !approved ? <p className={styles.approvalHint}>Revisá la prenda en el avatar y tocá “Aprobar prenda” para desbloquear la exportación.</p> : null}
+            {selected?.kind === "clothing" && !selected.rigged ? (
+              <p className={styles.approvalHint}>El Meshy original no se coloca sobre el cuerpo. Tocá “Generar vista riggeada real” dentro del visor y recién después probá brazos y caminar.</p>
+            ) : selected?.kind === "clothing" && !approved ? (
+              <p className={styles.approvalHint}>Probá la prenda riggeada en A pose, T pose y caminar; después tocá “Aprobar prenda”.</p>
+            ) : null}
           </section>
 
           {result?.url ? <div className={styles.success}><CheckCircle2 /><span><strong>Objeto listo para Unreal</strong>{result.filename} · {result.scale}</span><a href={result.url} download={result.filename || true}><Download /> Descargar otra vez</a></div> : null}
