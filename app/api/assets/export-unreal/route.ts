@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { finalizeClothingItem } from "@/lib/clothing-finalization";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,9 +11,6 @@ const DEFAULT_TARGET_HEIGHT_CM = 175;
 const WORKER_MIN_TARGET_HEIGHT_CM = 80;
 const WORKER_MAX_TARGET_HEIGHT_CM = 260;
 
-// Altura visual aproximada de cada prenda respecto del cuerpo completo.
-// El exportador de avatar normaliza el objeto recibido a target_height_cm;
-// por eso una prenda no puede recibir la altura total del personaje.
 const GARMENT_HEIGHT_RATIO: Record<string, number> = {
   hoodie: 0.43,
   shirt: 0.38,
@@ -32,6 +28,13 @@ const GARMENT_HEIGHT_LIMITS_CM: Record<string, [number, number]> = {
   shorts: [38, 62],
   shoes: [14, 28],
 };
+
+const ORIGINAL_SOURCE_KEYS = [
+  "source_meshy_model_url",
+  "meshy_model_url",
+  "raw_model_url",
+  "original_model_url",
+] as const;
 
 function getAdminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -76,6 +79,18 @@ function garmentTargetHeightCm(category: string, avatarHeightCm: number) {
     Math.max(WORKER_MIN_TARGET_HEIGHT_CM, categoryHeight),
   );
   return Math.round(workerSafeHeight * 10) / 10;
+}
+
+function objectMetadata(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+function originalSourceUrl(metadata: Record<string, unknown>) {
+  for (const key of ORIGINAL_SOURCE_KEYS) {
+    const candidate = metadata[key];
+    if (typeof candidate === "string" && candidate.startsWith("https://")) return candidate;
+  }
+  return null;
 }
 
 type ActiveAvatarContext = {
@@ -132,7 +147,7 @@ export async function GET(request: NextRequest) {
     const { supabase, user } = await requireUser(request);
     const { data, error } = await supabase
       .from("clothing_items")
-      .select("id,name,category,status,model_url,thumbnail_url,rigged,fit_status,updated_at")
+      .select("id,name,category,status,model_url,thumbnail_url,rigged,fit_status,metadata,updated_at")
       .eq("user_id", user.id)
       .eq("status", "ready")
       .not("model_url", "is", null)
@@ -145,6 +160,7 @@ export async function GET(request: NextRequest) {
         const category = String(item.category || "accessory");
         const skeletalRequired = SKELETAL_CATEGORIES.has(category);
         const actuallyRigged = item.rigged === true && item.fit_status === "fitted";
+        const storedOriginal = originalSourceUrl(objectMetadata(item.metadata));
         return {
           id: item.id,
           name: item.name || "Objeto CLOUVA",
@@ -153,7 +169,8 @@ export async function GET(request: NextRequest) {
           thumbnailUrl: item.thumbnail_url,
           rigged: actuallyRigged,
           fitStatus: item.fit_status,
-          exportMode: skeletalRequired ? (actuallyRigged ? "skeletal" : "auto-rig") : "static",
+          sourceMode: actuallyRigged ? (storedOriginal ? "meshy-original-saved" : "already-rigged") : "meshy-original",
+          exportMode: skeletalRequired ? (actuallyRigged ? "preserve-rig" : "single-pass-auto-rig") : "static",
         };
       }),
     });
@@ -178,12 +195,14 @@ export async function POST(request: NextRequest) {
     let assetName = String(body.name || "objeto.glb");
     let category = "prop";
     let skeletalExport = false;
+    let sourceAlreadyRigged = false;
+    let sourceOrigin = "storage-object";
     let selectedClothingItemId: string | null = null;
 
     if (body.clothingItemId) {
       const { data: item, error: itemError } = await supabase
         .from("clothing_items")
-        .select("id,name,category,status,model_url,rigged,fit_status,color,metadata")
+        .select("id,name,category,status,model_url,rigged,fit_status,metadata")
         .eq("id", body.clothingItemId)
         .eq("user_id", user.id)
         .single();
@@ -199,29 +218,23 @@ export async function POST(request: NextRequest) {
       assetName = String(item.name || body.name || "pieza-clouva");
       category = String(item.category || "accessory");
       skeletalExport = SKELETAL_CATEGORIES.has(category);
-      sourceUrl = String(item.model_url);
 
+      const metadata = objectMetadata(item.metadata);
       const actuallyRigged = item.rigged === true && item.fit_status === "fitted";
-      if (skeletalExport && !actuallyRigged) {
-        const rerigged = await finalizeClothingItem({
-          supabase,
-          userId: user.id,
-          itemId: String(item.id),
-          modelUrl: sourceUrl,
-          category,
-          color: typeof item.color === "string" ? item.color : null,
-          metadata: item.metadata && typeof item.metadata === "object"
-            ? (item.metadata as Record<string, unknown>)
-            : {},
-        });
+      const storedOriginal = originalSourceUrl(metadata);
 
-        if (!rerigged.rigged || !rerigged.item?.model_url) {
-          throw new Error(
-            rerigged.warning ||
-            "No se pudo riggear automáticamente la prenda con el esqueleto del avatar activo.",
-          );
-        }
-        sourceUrl = String(rerigged.item.model_url);
+      // One-pass routing:
+      // - Raw Meshy GLB: the Worker performs fitting + rig exactly once, then exports FBX.
+      // - Already rigged GLB: skip fitting/rig and preserve the existing armature during FBX export.
+      // - Future adjusted items retain their original Meshy URL, which is preferred when available.
+      if (skeletalExport && storedOriginal) {
+        sourceUrl = storedOriginal;
+        sourceAlreadyRigged = false;
+        sourceOrigin = "saved-meshy-original";
+      } else {
+        sourceUrl = String(item.model_url);
+        sourceAlreadyRigged = skeletalExport && actuallyRigged;
+        sourceOrigin = sourceAlreadyRigged ? "already-rigged" : "meshy-original";
       }
 
       if (!sourceUrl.startsWith("https://")) {
@@ -262,6 +275,8 @@ export async function POST(request: NextRequest) {
           asset_id: selectedClothingItemId,
           user_id: user.id,
           source_url: sourceUrl,
+          source_already_rigged: sourceAlreadyRigged,
+          source_origin: sourceOrigin,
           target_height_cm: targetHeightCm,
           avatar_height_cm: avatarHeightCm,
           garment_target_height_cm: targetHeightCm,
@@ -339,6 +354,7 @@ export async function POST(request: NextRequest) {
       path: storagePath,
       bucket: OUTPUT_BUCKET,
       metadata,
+      sourceMode: skeletalExport ? (sourceAlreadyRigged ? "preserved-rig" : "single-pass-auto-rig") : "static",
       exportMode: skeletalExport ? "skeletal-category-calibrated" : "static",
       avatarHeightCm,
       targetHeightCm,
