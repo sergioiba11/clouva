@@ -174,6 +174,9 @@ export async function finalizeClothingItem({
   const hoodUpModelUrl = typeof metadata.hood_up_model_url === "string" && metadata.hood_up_model_url ? metadata.hood_up_model_url : null;
   const hoodDownModelUrl = typeof metadata.hood_down_model_url === "string" && metadata.hood_down_model_url ? metadata.hood_down_model_url : null;
   const hoodSupported = Boolean(hoodUpModelUrl && hoodDownModelUrl && (category === "hoodie" || category === "jacket"));
+  const storedOriginalSource = typeof metadata.source_meshy_model_url === "string" && metadata.source_meshy_model_url.startsWith("https://")
+    ? metadata.source_meshy_model_url
+    : modelUrl;
 
   const rigResult = await rigWithWorker(supabase, userId, modelUrl, category, artUrl, color);
   const riggedBytes = rigResult.bytes;
@@ -190,6 +193,8 @@ export async function finalizeClothingItem({
   const { data: publicData } = supabase.storage.from("avatars").getPublicUrl(storagePath);
   const nextMetadata = {
     ...metadata,
+    source_meshy_model_url: storedOriginalSource,
+    source_model_kind: "meshy-original",
     rigged: Boolean(riggedBytes),
     rig_pipeline: riggedBytes ? "blender-nearest-surface-uv-v2" : "viewer-fit-fallback",
     fitted_avatar_id: rigResult.avatar?.id ?? null,
