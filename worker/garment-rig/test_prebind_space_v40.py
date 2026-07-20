@@ -17,6 +17,19 @@ def load_pipeline():
     return module
 
 
+def retained_contract(module, name):
+    """Resolve a contract retained by newer wrapper layers without weakening it."""
+    current = module
+    visited = set()
+    while current is not None and id(current) not in visited:
+        visited.add(id(current))
+        value = getattr(current, name, None)
+        if callable(value):
+            return value
+        current = getattr(current, "previous", None)
+    raise AttributeError(f"El pipeline activo no conserva el contrato {name}")
+
+
 def identity(matrix, epsilon=1e-5):
     expected = Matrix.Identity(4)
     return all(
@@ -43,13 +56,14 @@ def test_official_avatar_is_normalized_before_weights(module):
     assert identity(armature.matrix_world)
     assert int(armature.get("clouvaPrebindSpaceVersion", 0)) == 40
 
+    relative_point_drift = retained_contract(module, "_relative_point_drift")
     maximum = 0.0
     for obj in body_meshes:
         assert identity(obj.matrix_world)
         assert obj.find_armature() == armature
         assert int(obj.get("clouvaPrebindSpaceVersion", 0)) == 40
         after = module.evaluated_world_points(obj).copy()
-        drift, _rms = module._relative_point_drift(before[obj.name], after)
+        drift, _rms = relative_point_drift(before[obj.name], after)
         maximum = max(maximum, drift)
     assert maximum < 0.015
     print(f"[clouva] V40 official avatar pre-bind normalization OK maxDrift={maximum:.8f}", flush=True)
