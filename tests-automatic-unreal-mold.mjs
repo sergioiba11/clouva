@@ -40,8 +40,9 @@ test("las prendas usan el FBX oficial de Unreal como molde automático", () => {
 });
 
 
-test("Creator Studio procesa primero y deja los sliders como corrección opcional", () => {
-  assert.match(bootstrapSource, /CreatorStudioAutomatic/);
+test("Creator Studio conserva el molde automático pero monta el nuevo workspace visual", () => {
+  assert.match(bootstrapSource, /UnrealObjectExport/);
+  assert.doesNotMatch(bootstrapSource, /CreatorStudioAutomatic/);
   assert.match(creatorSource, /Crear molde automático/);
   assert.match(creatorSource, /Molde oficial conectado/);
   assert.match(creatorSource, /official-unreal-fbx/);
