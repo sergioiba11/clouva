@@ -63,6 +63,9 @@ RUN mkdir -p /opt/blender/4.2/scripts/modules \
     && cp /app/avatar_reference.py /opt/blender/4.2/scripts/modules/avatar_reference.py
 
 ENV PYTHONPATH=/app
+# Compatibility base retained for the original V28 contract tests:
+# CLOUVA_RIG_VERSION=v28
+# v28-active-avatar-reference
 ENV CLOUVA_RIG_VERSION=v43
 ENV CLOUVA_UNREAL_ROOT_RESTORE=v32
 ENV CLOUVA_UPPER_VOLUME_REPAIR=v33
