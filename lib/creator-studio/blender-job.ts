@@ -30,6 +30,8 @@ export function buildBlenderJob(payload: BlenderRequest) {
   const transferSkinWeights = deformable ? true : (templateMode ? false : (payload.autoWeight ?? true));
   const upperGarment = category === "hoodie" || category === "shirt" || category === "jacket";
   const lowerGarment = category === "pants" || category === "shorts";
+  const automaticFit = deformable && payload.previewSettings?.automaticFit !== false;
+  const manualCorrectionEnabled = deformable && Boolean(payload.previewSettings?.manualCorrectionEnabled);
 
   return {
     type: "clouva_creator_pipeline",
@@ -41,6 +43,7 @@ export function buildBlenderJob(payload: BlenderRequest) {
         ? "preserve_existing_skinning"
         : "transfer_from_avatar",
     avatarRig: payload.rig ?? "clouva_base_v1",
+    avatarMoldSource: deformable ? "official-unreal-fbx" : null,
     category,
     sourceUrl: payload.sourceUrl ?? null,
     sourceStoragePath: payload.sourceStoragePath ?? null,
@@ -50,6 +53,9 @@ export function buildBlenderJob(payload: BlenderRequest) {
     previewSettings: {
       ...(payload.previewSettings ?? {}),
       rigProfileVersion: deformable ? 15 : payload.previewSettings?.rigProfileVersion,
+      automaticFit,
+      manualCorrectionEnabled,
+      avatarMoldSource: deformable ? "official-unreal-fbx" : payload.previewSettings?.avatarMoldSource,
     },
     options: {
       cleanGeometry: true,
@@ -57,6 +63,14 @@ export function buildBlenderJob(payload: BlenderRequest) {
       applyTransforms: true,
       centerModel: !templateMode,
       fitToAvatar: true,
+      fitSource: deformable ? "official_unreal_fbx" : "active_avatar",
+      automaticFit,
+      manualCorrectionOptional: deformable,
+      manualCorrectionEnabled,
+      normalizeSourcePose: deformable,
+      useOfficialAvatarMesh: deformable,
+      useOfficialAvatarSkeleton: deformable,
+      useOfficialAvatarWeights: deformable,
       fitIncludesLimbSpan: upperGarment,
       fitUsesCanonicalLowerBodyLandmarks: lowerGarment,
       fitUsesBodyMeshVolume: lowerGarment,
