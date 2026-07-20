@@ -48,9 +48,23 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function normalizedStatus(row: any) {
+  return String(row?.status ?? "reference").toLowerCase();
+}
+
 function isResultRow(row: any): boolean {
-  const status = String(row?.status ?? "reference").toLowerCase();
-  return (status === "rigged" || status === "ready") && Boolean(row?.rigged_storage_path);
+  const status = normalizedStatus(row);
+  return (status === "rigged" || status === "ready")
+    && Boolean(row?.rigged_storage_path)
+    && row?.storage_path === row?.rigged_storage_path;
+}
+
+function isLegacyCombinedRow(row: any): boolean {
+  const status = normalizedStatus(row);
+  return (status === "rigged" || status === "ready")
+    && Boolean(row?.storage_path)
+    && Boolean(row?.rigged_storage_path)
+    && row.storage_path !== row.rigged_storage_path;
 }
 
 async function requireUserId() {
@@ -88,7 +102,7 @@ async function rowToAsset(row: any): Promise<ReferenceAsset> {
     name: row.name,
     category: row.category as ReferenceCategory,
     fileName: row.file_name,
-    size: Number(row.file_size ?? blob.size),
+    size: result ? blob.size : Number(row.file_size ?? blob.size),
     createdAt: new Date(row.created_at).getTime(),
     sourceUrl: row.source_url ?? undefined,
     license: row.license ?? undefined,
@@ -116,16 +130,100 @@ async function getOwnedRow(id: string, userId: string) {
   return data;
 }
 
-async function keepSourceClean(id: string, userId: string) {
-  const row = await getOwnedRow(id, userId);
-  if (isResultRow(row)) return;
-
+async function cleanSourceRow(row: any, userId: string) {
   const { error } = await supabase.from(TABLE).update({
     status: "reference",
     preview_settings: {},
+    rigged_storage_path: null,
     updated_at: new Date().toISOString(),
-  }).eq("id", id).eq("user_id", userId);
+  }).eq("id", row.id).eq("user_id", userId);
   if (error) throw new Error(`No se pudo conservar el GLB original: ${error.message}`);
+  return {
+    ...row,
+    status: "reference",
+    preview_settings: {},
+    rigged_storage_path: null,
+  };
+}
+
+async function migrateLegacyCombinedRow(row: any, userId: string) {
+  if (!isLegacyCombinedRow(row)) return row;
+
+  const { data: existingRows, error: existingError } = await supabase
+    .from(TABLE)
+    .select("id")
+    .eq("user_id", userId)
+    .eq("rigged_storage_path", row.rigged_storage_path)
+    .neq("id", row.id)
+    .limit(1);
+  if (existingError) throw new Error(`No se pudo revisar el resultado anterior: ${existingError.message}`);
+
+  if (!existingRows?.length) {
+    const { data: riggedBlob, error: downloadError } = await supabase.storage
+      .from(BUCKET)
+      .download(row.rigged_storage_path);
+    if (downloadError || !riggedBlob) {
+      throw new Error(downloadError?.message ?? "No se pudo recuperar el resultado riggeado anterior.");
+    }
+
+    const resultId = crypto.randomUUID();
+    const resultFileName = sanitizeFileName(
+      String(row.rigged_storage_path).split("/").pop() || `rigged-${row.file_name}`,
+    );
+    const previousSettings = asRecord(row.preview_settings);
+    const { error: insertError } = await supabase.from(TABLE).insert({
+      id: resultId,
+      user_id: userId,
+      name: `${row.name} · resultado riggeado`,
+      category: row.category,
+      file_name: resultFileName,
+      file_size: riggedBlob.size,
+      storage_path: row.rigged_storage_path,
+      rigged_storage_path: row.rigged_storage_path,
+      source_url: row.source_url ?? null,
+      license: row.license ?? null,
+      author: row.author ?? null,
+      status: "ready",
+      preview_settings: {
+        ...previousSettings,
+        sourceAssetId: row.id,
+        sourceAssetName: row.name,
+        resultKind: "migrated-rigged-copy",
+        migratedAt: new Date().toISOString(),
+      },
+      created_at: new Date().toISOString(),
+    });
+    if (insertError) {
+      throw new Error(`No se pudo separar el resultado anterior del GLB original: ${insertError.message}`);
+    }
+  }
+
+  return cleanSourceRow(row, userId);
+}
+
+async function normalizeStoredRow(row: any, userId: string) {
+  if (isLegacyCombinedRow(row)) return migrateLegacyCombinedRow(row, userId);
+  if (isResultRow(row)) return row;
+
+  const status = normalizedStatus(row);
+  const hasLeakedAttemptState = status !== "reference"
+    || Object.keys(asRecord(row.preview_settings)).length > 0
+    || Boolean(row.rigged_storage_path);
+  return hasLeakedAttemptState ? cleanSourceRow(row, userId) : row;
+}
+
+async function keepSourceClean(id: string, userId: string) {
+  const row = await getOwnedRow(id, userId);
+  if (isResultRow(row)) return;
+  await normalizeStoredRow(row, userId);
+}
+
+async function getCleanSourceRow(id: string, userId: string) {
+  const row = await getOwnedRow(id, userId);
+  if (isResultRow(row)) {
+    throw new Error("Elegí el GLB original para crear un intento nuevo desde cero.");
+  }
+  return normalizeStoredRow(row, userId);
 }
 
 async function saveResultCopy(
@@ -191,7 +289,19 @@ export async function listReferenceAssets(): Promise<ReferenceAsset[]> {
     .order("created_at", { ascending: false });
   if (error) throw new Error(`No se pudo leer la biblioteca online: ${error.message}`);
 
-  const results = await Promise.allSettled((data ?? []).map(rowToAsset));
+  const normalizedRows = [];
+  for (const row of data ?? []) {
+    normalizedRows.push(await normalizeStoredRow(row, userId));
+  }
+  const { data: refreshedRows, error: refreshError } = await supabase
+    .from(TABLE)
+    .select(SELECT_FIELDS)
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false });
+  if (refreshError) throw new Error(`No se pudo actualizar la biblioteca separada: ${refreshError.message}`);
+
+  const rows = refreshedRows ?? normalizedRows;
+  const results = await Promise.allSettled(rows.map(rowToAsset));
   return results
     .flatMap((result) => result.status === "fulfilled" ? [result.value] : [])
     .sort((a, b) => Number(a.isTemplate) - Number(b.isTemplate) || b.createdAt - a.createdAt);
@@ -206,7 +316,7 @@ export async function getReferenceAssetById(id: string): Promise<ReferenceAsset 
     .eq("user_id", userId)
     .maybeSingle();
   if (error) throw new Error(`No se pudo recuperar el GLB: ${error.message}`);
-  return data ? rowToAsset(data) : null;
+  return data ? rowToAsset(await normalizeStoredRow(data, userId)) : null;
 }
 
 export async function saveReferenceAsset(asset: ReferenceAsset): Promise<void> {
@@ -241,8 +351,7 @@ export async function saveReferenceAsset(asset: ReferenceAsset): Promise<void> {
 
 export async function promoteReferenceAssetToTemplate(id: string, previewSettings: Record<string, unknown>): Promise<void> {
   const userId = await requireUserId();
-  const row = await getOwnedRow(id, userId);
-  if (isResultRow(row)) return;
+  const row = await getCleanSourceRow(id, userId);
   const { data: blob, error } = await supabase.storage.from(BUCKET).download(row.storage_path);
   if (error || !blob) throw new Error(error?.message ?? "No se pudo copiar el GLB original.");
   await saveResultCopy(row, id, userId, blob, previewSettings);
@@ -259,8 +368,7 @@ export async function saveRiggedReferenceAsset(
   previewSettings: Record<string, unknown>,
 ): Promise<ReferenceAsset> {
   const userId = await requireUserId();
-  const row = await getOwnedRow(id, userId);
-  if (isResultRow(row)) throw new Error("Elegí el GLB original para crear un intento nuevo desde cero.");
+  const row = await getCleanSourceRow(id, userId);
 
   const response = await fetch(resultUrl, { cache: "no-store" });
   if (!response.ok) throw new Error(`El resultado del worker no se pudo descargar (HTTP ${response.status}).`);
