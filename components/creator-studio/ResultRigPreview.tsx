@@ -18,7 +18,6 @@ import {
   PerspectiveCamera,
   Quaternion,
   Scene,
-  Skeleton,
   SkeletonHelper,
   SkinnedMesh,
   SRGBColorSpace,
@@ -56,13 +55,17 @@ type ClipOption = {
   procedural?: boolean;
 };
 
-type SyncedActionGroup = {
-  garment: AnimationAction[];
-  avatar: AnimationAction[];
+type MotionActionGroup = {
+  actions: AnimationAction[];
   signatures: Set<string>;
   duration: number;
   tracks: number;
   motionScore: number;
+};
+
+type BonePair = {
+  source: Bone;
+  target: Bone;
 };
 
 type BoneSnapshot = {
@@ -82,14 +85,16 @@ const LEFT_UP_LEG_ALIASES = ["leftupleg", "leftupperleg", "thighl", "upperlegl",
 const RIGHT_UP_LEG_ALIASES = ["rightupleg", "rightupperleg", "thighr", "upperlegr", "mixamorigrightupleg", "j_bip_r_upperleg"];
 const LEFT_LEG_ALIASES = ["leftleg", "leftlowerleg", "calfl", "shinl", "lowerlegl", "mixamorigleftleg", "j_bip_l_lowerleg"];
 const RIGHT_LEG_ALIASES = ["rightleg", "rightlowerleg", "calfr", "shinr", "lowerlegr", "mixamorigrightleg", "j_bip_r_lowerleg"];
-const LEFT_FOOT_ALIASES = ["leftfoot", "footl", "lfoot", "mixamorigleftfoot", "j_bip_l_foot"];
-const RIGHT_FOOT_ALIASES = ["rightfoot", "footr", "rfoot", "mixamorigrightfoot", "j_bip_r_foot"];
 const LEFT_ARM_ALIASES = ["leftarm", "leftupperarm", "upperarml", "mixamorigleftarm", "j_bip_l_upperarm"];
 const RIGHT_ARM_ALIASES = ["rightarm", "rightupperarm", "upperarmr", "mixamorigrightarm", "j_bip_r_upperarm"];
 const X_AXIS = new Vector3(1, 0, 0);
 
 function cleanName(value: unknown) {
-  return String(value ?? "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  return String(value ?? "")
+    .toLowerCase()
+    .replace(/^mixamorig[:_]?/, "")
+    .replace(/^armature[|/.:_-]?/, "")
+    .replace(/[^a-z0-9]/g, "");
 }
 
 function findObjectMesh(root: Object3D): SkinnedMesh | null {
@@ -109,6 +114,27 @@ function collectBones(root: Object3D) {
     if (key && !bones.has(key)) bones.set(key, bone);
   });
   return bones;
+}
+
+function pairAvatarBonesWithGarment(avatarRoot: Object3D, garmentRoot: Object3D) {
+  const avatarBones = collectBones(avatarRoot);
+  const garmentBones = collectBones(garmentRoot);
+  const pairs: BonePair[] = [];
+
+  for (const [name, target] of garmentBones) {
+    const source = avatarBones.get(name);
+    if (source) pairs.push({ source, target });
+  }
+
+  return pairs;
+}
+
+function syncGarmentBones(pairs: BonePair[]) {
+  for (const { source, target } of pairs) {
+    target.position.copy(source.position);
+    target.quaternion.copy(source.quaternion);
+    target.scale.copy(source.scale);
+  }
 }
 
 function findBone(root: Object3D, aliases: string[]): Bone | null {
@@ -177,9 +203,17 @@ function avatarOcclusionTokens(category: string | undefined) {
   }
 }
 
-function hideConflictingAvatarClothes(root: Object3D, category: string | undefined) {
+function prepareAvatarMeshes(root: Object3D, category: string | undefined) {
+  root.traverse((object: any) => {
+    if (!object.isMesh && !object.isSkinnedMesh) return;
+    object.visible = true;
+    object.frustumCulled = false;
+    object.normalizeSkinWeights?.();
+  });
+
   const tokens = avatarOcclusionTokens(category);
   if (tokens.length === 0) return;
+
   root.traverse((object: any) => {
     if (!object.isMesh && !object.isSkinnedMesh) return;
     const materialNames = Array.isArray(object.material)
@@ -188,35 +222,6 @@ function hideConflictingAvatarClothes(root: Object3D, category: string | undefin
     const haystack = [object.name, ...materialNames].map(cleanName).join(" ");
     if (tokens.some((token) => haystack.includes(cleanName(token)))) object.visible = false;
   });
-}
-
-function alignAvatarToResultRig(avatarRoot: Object3D, rigRoot: Object3D) {
-  avatarRoot.updateMatrixWorld(true);
-  rigRoot.updateMatrixWorld(true);
-  const avatarHips = findBone(avatarRoot, HIP_ALIASES);
-  const rigHips = findBone(rigRoot, HIP_ALIASES);
-  const avatarFoot = findBone(avatarRoot, LEFT_FOOT_ALIASES) ?? findBone(avatarRoot, RIGHT_FOOT_ALIASES);
-  const rigFoot = findBone(rigRoot, LEFT_FOOT_ALIASES) ?? findBone(rigRoot, RIGHT_FOOT_ALIASES);
-  if (!avatarHips || !rigHips) return false;
-
-  const avatarHipPosition = avatarHips.getWorldPosition(new Vector3());
-  const rigHipPosition = rigHips.getWorldPosition(new Vector3());
-  if (avatarFoot && rigFoot) {
-    const avatarFootPosition = avatarFoot.getWorldPosition(new Vector3());
-    const rigFootPosition = rigFoot.getWorldPosition(new Vector3());
-    const avatarLeg = avatarHipPosition.distanceTo(avatarFootPosition);
-    const rigLeg = rigHipPosition.distanceTo(rigFootPosition);
-    const ratio = rigLeg / Math.max(avatarLeg, 1e-6);
-    if (Number.isFinite(ratio) && ratio >= 0.1 && ratio <= 10) {
-      avatarRoot.scale.multiplyScalar(ratio);
-      avatarRoot.updateMatrixWorld(true);
-    }
-  }
-
-  const alignedAvatarHips = avatarHips.getWorldPosition(new Vector3());
-  avatarRoot.position.add(rigHipPosition.clone().sub(alignedAvatarHips));
-  avatarRoot.updateMatrixWorld(true);
-  return true;
 }
 
 function isLowerBodyBoneName(value: string) {
@@ -298,37 +303,6 @@ function clipAvatarBodyUnderBaggy(root: Object3D, category: string | undefined) 
   });
 
   return clippedMeshes;
-}
-
-function rebindAvatarMeshesToRig(avatarRoot: Object3D, rigRoot: Object3D) {
-  const rigBones = collectBones(rigRoot);
-  let reboundMeshes = 0;
-
-  avatarRoot.updateMatrixWorld(true);
-  rigRoot.updateMatrixWorld(true);
-  avatarRoot.traverse((object: any) => {
-    if (!object.isSkinnedMesh) return;
-    const mesh = object as SkinnedMesh;
-    const originalBones = mesh.skeleton?.bones ?? [];
-    if (originalBones.length === 0) return;
-
-    let mappedCount = 0;
-    const mappedBones = originalBones.map((bone) => {
-      const mapped = rigBones.get(cleanName(bone.name));
-      if (mapped) mappedCount += 1;
-      return mapped ?? bone;
-    });
-    if (mappedCount / originalBones.length < 0.65) return;
-
-    const sharedSkeleton = new Skeleton(mappedBones);
-    sharedSkeleton.calculateInverses();
-    mesh.bind(sharedSkeleton, mesh.matrixWorld.clone());
-    mesh.normalizeSkinWeights();
-    mesh.frustumCulled = false;
-    reboundMeshes += 1;
-  });
-
-  return reboundMeshes;
 }
 
 function clipSignature(trackNames: string[]) {
@@ -417,23 +391,23 @@ function createProceduralMotion(root: Object3D): ProceduralMotion {
 }
 
 function disposeModel(root: Object3D | null) {
+  root?.removeFromParent();
   root?.traverse((object: any) => {
     object.geometry?.dispose?.();
     if (Array.isArray(object.material)) object.material.forEach((material: any) => material.dispose?.());
     else object.material?.dispose?.();
   });
-  root?.removeFromParent();
 }
 
 export function ResultRigPreview({ url, showAvatar = true, category, onInfo }: Props) {
   const mountRef = useRef<HTMLDivElement>(null);
   const helperRef = useRef<SkeletonHelper | null>(null);
-  const garmentMixerRef = useRef<AnimationMixer | null>(null);
-  const avatarMixerRef = useRef<AnimationMixer | null>(null);
-  const actionsRef = useRef<Map<string, SyncedActionGroup>>(new Map());
-  const proceduralMotionsRef = useRef<ProceduralMotion[]>([]);
+  const motionMixerRef = useRef<AnimationMixer | null>(null);
+  const actionsRef = useRef<Map<string, MotionActionGroup>>(new Map());
+  const proceduralMotionRef = useRef<ProceduralMotion | null>(null);
   const proceduralActiveRef = useRef(false);
   const proceduralTimeRef = useRef(0);
+  const bonePairsRef = useRef<BonePair[]>([]);
   const avatar = useActiveAvatarStore((state) => state.avatar);
   const avatarUrl = useMemo(() => avatar.modelUrl ?? avatar.fallbackUrl, [avatar.fallbackUrl, avatar.modelUrl]);
   const [showSkeleton, setShowSkeleton] = useState(false);
@@ -447,17 +421,12 @@ export function ResultRigPreview({ url, showAvatar = true, category, onInfo }: P
   }, [showSkeleton]);
 
   function stopAllMotion() {
-    for (const group of actionsRef.current.values()) {
-      group.garment.forEach(stopAction);
-      group.avatar.forEach(stopAction);
-    }
-    garmentMixerRef.current?.stopAllAction();
-    avatarMixerRef.current?.stopAllAction();
-    garmentMixerRef.current?.setTime(0);
-    avatarMixerRef.current?.setTime(0);
+    for (const group of actionsRef.current.values()) group.actions.forEach(stopAction);
+    motionMixerRef.current?.stopAllAction();
+    motionMixerRef.current?.setTime(0);
     proceduralActiveRef.current = false;
     proceduralTimeRef.current = 0;
-    proceduralMotionsRef.current.forEach((motion) => motion.reset());
+    proceduralMotionRef.current?.reset();
   }
 
   function playClip(id: string) {
@@ -466,17 +435,15 @@ export function ResultRigPreview({ url, showAvatar = true, category, onInfo }: P
     const selected = actionsRef.current.get(id);
 
     if (option?.procedural || !selected || selected.motionScore < 0.02) {
-      const usable = proceduralMotionsRef.current.some((motion) => motion.usable);
-      if (!usable) {
-        setPreviewStatus("El rig no expone huesos suficientes para la prueba de movimiento.");
+      if (!proceduralMotionRef.current?.usable) {
+        setPreviewStatus("El avatar activo no expone huesos suficientes para la prueba de movimiento.");
         return;
       }
       proceduralActiveRef.current = true;
-      setPreviewStatus("Movimiento de prueba activo: cadera, piernas, rodillas y brazos.");
+      setPreviewStatus("Movimiento de prueba activo: el avatar conduce y la prenda lo acompaña.");
     } else {
-      selected.garment.forEach(startAction);
-      selected.avatar.forEach(startAction);
-      setPreviewStatus("Animación exportada activa.");
+      selected.actions.forEach(startAction);
+      setPreviewStatus("Animación activa sobre el avatar principal; la prenda está sincronizada.");
     }
 
     setActiveClip(id);
@@ -496,15 +463,17 @@ export function ResultRigPreview({ url, showAvatar = true, category, onInfo }: P
     let avatarModel: Object3D | null = null;
     let displayGroup: Group | null = null;
     const clock = new Clock();
+
     setClips([]);
     setActiveClip(null);
     setReplayCount(0);
     setShowSkeleton(false);
-    setPreviewStatus("Tocá Probar movimiento para verificar el rig.");
+    setPreviewStatus("Cargando avatar activo y prenda riggeada…");
     actionsRef.current = new Map();
-    proceduralMotionsRef.current = [];
+    proceduralMotionRef.current = null;
     proceduralActiveRef.current = false;
     proceduralTimeRef.current = 0;
+    bonePairsRef.current = [];
     onInfo?.({ loading: true, bones: 0, objectMeshName: null, anchorBoneName: null, weightedVertexRatio: null, clips: [] });
 
     const scene = new Scene();
@@ -532,6 +501,13 @@ export function ResultRigPreview({ url, showAvatar = true, category, onInfo }: P
     controls.minDistance = 0.3;
     controls.maxDistance = 20;
 
+    const previewBounds = () => {
+      const box = new Box3();
+      if (avatarModel) box.expandByObject(avatarModel);
+      else if (rigModel) box.expandByObject(rigModel);
+      return box;
+    };
+
     const resize = () => {
       const rect = mount.getBoundingClientRect();
       const width = Math.max(rect.width, 1);
@@ -539,8 +515,7 @@ export function ResultRigPreview({ url, showAvatar = true, category, onInfo }: P
       renderer.setSize(width, height, false);
       camera.aspect = width / height;
       camera.updateProjectionMatrix();
-      if (!displayGroup) return;
-      const box = new Box3().setFromObject(displayGroup);
+      const box = previewBounds();
       if (box.isEmpty()) return;
       const size = box.getSize(new Vector3());
       const center = box.getCenter(new Vector3());
@@ -554,11 +529,11 @@ export function ResultRigPreview({ url, showAvatar = true, category, onInfo }: P
 
     const loader = new GLTFLoader();
     loader.setMeshoptDecoder(MeshoptDecoder);
-    const avatarPromise = showAvatar && avatarUrl && avatarUrl !== url
-      ? loader.loadAsync(avatarUrl).catch((error) => {
-          console.warn("Final avatar overlay failed", error);
-          return null;
-        })
+
+    const avatarPromise = showAvatar
+      ? avatarUrl && avatarUrl !== url
+        ? loader.loadAsync(avatarUrl)
+        : Promise.reject(new Error("No hay un avatar activo disponible para vestir."))
       : Promise.resolve(null);
 
     void Promise.all([loader.loadAsync(url), avatarPromise]).then(([rigGltf, avatarGltf]) => {
@@ -570,44 +545,50 @@ export function ResultRigPreview({ url, showAvatar = true, category, onInfo }: P
       displayGroup.rotation.y = Number.isFinite(avatar.frontRotationY) ? avatar.frontRotationY : 0;
       scene.add(displayGroup);
 
-      let reboundMeshes = 0;
+      let primaryRoot: Object3D = rigModel;
       if (avatarModel) {
-        hideConflictingAvatarClothes(avatarModel, category);
-        alignAvatarToResultRig(avatarModel, rigModel);
+        prepareAvatarMeshes(avatarModel, category);
         clipAvatarBodyUnderBaggy(avatarModel, category);
-        reboundMeshes = rebindAvatarMeshesToRig(avatarModel, rigModel);
         displayGroup.add(avatarModel);
+
+        rigModel.position.set(0, 0, 0);
+        rigModel.rotation.set(0, 0, 0);
+        rigModel.scale.set(1, 1, 1);
+        rigModel.name = "CLOUVA_SYNCED_RIGGED_GARMENT";
+        avatarModel.add(rigModel);
+
+        const pairs = pairAvatarBonesWithGarment(avatarModel, rigModel);
+        if (pairs.length < 6) {
+          throw new Error(`El rig de la prenda no coincide con el avatar activo (${pairs.length} huesos compatibles).`);
+        }
+        bonePairsRef.current = pairs;
+        syncGarmentBones(pairs);
+        rigModel.updateMatrixWorld(true);
+        primaryRoot = avatarModel;
+      } else {
+        displayGroup.add(rigModel);
       }
-      displayGroup.add(rigModel);
+
       displayGroup.updateMatrixWorld(true);
 
-      const boneMap = new Map<string, Bone>();
-      rigModel.traverse((object: any) => {
-        if (object.isBone) boneMap.set(object.uuid, object as Bone);
-        if (object.isSkinnedMesh) {
-          for (const bone of object.skeleton?.bones ?? []) boneMap.set(bone.uuid, bone as Bone);
-        }
-      });
-
-      const helper = new SkeletonHelper(rigModel);
+      const primaryBones = collectBones(primaryRoot);
+      const helper = new SkeletonHelper(primaryRoot);
       helper.visible = false;
       helperRef.current = helper;
       displayGroup.add(helper);
 
-      const garmentMixer = new AnimationMixer(rigModel);
-      const avatarMixer = avatarModel && reboundMeshes === 0 ? new AnimationMixer(avatarModel) : null;
-      garmentMixerRef.current = garmentMixer;
-      avatarMixerRef.current = avatarMixer;
+      const mixer = new AnimationMixer(primaryRoot);
+      motionMixerRef.current = mixer;
+      const sourceClips = avatarGltf?.animations?.length ? avatarGltf.animations : rigGltf.animations;
+      const groups = new Map<string, MotionActionGroup>();
 
-      const groups = new Map<string, SyncedActionGroup>();
-      rigGltf.animations.forEach((clip, index) => {
+      sourceClips.forEach((clip, index) => {
         if (!(clip.duration > 0) || clip.tracks.length === 0) return;
         const label = friendlyClipLabel(clip.name, index);
         const id = cleanName(label) || `movement${index + 1}`;
         const signature = clipSignature(clip.tracks.map((track) => track.name));
         const group = groups.get(id) ?? {
-          garment: [],
-          avatar: [],
+          actions: [],
           signatures: new Set<string>(),
           duration: 0,
           tracks: 0,
@@ -615,8 +596,7 @@ export function ResultRigPreview({ url, showAvatar = true, category, onInfo }: P
         };
         if (group.signatures.has(signature)) return;
         group.signatures.add(signature);
-        group.garment.push(garmentMixer.clipAction(clip));
-        if (avatarMixer && avatarModel) group.avatar.push(avatarMixer.clipAction(clip.clone()));
+        group.actions.push(mixer.clipAction(clip.clone()));
         group.duration = Math.max(group.duration, clip.duration);
         group.tracks += clip.tracks.length;
         group.motionScore += clipMotionScore(clip);
@@ -624,8 +604,7 @@ export function ResultRigPreview({ url, showAvatar = true, category, onInfo }: P
       });
 
       actionsRef.current = groups;
-      proceduralMotionsRef.current = [createProceduralMotion(rigModel)];
-      if (avatarModel && reboundMeshes === 0) proceduralMotionsRef.current.push(createProceduralMotion(avatarModel));
+      proceduralMotionRef.current = createProceduralMotion(primaryRoot);
 
       const options: ClipOption[] = [{
         id: "procedural-walk-test",
@@ -645,12 +624,17 @@ export function ResultRigPreview({ url, showAvatar = true, category, onInfo }: P
       }
       setClips(options);
       setActiveClip(null);
+      setPreviewStatus(
+        avatarModel
+          ? `Avatar completo cargado; ${bonePairsRef.current.length} huesos de la prenda sincronizados.`
+          : "Prenda riggeada cargada sin avatar superpuesto.",
+      );
 
       const objectMesh = findObjectMesh(rigModel);
       const inspection = objectMesh ? inspectAnchorBone(objectMesh) : { anchorBoneName: null, weightedVertexRatio: null };
       onInfo?.({
         loading: false,
-        bones: boneMap.size,
+        bones: primaryBones.size,
         objectMeshName: objectMesh?.name ?? null,
         anchorBoneName: inspection.anchorBoneName,
         weightedVertexRatio: inspection.weightedVertexRatio,
@@ -659,6 +643,9 @@ export function ResultRigPreview({ url, showAvatar = true, category, onInfo }: P
       resize();
     }).catch((error) => {
       if (disposed) return;
+      const message = error instanceof Error ? error.message : "No se pudo abrir el GLB";
+      setPreviewStatus(message);
+      setClips([]);
       onInfo?.({
         loading: false,
         bones: 0,
@@ -666,17 +653,20 @@ export function ResultRigPreview({ url, showAvatar = true, category, onInfo }: P
         anchorBoneName: null,
         weightedVertexRatio: null,
         clips: [],
-        error: error instanceof Error ? error.message : "No se pudo abrir el GLB",
+        error: message,
       });
     });
 
     const animate = () => {
       const delta = Math.min(clock.getDelta(), 0.05);
-      garmentMixerRef.current?.update(delta);
-      avatarMixerRef.current?.update(delta);
+      motionMixerRef.current?.update(delta);
       if (proceduralActiveRef.current) {
         proceduralTimeRef.current += delta;
-        proceduralMotionsRef.current.forEach((motion) => motion.update(proceduralTimeRef.current));
+        proceduralMotionRef.current?.update(proceduralTimeRef.current);
+      }
+      if (bonePairsRef.current.length > 0) {
+        syncGarmentBones(bonePairsRef.current);
+        rigModel?.updateMatrixWorld(true);
       }
       controls.update();
       renderer.render(scene, camera);
@@ -689,14 +679,13 @@ export function ResultRigPreview({ url, showAvatar = true, category, onInfo }: P
       cancelAnimationFrame(raf);
       observer.disconnect();
       controls.dispose();
-      proceduralMotionsRef.current.forEach((motion) => motion.reset());
-      proceduralMotionsRef.current = [];
+      proceduralMotionRef.current?.reset();
+      proceduralMotionRef.current = null;
       proceduralActiveRef.current = false;
-      garmentMixerRef.current?.stopAllAction();
-      avatarMixerRef.current?.stopAllAction();
-      garmentMixerRef.current = null;
-      avatarMixerRef.current = null;
+      motionMixerRef.current?.stopAllAction();
+      motionMixerRef.current = null;
       actionsRef.current.clear();
+      bonePairsRef.current = [];
       helperRef.current?.geometry.dispose();
       helperRef.current = null;
       disposeModel(rigModel);
@@ -712,7 +701,7 @@ export function ResultRigPreview({ url, showAvatar = true, category, onInfo }: P
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
         <div>
           <p className="text-xs uppercase tracking-[0.16em] text-violet-300">Tu avatar vestido</p>
-          <p className="text-xs text-white/45">Un solo rig para cuerpo y prenda</p>
+          <p className="text-xs text-white/45">Avatar principal + prenda sincronizada</p>
         </div>
         <button type="button" onClick={() => setShowSkeleton((value) => !value)} className="rounded-xl border border-white/10 px-3 py-2 text-xs">
           {showSkeleton ? "Ocultar rig" : "Ver rig"}
