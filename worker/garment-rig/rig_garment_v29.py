@@ -43,6 +43,14 @@ validate_deformation_envelope_v39 = previous.previous.validate_deformation_envel
 _points_metrics = previous.previous._points_metrics
 _matrix_values = previous.previous._matrix_values
 
+# V33 lives seven wrappers below this entrypoint. The former Docker smoke check
+# reaches V23 after six links, so expose the retained repair contract there too.
+_v23 = previous.previous.previous.previous.previous.previous
+_v22 = _v23.previous
+if not hasattr(_v23, "ensure_upper_volume_before_rig"):
+    _v23.ensure_upper_volume_before_rig = _v22.ensure_upper_volume_before_rig
+ensure_upper_volume_before_rig = _v22.ensure_upper_volume_before_rig
+
 # Re-export existing diagnostics and memory guards.
 evaluated_world_points = previous.evaluated_world_points
 shape_signature = previous.shape_signature
