@@ -7,10 +7,14 @@ const creatorSource = readFileSync("./components/creator-studio/CreatorStudioAut
 const bootstrapSource = readFileSync("./components/creator-studio/CreatorStudioBootstrap.tsx", "utf8");
 const previewSource = readFileSync("./components/creator-studio/ResultRigPreviewV40.tsx", "utf8");
 const alignmentSource = readFileSync("./components/creator-studio/result-rig-runtime-alignment.ts", "utf8");
+const blenderRouteSource = readFileSync("./app/api/creator-studio/blender/route.ts", "utf8");
+
 
 test("las prendas usan el FBX oficial de Unreal como molde automático", () => {
   const job = buildBlenderJob({
     category: "hoodie",
+    attemptId: "attempt-test",
+    forceFreshSource: true,
     previewSettings: { automaticFit: true, manualCorrectionEnabled: false },
   });
 
@@ -23,7 +27,18 @@ test("las prendas usan el FBX oficial de Unreal como molde automático", () => {
   assert.equal(job.options.useOfficialAvatarSkeleton, true);
   assert.equal(job.options.useOfficialAvatarWeights, true);
   assert.equal(job.options.normalizeSourcePose, true);
+  assert.equal(job.options.normalizeBeforeSkinning, true);
+  assert.equal(job.options.canonicalRestPose, true);
+  assert.equal(job.options.rejectPostSkinScaleChanges, true);
+  assert.equal(job.options.forceFreshSource, true);
+  assert.equal(job.options.cleanSceneBeforeImport, true);
+  assert.equal(job.options.validation.requireCanonicalRestBind, true);
+  assert.equal(job.options.validation.requireUnitLocalScale, true);
+  assert.equal(job.attemptId, "attempt-test");
+  assert.equal(job.sourcePolicy, "fresh-upload-and-factory-startup");
+  assert.equal(job.previewSettings.canonicalBindVersion, 43);
 });
+
 
 test("Creator Studio procesa primero y deja los sliders como corrección opcional", () => {
   assert.match(bootstrapSource, /CreatorStudioAutomatic/);
@@ -34,6 +49,17 @@ test("Creator Studio procesa primero y deja los sliders como corrección opciona
   assert.match(creatorSource, /Recalcular en Blender/);
   assert.match(creatorSource, /Aprobar molde automático/);
 });
+
+
+test("Reintentar molde crea un intento limpio desde el archivo original", () => {
+  assert.match(creatorSource, /Reintentar molde automático/);
+  assert.match(blenderRouteSource, /randomUUID\(\)/);
+  assert.match(blenderRouteSource, /forceFreshSource:\s*true/);
+  assert.match(blenderRouteSource, /cache:\s*"no-store"/);
+  assert.match(blenderRouteSource, /sourceFile, sourceFile\.name/);
+  assert.match(blenderRouteSource, /canonical-rest-bind-v43/);
+});
+
 
 test("el visor alinea el rig completo con el avatar antes de validar escala y bind pose", () => {
   assert.match(alignmentSource, /alignRigToActiveAvatar/);
