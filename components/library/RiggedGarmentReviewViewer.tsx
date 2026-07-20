@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Bone, Mesh, Object3D, SkinnedMesh } from "three";
+import { Bone, Mesh, Object3D, SkeletonHelper, SkinnedMesh } from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 import {
@@ -18,6 +18,9 @@ type Props = {
   modelUrl: string;
   pose: RiggedReviewPose;
   view: RiggedReviewView;
+  showAvatar?: boolean;
+  showGarment?: boolean;
+  showRig?: boolean;
   onStatus?: (status: string) => void;
 };
 
@@ -59,10 +62,32 @@ function disposeObject(root: Object3D | null) {
   });
 }
 
-export function RiggedGarmentReviewViewer({ modelUrl, pose, view, onStatus }: Props) {
+function disposeSkeletonHelper(helper: SkeletonHelper | null) {
+  if (!helper) return;
+  helper.removeFromParent();
+  helper.geometry?.dispose?.();
+  const material = helper.material;
+  if (Array.isArray(material)) {
+    for (const item of material) item.dispose();
+  } else {
+    material?.dispose?.();
+  }
+}
+
+export function RiggedGarmentReviewViewer({
+  modelUrl,
+  pose,
+  view,
+  showAvatar = true,
+  showGarment = true,
+  showRig = false,
+  onStatus,
+}: Props) {
   const avatar = useActiveAvatarStore((state) => state.avatar);
   const avatarRootRef = useRef<Object3D | null>(null);
   const avatarBonesRef = useRef<Map<string, Bone>>(new Map());
+  const avatarVisualsRef = useRef<Object3D[]>([]);
+  const skeletonHelperRef = useRef<SkeletonHelper | null>(null);
   const garmentRootRef = useRef<Object3D | null>(null);
   const bonePairsRef = useRef<BonePair[]>([]);
   const frameRef = useRef(0);
@@ -75,10 +100,38 @@ export function RiggedGarmentReviewViewer({ modelUrl, pose, view, onStatus }: Pr
   const poseMode: CreatorPoseMode = pose === "T-Pose" ? "tpose" : pose === "Walk" ? "walk" : "idle";
 
   const attachAvatar = (root: Object3D) => {
+    disposeSkeletonHelper(skeletonHelperRef.current);
+    skeletonHelperRef.current = null;
     avatarRootRef.current = root;
     avatarBonesRef.current = collectBones(root);
+    avatarVisualsRef.current = [];
+    root.traverse((object: any) => {
+      if ((object as Mesh).isMesh || (object as SkinnedMesh).isSkinnedMesh) {
+        object.visible = showAvatar;
+        avatarVisualsRef.current.push(object as Object3D);
+      }
+    });
+
+    const helper = new SkeletonHelper(root);
+    helper.name = "CLOUVA_CREATOR_STUDIO_SKELETON";
+    helper.visible = showRig;
+    helper.renderOrder = 50;
+    root.add(helper);
+    skeletonHelperRef.current = helper;
     setAvatarRevision((value) => value + 1);
   };
+
+  useEffect(() => {
+    for (const visual of avatarVisualsRef.current) visual.visible = showAvatar;
+  }, [showAvatar]);
+
+  useEffect(() => {
+    if (garmentRootRef.current) garmentRootRef.current.visible = showGarment;
+  }, [showGarment]);
+
+  useEffect(() => {
+    if (skeletonHelperRef.current) skeletonHelperRef.current.visible = showRig;
+  }, [showRig]);
 
   useEffect(() => {
     let cancelled = false;
@@ -123,6 +176,7 @@ export function RiggedGarmentReviewViewer({ modelUrl, pose, view, onStatus }: Pr
       garmentRoot.position.set(0, 0, 0);
       garmentRoot.rotation.set(0, 0, 0);
       garmentRoot.scale.set(1, 1, 1);
+      garmentRoot.visible = showGarment;
       garmentRoot.name = "CLOUVA_REAL_RIGGED_GARMENT";
 
       const garmentBones = collectBones(garmentRoot);
@@ -169,13 +223,18 @@ export function RiggedGarmentReviewViewer({ modelUrl, pose, view, onStatus }: Pr
         target.scale.copy(source.scale);
       }
       garmentRootRef.current?.updateMatrixWorld(true);
+      skeletonHelperRef.current?.updateMatrixWorld(true);
       frameRef.current = window.requestAnimationFrame(sync);
     };
     frameRef.current = window.requestAnimationFrame(sync);
     return () => window.cancelAnimationFrame(frameRef.current);
   }, []);
 
-  useEffect(() => () => disposeObject(garmentRootRef.current), []);
+  useEffect(() => () => {
+    disposeObject(garmentRootRef.current);
+    disposeSkeletonHelper(skeletonHelperRef.current);
+    skeletonHelperRef.current = null;
+  }, []);
 
   return (
     <div style={{ position: "relative", width: "100%", height: "100%", minHeight: 500 }}>
