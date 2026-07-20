@@ -40,7 +40,7 @@ export function buildBlenderJob(payload: BlenderRequest) {
   return {
     type: "clouva_creator_pipeline",
     operation: "fit_and_rig_reference",
-    pipelineVersion: "canonical-rest-bind-v43",
+    pipelineVersion: "body-mesh-contract-v15",
     attemptId,
     sourcePolicy: forceFreshSource ? "fresh-upload-and-factory-startup" : "uploaded-source",
     riggingStrategy: deformable
@@ -58,7 +58,7 @@ export function buildBlenderJob(payload: BlenderRequest) {
     templateMode,
     previewSettings: {
       ...(payload.previewSettings ?? {}),
-      rigProfileVersion: deformable ? 16 : payload.previewSettings?.rigProfileVersion,
+      rigProfileVersion: deformable ? 15 : payload.previewSettings?.rigProfileVersion,
       automaticFit,
       manualCorrectionEnabled,
       avatarMoldSource: deformable ? "official-unreal-fbx" : payload.previewSettings?.avatarMoldSource,
