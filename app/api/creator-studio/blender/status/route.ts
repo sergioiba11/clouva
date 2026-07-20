@@ -5,6 +5,10 @@ export const dynamic = "force-dynamic";
 
 const doneStates = new Set(["completed", "complete", "finished", "done", "success", "succeeded"]);
 
+function text(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -55,6 +59,9 @@ export async function GET(request: Request) {
     const resultUrl = workerHasResult || doneStates.has(status)
       ? `/api/creator-studio/blender/result?jobId=${encodeURIComponent(jobId)}`
       : null;
+    const technicalError = text(data.technicalError)
+      ?? text(data.failureReason)
+      ?? text(data.error);
 
     return NextResponse.json({
       ok: true,
@@ -63,7 +70,11 @@ export async function GET(request: Request) {
       progress,
       stage: data.stage ?? data.step ?? data.message ?? null,
       resultUrl,
-      error: data.error ?? data.failureReason ?? null,
+      // Creator Studio consumes `error` directly. Prefer the exact sanitized Blender
+      // exception so a failed mold can be fixed without another blind deployment.
+      error: technicalError,
+      technicalError,
+      diagnosticsVersion: data.diagnosticsVersion ?? null,
       riggingStrategy: data.riggingStrategy ?? null,
       templateMode: Boolean(data.templateMode),
       raw: data,

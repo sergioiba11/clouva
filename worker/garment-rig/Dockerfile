@@ -27,10 +27,10 @@ RUN wget -q "$BLENDER_URL" -O /tmp/blender.tar.xz \
 RUN pip install --no-cache-dir --break-system-packages fastapi uvicorn pydantic python-multipart
 
 WORKDIR /app
-COPY app.py app_v5.py app_v6.py app_v7.py app_v8.py app_v9.py app_v10.py avatar_reference.py rig_garment.py rig_garment_v5.py rig_garment_v10.py rig_garment_v11.py rig_garment_v12.py rig_garment_v13.py rig_garment_v14.py rig_garment_v15.py rig_garment_v16.py rig_garment_v17.py rig_garment_v18.py rig_garment_v19.py rig_garment_v20.py rig_garment_v21.py rig_garment_v22.py rig_object.py attach_object.py export_unreal.py export_unreal_clean.py export_unreal_v31.py inspect_garment.py test_export_unreal_units.py test_avatar_reference.py ./
+COPY app.py app_v5.py app_v6.py app_v7.py app_v8.py app_v9.py app_v10.py app_v11.py avatar_reference.py rig_garment.py rig_garment_v5.py rig_garment_v10.py rig_garment_v11.py rig_garment_v12.py rig_garment_v13.py rig_garment_v14.py rig_garment_v15.py rig_garment_v16.py rig_garment_v17.py rig_garment_v18.py rig_garment_v19.py rig_garment_v20.py rig_garment_v21.py rig_garment_v22.py rig_object.py attach_object.py export_unreal.py export_unreal_clean.py export_unreal_v31.py inspect_garment.py test_export_unreal_units.py test_avatar_reference.py ./
 COPY avatar-reference ./avatar-reference
 RUN mv app.py app_legacy.py \
-    && mv app_v10.py app.py \
+    && mv app_v11.py app.py \
     && mv rig_garment.py rig_garment_legacy.py \
     && mv rig_garment_v5.py rig_garment_v9.py \
     && mv rig_garment_v10.py rig_garment_v10_base.py \
@@ -66,6 +66,7 @@ ENV PYTHONPATH=/app
 ENV CLOUVA_RIG_VERSION=v28
 ENV CLOUVA_UNREAL_ROOT_RESTORE=v32
 ENV CLOUVA_UPPER_VOLUME_REPAIR=v33
+ENV CLOUVA_RIG_DIAGNOSTICS=v34
 ENV CLOUVA_LEGACY_GARMENT_RECOVERY=v29
 ENV CLOUVA_WORKER_INSPECTOR=v2
 ENV CLOUVA_GARMENT_SOURCE_ROUTING=v30
@@ -78,6 +79,7 @@ ENV CLOUVA_AVATAR_REFERENCE_METADATA_PATH=/app/avatar-reference/clouva_avatar_da
 RUN test -f /app/app.py \
     && test -f /app/app_v8.py \
     && test -f /app/app_v9.py \
+    && test -f /app/app_v10.py \
     && test -f /app/inspect_garment.py \
     && test -f /app/export_unreal.py \
     && test -f /app/export_unreal_clean.py \
@@ -94,7 +96,7 @@ RUN test -f /app/app.py \
     && test -f /app/rig_garment_v20_base.py \
     && test -f /opt/blender/4.2/scripts/modules/rig_garment_legacy.py \
     && test -f /opt/blender/4.2/scripts/modules/avatar_reference.py \
-    && python3 -c "import inspect, app; paths={getattr(route, 'path', '') for route in app.app.routes}; assert '/rig' in paths; assert '/export/unreal-v2' in paths; assert '/diagnostics/health' in paths; assert '/diagnostics/garment' in paths; assert app.WORKER_INSPECTOR_VERSION == 'v2-single-pass-awareness'; assert app.UNREAL_EXPORT_VERSION == 'v31.1-absolute-module-loader'; assert app.EXPORT_UNREAL_SCRIPT_PATH.name == 'export_unreal_v31.py'; assert app.GARMENT_SOURCE_ROUTING_VERSION == 'v30-single-pass'; model_fields=app.base.base.ValidatedUnrealExportRequestV30.model_fields; assert 'source_already_rigged' in model_fields; export_source=inspect.getsource(app.base.base.export_for_unreal_v30); assert 'if not request.source_already_rigged' in export_source; assert app.INSPECT_SCRIPT_PATH.name == 'inspect_garment.py'; print('[clouva] Inspector V2 + routing V30 + exporter V31.1 OK')" \
+    && python3 -c "import inspect, app; paths={getattr(route, 'path', '') for route in app.app.routes}; assert '/rig' in paths; assert '/export/unreal-v2' in paths; assert '/diagnostics/health' in paths; assert '/diagnostics/garment' in paths; assert '/diagnostics/latest-rig-failure' in paths; assert app.WORKER_INSPECTOR_VERSION == 'v2-single-pass-awareness'; assert app.UNREAL_EXPORT_VERSION == 'v31.1-absolute-module-loader'; assert app.RIG_DIAGNOSTICS_VERSION == 'v34-runtime-error-surface'; assert app.EXPORT_UNREAL_SCRIPT_PATH.name == 'export_unreal_v31.py'; assert app.GARMENT_SOURCE_ROUTING_VERSION == 'v30-single-pass'; assert app.base.legacy.run_blender_job.__name__ == 'run_blender_job_with_diagnostics'; model_fields=app.base.base.ValidatedUnrealExportRequestV30.model_fields; assert 'source_already_rigged' in model_fields; export_source=inspect.getsource(app.base.base.export_for_unreal_v30); assert 'if not request.source_already_rigged' in export_source; assert app.INSPECT_SCRIPT_PATH.name == 'inspect_garment.py'; assert app.extract_blender_failure('', 'Traceback\nRuntimeError: Sleeve validation failed') == 'RuntimeError: Sleeve validation failed'; print('[clouva] Inspector V2 + routing V30 + exporter V31.1 + diagnostics V34 OK')" \
     && /opt/blender/blender --background --factory-startup --python-expr "import ast; source=open('/app/inspect_garment.py', encoding='utf-8').read(); tree=ast.parse(source); names={node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}; assert {'inspect_asset','relative_shape_error','main'} <= names; assert 'rawGarmentReadyForRig' in source; assert 'Meshy original' in source; print('[clouva] Raw Meshy diagnostics contract OK')" \
     && cd /tmp \
     && env -u PYTHONPATH /opt/blender/blender --background --factory-startup --python-expr "import avatar_reference; assert hasattr(avatar_reference, 'canonicalize_and_validate_bones'); print('[clouva] avatar_reference available to embedded Blender without PYTHONPATH')" \
