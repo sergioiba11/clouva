@@ -24,6 +24,8 @@ Servicio local de solo lectura entre Unreal Engine Remote Control API y CLOUVA.
 
 ## Prueba local directa
 
+Para probar solamente la lectura local, configurá `DRY_RUN=true`. En ese modo el bridge imprime el snapshot normalizado antes de cualquier envío, no requiere `CLOUVA_APP_URL` ni `CLOUVA_BRIDGE_TOKEN`, y no envía datos a CLOUVA o Supabase.
+
 En PowerShell:
 
 ```powershell

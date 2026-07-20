@@ -10,6 +10,12 @@ function supabaseConfig() {
   return { url: url.replace(/\/$/, ''), key };
 }
 
+function publicSnapshot(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const { source: _discardedSource, ...normalized } = value as Record<string, unknown>;
+  return normalized;
+}
+
 export async function GET() {
   try {
     const { url, key } = supabaseConfig();
@@ -31,7 +37,7 @@ export async function GET() {
       lastConnectionAt: row.last_connected_at ?? capturedAt,
       capturedAt,
       error: status === 'offline' ? 'El bridge no envió datos recientemente o Unreal está cerrado' : null,
-      snapshot: row.snapshot,
+      snapshot: publicSnapshot(row.snapshot),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

@@ -6,6 +6,7 @@ const actorName = process.env.UNREAL_ACTOR_NAME ?? 'BP_ClouvaCharacter';
 const clouvaBaseUrl = process.env.CLOUVA_APP_URL;
 const bridgeToken = process.env.CLOUVA_BRIDGE_TOKEN;
 const intervalMs = Number(process.env.SNAPSHOT_INTERVAL_MS ?? 15000);
+const dryRun = process.env.DRY_RUN?.toLowerCase() === 'true';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -34,11 +35,6 @@ type AvatarSnapshot = {
     remoteUrl: string;
   };
   capturedAt: string;
-  source: {
-    info: unknown;
-    presets: unknown;
-    preset: unknown;
-  };
 };
 
 function isRecord(value: unknown): value is JsonRecord {
@@ -89,10 +85,26 @@ function collectExposedProperties(preset: unknown): JsonRecord {
   return output;
 }
 
-function normalizeSnapshot(info: unknown, presets: unknown, preset: unknown): AvatarSnapshot {
+function findExposedActor(preset: unknown): JsonRecord | null {
+  const groups = isRecord(preset) && isRecord(preset.Preset) && Array.isArray(preset.Preset.Groups)
+    ? preset.Preset.Groups
+    : [];
+  for (const group of groups) {
+    if (!isRecord(group) || !Array.isArray(group.ExposedActors)) continue;
+    for (const actor of group.ExposedActors) {
+      if (!isRecord(actor)) continue;
+      const underlying = isRecord(actor.UnderlyingActor) ? actor.UnderlyingActor : null;
+      if (actor.DisplayName === actorName || underlying?.Name === actorName) return actor;
+    }
+  }
+  return null;
+}
+
+function normalizeSnapshot(preset: unknown): AvatarSnapshot {
   const exposedProperties = collectExposedProperties(preset);
-  const actorCandidate = findValue(preset, ['BP_ClouvaCharacter', actorName, 'ActorLabel', 'ActorName']);
-  const actorLabel = typeof actorCandidate === 'string' ? actorCandidate : actorName;
+  const exposedActor = findExposedActor(preset);
+  const underlyingActor = exposedActor && isRecord(exposedActor.UnderlyingActor) ? exposedActor.UnderlyingActor : null;
+  const actorLabel = typeof exposedActor?.DisplayName === 'string' ? exposedActor.DisplayName : actorName;
   const now = new Date().toISOString();
   const asArray = (value: unknown) => Array.isArray(value) ? value : value == null ? [] : [value];
 
@@ -102,7 +114,7 @@ function normalizeSnapshot(info: unknown, presets: unknown, preset: unknown): Av
     actor: {
       name: actorName,
       label: actorLabel,
-      path: (findValue(preset, ['ActorPath', 'ObjectPath', 'Path']) as string | null) ?? null,
+      path: typeof underlyingActor?.Path === 'string' ? underlyingActor.Path : null,
       transform: findValue(preset, ['Transform', 'RelativeTransform', 'ActorTransform']),
       scale: findValue(preset, ['Scale3D', 'RelativeScale3D', 'Scale']),
       skeletalMesh: findValue(preset, ['SkeletalMesh', 'SkeletalMeshAsset']),
@@ -117,7 +129,6 @@ function normalizeSnapshot(info: unknown, presets: unknown, preset: unknown): Av
     },
     connection: { status: 'online', connectedAt: now, remoteUrl: unrealBaseUrl },
     capturedAt: now,
-    source: { info, presets, preset },
   };
 }
 
@@ -139,7 +150,10 @@ async function capture(): Promise<AvatarSnapshot> {
     getJson('/remote/presets'),
     getJson(`/remote/preset/${encodeURIComponent(presetName)}`),
   ]);
-  return normalizeSnapshot(info, presets, preset);
+  // These calls also verify that the server and configured preset are available.
+  void info;
+  void presets;
+  return normalizeSnapshot(preset);
 }
 
 async function sendSnapshot(snapshot: AvatarSnapshot): Promise<void> {
@@ -159,15 +173,19 @@ async function sendSnapshot(snapshot: AvatarSnapshot): Promise<void> {
 async function runOnce(): Promise<void> {
   try {
     const snapshot = await capture();
+    console.log(JSON.stringify(snapshot, null, 2));
+    if (dryRun) {
+      console.log(`[dry-run] Snapshot capturado ${snapshot.capturedAt}; no se enviaron datos.`);
+      return;
+    }
     await sendSnapshot(snapshot);
     console.log(`[online] Snapshot enviado ${snapshot.capturedAt}`);
-    console.log(JSON.stringify(snapshot, null, 2));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`[offline] ${new Date().toISOString()} ${message}`);
   }
 }
 
-console.log(`clouva-unreal-bridge iniciado. Unreal: ${unrealBaseUrl}; preset: ${presetName}; solo lectura.`);
+console.log(`clouva-unreal-bridge iniciado. Unreal: ${unrealBaseUrl}; preset: ${presetName}; solo lectura; dry-run: ${dryRun}.`);
 await runOnce();
 setInterval(runOnce, Math.max(intervalMs, 5000));

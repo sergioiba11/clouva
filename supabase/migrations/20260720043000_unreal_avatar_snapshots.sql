@@ -7,7 +7,8 @@ create table if not exists public.unreal_avatar_snapshots (
   last_connected_at timestamptz not null,
   snapshot jsonb not null,
   error text,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  constraint unreal_avatar_snapshots_preset_actor_key unique (preset_name, actor_name)
 );
 
 create index if not exists unreal_avatar_snapshots_preset_captured_idx

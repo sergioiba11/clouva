@@ -1,0 +1,661 @@
+{
+  "schemaVersion": 1,
+  "source": "Unreal Engine 5.8",
+  "units": "centimeters",
+  "coordinateSystem": {
+    "up": "+Z",
+    "forward": "<AxisType.Y: 2>"
+  },
+  "skeletalMesh": "/Game/Characters/Clouva/Clouva-avatar-unreal.Clouva-avatar-unreal",
+  "skeleton": "/Game/Characters/Clouva/Clouva-avatar-unreal_Skeleton.Clouva-avatar-unreal_Skeleton",
+  "physicsAsset": "/Game/Characters/Clouva/Clouva-avatar-unreal_PhysicsAsset.Clouva-avatar-unreal_PhysicsAsset",
+  "actor": {
+    "label": "BP_ClouvaCharacter",
+    "path": "/Game/ThirdPerson/Lvl_ThirdPerson.Lvl_ThirdPerson:PersistentLevel.BP_ClouvaCharacter_C_UAID_18C04D62A651EDEF02_1581965591",
+    "worldTransform": {
+      "translationCm": {
+        "x": -310.0,
+        "y": 310.0,
+        "z": 290.0
+      },
+      "rotation": {
+        "pitch": 0.0,
+        "yaw": 0.0,
+        "roll": -0.0
+      },
+      "scale": {
+        "x": 1.0,
+        "y": 1.0,
+        "z": 1.0
+      }
+    }
+  },
+  "component": {
+    "name": "ClouvaMesh",
+    "path": "/Game/ThirdPerson/Lvl_ThirdPerson.Lvl_ThirdPerson:PersistentLevel.BP_ClouvaCharacter_C_UAID_18C04D62A651EDEF02_1581965591.ClouvaMesh",
+    "relativeTransform": {
+      "translationCm": {
+        "x": 0.0,
+        "y": 0.0,
+        "z": -35.0
+      },
+      "rotation": {
+        "pitch": 0.0,
+        "yaw": 0.0,
+        "roll": -0.0
+      },
+      "scale": {
+        "x": 1.0,
+        "y": 1.0,
+        "z": 1.0
+      }
+    },
+    "worldTransform": {
+      "translationCm": {
+        "x": -310.0,
+        "y": 310.0,
+        "z": 136.0
+      },
+      "rotation": {
+        "pitch": -0.0,
+        "yaw": -90.00000000000001,
+        "roll": -0.0
+      },
+      "scale": {
+        "x": 1.0,
+        "y": 1.0,
+        "z": 1.0
+      }
+    }
+  },
+  "bounds": {
+    "imported": {
+      "originCm": {
+        "x": 1.239776611328125e-05,
+        "y": 0.0,
+        "z": 118.75002670288086
+      },
+      "boxExtentCm": {
+        "x": 23.494389533996582,
+        "y": 11.117805480957031,
+        "z": 56.25003433227539
+      },
+      "sizeCm": {
+        "x": 46.988779067993164,
+        "y": 22.235610961914062,
+        "z": 112.50006866455078
+      },
+      "sphereRadiusCm": 61.96497640336617
+    },
+    "extended": {
+      "originCm": {
+        "x": 1.239776611328125e-05,
+        "y": 0.0,
+        "z": 118.75002670288086
+      },
+      "boxExtentCm": {
+        "x": 23.494389533996582,
+        "y": 11.117805480957031,
+        "z": 56.25003433227539
+      },
+      "sizeCm": {
+        "x": 46.988779067993164,
+        "y": 22.235610961914062,
+        "z": 112.50006866455078
+      },
+      "sphereRadiusCm": 61.96497640336617
+    }
+  },
+  "materials": [
+    {
+      "index": 0,
+      "slotName": "Material_1",
+      "importedSlotName": "Material_1",
+      "material": "/Game/Characters/Clouva/Material_1.Material_1"
+    }
+  ],
+  "sockets": [],
+  "morphTargets": [],
+  "skinWeightProfiles": [],
+  "bones": [
+    {
+      "index": 0,
+      "name": "Hips",
+      "parent": null,
+      "referencePoseLocalTransform": {
+        "translationCm": {
+          "x": 0.1442520646378398,
+          "y": -0.1590223051607609,
+          "z": 121.79203033447266
+        },
+        "rotation": {
+          "pitch": -0.14725447615743795,
+          "yaw": 0.12327240827768733,
+          "roll": 100.13364478799969
+        },
+        "scale": {
+          "x": 100.00000142933709,
+          "y": 99.99999284694616,
+          "z": 99.99999127901421
+        }
+      }
+    },
+    {
+      "index": 1,
+      "name": "LeftUpLeg",
+      "parent": "Hips",
+      "referencePoseLocalTransform": {
+        "translationCm": {
+          "x": 0.054492955306933474,
+          "y": 0.05562600864041323,
+          "z": 0.007205150027799062
+        },
+        "rotation": {
+          "pitch": -6.597135938130477,
+          "yaw": -4.8435361508498005,
+          "roll": 172.49310556245803
+        },
+        "scale": {
+          "x": 1.0000005851671288,
+          "y": 0.9999998591438582,
+          "z": 1.0000010856278394
+        }
+      }
+    },
+    {
+      "index": 2,
+      "name": "LeftLeg",
+      "parent": "LeftUpLeg",
+      "referencePoseLocalTransform": {
+        "translationCm": {
+          "x": -2.3296048209942022e-07,
+          "y": -0.2259445197396952,
+          "z": 1.2623789111265715e-08
+        },
+        "rotation": {
+          "pitch": -3.1985580124788537,
+          "yaw": -2.8794326047051313,
+          "roll": 4.439758677749272
+        },
+        "scale": {
+          "x": 1.0000001129005263,
+          "y": 1.000000064700345,
+          "z": 0.9999999249052577
+        }
+      }
+    },
+    {
+      "index": 3,
+      "name": "LeftFoot",
+      "parent": "LeftLeg",
+      "referencePoseLocalTransform": {
+        "translationCm": {
+          "x": 4.741004714092778e-07,
+          "y": -0.22821220589468305,
+          "z": 5.046079784992719e-07
+        },
+        "rotation": {
+          "pitch": -1.6497782847317017,
+          "yaw": -2.1654985827874045,
+          "roll": -54.24183145554177
+        },
+        "scale": {
+          "x": 0.9999999380445991,
+          "y": 0.9999999844665967,
+          "z": 0.9999999865980962
+        }
+      }
+    },
+    {
+      "index": 4,
+      "name": "LeftToeBase",
+      "parent": "LeftFoot",
+      "referencePoseLocalTransform": {
+        "translationCm": {
+          "x": -1.629986901147129e-07,
+          "y": -0.09499557266769271,
+          "z": 4.419355947304915e-07
+        },
+        "rotation": {
+          "pitch": 0.5600067814781713,
+          "yaw": 0.0001288826019742471,
+          "roll": -42.422621114688205
+        },
+        "scale": {
+          "x": 0.9999999075542808,
+          "y": 0.9999998693505394,
+          "z": 0.9999998097723127
+        }
+      }
+    },
+    {
+      "index": 5,
+      "name": "RightUpLeg",
+      "parent": "Hips",
+      "referencePoseLocalTransform": {
+        "translationCm": {
+          "x": -0.054062620806360956,
+          "y": 0.055771027605044265,
+          "z": 0.0075587311972571125
+        },
+        "rotation": {
+          "pitch": 6.293364381022016,
+          "yaw": 4.579173318280618,
+          "roll": 172.38130582377588
+        },
+        "scale": {
+          "x": 0.9999997112763971,
+          "y": 0.9999999433587958,
+          "z": 0.9999992094746761
+        }
+      }
+    },
+    {
+      "index": 6,
+      "name": "RightLeg",
+      "parent": "RightUpLeg",
+      "referencePoseLocalTransform": {
+        "translationCm": {
+          "x": 5.10541706133516e-09,
+          "y": -0.22562971322514302,
+          "z": -1.164540537404446e-07
+        },
+        "rotation": {
+          "pitch": 2.6164580500398262,
+          "yaw": 2.2880638399778452,
+          "roll": 4.2525226706409
+        },
+        "scale": {
+          "x": 1.0000000588902005,
+          "y": 0.9999999604691857,
+          "z": 1.000000119430721
+        }
+      }
+    },
+    {
+      "index": 7,
+      "name": "RightFoot",
+      "parent": "RightLeg",
+      "referencePoseLocalTransform": {
+        "translationCm": {
+          "x": -2.5058508140718416e-07,
+          "y": -0.23185344797997498,
+          "z": 4.691757008873365e-07
+        },
+        "rotation": {
+          "pitch": 2.1962207210307545,
+          "yaw": 2.7088382940436926,
+          "roll": -55.32661580444155
+        },
+        "scale": {
+          "x": 0.9999999931813716,
+          "y": 0.9999998933351298,
+          "z": 1.000000053546964
+        }
+      }
+    },
+    {
+      "index": 8,
+      "name": "RightToeBase",
+      "parent": "RightFoot",
+      "referencePoseLocalTransform": {
+        "translationCm": {
+          "x": -3.4129961787310314e-08,
+          "y": -0.09255031745930048,
+          "z": 1.9980640565409047e-06
+        },
+        "rotation": {
+          "pitch": -0.556386386190123,
+          "yaw": 6.990288247489039e-05,
+          "roll": -41.06817736222331
+        },
+        "scale": {
+          "x": 1.0000000120096968,
+          "y": 1.0000000837029952,
+          "z": 0.9999999309542731
+        }
+      }
+    },
+    {
+      "index": 9,
+      "name": "Spine02",
+      "parent": "Hips",
+      "referencePoseLocalTransform": {
+        "translationCm": {
+          "x": -0.0004303510238136254,
+          "y": -0.07064337344546057,
+          "z": -0.014764053668023469
+        },
+        "rotation": {
+          "pitch": 0.006056486896490697,
+          "yaw": -0.35030207283856946,
+          "roll": -11.804293205611215
+        },
+        "scale": {
+          "x": 0.9999999126964264,
+          "y": 0.999999955434683,
+          "z": 0.9999999375460455
+        }
+      }
+    },
+    {
+      "index": 10,
+      "name": "Spine01",
+      "parent": "Spine02",
+      "referencePoseLocalTransform": {
+        "translationCm": {
+          "x": -1.7885116807697665e-09,
+          "y": -0.07217037148094096,
+          "z": 5.1304410726704663e-08
+        },
+        "rotation": {
+          "pitch": -5.171665753485169e-08,
+          "yaw": 1.02094216864042e-08,
+          "roll": -8.000771271829162e-06
+        },
+        "scale": {
+          "x": 1.000000059601641,
+          "y": 1.0000000040727124,
+          "z": 1.0000000038003416
+        }
+      }
+    },
+    {
+      "index": 11,
+      "name": "Spine",
+      "parent": "Spine01",
+      "referencePoseLocalTransform": {
+        "translationCm": {
+          "x": 5.860489333403551e-10,
+          "y": -0.0721714453572393,
+          "z": 3.2852395442928284e-08
+        },
+        "rotation": {
+          "pitch": 0.35230110684836813,
+          "yaw": -0.3993321256112828,
+          "roll": -5.833187702427762
+        },
+        "scale": {
+          "x": 0.9999999978851896,
+          "y": 1.000000047343288,
+          "z": 1.000000096512102
+        }
+      }
+    },
+    {
+      "index": 12,
+      "name": "LeftShoulder",
+      "parent": "Spine",
+      "referencePoseLocalTransform": {
+        "translationCm": {
+          "x": 0.016986089077254487,
+          "y": -0.01147309083740633,
+          "z": -0.0023275159685091085
+        },
+        "rotation": {
+          "pitch": -81.64186287976246,
+          "yaw": -115.74550071263074,
+          "roll": -153.88597204036424
+        },
+        "scale": {
+          "x": 0.9999999949554067,
+          "y": 1.0000000288460467,
+          "z": 0.9999999012130129
+        }
+      }
+    },
+    {
+      "index": 13,
+      "name": "LeftArm",
+      "parent": "LeftShoulder",
+      "referencePoseLocalTransform": {
+        "translationCm": {
+          "x": -6.999665904013075e-08,
+          "y": -0.06770992785458943,
+          "z": 1.196034600248197e-07
+        },
+        "rotation": {
+          "pitch": -22.11613030077648,
+          "yaw": -68.66634662808953,
+          "roll": 84.16707356968372
+        },
+        "scale": {
+          "x": 1.0000001437231323,
+          "y": 1.0000001634309474,
+          "z": 1.0000002006803237
+        }
+      }
+    },
+    {
+      "index": 14,
+      "name": "LeftForeArm",
+      "parent": "LeftArm",
+      "referencePoseLocalTransform": {
+        "translationCm": {
+          "x": -6.461852530836865e-08,
+          "y": -0.17188065962859667,
+          "z": -1.0708033815198803e-07
+        },
+        "rotation": {
+          "pitch": -0.41764811128477514,
+          "yaw": -6.111852728321732,
+          "roll": -15.789797803479171
+        },
+        "scale": {
+          "x": 1.00000006345868,
+          "y": 0.9999997726782713,
+          "z": 0.9999999345396413
+        }
+      }
+    },
+    {
+      "index": 15,
+      "name": "LeftHand",
+      "parent": "LeftForeArm",
+      "referencePoseLocalTransform": {
+        "translationCm": {
+          "x": 1.0110237310678727e-06,
+          "y": -0.15491311388324058,
+          "z": -5.088499164807025e-07
+        },
+        "rotation": {
+          "pitch": -10.172447985018907,
+          "yaw": -13.003804010164606,
+          "roll": 8.113841045975308
+        },
+        "scale": {
+          "x": 0.9999999293404206,
+          "y": 1.0000000609536897,
+          "z": 0.9999999783008394
+        }
+      }
+    },
+    {
+      "index": 16,
+      "name": "RightShoulder",
+      "parent": "Spine",
+      "referencePoseLocalTransform": {
+        "translationCm": {
+          "x": -0.017119879072428894,
+          "y": -0.013476565496798543,
+          "z": -0.0019566974231836898
+        },
+        "rotation": {
+          "pitch": 82.06643733568299,
+          "yaw": 109.75981993496296,
+          "roll": -161.02150466000828
+        },
+        "scale": {
+          "x": 1.0000000781449592,
+          "y": 1.0000001720001075,
+          "z": 0.999999960817641
+        }
+      }
+    },
+    {
+      "index": 17,
+      "name": "RightArm",
+      "parent": "RightShoulder",
+      "referencePoseLocalTransform": {
+        "translationCm": {
+          "x": -3.220387836608274e-08,
+          "y": -0.06899881628970654,
+          "z": 3.57017429175599e-07
+        },
+        "rotation": {
+          "pitch": 23.44421201196342,
+          "yaw": 67.00661584059642,
+          "roll": 83.4450709739076
+        },
+        "scale": {
+          "x": 0.9999999427732577,
+          "y": 0.9999997896366548,
+          "z": 0.9999999039494525
+        }
+      }
+    },
+    {
+      "index": 18,
+      "name": "RightForeArm",
+      "parent": "RightArm",
+      "referencePoseLocalTransform": {
+        "translationCm": {
+          "x": -1.4490525539478938e-06,
+          "y": -0.16223709220961302,
+          "z": -2.264996950551712e-07
+        },
+        "rotation": {
+          "pitch": 2.8546536392248814,
+          "yaw": 8.180231632605938,
+          "roll": -14.905721256891935
+        },
+        "scale": {
+          "x": 0.9999999159707473,
+          "y": 1.0000001070832776,
+          "z": 1.000000076248521
+        }
+      }
+    },
+    {
+      "index": 19,
+      "name": "RightHand",
+      "parent": "RightForeArm",
+      "referencePoseLocalTransform": {
+        "translationCm": {
+          "x": 4.635819664255969e-07,
+          "y": -0.15414628310394551,
+          "z": 9.442499028233797e-07
+        },
+        "rotation": {
+          "pitch": 11.184413899734844,
+          "yaw": 14.687271540342962,
+          "roll": 7.984023768485183
+        },
+        "scale": {
+          "x": 0.9999999894255864,
+          "y": 1.0000000184867344,
+          "z": 1.0000001145918236
+        }
+      }
+    },
+    {
+      "index": 20,
+      "name": "neck",
+      "parent": "Spine",
+      "referencePoseLocalTransform": {
+        "translationCm": {
+          "x": 0.00013378271916640594,
+          "y": -0.04087220534679403,
+          "z": 0.0042840739741139555
+        },
+        "rotation": {
+          "pitch": -0.1499635315259425,
+          "yaw": 0.1718200634847944,
+          "roll": 5.983746732401229
+        },
+        "scale": {
+          "x": 0.9999999353138402,
+          "y": 1.000000073806061,
+          "z": 0.9999999652244461
+        }
+      }
+    },
+    {
+      "index": 21,
+      "name": "Head",
+      "parent": "neck",
+      "referencePoseLocalTransform": {
+        "translationCm": {
+          "x": 2.379146248066011e-09,
+          "y": -0.060910062993962955,
+          "z": -6.204909941756598e-08
+        },
+        "rotation": {
+          "pitch": -0.06352349485510422,
+          "yaw": 0.22369305669320186,
+          "roll": 34.008178220550064
+        },
+        "scale": {
+          "x": 0.999999998114003,
+          "y": 0.9999999817260261,
+          "z": 0.9999999684421687
+        }
+      }
+    },
+    {
+      "index": 22,
+      "name": "head_end",
+      "parent": "Head",
+      "referencePoseLocalTransform": {
+        "translationCm": {
+          "x": -0.0006796657002393208,
+          "y": -0.19604895193449656,
+          "z": -0.09450671495308927
+        },
+        "rotation": {
+          "pitch": -0.04087189225731839,
+          "yaw": -0.17893097898454635,
+          "roll": -25.736716663212068
+        },
+        "scale": {
+          "x": 1.0000000039336112,
+          "y": 1.0000001462920407,
+          "z": 1.0000001353715318
+        }
+      }
+    },
+    {
+      "index": 23,
+      "name": "headfront",
+      "parent": "Head",
+      "referencePoseLocalTransform": {
+        "translationCm": {
+          "x": 0.0006796783627398672,
+          "y": -0.06018468769814467,
+          "z": 0.09450770545414844
+        },
+        "rotation": {
+          "pitch": -0.19071842011049864,
+          "yaw": 0.34755837819865354,
+          "roll": 57.50934348908014
+        },
+        "scale": {
+          "x": 0.9999999628884293,
+          "y": 1.00000004560184,
+          "z": 1.0000000196238834
+        }
+      }
+    }
+  ],
+  "fbx": {
+    "path": "AvatarReference.fbx",
+    "exported": true,
+    "errors": [],
+    "includes": [
+      "LOD0 geometry",
+      "reference skeleton",
+      "bind pose",
+      "vertex skin weights"
+    ]
+  }
+}

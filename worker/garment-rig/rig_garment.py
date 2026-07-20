@@ -72,9 +72,59 @@ def clear_scene():
 
 def import_glb(path):
     before = set(bpy.context.scene.objects)
-    bpy.ops.import_scene.gltf(filepath=path)
+    if str(path).lower().endswith(".fbx"):
+        bpy.ops.import_scene.fbx(
+            filepath=path,
+            use_anim=False,
+            ignore_leaf_bones=False,
+            automatic_bone_orientation=False,
+            use_prepost_rot=True,
+        )
+    else:
+        bpy.ops.import_scene.gltf(filepath=path)
     bpy.context.view_layer.update()
     return [obj for obj in bpy.context.scene.objects if obj not in before]
+
+
+def validate_unreal_avatar_reference(avatar_path, avatar_objects, armature, body_meshes):
+    metadata_path = os.path.join(os.path.dirname(avatar_path), "clouva_avatar_data.json")
+    if not os.path.exists(metadata_path):
+        return None
+    with open(metadata_path, encoding="utf-8") as handle:
+        metadata = json.load(handle)
+    if metadata.get("schemaVersion") != 1:
+        raise RuntimeError("Official Unreal avatar metadata has an unsupported schema")
+    expected_bones = {
+        str(item.get("name"))
+        for item in metadata.get("bones", [])
+        if isinstance(item, dict) and item.get("name")
+    }
+    actual_bones = {bone.name for bone in armature.data.bones}
+    missing = sorted(expected_bones - actual_bones)
+    if missing:
+        raise RuntimeError(
+            "Official Unreal avatar FBX does not match its rig metadata; missing bones: "
+            + ", ".join(missing[:12])
+        )
+    for obj in avatar_objects:
+        obj["clouvaAvatarReferenceSource"] = "unreal-fbx"
+        obj["clouvaAvatarReferenceSchema"] = 1
+    armature["clouvaExpectedBoneCount"] = len(expected_bones)
+    armature["clouvaUnrealSkeletalMesh"] = str(metadata.get("skeletalMesh") or "")
+    armature["clouvaUnrealSkeleton"] = str(metadata.get("skeleton") or "")
+    armature["clouvaUnrealPhysicsAsset"] = str(metadata.get("physicsAsset") or "")
+    body_min, body_max = combined_bbox(body_meshes)
+    measured_height = float(body_max.z - body_min.z)
+    imported_height_cm = float(
+        metadata.get("bounds", {}).get("imported", {}).get("sizeCm", {}).get("z", 0.0)
+    )
+    print(
+        "[avatar-reference] Unreal FBX verified "
+        f"bones={len(expected_bones)} blenderHeight={measured_height:.6f} "
+        f"unrealHeightCm={imported_height_cm:.6f}",
+        flush=True,
+    )
+    return metadata
 
 
 def select_only(obj):
@@ -932,6 +982,7 @@ def main():
     avatar_objects = import_glb(avatar_path)
     armature = find_armature(avatar_objects)
     body_meshes = body_meshes_for_rig(avatar_objects, armature)
+    validate_unreal_avatar_reference(avatar_path, avatar_objects, armature, body_meshes)
     body_min, body_max = combined_bbox(body_meshes)
     avatar_height = max(body_max.z - body_min.z, 1e-6)
 

@@ -32,8 +32,9 @@ export async function POST(request: NextRequest) {
     }
 
     const capturedAt = typeof snapshot.capturedAt === 'string' ? snapshot.capturedAt : new Date().toISOString();
+    const { source: _discardedSource, ...normalizedSnapshot } = snapshot;
     const { url, key } = supabaseConfig();
-    const response = await fetch(`${url}/rest/v1/unreal_avatar_snapshots`, {
+    const response = await fetch(`${url}/rest/v1/unreal_avatar_snapshots?on_conflict=preset_name,actor_name`, {
       method: 'POST',
       headers: {
         apikey: key,
@@ -47,7 +48,7 @@ export async function POST(request: NextRequest) {
         status: 'online',
         captured_at: capturedAt,
         last_connected_at: new Date().toISOString(),
-        snapshot,
+        snapshot: normalizedSnapshot,
         error: null,
       }),
     });
