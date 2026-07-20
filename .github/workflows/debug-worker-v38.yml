@@ -6,6 +6,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write
 
 jobs:
   debug-worker:
@@ -17,15 +18,23 @@ jobs:
         with:
           show-progress: false
 
-      - name: Build worker and print only failure tail
+      - name: Build worker and publish failure tail
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           set +e
           docker build --progress=plain -t clouva-garment-rig:debug worker/garment-rig > /tmp/clouva-worker-build.log 2>&1
           code=$?
           if [ "$code" -ne 0 ]; then
-            echo "=== CLOUVA WORKER FAILURE TAIL ==="
-            tail -n 90 /tmp/clouva-worker-build.log
+            {
+              echo '### V38 Docker failure tail'
+              echo '```text'
+              tail -n 100 /tmp/clouva-worker-build.log
+              echo '```'
+            } > /tmp/clouva-pr-comment.md
+            gh pr comment "$PR_NUMBER" --body-file /tmp/clouva-pr-comment.md
             exit "$code"
           fi
           echo "Worker build OK"
