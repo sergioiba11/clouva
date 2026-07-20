@@ -28,6 +28,7 @@ export type SharedSkeletonReport = {
   mappedBones: number;
   totalBones: number;
   missingBones: string[];
+  ignoredUnusedBones: string[];
 };
 
 export const RIG_ERROR = "Rig incompatible: escala o bind pose incorrecta";
@@ -187,40 +188,97 @@ export function compareBindPose(avatarRoot: Object3D, garmentRoot: Object3D, ava
   return { compared: sample.length, median, maximum };
 }
 
+function usedBoneIndices(mesh: SkinnedMesh) {
+  const used = new Set<number>();
+  const skinIndex = mesh.geometry.getAttribute("skinIndex");
+  const skinWeight = mesh.geometry.getAttribute("skinWeight");
+  if (!skinIndex || !skinWeight) {
+    for (let index = 0; index < (mesh.skeleton?.bones.length ?? 0); index += 1) used.add(index);
+    return used;
+  }
+
+  for (let vertex = 0; vertex < skinIndex.count; vertex += 1) {
+    const indexes = [skinIndex.getX(vertex), skinIndex.getY(vertex), skinIndex.getZ(vertex), skinIndex.getW(vertex)];
+    const weights = [skinWeight.getX(vertex), skinWeight.getY(vertex), skinWeight.getZ(vertex), skinWeight.getW(vertex)];
+    for (let slot = 0; slot < 4; slot += 1) {
+      if (Number.isFinite(weights[slot]) && weights[slot] > 0.00001) used.add(Math.trunc(indexes[slot]));
+    }
+  }
+  return used;
+}
+
+function compatibleAvatarBone(avatarBones: Map<string, Bone>, sourceName: string) {
+  const key = cleanName(sourceName);
+  const exact = avatarBones.get(key);
+  if (exact) return exact;
+  if (key.length < 4) return undefined;
+
+  const candidates = [...avatarBones.entries()]
+    .filter(([candidate]) => candidate.includes(key) || key.includes(candidate));
+  return candidates.length === 1 ? candidates[0][1] : undefined;
+}
+
 export function bindGarmentToAvatar(garmentRoot: Object3D, avatarRoot: Object3D): SharedSkeletonReport {
   const avatarBones = collectBones(avatarRoot);
+  const fallbackBone = findBone(avatarRoot, HIP_ALIASES) ?? avatarBones.values().next().value as Bone | undefined;
+  const skinnedMeshes: SkinnedMesh[] = [];
+  garmentRoot.traverse((object: any) => {
+    if (object.isSkinnedMesh) skinnedMeshes.push(object as SkinnedMesh);
+  });
+
   let meshes = 0;
   let mappedBones = 0;
   let totalBones = 0;
   const missing = new Set<string>();
+  const ignoredUnused = new Set<string>();
 
   garmentRoot.updateMatrixWorld(true);
   avatarRoot.updateMatrixWorld(true);
-  garmentRoot.traverse((object: any) => {
-    if (!object.isSkinnedMesh) return;
-    const mesh = object as SkinnedMesh;
+
+  for (const mesh of skinnedMeshes) {
     const originalBones = mesh.skeleton?.bones ?? [];
-    if (!originalBones.length) return;
-    const mapped = originalBones.map((bone) => {
-      const replacement = avatarBones.get(cleanName(bone.name));
-      if (!replacement) missing.add(bone.name || "sin-nombre");
-      else mappedBones += 1;
-      return replacement;
+    if (!originalBones.length) continue;
+    const usedIndices = usedBoneIndices(mesh);
+    totalBones += usedIndices.size;
+
+    const mapped = originalBones.map((bone, index) => {
+      const replacement = compatibleAvatarBone(avatarBones, bone.name);
+      if (replacement) {
+        if (usedIndices.has(index)) mappedBones += 1;
+        return replacement;
+      }
+      if (usedIndices.has(index)) missing.add(bone.name || `hueso-${index}`);
+      else ignoredUnused.add(bone.name || `hueso-${index}`);
+      return fallbackBone;
     });
-    totalBones += originalBones.length;
-    if (mapped.some((bone) => !bone)) return;
+
+    if (!fallbackBone || mapped.some((bone) => !bone)) continue;
+    if ([...usedIndices].some((index) => !mapped[index])) continue;
+
     const sharedSkeleton = new Skeleton(mapped as Bone[]);
     sharedSkeleton.calculateInverses();
     mesh.bind(sharedSkeleton, mesh.matrixWorld.clone());
     mesh.normalizeSkinWeights();
     mesh.frustumCulled = false;
     meshes += 1;
-  });
+  }
 
-  const report = { meshes, mappedBones, totalBones, missingBones: [...missing] };
+  const report: SharedSkeletonReport = {
+    meshes,
+    mappedBones,
+    totalBones,
+    missingBones: [...missing],
+    ignoredUnusedBones: [...ignoredUnused],
+  };
   if (!meshes || !totalBones || mappedBones / totalBones < 0.95 || report.missingBones.length) {
-    console.error("[CLOUVA rig] faltan huesos canónicos", report);
-    throw new Error(RIG_ERROR);
+    console.error("[CLOUVA rig] faltan huesos con peso real", report);
+    const detail = report.missingBones.length
+      ? ` · faltan huesos con peso: ${report.missingBones.slice(0, 6).join(", ")}`
+      : "";
+    throw new Error(`${RIG_ERROR}${detail}`);
+  }
+  if (report.ignoredUnusedBones.length) {
+    console.info("[CLOUVA rig] huesos exportados sin peso ignorados", report.ignoredUnusedBones);
   }
   return report;
 }
