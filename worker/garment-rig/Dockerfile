@@ -27,7 +27,7 @@ RUN wget -q "$BLENDER_URL" -O /tmp/blender.tar.xz \
 RUN pip install --no-cache-dir --break-system-packages fastapi uvicorn pydantic python-multipart
 
 WORKDIR /app
-COPY app.py app_v5.py app_v6.py app_v7.py app_v8.py rig_garment.py rig_garment_v5.py rig_garment_v10.py rig_garment_v11.py rig_garment_v12.py rig_garment_v13.py rig_garment_v14.py rig_garment_v15.py rig_garment_v16.py rig_garment_v17.py rig_garment_v18.py rig_garment_v19.py rig_object.py attach_object.py export_unreal.py export_unreal_clean.py test_export_unreal_units.py ./
+COPY app.py app_v5.py app_v6.py app_v7.py app_v8.py rig_garment.py rig_garment_v5.py rig_garment_v10.py rig_garment_v11.py rig_garment_v12.py rig_garment_v13.py rig_garment_v14.py rig_garment_v15.py rig_garment_v16.py rig_garment_v17.py rig_garment_v18.py rig_garment_v19.py rig_garment_v20.py rig_object.py attach_object.py export_unreal.py export_unreal_clean.py test_export_unreal_units.py ./
 RUN mv app.py app_legacy.py \
     && mv app_v8.py app.py \
     && mv rig_garment.py rig_garment_legacy.py \
@@ -41,7 +41,8 @@ RUN mv app.py app_legacy.py \
     && mv rig_garment_v16.py rig_garment_v16_base.py \
     && mv rig_garment_v17.py rig_garment_v17_base.py \
     && mv rig_garment_v18.py rig_garment_v18_base.py \
-    && mv rig_garment_v19.py rig_garment.py \
+    && mv rig_garment_v19.py rig_garment_v19_base.py \
+    && mv rig_garment_v20.py rig_garment.py \
     && sed -i 's/"rig_garment_v10.py"/"rig_garment_v10_base.py"/' /app/rig_garment_v11_base.py \
     && sed -i 's/"rig_garment_v11.py"/"rig_garment_v11_base.py"/' /app/rig_garment_v12_base.py \
     && sed -i 's/"rig_garment_v12.py"/"rig_garment_v12_base.py"/' /app/rig_garment_v13_base.py \
@@ -50,13 +51,14 @@ RUN mv app.py app_legacy.py \
     && sed -i 's/"rig_garment_v15.py"/"rig_garment_v15_base.py"/' /app/rig_garment_v16_base.py \
     && sed -i 's/"rig_garment_v16.py"/"rig_garment_v16_base.py"/' /app/rig_garment_v17_base.py \
     && sed -i 's/"rig_garment_v17.py"/"rig_garment_v17_base.py"/' /app/rig_garment_v18_base.py \
-    && sed -i 's/"rig_garment_v18.py"/"rig_garment_v18_base.py"/' /app/rig_garment.py
+    && sed -i 's/"rig_garment_v18.py"/"rig_garment_v18_base.py"/' /app/rig_garment_v19_base.py \
+    && sed -i 's/"rig_garment_v19.py"/"rig_garment_v19_base.py"/' /app/rig_garment.py
 
 RUN mkdir -p /opt/blender/4.2/scripts/modules \
     && cp /app/rig_garment_legacy.py /opt/blender/4.2/scripts/modules/rig_garment_legacy.py
 
 ENV PYTHONPATH=/app
-ENV CLOUVA_RIG_VERSION=v25
+ENV CLOUVA_RIG_VERSION=v26
 
 RUN test -f /app/app.py \
     && test -f /app/app_v5.py \
@@ -70,11 +72,12 @@ RUN test -f /app/app.py \
     && test -f /app/rig_garment_v16_base.py \
     && test -f /app/rig_garment_v17_base.py \
     && test -f /app/rig_garment_v18_base.py \
+    && test -f /app/rig_garment_v19_base.py \
     && test -f /opt/blender/4.2/scripts/modules/rig_garment_legacy.py \
-    && python3 -c "import app; paths={getattr(route, 'path', '') for route in app.app.routes}; rig_routes=[route for route in app.app.routes if getattr(route, 'path', '') == '/rig' and 'POST' in (getattr(route, 'methods', set()) or set())]; assert '/export/unreal-v2' in paths; assert '/export/unreal-object' in paths; assert len(rig_routes) == 1; assert app.RIG_ROUTE_VERSION == 'v8-diagnostic-sync'; assert app.EXPORT_UNREAL_SCRIPT_PATH.name == 'export_unreal_clean.py'; assert app.base.EXPORT_UNREAL_SCRIPT_PATH.name == 'export_unreal_clean.py'; print('[clouva] V25 API routes and clean exporters OK')" \
+    && python3 -c "import app; paths={getattr(route, 'path', '') for route in app.app.routes}; rig_routes=[route for route in app.app.routes if getattr(route, 'path', '') == '/rig' and 'POST' in (getattr(route, 'methods', set()) or set())]; assert '/export/unreal-v2' in paths; assert '/export/unreal-object' in paths; assert len(rig_routes) == 1; assert app.RIG_ROUTE_VERSION == 'v8-diagnostic-sync'; assert app.EXPORT_UNREAL_SCRIPT_PATH.name == 'export_unreal_clean.py'; assert app.base.EXPORT_UNREAL_SCRIPT_PATH.name == 'export_unreal_clean.py'; print('[clouva] V26 API routes and clean exporters OK')" \
     && /opt/blender/blender --background --factory-startup --python-expr "import importlib.util; spec=importlib.util.spec_from_file_location('clouva_export_unreal_clean','/app/export_unreal_clean.py'); module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module); assert hasattr(module.base, 'run_export'); assert module.base.FBX_APPLY_UNIT_SCALE is True; assert module.base.FBX_APPLY_SCALE_OPTIONS == 'FBX_SCALE_UNITS'; assert module.base.FBX_DECLARED_UNIT_SCALE_CM == 100.0; print('[clouva] Metric Unreal exporter import OK')" \
     && /opt/blender/blender --background --factory-startup --python /app/test_export_unreal_units.py \
-    && /opt/blender/blender --background --factory-startup --python-expr "namespace={'__name__':'clouva_rig_import_test','__file__':'/app/rig_garment.py'}; exec(compile(open('/app/rig_garment.py', encoding='utf-8').read(), '/app/rig_garment.py', 'exec'), namespace); assert namespace['v9'].validate_roundtrip_v9.__name__ == 'validate_roundtrip_v16'; assert namespace['legacy'].prepare_garment.__name__ == 'prepare_garment_v17'; assert namespace['legacy'].fit_to_body.__name__ == 'fit_to_body_v18'; assert namespace['v9'].ensure_upper_arm_weights.__name__ == 'ensure_upper_arm_weights_v19'; left,right=namespace['lateral_selection']([(0,-3.0),(1,-2.0),(2,-1.0),(3,1.0),(4,2.0),(5,3.0)],2); assert set(left)=={4,5} and set(right)=={0,1}; print('[clouva] Blender V25 bilateral sleeve repair wrapper OK')"
+    && /opt/blender/blender --background --factory-startup --python-expr "namespace={'__name__':'clouva_rig_import_test','__file__':'/app/rig_garment.py'}; exec(compile(open('/app/rig_garment.py', encoding='utf-8').read(), '/app/rig_garment.py', 'exec'), namespace); assert namespace['v9'].validate_roundtrip_v9.__name__ == 'validate_roundtrip_v16'; assert namespace['legacy'].prepare_garment.__name__ == 'prepare_garment_v17'; assert namespace['legacy'].fit_to_body.__name__ == 'fit_to_body_v18'; assert namespace['v9'].ensure_upper_arm_weights.__name__ == 'ensure_upper_arm_weights_v19'; assert namespace['legacy'].body_region.__name__ == 'body_region_v20'; assert namespace['legacy'].validate.__name__ == 'validate_v20'; dummy={'clouvaTargetDimensions':'[1.0,0.8,1.2]'}; mn,mx,repaired=namespace['stable_target_bounds'](namespace['Vector']((0,0,0)),namespace['Vector']((1.0,0.8,0.000002)),dummy,'hoodie'); size=mx-mn; assert repaired and abs(size.z-1.2)<1e-6; print('[clouva] Blender V26 stable upper safe-bounds contract OK')"
 
 ENV BLENDER_BIN=/usr/local/bin/blender
 EXPOSE 8000
