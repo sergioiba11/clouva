@@ -71,20 +71,63 @@ def validate_cleanup_contract(
     }
 
 
+def has_visible_deformation(obj):
+    return any(
+        modifier.type == "ARMATURE" and modifier.show_viewport
+        for modifier in obj.modifiers
+    )
+
+
+def bake_visible_geometry(obj):
+    """Freeze the currently visible legacy-rigged shape before removing its rig.
+
+    Older CLOUVA garments can arrive with an Armature modifier whose evaluated
+    geometry differs greatly from the raw rest mesh. Removing that modifier first
+    makes the hoodie appear to change size by 90%+, even though Blender is merely
+    showing the undeformed source mesh. Baking the evaluated object gives the fresh
+    rigging pass the exact visible hoodie the creator approved.
+    """
+    if not has_visible_deformation(obj):
+        return False
+
+    legacy.bpy.context.view_layer.update()
+    depsgraph = legacy.bpy.context.evaluated_depsgraph_get()
+    evaluated = obj.evaluated_get(depsgraph)
+    baked_data = legacy.bpy.data.meshes.new_from_object(
+        evaluated,
+        preserve_all_data_layers=True,
+        depsgraph=depsgraph,
+    )
+    if baked_data is None or len(baked_data.vertices) < 3:
+        raise RuntimeError(
+            f"No se pudo hornear la forma visible de la prenda antigua: {obj.name}"
+        )
+
+    old_data = obj.data
+    obj.data = baked_data
+    for modifier in list(obj.modifiers):
+        obj.modifiers.remove(modifier)
+    if old_data.users == 0:
+        legacy.bpy.data.meshes.remove(old_data)
+
+    obj["clouvaLegacyVisibleGeometryBaked"] = True
+    obj["clouvaLegacyVisibleGeometryBakeVersion"] = 29
+    return True
+
+
 def prepare_garment_v17(objects, category):
     meshes = [obj for obj in objects if obj.type == "MESH" and len(obj.data.vertices) >= 3]
     source_armatures = [obj for obj in objects if obj.type == "ARMATURE"]
     if not meshes:
         raise RuntimeError("Garment GLB has no usable mesh")
 
-    original_vertices = sum(len(obj.data.vertices) for obj in meshes)
-    original_polygons = sum(len(obj.data.polygons) for obj in meshes)
-    original_min, original_max = legacy.combined_bbox(meshes)
-    original_size = original_max - original_min
-    original_center = (original_min + original_max) * 0.5
-
+    baked_meshes = 0
     for obj in meshes:
+        # Bake before detaching the old Armature. Its current evaluated pose is the
+        # approved visible shape; the raw mesh underneath may be tiny or displaced.
         world = obj.matrix_world.copy()
+        if bake_visible_geometry(obj):
+            baked_meshes += 1
         obj.animation_data_clear()
         obj.parent = None
         obj.matrix_world = world
@@ -96,6 +139,15 @@ def prepare_garment_v17(objects, category):
         obj.hide_render = False
 
     legacy.bpy.context.view_layer.update()
+
+    # The cleanup contract must compare against the baked visible geometry, not the
+    # hidden rest mesh that existed below the previous rig.
+    original_vertices = sum(len(obj.data.vertices) for obj in meshes)
+    original_polygons = sum(len(obj.data.polygons) for obj in meshes)
+    original_min, original_max = legacy.combined_bbox(meshes)
+    original_size = original_max - original_min
+    original_center = (original_min + original_max) * 0.5
+
     legacy.bpy.ops.object.select_all(action="DESELECT")
     active = max(meshes, key=lambda obj: len(obj.data.vertices))
     for obj in meshes:
@@ -153,7 +205,9 @@ def prepare_garment_v17(objects, category):
         size_errors,
         center_error,
     )
-    garment["clouvaGeometryCleanupVersion"] = 17
+    garment["clouvaGeometryCleanupVersion"] = 29
+    garment["clouvaLegacyVisibleGeometryBaked"] = baked_meshes > 0
+    garment["clouvaLegacyBakedMeshCount"] = baked_meshes
     garment["clouvaSourceVertexCount"] = original_vertices
     garment["clouvaCleanVertexCount"] = final_vertices
     garment["clouvaSourcePolygonCount"] = original_polygons
@@ -163,10 +217,10 @@ def prepare_garment_v17(objects, category):
     garment["clouvaGeometryBoundsError"] = metrics["maximumSizeError"]
 
     print(
-        "[rig-v17] topology-aware cleanup passed "
+        "[rig-v29] topology-aware cleanup passed "
         f"vertices={original_vertices}->{final_vertices} "
         f"polygons={original_polygons}->{final_polygons} metrics={metrics} "
-        f"sourceArmatures={len(source_armatures)}",
+        f"sourceArmatures={len(source_armatures)} bakedMeshes={baked_meshes}",
         flush=True,
     )
     return garment
