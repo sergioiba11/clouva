@@ -38,7 +38,7 @@ export function buildBlenderJob(payload: BlenderRequest) {
     operation: "fit_and_rig_reference",
     pipelineVersion: "body-mesh-contract-v15",
     riggingStrategy: deformable
-      ? "fresh_transfer_from_official_unreal_avatar"
+      ? "fresh_transfer_from_active_avatar"
       : templateMode
         ? "preserve_existing_skinning"
         : "transfer_from_avatar",
