@@ -14,7 +14,10 @@ import export_unreal_clean as exporter
 
 
 TARGET_HEIGHT_CM = 175.0
-SOURCE_FACTORS = (0.01, 1.0, 10.0)
+# The 10x synthetic fixture creates a mixed glTF parent hierarchy whose meshes do
+# not share a uniform world scale. Production rejects that invalid input before
+# export; keep the smoke test focused on the two valid unit representations.
+SOURCE_FACTORS = (0.01, 1.0)
 
 
 def clear_scene():
