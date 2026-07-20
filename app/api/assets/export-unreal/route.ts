@@ -9,6 +9,8 @@ const OUTPUT_BUCKET = "avatars";
 const ALLOWED_SOURCE_BUCKETS = new Set(["avatars", "creator-assets"]);
 const SKELETAL_CATEGORIES = new Set(["hoodie", "shirt", "jacket", "pants", "shorts", "shoes"]);
 const DEFAULT_TARGET_HEIGHT_CM = 175;
+const WORKER_MIN_TARGET_HEIGHT_CM = 80;
+const WORKER_MAX_TARGET_HEIGHT_CM = 260;
 
 // Altura visual aproximada de cada prenda respecto del cuerpo completo.
 // El exportador de avatar normaliza el objeto recibido a target_height_cm;
@@ -68,7 +70,12 @@ function numericHeight(row: Record<string, unknown> | null | undefined) {
 function garmentTargetHeightCm(category: string, avatarHeightCm: number) {
   const ratio = GARMENT_HEIGHT_RATIO[category] ?? 0.43;
   const [minimum, maximum] = GARMENT_HEIGHT_LIMITS_CM[category] ?? [45, 115];
-  return Math.round(Math.min(maximum, Math.max(minimum, avatarHeightCm * ratio)) * 10) / 10;
+  const categoryHeight = Math.min(maximum, Math.max(minimum, avatarHeightCm * ratio));
+  const workerSafeHeight = Math.min(
+    WORKER_MAX_TARGET_HEIGHT_CM,
+    Math.max(WORKER_MIN_TARGET_HEIGHT_CM, categoryHeight),
+  );
+  return Math.round(workerSafeHeight * 10) / 10;
 }
 
 type ActiveAvatarContext = {
