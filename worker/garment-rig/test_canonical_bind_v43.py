@@ -13,6 +13,13 @@ module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 legacy = module.legacy
 
+# The deterministic sample must stay bounded even for production-sized meshes.
+large_sample = module._sample_indices(100_000)
+assert len(large_sample) <= module.CANONICAL_SAMPLE_LIMIT
+assert large_sample[0] == 0
+assert large_sample[-1] == 99_999
+assert len(set(large_sample)) == len(large_sample)
+
 legacy.clear_scene()
 
 bpy.ops.object.armature_add(enter_editmode=True, location=(0.0, 0.0, 0.0))
@@ -45,6 +52,11 @@ report = module.normalize_official_avatar_canonical_v43(
 )
 
 assert report["version"] == 43
+assert report["memoryVersion"] == 44
+assert report["memoryStrategy"] == "streaming-bounds-deterministic-sampled-drift"
+assert report["sampleLimitPerMesh"] == module.CANONICAL_SAMPLE_LIMIT
+assert report["sampledVerticesTotal"] <= module.CANONICAL_SAMPLE_LIMIT
+assert report["sourceVertexCount"] == report["canonicalVertexCount"] == len(mesh.data.vertices)
 assert report["armature"] == "TestArmature"
 assert report["boneCount"] == 1
 assert math.isclose(report["sourceHeight"], 4.0, rel_tol=0.0, abs_tol=1e-6)
@@ -60,6 +72,7 @@ assert module._matrix_delta(armature.matrix_world) <= 1e-6
 assert module._matrix_delta(mesh.matrix_world) <= 1e-6
 assert mesh.find_armature() == armature
 assert int(armature["clouvaCanonicalBindVersion"]) == 43
+assert int(armature["clouvaCanonicalMemoryVersion"]) == 44
 assert int(armature["clouvaPrebindSpaceVersion"]) == module.PREBIND_SPACE_VERSION
 
 sidecar = os.path.join(os.getcwd(), "canonical-bind-diagnostics.json")
@@ -67,6 +80,7 @@ assert os.path.exists(sidecar)
 with open(sidecar, encoding="utf-8") as handle:
     persisted = json.load(handle)
 assert persisted["version"] == 43
+assert persisted["memoryVersion"] == 44
 os.remove(sidecar)
 
-print("[clouva] V43 canonical rest/bind normalization OK")
+print("[clouva] V43 canonical bind + V44 streaming memory normalization OK")
