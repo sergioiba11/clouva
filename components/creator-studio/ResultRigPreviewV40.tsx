@@ -279,16 +279,27 @@ export function ResultRigPreview({ url, showAvatar = true, category, onInfo }: P
       if (avatarBounds.isEmpty()) throw new Error("El avatar activo no contiene una malla visible.");
       fitCameraOnce(avatarBounds);
 
-      rigStage = "validación de escala";
+      rigStage = "validación de escala inicial";
       const initialGarmentBounds = visibleMeshBounds(rigScene);
       const bounds = validateBounds(avatarBounds, initialGarmentBounds);
       avatarHeight = bounds.avatarHeight;
 
-      rigStage = "validación de bind pose";
-      const bindPose = compareBindPose(avatarScene, rigScene, avatarHeight);
+      let bindPose: ReturnType<typeof compareBindPose> | null = null;
+      try {
+        bindPose = compareBindPose(avatarScene, rigScene, avatarHeight);
+      } catch (error) {
+        console.warn("[CLOUVA rig] diferencia de rest pose previa al remapeo; continúa como diagnóstico", {
+          error,
+          avatarBounds: boxDiagnostics(avatarBounds),
+          garmentBounds: boxDiagnostics(initialGarmentBounds),
+        });
+      }
 
       rigStage = "enlace al esqueleto único";
       const shared = bindGarmentToAvatar(rigScene, avatarScene);
+      displayGroup.updateMatrixWorld(true);
+
+      rigStage = "validación posterior al enlace";
       const postBindBounds = animatedGarmentBounds(rigScene);
       validateBounds(avatarBounds, postBindBounds);
 
@@ -326,7 +337,7 @@ export function ResultRigPreview({ url, showAvatar = true, category, onInfo }: P
       }
       setClips(options);
       setActiveClip(null);
-      setPreviewStatus(`Avatar completo cargado; ${shared.mappedBones}/${shared.totalBones} huesos comparten el esqueleto oficial.`);
+      setPreviewStatus(`Prenda enlazada; ${shared.mappedBones}/${shared.totalBones} huesos usan el esqueleto oficial. Probá el movimiento.`);
 
       const objectMesh = findObjectMesh(rigScene);
       const inspection = objectMesh ? inspectAnchorBone(objectMesh) : { anchorBoneName: null, weightedVertexRatio: null };
