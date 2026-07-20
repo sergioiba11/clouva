@@ -1,0 +1,31 @@
+name: Debug Worker V38
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  debug-worker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          show-progress: false
+
+      - name: Build worker and print only failure tail
+        shell: bash
+        run: |
+          set +e
+          docker build --progress=plain -t clouva-garment-rig:debug worker/garment-rig > /tmp/clouva-worker-build.log 2>&1
+          code=$?
+          if [ "$code" -ne 0 ]; then
+            echo "=== CLOUVA WORKER FAILURE TAIL ==="
+            tail -n 90 /tmp/clouva-worker-build.log
+            exit "$code"
+          fi
+          echo "Worker build OK"
