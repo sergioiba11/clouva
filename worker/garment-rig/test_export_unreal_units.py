@@ -1,9 +1,14 @@
 import json
 import math
+import sys
 import tempfile
 from pathlib import Path
 
 import bpy
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
 import export_unreal_clean as exporter
 

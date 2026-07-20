@@ -1,12 +1,18 @@
 import json
 import os
+import sys
 
 import bpy
 from mathutils import Vector
-from avatar_reference import canonicalize_and_validate_bones
 
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, SCRIPT_DIR)
+
+from avatar_reference import canonicalize_and_validate_bones
+
+
 REFERENCE_DIR = os.path.join(SCRIPT_DIR, "avatar-reference")
 FBX_PATH = os.path.join(REFERENCE_DIR, "AvatarReference.fbx")
 METADATA_PATH = os.path.join(REFERENCE_DIR, "clouva_avatar_data.json")
