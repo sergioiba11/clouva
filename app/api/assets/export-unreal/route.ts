@@ -10,6 +10,27 @@ const ALLOWED_SOURCE_BUCKETS = new Set(["avatars", "creator-assets"]);
 const SKELETAL_CATEGORIES = new Set(["hoodie", "shirt", "jacket", "pants", "shorts", "shoes"]);
 const DEFAULT_TARGET_HEIGHT_CM = 175;
 
+// Altura visual aproximada de cada prenda respecto del cuerpo completo.
+// El exportador de avatar normaliza el objeto recibido a target_height_cm;
+// por eso una prenda no puede recibir la altura total del personaje.
+const GARMENT_HEIGHT_RATIO: Record<string, number> = {
+  hoodie: 0.43,
+  shirt: 0.38,
+  jacket: 0.46,
+  pants: 0.59,
+  shorts: 0.31,
+  shoes: 0.13,
+};
+
+const GARMENT_HEIGHT_LIMITS_CM: Record<string, [number, number]> = {
+  hoodie: [58, 88],
+  shirt: [52, 78],
+  jacket: [62, 92],
+  pants: [82, 115],
+  shorts: [38, 62],
+  shoes: [14, 28],
+};
+
 function getAdminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceRole = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -42,6 +63,12 @@ function numericHeight(row: Record<string, unknown> | null | undefined) {
     if (Number.isFinite(value) && value >= 80 && value <= 260) return value;
   }
   return DEFAULT_TARGET_HEIGHT_CM;
+}
+
+function garmentTargetHeightCm(category: string, avatarHeightCm: number) {
+  const ratio = GARMENT_HEIGHT_RATIO[category] ?? 0.43;
+  const [minimum, maximum] = GARMENT_HEIGHT_LIMITS_CM[category] ?? [45, 115];
+  return Math.round(Math.min(maximum, Math.max(minimum, avatarHeightCm * ratio)) * 10) / 10;
 }
 
 type ActiveAvatarContext = {
@@ -217,7 +244,10 @@ export async function POST(request: NextRequest) {
     }
 
     const avatar = await activeAvatarContext(supabase, user.id);
-    const targetHeightCm = avatar.targetHeightCm;
+    const avatarHeightCm = avatar.targetHeightCm;
+    const targetHeightCm = skeletalExport
+      ? garmentTargetHeightCm(category, avatarHeightCm)
+      : avatarHeightCm;
     const workerEndpoint = skeletalExport ? "/export/unreal-v2" : "/export/unreal-object";
     const workerPayload = skeletalExport
       ? {
@@ -226,6 +256,8 @@ export async function POST(request: NextRequest) {
           user_id: user.id,
           source_url: sourceUrl,
           target_height_cm: targetHeightCm,
+          avatar_height_cm: avatarHeightCm,
+          garment_target_height_cm: targetHeightCm,
           asset_type: "garment",
           category,
           preserve_armature: true,
@@ -274,18 +306,20 @@ export async function POST(request: NextRequest) {
     }
 
     const base = safeName(assetName);
-    const filename = `${base}-${skeletalExport ? "skeletal-" : ""}unreal.fbx`;
+    const exportRevision = new Date().toISOString().replace(/\D/g, "").slice(0, 14);
+    const filename = `${base}-${skeletalExport ? "skeletal-" : ""}unreal-${exportRevision}.fbx`;
     const storagePath = `${user.id}/unreal-objects/${filename}`;
     const upload = await supabase.storage.from(OUTPUT_BUCKET).upload(storagePath, bytes, {
       contentType: "application/octet-stream",
-      cacheControl: "3600",
-      upsert: true,
+      cacheControl: "0",
+      upsert: false,
     });
     if (upload.error) {
       throw new Error(errorMessage(upload.error, "No se pudo guardar el FBX en Supabase"));
     }
 
-    const url = supabase.storage.from(OUTPUT_BUCKET).getPublicUrl(storagePath).data.publicUrl;
+    const publicUrl = supabase.storage.from(OUTPUT_BUCKET).getPublicUrl(storagePath).data.publicUrl;
+    const url = `${publicUrl}?v=${encodeURIComponent(exportRevision)}`;
     const calibrated =
       (skeletalExport && metadata?.readyForUnreal === true) ||
       metadata?.calibratedToAvatar === true ||
@@ -298,9 +332,13 @@ export async function POST(request: NextRequest) {
       path: storagePath,
       bucket: OUTPUT_BUCKET,
       metadata,
-      exportMode: skeletalExport ? "skeletal-calibrated" : "static",
+      exportMode: skeletalExport ? "skeletal-category-calibrated" : "static",
+      avatarHeightCm,
+      targetHeightCm,
       scale: calibrated
-        ? `calibrado al avatar de ${targetHeightCm} cm · Import Scale 1`
+        ? skeletalExport
+          ? `${category} calibrado a ${targetHeightCm} cm para avatar de ${avatarHeightCm} cm · Import Scale 1`
+          : `calibrado al avatar de ${avatarHeightCm} cm · Import Scale 1`
         : "escala original preservada · centímetros Unreal",
     });
   } catch (cause) {
