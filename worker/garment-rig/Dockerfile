@@ -60,7 +60,8 @@ RUN mkdir -p /opt/blender/4.2/scripts/modules \
 ENV PYTHONPATH=/app
 ENV CLOUVA_RIG_VERSION=v28
 ENV CLOUVA_LEGACY_GARMENT_RECOVERY=v29
-ENV CLOUVA_WORKER_INSPECTOR=v1
+ENV CLOUVA_WORKER_INSPECTOR=v2
+ENV CLOUVA_GARMENT_SOURCE_ROUTING=v30
 
 RUN test -f /app/app.py \
     && test -f /app/app_v8.py \
@@ -75,8 +76,8 @@ RUN test -f /app/app.py \
     && test -f /app/rig_garment_v18_base.py \
     && test -f /app/rig_garment_v19_base.py \
     && test -f /opt/blender/4.2/scripts/modules/rig_garment_legacy.py \
-    && python3 -c "import app; paths={getattr(route, 'path', '') for route in app.app.routes}; assert '/rig' in paths; assert '/export/unreal-v2' in paths; assert '/diagnostics/health' in paths; assert '/diagnostics/garment' in paths; assert app.WORKER_INSPECTOR_VERSION == 'v1-pipeline-visibility'; assert app.base.UNREAL_EXPORT_VERSION == 'v28-active-avatar-reference'; assert app.INSPECT_SCRIPT_PATH.name == 'inspect_garment.py'; print('[clouva] Worker Inspector + V28 export routes OK')" \
-    && /opt/blender/blender --background --factory-startup --python-expr "import ast; source=open('/app/inspect_garment.py', encoding='utf-8').read(); tree=ast.parse(source); names={node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}; assert {'inspect_asset','relative_shape_error','main'} <= names; print('[clouva] Worker Inspector Blender script OK')" \
+    && python3 -c "import inspect, app; paths={getattr(route, 'path', '') for route in app.app.routes}; assert '/rig' in paths; assert '/export/unreal-v2' in paths; assert '/diagnostics/health' in paths; assert '/diagnostics/garment' in paths; assert app.WORKER_INSPECTOR_VERSION == 'v2-single-pass-awareness'; assert app.base.UNREAL_EXPORT_VERSION == 'v28-active-avatar-reference'; assert app.base.GARMENT_SOURCE_ROUTING_VERSION == 'v30-single-pass'; model_fields=app.base.ValidatedUnrealExportRequestV30.model_fields; assert 'source_already_rigged' in model_fields; export_source=inspect.getsource(app.base.export_for_unreal_v30); assert 'if not request.source_already_rigged' in export_source; assert app.INSPECT_SCRIPT_PATH.name == 'inspect_garment.py'; print('[clouva] Inspector V2 + source routing V30 OK')" \
+    && /opt/blender/blender --background --factory-startup --python-expr "import ast; source=open('/app/inspect_garment.py', encoding='utf-8').read(); tree=ast.parse(source); names={node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}; assert {'inspect_asset','relative_shape_error','main'} <= names; assert 'rawGarmentReadyForRig' in source; assert 'Meshy original' in source; print('[clouva] Raw Meshy diagnostics contract OK')" \
     && /opt/blender/blender --background --factory-startup --python-expr "import importlib.util; spec=importlib.util.spec_from_file_location('clouva_export_unreal_clean','/app/export_unreal_clean.py'); module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module); assert module.base.run_export.__name__ == 'run_export_v28'; assert module.base.prepare_wearable_object.__name__ == 'prepare_wearable_object_v28'; assert module.base.validate_object.__name__ == 'validate_object_v28'; assert module.base.validate_fbx_roundtrip.__name__ == 'validate_fbx_roundtrip_v28'; assert module.base.FBX_APPLY_UNIT_SCALE is True; assert module.base.FBX_APPLY_SCALE_OPTIONS == 'FBX_SCALE_UNITS'; assert module.base.FBX_DECLARED_UNIT_SCALE_CM == 100.0; print('[clouva] V28 avatar-reference exporter import OK')" \
     && /opt/blender/blender --background --factory-startup --python /app/test_export_unreal_units.py \
     && /opt/blender/blender --background --factory-startup --python-expr "import inspect; namespace={'__name__':'clouva_rig_import_test','__file__':'/app/rig_garment.py'}; exec(compile(open('/app/rig_garment.py', encoding='utf-8').read(), '/app/rig_garment.py', 'exec'), namespace); prepare=namespace['legacy'].prepare_garment; assert prepare.__name__ == 'prepare_garment_v17'; assert 'bake_visible_geometry' in prepare.__globals__; assert 'new_from_object' in inspect.getsource(prepare.__globals__['bake_visible_geometry']); print('[clouva] Blender V29 legacy recovery OK')"

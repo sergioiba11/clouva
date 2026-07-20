@@ -12,7 +12,7 @@ from pydantic import BaseModel, HttpUrl
 
 app = base.app
 legacy = base.legacy
-WORKER_INSPECTOR_VERSION = "v1-pipeline-visibility"
+WORKER_INSPECTOR_VERSION = "v2-single-pass-awareness"
 INSPECT_SCRIPT_PATH = Path(__file__).with_name("inspect_garment.py")
 
 
@@ -109,6 +109,7 @@ def run_rig_probe(
         )
     return {
         "ok": error is None,
+        "mode": "single-pass-auto-rig",
         "returnCode": result.returncode,
         "outputBytes": output_path.stat().st_size if output_path.exists() else 0,
         "error": error,
@@ -125,6 +126,14 @@ def worker_tools():
             "script": "inspect_garment.py",
             "purpose": "Lee mallas, materiales, jerarquía y transformaciones.",
             "status": "ready" if INSPECT_SCRIPT_PATH.exists() else "missing",
+        },
+        {
+            "id": "source-routing",
+            "name": "Selector de fuente",
+            "script": "app_v8.py",
+            "purpose": "Separa Meshy original de prenda ajustada para evitar doble rigging.",
+            "version": base.GARMENT_SOURCE_ROUTING_VERSION,
+            "status": "ready",
         },
         {
             "id": "geometry-cleanup",
@@ -167,6 +176,7 @@ def diagnostics_health():
         "rigVersion": os.environ.get("CLOUVA_RIG_VERSION", "unknown"),
         "legacyRecoveryVersion": os.environ.get("CLOUVA_LEGACY_GARMENT_RECOVERY", "unknown"),
         "exportVersion": base.UNREAL_EXPORT_VERSION,
+        "sourceRoutingVersion": base.GARMENT_SOURCE_ROUTING_VERSION,
         "rigRouteVersion": base.RIG_ROUTE_VERSION,
         "tools": worker_tools(),
     }
@@ -207,10 +217,18 @@ def diagnose_garment(request: GarmentDiagnosticsRequest):
             preflight_path,
             category,
         )
+        garment_report = preflight.get("garment", {})
+        raw_source = bool(garment_report.get("rawGarmentReadyForRig"))
+        healthy_existing_rig = bool(
+            garment_report.get("armatureCount", 0) > 0
+            and garment_report.get("boneCount", 0) > 0
+            and float(garment_report.get("weightedVertexRatio", 0.0)) >= 0.995
+        )
 
         pipeline = {
             "requested": bool(request.run_pipeline),
             "ok": None,
+            "mode": "not-run",
             "error": None,
             "returnCode": None,
             "outputBytes": 0,
@@ -219,7 +237,7 @@ def diagnose_garment(request: GarmentDiagnosticsRequest):
         }
         output_inspection = None
 
-        if request.run_pipeline:
+        if request.run_pipeline and raw_source:
             pipeline = run_rig_probe(
                 job_dir,
                 avatar_path,
@@ -227,6 +245,36 @@ def diagnose_garment(request: GarmentDiagnosticsRequest):
                 rigged_path,
                 category,
             )
+            pipeline["requested"] = True
+            if pipeline["ok"]:
+                output_inspection = run_inspector(
+                    job_dir,
+                    rigged_path,
+                    avatar_path,
+                    output_inspection_path,
+                    category,
+                )
+        elif request.run_pipeline and healthy_existing_rig:
+            pipeline = {
+                "requested": True,
+                "ok": True,
+                "mode": "preserve-existing-rig",
+                "error": None,
+                "returnCode": 0,
+                "outputBytes": garment_path.stat().st_size,
+                "stdout": "",
+                "stderr": "",
+            }
+            output_inspection = preflight
+        elif request.run_pipeline:
+            pipeline = run_rig_probe(
+                job_dir,
+                avatar_path,
+                garment_path,
+                rigged_path,
+                category,
+            )
+            pipeline["requested"] = True
             if pipeline["ok"]:
                 output_inspection = run_inspector(
                     job_dir,
@@ -237,9 +285,23 @@ def diagnose_garment(request: GarmentDiagnosticsRequest):
                 )
 
         stages = list(preflight.get("stages") or [])
+        stage_label = (
+            "Única pasada de fitting + rig"
+            if raw_source
+            else "Conservación del rig existente"
+            if healthy_existing_rig
+            else "Prueba de recuperación del rig"
+        )
+        stage_summary = (
+            f"GLB riggeado generado: {pipeline.get('outputBytes', 0):,} bytes"
+            if pipeline.get("ok") is True and pipeline.get("mode") == "single-pass-auto-rig"
+            else "Rig existente detectado: no se vuelve a riggear"
+            if pipeline.get("ok") is True and pipeline.get("mode") == "preserve-existing-rig"
+            else str(pipeline.get("error") or "La prueba profunda no fue ejecutada")
+        )
         stages.append({
-            "id": "fresh-rig-probe",
-            "label": "Prueba real de fitting + rig",
+            "id": "source-routing",
+            "label": stage_label,
             "status": (
                 "ok"
                 if pipeline.get("ok") is True
@@ -247,11 +309,7 @@ def diagnose_garment(request: GarmentDiagnosticsRequest):
                 if pipeline.get("ok") is False
                 else "pending"
             ),
-            "summary": (
-                f"GLB riggeado generado: {pipeline.get('outputBytes', 0):,} bytes"
-                if pipeline.get("ok") is True
-                else str(pipeline.get("error") or "La prueba profunda no fue ejecutada")
-            ),
+            "summary": stage_summary,
         })
         stages.append({
             "id": "fbx-export",
@@ -260,32 +318,45 @@ def diagnose_garment(request: GarmentDiagnosticsRequest):
             "summary": "Se ejecuta al tocar Generar y descargar objeto FBX.",
         })
 
+        if raw_source and pipeline.get("ok") is True:
+            recommended_action = (
+                "Meshy original listo: el botón hará una sola pasada de fitting + rig y luego generará el FBX."
+            )
+        elif healthy_existing_rig:
+            recommended_action = (
+                "Prenda ajustada lista: el botón conservará sus 24 huesos y pesos; no volverá a riggearla."
+            )
+        elif garment_report.get("legacyRecoveryRecommended"):
+            recommended_action = "Hornear la geometría evaluada antes de quitar el rig anterior."
+        elif pipeline.get("ok") is False:
+            recommended_action = "La entrada es válida, pero falló la etapa indicada en rojo durante la prueba real."
+        else:
+            recommended_action = "La forma cruda y la visible coinciden; revisar la siguiente etapa pendiente."
+
         result = {
             "ok": bool(preflight.get("ok") and pipeline.get("ok") is not False),
             "category": category,
+            "sourceMode": "meshy-original" if raw_source else "preserve-rig" if healthy_existing_rig else "recovery",
             "worker": {
                 "inspectorVersion": WORKER_INSPECTOR_VERSION,
                 "rigVersion": os.environ.get("CLOUVA_RIG_VERSION", "unknown"),
                 "legacyRecoveryVersion": os.environ.get("CLOUVA_LEGACY_GARMENT_RECOVERY", "unknown"),
                 "exportVersion": base.UNREAL_EXPORT_VERSION,
+                "sourceRoutingVersion": base.GARMENT_SOURCE_ROUTING_VERSION,
                 "rigRouteVersion": base.RIG_ROUTE_VERSION,
-                "blenderVersion": preflight.get("garment", {}).get("blenderVersion"),
+                "blenderVersion": garment_report.get("blenderVersion"),
             },
             "tools": worker_tools(),
             "stages": stages,
-            "garment": preflight.get("garment"),
+            "garment": garment_report,
             "avatar": preflight.get("avatar"),
             "pipeline": pipeline,
             "outputInspection": output_inspection,
             "diagnosis": {
                 "legacyGeometryDifferenceDetected": bool(
-                    preflight.get("garment", {}).get("legacyRecoveryRecommended")
+                    garment_report.get("legacyRecoveryRecommended")
                 ),
-                "recommendedAction": (
-                    "Hornear la geometría evaluada antes de quitar el rig anterior."
-                    if preflight.get("garment", {}).get("legacyRecoveryRecommended")
-                    else "La forma cruda y la visible coinciden; revisar la siguiente etapa fallida."
-                ),
+                "recommendedAction": recommended_action,
             },
         }
         return result

@@ -20,6 +20,7 @@ app = base.app
 EXPORT_UNREAL_SCRIPT_PATH = base.EXPORT_UNREAL_SCRIPT_PATH
 RIG_ROUTE_VERSION = "v8-diagnostic-sync"
 UNREAL_EXPORT_VERSION = "v28-active-avatar-reference"
+GARMENT_SOURCE_ROUTING_VERSION = "v30-single-pass"
 
 
 # Replace the legacy synchronous /rig route and the previous Unreal V2 route.
@@ -97,12 +98,14 @@ def rig_with_diagnostics(request: legacy.RigRequest):
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-class ValidatedUnrealExportRequestV28(BaseModel):
+class ValidatedUnrealExportRequestV30(BaseModel):
     avatar_id: str | None = None
     asset_id: str | None = None
     user_id: str | None = None
     source_url: HttpUrl
     avatar_source_url: HttpUrl | None = None
+    source_already_rigged: bool = False
+    source_origin: str = "unknown"
     target_height_cm: float = 175.0
     avatar_height_cm: float | None = None
     garment_target_height_cm: float | None = None
@@ -164,7 +167,7 @@ def resolve_user_avatar_url(user_id: str | None) -> str | None:
                     if isinstance(value, str) and value.startswith("https://"):
                         return value
         except Exception as exc:
-            print(f"[worker-v28] active avatar lookup failed: {exc}", flush=True)
+            print(f"[worker-v30] active avatar lookup failed: {exc}", flush=True)
 
         try:
             rows = _supabase_json(
@@ -175,7 +178,7 @@ def resolve_user_avatar_url(user_id: str | None) -> str | None:
                 if isinstance(value, str) and value.startswith("https://"):
                     return value
         except Exception as exc:
-            print(f"[worker-v28] profile avatar lookup failed: {exc}", flush=True)
+            print(f"[worker-v30] profile avatar lookup failed: {exc}", flush=True)
 
     try:
         return legacy.resolve_avatar_url()
@@ -216,7 +219,7 @@ def run_fresh_garment_rig(
         env={**os.environ, "PYTHONUNBUFFERED": "1"},
     )
     print(
-        f"[worker-v28] fresh garment rig category={category} returncode={result.returncode}\n"
+        f"[worker-v30] fresh garment rig category={category} returncode={result.returncode}\n"
         f"[stdout]\n{result.stdout[-12000:]}\n[stderr]\n{result.stderr[-8000:]}",
         flush=True,
     )
@@ -225,12 +228,12 @@ def run_fresh_garment_rig(
         raise RuntimeError(
             details
             or result.stderr[-1800:]
-            or "Blender no pudo reajustar la prenda al avatar activo"
+            or "Blender no pudo ajustar la prenda cruda al avatar activo"
         )
 
 
 @app.post("/export/unreal-v2")
-def export_for_unreal_v28(request: ValidatedUnrealExportRequestV28):
+def export_for_unreal_v30(request: ValidatedUnrealExportRequestV30):
     if not EXPORT_UNREAL_SCRIPT_PATH.exists():
         raise HTTPException(status_code=500, detail="Falta export_unreal_clean.py en el Blender Worker")
     if request.target_height_cm < 80 or request.target_height_cm > 260:
@@ -252,7 +255,7 @@ def export_for_unreal_v28(request: ValidatedUnrealExportRequestV28):
 
     job_dir = Path(tempfile.mkdtemp(prefix="clouva-unreal-garment-" if is_garment else "clouva-unreal-v2-"))
     input_path = job_dir / ("garment-source.glb" if is_garment else "avatar-rigged.glb")
-    refitted_path = job_dir / "garment-refitted-v28.glb"
+    refitted_path = job_dir / "garment-single-pass-rigged.glb"
     avatar_reference_path = job_dir / "avatar-reference.glb"
     output_path = job_dir / ("garment-unreal.fbx" if is_garment else "avatar-unreal.fbx")
     metadata_path = job_dir / ("garment-unreal.json" if is_garment else "avatar-unreal.json")
@@ -260,20 +263,27 @@ def export_for_unreal_v28(request: ValidatedUnrealExportRequestV28):
     try:
         legacy.download(str(request.source_url), input_path)
         export_source_path = input_path
+        fresh_rig_applied = False
 
         if is_garment:
             avatar_url = str(request.avatar_source_url) if request.avatar_source_url else resolve_user_avatar_url(request.user_id)
             if not avatar_url:
-                raise RuntimeError("No se pudo resolver el GLB del avatar activo para recalibrar la prenda")
+                raise RuntimeError("No se pudo resolver el GLB del avatar activo para calibrar la prenda")
             legacy.download(avatar_url, avatar_reference_path)
-            run_fresh_garment_rig(
-                job_dir,
-                avatar_reference_path,
-                input_path,
-                refitted_path,
-                category,
-            )
-            export_source_path = refitted_path
+
+            # Raw Meshy input needs one fitting/rig pass. An adjusted input already has
+            # the same skeleton and must go directly to export; re-rigging it was the
+            # source of the cleanup loop and the 93% geometry error.
+            if not request.source_already_rigged:
+                run_fresh_garment_rig(
+                    job_dir,
+                    avatar_reference_path,
+                    input_path,
+                    refitted_path,
+                    category,
+                )
+                export_source_path = refitted_path
+                fresh_rig_applied = True
 
         command = [
             legacy.BLENDER_BIN,
@@ -321,8 +331,11 @@ def export_for_unreal_v28(request: ValidatedUnrealExportRequestV28):
 
         metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
         if is_garment:
-            metadata["freshRigApplied"] = True
-            metadata["freshRigVersion"] = 28
+            metadata["freshRigApplied"] = fresh_rig_applied
+            metadata["freshRigVersion"] = 28 if fresh_rig_applied else None
+            metadata["sourceAlreadyRigged"] = bool(request.source_already_rigged)
+            metadata["sourceOrigin"] = str(request.source_origin or "unknown")[:80]
+            metadata["sourceRoutingVersion"] = GARMENT_SOURCE_ROUTING_VERSION
             metadata["avatarHeightCm"] = avatar_height_cm
             metadata["garmentTargetHeightCm"] = garment_target_height_cm
             physically_valid = bool(
@@ -374,7 +387,8 @@ def export_for_unreal_v28(request: ValidatedUnrealExportRequestV28):
         if is_garment:
             headers["X-Clouva-Scale"] = "active-avatar-reference-normalized"
             headers["X-Clouva-Rig-Preserved"] = "true"
-            headers["X-Clouva-Fresh-Rig"] = "v28"
+            headers["X-Clouva-Fresh-Rig"] = "v28" if fresh_rig_applied else "preserved"
+            headers["X-Clouva-Source-Routing"] = GARMENT_SOURCE_ROUTING_VERSION
         else:
             headers["X-Clouva-Height-Cm"] = str(metadata.get("finalMeshHeightCm", ""))
             headers["X-Clouva-Roundtrip-Height-Cm"] = str(metadata.get("fbxRoundTripHeightCm", ""))

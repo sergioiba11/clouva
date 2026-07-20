@@ -195,6 +195,8 @@ def inspect_asset(path: Path, role: str):
         for row in mesh_rows
         for key in row["customProperties"].keys()
     })
+    raw_garment = bool(role == "garment" and not armatures and bone_count == 0 and weighted_ratio == 0.0)
+    source_kind = "meshy-original" if raw_garment else "rigged" if armatures else "static"
 
     stages = [
         {
@@ -222,25 +224,39 @@ def inspect_asset(path: Path, role: str):
         {
             "id": "armature",
             "label": "Esqueleto",
-            "status": "ok" if armatures and bone_count > 0 else ("warning" if role == "garment" else "error"),
-            "summary": f"{bone_count} huesos · raíces: {', '.join(root_bones[:5]) or 'ninguna'}",
+            "status": "pending" if raw_garment else "ok" if armatures and bone_count > 0 else ("warning" if role == "garment" else "error"),
+            "summary": (
+                "Meshy original: el Worker creará el esqueleto durante el fitting"
+                if raw_garment
+                else f"{bone_count} huesos · raíces: {', '.join(root_bones[:5]) or 'ninguna'}"
+            ),
         },
         {
             "id": "skinning",
             "label": "Skin weights",
-            "status": "ok" if weighted_ratio >= 0.995 else ("warning" if weighted_ratio > 0 else "error"),
-            "summary": f"{weighted_ratio * 100:.2f}% de vértices con peso",
+            "status": "pending" if raw_garment else "ok" if weighted_ratio >= 0.995 else ("warning" if weighted_ratio > 0 else "error"),
+            "summary": (
+                "Meshy original: los pesos se transferirán desde el avatar activo"
+                if raw_garment
+                else f"{weighted_ratio * 100:.2f}% de vértices con peso"
+            ),
         },
         {
             "id": "fit-metadata",
             "label": "Datos de fitting CLOUVA",
-            "status": "ok" if metadata_keys else "warning",
-            "summary": ", ".join(metadata_keys) if metadata_keys else "El GLB no trae medidas CLOUVA guardadas",
+            "status": "pending" if raw_garment and not metadata_keys else "ok" if metadata_keys else "warning",
+            "summary": (
+                "Se generarán durante la única pasada de fitting + rig"
+                if raw_garment and not metadata_keys
+                else ", ".join(metadata_keys) if metadata_keys else "El GLB no trae medidas CLOUVA guardadas"
+            ),
         },
     ]
 
     result = {
         "role": role,
+        "sourceKind": source_kind,
+        "rawGarmentReadyForRig": raw_garment,
         "filename": path.name,
         "fileSizeBytes": path.stat().st_size if path.exists() else 0,
         "blenderVersion": bpy.app.version_string,

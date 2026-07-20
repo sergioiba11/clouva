@@ -16,6 +16,7 @@ const garmentExporterSource = readFileSync("./worker/garment-rig/export_unreal_c
 const garmentApiV8Source = readFileSync("./worker/garment-rig/app_v8.py", "utf8");
 const workerInspectorApiSource = readFileSync("./worker/garment-rig/app_v9.py", "utf8");
 const workerInspectorBlenderSource = readFileSync("./worker/garment-rig/inspect_garment.py", "utf8");
+const unrealExportRouteSource = readFileSync("./app/api/assets/export-unreal/route.ts", "utf8");
 const unrealObjectExportSource = readFileSync("./components/library/UnrealObjectExport.tsx", "utf8");
 const garmentDockerfile = readFileSync("./worker/garment-rig/Dockerfile", "utf8");
 
@@ -118,7 +119,7 @@ test("V15 usa la malla corporal como fuente de verdad para escala y roundtrip", 
   assert.match(garmentDockerfile, /rig_garment_v15\.py/);
 });
 
-test("V28 re-riggea y normaliza la prenda con la malla visible del avatar activo", () => {
+test("V28 normaliza la prenda con la malla visible del avatar activo", () => {
   assert.match(garmentDockerfile, /CLOUVA_RIG_VERSION=v28/);
   assert.match(garmentDockerfile, /v28-active-avatar-reference/);
   assert.match(garmentApiV8Source, /def run_fresh_garment_rig/);
@@ -134,16 +135,27 @@ test("V28 re-riggea y normaliza la prenda con la malla visible del avatar activo
   assert.match(garmentWorkerV20Source, /clouvaFinalDimensions/);
 });
 
-test("Inspector del Worker expone herramientas, medidas y prueba real del pipeline", () => {
+test("V30 evita doble rigging y separa Meshy original de prenda ajustada", () => {
+  assert.match(garmentDockerfile, /CLOUVA_GARMENT_SOURCE_ROUTING=v30/);
+  assert.match(garmentApiV8Source, /GARMENT_SOURCE_ROUTING_VERSION = "v30-single-pass"/);
+  assert.match(garmentApiV8Source, /source_already_rigged: bool = False/);
+  assert.match(garmentApiV8Source, /if not request\.source_already_rigged/);
+  assert.match(garmentApiV8Source, /X-Clouva-Fresh-Rig/);
+  assert.match(unrealExportRouteSource, /source_already_rigged: sourceAlreadyRigged/);
+  assert.match(unrealExportRouteSource, /single-pass-auto-rig/);
+  assert.doesNotMatch(unrealExportRouteSource, /finalizeClothingItem/);
+});
+
+test("Inspector V2 reconoce Meshy crudo como entrada válida", () => {
   assert.match(garmentDockerfile, /app_v9\.py/);
   assert.match(garmentDockerfile, /inspect_garment\.py/);
-  assert.match(garmentDockerfile, /CLOUVA_WORKER_INSPECTOR=v1/);
-  assert.match(workerInspectorApiSource, /@app\.post\("\/diagnostics\/garment"\)/);
-  assert.match(workerInspectorApiSource, /def run_rig_probe/);
-  assert.match(workerInspectorApiSource, /def worker_tools/);
-  assert.match(workerInspectorBlenderSource, /def relative_shape_error/);
-  assert.match(workerInspectorBlenderSource, /legacyRecoveryRecommended/);
-  assert.match(workerInspectorBlenderSource, /evaluatedBounds/);
+  assert.match(garmentDockerfile, /CLOUVA_WORKER_INSPECTOR=v2/);
+  assert.match(workerInspectorApiSource, /v2-single-pass-awareness/);
+  assert.match(workerInspectorApiSource, /preserve-existing-rig/);
+  assert.match(workerInspectorApiSource, /Meshy original listo/);
+  assert.match(workerInspectorBlenderSource, /rawGarmentReadyForRig/);
+  assert.match(workerInspectorBlenderSource, /sourceKind/);
+  assert.match(workerInspectorBlenderSource, /Meshy original: el Worker creará el esqueleto/);
   assert.match(unrealObjectExportSource, /ABRIR INSPECTOR DEL WORKER/);
   assert.match(unrealObjectExportSource, /Herramientas activas/);
   assert.match(unrealObjectExportSource, /Recorrido de esta prenda/);
