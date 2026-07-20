@@ -10,7 +10,7 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test tests-avatar-engine.mjs tests-creator-rig.mjs tests-project-access.mjs"
+    "test": "node --import tsx --test tests-avatar-engine.mjs tests-creator-rig.mjs tests-project-access.mjs tests-real-garment-review.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.8",

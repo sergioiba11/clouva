@@ -4,6 +4,7 @@ import { finalizeClothingItem } from "@/lib/clothing-finalization";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 300;
 
 type ItemMetadata = Record<string, unknown>;
 

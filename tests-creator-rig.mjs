@@ -156,7 +156,8 @@ test("Inspector V2 y el estudio visual mantienen el diagnóstico real", () => {
   assert.match(workerInspectorBlenderSource, /rawGarmentReadyForRig/);
   assert.match(workerInspectorBlenderSource, /sourceKind/);
   assert.match(workerInspectorBlenderSource, /Meshy original: el Worker creará el esqueleto/);
-  assert.match(unrealObjectExportSource, /SmartTryOnViewer/);
+  assert.doesNotMatch(unrealObjectExportSource, /<SmartTryOnViewer/);
+  assert.match(unrealObjectExportSource, /RealGarmentReview/);
   assert.match(unrealObjectExportSource, /REVISAR CON BLENDER/);
   assert.match(unrealObjectExportSource, /INSPECTOR TÉCNICO DEL WORKER/);
   assert.match(unrealObjectExportSource, /APROBAR PRENDA/);
