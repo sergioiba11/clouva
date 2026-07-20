@@ -146,7 +146,7 @@ test("V30 evita doble rigging y separa Meshy original de prenda ajustada", () =>
   assert.doesNotMatch(unrealExportRouteSource, /finalizeClothingItem/);
 });
 
-test("Inspector V2 reconoce Meshy crudo como entrada válida", () => {
+test("Inspector V2 y el estudio visual mantienen el diagnóstico real", () => {
   assert.match(garmentDockerfile, /app_v9\.py/);
   assert.match(garmentDockerfile, /inspect_garment\.py/);
   assert.match(garmentDockerfile, /CLOUVA_WORKER_INSPECTOR=v2/);
@@ -156,7 +156,13 @@ test("Inspector V2 reconoce Meshy crudo como entrada válida", () => {
   assert.match(workerInspectorBlenderSource, /rawGarmentReadyForRig/);
   assert.match(workerInspectorBlenderSource, /sourceKind/);
   assert.match(workerInspectorBlenderSource, /Meshy original: el Worker creará el esqueleto/);
-  assert.match(unrealObjectExportSource, /ABRIR INSPECTOR DEL WORKER/);
+  assert.match(unrealObjectExportSource, /SmartTryOnViewer/);
+  assert.match(unrealObjectExportSource, /REVISAR CON BLENDER/);
+  assert.match(unrealObjectExportSource, /INSPECTOR TÉCNICO DEL WORKER/);
+  assert.match(unrealObjectExportSource, /APROBAR PRENDA/);
+  assert.match(unrealObjectExportSource, /Frente/);
+  assert.match(unrealObjectExportSource, /Espalda/);
+  assert.match(unrealObjectExportSource, /Caminar/);
   assert.match(unrealObjectExportSource, /Herramientas activas/);
   assert.match(unrealObjectExportSource, /Recorrido de esta prenda/);
 });
