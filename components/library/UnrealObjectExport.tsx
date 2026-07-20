@@ -39,7 +39,7 @@ import {
   X,
   XCircle,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
 import {
   OFFICIAL_CLOUVA_AVATAR,
@@ -75,14 +75,7 @@ type ClothingAsset = {
 };
 
 type ObjectAsset = StorageAsset | ClothingAsset;
-
-type StorageEntry = {
-  name: string;
-  updated_at?: string;
-  created_at?: string;
-  metadata?: Record<string, unknown> | null;
-};
-
+type StorageEntry = { name: string; updated_at?: string; created_at?: string; metadata?: Record<string, unknown> | null };
 type ExportResult = { url?: string; filename?: string; scale?: string; error?: string };
 
 type ClothingResponse = {
@@ -99,23 +92,8 @@ type ClothingResponse = {
 };
 
 type DiagnosticStatus = "ok" | "warning" | "error" | "pending" | "info";
-
-type DiagnosticStage = {
-  id: string;
-  label: string;
-  status: DiagnosticStatus;
-  summary: string;
-};
-
-type WorkerTool = {
-  id: string;
-  name: string;
-  script?: string;
-  purpose?: string;
-  version?: string;
-  status?: string;
-};
-
+type DiagnosticStage = { id: string; label: string; status: DiagnosticStatus; summary: string };
+type WorkerTool = { id: string; name: string; script?: string; purpose?: string; version?: string; status?: string };
 type AssetInspection = {
   meshCount?: number;
   armatureCount?: number;
@@ -127,11 +105,7 @@ type AssetInspection = {
   weightedVertexRatio?: number;
   rawBounds?: { dimensionsCm?: number[] } | null;
   evaluatedBounds?: { dimensionsCm?: number[] } | null;
-  evaluatedDifference?: {
-    maximumSizeError?: number;
-    centerError?: number;
-    different?: boolean;
-  } | null;
+  evaluatedDifference?: { maximumSizeError?: number; centerError?: number; different?: boolean } | null;
   legacyRecoveryRecommended?: boolean;
   metadataKeys?: string[];
 };
@@ -163,10 +137,7 @@ type WorkerDiagnostics = {
     memoryRssMb?: number;
     elapsedSeconds?: number;
   };
-  diagnosis?: {
-    legacyGeometryDifferenceDetected?: boolean;
-    recommendedAction?: string;
-  };
+  diagnosis?: { legacyGeometryDifferenceDetected?: boolean; recommendedAction?: string };
   rigDiagnostics?: {
     armature?: string;
     boneCount?: number;
@@ -177,7 +148,6 @@ type WorkerDiagnostics = {
 };
 
 type UnrealSnapshot = Record<string, any>;
-
 type UnrealStatus = {
   status: "online" | "offline";
   capturedAt?: string | null;
@@ -186,13 +156,7 @@ type UnrealStatus = {
   error?: string | null;
 };
 
-type AvatarChoice = {
-  avatar: ActiveAvatar;
-  label: string;
-  detail: string;
-  active: boolean;
-};
-
+type AvatarChoice = { avatar: ActiveAvatar; label: string; detail: string; active: boolean };
 type ReviewView = "Frente" | "Lateral" | "Espalda";
 type ReviewPose = "Idle" | "T-Pose" | "Walk";
 
@@ -215,6 +179,11 @@ const STAGE_STATUS_LABELS: Record<DiagnosticStatus, string> = {
 };
 
 const APPROVAL_STORAGE_KEY = "clouva-unreal-visual-approvals-v2";
+const VISUAL_REVIEW_COPY = {
+  raw: "Original de Meshy",
+  blocked: "PRIMERO GENERÁ EL RIG REAL",
+  ready: "RIG REAL",
+} as const;
 
 async function listGlbs(userId: string, path = userId, depth = 0): Promise<StorageAsset[]> {
   const { data, error } = await supabase.storage.from("creator-assets").list(path, {
@@ -297,19 +266,9 @@ function avatarLabel(avatar: ActiveAvatar, index: number) {
 
 function readSnapshot(snapshot?: UnrealSnapshot | null) {
   const skeletalMesh = String(snapshot?.skeletalMesh ?? snapshot?.skeletal_mesh ?? snapshot?.mesh?.path ?? "Sin snapshot");
-  const bones = Array.isArray(snapshot?.bones)
-    ? snapshot.bones.length
-    : Number(snapshot?.boneCount ?? snapshot?.bone_count ?? 0);
-  const height = Number(
-    snapshot?.bounds?.imported?.sizeCm?.z
-      ?? snapshot?.bounds?.sizeCm?.z
-      ?? snapshot?.heightCm
-      ?? 0,
-  );
-  const scale = snapshot?.component?.worldTransform?.scale
-    ?? snapshot?.actor?.worldTransform?.scale
-    ?? snapshot?.scale
-    ?? null;
+  const bones = Array.isArray(snapshot?.bones) ? snapshot.bones.length : Number(snapshot?.boneCount ?? snapshot?.bone_count ?? 0);
+  const height = Number(snapshot?.bounds?.imported?.sizeCm?.z ?? snapshot?.bounds?.sizeCm?.z ?? snapshot?.heightCm ?? 0);
+  const scale = snapshot?.component?.worldTransform?.scale ?? snapshot?.actor?.worldTransform?.scale ?? snapshot?.scale ?? null;
   const scaleLabel = scale && typeof scale === "object"
     ? `${Number(scale.x ?? 1).toFixed(3)}, ${Number(scale.y ?? 1).toFixed(3)}, ${Number(scale.z ?? 1).toFixed(3)}`
     : "—";
@@ -379,11 +338,7 @@ export function UnrealObjectExport() {
         error: data.error ?? null,
       });
     } catch (cause) {
-      setUnrealStatus({
-        status: "offline",
-        snapshot: null,
-        error: cause instanceof Error ? cause.message : "No se pudo leer Unreal",
-      });
+      setUnrealStatus({ status: "offline", snapshot: null, error: cause instanceof Error ? cause.message : "No se pudo leer Unreal" });
     }
   }, []);
 
@@ -400,7 +355,6 @@ export function UnrealObjectExport() {
         .is("archived_at", null)
         .not("model_url", "is", null)
         .order("updated_at", { ascending: false });
-
       if (avatarError) throw avatarError;
       const current = useActiveAvatarStore.getState().avatar;
       const mapped: AvatarChoice[] = (data ?? []).map((row: any, index: number) => {
@@ -420,7 +374,6 @@ export function UnrealObjectExport() {
           active: current.id === avatar.id,
         };
       });
-
       const official: AvatarChoice = {
         avatar: OFFICIAL_CLOUVA_AVATAR,
         label: "Avatar oficial CLOUVA",
@@ -430,12 +383,8 @@ export function UnrealObjectExport() {
       setAvatarChoices([official, ...mapped.filter((choice) => choice.avatar.id !== OFFICIAL_CLOUVA_AVATAR.id)]);
     } catch (cause) {
       console.error("Could not list CLOUVA avatars", cause);
-      setAvatarChoices([{
-        avatar: useActiveAvatarStore.getState().avatar,
-        label: avatarLabel(useActiveAvatarStore.getState().avatar, 0),
-        detail: "Avatar activo",
-        active: true,
-      }]);
+      const current = useActiveAvatarStore.getState().avatar;
+      setAvatarChoices([{ avatar: current, label: avatarLabel(current, 0), detail: "Avatar activo", active: true }]);
     } finally {
       setLoadingAvatars(false);
     }
@@ -455,7 +404,6 @@ export function UnrealObjectExport() {
       ]);
       const clothingData = (await clothingResponse.json().catch(() => ({}))) as ClothingResponse;
       if (!clothingResponse.ok) throw new Error(clothingData.error || "No se pudieron cargar tus piezas");
-
       const clothingAssets: ClothingAsset[] = (clothingData.items ?? []).map((item) => ({
         id: `clothing:${item.id}`,
         kind: "clothing",
@@ -468,7 +416,6 @@ export function UnrealObjectExport() {
         fitStatus: item.fitStatus,
         label: `${CATEGORY_LABELS[item.category] || "Objeto"} · ${item.name}${item.rigged ? " · rig real" : " · original"}`,
       }));
-
       const next: ObjectAsset[] = [...clothingAssets, ...storageAssets];
       setObjects(next);
       setSelectedId((current) => (next.some((item) => item.id === current) ? current : next[0]?.id || ""));
@@ -512,7 +459,6 @@ export function UnrealObjectExport() {
     setShowAvatarLibrary(false);
     setPreviewStatus("Avatar seleccionado. Actualizando la vista real…");
     setViewerRevision((value) => value + 1);
-
     if (!user || choice.avatar.source === "official") return;
     try {
       await supabase.from("user_avatars").update({ is_active: false }).eq("user_id", user.id);
@@ -525,9 +471,7 @@ export function UnrealObjectExport() {
   const generateRig = async () => {
     const selected = objects.find((item) => item.id === selectedId);
     if (selected?.kind !== "clothing" || selected.rigged || !selected.modelUrl || !session?.access_token) return;
-    const nextAttemptId = typeof crypto !== "undefined" && "randomUUID" in crypto
-      ? crypto.randomUUID()
-      : `attempt-${Date.now()}`;
+    const nextAttemptId = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `attempt-${Date.now()}`;
     setAttemptId(nextAttemptId);
     setProcessingRig(true);
     setError(null);
@@ -535,17 +479,12 @@ export function UnrealObjectExport() {
     try {
       const response = await fetch("/api/clothing/finalize", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session.access_token}`,
-        },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
         body: JSON.stringify({ itemId: selected.clothingItemId, modelUrl: selected.modelUrl, attemptId: nextAttemptId }),
       });
       const data = (await response.json().catch(() => ({}))) as { ok?: boolean; rigged?: boolean; error?: string; warning?: string };
-      if (!response.ok || !data.ok || !data.rigged) {
-        throw new Error(data.error || data.warning || "Blender no pudo generar el rig real.");
-      }
-      setPreviewStatus("✓ Rig real guardado. Cargando la preview sobre el avatar…");
+      if (!response.ok || !data.ok || !data.rigged) throw new Error(data.error || data.warning || "Blender no pudo generar el rig real.");
+      setPreviewStatus("✓ Prenda riggeada guardada. Cargando la preview sobre el avatar…");
       await refresh();
       setViewerRevision((value) => value + 1);
     } catch (cause) {
@@ -567,7 +506,6 @@ export function UnrealObjectExport() {
       const requestBody = selected.kind === "clothing"
         ? { clothingItemId: selected.clothingItemId, name: selected.name }
         : { bucket: "creator-assets", path: selected.path, name: selected.name };
-
       const response = await fetch("/api/assets/export-unreal", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
@@ -614,22 +552,16 @@ export function UnrealObjectExport() {
     }
   };
 
+  const selected = objects.find((item) => item.id === selectedId);
+  const filteredObjects = objects.filter((item) => item.label.toLowerCase().includes(searchTerm.trim().toLowerCase()));
+  const filteredAvatars = avatarChoices.filter((choice) => `${choice.label} ${choice.detail}`.toLowerCase().includes(avatarSearch.trim().toLowerCase()));
+
   if (loading || !user) return null;
 
-  const selected = objects.find((item) => item.id === selectedId);
-  const filteredObjects = useMemo(
-    () => objects.filter((item) => item.label.toLowerCase().includes(searchTerm.trim().toLowerCase())),
-    [objects, searchTerm],
-  );
-  const filteredAvatars = useMemo(
-    () => avatarChoices.filter((choice) => `${choice.label} ${choice.detail}`.toLowerCase().includes(avatarSearch.trim().toLowerCase())),
-    [avatarChoices, avatarSearch],
-  );
   const isRiggedClothing = selected?.kind === "clothing" && selected.rigged;
   const approved = Boolean(isRiggedClothing && approvals[selected.id] === true);
   const previewReady = selected?.kind !== "clothing" || Boolean(isRiggedClothing && previewStatus.startsWith("✓"));
   const rigReady = selected?.kind === "clothing" ? selected.rigged : false;
-  const workerReady = diagnostics?.ok === true;
   const sourceDimensions = diagnostics?.garment?.evaluatedBounds?.dimensionsCm;
   const rawDimensions = diagnostics?.garment?.rawBounds?.dimensionsCm;
   const outputDimensions = diagnostics?.outputInspection?.garment?.evaluatedBounds?.dimensionsCm;
@@ -651,6 +583,7 @@ export function UnrealObjectExport() {
         : selected
           ? "Esperando generar rig"
           : "Esperando selección";
+  const approvalBlocked = !selected || selected.kind !== "clothing" || !selected.rigged || !previewReady;
   const canExport = Boolean(
     selected
     && !exporting
@@ -696,8 +629,7 @@ export function UnrealObjectExport() {
             Unreal {unrealStatus.status === "online" ? "online" : "offline"}
           </span>
           <button type="button" onClick={() => { void refresh(); void refreshAvatars(); void refreshUnreal(); }} disabled={loadingObjects}>
-            <RefreshCw className={loadingObjects ? styles.spin : undefined} />
-            Actualizar
+            <RefreshCw className={loadingObjects ? styles.spin : undefined} /> Actualizar
           </button>
         </div>
       </header>
@@ -780,7 +712,7 @@ export function UnrealObjectExport() {
               <section className={styles.viewportPanel} aria-label="Visor 3D principal">
                 <div className={styles.viewportTopbar}>
                   <div><small>VISTA PREVIA REAL</small><strong>{selected?.name || "Sin prenda"}</strong></div>
-                  <span className={rigReady ? styles.viewportReady : styles.viewportPending}>{rigReady ? "PREVIEW RIGGEADA" : "ORIGINAL SIN RIG"}</span>
+                  <span className={rigReady ? styles.viewportReady : styles.viewportPending}>{rigReady ? VISUAL_REVIEW_COPY.ready : VISUAL_REVIEW_COPY.raw.toUpperCase()}</span>
                 </div>
 
                 <div className={styles.viewport} ref={viewportRef}>
@@ -832,10 +764,7 @@ export function UnrealObjectExport() {
                   </div>
                   <div>
                     <span>Pose</span>
-                    {([[
-                      "Idle",
-                      "A-Pose",
-                    ], ["T-Pose", "T-Pose"], ["Walk", "Caminar"]] as Array<[ReviewPose, string]>).map(([pose, label]) => (
+                    {([["Idle", "A-Pose"], ["T-Pose", "T-Pose"], ["Walk", "Caminar"]] as Array<[ReviewPose, string]>).map(([pose, label]) => (
                       <button key={pose} type="button" className={reviewPose === pose ? styles.controlActive : ""} onClick={() => setReviewPose(pose)}>{pose === "Walk" ? <Play /> : null}{label}</button>
                     ))}
                   </div>
@@ -893,9 +822,7 @@ export function UnrealObjectExport() {
                 <div className={styles.futureBadge}><SlidersHorizontal /> AJUSTES FINOS · SIGUIENTE ETAPA</div>
                 {["Holgura general", "Ancho de hombros", "Largo de mangas", "Largo de prenda", "Posición vertical", "Escala uniforme"].map((label, index) => (
                   <label className={styles.sliderRow} key={label}>
-                    <span>{label}</span>
-                    <input type="range" min="0" max="100" defaultValue={index === 0 ? 55 : 50} disabled />
-                    <output>{index === 0 ? "Auto" : "—"}</output>
+                    <span>{label}</span><input type="range" min="0" max="100" defaultValue={index === 0 ? 55 : 50} disabled /><output>{index === 0 ? "Auto" : "—"}</output>
                   </label>
                 ))}
                 <div className={styles.selectRows}>
@@ -910,15 +837,13 @@ export function UnrealObjectExport() {
 
               <section className={styles.actionCard}>
                 <button type="button" className={styles.inspectAction} onClick={() => void diagnoseWorker()} disabled={selected?.kind !== "clothing" || diagnosing || processingRig}>
-                  {diagnosing ? <Loader2 className={styles.spin} /> : <Settings2 />}
-                  {diagnosing ? "BLENDER ESTÁ REVISANDO…" : "REVISAR CON BLENDER"}
+                  {diagnosing ? <Loader2 className={styles.spin} /> : <Settings2 />}{diagnosing ? "BLENDER ESTÁ REVISANDO…" : "REVISAR CON BLENDER"}
                 </button>
-                <button type="button" className={`${styles.approveAction} ${approved ? styles.approvedAction : ""}`} onClick={toggleApproval} disabled={!isRiggedClothing || !previewReady || diagnosing || processingRig}>
-                  <BadgeCheck /> {approved ? "APROBACIÓN LISTA" : "APROBAR PRENDA"}
+                <button type="button" className={`${styles.approveAction} ${approved ? styles.approvedAction : ""}`} onClick={toggleApproval} disabled={approvalBlocked || diagnosing || processingRig}>
+                  <BadgeCheck /> {approved ? "APROBACIÓN LISTA" : approvalBlocked ? VISUAL_REVIEW_COPY.blocked : "APROBAR PRENDA"}
                 </button>
                 <button type="button" className={styles.exportAction} onClick={() => void exportObject()} disabled={!canExport}>
-                  {exporting ? <Loader2 className={styles.spin} /> : <Box />}
-                  {exporting ? "PREPARANDO FBX…" : "EXPORTAR A UNREAL"}
+                  {exporting ? <Loader2 className={styles.spin} /> : <Box />}{exporting ? "PREPARANDO FBX…" : "EXPORTAR A UNREAL"}
                 </button>
               </section>
             </aside>
@@ -927,17 +852,12 @@ export function UnrealObjectExport() {
           {result?.url ? <div className={styles.success}><CheckCircle2 /><span><strong>Objeto listo para Unreal</strong>{result.filename} · {result.scale}</span><a href={result.url} download={result.filename || true}><Download /> Descargar otra vez</a></div> : null}
           {error ? (
             <div className={styles.userError}>
-              <TriangleAlert />
-              <div><strong>No se pudo terminar el proceso</strong><span>{friendlyExportError(error)}</span></div>
-              <details><summary>Ver error técnico</summary><pre>{error}</pre></details>
+              <TriangleAlert /><div><strong>No se pudo terminar el proceso</strong><span>{friendlyExportError(error)}</span></div><details><summary>Ver error técnico</summary><pre>{error}</pre></details>
             </div>
           ) : null}
 
           <button className={styles.logsToggle} type="button" onClick={() => setShowDiagnostics((value) => !value)}>
-            <Activity />
-            <span>Ver logs del proceso</span>
-            <small>INSPECTOR TÉCNICO DEL WORKER</small>
-            {showDiagnostics ? <ChevronUp /> : <ChevronDown />}
+            <Activity /><span>Ver logs del proceso</span><small>INSPECTOR TÉCNICO DEL WORKER</small>{showDiagnostics ? <ChevronUp /> : <ChevronDown />}
           </button>
 
           {showDiagnostics ? (
@@ -946,10 +866,8 @@ export function UnrealObjectExport() {
                 <div><small>BLENDER WORKER EN VIVO</small><h3>Hora, etapa, memoria, escala, armature y diferencia Rest/Bind</h3></div>
                 {diagnostics ? <span className={diagnostics.ok ? styles.workerOnline : styles.workerWarning}><CircleDot /> {diagnostics.ok ? "PRUEBA COMPLETA" : "FALLA DETECTADA"}</span> : null}
               </div>
-
               {diagnosing ? <div className={styles.diagnosticsLoading}><Loader2 className={styles.spin} /><div><strong>Ejecutando Blender real</strong><span>Importando GLB, midiendo geometría y validando el rig.</span></div></div> : null}
               {diagnosticError ? <div className={styles.diagnosticError}><TriangleAlert /><span>{diagnosticError}</span></div> : null}
-
               <div className={styles.logOverview}>
                 <article><Clock3 /><span>Hora</span><strong>{formatDate(diagnostics?.generatedAt || unrealStatus.capturedAt)}</strong></article>
                 <article><Activity /><span>Etapa</span><strong>{currentStep}</strong></article>
@@ -962,27 +880,13 @@ export function UnrealObjectExport() {
               {diagnostics ? (
                 <>
                   <div className={styles.workerVersions}>
-                    <span><Cpu /> Blender {diagnostics.worker?.blenderVersion || "—"}</span>
-                    <span><Wrench /> Rig {diagnostics.worker?.rigVersion || "—"}</span>
-                    <span><Activity /> Recuperación {diagnostics.worker?.legacyRecoveryVersion || "—"}</span>
-                    <span><FileCheck2 /> FBX {diagnostics.worker?.exportVersion || "—"}</span>
+                    <span><Cpu /> Blender {diagnostics.worker?.blenderVersion || "—"}</span><span><Wrench /> Rig {diagnostics.worker?.rigVersion || "—"}</span><span><Activity /> Recuperación {diagnostics.worker?.legacyRecoveryVersion || "—"}</span><span><FileCheck2 /> FBX {diagnostics.worker?.exportVersion || "—"}</span>
                   </div>
                   <div className={styles.metricsGrid}>
-                    <article><Ruler /><span>Malla cruda</span><strong>{dimensions(rawDimensions)}</strong></article>
-                    <article><Eye /><span>Forma visible</span><strong>{dimensions(sourceDimensions)}</strong></article>
-                    <article><Bone /><span>Huesos detectados</span><strong>{diagnostics.garment?.boneCount ?? 0}</strong></article>
-                    <article><Gauge /><span>Vértices con peso</span><strong>{percent(diagnostics.garment?.weightedVertexRatio)}</strong></article>
-                    <article><Box /><span>Salida del rig</span><strong>{dimensions(outputDimensions)}</strong></article>
-                    <article><Activity /><span>Diferencia visible</span><strong>{percent(diagnostics.garment?.evaluatedDifference?.maximumSizeError)}</strong></article>
+                    <article><Ruler /><span>Malla cruda</span><strong>{dimensions(rawDimensions)}</strong></article><article><Eye /><span>Forma visible</span><strong>{dimensions(sourceDimensions)}</strong></article><article><Bone /><span>Huesos detectados</span><strong>{diagnostics.garment?.boneCount ?? 0}</strong></article><article><Gauge /><span>Vértices con peso</span><strong>{percent(diagnostics.garment?.weightedVertexRatio)}</strong></article><article><Box /><span>Salida del rig</span><strong>{dimensions(outputDimensions)}</strong></article><article><Activity /><span>Diferencia visible</span><strong>{percent(diagnostics.garment?.evaluatedDifference?.maximumSizeError)}</strong></article>
                   </div>
-                  <div className={styles.toolsSection}>
-                    <h4>Herramientas activas</h4>
-                    <div className={styles.toolsGrid}>{(diagnostics.tools ?? []).map((tool) => <article key={tool.id}><span className={tool.status === "ready" ? styles.toolReady : styles.toolMissing}><CircleDot /></span><div><strong>{tool.name}</strong><small>{tool.script}{tool.version ? ` · ${tool.version}` : ""}</small><p>{tool.purpose}</p></div></article>)}</div>
-                  </div>
-                  <div className={styles.pipelineSection}>
-                    <h4>Recorrido de esta prenda</h4>
-                    <div className={styles.stageList}>{(diagnostics.stages ?? []).map((stage, index) => <article key={`${stage.id}-${index}`} className={styles[`stage_${stage.status}`]}><span className={styles.stageIcon}>{stageIcon(stage.status)}</span><div><strong>{stage.label}</strong><p>{stage.summary}</p></div><small>{STAGE_STATUS_LABELS[stage.status]}</small></article>)}</div>
-                  </div>
+                  <div className={styles.toolsSection}><h4>Herramientas activas</h4><div className={styles.toolsGrid}>{(diagnostics.tools ?? []).map((tool) => <article key={tool.id}><span className={tool.status === "ready" ? styles.toolReady : styles.toolMissing}><CircleDot /></span><div><strong>{tool.name}</strong><small>{tool.script}{tool.version ? ` · ${tool.version}` : ""}</small><p>{tool.purpose}</p></div></article>)}</div></div>
+                  <div className={styles.pipelineSection}><h4>Recorrido de esta prenda</h4><div className={styles.stageList}>{(diagnostics.stages ?? []).map((stage, index) => <article key={`${stage.id}-${index}`} className={styles[`stage_${stage.status}`]}><span className={styles.stageIcon}>{stageIcon(stage.status)}</span><div><strong>{stage.label}</strong><p>{stage.summary}</p></div><small>{STAGE_STATUS_LABELS[stage.status]}</small></article>)}</div></div>
                   {diagnostics.diagnosis?.recommendedAction ? <div className={diagnostics.diagnosis.legacyGeometryDifferenceDetected ? styles.diagnosisWarning : styles.diagnosisOk}><Activity /><div><strong>Lectura del Inspector</strong><span>{diagnostics.diagnosis.recommendedAction}</span></div></div> : null}
                   <details className={styles.technicalDetails}><summary>Ver registro técnico completo</summary><pre>{JSON.stringify({ worker: diagnostics.worker, garment: diagnostics.garment, avatar: diagnostics.avatar, pipeline: diagnostics.pipeline, rigDiagnostics: diagnostics.rigDiagnostics, outputInspection: diagnostics.outputInspection }, null, 2)}</pre></details>
                 </>
