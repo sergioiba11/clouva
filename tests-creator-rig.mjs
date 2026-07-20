@@ -11,6 +11,9 @@ const garmentWorkerV12Source = readFileSync("./worker/garment-rig/rig_garment_v1
 const garmentWorkerV13Source = readFileSync("./worker/garment-rig/rig_garment_v13.py", "utf8");
 const garmentWorkerV14Source = readFileSync("./worker/garment-rig/rig_garment_v14.py", "utf8");
 const garmentWorkerV15Source = readFileSync("./worker/garment-rig/rig_garment_v15.py", "utf8");
+const garmentWorkerV20Source = readFileSync("./worker/garment-rig/rig_garment_v20.py", "utf8");
+const garmentExporterSource = readFileSync("./worker/garment-rig/export_unreal_clean.py", "utf8");
+const garmentApiV8Source = readFileSync("./worker/garment-rig/app_v8.py", "utf8");
 const garmentDockerfile = readFileSync("./worker/garment-rig/Dockerfile", "utf8");
 
 test("hoodie siempre se pesa de nuevo contra el avatar activo", () => {
@@ -109,8 +112,20 @@ test("V15 usa la malla corporal como fuente de verdad para escala y roundtrip", 
   assert.match(garmentWorkerV15Source, /def validate_roundtrip_v15/);
   assert.match(garmentWorkerV15Source, /El pantalón volvió a quedar gigante respecto del cuerpo real/);
   assert.doesNotMatch(garmentWorkerV15Source, /waist\.z - left_foot\.z/);
-  assert.match(garmentDockerfile, /CLOUVA_RIG_VERSION=v15/);
   assert.match(garmentDockerfile, /rig_garment_v15\.py/);
+});
+
+test("V27 preserva el volumen de la prenda y valida las tres dimensiones del FBX", () => {
+  assert.match(garmentDockerfile, /CLOUVA_RIG_VERSION=v27/);
+  assert.match(garmentDockerfile, /v27-garment-volume-preserved/);
+  assert.match(garmentApiV8Source, /wearable-preserve/);
+  assert.match(garmentApiV8Source, /fbxRoundTripDimensionsValidated/);
+  assert.match(garmentExporterSource, /def _repair_collapsed_garment_volume/);
+  assert.match(garmentExporterSource, /def validate_fbx_roundtrip_v27/);
+  assert.match(garmentExporterSource, /garmentVolumeValid/);
+  assert.match(garmentWorkerV20Source, /def validate_upper_volume_v27/);
+  assert.match(garmentWorkerV20Source, /clouvaFinalDimensions/);
+  assert.match(garmentWorkerV20Source, /La prenda quedó comprimida en ancho o profundidad/);
 });
 
 test("solo una plantilla rígida puede conservar skinning existente", () => {

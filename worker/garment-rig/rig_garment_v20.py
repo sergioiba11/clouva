@@ -30,6 +30,22 @@ _original_body_region = legacy.body_region
 _original_validate = legacy.validate
 
 
+# The fitting pass targets a padded body region. These minimum ratios prevent a
+# rig from being marked ready when width/depth collapsed while height still looks
+# plausible. Values are intentionally tolerant of oversized/chibi CLOUVA cuts.
+UPPER_GARMENT_MIN_TARGET_RATIOS = {
+    "hoodie": Vector((0.82, 0.70, 0.82)),
+    "shirt": Vector((0.80, 0.68, 0.80)),
+    "jacket": Vector((0.82, 0.70, 0.82)),
+}
+
+UPPER_GARMENT_MIN_ASPECT = {
+    "hoodie": (0.62, 0.16),
+    "shirt": (0.56, 0.13),
+    "jacket": (0.62, 0.17),
+}
+
+
 def finite_vector(vector):
     return vector is not None and all(math.isfinite(float(vector[index])) for index in range(3))
 
@@ -108,6 +124,57 @@ def body_region_v20(body_meshes, armature, category):
     return repaired_min, repaired_max
 
 
+def validate_upper_volume_v27(garment, target_min, target_max, category):
+    garment_min, garment_max = legacy.bbox_world(garment)
+    garment_size = garment_max - garment_min
+    target_size = target_max - target_min
+
+    if not finite_vector(garment_size) or min(float(value) for value in garment_size) <= 0.0:
+        raise RuntimeError(f"El volumen final de la prenda es inválido: {tuple(garment_size)}")
+    if not finite_vector(target_size) or min(float(value) for value in target_size) <= 0.0:
+        raise RuntimeError(f"El volumen objetivo del torso es inválido: {tuple(target_size)}")
+
+    ratios = Vector((
+        float(garment_size.x) / max(float(target_size.x), 1e-9),
+        float(garment_size.y) / max(float(target_size.y), 1e-9),
+        float(garment_size.z) / max(float(target_size.z), 1e-9),
+    ))
+    minimums = UPPER_GARMENT_MIN_TARGET_RATIOS.get(category, Vector((0.75, 0.60, 0.75)))
+    if any(float(ratios[index]) < float(minimums[index]) for index in range(3)):
+        raise RuntimeError(
+            "La prenda perdió volumen durante el rig: "
+            f"category={category}, ratios={tuple(round(float(value), 4) for value in ratios)}, "
+            f"minimum={tuple(round(float(value), 4) for value in minimums)}"
+        )
+
+    vertical = max(float(garment_size.z), 1e-9)
+    major = max(float(garment_size.x), float(garment_size.y))
+    minor = min(float(garment_size.x), float(garment_size.y))
+    major_floor, minor_floor = UPPER_GARMENT_MIN_ASPECT.get(category, (0.52, 0.12))
+    if major / vertical < major_floor or minor / vertical < minor_floor:
+        raise RuntimeError(
+            "La prenda quedó comprimida en ancho o profundidad: "
+            f"category={category}, size={tuple(round(float(value), 5) for value in garment_size)}, "
+            f"aspect=({major / vertical:.4f},{minor / vertical:.4f})"
+        )
+
+    garment["clouvaVolumeContractVersion"] = 27
+    garment["clouvaFinalDimensions"] = json.dumps(
+        [float(garment_size.x), float(garment_size.y), float(garment_size.z)],
+        separators=(",", ":"),
+    )
+    garment["clouvaFinalTargetRatios"] = json.dumps(
+        [float(ratios.x), float(ratios.y), float(ratios.z)],
+        separators=(",", ":"),
+    )
+    print(
+        "[rig-v27] upper volume contract passed "
+        f"category={category} size={tuple(round(float(value), 6) for value in garment_size)} "
+        f"ratios={tuple(round(float(value), 6) for value in ratios)}",
+        flush=True,
+    )
+
+
 def validate_v20(garment, armature, target_min, target_max, category):
     repaired = False
     if category in legacy.UPPER_GARMENTS:
@@ -120,6 +187,7 @@ def validate_v20(garment, armature, target_min, target_max, category):
 
     result = _original_validate(garment, armature, target_min, target_max, category)
     if category in legacy.UPPER_GARMENTS:
+        validate_upper_volume_v27(garment, target_min, target_max, category)
         garment["clouvaSafeBoundsVersion"] = 20
         garment["clouvaSafeBoundsReusedFitContract"] = bool(repaired)
         safe_size = target_max - target_min
