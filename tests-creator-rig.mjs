@@ -115,17 +115,20 @@ test("V15 usa la malla corporal como fuente de verdad para escala y roundtrip", 
   assert.match(garmentDockerfile, /rig_garment_v15\.py/);
 });
 
-test("V27 preserva el volumen de la prenda y valida las tres dimensiones del FBX", () => {
-  assert.match(garmentDockerfile, /CLOUVA_RIG_VERSION=v27/);
-  assert.match(garmentDockerfile, /v27-garment-volume-preserved/);
-  assert.match(garmentApiV8Source, /wearable-preserve/);
-  assert.match(garmentApiV8Source, /fbxRoundTripDimensionsValidated/);
+test("V28 re-riggea y normaliza la prenda con la malla visible del avatar activo", () => {
+  assert.match(garmentDockerfile, /CLOUVA_RIG_VERSION=v28/);
+  assert.match(garmentDockerfile, /v28-active-avatar-reference/);
+  assert.match(garmentApiV8Source, /def run_fresh_garment_rig/);
+  assert.match(garmentApiV8Source, /def resolve_user_avatar_url/);
+  assert.match(garmentApiV8Source, /CLOUVA_AVATAR_REFERENCE_PATH/);
+  assert.match(garmentApiV8Source, /freshRigApplied/);
+  assert.match(garmentExporterSource, /def _measure_avatar_reference/);
+  assert.match(garmentExporterSource, /def prepare_wearable_object_v28/);
+  assert.match(garmentExporterSource, /avatarReferenceNormalized/);
   assert.match(garmentExporterSource, /def _repair_collapsed_garment_volume/);
-  assert.match(garmentExporterSource, /def validate_fbx_roundtrip_v27/);
-  assert.match(garmentExporterSource, /garmentVolumeValid/);
+  assert.match(garmentExporterSource, /def validate_fbx_roundtrip_v28/);
   assert.match(garmentWorkerV20Source, /def validate_upper_volume_v27/);
   assert.match(garmentWorkerV20Source, /clouvaFinalDimensions/);
-  assert.match(garmentWorkerV20Source, /La prenda quedó comprimida en ancho o profundidad/);
 });
 
 test("solo una plantilla rígida puede conservar skinning existente", () => {
