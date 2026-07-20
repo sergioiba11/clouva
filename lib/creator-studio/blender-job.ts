@@ -17,6 +17,8 @@ export type BlenderRequest = {
   templateId?: string | null;
   sourceStoragePath?: string | null;
   preserveExistingSkinning?: boolean;
+  attemptId?: string | null;
+  forceFreshSource?: boolean;
 };
 
 export type BlenderJob = ReturnType<typeof buildBlenderJob>;
@@ -32,11 +34,15 @@ export function buildBlenderJob(payload: BlenderRequest) {
   const lowerGarment = category === "pants" || category === "shorts";
   const automaticFit = deformable && payload.previewSettings?.automaticFit !== false;
   const manualCorrectionEnabled = deformable && Boolean(payload.previewSettings?.manualCorrectionEnabled);
+  const attemptId = payload.attemptId ?? null;
+  const forceFreshSource = payload.forceFreshSource ?? deformable;
 
   return {
     type: "clouva_creator_pipeline",
     operation: "fit_and_rig_reference",
     pipelineVersion: "body-mesh-contract-v15",
+    attemptId,
+    sourcePolicy: forceFreshSource ? "fresh-upload-and-factory-startup" : "uploaded-source",
     riggingStrategy: deformable
       ? "fresh_transfer_from_active_avatar"
       : templateMode
@@ -56,6 +62,11 @@ export function buildBlenderJob(payload: BlenderRequest) {
       automaticFit,
       manualCorrectionEnabled,
       avatarMoldSource: deformable ? "official-unreal-fbx" : payload.previewSettings?.avatarMoldSource,
+      attemptId,
+      forceFreshSource,
+      cleanScene: true,
+      canonicalBindVersion: deformable ? 43 : null,
+      restPoseBeforeMold: deformable,
     },
     options: {
       cleanGeometry: true,
@@ -71,6 +82,11 @@ export function buildBlenderJob(payload: BlenderRequest) {
       useOfficialAvatarMesh: deformable,
       useOfficialAvatarSkeleton: deformable,
       useOfficialAvatarWeights: deformable,
+      normalizeBeforeSkinning: deformable,
+      canonicalRestPose: deformable,
+      rejectPostSkinScaleChanges: deformable,
+      forceFreshSource,
+      cleanSceneBeforeImport: true,
       fitIncludesLimbSpan: upperGarment,
       fitUsesCanonicalLowerBodyLandmarks: lowerGarment,
       fitUsesBodyMeshVolume: lowerGarment,
@@ -105,6 +121,8 @@ export function buildBlenderJob(payload: BlenderRequest) {
         rejectTorsoAlignedPants: lowerGarment,
         rejectMissingBones: true,
         rejectUnnormalizedWeights: true,
+        requireCanonicalRestBind: deformable,
+        requireUnitLocalScale: deformable,
         maxUnweightedVertexRatio: 0.005,
         animationTests: ["tpose", "idle", "walk", "run"],
       },

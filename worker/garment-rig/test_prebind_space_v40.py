@@ -55,6 +55,8 @@ def test_official_avatar_is_normalized_before_weights(module):
     assert metadata
     assert identity(armature.matrix_world)
     assert int(armature.get("clouvaPrebindSpaceVersion", 0)) == 40
+    assert int(armature.get("clouvaCanonicalBindVersion", 0)) == 43
+    assert armature.data.pose_position == "REST"
 
     relative_point_drift = retained_contract(module, "_relative_point_drift")
     maximum = 0.0
@@ -62,11 +64,12 @@ def test_official_avatar_is_normalized_before_weights(module):
         assert identity(obj.matrix_world)
         assert obj.find_armature() == armature
         assert int(obj.get("clouvaPrebindSpaceVersion", 0)) == 40
+        assert int(obj.get("clouvaCanonicalBindVersion", 0)) == 43
         after = module.evaluated_world_points(obj).copy()
         drift, _rms = relative_point_drift(before[obj.name], after)
         maximum = max(maximum, drift)
     assert maximum < 0.015
-    print(f"[clouva] V40 official avatar pre-bind normalization OK maxDrift={maximum:.8f}", flush=True)
+    print(f"[clouva] V43 canonical + V40 pre-bind normalization OK maxDrift={maximum:.8f}", flush=True)
 
 
 def test_source_skinning_is_removed(module):
@@ -112,7 +115,8 @@ def main():
     module = load_pipeline()
     assert module.PREBIND_SPACE_VERSION == 40
     assert module.SPACE_CONTRACT_VERSION == 40
-    assert module.legacy.validate_unreal_avatar_reference.__name__ == "validate_unreal_avatar_reference_v40"
+    assert module.CANONICAL_BIND_VERSION == 43
+    assert module.legacy.validate_unreal_avatar_reference.__name__ == "validate_unreal_avatar_reference_v43"
     assert module.legacy.prepare_garment.__name__ == "prepare_garment_fresh_v40"
     assert module.legacy.export_glb.__name__ == "export_glb_v40"
     assert module.v9.validate_roundtrip_v9.__name__ == "validate_roundtrip_v40"
