@@ -1,11 +1,29 @@
+import importlib.util
 import json
 import math
 import os
+import sys
 from pathlib import Path
 
 from mathutils import Vector
 
-import export_unreal_clean as previous
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+BASE_EXPORT_PATH = SCRIPT_DIR / "export_unreal_clean.py"
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+if not BASE_EXPORT_PATH.is_file():
+    raise RuntimeError(f"No se encontró el exportador base V28 en {BASE_EXPORT_PATH}")
+
+_previous_spec = importlib.util.spec_from_file_location(
+    "clouva_export_unreal_clean_v28",
+    BASE_EXPORT_PATH,
+)
+if _previous_spec is None or _previous_spec.loader is None:
+    raise RuntimeError("No se pudo crear el cargador absoluto del exportador base V28")
+previous = importlib.util.module_from_spec(_previous_spec)
+sys.modules[_previous_spec.name] = previous
+_previous_spec.loader.exec_module(previous)
 
 
 base = previous.base
