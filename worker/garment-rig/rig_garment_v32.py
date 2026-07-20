@@ -1,3 +1,4 @@
+import gc
 import importlib.util
 import json
 import math
@@ -28,6 +29,8 @@ v9 = previous.v9
 v40 = previous.previous.previous
 
 CANONICAL_BIND_VERSION = 43
+CANONICAL_MEMORY_VERSION = 44
+CANONICAL_SAMPLE_LIMIT = max(256, int(os.getenv("CLOUVA_CANONICAL_SAMPLE_LIMIT", "4096")))
 ANATOMICAL_FIT_VERSION = previous.ANATOMICAL_FIT_VERSION
 PREBIND_SPACE_VERSION = previous.PREBIND_SPACE_VERSION
 SPACE_CONTRACT_VERSION = previous.SPACE_CONTRACT_VERSION
@@ -72,37 +75,80 @@ def _mesh_armature(obj):
     return None
 
 
-def _world_points(obj):
-    matrix = obj.matrix_world
-    return [matrix @ vertex.co for vertex in obj.data.vertices]
+def _rss_megabytes():
+    try:
+        with open("/proc/self/status", encoding="utf-8") as handle:
+            for line in handle:
+                if line.startswith("VmRSS:"):
+                    return round(float(line.split()[1]) / 1024.0, 2)
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
 
 
-def _combined_points(objects):
-    points = []
+def _memory_checkpoint(stage):
+    rss = _rss_megabytes()
+    suffix = f" rssMb={rss:.2f}" if rss is not None else ""
+    print(f"[rig-v44-memory] stage={stage}{suffix}", flush=True)
+    return rss
+
+
+def _release_temporary_memory(stage):
+    collected = gc.collect()
+    rss = _memory_checkpoint(stage)
+    return {"stage": stage, "collected": collected, "rssMb": rss}
+
+
+def _sample_indices(vertex_count, limit=CANONICAL_SAMPLE_LIMIT):
+    count = int(vertex_count)
+    maximum = max(2, int(limit))
+    if count <= 0:
+        return []
+    if count <= maximum:
+        return list(range(count))
+    if maximum == 1:
+        return [0]
+    step = (count - 1) / float(maximum - 1)
+    result = []
+    previous_index = -1
+    for sample in range(maximum):
+        index = min(count - 1, int(round(sample * step)))
+        if index != previous_index:
+            result.append(index)
+            previous_index = index
+    if result[-1] != count - 1:
+        result[-1] = count - 1
+    return result
+
+
+def _sample_world_points(obj, indices, prefix_matrix=None):
+    matrix = obj.matrix_world.copy()
+    if prefix_matrix is not None:
+        matrix = prefix_matrix @ matrix
+    vertices = obj.data.vertices
+    return [matrix @ vertices[index].co for index in indices]
+
+
+def _streaming_bounds(objects):
+    minimum = Vector((float("inf"), float("inf"), float("inf")))
+    maximum = Vector((float("-inf"), float("-inf"), float("-inf")))
+    vertices = 0
+
     for obj in objects:
-        points.extend(_world_points(obj))
-    if not points:
+        matrix = obj.matrix_world
+        for vertex in obj.data.vertices:
+            point = matrix @ vertex.co
+            minimum.x = min(minimum.x, point.x)
+            minimum.y = min(minimum.y, point.y)
+            minimum.z = min(minimum.z, point.z)
+            maximum.x = max(maximum.x, point.x)
+            maximum.y = max(maximum.y, point.y)
+            maximum.z = max(maximum.z, point.z)
+            vertices += 1
+
+    if vertices == 0:
         raise RuntimeError("El cuerpo oficial no contiene vértices para calcular su escala")
-    return points
-
-
-def _bounds(points):
-    minimum = Vector((
-        min(point.x for point in points),
-        min(point.y for point in points),
-        min(point.z for point in points),
-    ))
-    maximum = Vector((
-        max(point.x for point in points),
-        max(point.y for point in points),
-        max(point.z for point in points),
-    ))
-    return minimum, maximum
-
-
-def _height(points):
-    minimum, maximum = _bounds(points)
-    return float(maximum.z - minimum.z)
+    return minimum, maximum, vertices
 
 
 def _expected_height_meters(metadata):
@@ -174,7 +220,7 @@ def _transform_mesh_data(obj, matrix):
         obj.data.transform(matrix)
 
 
-def _raw_drift(expected, actual, reference_height):
+def _sampled_drift(expected, actual, reference_height):
     if len(expected) != len(actual) or not expected:
         return float("inf")
     denominator = max(float(reference_height), 1e-8)
@@ -184,13 +230,14 @@ def _raw_drift(expected, actual, reference_height):
 def normalize_official_avatar_canonical_v43(avatar_objects, armature, body_meshes, metadata=None):
     """Create one meter-based rest/bind space before fitting or creating garment weights.
 
-    The conversion is derived from Unreal metadata or Blender scene units plus the measured
-    body bounding box. No guessed 0.01/100 multiplier is applied. Armature rest bones and all
-    already-skinned avatar meshes are baked into the same canonical world matrix before the
-    garment exists, then every object transform is reset to identity.
+    V44 keeps the V43 canonical bind contract but measures bounds as a stream and validates
+    geometry drift with a deterministic sample. It never materializes several full copies of
+    every avatar vertex in Python, avoiding the memory spike that caused SIGKILL on Railway.
     """
     if armature is None or armature.type != "ARMATURE":
         raise RuntimeError(RIG_ERROR)
+
+    memory_checkpoints = [{"stage": "canonical-start", "rssMb": _memory_checkpoint("canonical-start")}]
 
     if legacy.bpy.context.object and legacy.bpy.context.object.mode != "OBJECT":
         legacy.bpy.ops.object.mode_set(mode="OBJECT")
@@ -209,19 +256,18 @@ def normalize_official_avatar_canonical_v43(avatar_objects, armature, body_meshe
         pose_bone.matrix_basis = Matrix.Identity(4)
     legacy.bpy.context.view_layer.update()
 
-    source_body_points = _combined_points(body_meshes)
-    source_min, source_max = _bounds(source_body_points)
+    source_min, source_max, source_vertex_count = _streaming_bounds(body_meshes)
     source_height = float(source_max.z - source_min.z)
     canonical_scale, expected_height, scale_reason, scene_scale, scene_system = _resolve_canonical_scale(
         source_height,
         metadata,
     )
     canonical_matrix = Matrix.Scale(canonical_scale, 4)
+    memory_checkpoints.append(_release_temporary_memory("source-bounds-complete"))
 
     armature_world_before = armature.matrix_world.copy()
     armature_local_before = armature.matrix_local.copy()
     mesh_snapshots = []
-    expected_points = {}
     bind_rest_difference_before = 0.0
 
     for obj in skinned_meshes:
@@ -230,7 +276,8 @@ def normalize_official_avatar_canonical_v43(avatar_objects, armature, body_meshe
         parent_inverse = obj.matrix_parent_inverse.copy()
         relative = armature_world_before.inverted_safe() @ world
         bind_rest_difference_before = max(bind_rest_difference_before, _matrix_delta(relative))
-        expected_points[obj.name] = [canonical_matrix @ point for point in _world_points(obj)]
+        sample_indices = _sample_indices(len(obj.data.vertices))
+        expected_sample = _sample_world_points(obj, sample_indices, canonical_matrix)
         mesh_snapshots.append({
             "name": obj.name,
             "world": world,
@@ -238,7 +285,11 @@ def normalize_official_avatar_canonical_v43(avatar_objects, armature, body_meshe
             "parentInverse": parent_inverse,
             "scale": _vector_values(obj.scale),
             "vertices": len(obj.data.vertices),
+            "sampleIndices": sample_indices,
+            "expectedSample": expected_sample,
         })
+
+    memory_checkpoints.append(_release_temporary_memory("geometry-samples-ready"))
 
     # Rest bones and source meshes receive their final common conversion before any new
     # garment skinning is generated. Nothing scales the skeleton after this point.
@@ -247,6 +298,7 @@ def normalize_official_avatar_canonical_v43(avatar_objects, armature, body_meshe
 
     mesh_reports = []
     maximum_geometry_drift = 0.0
+    sampled_vertices_total = 0
     for obj, snapshot in zip(skinned_meshes, mesh_snapshots):
         _transform_mesh_data(obj, canonical_matrix @ snapshot["world"])
         _identity_object(obj)
@@ -268,12 +320,17 @@ def normalize_official_avatar_canonical_v43(avatar_objects, armature, body_meshe
         obj.scale = (1.0, 1.0, 1.0)
 
         legacy.bpy.context.view_layer.update()
-        actual_points = _world_points(obj)
-        drift = _raw_drift(expected_points[obj.name], actual_points, expected_height)
+        sample_indices = snapshot.pop("sampleIndices")
+        expected_sample = snapshot.pop("expectedSample")
+        actual_sample = _sample_world_points(obj, sample_indices)
+        drift = _sampled_drift(expected_sample, actual_sample, expected_height)
+        sample_count = len(sample_indices)
+        sampled_vertices_total += sample_count
         maximum_geometry_drift = max(maximum_geometry_drift, drift)
         mesh_reports.append({
             "name": obj.name,
             "vertices": snapshot["vertices"],
+            "sampledVertices": sample_count,
             "scaleBefore": snapshot["scale"],
             "localMatrixBefore": _matrix_values(snapshot["local"]),
             "worldMatrixBefore": _matrix_values(snapshot["world"]),
@@ -282,10 +339,15 @@ def normalize_official_avatar_canonical_v43(avatar_objects, armature, body_meshe
             "worldMatrixAfter": _matrix_values(obj.matrix_world),
             "geometryDrift": drift,
         })
+        del sample_indices, expected_sample, actual_sample
+        memory_checkpoints.append(_release_temporary_memory(f"mesh-normalized-{obj.name}"))
+
+    mesh_snapshots.clear()
+    del mesh_snapshots
+    memory_checkpoints.append(_release_temporary_memory("all-mesh-samples-released"))
 
     legacy.bpy.context.view_layer.update()
-    canonical_body_points = _combined_points(body_meshes)
-    canonical_min, canonical_max = _bounds(canonical_body_points)
+    canonical_min, canonical_max, canonical_vertex_count = _streaming_bounds(body_meshes)
     canonical_height = float(canonical_max.z - canonical_min.z)
     height_error = abs(canonical_height - expected_height) / max(expected_height, 1e-8)
     pose_delta_after = _pose_basis_delta(armature)
@@ -308,15 +370,24 @@ def normalize_official_avatar_canonical_v43(avatar_objects, armature, body_meshe
         or bind_rest_difference_after > 1e-6
         or maximum_geometry_drift > 1e-6
         or height_error > 0.005
+        or canonical_vertex_count != source_vertex_count
     ):
         raise RuntimeError(RIG_ERROR)
 
     scene = legacy.bpy.context.scene
     scene.unit_settings.system = "METRIC"
     scene.unit_settings.scale_length = 1.0
+    memory_checkpoints.append(_release_temporary_memory("canonical-validation-complete"))
 
     report = {
         "version": CANONICAL_BIND_VERSION,
+        "memoryVersion": CANONICAL_MEMORY_VERSION,
+        "memoryStrategy": "streaming-bounds-deterministic-sampled-drift",
+        "sampleLimitPerMesh": CANONICAL_SAMPLE_LIMIT,
+        "sampledVerticesTotal": sampled_vertices_total,
+        "sourceVertexCount": source_vertex_count,
+        "canonicalVertexCount": canonical_vertex_count,
+        "memoryCheckpoints": memory_checkpoints,
         "armature": armature.name,
         "boneCount": len(armature.data.bones),
         "poseModeBefore": pose_mode_before,
@@ -352,6 +423,7 @@ def normalize_official_avatar_canonical_v43(avatar_objects, armature, body_meshe
     except OSError as exc:
         print(f"[rig-v43] could not persist diagnostics sidecar: {exc}", flush=True)
     armature["clouvaCanonicalBindVersion"] = CANONICAL_BIND_VERSION
+    armature["clouvaCanonicalMemoryVersion"] = CANONICAL_MEMORY_VERSION
     armature["clouvaCanonicalBindReport"] = encoded
     armature["clouvaPrebindSpaceVersion"] = PREBIND_SPACE_VERSION
     armature["clouvaPrebindSpace"] = encoded
@@ -359,12 +431,14 @@ def normalize_official_avatar_canonical_v43(avatar_objects, armature, body_meshe
     armature["clouvaPrebindReport"] = encoded
     for obj in skinned_meshes:
         obj["clouvaCanonicalBindVersion"] = CANONICAL_BIND_VERSION
+        obj["clouvaCanonicalMemoryVersion"] = CANONICAL_MEMORY_VERSION
         obj["clouvaPrebindSpaceVersion"] = PREBIND_SPACE_VERSION
 
     print(f"[rig-v43] canonical diagnostics {encoded}", flush=True)
     print(
-        "[rig-v43] avatar normalized before mold generation "
+        "[rig-v44-memory] avatar normalized without full vertex snapshots "
         f"armature={armature.name} bones={len(armature.data.bones)} "
+        f"vertices={source_vertex_count} sampled={sampled_vertices_total} "
         f"height={canonical_height:.8f} scale={canonical_scale:.10f} reason={scale_reason}",
         flush=True,
     )
