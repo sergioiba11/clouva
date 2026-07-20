@@ -1,0 +1,189 @@
+.riggedStage,
+.rawStage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 500px;
+  overflow: hidden;
+}
+
+.riggedStage {
+  background: radial-gradient(circle at 50% 68%, rgba(112, 72, 255, 0.24), transparent 36%), #05030a;
+}
+
+.realBadge {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  z-index: 4;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 12px;
+  border: 1px solid rgba(88, 235, 158, 0.34);
+  border-radius: 999px;
+  background: rgba(13, 67, 43, 0.82);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.26);
+  color: #8af2bd;
+  font-size: 0.65rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  backdrop-filter: blur(12px);
+}
+
+.realBadge svg {
+  width: 15px;
+  height: 15px;
+}
+
+.rawStage {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 0.78fr);
+  background:
+    radial-gradient(circle at 28% 45%, rgba(117, 72, 255, 0.22), transparent 36%),
+    #05030a;
+}
+
+.rawModel {
+  min-height: 500px;
+  overflow: hidden;
+}
+
+.rawModel img {
+  width: 100%;
+  height: 100%;
+  padding: 28px;
+  object-fit: contain;
+}
+
+.rawNotice {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 18px;
+  padding: clamp(24px, 4vw, 44px);
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  background: linear-gradient(160deg, rgba(17, 18, 31, 0.93), rgba(10, 7, 20, 0.98));
+}
+
+.rawIcon {
+  display: grid;
+  width: 52px;
+  height: 52px;
+  place-items: center;
+  border: 1px solid rgba(142, 105, 255, 0.4);
+  border-radius: 17px;
+  background: linear-gradient(145deg, rgba(66, 41, 130, 0.8), rgba(27, 22, 57, 0.9));
+  color: #c4adff;
+}
+
+.rawIcon svg {
+  width: 25px;
+}
+
+.rawNotice small,
+.rawNotice strong,
+.rawNotice p {
+  display: block;
+}
+
+.rawNotice small {
+  color: #9f8cff;
+  font-size: 0.66rem;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+}
+
+.rawNotice strong {
+  margin-top: 8px;
+  font-size: clamp(1.05rem, 2.4vw, 1.45rem);
+  line-height: 1.16;
+}
+
+.rawNotice p {
+  margin: 10px 0 0;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.rawNotice button {
+  display: flex;
+  min-height: 54px;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: 15px;
+  background: linear-gradient(100deg, #246dff, #7745ff);
+  color: #fff;
+  cursor: pointer;
+  font-size: 0.75rem;
+  font-weight: 900;
+}
+
+.rawNotice button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.rawNotice button svg {
+  width: 18px;
+}
+
+.error {
+  display: flex;
+  gap: 8px;
+  padding: 11px 12px;
+  border: 1px solid rgba(255, 118, 118, 0.25);
+  border-radius: 12px;
+  background: rgba(145, 39, 39, 0.16);
+  color: #ffb7b7;
+  font-size: 0.7rem;
+  line-height: 1.45;
+}
+
+.error svg {
+  width: 17px;
+  flex: 0 0 auto;
+}
+
+.missing {
+  display: grid;
+  height: 100%;
+  min-height: 500px;
+  place-items: center;
+  padding: 24px;
+  color: rgba(255, 255, 255, 0.5);
+  text-align: center;
+}
+
+.spin {
+  animation: spin 0.9s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 760px) {
+  .rawStage {
+    grid-template-columns: 1fr;
+  }
+
+  .rawModel {
+    min-height: 390px;
+  }
+
+  .rawNotice {
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    border-left: 0;
+  }
+
+  .realBadge {
+    top: 12px;
+    right: 12px;
+  }
+}
