@@ -34,7 +34,7 @@ function enforceCanonicalDeformableRig(payload: BlenderRequest): BlenderRequest 
     forceFreshSource: true,
     previewSettings: {
       ...(payload.previewSettings ?? {}),
-      rigProfileVersion: 16,
+      rigProfileVersion: 4,
       forceWeightTransfer: true,
       validationContract: "canonical-rest-bind-v43",
       canonicalBindVersion: 43,
