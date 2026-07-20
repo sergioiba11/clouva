@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { buildBlenderJob, type BlenderRequest } from "@/lib/creator-studio/blender-job";
 
@@ -23,19 +24,22 @@ function enforceCanonicalDeformableRig(payload: BlenderRequest): BlenderRequest 
   const category = String(payload.category ?? "").trim().toLowerCase();
   if (!DEFORMABLE_CATEGORIES.has(category)) return payload;
 
-  // Un asset marcado como ready puede venir de un pipeline viejo y tener el armature
-  // desplazado. Las prendas deformables siempre se desarman y se pesan otra vez contra
-  // el avatar activo; nunca se conserva un skinning solo por su estado en la biblioteca.
+  // Cada intento parte del GLB original y de una escena Blender --factory-startup. El avatar
+  // oficial se convierte a Rest Position y a un único espacio métrico antes de crear pesos.
   return {
     ...payload,
     autoWeight: true,
     templateMode: false,
     preserveExistingSkinning: false,
+    forceFreshSource: true,
     previewSettings: {
       ...(payload.previewSettings ?? {}),
-      rigProfileVersion: 4,
+      rigProfileVersion: 16,
       forceWeightTransfer: true,
-      validationContract: "canonical-landmarks-v4",
+      validationContract: "canonical-rest-bind-v43",
+      canonicalBindVersion: 43,
+      restPoseBeforeMold: true,
+      rejectPostSkinScaleChanges: true,
     },
   };
 }
@@ -71,7 +75,11 @@ export async function POST(request: Request) {
       payload = (await request.json()) as BlenderRequest;
     }
 
-    payload = enforceCanonicalDeformableRig(payload);
+    payload = enforceCanonicalDeformableRig({
+      ...payload,
+      attemptId: randomUUID(),
+      forceFreshSource: true,
+    });
 
     const workerUrl = process.env.GARMENT_WORKER_URL ?? process.env.BLENDER_WORKER_URL ?? "https://rig.clouva.com.ar";
     const workerToken = process.env.GARMENT_WORKER_TOKEN ?? process.env.BLENDER_WORKER_TOKEN;
@@ -80,6 +88,8 @@ export async function POST(request: Request) {
     let response: Response;
     if (sourceFile) {
       const workerForm = new FormData();
+      // File is immutable here: every POST, including “Reintentar molde automático”, sends
+      // the original bytes again under a new attemptId instead of reusing a partial result.
       workerForm.set("file", sourceFile, sourceFile.name);
       workerForm.set("job", JSON.stringify(job));
       response = await fetch(`${workerUrl.replace(/\/$/, "")}/jobs`, {
@@ -115,6 +125,7 @@ export async function POST(request: Request) {
         summary: "El Garment/Blender Worker rechazó el trabajo.",
         status: response.status,
         workerUrl,
+        attemptId: job.attemptId,
         riggingStrategy: job.riggingStrategy,
         details: data,
       }, { status: response.status });
@@ -130,6 +141,9 @@ export async function POST(request: Request) {
       ok: true,
       mock: false,
       workerUrl,
+      attemptId: job.attemptId,
+      sourcePolicy: job.sourcePolicy,
+      canonicalBindVersion: 43,
       riggingStrategy: job.riggingStrategy,
       templateMode: job.templateMode,
       jobId: returnedJobId,
