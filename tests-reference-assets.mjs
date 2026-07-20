@@ -31,6 +31,15 @@ test("procesar o fallar un intento no marca ni modifica el GLB fuente", () => {
   assert.doesNotMatch(failure, /status:\s*"error"/);
 });
 
+test("los registros viejos que mezclaban original y rig se separan automáticamente", () => {
+  assert.match(assetsSource, /function isLegacyCombinedRow/);
+  assert.match(assetsSource, /row\.storage_path !== row\.rigged_storage_path/);
+  assert.match(assetsSource, /async function migrateLegacyCombinedRow/);
+  assert.match(assetsSource, /resultKind: "migrated-rigged-copy"/);
+  assert.match(assetsSource, /rigged_storage_path: null/);
+  assert.match(assetsSource, /return cleanSourceRow\(row, userId\)/);
+});
+
 test("la biblioteca separa originales de resultados sin badges de job", () => {
   assert.match(librarySource, /GLB originales/);
   assert.match(librarySource, /Resultados guardados/);
