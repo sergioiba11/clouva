@@ -14,6 +14,9 @@ const garmentWorkerV15Source = readFileSync("./worker/garment-rig/rig_garment_v1
 const garmentWorkerV20Source = readFileSync("./worker/garment-rig/rig_garment_v20.py", "utf8");
 const garmentExporterSource = readFileSync("./worker/garment-rig/export_unreal_clean.py", "utf8");
 const garmentApiV8Source = readFileSync("./worker/garment-rig/app_v8.py", "utf8");
+const workerInspectorApiSource = readFileSync("./worker/garment-rig/app_v9.py", "utf8");
+const workerInspectorBlenderSource = readFileSync("./worker/garment-rig/inspect_garment.py", "utf8");
+const unrealObjectExportSource = readFileSync("./components/library/UnrealObjectExport.tsx", "utf8");
 const garmentDockerfile = readFileSync("./worker/garment-rig/Dockerfile", "utf8");
 
 test("hoodie siempre se pesa de nuevo contra el avatar activo", () => {
@@ -129,6 +132,21 @@ test("V28 re-riggea y normaliza la prenda con la malla visible del avatar activo
   assert.match(garmentExporterSource, /def validate_fbx_roundtrip_v28/);
   assert.match(garmentWorkerV20Source, /def validate_upper_volume_v27/);
   assert.match(garmentWorkerV20Source, /clouvaFinalDimensions/);
+});
+
+test("Inspector del Worker expone herramientas, medidas y prueba real del pipeline", () => {
+  assert.match(garmentDockerfile, /app_v9\.py/);
+  assert.match(garmentDockerfile, /inspect_garment\.py/);
+  assert.match(garmentDockerfile, /CLOUVA_WORKER_INSPECTOR=v1/);
+  assert.match(workerInspectorApiSource, /@app\.post\("\/diagnostics\/garment"\)/);
+  assert.match(workerInspectorApiSource, /def run_rig_probe/);
+  assert.match(workerInspectorApiSource, /def worker_tools/);
+  assert.match(workerInspectorBlenderSource, /def relative_shape_error/);
+  assert.match(workerInspectorBlenderSource, /legacyRecoveryRecommended/);
+  assert.match(workerInspectorBlenderSource, /evaluatedBounds/);
+  assert.match(unrealObjectExportSource, /ABRIR INSPECTOR DEL WORKER/);
+  assert.match(unrealObjectExportSource, /Herramientas activas/);
+  assert.match(unrealObjectExportSource, /Recorrido de esta prenda/);
 });
 
 test("solo una plantilla rígida puede conservar skinning existente", () => {

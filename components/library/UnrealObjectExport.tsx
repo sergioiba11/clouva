@@ -1,14 +1,25 @@
 "use client";
 
 import {
+  Activity,
+  Bone,
   Box,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  CircleDot,
+  Cpu,
   Download,
   Eye,
+  FileCheck2,
+  Gauge,
   Loader2,
   PackageOpen,
   RefreshCw,
+  Ruler,
   TriangleAlert,
+  Wrench,
+  XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
@@ -45,6 +56,69 @@ type ClothingResponse = {
   error?: string;
 };
 
+type DiagnosticStatus = "ok" | "warning" | "error" | "pending" | "info";
+type DiagnosticStage = {
+  id: string;
+  label: string;
+  status: DiagnosticStatus;
+  summary: string;
+};
+type WorkerTool = {
+  id: string;
+  name: string;
+  script?: string;
+  purpose?: string;
+  version?: string;
+  status?: string;
+};
+type AssetInspection = {
+  meshCount?: number;
+  armatureCount?: number;
+  boneCount?: number;
+  vertices?: number;
+  polygons?: number;
+  weightedVertexRatio?: number;
+  rawBounds?: { dimensionsCm?: number[] } | null;
+  evaluatedBounds?: { dimensionsCm?: number[] } | null;
+  evaluatedDifference?: {
+    maximumSizeError?: number;
+    centerError?: number;
+    different?: boolean;
+  } | null;
+  legacyRecoveryRecommended?: boolean;
+  metadataKeys?: string[];
+};
+type WorkerDiagnostics = {
+  ok?: boolean;
+  error?: string;
+  generatedAt?: string;
+  worker?: {
+    inspectorVersion?: string;
+    rigVersion?: string;
+    legacyRecoveryVersion?: string;
+    exportVersion?: string;
+    rigRouteVersion?: string;
+    blenderVersion?: string;
+  };
+  tools?: WorkerTool[];
+  stages?: DiagnosticStage[];
+  garment?: AssetInspection;
+  avatar?: AssetInspection;
+  outputInspection?: { garment?: AssetInspection } | null;
+  pipeline?: {
+    ok?: boolean | null;
+    error?: string | null;
+    returnCode?: number | null;
+    outputBytes?: number;
+    stdout?: string;
+    stderr?: string;
+  };
+  diagnosis?: {
+    legacyGeometryDifferenceDetected?: boolean;
+    recommendedAction?: string;
+  };
+};
+
 const CATEGORY_LABELS: Record<string, string> = {
   hoodie: "Buzo",
   shirt: "Remera",
@@ -53,6 +127,14 @@ const CATEGORY_LABELS: Record<string, string> = {
   shorts: "Short",
   shoes: "Zapatillas",
   accessory: "Accesorio",
+};
+
+const STAGE_STATUS_LABELS: Record<DiagnosticStatus, string> = {
+  ok: "OK",
+  warning: "REVISAR",
+  error: "FALLÓ",
+  pending: "PENDIENTE",
+  info: "INFO",
 };
 
 async function listGlbs(userId: string, path = userId, depth = 0): Promise<StorageAsset[]> {
@@ -80,12 +162,33 @@ async function listGlbs(userId: string, path = userId, depth = 0): Promise<Stora
   return found;
 }
 
+function dimensions(value?: number[] | null) {
+  if (!value?.length) return "Sin medir";
+  return value.map((item) => Number(item).toFixed(1)).join(" × ") + " cm";
+}
+
+function percent(value?: number | null) {
+  if (!Number.isFinite(value)) return "—";
+  return `${(Number(value) * 100).toFixed(1)}%`;
+}
+
+function stageIcon(status: DiagnosticStatus) {
+  if (status === "ok") return <CheckCircle2 />;
+  if (status === "error") return <XCircle />;
+  if (status === "warning") return <TriangleAlert />;
+  return <CircleDot />;
+}
+
 export function UnrealObjectExport() {
   const { user, session, loading } = useAuth();
   const [objects, setObjects] = useState<ObjectAsset[]>([]);
   const [selectedId, setSelectedId] = useState("");
   const [loadingObjects, setLoadingObjects] = useState(false);
   const [exporting, setExporting] = useState(false);
+  const [diagnosing, setDiagnosing] = useState(false);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
+  const [diagnostics, setDiagnostics] = useState<WorkerDiagnostics | null>(null);
+  const [diagnosticError, setDiagnosticError] = useState<string | null>(null);
   const [result, setResult] = useState<ExportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -167,9 +270,35 @@ export function UnrealObjectExport() {
     }
   };
 
+  const diagnoseWorker = async () => {
+    const selected = objects.find((item) => item.id === selectedId);
+    if (selected?.kind !== "clothing" || !session?.access_token) return;
+    setDiagnosing(true);
+    setDiagnosticError(null);
+    setDiagnostics(null);
+    setShowDiagnostics(true);
+    try {
+      const response = await fetch("/api/assets/export-unreal/diagnostics", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ clothingItemId: selected.clothingItemId, runPipeline: true }),
+      });
+      const data = (await response.json().catch(() => ({}))) as WorkerDiagnostics;
+      if (!response.ok) throw new Error(data.error || `No se pudo inspeccionar el Worker (${response.status})`);
+      setDiagnostics(data);
+    } catch (cause) {
+      setDiagnosticError(cause instanceof Error ? cause.message : "No se pudo abrir el Inspector del Worker");
+    } finally {
+      setDiagnosing(false);
+    }
+  };
+
   if (loading || !user) return null;
 
   const selected = objects.find((item) => item.id === selectedId);
+  const sourceDimensions = diagnostics?.garment?.evaluatedBounds?.dimensionsCm;
+  const rawDimensions = diagnostics?.garment?.rawBounds?.dimensionsCm;
+  const outputDimensions = diagnostics?.outputInspection?.garment?.evaluatedBounds?.dimensionsCm;
 
   return (
     <section id="unreal-objects" className={styles.card} aria-label="Exportar objetos para Unreal">
@@ -195,8 +324,11 @@ export function UnrealObjectExport() {
                 setSelectedId(event.target.value);
                 setResult(null);
                 setError(null);
+                setDiagnostics(null);
+                setDiagnosticError(null);
+                setShowDiagnostics(false);
               }}
-              disabled={exporting}
+              disabled={exporting || diagnosing}
             >
               {objects.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
             </select>
@@ -216,15 +348,9 @@ export function UnrealObjectExport() {
                 {selected.modelUrl ? (
                   <StandaloneObjectPreview modelUrl={selected.modelUrl} />
                 ) : selected.thumbnailUrl ? (
-                  <img
-                    src={selected.thumbnailUrl}
-                    alt={`Vista previa de ${selected.name}`}
-                    className={styles.previewImage}
-                  />
+                  <img src={selected.thumbnailUrl} alt={`Vista previa de ${selected.name}`} className={styles.previewImage} />
                 ) : (
-                  <div className={styles.previewEmpty}>
-                    Esta pieza no tiene una vista previa disponible, pero sigue lista para exportar.
-                  </div>
+                  <div className={styles.previewEmpty}>Esta pieza no tiene una vista previa disponible, pero sigue lista para exportar.</div>
                 )}
               </div>
 
@@ -241,7 +367,104 @@ export function UnrealObjectExport() {
             <span><CheckCircle2 /> Rig y skinning conservados</span>
             <span><CheckCircle2 /> Import Uniform Scale = 1</span>
           </div>
-          <button className={styles.exportButton} type="button" onClick={() => void exportObject()} disabled={exporting || !selectedId}>
+
+          {selected?.kind === "clothing" ? (
+            <button className={styles.inspectorButton} type="button" onClick={() => void diagnoseWorker()} disabled={diagnosing || exporting}>
+              {diagnosing ? <Loader2 className={styles.spin} /> : <Activity />}
+              <span>{diagnosing ? "BLENDER ESTÁ REVISANDO CADA ETAPA…" : "ABRIR INSPECTOR DEL WORKER"}</span>
+              {!diagnosing && (showDiagnostics ? <ChevronUp /> : <ChevronDown />)}
+            </button>
+          ) : null}
+
+          {showDiagnostics ? (
+            <section className={styles.diagnosticsPanel} aria-label="Inspector del Blender Worker">
+              <div className={styles.diagnosticsHeader}>
+                <div>
+                  <small>BLENDER WORKER EN VIVO</small>
+                  <h3>Qué entra, qué herramienta trabaja y dónde falla</h3>
+                </div>
+                {diagnostics ? (
+                  <span className={diagnostics.ok ? styles.workerOnline : styles.workerWarning}>
+                    <CircleDot /> {diagnostics.ok ? "PRUEBA COMPLETA" : "FALLA DETECTADA"}
+                  </span>
+                ) : null}
+              </div>
+
+              {diagnosing ? (
+                <div className={styles.diagnosticsLoading}>
+                  <Loader2 className={styles.spin} />
+                  <div><strong>Ejecutando Blender real</strong><span>Importando GLB, midiendo geometría y probando el rig contra tu avatar.</span></div>
+                </div>
+              ) : null}
+
+              {diagnosticError ? <div className={styles.diagnosticError}><TriangleAlert /><span>{diagnosticError}</span></div> : null}
+
+              {diagnostics ? (
+                <>
+                  <div className={styles.workerVersions}>
+                    <span><Cpu /> Blender {diagnostics.worker?.blenderVersion || "—"}</span>
+                    <span><Wrench /> Rig {diagnostics.worker?.rigVersion || "—"}</span>
+                    <span><Activity /> Recuperación {diagnostics.worker?.legacyRecoveryVersion || "—"}</span>
+                    <span><FileCheck2 /> FBX {diagnostics.worker?.exportVersion || "—"}</span>
+                  </div>
+
+                  <div className={styles.metricsGrid}>
+                    <article><Ruler /><span>Malla cruda</span><strong>{dimensions(rawDimensions)}</strong></article>
+                    <article><Eye /><span>Forma visible</span><strong>{dimensions(sourceDimensions)}</strong></article>
+                    <article><Bone /><span>Huesos detectados</span><strong>{diagnostics.garment?.boneCount ?? 0}</strong></article>
+                    <article><Gauge /><span>Vértices con peso</span><strong>{percent(diagnostics.garment?.weightedVertexRatio)}</strong></article>
+                    <article><Box /><span>Salida del rig</span><strong>{dimensions(outputDimensions)}</strong></article>
+                    <article><Activity /><span>Diferencia visible</span><strong>{percent(diagnostics.garment?.evaluatedDifference?.maximumSizeError)}</strong></article>
+                  </div>
+
+                  <div className={styles.toolsSection}>
+                    <h4>Herramientas activas</h4>
+                    <div className={styles.toolsGrid}>
+                      {(diagnostics.tools ?? []).map((tool) => (
+                        <article key={tool.id}>
+                          <span className={tool.status === "ready" ? styles.toolReady : styles.toolMissing}><CircleDot /></span>
+                          <div><strong>{tool.name}</strong><small>{tool.script}{tool.version ? ` · ${tool.version}` : ""}</small><p>{tool.purpose}</p></div>
+                        </article>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className={styles.pipelineSection}>
+                    <h4>Recorrido de esta prenda</h4>
+                    <div className={styles.stageList}>
+                      {(diagnostics.stages ?? []).map((stage, index) => (
+                        <article key={`${stage.id}-${index}`} className={styles[`stage_${stage.status}`]}>
+                          <span className={styles.stageIcon}>{stageIcon(stage.status)}</span>
+                          <div><strong>{stage.label}</strong><p>{stage.summary}</p></div>
+                          <small>{STAGE_STATUS_LABELS[stage.status]}</small>
+                        </article>
+                      ))}
+                    </div>
+                  </div>
+
+                  {diagnostics.diagnosis?.recommendedAction ? (
+                    <div className={diagnostics.diagnosis.legacyGeometryDifferenceDetected ? styles.diagnosisWarning : styles.diagnosisOk}>
+                      <Activity />
+                      <div><strong>Lectura del Inspector</strong><span>{diagnostics.diagnosis.recommendedAction}</span></div>
+                    </div>
+                  ) : null}
+
+                  <details className={styles.technicalDetails}>
+                    <summary>Ver registro técnico completo</summary>
+                    <pre>{JSON.stringify({
+                      worker: diagnostics.worker,
+                      garment: diagnostics.garment,
+                      avatar: diagnostics.avatar,
+                      pipeline: diagnostics.pipeline,
+                      outputInspection: diagnostics.outputInspection,
+                    }, null, 2)}</pre>
+                  </details>
+                </>
+              ) : null}
+            </section>
+          ) : null}
+
+          <button className={styles.exportButton} type="button" onClick={() => void exportObject()} disabled={exporting || diagnosing || !selectedId}>
             {exporting ? <Loader2 className={styles.spin} /> : <Box />}
             {exporting ? "BLENDER ESTÁ PREPARANDO EL OBJETO…" : "GENERAR Y DESCARGAR OBJETO FBX"}
           </button>
