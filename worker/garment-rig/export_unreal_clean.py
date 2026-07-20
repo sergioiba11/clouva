@@ -1,5 +1,6 @@
 import json
 import math
+import os
 import sys
 from pathlib import Path
 
@@ -15,9 +16,8 @@ import export_unreal as base
 
 
 # Some valid CLOUVA rigs contain helper/control bones whose endpoints extend far
-# outside the visible body. The mesh can be exactly 175 cm, grounded, weighted and
-# clean while the raw all-bone bounds look implausible. Keep the diagnostic, but do
-# not reject an otherwise valid avatar only because of helper-bone bounds.
+# outside the visible body. Keep their diagnostic, but never use those endpoints as
+# the physical scale reference for a garment.
 _original_validate_avatar = base.validate_avatar
 
 
@@ -63,18 +63,12 @@ base.validate_avatar = validate_avatar_without_helper_bone_false_positive
 
 
 # ---------------------------------------------------------------------------
-# V27: garment-aware Unreal export
+# V28: active-avatar reference normalisation
 # ---------------------------------------------------------------------------
-# A rigged garment already shares the avatar armature. Treating it as a complete
-# avatar and normalising only its visible height can destroy the width/depth stored
-# by the rigging pass. The active API now calls the exporter with
-# object_kind=wearable-preserve. In that mode we keep the skeleton scale, recover
-# the fitted garment volume from GLB extras, repair only collapsed horizontal axes,
-# and validate all three dimensions after an FBX round-trip.
-
 _PRESERVE_WEARABLE_SOURCE = False
 _EXPECTED_DIMENSIONS_CM = None
 _LAST_VOLUME_REPAIR = None
+_AVATAR_REFERENCE_METADATA = None
 
 CATEGORY_PADDING = {
     "hoodie": Vector((1.04, 1.18, 1.08)),
@@ -86,8 +80,6 @@ CATEGORY_PADDING = {
 }
 
 # (horizontal major min/max, horizontal minor min/max, vertical min/max), cm.
-# These are deliberately broad game-avatar limits. They reject physically absurd
-# outputs such as 8 x 6 x 69 cm without forcing every CLOUVA design into one cut.
 CATEGORY_VOLUME_LIMITS_CM = {
     "hoodie": (35.0, 120.0, 10.0, 65.0, 35.0, 110.0),
     "shirt": (30.0, 110.0, 8.0, 55.0, 30.0, 100.0),
@@ -97,7 +89,6 @@ CATEGORY_VOLUME_LIMITS_CM = {
     "shoes": (18.0, 90.0, 6.0, 55.0, 5.0, 45.0),
 }
 
-# Used only when an older GLB does not contain fitting metadata.
 CATEGORY_ASPECT_FLOORS = {
     "hoodie": (0.72, 0.20),
     "shirt": (0.65, 0.16),
@@ -136,24 +127,34 @@ def _decode_vector_property(raw):
     return None
 
 
+def _shape_at_current_height(shape, current_size):
+    if shape is None or float(shape.z) <= 1e-9:
+        return None
+    factor = float(current_size.z) / float(shape.z)
+    return Vector((float(shape.x) * factor, float(shape.y) * factor, float(current_size.z)))
+
+
 def _stored_expected_dimensions(meshes, category, current_size):
-    # New V27 GLBs store the exact fitted mesh dimensions. Older V18/V20 files
-    # store the body-region contract, so reapply the same category padding.
+    # Extras are stored in the source GLB's arbitrary Blender units. Use their shape
+    # ratios, then map them to the already-normalised physical garment height.
     for mesh in meshes:
         exact = _decode_vector_property(mesh.get("clouvaFinalDimensions"))
-        if exact is not None:
-            return exact, "clouvaFinalDimensions"
+        expected = _shape_at_current_height(exact, current_size)
+        if expected is not None:
+            return expected, "clouvaFinalDimensions-ratio"
 
     for key in ("clouvaSafeBoundsDimensions", "clouvaTargetDimensions"):
         for mesh in meshes:
             target = _decode_vector_property(mesh.get(key))
             if target is not None:
                 padding = CATEGORY_PADDING.get(category, Vector((1.0, 1.0, 1.0)))
-                return Vector((target.x * padding.x, target.y * padding.y, target.z * padding.z)), key
+                padded = Vector((target.x * padding.x, target.y * padding.y, target.z * padding.z))
+                expected = _shape_at_current_height(padded, current_size)
+                if expected is not None:
+                    return expected, f"{key}-ratio"
 
     major_ratio, minor_ratio = CATEGORY_ASPECT_FLOORS.get(category, (0.55, 0.16))
     vertical = max(float(current_size.z), 1e-6)
-    # Preserve the larger current horizontal axis when it is already healthy.
     horizontal_major = max(float(current_size.x), float(current_size.y), vertical * major_ratio)
     horizontal_minor = max(min(float(current_size.x), float(current_size.y)), vertical * minor_ratio)
     if float(current_size.x) >= float(current_size.y):
@@ -169,20 +170,18 @@ def _repair_collapsed_garment_volume(meshes, category):
     center = (minimum + maximum) * 0.5
 
     factors = [1.0, 1.0, 1.0]
-    # Only expand axes that lost most of the fitted volume. Never silently shrink a
-    # creator design and never alter the vertical fit here.
     for axis in (0, 1):
         current = max(float(current_size[axis]), 1e-9)
         desired = max(float(desired_size[axis]), current)
         if current < desired * 0.82:
-            factors[axis] = min(desired / current, 16.0)
+            factors[axis] = min(desired / current, 128.0)
 
     repaired = any(factor > 1.0001 for factor in factors)
     if repaired:
-        snapshots = []
-        for mesh in meshes:
-            snapshots.append((mesh, [mesh.matrix_world @ vertex.co.copy() for vertex in mesh.data.vertices]))
-
+        snapshots = [
+            (mesh, [mesh.matrix_world @ vertex.co.copy() for vertex in mesh.data.vertices])
+            for mesh in meshes
+        ]
         for mesh, world_vertices in snapshots:
             inverse = mesh.matrix_world.inverted_safe()
             for vertex, world in zip(mesh.data.vertices, world_vertices):
@@ -236,13 +235,58 @@ def _volume_contract(dimensions_cm, category):
     }
 
 
+def _delete_imported_objects(objects):
+    if not objects:
+        return
+    base.bpy.ops.object.select_all(action="DESELECT")
+    for obj in objects:
+        if obj.name in base.bpy.data.objects:
+            obj.select_set(True)
+    base.bpy.ops.object.delete(use_global=False)
+    base.bpy.context.view_layer.update()
+
+
+def _measure_avatar_reference(path: Path):
+    before = set(base.bpy.context.scene.objects)
+    base.bpy.ops.import_scene.gltf(filepath=str(path))
+    base.bpy.context.view_layer.update()
+    imported = [obj for obj in base.bpy.context.scene.objects if obj not in before]
+    meshes = [obj for obj in imported if obj.type == "MESH" and len(obj.data.vertices) >= 3]
+    armatures = [obj for obj in imported if obj.type == "ARMATURE"]
+    if not meshes:
+        _delete_imported_objects(imported)
+        raise RuntimeError("El avatar de referencia no contiene una malla visible")
+
+    base.set_rest_pose(armatures)
+    minimum, maximum, size = base.dimensions(meshes)
+    result = {
+        "minimum": minimum.copy(),
+        "maximum": maximum.copy(),
+        "size": size.copy(),
+        "meshCount": len(meshes),
+        "armatureCount": len(armatures),
+    }
+    _delete_imported_objects(imported)
+    return result
+
+
+def _translate_roots_z(objects, delta_z):
+    roots = base.root_objects(objects)
+    for obj in roots:
+        obj.location.z += float(delta_z)
+    base.bpy.context.view_layer.update()
+    base.apply_root_location(objects)
+
+
 _original_prepare_wearable_object = base.prepare_wearable_object
 _original_validate_object = base.validate_object
 _original_validate_fbx_roundtrip = base.validate_fbx_roundtrip
 _original_run_export = base.run_export
 
 
-def prepare_wearable_object_v27(objects, meshes, armatures, target_height_scene_units):
+def prepare_wearable_object_v28(objects, meshes, armatures, target_height_scene_units):
+    global _AVATAR_REFERENCE_METADATA
+
     if not _PRESERVE_WEARABLE_SOURCE:
         return _original_prepare_wearable_object(
             objects,
@@ -260,19 +304,54 @@ def prepare_wearable_object_v27(objects, meshes, armatures, target_height_scene_
     if not skeleton_bounds:
         raise RuntimeError("Could not measure the wearable skeleton")
     source_skeleton_height = float(skeleton_bounds[1].z - skeleton_bounds[0].z)
-    if source_skeleton_height <= 0.001:
-        raise RuntimeError("Wearable skeleton height is invalid")
 
-    # Clean imported object scales without normalising the garment as if it were a
-    # complete avatar. Then restore the fitted horizontal volume from GLB metadata.
     base.apply_uniform_scale(objects, meshes, armatures, 1.0)
     category = str(getattr(base, "_clouva_active_category", "prop"))
+    reference_path = Path(os.environ.get("CLOUVA_AVATAR_REFERENCE_PATH", "")).expanduser()
+
+    if reference_path.is_file():
+        reference = _measure_avatar_reference(reference_path)
+        reference_height = float(reference["size"].z)
+        if not math.isfinite(reference_height) or reference_height <= 0.001:
+            raise RuntimeError("La altura visible del avatar de referencia es inválida")
+
+        scale_factor = float(target_height_scene_units) / reference_height
+        base.apply_uniform_scale(objects, meshes, armatures, scale_factor)
+        # Apply the same feet-grounding translation used by the avatar export. This
+        # preserves the garment's torso position relative to the shared armature.
+        _translate_roots_z(objects, -float(reference["minimum"].z) * scale_factor)
+        _AVATAR_REFERENCE_METADATA = {
+            "pathResolved": True,
+            "sourceHeightSceneUnits": round(reference_height, 8),
+            "sourceBoundsMinSceneUnits": [round(float(value), 8) for value in reference["minimum"]],
+            "sourceBoundsMaxSceneUnits": [round(float(value), 8) for value in reference["maximum"]],
+            "targetAvatarHeightSceneUnits": round(float(target_height_scene_units), 8),
+            "uniformScaleFactor": round(scale_factor, 10),
+            "meshCount": int(reference["meshCount"]),
+            "armatureCount": int(reference["armatureCount"]),
+        }
+    else:
+        # Safe fallback for older deployments: normalise the visible garment height,
+        # never the helper-bone bounds.
+        _, _, current_size = base.dimensions(meshes)
+        garment_target_cm = float(os.environ.get("CLOUVA_GARMENT_TARGET_HEIGHT_CM", "80"))
+        garment_target_units = base.centimeters_to_scene_units(garment_target_cm)
+        if float(current_size.z) <= 0.001:
+            raise RuntimeError("La altura visible de la prenda es inválida")
+        scale_factor = garment_target_units / float(current_size.z)
+        base.apply_uniform_scale(objects, meshes, armatures, scale_factor)
+        base.ground_skeleton(objects, armatures)
+        _AVATAR_REFERENCE_METADATA = {
+            "pathResolved": False,
+            "fallback": "visible-garment-height",
+            "uniformScaleFactor": round(scale_factor, 10),
+        }
+
     _repair_collapsed_garment_volume(meshes, category)
-    base.ground_skeleton(objects, armatures)
-    return source_skeleton_height, 1.0
+    return source_skeleton_height, scale_factor
 
 
-def validate_object_v27(
+def validate_object_v28(
     objects,
     meshes,
     armatures,
@@ -315,17 +394,28 @@ def validate_object_v27(
         and base.has_root_bone(armatures)
         and base.has_skin_weights(meshes)
     )
+    reference_normalized = bool(
+        _AVATAR_REFERENCE_METADATA
+        and _AVATAR_REFERENCE_METADATA.get("pathResolved") is True
+    )
 
     metadata.update({
         "target": "unreal-garment",
         "category": category,
         "sourceDimensionsPreserved": True,
         "calibratedToAvatar": True,
+        "avatarReferenceNormalized": reference_normalized,
+        "avatarReference": _AVATAR_REFERENCE_METADATA,
         "garmentVolumeRepair": _LAST_VOLUME_REPAIR,
         "garmentVolumeValid": volume_valid,
         "garmentVolume": volume,
         "skeletal": skeletal_valid,
-        "readyForUnreal": bool(metadata.get("readyForUnreal") and volume_valid and skeletal_valid),
+        "readyForUnreal": bool(
+            metadata.get("readyForUnreal")
+            and volume_valid
+            and skeletal_valid
+            and reference_normalized
+        ),
     })
     _EXPECTED_DIMENSIONS_CM = [float(value) for value in dimensions_cm]
 
@@ -336,7 +426,7 @@ def validate_object_v27(
     return metadata
 
 
-def validate_fbx_roundtrip_v27(path, expected_height_cm):
+def validate_fbx_roundtrip_v28(path, expected_height_cm):
     metadata = _original_validate_fbx_roundtrip(path, expected_height_cm)
     if not (_PRESERVE_WEARABLE_SOURCE and _EXPECTED_DIMENSIONS_CM):
         metadata["fbxRoundTripDimensionsValidated"] = True
@@ -364,7 +454,7 @@ def validate_fbx_roundtrip_v27(path, expected_height_cm):
     return metadata
 
 
-def run_export_v27(
+def run_export_v28(
     source,
     output,
     target_height_cm=175.0,
@@ -373,12 +463,13 @@ def run_export_v27(
     category="prop",
     object_kind="rigid",
 ):
-    global _PRESERVE_WEARABLE_SOURCE, _EXPECTED_DIMENSIONS_CM, _LAST_VOLUME_REPAIR
+    global _PRESERVE_WEARABLE_SOURCE, _EXPECTED_DIMENSIONS_CM, _LAST_VOLUME_REPAIR, _AVATAR_REFERENCE_METADATA
 
     preserve = str(object_kind).lower() == "wearable-preserve"
     _PRESERVE_WEARABLE_SOURCE = preserve
     _EXPECTED_DIMENSIONS_CM = None
     _LAST_VOLUME_REPAIR = None
+    _AVATAR_REFERENCE_METADATA = None
     base._clouva_active_category = str(category).lower()
     try:
         return _original_run_export(
@@ -394,13 +485,14 @@ def run_export_v27(
         _PRESERVE_WEARABLE_SOURCE = False
         _EXPECTED_DIMENSIONS_CM = None
         _LAST_VOLUME_REPAIR = None
+        _AVATAR_REFERENCE_METADATA = None
         base._clouva_active_category = "prop"
 
 
-base.prepare_wearable_object = prepare_wearable_object_v27
-base.validate_object = validate_object_v27
-base.validate_fbx_roundtrip = validate_fbx_roundtrip_v27
-base.run_export = run_export_v27
+base.prepare_wearable_object = prepare_wearable_object_v28
+base.validate_object = validate_object_v28
+base.validate_fbx_roundtrip = validate_fbx_roundtrip_v28
+base.run_export = run_export_v28
 
 
 if __name__ == "__main__":
