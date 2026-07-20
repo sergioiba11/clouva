@@ -27,7 +27,6 @@ def identity(matrix, epsilon=1e-5):
 
 
 def test_official_avatar_is_normalized_before_weights(module):
-    bpy = module.legacy.bpy
     module.legacy.clear_scene()
     objects = module.legacy.import_glb(str(AVATAR_PATH))
     armature = module.legacy.find_armature(objects)
@@ -62,6 +61,7 @@ def test_source_skinning_is_removed(module):
 
     armature_data = bpy.data.armatures.new("SourceRig")
     source_armature = bpy.data.objects.new("SourceRig", armature_data)
+    source_armature_name = source_armature.name
     bpy.context.collection.objects.link(source_armature)
     bpy.context.view_layer.objects.active = source_armature
     source_armature.select_set(True)
@@ -90,7 +90,7 @@ def test_source_skinning_is_removed(module):
     assert not any(modifier.type == "ARMATURE" for modifier in garment.modifiers)
     assert bool(garment.get("clouvaSourceSkinningRemoved", False))
     assert int(garment.get("clouvaFreshSourceVersion", 0)) == 40
-    assert source_armature.name not in bpy.data.objects
+    assert source_armature_name not in bpy.data.objects
     print("[clouva] V40 removes source armature, modifier and weights before Auto Rig", flush=True)
 
 
