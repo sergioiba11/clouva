@@ -5,6 +5,8 @@ import { test } from "node:test";
 const { buildBlenderJob } = await import("./lib/creator-studio/blender-job.ts");
 const creatorSource = readFileSync("./components/creator-studio/CreatorStudioAutomatic.tsx", "utf8");
 const bootstrapSource = readFileSync("./components/creator-studio/CreatorStudioBootstrap.tsx", "utf8");
+const previewSource = readFileSync("./components/creator-studio/ResultRigPreviewV40.tsx", "utf8");
+const alignmentSource = readFileSync("./components/creator-studio/result-rig-runtime-alignment.ts", "utf8");
 
 test("las prendas usan el FBX oficial de Unreal como molde automático", () => {
   const job = buildBlenderJob({
@@ -31,4 +33,19 @@ test("Creator Studio procesa primero y deja los sliders como corrección opciona
   assert.match(creatorSource, /Necesito corregir el calce/);
   assert.match(creatorSource, /Recalcular en Blender/);
   assert.match(creatorSource, /Aprobar molde automático/);
+});
+
+test("el visor alinea el rig completo con el avatar antes de validar escala y bind pose", () => {
+  assert.match(alignmentSource, /alignRigToActiveAvatar/);
+  assert.match(alignmentSource, /makeScale\(scale, scale, scale\)/);
+  assert.match(alignmentSource, /makeRotationFromQuaternion/);
+  assert.match(alignmentSource, /source\.hips/);
+  assert.match(alignmentSource, /target\.hips/);
+  const alignmentIndex = previewSource.indexOf("alignRigToActiveAvatar(rigScene, avatarScene)");
+  const boundsIndex = previewSource.indexOf("validateBounds(avatarBounds, initialGarmentBounds)");
+  const bindIndex = previewSource.indexOf("compareBindPose(avatarScene, rigScene, avatarHeight)");
+  assert.ok(alignmentIndex >= 0);
+  assert.ok(boundsIndex > alignmentIndex);
+  assert.ok(bindIndex > alignmentIndex);
+  assert.doesNotMatch(previewSource, /if \(!isIdentityRoot\(rigScene\)\) throw/);
 });
