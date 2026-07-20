@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { useAuth } from "@/components/auth-provider";
-import { CreatorStudioPro } from "@/components/creator-studio/CreatorStudioPro";
+import { CreatorStudioAutomatic } from "@/components/creator-studio/CreatorStudioAutomatic";
 import { useActiveAvatarStore } from "@/lib/avatar-engine/active-avatar-store";
 
 export function CreatorStudioBootstrap() {
@@ -23,5 +23,5 @@ export function CreatorStudioBootstrap() {
     );
   }
 
-  return <CreatorStudioPro />;
+  return <CreatorStudioAutomatic />;
 }
