@@ -16,6 +16,19 @@ def load_pipeline():
     return module
 
 
+def retained_contract(module, name):
+    """Resolve a contract retained by newer V40/V41 wrapper layers."""
+    current = module
+    visited = set()
+    while current is not None and id(current) not in visited:
+        visited.add(id(current))
+        value = getattr(current, name, None)
+        if callable(value):
+            return value
+        current = getattr(current, "previous", None)
+    raise AttributeError(f"El pipeline activo no conserva el contrato {name}")
+
+
 def identity(matrix, epsilon=1e-5):
     expected = Matrix.Identity(4)
     return all(
@@ -59,7 +72,8 @@ def main():
     before = module.evaluated_world_points(garment).copy()
     report = module.normalize_shared_space_v39(garment, armature)
     after = module.evaluated_world_points(garment).copy()
-    maximum_drift, _rms = module._points_metrics(before, after)
+    points_metrics = retained_contract(module, "_points_metrics")
+    maximum_drift, _rms = points_metrics(before, after)
 
     assert identity(armature.matrix_world)
     assert identity(garment.matrix_world)
