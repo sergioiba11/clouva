@@ -6,6 +6,7 @@ const exportStudio = readFileSync("./components/library/UnrealObjectExport.tsx",
 const realReview = readFileSync("./components/library/RealGarmentReview.tsx", "utf8");
 const riggedViewer = readFileSync("./components/library/RiggedGarmentReviewViewer.tsx", "utf8");
 const finalizeRoute = readFileSync("./app/api/clothing/finalize/route.ts", "utf8");
+const creatorBootstrap = readFileSync("./components/creator-studio/CreatorStudioBootstrap.tsx", "utf8");
 
 test("Meshy crudo nunca se presenta como prenda vestida", () => {
   assert.doesNotMatch(exportStudio, /SmartTryOnViewer/);
@@ -33,4 +34,10 @@ test("la generación de preview usa el pipeline persistente de Blender", () => {
   assert.match(realReview, /\/api\/clothing\/finalize/);
   assert.match(finalizeRoute, /maxDuration = 300/);
   assert.match(realReview, /data\.rigged/);
+});
+
+test("la ruta real de Creator Studio monta el nuevo workspace visual", () => {
+  assert.match(creatorBootstrap, /UnrealObjectExport/);
+  assert.match(creatorBootstrap, /Preparando el estudio visual 3D/);
+  assert.doesNotMatch(creatorBootstrap, /CreatorStudioAutomatic/);
 });
