@@ -39,28 +39,8 @@ jobs:
       - name: Validate worker Python
         run: python3 -m py_compile worker/garment-rig/app*.py worker/garment-rig/rig_garment*.py worker/garment-rig/avatar_reference.py worker/garment-rig/test_*.py tools/unreal_avatar_export/export_clouva_avatar.py
 
-      - name: Capture Blender worker image build
-        id: docker
-        shell: bash
-        run: |
-          set +e
-          docker build --progress=plain -t clouva-garment-rig:test worker/garment-rig > docker-build.log 2>&1
-          code=$?
-          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
-          tail -n 400 docker-build.log
-          exit 0
-
-      - name: Upload Blender worker build log
-        uses: actions/upload-artifact@v4
-        with:
-          name: validate-v43-docker-log
-          path: docker-build.log
-          if-no-files-found: error
-          retention-days: 1
-
-      - name: Fail when Blender worker image is invalid
-        if: steps.docker.outputs.exit_code != '0'
-        run: exit 1
+      - name: Build and validate Blender worker image
+        run: docker build --progress=plain -t clouva-garment-rig:test worker/garment-rig
 
       - name: Build
         run: npm run build
