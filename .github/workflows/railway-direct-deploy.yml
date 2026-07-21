@@ -26,16 +26,27 @@ jobs:
     permissions:
       contents: read
     env:
-      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      PROJECT_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+      API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+      ALT_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
+      ALT_DEPLOY_TOKEN: ${{ secrets.RAILWAY_DEPLOY_TOKEN }}
     steps:
       - name: Checkout CLOUVA
         uses: actions/checkout@v4
 
-      - name: Verify Railway token
+      - name: Select Railway credential
         shell: bash
         run: |
-          if [ -z "$RAILWAY_TOKEN" ]; then
-            echo "::error::Falta el secreto RAILWAY_TOKEN en GitHub Actions."
+          if [ -n "$PROJECT_TOKEN" ]; then
+            echo "RAILWAY_TOKEN=$PROJECT_TOKEN" >> "$GITHUB_ENV"
+          elif [ -n "$API_TOKEN" ]; then
+            echo "RAILWAY_API_TOKEN=$API_TOKEN" >> "$GITHUB_ENV"
+          elif [ -n "$ALT_PROJECT_TOKEN" ]; then
+            echo "RAILWAY_TOKEN=$ALT_PROJECT_TOKEN" >> "$GITHUB_ENV"
+          elif [ -n "$ALT_DEPLOY_TOKEN" ]; then
+            echo "RAILWAY_TOKEN=$ALT_DEPLOY_TOKEN" >> "$GITHUB_ENV"
+          else
+            echo "::error::No hay ningún secreto de Railway disponible en GitHub Actions."
             exit 1
           fi
 
