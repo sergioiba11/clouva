@@ -4,7 +4,6 @@ import {
   Bone,
   Box,
   CheckCircle2,
-  Cpu,
   Download,
   FileBox,
   Loader2,
@@ -30,8 +29,6 @@ import styles from "./creator-studio-simple.module.css";
 
 type StorageEntry = {
   name: string;
-  updated_at?: string;
-  created_at?: string;
   metadata?: Record<string, unknown> | null;
 };
 
@@ -42,7 +39,6 @@ type CreatorAsset = {
   category?: string;
   clothingItemId?: string;
   modelUrl?: string;
-  thumbnailUrl?: string;
   storagePath?: string;
   rigged: boolean;
 };
@@ -58,7 +54,6 @@ type UnrealSnapshot = Record<string, unknown>;
 type UnrealStatus = {
   status: "online" | "offline";
   capturedAt?: string | null;
-  lastConnectionAt?: string | null;
   snapshot?: UnrealSnapshot | null;
   error?: string | null;
 };
@@ -66,23 +61,11 @@ type UnrealStatus = {
 type RigFeatureReport = {
   complete?: boolean;
   boneCount?: number;
-  addedBones?: string[];
-  fingers?: {
-    complete?: boolean;
-    leftChains?: number;
-    rightChains?: number;
-    weightedVertices?: number;
-  };
-  ears?: {
-    complete?: boolean;
-    left?: boolean;
-    right?: boolean;
-    weightedVertices?: number;
-  };
+  fingers?: { complete?: boolean; leftChains?: number; rightChains?: number; weightedVertices?: number };
+  ears?: { complete?: boolean; left?: boolean; right?: boolean; weightedVertices?: number };
 };
 
 type RigApiResponse = {
-  active?: boolean;
   alreadyRigged?: boolean;
   taskId?: string;
   status?: string;
@@ -90,21 +73,15 @@ type RigApiResponse = {
   newAvatarUrl?: string;
   sourceAvatarId?: string | null;
   rigProfile?: RigFeatureReport | null;
-  task?: {
-    status?: string;
-    progress?: number;
-    task_error?: { message?: string };
-  };
+  task?: { status?: string; progress?: number; task_error?: { message?: string } };
   task_error?: { message?: string };
   error?: string;
 };
 
 type UnrealExport = {
-  ok?: boolean;
   url?: string;
   filename?: string;
   error?: string;
-  validation?: Record<string, unknown>;
 };
 
 type ClothingResponse = {
@@ -113,13 +90,13 @@ type ClothingResponse = {
     name: string;
     category: string;
     modelUrl?: string;
-    thumbnailUrl?: string;
     rigged: boolean;
   }>;
   error?: string;
 };
 
 const TERMINAL_RIG_FAILURES = new Set(["FAILED", "EXPIRED", "CANCELED"]);
+const COMPLETE_RIG_FILE = /clouva-complete-rigged\.glb/i;
 const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
 
 function formatDate(value?: string | null) {
@@ -134,14 +111,9 @@ function formatDate(value?: string | null) {
   }).format(date);
 }
 
-function looksRigged(url?: string | null) {
-  return Boolean(url && /complete-rigged|rigged|processed|final/i.test(url));
-}
-
-function avatarLabel(avatar: ActiveAvatar, index: number) {
+function avatarLabel(avatar: ActiveAvatar, index = 0) {
   if (avatar.source === "official" || avatar.id === OFFICIAL_CLOUVA_AVATAR.id) return "Avatar oficial CLOUVA";
-  if (avatar.source === "uploaded") return `Avatar subido ${index + 1}`;
-  return `Avatar creado ${index + 1}`;
+  return avatar.source === "uploaded" ? `Avatar subido ${index + 1}` : `Avatar creado ${index + 1}`;
 }
 
 async function listStorageGlbs(userId: string, path = userId, depth = 0): Promise<CreatorAsset[]> {
@@ -151,19 +123,18 @@ async function listStorageGlbs(userId: string, path = userId, depth = 0): Promis
   });
   if (error) return [];
 
-  const assets: CreatorAsset[] = [];
+  const result: CreatorAsset[] = [];
   for (const raw of data ?? []) {
     const entry = raw as StorageEntry;
     const fullPath = `${path}/${entry.name}`;
-    const isFolder = !entry.metadata && !entry.name.includes(".");
-    if (isFolder && depth < 4) {
-      assets.push(...(await listStorageGlbs(userId, fullPath, depth + 1)));
+    const folder = !entry.metadata && !entry.name.includes(".");
+    if (folder && depth < 4) {
+      result.push(...(await listStorageGlbs(userId, fullPath, depth + 1)));
       continue;
     }
     if (!/\.glb$/i.test(entry.name) || /avatar/i.test(entry.name)) continue;
-
-    const { data: signed } = await supabase.storage.from("creator-assets").createSignedUrl(fullPath, 60 * 60);
-    assets.push({
+    const { data: signed } = await supabase.storage.from("creator-assets").createSignedUrl(fullPath, 3600);
+    result.push({
       id: `storage:${fullPath}`,
       kind: "storage",
       name: entry.name.replace(/[-_]+/g, " ").replace(/\.glb$/i, ""),
@@ -172,7 +143,7 @@ async function listStorageGlbs(userId: string, path = userId, depth = 0): Promis
       rigged: /rigged|processed|final/i.test(fullPath),
     });
   }
-  return assets;
+  return result;
 }
 
 export function CreatorStudioSimple() {
@@ -206,9 +177,9 @@ export function CreatorStudioSimple() {
     [assets, selectedAssetId],
   );
 
-  const avatarRigReady = useMemo(
-    () => looksRigged(activeAvatar.modelUrl) && rigProfile?.complete !== false,
-    [activeAvatar.modelUrl, rigProfile?.complete],
+  const avatarRigReady = Boolean(
+    rigProfile?.complete === true
+    || (activeAvatar.modelUrl && COMPLETE_RIG_FILE.test(activeAvatar.modelUrl)),
   );
 
   const requestRig = useCallback(async (body: Record<string, unknown>) => {
@@ -247,7 +218,6 @@ export function CreatorStudioSimple() {
         name: item.name,
         category: item.category,
         modelUrl: item.modelUrl,
-        thumbnailUrl: item.thumbnailUrl,
         rigged: item.rigged === true,
       }));
       const next = [...clothing, ...stored];
@@ -264,7 +234,6 @@ export function CreatorStudioSimple() {
     if (!user) return;
     setLoadingAvatars(true);
     try {
-      await loadActiveAvatar(user.id);
       const { data, error: avatarError } = await supabase
         .from("user_avatars")
         .select("id,source,status,model_url,front_rotation_y,updated_at")
@@ -291,9 +260,8 @@ export function CreatorStudioSimple() {
           detail: `${avatar.source === "uploaded" ? "Subido" : "Creado"} · ${formatDate(avatar.updatedAt)}`,
         };
       });
-      setAvatars([
+      setAvatars(mapped.length > 0 ? mapped : [
         { avatar: OFFICIAL_CLOUVA_AVATAR, label: "Avatar oficial CLOUVA", detail: "Base oficial" },
-        ...mapped.filter((choice) => choice.avatar.id !== OFFICIAL_CLOUVA_AVATAR.id),
       ]);
     } catch (cause) {
       setAvatars([{ avatar: activeAvatar, label: "Avatar activo", detail: "Selección actual" }]);
@@ -301,20 +269,20 @@ export function CreatorStudioSimple() {
     } finally {
       setLoadingAvatars(false);
     }
-  }, [activeAvatar, loadActiveAvatar, user]);
+  }, [activeAvatar, user]);
 
   const readUnreal = useCallback(async (requireSnapshot = false) => {
     const response = await fetch("/api/unreal/avatar", { cache: "no-store" });
     const data = (await response.json().catch(() => ({}))) as UnrealStatus;
-    setUnreal({
+    const next: UnrealStatus = {
       status: data.status === "online" ? "online" : "offline",
       capturedAt: data.capturedAt ?? null,
-      lastConnectionAt: data.lastConnectionAt ?? null,
       snapshot: data.snapshot ?? null,
       error: data.error ?? null,
-    });
-    if (requireSnapshot && !data.snapshot) throw new Error(data.error || "Unreal todavía no devolvió datos del cuerpo.");
-    return data;
+    };
+    setUnreal(next);
+    if (requireSnapshot && !next.snapshot) throw new Error(next.error || "Unreal todavía no devolvió datos del cuerpo.");
+    return next;
   }, []);
 
   useEffect(() => {
@@ -335,7 +303,6 @@ export function CreatorStudioSimple() {
     setShowAvatarPicker(true);
     setAvatarFbx(null);
     setBodyDataReady(false);
-    setRigProfile(null);
     setError(null);
     setMessage("GLB elegido. Ahora confirmá qué avatar va a usar.");
     setViewerRevision((value) => value + 1);
@@ -346,7 +313,7 @@ export function CreatorStudioSimple() {
     setShowAvatarPicker(false);
     setAvatarFbx(null);
     setBodyDataReady(false);
-    setRigProfile(null);
+    setRigProfile(COMPLETE_RIG_FILE.test(choice.avatar.modelUrl ?? "") ? { complete: true } : null);
     setError(null);
     setMessage("Avatar elegido. El siguiente paso es riggearlo con dedos y orejas.");
     setViewerRevision((value) => value + 1);
@@ -364,11 +331,12 @@ export function CreatorStudioSimple() {
     setError(null);
     setMessage("Preparando el rig completo del avatar…");
     try {
-      const created = await requestRig({ action: "create", force: false });
-      if (created.alreadyRigged) {
-        setRigProfile(created.rigProfile ?? { complete: true });
+      const created = await requestRig({ action: "create", force: avatarRigReady });
+      if (created.alreadyRigged && created.newAvatarUrl) {
+        const profile = created.rigProfile ?? { complete: true };
+        setRigProfile(profile);
         setAvatarRigProgress(100);
-        await loadActiveAvatar(user?.id ?? null);
+        setActiveAvatar({ ...activeAvatar, modelUrl: created.newAvatarUrl, updatedAt: new Date().toISOString() });
         await loadAvatars();
         setMessage("Avatar listo con rig completo para continuar.");
         return;
@@ -377,7 +345,6 @@ export function CreatorStudioSimple() {
       const taskId = String(created.taskId ?? "");
       if (!taskId) throw new Error("El rigeador no devolvió un identificador de trabajo.");
       const startedAt = Date.now();
-
       while (Date.now() - startedAt < 30 * 60 * 1000) {
         const status = await requestRig({ action: "status", taskId });
         const remoteStatus = String(status.status ?? status.task?.status ?? "").toUpperCase();
@@ -393,6 +360,14 @@ export function CreatorStudioSimple() {
           if (!finalized.newAvatarUrl || finalized.rigProfile?.complete !== true) {
             throw new Error(finalized.error || "El avatar no superó la validación de dedos y orejas.");
           }
+          const completedAvatar: ActiveAvatar = {
+            ...activeAvatar,
+            id: finalized.sourceAvatarId || activeAvatar.id,
+            modelUrl: finalized.newAvatarUrl,
+            status: "ready",
+            updatedAt: new Date().toISOString(),
+          };
+          setActiveAvatar(completedAvatar);
           setRigProfile(finalized.rigProfile);
           setAvatarRigProgress(100);
           await loadActiveAvatar(user?.id ?? null);
@@ -510,7 +485,7 @@ export function CreatorStudioSimple() {
     && !garmentRigging,
   );
   const viewerUrl = selectedAsset?.modelUrl || activeAvatar.modelUrl || undefined;
-  const dressedPreview = selectedAsset?.kind === "clothing" && selectedAsset.rigged && selectedAsset.modelUrl;
+  const dressedPreview = Boolean(selectedAsset?.kind === "clothing" && selectedAsset.rigged && selectedAsset.modelUrl);
 
   if (loading || !user) return null;
 
@@ -534,7 +509,7 @@ export function CreatorStudioSimple() {
         </button>
         <button type="button" onClick={() => setShowAvatarPicker(true)} disabled={!selectedAsset}>
           <UserRound />
-          <span><small>AVATAR</small><strong>{selectedAsset ? avatarLabel(activeAvatar, 0) : "Elegí primero el GLB"}</strong></span>
+          <span><small>AVATAR</small><strong>{selectedAsset ? avatarLabel(activeAvatar) : "Elegí primero el GLB"}</strong></span>
         </button>
       </div>
 
@@ -545,9 +520,9 @@ export function CreatorStudioSimple() {
             <span>{dressedPreview ? "Avatar vestido" : selectedAsset ? "GLB seleccionado" : "Avatar"}</span>
           </div>
           <div className={styles.viewer} key={`${viewerRevision}:${selectedAsset?.id ?? activeAvatar.id}`}>
-            {dressedPreview ? (
+            {dressedPreview && selectedAsset?.modelUrl ? (
               <RiggedGarmentReviewViewer
-                modelUrl={selectedAsset.modelUrl!}
+                modelUrl={selectedAsset.modelUrl}
                 pose="Idle"
                 view="Frente"
                 showAvatar
@@ -612,7 +587,7 @@ export function CreatorStudioSimple() {
             <div className={styles.stepCopy}>
               <small>BLENDER</small>
               <strong>Riggear GLB con molde</strong>
-              <p>{selectedAsset?.kind === "storage" ? "Este GLB debe guardarse como pieza antes de riggearlo" : selectedAsset?.rigged ? "Resultado listo en el visor" : "Se habilita cuando avatar, FBX y cuerpo estén listos"}</p>
+              <p>{selectedAsset?.kind === "storage" ? "Guardalo como pieza para habilitar el rig" : selectedAsset?.rigged ? "Resultado listo en el visor" : "Se habilita cuando avatar, FBX y cuerpo estén listos"}</p>
             </div>
             <button type="button" onClick={() => void rigGlbFromMold()} disabled={!canRigGlb}>
               {garmentRigging ? <Loader2 className={styles.spin} /> : <Shirt />}
@@ -627,7 +602,7 @@ export function CreatorStudioSimple() {
             </article>
             <article>
               <span className={avatarRigging || garmentRigging ? styles.busyDot : styles.onlineDot} />
-              <div><small>BLENDER WORKER</small><strong>{avatarRigging || garmentRigging ? "Procesando" : "Disponible"}</strong><p>{rigProfile?.complete ? `${rigProfile.boneCount ?? "—"} huesos · dedos y orejas OK` : "Esperando trabajo"}</p></div>
+              <div><small>BLENDER WORKER</small><strong>{avatarRigging || garmentRigging ? "Procesando" : "Disponible"}</strong><p>{avatarRigReady ? `${rigProfile?.boneCount ?? "Rig"} · dedos y orejas OK` : "Esperando trabajo"}</p></div>
             </article>
           </div>
         </aside>
