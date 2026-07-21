@@ -1,0 +1,19 @@
+name: Creator Viewer Anatomy
+
+on:
+  pull_request:
+    paths:
+      - "components/creator-studio/CreatorStudioAvatarViewer.tsx"
+      - "components/creator-studio/CreatorStudioAvatarViewerV4.tsx"
+      - "tests-creator-viewer-anatomy.mjs"
+      - ".github/workflows/creator-viewer-anatomy.yml"
+
+jobs:
+  viewer-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node tests-creator-viewer-anatomy.mjs
