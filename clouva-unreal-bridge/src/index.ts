@@ -1,4 +1,8 @@
 import 'dotenv/config';
+import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const unrealBaseUrl = process.env.UNREAL_REMOTE_URL ?? 'http://127.0.0.1:30010';
 const presetName = process.env.UNREAL_PRESET_NAME ?? 'RC_CLOUVA_Avatar';
@@ -7,8 +11,18 @@ const clouvaBaseUrl = process.env.CLOUVA_APP_URL;
 const bridgeToken = process.env.CLOUVA_BRIDGE_TOKEN;
 const intervalMs = Number(process.env.SNAPSHOT_INTERVAL_MS ?? 15000);
 const dryRun = process.env.DRY_RUN?.toLowerCase() === 'true';
+const projectDir = process.env.UNREAL_PROJECT_DIR ? resolve(process.env.UNREAL_PROJECT_DIR) : null;
+const currentDir = dirname(fileURLToPath(import.meta.url));
+const templatePythonDir = resolve(currentDir, '../unreal/Content/Python');
 
 type JsonRecord = Record<string, unknown>;
+type ImportCommand = {
+  id: string;
+  source_url: string;
+  filename: string;
+  destination_path: string;
+  command_type: string;
+};
 
 type AvatarSnapshot = {
   schemaVersion: 1;
@@ -29,11 +43,7 @@ type AvatarSnapshot = {
     bones: unknown[];
     exposedProperties: JsonRecord;
   };
-  connection: {
-    status: 'online';
-    connectedAt: string;
-    remoteUrl: string;
-  };
+  connection: { status: 'online'; connectedAt: string; remoteUrl: string };
   capturedAt: string;
 };
 
@@ -55,8 +65,7 @@ function findValue(root: unknown, names: string[]): unknown {
       continue;
     }
     for (const [key, value] of Object.entries(current)) {
-      const normalized = key.toLowerCase().replace(/[^a-z0-9]/g, '');
-      if (wanted.has(normalized)) return value;
+      if (wanted.has(key.toLowerCase().replace(/[^a-z0-9]/g, ''))) return value;
       queue.push(value);
     }
   }
@@ -86,9 +95,7 @@ function collectExposedProperties(preset: unknown): JsonRecord {
 }
 
 function findExposedActor(preset: unknown): JsonRecord | null {
-  const groups = isRecord(preset) && isRecord(preset.Preset) && Array.isArray(preset.Preset.Groups)
-    ? preset.Preset.Groups
-    : [];
+  const groups = isRecord(preset) && isRecord(preset.Preset) && Array.isArray(preset.Preset.Groups) ? preset.Preset.Groups : [];
   for (const group of groups) {
     if (!isRecord(group) || !Array.isArray(group.ExposedActors)) continue;
     for (const actor of group.ExposedActors) {
@@ -107,7 +114,6 @@ function normalizeSnapshot(preset: unknown): AvatarSnapshot {
   const actorLabel = typeof exposedActor?.DisplayName === 'string' ? exposedActor.DisplayName : actorName;
   const now = new Date().toISOString();
   const asArray = (value: unknown) => Array.isArray(value) ? value : value == null ? [] : [value];
-
   return {
     schemaVersion: 1,
     preset: presetName,
@@ -145,47 +151,114 @@ async function getJson(path: string): Promise<unknown> {
 }
 
 async function capture(): Promise<AvatarSnapshot> {
-  const [info, presets, preset] = await Promise.all([
+  const [, , preset] = await Promise.all([
     getJson('/remote/info'),
     getJson('/remote/presets'),
     getJson(`/remote/preset/${encodeURIComponent(presetName)}`),
   ]);
-  // These calls also verify that the server and configured preset are available.
-  void info;
-  void presets;
   return normalizeSnapshot(preset);
+}
+
+function apiHeaders() {
+  if (!bridgeToken) throw new Error('Falta CLOUVA_BRIDGE_TOKEN');
+  return { 'Content-Type': 'application/json', Authorization: `Bearer ${bridgeToken}` };
 }
 
 async function sendSnapshot(snapshot: AvatarSnapshot): Promise<void> {
   if (!clouvaBaseUrl) throw new Error('Falta CLOUVA_APP_URL');
-  if (!bridgeToken) throw new Error('Falta CLOUVA_BRIDGE_TOKEN');
   const response = await fetch(`${clouvaBaseUrl.replace(/\/$/, '')}/api/unreal/snapshot`, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${bridgeToken}`,
-    },
+    headers: apiHeaders(),
     body: JSON.stringify(snapshot),
   });
   if (!response.ok) throw new Error(`CLOUVA respondió HTTP ${response.status}: ${await response.text()}`);
 }
 
-async function runOnce(): Promise<void> {
+async function updateCommand(id: string, status: string, progress: number, extra: JsonRecord = {}) {
+  if (!clouvaBaseUrl) throw new Error('Falta CLOUVA_APP_URL');
+  const response = await fetch(`${clouvaBaseUrl.replace(/\/$/, '')}/api/unreal/commands`, {
+    method: 'POST',
+    headers: apiHeaders(),
+    body: JSON.stringify({ id, status, progress, ...extra }),
+  });
+  if (!response.ok) throw new Error(`No se pudo actualizar el comando ${id}: ${await response.text()}`);
+}
+
+async function nextCommand(): Promise<ImportCommand | null> {
+  if (!clouvaBaseUrl || dryRun) return null;
+  const response = await fetch(`${clouvaBaseUrl.replace(/\/$/, '')}/api/unreal/commands`, { headers: apiHeaders() });
+  if (!response.ok) throw new Error(`No se pudo consultar la cola Unreal: ${await response.text()}`);
+  const data = await response.json() as { command?: ImportCommand | null };
+  return data.command ?? null;
+}
+
+async function ensureImporterInstalled() {
+  if (!projectDir) throw new Error('Falta UNREAL_PROJECT_DIR en clouva-unreal-bridge/.env');
+  const destination = resolve(projectDir, 'Content/Python');
+  await mkdir(destination, { recursive: true });
+  for (const name of ['init_unreal.py', 'clouva_importer.py']) {
+    const source = resolve(templatePythonDir, name);
+    if (!existsSync(source)) throw new Error(`Falta plantilla Unreal ${source}`);
+    await copyFile(source, resolve(destination, name));
+  }
+  await mkdir(resolve(projectDir, 'Saved/ClouvaInbox'), { recursive: true });
+  await mkdir(resolve(projectDir, 'Saved/ClouvaOutbox'), { recursive: true });
+}
+
+async function processCommand(command: ImportCommand) {
   try {
-    const snapshot = await capture();
-    console.log(JSON.stringify(snapshot, null, 2));
-    if (dryRun) {
-      console.log(`[dry-run] Snapshot capturado ${snapshot.capturedAt}; no se enviaron datos.`);
-      return;
+    await ensureImporterInstalled();
+    await updateCommand(command.id, 'downloading', 20);
+    const response = await fetch(command.source_url);
+    if (!response.ok) throw new Error(`No se pudo descargar FBX (${response.status})`);
+    const inbox = resolve(projectDir!, 'Saved/ClouvaInbox');
+    const localFbx = resolve(inbox, `${command.id}.fbx`);
+    await writeFile(localFbx, Buffer.from(await response.arrayBuffer()));
+    await updateCommand(command.id, 'importing', 65);
+    await writeFile(resolve(inbox, `${command.id}.json`), JSON.stringify({
+      id: command.id,
+      type: command.command_type,
+      filePath: localFbx,
+      destinationPath: command.destination_path,
+    }, null, 2), 'utf8');
+
+    const resultPath = resolve(projectDir!, 'Saved/ClouvaOutbox', `${command.id}.json`);
+    for (let attempt = 0; attempt < 120; attempt += 1) {
+      if (existsSync(resultPath)) {
+        const result = JSON.parse(await readFile(resultPath, 'utf8')) as JsonRecord;
+        const ok = result.ok === true;
+        await updateCommand(command.id, ok ? 'succeeded' : 'failed', 100, ok ? { result } : { error: String(result.error ?? 'Unreal rechazó la importación'), result });
+        console.log(`[unreal-import] ${command.id} ${ok ? 'completado' : 'falló'}`);
+        return;
+      }
+      await new Promise((resolveWait) => setTimeout(resolveWait, 1000));
     }
-    await sendSnapshot(snapshot);
-    console.log(`[online] Snapshot enviado ${snapshot.capturedAt}`);
+    throw new Error('Unreal no procesó la bandeja en 120 segundos. Reiniciá el editor para cargar init_unreal.py.');
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error(`[offline] ${new Date().toISOString()} ${message}`);
+    await updateCommand(command.id, 'failed', 100, { error: message }).catch(() => undefined);
+    console.error(`[unreal-import] ${command.id} ${message}`);
   }
 }
 
-console.log(`clouva-unreal-bridge iniciado. Unreal: ${unrealBaseUrl}; preset: ${presetName}; solo lectura; dry-run: ${dryRun}.`);
+let running = false;
+async function runOnce(): Promise<void> {
+  if (running) return;
+  running = true;
+  try {
+    const snapshot = await capture();
+    if (!dryRun) await sendSnapshot(snapshot);
+    else console.log(`[dry-run] Snapshot capturado ${snapshot.capturedAt}`);
+    const command = await nextCommand();
+    if (command) await processCommand(command);
+    console.log(`[online] Snapshot enviado ${snapshot.capturedAt}`);
+  } catch (error) {
+    console.error(`[offline] ${new Date().toISOString()} ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    running = false;
+  }
+}
+
+console.log(`clouva-unreal-bridge iniciado. Unreal: ${unrealBaseUrl}; preset: ${presetName}; bidireccional; proyecto: ${projectDir ?? 'SIN CONFIGURAR'}; dry-run: ${dryRun}.`);
 await runOnce();
 setInterval(runOnce, Math.max(intervalMs, 5000));
