@@ -1,5 +1,14 @@
+import sys
+from pathlib import Path
+
 import bpy
 from mathutils import Vector
+
+# Blender ejecuta este archivo con el directorio temporal del trabajo como cwd.
+# Aseguramos que el módulo base hermano siempre sea importable sin depender de PYTHONPATH.
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
 import complete_avatar_rig as legacy
 
