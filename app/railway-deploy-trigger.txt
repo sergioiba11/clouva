@@ -1,4 +1,4 @@
-CLOUVA Railway redeploy trigger
-Requested: 2026-07-21 14:42 America/Argentina/Buenos_Aires
+CLOUVA Railway direct deploy trigger
+Requested: 2026-07-21 15:05 America/Argentina/Buenos_Aires
 Source feature commit: 18d5981e4fe49ebf2504adf487257de2ea62fc7c
-Reason: retry after Railway upstream GitHub queue issue
+Emergency path: GitHub Actions -> railway up -> production/clouva
