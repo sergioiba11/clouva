@@ -31,6 +31,25 @@ COMPLETE_AVATAR_RIG_SCRIPT = Path(__file__).with_name("complete_avatar_rig.py")
 UNREAL_MOLD_RIG_VERSION = "v1-unreal-snapshot-mold"
 
 
+def _complete_rig_failure(stdout: str | None, stderr: str | None) -> str:
+    """Extract the real Blender error without ever replacing it with a parser error."""
+    try:
+        technical = extract_blender_failure(stdout, stderr)
+    except Exception as parser_error:
+        print(f"[complete-avatar-rig] error parser failed: {parser_error}", flush=True)
+        technical = None
+
+    if technical:
+        return technical
+
+    stderr_text = str(stderr or "").strip()
+    stdout_text = str(stdout or "").strip()
+    fallback = stderr_text or stdout_text
+    if fallback:
+        return fallback[-1800:]
+    return "Blender no pudo completar el rig del avatar"
+
+
 class CompleteAvatarRigRequest(BaseModel):
     source_url: HttpUrl
     require_fingers: bool = True
@@ -83,8 +102,7 @@ def complete_avatar_rig(request: CompleteAvatarRigRequest):
             cwd=str(job_dir),
         )
         if result.returncode != 0 or not output_path.is_file() or output_path.stat().st_size < 1024:
-            details = extract_blender_failure({"stdout": result.stdout, "stderr": result.stderr})
-            raise RuntimeError(details or result.stderr[-1800:] or "Blender no pudo completar el rig del avatar")
+            raise RuntimeError(_complete_rig_failure(result.stdout, result.stderr))
         if not metadata_path.is_file():
             raise RuntimeError("Blender no generó la validación del rig completo")
 
