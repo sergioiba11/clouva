@@ -6,6 +6,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
+const MAX_SNAPSHOT_BYTES = 250_000;
 type ItemMetadata = Record<string, unknown>;
 
 function getAdminClient() {
@@ -13,6 +14,15 @@ function getAdminClient() {
   const serviceRole = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !serviceRole) throw new Error("Missing Supabase server credentials");
   return createClient(url, serviceRole, { auth: { persistSession: false, autoRefreshToken: false } });
+}
+
+function readUnrealSnapshot(value: unknown) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const serialized = JSON.stringify(value);
+  if (Buffer.byteLength(serialized, "utf8") > MAX_SNAPSHOT_BYTES) {
+    throw new Error("El snapshot corporal de Unreal supera el tamaño permitido");
+  }
+  return value as Record<string, unknown>;
 }
 
 export async function POST(request: NextRequest) {
@@ -38,6 +48,12 @@ export async function POST(request: NextRequest) {
     }
     if (parsedUrl.protocol !== "https:") return NextResponse.json({ error: "Model URL must use HTTPS" }, { status: 400 });
 
+    const unrealSnapshot = readUnrealSnapshot(body?.unrealSnapshot);
+    const attemptId = typeof body?.attemptId === "string" ? body.attemptId.slice(0, 100) : null;
+    if (body?.moldSource === "unreal-avatar-snapshot" && !unrealSnapshot) {
+      return NextResponse.json({ error: "Unreal todavía no devolvió los datos corporales para crear el molde" }, { status: 409 });
+    }
+
     const { data: sourceItem, error: sourceError } = await supabase
       .from("clothing_items")
       .select("id,category,color,metadata,status")
@@ -49,6 +65,14 @@ export async function POST(request: NextRequest) {
     const metadata = sourceItem.metadata && typeof sourceItem.metadata === "object"
       ? (sourceItem.metadata as ItemMetadata)
       : {};
+    const processingMetadata: ItemMetadata = {
+      ...metadata,
+      ...(unrealSnapshot ? {
+        unreal_snapshot: unrealSnapshot,
+        unreal_attempt_id: attemptId,
+        mold_source: "unreal-avatar-snapshot",
+      } : {}),
+    };
 
     await supabase
       .from("clothing_items")
@@ -59,6 +83,8 @@ export async function POST(request: NextRequest) {
           ...metadata,
           generation_stage: "rigging",
           generation_progress: 99,
+          unreal_attempt_id: attemptId,
+          mold_source: unrealSnapshot ? "unreal-avatar-snapshot" : "active-avatar-geometry",
         },
       })
       .eq("id", itemId)
@@ -71,15 +97,14 @@ export async function POST(request: NextRequest) {
       modelUrl,
       category: sourceItem.category,
       color: typeof sourceItem.color === "string" ? sourceItem.color : null,
-      metadata,
+      metadata: processingMetadata,
     });
 
     return NextResponse.json({ ok: true, ...result });
   } catch (error) {
     console.error("Clothing finalization failed", error);
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Unknown clothing finalization error" },
-      { status: 500 },
-    );
+    const message = error instanceof Error ? error.message : "Unknown clothing finalization error";
+    const status = /snapshot corporal.*tamaño/i.test(message) ? 413 : 500;
+    return NextResponse.json({ error: message }, { status });
   }
 }
