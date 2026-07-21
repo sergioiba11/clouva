@@ -106,6 +106,7 @@ async function rigWithWorker(
   category: string,
   artUrl: string | null,
   color: string | null,
+  metadata: ItemMetadata,
 ) {
   const workerUrl = (process.env.GARMENT_RIG_WORKER_URL || process.env.BLENDER_WORKER_URL)?.replace(/\/+$/, "");
   const workerToken = process.env.GARMENT_RIG_WORKER_TOKEN || process.env.BLENDER_WORKER_TOKEN;
@@ -114,24 +115,35 @@ async function rigWithWorker(
       bytes: null as ArrayBuffer | null,
       error: "No está configurada GARMENT_RIG_WORKER_URL ni BLENDER_WORKER_URL",
       avatar: null as ResolvedAvatar | null,
+      moldSource: null as string | null,
     };
   }
 
   try {
     const avatar = await resolveUserAvatar(supabase, userId);
-    const response = await fetch(`${workerUrl}/rig`, {
+    const unrealSnapshot = metadata.unreal_snapshot && typeof metadata.unreal_snapshot === "object"
+      ? metadata.unreal_snapshot as Record<string, unknown>
+      : null;
+    const endpoint = unrealSnapshot ? "/rig-with-unreal-mold" : "/rig";
+    const requestBody: Record<string, unknown> = {
+      avatar_url: avatar.url,
+      garment_url: modelUrl,
+      category,
+      art_url: artUrl,
+      color,
+    };
+    if (unrealSnapshot) {
+      requestBody.unreal_snapshot = unrealSnapshot;
+      requestBody.attempt_id = typeof metadata.unreal_attempt_id === "string" ? metadata.unreal_attempt_id : null;
+    }
+
+    const response = await fetch(`${workerUrl}${endpoint}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         ...(workerToken ? { Authorization: `Bearer ${workerToken}` } : {}),
       },
-      body: JSON.stringify({
-        avatar_url: avatar.url,
-        garment_url: modelUrl,
-        category,
-        art_url: artUrl,
-        color,
-      }),
+      body: JSON.stringify(requestBody),
       signal: AbortSignal.timeout(8 * 60 * 1000),
     });
 
@@ -141,22 +153,29 @@ async function rigWithWorker(
         bytes: null,
         error: `Automatic rigging failed (${response.status}): ${detail.slice(0, 1200)}`,
         avatar,
+        moldSource: unrealSnapshot ? "unreal-avatar-snapshot" : "active-avatar-geometry",
       };
     }
 
     const bytes = await response.arrayBuffer();
     if (bytes.byteLength > MAX_GLB_BYTES) {
-      return { bytes: null, error: "Rigged GLB exceeds 75 MB", avatar };
+      return { bytes: null, error: "Rigged GLB exceeds 75 MB", avatar, moldSource: null };
     }
     if (Buffer.from(bytes).subarray(0, 4).toString("ascii") !== "glTF") {
-      return { bytes: null, error: "Rig worker did not return a valid GLB", avatar };
+      return { bytes: null, error: "Rig worker did not return a valid GLB", avatar, moldSource: null };
     }
-    return { bytes, error: null as string | null, avatar };
+    return {
+      bytes,
+      error: null as string | null,
+      avatar,
+      moldSource: unrealSnapshot ? "unreal-avatar-snapshot" : "active-avatar-geometry",
+    };
   } catch (error) {
     return {
       bytes: null,
       error: errorMessage(error, "Unknown rigging error"),
       avatar: null as ResolvedAvatar | null,
+      moldSource: null as string | null,
     };
   }
 }
@@ -178,7 +197,7 @@ export async function finalizeClothingItem({
     ? metadata.source_meshy_model_url
     : modelUrl;
 
-  const rigResult = await rigWithWorker(supabase, userId, modelUrl, category, artUrl, color);
+  const rigResult = await rigWithWorker(supabase, userId, modelUrl, category, artUrl, color, metadata);
   const riggedBytes = rigResult.bytes;
   const bytes = riggedBytes ?? (await fetchGlb(modelUrl, "Meshy GLB"));
   const storagePath = `${userId}/clothing/${itemId}/${riggedBytes ? "rigged-textured" : "garment-fallback"}.glb`;
@@ -191,12 +210,15 @@ export async function finalizeClothingItem({
   if (uploadError) throw new Error(errorMessage(uploadError, "No se pudo guardar el GLB final"));
 
   const { data: publicData } = supabase.storage.from("avatars").getPublicUrl(storagePath);
+  const persistentMetadata = { ...metadata };
+  delete persistentMetadata.unreal_snapshot;
   const nextMetadata = {
-    ...metadata,
+    ...persistentMetadata,
     source_meshy_model_url: storedOriginalSource,
     source_model_kind: "meshy-original",
     rigged: Boolean(riggedBytes),
-    rig_pipeline: riggedBytes ? "blender-nearest-surface-uv-v2" : "viewer-fit-fallback",
+    rig_pipeline: riggedBytes ? "blender-unreal-mold-v1" : "viewer-fit-fallback",
+    mold_source: rigResult.moldSource,
     fitted_avatar_id: rigResult.avatar?.id ?? null,
     fitted_avatar_source: rigResult.avatar?.source ?? null,
     avatar_scope: "authenticated-user",
@@ -238,6 +260,7 @@ export async function finalizeClothingItem({
     rigged: Boolean(riggedBytes),
     textured: Boolean(riggedBytes && artUrl),
     hoodSupported,
+    moldSource: rigResult.moldSource,
     warning: riggedBytes ? null : rigResult.error || "La pieza quedó disponible sin rigging automático.",
   };
 }
