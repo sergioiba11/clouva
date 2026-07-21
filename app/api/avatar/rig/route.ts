@@ -46,6 +46,14 @@ type RigProfile = {
   };
 };
 
+type ErrorLike = {
+  message?: unknown;
+  details?: unknown;
+  hint?: unknown;
+  code?: unknown;
+  error?: unknown;
+};
+
 function getAdminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceRole = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -55,6 +63,46 @@ function getAdminClient() {
   });
 }
 
+function errorMessage(cause: unknown) {
+  if (cause instanceof Error && cause.message.trim()) return cause.message.trim();
+  if (typeof cause === "string" && cause.trim()) return cause.trim();
+
+  if (cause && typeof cause === "object") {
+    const value = cause as ErrorLike;
+    const parts = [value.message, value.details, value.hint, value.error]
+      .filter((part): part is string => typeof part === "string" && Boolean(part.trim()))
+      .map((part) => part.trim());
+    const code = typeof value.code === "string" && value.code.trim() ? `Código ${value.code.trim()}` : "";
+    if (parts.length || code) return [...parts, code].filter(Boolean).join(" · ");
+
+    try {
+      const serialized = JSON.stringify(cause);
+      if (serialized && serialized !== "{}") return serialized.slice(0, 1200);
+    } catch {
+      // Fall through to the safe generic message.
+    }
+  }
+
+  return "No se pudo completar el rig del avatar";
+}
+
+function asError(cause: unknown, prefix?: string) {
+  const message = errorMessage(cause);
+  return new Error(prefix ? `${prefix}: ${message}` : message);
+}
+
+function isMissingColumn(cause: unknown, column?: string) {
+  const message = errorMessage(cause).toLowerCase();
+  const columnMatch = column ? message.includes(column.toLowerCase()) : true;
+  return columnMatch && (
+    message.includes("does not exist")
+    || message.includes("schema cache")
+    || message.includes("could not find")
+    || message.includes("pgrst204")
+    || message.includes("42703")
+  );
+}
+
 async function requireUser(request: NextRequest) {
   const authorization = request.headers.get("authorization");
   const accessToken = authorization?.startsWith("Bearer ") ? authorization.slice(7) : null;
@@ -62,7 +110,7 @@ async function requireUser(request: NextRequest) {
 
   const supabase = getAdminClient();
   const { data, error } = await supabase.auth.getUser(accessToken);
-  if (error || !data.user) throw new Error("Sesión inválida");
+  if (error || !data.user) throw new Error(`Sesión inválida${error ? `: ${errorMessage(error)}` : ""}`);
   return { supabase, user: data.user };
 }
 
@@ -84,20 +132,24 @@ async function resolveStoredOriginalUrl(
   supabase: ReturnType<typeof getAdminClient>,
   storagePath: string,
 ) {
-  const { data: signed } = await supabase.storage.from("avatars").createSignedUrl(storagePath, 60 * 60);
+  const { data: signed, error } = await supabase.storage
+    .from("avatars")
+    .createSignedUrl(storagePath, 60 * 60);
+
   if (signed?.signedUrl) return signed.signedUrl;
+  if (error) console.warn("Could not sign original avatar URL", errorMessage(error));
 
   const { data: publicData } = supabase.storage.from("avatars").getPublicUrl(storagePath);
   return asHttpsUrl(publicData.publicUrl);
 }
 
-async function resolveSource(
+async function readActiveAvatar(
   supabase: ReturnType<typeof getAdminClient>,
   userId: string,
-): Promise<RigSource> {
-  const { data: active, error } = await supabase
+) {
+  const richQuery = await supabase
     .from("user_avatars")
-    .select("id,model_url,processed_glb_url,rigged_url,storage_path,metadata,updated_at")
+    .select("id,model_url,storage_path,metadata,updated_at")
     .eq("user_id", userId)
     .eq("is_active", true)
     .eq("status", "ready")
@@ -105,20 +157,50 @@ async function resolveSource(
     .order("updated_at", { ascending: false })
     .limit(1)
     .maybeSingle();
-  if (error) throw error;
+
+  if (!richQuery.error) return richQuery.data as Record<string, unknown> | null;
+
+  const optionalColumnFailure = ["storage_path", "metadata"].some((column) =>
+    isMissingColumn(richQuery.error, column),
+  );
+  if (!optionalColumnFailure) throw asError(richQuery.error, "No se pudo leer el avatar activo");
+
+  console.warn(
+    "Falling back to legacy user_avatars schema",
+    errorMessage(richQuery.error),
+  );
+
+  const legacyQuery = await supabase
+    .from("user_avatars")
+    .select("id,model_url,updated_at")
+    .eq("user_id", userId)
+    .eq("is_active", true)
+    .eq("status", "ready")
+    .is("archived_at", null)
+    .order("updated_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (legacyQuery.error) throw asError(legacyQuery.error, "No se pudo leer el avatar activo");
+  return legacyQuery.data as Record<string, unknown> | null;
+}
+
+async function resolveSource(
+  supabase: ReturnType<typeof getAdminClient>,
+  userId: string,
+): Promise<RigSource> {
+  const active = await readActiveAvatar(supabase, userId);
 
   if (active?.id) {
-    const currentUrl = asHttpsUrl(active.rigged_url)
-      ?? asHttpsUrl(active.processed_glb_url)
-      ?? asHttpsUrl(active.model_url);
-
+    const currentUrl = asHttpsUrl(active.model_url);
     const storagePath = typeof active.storage_path === "string" && active.storage_path.trim()
       ? active.storage_path.trim()
       : null;
     const metadata = active.metadata && typeof active.metadata === "object"
       ? active.metadata as Record<string, unknown>
       : {};
-    const storedOriginal = storagePath
+
+    const storedOriginal = storagePath && !looksDerivedRig(storagePath)
       ? await resolveStoredOriginalUrl(supabase, storagePath)
       : null;
     const meshyOriginal = asHttpsUrl(metadata.original_meshy_url);
@@ -130,7 +212,7 @@ async function resolveSource(
     if (!currentUrl) throw new Error("El avatar activo no tiene un GLB disponible");
     if (!originalUrl) {
       throw new Error(
-        "No encontramos el GLB original limpio del avatar. El rig viejo no se usará como fuente; restaurá el avatar original antes de reintentar.",
+        "No encontramos el GLB original limpio del avatar. El rig anterior no se usará como fuente. Volvé a seleccionar el avatar creado originalmente.",
       );
     }
 
@@ -148,7 +230,7 @@ async function resolveSource(
     .select("avatar_3d_url")
     .eq("id", userId)
     .maybeSingle();
-  if (profileError) throw profileError;
+  if (profileError) throw asError(profileError, "No se pudo leer el avatar del perfil");
 
   const profileUrl = asHttpsUrl(profile?.avatar_3d_url);
   if (profileUrl && !looksDerivedRig(profileUrl)) {
@@ -194,7 +276,10 @@ async function updateMetadata(
   patch: { job?: RigJob | null; profile?: RigProfile | null },
 ) {
   const current = await supabase.auth.admin.getUserById(userId);
-  if (current.error || !current.data.user) throw current.error || new Error("Usuario no encontrado");
+  if (current.error || !current.data.user) {
+    throw asError(current.error || new Error("Usuario no encontrado"), "No se pudo leer el trabajo de rig");
+  }
+
   const metadata = { ...(current.data.user.app_metadata ?? {}) } as Record<string, unknown>;
   if ("job" in patch) {
     if (patch.job) metadata[JOB_KEY] = patch.job;
@@ -204,8 +289,9 @@ async function updateMetadata(
     if (patch.profile) metadata[PROFILE_KEY] = patch.profile;
     else delete metadata[PROFILE_KEY];
   }
+
   const { error } = await supabase.auth.admin.updateUserById(userId, { app_metadata: metadata });
-  if (error) throw error;
+  if (error) throw asError(error, "No se pudo guardar el estado del rig");
 }
 
 function jobMatches(job: RigJob, source: RigSource) {
@@ -274,6 +360,65 @@ async function completeRigWithWorker(sourceUrl: string) {
   return { bytes, profile };
 }
 
+async function updateAvatarRow(
+  supabase: ReturnType<typeof getAdminClient>,
+  userId: string,
+  avatarId: string,
+  publicUrl: string,
+  now: string,
+) {
+  const basePatch = {
+    model_url: publicUrl,
+    status: "ready",
+    is_active: true,
+    updated_at: now,
+  };
+
+  const withRiggedUrl = await supabase
+    .from("user_avatars")
+    .update({ ...basePatch, rigged_url: publicUrl })
+    .eq("id", avatarId)
+    .eq("user_id", userId);
+
+  if (!withRiggedUrl.error) return;
+  if (!isMissingColumn(withRiggedUrl.error, "rigged_url")) {
+    throw asError(withRiggedUrl.error, "No se pudo guardar el avatar riggeado");
+  }
+
+  const legacyUpdate = await supabase
+    .from("user_avatars")
+    .update(basePatch)
+    .eq("id", avatarId)
+    .eq("user_id", userId);
+
+  if (legacyUpdate.error) {
+    throw asError(legacyUpdate.error, "No se pudo guardar el avatar riggeado");
+  }
+}
+
+async function updateProfileAvatar(
+  supabase: ReturnType<typeof getAdminClient>,
+  userId: string,
+  publicUrl: string,
+  now: string,
+) {
+  const fullUpdate = await supabase
+    .from("profiles")
+    .update({ avatar_3d_url: publicUrl, updated_at: now })
+    .eq("id", userId);
+
+  if (!fullUpdate.error) return;
+  if (!isMissingColumn(fullUpdate.error, "updated_at")) {
+    throw asError(fullUpdate.error, "No se pudo actualizar el avatar del perfil");
+  }
+
+  const legacyUpdate = await supabase
+    .from("profiles")
+    .update({ avatar_3d_url: publicUrl })
+    .eq("id", userId);
+  if (legacyUpdate.error) throw asError(legacyUpdate.error, "No se pudo actualizar el avatar del perfil");
+}
+
 async function persistRiggedAvatar(
   supabase: ReturnType<typeof getAdminClient>,
   userId: string,
@@ -286,32 +431,19 @@ async function persistRiggedAvatar(
     cacheControl: "3600",
     upsert: true,
   });
-  if (uploadError) throw uploadError;
+  if (uploadError) throw asError(uploadError, "No se pudo guardar el GLB riggeado");
 
   const { data: publicData } = supabase.storage.from("avatars").getPublicUrl(storagePath);
-  const publicUrl = `${publicData.publicUrl}?v=${Date.now()}`;
+  const basePublicUrl = asHttpsUrl(publicData.publicUrl);
+  if (!basePublicUrl) throw new Error("Supabase no devolvió una URL válida para el avatar riggeado");
+
+  const publicUrl = `${basePublicUrl}?v=${Date.now()}`;
   const now = new Date().toISOString();
 
   if (avatarId) {
-    const { error: avatarError } = await supabase
-      .from("user_avatars")
-      .update({
-        model_url: publicUrl,
-        rigged_url: publicUrl,
-        status: "ready",
-        is_active: true,
-        updated_at: now,
-      })
-      .eq("id", avatarId)
-      .eq("user_id", userId);
-    if (avatarError) throw avatarError;
+    await updateAvatarRow(supabase, userId, avatarId, publicUrl, now);
   }
-
-  const { error: profileError } = await supabase
-    .from("profiles")
-    .update({ avatar_3d_url: publicUrl, updated_at: now })
-    .eq("id", userId);
-  if (profileError) throw profileError;
+  await updateProfileAvatar(supabase, userId, publicUrl, now);
   return publicUrl;
 }
 
@@ -328,8 +460,12 @@ export async function POST(request: NextRequest) {
     stage = "buscar-glb-original";
     const source = await resolveSource(supabase, user.id);
 
+    stage = "leer-estado-del-rig";
     const freshUser = await supabase.auth.admin.getUserById(user.id);
-    if (freshUser.error || !freshUser.data.user) throw freshUser.error || new Error("Usuario no encontrado");
+    if (freshUser.error || !freshUser.data.user) {
+      throw asError(freshUser.error || new Error("Usuario no encontrado"), "No se pudo leer el estado del rig");
+    }
+
     const metadata = freshUser.data.user.app_metadata as Record<string, unknown> | undefined;
     const storedJob = readJob(metadata);
     const storedProfile = readProfile(metadata);
@@ -451,9 +587,16 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ error: "Acción inválida", stage: "entrada" }, { status: 400 });
   } catch (cause) {
-    console.error("Complete avatar rig failed", { stage, cause });
-    const message = cause instanceof Error ? cause.message : "No se pudo completar el rig del avatar";
-    const status = /sesión/i.test(message) ? 401 : /original limpio|GLB original/i.test(message) ? 422 : 500;
-    return NextResponse.json({ error: message, stage }, { status });
+    const technicalError = errorMessage(cause);
+    console.error("Complete avatar rig failed", { stage, technicalError, cause });
+
+    const message = `[${stage}] ${technicalError}`;
+    const status = /sesión/i.test(technicalError)
+      ? 401
+      : /original limpio|GLB original|no hay un avatar original/i.test(technicalError)
+        ? 422
+        : 500;
+
+    return NextResponse.json({ error: message, stage, technicalError }, { status });
   }
 }
