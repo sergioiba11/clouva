@@ -27,20 +27,23 @@ export async function GET() {
     const rows = await response.json() as Array<Record<string, unknown>>;
     const row = rows[0];
     if (!row) {
-      return NextResponse.json({ status: 'offline', lastConnectionAt: null, snapshot: null, error: 'Todavía no se recibió ningún snapshot' }, { status: 404 });
+      return NextResponse.json({ status: 'offline', lastConnectionAt: null, capturedAt: null, snapshot: null, snapshotFresh: false, error: 'Todavía no se recibió ningún snapshot' }, { status: 404 });
     }
     const capturedAt = String(row.captured_at ?? '');
-    const ageMs = Date.now() - new Date(capturedAt).getTime();
-    const status = ageMs <= 45000 ? 'online' : 'offline';
+    const capturedTime = new Date(capturedAt).getTime();
+    const ageMs = Number.isFinite(capturedTime) ? Date.now() - capturedTime : Number.POSITIVE_INFINITY;
+    const snapshotFresh = ageMs >= 0 && ageMs <= 45000;
+    const status = snapshotFresh ? 'online' : 'offline';
     return NextResponse.json({
       status,
       lastConnectionAt: row.last_connected_at ?? capturedAt,
       capturedAt,
-      error: status === 'offline' ? 'El bridge no envió datos recientemente o Unreal está cerrado' : null,
-      snapshot: publicSnapshot(row.snapshot),
+      snapshotFresh,
+      error: snapshotFresh ? null : 'El bridge no envió datos recientemente o Unreal está cerrado',
+      snapshot: snapshotFresh ? publicSnapshot(row.snapshot) : null,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return NextResponse.json({ status: 'offline', lastConnectionAt: null, snapshot: null, error: message }, { status: 500 });
+    return NextResponse.json({ status: 'offline', lastConnectionAt: null, capturedAt: null, snapshot: null, snapshotFresh: false, error: message }, { status: 500 });
   }
 }
