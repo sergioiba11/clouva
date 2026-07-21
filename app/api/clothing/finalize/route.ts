@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { finalizeClothingItem } from "@/lib/clothing-finalization";
+import { finalizeClothingItem } from "@/lib/clothing-finalization-v2";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -51,7 +51,7 @@ export async function POST(request: NextRequest) {
     const unrealSnapshot = readUnrealSnapshot(body?.unrealSnapshot);
     const attemptId = typeof body?.attemptId === "string" ? body.attemptId.slice(0, 100) : null;
     if (body?.moldSource === "unreal-avatar-snapshot" && !unrealSnapshot) {
-      return NextResponse.json({ error: "Unreal todavía no devolvió los datos corporales para crear el molde" }, { status: 409 });
+      return NextResponse.json({ error: "Unreal todavía no devolvió datos corporales recientes para crear el molde" }, { status: 409 });
     }
 
     const { data: sourceItem, error: sourceError } = await supabase
