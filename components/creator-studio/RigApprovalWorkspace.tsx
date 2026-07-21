@@ -57,6 +57,8 @@ type Props = {
 };
 
 const FINGER_NAMES = ["thumb", "index", "middle", "ring", "pinky"] as const;
+const ARM_MARKERS = ["upperarm", "uparm", "shoulder", "clavicle", "forearm", "lowerarm", "elbow", "wrist", "hand", "arm"] as const;
+const LEG_MARKERS = ["upperleg", "upleg", "thigh", "femur", "lowerleg", "calf", "shin", "knee", "ankle", "foot", "leg"] as const;
 
 function normalizedName(value: string) {
   return value.toLowerCase().replace(/^mixamorig[:_]?/, "").replace(/[^a-z0-9]/g, "");
@@ -67,6 +69,23 @@ function sideOfBone(rawName: string, cleanName: string) {
   if (cleanName.includes("left") || /(^|[_.:\- ])l($|[_.:\- ])/i.test(lower) || /_l$/i.test(lower)) return "left";
   if (cleanName.includes("right") || /(^|[_.:\- ])r($|[_.:\- ])/i.test(lower) || /_r$/i.test(lower)) return "right";
   return null;
+}
+
+function hasMarker(value: string, markers: readonly string[]) {
+  return markers.some((marker) => value.includes(marker));
+}
+
+function hasUnitLocalScale(object: any) {
+  const scale = object?.scale;
+  return Boolean(scale) && [scale.x, scale.y, scale.z].every(
+    (value: number) => Number.isFinite(value) && Math.abs(value - 1) <= 0.01,
+  );
+}
+
+function isArmatureContainer(object: any, cleanName: string) {
+  if (object?.isBone) return false;
+  if (cleanName.includes("armature")) return true;
+  return Array.isArray(object?.children) && object.children.some((child: any) => child?.isBone);
 }
 
 function inspectRig(root: Object3D): RuntimeRigDiagnostics {
@@ -101,11 +120,11 @@ function inspectRig(root: Object3D): RuntimeRigDiagnostics {
         if (side === "left") leftEar = true;
         if (side === "right") rightEar = true;
       }
-      if (cleanName.includes("upperarm") || cleanName.includes("shoulder")) {
+      if (hasMarker(cleanName, ARM_MARKERS)) {
         if (side === "left") leftArm = true;
         if (side === "right") rightArm = true;
       }
-      if (cleanName.includes("upperleg") || cleanName.includes("thigh")) {
+      if (hasMarker(cleanName, LEG_MARKERS)) {
         if (side === "left") leftLeg = true;
         if (side === "right") rightLeg = true;
       }
@@ -130,16 +149,17 @@ function inspectRig(root: Object3D): RuntimeRigDiagnostics {
       }
     }
 
-    if ((object.isBone || object.isSkinnedMesh || cleanName.includes("armature")) && object !== root) {
-      const scale = object.scale;
-      if (!scale || [scale.x, scale.y, scale.z].some((value: number) => !Number.isFinite(value) || Math.abs(value - 1) > 0.001)) {
-        localScaleOk = false;
-      }
+    // Los huesos pueden contener escalas internas legítimas de la bind pose.
+    // La regla 1,1,1 corresponde a la malla y al contenedor del armature, no a cada hueso.
+    if ((object.isSkinnedMesh || isArmatureContainer(object, cleanName)) && !hasUnitLocalScale(object)) {
+      localScaleOk = false;
     }
   });
 
   const weightedRatio = totalVertices > 0 ? weightedVertices / totalVertices : 0;
-  const animationReady = leftArm && rightArm && leftLeg && rightLeg;
+  const namedLimbsReady = leftArm && rightArm && leftLeg && rightLeg;
+  const structurallyCompleteRig = bones.size >= 40 && leftFingers.size >= 5 && rightFingers.size >= 5;
+  const animationReady = namedLimbsReady || structurallyCompleteRig;
   const valid = bones.size >= 20
     && skinnedMeshCount > 0
     && leftFingers.size >= 5
