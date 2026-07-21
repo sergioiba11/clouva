@@ -8,6 +8,7 @@ const riggedViewer = readFileSync("./components/library/RiggedGarmentReviewViewe
 const finalizeRoute = readFileSync("./app/api/clothing/finalize/route.ts", "utf8");
 const creatorBootstrap = readFileSync("./components/creator-studio/CreatorStudioBootstrap.tsx", "utf8");
 const creatorSimple = readFileSync("./components/creator-studio/CreatorStudioSimple.tsx", "utf8");
+const rigWorkspace = readFileSync("./components/creator-studio/RigApprovalWorkspace.tsx", "utf8");
 
 test("Meshy crudo nunca se presenta como prenda vestida", () => {
   assert.doesNotMatch(exportStudio, /SmartTryOnViewer/);
@@ -37,12 +38,14 @@ test("la generación de preview usa el pipeline persistente de Blender", () => {
   assert.match(realReview, /data\.rigged/);
 });
 
-test("la ruta real de Creator Studio monta el flujo simple con visor real", () => {
+test("la ruta real de Creator Studio monta el flujo simple con visor y aprobación real", () => {
   assert.match(creatorBootstrap, /CreatorStudioSimple/);
   assert.match(creatorBootstrap, /Preparando el Creator Studio/);
   assert.doesNotMatch(creatorBootstrap, /UnrealObjectExport/);
   assert.doesNotMatch(creatorBootstrap, /CreatorStudioAutomatic/);
-  assert.match(creatorSimple, /RiggedGarmentReviewViewer/);
-  assert.match(creatorSimple, /StandaloneObjectPreview/);
+  assert.match(creatorSimple, /RigApprovalWorkspace/);
+  assert.match(rigWorkspace, /RiggedGarmentReviewViewer/);
+  assert.match(rigWorkspace, /StandaloneObjectPreview/);
+  assert.match(rigWorkspace, /CreatorStudioAvatarViewer/);
   assert.match(creatorSimple, /VISOR 3D/);
 });
