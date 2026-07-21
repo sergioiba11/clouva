@@ -1,0 +1,40 @@
+name: Railway direct deploy
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/railway-direct-deploy.yml
+      - app/railway-deploy-trigger.txt
+
+concurrency:
+  group: railway-direct-deploy-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+    steps:
+      - name: Checkout CLOUVA
+        uses: actions/checkout@v4
+
+      - name: Verify Railway token
+        shell: bash
+        run: |
+          if [ -z "$RAILWAY_TOKEN" ]; then
+            echo "::error::Falta el secreto RAILWAY_TOKEN en GitHub Actions."
+            exit 1
+          fi
+
+      - name: Install Railway CLI
+        run: npm install --global @railway/cli
+
+      - name: Deploy CLOUVA directly to Railway
+        run: railway up --project 738f9622-30b0-4aea-8c5d-0d8db474a47a --environment production --service clouva --ci --yes
