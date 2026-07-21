@@ -27,7 +27,7 @@ RUN wget -q "$BLENDER_URL" -O /tmp/blender.tar.xz \
 RUN pip install --no-cache-dir --break-system-packages fastapi uvicorn pydantic python-multipart
 
 WORKDIR /app
-COPY app.py app_v5.py app_v6.py app_v7.py app_v8.py app_v9.py app_v10.py app_v11.py app_v12.py app_v13.py app_v14.py app_v15.py app_v16.py avatar_reference.py complete_avatar_rig.py rig_garment.py rig_garment_v5.py rig_garment_v10.py rig_garment_v11.py rig_garment_v12.py rig_garment_v13.py rig_garment_v14.py rig_garment_v15.py rig_garment_v16.py rig_garment_v17.py rig_garment_v18.py rig_garment_v19.py rig_garment_v20.py rig_garment_v21.py rig_garment_v22.py rig_garment_v23.py rig_garment_v24.py rig_garment_v25.py rig_garment_v26.py rig_garment_v27.py rig_garment_v28.py rig_garment_v29.py rig_garment_v30.py rig_garment_v31.py rig_garment_v32.py rig_garment_v33.py rig_object.py attach_object.py export_unreal.py export_unreal_clean.py export_unreal_v31.py inspect_garment.py test_export_unreal_units.py test_avatar_reference.py test_roundtrip_signature.py test_shared_space_v39.py test_prebind_space_v40.py test_anatomical_fit_v41.py test_canonical_bind_v43.py ./
+COPY app.py app_v5.py app_v6.py app_v7.py app_v8.py app_v9.py app_v10.py app_v11.py app_v12.py app_v13.py app_v14.py app_v15.py app_v16.py avatar_reference.py complete_avatar_rig.py complete_avatar_rig_v3.py rig_garment.py rig_garment_v5.py rig_garment_v10.py rig_garment_v11.py rig_garment_v12.py rig_garment_v13.py rig_garment_v14.py rig_garment_v15.py rig_garment_v16.py rig_garment_v17.py rig_garment_v18.py rig_garment_v19.py rig_garment_v20.py rig_garment_v21.py rig_garment_v22.py rig_garment_v23.py rig_garment_v24.py rig_garment_v25.py rig_garment_v26.py rig_garment_v27.py rig_garment_v28.py rig_garment_v29.py rig_garment_v30.py rig_garment_v31.py rig_garment_v32.py rig_garment_v33.py rig_object.py attach_object.py export_unreal.py export_unreal_clean.py export_unreal_v31.py inspect_garment.py test_export_unreal_units.py test_avatar_reference.py test_roundtrip_signature.py test_shared_space_v39.py test_prebind_space_v40.py test_anatomical_fit_v41.py test_canonical_bind_v43.py ./
 COPY avatar-reference ./avatar-reference
 RUN mv app.py app_legacy.py \
     && mv app_v16.py app.py \
@@ -81,7 +81,7 @@ ENV CLOUVA_WORKER_INSPECTOR=v2
 ENV CLOUVA_GARMENT_SOURCE_ROUTING=v30
 ENV CLOUVA_GARMENT_MESH_NORMALIZATION=v31
 ENV CLOUVA_GARMENT_MODULE_LOADER=v31.2
-ENV CLOUVA_AVATAR_COMPLETE_RIG=v1
+ENV CLOUVA_AVATAR_COMPLETE_RIG=v3-world-space-validated
 ENV CLOUVA_UNREAL_MOLD_RIG=v2
 ENV CLOUVA_AVATAR_REFERENCE_PATH=/app/avatar-reference/AvatarReference.fbx
 ENV CLOUVA_AVATAR_REFERENCE_METADATA_PATH=/app/avatar-reference/clouva_avatar_data.json
@@ -89,6 +89,7 @@ ENV CLOUVA_AVATAR_REFERENCE_METADATA_PATH=/app/avatar-reference/clouva_avatar_da
 RUN test -f /app/app.py \
     && test -f /app/app_v15.py \
     && test -f /app/complete_avatar_rig.py \
+    && test -f /app/complete_avatar_rig_v3.py \
     && test -f /app/rig_garment.py \
     && test -f /app/rig_garment_v27.py \
     && test -f /app/rig_garment_v28.py \
@@ -103,8 +104,8 @@ RUN test -f /app/app.py \
     && test -f /app/test_canonical_bind_v43.py \
     && test -f /app/avatar-reference/AvatarReference.fbx \
     && test -f /app/avatar-reference/clouva_avatar_data.json \
-    && python3 -m py_compile /app/app.py /app/complete_avatar_rig.py \
-    && python3 -c "import app; paths={getattr(route, 'path', '') for route in app.app.routes}; assert '/rig' in paths; assert '/avatar/complete-rig' in paths; assert '/rig-with-unreal-mold' in paths; assert '/diagnostics/unreal-mold' in paths; assert '/diagnostics/avatar-complete-rig' in paths; assert '/diagnostics/health' in paths; assert '/diagnostics/latest-rig-failure' in paths; assert '/diagnostics/canonical-bind' in paths; assert app.MAX_CONCURRENT_BLENDER_JOBS == 1; assert app.CLEAN_ATTEMPT_VERSION == 'v43-fresh-source-per-attempt'; print('[clouva] Worker API + Unreal mold V2 routes OK')" \
+    && python3 -m py_compile /app/app.py /app/complete_avatar_rig.py /app/complete_avatar_rig_v3.py \
+    && python3 -c "import app; paths={getattr(route, 'path', '') for route in app.app.routes}; assert '/rig' in paths; assert '/avatar/complete-rig' in paths; assert '/rig-with-unreal-mold' in paths; assert '/diagnostics/unreal-mold' in paths; assert '/diagnostics/avatar-complete-rig' in paths; assert '/diagnostics/health' in paths; assert '/diagnostics/latest-rig-failure' in paths; assert '/diagnostics/canonical-bind' in paths; assert app.MAX_CONCURRENT_BLENDER_JOBS == 1; assert app.CLEAN_ATTEMPT_VERSION == 'v43-fresh-source-per-attempt'; assert app.COMPLETE_AVATAR_RIG_VERSION == 'v3-world-space-validated'; assert app.COMPLETE_AVATAR_RIG_SCRIPT.name == 'complete_avatar_rig_v3.py'; print('[clouva] Worker API + Unreal mold V2 + avatar complete rig V3 routes OK')" \
     && cd /tmp \
     && env -u PYTHONPATH /opt/blender/blender --background --factory-startup --python-exit-code 1 --python-expr "import avatar_reference; assert hasattr(avatar_reference, 'canonicalize_and_validate_bones'); print('[clouva] avatar_reference available without PYTHONPATH')" \
     && cd /app \
