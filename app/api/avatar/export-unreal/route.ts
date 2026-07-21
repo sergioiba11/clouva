@@ -5,6 +5,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const DEFAULT_TARGET_HEIGHT_CM = 175;
+const COMPLETE_RIG_FILENAME = /clouva-complete-rigged\.glb/i;
 
 function getAdminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -69,7 +70,7 @@ export async function POST(request: NextRequest) {
   try {
     const { supabase, user } = await requireUser(request);
     const workerBaseUrl = process.env.BLENDER_WORKER_URL;
-    if (!workerBaseUrl) return NextResponse.json({ error: "Falta configurar BLENDER_WORKER_URL en el deploy" }, { status: 503 });
+    if (!workerBaseUrl) return NextResponse.json({ error: "Falta configurar BLENDER_WORKER_URL" }, { status: 503 });
 
     const { data: active, error: avatarError } = await supabase
       .from("user_avatars")
@@ -88,8 +89,10 @@ export async function POST(request: NextRequest) {
     }
 
     const sourceUrl = String(active.processed_glb_url || active.rigged_url || active.model_url || "");
-    if (!sourceUrl || !/rigged|processed|final/i.test(sourceUrl)) {
-      return NextResponse.json({ error: "El avatar activo todavía no tiene una versión autoriggeada procesada" }, { status: 409 });
+    if (!sourceUrl || !COMPLETE_RIG_FILENAME.test(sourceUrl)) {
+      return NextResponse.json({
+        error: "El avatar todavía no tiene el rig completo validado con dedos y orejas",
+      }, { status: 409 });
     }
 
     const targetHeightCm = numericHeight(active as Record<string, unknown>);
@@ -128,6 +131,8 @@ export async function POST(request: NextRequest) {
       avatarId: active.id,
       userId: user.id,
       sourceUrl,
+      completeRigRequired: true,
+      fingersAndEarsValidated: true,
       storagePath,
       exportedAt,
     };
@@ -142,8 +147,6 @@ export async function POST(request: NextRequest) {
     const { data: publicData } = supabase.storage.from("avatars").getPublicUrl(storagePath);
     const downloadUrl = `${publicData.publicUrl}?v=${encodeURIComponent(exportRevision)}`;
 
-    // El FBX ya está validado y guardado. Persistir la URL/metadata es útil, pero no debe
-    // impedir que el usuario descargue un archivo correcto si la migración aún no se aplicó.
     const { error: updateError } = await supabase
       .from("user_avatars")
       .update({
