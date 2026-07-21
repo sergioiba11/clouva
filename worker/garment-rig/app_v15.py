@@ -28,6 +28,7 @@ CLEAN_ATTEMPT_VERSION = current.CLEAN_ATTEMPT_VERSION
 
 COMPLETE_AVATAR_RIG_VERSION = "v1-fingers-ears"
 COMPLETE_AVATAR_RIG_SCRIPT = Path(__file__).with_name("complete_avatar_rig.py")
+UNREAL_MOLD_RIG_VERSION = "v1-unreal-snapshot-mold"
 
 
 class CompleteAvatarRigRequest(BaseModel):
@@ -35,6 +36,16 @@ class CompleteAvatarRigRequest(BaseModel):
     require_fingers: bool = True
     require_ears: bool = True
     finger_segments: int = 3
+
+
+class RigWithUnrealMoldRequest(BaseModel):
+    avatar_url: HttpUrl
+    garment_url: HttpUrl
+    category: str
+    art_url: HttpUrl | None = None
+    color: str | None = None
+    unreal_snapshot: dict
+    attempt_id: str | None = None
 
 
 @app.post("/avatar/complete-rig")
@@ -113,6 +124,70 @@ def complete_avatar_rig(request: CompleteAvatarRigRequest):
         raise HTTPException(status_code=422, detail=f"No se pudo completar el rig del avatar: {exc}") from exc
 
 
+@app.post("/rig-with-unreal-mold")
+def rig_with_unreal_mold(request: RigWithUnrealMoldRequest):
+    if not request.unreal_snapshot:
+        raise HTTPException(status_code=400, detail="Falta el snapshot corporal devuelto por Unreal")
+
+    category_raw = request.category.strip().lower()
+    category = legacy.CATEGORY_MAP.get(category_raw, category_raw)
+    if category not in legacy.VALID_CATEGORIES:
+        raise HTTPException(status_code=400, detail="Categoría de prenda inválida")
+
+    job_dir = Path(tempfile.mkdtemp(prefix="clouva-unreal-mold-rig-"))
+    avatar_path = job_dir / "avatar-complete-rigged.glb"
+    garment_path = job_dir / "garment-original.glb"
+    output_path = job_dir / "garment-rigged.glb"
+    art_path = job_dir / "art.png"
+
+    try:
+        legacy.download(str(request.avatar_url), avatar_path)
+        legacy.download(str(request.garment_url), garment_path)
+        resolved_art_path = None
+        if request.art_url:
+            legacy.download(str(request.art_url), art_path)
+            resolved_art_path = art_path
+
+        preview_settings = {
+            "attemptId": request.attempt_id,
+            "forceFreshSource": True,
+            "cleanScene": True,
+            "moldSource": "unreal-avatar-snapshot",
+            "unrealSnapshot": request.unreal_snapshot,
+        }
+        legacy.run_blender_job(
+            f"unreal-mold-{request.attempt_id or 'sync'}",
+            job_dir,
+            avatar_path,
+            garment_path,
+            output_path,
+            category,
+            resolved_art_path,
+            request.color or "",
+            preview_settings,
+        )
+        if not output_path.is_file() or output_path.stat().st_size < 1024:
+            raise RuntimeError("Blender no generó un GLB riggeado válido usando el molde de Unreal")
+
+        return FileResponse(
+            output_path,
+            media_type="model/gltf-binary",
+            filename="clouva-garment-unreal-mold-rigged.glb",
+            background=BackgroundTask(shutil.rmtree, job_dir, True),
+            headers={
+                "X-Clouva-Mold-Source": "unreal-avatar-snapshot",
+                "X-Clouva-Mold-Version": UNREAL_MOLD_RIG_VERSION,
+                "X-Clouva-Attempt-Id": request.attempt_id or "sync",
+            },
+        )
+    except HTTPException:
+        shutil.rmtree(job_dir, ignore_errors=True)
+        raise
+    except Exception as exc:
+        shutil.rmtree(job_dir, ignore_errors=True)
+        raise HTTPException(status_code=422, detail=f"No se pudo riggear el GLB con el molde de Unreal: {exc}") from exc
+
+
 @app.get("/diagnostics/avatar-complete-rig")
 def complete_avatar_rig_health():
     return {
@@ -121,4 +196,9 @@ def complete_avatar_rig_health():
         "fingers": {"chainsPerHand": 5, "segmentsPerFinger": 3},
         "ears": {"left": True, "right": True},
         "validationRequired": True,
+        "unrealMoldRig": {
+            "supported": True,
+            "version": UNREAL_MOLD_RIG_VERSION,
+            "endpoint": "/rig-with-unreal-mold",
+        },
     }
