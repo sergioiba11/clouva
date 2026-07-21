@@ -6,8 +6,12 @@ const studio = readFileSync("./components/creator-studio/CreatorStudioSimple.tsx
 const rigWorkspace = readFileSync("./components/creator-studio/RigApprovalWorkspace.tsx", "utf8");
 const worker = readFileSync("./worker/garment-rig/app_v16.py", "utf8");
 const dockerfile = readFileSync("./worker/garment-rig/Dockerfile", "utf8");
+const exportRoute = readFileSync("./app/api/avatar/export-unreal/route.ts", "utf8");
+const commandRoute = readFileSync("./app/api/unreal/commands/route.ts", "utf8");
+const bridge = readFileSync("./clouva-unreal-bridge/src/index.ts", "utf8");
+const importer = readFileSync("./clouva-unreal-bridge/unreal/Content/Python/clouva_importer.py", "utf8");
 
-test("Creator Studio conserva el flujo simple", () => {
+ test("Creator Studio conserva el flujo simple", () => {
   for (const label of ["Elegir GLB", "Riggear avatar", "Enviar FBX", "Traer data", "Riggear GLB", "VISOR 3D"]) assert.ok(studio.includes(label));
 });
 
@@ -19,6 +23,16 @@ test("el rig se revisa visualmente antes de habilitar Unreal", () => {
   assert.match(rigWorkspace, /rightFingerChains >= 5/);
   assert.match(studio, /avatarRigReady && rigApproved/);
   assert.match(studio, /Primero aprobá el rig en el visor/);
+});
+
+test("Enviar FBX crea una orden que el bridge importa dentro de Unreal", () => {
+  assert.match(exportRoute, /unreal_import_commands/);
+  assert.match(exportRoute, /sentToUnreal: true/);
+  assert.match(commandRoute, /status, "pending"/);
+  assert.match(bridge, /Saved\/ClouvaInbox/);
+  assert.match(bridge, /api\/unreal\/commands/);
+  assert.match(importer, /AssetImportTask/);
+  assert.match(importer, /import_asset_tasks/);
 });
 
 test("Worker V16 está activo para el molde", () => {
