@@ -28,10 +28,10 @@ def inside_bounds(point, minimum, maximum, padding):
 
 def finger_segment(name):
     parts = name.split("_")
-    if len(parts) != 5 or parts[0] != "clouva":
+    if len(parts) != 4 or parts[0] != "clouva":
         return None
     try:
-        return int(parts[3])
+        return int(parts[2])
     except ValueError:
         return None
 
@@ -41,8 +41,8 @@ def expected_parent_name(name):
     segment = finger_segment(name)
     if segment is None:
         return None
-    side = parts[4]
-    finger = parts[2]
+    side = parts[3]
+    finger = parts[1]
     if segment == 1:
         return f"clouva_palm_root_{side}"
     return f"clouva_{finger}_{segment - 1:02d}_{side}"
@@ -53,7 +53,7 @@ def next_segment_name(name):
     segment = finger_segment(name)
     if segment is None or segment >= v5.legacy.SEGMENTS:
         return None
-    return f"clouva_{parts[2]}_{segment + 1:02d}_{parts[4]}"
+    return f"clouva_{parts[1]}_{segment + 1:02d}_{parts[3]}"
 
 
 def validate_roundtrip_joint_hierarchy(armature, report):
