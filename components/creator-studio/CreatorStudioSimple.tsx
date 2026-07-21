@@ -10,15 +10,13 @@ import {
   RefreshCw,
   Server,
   Shirt,
-  UploadCloud,
   UserRound,
   X,
   XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
-import { RiggedGarmentReviewViewer } from "@/components/library/RiggedGarmentReviewViewer";
-import { StandaloneObjectPreview } from "@/components/library/StandaloneObjectPreview";
+import { RigApprovalWorkspace } from "@/components/creator-studio/RigApprovalWorkspace";
 import {
   OFFICIAL_CLOUVA_AVATAR,
   type ActiveAvatar,
@@ -165,6 +163,7 @@ export function CreatorStudioSimple() {
   const [avatarRigging, setAvatarRigging] = useState(false);
   const [avatarRigProgress, setAvatarRigProgress] = useState(0);
   const [rigProfile, setRigProfile] = useState<RigFeatureReport | null>(null);
+  const [rigApproved, setRigApproved] = useState(false);
   const [avatarExporting, setAvatarExporting] = useState(false);
   const [avatarFbx, setAvatarFbx] = useState<UnrealExport | null>(null);
   const [garmentRigging, setGarmentRigging] = useState(false);
@@ -303,6 +302,7 @@ export function CreatorStudioSimple() {
     setShowAvatarPicker(true);
     setAvatarFbx(null);
     setBodyDataReady(false);
+    setRigApproved(false);
     setError(null);
     setMessage("GLB elegido. Ahora confirmá qué avatar va a usar.");
     setViewerRevision((value) => value + 1);
@@ -313,9 +313,10 @@ export function CreatorStudioSimple() {
     setShowAvatarPicker(false);
     setAvatarFbx(null);
     setBodyDataReady(false);
+    setRigApproved(false);
     setRigProfile(COMPLETE_RIG_FILE.test(choice.avatar.modelUrl ?? "") ? { complete: true } : null);
     setError(null);
-    setMessage("Avatar elegido. El siguiente paso es riggearlo con dedos y orejas.");
+    setMessage("Avatar elegido. Riggealo y después aprobalo visualmente en Huesos y Diagnóstico.");
     setViewerRevision((value) => value + 1);
     if (!user || choice.avatar.source === "official") return;
     await supabase.from("user_avatars").update({ is_active: false }).eq("user_id", user.id);
@@ -326,6 +327,7 @@ export function CreatorStudioSimple() {
     setAvatarRigging(true);
     setAvatarRigProgress(0);
     setRigProfile(null);
+    setRigApproved(false);
     setAvatarFbx(null);
     setBodyDataReady(false);
     setError(null);
@@ -338,7 +340,8 @@ export function CreatorStudioSimple() {
         setAvatarRigProgress(100);
         setActiveAvatar({ ...activeAvatar, modelUrl: created.newAvatarUrl, updatedAt: new Date().toISOString() });
         await loadAvatars();
-        setMessage("Avatar listo con rig completo para continuar.");
+        setViewerRevision((value) => value + 1);
+        setMessage("Rig completo generado. Revisá Huesos, Animación y Diagnóstico antes de aprobarlo.");
         return;
       }
 
@@ -373,7 +376,7 @@ export function CreatorStudioSimple() {
           await loadActiveAvatar(user?.id ?? null);
           await loadAvatars();
           setViewerRevision((value) => value + 1);
-          setMessage("Avatar riggeado con dedos y orejas. Ya podés preparar el FBX.");
+          setMessage("Avatar riggeado. Revisá los huesos y probá la animación antes de aprobar para Unreal.");
           return;
         }
         await sleep(5000);
@@ -391,6 +394,11 @@ export function CreatorStudioSimple() {
 
   const exportAvatarToUnreal = async () => {
     if (!session?.access_token) return;
+    if (!rigApproved) {
+      setError("Primero aprobá el rig en el visor.");
+      setMessage("Primero aprobá el rig en el visor.");
+      return;
+    }
     setAvatarExporting(true);
     setAvatarFbx(null);
     setError(null);
@@ -462,7 +470,7 @@ export function CreatorStudioSimple() {
       if (!response.ok || !data.ok || !data.rigged) throw new Error(data.error || data.warning || "Blender no pudo riggear el GLB con el molde.");
       await loadAssets();
       setViewerRevision((value) => value + 1);
-      setMessage("GLB riggeado con el molde del avatar. Resultado listo en el visor.");
+      setMessage("GLB riggeado con el molde del avatar. Resultado listo para probar en Animación.");
     } catch (cause) {
       const nextError = cause instanceof Error ? cause.message : "No se pudo riggear el GLB.";
       setError(nextError);
@@ -472,19 +480,19 @@ export function CreatorStudioSimple() {
     }
   };
 
-  const canExportAvatar = avatarRigReady && !avatarRigging && !avatarExporting;
+  const canExportAvatar = avatarRigReady && rigApproved && !avatarRigging && !avatarExporting;
   const canReadBody = Boolean(avatarFbx?.url) && !avatarExporting;
   const canRigGlb = Boolean(
     selectedAsset?.kind === "clothing"
     && selectedAsset.clothingItemId
     && selectedAsset.modelUrl
     && avatarRigReady
+    && rigApproved
     && avatarFbx?.url
     && bodyDataReady
     && unreal.snapshot
     && !garmentRigging,
   );
-  const viewerUrl = selectedAsset?.modelUrl || activeAvatar.modelUrl || undefined;
   const dressedPreview = Boolean(selectedAsset?.kind === "clothing" && selectedAsset.rigged && selectedAsset.modelUrl);
 
   if (loading || !user) return null;
@@ -495,7 +503,7 @@ export function CreatorStudioSimple() {
         <div>
           <span>CLOUVA</span>
           <h1>Creator Studio</h1>
-          <p>GLB → avatar → Unreal → molde → rig final</p>
+          <p>GLB → rig visual → aprobación → Unreal → molde → rig final</p>
         </div>
         <button type="button" className={styles.refresh} onClick={() => void Promise.all([loadAssets(), loadAvatars(), readUnreal(false)])}>
           <RefreshCw /> Actualizar
@@ -516,25 +524,24 @@ export function CreatorStudioSimple() {
       <div className={styles.workspace}>
         <div className={styles.viewerCard}>
           <div className={styles.viewerHeader}>
-            <div><Box /> VISOR 3D</div>
-            <span>{dressedPreview ? "Avatar vestido" : selectedAsset ? "GLB seleccionado" : "Avatar"}</span>
+            <div><Box /> VISOR 3D · VALIDACIÓN DE RIG</div>
+            <span>{rigApproved ? "Rig aprobado" : avatarRigReady ? "Esperando aprobación" : selectedAsset ? "GLB seleccionado" : "Avatar"}</span>
           </div>
-          <div className={styles.viewer} key={`${viewerRevision}:${selectedAsset?.id ?? activeAvatar.id}`}>
-            {dressedPreview && selectedAsset?.modelUrl ? (
-              <RiggedGarmentReviewViewer
-                modelUrl={selectedAsset.modelUrl}
-                pose="Idle"
-                view="Frente"
-                showAvatar
-                showGarment
-                showRig={false}
-                onStatus={setMessage}
-              />
-            ) : viewerUrl ? (
-              <StandaloneObjectPreview modelUrl={viewerUrl} />
-            ) : (
-              <div className={styles.emptyViewer}><UploadCloud /> Elegí un GLB</div>
-            )}
+          <div className={styles.viewer}>
+            <RigApprovalWorkspace
+              avatar={activeAvatar}
+              selectedModelUrl={selectedAsset?.modelUrl}
+              selectedModelName={selectedAsset?.name}
+              dressedPreview={dressedPreview}
+              avatarRigReady={avatarRigReady}
+              rigProfile={rigProfile}
+              revision={viewerRevision}
+              onStatus={(status) => {
+                setError(null);
+                setMessage(status);
+              }}
+              onApprovalChange={setRigApproved}
+            />
           </div>
           <div className={error ? styles.viewerMessageError : styles.viewerMessage}>
             {error ? <XCircle /> : <CheckCircle2 />}
@@ -543,12 +550,12 @@ export function CreatorStudioSimple() {
         </div>
 
         <aside className={styles.flow}>
-          <div className={styles.step} data-ready={avatarRigReady}>
+          <div className={styles.step} data-ready={avatarRigReady && rigApproved}>
             <span className={styles.stepNumber}>1</span>
             <div className={styles.stepCopy}>
               <small>AVATAR</small>
-              <strong>Rig completo</strong>
-              <p>{avatarRigReady ? "Dedos y orejas validados" : "Genera esqueleto, dedos, orejas y pesos"}</p>
+              <strong>Rig completo y aprobado</strong>
+              <p>{rigApproved ? "Huesos, pesos, escala y animación aprobados" : avatarRigReady ? "Abrí Huesos y Diagnóstico; después tocá Aprobar rig" : "Genera esqueleto, dedos, orejas y pesos"}</p>
               {avatarRigging ? <div className={styles.progress}><i style={{ width: `${Math.max(avatarRigProgress, 4)}%` }} /></div> : null}
             </div>
             <button type="button" onClick={() => void rigAvatar()} disabled={!selectedAsset || avatarRigging}>
@@ -562,7 +569,7 @@ export function CreatorStudioSimple() {
             <div className={styles.stepCopy}>
               <small>UNREAL</small>
               <strong>Avatar FBX</strong>
-              <p>{avatarFbx?.url ? "FBX validado y generado" : "Prepara el rig para Unreal con escala 1"}</p>
+              <p>{avatarFbx?.url ? "FBX validado y generado" : rigApproved ? "Rig aprobado; ya puede prepararse para Unreal" : "Bloqueado hasta aprobar el rig en el visor"}</p>
             </div>
             <button type="button" onClick={() => void exportAvatarToUnreal()} disabled={!canExportAvatar}>
               {avatarExporting ? <Loader2 className={styles.spin} /> : <Download />}
@@ -587,7 +594,7 @@ export function CreatorStudioSimple() {
             <div className={styles.stepCopy}>
               <small>BLENDER</small>
               <strong>Riggear GLB con molde</strong>
-              <p>{selectedAsset?.kind === "storage" ? "Guardalo como pieza para habilitar el rig" : selectedAsset?.rigged ? "Resultado listo en el visor" : "Se habilita cuando avatar, FBX y cuerpo estén listos"}</p>
+              <p>{selectedAsset?.kind === "storage" ? "Guardalo como pieza para habilitar el rig" : selectedAsset?.rigged ? "Resultado listo para probar en el visor" : "Se habilita cuando rig, FBX y cuerpo estén listos"}</p>
             </div>
             <button type="button" onClick={() => void rigGlbFromMold()} disabled={!canRigGlb}>
               {garmentRigging ? <Loader2 className={styles.spin} /> : <Shirt />}
@@ -602,7 +609,7 @@ export function CreatorStudioSimple() {
             </article>
             <article>
               <span className={avatarRigging || garmentRigging ? styles.busyDot : styles.onlineDot} />
-              <div><small>BLENDER WORKER</small><strong>{avatarRigging || garmentRigging ? "Procesando" : "Disponible"}</strong><p>{avatarRigReady ? `${rigProfile?.boneCount ?? "Rig"} · dedos y orejas OK` : "Esperando trabajo"}</p></div>
+              <div><small>BLENDER WORKER</small><strong>{avatarRigging || garmentRigging ? "Procesando" : "Disponible"}</strong><p>{rigApproved ? "Rig aprobado en visor" : avatarRigReady ? `${rigProfile?.boneCount ?? "Rig"} · falta aprobación visual` : "Esperando trabajo"}</p></div>
             </article>
           </div>
         </aside>
