@@ -22,14 +22,13 @@ MAX_CONCURRENT_BLENDER_JOBS = current.MAX_CONCURRENT_BLENDER_JOBS
 BLENDER_SINGLE_FLIGHT_VERSION = current.BLENDER_SINGLE_FLIGHT_VERSION
 RIG_DIAGNOSTICS_VERSION = current.RIG_DIAGNOSTICS_VERSION
 CLEAN_ATTEMPT_VERSION = current.CLEAN_ATTEMPT_VERSION
-COMPLETE_AVATAR_RIG_VERSION = "v3-world-space-validated"
+COMPLETE_AVATAR_RIG_VERSION = "v4-connected-roundtrip"
 COMPLETE_AVATAR_RIG_SCRIPT = Path(__file__).with_name("complete_avatar_rig_v3.py")
 RigWithUnrealMoldRequest = current.RigWithUnrealMoldRequest
 
 # Las rutas /avatar/complete-rig y /diagnostics/avatar-complete-rig fueron
 # registradas al importar app_v15. Sus funciones leen los globales de ese
-# módulo, no las variables homónimas de app_v16. Sin esta asignación seguían
-# ejecutando complete_avatar_rig.py V1 aunque Railway mostrara el deploy V3.
+# módulo, no las variables homónimas de app_v16.
 current.COMPLETE_AVATAR_RIG_VERSION = COMPLETE_AVATAR_RIG_VERSION
 current.COMPLETE_AVATAR_RIG_SCRIPT = COMPLETE_AVATAR_RIG_SCRIPT
 
