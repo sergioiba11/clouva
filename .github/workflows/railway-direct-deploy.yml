@@ -8,6 +8,11 @@ on:
     paths:
       - .github/workflows/railway-direct-deploy.yml
       - app/railway-deploy-trigger.txt
+  pull_request:
+    branches:
+      - main
+    paths:
+      - app/railway-deploy-trigger.txt
 
 concurrency:
   group: railway-direct-deploy-production
@@ -15,6 +20,7 @@ concurrency:
 
 jobs:
   deploy:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
