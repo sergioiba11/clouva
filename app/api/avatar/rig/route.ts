@@ -9,7 +9,6 @@ export const maxDuration = 300;
 const JOB_KEY = "clouva_avatar_complete_rig_job";
 const PROFILE_KEY = "clouva_avatar_complete_rig_profile";
 const COMPLETE_FILENAME = "clouva-complete-rigged.glb";
-const MAX_JOB_AGE_MS = 30 * 60 * 1000;
 const ACTIVE_TASK_STATES = new Set(["PENDING", "IN_PROGRESS"]);
 const FAILED_TASK_STATES = new Set(["FAILED", "EXPIRED", "CANCELED"]);
 const DERIVED_RIG_PATTERN = /(?:complete-rigged|rigged|processed|final)(?:[-_.]|$)/i;
@@ -349,25 +348,8 @@ export async function POST(request: NextRequest) {
         });
       }
 
-      if (force) {
-        stage = "limpiar-intento-anterior";
-        await updateMetadata(supabase, user.id, { job: null, profile: null });
-      } else if (storedJob && jobMatches(storedJob, source)) {
-        stage = "revisar-intento-existente";
-        const existingTask = await getRiggingTask(storedJob.taskId);
-        const ageMs = Date.now() - storedJob.startedAt;
-        if (ACTIVE_TASK_STATES.has(existingTask.status) && ageMs < MAX_JOB_AGE_MS) {
-          return NextResponse.json({
-            ...storedJob,
-            status: existingTask.status,
-            progress: existingTask.progress,
-            resumed: true,
-          });
-        }
-        if (existingTask.status === "SUCCEEDED") {
-          return NextResponse.json({ ...storedJob, status: "SUCCEEDED", progress: 99, resumed: true });
-        }
-      }
+      stage = "limpiar-intento-anterior";
+      await updateMetadata(supabase, user.id, { job: null, profile: null });
 
       stage = "rig-base-desde-original";
       const taskId = await createRiggingTask(source.originalUrl, 1.8);
