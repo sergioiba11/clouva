@@ -81,7 +81,7 @@ ENV CLOUVA_WORKER_INSPECTOR=v2
 ENV CLOUVA_GARMENT_SOURCE_ROUTING=v30
 ENV CLOUVA_GARMENT_MESH_NORMALIZATION=v31
 ENV CLOUVA_GARMENT_MODULE_LOADER=v31.2
-ENV CLOUVA_AVATAR_COMPLETE_RIG=v4-connected-roundtrip
+ENV CLOUVA_AVATAR_COMPLETE_RIG=v5-proportional-roots
 ENV CLOUVA_UNREAL_MOLD_RIG=v2
 ENV CLOUVA_AVATAR_REFERENCE_PATH=/app/avatar-reference/AvatarReference.fbx
 ENV CLOUVA_AVATAR_REFERENCE_METADATA_PATH=/app/avatar-reference/clouva_avatar_data.json
@@ -105,7 +105,7 @@ RUN test -f /app/app.py \
     && test -f /app/avatar-reference/AvatarReference.fbx \
     && test -f /app/avatar-reference/clouva_avatar_data.json \
     && python3 -m py_compile /app/app.py /app/complete_avatar_rig.py /app/complete_avatar_rig_v3.py \
-    && python3 -c "import app; paths={getattr(route, 'path', '') for route in app.app.routes}; avatar_route=next(route for route in app.app.routes if getattr(route, 'path', '') == '/avatar/complete-rig' and 'POST' in (getattr(route, 'methods', set()) or set())); assert '/rig' in paths; assert '/avatar/complete-rig' in paths; assert '/rig-with-unreal-mold' in paths; assert '/diagnostics/unreal-mold' in paths; assert '/diagnostics/avatar-complete-rig' in paths; assert '/diagnostics/health' in paths; assert '/diagnostics/latest-rig-failure' in paths; assert '/diagnostics/canonical-bind' in paths; assert app.MAX_CONCURRENT_BLENDER_JOBS == 1; assert app.CLEAN_ATTEMPT_VERSION == 'v43-fresh-source-per-attempt'; assert app.COMPLETE_AVATAR_RIG_VERSION == 'v4-connected-roundtrip'; assert app.COMPLETE_AVATAR_RIG_SCRIPT.name == 'complete_avatar_rig_v3.py'; assert app.current.COMPLETE_AVATAR_RIG_VERSION == 'v4-connected-roundtrip'; assert app.current.COMPLETE_AVATAR_RIG_SCRIPT.name == 'complete_avatar_rig_v3.py'; assert avatar_route.endpoint.__globals__['COMPLETE_AVATAR_RIG_SCRIPT'].name == 'complete_avatar_rig_v3.py'; print('[clouva] Worker API + actual avatar complete rig V4 connected roundtrip route OK')" \
+    && python3 -c "import app; paths={getattr(route, 'path', '') for route in app.app.routes}; avatar_route=next(route for route in app.app.routes if getattr(route, 'path', '') == '/avatar/complete-rig' and 'POST' in (getattr(route, 'methods', set()) or set())); assert '/rig' in paths; assert '/avatar/complete-rig' in paths; assert '/rig-with-unreal-mold' in paths; assert '/diagnostics/unreal-mold' in paths; assert '/diagnostics/avatar-complete-rig' in paths; assert '/diagnostics/health' in paths; assert '/diagnostics/latest-rig-failure' in paths; assert '/diagnostics/canonical-bind' in paths; assert app.MAX_CONCURRENT_BLENDER_JOBS == 1; assert app.CLEAN_ATTEMPT_VERSION == 'v43-fresh-source-per-attempt'; assert app.COMPLETE_AVATAR_RIG_VERSION == 'v5-proportional-roots'; assert app.COMPLETE_AVATAR_RIG_SCRIPT.name == 'complete_avatar_rig_v3.py'; assert app.current.COMPLETE_AVATAR_RIG_VERSION == 'v5-proportional-roots'; assert app.current.COMPLETE_AVATAR_RIG_SCRIPT.name == 'complete_avatar_rig_v3.py'; assert avatar_route.endpoint.__globals__['COMPLETE_AVATAR_RIG_SCRIPT'].name == 'complete_avatar_rig_v3.py'; print('[clouva] Worker API + actual avatar complete rig V5 proportional roots route OK')" \
     && cd /tmp \
     && env -u PYTHONPATH /opt/blender/blender --background --factory-startup --python-exit-code 1 --python-expr "import avatar_reference; assert hasattr(avatar_reference, 'canonicalize_and_validate_bones'); print('[clouva] avatar_reference available without PYTHONPATH')" \
     && cd /app \
