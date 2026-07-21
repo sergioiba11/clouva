@@ -3,7 +3,7 @@ from mathutils import Vector
 
 import complete_avatar_rig as legacy
 
-VERSION = "clouva-complete-rig-v3-world-space"
+VERSION = "clouva-complete-rig-v4-connected-roundtrip"
 PREFIXES = tuple(f"clouva_{name}_" for name in legacy.FINGER_NAMES) + ("clouva_ear_",)
 
 
@@ -23,18 +23,12 @@ def clamp(value, low, high):
     return max(low, min(high, value))
 
 
-def world_points(armature, bone):
-    return armature.matrix_world @ bone.head, armature.matrix_world @ bone.tail
+def world_point(armature, point):
+    return armature.matrix_world @ Vector(point)
 
 
-def set_world_points(armature, bone, head, tail):
-    inverse = armature.matrix_world.inverted_safe()
-    local_head = inverse @ Vector(head)
-    local_tail = inverse @ Vector(tail)
-    if (local_tail - local_head).length <= 1e-7:
-        raise RuntimeError(f"Generated bone has zero length: {bone.name}")
-    bone.head = local_head
-    bone.tail = local_tail
+def local_point(armature, point):
+    return armature.matrix_world.inverted_safe() @ Vector(point)
 
 
 def choose_hand(armature, side):
@@ -60,18 +54,14 @@ def choose_hand(armature, side):
     return legacy.hand_bone(armature, side)
 
 
-def distal_endpoint(first, second, center, lateral, side_sign):
-    first_score = side_sign * (first - center).dot(lateral)
-    second_score = side_sign * (second - center).dot(lateral)
-    return (first, second) if second_score >= first_score else (second, first)
-
-
-def validate_geometry(armature, report):
+def validate_geometry(armature, report, roundtrip=False):
     minimum, maximum, size = report["bounds"]
     height = max(float(size.z), 0.5)
     padding = height * 0.10
     errors = []
     maximum_length = 0.0
+    maximum_link = 0.0
+
     for name in report["fingerNames"] + report["earNames"]:
         bone = armature.data.bones.get(name)
         if bone is None:
@@ -81,25 +71,38 @@ def validate_geometry(armature, report):
         tail = armature.matrix_world @ bone.tail_local
         length = (tail - head).length
         maximum_length = max(maximum_length, length)
-        minimum_length = height * (0.005 if name.startswith("clouva_ear_") else 0.006)
-        if not minimum_length <= length <= height * 0.030:
+        minimum_length = height * 0.004
+        maximum_allowed = height * 0.035
+        if not minimum_length <= length <= maximum_allowed:
             errors.append(f"invalid-length:{name}:{length:.6f}")
         for label, point in (("head", head), ("tail", tail)):
-            if any(float(point[index]) < float(minimum[index]) - padding or float(point[index]) > float(maximum[index]) + padding for index in range(3)):
+            if any(
+                float(point[index]) < float(minimum[index]) - padding
+                or float(point[index]) > float(maximum[index]) + padding
+                for index in range(3)
+            ):
                 errors.append(f"outside-avatar:{name}:{label}")
+        if bone.parent is not None:
+            parent_tail = armature.matrix_world @ bone.parent.tail_local
+            link = (head - parent_tail).length
+            maximum_link = max(maximum_link, link)
+            if link > height * 0.025:
+                errors.append(f"broken-parent-link:{name}:{link:.6f}")
+
     return {
         "valid": not errors,
         "errors": errors,
         "avatarHeight": height,
         "maximumSegmentLength": maximum_length,
-        "space": "world-to-armature-local",
+        "maximumParentLink": maximum_link,
+        "space": "connected-armature-local",
+        "roundtrip": roundtrip,
     }
 
 
 def ensure_extended_bones(armature, meshes):
     minimum, maximum, size = legacy.world_bounds(meshes)
     height = max(float(size.z), 0.5)
-    center = (minimum + maximum) * 0.5
     hands = {"l": choose_hand(armature, "l"), "r": choose_hand(armature, "r")}
     head = legacy.head_bone(armature)
     if not hands["l"] or not hands["r"]:
@@ -124,67 +127,66 @@ def ensure_extended_bones(armature, meshes):
     if not left or not right or not head_bone:
         raise RuntimeError("Source bones disappeared while rebuilding the extended rig")
 
-    left_points = world_points(armature, left)
-    right_points = world_points(armature, right)
-    lateral = ((left_points[0] + left_points[1]) - (right_points[0] + right_points[1])) * 0.5
+    left_world = world_point(armature, left.tail)
+    right_world = world_point(armature, right.tail)
+    lateral = left_world - right_world
     lateral.z = 0.0
     lateral = unit(lateral, (1.0, 0.0, 0.0))
     vertical = Vector((0.0, 0.0, 1.0))
-    segment_length = clamp(height * 0.0145, height * 0.010, height * 0.020)
-    spread_step = height * 0.0034
-    spread = {"thumb": -2.0, "index": -1.0, "middle": 0.0, "ring": 1.0, "pinky": 2.0}
+    segment_length = clamp(height * 0.0135, height * 0.009, height * 0.018)
+    fan = {
+        "thumb": -0.42,
+        "index": -0.18,
+        "middle": 0.0,
+        "ring": 0.18,
+        "pinky": 0.36,
+    }
     added = []
     finger_names = []
 
     for side, source_name in hand_names.items():
         source = bones[source_name]
         side_sign = 1.0 if side == "l" else -1.0
-        source_head, source_tail = world_points(armature, source)
-        wrist, palm = distal_endpoint(source_head, source_tail, center, lateral, side_sign)
+        source_head_world = world_point(armature, source.head)
+        source_tail_world = world_point(armature, source.tail)
         outward = lateral * side_sign
-        direction = unit(palm - wrist, outward)
-        if direction.dot(outward) < 0.08:
-            direction = unit(direction + outward * 0.85, outward)
-        spread_axis = unit(vertical.cross(direction), (0.0, 1.0, 0.0))
-        palm_normal = unit(direction.cross(spread_axis), vertical)
+        hand_direction = unit(source_tail_world - source_head_world, outward)
+        if hand_direction.dot(outward) < 0.05:
+            hand_direction = unit(hand_direction + outward, outward)
+        spread_axis = unit(vertical.cross(hand_direction), (0.0, 1.0, 0.0))
 
         for finger in legacy.FINGER_NAMES:
             previous = source
-            direction_for_finger = direction.copy()
-            offset = spread_axis * spread[finger] * spread_step
+            direction = unit(hand_direction + spread_axis * fan[finger], hand_direction)
             if finger == "thumb":
-                direction_for_finger = unit(direction * 0.72 - palm_normal * 0.42 - spread_axis * 0.16, direction)
-                offset += -palm_normal * height * 0.0055
-            next_head = palm + offset
+                direction = unit(direction - vertical * 0.28, direction)
             for segment in range(1, legacy.SEGMENTS + 1):
                 name = f"clouva_{finger}_{segment:02d}_{side}"
                 bone = bones.new(name)
-                next_tail = next_head + direction_for_finger * segment_length * (1.0 - (segment - 1) * 0.12)
-                set_world_points(armature, bone, next_head, next_tail)
                 bone.parent = previous
-                bone.use_connect = segment > 1
+                bone.use_connect = True
+                bone.head = previous.tail.copy()
+                head_world = world_point(armature, bone.head)
+                tail_world = head_world + direction * segment_length * (1.0 - (segment - 1) * 0.12)
+                bone.tail = local_point(armature, tail_world)
                 bone.use_deform = True
                 bone.roll = 0.0
                 added.append(name)
                 finger_names.append(name)
                 previous = bone
-                next_head = next_tail
 
-    head_start, head_end = world_points(armature, head_bone)
-    head_center = (head_start + head_end) * 0.5
-    ear_span = clamp(height * 0.043, height * 0.032, height * 0.060)
-    ear_length = clamp(height * 0.012, height * 0.008, height * 0.018)
-    ear_height = clamp(head_center.z, minimum.z + height * 0.78, minimum.z + height * 0.94)
+    head_tail_world = world_point(armature, head_bone.tail)
+    ear_length = clamp(height * 0.020, height * 0.014, height * 0.026)
     ear_names = []
     for side in ("l", "r"):
         sign = 1.0 if side == "l" else -1.0
         name = f"clouva_ear_{side}"
         bone = bones.new(name)
-        ear_head = head_center + lateral * sign * ear_span
-        ear_head.z = ear_height
-        set_world_points(armature, bone, ear_head, ear_head + vertical * ear_length)
         bone.parent = head_bone
-        bone.use_connect = False
+        bone.use_connect = True
+        bone.head = head_bone.tail.copy()
+        ear_direction = unit(lateral * sign - vertical * 0.20, lateral * sign)
+        bone.tail = local_point(armature, head_tail_world + ear_direction * ear_length)
         bone.use_deform = True
         bone.roll = 0.0
         added.append(name)
@@ -205,6 +207,7 @@ def ensure_extended_bones(armature, meshes):
 
 
 original_validate = legacy.validate_profile
+original_export = legacy.export_glb
 
 
 def validate_profile(armature, report, finger_weighted, ear_weighted, fallback):
@@ -216,8 +219,31 @@ def validate_profile(armature, report, finger_weighted, ear_weighted, fallback):
     return profile
 
 
+def export_glb_with_roundtrip(path):
+    original_export(path)
+    legacy.clear_scene()
+    bpy.ops.import_scene.gltf(filepath=str(path))
+    objects = legacy.imported_objects()
+    meshes = [obj for obj in objects if obj.type == "MESH" and len(obj.data.vertices) > 0]
+    armatures = [obj for obj in objects if obj.type == "ARMATURE"]
+    if not meshes or not armatures:
+        raise RuntimeError("Roundtrip validation could not reload the exported avatar")
+    armature = legacy.choose_armature(armatures)
+    minimum, maximum, size = legacy.world_bounds(meshes)
+    names = [bone.name for bone in armature.data.bones if is_generated(bone.name)]
+    report = {
+        "fingerNames": [name for name in names if not name.startswith("clouva_ear_")],
+        "earNames": [name for name in names if name.startswith("clouva_ear_")],
+        "bounds": (minimum, maximum, size),
+    }
+    geometry = validate_geometry(armature, report, roundtrip=True)
+    if not geometry["valid"]:
+        raise RuntimeError(f"Exported GLB roundtrip rig validation failed: {geometry}")
+
+
 legacy.ensure_extended_bones = ensure_extended_bones
 legacy.validate_profile = validate_profile
+legacy.export_glb = export_glb_with_roundtrip
 
 if __name__ == "__main__":
     legacy.main()
