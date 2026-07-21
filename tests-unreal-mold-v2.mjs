@@ -22,4 +22,6 @@ test("el Worker expone la causa real del fallo", () => {
   assert.match(workerV16, /_failure_from_job/);
   assert.match(workerV16, /technicalError/);
   assert.match(workerV16, /diagnostics\/unreal-mold/);
+  assert.match(workerV16, /extract_blender_failure\([\s\S]*details\.get\("stdout"\)[\s\S]*details\.get\("stderr"\)/);
+  assert.doesNotMatch(workerV16, /extract_blender_failure\(\s*\{/);
 });

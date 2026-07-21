@@ -49,10 +49,10 @@ def _failure_from_job(snapshot: dict) -> str:
     technical = str(snapshot.get("technicalError") or "").strip()
     visible = str(snapshot.get("error") or "").strip()
     details = snapshot.get("details") if isinstance(snapshot.get("details"), dict) else {}
-    extracted = extract_blender_failure({
-        "stdout": details.get("stdout") or "",
-        "stderr": details.get("stderr") or "",
-    })
+    extracted = extract_blender_failure(
+        details.get("stdout") or "",
+        details.get("stderr") or "",
+    )
     reason = technical or visible or extracted or "Blender no generó un GLB riggeado válido"
     return f"{stage}: {reason}" if stage else reason
 
