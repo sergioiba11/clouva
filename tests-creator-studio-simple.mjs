@@ -36,7 +36,7 @@ test("el diagnóstico no confunde la bind pose con una escala inválida", () => 
 test("Enviar FBX crea una orden que el bridge importa dentro de Unreal", () => {
   assert.match(exportRoute, /unreal_import_commands/);
   assert.match(exportRoute, /sentToUnreal: true/);
-  assert.match(commandRoute, /status, "pending"/);
+  assert.match(commandRoute, /\.eq\("status", "pending"\)/);
   assert.match(bridge, /Saved\/ClouvaInbox/);
   assert.match(bridge, /api\/unreal\/commands/);
   assert.match(importer, /AssetImportTask/);
