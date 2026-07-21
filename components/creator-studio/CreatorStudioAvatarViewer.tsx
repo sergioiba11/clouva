@@ -1,1 +1,1 @@
-export * from "./CreatorStudioAvatarViewerV4";
+export * from "./CreatorStudioAvatarViewerV5";
