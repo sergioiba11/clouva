@@ -4,7 +4,7 @@ on:
   pull_request:
     paths:
       - "components/creator-studio/CreatorStudioAvatarViewer.tsx"
-      - "components/creator-studio/CreatorStudioAvatarViewerV4.tsx"
+      - "components/creator-studio/CreatorStudioAvatarViewerV5.tsx"
       - "tests-creator-viewer-anatomy.mjs"
       - ".github/workflows/creator-viewer-anatomy.yml"
 
