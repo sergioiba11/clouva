@@ -60,7 +60,7 @@ function errorMessage(cause: unknown, fallback: string) {
       const serialized = JSON.stringify(cause);
       if (serialized && serialized !== "{}") return serialized.slice(0, 600);
     } catch {
-      // Keep the user-facing fallback below.
+      // Keep fallback.
     }
   }
   return fallback;
@@ -90,9 +90,7 @@ export async function POST(request: NextRequest) {
 
     const sourceUrl = String(active.processed_glb_url || active.rigged_url || active.model_url || "");
     if (!sourceUrl || !COMPLETE_RIG_FILENAME.test(sourceUrl)) {
-      return NextResponse.json({
-        error: "El avatar todavía no tiene el rig completo validado con dedos y orejas",
-      }, { status: 409 });
+      return NextResponse.json({ error: "El avatar todavía no tiene el rig completo validado con dedos y orejas" }, { status: 409 });
     }
 
     const targetHeightCm = numericHeight(active as Record<string, unknown>);
@@ -123,9 +121,11 @@ export async function POST(request: NextRequest) {
 
     const exportedAt = new Date().toISOString();
     const exportRevision = exportedAt.replace(/\D/g, "").slice(0, 14);
-    const filename = `clouva-avatar-${String(active.id).slice(0, 8)}-unreal.fbx`;
-    const storedFilename = `clouva-avatar-${String(active.id).slice(0, 8)}-unreal-${exportRevision}.fbx`;
+    const shortAvatarId = String(active.id).slice(0, 8);
+    const filename = `clouva-avatar-${shortAvatarId}-unreal.fbx`;
+    const storedFilename = `clouva-avatar-${shortAvatarId}-unreal-${exportRevision}.fbx`;
     const storagePath = `${user.id}/${active.id}/unreal/${storedFilename}`;
+    const destinationPath = `/Game/CLOUVA/Avatars/Avatar_${shortAvatarId}`;
     const exportMetadata = {
       ...metadata,
       avatarId: active.id,
@@ -134,6 +134,7 @@ export async function POST(request: NextRequest) {
       completeRigRequired: true,
       fingersAndEarsValidated: true,
       storagePath,
+      destinationPath,
       exportedAt,
     };
 
@@ -147,18 +148,34 @@ export async function POST(request: NextRequest) {
     const { data: publicData } = supabase.storage.from("avatars").getPublicUrl(storagePath);
     const downloadUrl = `${publicData.publicUrl}?v=${encodeURIComponent(exportRevision)}`;
 
+    const { data: importCommand, error: commandError } = await supabase
+      .from("unreal_import_commands")
+      .insert({
+        user_id: user.id,
+        avatar_id: active.id,
+        command_type: "import_avatar",
+        source_url: downloadUrl,
+        filename,
+        destination_path: destinationPath,
+        status: "pending",
+        progress: 0,
+      })
+      .select("id,status,progress,created_at")
+      .single();
+    if (commandError) throw new Error(errorMessage(commandError, "No se pudo crear la orden para Unreal"));
+
     const { error: updateError } = await supabase
       .from("user_avatars")
       .update({
         unreal_model_url: downloadUrl,
-        unreal_export_metadata: exportMetadata,
+        unreal_export_metadata: { ...exportMetadata, importCommandId: importCommand.id },
         unreal_exported_at: exportedAt,
       })
       .eq("id", active.id)
       .eq("user_id", user.id);
 
     const metadataWarning = updateError
-      ? `El FBX se generó, pero no se pudo guardar su metadata: ${errorMessage(updateError, "error de base de datos")}`
+      ? `El FBX se generó y fue enviado, pero no se pudo guardar su metadata: ${errorMessage(updateError, "error de base de datos")}`
       : null;
     if (updateError) console.warn("Unreal avatar metadata persistence failed", updateError);
 
@@ -172,6 +189,8 @@ export async function POST(request: NextRequest) {
       target: "unreal",
       scale: "Import Uniform Scale = 1.0",
       validation: exportMetadata,
+      importCommand,
+      sentToUnreal: true,
       warning: metadataWarning,
     });
   } catch (cause) {
