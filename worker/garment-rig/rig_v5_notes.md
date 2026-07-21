@@ -1,1 +1,0 @@
-V5 ignores unreliable imported hand/head bone tails when placing generated finger and ear chains. Roots are derived from stable bone heads plus avatar proportions, and first generated bones remain parented but disconnected so glTF serializes a short explicit offset instead of exposing malformed parent tails.
