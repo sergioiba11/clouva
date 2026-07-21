@@ -5,6 +5,7 @@ import { test } from "node:test";
 const { buildBlenderJob } = await import("./lib/creator-studio/blender-job.ts");
 const creatorSource = readFileSync("./components/creator-studio/CreatorStudioAutomatic.tsx", "utf8");
 const bootstrapSource = readFileSync("./components/creator-studio/CreatorStudioBootstrap.tsx", "utf8");
+const simpleStudioSource = readFileSync("./components/creator-studio/CreatorStudioSimple.tsx", "utf8");
 const previewSource = readFileSync("./components/creator-studio/ResultRigPreviewV40.tsx", "utf8");
 const alignmentSource = readFileSync("./components/creator-studio/result-rig-runtime-alignment.ts", "utf8");
 const blenderRouteSource = readFileSync("./app/api/creator-studio/blender/route.ts", "utf8");
@@ -40,15 +41,17 @@ test("las prendas usan el FBX oficial de Unreal como molde automático", () => {
 });
 
 
-test("Creator Studio conserva el molde automático pero monta el nuevo workspace visual", () => {
-  assert.match(bootstrapSource, /UnrealObjectExport/);
+test("Creator Studio conserva el molde automático pero monta el flujo simple", () => {
+  assert.match(bootstrapSource, /CreatorStudioSimple/);
+  assert.doesNotMatch(bootstrapSource, /UnrealObjectExport/);
   assert.doesNotMatch(bootstrapSource, /CreatorStudioAutomatic/);
-  assert.match(creatorSource, /Crear molde automático/);
-  assert.match(creatorSource, /Molde oficial conectado/);
+  assert.match(simpleStudioSource, /Elegir GLB/);
+  assert.match(simpleStudioSource, /Riggear avatar/);
+  assert.match(simpleStudioSource, /Enviar FBX/);
+  assert.match(simpleStudioSource, /Traer data/);
+  assert.match(simpleStudioSource, /Riggear GLB/);
+  assert.match(simpleStudioSource, /moldSource: "unreal-avatar-snapshot"/);
   assert.match(creatorSource, /official-unreal-fbx/);
-  assert.match(creatorSource, /Necesito corregir el calce/);
-  assert.match(creatorSource, /Recalcular en Blender/);
-  assert.match(creatorSource, /Aprobar molde automático/);
 });
 
 
