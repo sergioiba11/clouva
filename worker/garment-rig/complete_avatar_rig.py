@@ -8,6 +8,8 @@ from mathutils import Vector
 
 FINGER_NAMES = ("thumb", "index", "middle", "ring", "pinky")
 SEGMENTS = 3
+FALLBACK_VERTICES_PER_SIDE = 96
+FALLBACK_VERTICES_PER_EAR = 40
 
 
 def args_after_separator():
@@ -37,7 +39,10 @@ def world_bounds(meshes):
         raise RuntimeError("The avatar has no visible mesh bounds")
     minimum = Vector((min(point.x for point in points), min(point.y for point in points), min(point.z for point in points)))
     maximum = Vector((max(point.x for point in points), max(point.y for point in points), max(point.z for point in points)))
-    return minimum, maximum, maximum - minimum
+    size = maximum - minimum
+    if any(not math.isfinite(float(value)) or float(value) <= 1e-8 for value in size):
+        raise RuntimeError(f"The avatar visible bounds are invalid: {tuple(float(value) for value in size)}")
+    return minimum, maximum, size
 
 
 def choose_armature(armatures):
@@ -46,41 +51,74 @@ def choose_armature(armatures):
     return max(armatures, key=lambda item: len(item.data.bones))
 
 
+def side_from_name(name):
+    raw = name.lower()
+    key = clean_name(name)
+    if any(token in raw for token in ("left", ".l", "_l", "-l", " l")) or key.startswith("left") or key.endswith("left"):
+        return "l"
+    if any(token in raw for token in ("right", ".r", "_r", "-r", " r")) or key.startswith("right") or key.endswith("right"):
+        return "r"
+    return None
+
+
 def find_bone(armature, aliases, side=None):
     candidates = []
     for bone in armature.data.bones:
         key = clean_name(bone.name)
         if not any(alias in key for alias in aliases):
             continue
-        if side == "l" and not any(token in key for token in ("left", "l", "_l")):
-            if bone.head_local.x <= 0.0:
-                continue
-        if side == "r" and not any(token in key for token in ("right", "r", "_r")):
-            if bone.head_local.x >= 0.0:
-                continue
+        explicit_side = side_from_name(bone.name)
+        if side and explicit_side and explicit_side != side:
+            continue
         candidates.append(bone)
     if not candidates:
         return None
-    if side == "l":
-        return max(candidates, key=lambda bone: bone.head_local.x)
-    if side == "r":
-        return min(candidates, key=lambda bone: bone.head_local.x)
-    return max(candidates, key=lambda bone: bone.head_local.z)
+    if side:
+        signed = 1.0 if side == "l" else -1.0
+        explicit = [bone for bone in candidates if side_from_name(bone.name) == side]
+        pool = explicit or candidates
+        return max(pool, key=lambda bone: signed * float(bone.head_local.x))
+    return max(candidates, key=lambda bone: float(bone.head_local.z))
+
+
+def arm_chain_candidates(armature, side):
+    signed = 1.0 if side == "l" else -1.0
+    aliases = ("hand", "wrist", "lowerarm", "forearm", "arm")
+    candidates = []
+    for bone in armature.data.bones:
+        key = clean_name(bone.name)
+        if not any(alias in key for alias in aliases):
+            continue
+        explicit_side = side_from_name(bone.name)
+        if explicit_side and explicit_side != side:
+            continue
+        score = signed * max(float(bone.head_local.x), float(bone.tail_local.x))
+        if score > 0:
+            candidates.append((score, bone))
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return [bone for _, bone in candidates]
 
 
 def hand_bone(armature, side):
     exact = find_bone(armature, ("hand", "wrist"), side)
     if exact:
         return exact
-    side_sign = 1.0 if side == "l" else -1.0
-    candidates = [bone for bone in armature.data.bones if bone.head_local.x * side_sign > 0.0]
-    if not candidates:
+    chain = arm_chain_candidates(armature, side)
+    if chain:
+        return chain[0]
+    signed = 1.0 if side == "l" else -1.0
+    spatial = [bone for bone in armature.data.bones if signed * float(bone.head_local.x) > 0.0]
+    if not spatial:
         return None
-    return max(candidates, key=lambda bone: abs(bone.head_local.x))
+    return max(spatial, key=lambda bone: signed * max(float(bone.head_local.x), float(bone.tail_local.x)))
 
 
 def head_bone(armature):
-    return find_bone(armature, ("head",)) or find_bone(armature, ("neck",))
+    return find_bone(armature, ("head",)) or find_bone(armature, ("neck",)) or max(
+        armature.data.bones,
+        key=lambda bone: max(float(bone.head_local.z), float(bone.tail_local.z)),
+        default=None,
+    )
 
 
 def safe_direction(value, fallback):
@@ -97,18 +135,20 @@ def ensure_extended_bones(armature, meshes):
     added = []
     created_finger_names = []
     created_ear_names = []
-    hand_sources = {}
 
     left_hand = hand_bone(armature, "l")
     right_hand = hand_bone(armature, "r")
     head = head_bone(armature)
     if not left_hand or not right_hand:
-        raise RuntimeError("Could not locate both hand bones for finger rigging")
+        available = [bone.name for bone in armature.data.bones]
+        raise RuntimeError(
+            "Could not locate both hand bones for finger rigging. "
+            f"Detected {len(available)} bones; sample={available[:30]}"
+        )
     if not head:
-        raise RuntimeError("Could not locate the head bone for ear rigging")
+        raise RuntimeError("Could not locate the head or highest bone for ear rigging")
 
-    hand_sources["l"] = left_hand.name
-    hand_sources["r"] = right_hand.name
+    hand_sources = {"l": left_hand.name, "r": right_hand.name}
     head_name = head.name
 
     bpy.context.view_layer.objects.active = armature
@@ -119,7 +159,7 @@ def ensure_extended_bones(armature, meshes):
     for side, source_name in hand_sources.items():
         source = edit_bones.get(source_name)
         if source is None:
-            raise RuntimeError(f"Hand edit bone missing for side {side}")
+            raise RuntimeError(f"Hand edit bone missing for side {side}: {source_name}")
         side_sign = 1.0 if side == "l" else -1.0
         direction = safe_direction(source.tail - source.head, (side_sign, 0.0, 0.0))
         if direction.x * side_sign < 0.15:
@@ -127,22 +167,16 @@ def ensure_extended_bones(armature, meshes):
         spread_axis = safe_direction(Vector((0.0, 0.0, 1.0)).cross(direction), (0.0, 1.0, 0.0))
         vertical_axis = safe_direction(direction.cross(spread_axis), (0.0, 0.0, 1.0))
         palm = source.tail.copy()
-        segment_length = max(height * 0.018, source.length * 0.23, 0.012)
-        spread_values = {
-            "thumb": -2.0,
-            "index": -1.0,
-            "middle": 0.0,
-            "ring": 1.0,
-            "pinky": 2.0,
-        }
+        segment_length = max(height * 0.015, source.length * 0.20, 0.008)
+        spread_values = {"thumb": -2.0, "index": -1.0, "middle": 0.0, "ring": 1.0, "pinky": 2.0}
 
         for finger in FINGER_NAMES:
             previous = source
-            offset = spread_axis * spread_values[finger] * height * 0.006
+            offset = spread_axis * spread_values[finger] * height * 0.0045
             finger_direction = direction.copy()
             if finger == "thumb":
-                finger_direction = safe_direction(direction * 0.7 - vertical_axis * 0.45 + spread_axis * -0.15, direction)
-                offset += -vertical_axis * height * 0.008
+                finger_direction = safe_direction(direction * 0.72 - vertical_axis * 0.40 + spread_axis * -0.16, direction)
+                offset += -vertical_axis * height * 0.006
             origin = palm + offset
             for segment in range(1, SEGMENTS + 1):
                 name = f"clouva_{finger}_{segment:02d}_{side}"
@@ -162,22 +196,29 @@ def ensure_extended_bones(armature, meshes):
     visible_center = (minimum + maximum) * 0.5
     head_edit = edit_bones.get(head_name)
     if head_edit is None:
-        raise RuntimeError("Head edit bone missing")
+        raise RuntimeError(f"Head edit bone missing: {head_name}")
+
+    head_world = armature.matrix_world @ ((head_edit.head + head_edit.tail) * 0.5)
+    lateral = safe_direction(
+        (armature.matrix_world @ edit_bones[hand_sources["l"]].head)
+        - (armature.matrix_world @ edit_bones[hand_sources["r"]].head),
+        (1.0, 0.0, 0.0),
+    )
+    ear_span = max(float(size.x), float(size.y)) * 0.19
+    ear_height = max(height * 0.018, 0.012)
 
     for side in ("l", "r"):
         side_sign = 1.0 if side == "l" else -1.0
         name = f"clouva_ear_{side}"
         ear = edit_bones.get(name)
         if ear is None:
-            world_position = Vector((
-                visible_center.x + side_sign * float(size.x) * 0.47,
-                visible_center.y,
-                minimum.z + float(size.z) * 0.82,
-            ))
+            world_position = head_world + lateral * side_sign * ear_span
+            world_position.z = max(world_position.z, minimum.z + float(size.z) * 0.78)
+            world_position = Vector((world_position.x, world_position.y, min(world_position.z, maximum.z)))
             local_position = inverse_armature @ world_position
             ear = edit_bones.new(name)
             ear.head = local_position
-            ear.tail = local_position + Vector((0.0, 0.0, max(height * 0.025, 0.018)))
+            ear.tail = local_position + Vector((0.0, 0.0, ear_height))
             ear.parent = head_edit
             ear.use_connect = False
             ear.use_deform = True
@@ -212,10 +253,34 @@ def point_segment_distance(point, start, end):
     return (point - (start + segment * factor)).length
 
 
+def all_world_vertices(meshes):
+    return [
+        (mesh, vertex.index, mesh.matrix_world @ vertex.co)
+        for mesh in meshes
+        for vertex in mesh.data.vertices
+    ]
+
+
+def assign_nearest(vertices, targets, groups_by_mesh, limit, weight):
+    if not vertices or not targets:
+        return 0
+    selected = sorted(
+        vertices,
+        key=lambda item: min((item[2] - target).length_squared for target in targets.values()),
+    )[: max(1, min(limit, len(vertices)))]
+    assigned = 0
+    for mesh, vertex_index, world in selected:
+        name = min(targets, key=lambda key: (world - targets[key]).length_squared)
+        groups_by_mesh[mesh][name].add([vertex_index], weight, "REPLACE")
+        assigned += 1
+    return assigned
+
+
 def assign_extended_weights(armature, meshes, report):
     minimum, maximum, size = report["bounds"]
     height = max(float(size.z), 0.5)
-    finger_radius = max(height * 0.04, 0.035)
+    finger_radius = max(height * 0.045, 0.03)
+    ear_radius = max(height * 0.055, 0.04)
     finger_weighted = 0
     ear_weighted = 0
 
@@ -224,38 +289,84 @@ def assign_extended_weights(armature, meshes, report):
         for name in report["fingerNames"]
     }
     finger_segments = {name: value for name, value in finger_segments.items() if value is not None}
+    ear_targets = {
+        name: bone_segment_world(armature, name)[0]
+        for name in report["earNames"]
+        if bone_segment_world(armature, name) is not None
+    }
+    vertices = all_world_vertices(meshes)
+    center = (minimum + maximum) * 0.5
 
-    for mesh in meshes:
-        finger_groups = {name: mesh.vertex_groups.get(name) or mesh.vertex_groups.new(name=name) for name in finger_segments}
-        ear_groups = {name: mesh.vertex_groups.get(name) or mesh.vertex_groups.new(name=name) for name in report["earNames"]}
+    finger_groups_by_mesh = {
+        mesh: {name: mesh.vertex_groups.get(name) or mesh.vertex_groups.new(name=name) for name in finger_segments}
+        for mesh in meshes
+    }
+    ear_groups_by_mesh = {
+        mesh: {name: mesh.vertex_groups.get(name) or mesh.vertex_groups.new(name=name) for name in ear_targets}
+        for mesh in meshes
+    }
 
-        for vertex in mesh.data.vertices:
-            world = mesh.matrix_world @ vertex.co
-            side = "l" if world.x >= (minimum.x + maximum.x) * 0.5 else "r"
-            side_segments = [(name, segment) for name, segment in finger_segments.items() if name.endswith(f"_{side}")]
-            if side_segments and abs(world.x - ((maximum.x if side == "l" else minimum.x))) <= float(size.x) * 0.24:
-                nearest_name, nearest_distance = min(
-                    ((name, point_segment_distance(world, segment[0], segment[1])) for name, segment in side_segments),
-                    key=lambda item: item[1],
-                )
-                if nearest_distance <= finger_radius:
-                    weight = max(0.35, min(0.92, 1.0 - nearest_distance / finger_radius))
-                    finger_groups[nearest_name].add([vertex.index], weight, "REPLACE")
-                    finger_weighted += 1
+    for mesh, vertex_index, world in vertices:
+        side = "l" if world.x >= center.x else "r"
+        side_segments = [(name, segment) for name, segment in finger_segments.items() if name.endswith(f"_{side}")]
+        if side_segments:
+            nearest_name, nearest_distance = min(
+                ((name, point_segment_distance(world, segment[0], segment[1])) for name, segment in side_segments),
+                key=lambda item: item[1],
+            )
+            if nearest_distance <= finger_radius:
+                weight = max(0.30, min(0.90, 1.0 - nearest_distance / finger_radius))
+                finger_groups_by_mesh[mesh][nearest_name].add([vertex_index], weight, "REPLACE")
+                finger_weighted += 1
 
-            high_enough = world.z >= minimum.z + float(size.z) * 0.70
-            side_band = abs(world.x - (maximum.x if side == "l" else minimum.x)) <= max(float(size.x) * 0.12, height * 0.035)
-            if high_enough and side_band:
-                ear_name = f"clouva_ear_{side}"
-                ear_groups[ear_name].add([vertex.index], 0.72, "REPLACE")
+        high_enough = world.z >= minimum.z + float(size.z) * 0.68
+        if high_enough and ear_targets:
+            ear_name = min(ear_targets, key=lambda name: (world - ear_targets[name]).length_squared)
+            if (world - ear_targets[ear_name]).length <= ear_radius:
+                ear_groups_by_mesh[mesh][ear_name].add([vertex_index], 0.68, "REPLACE")
                 ear_weighted += 1
 
+    fallback = {"fingers": False, "ears": False}
+    if finger_weighted == 0:
+        fallback["fingers"] = True
+        for side in ("l", "r"):
+            side_names = [name for name in finger_segments if name.endswith(f"_{side}")]
+            side_targets = {
+                name: (finger_segments[name][0] + finger_segments[name][1]) * 0.5
+                for name in side_names
+            }
+            side_vertices = [item for item in vertices if (item[2].x >= center.x) == (side == "l")]
+            finger_weighted += assign_nearest(
+                side_vertices,
+                side_targets,
+                finger_groups_by_mesh,
+                FALLBACK_VERTICES_PER_SIDE,
+                0.58,
+            )
+
+    if ear_weighted == 0:
+        fallback["ears"] = True
+        high_vertices = [item for item in vertices if item[2].z >= minimum.z + float(size.z) * 0.64]
+        for side in ("l", "r"):
+            name = f"clouva_ear_{side}"
+            if name not in ear_targets:
+                continue
+            side_vertices = [item for item in high_vertices if (item[2].x >= center.x) == (side == "l")]
+            ear_weighted += assign_nearest(
+                side_vertices,
+                {name: ear_targets[name]},
+                ear_groups_by_mesh,
+                FALLBACK_VERTICES_PER_EAR,
+                0.62,
+            )
+
+    for mesh in meshes:
         mesh.data.update()
 
-    return finger_weighted, ear_weighted
+    return finger_weighted, ear_weighted, fallback
 
 
-def validate_profile(armature, report, finger_weighted, ear_weighted):
+def validate_profile(armature, report, finger_weighted, ear_weighted, fallback):
     names = {bone.name for bone in armature.data.bones}
     left_chains = sum(
         all(f"clouva_{finger}_{segment:02d}_l" in names for segment in range(1, SEGMENTS + 1))
@@ -270,10 +381,11 @@ def validate_profile(armature, report, finger_weighted, ear_weighted):
     fingers_complete = left_chains == 5 and right_chains == 5 and finger_weighted > 0
     ears_complete = left_ear and right_ear and ear_weighted > 0
     return {
-        "version": "clouva-complete-rig-v1",
+        "version": "clouva-complete-rig-v2",
         "complete": bool(fingers_complete and ears_complete),
         "boneCount": len(names),
         "addedBones": report["added"],
+        "weightFallback": fallback,
         "fingers": {
             "complete": fingers_complete,
             "leftChains": left_chains,
@@ -330,8 +442,8 @@ def main():
     armature.animation_data_clear()
 
     report = ensure_extended_bones(armature, meshes)
-    finger_weighted, ear_weighted = assign_extended_weights(armature, meshes, report)
-    profile = validate_profile(armature, report, finger_weighted, ear_weighted)
+    finger_weighted, ear_weighted, fallback = assign_extended_weights(armature, meshes, report)
+    profile = validate_profile(armature, report, finger_weighted, ear_weighted, fallback)
     if not profile["complete"]:
         raise RuntimeError(f"Extended rig validation failed: {json.dumps(profile, separators=(',', ':'))}")
 
