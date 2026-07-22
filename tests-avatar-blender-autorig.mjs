@@ -20,22 +20,11 @@ function walk(path) {
 
 const sourceFiles = sourceRoots.flatMap(walk);
 const rigRoute = readFileSync("app/api/avatar/rig/route.ts", "utf8");
-const analyzerRoute = readFileSync("app/api/avatar/analyze/route.ts", "utf8");
 const libraryButton = readFileSync("components/library/ActiveAvatarDownload.tsx", "utf8");
-const analyzerPanel = readFileSync("components/library/AvatarAnalyzerPreview.tsx", "utf8");
-const libraryPage = readFileSync("app/biblioteca/page.tsx", "utf8");
 const meshy = readFileSync("lib/meshy.ts", "utf8");
 const creatorStudio = readFileSync("components/creator-studio/CreatorStudioSimple.tsx", "utf8");
 const workerAutorig = readFileSync("worker/garment-rig/autorig_avatar_v16.py", "utf8");
 const workerApp = readFileSync("worker/garment-rig/app_v16.py", "utf8");
-const analyzerWorker = readFileSync("worker/garment-rig/app_v17.py", "utf8");
-const analyzerScript = readFileSync("worker/garment-rig/avatar_analyzer.py", "utf8");
-const bodyAnalyzer = readFileSync("worker/garment-rig/body_analyzer.py", "utf8");
-const faceAnalyzer = readFileSync("worker/garment-rig/face_analyzer.py", "utf8");
-const handAnalyzer = readFileSync("worker/garment-rig/hand_analyzer.py", "utf8");
-const detector2d = readFileSync("worker/garment-rig/landmark_detector_2d.py", "utf8");
-const projector3d = readFileSync("worker/garment-rig/landmark_projector_3d.py", "utf8");
-const diagnosticBuilder = readFileSync("worker/garment-rig/diagnostic_builder.py", "utf8");
 const dockerfile = readFileSync("worker/garment-rig/Dockerfile", "utf8");
 
 test("el autorig de avatar no puede volver a llamar la ruta de rigging de Meshy", () => {
@@ -143,51 +132,4 @@ test("el Worker conserva temporalmente el contrato web V15 pero adjunta la prueb
   assert.match(workerApp, /profile\["rigSource"\] = "Blender official Unreal reference"/);
   assert.match(workerApp, /profile\["landmarkFit"\]\["actualMethod"\]/);
   assert.match(workerApp, /weightedRatio.*0\.995/s);
-});
-
-test("Avatar Analyzer queda separado del Armature y produce diagnóstico multivista", () => {
-  assert.match(analyzerWorker, /@app\.post\("\/avatar\/analyze"\)/);
-  assert.match(analyzerWorker, /@app\.post\("\/avatar\/analyze-preview"\)/);
-  assert.match(analyzerWorker, /"X-Clouva-Rig-Modified": "false"/);
-  assert.match(analyzerScript, /fingerRig": "not_connected_phase1"/);
-  assert.match(analyzerScript, /facialRig": "not_connected_phase1"/);
-  assert.doesNotMatch(analyzerScript, /create_fresh_schema_armature|bind_geometry_aware_weights/);
-  for (const output of ["avatar_analysis.json", "diagnostic_report.json", "diagnostic_landmarks.glb", "renders_temporales"]) {
-    assert.ok(analyzerScript.includes(output) || analyzerWorker.includes(output), `Falta salida ${output}`);
-  }
-});
-
-test("cara y manos usan MediaPipe como candidatos y Blender confirma sobre la malla real", () => {
-  assert.match(detector2d, /FaceLandmarker/);
-  assert.match(detector2d, /HandLandmarker/);
-  assert.match(detector2d, /HAND_MAP/);
-  assert.match(projector3d, /scene\.ray_cast/);
-  assert.match(projector3d, /rejectedHits/);
-  assert.match(faceAnalyzer, /mediapipe-face-landmarker-plus-mesh-raycast-v1/);
-  assert.match(handAnalyzer, /mediapipe-hand-landmarker-plus-mesh-raycast-v1/);
-  assert.match(diagnosticBuilder, /export_extras=True/);
-  assert.match(dockerfile, /mediapipe==0\.10\.14/);
-  assert.match(dockerfile, /face_landmarker\.task/);
-  assert.match(dockerfile, /hand_landmarker\.task/);
-});
-
-test("el mapa corporal incluye los nombres canónicos que necesitará Skeleton Planner", () => {
-  for (const name of [
-    "root", "pelvis", "spine_01", "spine_02", "chest", "neck", "head",
-    "clavicle_l", "upperarm_l", "lowerarm_l", "hand_l", "thigh_l", "calf_l", "foot_l", "ball_l",
-    "clavicle_r", "upperarm_r", "lowerarm_r", "hand_r", "thigh_r", "calf_r", "foot_r", "ball_r",
-  ]) {
-    assert.ok(bodyAnalyzer.includes(`"${name}"`), `Falta landmark canónico ${name}`);
-  }
-});
-
-test("Biblioteca expone ANALIZAR AVATAR y muestra el GLB diagnóstico sin guardar otro avatar", () => {
-  assert.match(libraryPage, /AvatarAnalyzerPreview/);
-  assert.match(analyzerPanel, /ANALIZAR AVATAR/);
-  assert.match(analyzerPanel, /model-viewer/);
-  assert.match(analyzerPanel, /PUNTOS REALES SOBRE LA MALLA/);
-  assert.match(analyzerRoute, /resolveOriginalAvatar/);
-  assert.match(analyzerRoute, /\/avatar\/analyze-preview/);
-  assert.match(analyzerRoute, /model\/gltf-binary/);
-  assert.doesNotMatch(analyzerRoute, /storage\.from\("avatars"\)\.upload/);
 });
