@@ -51,6 +51,15 @@ jobs:
           fi
           tail -n 40 /tmp/clouva-worker-build.log
 
+      - name: Upload Blender worker build log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: blender-worker-build-log
+          path: /tmp/clouva-worker-build.log
+          if-no-files-found: error
+          retention-days: 3
+
       - name: Build
         run: npm run build
         env:
