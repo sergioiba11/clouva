@@ -4,6 +4,7 @@ import { AvatarAnalyzerPreview } from "@/components/library/AvatarAnalyzerPrevie
 import { ClouvaLibrary } from "@/components/library/ClouvaLibrary";
 import { UnrealAvatarExport } from "@/components/library/UnrealAvatarExport";
 import { UnrealObjectExport } from "@/components/library/UnrealObjectExport";
+import styles from "./biblioteca.module.css";
 
 export const metadata: Metadata = {
   title: "Biblioteca | CLOUVA",
@@ -12,12 +13,12 @@ export const metadata: Metadata = {
 
 export default function BibliotecaPage() {
   return (
-    <>
+    <main className={styles.page}>
       <ActiveAvatarDownload />
       <AvatarAnalyzerPreview />
       <UnrealAvatarExport />
       <UnrealObjectExport />
       <ClouvaLibrary />
-    </>
+    </main>
   );
 }
