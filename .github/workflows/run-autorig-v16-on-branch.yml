@@ -1,0 +1,59 @@
+name: Run AutoRig V16 On Branch
+
+on:
+  push:
+    branches:
+      - "fix/autorig-v16-real-weights-apply"
+
+permissions:
+  contents: write
+
+jobs:
+  apply-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract and apply V16 patch
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          source = Path('.github/workflows/apply-autorig-v16-real-weights.yml').read_text(encoding='utf-8').splitlines()
+          collecting = False
+          output = []
+          for line in source:
+              if line.strip() == "python - <<'PY'":
+                  collecting = True
+                  continue
+              if collecting and line.strip() == 'PY':
+                  break
+              if collecting:
+                  output.append(line[10:] if line.startswith('          ') else line)
+          if not output:
+              raise SystemExit('Could not extract AutoRig V16 patch script')
+          Path('/tmp/apply_autorig_v16.py').write_text('\n'.join(output) + '\n', encoding='utf-8')
+          PY
+          python /tmp/apply_autorig_v16.py
+          rm -f .github/workflows/run-autorig-v16-on-branch.yml
+
+      - name: Validate TypeScript and contracts
+        run: |
+          npm ci
+          npm run typecheck
+          node --test tests-avatar-blender-autorig.mjs tests-creator-viewer-anatomy.mjs
+          python -m py_compile worker/garment-rig/autorig_avatar_v12.py worker/garment-rig/app_v16.py worker/garment-rig/test_autorig_avatar_v12.py
+
+      - name: Validate real Blender worker image
+        run: docker build --no-cache worker/garment-rig
+
+      - name: Build app
+        run: npm run build
+
+      - name: Commit validated V16
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Fix AutoRig weights and anatomical preview"
+          git push origin HEAD:fix/autorig-v16-real-weights-apply
