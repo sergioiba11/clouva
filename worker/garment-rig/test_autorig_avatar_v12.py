@@ -66,9 +66,20 @@ def validate_output(path):
     assert len(names) >= 50
     assert "clouva_head_end" in lower_names or "head_end" in lower_names
     head = next((bone for bone in armature.data.bones if bone.name.lower() == "head"), None)
-    assert head is not None
+    head_end = next(
+        (
+            bone
+            for bone in armature.data.bones
+            if bone.name.lower() in {"clouva_head_end", "head_end"}
+        ),
+        None,
+    )
+    assert head is not None and head_end is not None
     minimum, maximum, size = autorig.bounds(meshes)
-    head_ratio = (armature.matrix_world.to_3x3() @ (head.tail_local - head.head_local)).length / max(float(size.z), 1e-6)
+    # Blender reconstructs leaf-bone tails when importing GLB. The stable glTF
+    # contract is the exported Head joint to the exported head terminal joint.
+    head_vector = head_end.head_local - head.head_local
+    head_ratio = (armature.matrix_world.to_3x3() @ head_vector).length / max(float(size.z), 1e-6)
     assert 0.10 <= head_ratio <= 0.20
     for side in ("l", "r"):
         for finger in autorig.v11.v5.legacy.FINGER_NAMES:
