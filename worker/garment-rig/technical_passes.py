@@ -17,19 +17,20 @@ from mathutils import Vector
 def _camera_ray(camera: bpy.types.Object, x: float, y: float, resolution: Sequence[int]):
     width, height = int(resolution[0]), int(resolution[1])
     aspect = float(width) / max(float(height), 1.0)
+    matrix_world = camera.matrix_world.copy()
     if camera.data.type == "ORTHO":
         local_x = (float(x) - 0.5) * float(camera.data.ortho_scale) * aspect
         local_y = (0.5 - float(y)) * float(camera.data.ortho_scale)
-        origin = camera.matrix_world @ Vector((local_x, local_y, 0.0))
-        direction = camera.matrix_world.to_3x3() @ Vector((0.0, 0.0, -1.0))
+        origin = matrix_world @ Vector((local_x, local_y, 0.0))
+        direction = matrix_world.to_3x3() @ Vector((0.0, 0.0, -1.0))
     else:
         import math
         ndc_x = float(x) * 2.0 - 1.0
         ndc_y = 1.0 - float(y) * 2.0
         tangent_y = math.tan(float(camera.data.angle_y) * 0.5)
         local = Vector((ndc_x * tangent_y * aspect, ndc_y * tangent_y, -1.0)).normalized()
-        origin = camera.matrix_world.translation.copy()
-        direction = camera.matrix_world.to_3x3() @ local
+        origin = matrix_world.translation.copy()
+        direction = matrix_world.to_3x3() @ local
     if direction.length > 1e-8:
         direction.normalize()
     return origin, direction
@@ -100,6 +101,11 @@ def generate_technical_passes(output_dir: Path, view_name: str, camera: bpy.type
     region_ids = np.zeros((height, width), dtype=np.int16)
     object_ids = np.zeros((height, width), dtype=np.int16)
     triangle_ids = np.full((height, width), -1, dtype=np.int32)
+
+    # Camera rotation/location assignments are lazy in Blender. The production
+    # renderer normally forces this update, but direct smoke tests and future API
+    # callers may request technical passes before a color render.
+    bpy.context.view_layer.update()
 
     for row in range(height):
         y = (row + 0.5) / float(height)
