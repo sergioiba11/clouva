@@ -1,0 +1,73 @@
+name: Apply AutoRig V14 Proof Contract
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/apply-autorig-v14-proof-contract.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+
+      - name: Align API and Blender V14 proof contract
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          route_path = Path("app/api/avatar/rig/route.ts")
+          route = route_path.read_text(encoding="utf-8")
+
+          old_constants = (
+              'const EXPECTED_WORKER_RIG_VERSION = "v14-landmark-autorig";\n'
+              'const EXPECTED_PROFILE_VERSION = "clouva-blender-autorig-v14-landmarks-heat";\n'
+          )
+          new_constants = old_constants + (
+              'const EXPECTED_RIG_SOURCE = "Blender geometry landmarks + official Unreal hierarchy";\n'
+          )
+          if old_constants not in route:
+              raise SystemExit("AutoRig V14 constants were not found in route.ts")
+          route = route.replace(old_constants, new_constants, 1)
+
+          old_check = 'proof.rigSource !== "Blender official Unreal reference"'
+          new_check = 'proof.rigSource !== EXPECTED_RIG_SOURCE'
+          if old_check not in route:
+              raise SystemExit("Stale V12 rigSource validation was not found")
+          route = route.replace(old_check, new_check, 1)
+          route_path.write_text(route, encoding="utf-8")
+
+          test_path = Path("tests-avatar-blender-autorig.mjs")
+          tests = test_path.read_text(encoding="utf-8")
+          contract_test = r'''
+
+test("la API y Blender comparten exactamente el contrato de origen AutoRig V14", () => {
+  const source = "Blender geometry landmarks + official Unreal hierarchy";
+  assert.ok(rigRoute.includes(`const EXPECTED_RIG_SOURCE = "${source}";`));
+  assert.ok(rigRoute.includes("proof.rigSource !== EXPECTED_RIG_SOURCE"));
+  assert.ok(workerAutorig.includes(`profile["rigSource"] = "${source}"`));
+  assert.doesNotMatch(rigRoute, /proof\.rigSource !== "Blender official Unreal reference"/);
+});
+'''
+          if "la API y Blender comparten exactamente el contrato de origen AutoRig V14" not in tests:
+              tests += contract_test
+          test_path.write_text(tests, encoding="utf-8")
+
+          Path(".github/workflows/apply-autorig-v14-proof-contract.yml").unlink()
+          PY
+
+      - name: Validate focused contract
+        run: node --test tests-avatar-blender-autorig.mjs
+
+      - name: Commit fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Align AutoRig V14 proof contract"
+          git push origin HEAD:${{ github.head_ref }}
