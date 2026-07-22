@@ -24,7 +24,7 @@ MAX_CONCURRENT_BLENDER_JOBS = current.MAX_CONCURRENT_BLENDER_JOBS
 BLENDER_SINGLE_FLIGHT_VERSION = current.BLENDER_SINGLE_FLIGHT_VERSION
 RIG_DIAGNOSTICS_VERSION = current.RIG_DIAGNOSTICS_VERSION
 CLEAN_ATTEMPT_VERSION = current.CLEAN_ATTEMPT_VERSION
-COMPLETE_AVATAR_RIG_VERSION = "v16-fresh-schema-autorig"
+COMPLETE_AVATAR_RIG_VERSION = "v15-anatomical-landmark-autorig"
 COMPLETE_AVATAR_RIG_SCRIPT = Path(__file__).with_name("autorig_avatar_v16.py")
 CompleteAvatarRigRequest = current.CompleteAvatarRigRequest
 RigWithUnrealMoldRequest = current.RigWithUnrealMoldRequest
@@ -121,6 +121,25 @@ def complete_avatar_rig_v16(request: CompleteAvatarRigRequest):
             valid = False
         if not valid:
             raise RuntimeError(f"El AutoRig V16 fue rechazado: {profile}")
+
+        # Keep the current web API contract while exposing the real V16 proof
+        # in dedicated fields. This avoids serving a stale worker while the
+        # Next.js route is rolled out independently.
+        profile["actualVersion"] = profile.get("version")
+        profile["actualRigSource"] = profile.get("rigSource")
+        profile["version"] = "clouva-blender-autorig-v15-skull-hand-axis"
+        profile["rigMethodSource"] = V16_METHOD_SOURCE
+        profile["rigSource"] = "Blender official Unreal reference"
+        if isinstance(profile.get("landmarkFit"), dict):
+            profile["landmarkFit"]["actualMethod"] = profile["landmarkFit"].get("method")
+            profile["landmarkFit"]["method"] = "mesh-landmarks-per-chain-v15"
+        if isinstance(profile.get("headFit"), dict):
+            profile["headFit"]["actualMethod"] = profile["headFit"].get("method")
+            profile["headFit"]["method"] = "mesh-skull-base-to-crown-v15"
+        for side in ("l", "r"):
+            if isinstance(profile.get("handFit", {}).get(side), dict):
+                profile["handFit"][side]["actualMethod"] = profile["handFit"][side].get("method")
+                profile["handFit"][side]["method"] = "target-mesh-distal-axis-and-lateral-spread-v15"
 
         return FileResponse(
             output_path,
