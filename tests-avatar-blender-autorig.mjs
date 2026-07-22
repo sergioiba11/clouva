@@ -27,7 +27,7 @@ const workerAutorig = readFileSync("worker/garment-rig/autorig_avatar_v16.py", "
 const workerApp = readFileSync("worker/garment-rig/app_v16.py", "utf8");
 const dockerfile = readFileSync("worker/garment-rig/Dockerfile", "utf8");
 
- test("el autorig de avatar no puede volver a llamar la ruta de rigging de Meshy", () => {
+test("el autorig de avatar no puede volver a llamar la ruta de rigging de Meshy", () => {
   const offenders = sourceFiles.filter((file) => readFileSync(file, "utf8").includes(forbiddenRiggingRoute));
   assert.deepEqual(offenders, [], `Se encontró la ruta prohibida en: ${offenders.join(", ")}`);
   assert.doesNotMatch(rigRoute, /createRiggingTask|getRiggingTask|@\/lib\/meshy/);
@@ -111,12 +111,13 @@ test("AutoRig V16 detecta articulaciones sobre la malla y no escala un rig gené
   assert.match(workerAutorig, /fresh-schema-mesh-landmarks-v16/);
   assert.match(workerAutorig, /target-mesh-distal-axis-and-lateral-spread-v16/);
   assert.match(workerAutorig, /mesh-neck-section-to-crown-v16/);
+  assert.match(workerAutorig, /skullBase/);
   assert.doesNotMatch(workerAutorig, /import_reference\(/);
   assert.doesNotMatch(workerAutorig, /fit_reference\(/);
 });
 
 test("AutoRig V16 genera pesos nuevos, limita cuatro influencias y prueba articulaciones", () => {
-  assert.match(workerAutorig, /ARMATURE_AUTO/);
+  assert.match(workerAutorig, /bind_geometry_aware_weights/);
   assert.match(workerAutorig, /cleanup_weights_max_four/);
   assert.match(workerAutorig, /maxInfluences": 4/);
   assert.match(workerAutorig, /articulation_smoke_test/);
