@@ -1,0 +1,350 @@
+name: Apply AutoRig V15 Anatomy
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/apply-autorig-v15-anatomy.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - name: Apply anatomical head, hand and viewer corrections
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace(path, old, new, count=1):
+              file = Path(path)
+              text = file.read_text(encoding="utf-8")
+              if old not in text:
+                  raise SystemExit(f"Pattern not found in {path}: {old[:220]!r}")
+              text = text.replace(old, new, count)
+              file.write_text(text, encoding="utf-8")
+
+          worker = "worker/garment-rig/autorig_avatar_v12.py"
+          replace(worker,
+              'VERSION = "clouva-blender-autorig-v14-landmarks-heat"',
+              'VERSION = "clouva-blender-autorig-v15-skull-hand-axis"')
+          replace(worker,
+              '    neck = center_landmark(0.742)\n    head_top = center_landmark(0.955)',
+              '    skull_base = center_landmark(0.785)\n    head_top = center_landmark(0.955)')
+          replace(worker,
+              '    set_bone(neck_bone, chest, neck, previous, True)\n'
+              '    set_bone(head_bone, neck, head_top, neck_bone, True)\n\n'
+              '    report = {\n'
+              '        "method": "mesh-landmarks-per-chain-v14",',
+              '    set_bone(neck_bone, chest, skull_base, previous, True)\n'
+              '    set_bone(head_bone, skull_base, head_top, neck_bone, True)\n'
+              '    head_end_bone = _find_named_bone(\n'
+              '        bones, "clouva_head_end", "Head_end", "head_end", "HeadEnd", "headend"\n'
+              '    )\n'
+              '    if head_end_bone is None:\n'
+              '        head_end_bone = bones.new("clouva_head_end")\n'
+              '    set_bone(\n'
+              '        head_end_bone,\n'
+              '        head_top,\n'
+              '        head_top + Vector((0.0, 0.0, height * 0.012)),\n'
+              '        head_bone,\n'
+              '        True,\n'
+              '    )\n'
+              '    head_end_bone.use_deform = False\n\n'
+              '    report = {\n'
+              '        "method": "mesh-landmarks-per-chain-v15",\n'
+              '        "head": {\n'
+              '            "method": "mesh-skull-base-to-crown-v15",\n'
+              '            "base": list(map(float, skull_base)),\n'
+              '            "crown": list(map(float, head_top)),\n'
+              '            "lengthRatio": float((head_top - skull_base).length / height),\n'
+              '            "terminalBone": head_end_bone.name,\n'
+              '        },')
+          replace(worker,
+              '        "method": "automatic-heat-body-plus-projected-parts-v14",',
+              '        "method": "automatic-heat-body-plus-projected-parts-v15",')
+          replace(worker,
+              '    hand_names = report.get("handSources") or {}\n'
+              '    bpy.ops.object.select_all(action="DESELECT")',
+              '    hand_names = report.get("handSources") or {}\n'
+              '    bpy.ops.object.select_all(action="DESELECT")')
+          replace(worker,
+              '    bones = armature.data.edit_bones\n\n'
+              '    for side in ("l", "r"):',
+              '    bones = armature.data.edit_bones\n'
+              '    left_hand = bones.get(hand_names.get("l", ""))\n'
+              '    right_hand = bones.get(hand_names.get("r", ""))\n'
+              '    if left_hand is None or right_hand is None:\n'
+              '        bpy.ops.object.mode_set(mode="OBJECT")\n'
+              '        raise RuntimeError("Missing both hand bones while deriving the palm lateral axis")\n'
+              '    left_wrist = armature.matrix_world @ left_hand.head\n'
+              '    right_wrist = armature.matrix_world @ right_hand.head\n'
+              '    global_lateral = v11.v10.unit(left_wrist - right_wrist, (1.0, 0.0, 0.0))\n\n'
+              '    for side in ("l", "r"):')
+          replace(worker,
+              '        vertical = Vector((0.0, 0.0, 1.0))\n'
+              '        spread_axis = vertical.cross(direction)\n'
+              '        if spread_axis.length < 1e-6:\n'
+              '            spread_axis = Vector((1.0, 0.0, 0.0))\n'
+              '        spread_axis.normalize()\n\n'
+              '        candidates = []\n'
+              '        for point in all_vertices:\n'
+              '            delta = point - wrist\n'
+              '            along = float(delta.dot(direction))\n'
+              '            perpendicular = (delta - direction * along).length\n'
+              '            if -height * 0.012 <= along <= height * 0.11 and perpendicular <= height * 0.055:\n'
+              '                candidates.append((point, along, float(delta.dot(spread_axis))))\n'
+              '        positive = [along for _, along, _ in candidates if along > height * 0.004]\n'
+              '        extent = _percentile(positive, 0.94, height * 0.045)\n'
+              '        extent = max(height * 0.026, min(height * 0.070, extent))\n'
+              '        widths = [abs(spread) for _, along, spread in candidates if along >= extent * 0.25]\n'
+              '        half_width = _percentile(widths, 0.88, height * 0.016)\n'
+              '        half_width = max(height * 0.010, min(height * 0.032, half_width))',
+              '        outward_axis = global_lateral.copy()\n'
+              '        if side == "r":\n'
+              '            outward_axis.negate()\n'
+              '        spread_axis = outward_axis - direction * outward_axis.dot(direction)\n'
+              '        if spread_axis.length < 1e-6:\n'
+              '            spread_axis = Vector((0.0, 0.0, 1.0)).cross(direction)\n'
+              '        spread_axis.normalize()\n\n'
+              '        def collect_candidates(axis):\n'
+              '            result = []\n'
+              '            for point in all_vertices:\n'
+              '                delta = point - wrist\n'
+              '                along = float(delta.dot(axis))\n'
+              '                perpendicular = (delta - axis * along).length\n'
+              '                if -height * 0.012 <= along <= height * 0.11 and perpendicular <= height * 0.055:\n'
+              '                    result.append((point, along))\n'
+              '            return result\n\n'
+              '        axis_candidates = collect_candidates(direction)\n'
+              '        positive = [along for _, along in axis_candidates if along > height * 0.004]\n'
+              '        distal_threshold = _percentile(positive, 0.72, height * 0.028)\n'
+              '        distal_points = [point for point, along in axis_candidates if along >= distal_threshold]\n'
+              '        if len(distal_points) >= 6:\n'
+              '            distal_center = _mean_point(distal_points, wrist + direction * height * 0.04)\n'
+              '            mesh_axis = distal_center - wrist\n'
+              '            if mesh_axis.length >= height * 0.018 and mesh_axis.dot(direction) > 0.0:\n'
+              '                direction = v11.v10.unit(mesh_axis * 0.88 + direction * 0.12, direction)\n'
+              '                spread_axis = outward_axis - direction * outward_axis.dot(direction)\n'
+              '                if spread_axis.length < 1e-6:\n'
+              '                    spread_axis = Vector((0.0, 0.0, 1.0)).cross(direction)\n'
+              '                spread_axis.normalize()\n'
+              '                axis_candidates = collect_candidates(direction)\n\n'
+              '        candidates = [\n'
+              '            (point, along, float((point - wrist).dot(spread_axis)))\n'
+              '            for point, along in axis_candidates\n'
+              '        ]\n'
+              '        positive = [along for _, along, _ in candidates if along > height * 0.004]\n'
+              '        extent = _percentile(positive, 0.94, height * 0.045)\n'
+              '        extent = max(height * 0.026, min(height * 0.070, extent))\n'
+              '        widths = [abs(spread) for _, along, spread in candidates if along >= extent * 0.25]\n'
+              '        half_width = _percentile(widths, 0.88, height * 0.016)\n'
+              '        half_width = max(height * 0.010, min(height * 0.032, half_width))')
+          replace(worker,
+              '            "method": "target-mesh-hand-envelope",',
+              '            "method": "target-mesh-distal-axis-and-lateral-spread-v15",')
+          replace(worker,
+              '    profile["landmarkFit"] = landmark_fit\n'
+              '    profile["handFit"] = hand_fit',
+              '    profile["landmarkFit"] = landmark_fit\n'
+              '    profile["headFit"] = landmark_fit.get("head")\n'
+              '    profile["handFit"] = hand_fit')
+          replace(worker,
+              '        and landmark_fit.get("method") == "mesh-landmarks-per-chain-v14"\n'
+              '    )',
+              '        and landmark_fit.get("method") == "mesh-landmarks-per-chain-v15"\n'
+              '        and landmark_fit.get("head", {}).get("method") == "mesh-skull-base-to-crown-v15"\n'
+              '        and hand_fit.get("l", {}).get("method") == "target-mesh-distal-axis-and-lateral-spread-v15"\n'
+              '        and hand_fit.get("r", {}).get("method") == "target-mesh-distal-axis-and-lateral-spread-v15"\n'
+              '    )')
+          replace(worker,
+              '    print(f"[clouva-landmark-autorig-v14] {json.dumps(profile, separators=(\',\', \':\'))}", flush=True)',
+              '    print(f"[clouva-landmark-autorig-v15] {json.dumps(profile, separators=(\',\', \':\'))}", flush=True)')
+
+          app16 = "worker/garment-rig/app_v16.py"
+          replace(app16, 'COMPLETE_AVATAR_RIG_VERSION = "v14-landmark-autorig"', 'COMPLETE_AVATAR_RIG_VERSION = "v15-anatomical-landmark-autorig"')
+          replace(app16, 'V14_METHOD_SOURCE = "Blender geometry landmarks + official Unreal hierarchy"', 'V15_METHOD_SOURCE = "Blender geometry landmarks + official Unreal hierarchy"')
+          replace(app16, 'def complete_avatar_rig_v14(request: CompleteAvatarRigRequest):', 'def complete_avatar_rig_v15(request: CompleteAvatarRigRequest):')
+          replace(app16, 'prefix="clouva-complete-avatar-rig-v14-"', 'prefix="clouva-complete-avatar-rig-v15-"')
+          replace(app16, 'V14_METHOD_SOURCE', 'V15_METHOD_SOURCE')
+          replace(app16, 'AutoRig V14', 'AutoRig V15', count=20)
+          replace(app16,
+              '            and profile.get("landmarkFit", {}).get("method") == "mesh-landmarks-per-chain-v14"\n'
+              '            and float(profile.get("weights", {}).get("weightedRatio") or 0.0) >= 0.995',
+              '            and profile.get("landmarkFit", {}).get("method") == "mesh-landmarks-per-chain-v15"\n'
+              '            and profile.get("headFit", {}).get("method") == "mesh-skull-base-to-crown-v15"\n'
+              '            and profile.get("handFit", {}).get("l", {}).get("method") == "target-mesh-distal-axis-and-lateral-spread-v15"\n'
+              '            and profile.get("handFit", {}).get("r", {}).get("method") == "target-mesh-distal-axis-and-lateral-spread-v15"\n'
+              '            and float(profile.get("weights", {}).get("weightedRatio") or 0.0) >= 0.995')
+
+          route = "app/api/avatar/rig/route.ts"
+          replace(route, 'const EXPECTED_WORKER_RIG_VERSION = "v14-landmark-autorig";', 'const EXPECTED_WORKER_RIG_VERSION = "v15-anatomical-landmark-autorig";')
+          replace(route, 'const EXPECTED_PROFILE_VERSION = "clouva-blender-autorig-v14-landmarks-heat";', 'const EXPECTED_PROFILE_VERSION = "clouva-blender-autorig-v15-skull-hand-axis";')
+          replace(route,
+              '    handFit?: Record<string, { method?: string }>;\n'
+              '    landmarkFit?: { method?: string };',
+              '    handFit?: Record<string, { method?: string }>;\n'
+              '    landmarkFit?: { method?: string };\n'
+              '    headFit?: { method?: string; lengthRatio?: number };')
+          replace(route, 'proof.landmarkFit?.method !== "mesh-landmarks-per-chain-v14"', 'proof.landmarkFit?.method !== "mesh-landmarks-per-chain-v15"')
+          replace(route, 'proof.handFit?.l?.method !== "target-mesh-hand-envelope"', 'proof.handFit?.l?.method !== "target-mesh-distal-axis-and-lateral-spread-v15"')
+          replace(route, 'proof.handFit?.r?.method !== "target-mesh-hand-envelope"', 'proof.handFit?.r?.method !== "target-mesh-distal-axis-and-lateral-spread-v15"')
+          replace(route,
+              '    || proof.handFit?.r?.method !== "target-mesh-distal-axis-and-lateral-spread-v15"\n'
+              '  ) {',
+              '    || proof.handFit?.r?.method !== "target-mesh-distal-axis-and-lateral-spread-v15"\n'
+              '    || proof.headFit?.method !== "mesh-skull-base-to-crown-v15"\n'
+              '    || Number(proof.headFit?.lengthRatio ?? 0) < 0.10\n'
+              '    || Number(proof.headFit?.lengthRatio ?? 1) > 0.20\n'
+              '  ) {')
+          replace(route, 'AutoRig V14 geométrico fresco', 'AutoRig V15 anatómico fresco')
+
+          studio = "components/creator-studio/CreatorStudioSimple.tsx"
+          replace(studio, 'Blender V14 ajustó articulaciones y creó un rig nuevo', 'Blender V15 ajustó cabeza, manos y articulaciones y creó un rig nuevo')
+
+          viewer = "components/creator-studio/CreatorStudioAvatarViewerV6.tsx"
+          replace(viewer,
+              'function fingerInfo(name: string) {\n'
+              '  const match = name.toLowerCase().match(/^clouva_(thumb|index|middle|ring|pinky)_(\\d{2})_([lr])$/);\n'
+              '  if (!match) return null;\n'
+              '  return { finger: match[1], segment: Number(match[2]), side: match[3] };\n'
+              '}\n',
+              'function fingerInfo(name: string) {\n'
+              '  const match = name.toLowerCase().match(/^clouva_(thumb|index|middle|ring|pinky)_(\\d{2})_([lr])$/);\n'
+              '  if (!match) return null;\n'
+              '  return { finger: match[1], segment: Number(match[2]), side: match[3] };\n'
+              '}\n\n'
+              'function anatomicalSide(name: string): "left" | "right" | null {\n'
+              '  const raw = name.toLowerCase();\n'
+              '  const normalized = clean(name);\n'
+              '  if (normalized.includes("left") || /(^|[_.:\\- ])l($|[_.:\\- ])/i.test(raw) || /_l$/i.test(raw)) return "left";\n'
+              '  if (normalized.includes("right") || /(^|[_.:\\- ])r($|[_.:\\- ])/i.test(raw) || /_r$/i.test(raw)) return "right";\n'
+              '  return null;\n'
+              '}\n')
+          replace(viewer, 'function createSkeletonPreview(root: Object3D, rig: HumanRig) {', 'function createSkeletonPreview(root: Object3D, rig: HumanRig, camera: PerspectiveCamera) {')
+          replace(viewer,
+              '  const linePositions = new Float32Array(Math.max(segmentCapacity * 6, 6));\n',
+              '  const linePositions = new Float32Array(Math.max(segmentCapacity * 6, 6));\n'
+              '  const cameraWorld = new Vector3();\n'
+              '  const cameraLocal = new Vector3();\n')
+          replace(viewer,
+              '    let lineOffset = 0;\n\n'
+              '    for (const link of links) {',
+              '    let lineOffset = 0;\n'
+              '    camera.getWorldPosition(cameraWorld);\n'
+              '    cameraLocal.copy(cameraWorld);\n'
+              '    root.worldToLocal(cameraLocal);\n'
+              '    const sideView = Math.abs(cameraLocal.x) > Math.abs(cameraLocal.z) * 0.72;\n'
+              '    let nearSide: "left" | "right" | null = null;\n'
+              '    if (sideView && rig.leftHand && rig.rightHand) {\n'
+              '      rig.leftHand.getWorldPosition(tmpA);\n'
+              '      rig.rightHand.getWorldPosition(tmpB);\n'
+              '      nearSide = cameraWorld.distanceToSquared(tmpA) <= cameraWorld.distanceToSquared(tmpB) ? "left" : "right";\n'
+              '    }\n\n'
+              '    for (const link of links) {\n'
+              '      const linkSide = anatomicalSide(link.child.name) ?? anatomicalSide(link.parent.name);\n'
+              '      if (nearSide && linkSide && linkSide !== nearSide) continue;')
+          replace(viewer,
+              '    for (const ear of ears) {\n'
+              '      ear.getWorldPosition(tmpA);',
+              '    for (const ear of ears) {\n'
+              '      const earSide = anatomicalSide(ear.name);\n'
+              '      if (nearSide && earSide && earSide !== nearSide) continue;\n'
+              '      ear.getWorldPosition(tmpA);')
+          replace(viewer,
+              '    for (const tip of fingerTips) {\n'
+              '      const parent = nearestPreviewAncestor(tip);',
+              '    for (const tip of fingerTips) {\n'
+              '      const tipSide = anatomicalSide(tip.name);\n'
+              '      if (nearSide && tipSide && tipSide !== nearSide) continue;\n'
+              '      const parent = nearestPreviewAncestor(tip);')
+          replace(viewer, 'skeletonPreview = createSkeletonPreview(model, rig);', 'skeletonPreview = createSkeletonPreview(model, rig, camera);')
+
+          workspace = "components/creator-studio/RigApprovalWorkspace.tsx"
+          replace(workspace,
+              '  animationReady: boolean;\n'
+              '  valid: boolean;',
+              '  animationReady: boolean;\n'
+              '  issues: string[];\n'
+              '  valid: boolean;')
+          replace(workspace,
+              '  const valid = bones.size >= 20',
+              '  const issues = [\n'
+              '    !headPresent ? "falta el hueso Head" : null,\n'
+              '    headPresent && !headGeometryOk ? "Head no llega correctamente a la coronilla" : null,\n'
+              '    !fingerGeometryOk ? "los dedos no siguen el eje y ancho real de las manos" : null,\n'
+              '    !earGeometryOk ? "las orejas no están centradas y simétricas sobre la cabeza" : null,\n'
+              '    weightedRatio < 0.995 ? `pesos incompletos (${(weightedRatio * 100).toFixed(1)}%)` : null,\n'
+              '    !localScaleOk ? "Mesh o Armature no están en escala 1,1,1" : null,\n'
+              '    !animationReady ? "faltan cadenas de brazos o piernas" : null,\n'
+              '  ].filter((value): value is string => Boolean(value));\n\n'
+              '  const valid = bones.size >= 20')
+          replace(workspace,
+              '    animationReady,\n'
+              '    valid,',
+              '    animationReady,\n'
+              '    issues,\n'
+              '    valid,')
+          replace(workspace,
+              '      onStatus?.("Rig rechazado: revisá cabeza, orejas y la dirección de los dedos. Abrí Diagnóstico y después tocá Rehacer rig.");',
+              '      onStatus?.(`Rig rechazado: ${next.issues.join(" · ") || "la anatomía no coincide con la malla"}. Abrí Diagnóstico y después tocá Rehacer rig.`);')
+
+          test = "worker/garment-rig/test_autorig_avatar_v12.py"
+          replace(test,
+              '    names = {bone.name for bone in armature.data.bones}\n'
+              '    assert len(names) >= 50',
+              '    names = {bone.name for bone in armature.data.bones}\n'
+              '    assert len(names) >= 50\n'
+              '    assert "clouva_head_end" in names or "Head_end" in names\n'
+              '    head = next((bone for bone in armature.data.bones if bone.name.lower() == "head"), None)\n'
+              '    assert head is not None\n'
+              '    minimum, maximum, size = autorig.bounds(meshes)\n'
+              '    head_ratio = (armature.matrix_world.to_3x3() @ (head.tail_local - head.head_local)).length / max(float(size.z), 1e-6)\n'
+              '    assert 0.10 <= head_ratio <= 0.20')
+          replace(test, 'clouva-blender-autorig-v14-landmarks-heat', 'clouva-blender-autorig-v15-skull-hand-axis')
+          replace(test, 'mesh-landmarks-per-chain-v14', 'mesh-landmarks-per-chain-v15')
+          replace(test, 'automatic-heat-body-plus-projected-parts-v14', 'automatic-heat-body-plus-projected-parts-v15')
+          replace(test,
+              '        assert stored["handFit"]["l"]["method"] == "target-mesh-hand-envelope"\n'
+              '        assert stored["handFit"]["r"]["method"] == "target-mesh-hand-envelope"',
+              '        assert stored["headFit"]["method"] == "mesh-skull-base-to-crown-v15"\n'
+              '        assert 0.10 <= stored["headFit"]["lengthRatio"] <= 0.20\n'
+              '        assert stored["handFit"]["l"]["method"] == "target-mesh-distal-axis-and-lateral-spread-v15"\n'
+              '        assert stored["handFit"]["r"]["method"] == "target-mesh-distal-axis-and-lateral-spread-v15"')
+          replace(test, 'Blender AutoRig V14 landmark + heat weights validated', 'Blender AutoRig V15 anatomical head + hand axis validated')
+
+          contracts = "tests-avatar-blender-autorig.mjs"
+          replace(contracts, 'cada Rehacer rig exige prueba criptográfica de una ejecución nueva de Blender V12', 'cada Rehacer rig exige prueba criptográfica de una ejecución nueva de Blender V15')
+          replace(contracts, 'EXPECTED_WORKER_RIG_VERSION = "v14-landmark-autorig"', 'EXPECTED_WORKER_RIG_VERSION = "v15-anatomical-landmark-autorig"')
+          replace(contracts, 'EXPECTED_PROFILE_VERSION = "clouva-blender-autorig-v14-landmarks-heat"', 'EXPECTED_PROFILE_VERSION = "clouva-blender-autorig-v15-skull-hand-axis"')
+          replace(contracts, 'Blender V14 ajustó articulaciones y creó un rig nuevo', 'Blender V15 ajustó cabeza, manos y articulaciones y creó un rig nuevo')
+          replace(contracts, 'AutoRig V14 ajusta cada cadena con landmarks y usa pesos automáticos de Blender', 'AutoRig V15 ajusta cabeza y cada cadena con landmarks y usa pesos automáticos de Blender')
+          replace(contracts, 'mesh-landmarks-per-chain-v14', 'mesh-landmarks-per-chain-v15', count=4)
+          replace(contracts, 'automatic-heat-body-plus-projected-parts-v14', 'automatic-heat-body-plus-projected-parts-v15')
+          replace(contracts,
+              '  assert.match(rigRoute, /landmarkFit\\?\\.method !== "mesh-landmarks-per-chain-v15"/);\n'
+              '});',
+              '  assert.match(rigRoute, /landmarkFit\\?\\.method !== "mesh-landmarks-per-chain-v15"/);\n'
+              '  assert.match(workerAutorig, /mesh-skull-base-to-crown-v15/);\n'
+              '  assert.match(workerAutorig, /target-mesh-distal-axis-and-lateral-spread-v15/);\n'
+              '  assert.match(workerApp, /v15-anatomical-landmark-autorig/);\n'
+              '});')
+
+          Path('.github/workflows/apply-autorig-v15-anatomy.yml').unlink()
+          PY
+      - name: Validate patch contracts
+        run: |
+          node --test tests-avatar-blender-autorig.mjs
+          python -m py_compile worker/garment-rig/autorig_avatar_v12.py worker/garment-rig/app_v16.py worker/garment-rig/test_autorig_avatar_v12.py
+      - name: Commit AutoRig V15
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Fix anatomical head, hand axes, and side rig preview"
+          git push origin HEAD:${{ github.head_ref }}
