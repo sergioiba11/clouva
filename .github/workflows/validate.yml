@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [agent/base-mesh-auto-rig, agent/avatar-analyzer-phase1]
+    branches: [agent/base-mesh-auto-rig]
 
 permissions:
   contents: read
@@ -37,7 +37,7 @@ jobs:
         run: npm test
 
       - name: Validate worker Python
-        run: python3 -m py_compile worker/garment-rig/app*.py worker/garment-rig/rig_garment*.py worker/garment-rig/autorig_avatar*.py worker/garment-rig/avatar_analyzer.py worker/garment-rig/body_analyzer.py worker/garment-rig/face_analyzer.py worker/garment-rig/hand_analyzer.py worker/garment-rig/multiview_renderer.py worker/garment-rig/landmark_detector_2d.py worker/garment-rig/landmark_projector_3d.py worker/garment-rig/landmark_fusion.py worker/garment-rig/diagnostic_builder.py worker/garment-rig/avatar_reference.py worker/garment-rig/test_*.py tools/unreal_avatar_export/export_clouva_avatar.py
+        run: python3 -m py_compile worker/garment-rig/app*.py worker/garment-rig/rig_garment*.py worker/garment-rig/autorig_avatar*.py worker/garment-rig/avatar_reference.py worker/garment-rig/test_*.py tools/unreal_avatar_export/export_clouva_avatar.py
 
       - name: Build and validate Blender worker image
         shell: bash
