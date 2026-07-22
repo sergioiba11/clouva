@@ -26,6 +26,14 @@ const creatorStudio = readFileSync("components/creator-studio/CreatorStudioSimpl
 const workerAutorig = readFileSync("worker/garment-rig/autorig_avatar_v16.py", "utf8");
 const workerApp = readFileSync("worker/garment-rig/app_v16.py", "utf8");
 const dockerfile = readFileSync("worker/garment-rig/Dockerfile", "utf8");
+const analyzer = readFileSync("worker/garment-rig/avatar_analyzer.py", "utf8");
+const segmenter = readFileSync("worker/garment-rig/anatomy_segmenter.py", "utf8");
+const triangulator = readFileSync("worker/garment-rig/ray_triangulator.py", "utf8");
+const fingerCenterline = readFileSync("worker/garment-rig/finger_centerline.py", "utf8");
+const handAnalyzer = readFileSync("worker/garment-rig/hand_analyzer.py", "utf8");
+const detector2d = readFileSync("worker/garment-rig/landmark_detector_2d.py", "utf8");
+const diagnosticBuilder = readFileSync("worker/garment-rig/diagnostic_builder.py", "utf8");
+const analyzerPanel = readFileSync("components/library/AvatarAnalyzerPreview.tsx", "utf8");
 
 test("el autorig de avatar no puede volver a llamar la ruta de rigging de Meshy", () => {
   const offenders = sourceFiles.filter((file) => readFileSync(file, "utf8").includes(forbiddenRiggingRoute));
@@ -132,4 +140,51 @@ test("el Worker conserva temporalmente el contrato web V15 pero adjunta la prueb
   assert.match(workerApp, /profile\["rigSource"\] = "Blender official Unreal reference"/);
   assert.match(workerApp, /profile\["landmarkFit"\]\["actualMethod"\]/);
   assert.match(workerApp, /weightedRatio.*0\.995/s);
+});
+
+test("Avatar Analyzer V2 segmenta regiones antes de buscar superficie", () => {
+  assert.match(analyzer, /segment_anatomy/);
+  assert.match(analyzer, /named-anatomy-region-nearest-surface-v2/);
+  assert.match(segmenter, /upper_arm_l/);
+  assert.match(segmenter, /forearm_l/);
+  assert.match(segmenter, /hand_l/);
+  assert.match(segmenter, /side gate/i);
+  assert.doesNotMatch(analyzer, /same-side-nearest-mesh-anchor-v2/);
+});
+
+test("cara y manos usan triangulación en lugar de promediar impactos", () => {
+  assert.match(triangulator, /robust_ray_triangulation/);
+  assert.match(triangulator, /_least_squares/);
+  assert.match(handAnalyzer, /triangulate_landmark/);
+  assert.match(handAnalyzer, /segmentation\.hand_measurement/);
+  assert.doesNotMatch(handAnalyzer, /body_height\s*\*\s*0\.105/);
+  assert.doesNotMatch(handAnalyzer, /fuse_projected/);
+});
+
+test("MediaPipe emite exactamente una referencia canónica por articulación de mano", () => {
+  assert.match(detector2d, /"handLandmarkCount": len\(HAND_MAP\)/);
+  assert.doesNotMatch(detector2d, /"thumb_metacarpal"\s*:/);
+  assert.doesNotMatch(detector2d, /"index_metacarpal"\s*:/);
+  assert.doesNotMatch(detector2d, /"middle_metacarpal"\s*:/);
+  assert.doesNotMatch(detector2d, /"ring_metacarpal"\s*:/);
+  assert.doesNotMatch(detector2d, /"pinky_metacarpal"\s*:/);
+});
+
+test("cada dedo se refina contra su nube geométrica y se valida topológicamente", () => {
+  assert.match(fingerCenterline, /finger_cloud_assignment/);
+  assert.match(fingerCenterline, /cross_section_medial_refinement/);
+  assert.match(fingerCenterline, /FINGER_CHAINS_CROSS/);
+  assert.match(fingerCenterline, /FINGER_LATERAL_ORDER_INVALID/);
+  assert.match(fingerCenterline, /hand_scale/);
+});
+
+test("el diagnóstico separa superficie, articulaciones internas y rechazados", () => {
+  assert.match(diagnosticBuilder, /internal_joint_position/);
+  assert.match(diagnosticBuilder, /surface_display_position/);
+  assert.match(diagnosticBuilder, /duplicateLandmarksHidden/);
+  assert.doesNotMatch(diagnosticBuilder, /BODY_EDGES\s*=/);
+  assert.match(analyzerPanel, /Compatibilidad corporal humanoide/);
+  assert.match(analyzerPanel, /Superficie verificada/);
+  assert.match(analyzerPanel, /Articulaciones internas/);
+  assert.match(analyzerPanel, /Candidatos rechazados/);
 });
