@@ -1,0 +1,250 @@
+name: Apply Rig Proof V13
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/apply-rig-proof-v13.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - name: Add strict Blender run proof
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace(path, old, new, count=1):
+              file = Path(path)
+              text = file.read_text(encoding="utf-8")
+              if old not in text:
+                  raise SystemExit(f"Pattern not found in {path}: {old[:180]!r}")
+              text = text.replace(old, new, count)
+              file.write_text(text, encoding="utf-8")
+
+          route_path = "app/api/avatar/rig/route.ts"
+          replace(
+              route_path,
+              'const COMPLETE_FILENAME = "clouva-complete-rigged.glb";\n',
+              'const COMPLETE_FILENAME = "clouva-complete-rigged.glb";\n'
+              'const EXPECTED_WORKER_RIG_VERSION = "v12-real-blender-autorig";\n'
+              'const EXPECTED_PROFILE_VERSION = "clouva-blender-autorig-v12-official-reference";\n',
+          )
+          replace(
+              route_path,
+              '  const profile = parseRigProfile(response);\n'
+              '  if (profile.complete !== true || profile.fingers?.complete !== true || profile.ears?.complete !== true) {\n'
+              '    throw new Error("El avatar no superó la validación del esqueleto y los pesos");\n'
+              '  }\n\n'
+              '  const bytes = await response.arrayBuffer();',
+              '  const workerVersion = response.headers.get("x-clouva-rig-version") ?? "";\n'
+              '  const profile = parseRigProfile(response);\n'
+              '  const proof = profile as RigProfile & {\n'
+              '    version?: string;\n'
+              '    rigSource?: string;\n'
+              '    inputSource?: string;\n'
+              '    runId?: string;\n'
+              '    durationMs?: number;\n'
+              '    inputSha256?: string;\n'
+              '    outputSha256?: string;\n'
+              '    weights?: { weightedRatio?: number };\n'
+              '    handFit?: Record<string, { method?: string }>;\n'
+              '  };\n'
+              '  if (workerVersion !== EXPECTED_WORKER_RIG_VERSION) {\n'
+              '    throw new Error(`Railway respondió con el rig ${workerVersion || "sin versión"}; se exige ${EXPECTED_WORKER_RIG_VERSION}`);\n'
+              '  }\n'
+              '  if (\n'
+              '    proof.version !== EXPECTED_PROFILE_VERSION\n'
+              '    || proof.rigSource !== "Blender official Unreal reference"\n'
+              '    || proof.inputSource !== "original-clean-meshy-avatar"\n'
+              '    || !proof.runId\n'
+              '    || !proof.inputSha256\n'
+              '    || !proof.outputSha256\n'
+              '    || proof.inputSha256 === proof.outputSha256\n'
+              '    || Number(proof.weights?.weightedRatio ?? 0) < 0.985\n'
+              '    || proof.handFit?.l?.method !== "target-mesh-hand-envelope"\n'
+              '    || proof.handFit?.r?.method !== "target-mesh-hand-envelope"\n'
+              '  ) {\n'
+              '    throw new Error("Blender devolvió un resultado sin prueba de AutoRig V12 fresco; no se guardará como aprobado");\n'
+              '  }\n'
+              '  if (profile.complete !== true || profile.fingers?.complete !== true || profile.ears?.complete !== true) {\n'
+              '    throw new Error("El avatar no superó la validación del esqueleto y los pesos");\n'
+              '  }\n\n'
+              '  const bytes = await response.arrayBuffer();',
+          )
+          replace(
+              route_path,
+              '  return { bytes, profile };\n',
+              '  return {\n'
+              '    bytes,\n'
+              '    profile,\n'
+              '    workerVersion,\n'
+              '    rigRunId: proof.runId,\n'
+              '    rigDurationMs: Number(proof.durationMs ?? 0),\n'
+              '    inputSha256: proof.inputSha256,\n'
+              '    outputSha256: proof.outputSha256,\n'
+              '  };\n',
+          )
+          replace(
+              route_path,
+              '        retried: retry,\n',
+              '        retried: retry,\n'
+              '        workerVersion: completed.workerVersion,\n'
+              '        rigRunId: completed.rigRunId,\n'
+              '        rigDurationMs: completed.rigDurationMs,\n'
+              '        inputSha256: completed.inputSha256,\n'
+              '        outputSha256: completed.outputSha256,\n',
+          )
+
+          worker_path = "worker/garment-rig/autorig_avatar_v12.py"
+          replace(
+              worker_path,
+              'import json\nimport os\nimport sys\n',
+              'import hashlib\nimport json\nimport os\nimport sys\nimport time\nimport uuid\n',
+          )
+          replace(
+              worker_path,
+              '\n\ndef args_after_separator():\n',
+              '\n\ndef sha256_file(path):\n'
+              '    digest = hashlib.sha256()\n'
+              '    with Path(path).open("rb") as handle:\n'
+              '        for chunk in iter(lambda: handle.read(1024 * 1024), b""):\n'
+              '            digest.update(chunk)\n'
+              '    return digest.hexdigest()\n'
+              '\n\ndef args_after_separator():\n',
+          )
+          replace(
+              worker_path,
+              'def run(input_path, output_path, metadata_path):\n'
+              '    target_meshes = import_original(input_path)\n',
+              'def run(input_path, output_path, metadata_path):\n'
+              '    started = time.perf_counter()\n'
+              '    run_id = uuid.uuid4().hex\n'
+              '    input_sha256 = sha256_file(input_path)\n'
+              '    reference_sha256 = sha256_file(REFERENCE_FBX)\n'
+              '    target_meshes = import_original(input_path)\n',
+          )
+          replace(
+              worker_path,
+              '    profile["rigSource"] = "Blender official Unreal reference"\n'
+              '    profile["inputSource"] = "original-clean-meshy-avatar"\n',
+              '    profile["rigSource"] = "Blender official Unreal reference"\n'
+              '    profile["inputSource"] = "original-clean-meshy-avatar"\n'
+              '    profile["runId"] = run_id\n'
+              '    profile["inputSha256"] = input_sha256\n'
+              '    profile["referenceSha256"] = reference_sha256\n',
+          )
+          replace(
+              worker_path,
+              '    if not output_path.is_file() or output_path.stat().st_size < 1024:\n'
+              '        raise RuntimeError("Blender did not generate a valid rigged GLB")\n'
+              '    metadata_path.write_text(json.dumps(profile, separators=(",", ":")), encoding="utf-8")\n',
+              '    if not output_path.is_file() or output_path.stat().st_size < 1024:\n'
+              '        raise RuntimeError("Blender did not generate a valid rigged GLB")\n'
+              '    profile["outputSha256"] = sha256_file(output_path)\n'
+              '    profile["durationMs"] = max(1, int((time.perf_counter() - started) * 1000))\n'
+              '    if profile["inputSha256"] == profile["outputSha256"]:\n'
+              '        raise RuntimeError("Blender returned the original file instead of a fresh rig")\n'
+              '    metadata_path.write_text(json.dumps(profile, separators=(",", ":")), encoding="utf-8")\n',
+          )
+
+          app15_path = "worker/garment-rig/app_v15.py"
+          replace(
+              app15_path,
+              '                "X-Clouva-Rig-Version": COMPLETE_AVATAR_RIG_VERSION,\n'
+              '                "X-Clouva-Fingers": "true",\n',
+              '                "X-Clouva-Rig-Version": COMPLETE_AVATAR_RIG_VERSION,\n'
+              '                "X-Clouva-Rig-Run-Id": str(profile.get("runId") or ""),\n'
+              '                "X-Clouva-Rig-Duration-Ms": str(profile.get("durationMs") or 0),\n'
+              '                "X-Clouva-Fingers": "true",\n',
+          )
+
+          studio_path = "components/creator-studio/CreatorStudioSimple.tsx"
+          replace(
+              studio_path,
+              'type RigFeatureReport = {\n'
+              '  complete?: boolean;\n'
+              '  boneCount?: number;\n',
+              'type RigFeatureReport = {\n'
+              '  complete?: boolean;\n'
+              '  boneCount?: number;\n'
+              '  version?: string;\n'
+              '  rigSource?: string;\n'
+              '  inputSource?: string;\n'
+              '  runId?: string;\n'
+              '  durationMs?: number;\n'
+              '  inputSha256?: string;\n'
+              '  outputSha256?: string;\n',
+          )
+          replace(
+              studio_path,
+              '  rigProfile?: RigFeatureReport | null;\n'
+              '  task?: { status?: string; progress?: number; task_error?: { message?: string } };\n',
+              '  rigProfile?: RigFeatureReport | null;\n'
+              '  workerVersion?: string;\n'
+              '  rigRunId?: string;\n'
+              '  rigDurationMs?: number;\n'
+              '  inputSha256?: string;\n'
+              '  outputSha256?: string;\n'
+              '  task?: { status?: string; progress?: number; task_error?: { message?: string } };\n',
+          )
+          replace(
+              studio_path,
+              '        setMessage("Listo para Unreal. Revisá Huesos, Animación y Diagnóstico antes de aprobar.");\n',
+              '        const durationSeconds = Math.max(0.001, Number(created.rigDurationMs ?? created.rigProfile.durationMs ?? 0) / 1000);\n'
+              '        const runId = String(created.rigRunId ?? created.rigProfile.runId ?? "").slice(0, 8);\n'
+              '        setMessage(`Blender V12 creó un rig nuevo en ${durationSeconds.toFixed(2)} s · ejecución ${runId}. Revisá Animación antes de aprobar.`);\n',
+          )
+
+          test_path = "worker/garment-rig/test_autorig_avatar_v12.py"
+          replace(
+              test_path,
+              '        assert stored["handFit"]["r"]["method"] == "target-mesh-hand-envelope"\n'
+              '        validate_output(output)\n',
+              '        assert stored["handFit"]["r"]["method"] == "target-mesh-hand-envelope"\n'
+              '        assert stored["runId"]\n'
+              '        assert stored["durationMs"] > 0\n'
+              '        assert len(stored["inputSha256"]) == 64\n'
+              '        assert len(stored["outputSha256"]) == 64\n'
+              '        assert stored["inputSha256"] != stored["outputSha256"]\n'
+              '        validate_output(output)\n',
+          )
+
+          contracts = "tests-avatar-blender-autorig.mjs"
+          replace(
+              contracts,
+              '  assert.match(dockerfile, /test_autorig_avatar_v12\\.py/);\n'
+              '});\n',
+              '  assert.match(dockerfile, /test_autorig_avatar_v12\\.py/);\n'
+              '});\n'
+              '\n'
+              'test("cada Rehacer rig exige prueba criptográfica de una ejecución nueva de Blender V12", () => {\n'
+              '  assert.match(rigRoute, /EXPECTED_WORKER_RIG_VERSION = "v12-real-blender-autorig"/);\n'
+              '  assert.match(rigRoute, /EXPECTED_PROFILE_VERSION = "clouva-blender-autorig-v12-official-reference"/);\n'
+              '  assert.match(rigRoute, /proof\\.inputSha256 === proof\\.outputSha256/);\n'
+              '  assert.match(workerAutorig, /uuid\\.uuid4\\(\\)\\.hex/);\n'
+              '  assert.match(workerAutorig, /sha256_file\\(output_path\\)/);\n'
+              '  assert.match(creatorStudio, /Blender V12 creó un rig nuevo/);\n'
+              '});\n',
+          )
+
+          Path('.github/workflows/apply-rig-proof-v13.yml').unlink()
+          PY
+      - name: Validate contracts
+        run: |
+          node --test tests-avatar-blender-autorig.mjs
+          python -m py_compile worker/garment-rig/autorig_avatar_v12.py worker/garment-rig/app_v15.py worker/garment-rig/test_autorig_avatar_v12.py
+      - name: Commit proof enforcement
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Require proof of fresh Blender AutoRig execution"
+          git push origin HEAD:${{ github.head_ref }}
