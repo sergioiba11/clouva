@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from dataclasses import dataclass
 from typing import Dict, Iterable, List, Sequence
 
 import bpy
@@ -16,6 +17,14 @@ from anatomy_segmenter import (
     _safe_normal,
     _segment_distance,
 )
+
+
+@dataclass
+class ComponentInfo:
+    indices: List[int]
+    points: List[Vector]
+    center: Vector
+    labels: Counter
 
 
 def _connected_components(obj: bpy.types.Object):
@@ -43,6 +52,20 @@ def _connected_components(obj: bpy.types.Object):
     return components
 
 
+def _component_infos(obj: bpy.types.Object, object_labels: List[str]):
+    result = []
+    for component in _connected_components(obj):
+        points = [obj.matrix_world @ obj.data.vertices[index].co for index in component]
+        center = sum(points, Vector((0.0, 0.0, 0.0))) / max(len(points), 1)
+        result.append(ComponentInfo(
+            indices=component,
+            points=points,
+            center=center,
+            labels=Counter(object_labels[index] for index in component),
+        ))
+    return result
+
+
 def _percentile(values: Sequence[float], factor: float):
     if not values:
         return float("inf")
@@ -53,11 +76,6 @@ def _percentile(values: Sequence[float], factor: float):
 
 def _component_corridor_candidate(points: Sequence[Vector], specs: dict,
                                   center_x: float, width: float):
-    """Choose the limb corridor that best explains an entire component.
-
-    This uses robust component-level evidence instead of allowing a few fallback
-    torso labels to dominate a disconnected arm, hand or shoe component.
-    """
     candidates = []
     for region, (start, end, radius, sign) in specs.items():
         scores = []
@@ -91,28 +109,102 @@ def _component_corridor_candidate(points: Sequence[Vector], specs: dict,
         return None
     candidates.sort(key=lambda item: (item["metric"], -item["insideFraction"], -item["coverage"]))
     best = candidates[0]
-    if best["metric"] > 3.05:
-        return None
-    return best
+    return best if best["metric"] <= 3.05 else None
+
+
+def _contains_family(info: ComponentInfo, family: Sequence[str]):
+    return sum(info.labels.get(name, 0) for name in family) >= max(3, len(info.indices) * 0.08)
+
+
+def _rank_assign(items: List[ComponentInfo], names: Sequence[str], key):
+    """Assign disconnected pieces by proximal-to-distal order.
+
+    It is only used when at least two independent connected components provide
+    evidence for the same limb side. A connected production avatar never enters
+    this fallback.
+    """
+    if len(items) < 2:
+        return {}
+    ordered = sorted(items, key=key)
+    assignments = {}
+    count = len(ordered)
+    for index, info in enumerate(ordered):
+        factor = index / float(max(count - 1, 1))
+        if factor <= 0.30:
+            region = names[0]
+        elif factor >= 0.72:
+            region = names[-1]
+        else:
+            region = names[1]
+        assignments[id(info)] = region
+    return assignments
+
+
+def _disconnected_chain_assignments(infos: List[ComponentInfo], center_x: float):
+    assignments = {}
+    diagnostics = []
+    for suffix, sign in (("l", 1.0), ("r", -1.0)):
+        arm_names = (f"upper_arm_{suffix}", f"forearm_{suffix}", f"hand_{suffix}")
+        arm_items = [
+            info for info in infos
+            if sign * (info.center.x - center_x) > 0.0 and _contains_family(info, arm_names)
+        ]
+        arm_assignments = _rank_assign(
+            arm_items,
+            arm_names,
+            key=lambda info: sign * (info.center.x - center_x),
+        )
+        assignments.update(arm_assignments)
+        if arm_assignments:
+            diagnostics.append({
+                "side": suffix,
+                "chain": "arm",
+                "componentCount": len(arm_items),
+                "assignments": [
+                    {"center": [float(info.center.x), float(info.center.y), float(info.center.z)],
+                     "region": arm_assignments.get(id(info))}
+                    for info in sorted(arm_items, key=lambda value: sign * (value.center.x - center_x))
+                ],
+                "method": "disconnected-proximal-to-distal-lateral-order",
+            })
+
+        leg_names = (f"thigh_{suffix}", f"calf_{suffix}", f"foot_{suffix}")
+        leg_items = [
+            info for info in infos
+            if sign * (info.center.x - center_x) >= -1e-6 and _contains_family(info, leg_names)
+        ]
+        leg_assignments = _rank_assign(
+            leg_items,
+            leg_names,
+            key=lambda info: -info.center.z,
+        )
+        assignments.update(leg_assignments)
+        if leg_assignments:
+            diagnostics.append({
+                "side": suffix,
+                "chain": "leg",
+                "componentCount": len(leg_items),
+                "assignments": [
+                    {"center": [float(info.center.x), float(info.center.y), float(info.center.z)],
+                     "region": leg_assignments.get(id(info))}
+                    for info in sorted(leg_items, key=lambda value: -value.center.z)
+                ],
+                "method": "disconnected-proximal-to-distal-vertical-order",
+            })
+    return assignments, diagnostics
 
 
 def _cohere_small_components(obj: bpy.types.Object, object_labels: List[str],
                              specs: dict, center_x: float, width: float):
-    """Stabilize disconnected anatomy using component-wide geometric evidence.
-
-    The largest connected body component stays vertex-segmented. Smaller pieces
-    such as Meshy hands, shoes, eyes embedded in the body mesh, or synthetic test
-    limbs are assigned by their best anatomical corridor. Label plurality remains
-    a fallback for head/neck/torso components that are not represented by a limb
-    corridor.
-    """
     total = max(len(object_labels), 1)
     changes = []
-    for component in _connected_components(obj):
-        if len(component) > total * 0.30 or len(component) < 4:
+    infos = _component_infos(obj, object_labels)
+    chain_assignments, chain_diagnostics = _disconnected_chain_assignments(infos, center_x)
+
+    for info in infos:
+        if len(info.indices) > total * 0.30 or len(info.indices) < 4:
             continue
-        points = [obj.matrix_world @ obj.data.vertices[index].co for index in component]
-        previous = Counter(object_labels[index] for index in component)
+        previous = info.labels
         non_unassigned = Counter({
             label: count for label, count in previous.items() if label != "unassigned"
         })
@@ -120,39 +212,33 @@ def _cohere_small_components(obj: bpy.types.Object, object_labels: List[str],
         plurality_region = ranked[0][0] if ranked else None
         plurality_count = ranked[0][1] if ranked else 0
         second_count = ranked[1][1] if len(ranked) > 1 else 0
-        support = plurality_count / float(len(component))
-        margin = (plurality_count - second_count) / float(len(component))
-        corridor = _component_corridor_candidate(points, specs, center_x, width)
+        support = plurality_count / float(len(info.indices))
+        margin = (plurality_count - second_count) / float(len(info.indices))
+        corridor = _component_corridor_candidate(info.points, specs, center_x, width)
 
-        selected_region = None
-        selection_method = None
-        if corridor is not None:
+        selected_region = chain_assignments.get(id(info))
+        selection_method = "disconnected-chain-order" if selected_region else None
+        if selected_region is None and corridor is not None:
             plurality_is_limb = bool(plurality_region and plurality_region in specs)
-            corridor_is_strong = (
-                corridor["insideFraction"] >= 0.30
-                or corridor["metric"] <= 2.30
-            )
+            corridor_is_strong = corridor["insideFraction"] >= 0.30 or corridor["metric"] <= 2.30
             corridor_beats_plurality = (
-                not plurality_is_limb
-                or support < 0.58
-                or corridor["region"] == plurality_region
+                not plurality_is_limb or support < 0.58 or corridor["region"] == plurality_region
             )
             if corridor_is_strong and corridor_beats_plurality:
                 selected_region = corridor["region"]
                 selection_method = "component-anatomy-corridor"
-
         if selected_region is None and plurality_region is not None:
             if plurality_count >= 4 and support >= 0.34 and margin >= 0.08:
                 selected_region = plurality_region
                 selection_method = "component-label-plurality"
-
         if selected_region is None:
             continue
-        for index in component:
+        for index in info.indices:
             object_labels[index] = selected_region
         changes.append({
             "object": obj.name,
-            "vertexCount": len(component),
+            "vertexCount": len(info.indices),
+            "center": [float(info.center.x), float(info.center.y), float(info.center.z)],
             "selectedRegion": selected_region,
             "selectionMethod": selection_method,
             "support": float(support),
@@ -160,7 +246,7 @@ def _cohere_small_components(obj: bpy.types.Object, object_labels: List[str],
             "corridorEvidence": corridor,
             "previousLabels": dict(previous),
         })
-    return changes
+    return changes, chain_diagnostics
 
 
 def segment_anatomy_v3(meshes: Iterable[bpy.types.Object], classifications: Dict[str, str],
@@ -175,6 +261,7 @@ def segment_anatomy_v3(meshes: Iterable[bpy.types.Object], classifications: Dict
     labels = {}
     rejected_objects = []
     component_changes = []
+    chain_diagnostics = []
 
     for obj in meshes:
         category = classifications.get(obj.name, "unknown_rejected")
@@ -201,12 +288,12 @@ def segment_anatomy_v3(meshes: Iterable[bpy.types.Object], classifications: Dict
             object_labels[vertex.index] = best_region or _fallback_region(
                 point, refined, center_x, width, height,
             )
-        component_changes.extend(
-            _cohere_small_components(obj, object_labels, specs, center_x, width)
+        changes, chain_report = _cohere_small_components(
+            obj, object_labels, specs, center_x, width,
         )
+        component_changes.extend(changes)
+        chain_diagnostics.extend(chain_report)
 
-    # Build samples after component coherence so BVHs and measurements consume
-    # exactly the final labels.
     samples = defaultdict(list)
     for obj in meshes:
         if classifications.get(obj.name, "unknown_rejected") != "body":
@@ -228,10 +315,11 @@ def segment_anatomy_v3(meshes: Iterable[bpy.types.Object], classifications: Dict
         ),
     }
     diagnostics = {
-        "method": "geodesic-cross-section-vectors-plus-component-corridors-v3",
+        "method": "geodesic-cross-section-vectors-plus-disconnected-chain-order-v3",
         "limbRefinement": refinement_diagnostics or {},
         "rejectedObjects": rejected_objects,
         "componentCoherence": component_changes,
+        "disconnectedChainOrdering": chain_diagnostics,
         "unassignedVertices": len(samples.get("unassigned", [])),
         "regionCount": len([name for name, values in samples.items() if values]),
         "preservesExternalRefinedVectors": True,
