@@ -1,0 +1,37 @@
+name: Debug Autorig Typecheck
+
+on:
+  pull_request:
+    paths:
+      - "app/api/avatar/rig/route.ts"
+      - "components/library/ActiveAvatarDownload.tsx"
+      - "lib/meshy.ts"
+      - "tests-avatar-blender-autorig.mjs"
+      - ".github/workflows/debug-autorig-typecheck.yml"
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Capture typecheck
+        shell: bash
+        run: |
+          set +e
+          npm run typecheck > autorig-typecheck.log 2>&1
+          echo "$?" > autorig-typecheck-exit.txt
+          cat autorig-typecheck.log
+          exit 0
+      - uses: actions/upload-artifact@v4
+        with:
+          name: autorig-typecheck-log
+          path: |
+            autorig-typecheck.log
+            autorig-typecheck-exit.txt
+      - name: Preserve result
+        run: test "$(cat autorig-typecheck-exit.txt)" = "0"
