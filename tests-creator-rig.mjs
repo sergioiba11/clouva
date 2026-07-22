@@ -20,6 +20,8 @@ const unrealExportRouteSource = readFileSync("./app/api/assets/export-unreal/rou
 const unrealObjectExportSource = readFileSync("./components/library/UnrealObjectExport.tsx", "utf8");
 const garmentDockerfile = readFileSync("./worker/garment-rig/Dockerfile", "utf8");
 
+const workerCopiesAllPython = /COPY \*\.py \.\//.test(garmentDockerfile);
+
 test("hoodie siempre se pesa de nuevo contra el avatar activo", () => {
   const job = buildBlenderJob({ category: "hoodie", templateMode: true, preserveExistingSkinning: true });
   assert.equal(job.operation, "fit_and_rig_reference");
@@ -116,7 +118,7 @@ test("V15 usa la malla corporal como fuente de verdad para escala y roundtrip", 
   assert.match(garmentWorkerV15Source, /def validate_roundtrip_v15/);
   assert.match(garmentWorkerV15Source, /El pantalón volvió a quedar gigante respecto del cuerpo real/);
   assert.doesNotMatch(garmentWorkerV15Source, /waist\.z - left_foot\.z/);
-  assert.match(garmentDockerfile, /rig_garment_v15\.py/);
+  assert.equal(workerCopiesAllPython, true);
 });
 
 test("V43 mantiene la referencia visible del avatar activo", () => {
@@ -147,8 +149,7 @@ test("V30 evita doble rigging y separa Meshy original de prenda ajustada", () =>
 });
 
 test("Inspector V2 y el estudio visual mantienen el diagnóstico real", () => {
-  assert.match(garmentDockerfile, /app_v9\.py/);
-  assert.match(garmentDockerfile, /inspect_garment\.py/);
+  assert.equal(workerCopiesAllPython, true);
   assert.match(garmentDockerfile, /CLOUVA_WORKER_INSPECTOR=v2/);
   assert.match(workerInspectorApiSource, /v2-single-pass-awareness/);
   assert.match(workerInspectorApiSource, /preserve-existing-rig/);
