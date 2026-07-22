@@ -19,8 +19,6 @@ import {
   LineSegments,
   Object3D,
   PerspectiveCamera,
-  Points,
-  PointsMaterial,
   Quaternion,
   Scene,
   SkinnedMesh,
@@ -409,14 +407,11 @@ function createSkeletonPreview(root: Object3D, rig: HumanRig) {
   const links = buildBasePreviewLinks(root);
   const ears = bones.filter((bone) => isEarBone(bone.name));
   const fingerTips = bones.filter((bone) => fingerInfo(bone.name)?.segment === 3);
-  const visibleJoints = bones.filter((bone) => !isPalmRoot(bone.name) && !isUnsafeHelper(bone.name));
-
   const box = new Box3().setFromObject(root);
   const height = Math.max(box.max.y - box.min.y, 0.001);
   const maxLinkLength = height * 0.45;
-  const segmentCapacity = links.length + 1 + ears.length * 2 + fingerTips.length;
+  const segmentCapacity = links.length + 1 + ears.length + fingerTips.length;
   const linePositions = new Float32Array(Math.max(segmentCapacity * 6, 6));
-  const pointPositions = new Float32Array(Math.max(visibleJoints.length * 3, 3));
 
   const lineGeometry = new BufferGeometry();
   lineGeometry.setAttribute("position", new Float32BufferAttribute(linePositions, 3));
@@ -425,22 +420,8 @@ function createSkeletonPreview(root: Object3D, rig: HumanRig) {
   lines.frustumCulled = false;
   lines.renderOrder = 100;
 
-  const pointGeometry = new BufferGeometry();
-  pointGeometry.setAttribute("position", new Float32BufferAttribute(pointPositions, 3));
-  const pointMaterial = new PointsMaterial({
-    color: 0xbfffee,
-    size: height * 0.009,
-    sizeAttenuation: true,
-    transparent: true,
-    opacity: 0.98,
-    depthTest: false,
-  });
-  const points = new Points(pointGeometry, pointMaterial);
-  points.frustumCulled = false;
-  points.renderOrder = 101;
-
   const group = new Group();
-  group.add(lines, points);
+  group.add(lines);
 
   const writeLine = (array: Float32Array, offset: number, start: Vector3, end: Vector3) => {
     array[offset++] = start.x;
@@ -489,25 +470,15 @@ function createSkeletonPreview(root: Object3D, rig: HumanRig) {
       }
     }
 
-    // Las orejas son joints hoja: se muestran como pequeños huesos cruzados en su posición real.
+    // Las orejas se dibujan con un único segmento corto hacia afuera, sin cruces flotantes.
     root.getWorldQuaternion(tmpRootWorldQuaternion);
-    const up = tmpA.set(0, 1, 0).applyQuaternion(tmpRootWorldQuaternion).normalize().clone();
     const right = tmpB.set(1, 0, 0).applyQuaternion(tmpRootWorldQuaternion).normalize().clone();
+    box.getCenter(tmpCenter);
     for (const ear of ears) {
-      ear.getWorldPosition(tmpC);
-      const half = height * 0.012;
-      lineOffset = writeLine(
-        lineArray,
-        lineOffset,
-        tmpC.clone().addScaledVector(up, -half),
-        tmpC.clone().addScaledVector(up, half),
-      );
-      lineOffset = writeLine(
-        lineArray,
-        lineOffset,
-        tmpC.clone().addScaledVector(right, -half * 0.65),
-        tmpC.clone().addScaledVector(right, half * 0.65),
-      );
+      ear.getWorldPosition(tmpA);
+      const sign = tmpA.x >= tmpCenter.x ? 1 : -1;
+      tmpC.copy(tmpA).addScaledVector(right, sign * height * 0.020);
+      lineOffset = writeLine(lineArray, lineOffset, tmpA, tmpC);
     }
 
     // glTF no conserva el tail del último hueso. Proyectamos la última falange desde 02→03.
@@ -532,18 +503,6 @@ function createSkeletonPreview(root: Object3D, rig: HumanRig) {
     lineAttribute.needsUpdate = true;
     lineGeometry.computeBoundingSphere();
 
-    const pointAttribute = pointGeometry.getAttribute("position") as Float32BufferAttribute;
-    const pointArray = pointAttribute.array as Float32Array;
-    let pointOffset = 0;
-    for (const bone of visibleJoints) {
-      bone.getWorldPosition(tmpA);
-      pointArray[pointOffset++] = tmpA.x;
-      pointArray[pointOffset++] = tmpA.y;
-      pointArray[pointOffset++] = tmpA.z;
-    }
-    while (pointOffset < pointArray.length) pointArray[pointOffset++] = 0;
-    pointAttribute.needsUpdate = true;
-    pointGeometry.computeBoundingSphere();
   };
 
   return {
@@ -552,8 +511,6 @@ function createSkeletonPreview(root: Object3D, rig: HumanRig) {
     dispose: () => {
       lineGeometry.dispose();
       lineMaterial.dispose();
-      pointGeometry.dispose();
-      pointMaterial.dispose();
     },
   };
 }
@@ -599,13 +556,14 @@ export function CreatorStudioAvatarViewer({
     let needsRefit = false;
 
     const scene = new Scene();
-    const camera = new PerspectiveCamera(31, 1, 0.02, 100);
+    const camera = new PerspectiveCamera(31, 1, 0.005, 100);
     const renderer = new WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
     renderer.outputColorSpace = SRGBColorSpace;
     renderer.toneMapping = ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.05;
     renderer.setClearColor(0x000000, 0);
     renderer.setPixelRatio(Math.min(devicePixelRatio || 1, innerWidth < 768 ? 1 : 1.5));
+    renderer.domElement.style.touchAction = "none";
     mount.appendChild(renderer.domElement);
 
     scene.add(new HemisphereLight(0xffffff, 0x160b25, 1.65));
@@ -615,12 +573,17 @@ export function CreatorStudioAvatarViewer({
     scene.add(light);
 
     const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = false;
-    controls.enablePan = false;
-    controls.enableRotate = false;
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.enablePan = true;
+    controls.enableRotate = true;
     controls.enableZoom = true;
-    controls.minDistance = 1.2;
-    controls.maxDistance = 8;
+    controls.screenSpacePanning = true;
+    controls.zoomToCursor = true;
+    controls.minPolarAngle = 0.12;
+    controls.maxPolarAngle = Math.PI - 0.12;
+    controls.minDistance = 0.35;
+    controls.maxDistance = 12;
 
     const refit = () => {
       if (!model) return;
@@ -628,7 +591,13 @@ export function CreatorStudioAvatarViewer({
       const rect = mount.getBoundingClientRect();
       const aspect = Math.max(rect.width, 1) / Math.max(rect.height, 1);
       const framed = frameAvatar(camera, model, aspect, 1.28);
+      const fittedDistance = Math.max(camera.position.distanceTo(framed.center), 0.1);
+      camera.near = Math.max(0.002, fittedDistance / 1000);
+      camera.far = Math.max(100, fittedDistance * 30);
+      camera.updateProjectionMatrix();
       controls.target.copy(framed.center);
+      controls.minDistance = Math.max(0.28, fittedDistance * 0.22);
+      controls.maxDistance = Math.max(8, fittedDistance * 4);
       controls.update();
       controls.saveState();
     };
@@ -640,6 +609,9 @@ export function CreatorStudioAvatarViewer({
       camera.updateProjectionMatrix();
       refit();
     };
+
+    const handleDoubleClick = () => refit();
+    renderer.domElement.addEventListener("dblclick", handleDoubleClick);
 
     const observer = new ResizeObserver(resize);
     observer.observe(mount);
@@ -754,6 +726,7 @@ export function CreatorStudioAvatarViewer({
       disposed = true;
       cancelAnimationFrame(frame);
       observer.disconnect();
+      renderer.domElement.removeEventListener("dblclick", handleDoubleClick);
       action?.stop();
       mixer?.stopAllAction();
       skeletonPreview?.dispose();
