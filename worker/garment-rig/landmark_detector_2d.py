@@ -2,7 +2,7 @@
 
 This file runs with the container's system Python, not Blender's executable.
 It emits only candidate 2D landmarks. Blender remains responsible for 3D ray
-projection, mesh-class filtering and multiview validation.
+triangulation, anatomical-region filtering and topology validation.
 """
 from __future__ import annotations
 
@@ -64,29 +64,27 @@ FACE_MAP: Dict[str, List[int]] = {
     "brow_r_outer": [70],
 }
 
+# Exactly the 21 canonical MediaPipe points. Extra metacarpal aliases are
+# derived later as hidden internal joints; they must never create duplicate 2D
+# candidates or duplicate balls in the diagnostic GLB.
 HAND_MAP = {
     "wrist": 0,
-    "thumb_metacarpal": 1,
     "thumb_01": 1,
     "thumb_02": 2,
     "thumb_03": 3,
     "thumb_tip": 4,
-    "index_metacarpal": 5,
     "index_01": 5,
     "index_02": 6,
     "index_03": 7,
     "index_tip": 8,
-    "middle_metacarpal": 9,
     "middle_01": 9,
     "middle_02": 10,
     "middle_03": 11,
     "middle_tip": 12,
-    "ring_metacarpal": 13,
     "ring_01": 13,
     "ring_02": 14,
     "ring_03": 15,
     "ring_tip": 16,
-    "pinky_metacarpal": 17,
     "pinky_01": 17,
     "pinky_02": 18,
     "pinky_03": 19,
@@ -189,6 +187,7 @@ def _detect_hand(detector, view: dict):
             "side": view.get("side"),
             "detectorHandedness": detector_handedness,
             "index": index,
+            "canonicalIndex": index,
         })
     return candidates, None
 
@@ -197,9 +196,10 @@ def run(request_path: Path, output_path: Path):
     request = json.loads(request_path.read_text(encoding="utf-8"))
     views = request.get("views") or []
     output = {
-        "version": "clouva-mediapipe-tasks-v1",
+        "version": "clouva-mediapipe-tasks-v2-canonical",
         "faceModel": str(FACE_MODEL),
         "handModel": str(HAND_MODEL),
+        "handLandmarkCount": len(HAND_MAP),
         "views": [],
         "errors": [],
     }
@@ -222,7 +222,7 @@ def run(request_path: Path, output_path: Path):
                 })
                 if error:
                     output["errors"].append(error)
-            except Exception as exc:  # one bad render must not hide other views
+            except Exception as exc:
                 output["errors"].append({
                     "code": "DETECTOR_VIEW_FAILED",
                     "view": view.get("name"),
