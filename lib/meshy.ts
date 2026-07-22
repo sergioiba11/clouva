@@ -1,17 +1,12 @@
 const MESHY_BASE = "https://api.meshy.ai/openapi/v2/text-to-3d";
 const MESHY_MULTI_IMAGE_BASE = "https://api.meshy.ai/openapi/v1/multi-image-to-3d";
-const MESHY_RIGGING_BASE = "https://api.meshy.ai/openapi/v1/rigging";
 
 type MeshyTask = {
   id?: string;
   status: "PENDING" | "IN_PROGRESS" | "SUCCEEDED" | "FAILED" | "EXPIRED" | "CANCELED";
   progress?: number;
   model_urls?: { glb?: string; fbx?: string; obj?: string };
-  result?: {
-    rigged_character_glb_url?: string;
-    rigged_character_fbx_url?: string;
-    basic_animations?: Record<string, string>;
-  } | null;
+  result?: Record<string, unknown> | null;
   thumbnail_url?: string;
   task_error?: { message?: string };
 };
@@ -105,17 +100,4 @@ export async function createMultiImageTask(imageUrls: string[], texturePrompt?: 
 
 export async function getMultiImageTask(taskId: string): Promise<MeshyTask> {
   return meshyFetchAbsolute(`${MESHY_MULTI_IMAGE_BASE}/${encodeURIComponent(taskId)}`);
-}
-
-export async function createRiggingTask(modelUrl: string, heightMeters = 1.8) {
-  const data = await meshyFetchAbsolute(MESHY_RIGGING_BASE, {
-    method: "POST",
-    body: JSON.stringify({ model_url: modelUrl, height_meters: heightMeters }),
-  });
-  if (!data?.result || typeof data.result !== "string") throw new Error("Meshy no devolvió un ID de rigging válido");
-  return data.result as string;
-}
-
-export async function getRiggingTask(taskId: string): Promise<MeshyTask> {
-  return meshyFetchAbsolute(`${MESHY_RIGGING_BASE}/${encodeURIComponent(taskId)}`);
 }

@@ -1,6 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { createRiggingTask, getRiggingTask } from "@/lib/meshy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,15 +9,25 @@ export const maxDuration = 300;
 const JOB_KEY = "clouva_avatar_complete_rig_job";
 const PROFILE_KEY = "clouva_avatar_complete_rig_profile";
 const COMPLETE_FILENAME = "clouva-complete-rigged.glb";
-const ACTIVE_TASK_STATES = new Set(["PENDING", "IN_PROGRESS"]);
-const FAILED_TASK_STATES = new Set(["FAILED", "EXPIRED", "CANCELED"]);
 const DERIVED_RIG_PATTERN = /(?:complete-rigged|rigged|processed|final)(?:[-_.]|$)/i;
+const MAX_ACTIVE_JOB_AGE_MS = 10 * 60 * 1000;
+
+const RIG_STAGES = {
+  preparing: "Preparando avatar en Blender",
+  skeleton: "Creando esqueleto",
+  weights: "Asignando pesos",
+  ready: "Listo para Unreal",
+} as const;
+
+type RigStage = (typeof RIG_STAGES)[keyof typeof RIG_STAGES];
 
 type RigJob = {
-  taskId: string;
+  jobId: string;
   startedAt: number;
   sourceAvatarId: string | null;
   sourceAvatarUrl: string;
+  status: "IN_PROGRESS";
+  stage: RigStage;
 };
 
 type RigSource = {
@@ -32,6 +42,7 @@ type RigProfile = {
   complete?: boolean;
   boneCount?: number;
   addedBones?: string[];
+  normalization?: Record<string, unknown>;
   fingers?: {
     complete?: boolean;
     leftChains?: number;
@@ -165,11 +176,6 @@ async function readActiveAvatar(
   );
   if (!optionalColumnFailure) throw asError(richQuery.error, "No se pudo leer el avatar activo");
 
-  console.warn(
-    "Falling back to legacy user_avatars schema",
-    errorMessage(richQuery.error),
-  );
-
   const legacyQuery = await supabase
     .from("user_avatars")
     .select("id,model_url,updated_at")
@@ -212,7 +218,7 @@ async function resolveSource(
     if (!currentUrl) throw new Error("El avatar activo no tiene un GLB disponible");
     if (!originalUrl) {
       throw new Error(
-        "No encontramos el GLB original limpio del avatar. El rig anterior no se usará como fuente. Volvé a seleccionar el avatar creado originalmente.",
+        "No encontramos el GLB original limpio del avatar. El reintento nunca usará un rig parcial como fuente.",
       );
     }
 
@@ -251,17 +257,21 @@ function readJob(metadata: Record<string, unknown> | null | undefined): RigJob |
   if (!raw || typeof raw !== "object") return null;
   const value = raw as Record<string, unknown>;
   if (
-    typeof value.taskId !== "string"
+    typeof value.jobId !== "string"
     || typeof value.startedAt !== "number"
     || typeof value.sourceAvatarUrl !== "string"
+    || value.status !== "IN_PROGRESS"
+    || typeof value.stage !== "string"
   ) {
     return null;
   }
   return {
-    taskId: value.taskId,
+    jobId: value.jobId,
     startedAt: value.startedAt,
     sourceAvatarId: typeof value.sourceAvatarId === "string" ? value.sourceAvatarId : null,
     sourceAvatarUrl: value.sourceAvatarUrl,
+    status: "IN_PROGRESS",
+    stage: value.stage as RigStage,
   };
 }
 
@@ -299,13 +309,28 @@ function jobMatches(job: RigJob, source: RigSource) {
   return job.sourceAvatarUrl === source.originalUrl;
 }
 
+function jobIsActive(job: RigJob | null, source: RigSource) {
+  return Boolean(
+    job
+    && jobMatches(job, source)
+    && Date.now() - job.startedAt < MAX_ACTIVE_JOB_AGE_MS,
+  );
+}
+
+function progressForStage(stage: RigStage) {
+  if (stage === RIG_STAGES.preparing) return 10;
+  if (stage === RIG_STAGES.skeleton) return 45;
+  if (stage === RIG_STAGES.weights) return 80;
+  return 100;
+}
+
 function parseRigProfile(response: Response): RigProfile {
   const raw = response.headers.get("x-clouva-rig-profile");
-  if (!raw) throw new Error("El Blender Worker no devolvió la validación de dedos y orejas");
+  if (!raw) throw new Error("El Blender Worker no devolvió el perfil de validación del rig");
   try {
     return JSON.parse(raw) as RigProfile;
   } catch {
-    throw new Error("La validación del rig completo devuelta por Blender es inválida");
+    throw new Error("La validación del rig devuelta por Blender es inválida");
   }
 }
 
@@ -350,7 +375,7 @@ async function completeRigWithWorker(sourceUrl: string) {
 
   const profile = parseRigProfile(response);
   if (profile.complete !== true || profile.fingers?.complete !== true || profile.ears?.complete !== true) {
-    throw new Error("El avatar no superó la validación de dedos y orejas");
+    throw new Error("El avatar no superó la validación del esqueleto y los pesos");
   }
 
   const bytes = await response.arrayBuffer();
@@ -440,22 +465,22 @@ async function persistRiggedAvatar(
   const publicUrl = `${basePublicUrl}?v=${Date.now()}`;
   const now = new Date().toISOString();
 
-  if (avatarId) {
-    await updateAvatarRow(supabase, userId, avatarId, publicUrl, now);
-  }
+  if (avatarId) await updateAvatarRow(supabase, userId, avatarId, publicUrl, now);
   await updateProfileAvatar(supabase, userId, publicUrl, now);
   return publicUrl;
 }
 
 export async function POST(request: NextRequest) {
-  let stage = "inicio";
+  let stage: RigStage | "sesión" | "buscar-glb-original" | "leer-estado-del-rig" = "sesión";
+  let userId: string | null = null;
+  let supabaseForCleanup: ReturnType<typeof getAdminClient> | null = null;
 
   try {
-    stage = "sesión";
     const { supabase, user } = await requireUser(request);
+    userId = user.id;
+    supabaseForCleanup = supabase;
     const body = await request.json();
     const action = String(body?.action ?? "");
-    const force = Boolean(body?.force);
 
     stage = "buscar-glb-original";
     const source = await resolveSource(supabase, user.id);
@@ -472,11 +497,14 @@ export async function POST(request: NextRequest) {
     const alreadyRigged = source.currentUrl.includes(COMPLETE_FILENAME);
 
     if (action === "create") {
-      if (alreadyRigged && !force) {
+      if (alreadyRigged) {
         await updateMetadata(supabase, user.id, { job: null });
         return NextResponse.json({
           alreadyRigged: true,
+          completed: true,
           status: "SUCCEEDED",
+          progress: 100,
+          stage: RIG_STAGES.ready,
           newAvatarUrl: source.currentUrl,
           sourceAvatarId: source.avatarId,
           rigProfile: storedProfile ?? { complete: true },
@@ -484,118 +512,150 @@ export async function POST(request: NextRequest) {
         });
       }
 
-      stage = "limpiar-intento-anterior";
-      await updateMetadata(supabase, user.id, { job: null, profile: null });
+      if (jobIsActive(storedJob, source)) {
+        return NextResponse.json({
+          active: true,
+          resumed: true,
+          taskId: storedJob!.jobId,
+          status: storedJob!.status,
+          progress: progressForStage(storedJob!.stage),
+          stage: storedJob!.stage,
+          sourceAvatarId: source.avatarId,
+        });
+      }
 
-      stage = "rig-base-desde-original";
-      const taskId = await createRiggingTask(source.originalUrl, 1.8);
-      const job: RigJob = {
-        taskId,
+      if (storedJob) await updateMetadata(supabase, user.id, { job: null });
+
+      let job: RigJob = {
+        jobId: randomUUID(),
         startedAt: Date.now(),
         sourceAvatarId: source.avatarId,
         sourceAvatarUrl: source.originalUrl,
+        status: "IN_PROGRESS",
+        stage: RIG_STAGES.preparing,
       };
-      await updateMetadata(supabase, user.id, { job, profile: null });
-      return NextResponse.json({
-        ...job,
-        status: "PENDING",
-        source: source.source,
-        sourceKind: "original-clean-glb",
-        freshRig: true,
-      });
-    }
+      await updateMetadata(supabase, user.id, { job });
 
-    if (action === "current") {
-      if (alreadyRigged) {
-        return NextResponse.json({
-          active: false,
-          alreadyRigged: true,
-          status: "SUCCEEDED",
-          newAvatarUrl: source.currentUrl,
-          sourceAvatarId: source.avatarId,
-          rigProfile: storedProfile ?? { complete: true },
-        });
-      }
-      if (!storedJob || !jobMatches(storedJob, source)) {
-        return NextResponse.json({ active: false, status: "NOT_STARTED", sourceAvatarId: source.avatarId });
-      }
+      stage = RIG_STAGES.skeleton;
+      job = { ...job, stage };
+      await updateMetadata(supabase, user.id, { job });
+      const completed = await completeRigWithWorker(source.originalUrl);
 
-      stage = "estado-rig-base";
-      const task = await getRiggingTask(storedJob.taskId);
-      return NextResponse.json({ active: ACTIVE_TASK_STATES.has(task.status), ...storedJob, ...task });
-    }
+      stage = RIG_STAGES.weights;
+      job = { ...job, stage };
+      await updateMetadata(supabase, user.id, { job });
 
-    if (action === "status") {
-      const taskId = String(body?.taskId ?? storedJob?.taskId ?? "");
-      if (!taskId) return NextResponse.json({ error: "Falta taskId", stage: "estado-rig-base" }, { status: 400 });
-
-      stage = "estado-rig-base";
-      const task = await getRiggingTask(taskId);
-      return NextResponse.json({ ...task, taskId });
-    }
-
-    if (action === "finalize") {
-      const taskId = String(body?.taskId ?? storedJob?.taskId ?? "");
-      if (!taskId) return NextResponse.json({ error: "Falta taskId", stage: "finalizar-rig" }, { status: 400 });
-
-      stage = "validar-rig-base";
-      const task = await getRiggingTask(taskId);
-      if (FAILED_TASK_STATES.has(task.status)) {
-        await updateMetadata(supabase, user.id, { job: null });
-        return NextResponse.json(
-          {
-            error: task.task_error?.message || "El rigeador base no pudo completar el avatar",
-            stage,
-            task,
-          },
-          { status: 422 },
-        );
-      }
-
-      const riggedUrl = task.result?.rigged_character_glb_url;
-      if (task.status !== "SUCCEEDED" || !riggedUrl) {
-        return NextResponse.json({ error: "El rig base todavía no terminó", stage, task }, { status: 409 });
-      }
-
-      stage = "completar-dedos-y-orejas";
-      const completed = await completeRigWithWorker(riggedUrl);
-
-      stage = "guardar-rig-completo";
       const publicUrl = await persistRiggedAvatar(
         supabase,
         user.id,
-        storedJob?.sourceAvatarId ?? source.avatarId,
+        source.avatarId,
         completed.bytes,
       );
       await updateMetadata(supabase, user.id, { job: null, profile: completed.profile });
 
       return NextResponse.json({
         ok: true,
+        completed: true,
         status: "SUCCEEDED",
+        progress: 100,
+        stage: RIG_STAGES.ready,
+        taskId: job.jobId,
         newAvatarUrl: publicUrl,
-        sourceAvatarId: storedJob?.sourceAvatarId ?? source.avatarId,
+        sourceAvatarId: source.avatarId,
         rigProfile: completed.profile,
         sourceKind: "original-clean-glb",
         freshRig: true,
       });
     }
 
+    if (action === "current" || action === "status") {
+      if (alreadyRigged) {
+        return NextResponse.json({
+          active: false,
+          alreadyRigged: true,
+          completed: true,
+          status: "SUCCEEDED",
+          progress: 100,
+          stage: RIG_STAGES.ready,
+          newAvatarUrl: source.currentUrl,
+          sourceAvatarId: source.avatarId,
+          rigProfile: storedProfile ?? { complete: true },
+        });
+      }
+
+      const requestedId = typeof body?.taskId === "string" ? body.taskId : null;
+      if (jobIsActive(storedJob, source) && (!requestedId || requestedId === storedJob!.jobId)) {
+        return NextResponse.json({
+          active: true,
+          taskId: storedJob!.jobId,
+          status: storedJob!.status,
+          progress: progressForStage(storedJob!.stage),
+          stage: storedJob!.stage,
+          sourceAvatarId: source.avatarId,
+        });
+      }
+
+      if (storedJob) await updateMetadata(supabase, user.id, { job: null });
+      return NextResponse.json({
+        active: false,
+        status: "NOT_STARTED",
+        progress: 0,
+        stage: RIG_STAGES.preparing,
+        sourceAvatarId: source.avatarId,
+      });
+    }
+
+    if (action === "finalize") {
+      if (alreadyRigged) {
+        return NextResponse.json({
+          ok: true,
+          completed: true,
+          status: "SUCCEEDED",
+          progress: 100,
+          stage: RIG_STAGES.ready,
+          newAvatarUrl: source.currentUrl,
+          sourceAvatarId: source.avatarId,
+          rigProfile: storedProfile ?? { complete: true },
+        });
+      }
+      return NextResponse.json(
+        {
+          error: jobIsActive(storedJob, source)
+            ? "Blender todavía está procesando el avatar"
+            : "No hay un resultado de Blender para finalizar",
+          status: jobIsActive(storedJob, source) ? "IN_PROGRESS" : "NOT_STARTED",
+          stage: storedJob?.stage ?? RIG_STAGES.preparing,
+        },
+        { status: 409 },
+      );
+    }
+
     if (action === "clear") {
-      await updateMetadata(supabase, user.id, { job: null, profile: null });
+      await updateMetadata(supabase, user.id, { job: null });
       return NextResponse.json({ ok: true });
     }
 
     return NextResponse.json({ error: "Acción inválida", stage: "entrada" }, { status: 400 });
   } catch (cause) {
     const technicalError = errorMessage(cause);
-    console.error("Complete avatar rig failed", { stage, technicalError, cause });
+    console.error("Blender avatar autorig failed", { stage, technicalError, cause });
+
+    if (userId && supabaseForCleanup) {
+      try {
+        await updateMetadata(supabaseForCleanup, userId, { job: null });
+      } catch (cleanupError) {
+        console.error("Could not clear failed Blender avatar job", cleanupError);
+      }
+    }
 
     const message = `[${stage}] ${technicalError}`;
     const status = /sesión/i.test(technicalError)
       ? 401
       : /original limpio|GLB original|no hay un avatar original/i.test(technicalError)
         ? 422
-        : 500;
+        : /Blender no pudo|validación del esqueleto/i.test(technicalError)
+          ? 422
+          : 500;
 
     return NextResponse.json({ error: message, stage, technicalError }, { status });
   }
