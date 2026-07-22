@@ -1,0 +1,41 @@
+name: Run Real Blender AutoRig Payload
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/run-real-autorig-payload.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - name: Execute stored AutoRig payload
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import textwrap
+
+          source = Path('.github/workflows/apply-real-autorig-v1.yml').read_text()
+          start_marker = "          python - <<'PY'\n"
+          end_marker = "          PY\n"
+          start = source.index(start_marker) + len(start_marker)
+          end = source.index(end_marker, start)
+          payload = textwrap.dedent(source[start:end])
+          exec(compile(payload, '<autorig-payload>', 'exec'), {})
+          PY
+      - name: Validate Python syntax
+        run: python -m py_compile worker/garment-rig/autorig_avatar_v1.py worker/garment-rig/test_autorig_avatar_v1.py
+      - name: Commit generated files
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add worker/garment-rig/autorig_avatar_v1.py worker/garment-rig/test_autorig_avatar_v1.py
+          git commit -m "Add real Blender AutoRig from clean avatar"
+          git push origin HEAD:${{ github.head_ref }}
