@@ -1,4 +1,4 @@
-name: Assemble Real Blender AutoRig V12
+name: Apply Real Blender AutoRig V12
 
 on:
   pull_request:
@@ -9,26 +9,37 @@ permissions:
   contents: write
 
 jobs:
-  assemble:
+  apply:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.head_ref }}
-      - name: Assemble AutoRig source
+      - name: Apply production patch
+        shell: bash
         run: |
-          cat .autorig-v12-payload/part00.pyfrag \
-              .autorig-v12-payload/part01.pyfrag \
-              .autorig-v12-payload/part02.pyfrag \
-              .autorig-v12-payload/part03.pyfrag \
-              > worker/garment-rig/autorig_avatar_v12.py
-          python -m py_compile \
-              worker/garment-rig/autorig_avatar_v12.py \
-              worker/garment-rig/test_autorig_avatar_v12.py
-      - name: Commit AutoRig source
+          python - <<'PY'
+          from pathlib import Path
+
+          lines = Path('.github/workflows/apply-real-autorig-product.yml').read_text().splitlines()
+          start = next(index for index, line in enumerate(lines) if line.strip() == "python - <<'PY'")
+          end = next(index for index in range(start + 1, len(lines)) if lines[index].strip() == "PY")
+          payload_lines = []
+          for line in lines[start + 1:end]:
+              payload_lines.append(line[10:] if line.startswith('          ') else line)
+          payload = '\n'.join(payload_lines) + '\n'
+          exec(compile(payload, '<real-autorig-product-patch>', 'exec'), {})
+          PY
+      - name: Validate static contracts
+        run: |
+          python -m py_compile worker/garment-rig/autorig_avatar_v12.py worker/garment-rig/test_autorig_avatar_v12.py
+          npm ci
+          npm run typecheck
+          npm test
+      - name: Commit production fix
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add worker/garment-rig/autorig_avatar_v12.py
-          git commit -m "Add real Blender AutoRig V12"
+          git add -A
+          git commit -m "Run real Blender AutoRig when rebuilding avatar"
           git push origin HEAD:${{ github.head_ref }}
