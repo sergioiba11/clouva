@@ -62,8 +62,9 @@ def validate_output(path):
     assert len(armatures) == 1 and meshes
     armature = armatures[0]
     names = {bone.name for bone in armature.data.bones}
+    lower_names = {name.lower() for name in names}
     assert len(names) >= 50
-    assert "clouva_head_end" in names or "Head_end" in names
+    assert "clouva_head_end" in lower_names or "head_end" in lower_names
     head = next((bone for bone in armature.data.bones if bone.name.lower() == "head"), None)
     assert head is not None
     minimum, maximum, size = autorig.bounds(meshes)
