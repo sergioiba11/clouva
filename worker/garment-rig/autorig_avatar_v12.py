@@ -16,7 +16,7 @@ if str(SCRIPT_DIR) not in sys.path:
 import complete_avatar_rig_v11 as v11
 from avatar_reference import canonicalize_and_validate_bones
 
-VERSION = "clouva-blender-autorig-v14-landmarks-heat"
+VERSION = "clouva-blender-autorig-v15-skull-hand-axis"
 REFERENCE_FBX = Path(os.environ.get(
     "CLOUVA_AVATAR_REFERENCE_PATH",
     SCRIPT_DIR / "avatar-reference" / "AvatarReference.fbx",
@@ -264,7 +264,7 @@ def fit_major_bones_to_target_mesh(armature, meshes):
     pelvis = center_landmark(0.445)
     lower_spine = center_landmark(0.505)
     chest = center_landmark(0.655)
-    neck = center_landmark(0.742)
+    skull_base = center_landmark(0.785)
     head_top = center_landmark(0.955)
 
     data_bones = armature.data.bones
@@ -325,11 +325,31 @@ def fit_major_bones_to_target_mesh(armature, meshes):
     for index, bone in enumerate(spine_chain):
         set_bone(bone, spine_nodes[index], spine_nodes[index + 1], previous, index > 0)
         previous = bone
-    set_bone(neck_bone, chest, neck, previous, True)
-    set_bone(head_bone, neck, head_top, neck_bone, True)
+    set_bone(neck_bone, chest, skull_base, previous, True)
+    set_bone(head_bone, skull_base, head_top, neck_bone, True)
+    head_end_bone = _find_named_bone(
+        bones, "clouva_head_end", "Head_end", "head_end", "HeadEnd", "headend"
+    )
+    if head_end_bone is None:
+        head_end_bone = bones.new("clouva_head_end")
+    set_bone(
+        head_end_bone,
+        head_top,
+        head_top + Vector((0.0, 0.0, height * 0.012)),
+        head_bone,
+        True,
+    )
+    head_end_bone.use_deform = False
 
     report = {
-        "method": "mesh-landmarks-per-chain-v14",
+        "method": "mesh-landmarks-per-chain-v15",
+        "head": {
+            "method": "mesh-skull-base-to-crown-v15",
+            "base": list(map(float, skull_base)),
+            "crown": list(map(float, head_top)),
+            "lengthRatio": float((head_top - skull_base).length / height),
+            "terminalBone": head_end_bone.name,
+        },
         "height": height,
         "width": width,
         "center": [center_x, center_y],
@@ -515,7 +535,7 @@ def bind_geometry_aware_weights(target_meshes, armature):
     if ratio < 0.995:
         raise RuntimeError(f"Geometry-aware weights covered only {weighted}/{vertices} vertices")
     return {
-        "method": "automatic-heat-body-plus-projected-parts-v14",
+        "method": "automatic-heat-body-plus-projected-parts-v15",
         "bodyMesh": body.name,
         "projectedParts": transferred_parts,
         "filledNearestBoneVertices": filled,
@@ -598,6 +618,14 @@ def fit_fingers_to_target_mesh(armature, meshes, report):
         bpy.ops.object.mode_set(mode="OBJECT")
     bpy.ops.object.mode_set(mode="EDIT")
     bones = armature.data.edit_bones
+    left_hand = bones.get(hand_names.get("l", ""))
+    right_hand = bones.get(hand_names.get("r", ""))
+    if left_hand is None or right_hand is None:
+        bpy.ops.object.mode_set(mode="OBJECT")
+        raise RuntimeError("Missing both hand bones while deriving the palm lateral axis")
+    left_wrist = armature.matrix_world @ left_hand.head
+    right_wrist = armature.matrix_world @ right_hand.head
+    global_lateral = v11.v10.unit(left_wrist - right_wrist, (1.0, 0.0, 0.0))
 
     for side in ("l", "r"):
         hand = bones.get(hand_names.get(side, ""))
@@ -619,19 +647,43 @@ def fit_fingers_to_target_mesh(armature, meshes, report):
                 own.negate()
             direction = v11.v10.unit(direction * 0.75 + own * 0.25, direction)
 
-        vertical = Vector((0.0, 0.0, 1.0))
-        spread_axis = vertical.cross(direction)
+        outward_axis = global_lateral.copy()
+        if side == "r":
+            outward_axis.negate()
+        spread_axis = outward_axis - direction * outward_axis.dot(direction)
         if spread_axis.length < 1e-6:
-            spread_axis = Vector((1.0, 0.0, 0.0))
+            spread_axis = Vector((0.0, 0.0, 1.0)).cross(direction)
         spread_axis.normalize()
 
-        candidates = []
-        for point in all_vertices:
-            delta = point - wrist
-            along = float(delta.dot(direction))
-            perpendicular = (delta - direction * along).length
-            if -height * 0.012 <= along <= height * 0.11 and perpendicular <= height * 0.055:
-                candidates.append((point, along, float(delta.dot(spread_axis))))
+        def collect_candidates(axis):
+            result = []
+            for point in all_vertices:
+                delta = point - wrist
+                along = float(delta.dot(axis))
+                perpendicular = (delta - axis * along).length
+                if -height * 0.012 <= along <= height * 0.11 and perpendicular <= height * 0.055:
+                    result.append((point, along))
+            return result
+
+        axis_candidates = collect_candidates(direction)
+        positive = [along for _, along in axis_candidates if along > height * 0.004]
+        distal_threshold = _percentile(positive, 0.72, height * 0.028)
+        distal_points = [point for point, along in axis_candidates if along >= distal_threshold]
+        if len(distal_points) >= 6:
+            distal_center = _mean_point(distal_points, wrist + direction * height * 0.04)
+            mesh_axis = distal_center - wrist
+            if mesh_axis.length >= height * 0.018 and mesh_axis.dot(direction) > 0.0:
+                direction = v11.v10.unit(mesh_axis * 0.88 + direction * 0.12, direction)
+                spread_axis = outward_axis - direction * outward_axis.dot(direction)
+                if spread_axis.length < 1e-6:
+                    spread_axis = Vector((0.0, 0.0, 1.0)).cross(direction)
+                spread_axis.normalize()
+                axis_candidates = collect_candidates(direction)
+
+        candidates = [
+            (point, along, float((point - wrist).dot(spread_axis)))
+            for point, along in axis_candidates
+        ]
         positive = [along for _, along, _ in candidates if along > height * 0.004]
         extent = _percentile(positive, 0.94, height * 0.045)
         extent = max(height * 0.026, min(height * 0.070, extent))
@@ -680,7 +732,7 @@ def fit_fingers_to_target_mesh(armature, meshes, report):
             "handExtent": extent,
             "handHalfWidth": half_width,
             "fingerTotalLength": total_length,
-            "method": "target-mesh-hand-envelope",
+            "method": "target-mesh-distal-axis-and-lateral-spread-v15",
         }
 
     bpy.ops.object.mode_set(mode="OBJECT")
@@ -728,6 +780,7 @@ def run(input_path, output_path, metadata_path):
     profile["normalization"] = {**fit, "workerNormalization": report.get("normalization")}
     profile["weights"] = transferred
     profile["landmarkFit"] = landmark_fit
+    profile["headFit"] = landmark_fit.get("head")
     profile["handFit"] = hand_fit
     profile["rigSource"] = "Blender geometry landmarks + official Unreal hierarchy"
     profile["inputSource"] = "original-clean-meshy-avatar"
@@ -739,7 +792,10 @@ def run(input_path, output_path, metadata_path):
         and profile.get("fingers", {}).get("complete")
         and profile.get("ears", {}).get("complete")
         and transferred.get("weightedRatio", 0.0) >= 0.995
-        and landmark_fit.get("method") == "mesh-landmarks-per-chain-v14"
+        and landmark_fit.get("method") == "mesh-landmarks-per-chain-v15"
+        and landmark_fit.get("head", {}).get("method") == "mesh-skull-base-to-crown-v15"
+        and hand_fit.get("l", {}).get("method") == "target-mesh-distal-axis-and-lateral-spread-v15"
+        and hand_fit.get("r", {}).get("method") == "target-mesh-distal-axis-and-lateral-spread-v15"
     )
     validate_unit_scale(armature, target_meshes)
     if not profile["complete"]:
@@ -768,7 +824,7 @@ def run(input_path, output_path, metadata_path):
     if profile["inputSha256"] == profile["outputSha256"]:
         raise RuntimeError("Blender returned the original file instead of a fresh rig")
     metadata_path.write_text(json.dumps(profile, separators=(",", ":")), encoding="utf-8")
-    print(f"[clouva-landmark-autorig-v14] {json.dumps(profile, separators=(',', ':'))}", flush=True)
+    print(f"[clouva-landmark-autorig-v15] {json.dumps(profile, separators=(',', ':'))}", flush=True)
     return profile
 
 

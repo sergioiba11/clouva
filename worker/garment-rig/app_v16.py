@@ -24,7 +24,7 @@ MAX_CONCURRENT_BLENDER_JOBS = current.MAX_CONCURRENT_BLENDER_JOBS
 BLENDER_SINGLE_FLIGHT_VERSION = current.BLENDER_SINGLE_FLIGHT_VERSION
 RIG_DIAGNOSTICS_VERSION = current.RIG_DIAGNOSTICS_VERSION
 CLEAN_ATTEMPT_VERSION = current.CLEAN_ATTEMPT_VERSION
-COMPLETE_AVATAR_RIG_VERSION = "v14-landmark-autorig"
+COMPLETE_AVATAR_RIG_VERSION = "v15-anatomical-landmark-autorig"
 COMPLETE_AVATAR_RIG_SCRIPT = Path(__file__).with_name("autorig_avatar_v12.py")
 CompleteAvatarRigRequest = current.CompleteAvatarRigRequest
 RigWithUnrealMoldRequest = current.RigWithUnrealMoldRequest
@@ -34,7 +34,7 @@ current.COMPLETE_AVATAR_RIG_VERSION = COMPLETE_AVATAR_RIG_VERSION
 current.COMPLETE_AVATAR_RIG_SCRIPT = COMPLETE_AVATAR_RIG_SCRIPT
 
 UNREAL_MOLD_RIG_VERSION = "v2-fresh-source-real-diagnostics"
-V14_METHOD_SOURCE = "Blender geometry landmarks + official Unreal hierarchy"
+V15_METHOD_SOURCE = "Blender geometry landmarks + official Unreal hierarchy"
 API_COMPATIBLE_RIG_SOURCE = "Blender official Unreal reference"
 
 # Reemplaza solamente las rutas síncronas de avatar y molde.
@@ -49,13 +49,13 @@ app.router.routes[:] = [
 
 
 @app.post("/avatar/complete-rig")
-def complete_avatar_rig_v14(request: CompleteAvatarRigRequest):
+def complete_avatar_rig_v15(request: CompleteAvatarRigRequest):
     if not COMPLETE_AVATAR_RIG_SCRIPT.is_file():
         raise HTTPException(status_code=500, detail="Falta autorig_avatar_v12.py en el Blender Worker")
     if request.finger_segments != 3:
         raise HTTPException(status_code=400, detail="CLOUVA usa tres segmentos por dedo")
 
-    job_dir = Path(tempfile.mkdtemp(prefix="clouva-complete-avatar-rig-v14-"))
+    job_dir = Path(tempfile.mkdtemp(prefix="clouva-complete-avatar-rig-v15-"))
     input_path = job_dir / "avatar-original-clean.glb"
     output_path = job_dir / "avatar-complete-rigged.glb"
     metadata_path = job_dir / "avatar-complete-rig.json"
@@ -85,11 +85,11 @@ def complete_avatar_rig_v14(request: CompleteAvatarRigRequest):
         if result.returncode != 0 or not output_path.is_file() or output_path.stat().st_size < 1024:
             raise RuntimeError(current._complete_rig_failure(result.stdout, result.stderr))
         if not metadata_path.is_file():
-            raise RuntimeError("Blender no generó la validación del AutoRig V14")
+            raise RuntimeError("Blender no generó la validación del AutoRig V15")
 
         profile = json.loads(metadata_path.read_text(encoding="utf-8"))
         method_source = str(profile.get("rigSource") or "")
-        if method_source != V14_METHOD_SOURCE:
+        if method_source != V15_METHOD_SOURCE:
             raise RuntimeError(
                 f"El AutoRig no devolvió el origen geométrico V14 esperado: {method_source or 'vacío'}"
             )
@@ -103,7 +103,10 @@ def complete_avatar_rig_v14(request: CompleteAvatarRigRequest):
             profile.get("complete")
             and profile.get("fingers", {}).get("complete")
             and profile.get("ears", {}).get("complete")
-            and profile.get("landmarkFit", {}).get("method") == "mesh-landmarks-per-chain-v14"
+            and profile.get("landmarkFit", {}).get("method") == "mesh-landmarks-per-chain-v15"
+            and profile.get("headFit", {}).get("method") == "mesh-skull-base-to-crown-v15"
+            and profile.get("handFit", {}).get("l", {}).get("method") == "target-mesh-distal-axis-and-lateral-spread-v15"
+            and profile.get("handFit", {}).get("r", {}).get("method") == "target-mesh-distal-axis-and-lateral-spread-v15"
             and float(profile.get("weights", {}).get("weightedRatio") or 0.0) >= 0.995
         )
         if request.require_fingers and not profile.get("fingers", {}).get("complete"):
@@ -111,7 +114,7 @@ def complete_avatar_rig_v14(request: CompleteAvatarRigRequest):
         if request.require_ears and not profile.get("ears", {}).get("complete"):
             valid = False
         if not valid:
-            raise RuntimeError(f"El AutoRig V14 fue rechazado: {profile}")
+            raise RuntimeError(f"El AutoRig V15 fue rechazado: {profile}")
 
         return FileResponse(
             output_path,
@@ -133,10 +136,10 @@ def complete_avatar_rig_v14(request: CompleteAvatarRigRequest):
         raise
     except subprocess.TimeoutExpired as exc:
         shutil.rmtree(job_dir, ignore_errors=True)
-        raise HTTPException(status_code=504, detail="Blender agotó el tiempo al completar el AutoRig V14") from exc
+        raise HTTPException(status_code=504, detail="Blender agotó el tiempo al completar el AutoRig V15") from exc
     except Exception as exc:
         shutil.rmtree(job_dir, ignore_errors=True)
-        raise HTTPException(status_code=422, detail=f"No se pudo completar el AutoRig V14: {exc}") from exc
+        raise HTTPException(status_code=422, detail=f"No se pudo completar el AutoRig V15: {exc}") from exc
 
 
 def _pop_job(job_id: str) -> dict:

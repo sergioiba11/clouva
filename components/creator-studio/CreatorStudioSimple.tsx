@@ -377,7 +377,7 @@ updatedAt: new Date().toISOString(),
         setViewerRevision((value) => value + 1);
         const durationSeconds = Math.max(0.001, Number(created.rigDurationMs ?? created.rigProfile.durationMs ?? 0) / 1000);
         const runId = String(created.rigRunId ?? created.rigProfile.runId ?? "").slice(0, 8);
-        setMessage(`Blender V14 ajustó articulaciones y creó un rig nuevo en ${durationSeconds.toFixed(2)} s · ejecución ${runId}. Revisá Animación antes de aprobar.`);
+        setMessage(`Blender V15 ajustó cabeza, manos y articulaciones y creó un rig nuevo en ${durationSeconds.toFixed(2)} s · ejecución ${runId}. Revisá Animación antes de aprobar.`);
         return;
       }
 
