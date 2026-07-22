@@ -114,6 +114,7 @@ function inspectRig(root: Object3D): RuntimeRigDiagnostics {
   let leftEarBone: Object3D | null = null;
   let rightEarBone: Object3D | null = null;
   let headBone: Object3D | null = null;
+  let headEndBone: Object3D | null = null;
   let leftHandBone: Object3D | null = null;
   let rightHandBone: Object3D | null = null;
   let skinnedMeshCount = 0;
@@ -142,14 +143,13 @@ function inspectRig(root: Object3D): RuntimeRigDiagnostics {
         if (side === "left") leftFingers.add(finger);
         if (side === "right") rightFingers.add(finger);
       }
-      if (generated) {
-        generatedFingers.set(`${generated.side}:${generated.finger}:${generated.segment}`, bone);
-      }
+      if (generated) generatedFingers.set(`${generated.side}:${generated.finger}:${generated.segment}`, bone);
 
       const exactHead = ["head", "headbone", "jbiphead", "bip01head"].includes(cleanName);
       const anatomicalHead = cleanName.includes("head")
         && !["end", "tip", "terminal", "effector"].some((token) => cleanName.includes(token));
       if (!headBone && (exactHead || anatomicalHead)) headBone = bone;
+      if (!headEndBone && (cleanName.includes("headend") || cleanName.includes("headtip"))) headEndBone = bone;
 
       if (!leftHandBone && side === "left" && cleanName.includes("hand") && !FINGER_NAMES.some((finger) => cleanName.includes(finger))) {
         leftHandBone = bone;
@@ -227,15 +227,33 @@ function inspectRig(root: Object3D): RuntimeRigDiagnostics {
       .sort((a, b) => b.point.y - a.point.y)[0]?.bone ?? null;
   }
 
+  if (!headEndBone && headBone) {
+    headEndBone = boneList.find((bone) => {
+      if (bone.parent !== headBone) return false;
+      const name = normalizedName(bone.name);
+      return name.includes("headend") || name.includes("headtip");
+    }) ?? null;
+  }
+
   const headPresent = Boolean(headBone);
   const headGeometryOk = Boolean(headBone && (() => {
     const point = worldPosition(headBone);
     const relativeY = (point.y - box.min.y) / height;
+    const crown = headEndBone ? worldPosition(headEndBone) : null;
+    const crownDistance = crown ? point.distanceTo(crown) : height * 0.095;
     return relativeY >= 0.68
-      && relativeY <= 0.98
+      && relativeY <= 0.94
+      && crownDistance >= height * 0.025
+      && crownDistance <= height * 0.20
       && Math.abs(point.x - center.x) <= height * 0.20
       && insidePaddedBounds(point);
   })());
+
+  const lateralAxis = (() => {
+    if (!leftHandBone || !rightHandBone) return new Vector3(1, 0, 0);
+    const axis = worldPosition(leftHandBone).sub(worldPosition(rightHandBone));
+    return axis.lengthSq() > 1e-10 ? axis.normalize() : new Vector3(1, 0, 0);
+  })();
 
   const chainGeometryOk = (side: "left" | "right", finger: string) => {
     const first = generatedFingers.get(`${side}:${finger}:1`);
@@ -248,14 +266,28 @@ function inspectRig(root: Object3D): RuntimeRigDiagnostics {
     const thirdPoint = worldPosition(third);
     const firstLength = firstPoint.distanceTo(secondPoint);
     const secondLength = secondPoint.distanceTo(thirdPoint);
+    const chainDirection = thirdPoint.clone().sub(firstPoint);
+    if (chainDirection.lengthSq() < 1e-10) return false;
+    chainDirection.normalize();
+
     const hand = side === "left" ? leftHandBone : rightHandBone;
-    const handLink = hand ? worldPosition(hand).distanceTo(firstPoint) : Number.POSITIVE_INFINITY;
+    const handPoint = hand ? worldPosition(hand) : null;
+    const handLink = handPoint ? handPoint.distanceTo(firstPoint) : Number.POSITIVE_INFINITY;
+    const parent = hand?.parent && (hand.parent as any).isBone ? hand.parent as Object3D : null;
+    const continuation = parent && handPoint
+      ? handPoint.clone().sub(worldPosition(parent))
+      : null;
+    const followsHand = Boolean(continuation && continuation.lengthSq() > 1e-10
+      && chainDirection.dot(continuation.normalize()) >= 0.30);
+    const lateralAlignment = Math.abs(chainDirection.dot(lateralAxis));
 
     return firstLength >= height * 0.003
       && firstLength <= height * 0.035
       && secondLength >= height * 0.003
       && secondLength <= height * 0.035
-      && handLink <= height * 0.12
+      && handLink <= height * 0.075
+      && followsHand
+      && lateralAlignment <= 0.72
       && insidePaddedBounds(firstPoint)
       && insidePaddedBounds(secondPoint)
       && insidePaddedBounds(thirdPoint);
@@ -265,20 +297,35 @@ function inspectRig(root: Object3D): RuntimeRigDiagnostics {
     FINGER_NAMES.every((finger) => chainGeometryOk(side, finger))
   ));
 
-  const earPositionOk = (ear: Object3D | null) => {
+  const expectedEarY = (() => {
+    if (!headBone) return box.min.y + height * 0.865;
+    const headPoint = worldPosition(headBone);
+    if (headEndBone) return (headPoint.y + worldPosition(headEndBone).y) * 0.5;
+    return headPoint.y + height * 0.060;
+  })();
+
+  const earPositionOk = (ear: Object3D | null, expectedSide: "left" | "right") => {
     if (!ear) return false;
     const point = worldPosition(ear);
     const relativeY = (point.y - box.min.y) / height;
-    const lateral = Math.abs(point.x - center.x);
+    const signedLateral = point.clone().sub(center).dot(lateralAxis);
+    const lateral = Math.abs(signedLateral);
     const depth = Math.abs(point.z - center.z);
-    return relativeY >= 0.70
+    const correctSide = expectedSide === "left" ? signedLateral > 0 : signedLateral < 0;
+    return relativeY >= 0.78
       && relativeY <= 0.98
-      && lateral >= height * 0.012
-      && lateral <= height * 0.16
-      && depth <= height * 0.18
+      && Math.abs(point.y - expectedEarY) <= height * 0.060
+      && correctSide
+      && lateral >= height * 0.020
+      && lateral <= height * 0.13
+      && depth <= height * 0.16
       && insidePaddedBounds(point);
   };
-  const earGeometryOk = earPositionOk(leftEarBone) && earPositionOk(rightEarBone);
+  const earSymmetryOk = Boolean(leftEarBone && rightEarBone
+    && Math.abs(worldPosition(leftEarBone).y - worldPosition(rightEarBone).y) <= height * 0.020);
+  const earGeometryOk = earPositionOk(leftEarBone, "left")
+    && earPositionOk(rightEarBone, "right")
+    && earSymmetryOk;
 
   const weightedRatio = totalVertices > 0 ? weightedVertices / totalVertices : 0;
   const namedLimbsReady = leftArm && rightArm && leftLeg && rightLeg;
@@ -355,9 +402,9 @@ export function RigApprovalWorkspace({
     const next = inspectRig(root);
     setDiagnostics(next);
     if (next.valid) {
-      onStatus?.(`Rig cargado en el visor: ${next.boneCount} huesos, cabeza, cadenas de dedos, orejas, pesos y escala validados.`);
+      onStatus?.(`Rig cargado en el visor: ${next.boneCount} huesos, cabeza, dedos alineados con las manos, orejas, pesos y escala validados.`);
     } else {
-      onStatus?.("El rig se cargó, pero la geometría de cabeza, dedos u orejas todavía no es válida. Abrí Diagnóstico.");
+      onStatus?.("Rig rechazado: revisá cabeza, orejas y la dirección de los dedos. Abrí Diagnóstico y después tocá Rehacer rig.");
     }
   }, [onStatus]);
 
@@ -452,12 +499,12 @@ export function RigApprovalWorkspace({
           </header>
           <ul>
             <DiagnosticRow ok={effective.boneCount >= 20}>Armature detectado · {effective.boneCount || "—"} huesos</DiagnosticRow>
-            <DiagnosticRow ok={effective.headPresent && effective.headGeometryOk}>Hueso de cabeza presente y dentro del cráneo</DiagnosticRow>
+            <DiagnosticRow ok={effective.headPresent && effective.headGeometryOk}>Cabeza conectada hasta la coronilla</DiagnosticRow>
             <DiagnosticRow ok={effective.leftFingerChains >= 5}>5 dedos en mano izquierda · {effective.leftFingerChains}/5</DiagnosticRow>
             <DiagnosticRow ok={effective.rightFingerChains >= 5}>5 dedos en mano derecha · {effective.rightFingerChains}/5</DiagnosticRow>
-            <DiagnosticRow ok={effective.fingerGeometryOk}>Cadenas de tres falanges con longitud y posición válidas</DiagnosticRow>
+            <DiagnosticRow ok={effective.fingerGeometryOk}>Dedos dentro de las manos y siguiendo su dirección real</DiagnosticRow>
             <DiagnosticRow ok={effective.leftEar && effective.rightEar}>Huesos de oreja izquierda y derecha</DiagnosticRow>
-            <DiagnosticRow ok={effective.earGeometryOk}>Orejas ubicadas a ambos lados de la cabeza</DiagnosticRow>
+            <DiagnosticRow ok={effective.earGeometryOk}>Orejas simétricas y ubicadas sobre la cabeza</DiagnosticRow>
             <DiagnosticRow ok={effective.skinnedMeshCount > 0}>Malla vinculada al armature · {effective.skinnedMeshCount || "—"}</DiagnosticRow>
             <DiagnosticRow ok={effective.weightedRatio >= 0.995}>Vértices con peso · {(effective.weightedRatio * 100).toFixed(1)}%</DiagnosticRow>
             <DiagnosticRow ok={effective.localScaleOk}>Mesh y Armature con escala local 1,1,1</DiagnosticRow>
@@ -469,7 +516,7 @@ export function RigApprovalWorkspace({
       <div className={styles.approvalBar}>
         <div>
           {approved ? <ShieldCheck /> : effective.valid ? <Eye /> : <CircleAlert />}
-          <span><strong>{approved ? "Rig aprobado" : effective.valid ? "Rig listo para aprobación" : "Abrí Huesos y Diagnóstico"}</strong><small>{approved ? "Se habilitó la preparación del FBX" : "Unreal permanece bloqueado hasta aprobar este rig"}</small></span>
+          <span><strong>{approved ? "Rig aprobado" : effective.valid ? "Rig listo para aprobación" : "Rig anatómico incorrecto"}</strong><small>{approved ? "Se habilitó la preparación del FBX" : effective.valid ? "Revisá visualmente y aprobalo" : "Tocá Rehacer rig para regenerar cabeza, orejas y dedos"}</small></span>
         </div>
         <button type="button" onClick={approve} disabled={!effective.valid || approved}>
           <ShieldCheck /> {approved ? "Aprobado" : "Aprobar rig"}
