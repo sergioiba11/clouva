@@ -148,7 +148,9 @@ test("Avatar Analyzer V2 segmenta regiones antes de buscar superficie", () => {
   assert.match(segmenter, /upper_arm_l/);
   assert.match(segmenter, /forearm_l/);
   assert.match(segmenter, /hand_l/);
-  assert.match(segmenter, /side gate/i);
+  assert.match(segmenter, /def _refine_arm/);
+  assert.match(segmenter, /def _refine_leg/);
+  assert.match(segmenter, /signed_lateral/);
   assert.doesNotMatch(analyzer, /same-side-nearest-mesh-anchor-v2/);
 });
 
