@@ -9,11 +9,11 @@ if str(SCRIPT_DIR) not in sys.path:
 import bpy
 from mathutils import Vector
 
-import complete_avatar_rig_v10 as v10
+import complete_avatar_rig_v11 as v11
 
 
 def build_anatomical_avatar():
-    v10.v5.legacy.clear_scene()
+    v11.v5.legacy.clear_scene()
 
     scaled_root = bpy.data.objects.new("ImportedRootScale001", None)
     bpy.context.collection.objects.link(scaled_root)
@@ -96,7 +96,7 @@ def build_anatomical_avatar():
 
 
 def generated_report(armature, meshes):
-    minimum, maximum, size = v10.v5.legacy.world_bounds(meshes)
+    minimum, maximum, size = v11.v5.legacy.world_bounds(meshes)
     names = [bone.name for bone in armature.data.bones]
     return {
         "fingerNames": sorted(
@@ -114,26 +114,28 @@ def generated_report(armature, meshes):
 def main():
     armature, meshes = build_anatomical_avatar()
     armature.data.pose_position = "REST"
-    report = v10.ensure_extended_bones_v10(armature, meshes)
+    report = v11.ensure_extended_bones_v11(armature, meshes)
     assert report["geometry"]["valid"], report["geometry"]
     assert report["geometry"]["maximumFingerLateralAlignment"] < 0.72, report["geometry"]
     assert report["geometry"]["minimumFingerHandAlignment"] > 0.30, report["geometry"]
+    assert report["geometry"]["maximumEarVerticalError"] < 0.06, report["geometry"]
     assert report["fingerAxis"] == "continuation-of-real-hand"
-    assert report["earPlacement"] == "head-bone-midpoint-and-mesh-width"
+    assert report["earPlacement"] == "anatomical-head-bone-midpoint"
 
-    v10.v5.legacy.assign_extended_weights(armature, meshes, report)
-    with tempfile.TemporaryDirectory(prefix="clouva-rig-v10-test-") as directory:
+    v11.v5.legacy.assign_extended_weights(armature, meshes, report)
+    with tempfile.TemporaryDirectory(prefix="clouva-rig-v11-test-") as directory:
         output = Path(directory) / "roundtrip.glb"
-        v10.v5.export_glb_with_roundtrip(output)
+        v11.v5.export_glb_with_roundtrip(output)
         assert output.is_file() and output.stat().st_size > 1024
 
     imported_armatures = [obj for obj in bpy.context.scene.objects if obj.type == "ARMATURE"]
     imported_meshes = [obj for obj in bpy.context.scene.objects if obj.type == "MESH"]
-    imported = v10.v5.legacy.choose_armature(imported_armatures)
+    imported = v11.v5.legacy.choose_armature(imported_armatures)
     roundtrip_report = generated_report(imported, imported_meshes)
-    geometry = v10.validate_geometry_v10(imported, roundtrip_report, roundtrip=True)
+    geometry = v11.validate_geometry_v11(imported, roundtrip_report, roundtrip=True)
     assert geometry["valid"], geometry
     assert geometry["maximumFingerLateralAlignment"] < 0.72, geometry
+    assert geometry["maximumEarVerticalError"] < 0.06, geometry
 
     bpy.context.view_layer.objects.active = imported
     imported.select_set(True)
@@ -149,11 +151,11 @@ def main():
     third.head = second.head + Vector((0.08, 0.0, 0.0))
     third.tail = third.head + Vector((0.08, 0.0, 0.0))
     bpy.ops.object.mode_set(mode="OBJECT")
-    broken = v10.validate_geometry_v10(imported, roundtrip_report, roundtrip=True)
+    broken = v11.validate_geometry_v11(imported, roundtrip_report, roundtrip=True)
     assert not broken["valid"], broken
     assert any(error.startswith("sideways-finger-chain:l:index") for error in broken["errors"]), broken
 
-    print("[clouva] Rig V10 follows the real hand axis and keeps ears on the anatomical head")
+    print("[clouva] Rig V11 follows the real hand axis and centers ears on the anatomical head")
 
 
 if __name__ == "__main__":
