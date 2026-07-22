@@ -182,7 +182,7 @@ def triangulate_landmark(name: str, candidates: List[dict], segmentation,
     normal_confidence = _mean(item.get("normalCompatibility") for item in inliers)
     silhouette_confidence = _mean(item.get("silhouetteConfidence") for item in inliers)
     detector_confidence = _mean(item.get("detectorConfidence", item.get("visualConfidence")) for item in inliers)
-    view_quality = _mean(item.get("viewQualityConfidence") for item in inliers, 0.5)
+    view_quality = _mean((item.get("viewQualityConfidence") for item in inliers), 0.5)
     spread_confidence = max(0.0, min(1.0, 1.0 - multiview_spread / max(scale * 0.34, 1e-8)))
     view_confidence = min(1.0, len(_unique_views(inliers)) / max(minimum_views + 1, 1))
 
@@ -219,6 +219,7 @@ def triangulate_landmark(name: str, candidates: List[dict], segmentation,
     )
     display_observation = _surface_point(preferred_candidates[0])
     display_surface = surface if surface is not None else display_observation
+    depth_residual = _mean((item.get("depthResidual") for item in inliers), 0.0)
 
     return {
         "name": name,
@@ -247,7 +248,7 @@ def triangulate_landmark(name: str, candidates: List[dict], segmentation,
         "viewsConfirmed": len(_unique_views(inliers)),
         "views": _unique_views(inliers),
         "rayResidual": float(mean_ray_residual),
-        "depthResidual": float(_mean(item.get("depthResidual") for item in inliers, 0.0)),
+        "depthResidual": float(depth_residual),
         "multiviewSpread": float(multiview_spread),
         "regionDistance": float(region_distance),
         "surfaceHitObject": str(preferred_candidates[0].get("hitObject") or ""),
