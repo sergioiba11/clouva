@@ -34,7 +34,16 @@ jobs:
         run: npm run typecheck
 
       - name: Tests
-        run: npm test
+        shell: bash
+        run: |
+          set -o pipefail
+          if ! npm test > /tmp/clouva-tests.log 2>&1; then
+            echo "::group::Últimas 220 líneas de npm test"
+            tail -n 220 /tmp/clouva-tests.log
+            echo "::endgroup::"
+            exit 1
+          fi
+          tail -n 60 /tmp/clouva-tests.log
 
       - name: Validate worker Python
         run: python3 -m py_compile worker/garment-rig/app*.py worker/garment-rig/rig_garment*.py worker/garment-rig/autorig_avatar*.py worker/garment-rig/avatar_reference.py worker/garment-rig/test_*.py tools/unreal_avatar_export/export_clouva_avatar.py
@@ -68,12 +77,13 @@ jobs:
           fi
           tail -n 80 /tmp/clouva-autorig-v16-e2e.log
 
-      - name: Upload Blender validation logs
+      - name: Upload validation logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: blender-validation-logs
+          name: validation-logs
           path: |
+            /tmp/clouva-tests.log
             /tmp/clouva-worker-build.log
             /tmp/clouva-autorig-v16-e2e.log
           if-no-files-found: warn

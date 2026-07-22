@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { ActiveAvatarDownload } from "@/components/library/ActiveAvatarDownload";
+import { AvatarAnalyzerPreview } from "@/components/library/AvatarAnalyzerPreview";
 import { ClouvaLibrary } from "@/components/library/ClouvaLibrary";
 import { UnrealAvatarExport } from "@/components/library/UnrealAvatarExport";
 import { UnrealObjectExport } from "@/components/library/UnrealObjectExport";
@@ -13,6 +14,7 @@ export default function BibliotecaPage() {
   return (
     <>
       <ActiveAvatarDownload />
+      <AvatarAnalyzerPreview />
       <UnrealAvatarExport />
       <UnrealObjectExport />
       <ClouvaLibrary />

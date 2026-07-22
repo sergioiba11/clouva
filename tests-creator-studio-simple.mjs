@@ -5,6 +5,7 @@ import { test } from "node:test";
 const studio = readFileSync("./components/creator-studio/CreatorStudioSimple.tsx", "utf8");
 const rigWorkspace = readFileSync("./components/creator-studio/RigApprovalWorkspace.tsx", "utf8");
 const worker = readFileSync("./worker/garment-rig/app_v16.py", "utf8");
+const analyzerWorker = readFileSync("./worker/garment-rig/app_v17.py", "utf8");
 const dockerfile = readFileSync("./worker/garment-rig/Dockerfile", "utf8");
 const exportRoute = readFileSync("./app/api/avatar/export-unreal/route.ts", "utf8");
 const commandRoute = readFileSync("./app/api/unreal/commands/route.ts", "utf8");
@@ -43,8 +44,10 @@ test("Enviar FBX crea una orden que el bridge importa dentro de Unreal", () => {
   assert.match(importer, /import_asset_tasks/);
 });
 
-test("Worker V16 está activo para el molde", () => {
+test("Worker V16 sigue activo para el molde bajo el wrapper V17", () => {
   assert.ok(dockerfile.includes("app_v16.py"));
-  assert.ok(dockerfile.includes("mv app_v16.py app.py"));
+  assert.ok(dockerfile.includes("app_v17.py"));
+  assert.ok(dockerfile.includes("mv app_v17.py app.py"));
+  assert.match(analyzerWorker, /import app_v16 as current/);
   assert.ok(worker.includes("unreal_mold_health_v2"));
 });
