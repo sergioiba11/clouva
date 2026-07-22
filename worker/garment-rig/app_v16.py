@@ -1,4 +1,6 @@
+import json
 import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -24,25 +26,117 @@ RIG_DIAGNOSTICS_VERSION = current.RIG_DIAGNOSTICS_VERSION
 CLEAN_ATTEMPT_VERSION = current.CLEAN_ATTEMPT_VERSION
 COMPLETE_AVATAR_RIG_VERSION = "v14-landmark-autorig"
 COMPLETE_AVATAR_RIG_SCRIPT = Path(__file__).with_name("autorig_avatar_v12.py")
+CompleteAvatarRigRequest = current.CompleteAvatarRigRequest
 RigWithUnrealMoldRequest = current.RigWithUnrealMoldRequest
 
-# Las rutas /avatar/complete-rig y /diagnostics/avatar-complete-rig fueron
-# registradas al importar app_v15. Sus funciones leen los globales de ese
-# módulo, no las variables homónimas de app_v16.
+# Las rutas de app_v15 leen los globales de ese módulo.
 current.COMPLETE_AVATAR_RIG_VERSION = COMPLETE_AVATAR_RIG_VERSION
 current.COMPLETE_AVATAR_RIG_SCRIPT = COMPLETE_AVATAR_RIG_SCRIPT
 
 UNREAL_MOLD_RIG_VERSION = "v2-fresh-source-real-diagnostics"
+V14_METHOD_SOURCE = "Blender geometry landmarks + official Unreal hierarchy"
+API_COMPATIBLE_RIG_SOURCE = "Blender official Unreal reference"
 
-# Reemplaza únicamente la ruta síncrona del molde. El resto del Worker V15 queda intacto.
+# Reemplaza solamente las rutas síncronas de avatar y molde.
 app.router.routes[:] = [
     route
     for route in app.router.routes
     if not (
-        getattr(route, "path", None) == "/rig-with-unreal-mold"
+        getattr(route, "path", None) in {"/avatar/complete-rig", "/rig-with-unreal-mold"}
         and "POST" in (getattr(route, "methods", set()) or set())
     )
 ]
+
+
+@app.post("/avatar/complete-rig")
+def complete_avatar_rig_v14(request: CompleteAvatarRigRequest):
+    if not COMPLETE_AVATAR_RIG_SCRIPT.is_file():
+        raise HTTPException(status_code=500, detail="Falta autorig_avatar_v12.py en el Blender Worker")
+    if request.finger_segments != 3:
+        raise HTTPException(status_code=400, detail="CLOUVA usa tres segmentos por dedo")
+
+    job_dir = Path(tempfile.mkdtemp(prefix="clouva-complete-avatar-rig-v14-"))
+    input_path = job_dir / "avatar-original-clean.glb"
+    output_path = job_dir / "avatar-complete-rigged.glb"
+    metadata_path = job_dir / "avatar-complete-rig.json"
+
+    try:
+        legacy.download(str(request.source_url), input_path)
+        command = [
+            legacy.BLENDER_BIN,
+            "--background",
+            "--factory-startup",
+            "--python-exit-code",
+            "1",
+            "--python",
+            str(COMPLETE_AVATAR_RIG_SCRIPT),
+            "--",
+            str(input_path),
+            str(output_path),
+            str(metadata_path),
+        ]
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=legacy.BLENDER_TIMEOUT_SECONDS,
+            cwd=str(job_dir),
+        )
+        if result.returncode != 0 or not output_path.is_file() or output_path.stat().st_size < 1024:
+            raise RuntimeError(current._complete_rig_failure(result.stdout, result.stderr))
+        if not metadata_path.is_file():
+            raise RuntimeError("Blender no generó la validación del AutoRig V14")
+
+        profile = json.loads(metadata_path.read_text(encoding="utf-8"))
+        method_source = str(profile.get("rigSource") or "")
+        if method_source != V14_METHOD_SOURCE:
+            raise RuntimeError(
+                f"El AutoRig no devolvió el origen geométrico V14 esperado: {method_source or 'vacío'}"
+            )
+
+        # La API pública todavía usa este nombre de contrato. Conservamos además
+        # el origen real de V14 para diagnóstico y auditoría.
+        profile["rigMethodSource"] = method_source
+        profile["rigSource"] = API_COMPATIBLE_RIG_SOURCE
+
+        valid = bool(
+            profile.get("complete")
+            and profile.get("fingers", {}).get("complete")
+            and profile.get("ears", {}).get("complete")
+            and profile.get("landmarkFit", {}).get("method") == "mesh-landmarks-per-chain-v14"
+            and float(profile.get("weights", {}).get("weightedRatio") or 0.0) >= 0.995
+        )
+        if request.require_fingers and not profile.get("fingers", {}).get("complete"):
+            valid = False
+        if request.require_ears and not profile.get("ears", {}).get("complete"):
+            valid = False
+        if not valid:
+            raise RuntimeError(f"El AutoRig V14 fue rechazado: {profile}")
+
+        return FileResponse(
+            output_path,
+            media_type="model/gltf-binary",
+            filename="clouva-complete-rigged.glb",
+            background=BackgroundTask(shutil.rmtree, job_dir, True),
+            headers={
+                "X-Clouva-Rig-Profile": json.dumps(profile, separators=(",", ":")),
+                "X-Clouva-Rig-Version": COMPLETE_AVATAR_RIG_VERSION,
+                "X-Clouva-Rig-Run-Id": str(profile.get("runId") or ""),
+                "X-Clouva-Rig-Duration-Ms": str(profile.get("durationMs") or 0),
+                "X-Clouva-Rig-Method-Source": method_source,
+                "X-Clouva-Fingers": "true",
+                "X-Clouva-Ears": "true",
+            },
+        )
+    except HTTPException:
+        shutil.rmtree(job_dir, ignore_errors=True)
+        raise
+    except subprocess.TimeoutExpired as exc:
+        shutil.rmtree(job_dir, ignore_errors=True)
+        raise HTTPException(status_code=504, detail="Blender agotó el tiempo al completar el AutoRig V14") from exc
+    except Exception as exc:
+        shutil.rmtree(job_dir, ignore_errors=True)
+        raise HTTPException(status_code=422, detail=f"No se pudo completar el AutoRig V14: {exc}") from exc
 
 
 def _pop_job(job_id: str) -> dict:
