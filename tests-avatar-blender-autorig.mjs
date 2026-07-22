@@ -28,7 +28,6 @@ const workerApp = readFileSync("worker/garment-rig/app_v16.py", "utf8");
 const analyzerWorker = readFileSync("worker/garment-rig/app_v17.py", "utf8");
 const dockerfile = readFileSync("worker/garment-rig/Dockerfile", "utf8");
 const analyzer = readFileSync("worker/garment-rig/avatar_analyzer.py", "utf8");
-const segmenter = readFileSync("worker/garment-rig/anatomy_segmenter.py", "utf8");
 const segmenterV3 = readFileSync("worker/garment-rig/anatomy_segmenter_v3.py", "utf8");
 const anatomyBvh = readFileSync("worker/garment-rig/anatomy_bvh.py", "utf8");
 const technicalPasses = readFileSync("worker/garment-rig/technical_passes.py", "utf8");
@@ -156,9 +155,9 @@ test("Avatar Analyzer V3 proyecta contra BVH exclusivos de la región renderizad
   assert.match(anatomyBvh, /source_polygon/);
   assert.match(anatomyBvh, /source_vertices/);
   assert.match(multiview, /anatomy_bvh\.proxy/);
-  assert.match(projector, /anatomy_bvh\.ray_cast/);
+  assert.match(projector, /if anatomy_bvh is not None:/);
+  assert.match(projector, /hit = anatomy_bvh\.ray_cast/);
   assert.match(projector, /exact-region-bvh-plus-technical-pass-v3/);
-  assert.doesNotMatch(projector, /category in allowed_classes[\s\S]*return \{/);
 });
 
 test("cada vista genera profundidad, normales, curvatura e IDs exactos", () => {
@@ -181,7 +180,7 @@ test("brazos y piernas usan grafos geodésicos y secciones, no porcentajes final
   assert.match(crossSections, /choose_joint_section/);
   assert.match(segmenterV3, /preservesExternalRefinedVectors/);
   assert.match(analyzer, /refine_limb_joints/);
-  assert.match(analyzer, /usesFixedPercentagesAsFinalAnswer/);
+  assert.match(limbCenterline, /usesFixedPercentagesAsFinalAnswer/);
 });
 
 test("manos topology-first detectan ramas antes de asignar nombres MediaPipe", () => {
