@@ -1,6 +1,9 @@
+import hashlib
 import json
 import os
 import sys
+import time
+import uuid
 from pathlib import Path
 
 import bpy
@@ -22,6 +25,14 @@ REFERENCE_METADATA = Path(os.environ.get(
     "CLOUVA_AVATAR_REFERENCE_METADATA_PATH",
     SCRIPT_DIR / "avatar-reference" / "clouva_avatar_data.json",
 ))
+
+
+def sha256_file(path):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def args_after_separator():
@@ -312,6 +323,10 @@ def validate_unit_scale(armature, meshes):
 
 
 def run(input_path, output_path, metadata_path):
+    started = time.perf_counter()
+    run_id = uuid.uuid4().hex
+    input_sha256 = sha256_file(input_path)
+    reference_sha256 = sha256_file(REFERENCE_FBX)
     target_meshes = import_original(input_path)
     armature, reference_meshes = import_reference()
     fit = fit_reference(armature, reference_meshes, target_meshes)
@@ -335,6 +350,9 @@ def run(input_path, output_path, metadata_path):
     profile["handFit"] = hand_fit
     profile["rigSource"] = "Blender official Unreal reference"
     profile["inputSource"] = "original-clean-meshy-avatar"
+    profile["runId"] = run_id
+    profile["inputSha256"] = input_sha256
+    profile["referenceSha256"] = reference_sha256
     profile["complete"] = bool(
         profile.get("complete")
         and profile.get("fingers", {}).get("complete")
@@ -362,6 +380,10 @@ def run(input_path, output_path, metadata_path):
     )
     if not output_path.is_file() or output_path.stat().st_size < 1024:
         raise RuntimeError("Blender did not generate a valid rigged GLB")
+    profile["outputSha256"] = sha256_file(output_path)
+    profile["durationMs"] = max(1, int((time.perf_counter() - started) * 1000))
+    if profile["inputSha256"] == profile["outputSha256"]:
+        raise RuntimeError("Blender returned the original file instead of a fresh rig")
     metadata_path.write_text(json.dumps(profile, separators=(",", ":")), encoding="utf-8")
     print(f"[clouva-real-blender-autorig] {json.dumps(profile, separators=(',', ':'))}", flush=True)
     return profile

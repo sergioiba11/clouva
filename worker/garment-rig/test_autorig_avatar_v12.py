@@ -96,6 +96,11 @@ def main():
         assert stored["normalization"]["canonicalLocalScale"] == [1.0, 1.0, 1.0]
         assert stored["handFit"]["l"]["method"] == "target-mesh-hand-envelope"
         assert stored["handFit"]["r"]["method"] == "target-mesh-hand-envelope"
+        assert stored["runId"]
+        assert stored["durationMs"] > 0
+        assert len(stored["inputSha256"]) == 64
+        assert len(stored["outputSha256"]) == 64
+        assert stored["inputSha256"] != stored["outputSha256"]
         validate_output(output)
         print("[clouva] Blender AutoRig V12 mesh-only input validated", flush=True)
 

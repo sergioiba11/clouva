@@ -127,6 +127,8 @@ def complete_avatar_rig(request: CompleteAvatarRigRequest):
             headers={
                 "X-Clouva-Rig-Profile": json.dumps(profile, separators=(",", ":")),
                 "X-Clouva-Rig-Version": COMPLETE_AVATAR_RIG_VERSION,
+                "X-Clouva-Rig-Run-Id": str(profile.get("runId") or ""),
+                "X-Clouva-Rig-Duration-Ms": str(profile.get("durationMs") or 0),
                 "X-Clouva-Fingers": "true",
                 "X-Clouva-Ears": "true",
             },

@@ -9,6 +9,8 @@ export const maxDuration = 300;
 const JOB_KEY = "clouva_avatar_complete_rig_job";
 const PROFILE_KEY = "clouva_avatar_complete_rig_profile";
 const COMPLETE_FILENAME = "clouva-complete-rigged.glb";
+const EXPECTED_WORKER_RIG_VERSION = "v12-real-blender-autorig";
+const EXPECTED_PROFILE_VERSION = "clouva-blender-autorig-v12-official-reference";
 const DERIVED_RIG_PATTERN = /(?:complete-rigged|rigged|processed|final)(?:[-_.]|$)/i;
 const MAX_ACTIVE_JOB_AGE_MS = 10 * 60 * 1000;
 
@@ -373,7 +375,36 @@ async function completeRigWithWorker(sourceUrl: string) {
     throw new Error(`Blender no pudo completar el rig (${response.status})${detail ? `: ${detail}` : ""}`);
   }
 
+  const workerVersion = response.headers.get("x-clouva-rig-version") ?? "";
   const profile = parseRigProfile(response);
+  const proof = profile as RigProfile & {
+    version?: string;
+    rigSource?: string;
+    inputSource?: string;
+    runId?: string;
+    durationMs?: number;
+    inputSha256?: string;
+    outputSha256?: string;
+    weights?: { weightedRatio?: number };
+    handFit?: Record<string, { method?: string }>;
+  };
+  if (workerVersion !== EXPECTED_WORKER_RIG_VERSION) {
+    throw new Error(`Railway respondió con el rig ${workerVersion || "sin versión"}; se exige ${EXPECTED_WORKER_RIG_VERSION}`);
+  }
+  if (
+    proof.version !== EXPECTED_PROFILE_VERSION
+    || proof.rigSource !== "Blender official Unreal reference"
+    || proof.inputSource !== "original-clean-meshy-avatar"
+    || !proof.runId
+    || !proof.inputSha256
+    || !proof.outputSha256
+    || proof.inputSha256 === proof.outputSha256
+    || Number(proof.weights?.weightedRatio ?? 0) < 0.985
+    || proof.handFit?.l?.method !== "target-mesh-hand-envelope"
+    || proof.handFit?.r?.method !== "target-mesh-hand-envelope"
+  ) {
+    throw new Error("Blender devolvió un resultado sin prueba de AutoRig V12 fresco; no se guardará como aprobado");
+  }
   if (profile.complete !== true || profile.fingers?.complete !== true || profile.ears?.complete !== true) {
     throw new Error("El avatar no superó la validación del esqueleto y los pesos");
   }
@@ -382,7 +413,15 @@ async function completeRigWithWorker(sourceUrl: string) {
   if (bytes.byteLength < 1024 || Buffer.from(bytes).subarray(0, 4).toString("ascii") !== "glTF") {
     throw new Error("Blender no devolvió un GLB completo válido");
   }
-  return { bytes, profile };
+  return {
+    bytes,
+    profile,
+    workerVersion,
+    rigRunId: proof.runId,
+    rigDurationMs: Number(proof.durationMs ?? 0),
+    inputSha256: proof.inputSha256,
+    outputSha256: proof.outputSha256,
+  };
 }
 
 async function updateAvatarRow(
@@ -572,6 +611,11 @@ export async function POST(request: NextRequest) {
         sourceKind: "original-clean-glb",
         freshRig: true,
         retried: retry,
+        workerVersion: completed.workerVersion,
+        rigRunId: completed.rigRunId,
+        rigDurationMs: completed.rigDurationMs,
+        inputSha256: completed.inputSha256,
+        outputSha256: completed.outputSha256,
       });
     }
 
