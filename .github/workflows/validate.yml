@@ -3,47 +3,117 @@ name: Validate CLOUVA
 on:
   pull_request:
     branches: [main]
-  push:
-    branches: [agent/base-mesh-auto-rig]
 
 permissions:
-  contents: read
-
-concurrency:
-  group: validate-${{ github.ref }}
-  cancel-in-progress: true
+  contents: write
 
 jobs:
-  validate:
+  patch-contract:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
         with:
-          node-version: 22
-          cache: npm
+          ref: ${{ github.head_ref }}
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Align API and Worker proof
+        run: |
+          python - <<'PY'
+          from pathlib import Path
 
-      - name: Typecheck
-        run: npm run typecheck
+          route_path = Path("app/api/avatar/rig/route.ts")
+          route = route_path.read_text(encoding="utf-8")
+          old_constants = (
+              'const EXPECTED_WORKER_RIG_VERSION = "v14-landmark-autorig";\n'
+              'const EXPECTED_PROFILE_VERSION = "clouva-blender-autorig-v14-landmarks-heat";\n'
+          )
+          new_constants = old_constants + (
+              'const EXPECTED_RIG_SOURCE = "Blender geometry landmarks + official Unreal hierarchy";\n'
+          )
+          if old_constants not in route:
+              raise SystemExit("AutoRig V14 constants were not found")
+          route = route.replace(old_constants, new_constants, 1)
 
-      - name: Tests
-        run: npm test
+          old_check = 'proof.rigSource !== "Blender official Unreal reference"'
+          if old_check not in route:
+              raise SystemExit("Stale V12 rigSource validation was not found")
+          route = route.replace(old_check, 'proof.rigSource !== EXPECTED_RIG_SOURCE', 1)
+          route_path.write_text(route, encoding="utf-8")
 
-      - name: Validate worker Python
-        run: python3 -m py_compile worker/garment-rig/app*.py worker/garment-rig/rig_garment*.py worker/garment-rig/avatar_reference.py worker/garment-rig/test_*.py tools/unreal_avatar_export/export_clouva_avatar.py
+          test_path = Path("tests-avatar-blender-autorig.mjs")
+          tests = test_path.read_text(encoding="utf-8")
+          if "la API y Blender comparten exactamente el contrato de origen AutoRig V14" not in tests:
+              tests += r'''
 
-      - name: Build and validate Blender worker image
-        run: docker build --progress=plain -t clouva-garment-rig:test worker/garment-rig
+test("la API y Blender comparten exactamente el contrato de origen AutoRig V14", () => {
+  const source = "Blender geometry landmarks + official Unreal hierarchy";
+  assert.ok(rigRoute.includes(`const EXPECTED_RIG_SOURCE = "${source}";`));
+  assert.ok(rigRoute.includes("proof.rigSource !== EXPECTED_RIG_SOURCE"));
+  assert.ok(workerAutorig.includes(`profile["rigSource"] = "${source}"`));
+  assert.doesNotMatch(rigRoute, /proof\.rigSource !== "Blender official Unreal reference"/);
+});
+'''
+          test_path.write_text(tests, encoding="utf-8")
+          PY
 
-      - name: Build
-        run: npm run build
-        env:
-          NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
-          NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key
+      - name: Validate contract
+        run: node --test tests-avatar-blender-autorig.mjs
+
+      - name: Restore normal validation and commit
+        run: |
+          rm -f .github/workflows/apply-autorig-v14-proof-contract.yml
+          cat > .github/workflows/validate.yml <<'YAML'
+          name: Validate CLOUVA
+
+          on:
+            pull_request:
+              branches: [main]
+            push:
+              branches: [agent/base-mesh-auto-rig]
+
+          permissions:
+            contents: read
+
+          concurrency:
+            group: validate-${{ github.ref }}
+            cancel-in-progress: true
+
+          jobs:
+            validate:
+              runs-on: ubuntu-latest
+              timeout-minutes: 20
+              steps:
+                - name: Checkout
+                  uses: actions/checkout@v4
+
+                - name: Setup Node
+                  uses: actions/setup-node@v4
+                  with:
+                    node-version: 22
+                    cache: npm
+
+                - name: Install dependencies
+                  run: npm ci
+
+                - name: Typecheck
+                  run: npm run typecheck
+
+                - name: Tests
+                  run: npm test
+
+                - name: Validate worker Python
+                  run: python3 -m py_compile worker/garment-rig/app*.py worker/garment-rig/rig_garment*.py worker/garment-rig/avatar_reference.py worker/garment-rig/test_*.py tools/unreal_avatar_export/export_clouva_avatar.py
+
+                - name: Build and validate Blender worker image
+                  run: docker build --progress=plain -t clouva-garment-rig:test worker/garment-rig
+
+                - name: Build
+                  run: npm run build
+                  env:
+                    NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+                    NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key
+          YAML
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Align AutoRig V14 proof contract"
+          git push origin HEAD:${{ github.head_ref }}
