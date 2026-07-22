@@ -1,8 +1,8 @@
 """MediaPipe Tasks auxiliary process for CLOUVA technical renders.
 
-V3 evaluates the neutral RGB render, an edge-enhanced render and safe contrast
-variants. MediaPipe supplies only 2D candidates; Blender still validates every
-candidate against the anatomical BVH before it can become an accepted landmark.
+V3.2 evaluates neutral, edge, contrast, grayscale and silhouette variants.
+MediaPipe supplies only 2D candidates; Blender still validates every candidate
+against the anatomical BVH before it can become an accepted landmark.
 """
 from __future__ import annotations
 
@@ -89,9 +89,9 @@ def _hand_detector():
         base_options=python.BaseOptions(model_asset_path=str(HAND_MODEL)),
         running_mode=vision.RunningMode.IMAGE,
         num_hands=1,
-        min_hand_detection_confidence=0.15,
-        min_hand_presence_confidence=0.15,
-        min_tracking_confidence=0.15,
+        min_hand_detection_confidence=0.12,
+        min_hand_presence_confidence=0.12,
+        min_tracking_confidence=0.12,
     )
     return vision.HandLandmarker.create_from_options(options)
 
@@ -117,6 +117,13 @@ def _agreement_confidence(rgb: dict | None, edge: dict | None, base: float):
     return point, max(0.38, min(0.72, base * 0.72)), 0.35, ["rgb" if rgb else "edge"]
 
 
+def _append_variant(images: list, variant):
+    if variant is None:
+        return
+    contiguous = np.ascontiguousarray(variant, dtype=np.uint8)
+    images.append(mp.Image(image_format=mp.ImageFormat.SRGB, data=contiguous))
+
+
 def _mediapipe_images(path: str | None):
     if not path or not Path(path).is_file():
         return []
@@ -126,25 +133,29 @@ def _mediapipe_images(path: str | None):
     source = cv2.imread(path, cv2.IMREAD_COLOR)
     if source is None or source.size == 0:
         return images
-    variants = []
     try:
         lab = cv2.cvtColor(source, cv2.COLOR_BGR2LAB)
         lightness, channel_a, channel_b = cv2.split(lab)
         clahe = cv2.createCLAHE(clipLimit=2.2, tileGridSize=(8, 8))
         enhanced = cv2.cvtColor(cv2.merge((clahe.apply(lightness), channel_a, channel_b)), cv2.COLOR_LAB2RGB)
-        variants.append(enhanced)
+        _append_variant(images, enhanced)
     except Exception:
         pass
     try:
         rgb = cv2.cvtColor(source, cv2.COLOR_BGR2RGB)
         blurred = cv2.GaussianBlur(rgb, (0, 0), 1.15)
         sharpened = cv2.addWeighted(rgb, 1.75, blurred, -0.75, 0)
-        variants.append(sharpened)
+        _append_variant(images, sharpened)
     except Exception:
         pass
-    for variant in variants:
-        contiguous = np.ascontiguousarray(variant, dtype=np.uint8)
-        images.append(mp.Image(image_format=mp.ImageFormat.SRGB, data=contiguous))
+    try:
+        gray = cv2.cvtColor(source, cv2.COLOR_BGR2GRAY)
+        gray = cv2.equalizeHist(gray)
+        gray_rgb = cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB)
+        _append_variant(images, gray_rgb)
+        _append_variant(images, 255 - gray_rgb)
+    except Exception:
+        pass
     return images
 
 
@@ -185,6 +196,9 @@ def _detect_face(detector, view: dict):
     rgb = _face_points(detector, view.get("path"))
     edge = _face_points(detector, view.get("edgePath"))
     if not rgb and not edge:
+        silhouette = _face_points(detector, view.get("silhouettePath"))
+        rgb = silhouette
+    if not rgb and not edge:
         return [], {"code": "FACE_NOT_DETECTED", "view": view["name"]}
     candidates = []
     for name in FACE_MAP:
@@ -206,18 +220,23 @@ def _detect_face(detector, view: dict):
 def _detect_hand(detector, view: dict):
     rgb, rgb_handedness, rgb_score = _hand_points(detector, view.get("path"))
     edge, edge_handedness, edge_score = _hand_points(detector, view.get("edgePath"))
+    silhouette, silhouette_handedness, silhouette_score = _hand_points(detector, view.get("silhouettePath"))
+    if not rgb and not edge and silhouette:
+        rgb, rgb_handedness, rgb_score = silhouette, silhouette_handedness, silhouette_score
     if not rgb and not edge:
         return [], {"code": "HAND_NOT_DETECTED", "view": view["name"], "side": view.get("side")}
-    detector_handedness = rgb_handedness or edge_handedness
-    handedness_score = max(rgb_score, edge_score, 0.45)
+    detector_handedness = rgb_handedness or edge_handedness or silhouette_handedness
+    handedness_score = max(rgb_score, edge_score, silhouette_score, 0.45)
     suffix = "l" if view.get("side") == "left" else "r"
     candidates = []
     for base_name, index in HAND_MAP.items():
-        point, confidence, agreement, variants = _agreement_confidence(
-            rgb.get(base_name), edge.get(base_name), handedness_score,
-        )
+        first = rgb.get(base_name) or silhouette.get(base_name)
+        second = edge.get(base_name)
+        point, confidence, agreement, variants = _agreement_confidence(first, second, handedness_score)
         if point is None:
             continue
+        if first is silhouette.get(base_name) and "rgb" in variants:
+            variants = ["silhouette" if value == "rgb" else value for value in variants]
         candidates.append({
             "name": f"{base_name}_{suffix}",
             "x": point["x"], "y": point["y"], "detectorDepth": point["z"],
@@ -252,11 +271,42 @@ def _collapse_errors(errors: List[dict]):
     return list(grouped.values())
 
 
+def _prune_redundant_errors(output: dict):
+    successful_face_views = sum(
+        1 for view in output.get("views", [])
+        if view.get("region") == "face" and len(view.get("candidates") or []) >= 8
+    )
+    successful_hand_views = {
+        side: sum(
+            1 for view in output.get("views", [])
+            if view.get("region") == "hand"
+            and view.get("side") == side
+            and len(view.get("candidates") or []) >= 12
+        )
+        for side in ("left", "right")
+    }
+    filtered = []
+    for error in output.get("errors", []):
+        code = error.get("code")
+        if code == "FACE_NOT_DETECTED" and successful_face_views >= 2:
+            continue
+        if code == "HAND_NOT_DETECTED" and successful_hand_views.get(error.get("side"), 0) >= 2:
+            continue
+        filtered.append(error)
+    output["errors"] = filtered
+    output["detectionCoverage"] = {
+        "faceViews": successful_face_views,
+        "leftHandViews": successful_hand_views["left"],
+        "rightHandViews": successful_hand_views["right"],
+    }
+    return output
+
+
 def run(request_path: Path, output_path: Path):
     request = json.loads(request_path.read_text(encoding="utf-8"))
     views = request.get("views") or []
     output = {
-        "version": "clouva-mediapipe-tasks-v3-stylized-retry",
+        "version": "clouva-mediapipe-tasks-v3.2-stylized-silhouette-retry",
         "faceModel": str(FACE_MODEL), "handModel": str(HAND_MODEL),
         "handLandmarkCount": len(HAND_MAP), "views": [], "errors": [],
     }
@@ -284,6 +334,7 @@ def run(request_path: Path, output_path: Path):
     finally:
         face_detector.close()
         hand_detector.close()
+    output = _prune_redundant_errors(output)
     output["errors"] = _collapse_errors(output["errors"])
     output_path.write_text(json.dumps(output, indent=2), encoding="utf-8")
     return output
