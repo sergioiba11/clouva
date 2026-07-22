@@ -1,4 +1,9 @@
-"""Topology-first hand analysis for CLOUVA Avatar Analyzer V3."""
+"""Topology-first hand analysis for CLOUVA Avatar Analyzer V3.2.
+
+MediaPipe is used as visual evidence, but a stylized hand is not declared absent
+when Blender can isolate five real geodesic branches in the hand mesh. Geometry
+fallbacks remain confidence-gated and never invent branches that do not exist.
+"""
 from __future__ import annotations
 
 from collections import defaultdict
@@ -50,9 +55,10 @@ def _invalidate(landmarks: Dict[str, dict], names: List[str], reasons: List[str]
         item["display"] = False
         item["confidence"] = min(float(item.get("confidence", 0.0)), 0.39)
         item["finalConfidence"] = min(float(item.get("finalConfidence", item.get("confidence", 0.0))), 0.39)
-        item.setdefault("rejectionReasons", []).extend(
-            reason for reason in reasons if reason not in item.get("rejectionReasons", [])
-        )
+        existing = item.setdefault("rejectionReasons", [])
+        for reason in reasons:
+            if reason not in existing:
+                existing.append(reason)
 
 
 def _expected_names(suffix: str):
@@ -72,13 +78,13 @@ def _triangulate_side(grouped, segmentation, anatomy_bvh, side: str, rough: bool
     landmarks = {}
     for name in _expected_names(suffix):
         if name.startswith("wrist_"):
-            regions = (f"hand_{suffix}",)
-            preferred = ("palm", "dorsum")
+            regions = (f"forearm_{suffix}", f"hand_{suffix}")
+            preferred = ("palm", "dorsum", "medial")
         else:
             finger = name.split("_")[0]
             finger_region = f"{finger}_{suffix}"
             regions = (finger_region,) if anatomy_bvh.has_region(finger_region) and not rough else (f"hand_{suffix}",)
-            preferred = ("palm", "three_quarter_palm")
+            preferred = ("palm", "three_quarter_palm", "dorsum")
         landmarks[name] = triangulate_landmark(
             name, grouped.get(name, []), segmentation, regions, hand_scale,
             minimum_views=2, preferred_view_tokens=preferred,
@@ -111,11 +117,112 @@ def _refresh_hand_passes(manifest: dict, anatomy_bvh, side: str):
     return {"side": side, "allowedRegions": allowed, "viewsRefreshed": refreshed}
 
 
-def _refine_to_topology(landmarks: Dict[str, dict], topology, anatomy_bvh, side: str):
+def _ensure_wrist(landmarks: Dict[str, dict], measurement: dict, anatomy_bvh, side: str):
+    suffix = "l" if side == "left" else "r"
+    name = f"wrist_{suffix}"
+    current = landmarks.get(name) or {"name": name}
+    if current.get("accepted", False):
+        return False
+    origin_value = measurement.get("origin")
+    if not measurement.get("valid") or not origin_value:
+        landmarks[name] = current
+        return False
+    origin = Vector(tuple(float(value) for value in origin_value))
+    hand_scale = max(float(measurement.get("handScale") or 0.0), 1e-5)
+    surface = anatomy_bvh.nearest(origin, (f"forearm_{suffix}", f"hand_{suffix}"))
+    if surface is None or float(surface["distance"]) > hand_scale * 0.42:
+        landmarks[name] = current
+        return False
+    confidence = max(0.58, min(0.86, 0.72 + min(0.14, int(measurement.get("vertexCount") or 0) / 1200.0)))
+    current.update({
+        "name": name,
+        "position": _vec(origin),
+        "internalJointPosition": _vec(origin),
+        "surfaceDisplayPosition": _vec(surface["location"]),
+        "displayPosition": _vec(surface["location"]),
+        "region": f"hand_{suffix}",
+        "surfaceRegion": surface.get("region", f"hand_{suffix}"),
+        "landmarkType": "internal_joint",
+        "accepted": True,
+        "verified": True,
+        "display": True,
+        "confidence": confidence,
+        "finalConfidence": confidence,
+        "viewsConfirmed": int(current.get("viewsConfirmed") or 0),
+        "methods": ["measured_hand_origin", "forearm_hand_boundary_bvh"],
+        "method": "geometry-measured-wrist-boundary-v3.2",
+        "rejectionReasons": [],
+        "geometryFallback": True,
+    })
+    landmarks[name] = current
+    return True
+
+
+def _usable_observation(item: dict):
+    if not item or not (item.get("internalJointPosition") or item.get("position")):
+        return False
+    reasons = set(item.get("rejectionReasons") or [])
+    hard_failures = {
+        "LANDMARK_REGION_BVH_MISS", "LANDMARK_TECHNICAL_PASS_MISMATCH",
+        "TECHNICAL_EVIDENCE_GATE_FAILED", "RAY_TRIANGULATION_FAILED",
+    }
+    if reasons.intersection(hard_failures):
+        return False
+    confidence = float(item.get("finalConfidence", item.get("confidence", 0.0)))
+    views = int(item.get("viewsConfirmed") or 0)
+    return bool(item.get("accepted", False) or (views >= 2 and confidence >= 0.30))
+
+
+def _factor_sequence(names: List[str], observations: dict):
+    canonical = [0.18, 0.43, 0.70, 0.96]
+    bands = [(0.10, 0.30), (0.31, 0.56), (0.57, 0.82), (0.88, 1.0)]
+    factors = []
+    for index, name in enumerate(names):
+        if name in observations:
+            _item, _point, _distance, along = observations[name]
+            factor = float(along) * 0.58 + canonical[index] * 0.42
+        else:
+            factor = canonical[index]
+        lower, upper = bands[index]
+        factor = max(lower, min(upper, factor))
+        if factors:
+            factor = max(factor, factors[-1] + 0.10)
+        factors.append(min(factor, upper))
+    return factors
+
+
+def _local_xy(point: Vector, origin: Vector, lateral: Vector, forward: Vector):
+    delta = point - origin
+    return delta.dot(lateral), delta.dot(forward)
+
+
+def _chains_cross(first: List[Vector], second: List[Vector], origin: Vector,
+                  lateral: Vector, forward: Vector):
+    def orient(a, b, c):
+        return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+
+    first_2d = [_local_xy(point, origin, lateral, forward) for point in first]
+    second_2d = [_local_xy(point, origin, lateral, forward) for point in second]
+    for a, b in zip(first_2d, first_2d[1:]):
+        for c, d in zip(second_2d, second_2d[1:]):
+            if orient(a, b, c) * orient(a, b, d) < 0 and orient(c, d, a) * orient(c, d, b) < 0:
+                return True
+    return False
+
+
+def _refine_to_topology(landmarks: Dict[str, dict], topology, anatomy_bvh,
+                        side: str, measurement: dict):
     suffix = topology.suffix
-    warnings = []
+    blocking = []
+    informative = []
     valid = {}
     finger_lengths = {}
+    mapping = topology.diagnostics.get("branchAssignment") or {}
+    medial = topology.diagnostics.get("medialGraph") or {}
+    mapping_confidence = float(mapping.get("mappingConfidence") or 0.0)
+    medial_valid = medial.get("status") == "valid"
+    hand_scale = max(float(measurement.get("handScale") or 0.0), 1e-5)
+
     for finger in FINGERS:
         names = _chain_names(finger, suffix)
         branch = topology.branch(finger)
@@ -124,58 +231,58 @@ def _refine_to_topology(landmarks: Dict[str, dict], topology, anatomy_bvh, side:
         if branch is None or not anatomy_bvh.has_region(region):
             _invalidate(landmarks, names, ["GEOMETRIC_FINGER_BRANCH_UNAVAILABLE"])
             valid[finger] = False
-            warnings.append({"code": "GEOMETRIC_FINGER_BRANCH_UNAVAILABLE", "side": side, "finger": finger})
+            blocking.append({"code": "GEOMETRIC_FINGER_BRANCH_UNAVAILABLE", "side": side, "finger": finger})
             continue
 
         observations = []
         for name in names:
             item = landmarks.get(name) or {}
-            if item.get("accepted", False):
+            if _usable_observation(item):
                 point, distance, along = topology.nearest_on_branch(finger, _internal(item))
                 if point is not None:
                     observations.append((name, item, point, distance, along))
-        if len(observations) < 3:
-            _invalidate(landmarks, names, ["INSUFFICIENT_VISUAL_GEOMETRY_AGREEMENT"])
-            valid[finger] = False
-            warnings.append({
-                "code": "INSUFFICIENT_VISUAL_GEOMETRY_AGREEMENT", "side": side,
-                "finger": finger, "acceptedVisualPoints": len(observations),
-            })
-            continue
-
         observation_lookup = {name: (item, point, distance, along) for name, item, point, distance, along in observations}
-        prior_factors = {names[0]: 0.18, names[1]: 0.43, names[2]: 0.70, names[3]: 1.0}
-        factors = []
-        for name in names:
-            if name in observation_lookup:
-                _item, _point, _distance, along = observation_lookup[name]
-                factor = along * 0.82 + prior_factors[name] * 0.18
-            else:
-                factor = prior_factors[name]
-            if factors:
-                factor = max(factor, factors[-1] + 0.07)
-            factors.append(min(factor, 1.0))
-        if factors[-1] < 0.88:
-            factors[-1] = 1.0
-
+        factors = _factor_sequence(names, observation_lookup)
         points = [topology.point_at(finger, factor) for factor in factors]
         if any(point is None for point in points):
             _invalidate(landmarks, names, ["FINGER_CENTERLINE_SAMPLING_FAILED"])
             valid[finger] = False
+            blocking.append({"code": "FINGER_CENTERLINE_SAMPLING_FAILED", "side": side, "finger": finger})
             continue
+
         segment_lengths = [(points[index + 1] - points[index]).length for index in range(3)]
         geodesic_length = max(float(metric.get("geodesicLength") or branch.geodesic_length), 1e-5)
-        minimum_segment = geodesic_length * 0.055
-        maximum_segment = geodesic_length * 0.52
+        length_ratio = geodesic_length / hand_scale
+        minimum_segment = geodesic_length * 0.045
+        maximum_segment = geodesic_length * 0.46
         sizes_valid = all(minimum_segment <= length <= maximum_segment for length in segment_lengths)
         branch_confidence = float(metric.get("branchConfidence") or branch.confidence)
-        visual_geometry_distances = [value[2] for value in observation_lookup.values()]
-        agreement = max(0.0, min(1.0, 1.0 - sum(visual_geometry_distances) / max(len(visual_geometry_distances) * geodesic_length * 0.25, 1e-8)))
-        chain_valid = sizes_valid and branch_confidence >= 0.48 and agreement >= 0.40
+        vertex_count = int(metric.get("vertexCount") or 0)
+        visual_distances = [value[2] for value in observation_lookup.values()]
+        if visual_distances:
+            agreement = max(
+                0.0,
+                min(1.0, 1.0 - sum(visual_distances) / max(len(visual_distances) * geodesic_length * 0.42, 1e-8)),
+            )
+        else:
+            agreement = 0.55
+        minimum_ratio = 0.11 if finger == "thumb" else 0.16
+        geometry_strong = bool(
+            medial_valid
+            and branch_confidence >= 0.52
+            and vertex_count >= 4
+            and minimum_ratio <= length_ratio <= 1.20
+        )
+        semantic_evidence = mapping_confidence >= 0.45 or len(observations) >= 2
+        visual_gate = len(observations) < 2 or agreement >= 0.24
+        chain_valid = bool(sizes_valid and geometry_strong and semantic_evidence and visual_gate)
+        geometry_only = chain_valid and len(observations) < 2
+        surfaces = [anatomy_bvh.nearest(point, region) for point in points]
+        if any(surface is None for surface in surfaces):
+            chain_valid = False
 
-        for name, point, factor in zip(names, points, factors):
+        for name, point, factor, surface in zip(names, points, factors, surfaces):
             item = landmarks.setdefault(name, {"name": name})
-            surface = anatomy_bvh.nearest(point, region)
             item["position"] = _vec(point)
             item["internalJointPosition"] = _vec(point)
             item["surfaceDisplayPosition"] = _vec(surface["location"] if surface else point)
@@ -187,63 +294,83 @@ def _refine_to_topology(landmarks: Dict[str, dict], topology, anatomy_bvh, side:
             item["geodesicConfidence"] = float(branch_confidence)
             item["topologyConfidence"] = float(agreement)
             item["fingerMetrics"] = metric
-            item.setdefault("methods", []).extend([
+            item["geometryFallback"] = geometry_only
+            methods = item.setdefault("methods", [])
+            for method in (
                 "geometry_first_finger_branch", "geodesic_centerline_projection",
                 "finger_specific_region_bvh",
-            ])
-            item["method"] = "topology-first-finger-centerline-v3"
+                "visual_geometry_fusion" if observations else "geometry_only_branch_recovery",
+            ):
+                if method not in methods:
+                    methods.append(method)
+            item["method"] = "topology-visual-fused-finger-centerline-v3.2" if observations else "topology-only-finger-centerline-v3.2"
             item["accepted"] = chain_valid
             item["verified"] = chain_valid
             item["display"] = chain_valid
-            final = (
-                float(item.get("finalConfidence", item.get("confidence", 0.0))) * 0.45
-                + branch_confidence * 0.30 + agreement * 0.25
-            )
-            item["finalConfidence"] = float(final if chain_valid else min(final, 0.39))
+            detector_confidence = float(item.get("finalConfidence", item.get("confidence", 0.0)))
+            evidence_confidence = agreement if observations else 0.55
+            final = detector_confidence * 0.22 + branch_confidence * 0.40 + mapping_confidence * 0.18 + evidence_confidence * 0.20
+            item["finalConfidence"] = float(max(0.45, final) if chain_valid else min(final, 0.39))
             item["confidence"] = item["finalConfidence"]
+            item["rejectionReasons"] = []
             if not chain_valid:
-                item.setdefault("rejectionReasons", []).extend([
-                    *( [] if sizes_valid else ["FINGER_SEGMENT_SCALE_INVALID"] ),
-                    *( [] if branch_confidence >= 0.48 else ["FINGER_BRANCH_CONFIDENCE_LOW"] ),
-                    *( [] if agreement >= 0.40 else ["VISUAL_GEOMETRY_AGREEMENT_LOW"] ),
-                ])
+                reasons = item["rejectionReasons"]
+                if not sizes_valid:
+                    reasons.append("FINGER_SEGMENT_SCALE_INVALID")
+                if not geometry_strong:
+                    reasons.append("FINGER_BRANCH_CONFIDENCE_LOW")
+                if not semantic_evidence:
+                    reasons.append("FINGER_BRANCH_LABEL_UNCERTAIN")
+                if not visual_gate:
+                    reasons.append("VISUAL_GEOMETRY_AGREEMENT_LOW")
+                if surface is None:
+                    reasons.append("FINGER_REGION_BVH_UNAVAILABLE")
 
         valid[finger] = chain_valid
         if chain_valid:
             finger_lengths[finger] = float(sum(segment_lengths))
+            if geometry_only:
+                informative.append({
+                    "code": "FINGER_GEOMETRY_FALLBACK_USED", "side": side, "finger": finger,
+                    "branchConfidence": branch_confidence, "mappingConfidence": mapping_confidence,
+                })
         else:
-            warnings.append({
+            blocking.append({
                 "code": "FINGER_TOPOLOGY_INVALID", "side": side, "finger": finger,
                 "segmentLengths": segment_lengths, "branchConfidence": branch_confidence,
-                "visualGeometryAgreement": agreement,
+                "visualGeometryAgreement": agreement, "visualPointCount": len(observations),
+                "mappingConfidence": mapping_confidence, "lengthRatio": length_ratio,
             })
 
-    # Crossing test in the hand local plane.
-    measurement = topology.metrics
-    crossed = set()
+    origin = Vector(tuple(measurement.get("origin") or (0.0, 0.0, 0.0)))
+    lateral = Vector(tuple(measurement.get("lateral") or (1.0, 0.0, 0.0)))
+    forward = Vector(tuple(measurement.get("forward") or (0.0, 0.0, -1.0)))
+    if lateral.length <= 1e-8:
+        lateral = Vector((1.0, 0.0, 0.0))
+    if forward.length <= 1e-8:
+        forward = Vector((0.0, 0.0, -1.0))
+    lateral.normalize(); forward.normalize()
     valid_chains = {
         finger: [_internal(landmarks[name]) for name in _chain_names(finger, suffix)]
         for finger in FINGERS if valid.get(finger, False)
     }
-    def segments(points): return list(zip(points, points[1:]))
-    def orient(a, b, c): return (b.x-a.x)*(c.z-a.z)-(b.z-a.z)*(c.x-a.x)
-    def crosses(first, second):
-        a,b=first; c,d=second
-        return orient(a,b,c)*orient(a,b,d) < 0 and orient(c,d,a)*orient(c,d,b) < 0
+    crossed = set()
     for first, second in combinations(valid_chains, 2):
-        if any(crosses(a, b) for a in segments(valid_chains[first]) for b in segments(valid_chains[second])):
+        if _chains_cross(valid_chains[first], valid_chains[second], origin, lateral, forward):
             crossed.update((first, second))
     for finger in crossed:
         _invalidate(landmarks, _chain_names(finger, suffix), ["FINGER_CHAINS_CROSS"])
         valid[finger] = False
+        finger_lengths.pop(finger, None)
     if crossed:
-        warnings.append({"code": "FINGER_CHAINS_CROSS", "side": side, "fingers": sorted(crossed)})
+        blocking.append({"code": "FINGER_CHAINS_CROSS", "side": side, "fingers": sorted(crossed)})
 
     return {
         "landmarks": landmarks,
         "validFingers": sum(1 for value in valid.values() if value),
         "fingerLengths": finger_lengths,
-        "warnings": warnings,
+        "blockingWarnings": blocking,
+        "informativeWarnings": informative,
     }
 
 
@@ -266,11 +393,11 @@ def _derive_palm_and_metacarpals(landmarks: Dict[str, dict], anatomy_bvh, side: 
         "displayPosition": _vec(surface["location"] if surface else palm),
         "region": f"hand_{suffix}", "surfaceRegion": f"hand_{suffix}",
         "landmarkType": "internal_joint", "accepted": accepted, "verified": accepted,
-        "display": accepted, "confidence": base_confidence * 0.88 if accepted else min(base_confidence, 0.39),
-        "finalConfidence": base_confidence * 0.88 if accepted else min(base_confidence, 0.39),
+        "display": accepted, "confidence": base_confidence * 0.90 if accepted else min(base_confidence, 0.39),
+        "finalConfidence": base_confidence * 0.90 if accepted else min(base_confidence, 0.39),
         "viewsConfirmed": min(int(landmarks[name].get("viewsConfirmed", 0)) for name in base_names),
         "methods": ["verified_mcp_centroid", "hand_region_bvh_surface_anchor"],
-        "method": "anatomical-palm-center-v3", "rejectionReasons": [] if accepted else ["PALM_OUTSIDE_HAND_REGION"],
+        "method": "anatomical-palm-center-v3.2", "rejectionReasons": [] if accepted else ["PALM_OUTSIDE_HAND_REGION"],
     }
     for finger in FINGERS:
         base_name = f"{finger}_01_{suffix}"
@@ -284,9 +411,9 @@ def _derive_palm_and_metacarpals(landmarks: Dict[str, dict], anatomy_bvh, side: 
             "name": name, "position": _vec(point), "internalJointPosition": _vec(point),
             "region": f"hand_{suffix}", "landmarkType": "derived_internal",
             "accepted": verified, "verified": verified, "display": False, "derived": True,
-            "aliasOf": base_name, "confidence": min(float(landmarks[base_name].get("confidence", 0.0)), base_confidence) * 0.82,
+            "aliasOf": base_name, "confidence": min(float(landmarks[base_name].get("confidence", 0.0)), base_confidence) * 0.84,
             "viewsConfirmed": int(landmarks[base_name].get("viewsConfirmed", 0)),
-            "methods": ["palm_to_mcp_internal_derivation"], "method": "derived-metacarpal-internal-v3",
+            "methods": ["palm_to_mcp_internal_derivation"], "method": "derived-metacarpal-internal-v3.2",
             "rejectionReasons": [] if verified else ["SOURCE_CHAIN_NOT_VERIFIED"],
         }
     return []
@@ -298,20 +425,18 @@ def analyze_hands(detector_output: dict, manifest: dict, classifications: Dict[s
     rough_projected, rough_failures = project_candidates(hand_views, manifest, classifications, anatomy_bvh)
     rough_grouped = _group(rough_projected)
     topologies = {}
-    rough_landmarks = {}
     warnings = list(rough_failures)
 
     for side in ("left", "right"):
         suffix = "l" if side == "left" else "r"
         side_grouped = {name: values for name, values in rough_grouped.items() if name.endswith(f"_{suffix}")}
         rough = _triangulate_side(side_grouped, segmentation, anatomy_bvh, side, rough=True)
-        rough_landmarks[side] = rough
         topology = detect_hand_topology(meshes, segmentation, side, rough)
         topologies[side] = topology
         apply_report = apply_finger_region_labels(meshes, segmentation, topology)
         warnings.extend(topology.diagnostics.get("branchAssignment", {}).get("warnings") or [])
         if apply_report.get("validFingerRegions", 0) < 5:
-            warnings.append({"code": "FINGER_REGION_LABELING_INCOMPLETE", **apply_report})
+            warnings.append({"code": "FINGER_REGION_LABELING_INCOMPLETE", "side": side, **apply_report})
 
     final_bvh = build_anatomy_bvh(meshes, segmentation, classifications)
     refresh_reports = [_refresh_hand_passes(manifest, final_bvh, side) for side in ("left", "right")]
@@ -322,31 +447,43 @@ def analyze_hands(detector_output: dict, manifest: dict, classifications: Dict[s
 
     for side in ("left", "right"):
         suffix = "l" if side == "left" else "r"
+        measurement = segmentation.hand_measurement(side)
         side_grouped = {name: values for name, values in final_grouped.items() if name.endswith(f"_{suffix}")}
         landmarks = _triangulate_side(side_grouped, segmentation, final_bvh, side, rough=False)
-        refined = _refine_to_topology(landmarks, topologies[side], final_bvh, side)
+        wrist_fallback = _ensure_wrist(landmarks, measurement, final_bvh, side)
+        refined = _refine_to_topology(landmarks, topologies[side], final_bvh, side, measurement)
         landmarks = refined["landmarks"]
-        side_warnings = list(refined.get("warnings") or [])
-        side_warnings.extend(_derive_palm_and_metacarpals(landmarks, final_bvh, side))
+        blocking = list(refined.get("blockingWarnings") or [])
+        informative = list(refined.get("informativeWarnings") or [])
+        if wrist_fallback:
+            informative.append({"code": "WRIST_GEOMETRY_FALLBACK_USED", "side": side})
+        blocking.extend(_derive_palm_and_metacarpals(landmarks, final_bvh, side))
         valid_fingers = int(refined.get("validFingers") or 0)
-        rejected_names = sorted(name for name, item in landmarks.items() if isinstance(item, dict) and not item.get("accepted", False))
-        status = "valid" if valid_fingers == 5 and not rejected_names and not side_warnings and topologies[side].diagnostics.get("status") == "valid" else "needs_review"
-        if status != "valid":
-            side_warnings.append({
-                "code": f"{side.upper()}_HAND_REQUIRES_REVIEW", "validFingers": valid_fingers,
-                "rejectedLandmarks": rejected_names,
+        rejected_names = sorted(
+            name for name, item in landmarks.items()
+            if isinstance(item, dict) and not item.get("accepted", False)
+        )
+        if valid_fingers == 5 and not rejected_names and not blocking:
+            status = "valid_with_warnings" if informative or topologies[side].diagnostics.get("status") != "valid" else "valid"
+        else:
+            status = "needs_review"
+            blocking.append({
+                "code": f"{side.upper()}_HAND_REQUIRES_REVIEW", "side": side,
+                "validFingers": valid_fingers, "rejectedLandmarks": rejected_names,
                 "topologyStatus": topologies[side].diagnostics.get("status"),
             })
+        side_warnings = [*blocking, *informative]
         result[side] = {
             "status": status, "landmarks": landmarks, "validFingers": valid_fingers,
-            "measurements": {**segmentation.hand_measurement(side), "fingerLengths": refined.get("fingerLengths") or {}},
+            "measurements": {**measurement, "fingerLengths": refined.get("fingerLengths") or {}},
             "topology": topologies[side].as_report(),
             "triangulatedLandmarks": sum(1 for item in landmarks.values() if item.get("internalJointPosition")),
             "acceptedLandmarks": sum(1 for item in landmarks.values() if item.get("accepted", False)),
             "visibleSurfaceLandmarks": sum(1 for item in landmarks.values() if item.get("display", False)),
             "rejectedLandmarks": rejected_names, "warnings": side_warnings,
+            "blockingWarnings": blocking, "nonBlockingWarnings": informative,
             "projectedCandidates": [item for item in final_projected if item.get("side") == side],
-            "method": "topology-first-geodesic-branches-plus-finger-region-bvh-v3",
+            "method": "topology-first-geodesic-branches-plus-finger-region-bvh-v3.2",
         }
         warnings.extend(side_warnings)
 
