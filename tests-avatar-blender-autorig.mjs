@@ -46,6 +46,13 @@ test("AUTORIGGEAR AVATAR envía el original limpio al Blender Worker", () => {
   assert.match(rigRoute, /jobIsActive\(storedJob, source\)/);
 });
 
+test("un avatar terminado no vuelve a riggearse y un trabajo activo no se duplica", () => {
+  assert.match(rigRoute, /if \(alreadyRigged\) \{/);
+  assert.doesNotMatch(rigRoute, /alreadyRigged\s*&&\s*!force/);
+  assert.match(rigRoute, /if \(jobIsActive\(storedJob, source\)\) \{/);
+  assert.match(rigRoute, /resumed: true/);
+});
+
 test("Blender guarda el resultado en Supabase y actualiza el avatar activo", () => {
   assert.match(rigRoute, /storage\.from\("avatars"\)\.upload/);
   assert.match(rigRoute, /COMPLETE_FILENAME/);
