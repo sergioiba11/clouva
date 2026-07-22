@@ -1,0 +1,208 @@
+name: Apply Real Blender AutoRig Product Fix
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/apply-real-autorig-product.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - name: Wire AutoRig V12 and true retry
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace(path, old, new, count=None):
+              file = Path(path)
+              text = file.read_text()
+              if old not in text:
+                  raise SystemExit(f"Pattern not found in {path}: {old[:120]!r}")
+              text = text.replace(old, new, count if count is not None else -1)
+              file.write_text(text)
+
+          replace(
+              "worker/garment-rig/app_v16.py",
+              'COMPLETE_AVATAR_RIG_VERSION = "v11-head-midpoint-ears"\nCOMPLETE_AVATAR_RIG_SCRIPT = Path(__file__).with_name("complete_avatar_rig_v11.py")',
+              'COMPLETE_AVATAR_RIG_VERSION = "v12-real-blender-autorig"\nCOMPLETE_AVATAR_RIG_SCRIPT = Path(__file__).with_name("autorig_avatar_v12.py")',
+          )
+
+          route = Path("app/api/avatar/rig/route.ts")
+          text = route.read_text()
+          old = '    const action = String(body?.action ?? "");\n'
+          new = old + '    const retry = action === "retry";\n    const createRequested = action === "create" || retry;\n'
+          if old not in text:
+              raise SystemExit("Avatar rig action parser not found")
+          text = text.replace(old, new, 1)
+          if '    if (action === "create") {' not in text:
+              raise SystemExit("Avatar rig create branch not found")
+          text = text.replace('    if (action === "create") {', '    if (createRequested) {', 1)
+          create_index = text.index('    if (createRequested) {')
+          guard_index = text.index('      if (alreadyRigged) {', create_index)
+          text = text[:guard_index] + text[guard_index:].replace(
+              '      if (alreadyRigged) {',
+              '      if (alreadyRigged && !retry) {',
+              1,
+          )
+          metadata_marker = '      await updateMetadata(supabase, user.id, { job });\n\n      stage = RIG_STAGES.skeleton;'
+          metadata_replacement = '      await updateMetadata(\n        supabase,\n        user.id,\n        retry ? { job, profile: null } : { job },\n      );\n\n      stage = RIG_STAGES.skeleton;'
+          if metadata_marker not in text:
+              raise SystemExit("Initial rig job metadata write not found")
+          text = text.replace(metadata_marker, metadata_replacement, 1)
+          response_marker = '        freshRig: true,\n'
+          if response_marker not in text:
+              raise SystemExit("Fresh rig response marker not found")
+          text = text.replace(response_marker, '        freshRig: true,\n        retried: retry,\n', 1)
+          route.write_text(text)
+
+          replace(
+              "components/library/ActiveAvatarDownload.tsx",
+              '      let result = await requestRigApi({ action: "create", force: retry });',
+              '      let result = await requestRigApi({ action: retry ? "retry" : "create" });',
+          )
+
+          studio = Path("components/creator-studio/CreatorStudioSimple.tsx")
+          text = studio.read_text()
+          text = text.replace(
+              '    setMessage("Preparando el rig completo del avatar…");\n    try {\n      const created = await requestRig({ action: "create", force: avatarRigReady });',
+              '    setMessage("Preparando avatar en Blender");\n    const rigStageTimers = [\n      window.setTimeout(() => setMessage("Creando esqueleto"), 1500),\n      window.setTimeout(() => setMessage("Asignando pesos"), 10000),\n    ];\n    try {\n      const created = await requestRig({ action: avatarRigReady ? "retry" : "create" });',
+              1,
+          )
+          task_marker = '      const taskId = String(created.taskId ?? "");\n'
+          success_block = '''      if (created.status === "SUCCEEDED" && created.newAvatarUrl && created.rigProfile?.complete === true) {
+        const completedAvatar: ActiveAvatar = {
+          ...activeAvatar,
+          id: created.sourceAvatarId || activeAvatar.id,
+          modelUrl: created.newAvatarUrl,
+          status: "ready",
+          updatedAt: new Date().toISOString(),
+        };
+        setActiveAvatar(completedAvatar);
+        setRigProfile(created.rigProfile);
+        setAvatarRigProgress(100);
+        await loadActiveAvatar(user?.id ?? null);
+        await loadAvatars();
+        setViewerRevision((value) => value + 1);
+        setMessage("Listo para Unreal. Revisá Huesos, Animación y Diagnóstico antes de aprobar.");
+        return;
+      }
+
+'''
+          if task_marker not in text:
+              raise SystemExit("Creator Studio task marker not found")
+          text = text.replace(task_marker, success_block + task_marker, 1)
+          finally_marker = '    } finally {\n      setAvatarRigging(false);\n'
+          if finally_marker not in text:
+              raise SystemExit("Creator Studio rig finally block not found")
+          text = text.replace(
+              finally_marker,
+              '    } finally {\n      rigStageTimers.forEach((timer) => window.clearTimeout(timer));\n      setAvatarRigging(false);\n',
+              1,
+          )
+          studio.write_text(text)
+
+          docker = Path("worker/garment-rig/Dockerfile")
+          text = docker.read_text()
+          text = text.replace(
+              'complete_avatar_rig_v10.py complete_avatar_rig_v11.py rig_garment.py',
+              'complete_avatar_rig_v10.py complete_avatar_rig_v11.py autorig_avatar_v12.py test_autorig_avatar_v12.py rig_garment.py',
+              1,
+          )
+          text = text.replace(
+              'ENV CLOUVA_AVATAR_COMPLETE_RIG=v11-head-midpoint-ears',
+              'ENV CLOUVA_AVATAR_COMPLETE_RIG=v12-real-blender-autorig',
+              1,
+          )
+          text = text.replace(
+              '    && test -f /app/complete_avatar_rig_v11.py \\\n',
+              '    && test -f /app/complete_avatar_rig_v11.py \\\n    && test -f /app/autorig_avatar_v12.py \\\n    && test -f /app/test_autorig_avatar_v12.py \\\n',
+              1,
+          )
+          text = text.replace(
+              '/app/complete_avatar_rig_v10.py /app/complete_avatar_rig_v11.py /app/test_complete_avatar_rig_v7.py',
+              '/app/complete_avatar_rig_v10.py /app/complete_avatar_rig_v11.py /app/autorig_avatar_v12.py /app/test_autorig_avatar_v12.py /app/test_complete_avatar_rig_v7.py',
+              1,
+          )
+          text = text.replace(
+              "assert app.COMPLETE_AVATAR_RIG_VERSION == 'v11-head-midpoint-ears'; assert app.COMPLETE_AVATAR_RIG_SCRIPT.name == 'complete_avatar_rig_v11.py'; assert app.current.COMPLETE_AVATAR_RIG_VERSION == 'v11-head-midpoint-ears'; assert app.current.COMPLETE_AVATAR_RIG_SCRIPT.name == 'complete_avatar_rig_v11.py'; assert avatar_route.endpoint.__globals__['COMPLETE_AVATAR_RIG_SCRIPT'].name == 'complete_avatar_rig_v11.py';",
+              "assert app.COMPLETE_AVATAR_RIG_VERSION == 'v12-real-blender-autorig'; assert app.COMPLETE_AVATAR_RIG_SCRIPT.name == 'autorig_avatar_v12.py'; assert app.current.COMPLETE_AVATAR_RIG_VERSION == 'v12-real-blender-autorig'; assert app.current.COMPLETE_AVATAR_RIG_SCRIPT.name == 'autorig_avatar_v12.py'; assert avatar_route.endpoint.__globals__['COMPLETE_AVATAR_RIG_SCRIPT'].name == 'autorig_avatar_v12.py';",
+              1,
+          )
+          test_marker = '    && env PYTHONPATH=/app /opt/blender/blender --background --factory-startup --python-exit-code 1 --python /app/test_complete_avatar_rig_v10.py \\\n'
+          if test_marker not in text:
+              raise SystemExit("Docker Blender avatar test marker not found")
+          text = text.replace(
+              test_marker,
+              test_marker + '    && env PYTHONPATH=/app /opt/blender/blender --background --factory-startup --python-exit-code 1 --python /app/test_autorig_avatar_v12.py \\\n',
+              1,
+          )
+          docker.write_text(text)
+
+          tests = Path("tests-avatar-blender-autorig.mjs")
+          text = tests.read_text()
+          text = text.replace(
+              'const meshy = readFileSync("lib/meshy.ts", "utf8");',
+              'const meshy = readFileSync("lib/meshy.ts", "utf8");\nconst creatorStudio = readFileSync("components/creator-studio/CreatorStudioSimple.tsx", "utf8");\nconst workerAutorig = readFileSync("worker/garment-rig/autorig_avatar_v12.py", "utf8");\nconst workerApp = readFileSync("worker/garment-rig/app_v16.py", "utf8");\nconst dockerfile = readFileSync("worker/garment-rig/Dockerfile", "utf8");',
+              1,
+          )
+          text = text.replace(
+              '  assert.match(rigRoute, /if \\(alreadyRigged\\) \\{/);\n  assert.doesNotMatch(rigRoute, /alreadyRigged\\s*&&\\s*!force/);',
+              '  assert.match(rigRoute, /if \\(alreadyRigged && !retry\\) \\{/);\n  assert.match(rigRoute, /const retry = action === "retry"/);',
+              1,
+          )
+          text += '''
+
+test("Rehacer rig ejecuta Blender desde el original y no devuelve el rig anterior", () => {
+  assert.match(creatorStudio, /action: avatarRigReady \? "retry" : "create"/);
+  assert.match(rigRoute, /const createRequested = action === "create" \|\| retry/);
+  assert.match(rigRoute, /completeRigWithWorker\(source\.originalUrl\)/);
+  assert.match(rigRoute, /retry \? \{ job, profile: null \} : \{ job \}/);
+});
+
+test("el Worker crea un rig desde una malla limpia usando la referencia oficial de Unreal", () => {
+  assert.match(workerApp, /autorig_avatar_v12\.py/);
+  assert.match(workerAutorig, /import_original/);
+  assert.match(workerAutorig, /old_armatures/);
+  assert.match(workerAutorig, /canonicalize_and_validate_bones/);
+  assert.match(workerAutorig, /DATA_TRANSFER/);
+  assert.match(workerAutorig, /target-mesh-hand-envelope/);
+  assert.match(dockerfile, /test_autorig_avatar_v12\.py/);
+});
+'''
+          tests.write_text(text)
+
+          # Remove temporary source transport files; only production files remain in the PR.
+          for path in (
+              ".autorig-payload",
+              ".autorig-v12-payload",
+          ):
+              import shutil
+              shutil.rmtree(path, ignore_errors=True)
+          for path in (
+              ".github/workflows/apply-real-autorig-v1.yml",
+              ".github/workflows/run-real-autorig-payload.yml",
+              ".github/workflows/apply-real-autorig-product.yml",
+          ):
+              Path(path).unlink(missing_ok=True)
+          PY
+      - name: Validate static contracts
+        run: |
+          python -m py_compile worker/garment-rig/autorig_avatar_v12.py worker/garment-rig/test_autorig_avatar_v12.py
+          npm ci
+          npm run typecheck
+          npm test
+      - name: Commit production fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Run real Blender AutoRig when rebuilding avatar"
+          git push origin HEAD:${{ github.head_ref }}
