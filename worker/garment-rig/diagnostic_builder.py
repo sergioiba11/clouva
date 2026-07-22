@@ -1,4 +1,4 @@
-"""Build a selectable GLB overlay for Avatar Analyzer diagnostics."""
+"""Build a selectable, deduplicated GLB overlay for Avatar Analyzer V2."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -6,18 +6,6 @@ from typing import Dict, Iterable
 
 import bpy
 from mathutils import Vector
-
-BODY_EDGES = [
-    ("root", "pelvis"), ("pelvis", "spine_01"), ("spine_01", "spine_02"),
-    ("spine_02", "chest"), ("chest", "neck"), ("neck", "skull_base"),
-    ("skull_base", "head_top"),
-    ("chest", "shoulder_l"), ("shoulder_l", "elbow_l"), ("elbow_l", "wrist_l"),
-    ("wrist_l", "hand_l"), ("chest", "shoulder_r"), ("shoulder_r", "elbow_r"),
-    ("elbow_r", "wrist_r"), ("wrist_r", "hand_r"),
-    ("pelvis", "hip_l"), ("hip_l", "knee_l"), ("knee_l", "ankle_l"),
-    ("ankle_l", "foot_l"), ("pelvis", "hip_r"), ("hip_r", "knee_r"),
-    ("knee_r", "ankle_r"), ("ankle_r", "foot_r"),
-]
 
 FACE_EDGES = [
     ("eye_l_inner", "eye_l_upper"), ("eye_l_upper", "eye_l_outer"),
@@ -33,8 +21,10 @@ FACE_EDGES = [
 ]
 
 
-def _point(item: dict, display: bool = False):
-    key = "displayPosition" if display and item.get("displayPosition") else "position"
+def _position(item: dict, display: bool = True):
+    key = "surfaceDisplayPosition" if display and item.get("surfaceDisplayPosition") else (
+        "displayPosition" if display and item.get("displayPosition") else "position"
+    )
     return Vector(tuple(float(value) for value in item[key]))
 
 
@@ -54,44 +44,62 @@ def _confidence_material(confidence: float):
     return _material("CLOUVA_CONFIDENCE_INVALID", (0.85, 0.08, 0.12, 1.0))
 
 
+def _layer(name: str):
+    if name.endswith("_l") and name.startswith(("thumb_", "index_", "middle_", "ring_", "pinky_", "wrist_", "palm_")):
+        return "left_hand"
+    if name.endswith("_r") and name.startswith(("thumb_", "index_", "middle_", "ring_", "pinky_", "wrist_", "palm_")):
+        return "right_hand"
+    if name.startswith("eye_"):
+        return "face_eyes"
+    if name.startswith(("nose_", "nostril_")):
+        return "face_nose"
+    if name.startswith(("mouth_", "upper_lip", "lower_lip")):
+        return "face_mouth"
+    if name.startswith("ear_"):
+        return "face_ears"
+    if name in {"chin", "jaw_l", "jaw_r", "cheek_l", "cheek_r", "forehead_center", "temple_l", "temple_r"}:
+        return "face"
+    return "verified_surface"
+
+
+def _visible(item: dict):
+    return bool(
+        isinstance(item, dict)
+        and "position" in item
+        and item.get("accepted", item.get("verified", False))
+        and item.get("display", False)
+        and float(item.get("confidence", 0.0)) >= 0.40
+        and item.get("landmarkType") != "derived_internal"
+    )
+
+
 def _marker(name: str, item: dict, radius: float):
-    bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=2, radius=radius, location=_point(item, display=True))
+    bpy.ops.mesh.primitive_ico_sphere_add(subdivisions=2, radius=radius, location=_position(item))
     obj = bpy.context.object
     obj.name = f"LM_{name}"
     obj.data.name = f"LM_MESH_{name}"
-    confidence = float(item.get("confidence", item.get("finalConfidence", 0.0)))
+    confidence = float(item.get("confidence", 0.0))
     obj.data.materials.append(_confidence_material(confidence))
     obj["clouva_landmark"] = name
+    obj["landmark_name"] = name
+    obj["region"] = str(item.get("region") or "unknown")
+    obj["surface_region"] = str(item.get("surfaceRegion") or "unknown")
+    obj["landmark_type"] = str(item.get("landmarkType") or "unknown")
+    obj["accepted"] = bool(item.get("accepted", False))
     obj["confidence"] = confidence
-    obj["method"] = str(item.get("method") or item.get("surfaceMethod") or "unknown")
+    obj["method"] = str(item.get("method") or "unknown")
+    obj["methods"] = list(item.get("methods") or [])
     obj["views_confirmed"] = int(item.get("viewsConfirmed") or 0)
     obj["diagnostic_layer"] = _layer(name)
-    obj["verified"] = bool(item.get("verified", False))
-    obj["landmark_type"] = str(item.get("landmarkType") or "unknown")
-    if item.get("internalPosition"):
-        obj["internal_position"] = list(item["internalPosition"])
+    obj["rejection_reasons"] = list(item.get("rejectionReasons") or [])
+    if item.get("internalJointPosition"):
+        obj["internal_joint_position"] = list(item["internalJointPosition"])
+    if item.get("surfaceDisplayPosition"):
+        obj["surface_display_position"] = list(item["surfaceDisplayPosition"])
     return obj
 
 
-def _layer(name: str):
-    if name.startswith(("thumb_", "index_", "middle_", "ring_", "pinky_")):
-        return "fingers"
-    if name.startswith(("palm_", "wrist_")):
-        return "hands"
-    if name.startswith("eye_"):
-        return "eyes"
-    if name.startswith("nose_") or name.startswith("nostril_"):
-        return "nose"
-    if name.startswith(("mouth_", "upper_lip", "lower_lip")):
-        return "mouth"
-    if name.startswith("ear_"):
-        return "ears"
-    if name in {"chin", "jaw_l", "jaw_r", "cheek_l", "cheek_r", "forehead_center"}:
-        return "face"
-    return "body"
-
-
-def _edge(name: str, start: Vector, end: Vector, radius: float):
+def _edge(name: str, start: Vector, end: Vector, radius: float, layer: str):
     curve_data = bpy.data.curves.new(name, "CURVE")
     curve_data.dimensions = "3D"
     curve_data.resolution_u = 1
@@ -105,6 +113,7 @@ def _edge(name: str, start: Vector, end: Vector, radius: float):
     bpy.context.collection.objects.link(obj)
     curve_data.materials.append(_material("CLOUVA_DIAGNOSTIC_EDGE", (0.48, 0.20, 0.95, 1.0)))
     obj["diagnostic_edge"] = True
+    obj["diagnostic_layer"] = layer
     return obj
 
 
@@ -115,50 +124,55 @@ def _finger_edges(landmarks: Dict[str, dict]):
         for finger in ("thumb", "index", "middle", "ring", "pinky"):
             chain = [
                 wrist,
-                f"{finger}_01_{suffix}",
-                f"{finger}_02_{suffix}",
-                f"{finger}_03_{suffix}",
-                f"{finger}_tip_{suffix}",
+                f"{finger}_01_{suffix}", f"{finger}_02_{suffix}",
+                f"{finger}_03_{suffix}", f"{finger}_tip_{suffix}",
             ]
             edges.extend(zip(chain, chain[1:]))
     return edges
 
 
-def _visible(landmarks: Dict[str, dict], name: str):
-    item = landmarks.get(name)
-    return bool(
-        isinstance(item, dict)
-        and "position" in item
-        and item.get("display", False)
-        and item.get("verified", False)
-        and float(item.get("confidence", 0.0)) >= 0.40
-    )
-
-
 def build_diagnostic_glb(output_path: Path, avatar_meshes: Iterable[bpy.types.Object],
-                          landmarks: Dict[str, dict], body_height: float):
+                         landmarks: Dict[str, dict], body_height: float):
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     marker_radius = max(body_height * 0.006, 0.002)
     edge_radius = marker_radius * 0.24
     diagnostic_objects = []
+    accepted_names = []
+    duplicate_names = []
+    occupied = {}
+    quantization = max(marker_radius * 0.18, 1e-6)
 
     for name, item in landmarks.items():
-        if not _visible(landmarks, name):
+        if not _visible(item):
             continue
+        point = _position(item)
+        key = tuple(round(float(component) / quantization) for component in point)
+        if key in occupied:
+            duplicate_names.append(name)
+            item["display"] = False
+            item.setdefault("rejectionReasons", []).append(f"DISPLAY_DUPLICATE_OF:{occupied[key]}")
+            continue
+        occupied[key] = name
+        accepted_names.append(name)
         diagnostic_objects.append(_marker(name, item, marker_radius))
 
-    # Body skeleton-center estimates stay in JSON and are not drawn as surface
-    # lines. Face and finger edges are drawn only if both endpoints survived the
-    # strict multiview + anatomical validation.
+    accepted_set = set(accepted_names)
     for start_name, end_name in [*FACE_EDGES, *_finger_edges(landmarks)]:
-        if not _visible(landmarks, start_name) or not _visible(landmarks, end_name):
+        if start_name not in accepted_set or end_name not in accepted_set:
+            continue
+        start = landmarks[start_name]
+        end = landmarks[end_name]
+        if _layer(start_name) != _layer(end_name) and not (
+            _layer(start_name).startswith("face") and _layer(end_name).startswith("face")
+        ):
             continue
         diagnostic_objects.append(_edge(
             f"EDGE_{start_name}__{end_name}",
-            _point(landmarks[start_name], display=True),
-            _point(landmarks[end_name], display=True),
+            _position(start),
+            _position(end),
             edge_radius,
+            _layer(start_name),
         ))
 
     bpy.ops.object.select_all(action="DESELECT")
@@ -180,14 +194,19 @@ def build_diagnostic_glb(output_path: Path, avatar_meshes: Iterable[bpy.types.Ob
     )
     if not output_path.is_file() or output_path.stat().st_size < 1024:
         raise RuntimeError("Blender did not generate diagnostic_landmarks.glb")
+
+    records = [item for item in landmarks.values() if isinstance(item, dict) and "position" in item]
     return {
         "path": str(output_path),
         "landmarkObjects": sum(1 for obj in diagnostic_objects if obj.name.startswith("LM_")),
         "edgeObjects": sum(1 for obj in diagnostic_objects if obj.name.startswith("EDGE_")),
-        "hiddenLandmarks": sum(
-            1 for name, item in landmarks.items()
-            if isinstance(item, dict) and "position" in item and not _visible(landmarks, name)
-        ),
-        "layers": sorted({_layer(name) for name in landmarks if _visible(landmarks, name)}),
+        "verifiedSurfaceLandmarks": len(accepted_names),
+        "duplicateLandmarksHidden": len(duplicate_names),
+        "duplicateNames": duplicate_names,
+        "invalidLandmarksHidden": sum(1 for item in records if not item.get("accepted", False)),
+        "internalJointCount": sum(1 for item in records if item.get("landmarkType") in {"internal_joint", "derived_internal"}),
+        "hiddenLandmarks": sum(1 for item in records if not item.get("display", False)),
+        "layers": sorted({_layer(name) for name in accepted_names}),
         "surfaceOnly": True,
+        "internalSkeletonStoredInJson": True,
     }

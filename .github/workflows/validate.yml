@@ -46,7 +46,7 @@ jobs:
           tail -n 60 /tmp/clouva-tests.log
 
       - name: Validate worker Python
-        run: python3 -m py_compile worker/garment-rig/app*.py worker/garment-rig/rig_garment*.py worker/garment-rig/autorig_avatar*.py worker/garment-rig/avatar_reference.py worker/garment-rig/test_*.py tools/unreal_avatar_export/export_clouva_avatar.py
+        run: python3 -m py_compile worker/garment-rig/*.py tools/unreal_avatar_export/export_clouva_avatar.py
 
       - name: Build and validate Blender worker image
         shell: bash

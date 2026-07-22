@@ -1,7 +1,7 @@
-"""CLOUVA Avatar Analyzer Blender entrypoint.
+"""CLOUVA Avatar Analyzer V2 Blender entrypoint.
 
-The script analyses and visualises landmarks only. It deliberately does not
-create an armature, bind weights, replace the active avatar or export for Unreal.
+The analyzer produces anatomy diagnostics only. It never creates an Armature,
+binds weights, changes the active avatar or exports a production Unreal asset.
 """
 from __future__ import annotations
 
@@ -15,7 +15,6 @@ import traceback
 import uuid
 from pathlib import Path
 
-import bpy
 from mathutils import Vector
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -23,13 +22,14 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 import autorig_avatar_v16 as autorig_v16
+from anatomy_segmenter import segment_anatomy
 from body_analyzer import analyze_body
 from diagnostic_builder import build_diagnostic_glb
 from face_analyzer import analyze_face
 from hand_analyzer import analyze_hands
 from multiview_renderer import render_multiview
 
-VERSION = "clouva-avatar-analyzer-v2-strict-surface"
+VERSION = "clouva-avatar-analyzer-v2-anatomy-triangulation"
 AUX_PYTHON = os.environ.get("CLOUVA_AUX_PYTHON", "/usr/local/bin/python3")
 DETECTOR_SCRIPT = Path(os.environ.get(
     "CLOUVA_LANDMARK_DETECTOR_SCRIPT",
@@ -59,11 +59,14 @@ def _write_json(path: Path, payload):
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
+def _vec(value: Vector):
+    return [float(value.x), float(value.y), float(value.z)]
+
+
 def _run_detector(manifest: dict, output_dir: Path):
     request_path = output_dir / "detector_request.json"
     response_path = output_dir / "detector_output.json"
-    request = {"version": VERSION, "views": manifest.get("views", [])}
-    _write_json(request_path, request)
+    _write_json(request_path, {"version": VERSION, "views": manifest.get("views", [])})
     if not DETECTOR_SCRIPT.is_file():
         return {
             "version": "unavailable",
@@ -105,49 +108,96 @@ def _run_detector(manifest: dict, output_dir: Path):
     return json.loads(response_path.read_text(encoding="utf-8")), diagnostics
 
 
-def _world_vertices(meshes, classifications):
-    return [
-        obj.matrix_world @ vertex.co
-        for obj in meshes
-        if classifications.get(obj.name) in {"body", "unknown"}
-        for vertex in obj.data.vertices
-    ]
+def _body_region_map():
+    return {
+        "shoulder_l": ("upper_arm_l",),
+        "elbow_l": ("upper_arm_l", "forearm_l"),
+        "wrist_l": ("forearm_l", "hand_l"),
+        "hand_l": ("hand_l",),
+        "shoulder_r": ("upper_arm_r",),
+        "elbow_r": ("upper_arm_r", "forearm_r"),
+        "wrist_r": ("forearm_r", "hand_r"),
+        "hand_r": ("hand_r",),
+        "hip_l": ("pelvis", "thigh_l"),
+        "knee_l": ("thigh_l", "calf_l"),
+        "ankle_l": ("calf_l", "foot_l"),
+        "foot_l": ("foot_l",),
+        "hip_r": ("pelvis", "thigh_r"),
+        "knee_r": ("thigh_r", "calf_r"),
+        "ankle_r": ("calf_r", "foot_r"),
+        "foot_r": ("foot_r",),
+    }
 
 
-def _surface_anchor(points, internal: Vector, center_x: float, sign: float,
-                    body_width: float, body_height: float):
-    """Find a visible surface anchor near a rough internal limb joint.
+def _apply_refined_body_vectors(body_report: dict, body_vectors: dict, segmentation):
+    """Replace rough V16 limb candidates with the region-refined anatomical axes.
 
-    The v1 preview drew skeleton-center estimates as green surface points. This
-    function constrains the search to the same body side and height, then keeps
-    the internal coordinate separately instead of pretending both are equal.
+    The original detector remains useful as a seed, but Skeleton Planner must
+    eventually consume the refined internal coordinates, not the first guess.
+    Aliases such as upperarm/lowerarm/thigh/calf inherit the same refined joint
+    without creating additional visual markers.
     """
-    internal_lateral = sign * (internal.x - center_x)
-    minimum_lateral = max(body_width * 0.075, internal_lateral * 0.72)
-    candidates = [
-        point for point in points
-        if sign * (point.x - center_x) >= minimum_lateral
-        and abs(float(point.z - internal.z)) <= body_height * 0.085
-        and abs(float(point.y - internal.y)) <= body_height * 0.090
-    ]
-    if not candidates:
-        return None, float("inf")
-    anchor = min(candidates, key=lambda point: (point - internal).length)
-    return anchor, (anchor - internal).length
-
-
-def _sanitize_body_landmarks(meshes, body_report: dict, body_vectors: dict, classifications: dict):
+    refined = getattr(segmentation, "refined_vectors", {}) or {}
+    if not refined:
+        return body_report, body_vectors
+    body_vectors.update({name: value.copy() for name, value in refined.items()})
     landmarks = body_report.get("landmarks") or {}
-    dimensions = body_report.get("dimensions") or {}
-    height = max(float(dimensions.get("height") or 0.0), 1e-5)
-    width = max(float(dimensions.get("width") or 0.0), 1e-5)
-    center_x = float(dimensions.get("center", [0.0])[0])
-    points = _world_vertices(meshes, classifications)
-    warnings = []
+    aliases = {
+        "shoulder_l": "shoulder_l", "upperarm_l": "shoulder_l",
+        "elbow_l": "elbow_l", "lowerarm_l": "elbow_l",
+        "wrist_l": "wrist_l", "hand_l": "hand_l",
+        "hip_l": "hip_l", "thigh_l": "hip_l",
+        "knee_l": "knee_l", "calf_l": "knee_l",
+        "ankle_l": "ankle_l", "foot_l": "foot_l",
+        "shoulder_r": "shoulder_r", "upperarm_r": "shoulder_r",
+        "elbow_r": "elbow_r", "lowerarm_r": "elbow_r",
+        "wrist_r": "wrist_r", "hand_r": "hand_r",
+        "hip_r": "hip_r", "thigh_r": "hip_r",
+        "knee_r": "knee_r", "calf_r": "knee_r",
+        "ankle_r": "ankle_r", "foot_r": "foot_r",
+    }
+    for landmark_name, source_name in aliases.items():
+        point = refined.get(source_name)
+        item = landmarks.get(landmark_name)
+        if point is None or not isinstance(item, dict):
+            continue
+        previous = list(item.get("position") or [])
+        item["roughCandidatePosition"] = previous
+        item["position"] = _vec(point)
+        item["internalJointPosition"] = _vec(point)
+        item["refinedFrom"] = source_name
+        item["method"] = "anatomy-segmented-limb-axis-v2.1"
+    for suffix in ("l", "r"):
+        shoulder = refined.get(f"shoulder_{suffix}")
+        if shoulder is not None:
+            body_vectors[f"clavicle_{suffix}"] = body_vectors["chest"].lerp(shoulder, 0.45)
+            clavicle = landmarks.get(f"clavicle_{suffix}")
+            if isinstance(clavicle, dict):
+                clavicle["roughCandidatePosition"] = list(clavicle.get("position") or [])
+                clavicle["position"] = _vec(body_vectors[f"clavicle_{suffix}"])
+                clavicle["internalJointPosition"] = list(clavicle["position"])
+                clavicle["method"] = "chest-to-refined-shoulder-internal-v2.1"
+    body_report["refinedBodyAxesApplied"] = True
+    body_report["refinedBodyVectors"] = {
+        name: _vec(value) for name, value in refined.items()
+    }
+    return body_report, body_vectors
 
-    # These names are schema aliases or skeleton-center nodes, not independent
-    # surface detections. Keep them in JSON for Skeleton Planner, never draw them
-    # as duplicate green balls.
+
+def _sanitize_body_landmarks(meshes, body_report: dict, body_vectors: dict,
+                             classifications: dict, segmentation=None):
+    """Separate internal body joints from region-restricted display anchors."""
+    if segmentation is None:
+        segmentation = segment_anatomy(
+            meshes,
+            classifications,
+            body_vectors,
+            body_report.get("dimensions") or {},
+        )
+        body_report, body_vectors = _apply_refined_body_vectors(body_report, body_vectors, segmentation)
+    landmarks = body_report.get("landmarks") or {}
+    height = max(float((body_report.get("dimensions") or {}).get("height") or 0.0), 1e-5)
+    warnings = []
     hidden_internal = {
         "root", "pelvis", "spine_01", "spine_02", "chest", "neck",
         "skull_base", "head_top", "head", "clavicle_l", "clavicle_r",
@@ -155,53 +205,76 @@ def _sanitize_body_landmarks(meshes, body_report: dict, body_vectors: dict, clas
         "thigh_l", "thigh_r", "calf_l", "calf_r", "ball_l", "ball_r",
     }
     for name, item in landmarks.items():
-        if not isinstance(item, dict):
+        if not isinstance(item, dict) or "position" not in item:
             continue
+        item["name"] = name
+        item["internalJointPosition"] = list(item["position"])
         item["landmarkType"] = "internal_joint"
+        item["accepted"] = float(item.get("confidence", 0.0)) >= 0.40
+        item["verified"] = item["accepted"]
         item["display"] = False
-        item["verified"] = float(item.get("confidence", 0.0)) >= 0.40
+        item["methods"] = [
+            "v16_body_candidate",
+            "anatomy_region_segmentation",
+            "refined_limb_axis" if item.get("roughCandidatePosition") is not None else "central_body_estimate",
+        ]
         if name in hidden_internal:
-            item["diagnosticReason"] = "INTERNAL_OR_ALIAS_NOT_A_SURFACE_HIT"
+            item["diagnosticReason"] = "INTERNAL_JOINT_NOT_SURFACE_LANDMARK"
 
-    visible_joint_names = (
-        "shoulder_l", "elbow_l", "wrist_l", "hand_l",
-        "shoulder_r", "elbow_r", "wrist_r", "hand_r",
-        "hip_l", "knee_l", "ankle_l", "foot_l",
-        "hip_r", "knee_r", "ankle_r", "foot_r",
-    )
-    for name in visible_joint_names:
+    for name, regions in _body_region_map().items():
         item = landmarks.get(name)
         if not item or "position" not in item:
             warnings.append({"code": "BODY_JOINT_MISSING", "landmark": name})
             continue
         internal = Vector(tuple(float(value) for value in item["position"]))
-        sign = 1.0 if name.endswith("_l") else -1.0
-        anchor, distance = _surface_anchor(points, internal, center_x, sign, width, height)
-        item["internalPosition"] = list(item["position"])
-        item["surfaceDistance"] = distance if distance != float("inf") else None
-        item["landmarkType"] = "surface_anchor"
-        item["displayEdge"] = False
-        verified = (
-            anchor is not None
-            and distance <= height * 0.055
+        sample, distance = segmentation.nearest(internal, regions)
+        measurement_side = "left" if name.endswith("_l") else "right"
+        hand_scale = float(segmentation.hand_measurement(measurement_side).get("handScale") or 0.0)
+        threshold = max(height * 0.045, hand_scale * 0.42 if name.startswith(("wrist_", "hand_")) else 0.0)
+        accepted = (
+            sample is not None
+            and distance <= threshold
             and float(item.get("confidence", 0.0)) >= 0.40
         )
-        item["verified"] = verified
-        item["display"] = verified
-        if anchor is not None:
-            item["displayPosition"] = [float(anchor.x), float(anchor.y), float(anchor.z)]
-            item["surfaceMethod"] = "same-side-nearest-mesh-anchor-v2"
-        if not verified:
-            item["confidence"] = min(float(item.get("confidence", 0.0)), 0.35)
+        item["region"] = regions[0]
+        item["surfaceRegion"] = sample.region if sample else regions[0]
+        item["surfaceDistance"] = float(distance) if distance != float("inf") else None
+        item["accepted"] = accepted
+        item["verified"] = accepted
+        item["display"] = accepted
+        item["displayEdge"] = False
+        item["surfaceDisplayPosition"] = (
+            [float(sample.point.x), float(sample.point.y), float(sample.point.z)]
+            if sample else list(item["position"])
+        )
+        item["displayPosition"] = list(item["surfaceDisplayPosition"])
+        item["surfaceMethod"] = "named-anatomy-region-nearest-surface-v2"
+        if not accepted:
+            item["confidence"] = min(float(item.get("confidence", 0.0)), 0.39)
+            item.setdefault("rejectionReasons", []).append("BODY_JOINT_REGION_ANCHOR_INVALID")
             warnings.append({
-                "code": "BODY_JOINT_NOT_ON_EXPECTED_LIMB",
+                "code": "BODY_JOINT_REGION_ANCHOR_INVALID",
                 "landmark": name,
+                "allowedRegions": list(regions),
+                "surfaceRegion": item.get("surfaceRegion"),
                 "surfaceDistance": item.get("surfaceDistance"),
+                "threshold": threshold,
             })
 
-    body_status = "needs_review" if warnings else "valid"
-    body_report["status"] = body_status
+    critical_regions = (
+        "upper_arm_l", "forearm_l", "hand_l", "upper_arm_r", "forearm_r", "hand_r",
+        "thigh_l", "calf_l", "foot_l", "thigh_r", "calf_r", "foot_r", "head", "torso",
+    )
+    segmentation_report = segmentation.as_report()
+    empty_regions = [
+        name for name in critical_regions
+        if int(segmentation_report.get("regions", {}).get(name, {}).get("vertexCount", 0)) < 4
+    ]
+    if empty_regions:
+        warnings.append({"code": "ANATOMY_REGIONS_INSUFFICIENT", "regions": empty_regions})
+    body_report["status"] = "needs_review" if warnings else "valid"
     body_report["warnings"] = warnings
+    body_report["segmentation"] = segmentation_report
     body_report["visibleSurfaceAnchors"] = sum(
         1 for item in landmarks.values() if isinstance(item, dict) and item.get("display", False)
     )
@@ -220,17 +293,30 @@ def _analysis_status(body_report: dict, face: dict, hands: dict):
     body_valid = bool(body_report.get("isHumanoid")) and float(body_report.get("humanoidConfidence", 0.0)) >= 0.40
     if not body_valid:
         return "invalid"
-    detailed = [
+    states = [
         body_report.get("status"),
         face.get("status"),
         hands.get("left", {}).get("status"),
         hands.get("right", {}).get("status"),
     ]
-    if any(status == "needs_review" for status in detailed):
+    if any(state == "invalid" for state in states):
+        return "invalid"
+    if any(state == "needs_review" for state in states):
         return "needs_review"
-    if any(status == "valid_with_warnings" for status in detailed):
+    if any(state == "valid_with_warnings" for state in states):
         return "valid_with_warnings"
     return "valid"
+
+
+def _landmark_metrics(landmarks: dict):
+    values = [item for item in landmarks.values() if isinstance(item, dict) and "position" in item]
+    return {
+        "totalLandmarkRecords": len(values),
+        "verifiedSurfaceLandmarkCount": sum(1 for item in values if item.get("display", False) and item.get("accepted", False)),
+        "internalJointCount": sum(1 for item in values if item.get("landmarkType") in {"internal_joint", "derived_internal"}),
+        "rejectedLandmarkCount": sum(1 for item in values if not item.get("accepted", False)),
+        "hiddenLandmarkCount": sum(1 for item in values if not item.get("display", False)),
+    }
 
 
 def run(input_path: Path, output_dir: Path):
@@ -249,16 +335,23 @@ def run(input_path: Path, output_dir: Path):
 
     current = time.perf_counter()
     body_report, body_vectors, classifications = analyze_body(meshes)
-    body_report = _sanitize_body_landmarks(meshes, body_report, body_vectors, classifications)
-    stage("detecting_and_validating_body_regions", current)
+    segmentation = segment_anatomy(meshes, classifications, body_vectors, body_report["dimensions"])
+    body_report, body_vectors = _apply_refined_body_vectors(body_report, body_vectors, segmentation)
+    body_report = _sanitize_body_landmarks(
+        meshes, body_report, body_vectors, classifications, segmentation,
+    )
+    stage("segmenting_and_validating_anatomy_regions", current)
 
     current = time.perf_counter()
     manifest = render_multiview(
         renders_dir,
         body_vectors,
         float(body_report["dimensions"]["height"]),
+        meshes=meshes,
+        segmentation=segmentation,
+        classifications=classifications,
     )
-    stage("rendering_multiview", current)
+    stage("rendering_isolated_multiview", current)
 
     current = time.perf_counter()
     detector_output, detector_process = _run_detector(manifest, output_dir)
@@ -272,17 +365,13 @@ def run(input_path: Path, output_dir: Path):
         classifications,
         body_vectors,
         float(body_report["dimensions"]["width"]),
+        segmentation,
     )
-    stage("projecting_and_fusing_face", current)
+    stage("triangulating_face_in_segmented_head", current)
 
     current = time.perf_counter()
-    hands = analyze_hands(
-        detector_output,
-        manifest,
-        classifications,
-        float(body_report["dimensions"]["height"]),
-    )
-    stage("projecting_and_fusing_hands", current)
+    hands = analyze_hands(detector_output, manifest, classifications, segmentation)
+    stage("triangulating_and_refining_finger_centerlines", current)
 
     landmarks = _combine_landmarks(body_report, face, hands)
     status = _analysis_status(body_report, face, hands)
@@ -292,6 +381,7 @@ def run(input_path: Path, output_dir: Path):
         *(face.get("warnings") or []),
         *(hands.get("warnings") or []),
     ]
+    metrics = _landmark_metrics(landmarks)
     analysis = {
         "version": VERSION,
         "runId": run_id,
@@ -314,9 +404,11 @@ def run(input_path: Path, output_dir: Path):
         "faceAnalysis": face.get("status"),
         "leftHandAnalysis": hands.get("left", {}).get("status"),
         "rightHandAnalysis": hands.get("right", {}).get("status"),
-        "fingerRig": "not_connected_phase1",
-        "facialRig": "not_connected_phase1",
+        "fingerRig": "not_connected_analysis_only",
+        "facialRig": "not_connected_analysis_only",
         "meshClassifications": classifications,
+        "segmentation": segmentation.as_report(),
+        "metrics": metrics,
         "landmarks": landmarks,
         "warnings": warnings,
         "diagnostics": {
@@ -340,7 +432,7 @@ def run(input_path: Path, output_dir: Path):
         landmarks,
         float(body_report["dimensions"]["height"]),
     )
-    stage("building_diagnostic_glb", current)
+    stage("building_layered_diagnostic_glb", current)
 
     report = {
         "version": VERSION,
@@ -349,14 +441,14 @@ def run(input_path: Path, output_dir: Path):
         "analysisPath": str(analysis_path),
         "diagnosticGlbPath": str(diagnostic_glb),
         "rendersDirectory": str(renders_dir),
+        "metrics": metrics,
         "diagnosticBuild": diagnostic_build,
         "stageTimings": stages,
         "durationMs": max(1, int((time.perf_counter() - started) * 1000)),
         "limitations": [
             "The analyzer does not create or modify the production Armature.",
-            "Only verified surface points are visible in the default GLB.",
-            "Internal skeleton estimates and schema aliases remain in JSON but are hidden.",
-            "Fused or texture-only fingers cannot produce verified phalange landmarks.",
+            "The diagnostic must be visually approved on the active CLOUVA avatar before Skeleton Planner integration.",
+            "Texture-only or geometrically fused fingers remain needs_review instead of receiving invented joints.",
         ],
     }
     _write_json(output_dir / "diagnostic_report.json", report)
@@ -372,12 +464,11 @@ def main():
         run(input_path, output_dir)
     except Exception:
         output_dir.mkdir(parents=True, exist_ok=True)
-        failure = {
+        _write_json(output_dir / "diagnostic_report.json", {
             "version": VERSION,
             "status": "failed",
             "error": traceback.format_exc(),
-        }
-        _write_json(output_dir / "diagnostic_report.json", failure)
+        })
         raise
 
 
