@@ -18,7 +18,6 @@ app = current.app
 base = current.base
 legacy = current.legacy
 
-# Re-export the worker globals consumed by health checks and tests.
 WORKER_INSPECTOR_VERSION = current.WORKER_INSPECTOR_VERSION
 INSPECT_SCRIPT_PATH = current.INSPECT_SCRIPT_PATH
 RIG_ROUTE_VERSION = current.RIG_ROUTE_VERSION
@@ -33,7 +32,7 @@ COMPLETE_AVATAR_RIG_VERSION = current.COMPLETE_AVATAR_RIG_VERSION
 COMPLETE_AVATAR_RIG_SCRIPT = current.COMPLETE_AVATAR_RIG_SCRIPT
 UNREAL_MOLD_RIG_VERSION = current.UNREAL_MOLD_RIG_VERSION
 
-AVATAR_ANALYZER_VERSION = "v1-mediapipe-multiview-diagnostic"
+AVATAR_ANALYZER_VERSION = "v2-strict-surface-multiview"
 AVATAR_ANALYZER_SCRIPT = Path(__file__).with_name("avatar_analyzer.py")
 
 
@@ -45,14 +44,24 @@ class AvatarAnalyzeRequest(BaseModel):
 def _analysis_summary(analysis: dict) -> dict:
     landmarks = analysis.get("landmarks") if isinstance(analysis.get("landmarks"), dict) else {}
     warnings = analysis.get("warnings") if isinstance(analysis.get("warnings"), list) else []
+    visible = {
+        name: item for name, item in landmarks.items()
+        if isinstance(item, dict)
+        and item.get("display", False)
+        and item.get("verified", False)
+        and float(item.get("confidence", 0.0)) >= 0.40
+    }
     return {
         "status": str(analysis.get("status") or "unknown"),
         "runId": str(analysis.get("runId") or ""),
         "humanoidConfidence": float(analysis.get("humanoidConfidence") or 0.0),
+        "bodyAnalysis": str(analysis.get("bodyAnalysis") or "unknown"),
         "faceAnalysis": str(analysis.get("faceAnalysis") or "unknown"),
         "leftHandAnalysis": str(analysis.get("leftHandAnalysis") or "unknown"),
         "rightHandAnalysis": str(analysis.get("rightHandAnalysis") or "unknown"),
-        "landmarkCount": len(landmarks),
+        "landmarkCount": len(visible),
+        "rawLandmarkCount": len(landmarks),
+        "hiddenLandmarkCount": max(0, len(landmarks) - len(visible)),
         "warningCount": len(warnings),
         "rigModified": False,
     }
@@ -67,7 +76,7 @@ def _run_analysis(source_url: str):
     if not AVATAR_ANALYZER_SCRIPT.is_file():
         raise HTTPException(status_code=500, detail="Falta avatar_analyzer.py en el Blender Worker")
 
-    job_dir = Path(tempfile.mkdtemp(prefix="clouva-avatar-analyzer-v1-"))
+    job_dir = Path(tempfile.mkdtemp(prefix="clouva-avatar-analyzer-v2-"))
     input_path = job_dir / "avatar-original-clean.glb"
     output_dir = job_dir / "analysis"
     try:
@@ -133,7 +142,7 @@ def _headers(analysis: dict):
 
 @app.post("/avatar/analyze")
 def analyze_avatar(request: AvatarAnalyzeRequest):
-    """Return the complete phase-1 diagnostic ZIP."""
+    """Return the complete diagnostic ZIP."""
     job_dir, output_dir, analysis = _run_analysis(str(request.source_url))
     archive_base = job_dir / "clouva-avatar-analysis"
     archive_path = archive_base.with_suffix(".zip")
@@ -157,7 +166,7 @@ def analyze_avatar(request: AvatarAnalyzeRequest):
 
 @app.post("/avatar/analyze-preview")
 def analyze_avatar_preview(request: AvatarAnalyzeRequest):
-    """Return the selectable diagnostic GLB for the CLOUVA web viewer."""
+    """Return the selectable surface-only diagnostic GLB for the web viewer."""
     job_dir, output_dir, analysis = _run_analysis(str(request.source_url))
     diagnostic_glb = output_dir / "diagnostic_landmarks.glb"
     return FileResponse(
@@ -177,6 +186,7 @@ def avatar_analyzer_health():
         "script": AVATAR_ANALYZER_SCRIPT.name,
         "createsArmature": False,
         "modifiesProductionRig": False,
+        "surfaceOnlyPreview": True,
         "outputs": [
             "avatar_analysis.json",
             "diagnostic_report.json",
