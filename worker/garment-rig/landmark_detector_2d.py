@@ -1,8 +1,8 @@
 """MediaPipe Tasks auxiliary process for CLOUVA technical renders.
 
-V3 evaluates both the neutral RGB render and an edge-enhanced render. MediaPipe
-still supplies only 2D candidates; confidence is derived from detector agreement
-and handedness instead of assigning one fixed value to every landmark.
+V3 evaluates the neutral RGB render, an edge-enhanced render and safe contrast
+variants. MediaPipe supplies only 2D candidates; Blender still validates every
+candidate against the anatomical BVH before it can become an accepted landmark.
 """
 from __future__ import annotations
 
@@ -14,8 +14,14 @@ from pathlib import Path
 from typing import Dict, Iterable, List
 
 import mediapipe as mp
+import numpy as np
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
+
+try:
+    import cv2
+except Exception:  # MediaPipe still works without optional preprocessing.
+    cv2 = None
 
 FACE_MODEL = Path(os.environ.get("CLOUVA_FACE_LANDMARKER_MODEL", "/app/models/face_landmarker.task"))
 HAND_MODEL = Path(os.environ.get("CLOUVA_HAND_LANDMARKER_MODEL", "/app/models/hand_landmarker.task"))
@@ -67,9 +73,9 @@ def _face_detector():
         base_options=python.BaseOptions(model_asset_path=str(FACE_MODEL)),
         running_mode=vision.RunningMode.IMAGE,
         num_faces=1,
-        min_face_detection_confidence=0.35,
-        min_face_presence_confidence=0.35,
-        min_tracking_confidence=0.35,
+        min_face_detection_confidence=0.20,
+        min_face_presence_confidence=0.20,
+        min_tracking_confidence=0.20,
         output_face_blendshapes=False,
         output_facial_transformation_matrixes=False,
     )
@@ -83,9 +89,9 @@ def _hand_detector():
         base_options=python.BaseOptions(model_asset_path=str(HAND_MODEL)),
         running_mode=vision.RunningMode.IMAGE,
         num_hands=1,
-        min_hand_detection_confidence=0.25,
-        min_hand_presence_confidence=0.25,
-        min_tracking_confidence=0.25,
+        min_hand_detection_confidence=0.15,
+        min_hand_presence_confidence=0.15,
+        min_tracking_confidence=0.15,
     )
     return vision.HandLandmarker.create_from_options(options)
 
@@ -111,37 +117,68 @@ def _agreement_confidence(rgb: dict | None, edge: dict | None, base: float):
     return point, max(0.38, min(0.72, base * 0.72)), 0.35, ["rgb" if rgb else "edge"]
 
 
-def _face_points(detector, path: str | None):
+def _mediapipe_images(path: str | None):
     if not path or not Path(path).is_file():
-        return {}
-    result = detector.detect(mp.Image.create_from_file(path))
-    if not result.face_landmarks:
-        return {}
-    landmarks = result.face_landmarks[0]
-    return {name: _average(landmarks, indices) for name, indices in FACE_MAP.items()}
+        return []
+    images = [mp.Image.create_from_file(path)]
+    if cv2 is None:
+        return images
+    source = cv2.imread(path, cv2.IMREAD_COLOR)
+    if source is None or source.size == 0:
+        return images
+    variants = []
+    try:
+        lab = cv2.cvtColor(source, cv2.COLOR_BGR2LAB)
+        lightness, channel_a, channel_b = cv2.split(lab)
+        clahe = cv2.createCLAHE(clipLimit=2.2, tileGridSize=(8, 8))
+        enhanced = cv2.cvtColor(cv2.merge((clahe.apply(lightness), channel_a, channel_b)), cv2.COLOR_LAB2RGB)
+        variants.append(enhanced)
+    except Exception:
+        pass
+    try:
+        rgb = cv2.cvtColor(source, cv2.COLOR_BGR2RGB)
+        blurred = cv2.GaussianBlur(rgb, (0, 0), 1.15)
+        sharpened = cv2.addWeighted(rgb, 1.75, blurred, -0.75, 0)
+        variants.append(sharpened)
+    except Exception:
+        pass
+    for variant in variants:
+        contiguous = np.ascontiguousarray(variant, dtype=np.uint8)
+        images.append(mp.Image(image_format=mp.ImageFormat.SRGB, data=contiguous))
+    return images
+
+
+def _face_points(detector, path: str | None):
+    for image in _mediapipe_images(path):
+        result = detector.detect(image)
+        if not result.face_landmarks:
+            continue
+        landmarks = result.face_landmarks[0]
+        return {name: _average(landmarks, indices) for name, indices in FACE_MAP.items()}
+    return {}
 
 
 def _hand_points(detector, path: str | None):
-    if not path or not Path(path).is_file():
-        return {}, None, 0.0
-    result = detector.detect(mp.Image.create_from_file(path))
-    if not result.hand_landmarks:
-        return {}, None, 0.0
-    detector_handedness = None
-    handedness_score = 0.55
-    if result.handedness and result.handedness[0]:
-        category = result.handedness[0][0]
-        detector_handedness = category.category_name
-        handedness_score = float(category.score or handedness_score)
-    landmarks = result.hand_landmarks[0]
-    return {
-        base_name: {
-            "x": float(landmarks[index].x),
-            "y": float(landmarks[index].y),
-            "z": float(landmarks[index].z),
-        }
-        for base_name, index in HAND_MAP.items() if index < len(landmarks)
-    }, detector_handedness, handedness_score
+    for image in _mediapipe_images(path):
+        result = detector.detect(image)
+        if not result.hand_landmarks:
+            continue
+        detector_handedness = None
+        handedness_score = 0.55
+        if result.handedness and result.handedness[0]:
+            category = result.handedness[0][0]
+            detector_handedness = category.category_name
+            handedness_score = float(category.score or handedness_score)
+        landmarks = result.hand_landmarks[0]
+        return {
+            base_name: {
+                "x": float(landmarks[index].x),
+                "y": float(landmarks[index].y),
+                "z": float(landmarks[index].z),
+            }
+            for base_name, index in HAND_MAP.items() if index < len(landmarks)
+        }, detector_handedness, handedness_score
+    return {}, None, 0.0
 
 
 def _detect_face(detector, view: dict):
@@ -195,11 +232,31 @@ def _detect_hand(detector, view: dict):
     return candidates, None
 
 
+def _collapse_errors(errors: List[dict]):
+    grouped: Dict[tuple, dict] = {}
+    for raw in errors:
+        code = str(raw.get("code") or "DETECTOR_WARNING")
+        side = raw.get("side")
+        key = (code, side, raw.get("message"))
+        view = raw.get("view")
+        if key not in grouped:
+            grouped[key] = {
+                **{name: value for name, value in raw.items() if name != "view"},
+                "occurrences": 0,
+                "views": [],
+            }
+        item = grouped[key]
+        item["occurrences"] += 1
+        if view and view not in item["views"]:
+            item["views"].append(view)
+    return list(grouped.values())
+
+
 def run(request_path: Path, output_path: Path):
     request = json.loads(request_path.read_text(encoding="utf-8"))
     views = request.get("views") or []
     output = {
-        "version": "clouva-mediapipe-tasks-v3-dual-render-agreement",
+        "version": "clouva-mediapipe-tasks-v3-stylized-retry",
         "faceModel": str(FACE_MODEL), "handModel": str(HAND_MODEL),
         "handLandmarkCount": len(HAND_MAP), "views": [], "errors": [],
     }
@@ -225,7 +282,9 @@ def run(request_path: Path, output_path: Path):
                     "code": "DETECTOR_VIEW_FAILED", "view": view.get("name"), "message": str(exc),
                 })
     finally:
-        face_detector.close(); hand_detector.close()
+        face_detector.close()
+        hand_detector.close()
+    output["errors"] = _collapse_errors(output["errors"])
     output_path.write_text(json.dumps(output, indent=2), encoding="utf-8")
     return output
 
