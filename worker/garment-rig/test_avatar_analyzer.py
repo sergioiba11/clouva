@@ -1,9 +1,14 @@
 """Blender smoke test for structural Avatar Analyzer V2."""
 from __future__ import annotations
 
+import sys
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
 import bpy
 from mathutils import Vector
@@ -119,7 +124,6 @@ def main():
     ):
         assert segmentation_report["regions"].get(region, {}).get("vertexCount", 0) > 0, region
 
-    # A point queried from the left arm cannot be returned from torso geometry.
     shoulder_sample, _distance = segmentation.nearest(vectors["shoulder_l"], ("upper_arm_l",))
     assert shoulder_sample is not None
     assert shoulder_sample.region == "upper_arm_l"
