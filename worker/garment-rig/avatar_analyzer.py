@@ -59,6 +59,10 @@ def _write_json(path: Path, payload):
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
+def _vec(value: Vector):
+    return [float(value.x), float(value.y), float(value.z)]
+
+
 def _run_detector(manifest: dict, output_dir: Path):
     request_path = output_dir / "detector_request.json"
     response_path = output_dir / "detector_output.json"
@@ -125,13 +129,64 @@ def _body_region_map():
     }
 
 
+def _apply_refined_body_vectors(body_report: dict, body_vectors: dict, segmentation):
+    """Replace rough V16 limb candidates with the region-refined anatomical axes.
+
+    The original detector remains useful as a seed, but Skeleton Planner must
+    eventually consume the refined internal coordinates, not the first guess.
+    Aliases such as upperarm/lowerarm/thigh/calf inherit the same refined joint
+    without creating additional visual markers.
+    """
+    refined = getattr(segmentation, "refined_vectors", {}) or {}
+    if not refined:
+        return body_report, body_vectors
+    body_vectors.update({name: value.copy() for name, value in refined.items()})
+    landmarks = body_report.get("landmarks") or {}
+    aliases = {
+        "shoulder_l": "shoulder_l", "upperarm_l": "shoulder_l",
+        "elbow_l": "elbow_l", "lowerarm_l": "elbow_l",
+        "wrist_l": "wrist_l", "hand_l": "hand_l",
+        "hip_l": "hip_l", "thigh_l": "hip_l",
+        "knee_l": "knee_l", "calf_l": "knee_l",
+        "ankle_l": "ankle_l", "foot_l": "foot_l",
+        "shoulder_r": "shoulder_r", "upperarm_r": "shoulder_r",
+        "elbow_r": "elbow_r", "lowerarm_r": "elbow_r",
+        "wrist_r": "wrist_r", "hand_r": "hand_r",
+        "hip_r": "hip_r", "thigh_r": "hip_r",
+        "knee_r": "knee_r", "calf_r": "knee_r",
+        "ankle_r": "ankle_r", "foot_r": "foot_r",
+    }
+    for landmark_name, source_name in aliases.items():
+        point = refined.get(source_name)
+        item = landmarks.get(landmark_name)
+        if point is None or not isinstance(item, dict):
+            continue
+        previous = list(item.get("position") or [])
+        item["roughCandidatePosition"] = previous
+        item["position"] = _vec(point)
+        item["internalJointPosition"] = _vec(point)
+        item["refinedFrom"] = source_name
+        item["method"] = "anatomy-segmented-limb-axis-v2.1"
+    for suffix in ("l", "r"):
+        shoulder = refined.get(f"shoulder_{suffix}")
+        if shoulder is not None:
+            body_vectors[f"clavicle_{suffix}"] = body_vectors["chest"].lerp(shoulder, 0.45)
+            clavicle = landmarks.get(f"clavicle_{suffix}")
+            if isinstance(clavicle, dict):
+                clavicle["roughCandidatePosition"] = list(clavicle.get("position") or [])
+                clavicle["position"] = _vec(body_vectors[f"clavicle_{suffix}"])
+                clavicle["internalJointPosition"] = list(clavicle["position"])
+                clavicle["method"] = "chest-to-refined-shoulder-internal-v2.1"
+    body_report["refinedBodyAxesApplied"] = True
+    body_report["refinedBodyVectors"] = {
+        name: _vec(value) for name, value in refined.items()
+    }
+    return body_report, body_vectors
+
+
 def _sanitize_body_landmarks(meshes, body_report: dict, body_vectors: dict,
                              classifications: dict, segmentation=None):
-    """Separate internal body joints from region-restricted display anchors.
-
-    ``meshes`` and ``classifications`` stay in the signature for compatibility
-    with the Blender smoke test and previous callers.
-    """
+    """Separate internal body joints from region-restricted display anchors."""
     if segmentation is None:
         segmentation = segment_anatomy(
             meshes,
@@ -139,6 +194,7 @@ def _sanitize_body_landmarks(meshes, body_report: dict, body_vectors: dict,
             body_vectors,
             body_report.get("dimensions") or {},
         )
+        body_report, body_vectors = _apply_refined_body_vectors(body_report, body_vectors, segmentation)
     landmarks = body_report.get("landmarks") or {}
     height = max(float((body_report.get("dimensions") or {}).get("height") or 0.0), 1e-5)
     warnings = []
@@ -157,7 +213,11 @@ def _sanitize_body_landmarks(meshes, body_report: dict, body_vectors: dict,
         item["accepted"] = float(item.get("confidence", 0.0)) >= 0.40
         item["verified"] = item["accepted"]
         item["display"] = False
-        item["methods"] = ["v16_body_candidate", "anatomy_region_refinement"]
+        item["methods"] = [
+            "v16_body_candidate",
+            "anatomy_region_segmentation",
+            "refined_limb_axis" if item.get("roughCandidatePosition") is not None else "central_body_estimate",
+        ]
         if name in hidden_internal:
             item["diagnosticReason"] = "INTERNAL_JOINT_NOT_SURFACE_LANDMARK"
 
@@ -276,6 +336,7 @@ def run(input_path: Path, output_dir: Path):
     current = time.perf_counter()
     body_report, body_vectors, classifications = analyze_body(meshes)
     segmentation = segment_anatomy(meshes, classifications, body_vectors, body_report["dimensions"])
+    body_report, body_vectors = _apply_refined_body_vectors(body_report, body_vectors, segmentation)
     body_report = _sanitize_body_landmarks(
         meshes, body_report, body_vectors, classifications, segmentation,
     )
