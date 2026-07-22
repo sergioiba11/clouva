@@ -5,118 +5,40 @@ on:
     branches: [main]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  apply-autorig-v14:
+  diagnose-autorig-v14:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.head_ref }}
 
-      - name: Apply landmark AutoRig source patch
+      - name: Diagnose embedded patch
         run: |
           set +e
           python - <<'PY' > /tmp/patch-output.txt 2>&1
           from pathlib import Path
-
           lines = Path('.github/workflows/apply-landmark-autorig-v14.yml').read_text(encoding='utf-8').splitlines()
           start = next(i for i, line in enumerate(lines) if "python - <<'PY'" in line) + 1
           end = next(i for i in range(start, len(lines)) if lines[i].strip() == 'PY')
-          code_lines = lines[start:end]
           output = []
           raw_block = False
-          for line in code_lines:
+          for line in lines[start:end]:
               candidate = line[10:] if line.startswith('          ') else line
               if not raw_block and ("landmark_code = r'''" in candidate or "new_run = r'''" in candidate):
                   output.append(candidate)
                   raw_block = True
-                  continue
-              if raw_block:
+              elif raw_block:
                   output.append(line)
                   if line.strip() == "'''":
                       raw_block = False
-                  continue
-              output.append(candidate)
-          code = '\n'.join(output)
-          exec(compile(code, 'apply-landmark-autorig-v14', 'exec'))
+              else:
+                  output.append(candidate)
+          exec(compile('\n'.join(output), 'apply-landmark-autorig-v14', 'exec'))
           PY
           status=$?
-          if [ "$status" -eq 0 ]; then
-            node --test tests-avatar-blender-autorig.mjs >> /tmp/patch-output.txt 2>&1
-            status=$?
-          fi
-          if [ "$status" -eq 0 ]; then
-            python -m py_compile worker/garment-rig/autorig_avatar_v12.py worker/garment-rig/app_v16.py worker/garment-rig/test_autorig_avatar_v12.py >> /tmp/patch-output.txt 2>&1
-            status=$?
-          fi
-          if [ "$status" -ne 0 ]; then
-            git reset --hard HEAD
-            printf 'exit=%s\n' "$status" > PATCH_AUTORIG_V14_ERROR.txt
-            cat /tmp/patch-output.txt >> PATCH_AUTORIG_V14_ERROR.txt
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add PATCH_AUTORIG_V14_ERROR.txt
-            git commit -m "Capture AutoRig V14 patch diagnostics"
-            git push origin HEAD:${{ github.head_ref }}
-            exit 0
-          fi
-
-          rm -f PATCH_AUTORIG_V14_ERROR.txt .github/workflows/apply-landmark-autorig-v14.yml
-          cat > .github/workflows/validate.yml <<'YAML'
-          name: Validate CLOUVA
-
-          on:
-            pull_request:
-              branches: [main]
-            push:
-              branches: [agent/base-mesh-auto-rig]
-
-          permissions:
-            contents: read
-
-          concurrency:
-            group: validate-${{ github.ref }}
-            cancel-in-progress: true
-
-          jobs:
-            validate:
-              runs-on: ubuntu-latest
-              timeout-minutes: 20
-              steps:
-                - name: Checkout
-                  uses: actions/checkout@v4
-
-                - name: Setup Node
-                  uses: actions/setup-node@v4
-                  with:
-                    node-version: 22
-                    cache: npm
-
-                - name: Install dependencies
-                  run: npm ci
-
-                - name: Typecheck
-                  run: npm run typecheck
-
-                - name: Tests
-                  run: npm test
-
-                - name: Validate worker Python
-                  run: python3 -m py_compile worker/garment-rig/app*.py worker/garment-rig/rig_garment*.py worker/garment-rig/avatar_reference.py worker/garment-rig/test_*.py tools/unreal_avatar_export/export_clouva_avatar.py
-
-                - name: Build and validate Blender worker image
-                  run: docker build --progress=plain -t clouva-garment-rig:test worker/garment-rig
-
-                - name: Build
-                  run: npm run build
-                  env:
-                    NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
-                    NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key
-          YAML
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "Fit avatar rig from mesh landmarks and automatic weights"
-          git push origin HEAD:${{ github.head_ref }}
+          echo "PATCH_STATUS=$status"
+          cat /tmp/patch-output.txt
+          exit 0
