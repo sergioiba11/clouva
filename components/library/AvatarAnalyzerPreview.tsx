@@ -10,7 +10,7 @@ import {
   Save,
   TriangleAlert,
 } from "lucide-react";
-import { createElement, useEffect, useMemo, useState } from "react";
+import { createElement, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
 import styles from "./avatar-analyzer-preview.module.css";
 
@@ -39,6 +39,7 @@ type WarningRecord = {
   side?: string;
   finger?: string;
   message?: string;
+  occurrences?: number;
   [key: string]: unknown;
 };
 
@@ -84,18 +85,43 @@ type AnalysisDetail = {
 type CameraPreset = {
   label: string;
   orbit: string;
-  targetLandmarks?: string[];
+  targetLandmarks: string[];
   icon?: "face" | "hand";
 };
 
+type ModelViewerElement = HTMLElement & {
+  cameraOrbit?: string;
+  cameraTarget?: string;
+  fieldOfView?: string;
+  jumpCameraToGoal?: () => void;
+  resetTurntableRotation?: () => void;
+};
+
+const BODY_TARGETS = ["pelvis", "chest"];
+
 const CAMERA_PRESETS: CameraPreset[] = [
-  { label: "Frente", orbit: "0deg 75deg 105%" },
-  { label: "Espalda", orbit: "180deg 75deg 105%" },
-  { label: "Lado izquierdo", orbit: "90deg 75deg 105%" },
-  { label: "Lado derecho", orbit: "-90deg 75deg 105%" },
-  { label: "Rostro", orbit: "0deg 75deg 34%", targetLandmarks: ["nose_tip", "head"], icon: "face" },
-  { label: "Mano izquierda", orbit: "-65deg 75deg 22%", targetLandmarks: ["palm_l", "wrist_l"], icon: "hand" },
-  { label: "Mano derecha", orbit: "65deg 75deg 22%", targetLandmarks: ["palm_r", "wrist_r"], icon: "hand" },
+  { label: "Frente", orbit: "0deg 75deg 115%", targetLandmarks: BODY_TARGETS },
+  { label: "Espalda", orbit: "180deg 75deg 115%", targetLandmarks: BODY_TARGETS },
+  { label: "Lado izquierdo", orbit: "90deg 75deg 115%", targetLandmarks: BODY_TARGETS },
+  { label: "Lado derecho", orbit: "-90deg 75deg 115%", targetLandmarks: BODY_TARGETS },
+  {
+    label: "Rostro",
+    orbit: "0deg 75deg 40%",
+    targetLandmarks: ["nose_tip", "forehead_center", "chin", "head"],
+    icon: "face",
+  },
+  {
+    label: "Mano izquierda",
+    orbit: "-65deg 75deg 29%",
+    targetLandmarks: ["palm_l", "wrist_l", "middle_01_l", "hand_l"],
+    icon: "hand",
+  },
+  {
+    label: "Mano derecha",
+    orbit: "65deg 75deg 29%",
+    targetLandmarks: ["palm_r", "wrist_r", "middle_01_r", "hand_r"],
+    icon: "hand",
+  },
 ];
 
 function decodeSummary(value: string | null): AnalysisSummary | null {
@@ -126,9 +152,18 @@ function readableName(value: string) {
 }
 
 function warningDescription(warning: WarningRecord) {
-  if (warning.message) return warning.message;
+  const occurrences = Number(warning.occurrences ?? 1);
+  const suffix = occurrences > 1 ? ` · ${occurrences} evidencias` : "";
+  if (warning.message) return `${warning.message}${suffix}`;
   const subject = warning.landmark || warning.finger || warning.region || warning.side;
-  return `${warning.code || "REVISIÓN_REQUERIDA"}${subject ? ` · ${readableName(String(subject))}` : ""}`;
+  return `${readableName(warning.code || "REVISIÓN_REQUERIDA")}${subject ? ` · ${readableName(String(subject))}` : ""}${suffix}`;
+}
+
+function warningKind(warning: WarningRecord) {
+  if (warning.landmark) return "Abrir landmark";
+  if (warning.finger) return `Cadena del dedo ${readableName(String(warning.finger))}`;
+  if (warning.side) return `Revisión ${readableName(String(warning.side))}`;
+  return "Advertencia regional";
 }
 
 function recordPosition(record?: LandmarkRecord) {
@@ -141,16 +176,29 @@ function displayPosition(record?: LandmarkRecord) {
   return Array.isArray(value) && value.length === 3 ? value.map(Number) : null;
 }
 
-function cameraTarget(landmarks: Record<string, LandmarkRecord>, names?: string[]) {
-  for (const name of names || []) {
-    const position = displayPosition(landmarks[name]);
-    if (position) return `${position[0]}m ${position[1]}m ${position[2]}m`;
-  }
-  return "auto auto auto";
+function cameraTarget(landmarks: Record<string, LandmarkRecord>, names: string[]) {
+  const positions = names
+    .map((name) => displayPosition(landmarks[name]))
+    .filter((value): value is number[] => Boolean(value));
+
+  if (!positions.length) return "auto auto auto";
+
+  const center = [0, 1, 2].map(
+    (axis) => positions.reduce((total, position) => total + position[axis], 0) / positions.length,
+  );
+  return `${center[0]}m ${center[1]}m ${center[2]}m`;
 }
 
 function numberLabel(value?: number) {
   return Number.isFinite(value) ? Number(value).toFixed(4) : "—";
+}
+
+function rejectedGroup(name: string) {
+  const normalized = name.toLowerCase();
+  if (/^(brow|eye|nose|mouth|lip|chin|jaw|cheek|forehead|temple|ear)_/.test(normalized)) return "rostro";
+  if (normalized.endsWith("_l") && /^(thumb|index|middle|ring|pinky|palm|wrist)_/.test(normalized)) return "mano izquierda";
+  if (normalized.endsWith("_r") && /^(thumb|index|middle|ring|pinky|palm|wrist)_/.test(normalized)) return "mano derecha";
+  return "cuerpo";
 }
 
 export function AvatarAnalyzerPreview() {
@@ -161,12 +209,34 @@ export function AvatarAnalyzerPreview() {
   const [summary, setSummary] = useState<AnalysisSummary | null>(null);
   const [detail, setDetail] = useState<AnalysisDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [cameraOrbit, setCameraOrbit] = useState("0deg 75deg 105%");
+  const [cameraOrbit, setCameraOrbit] = useState(CAMERA_PRESETS[0].orbit);
   const [cameraTargetValue, setCameraTargetValue] = useState("auto auto auto");
   const [selectedName, setSelectedName] = useState("");
   const [correction, setCorrection] = useState<[string, string, string]>(["", "", ""]);
   const [savingCorrection, setSavingCorrection] = useState(false);
   const [correctionMessage, setCorrectionMessage] = useState<string | null>(null);
+  const modelViewerRef = useRef<ModelViewerElement | null>(null);
+
+  const applyCamera = (orbit: string, target: string) => {
+    setCameraOrbit(orbit);
+    setCameraTargetValue(target);
+
+    const updateViewer = () => {
+      const viewer = modelViewerRef.current;
+      if (!viewer) return;
+      viewer.cameraOrbit = orbit;
+      viewer.cameraTarget = target;
+      viewer.fieldOfView = "32deg";
+      viewer.setAttribute("camera-orbit", orbit);
+      viewer.setAttribute("camera-target", target);
+      viewer.setAttribute("field-of-view", "32deg");
+      viewer.resetTurntableRotation?.();
+      viewer.jumpCameraToGoal?.();
+    };
+
+    window.requestAnimationFrame(updateViewer);
+    window.setTimeout(updateViewer, 90);
+  };
 
   useEffect(() => () => {
     if (previewUrl) URL.revokeObjectURL(previewUrl);
@@ -185,9 +255,34 @@ export function AvatarAnalyzerPreview() {
     [detail],
   );
   const selectableEntries = useMemo(
-    () => [...rejectedEntries, ...acceptedEntries].sort(([first], [second]) => first.localeCompare(second)),
+    () => [...rejectedEntries, ...acceptedEntries].sort(([firstName, first], [secondName, second]) => {
+      const firstRejected = first.accepted === true ? 1 : 0;
+      const secondRejected = second.accepted === true ? 1 : 0;
+      return firstRejected - secondRejected || firstName.localeCompare(secondName);
+    }),
     [acceptedEntries, rejectedEntries],
   );
+  const pendingBreakdown = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const [name] of rejectedEntries) {
+      const group = rejectedGroup(name);
+      counts.set(group, (counts.get(group) ?? 0) + 1);
+    }
+    return [...counts.entries()]
+      .filter(([, count]) => count > 0)
+      .map(([group, count]) => `${count} en ${group}`)
+      .join(" · ");
+  }, [rejectedEntries]);
+
+  const usePreset = (preset: CameraPreset) => {
+    applyCamera(preset.orbit, cameraTarget(landmarks, preset.targetLandmarks));
+  };
+
+  useEffect(() => {
+    if (!previewUrl || !Object.keys(landmarks).length) return;
+    const timer = window.setTimeout(() => usePreset(CAMERA_PRESETS[0]), 0);
+    return () => window.clearTimeout(timer);
+  }, [previewUrl, landmarks]);
 
   const loadDetail = async (runId: string, accessToken: string) => {
     setLoadingDetail(true);
@@ -233,7 +328,7 @@ export function AvatarAnalyzerPreview() {
         return nextUrl;
       });
       setSummary(decoded);
-      setCameraOrbit("0deg 75deg 105%");
+      setCameraOrbit(CAMERA_PRESETS[0].orbit);
       setCameraTargetValue("auto auto auto");
       if (decoded?.runId) await loadDetail(decoded.runId, session.access_token);
     } catch (cause) {
@@ -252,11 +347,6 @@ export function AvatarAnalyzerPreview() {
     const position = recordPosition(source[name]);
     setCorrection(position ? position.map((value) => String(value)) as [string, string, string] : ["", "", ""]);
     setCorrectionMessage(null);
-  };
-
-  const usePreset = (preset: CameraPreset) => {
-    setCameraOrbit(preset.orbit);
-    setCameraTargetValue(cameraTarget(landmarks, preset.targetLandmarks));
   };
 
   const saveCorrection = async () => {
@@ -302,7 +392,7 @@ export function AvatarAnalyzerPreview() {
   if (authLoading || !user) return null;
 
   const verified = summary?.verifiedSurfaceLandmarkCount ?? summary?.landmarkCount ?? 0;
-  const subsystems = Object.entries(detail?.analysis.bodySubsystems || {});
+  const subsystems = Object.entries(detail?.analysis.bodySubsystems || {}) as [string, SubsystemRecord][];
   const warnings = detail?.analysis.warnings || [];
   const selectedRecord = landmarks[selectedName];
 
@@ -322,12 +412,19 @@ export function AvatarAnalyzerPreview() {
         <>
           <div className={styles.viewer}>
             {createElement("model-viewer", {
+              ref: (node: Element | null) => {
+                modelViewerRef.current = node as ModelViewerElement | null;
+              },
               className: styles.model,
               src: previewUrl,
               alt: "Avatar CLOUVA con landmarks anatómicos verificados",
               "camera-controls": true,
               "camera-orbit": cameraOrbit,
               "camera-target": cameraTargetValue,
+              "field-of-view": "32deg",
+              "min-camera-orbit": "auto auto 18%",
+              "max-camera-orbit": "auto auto 180%",
+              "interaction-prompt": "none",
               "shadow-intensity": "1",
               exposure: "1",
             })}
@@ -357,7 +454,7 @@ export function AvatarAnalyzerPreview() {
             <div><span>Compatibilidad corporal</span><strong>{Math.round(summary.humanoidConfidence * 100)}%</strong></div>
             <div><span>Superficie verificada</span><strong>{verified}</strong></div>
             <div><span>Articulaciones internas</span><strong>{summary.internalJointCount ?? 0}</strong></div>
-            <div><span>Candidatos rechazados</span><strong>{summary.rejectedLandmarkCount ?? 0}</strong></div>
+            <div><span>Puntos pendientes</span><strong>{summary.rejectedLandmarkCount ?? 0}</strong></div>
             <div><span>Cuerpo</span><strong>{statusLabel(summary.bodyAnalysis)}</strong></div>
             <div><span>Rostro</span><strong>{statusLabel(summary.faceAnalysis)}</strong></div>
             <div><span>Mano izquierda</span><strong>{statusLabel(summary.leftHandAnalysis)}</strong></div>
@@ -365,7 +462,11 @@ export function AvatarAnalyzerPreview() {
           </div>
           {summary.status === "needs_review" || summary.status === "invalid" ? (
             <p className={styles.error}>
-              <TriangleAlert /> Análisis anatómico pendiente de revisión. Todavía no se utilizará para crear el rig.
+              <TriangleAlert />
+              <span>
+                Análisis anatómico pendiente. No se crearán huesos dudosos.
+                {pendingBreakdown ? ` Pendientes reales: ${pendingBreakdown}.` : ""}
+              </span>
             </p>
           ) : (
             <p className={styles.success}><CheckCircle2 /> El mapa anatómico superó las validaciones automáticas.</p>
@@ -411,12 +512,12 @@ export function AvatarAnalyzerPreview() {
               {warnings.length ? warnings.slice(0, 16).map((warning, index) => (
                 <button
                   type="button"
-                  key={`${warning.code || "warning"}-${index}`}
+                  key={`${warning.code || "warning"}-${warning.side || ""}-${warning.finger || ""}-${warning.landmark || ""}-${index}`}
                   onClick={() => warning.landmark && selectLandmark(warning.landmark)}
                   disabled={!warning.landmark}
                 >
                   <TriangleAlert />
-                  <span><strong>{warningDescription(warning)}</strong><small>{warning.landmark ? "Abrir landmark" : "Advertencia regional"}</small></span>
+                  <span><strong>{warningDescription(warning)}</strong><small>{warningKind(warning)}</small></span>
                 </button>
               )) : <p className={styles.muted}>No hay advertencias registradas.</p>}
             </div>
@@ -424,21 +525,21 @@ export function AvatarAnalyzerPreview() {
 
           <section className={`${styles.panel} ${styles.widePanel}`}>
             <div className={styles.panelHeader}>
-              <div><small>LANDMARKS</small><h3>Aceptados y rechazados</h3></div>
+              <div><small>LANDMARKS</small><h3>Pendientes primero</h3></div>
               <span>{selectableEntries.length}</span>
             </div>
             <div className={styles.landmarkTableWrap}>
               <table className={styles.landmarkTable}>
                 <thead><tr><th>Landmark</th><th>Región</th><th>Estado</th><th>Confianza</th><th>Vistas</th><th>Motivo</th></tr></thead>
                 <tbody>
-                  {selectableEntries.slice(0, 80).map(([name, record]) => (
+                  {selectableEntries.slice(0, 120).map(([name, record]) => (
                     <tr key={name} className={selectedName === name ? styles.selectedRow : undefined} onClick={() => selectLandmark(name)}>
                       <td>{readableName(name)}</td>
                       <td>{readableName(record.region || "unknown")}</td>
                       <td>{record.accepted ? "Aceptado" : "Rechazado"}</td>
                       <td>{Math.round((record.finalConfidence ?? record.confidence ?? 0) * 100)}%</td>
                       <td>{record.viewsConfirmed ?? 0}</td>
-                      <td>{(record.rejectionReasons || []).join(", ") || "—"}</td>
+                      <td>{(record.rejectionReasons || []).map(readableName).join(", ") || "—"}</td>
                     </tr>
                   ))}
                 </tbody>
