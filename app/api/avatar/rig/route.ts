@@ -9,8 +9,8 @@ export const maxDuration = 300;
 const JOB_KEY = "clouva_avatar_complete_rig_job";
 const PROFILE_KEY = "clouva_avatar_complete_rig_profile";
 const COMPLETE_FILENAME = "clouva-complete-rigged.glb";
-const EXPECTED_WORKER_RIG_VERSION = "v12-real-blender-autorig";
-const EXPECTED_PROFILE_VERSION = "clouva-blender-autorig-v12-official-reference";
+const EXPECTED_WORKER_RIG_VERSION = "v14-landmark-autorig";
+const EXPECTED_PROFILE_VERSION = "clouva-blender-autorig-v14-landmarks-heat";
 const DERIVED_RIG_PATTERN = /(?:complete-rigged|rigged|processed|final)(?:[-_.]|$)/i;
 const MAX_ACTIVE_JOB_AGE_MS = 10 * 60 * 1000;
 
@@ -387,6 +387,7 @@ async function completeRigWithWorker(sourceUrl: string) {
     outputSha256?: string;
     weights?: { weightedRatio?: number };
     handFit?: Record<string, { method?: string }>;
+    landmarkFit?: { method?: string };
   };
   if (workerVersion !== EXPECTED_WORKER_RIG_VERSION) {
     throw new Error(`Railway respondió con el rig ${workerVersion || "sin versión"}; se exige ${EXPECTED_WORKER_RIG_VERSION}`);
@@ -399,11 +400,12 @@ async function completeRigWithWorker(sourceUrl: string) {
     || !proof.inputSha256
     || !proof.outputSha256
     || proof.inputSha256 === proof.outputSha256
-    || Number(proof.weights?.weightedRatio ?? 0) < 0.985
+    || Number(proof.weights?.weightedRatio ?? 0) < 0.995
+    || proof.landmarkFit?.method !== "mesh-landmarks-per-chain-v14"
     || proof.handFit?.l?.method !== "target-mesh-hand-envelope"
     || proof.handFit?.r?.method !== "target-mesh-hand-envelope"
   ) {
-    throw new Error("Blender devolvió un resultado sin prueba de AutoRig V12 fresco; no se guardará como aprobado");
+    throw new Error("Blender devolvió un resultado sin prueba de AutoRig V14 geométrico fresco; no se guardará como aprobado");
   }
   if (profile.complete !== true || profile.fingers?.complete !== true || profile.ears?.complete !== true) {
     throw new Error("El avatar no superó la validación del esqueleto y los pesos");

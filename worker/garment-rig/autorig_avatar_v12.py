@@ -16,7 +16,7 @@ if str(SCRIPT_DIR) not in sys.path:
 import complete_avatar_rig_v11 as v11
 from avatar_reference import canonicalize_and_validate_bones
 
-VERSION = "clouva-blender-autorig-v12-official-reference"
+VERSION = "clouva-blender-autorig-v14-landmarks-heat"
 REFERENCE_FBX = Path(os.environ.get(
     "CLOUVA_AVATAR_REFERENCE_PATH",
     SCRIPT_DIR / "avatar-reference" / "AvatarReference.fbx",
@@ -147,6 +147,382 @@ def fit_reference(armature, reference_meshes, target_meshes):
         "targetSize": [float(value) for value in target_size],
     }
 
+
+
+def _median(values, fallback=0.0):
+    ordered = sorted(float(value) for value in values)
+    if not ordered:
+        return float(fallback)
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return ordered[middle]
+    return (ordered[middle - 1] + ordered[middle]) * 0.5
+
+
+def _mean_point(points, fallback):
+    if not points:
+        return fallback.copy()
+    total = Vector((0.0, 0.0, 0.0))
+    for point in points:
+        total += point
+    return total / len(points)
+
+
+def _find_named_bone(collection, *aliases):
+    lowered = {bone.name.lower(): bone for bone in collection}
+    for alias in aliases:
+        bone = lowered.get(alias.lower())
+        if bone is not None:
+            return bone
+    return None
+
+
+def _point_segment_distance(point, start, end):
+    direction = end - start
+    length_squared = direction.length_squared
+    if length_squared <= 1e-12:
+        return (point - start).length
+    factor = max(0.0, min(1.0, (point - start).dot(direction) / length_squared))
+    return (point - (start + direction * factor)).length
+
+
+def fit_major_bones_to_target_mesh(armature, meshes):
+    minimum, maximum, size = bounds(meshes)
+    height = float(size.z)
+    width = float(size.x)
+    if height <= 1e-6 or width <= 1e-6:
+        raise RuntimeError("Avatar geometry is too small for landmark detection")
+
+    points = [mesh.matrix_world @ vertex.co for mesh in meshes for vertex in mesh.data.vertices]
+    center_x = float((minimum.x + maximum.x) * 0.5)
+    center_y = _median([point.y for point in points], (minimum.y + maximum.y) * 0.5)
+    base_z = float(minimum.z)
+
+    def z_value(factor):
+        return base_z + height * factor
+
+    def slice_points(factor, half=0.024):
+        target_z = z_value(factor)
+        tolerance = height * half
+        selected = [point for point in points if abs(float(point.z) - target_z) <= tolerance]
+        if selected:
+            return selected
+        return sorted(points, key=lambda point: abs(float(point.z) - target_z))[: max(20, len(points) // 500)]
+
+    def center_landmark(factor):
+        candidates = [
+            point for point in slice_points(factor, 0.026)
+            if abs(float(point.x) - center_x) <= width * 0.14
+        ]
+        fallback = Vector((center_x, center_y, z_value(factor)))
+        result = _mean_point(candidates, fallback)
+        result.x = center_x
+        result.z = z_value(factor)
+        return result
+
+    def side_leg_landmark(factor, sign):
+        candidates = []
+        for point in slice_points(factor, 0.028):
+            lateral = sign * (float(point.x) - center_x)
+            if width * 0.012 <= lateral <= width * 0.24:
+                candidates.append(point)
+        fallback = Vector((center_x + sign * width * 0.075, center_y, z_value(factor)))
+        result = _mean_point(candidates, fallback)
+        result.z = z_value(factor)
+        return result
+
+    def shoulder_landmark(sign):
+        candidates = slice_points(0.665, 0.032)
+        lateral_values = [sign * (float(point.x) - center_x) for point in candidates if sign * (float(point.x) - center_x) > 0]
+        lateral = _percentile(lateral_values, 0.72, width * 0.16)
+        lateral = max(width * 0.10, min(width * 0.30, lateral))
+        near = [
+            point for point in candidates
+            if abs(sign * (float(point.x) - center_x) - lateral) <= width * 0.035
+        ]
+        fallback = Vector((center_x + sign * lateral, center_y, z_value(0.665)))
+        result = _mean_point(near, fallback)
+        result.x = center_x + sign * lateral
+        result.z = z_value(0.665)
+        return result
+
+    def hand_landmark(sign):
+        candidates = [
+            point for point in points
+            if z_value(0.24) <= float(point.z) <= z_value(0.62)
+            and sign * (float(point.x) - center_x) >= width * 0.18
+        ]
+        lateral_values = [sign * (float(point.x) - center_x) for point in candidates]
+        lateral = _percentile(lateral_values, 0.88, width * 0.42)
+        near = [
+            point for point in candidates
+            if sign * (float(point.x) - center_x) >= lateral - width * 0.035
+        ]
+        fallback = Vector((center_x + sign * width * 0.43, center_y, z_value(0.38)))
+        return _mean_point(near, fallback)
+
+    pelvis = center_landmark(0.445)
+    lower_spine = center_landmark(0.505)
+    chest = center_landmark(0.655)
+    neck = center_landmark(0.742)
+    head_top = center_landmark(0.955)
+
+    data_bones = armature.data.bones
+    left_probe = _find_named_bone(data_bones, "LeftArm", "upperarm_l", "arm_l")
+    if left_probe is None:
+        raise RuntimeError("Official reference is missing the left upper-arm bone")
+    left_world_x = float((armature.matrix_world @ left_probe.head_local).x)
+    left_sign = 1 if left_world_x >= center_x else -1
+    side_signs = {"left": left_sign, "right": -left_sign}
+
+    armature.data.pose_position = "REST"
+    bpy.ops.object.select_all(action="DESELECT")
+    armature.select_set(True)
+    bpy.context.view_layer.objects.active = armature
+    if armature.mode != "OBJECT":
+        bpy.ops.object.mode_set(mode="OBJECT")
+    bpy.ops.object.mode_set(mode="EDIT")
+    bones = armature.data.edit_bones
+    inverse = armature.matrix_world.inverted_safe()
+
+    def set_bone(bone, head_world, tail_world, parent=None, connected=False):
+        if bone is None:
+            return False
+        if (tail_world - head_world).length < height * 0.004:
+            raise RuntimeError(f"Landmark fit collapsed bone {bone.name}")
+        bone.head = inverse @ head_world
+        bone.tail = inverse @ tail_world
+        if parent is not None:
+            bone.parent = parent
+        bone.use_connect = bool(connected and parent is not None)
+        bone.use_deform = True
+        v11.v10.set_no_inherited_scale(bone)
+        return True
+
+    hips = _find_named_bone(bones, "Hips", "hips", "pelvis", "root")
+    spine_chain = [
+        _find_named_bone(bones, "Spine", "spine_01", "spine1"),
+        _find_named_bone(bones, "Spine1", "Spine01", "spine_02", "spine2"),
+        _find_named_bone(bones, "Spine2", "Spine02", "spine_03", "spine3", "Chest"),
+    ]
+    spine_chain = [bone for index, bone in enumerate(spine_chain) if bone is not None and bone not in spine_chain[:index]]
+    neck_bone = _find_named_bone(bones, "Neck", "neck_01", "neck")
+    head_bone = _find_named_bone(bones, "Head", "head")
+    if hips is None or not spine_chain or neck_bone is None or head_bone is None:
+        bpy.ops.object.mode_set(mode="OBJECT")
+        raise RuntimeError("Official reference does not contain the required hips/spine/neck/head chain")
+
+    set_bone(hips, pelvis - Vector((0.0, 0.0, height * 0.025)), pelvis)
+    spine_nodes = [pelvis]
+    for index in range(1, len(spine_chain) + 1):
+        factor = index / len(spine_chain)
+        if factor < 0.67:
+            point = pelvis.lerp(lower_spine, factor / 0.67)
+        else:
+            point = lower_spine.lerp(chest, (factor - 0.67) / 0.33)
+        spine_nodes.append(point)
+    previous = hips
+    for index, bone in enumerate(spine_chain):
+        set_bone(bone, spine_nodes[index], spine_nodes[index + 1], previous, index > 0)
+        previous = bone
+    set_bone(neck_bone, chest, neck, previous, True)
+    set_bone(head_bone, neck, head_top, neck_bone, True)
+
+    report = {
+        "method": "mesh-landmarks-per-chain-v14",
+        "height": height,
+        "width": width,
+        "center": [center_x, center_y],
+        "sides": {},
+    }
+
+    aliases = {
+        "left": {
+            "shoulder": ("LeftShoulder", "clavicle_l", "shoulder_l"),
+            "arm": ("LeftArm", "upperarm_l", "arm_l"),
+            "forearm": ("LeftForeArm", "lowerarm_l", "forearm_l"),
+            "hand": ("LeftHand", "hand_l"),
+            "upleg": ("LeftUpLeg", "thigh_l", "upleg_l"),
+            "leg": ("LeftLeg", "calf_l", "leg_l"),
+            "foot": ("LeftFoot", "foot_l"),
+            "toe": ("LeftToeBase", "ball_l", "toe_l"),
+        },
+        "right": {
+            "shoulder": ("RightShoulder", "clavicle_r", "shoulder_r"),
+            "arm": ("RightArm", "upperarm_r", "arm_r"),
+            "forearm": ("RightForeArm", "lowerarm_r", "forearm_r"),
+            "hand": ("RightHand", "hand_r"),
+            "upleg": ("RightUpLeg", "thigh_r", "upleg_r"),
+            "leg": ("RightLeg", "calf_r", "leg_r"),
+            "foot": ("RightFoot", "foot_r"),
+            "toe": ("RightToeBase", "ball_r", "toe_r"),
+        },
+    }
+
+    for side, sign in side_signs.items():
+        shoulder_point = shoulder_landmark(sign)
+        hand_center = hand_landmark(sign)
+        inward = shoulder_point - hand_center
+        if inward.length < height * 0.08:
+            bpy.ops.object.mode_set(mode="OBJECT")
+            raise RuntimeError(f"Could not detect the {side} arm from avatar geometry")
+        inward.normalize()
+        wrist = hand_center + inward * height * 0.026
+        palm_tip = hand_center - inward * height * 0.022
+        elbow = shoulder_point.lerp(wrist, 0.52)
+        elbow.z += height * 0.008
+
+        hip = side_leg_landmark(0.445, sign)
+        knee = side_leg_landmark(0.255, sign)
+        ankle = side_leg_landmark(0.085, sign)
+
+        names = aliases[side]
+        shoulder_bone = _find_named_bone(bones, *names["shoulder"])
+        arm_bone = _find_named_bone(bones, *names["arm"])
+        forearm_bone = _find_named_bone(bones, *names["forearm"])
+        hand_bone = _find_named_bone(bones, *names["hand"])
+        up_leg_bone = _find_named_bone(bones, *names["upleg"])
+        leg_bone = _find_named_bone(bones, *names["leg"])
+        foot_bone = _find_named_bone(bones, *names["foot"])
+        toe_bone = _find_named_bone(bones, *names["toe"])
+        required = [shoulder_bone, arm_bone, forearm_bone, hand_bone, up_leg_bone, leg_bone, foot_bone]
+        if any(bone is None for bone in required):
+            bpy.ops.object.mode_set(mode="OBJECT")
+            raise RuntimeError(f"Official reference is missing required {side} limb bones")
+
+        set_bone(shoulder_bone, chest, shoulder_point, previous, False)
+        set_bone(arm_bone, shoulder_point, elbow, shoulder_bone, True)
+        set_bone(forearm_bone, elbow, wrist, arm_bone, True)
+        set_bone(hand_bone, wrist, palm_tip, forearm_bone, True)
+        set_bone(up_leg_bone, hip, knee, hips, False)
+        set_bone(leg_bone, knee, ankle, up_leg_bone, True)
+
+        old_foot_direction = armature.matrix_world.to_3x3() @ (foot_bone.tail - foot_bone.head)
+        old_foot_direction.z = 0.0
+        if old_foot_direction.length < 1e-6:
+            old_foot_direction = Vector((0.0, -1.0, 0.0))
+        old_foot_direction.normalize()
+        foot_tip = ankle + old_foot_direction * height * 0.085
+        foot_tip.z = max(base_z + height * 0.025, ankle.z - height * 0.025)
+        set_bone(foot_bone, ankle, foot_tip, leg_bone, True)
+        if toe_bone is not None:
+            toe_tip = foot_tip + old_foot_direction * height * 0.045
+            set_bone(toe_bone, foot_tip, toe_tip, foot_bone, True)
+
+        report["sides"][side] = {
+            "sign": sign,
+            "shoulder": list(map(float, shoulder_point)),
+            "elbow": list(map(float, elbow)),
+            "wrist": list(map(float, wrist)),
+            "hip": list(map(float, hip)),
+            "knee": list(map(float, knee)),
+            "ankle": list(map(float, ankle)),
+        }
+
+    bpy.ops.armature.select_all(action="SELECT")
+    try:
+        bpy.ops.armature.calculate_roll(type="GLOBAL_POS_Z")
+    except RuntimeError:
+        pass
+    bpy.ops.object.mode_set(mode="OBJECT")
+    bpy.context.view_layer.update()
+    return report
+
+
+def _fill_unweighted_vertices(mesh, armature):
+    deform_bones = [bone for bone in armature.data.bones if bone.use_deform]
+    if not deform_bones:
+        raise RuntimeError("Armature has no deform bones")
+    world_segments = [
+        (
+            bone.name,
+            armature.matrix_world @ bone.head_local,
+            armature.matrix_world @ bone.tail_local,
+        )
+        for bone in deform_bones
+    ]
+    filled = 0
+    for vertex in mesh.data.vertices:
+        if any(item.weight > 1e-8 for item in vertex.groups):
+            continue
+        point = mesh.matrix_world @ vertex.co
+        name, _, _ = min(
+            world_segments,
+            key=lambda segment: _point_segment_distance(point, segment[1], segment[2]),
+        )
+        group = mesh.vertex_groups.get(name) or mesh.vertex_groups.new(name=name)
+        group.add([vertex.index], 1.0, "REPLACE")
+        filled += 1
+    return filled
+
+
+def bind_geometry_aware_weights(target_meshes, armature):
+    body = max(target_meshes, key=lambda obj: len(obj.data.vertices))
+    for mesh in target_meshes:
+        detach_preserve_world(mesh)
+        for modifier in list(mesh.modifiers):
+            if modifier.type == "ARMATURE":
+                mesh.modifiers.remove(modifier)
+        mesh.vertex_groups.clear()
+
+    bpy.ops.object.select_all(action="DESELECT")
+    body.select_set(True)
+    armature.select_set(True)
+    bpy.context.view_layer.objects.active = armature
+    try:
+        bpy.ops.object.parent_set(type="ARMATURE_AUTO")
+    except RuntimeError as exc:
+        raise RuntimeError(f"Blender automatic heat weights failed on the avatar body: {exc}") from exc
+
+    if not body.vertex_groups:
+        raise RuntimeError("Blender automatic heat weights created no body weights")
+
+    filled = _fill_unweighted_vertices(body, armature)
+    source_names = [group.name for group in body.vertex_groups]
+    transferred_parts = 0
+    for mesh in target_meshes:
+        if mesh == body:
+            continue
+        mesh.vertex_groups.clear()
+        for name in source_names:
+            mesh.vertex_groups.new(name=name)
+        transfer = mesh.modifiers.new("CLOUVA body weight projection", "DATA_TRANSFER")
+        transfer.object = body
+        transfer.use_vert_data = True
+        transfer.data_types_verts = {"VGROUP_WEIGHTS"}
+        transfer.vert_mapping = "POLYINTERP_NEAREST"
+        transfer.layers_vgroup_select_src = "ALL"
+        transfer.layers_vgroup_select_dst = "NAME"
+        transfer.mix_mode = "REPLACE"
+        bpy.ops.object.select_all(action="DESELECT")
+        mesh.select_set(True)
+        bpy.context.view_layer.objects.active = mesh
+        bpy.ops.object.modifier_apply(modifier=transfer.name)
+        modifier = mesh.modifiers.new("CLOUVA Armature", "ARMATURE")
+        modifier.object = armature
+        modifier.use_deform_preserve_volume = True
+        mesh.parent = armature
+        mesh.matrix_parent_inverse = armature.matrix_world.inverted_safe()
+        filled += _fill_unweighted_vertices(mesh, armature)
+        transferred_parts += 1
+
+    vertices = sum(len(mesh.data.vertices) for mesh in target_meshes)
+    weighted = sum(
+        1 for mesh in target_meshes for vertex in mesh.data.vertices
+        if any(item.weight > 1e-8 for item in vertex.groups)
+    )
+    ratio = weighted / max(vertices, 1)
+    if ratio < 0.995:
+        raise RuntimeError(f"Geometry-aware weights covered only {weighted}/{vertices} vertices")
+    return {
+        "method": "automatic-heat-body-plus-projected-parts-v14",
+        "bodyMesh": body.name,
+        "projectedParts": transferred_parts,
+        "filledNearestBoneVertices": filled,
+        "vertices": vertices,
+        "weightedVertices": weighted,
+        "weightedRatio": ratio,
+    }
 
 def join_reference_meshes(meshes):
     if len(meshes) == 1:
@@ -330,14 +706,18 @@ def run(input_path, output_path, metadata_path):
     target_meshes = import_original(input_path)
     armature, reference_meshes = import_reference()
     fit = fit_reference(armature, reference_meshes, target_meshes)
-    source = join_reference_meshes(reference_meshes)
-    transferred = transfer_weights(source, target_meshes, armature)
-    bpy.data.objects.remove(source, do_unlink=True)
+    landmark_fit = fit_major_bones_to_target_mesh(armature, target_meshes)
 
     report = v11.ensure_extended_bones_v11(armature, target_meshes)
     hand_fit = fit_fingers_to_target_mesh(armature, target_meshes, report)
     report["handFit"] = hand_fit
+    report["landmarkFit"] = landmark_fit
     report["geometry"] = v11.validate_geometry_v11(armature, report, roundtrip=False)
+
+    for reference_mesh in list(reference_meshes):
+        if reference_mesh.name in bpy.data.objects:
+            bpy.data.objects.remove(reference_mesh, do_unlink=True)
+    transferred = bind_geometry_aware_weights(target_meshes, armature)
     finger_weighted, ear_weighted, fallback = v11.v5.legacy.assign_extended_weights(
         armature, target_meshes, report
     )
@@ -347,8 +727,9 @@ def run(input_path, output_path, metadata_path):
     profile["version"] = VERSION
     profile["normalization"] = {**fit, "workerNormalization": report.get("normalization")}
     profile["weights"] = transferred
+    profile["landmarkFit"] = landmark_fit
     profile["handFit"] = hand_fit
-    profile["rigSource"] = "Blender official Unreal reference"
+    profile["rigSource"] = "Blender geometry landmarks + official Unreal hierarchy"
     profile["inputSource"] = "original-clean-meshy-avatar"
     profile["runId"] = run_id
     profile["inputSha256"] = input_sha256
@@ -357,6 +738,8 @@ def run(input_path, output_path, metadata_path):
         profile.get("complete")
         and profile.get("fingers", {}).get("complete")
         and profile.get("ears", {}).get("complete")
+        and transferred.get("weightedRatio", 0.0) >= 0.995
+        and landmark_fit.get("method") == "mesh-landmarks-per-chain-v14"
     )
     validate_unit_scale(armature, target_meshes)
     if not profile["complete"]:
@@ -385,7 +768,7 @@ def run(input_path, output_path, metadata_path):
     if profile["inputSha256"] == profile["outputSha256"]:
         raise RuntimeError("Blender returned the original file instead of a fresh rig")
     metadata_path.write_text(json.dumps(profile, separators=(",", ":")), encoding="utf-8")
-    print(f"[clouva-real-blender-autorig] {json.dumps(profile, separators=(',', ':'))}", flush=True)
+    print(f"[clouva-landmark-autorig-v14] {json.dumps(profile, separators=(',', ':'))}", flush=True)
     return profile
 
 
