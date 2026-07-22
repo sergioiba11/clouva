@@ -481,7 +481,6 @@ export async function POST(request: NextRequest) {
     supabaseForCleanup = supabase;
     const body = await request.json();
     const action = String(body?.action ?? "");
-    const force = Boolean(body?.force);
 
     stage = "buscar-glb-original";
     const source = await resolveSource(supabase, user.id);
@@ -498,7 +497,7 @@ export async function POST(request: NextRequest) {
     const alreadyRigged = source.currentUrl.includes(COMPLETE_FILENAME);
 
     if (action === "create") {
-      if (alreadyRigged && !force) {
+      if (alreadyRigged) {
         await updateMetadata(supabase, user.id, { job: null });
         return NextResponse.json({
           alreadyRigged: true,
