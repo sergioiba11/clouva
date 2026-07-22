@@ -1,0 +1,39 @@
+name: Apply Autorig Idempotency
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/apply-autorig-idempotency.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - name: Prevent rerigging completed avatars
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("app/api/avatar/rig/route.ts")
+          text = path.read_text()
+          old_force = '    const force = Boolean(body?.force);\n'
+          old_guard = '      if (alreadyRigged && !force) {'
+          if old_force not in text or old_guard not in text:
+              raise SystemExit("Expected autorig idempotency patterns were not found")
+          text = text.replace(old_force, "", 1)
+          text = text.replace(old_guard, '      if (alreadyRigged) {', 1)
+          path.write_text(text)
+          PY
+      - name: Commit patch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/api/avatar/rig/route.ts
+          git commit -m "Never rerig an already completed avatar"
+          git push origin HEAD:${{ github.head_ref }}
