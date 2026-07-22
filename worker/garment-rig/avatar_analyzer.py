@@ -32,7 +32,7 @@ from hand_analyzer import analyze_hands
 from limb_centerline import refine_limb_joints
 from multiview_renderer import cleanup_render_proxies, render_multiview
 
-VERSION = "clouva-avatar-analyzer-v3-region-bvh-topology"
+VERSION = "clouva-avatar-analyzer-v3.1-boundary-aware"
 AUX_PYTHON = os.environ.get("CLOUVA_AUX_PYTHON", "/usr/local/bin/python3")
 DETECTOR_SCRIPT = Path(os.environ.get(
     "CLOUVA_LANDMARK_DETECTOR_SCRIPT",
@@ -64,6 +64,36 @@ def _write_json(path: Path, payload):
 
 def _vec(value: Vector):
     return [float(value.x), float(value.y), float(value.z)]
+
+
+def _warning_key(item: dict):
+    return tuple(str(item.get(name) or "") for name in (
+        "code", "landmark", "region", "side", "finger", "message",
+    ))
+
+
+def _dedupe_warnings(items):
+    grouped = {}
+    for raw in items or []:
+        if not isinstance(raw, dict):
+            continue
+        key = _warning_key(raw)
+        view = raw.get("view")
+        if key not in grouped:
+            grouped[key] = {
+                **raw,
+                "occurrences": int(raw.get("occurrences") or 1),
+                "views": list(raw.get("views") or ([view] if view else [])),
+            }
+            grouped[key].pop("view", None)
+            continue
+        item = grouped[key]
+        item["occurrences"] = int(item.get("occurrences") or 1) + int(raw.get("occurrences") or 1)
+        views = item.setdefault("views", [])
+        for candidate in list(raw.get("views") or ([view] if view else [])):
+            if candidate and candidate not in views:
+                views.append(candidate)
+    return list(grouped.values())
 
 
 def _run_detector(manifest: dict, output_dir: Path):
@@ -99,20 +129,73 @@ def _run_detector(manifest: dict, output_dir: Path):
                 "message": result.stderr[-2000:] or result.stdout[-2000:],
             }],
         }, diagnostics
-    return json.loads(response_path.read_text(encoding="utf-8")), diagnostics
+    output = json.loads(response_path.read_text(encoding="utf-8"))
+    output["errors"] = _dedupe_warnings(output.get("errors") or [])
+    return output, diagnostics
 
 
 def _body_region_map():
     return {
-        "shoulder_l": ("upper_arm_l",), "elbow_l": ("upper_arm_l", "forearm_l"),
-        "wrist_l": ("forearm_l", "hand_l"), "hand_l": ("hand_l",),
-        "shoulder_r": ("upper_arm_r",), "elbow_r": ("upper_arm_r", "forearm_r"),
-        "wrist_r": ("forearm_r", "hand_r"), "hand_r": ("hand_r",),
-        "hip_l": ("pelvis", "thigh_l"), "knee_l": ("thigh_l", "calf_l"),
-        "ankle_l": ("calf_l", "foot_l"), "foot_l": ("foot_l",),
-        "hip_r": ("pelvis", "thigh_r"), "knee_r": ("thigh_r", "calf_r"),
-        "ankle_r": ("calf_r", "foot_r"), "foot_r": ("foot_r",),
+        "shoulder_l": ("upper_arm_l", "torso"),
+        "elbow_l": ("upper_arm_l", "forearm_l"),
+        "wrist_l": ("forearm_l", "hand_l"),
+        "hand_l": ("hand_l",),
+        "shoulder_r": ("upper_arm_r", "torso"),
+        "elbow_r": ("upper_arm_r", "forearm_r"),
+        "wrist_r": ("forearm_r", "hand_r"),
+        "hand_r": ("hand_r",),
+        "hip_l": ("thigh_l", "pelvis", "torso"),
+        "knee_l": ("thigh_l", "calf_l"),
+        "ankle_l": ("calf_l", "foot_l"),
+        "foot_l": ("foot_l",),
+        "hip_r": ("thigh_r", "pelvis", "torso"),
+        "knee_r": ("thigh_r", "calf_r"),
+        "ankle_r": ("calf_r", "foot_r"),
+        "foot_r": ("foot_r",),
     }
+
+
+def _metadata_region_map():
+    return {
+        "root": "torso", "pelvis": "torso", "spine_01": "torso",
+        "spine_02": "torso", "chest": "torso", "neck": "neck",
+        "skull_base": "head", "head_top": "head", "head": "head",
+        "clavicle_l": "torso", "clavicle_r": "torso",
+        "upperarm_l": "upper_arm_l", "upperarm_r": "upper_arm_r",
+        "lowerarm_l": "forearm_l", "lowerarm_r": "forearm_r",
+        "thigh_l": "thigh_l", "thigh_r": "thigh_r",
+        "calf_l": "calf_l", "calf_r": "calf_r",
+        "ball_l": "foot_l", "ball_r": "foot_r",
+    }
+
+
+def _region_cross_section(anatomy_bvh, regions):
+    values = []
+    for name in regions:
+        geometry = getattr(anatomy_bvh, "regions", {}).get(name)
+        if geometry is None:
+            continue
+        bounds = geometry.bounds()
+        sizes = sorted(float(value) for value in bounds.get("size", []) if float(value) > 1e-6)
+        if sizes:
+            values.append(sizes[0])
+    return max(values, default=0.0)
+
+
+def _joint_threshold(name: str, height: float, hand_scale: float, anatomy_bvh, regions):
+    ratio = 0.055
+    if name.startswith("shoulder_"):
+        ratio = 0.075
+    elif name.startswith(("elbow_", "hip_", "knee_")):
+        ratio = 0.065
+    elif name.startswith(("wrist_", "ankle_")):
+        ratio = 0.060
+    elif name.startswith(("hand_", "foot_")):
+        ratio = 0.070
+    local_cross_section = _region_cross_section(anatomy_bvh, regions)
+    local_allowance = local_cross_section * 0.78
+    hand_allowance = hand_scale * 0.55 if name.startswith(("wrist_", "hand_")) else 0.0
+    return min(max(height * ratio, local_allowance, hand_allowance), height * 0.14)
 
 
 def _apply_refined_body_vectors(body_report: dict, body_vectors: dict,
@@ -183,6 +266,7 @@ def _sanitize_body_landmarks(body_report: dict, body_vectors: dict,
         "upperarm_l", "upperarm_r", "lowerarm_l", "lowerarm_r",
         "thigh_l", "thigh_r", "calf_l", "calf_r", "ball_l", "ball_r",
     }
+    metadata_regions = _metadata_region_map()
     for name, item in landmarks.items():
         if not isinstance(item, dict) or "position" not in item:
             continue
@@ -198,6 +282,9 @@ def _sanitize_body_landmarks(body_report: dict, body_vectors: dict,
             "v16_body_seed", "anatomy_region_segmentation",
             "geodesic_cross_section_refinement" if item.get("roughCandidatePosition") is not None else "central_body_estimate",
         ]
+        if name in metadata_regions:
+            item["region"] = metadata_regions[name]
+            item.setdefault("surfaceRegion", metadata_regions[name])
         if name in hidden_internal:
             item["diagnosticReason"] = "INTERNAL_JOINT_STORED_SEPARATELY"
 
@@ -210,35 +297,41 @@ def _sanitize_body_landmarks(body_report: dict, body_vectors: dict,
         nearest = anatomy_bvh.nearest(internal, regions)
         measurement_side = "left" if name.endswith("_l") else "right"
         hand_scale = float(segmentation.hand_measurement(measurement_side).get("handScale") or 0.0)
-        threshold = max(height * 0.055, hand_scale * 0.48 if name.startswith(("wrist_", "hand_")) else 0.0)
+        threshold = _joint_threshold(name, height, hand_scale, anatomy_bvh, regions)
         distance = float(nearest["distance"]) if nearest else float("inf")
-        internal_accepted = bool(
-            nearest is not None and distance <= threshold
-            and float(item.get("confidence", 0.0)) >= 0.40
-        )
-        surface_accepted = bool(nearest is not None)
+        confidence = float(item.get("confidence", 0.0))
+        distance_valid = nearest is not None and distance <= threshold
+        confidence_valid = confidence >= 0.40
+        internal_accepted = bool(distance_valid and confidence_valid)
         item["region"] = regions[0]
         item["surfaceRegion"] = nearest.get("region") if nearest else regions[0]
         item["surfaceDistance"] = distance if distance != float("inf") else None
+        item["validationThreshold"] = threshold
+        item["validationUsesLocalCrossSection"] = True
         item["internalAccepted"] = internal_accepted
-        item["surfaceAccepted"] = surface_accepted and internal_accepted
+        item["surfaceAccepted"] = internal_accepted and nearest is not None
         item["accepted"] = internal_accepted
         item["verified"] = internal_accepted
         item["display"] = bool(item["surfaceAccepted"])
         item["displayEdge"] = False
         item["surfaceDisplayPosition"] = _vec(nearest["location"] if nearest else internal)
         item["displayPosition"] = list(item["surfaceDisplayPosition"])
-        item["surfaceMethod"] = "exact-named-region-bvh-nearest-surface-v3"
-        if not internal_accepted:
-            item["confidence"] = min(float(item.get("confidence", 0.0)), 0.39)
+        item["surfaceMethod"] = "boundary-aware-named-region-bvh-v3.1"
+        if not distance_valid:
+            item["confidence"] = min(confidence, 0.39)
             item.setdefault("rejectionReasons", []).append("BODY_INTERNAL_JOINT_OUTSIDE_REGION")
             blocking.append({
                 "code": "BODY_INTERNAL_JOINT_OUTSIDE_REGION", "landmark": name,
                 "allowedRegions": list(regions), "surfaceRegion": item.get("surfaceRegion"),
                 "regionDistance": item.get("surfaceDistance"), "threshold": threshold,
             })
-        elif not surface_accepted:
-            non_blocking.append({"code": "BODY_SURFACE_DISPLAY_UNAVAILABLE", "landmark": name})
+        elif not confidence_valid:
+            item["confidence"] = min(confidence, 0.39)
+            item.setdefault("rejectionReasons", []).append("BODY_JOINT_CONFIDENCE_LOW")
+            blocking.append({
+                "code": "BODY_JOINT_CONFIDENCE_LOW", "landmark": name,
+                "confidence": confidence, "minimumConfidence": 0.40,
+            })
 
     segmentation_report = segmentation.as_report()
     critical_regions = (
@@ -250,8 +343,10 @@ def _sanitize_body_landmarks(body_report: dict, body_vectors: dict,
         if int(segmentation_report.get("regions", {}).get(name, {}).get("vertexCount", 0)) < 4
     ]
     if empty_regions:
-        blocking.append({"code": "ANATOMY_REGIONS_INSUFFICIENT", "regions": empty_regions})
+        non_blocking.append({"code": "ANATOMY_REGIONS_INSUFFICIENT", "regions": empty_regions})
 
+    blocking = _dedupe_warnings(blocking)
+    non_blocking = _dedupe_warnings(non_blocking)
     subsystems = {}
     for subsystem, names in _subsystem_requirements().items():
         missing = [name for name in names if name not in landmarks or not landmarks[name].get("internalAccepted", False)]
@@ -275,7 +370,7 @@ def _sanitize_body_landmarks(body_report: dict, body_vectors: dict,
     body_report["status"] = body_status
     body_report["blockingWarnings"] = blocking
     body_report["nonBlockingWarnings"] = non_blocking
-    body_report["warnings"] = [*blocking, *non_blocking]
+    body_report["warnings"] = _dedupe_warnings([*blocking, *non_blocking])
     body_report["subsystems"] = subsystems
     body_report["segmentation"] = segmentation_report
     body_report["visibleSurfaceAnchors"] = sum(
@@ -299,9 +394,12 @@ def _analysis_status(body_report: dict, face: dict, hands: dict):
         body_report.get("status"), face.get("status"),
         hands.get("left", {}).get("status"), hands.get("right", {}).get("status"),
     ]
-    if any(state == "invalid" for state in states): return "invalid"
-    if any(state == "needs_review" for state in states): return "needs_review"
-    if any(state == "valid_with_warnings" for state in states): return "valid_with_warnings"
+    if any(state == "invalid" for state in states):
+        return "invalid"
+    if any(state == "needs_review" for state in states):
+        return "needs_review"
+    if any(state == "valid_with_warnings" for state in states):
+        return "valid_with_warnings"
     return "valid"
 
 
@@ -375,10 +473,10 @@ def run(input_path: Path, output_dir: Path):
 
         landmarks = _combine_landmarks(body_report, face, hands)
         status = _analysis_status(body_report, face, hands)
-        warnings = [
+        warnings = _dedupe_warnings([
             *(body_report.get("warnings") or []), *(detector_output.get("errors") or []),
             *(face.get("warnings") or []), *(hands.get("warnings") or []),
-        ]
+        ])
         metrics = _landmark_metrics(landmarks)
         analysis = {
             "version": VERSION, "runId": run_id, "status": status,
