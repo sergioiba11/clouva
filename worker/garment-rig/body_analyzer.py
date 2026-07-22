@@ -6,7 +6,6 @@ its Vector output into an explicit, confidence-bearing diagnostic contract.
 """
 from __future__ import annotations
 
-import math
 from collections import Counter
 from typing import Dict, Iterable, List, Tuple
 
@@ -184,22 +183,34 @@ def analyze_body(meshes: Iterable[bpy.types.Object]):
         "skull_base": raw["skullBase"],
         "head_top": raw["headTop"],
         "head": raw["skullBase"].lerp(raw["headTop"], 0.52),
+        "clavicle_l": raw["chest"].lerp(left["shoulder"], 0.45),
         "shoulder_l": left["shoulder"],
+        "upperarm_l": left["shoulder"],
         "elbow_l": left["elbow"],
+        "lowerarm_l": left["elbow"],
         "wrist_l": left["wrist"],
         "hand_l": left["palmTip"],
         "hip_l": left["hip"],
+        "thigh_l": left["hip"],
         "knee_l": left["knee"],
+        "calf_l": left["knee"],
         "ankle_l": left["ankle"],
         "foot_l": left["ankle"] + Vector((0.0, -detector.height * 0.065, -detector.height * 0.015)),
+        "ball_l": left["ankle"] + Vector((0.0, -detector.height * 0.095, -detector.height * 0.018)),
+        "clavicle_r": raw["chest"].lerp(right["shoulder"], 0.45),
         "shoulder_r": right["shoulder"],
+        "upperarm_r": right["shoulder"],
         "elbow_r": right["elbow"],
+        "lowerarm_r": right["elbow"],
         "wrist_r": right["wrist"],
         "hand_r": right["palmTip"],
         "hip_r": right["hip"],
+        "thigh_r": right["hip"],
         "knee_r": right["knee"],
+        "calf_r": right["knee"],
         "ankle_r": right["ankle"],
         "foot_r": right["ankle"] + Vector((0.0, -detector.height * 0.065, -detector.height * 0.015)),
+        "ball_r": right["ankle"] + Vector((0.0, -detector.height * 0.095, -detector.height * 0.018)),
     }
 
     body_points = [
@@ -224,14 +235,20 @@ def analyze_body(meshes: Iterable[bpy.types.Object]):
     for short, side in (("l", "left"), ("r", "right")):
         side_conf = confidence.get(side, {})
         conf_map.update({
+            f"clavicle_{short}": min(confidence.get("chest", 0.0), side_conf.get("shoulder", 0.0)),
             f"shoulder_{short}": side_conf.get("shoulder", 0.0),
+            f"upperarm_{short}": side_conf.get("shoulder", 0.0),
             f"elbow_{short}": side_conf.get("arm", 0.0),
+            f"lowerarm_{short}": side_conf.get("arm", 0.0),
             f"wrist_{short}": side_conf.get("wrist", 0.0),
             f"hand_{short}": side_conf.get("wrist", 0.0) * 0.9,
             f"hip_{short}": side_conf.get("hip", 0.0),
+            f"thigh_{short}": side_conf.get("hip", 0.0),
             f"knee_{short}": side_conf.get("knee", 0.0),
+            f"calf_{short}": side_conf.get("knee", 0.0),
             f"ankle_{short}": side_conf.get("ankle", 0.0),
             f"foot_{short}": side_conf.get("ankle", 0.0) * 0.72,
+            f"ball_{short}": side_conf.get("ankle", 0.0) * 0.62,
         })
 
     landmarks = {
