@@ -51,13 +51,32 @@ jobs:
           fi
           tail -n 40 /tmp/clouva-worker-build.log
 
-      - name: Upload Blender worker build log
+      - name: Validate AutoRig V16 end to end in Blender
+        shell: bash
+        run: |
+          set -o pipefail
+          if ! docker run --rm \
+            -v "${{ github.workspace }}/worker/garment-rig/test_autorig_avatar_v16.py:/app/test_autorig_avatar_v16_external.py:ro" \
+            clouva-garment-rig:test \
+            /opt/blender/blender --background --factory-startup --python-exit-code 1 \
+            --python /app/test_autorig_avatar_v16_external.py \
+            > /tmp/clouva-autorig-v16-e2e.log 2>&1; then
+            echo "::group::AutoRig V16 end-to-end"
+            tail -n 200 /tmp/clouva-autorig-v16-e2e.log
+            echo "::endgroup::"
+            exit 1
+          fi
+          tail -n 80 /tmp/clouva-autorig-v16-e2e.log
+
+      - name: Upload Blender validation logs
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: blender-worker-build-log
-          path: /tmp/clouva-worker-build.log
-          if-no-files-found: error
+          name: blender-validation-logs
+          path: |
+            /tmp/clouva-worker-build.log
+            /tmp/clouva-autorig-v16-e2e.log
+          if-no-files-found: warn
           retention-days: 3
 
       - name: Build
