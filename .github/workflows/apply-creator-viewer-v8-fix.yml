@@ -1,0 +1,40 @@
+name: Apply Creator Viewer V8 Fix
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/apply-creator-viewer-v8-fix.yml"
+      - "scripts/apply-creator-viewer-v8-fix.py"
+
+permissions:
+  contents: write
+
+jobs:
+  patch-viewer:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Apply single-camera viewer patch
+        run: python scripts/apply-creator-viewer-v8-fix.py
+      - name: Commit generated viewer fix
+        shell: bash
+        run: |
+          git config user.name "clouva-ci"
+          git config user.email "actions@users.noreply.github.com"
+          git add components/creator-studio/CreatorStudioAvatarViewerV6.tsx \
+                  components/creator-studio/CreatorStudioAvatarViewerV8.tsx \
+                  components/creator-studio/CreatorStudioAvatarViewer.tsx \
+                  tests-creator-viewer-anatomy.mjs
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Corregir cámara, controles y sincronía del visor 3D"
+            git push origin HEAD:${{ github.event.pull_request.head.ref }}
+          fi
