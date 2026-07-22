@@ -140,14 +140,26 @@ def _rank_assign(items: List[ComponentInfo], names: Sequence[str], key):
     return assignments
 
 
-def _disconnected_chain_assignments(infos: List[ComponentInfo], center_x: float):
+def _family_evidence(info: ComponentInfo, family: Sequence[str], corridor: dict | None):
+    if _contains_family(info, family):
+        return True
+    return bool(corridor and corridor.get("region") in family)
+
+
+def _disconnected_chain_assignments(infos: List[ComponentInfo], center_x: float,
+                                    specs: dict, width: float):
     assignments = {}
     diagnostics = []
+    corridors = {
+        id(info): _component_corridor_candidate(info.points, specs, center_x, width)
+        for info in infos
+    }
     for suffix, sign in (("l", 1.0), ("r", -1.0)):
         arm_names = (f"upper_arm_{suffix}", f"forearm_{suffix}", f"hand_{suffix}")
         arm_items = [
             info for info in infos
-            if sign * (info.center.x - center_x) > 0.0 and _contains_family(info, arm_names)
+            if sign * (info.center.x - center_x) > 0.0
+            and _family_evidence(info, arm_names, corridors.get(id(info)))
         ]
         arm_assignments = _rank_assign(
             arm_items,
@@ -161,17 +173,22 @@ def _disconnected_chain_assignments(infos: List[ComponentInfo], center_x: float)
                 "chain": "arm",
                 "componentCount": len(arm_items),
                 "assignments": [
-                    {"center": [float(info.center.x), float(info.center.y), float(info.center.z)],
-                     "region": arm_assignments.get(id(info))}
+                    {
+                        "center": [float(info.center.x), float(info.center.y), float(info.center.z)],
+                        "region": arm_assignments.get(id(info)),
+                        "corridor": corridors.get(id(info)),
+                        "labelEvidence": dict(info.labels),
+                    }
                     for info in sorted(arm_items, key=lambda value: sign * (value.center.x - center_x))
                 ],
-                "method": "disconnected-proximal-to-distal-lateral-order",
+                "method": "disconnected-proximal-to-distal-lateral-order-plus-corridor-evidence",
             })
 
         leg_names = (f"thigh_{suffix}", f"calf_{suffix}", f"foot_{suffix}")
         leg_items = [
             info for info in infos
-            if sign * (info.center.x - center_x) >= -1e-6 and _contains_family(info, leg_names)
+            if sign * (info.center.x - center_x) >= -1e-6
+            and _family_evidence(info, leg_names, corridors.get(id(info)))
         ]
         leg_assignments = _rank_assign(
             leg_items,
@@ -185,13 +202,17 @@ def _disconnected_chain_assignments(infos: List[ComponentInfo], center_x: float)
                 "chain": "leg",
                 "componentCount": len(leg_items),
                 "assignments": [
-                    {"center": [float(info.center.x), float(info.center.y), float(info.center.z)],
-                     "region": leg_assignments.get(id(info))}
+                    {
+                        "center": [float(info.center.x), float(info.center.y), float(info.center.z)],
+                        "region": leg_assignments.get(id(info)),
+                        "corridor": corridors.get(id(info)),
+                        "labelEvidence": dict(info.labels),
+                    }
                     for info in sorted(leg_items, key=lambda value: -value.center.z)
                 ],
-                "method": "disconnected-proximal-to-distal-vertical-order",
+                "method": "disconnected-proximal-to-distal-vertical-order-plus-corridor-evidence",
             })
-    return assignments, diagnostics
+    return assignments, diagnostics, corridors
 
 
 def _cohere_small_components(obj: bpy.types.Object, object_labels: List[str],
@@ -199,7 +220,9 @@ def _cohere_small_components(obj: bpy.types.Object, object_labels: List[str],
     total = max(len(object_labels), 1)
     changes = []
     infos = _component_infos(obj, object_labels)
-    chain_assignments, chain_diagnostics = _disconnected_chain_assignments(infos, center_x)
+    chain_assignments, chain_diagnostics, corridors = _disconnected_chain_assignments(
+        infos, center_x, specs, width,
+    )
 
     for info in infos:
         if len(info.indices) > total * 0.30 or len(info.indices) < 4:
@@ -214,7 +237,7 @@ def _cohere_small_components(obj: bpy.types.Object, object_labels: List[str],
         second_count = ranked[1][1] if len(ranked) > 1 else 0
         support = plurality_count / float(len(info.indices))
         margin = (plurality_count - second_count) / float(len(info.indices))
-        corridor = _component_corridor_candidate(info.points, specs, center_x, width)
+        corridor = corridors.get(id(info))
 
         selected_region = chain_assignments.get(id(info))
         selection_method = "disconnected-chain-order" if selected_region else None
@@ -315,7 +338,7 @@ def segment_anatomy_v3(meshes: Iterable[bpy.types.Object], classifications: Dict
         ),
     }
     diagnostics = {
-        "method": "geodesic-cross-section-vectors-plus-disconnected-chain-order-v3",
+        "method": "geodesic-cross-section-vectors-plus-disconnected-chain-corridors-v3",
         "limbRefinement": refinement_diagnostics or {},
         "rejectedObjects": rejected_objects,
         "componentCoherence": component_changes,
