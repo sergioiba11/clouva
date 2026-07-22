@@ -135,15 +135,14 @@ def _rank_assign(items: List[ComponentInfo], names: Sequence[str], key):
 
 
 def _family_evidence(info: ComponentInfo, family: Sequence[str], corridor: dict | None):
-    if _contains_family(info, family):
-        return True
-    return bool(corridor and corridor.get("region") in family)
+    return _contains_family(info, family) or bool(corridor and corridor.get("region") in family)
 
 
 def _arm_spatial_evidence(info: ComponentInfo, sign: float, center_x: float,
                           width: float, height: float, refined: Dict[str, Vector]):
     lateral = sign * (info.center.x - center_x)
-    lower = refined["pelvis"].z - height * 0.01
+    torso_span = max(refined["chest"].z - refined["pelvis"].z, height * 0.12)
+    lower = refined["pelvis"].z + torso_span * 0.22 - height * 0.02
     upper = refined["neck"].z + height * 0.09
     return lateral >= width * 0.055 and lower <= info.center.z <= upper
 
@@ -151,9 +150,26 @@ def _arm_spatial_evidence(info: ComponentInfo, sign: float, center_x: float,
 def _leg_spatial_evidence(info: ComponentInfo, sign: float, center_x: float,
                           width: float, height: float, refined: Dict[str, Vector]):
     lateral = sign * (info.center.x - center_x)
-    upper = refined["pelvis"].z + height * 0.025
+    upper = refined["pelvis"].z + height * 0.015
     lower = min(refined["foot_l"].z, refined["foot_r"].z) - height * 0.10
     return lateral >= width * 0.018 and lower <= info.center.z <= upper
+
+
+def _central_component_region(info: ComponentInfo, center_x: float, width: float,
+                              height: float, refined: Dict[str, Vector]):
+    if abs(info.center.x - center_x) > width * 0.045:
+        return None
+    if info.center.z >= refined["skull_base"].z - height * 0.055:
+        return "head"
+    neck_floor = refined["chest"].z + max(
+        (refined["neck"].z - refined["chest"].z) * 0.30,
+        height * 0.035,
+    )
+    if info.center.z >= neck_floor:
+        return "neck"
+    if info.center.z >= refined["pelvis"].z - height * 0.10:
+        return "torso"
+    return "pelvis"
 
 
 def _disconnected_chain_assignments(infos: List[ComponentInfo], center_x: float,
@@ -174,6 +190,10 @@ def _disconnected_chain_assignments(infos: List[ComponentInfo], center_x: float,
                 _family_evidence(info, arm_names, corridors.get(id(info)))
                 or _arm_spatial_evidence(info, sign, center_x, width, height, refined)
             )
+            and info.center.z >= refined["pelvis"].z + max(
+                (refined["chest"].z - refined["pelvis"].z) * 0.18,
+                height * 0.025,
+            )
         ]
         arm_assignments = _rank_assign(
             arm_items,
@@ -192,13 +212,10 @@ def _disconnected_chain_assignments(infos: List[ComponentInfo], center_x: float,
                         "region": arm_assignments.get(id(info)),
                         "corridor": corridors.get(id(info)),
                         "labelEvidence": dict(info.labels),
-                        "spatialEvidence": _arm_spatial_evidence(
-                            info, sign, center_x, width, height, refined,
-                        ),
                     }
                     for info in sorted(arm_items, key=lambda value: sign * (value.center.x - center_x))
                 ],
-                "method": "disconnected-proximal-to-distal-lateral-order-excluding-body-axis",
+                "method": "disconnected-arm-order-with-torso-height-gate",
             })
 
         leg_names = (f"thigh_{suffix}", f"calf_{suffix}", f"foot_{suffix}")
@@ -209,6 +226,7 @@ def _disconnected_chain_assignments(infos: List[ComponentInfo], center_x: float,
                 _family_evidence(info, leg_names, corridors.get(id(info)))
                 or _leg_spatial_evidence(info, sign, center_x, width, height, refined)
             )
+            and info.center.z <= refined["pelvis"].z + height * 0.035
         ]
         leg_assignments = _rank_assign(
             leg_items,
@@ -227,13 +245,10 @@ def _disconnected_chain_assignments(infos: List[ComponentInfo], center_x: float,
                         "region": leg_assignments.get(id(info)),
                         "corridor": corridors.get(id(info)),
                         "labelEvidence": dict(info.labels),
-                        "spatialEvidence": _leg_spatial_evidence(
-                            info, sign, center_x, width, height, refined,
-                        ),
                     }
                     for info in sorted(leg_items, key=lambda value: -value.center.z)
                 ],
-                "method": "disconnected-proximal-to-distal-vertical-order-excluding-body-axis",
+                "method": "disconnected-leg-order-with-pelvis-height-gate",
             })
     return assignments, diagnostics, corridors
 
@@ -261,8 +276,13 @@ def _cohere_small_components(obj: bpy.types.Object, object_labels: List[str],
         support = plurality_count / float(len(info.indices))
         margin = (plurality_count - second_count) / float(len(info.indices))
         corridor = corridors.get(id(info))
-        selected_region = chain_assignments.get(id(info))
-        selection_method = "disconnected-chain-order" if selected_region else None
+        central_region = _central_component_region(info, center_x, width, height, refined)
+        selected_region = chain_assignments.get(id(info)) or central_region
+        selection_method = (
+            "disconnected-chain-order" if chain_assignments.get(id(info))
+            else "central-component-height" if central_region
+            else None
+        )
         if selected_region is None and corridor is not None:
             plurality_is_limb = bool(plurality_region and plurality_region in specs)
             corridor_is_strong = corridor["insideFraction"] >= 0.30 or corridor["metric"] <= 2.30
@@ -360,7 +380,7 @@ def segment_anatomy_v3(meshes: Iterable[bpy.types.Object], classifications: Dict
         ),
     }
     diagnostics = {
-        "method": "geodesic-cross-section-vectors-plus-axis-excluded-component-order-v3",
+        "method": "geodesic-cross-section-plus-central-and-limb-component-evidence-v3",
         "limbRefinement": refinement_diagnostics or {},
         "rejectedObjects": rejected_objects,
         "componentCoherence": component_changes,
