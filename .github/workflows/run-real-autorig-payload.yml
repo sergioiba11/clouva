@@ -21,20 +21,26 @@ jobs:
           python - <<'PY'
           import base64
           import gzip
-          import re
           from pathlib import Path
 
-          source = Path('.github/workflows/apply-real-autorig-v1.yml').read_text()
-          matches = re.findall(
-              r'"(worker/garment-rig/(?:autorig_avatar_v1|test_autorig_avatar_v1)\.py)": "([A-Za-z0-9+/=]+)"',
-              source,
+          source_lines = Path('.github/workflows/apply-real-autorig-v1.yml').read_text().splitlines()
+          paths = (
+              'worker/garment-rig/autorig_avatar_v1.py',
+              'worker/garment-rig/test_autorig_avatar_v1.py',
           )
-          if len(matches) != 2:
-              raise SystemExit(f'Expected two payload files, found {len(matches)}')
-          for path, encoded in matches:
+          decoded = 0
+          for path in paths:
+              marker = f'"{path}": "'
+              matching = next((line for line in source_lines if marker in line), None)
+              if matching is None:
+                  raise SystemExit(f'Payload marker not found: {path}')
+              encoded = matching.split(marker, 1)[1].rsplit('"', 1)[0]
               target = Path(path)
               target.parent.mkdir(parents=True, exist_ok=True)
               target.write_bytes(gzip.decompress(base64.b64decode(encoded)))
+              decoded += 1
+          if decoded != len(paths):
+              raise SystemExit(f'Expected {len(paths)} files, decoded {decoded}')
           PY
       - name: Validate Python syntax
         run: python -m py_compile worker/garment-rig/autorig_avatar_v1.py worker/garment-rig/test_autorig_avatar_v1.py
