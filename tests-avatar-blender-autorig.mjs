@@ -77,7 +77,6 @@ test("la interfaz muestra las cuatro etapas oficiales de Blender", () => {
   }
 });
 
-
 test("Rehacer rig ejecuta Blender desde el original y no devuelve el rig anterior", () => {
   assert.match(creatorStudio, /action: avatarRigReady \? "retry" : "create"/);
   assert.match(rigRoute, /const createRequested = action === "create" \|\| retry/);
@@ -91,7 +90,7 @@ test("el Worker crea un rig desde una malla limpia usando la referencia oficial 
   assert.match(workerAutorig, /old_armatures/);
   assert.match(workerAutorig, /canonicalize_and_validate_bones/);
   assert.match(workerAutorig, /DATA_TRANSFER/);
-  assert.match(workerAutorig, /target-mesh-hand-envelope/);
+  assert.match(workerAutorig, /target-mesh-distal-axis-and-lateral-spread-v15/);
   assert.match(dockerfile, /test_autorig_avatar_v12\.py/);
 });
 
@@ -104,7 +103,6 @@ test("cada Rehacer rig exige prueba criptográfica de una ejecución nueva de Bl
   assert.match(creatorStudio, /Blender V15 ajustó cabeza, manos y articulaciones y creó un rig nuevo/);
 });
 
-
 test("AutoRig V15 ajusta cabeza y cada cadena con landmarks y usa pesos automáticos de Blender", () => {
   assert.match(workerAutorig, /mesh-landmarks-per-chain-v15/);
   assert.match(workerAutorig, /ARMATURE_AUTO/);
@@ -115,8 +113,8 @@ test("AutoRig V15 ajusta cabeza y cada cadena con landmarks y usa pesos automát
   assert.match(workerApp, /v15-anatomical-landmark-autorig/);
 });
 
-test("el Worker V14 conserva el origen geométrico y responde el contrato esperado por la API", () => {
-  assert.match(workerApp, /V14_METHOD_SOURCE = "Blender geometry landmarks \+ official Unreal hierarchy"/);
+test("el Worker V15 conserva el origen geométrico y responde el contrato esperado por la API", () => {
+  assert.match(workerApp, /V15_METHOD_SOURCE = "Blender geometry landmarks \+ official Unreal hierarchy"/);
   assert.match(workerApp, /API_COMPATIBLE_RIG_SOURCE = "Blender official Unreal reference"/);
   assert.match(workerApp, /profile\["rigMethodSource"\] = method_source/);
   assert.match(workerApp, /profile\["rigSource"\] = API_COMPATIBLE_RIG_SOURCE/);
