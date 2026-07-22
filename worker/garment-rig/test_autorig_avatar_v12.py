@@ -87,9 +87,13 @@ def main():
         profile = autorig.run(source, output, metadata)
         stored = json.loads(metadata.read_text(encoding="utf-8"))
         assert profile["complete"] is True
-        assert stored["rigSource"] == "Blender official Unreal reference"
+        assert stored["rigSource"] == "Blender geometry landmarks + official Unreal hierarchy"
+        assert stored["version"] == "clouva-blender-autorig-v14-landmarks-heat"
+        assert stored["landmarkFit"]["method"] == "mesh-landmarks-per-chain-v14"
+        assert len(stored["landmarkFit"]["sides"]) == 2
+        assert stored["weights"]["method"] == "automatic-heat-body-plus-projected-parts-v14"
         assert stored["inputSource"] == "original-clean-meshy-avatar"
-        assert stored["weights"]["weightedRatio"] >= 0.985
+        assert stored["weights"]["weightedRatio"] >= 0.995
         assert stored["fingers"]["leftChains"] == 5
         assert stored["fingers"]["rightChains"] == 5
         assert stored["ears"]["complete"] is True
@@ -102,7 +106,7 @@ def main():
         assert len(stored["outputSha256"]) == 64
         assert stored["inputSha256"] != stored["outputSha256"]
         validate_output(output)
-        print("[clouva] Blender AutoRig V12 mesh-only input validated", flush=True)
+        print("[clouva] Blender AutoRig V14 landmark + heat weights validated", flush=True)
 
 
 if __name__ == "__main__":

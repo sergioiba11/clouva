@@ -1,0 +1,41 @@
+name: Kick Landmark AutoRig V14
+
+on:
+  push:
+    branches:
+      - fix/blender-landmark-autorig-v14
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/blender-landmark-autorig-v14
+      - name: Execute embedded patch
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          lines = Path('.github/workflows/apply-landmark-autorig-v14.yml').read_text(encoding='utf-8').splitlines()
+          start = next(i for i, line in enumerate(lines) if "python - <<'PY'" in line) + 1
+          end = next(i for i in range(start, len(lines)) if lines[i].strip() == 'PY')
+          code_lines = lines[start:end]
+          indent = min(len(line) - len(line.lstrip()) for line in code_lines if line.strip())
+          code = '\n'.join(line[indent:] for line in code_lines)
+          exec(compile(code, 'apply-landmark-autorig-v14', 'exec'))
+          PY
+      - name: Validate source contracts
+        run: |
+          node --test tests-avatar-blender-autorig.mjs
+          python -m py_compile worker/garment-rig/autorig_avatar_v12.py worker/garment-rig/app_v16.py worker/garment-rig/test_autorig_avatar_v12.py
+      - name: Remove temporary workflows and commit
+        run: |
+          rm -f .github/workflows/apply-landmark-autorig-v14.yml .github/workflows/kick-landmark-autorig-v14.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Fit avatar rig from mesh landmarks and automatic weights"
+          git push origin HEAD:fix/blender-landmark-autorig-v14
