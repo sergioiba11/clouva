@@ -71,6 +71,25 @@ class RegionGeometry:
             "component": metadata.component,
         }
 
+    def bounds(self):
+        if not self.vertices:
+            return {
+                "minimum": [0.0, 0.0, 0.0],
+                "maximum": [0.0, 0.0, 0.0],
+                "center": [0.0, 0.0, 0.0],
+                "size": [0.0, 0.0, 0.0],
+            }
+        minimum = Vector(tuple(min(point[axis] for point in self.vertices) for axis in range(3)))
+        maximum = Vector(tuple(max(point[axis] for point in self.vertices) for axis in range(3)))
+        center = (minimum + maximum) * 0.5
+        size = maximum - minimum
+        return {
+            "minimum": [float(value) for value in minimum],
+            "maximum": [float(value) for value in maximum],
+            "center": [float(value) for value in center],
+            "size": [float(value) for value in size],
+        }
+
 
 class AnatomyBVH:
     def __init__(self, regions: Dict[str, RegionGeometry], rejected: List[dict]):
@@ -159,6 +178,12 @@ class AnatomyBVH:
                     "triangleCount": len(geometry.triangles),
                     "sourceObjects": sorted({item.source_object for item in geometry.metadata}),
                     "sourcePolygons": len({(item.source_object, item.source_polygon) for item in geometry.metadata}),
+                    "bounds": geometry.bounds(),
+                    "firstVertices": [
+                        [float(value) for value in point]
+                        for point in geometry.vertices[:6]
+                    ],
+                    "firstTriangles": [list(triangle) for triangle in geometry.triangles[:4]],
                 }
                 for name, geometry in sorted(self.regions.items())
             },
@@ -209,7 +234,7 @@ def build_anatomy_bvh(meshes: Iterable[bpy.types.Object], segmentation,
     for obj in meshes:
         category = classifications.get(obj.name, "unknown_rejected")
         labels = list((segmentation.labels.get(obj.name) if segmentation is not None else None) or [])
-        world = obj.matrix_world
+        world = obj.matrix_world.copy()
         if category == "eyes":
             labels = ["eyes"] * len(obj.data.vertices)
         elif category != "body":
@@ -246,7 +271,7 @@ def build_anatomy_bvh(meshes: Iterable[bpy.types.Object], segmentation,
         vertices = region_vertices[region]
         if not triangles:
             continue
-        bvh = BVHTree.FromPolygons(vertices, triangles, all_triangles=True, epsilon=0.0)
+        bvh = BVHTree.FromPolygons(vertices, triangles, all_triangles=True)
         regions[region] = RegionGeometry(
             name=region,
             vertices=vertices,
