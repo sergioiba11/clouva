@@ -9,13 +9,24 @@ permissions:
 
 jobs:
   diagnose-autorig-v14:
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.head_ref }}
 
-      - name: Execute patch and capture diagnostics
+      - name: Skip after diagnostic is saved
+        id: guard
+        run: |
+          if [ -f PATCH_AUTORIG_V14_ERROR.txt ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Execute patch and persist diagnostics
+        if: steps.guard.outputs.skip != 'true'
         run: |
           set +e
           python - <<'PY' > /tmp/patch-output.txt 2>&1
@@ -32,59 +43,8 @@ jobs:
           git reset --hard HEAD
           printf 'exit=%s\n' "$status" > PATCH_AUTORIG_V14_ERROR.txt
           cat /tmp/patch-output.txt >> PATCH_AUTORIG_V14_ERROR.txt
-          cat > .github/workflows/validate.yml <<'YAML'
-          name: Validate CLOUVA
-
-          on:
-            pull_request:
-              branches: [main]
-            push:
-              branches: [agent/base-mesh-auto-rig]
-
-          permissions:
-            contents: read
-
-          concurrency:
-            group: validate-${{ github.ref }}
-            cancel-in-progress: true
-
-          jobs:
-            validate:
-              runs-on: ubuntu-latest
-              timeout-minutes: 20
-              steps:
-                - name: Checkout
-                  uses: actions/checkout@v4
-
-                - name: Setup Node
-                  uses: actions/setup-node@v4
-                  with:
-                    node-version: 22
-                    cache: npm
-
-                - name: Install dependencies
-                  run: npm ci
-
-                - name: Typecheck
-                  run: npm run typecheck
-
-                - name: Tests
-                  run: npm test
-
-                - name: Validate worker Python
-                  run: python3 -m py_compile worker/garment-rig/app*.py worker/garment-rig/rig_garment*.py worker/garment-rig/avatar_reference.py worker/garment-rig/test_*.py tools/unreal_avatar_export/export_clouva_avatar.py
-
-                - name: Build and validate Blender worker image
-                  run: docker build --progress=plain -t clouva-garment-rig:test worker/garment-rig
-
-                - name: Build
-                  run: npm run build
-                  env:
-                    NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
-                    NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key
-          YAML
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add PATCH_AUTORIG_V14_ERROR.txt .github/workflows/validate.yml
+          git add PATCH_AUTORIG_V14_ERROR.txt
           git commit -m "Capture AutoRig V14 patch diagnostics"
           git push origin HEAD:${{ github.head_ref }}
