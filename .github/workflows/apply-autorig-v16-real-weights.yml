@@ -1,0 +1,449 @@
+name: Apply AutoRig V16 Real Weights
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/apply-autorig-v16-real-weights.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+
+      - name: Apply AutoRig V16
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace(path, old, new, count=1):
+              file = Path(path)
+              text = file.read_text(encoding="utf-8")
+              if old not in text:
+                  raise SystemExit(f"Pattern not found in {path}: {old[:240]!r}")
+              file.write_text(text.replace(old, new, count), encoding="utf-8")
+
+          autorig = "worker/garment-rig/autorig_avatar_v12.py"
+          replace(autorig,
+              'VERSION = "clouva-blender-autorig-v15-skull-hand-axis"',
+              'VERSION = "clouva-blender-autorig-v16-reference-weights-anatomical-extremities"')
+
+          replace(autorig,
+              '        offsets = {"thumb": -0.90, "index": -0.46, "middle": 0.0, "ring": 0.43, "pinky": 0.82}\n'
+              '        total_length = extent * 0.50\n'
+              '        for finger in v11.v5.legacy.FINGER_NAMES:\n'
+              '            root = wrist + direction * extent * (0.34 if finger == "thumb" else 0.44)\n'
+              '            root += spread_axis * offsets[finger] * half_width\n'
+              '            finger_direction = direction.copy()\n'
+              '            if finger == "thumb":\n'
+              '                finger_direction = v11.v10.unit(direction * 0.72 + spread_axis * offsets[finger] * 0.42, direction)\n'
+              '            previous = palm_root or hand\n'
+              '            cursor = root\n'
+              '            for segment in range(1, v11.v5.legacy.SEGMENTS + 1):\n'
+              '                bone = bones.get(f"clouva_{finger}_{segment:02d}_{side}")\n'
+              '                if bone is None:\n'
+              '                    bpy.ops.object.mode_set(mode="OBJECT")\n'
+              '                    raise RuntimeError(f"Missing generated finger bone: {finger} {segment} {side}")\n'
+              '                length = total_length / 3.0 * (1.0 - (segment - 1) * 0.12)\n',
+              '        offsets = {"thumb": -0.86, "index": -0.40, "middle": 0.0, "ring": 0.38, "pinky": 0.74}\n'
+              '        length_factors = {"thumb": 0.44, "index": 0.57, "middle": 0.60, "ring": 0.57, "pinky": 0.49}\n'
+              '        root_factors = {"thumb": 0.30, "index": 0.38, "middle": 0.38, "ring": 0.38, "pinky": 0.36}\n'
+              '        longest_total = 0.0\n'
+              '        for finger in v11.v5.legacy.FINGER_NAMES:\n'
+              '            total_length = extent * length_factors[finger]\n'
+              '            longest_total = max(longest_total, total_length)\n'
+              '            root = wrist + direction * extent * root_factors[finger]\n'
+              '            root += spread_axis * offsets[finger] * half_width\n'
+              '            finger_direction = direction.copy()\n'
+              '            if finger == "thumb":\n'
+              '                finger_direction = v11.v10.unit(direction * 0.72 + spread_axis * offsets[finger] * 0.42, direction)\n'
+              '            previous = palm_root or hand\n'
+              '            cursor = root\n'
+              '            for segment in range(1, v11.v5.legacy.SEGMENTS + 1):\n'
+              '                bone = bones.get(f"clouva_{finger}_{segment:02d}_{side}")\n'
+              '                if bone is None:\n'
+              '                    bpy.ops.object.mode_set(mode="OBJECT")\n'
+              '                    raise RuntimeError(f"Missing generated finger bone: {finger} {segment} {side}")\n'
+              '                length = total_length / 3.0 * (1.0 - (segment - 1) * 0.12)\n')
+
+          replace(autorig,
+              '        hand_fit[side] = {\n'
+              '            "sourceBone": hand.name,\n'
+              '            "candidateVertices": len(candidates),\n'
+              '            "handExtent": extent,\n'
+              '            "handHalfWidth": half_width,\n'
+              '            "fingerTotalLength": total_length,\n'
+              '            "method": "target-mesh-distal-axis-and-lateral-spread-v15",\n'
+              '        }\n',
+              '        hand_fit[side] = {\n'
+              '            "sourceBone": hand.name,\n'
+              '            "candidateVertices": len(candidates),\n'
+              '            "handExtent": extent,\n'
+              '            "handHalfWidth": half_width,\n'
+              '            "fingerTotalLength": longest_total,\n'
+              '            "wrist": list(map(float, wrist)),\n'
+              '            "direction": list(map(float, direction)),\n'
+              '            "spreadAxis": list(map(float, spread_axis)),\n'
+              '            "method": "target-mesh-distal-axis-and-lateral-spread-v16",\n'
+              '        }\n')
+
+          insertion = r'''
+
+def _replace_vertex_deform_weights(mesh, vertex_index, deform_names, assignments):
+    for name in deform_names:
+        group = mesh.vertex_groups.get(name)
+        if group is not None:
+            try:
+                group.remove([vertex_index])
+            except RuntimeError:
+                pass
+    for name, weight in assignments:
+        group = mesh.vertex_groups.get(name) or mesh.vertex_groups.new(name=name)
+        group.add([vertex_index], float(weight), "REPLACE")
+
+
+def bind_reference_projected_weights(target_meshes, armature, reference_source):
+    detach_preserve_world(reference_source)
+    source_names = [group.name for group in reference_source.vertex_groups]
+    if not source_names:
+        raise RuntimeError("Official Unreal reference has no skin weights to project")
+
+    for mesh in target_meshes:
+        detach_preserve_world(mesh)
+        for modifier in list(mesh.modifiers):
+            if modifier.type == "ARMATURE":
+                mesh.modifiers.remove(modifier)
+        mesh.vertex_groups.clear()
+        for name in source_names:
+            mesh.vertex_groups.new(name=name)
+        transfer = mesh.modifiers.new("CLOUVA official reference weights V16", "DATA_TRANSFER")
+        transfer.object = reference_source
+        transfer.use_vert_data = True
+        transfer.data_types_verts = {"VGROUP_WEIGHTS"}
+        transfer.vert_mapping = "POLYINTERP_NEAREST"
+        transfer.layers_vgroup_select_src = "ALL"
+        transfer.layers_vgroup_select_dst = "NAME"
+        transfer.mix_mode = "REPLACE"
+        bpy.ops.object.select_all(action="DESELECT")
+        mesh.select_set(True)
+        bpy.context.view_layer.objects.active = mesh
+        bpy.ops.object.modifier_apply(modifier=transfer.name)
+
+        modifier = mesh.modifiers.new("CLOUVA Armature V16", "ARMATURE")
+        modifier.object = armature
+        modifier.use_deform_preserve_volume = True
+        mesh.parent = armature
+        mesh.matrix_parent_inverse = armature.matrix_world.inverted_safe()
+
+    vertices = sum(len(mesh.data.vertices) for mesh in target_meshes)
+    weighted_before_fill = sum(
+        1 for mesh in target_meshes for vertex in mesh.data.vertices
+        if any(item.weight > 1e-8 for item in vertex.groups)
+    )
+    ratio_before_fill = weighted_before_fill / max(vertices, 1)
+    if ratio_before_fill < 0.985:
+        raise RuntimeError(
+            f"Official reference weight projection covered only {weighted_before_fill}/{vertices} vertices; "
+            "nearest-bone mass fallback is forbidden"
+        )
+
+    filled = sum(_fill_unweighted_vertices(mesh, armature) for mesh in target_meshes)
+    if filled > max(128, int(vertices * 0.01)):
+        raise RuntimeError(
+            f"Weight projection required {filled} nearest-bone fallback vertices; maximum allowed is 1%"
+        )
+    weighted = sum(
+        1 for mesh in target_meshes for vertex in mesh.data.vertices
+        if any(item.weight > 1e-8 for item in vertex.groups)
+    )
+    ratio = weighted / max(vertices, 1)
+    return {
+        "method": "official-reference-projection-plus-anatomical-extremities-v16",
+        "bodyMesh": max(target_meshes, key=lambda obj: len(obj.data.vertices)).name,
+        "projectedParts": len(target_meshes),
+        "weightedBeforeFallback": weighted_before_fill,
+        "projectionRatio": ratio_before_fill,
+        "filledNearestBoneVertices": filled,
+        "nearestBoneFallbackRatio": filled / max(vertices, 1),
+        "vertices": vertices,
+        "weightedVertices": weighted,
+        "weightedRatio": ratio,
+    }
+
+
+def assign_anatomical_extremity_weights_v16(armature, meshes, report, hand_fit):
+    deform_names = [bone.name for bone in armature.data.bones if bone.use_deform]
+    minimum, maximum, size = bounds(meshes)
+    height = max(float(size.z), 0.5)
+    center = (minimum + maximum) * 0.5
+    inverse = armature.matrix_world.inverted_safe()
+    finger_weighted = 0
+    ear_weighted = 0
+    per_side = {}
+
+    for side in ("l", "r"):
+        fit = hand_fit.get(side) or {}
+        wrist = Vector(fit.get("wrist") or (0.0, 0.0, 0.0))
+        direction = v11.v10.unit(Vector(fit.get("direction") or (0.0, 0.0, -1.0)), (0.0, 0.0, -1.0))
+        spread = v11.v10.unit(Vector(fit.get("spreadAxis") or (1.0, 0.0, 0.0)), (1.0, 0.0, 0.0))
+        depth = direction.cross(spread)
+        depth = v11.v10.unit(depth, (0.0, 1.0, 0.0))
+        extent = float(fit.get("handExtent") or height * 0.045)
+        half_width = float(fit.get("handHalfWidth") or height * 0.016)
+        hand_name = str(fit.get("sourceBone") or "")
+        segments = {}
+        for finger in v11.v5.legacy.FINGER_NAMES:
+            for segment in range(1, 4):
+                name = f"clouva_{finger}_{segment:02d}_{side}"
+                bone = armature.data.bones.get(name)
+                if bone is not None:
+                    segments[name] = (
+                        armature.matrix_world @ bone.head_local,
+                        armature.matrix_world @ bone.tail_local,
+                    )
+        if len(segments) != 15 or not hand_name:
+            raise RuntimeError(f"AutoRig V16 cannot resolve the complete {side} hand")
+
+        radius = max(height * 0.0045, half_width * 0.38)
+        assigned = 0
+        for mesh in meshes:
+            for vertex in mesh.data.vertices:
+                world = mesh.matrix_world @ vertex.co
+                delta = world - wrist
+                along = float(delta.dot(direction))
+                lateral = abs(float(delta.dot(spread)))
+                depth_value = abs(float(delta.dot(depth)))
+                if not (extent * 0.24 <= along <= extent * 1.08):
+                    continue
+                if lateral > half_width * 1.18 or depth_value > half_width * 0.95:
+                    continue
+                nearest_name, nearest_distance = min(
+                    ((name, _point_segment_distance(world, start, end)) for name, (start, end) in segments.items()),
+                    key=lambda item: item[1],
+                )
+                if nearest_distance > radius:
+                    continue
+                finger_strength = max(0.76, min(0.94, 1.0 - nearest_distance / max(radius * 4.0, 1e-6)))
+                _replace_vertex_deform_weights(
+                    mesh,
+                    vertex.index,
+                    deform_names,
+                    [(nearest_name, finger_strength), (hand_name, 1.0 - finger_strength)],
+                )
+                assigned += 1
+        if assigned < 20:
+            raise RuntimeError(f"AutoRig V16 found only {assigned} vertices for the {side} fingers")
+        per_side[side] = assigned
+        finger_weighted += assigned
+
+    head = _find_named_bone(armature.data.bones, "Head", "head")
+    if head is None:
+        raise RuntimeError("AutoRig V16 cannot resolve the Head bone for ear weights")
+    head_name = head.name
+    for side in ("l", "r"):
+        ear_name = f"clouva_ear_{side}"
+        ear = armature.data.bones.get(ear_name)
+        if ear is None:
+            raise RuntimeError(f"AutoRig V16 is missing {ear_name}")
+        target = armature.matrix_world @ ear.head_local
+        sign = 1.0 if target.x >= center.x else -1.0
+        radius = height * 0.014
+        assigned = 0
+        for mesh in meshes:
+            for vertex in mesh.data.vertices:
+                world = mesh.matrix_world @ vertex.co
+                if sign * (world.x - center.x) < float(size.x) * 0.22:
+                    continue
+                distance = (world - target).length
+                if distance > radius:
+                    continue
+                ear_strength = max(0.68, min(0.88, 1.0 - distance / max(radius * 3.0, 1e-6)))
+                _replace_vertex_deform_weights(
+                    mesh,
+                    vertex.index,
+                    deform_names,
+                    [(ear_name, ear_strength), (head_name, 1.0 - ear_strength)],
+                )
+                assigned += 1
+        if assigned < 8:
+            raise RuntimeError(f"AutoRig V16 found only {assigned} vertices for {ear_name}")
+        ear_weighted += assigned
+
+    vertices = sum(len(mesh.data.vertices) for mesh in meshes)
+    finger_ratio = finger_weighted / max(vertices, 1)
+    ear_ratio = ear_weighted / max(vertices, 1)
+    if finger_ratio > 0.08:
+        raise RuntimeError(f"Finger weights leaked into {finger_ratio:.2%} of the avatar")
+    if ear_ratio > 0.03:
+        raise RuntimeError(f"Ear weights leaked into {ear_ratio:.2%} of the avatar")
+    return finger_weighted, ear_weighted, {
+        "fingers": False,
+        "ears": False,
+        "method": "anatomical-envelopes-v16",
+        "fingerWeightedRatio": finger_ratio,
+        "earWeightedRatio": ear_ratio,
+        "fingerVerticesBySide": per_side,
+    }
+'''
+          replace(autorig, '\n\ndef transfer_weights(source, target_meshes, armature):\n', insertion + '\n\ndef transfer_weights(source, target_meshes, armature):\n')
+
+          replace(autorig,
+              '    report = v11.ensure_extended_bones_v11(armature, target_meshes)\n'
+              '    hand_fit = fit_fingers_to_target_mesh(armature, target_meshes, report)\n'
+              '    report["handFit"] = hand_fit\n'
+              '    report["landmarkFit"] = landmark_fit\n'
+              '    report["geometry"] = v11.validate_geometry_v11(armature, report, roundtrip=False)\n\n'
+              '    for reference_mesh in list(reference_meshes):\n'
+              '        if reference_mesh.name in bpy.data.objects:\n'
+              '            bpy.data.objects.remove(reference_mesh, do_unlink=True)\n'
+              '    transferred = bind_geometry_aware_weights(target_meshes, armature)\n'
+              '    finger_weighted, ear_weighted, fallback = v11.v5.legacy.assign_extended_weights(\n'
+              '        armature, target_meshes, report\n'
+              '    )\n',
+              '    report = v11.ensure_extended_bones_v11(armature, target_meshes)\n'
+              '    hand_fit = fit_fingers_to_target_mesh(armature, target_meshes, report)\n'
+              '    report["handFit"] = hand_fit\n'
+              '    report["landmarkFit"] = landmark_fit\n'
+              '    report["geometry"] = v11.validate_geometry_v11(armature, report, roundtrip=False)\n\n'
+              '    reference_source = join_reference_meshes(reference_meshes)\n'
+              '    transferred = bind_reference_projected_weights(target_meshes, armature, reference_source)\n'
+              '    finger_weighted, ear_weighted, fallback = assign_anatomical_extremity_weights_v16(\n'
+              '        armature, target_meshes, report, hand_fit\n'
+              '    )\n'
+              '    if reference_source.name in bpy.data.objects:\n'
+              '        bpy.data.objects.remove(reference_source, do_unlink=True)\n')
+
+          replace(autorig,
+              '        and landmark_fit.get("method") == "mesh-landmarks-per-chain-v15"\n'
+              '        and landmark_fit.get("head", {}).get("method") == "mesh-skull-base-to-crown-v15"\n'
+              '        and hand_fit.get("l", {}).get("method") == "target-mesh-distal-axis-and-lateral-spread-v15"\n'
+              '        and hand_fit.get("r", {}).get("method") == "target-mesh-distal-axis-and-lateral-spread-v15"\n',
+              '        and landmark_fit.get("method") == "mesh-landmarks-per-chain-v15"\n'
+              '        and landmark_fit.get("head", {}).get("method") == "mesh-skull-base-to-crown-v15"\n'
+              '        and hand_fit.get("l", {}).get("method") == "target-mesh-distal-axis-and-lateral-spread-v16"\n'
+              '        and hand_fit.get("r", {}).get("method") == "target-mesh-distal-axis-and-lateral-spread-v16"\n'
+              '        and transferred.get("method") == "official-reference-projection-plus-anatomical-extremities-v16"\n'
+              '        and transferred.get("nearestBoneFallbackRatio", 1.0) <= 0.01\n'
+              '        and fallback.get("method") == "anatomical-envelopes-v16"\n')
+          replace(autorig, '[clouva-landmark-autorig-v15]', '[clouva-landmark-autorig-v16]')
+
+          viewer = "components/creator-studio/CreatorStudioAvatarViewerV6.tsx"
+          replace(viewer,
+              'function isEarBone(name: string) {\n  return clean(name).startsWith("clouvaear");\n}\n',
+              'function isEarBone(name: string) {\n  return clean(name).startsWith("clouvaear");\n}\n\n'
+              'function isPelvisBone(name: string) {\n'
+              '  const value = clean(name);\n'
+              '  return value === "hips" || value.includes("pelvis");\n'
+              '}\n\n'
+              'function isUpperLegBone(name: string) {\n'
+              '  const value = clean(name);\n'
+              '  return value.includes("upleg") || value.includes("upperleg") || value.includes("thigh");\n'
+              '}\n')
+          replace(viewer,
+              '    const parent = nearestPreviewAncestor(child);\n'
+              '    if (!parent || parent === child) continue;\n',
+              '    const parent = nearestPreviewAncestor(child);\n'
+              '    if (!parent || parent === child) continue;\n'
+              '    // No dibujar el puente jerárquico Hips→muslo: formaba una V falsa sobre la entrepierna.\n'
+              '    if (isPelvisBone(parent.name) && isUpperLegBone(child.name)) continue;\n')
+          replace(viewer,
+              '    for (const ear of ears) {\n'
+              '      const earSide = anatomicalSide(ear.name);\n',
+              '    for (const ear of ears) {\n'
+              '      // En perfil, un hueso lateral de oreja se proyecta sobre mandíbula/cara y parece un rig roto.\n'
+              '      if (sideView) continue;\n'
+              '      const earSide = anatomicalSide(ear.name);\n')
+
+          route = "app/api/avatar/rig/route.ts"
+          replace(route, 'const EXPECTED_WORKER_RIG_VERSION = "v15-anatomical-landmark-autorig";', 'const EXPECTED_WORKER_RIG_VERSION = "v16-reference-weight-autorig";')
+          replace(route, 'const EXPECTED_PROFILE_VERSION = "clouva-blender-autorig-v15-skull-hand-axis";', 'const EXPECTED_PROFILE_VERSION = "clouva-blender-autorig-v16-reference-weights-anatomical-extremities";')
+          replace(route,
+              '    weights?: { weightedRatio?: number };\n',
+              '    weights?: { weightedRatio?: number; method?: string; nearestBoneFallbackRatio?: number; projectionRatio?: number };\n'
+              '    weightFallback?: { method?: string; fingerWeightedRatio?: number; earWeightedRatio?: number };\n')
+          replace(route,
+              '    || Number(proof.weights?.weightedRatio ?? 0) < 0.995\n',
+              '    || Number(proof.weights?.weightedRatio ?? 0) < 0.995\n'
+              '    || proof.weights?.method !== "official-reference-projection-plus-anatomical-extremities-v16"\n'
+              '    || Number(proof.weights?.projectionRatio ?? 0) < 0.985\n'
+              '    || Number(proof.weights?.nearestBoneFallbackRatio ?? 1) > 0.01\n'
+              '    || proof.weightFallback?.method !== "anatomical-envelopes-v16"\n'
+              '    || Number(proof.weightFallback?.fingerWeightedRatio ?? 1) > 0.08\n'
+              '    || Number(proof.weightFallback?.earWeightedRatio ?? 1) > 0.03\n')
+          replace(route, 'AutoRig V14 geométrico fresco', 'AutoRig V16 con pesos anatómicos frescos')
+
+          app = "worker/garment-rig/app_v16.py"
+          replace(app, 'COMPLETE_AVATAR_RIG_VERSION = "v15-anatomical-landmark-autorig"', 'COMPLETE_AVATAR_RIG_VERSION = "v16-reference-weight-autorig"')
+          replace(app, 'V15_METHOD_SOURCE = "Blender geometry landmarks + official Unreal hierarchy"', 'V16_METHOD_SOURCE = "Blender geometry landmarks + official Unreal hierarchy"')
+          replace(app, 'def complete_avatar_rig_v15(request: CompleteAvatarRigRequest):', 'def complete_avatar_rig_v16(request: CompleteAvatarRigRequest):')
+          replace(app, 'clouva-complete-avatar-rig-v15-', 'clouva-complete-avatar-rig-v16-')
+          replace(app, 'validación del AutoRig V15', 'validación del AutoRig V16')
+          replace(app, 'if method_source != V15_METHOD_SOURCE:', 'if method_source != V16_METHOD_SOURCE:')
+          replace(app, 'origen geométrico V14 esperado', 'origen geométrico V16 esperado')
+          replace(app, 'origen real de V14', 'origen real de V16')
+
+          docker = "worker/garment-rig/Dockerfile"
+          replace(docker, 'ENV CLOUVA_AVATAR_COMPLETE_RIG=v15-anatomical-landmark-autorig', 'ENV CLOUVA_AVATAR_COMPLETE_RIG=v16-reference-weight-autorig')
+          replace(docker, "assert app.COMPLETE_AVATAR_RIG_VERSION == 'v15-anatomical-landmark-autorig'", "assert app.COMPLETE_AVATAR_RIG_VERSION == 'v16-reference-weight-autorig'")
+          replace(docker, "assert app.current.COMPLETE_AVATAR_RIG_VERSION == 'v15-anatomical-landmark-autorig'", "assert app.current.COMPLETE_AVATAR_RIG_VERSION == 'v16-reference-weight-autorig'")
+          replace(docker, 'AutoRig V15 anatomical route OK', 'AutoRig V16 reference-weight route OK')
+
+          studio = "components/creator-studio/CreatorStudioSimple.tsx"
+          replace(studio,
+              'Blender V15 ajustó cabeza, manos y articulaciones y creó un rig nuevo',
+              'Blender V16 proyectó pesos reales y ajustó cabeza, manos y articulaciones')
+
+          test = "worker/garment-rig/test_autorig_avatar_v12.py"
+          replace(test, 'clouva-blender-autorig-v15-skull-hand-axis', 'clouva-blender-autorig-v16-reference-weights-anatomical-extremities')
+          replace(test, 'automatic-heat-body-plus-projected-parts-v15', 'official-reference-projection-plus-anatomical-extremities-v16')
+          replace(test, 'target-mesh-distal-axis-and-lateral-spread-v15', 'target-mesh-distal-axis-and-lateral-spread-v16')
+          replace(test,
+              '        assert stored["weights"]["weightedRatio"] >= 0.995\n',
+              '        assert stored["weights"]["weightedRatio"] >= 0.995\n'
+              '        assert stored["weights"]["projectionRatio"] >= 0.985\n'
+              '        assert stored["weights"]["nearestBoneFallbackRatio"] <= 0.01\n'
+              '        assert stored["weightFallback"]["method"] == "anatomical-envelopes-v16"\n'
+              '        assert 0.0 < stored["weightFallback"]["fingerWeightedRatio"] <= 0.08\n'
+              '        assert 0.0 < stored["weightFallback"]["earWeightedRatio"] <= 0.03\n')
+          replace(test, 'Blender AutoRig V15 anatomical head + hand axis validated', 'Blender AutoRig V16 reference weights + anatomical extremities validated')
+
+          contracts = "tests-avatar-blender-autorig.mjs"
+          replace(contracts, 'v15-anatomical-landmark-autorig', 'v16-reference-weight-autorig')
+          replace(contracts, 'clouva-blender-autorig-v15-skull-hand-axis', 'clouva-blender-autorig-v16-reference-weights-anatomical-extremities')
+          replace(contracts, 'Blender V15 ajustó cabeza, manos y articulaciones', 'Blender V16 proyectó pesos reales')
+          with Path(contracts).open('a', encoding='utf-8') as handle:
+              handle.write('''\n\ntest("AutoRig V16 prohíbe el relleno masivo por hueso cercano", () => {\n  assert.match(workerAutorig, /official-reference-projection-plus-anatomical-extremities-v16/);\n  assert.match(workerAutorig, /nearest-bone mass fallback is forbidden/);\n  assert.match(workerAutorig, /nearestBoneFallbackRatio/);\n  assert.match(workerAutorig, /anatomical-envelopes-v16/);\n});\n''')
+
+          viewer_test = "tests-creator-viewer-anatomy.mjs"
+          with Path(viewer_test).open('a', encoding='utf-8') as handle:
+              handle.write('''\n\ntest("el visor no dibuja mandíbula falsa ni V de pelvis", () => {\n  assert.match(viewer, /if \(sideView\) continue;/);\n  assert.match(viewer, /isPelvisBone\(parent\.name\) && isUpperLegBone\(child\.name\)/);\n});\n''')
+
+          Path('.github/workflows/apply-autorig-v16-real-weights.yml').unlink()
+          PY
+
+      - name: Validate TypeScript and contracts
+        run: |
+          npm ci
+          npm run typecheck
+          node --test tests-avatar-blender-autorig.mjs tests-creator-viewer-anatomy.mjs
+          python -m py_compile worker/garment-rig/autorig_avatar_v12.py worker/garment-rig/app_v16.py worker/garment-rig/test_autorig_avatar_v12.py
+
+      - name: Validate real Blender worker image
+        run: docker build --no-cache worker/garment-rig
+
+      - name: Build app
+        run: npm run build
+
+      - name: Commit validated V16
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Fix AutoRig weights and anatomical preview"
+          git push origin HEAD:${{ github.head_ref }}
