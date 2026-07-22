@@ -25,15 +25,27 @@ const meshy = readFileSync("lib/meshy.ts", "utf8");
 const creatorStudio = readFileSync("components/creator-studio/CreatorStudioSimple.tsx", "utf8");
 const workerAutorig = readFileSync("worker/garment-rig/autorig_avatar_v16.py", "utf8");
 const workerApp = readFileSync("worker/garment-rig/app_v16.py", "utf8");
+const analyzerWorker = readFileSync("worker/garment-rig/app_v17.py", "utf8");
 const dockerfile = readFileSync("worker/garment-rig/Dockerfile", "utf8");
 const analyzer = readFileSync("worker/garment-rig/avatar_analyzer.py", "utf8");
 const segmenter = readFileSync("worker/garment-rig/anatomy_segmenter.py", "utf8");
+const segmenterV3 = readFileSync("worker/garment-rig/anatomy_segmenter_v3.py", "utf8");
+const anatomyBvh = readFileSync("worker/garment-rig/anatomy_bvh.py", "utf8");
+const technicalPasses = readFileSync("worker/garment-rig/technical_passes.py", "utf8");
+const projector = readFileSync("worker/garment-rig/landmark_projector_3d.py", "utf8");
 const triangulator = readFileSync("worker/garment-rig/ray_triangulator.py", "utf8");
-const fingerCenterline = readFileSync("worker/garment-rig/finger_centerline.py", "utf8");
+const limbCenterline = readFileSync("worker/garment-rig/limb_centerline.py", "utf8");
+const geodesics = readFileSync("worker/garment-rig/mesh_geodesics.py", "utf8");
+const crossSections = readFileSync("worker/garment-rig/cross_section_analyzer.py", "utf8");
+const handTopology = readFileSync("worker/garment-rig/hand_topology_segmenter.py", "utf8");
+const medialGraph = readFileSync("worker/garment-rig/hand_medial_graph.py", "utf8");
+const branchDetector = readFileSync("worker/garment-rig/finger_branch_detector.py", "utf8");
 const handAnalyzer = readFileSync("worker/garment-rig/hand_analyzer.py", "utf8");
 const detector2d = readFileSync("worker/garment-rig/landmark_detector_2d.py", "utf8");
 const diagnosticBuilder = readFileSync("worker/garment-rig/diagnostic_builder.py", "utf8");
+const multiview = readFileSync("worker/garment-rig/multiview_renderer.py", "utf8");
 const analyzerPanel = readFileSync("components/library/AvatarAnalyzerPreview.tsx", "utf8");
+
 
 test("el autorig de avatar no puede volver a llamar la ruta de rigging de Meshy", () => {
   const offenders = sourceFiles.filter((file) => readFileSync(file, "utf8").includes(forbiddenRiggingRoute));
@@ -74,12 +86,7 @@ test("Blender guarda el resultado en Supabase y actualiza el avatar activo", () 
 });
 
 test("la interfaz muestra las cuatro etapas oficiales de Blender", () => {
-  for (const label of [
-    "Preparando avatar en Blender",
-    "Creando esqueleto",
-    "Asignando pesos",
-    "Listo para Unreal",
-  ]) {
+  for (const label of ["Preparando avatar en Blender", "Creando esqueleto", "Asignando pesos", "Listo para Unreal"]) {
     assert.ok(rigRoute.includes(label), `Falta la etapa ${label} en la API`);
     assert.ok(libraryButton.includes(label), `Falta la etapa ${label} en la interfaz`);
   }
@@ -142,45 +149,81 @@ test("el Worker conserva temporalmente el contrato web V15 pero adjunta la prueb
   assert.match(workerApp, /weightedRatio.*0\.995/s);
 });
 
-test("Avatar Analyzer V2 segmenta regiones antes de buscar superficie", () => {
-  assert.match(analyzer, /segment_anatomy/);
-  assert.match(analyzer, /named-anatomy-region-nearest-surface-v2/);
-  assert.match(segmenter, /upper_arm_l/);
-  assert.match(segmenter, /forearm_l/);
-  assert.match(segmenter, /hand_l/);
-  assert.match(segmenter, /def _refine_arm/);
-  assert.match(segmenter, /def _refine_leg/);
-  assert.match(segmenter, /signed_lateral/);
-  assert.doesNotMatch(analyzer, /same-side-nearest-mesh-anchor-v2/);
+test("Avatar Analyzer V3 proyecta contra BVH exclusivos de la región renderizada", () => {
+  assert.match(analyzer, /build_anatomy_bvh/);
+  assert.match(anatomyBvh, /class AnatomyBVH/);
+  assert.match(anatomyBvh, /BVHTree\.FromPolygons/);
+  assert.match(anatomyBvh, /source_polygon/);
+  assert.match(anatomyBvh, /source_vertices/);
+  assert.match(multiview, /anatomy_bvh\.proxy/);
+  assert.match(projector, /anatomy_bvh\.ray_cast/);
+  assert.match(projector, /exact-region-bvh-plus-technical-pass-v3/);
+  assert.doesNotMatch(projector, /category in allowed_classes[\s\S]*return \{/);
 });
 
-test("cara y manos usan triangulación en lugar de promediar impactos", () => {
-  assert.match(triangulator, /robust_ray_triangulation/);
-  assert.match(triangulator, /_least_squares/);
-  assert.match(handAnalyzer, /triangulate_landmark/);
-  assert.match(handAnalyzer, /segmentation\.hand_measurement/);
-  assert.doesNotMatch(handAnalyzer, /body_height\s*\*\s*0\.105/);
-  assert.doesNotMatch(handAnalyzer, /fuse_projected/);
+test("cada vista genera profundidad, normales, curvatura e IDs exactos", () => {
+  for (const token of ["depth.npy", "normal.npy", "curvature.npy", "region_id.npy", "object_id.npy", "triangle_id.npy"]) {
+    assert.ok(technicalPasses.includes(token), `Falta pase técnico ${token}`);
+  }
+  assert.match(technicalPasses, /anatomy_bvh\.ray_cast/);
+  assert.match(projector, /depthResidual/);
+  assert.match(projector, /normalCompatibility/);
+  assert.match(projector, /regionCompatibility/);
+  assert.match(triangulator, /TECHNICAL_EVIDENCE_GATE_FAILED/);
+  assert.match(triangulator, /depth_confidence/);
+  assert.match(triangulator, /normal_confidence/);
 });
 
-test("MediaPipe emite exactamente una referencia canónica por articulación de mano", () => {
-  assert.match(detector2d, /"handLandmarkCount": len\(HAND_MAP\)/);
+test("brazos y piernas usan grafos geodésicos y secciones, no porcentajes finales", () => {
+  assert.match(geodesics, /class RegionGraph/);
+  assert.match(geodesics, /def dijkstra/);
+  assert.match(limbCenterline, /original-mesh-geodesic-centerline/);
+  assert.match(crossSections, /choose_joint_section/);
+  assert.match(segmenterV3, /preservesExternalRefinedVectors/);
+  assert.match(analyzer, /refine_limb_joints/);
+  assert.match(analyzer, /usesFixedPercentagesAsFinalAnswer/);
+});
+
+test("manos topology-first detectan ramas antes de asignar nombres MediaPipe", () => {
+  assert.match(medialGraph, /surface-geodesic-distal-maxima-plus-shared-prefix-v3/);
+  assert.match(handTopology, /detect_medial_branches/);
+  assert.match(branchDetector, /assign_finger_branches/);
+  assert.match(handTopology, /apply_finger_region_labels/);
+  assert.match(handAnalyzer, /build_anatomy_bvh/);
+  assert.match(handAnalyzer, /finger-region-bvh-v3/);
+  assert.match(handAnalyzer, /geometry_first_finger_branch/);
+  assert.doesNotMatch(handAnalyzer, /body_height\s*\*/);
+});
+
+test("MediaPipe usa RGB y bordes y no asigna confianza fija a todos los puntos", () => {
+  assert.match(detector2d, /edgePath/);
+  assert.match(detector2d, /_agreement_confidence/);
+  assert.match(detector2d, /detectorConfidence/);
+  assert.match(detector2d, /viewQualityConfidence/);
+  assert.doesNotMatch(detector2d, /"visualConfidence": 0\.88/);
   assert.doesNotMatch(detector2d, /"thumb_metacarpal"\s*:/);
-  assert.doesNotMatch(detector2d, /"index_metacarpal"\s*:/);
-  assert.doesNotMatch(detector2d, /"middle_metacarpal"\s*:/);
-  assert.doesNotMatch(detector2d, /"ring_metacarpal"\s*:/);
-  assert.doesNotMatch(detector2d, /"pinky_metacarpal"\s*:/);
 });
 
-test("cada dedo se refina contra su nube geométrica y se valida topológicamente", () => {
-  assert.match(fingerCenterline, /finger_cloud_assignment/);
-  assert.match(fingerCenterline, /cross_section_medial_refinement/);
-  assert.match(fingerCenterline, /FINGER_CHAINS_CROSS/);
-  assert.match(fingerCenterline, /FINGER_LATERAL_ORDER_INVALID/);
-  assert.match(fingerCenterline, /hand_scale/);
+test("el estado corporal distingue subsistemas y warnings bloqueantes", () => {
+  assert.match(analyzer, /body_core/);
+  assert.match(analyzer, /left_arm/);
+  assert.match(analyzer, /right_leg/);
+  assert.match(analyzer, /blockingWarnings/);
+  assert.match(analyzer, /nonBlockingWarnings/);
+  assert.match(analyzer, /BODY_INTERNAL_JOINT_OUTSIDE_REGION/);
 });
 
-test("el diagnóstico separa superficie, articulaciones internas y rechazados", () => {
+test("el diagnóstico V3 se conserva por run_id y acepta correcciones separadas", () => {
+  assert.match(analyzerWorker, /RUN_CACHE_ROOT/);
+  assert.match(analyzerWorker, /avatar_analysis_corrections\.json/);
+  assert.match(analyzerWorker, /\/avatar\/analyze\/result\/\{run_id\}/);
+  assert.match(analyzerWorker, /automaticPosition/);
+  assert.match(analyzerWorker, /correctedPosition/);
+  assert.doesNotMatch(analyzerWorker, /storage\.from\(/);
+});
+
+test("el diagnóstico sigue separado de Armature, pesos y avatar oficial", () => {
+  assert.doesNotMatch(analyzer, /create_fresh_schema_armature|bind_geometry_aware_weights/);
   assert.match(diagnosticBuilder, /internal_joint_position/);
   assert.match(diagnosticBuilder, /surface_display_position/);
   assert.match(diagnosticBuilder, /duplicateLandmarksHidden/);
