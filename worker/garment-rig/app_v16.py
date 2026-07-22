@@ -22,8 +22,8 @@ MAX_CONCURRENT_BLENDER_JOBS = current.MAX_CONCURRENT_BLENDER_JOBS
 BLENDER_SINGLE_FLIGHT_VERSION = current.BLENDER_SINGLE_FLIGHT_VERSION
 RIG_DIAGNOSTICS_VERSION = current.RIG_DIAGNOSTICS_VERSION
 CLEAN_ATTEMPT_VERSION = current.CLEAN_ATTEMPT_VERSION
-COMPLETE_AVATAR_RIG_VERSION = "v9-gltf-joint-roundtrip"
-COMPLETE_AVATAR_RIG_SCRIPT = Path(__file__).with_name("complete_avatar_rig_v9.py")
+COMPLETE_AVATAR_RIG_VERSION = "v11-head-midpoint-ears"
+COMPLETE_AVATAR_RIG_SCRIPT = Path(__file__).with_name("complete_avatar_rig_v11.py")
 RigWithUnrealMoldRequest = current.RigWithUnrealMoldRequest
 
 # Las rutas /avatar/complete-rig y /diagnostics/avatar-complete-rig fueron
