@@ -300,12 +300,34 @@ class MeshLandmarkDetector:
         head_top_z = _clamp(head_top_z, neck_z + self.height * 0.09, self.top_z)
         head_top, head_top_info = self.center_at(head_top_z, 0.30)
 
+        neck_factor = (neck_z - self.base_z) / self.height
+        head_top_factor = (head_top_z - self.base_z) / self.height
+        scan_start = min(head_top_factor - 0.03, neck_factor + 0.01)
+        scan_end = max(scan_start + 0.01, min(0.94, head_top_factor - 0.02))
+        head_sections = self.scan_sections(scan_start, scan_end, 14, lateral=0.31)
+        expanded = [
+            section for section in head_sections
+            if section["halfWidth"] >= neck_section["halfWidth"] * 1.35
+        ]
+        detected_skull_base_z = (
+            float(expanded[0]["z"])
+            if expanded
+            else head_top_z - self.height * 0.17
+        )
+        skull_base_z = _clamp(
+            detected_skull_base_z,
+            head_top_z - self.height * 0.195,
+            head_top_z - self.height * 0.105,
+        )
+        skull_base, skull_base_info = self.center_at(skull_base_z, 0.26)
+
         result = {
             "pelvis": pelvis,
             "lowerSpine": lower_spine,
             "midSpine": mid_spine,
             "chest": chest,
             "neckBase": neck_base,
+            "skullBase": skull_base,
             "headTop": head_top,
             "sides": {},
         }
@@ -314,6 +336,7 @@ class MeshLandmarkDetector:
             "spine": min(1.0, (len(lower_info["points"]) + len(mid_info["points"])) / 280.0),
             "chest": min(1.0, len(chest_info["points"]) / 160.0),
             "neck": min(1.0, len(neck_info["points"]) / 110.0),
+            "skullBase": min(1.0, len(skull_base_info["points"]) / 130.0),
             "head": min(1.0, max(len(central_head), len(head_top_info["points"])) / 220.0),
         }
 
@@ -456,14 +479,16 @@ def fit_fresh_armature_to_mesh(armature, meshes):
     mid_spine = landmarks["midSpine"]
     chest = landmarks["chest"]
     neck_base = landmarks["neckBase"]
+    skull_base = landmarks["skullBase"]
     head_top = landmarks["headTop"]
 
     set_bone("Hips", pelvis - Vector((0.0, 0.0, height * 0.025)), pelvis)
+    # Preserve the exact Unreal hierarchy declared in clouva_avatar_data.json.
     set_bone("Spine02", pelvis, lower_spine, "Hips", True)
     set_bone("Spine01", lower_spine, mid_spine, "Spine02", True)
     set_bone("Spine", mid_spine, chest, "Spine01", True)
-    set_bone("neck", chest, neck_base, "Spine", True)
-    set_bone("Head", neck_base, head_top, "neck", True)
+    set_bone("neck", chest, skull_base, "Spine", True)
+    set_bone("Head", skull_base, head_top, "neck", True)
     set_bone(
         "head_end",
         head_top,
@@ -475,8 +500,8 @@ def fit_fresh_armature_to_mesh(armature, meshes):
     forward = Vector((0.0, -1.0, 0.0))
     set_bone(
         "headfront",
-        neck_base.lerp(head_top, 0.56),
-        neck_base.lerp(head_top, 0.56) + forward * max(detector.depth * 0.32, height * 0.025),
+        skull_base.lerp(head_top, 0.56),
+        skull_base.lerp(head_top, 0.56) + forward * max(detector.depth * 0.32, height * 0.025),
         "Head",
         False,
         False,
@@ -550,6 +575,7 @@ def fit_fresh_armature_to_mesh(armature, meshes):
             "midSpine": [float(value) for value in mid_spine],
             "chest": [float(value) for value in chest],
             "neckBase": [float(value) for value in neck_base],
+            "skullBase": [float(value) for value in skull_base],
             "headTop": [float(value) for value in head_top],
             "sides": report_sides,
         },
@@ -557,9 +583,10 @@ def fit_fresh_armature_to_mesh(armature, meshes):
         "minimumConfidence": minimum_confidence,
         "head": {
             "method": "mesh-neck-section-to-crown-v16",
-            "base": [float(value) for value in neck_base],
+            "base": [float(value) for value in skull_base],
+            "neckBase": [float(value) for value in neck_base],
             "crown": [float(value) for value in head_top],
-            "lengthRatio": float((head_top - neck_base).length / detector.height),
+            "lengthRatio": float((head_top - skull_base).length / detector.height),
             "terminalBone": "head_end",
         },
     }
