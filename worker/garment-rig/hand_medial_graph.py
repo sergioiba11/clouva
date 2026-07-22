@@ -56,9 +56,6 @@ def _local_maxima(graph: RegionGraph, distances: Dict, threshold: float):
 def _select_diverse_endpoints(graph: RegionGraph, wrist: Vector, candidates: Sequence,
                               distances: Dict, hand_scale: float, maximum: int = 5):
     selected = []
-    # Separate local maxima already represent distinct graph branches. Only merge
-    # endpoints that are almost coincident on the same distal cap; normal finger
-    # spacing can be much smaller than 17% of the full hand scale.
     duplicate_cap_distance = max(hand_scale * 0.075, 1e-5)
     ranked = sorted(candidates, key=lambda node: distances.get(node, 0.0), reverse=True)
     for node in ranked:
@@ -68,9 +65,6 @@ def _select_diverse_endpoints(graph: RegionGraph, wrist: Vector, candidates: Seq
             continue
         if any((point - graph.points[other]).length < duplicate_cap_distance for other in selected):
             continue
-        # Keep neighboring fingers even when their directions are similar. Treat
-        # two maxima as the same cap only when both direction and radial distance
-        # are virtually identical.
         normalized = direction.normalized()
         if any(
             normalized.dot((graph.points[other] - wrist).normalized()) > 0.9995
@@ -129,7 +123,6 @@ def detect_medial_branches(graph: RegionGraph, wrist: Vector, hand_scale: float,
     branches: List[HandBranch] = []
     for index, (endpoint, path) in enumerate(zip(endpoints, raw_paths)):
         shared_prefix = _shared_prefix_length(path, raw_paths)
-        # Retain one palm-connection point before the unique branch begins.
         start_index = max(0, shared_prefix - 1)
         unique_path = path[start_index:]
         points = path_points(graph, unique_path)
@@ -164,6 +157,6 @@ def detect_medial_branches(graph: RegionGraph, wrist: Vector, hand_scale: float,
         "endpointCount": len(endpoints),
         "branchCount": len(branches),
         "distanceThreshold": float(distance_threshold),
-        "duplicateCapDistance": float(duplicate_cap_distance),
+        "duplicateCapDistance": float(max(hand_scale * 0.075, 1e-5)),
         "method": "surface-geodesic-distal-maxima-plus-shared-prefix-v3",
     }
