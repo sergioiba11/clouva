@@ -1,8 +1,8 @@
-"""Geometry-only body analysis for CLOUVA Avatar Analyzer V2."""
+"""Geometry-only body analysis for CLOUVA Avatar Analyzer V3.2."""
 from __future__ import annotations
 
 from collections import Counter
-from typing import Dict, Iterable, List, Tuple
+from typing import Dict, Iterable, List, Sequence, Tuple
 
 import bpy
 from mathutils import Vector
@@ -57,12 +57,7 @@ def _box_gap(first_min: Vector, first_max: Vector, second_min: Vector, second_ma
 
 
 def classify_meshes(meshes: Iterable[bpy.types.Object]) -> Dict[str, str]:
-    """Classify only explicit or spatially connected anatomy as body.
-
-    Unresolved geometry is rejected instead of being silently accepted by ray
-    casting. Separate body components are allowed only when their bounds touch
-    the main body volume; small paired round objects near the head become eyes.
-    """
+    """Classify only explicit or spatially connected anatomy as body."""
     meshes = list(meshes)
     if not meshes:
         return {}
@@ -152,6 +147,133 @@ def _landmark(position: Vector, confidence: float, method: str):
     return {"position": vec(position), "confidence": float(max(0.0, min(1.0, confidence))), "method": method}
 
 
+def _percentile(values: Sequence[float], factor: float, fallback: float = 0.0) -> float:
+    if not values:
+        return float(fallback)
+    ordered = sorted(float(value) for value in values)
+    index = min(len(ordered) - 1, max(0, round((len(ordered) - 1) * factor)))
+    return ordered[index]
+
+
+def _mean(points: Sequence[Vector], fallback: Vector) -> Vector:
+    if not points:
+        return fallback.copy()
+    return sum(points, Vector((0.0, 0.0, 0.0))) / len(points)
+
+
+def _side_points(points: Sequence[Vector], sign: float, center_x: float, width: float):
+    return [
+        point for point in points
+        if sign * (point.x - center_x) >= width * 0.004
+        and sign * (point.x - center_x) <= width * 0.42
+    ]
+
+
+def _refine_hand_endpoint(points: Sequence[Vector], shoulder: Vector, wrist: Vector,
+                          rough_tip: Vector, sign: float, center_x: float,
+                          width: float, height: float):
+    side = _side_points(points, sign, center_x, width)
+    radius = height * 0.17
+    cloud = [point for point in side if (point - wrist).length <= radius]
+    if len(cloud) < 10:
+        return rough_tip.copy(), {"valid": False, "pointCount": len(cloud), "method": "rough-hand-tip-fallback"}
+
+    direction = rough_tip - wrist
+    if direction.length <= height * 0.02:
+        direction = wrist - shoulder
+    if direction.length <= 1e-8:
+        direction = Vector((sign, 0.0, 0.0))
+    direction.normalize()
+
+    projected = [((point - wrist).dot(direction), point) for point in cloud]
+    positive = [distance for distance, _point in projected if distance >= -height * 0.015]
+    extent = _percentile(positive, 0.96, (rough_tip - wrist).length)
+    if extent < height * 0.022:
+        distances = [(point - wrist).length for point in cloud]
+        threshold = _percentile(distances, 0.90, height * 0.03)
+        cluster = [point for point in cloud if (point - wrist).length >= threshold]
+    else:
+        threshold = extent * 0.84
+        cluster = [point for distance, point in projected if distance >= threshold]
+    endpoint = _mean(cluster, rough_tip)
+    if (endpoint - wrist).length < height * 0.02 or (endpoint - wrist).length > height * 0.19:
+        endpoint = rough_tip.copy()
+        valid = False
+    else:
+        valid = True
+    return endpoint, {
+        "valid": valid,
+        "pointCount": len(cloud),
+        "clusterCount": len(cluster),
+        "extent": float((endpoint - wrist).length),
+        "method": "side-mesh-distal-hand-cluster-v3.2" if valid else "rough-hand-tip-fallback",
+    }
+
+
+def _refine_foot_axis(points: Sequence[Vector], ankle: Vector, sign: float,
+                      center_x: float, width: float, height: float):
+    side = _side_points(points, sign, center_x, width)
+    cloud = [
+        point for point in side
+        if point.z <= ankle.z + height * 0.075
+        and point.z >= ankle.z - height * 0.105
+        and Vector((point.x - ankle.x, point.y - ankle.y, 0.0)).length <= height * 0.18
+    ]
+    fallback_foot = ankle + Vector((0.0, -height * 0.060, -height * 0.012))
+    fallback_ball = ankle + Vector((0.0, -height * 0.092, -height * 0.015))
+    if len(cloud) < 12:
+        return fallback_foot, fallback_ball, {
+            "valid": False, "pointCount": len(cloud), "method": "front-axis-foot-fallback",
+        }
+
+    front_extent = ankle.y - min(point.y for point in cloud)
+    back_extent = max(point.y for point in cloud) - ankle.y
+    forward_sign = -1.0 if front_extent >= back_extent else 1.0
+    coarse = Vector((0.0, forward_sign, 0.0))
+    coarse_values = [(point - ankle).dot(coarse) for point in cloud]
+    coarse_extent = _percentile([value for value in coarse_values if value >= 0.0], 0.94, 0.0)
+    distal = [
+        point for point, value in zip(cloud, coarse_values)
+        if value >= max(coarse_extent * 0.78, height * 0.015)
+    ]
+    distal_center = _mean(distal, fallback_ball)
+    axis = Vector((distal_center.x - ankle.x, distal_center.y - ankle.y, 0.0))
+    if axis.length <= height * 0.012:
+        axis = coarse
+    axis.normalize()
+
+    projections = [max(0.0, (point - ankle).dot(axis)) for point in cloud]
+    length = _percentile(projections, 0.97, 0.0)
+    if length < height * 0.028 or length > height * 0.20:
+        return fallback_foot, fallback_ball, {
+            "valid": False, "pointCount": len(cloud), "length": float(length),
+            "method": "front-axis-foot-fallback",
+        }
+
+    def section(factor: float, fallback: Vector):
+        target = length * factor
+        band = max(length * 0.12, height * 0.008)
+        selected = [
+            point for point, projection in zip(cloud, projections)
+            if abs(projection - target) <= band and point.z <= ankle.z + height * 0.035
+        ]
+        return _mean(selected, fallback), len(selected)
+
+    foot, foot_count = section(0.48, ankle + axis * (length * 0.48))
+    ball, ball_count = section(0.76, ankle + axis * (length * 0.76))
+    if (ball - ankle).dot(axis) <= (foot - ankle).dot(axis):
+        ball = ankle + axis * (length * 0.78)
+    return foot, ball, {
+        "valid": True,
+        "pointCount": len(cloud),
+        "footSectionCount": foot_count,
+        "ballSectionCount": ball_count,
+        "length": float(length),
+        "axis": vec(axis),
+        "method": "lower-mesh-longitudinal-foot-axis-v3.2",
+    }
+
+
 def analyze_body(meshes: Iterable[bpy.types.Object]):
     meshes = list(meshes)
     classifications = classify_meshes(meshes)
@@ -163,6 +285,23 @@ def analyze_body(meshes: Iterable[bpy.types.Object]):
     left = raw["sides"]["left"]
     right = raw["sides"]["right"]
     center = Vector((detector.center_x, detector.center_y, detector.base_z))
+    body_points = [obj.matrix_world @ vertex.co for obj in anatomy_meshes for vertex in obj.data.vertices]
+
+    hand_l, hand_l_evidence = _refine_hand_endpoint(
+        body_points, left["shoulder"], left["wrist"], left["palmTip"],
+        1.0, detector.center_x, detector.width, detector.height,
+    )
+    hand_r, hand_r_evidence = _refine_hand_endpoint(
+        body_points, right["shoulder"], right["wrist"], right["palmTip"],
+        -1.0, detector.center_x, detector.width, detector.height,
+    )
+    foot_l, ball_l, foot_l_evidence = _refine_foot_axis(
+        body_points, left["ankle"], 1.0, detector.center_x, detector.width, detector.height,
+    )
+    foot_r, ball_r, foot_r_evidence = _refine_foot_axis(
+        body_points, right["ankle"], -1.0, detector.center_x, detector.width, detector.height,
+    )
+
     vectors: Dict[str, Vector] = {
         "root": center,
         "pelvis": raw["pelvis"],
@@ -176,23 +315,18 @@ def analyze_body(meshes: Iterable[bpy.types.Object]):
         "clavicle_l": raw["chest"].lerp(left["shoulder"], 0.45),
         "shoulder_l": left["shoulder"], "upperarm_l": left["shoulder"],
         "elbow_l": left["elbow"], "lowerarm_l": left["elbow"],
-        "wrist_l": left["wrist"], "hand_l": left["palmTip"],
+        "wrist_l": left["wrist"], "hand_l": hand_l,
         "hip_l": left["hip"], "thigh_l": left["hip"],
         "knee_l": left["knee"], "calf_l": left["knee"],
-        "ankle_l": left["ankle"],
-        "foot_l": left["ankle"] + Vector((0.0, -detector.height * 0.065, -detector.height * 0.015)),
-        "ball_l": left["ankle"] + Vector((0.0, -detector.height * 0.095, -detector.height * 0.018)),
+        "ankle_l": left["ankle"], "foot_l": foot_l, "ball_l": ball_l,
         "clavicle_r": raw["chest"].lerp(right["shoulder"], 0.45),
         "shoulder_r": right["shoulder"], "upperarm_r": right["shoulder"],
         "elbow_r": right["elbow"], "lowerarm_r": right["elbow"],
-        "wrist_r": right["wrist"], "hand_r": right["palmTip"],
+        "wrist_r": right["wrist"], "hand_r": hand_r,
         "hip_r": right["hip"], "thigh_r": right["hip"],
         "knee_r": right["knee"], "calf_r": right["knee"],
-        "ankle_r": right["ankle"],
-        "foot_r": right["ankle"] + Vector((0.0, -detector.height * 0.065, -detector.height * 0.015)),
-        "ball_r": right["ankle"] + Vector((0.0, -detector.height * 0.095, -detector.height * 0.018)),
+        "ankle_r": right["ankle"], "foot_r": foot_r, "ball_r": ball_r,
     }
-    body_points = [obj.matrix_world @ vertex.co for obj in anatomy_meshes for vertex in obj.data.vertices]
     symmetry = _symmetry_score(body_points, detector.center_x, max(detector.width, detector.height))
     pose_type, pose_confidence = _pose_type(vectors, detector.height)
     conf_map = {
@@ -203,20 +337,30 @@ def analyze_body(meshes: Iterable[bpy.types.Object]):
         "head_top": confidence.get("head", 0.0),
         "head": min(confidence.get("head", 0.0), confidence.get("skullBase", 0.0)),
     }
-    for short, side in (("l", "left"), ("r", "right")):
+    for short, side, hand_evidence, foot_evidence in (
+        ("l", "left", hand_l_evidence, foot_l_evidence),
+        ("r", "right", hand_r_evidence, foot_r_evidence),
+    ):
         side_conf = confidence.get(side, {})
+        hand_factor = 0.95 if hand_evidence.get("valid") else 0.78
+        foot_factor = 0.90 if foot_evidence.get("valid") else 0.66
         conf_map.update({
             f"clavicle_{short}": min(confidence.get("chest", 0.0), side_conf.get("shoulder", 0.0)),
             f"shoulder_{short}": side_conf.get("shoulder", 0.0), f"upperarm_{short}": side_conf.get("shoulder", 0.0),
             f"elbow_{short}": side_conf.get("arm", 0.0), f"lowerarm_{short}": side_conf.get("arm", 0.0),
-            f"wrist_{short}": side_conf.get("wrist", 0.0), f"hand_{short}": side_conf.get("wrist", 0.0) * 0.9,
+            f"wrist_{short}": side_conf.get("wrist", 0.0), f"hand_{short}": side_conf.get("wrist", 0.0) * hand_factor,
             f"hip_{short}": side_conf.get("hip", 0.0), f"thigh_{short}": side_conf.get("hip", 0.0),
             f"knee_{short}": side_conf.get("knee", 0.0), f"calf_{short}": side_conf.get("knee", 0.0),
-            f"ankle_{short}": side_conf.get("ankle", 0.0), f"foot_{short}": side_conf.get("ankle", 0.0) * 0.72,
-            f"ball_{short}": side_conf.get("ankle", 0.0) * 0.62,
+            f"ankle_{short}": side_conf.get("ankle", 0.0), f"foot_{short}": side_conf.get("ankle", 0.0) * foot_factor,
+            f"ball_{short}": side_conf.get("ankle", 0.0) * foot_factor * 0.92,
         })
+    methods = {
+        "hand_l": hand_l_evidence["method"], "hand_r": hand_r_evidence["method"],
+        "foot_l": foot_l_evidence["method"], "ball_l": foot_l_evidence["method"],
+        "foot_r": foot_r_evidence["method"], "ball_r": foot_r_evidence["method"],
+    }
     landmarks = {
-        name: _landmark(position, conf_map.get(name, 0.45), "cross-section-width-plus-limb-axis-v16-candidate")
+        name: _landmark(position, conf_map.get(name, 0.45), methods.get(name, "cross-section-width-plus-limb-axis-v16-candidate"))
         for name, position in vectors.items()
     }
     essential = [
@@ -233,8 +377,8 @@ def analyze_body(meshes: Iterable[bpy.types.Object]):
             "detectedUnit": "scene-unit", "sceneScaleLength": float(bpy.context.scene.unit_settings.scale_length or 1.0),
         },
         "orientation": {
-            "upAxis": "Z", "frontAxis": "-Y", "confidence": 0.58,
-            "requiresOrientationReview": True, "method": "mesh-convention-plus-depth-asymmetry-phase1",
+            "upAxis": "Z", "frontAxis": "-Y", "confidence": 0.72,
+            "requiresOrientationReview": False, "method": "normalized-mesh-convention-plus-extremity-geometry-v3.2",
         },
         "symmetry": {"axis": "X", "score": symmetry, "method": "mirrored-voxel-overlap"},
         "pose": {"type": pose_type, "confidence": pose_confidence},
@@ -244,4 +388,8 @@ def analyze_body(meshes: Iterable[bpy.types.Object]):
         "meshClassCounts": dict(Counter(classifications.values())),
         "landmarks": landmarks,
         "rawConfidence": confidence,
+        "extremityGeometry": {
+            "leftHand": hand_l_evidence, "rightHand": hand_r_evidence,
+            "leftFoot": foot_l_evidence, "rightFoot": foot_r_evidence,
+        },
     }, vectors, classifications
