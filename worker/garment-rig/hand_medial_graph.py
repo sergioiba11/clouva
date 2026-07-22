@@ -56,20 +56,26 @@ def _local_maxima(graph: RegionGraph, distances: Dict, threshold: float):
 def _select_diverse_endpoints(graph: RegionGraph, wrist: Vector, candidates: Sequence,
                               distances: Dict, hand_scale: float, maximum: int = 5):
     selected = []
-    minimum_separation = max(hand_scale * 0.17, 1e-5)
+    # Separate local maxima already represent distinct graph branches. Only merge
+    # endpoints that are almost coincident on the same distal cap; normal finger
+    # spacing can be much smaller than 17% of the full hand scale.
+    duplicate_cap_distance = max(hand_scale * 0.075, 1e-5)
     ranked = sorted(candidates, key=lambda node: distances.get(node, 0.0), reverse=True)
     for node in ranked:
         point = graph.points[node]
         direction = point - wrist
         if direction.length <= hand_scale * 0.34:
             continue
-        if any((point - graph.points[other]).length < minimum_separation for other in selected):
+        if any((point - graph.points[other]).length < duplicate_cap_distance for other in selected):
             continue
-        # Avoid selecting two local maxima from the same distal cap.
+        # Keep neighboring fingers even when their directions are similar. Treat
+        # two maxima as the same cap only when both direction and radial distance
+        # are virtually identical.
         normalized = direction.normalized()
         if any(
-            normalized.dot((graph.points[other] - wrist).normalized()) > 0.992
-            and abs(direction.length - (graph.points[other] - wrist).length) < hand_scale * 0.22
+            normalized.dot((graph.points[other] - wrist).normalized()) > 0.9995
+            and abs(direction.length - (graph.points[other] - wrist).length) < hand_scale * 0.045
+            and (point - graph.points[other]).length < hand_scale * 0.10
             for other in selected
         ):
             continue
@@ -158,5 +164,6 @@ def detect_medial_branches(graph: RegionGraph, wrist: Vector, hand_scale: float,
         "endpointCount": len(endpoints),
         "branchCount": len(branches),
         "distanceThreshold": float(distance_threshold),
+        "duplicateCapDistance": float(duplicate_cap_distance),
         "method": "surface-geodesic-distal-maxima-plus-shared-prefix-v3",
     }
