@@ -117,12 +117,6 @@ def _contains_family(info: ComponentInfo, family: Sequence[str]):
 
 
 def _rank_assign(items: List[ComponentInfo], names: Sequence[str], key):
-    """Assign disconnected pieces by proximal-to-distal order.
-
-    It is only used when at least two independent connected components provide
-    evidence for the same limb side. A connected production avatar never enters
-    this fallback.
-    """
     if len(items) < 2:
         return {}
     ordered = sorted(items, key=key)
@@ -146,8 +140,25 @@ def _family_evidence(info: ComponentInfo, family: Sequence[str], corridor: dict 
     return bool(corridor and corridor.get("region") in family)
 
 
+def _arm_spatial_evidence(info: ComponentInfo, sign: float, center_x: float,
+                          width: float, height: float, refined: Dict[str, Vector]):
+    lateral = sign * (info.center.x - center_x)
+    lower = refined["pelvis"].z - height * 0.07
+    upper = refined["neck"].z + height * 0.09
+    return lateral >= width * 0.055 and lower <= info.center.z <= upper
+
+
+def _leg_spatial_evidence(info: ComponentInfo, sign: float, center_x: float,
+                          width: float, height: float, refined: Dict[str, Vector]):
+    lateral = sign * (info.center.x - center_x)
+    upper = refined["pelvis"].z + height * 0.09
+    lower = min(refined["foot_l"].z, refined["foot_r"].z) - height * 0.10
+    return lateral >= width * 0.018 and lower <= info.center.z <= upper
+
+
 def _disconnected_chain_assignments(infos: List[ComponentInfo], center_x: float,
-                                    specs: dict, width: float):
+                                    specs: dict, width: float, height: float,
+                                    refined: Dict[str, Vector]):
     assignments = {}
     diagnostics = []
     corridors = {
@@ -159,7 +170,10 @@ def _disconnected_chain_assignments(infos: List[ComponentInfo], center_x: float,
         arm_items = [
             info for info in infos
             if sign * (info.center.x - center_x) > 0.0
-            and _family_evidence(info, arm_names, corridors.get(id(info)))
+            and (
+                _family_evidence(info, arm_names, corridors.get(id(info)))
+                or _arm_spatial_evidence(info, sign, center_x, width, height, refined)
+            )
         ]
         arm_assignments = _rank_assign(
             arm_items,
@@ -178,17 +192,23 @@ def _disconnected_chain_assignments(infos: List[ComponentInfo], center_x: float,
                         "region": arm_assignments.get(id(info)),
                         "corridor": corridors.get(id(info)),
                         "labelEvidence": dict(info.labels),
+                        "spatialEvidence": _arm_spatial_evidence(
+                            info, sign, center_x, width, height, refined,
+                        ),
                     }
                     for info in sorted(arm_items, key=lambda value: sign * (value.center.x - center_x))
                 ],
-                "method": "disconnected-proximal-to-distal-lateral-order-plus-corridor-evidence",
+                "method": "disconnected-proximal-to-distal-lateral-order-plus-spatial-evidence",
             })
 
         leg_names = (f"thigh_{suffix}", f"calf_{suffix}", f"foot_{suffix}")
         leg_items = [
             info for info in infos
             if sign * (info.center.x - center_x) >= -1e-6
-            and _family_evidence(info, leg_names, corridors.get(id(info)))
+            and (
+                _family_evidence(info, leg_names, corridors.get(id(info)))
+                or _leg_spatial_evidence(info, sign, center_x, width, height, refined)
+            )
         ]
         leg_assignments = _rank_assign(
             leg_items,
@@ -207,23 +227,26 @@ def _disconnected_chain_assignments(infos: List[ComponentInfo], center_x: float,
                         "region": leg_assignments.get(id(info)),
                         "corridor": corridors.get(id(info)),
                         "labelEvidence": dict(info.labels),
+                        "spatialEvidence": _leg_spatial_evidence(
+                            info, sign, center_x, width, height, refined,
+                        ),
                     }
                     for info in sorted(leg_items, key=lambda value: -value.center.z)
                 ],
-                "method": "disconnected-proximal-to-distal-vertical-order-plus-corridor-evidence",
+                "method": "disconnected-proximal-to-distal-vertical-order-plus-spatial-evidence",
             })
     return assignments, diagnostics, corridors
 
 
 def _cohere_small_components(obj: bpy.types.Object, object_labels: List[str],
-                             specs: dict, center_x: float, width: float):
+                             specs: dict, center_x: float, width: float,
+                             height: float, refined: Dict[str, Vector]):
     total = max(len(object_labels), 1)
     changes = []
     infos = _component_infos(obj, object_labels)
     chain_assignments, chain_diagnostics, corridors = _disconnected_chain_assignments(
-        infos, center_x, specs, width,
+        infos, center_x, specs, width, height, refined,
     )
-
     for info in infos:
         if len(info.indices) > total * 0.30 or len(info.indices) < 4:
             continue
@@ -238,7 +261,6 @@ def _cohere_small_components(obj: bpy.types.Object, object_labels: List[str],
         support = plurality_count / float(len(info.indices))
         margin = (plurality_count - second_count) / float(len(info.indices))
         corridor = corridors.get(id(info))
-
         selected_region = chain_assignments.get(id(info))
         selection_method = "disconnected-chain-order" if selected_region else None
         if selected_region is None and corridor is not None:
@@ -312,7 +334,7 @@ def segment_anatomy_v3(meshes: Iterable[bpy.types.Object], classifications: Dict
                 point, refined, center_x, width, height,
             )
         changes, chain_report = _cohere_small_components(
-            obj, object_labels, specs, center_x, width,
+            obj, object_labels, specs, center_x, width, height, refined,
         )
         component_changes.extend(changes)
         chain_diagnostics.extend(chain_report)
@@ -338,7 +360,7 @@ def segment_anatomy_v3(meshes: Iterable[bpy.types.Object], classifications: Dict
         ),
     }
     diagnostics = {
-        "method": "geodesic-cross-section-vectors-plus-disconnected-chain-corridors-v3",
+        "method": "geodesic-cross-section-vectors-plus-disconnected-spatial-chain-order-v3",
         "limbRefinement": refinement_diagnostics or {},
         "rejectedObjects": rejected_objects,
         "componentCoherence": component_changes,
