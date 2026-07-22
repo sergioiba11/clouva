@@ -12,6 +12,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Box3, Vector3 } from "three";
 import type { Object3D, SkinnedMesh } from "three";
 import { CreatorStudioAvatarViewer, type CreatorPoseMode } from "@/components/creator-studio/CreatorStudioAvatarViewer";
 import { RiggedGarmentReviewViewer } from "@/components/library/RiggedGarmentReviewViewer";
@@ -36,6 +37,10 @@ type RuntimeRigDiagnostics = {
   rightFingerChains: number;
   leftEar: boolean;
   rightEar: boolean;
+  headPresent: boolean;
+  headGeometryOk: boolean;
+  fingerGeometryOk: boolean;
+  earGeometryOk: boolean;
   weightedVertices: number;
   totalVertices: number;
   weightedRatio: number;
@@ -88,12 +93,29 @@ function isArmatureContainer(object: any, cleanName: string) {
   return Array.isArray(object?.children) && object.children.some((child: any) => child?.isBone);
 }
 
+function generatedFingerInfo(rawName: string) {
+  const match = rawName.toLowerCase().match(/^clouva_(thumb|index|middle|ring|pinky)_(\d{2})_([lr])$/);
+  if (!match) return null;
+  return {
+    finger: match[1],
+    segment: Number(match[2]),
+    side: match[3] === "l" ? "left" as const : "right" as const,
+  };
+}
+
 function inspectRig(root: Object3D): RuntimeRigDiagnostics {
   const bones = new Set<Object3D>();
+  const boneList: Object3D[] = [];
   const leftFingers = new Set<string>();
   const rightFingers = new Set<string>();
+  const generatedFingers = new Map<string, Object3D>();
   let leftEar = false;
   let rightEar = false;
+  let leftEarBone: Object3D | null = null;
+  let rightEarBone: Object3D | null = null;
+  let headBone: Object3D | null = null;
+  let leftHandBone: Object3D | null = null;
+  let rightHandBone: Object3D | null = null;
   let skinnedMeshCount = 0;
   let weightedVertices = 0;
   let totalVertices = 0;
@@ -109,16 +131,42 @@ function inspectRig(root: Object3D): RuntimeRigDiagnostics {
     const cleanName = normalizedName(rawName);
 
     if (object.isBone) {
-      bones.add(object as Object3D);
+      const bone = object as Object3D;
+      bones.add(bone);
+      boneList.push(bone);
       const side = sideOfBone(rawName, cleanName);
+      const generated = generatedFingerInfo(rawName);
+
       for (const finger of FINGER_NAMES) {
         if (!cleanName.includes(finger)) continue;
         if (side === "left") leftFingers.add(finger);
         if (side === "right") rightFingers.add(finger);
       }
+      if (generated) {
+        generatedFingers.set(`${generated.side}:${generated.finger}:${generated.segment}`, bone);
+      }
+
+      const exactHead = ["head", "headbone", "jbiphead", "bip01head"].includes(cleanName);
+      const anatomicalHead = cleanName.includes("head")
+        && !["end", "tip", "terminal", "effector"].some((token) => cleanName.includes(token));
+      if (!headBone && (exactHead || anatomicalHead)) headBone = bone;
+
+      if (!leftHandBone && side === "left" && cleanName.includes("hand") && !FINGER_NAMES.some((finger) => cleanName.includes(finger))) {
+        leftHandBone = bone;
+      }
+      if (!rightHandBone && side === "right" && cleanName.includes("hand") && !FINGER_NAMES.some((finger) => cleanName.includes(finger))) {
+        rightHandBone = bone;
+      }
+
       if (cleanName.includes("ear")) {
-        if (side === "left") leftEar = true;
-        if (side === "right") rightEar = true;
+        if (side === "left") {
+          leftEar = true;
+          leftEarBone = bone;
+        }
+        if (side === "right") {
+          rightEar = true;
+          rightEarBone = bone;
+        }
       }
       if (hasMarker(cleanName, ARM_MARKERS)) {
         if (side === "left") leftArm = true;
@@ -156,6 +204,82 @@ function inspectRig(root: Object3D): RuntimeRigDiagnostics {
     }
   });
 
+  const box = new Box3().setFromObject(root);
+  const center = box.getCenter(new Vector3());
+  const height = Math.max(box.max.y - box.min.y, 0.001);
+  const worldPosition = (object: Object3D) => object.getWorldPosition(new Vector3());
+  const insidePaddedBounds = (point: Vector3) => (
+    point.x >= box.min.x - height * 0.08
+    && point.x <= box.max.x + height * 0.08
+    && point.y >= box.min.y - height * 0.08
+    && point.y <= box.max.y + height * 0.08
+    && point.z >= box.min.z - height * 0.12
+    && point.z <= box.max.z + height * 0.12
+  );
+
+  if (!headBone && boneList.length) {
+    headBone = boneList
+      .map((bone) => ({ bone, point: worldPosition(bone), name: normalizedName(bone.name) }))
+      .filter(({ point, name }) => (
+        Math.abs(point.x - center.x) <= height * 0.18
+        && !["eye", "jaw", "mouth", "hand", "finger", "ear", "end", "tip"].some((token) => name.includes(token))
+      ))
+      .sort((a, b) => b.point.y - a.point.y)[0]?.bone ?? null;
+  }
+
+  const headPresent = Boolean(headBone);
+  const headGeometryOk = Boolean(headBone && (() => {
+    const point = worldPosition(headBone);
+    const relativeY = (point.y - box.min.y) / height;
+    return relativeY >= 0.68
+      && relativeY <= 0.98
+      && Math.abs(point.x - center.x) <= height * 0.20
+      && insidePaddedBounds(point);
+  })());
+
+  const chainGeometryOk = (side: "left" | "right", finger: string) => {
+    const first = generatedFingers.get(`${side}:${finger}:1`);
+    const second = generatedFingers.get(`${side}:${finger}:2`);
+    const third = generatedFingers.get(`${side}:${finger}:3`);
+    if (!first || !second || !third) return false;
+
+    const firstPoint = worldPosition(first);
+    const secondPoint = worldPosition(second);
+    const thirdPoint = worldPosition(third);
+    const firstLength = firstPoint.distanceTo(secondPoint);
+    const secondLength = secondPoint.distanceTo(thirdPoint);
+    const hand = side === "left" ? leftHandBone : rightHandBone;
+    const handLink = hand ? worldPosition(hand).distanceTo(firstPoint) : Number.POSITIVE_INFINITY;
+
+    return firstLength >= height * 0.003
+      && firstLength <= height * 0.035
+      && secondLength >= height * 0.003
+      && secondLength <= height * 0.035
+      && handLink <= height * 0.12
+      && insidePaddedBounds(firstPoint)
+      && insidePaddedBounds(secondPoint)
+      && insidePaddedBounds(thirdPoint);
+  };
+
+  const fingerGeometryOk = (["left", "right"] as const).every((side) => (
+    FINGER_NAMES.every((finger) => chainGeometryOk(side, finger))
+  ));
+
+  const earPositionOk = (ear: Object3D | null) => {
+    if (!ear) return false;
+    const point = worldPosition(ear);
+    const relativeY = (point.y - box.min.y) / height;
+    const lateral = Math.abs(point.x - center.x);
+    const depth = Math.abs(point.z - center.z);
+    return relativeY >= 0.70
+      && relativeY <= 0.98
+      && lateral >= height * 0.012
+      && lateral <= height * 0.16
+      && depth <= height * 0.18
+      && insidePaddedBounds(point);
+  };
+  const earGeometryOk = earPositionOk(leftEarBone) && earPositionOk(rightEarBone);
+
   const weightedRatio = totalVertices > 0 ? weightedVertices / totalVertices : 0;
   const namedLimbsReady = leftArm && rightArm && leftLeg && rightLeg;
   const structurallyCompleteRig = bones.size >= 40 && leftFingers.size >= 5 && rightFingers.size >= 5;
@@ -166,6 +290,10 @@ function inspectRig(root: Object3D): RuntimeRigDiagnostics {
     && rightFingers.size >= 5
     && leftEar
     && rightEar
+    && headPresent
+    && headGeometryOk
+    && fingerGeometryOk
+    && earGeometryOk
     && weightedRatio >= 0.995
     && localScaleOk
     && animationReady;
@@ -177,6 +305,10 @@ function inspectRig(root: Object3D): RuntimeRigDiagnostics {
     rightFingerChains: rightFingers.size,
     leftEar,
     rightEar,
+    headPresent,
+    headGeometryOk,
+    fingerGeometryOk,
+    earGeometryOk,
     weightedVertices,
     totalVertices,
     weightedRatio,
@@ -223,9 +355,9 @@ export function RigApprovalWorkspace({
     const next = inspectRig(root);
     setDiagnostics(next);
     if (next.valid) {
-      onStatus?.(`Rig cargado en el visor: ${next.boneCount} huesos, dedos, orejas, pesos y escala validados.`);
+      onStatus?.(`Rig cargado en el visor: ${next.boneCount} huesos, cabeza, cadenas de dedos, orejas, pesos y escala validados.`);
     } else {
-      onStatus?.("El rig se cargó, pero todavía tiene comprobaciones pendientes. Abrí Diagnóstico.");
+      onStatus?.("El rig se cargó, pero la geometría de cabeza, dedos u orejas todavía no es válida. Abrí Diagnóstico.");
     }
   }, [onStatus]);
 
@@ -235,6 +367,10 @@ export function RigApprovalWorkspace({
     rightFingerChains: diagnostics?.rightFingerChains ?? rigProfile?.fingers?.rightChains ?? 0,
     leftEar: diagnostics?.leftEar ?? rigProfile?.ears?.left ?? false,
     rightEar: diagnostics?.rightEar ?? rigProfile?.ears?.right ?? false,
+    headPresent: diagnostics?.headPresent ?? false,
+    headGeometryOk: diagnostics?.headGeometryOk ?? false,
+    fingerGeometryOk: diagnostics?.fingerGeometryOk ?? false,
+    earGeometryOk: diagnostics?.earGeometryOk ?? false,
     weightedRatio: diagnostics?.weightedRatio ?? ((rigProfile?.fingers?.weightedVertices ?? 0) > 0 ? 1 : 0),
     localScaleOk: diagnostics?.localScaleOk ?? false,
     animationReady: diagnostics?.animationReady ?? false,
@@ -316,9 +452,12 @@ export function RigApprovalWorkspace({
           </header>
           <ul>
             <DiagnosticRow ok={effective.boneCount >= 20}>Armature detectado · {effective.boneCount || "—"} huesos</DiagnosticRow>
+            <DiagnosticRow ok={effective.headPresent && effective.headGeometryOk}>Hueso de cabeza presente y dentro del cráneo</DiagnosticRow>
             <DiagnosticRow ok={effective.leftFingerChains >= 5}>5 dedos en mano izquierda · {effective.leftFingerChains}/5</DiagnosticRow>
             <DiagnosticRow ok={effective.rightFingerChains >= 5}>5 dedos en mano derecha · {effective.rightFingerChains}/5</DiagnosticRow>
+            <DiagnosticRow ok={effective.fingerGeometryOk}>Cadenas de tres falanges con longitud y posición válidas</DiagnosticRow>
             <DiagnosticRow ok={effective.leftEar && effective.rightEar}>Huesos de oreja izquierda y derecha</DiagnosticRow>
+            <DiagnosticRow ok={effective.earGeometryOk}>Orejas ubicadas a ambos lados de la cabeza</DiagnosticRow>
             <DiagnosticRow ok={effective.skinnedMeshCount > 0}>Malla vinculada al armature · {effective.skinnedMeshCount || "—"}</DiagnosticRow>
             <DiagnosticRow ok={effective.weightedRatio >= 0.995}>Vértices con peso · {(effective.weightedRatio * 100).toFixed(1)}%</DiagnosticRow>
             <DiagnosticRow ok={effective.localScaleOk}>Mesh y Armature con escala local 1,1,1</DiagnosticRow>
