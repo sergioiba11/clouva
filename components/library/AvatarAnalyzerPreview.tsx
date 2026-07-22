@@ -14,6 +14,9 @@ type AnalysisSummary = {
   leftHandAnalysis: string;
   rightHandAnalysis: string;
   landmarkCount: number;
+  verifiedSurfaceLandmarkCount?: number;
+  internalJointCount?: number;
+  rejectedLandmarkCount?: number;
   rawLandmarkCount?: number;
   hiddenLandmarkCount?: number;
   warningCount: number;
@@ -83,6 +86,8 @@ export function AvatarAnalyzerPreview() {
 
   if (authLoading || !user) return null;
 
+  const verified = summary?.verifiedSurfaceLandmarkCount ?? summary?.landmarkCount ?? 0;
+
   return (
     <section className={styles.card} aria-label="Avatar Analyzer CLOUVA">
       <div className={styles.glow} aria-hidden="true" />
@@ -91,7 +96,7 @@ export function AvatarAnalyzerPreview() {
         <div>
           <small>BLENDER WORKER · DIAGNÓSTICO</small>
           <h2>Avatar Analyzer</h2>
-          <p>Detecta cuerpo, rostro, orejas, manos y dedos antes de crear el rig.</p>
+          <p>Segmenta la anatomía, triangula rostro y manos y valida cada cadena antes del rig.</p>
         </div>
       </header>
 
@@ -107,7 +112,7 @@ export function AvatarAnalyzerPreview() {
             "shadow-intensity": "1",
             exposure: "1",
           })}
-          <span className={styles.viewerBadge}>SOLO PUNTOS DE SUPERFICIE VERIFICADOS</span>
+          <span className={styles.viewerBadge}>SUPERFICIE ANATÓMICA VERIFICADA</span>
         </div>
       ) : (
         <div className={styles.empty}>
@@ -121,18 +126,18 @@ export function AvatarAnalyzerPreview() {
         <>
           <div className={styles.summary}>
             <div><span>Resultado</span><strong>{statusLabel(summary.status)}</strong></div>
-            <div><span>Forma humanoide</span><strong>{Math.round(summary.humanoidConfidence * 100)}%</strong></div>
-            <div><span>Puntos verificados</span><strong>{summary.landmarkCount}</strong></div>
+            <div><span>Compatibilidad corporal humanoide</span><strong>{Math.round(summary.humanoidConfidence * 100)}%</strong></div>
+            <div><span>Superficie verificada</span><strong>{verified}</strong></div>
+            <div><span>Articulaciones internas</span><strong>{summary.internalJointCount ?? 0}</strong></div>
+            <div><span>Candidatos rechazados</span><strong>{summary.rejectedLandmarkCount ?? 0}</strong></div>
             <div><span>Cuerpo</span><strong>{statusLabel(summary.bodyAnalysis || "unknown")}</strong></div>
             <div><span>Rostro</span><strong>{statusLabel(summary.faceAnalysis)}</strong></div>
             <div><span>Mano izquierda</span><strong>{statusLabel(summary.leftHandAnalysis)}</strong></div>
             <div><span>Mano derecha</span><strong>{statusLabel(summary.rightHandAnalysis)}</strong></div>
-            <div><span>Ocultos por inválidos/internos</span><strong>{summary.hiddenLandmarkCount ?? 0}</strong></div>
-            <div><span>Advertencias</span><strong>{summary.warningCount}</strong></div>
           </div>
           {summary.status === "needs_review" || summary.status === "invalid" ? (
             <p className={styles.error}>
-              <TriangleAlert /> El análisis no está aprobado. Los puntos flotantes, repetidos o sin dos vistas confirmadas fueron ocultados.
+              <TriangleAlert /> Análisis anatómico pendiente de revisión. Todavía no se utilizará para crear el rig.
             </p>
           ) : null}
         </>
@@ -145,13 +150,13 @@ export function AvatarAnalyzerPreview() {
         disabled={analyzing || !session?.access_token}
       >
         {analyzing ? <Loader2 className={styles.spin} /> : previewUrl ? <RotateCcw /> : <BrainCircuit />}
-        {analyzing ? "ANALIZANDO CUERPO, CARA Y MANOS…" : previewUrl ? "VOLVER A ANALIZAR" : "ANALIZAR AVATAR"}
+        {analyzing ? "SEGMENTANDO Y TRIANGULANDO ANATOMÍA…" : previewUrl ? "VOLVER A ANALIZAR" : "ANALIZAR AVATAR"}
       </button>
 
       {analyzing ? (
         <div className={styles.processing}>
           <span />
-          <p>Blender genera vistas técnicas, MediaPipe detecta candidatos y el Worker conserva únicamente los que coinciden sobre la malla.</p>
+          <p>Blender separa regiones anatómicas, aísla cabeza y manos y triangula cada punto con varias cámaras.</p>
         </div>
       ) : null}
 
