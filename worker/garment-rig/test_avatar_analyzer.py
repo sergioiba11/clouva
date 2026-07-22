@@ -1,10 +1,15 @@
 """Blender smoke test for Avatar Analyzer phase 1 geometry and diagnostic GLB."""
 from __future__ import annotations
 
+import sys
 import tempfile
 from pathlib import Path
 
 import bpy
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
 from body_analyzer import analyze_body
 from diagnostic_builder import build_diagnostic_glb
