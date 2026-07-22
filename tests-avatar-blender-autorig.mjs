@@ -22,6 +22,10 @@ const sourceFiles = sourceRoots.flatMap(walk);
 const rigRoute = readFileSync("app/api/avatar/rig/route.ts", "utf8");
 const libraryButton = readFileSync("components/library/ActiveAvatarDownload.tsx", "utf8");
 const meshy = readFileSync("lib/meshy.ts", "utf8");
+const creatorStudio = readFileSync("components/creator-studio/CreatorStudioSimple.tsx", "utf8");
+const workerAutorig = readFileSync("worker/garment-rig/autorig_avatar_v12.py", "utf8");
+const workerApp = readFileSync("worker/garment-rig/app_v16.py", "utf8");
+const dockerfile = readFileSync("worker/garment-rig/Dockerfile", "utf8");
 
 test("el autorig de avatar no puede volver a llamar la ruta de rigging de Meshy", () => {
   const offenders = sourceFiles.filter((file) => readFileSync(file, "utf8").includes(forbiddenRiggingRoute));
@@ -47,8 +51,8 @@ test("AUTORIGGEAR AVATAR envía el original limpio al Blender Worker", () => {
 });
 
 test("un avatar terminado no vuelve a riggearse y un trabajo activo no se duplica", () => {
-  assert.match(rigRoute, /if \(alreadyRigged\) \{/);
-  assert.doesNotMatch(rigRoute, /alreadyRigged\s*&&\s*!force/);
+  assert.match(rigRoute, /if \(alreadyRigged && !retry\) \{/);
+  assert.match(rigRoute, /const retry = action === "retry"/);
   assert.match(rigRoute, /if \(jobIsActive\(storedJob, source\)\) \{/);
   assert.match(rigRoute, /resumed: true/);
 });
@@ -71,4 +75,22 @@ test("la interfaz muestra las cuatro etapas oficiales de Blender", () => {
     assert.ok(rigRoute.includes(label), `Falta la etapa ${label} en la API`);
     assert.ok(libraryButton.includes(label), `Falta la etapa ${label} en la interfaz`);
   }
+});
+
+
+test("Rehacer rig ejecuta Blender desde el original y no devuelve el rig anterior", () => {
+  assert.match(creatorStudio, /action: avatarRigReady \? "retry" : "create"/);
+  assert.match(rigRoute, /const createRequested = action === "create" \|\| retry/);
+  assert.match(rigRoute, /completeRigWithWorker\(source\.originalUrl\)/);
+  assert.match(rigRoute, /retry \? \{ job, profile: null \} : \{ job \}/);
+});
+
+test("el Worker crea un rig desde una malla limpia usando la referencia oficial de Unreal", () => {
+  assert.match(workerApp, /autorig_avatar_v12\.py/);
+  assert.match(workerAutorig, /import_original/);
+  assert.match(workerAutorig, /old_armatures/);
+  assert.match(workerAutorig, /canonicalize_and_validate_bones/);
+  assert.match(workerAutorig, /DATA_TRANSFER/);
+  assert.match(workerAutorig, /target-mesh-hand-envelope/);
+  assert.match(dockerfile, /test_autorig_avatar_v12\.py/);
 });
