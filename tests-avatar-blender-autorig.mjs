@@ -23,7 +23,7 @@ const rigRoute = readFileSync("app/api/avatar/rig/route.ts", "utf8");
 const libraryButton = readFileSync("components/library/ActiveAvatarDownload.tsx", "utf8");
 const meshy = readFileSync("lib/meshy.ts", "utf8");
 const creatorStudio = readFileSync("components/creator-studio/CreatorStudioSimple.tsx", "utf8");
-const workerAutorig = readFileSync("worker/garment-rig/autorig_avatar_v12.py", "utf8");
+const workerAutorig = readFileSync("worker/garment-rig/autorig_avatar_v16.py", "utf8");
 const workerApp = readFileSync("worker/garment-rig/app_v16.py", "utf8");
 const dockerfile = readFileSync("worker/garment-rig/Dockerfile", "utf8");
 
@@ -82,42 +82,54 @@ test("Rehacer rig ejecuta Blender desde el original y no devuelve el rig anterio
   assert.match(rigRoute, /const createRequested = action === "create" \|\| retry/);
   assert.match(rigRoute, /completeRigWithWorker\(source\.originalUrl\)/);
   assert.match(rigRoute, /retry \? \{ job, profile: null \} : \{ job \}/);
+  assert.match(workerAutorig, /import_original_fresh/);
+  assert.match(workerAutorig, /oldArmaturesRemoved/);
+  assert.match(workerAutorig, /vertexGroupsRemoved/);
 });
 
-test("el Worker crea un rig desde una malla limpia usando la referencia oficial de Unreal", () => {
-  assert.match(workerApp, /autorig_avatar_v12\.py/);
-  assert.match(workerAutorig, /import_original/);
-  assert.match(workerAutorig, /old_armatures/);
+test("AutoRig V16 crea un Armature nuevo desde CLOUVA_SKELETON_SCHEMA", () => {
+  assert.match(workerApp, /autorig_avatar_v16\.py/);
+  assert.match(workerAutorig, /create_fresh_schema_armature/);
+  assert.match(workerAutorig, /bpy\.data\.armatures\.new\("CLOUVA_SKELETON_SCHEMA"\)/);
+  assert.match(workerAutorig, /reusedArmature": False/);
   assert.match(workerAutorig, /canonicalize_and_validate_bones/);
-  assert.match(workerAutorig, /DATA_TRANSFER/);
-  assert.match(workerAutorig, /target-mesh-distal-axis-and-lateral-spread-v15/);
-  assert.match(dockerfile, /test_autorig_avatar_v12\.py/);
+  assert.match(dockerfile, /AutoRig V16 creates a brand-new 24-bone schema armature OK/);
 });
 
-test("cada Rehacer rig exige prueba criptográfica de una ejecución nueva de Blender V15", () => {
+test("cada Rehacer rig exige prueba criptográfica de una ejecución nueva", () => {
   assert.match(rigRoute, /EXPECTED_WORKER_RIG_VERSION = "v15-anatomical-landmark-autorig"/);
-  assert.match(rigRoute, /EXPECTED_PROFILE_VERSION = "clouva-blender-autorig-v15-skull-hand-axis"/);
   assert.match(rigRoute, /proof\.inputSha256 === proof\.outputSha256/);
   assert.match(workerAutorig, /uuid\.uuid4\(\)\.hex/);
   assert.match(workerAutorig, /sha256_file\(output_path\)/);
-  assert.match(creatorStudio, /Blender V15 ajustó cabeza, manos y articulaciones y creó un rig nuevo/);
+  assert.match(workerAutorig, /rigVersionId/);
+  assert.match(workerApp, /X-Clouva-Rig-Version-Id/);
 });
 
-test("AutoRig V15 ajusta cabeza y cada cadena con landmarks y usa pesos automáticos de Blender", () => {
-  assert.match(workerAutorig, /mesh-landmarks-per-chain-v15/);
-  assert.match(workerAutorig, /ARMATURE_AUTO/);
-  assert.match(workerAutorig, /automatic-heat-body-plus-projected-parts-v15/);
-  assert.match(rigRoute, /landmarkFit\?\.method !== "mesh-landmarks-per-chain-v15"/);
-  assert.match(workerAutorig, /mesh-skull-base-to-crown-v15/);
-  assert.match(workerAutorig, /target-mesh-distal-axis-and-lateral-spread-v15/);
-  assert.match(workerApp, /v15-anatomical-landmark-autorig/);
+test("AutoRig V16 detecta articulaciones sobre la malla y no escala un rig genérico", () => {
+  assert.match(workerAutorig, /class MeshLandmarkDetector/);
+  assert.match(workerAutorig, /cross-section-width-plus-limb-axis/);
+  assert.match(workerAutorig, /fresh-schema-mesh-landmarks-v16/);
+  assert.match(workerAutorig, /target-mesh-distal-axis-and-lateral-spread-v16/);
+  assert.match(workerAutorig, /mesh-neck-section-to-crown-v16/);
+  assert.match(workerAutorig, /skullBase/);
+  assert.doesNotMatch(workerAutorig, /import_reference\(/);
+  assert.doesNotMatch(workerAutorig, /fit_reference\(/);
 });
 
-test("el Worker V15 conserva el origen geométrico y responde el contrato esperado por la API", () => {
-  assert.match(workerApp, /V15_METHOD_SOURCE = "Blender geometry landmarks \+ official Unreal hierarchy"/);
-  assert.match(workerApp, /API_COMPATIBLE_RIG_SOURCE = "Blender official Unreal reference"/);
-  assert.match(workerApp, /profile\["rigMethodSource"\] = method_source/);
-  assert.match(workerApp, /profile\["rigSource"\] = API_COMPATIBLE_RIG_SOURCE/);
-  assert.match(workerApp, /landmarkFit.*mesh-landmarks-per-chain-v15/s);
+test("AutoRig V16 genera pesos nuevos, limita cuatro influencias y prueba articulaciones", () => {
+  assert.match(workerAutorig, /bind_geometry_aware_weights/);
+  assert.match(workerAutorig, /cleanup_weights_max_four/);
+  assert.match(workerAutorig, /maxInfluences": 4/);
+  assert.match(workerAutorig, /articulation_smoke_test/);
+  assert.match(workerAutorig, /non-destructive-articulation-smoke-test-v16/);
+  assert.match(workerAutorig, /poseValidation/);
+});
+
+test("el Worker conserva temporalmente el contrato web V15 pero adjunta la prueba real V16", () => {
+  assert.match(workerApp, /actualVersion/);
+  assert.match(workerApp, /actualRigSource/);
+  assert.match(workerApp, /V16_METHOD_SOURCE = "Blender fresh CLOUVA schema"/);
+  assert.match(workerApp, /profile\["rigSource"\] = "Blender official Unreal reference"/);
+  assert.match(workerApp, /profile\["landmarkFit"\]\["actualMethod"\]/);
   assert.match(workerApp, /weightedRatio.*0\.995/s);
 });

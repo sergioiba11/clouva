@@ -37,10 +37,47 @@ jobs:
         run: npm test
 
       - name: Validate worker Python
-        run: python3 -m py_compile worker/garment-rig/app*.py worker/garment-rig/rig_garment*.py worker/garment-rig/avatar_reference.py worker/garment-rig/test_*.py tools/unreal_avatar_export/export_clouva_avatar.py
+        run: python3 -m py_compile worker/garment-rig/app*.py worker/garment-rig/rig_garment*.py worker/garment-rig/autorig_avatar*.py worker/garment-rig/avatar_reference.py worker/garment-rig/test_*.py tools/unreal_avatar_export/export_clouva_avatar.py
 
       - name: Build and validate Blender worker image
-        run: docker build --progress=plain -t clouva-garment-rig:test worker/garment-rig
+        shell: bash
+        run: |
+          set -o pipefail
+          if ! docker build --progress=plain -t clouva-garment-rig:test worker/garment-rig > /tmp/clouva-worker-build.log 2>&1; then
+            echo "::group::Últimas 160 líneas del build de Blender"
+            tail -n 160 /tmp/clouva-worker-build.log
+            echo "::endgroup::"
+            exit 1
+          fi
+          tail -n 40 /tmp/clouva-worker-build.log
+
+      - name: Validate AutoRig V16 end to end in Blender
+        shell: bash
+        run: |
+          set -o pipefail
+          if ! docker run --rm \
+            -v "${{ github.workspace }}/worker/garment-rig/test_autorig_avatar_v16.py:/app/test_autorig_avatar_v16_external.py:ro" \
+            clouva-garment-rig:test \
+            /opt/blender/blender --background --factory-startup --python-exit-code 1 \
+            --python /app/test_autorig_avatar_v16_external.py \
+            > /tmp/clouva-autorig-v16-e2e.log 2>&1; then
+            echo "::group::AutoRig V16 end-to-end"
+            tail -n 200 /tmp/clouva-autorig-v16-e2e.log
+            echo "::endgroup::"
+            exit 1
+          fi
+          tail -n 80 /tmp/clouva-autorig-v16-e2e.log
+
+      - name: Upload Blender validation logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: blender-validation-logs
+          path: |
+            /tmp/clouva-worker-build.log
+            /tmp/clouva-autorig-v16-e2e.log
+          if-no-files-found: warn
+          retention-days: 3
 
       - name: Build
         run: npm run build

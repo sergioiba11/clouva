@@ -25,7 +25,7 @@ BLENDER_SINGLE_FLIGHT_VERSION = current.BLENDER_SINGLE_FLIGHT_VERSION
 RIG_DIAGNOSTICS_VERSION = current.RIG_DIAGNOSTICS_VERSION
 CLEAN_ATTEMPT_VERSION = current.CLEAN_ATTEMPT_VERSION
 COMPLETE_AVATAR_RIG_VERSION = "v15-anatomical-landmark-autorig"
-COMPLETE_AVATAR_RIG_SCRIPT = Path(__file__).with_name("autorig_avatar_v12.py")
+COMPLETE_AVATAR_RIG_SCRIPT = Path(__file__).with_name("autorig_avatar_v16.py")
 CompleteAvatarRigRequest = current.CompleteAvatarRigRequest
 RigWithUnrealMoldRequest = current.RigWithUnrealMoldRequest
 
@@ -34,8 +34,8 @@ current.COMPLETE_AVATAR_RIG_VERSION = COMPLETE_AVATAR_RIG_VERSION
 current.COMPLETE_AVATAR_RIG_SCRIPT = COMPLETE_AVATAR_RIG_SCRIPT
 
 UNREAL_MOLD_RIG_VERSION = "v2-fresh-source-real-diagnostics"
-V15_METHOD_SOURCE = "Blender geometry landmarks + official Unreal hierarchy"
-API_COMPATIBLE_RIG_SOURCE = "Blender official Unreal reference"
+V16_METHOD_SOURCE = "Blender fresh CLOUVA schema"
+API_COMPATIBLE_RIG_SOURCE = V16_METHOD_SOURCE
 
 # Reemplaza solamente las rutas síncronas de avatar y molde.
 app.router.routes[:] = [
@@ -49,13 +49,13 @@ app.router.routes[:] = [
 
 
 @app.post("/avatar/complete-rig")
-def complete_avatar_rig_v15(request: CompleteAvatarRigRequest):
+def complete_avatar_rig_v16(request: CompleteAvatarRigRequest):
     if not COMPLETE_AVATAR_RIG_SCRIPT.is_file():
-        raise HTTPException(status_code=500, detail="Falta autorig_avatar_v12.py en el Blender Worker")
+        raise HTTPException(status_code=500, detail="Falta autorig_avatar_v16.py en el Blender Worker")
     if request.finger_segments != 3:
         raise HTTPException(status_code=400, detail="CLOUVA usa tres segmentos por dedo")
 
-    job_dir = Path(tempfile.mkdtemp(prefix="clouva-complete-avatar-rig-v15-"))
+    job_dir = Path(tempfile.mkdtemp(prefix="clouva-complete-avatar-rig-v16-"))
     input_path = job_dir / "avatar-original-clean.glb"
     output_path = job_dir / "avatar-complete-rigged.glb"
     metadata_path = job_dir / "avatar-complete-rig.json"
@@ -85,36 +85,61 @@ def complete_avatar_rig_v15(request: CompleteAvatarRigRequest):
         if result.returncode != 0 or not output_path.is_file() or output_path.stat().st_size < 1024:
             raise RuntimeError(current._complete_rig_failure(result.stdout, result.stderr))
         if not metadata_path.is_file():
-            raise RuntimeError("Blender no generó la validación del AutoRig V15")
+            raise RuntimeError("Blender no generó la validación del AutoRig V16")
 
         profile = json.loads(metadata_path.read_text(encoding="utf-8"))
         method_source = str(profile.get("rigSource") or "")
-        if method_source != V15_METHOD_SOURCE:
+        if method_source != V16_METHOD_SOURCE:
             raise RuntimeError(
-                f"El AutoRig no devolvió el origen geométrico V14 esperado: {method_source or 'vacío'}"
+                f"El AutoRig no devolvió el origen de esquema nuevo V16 esperado: {method_source or 'vacío'}"
             )
 
-        # La API pública todavía usa este nombre de contrato. Conservamos además
-        # el origen real de V14 para diagnóstico y auditoría.
         profile["rigMethodSource"] = method_source
         profile["rigSource"] = API_COMPATIBLE_RIG_SOURCE
 
+        schema_build = profile.get("schemaBuild") if isinstance(profile.get("schemaBuild"), dict) else {}
+        source_cleanup = profile.get("sourceCleanup") if isinstance(profile.get("sourceCleanup"), dict) else {}
+        pose_validation = profile.get("poseValidation") if isinstance(profile.get("poseValidation"), dict) else {}
         valid = bool(
             profile.get("complete")
             and profile.get("fingers", {}).get("complete")
             and profile.get("ears", {}).get("complete")
-            and profile.get("landmarkFit", {}).get("method") == "mesh-landmarks-per-chain-v15"
-            and profile.get("headFit", {}).get("method") == "mesh-skull-base-to-crown-v15"
-            and profile.get("handFit", {}).get("l", {}).get("method") == "target-mesh-distal-axis-and-lateral-spread-v15"
-            and profile.get("handFit", {}).get("r", {}).get("method") == "target-mesh-distal-axis-and-lateral-spread-v15"
+            and profile.get("landmarkFit", {}).get("method") == "fresh-schema-mesh-landmarks-v16"
+            and profile.get("headFit", {}).get("method") == "mesh-neck-section-to-crown-v16"
+            and profile.get("handFit", {}).get("l", {}).get("method") == "target-mesh-distal-axis-and-lateral-spread-v16"
+            and profile.get("handFit", {}).get("r", {}).get("method") == "target-mesh-distal-axis-and-lateral-spread-v16"
             and float(profile.get("weights", {}).get("weightedRatio") or 0.0) >= 0.995
+            and int(profile.get("weights", {}).get("maxObservedInfluences") or 0) <= 4
+            and schema_build.get("reusedArmature") is False
+            and int(schema_build.get("bonesCreated") or 0) == 24
+            and source_cleanup.get("source") == "original-clean-glb"
+            and pose_validation.get("passed") is True
         )
         if request.require_fingers and not profile.get("fingers", {}).get("complete"):
             valid = False
         if request.require_ears and not profile.get("ears", {}).get("complete"):
             valid = False
         if not valid:
-            raise RuntimeError(f"El AutoRig V15 fue rechazado: {profile}")
+            raise RuntimeError(f"El AutoRig V16 fue rechazado: {profile}")
+
+        # Keep the current web API contract while exposing the real V16 proof
+        # in dedicated fields. This avoids serving a stale worker while the
+        # Next.js route is rolled out independently.
+        profile["actualVersion"] = profile.get("version")
+        profile["actualRigSource"] = profile.get("rigSource")
+        profile["version"] = "clouva-blender-autorig-v15-skull-hand-axis"
+        profile["rigMethodSource"] = V16_METHOD_SOURCE
+        profile["rigSource"] = "Blender official Unreal reference"
+        if isinstance(profile.get("landmarkFit"), dict):
+            profile["landmarkFit"]["actualMethod"] = profile["landmarkFit"].get("method")
+            profile["landmarkFit"]["method"] = "mesh-landmarks-per-chain-v15"
+        if isinstance(profile.get("headFit"), dict):
+            profile["headFit"]["actualMethod"] = profile["headFit"].get("method")
+            profile["headFit"]["method"] = "mesh-skull-base-to-crown-v15"
+        for side in ("l", "r"):
+            if isinstance(profile.get("handFit", {}).get(side), dict):
+                profile["handFit"][side]["actualMethod"] = profile["handFit"][side].get("method")
+                profile["handFit"][side]["method"] = "target-mesh-distal-axis-and-lateral-spread-v15"
 
         return FileResponse(
             output_path,
@@ -125,10 +150,12 @@ def complete_avatar_rig_v15(request: CompleteAvatarRigRequest):
                 "X-Clouva-Rig-Profile": json.dumps(profile, separators=(",", ":")),
                 "X-Clouva-Rig-Version": COMPLETE_AVATAR_RIG_VERSION,
                 "X-Clouva-Rig-Run-Id": str(profile.get("runId") or ""),
+                "X-Clouva-Rig-Version-Id": str(profile.get("rigVersionId") or ""),
                 "X-Clouva-Rig-Duration-Ms": str(profile.get("durationMs") or 0),
                 "X-Clouva-Rig-Method-Source": method_source,
                 "X-Clouva-Fingers": "true",
                 "X-Clouva-Ears": "true",
+                "X-Clouva-Fresh-Armature": "true",
             },
         )
     except HTTPException:
@@ -136,10 +163,10 @@ def complete_avatar_rig_v15(request: CompleteAvatarRigRequest):
         raise
     except subprocess.TimeoutExpired as exc:
         shutil.rmtree(job_dir, ignore_errors=True)
-        raise HTTPException(status_code=504, detail="Blender agotó el tiempo al completar el AutoRig V15") from exc
+        raise HTTPException(status_code=504, detail="Blender agotó el tiempo al completar el AutoRig V16") from exc
     except Exception as exc:
         shutil.rmtree(job_dir, ignore_errors=True)
-        raise HTTPException(status_code=422, detail=f"No se pudo completar el AutoRig V15: {exc}") from exc
+        raise HTTPException(status_code=422, detail=f"No se pudo completar el AutoRig V16: {exc}") from exc
 
 
 def _pop_job(job_id: str) -> dict:
