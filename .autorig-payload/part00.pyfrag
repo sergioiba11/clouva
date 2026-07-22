@@ -1,0 +1,100 @@
+import json
+import math
+import os
+import sys
+from pathlib import Path
+
+import bpy
+from mathutils import Matrix, Vector
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from avatar_reference import canonicalize_and_validate_bones
+
+VERSION = "clouva-blender-autorig-v1-reference-transfer"
+FINGER_NAMES = ("thumb", "index", "middle", "ring", "pinky")
+SEGMENTS = 3
+GENERATED_PREFIXES = tuple(f"clouva_{name}_" for name in FINGER_NAMES) + (
+    "clouva_palm_root_",
+    "clouva_ear_",
+)
+REFERENCE_FBX = Path(
+    os.environ.get(
+        "CLOUVA_AVATAR_REFERENCE_PATH",
+        str(SCRIPT_DIR / "avatar-reference" / "AvatarReference.fbx"),
+    )
+)
+REFERENCE_METADATA = Path(
+    os.environ.get(
+        "CLOUVA_AVATAR_REFERENCE_METADATA_PATH",
+        str(SCRIPT_DIR / "avatar-reference" / "clouva_avatar_data.json"),
+    )
+)
+SCALE_EPSILON = 1e-5
+
+
+def args_after_separator():
+    if "--" not in sys.argv:
+        raise RuntimeError("Missing Blender script arguments")
+    return sys.argv[sys.argv.index("--") + 1 :]
+
+
+def clamp(value, low, high):
+    return max(low, min(high, value))
+
+
+def unit(value, fallback):
+    result = Vector(value)
+    if result.length <= 1e-8 or any(not math.isfinite(float(item)) for item in result):
+        result = Vector(fallback)
+    result.normalize()
+    return result
+
+
+def clean_name(value):
+    return "".join(character for character in value.lower() if character.isalnum())
+
+
+def side_from_name(name):
+    raw = name.lower()
+    key = clean_name(name)
+    if any(token in raw for token in ("left", ".l", "_l", "-l", " l")) or key.startswith("left") or key.endswith("left"):
+        return "l"
+    if any(token in raw for token in ("right", ".r", "_r", "-r", " r")) or key.startswith("right") or key.endswith("right"):
+        return "r"
+    return None
+
+
+def clear_scene():
+    bpy.ops.object.select_all(action="SELECT")
+    bpy.ops.object.delete(use_global=False)
+    for datablocks in (bpy.data.armatures, bpy.data.meshes, bpy.data.curves):
+        for datablock in list(datablocks):
+            if datablock.users == 0:
+                datablocks.remove(datablock)
+
+
+def world_bounds(meshes):
+    points = [mesh.matrix_world @ Vector(corner) for mesh in meshes for corner in mesh.bound_box]
+    if not points:
+        raise RuntimeError("The avatar has no visible mesh bounds")
+    minimum = Vector(tuple(min(float(point[index]) for point in points) for index in range(3)))
+    maximum = Vector(tuple(max(float(point[index]) for point in points) for index in range(3)))
+    size = maximum - minimum
+    if any(not math.isfinite(float(value)) or float(value) <= 1e-8 for value in size):
+        raise RuntimeError(f"Invalid avatar bounds: {tuple(float(value) for value in size)}")
+    return minimum, maximum, size
+
+
+def detach_preserve_world(obj):
+    world = obj.matrix_world.copy()
+    obj.parent = None
+    obj.matrix_parent_inverse = Matrix.Identity(4)
+    obj.matrix_world = world
+
+
+def apply_rotation_and_scale(obj):
+    bpy.ops.object.select_all(action="DESELECT")
+    obj.select_set(True)
