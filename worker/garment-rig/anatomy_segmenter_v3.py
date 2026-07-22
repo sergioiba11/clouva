@@ -143,7 +143,7 @@ def _family_evidence(info: ComponentInfo, family: Sequence[str], corridor: dict 
 def _arm_spatial_evidence(info: ComponentInfo, sign: float, center_x: float,
                           width: float, height: float, refined: Dict[str, Vector]):
     lateral = sign * (info.center.x - center_x)
-    lower = refined["pelvis"].z - height * 0.07
+    lower = refined["pelvis"].z - height * 0.01
     upper = refined["neck"].z + height * 0.09
     return lateral >= width * 0.055 and lower <= info.center.z <= upper
 
@@ -151,7 +151,7 @@ def _arm_spatial_evidence(info: ComponentInfo, sign: float, center_x: float,
 def _leg_spatial_evidence(info: ComponentInfo, sign: float, center_x: float,
                           width: float, height: float, refined: Dict[str, Vector]):
     lateral = sign * (info.center.x - center_x)
-    upper = refined["pelvis"].z + height * 0.09
+    upper = refined["pelvis"].z + height * 0.025
     lower = min(refined["foot_l"].z, refined["foot_r"].z) - height * 0.10
     return lateral >= width * 0.018 and lower <= info.center.z <= upper
 
@@ -169,7 +169,7 @@ def _disconnected_chain_assignments(infos: List[ComponentInfo], center_x: float,
         arm_names = (f"upper_arm_{suffix}", f"forearm_{suffix}", f"hand_{suffix}")
         arm_items = [
             info for info in infos
-            if sign * (info.center.x - center_x) > 0.0
+            if sign * (info.center.x - center_x) >= width * 0.04
             and (
                 _family_evidence(info, arm_names, corridors.get(id(info)))
                 or _arm_spatial_evidence(info, sign, center_x, width, height, refined)
@@ -198,13 +198,13 @@ def _disconnected_chain_assignments(infos: List[ComponentInfo], center_x: float,
                     }
                     for info in sorted(arm_items, key=lambda value: sign * (value.center.x - center_x))
                 ],
-                "method": "disconnected-proximal-to-distal-lateral-order-plus-spatial-evidence",
+                "method": "disconnected-proximal-to-distal-lateral-order-excluding-body-axis",
             })
 
         leg_names = (f"thigh_{suffix}", f"calf_{suffix}", f"foot_{suffix}")
         leg_items = [
             info for info in infos
-            if sign * (info.center.x - center_x) >= -1e-6
+            if sign * (info.center.x - center_x) >= width * 0.012
             and (
                 _family_evidence(info, leg_names, corridors.get(id(info)))
                 or _leg_spatial_evidence(info, sign, center_x, width, height, refined)
@@ -233,7 +233,7 @@ def _disconnected_chain_assignments(infos: List[ComponentInfo], center_x: float,
                     }
                     for info in sorted(leg_items, key=lambda value: -value.center.z)
                 ],
-                "method": "disconnected-proximal-to-distal-vertical-order-plus-spatial-evidence",
+                "method": "disconnected-proximal-to-distal-vertical-order-excluding-body-axis",
             })
     return assignments, diagnostics, corridors
 
@@ -360,7 +360,7 @@ def segment_anatomy_v3(meshes: Iterable[bpy.types.Object], classifications: Dict
         ),
     }
     diagnostics = {
-        "method": "geodesic-cross-section-vectors-plus-disconnected-spatial-chain-order-v3",
+        "method": "geodesic-cross-section-vectors-plus-axis-excluded-component-order-v3",
         "limbRefinement": refinement_diagnostics or {},
         "rejectedObjects": rejected_objects,
         "componentCoherence": component_changes,
