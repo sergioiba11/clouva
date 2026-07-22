@@ -55,7 +55,10 @@ function normalizeLandmark(name: string, value: unknown) {
   const record = asRecord(value);
   if (!record) return value;
   const region = typeof record.region === "string" ? record.region.trim().toLowerCase() : "";
-  const next = { ...record, name: typeof record.name === "string" ? record.name : name };
+  const next: JsonRecord = {
+    ...record,
+    name: typeof record.name === "string" ? record.name : name,
+  };
   if (!region || region === "unknown" || region === "unassigned") {
     const inferred = inferredRegion(name);
     if (inferred) next.region = inferred;
