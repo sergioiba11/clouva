@@ -61,21 +61,38 @@ def _ear_landmarks(segmentation, body_vectors: Dict[str, Vector], body_width: fl
         lateral_span = max(sign * (point.x - center_x) for point in points) - min(sign * (point.x - center_x) for point in points)
         vertical_span = max(point.z for point in points) - min(point.z for point in points)
         normal_alignment = sum(max(0.0, sign * sample.normal.x) for sample in cluster) / len(cluster)
-        geometry_confidence = min(0.90, 0.36 + min(1.0, len(cluster) / 180.0) * 0.24 + min(1.0, normal_alignment) * 0.24 + min(1.0, vertical_span / max(head_height * 0.22, 1e-8)) * 0.06)
-        side_clusters[side] = (center, points, geometry_confidence, lateral_span, vertical_span)
+        geometry_confidence = min(
+            0.90,
+            0.36
+            + min(1.0, len(cluster) / 180.0) * 0.24
+            + min(1.0, normal_alignment) * 0.24
+            + min(1.0, vertical_span / max(head_height * 0.22, 1e-8)) * 0.06,
+        )
+        side_clusters[side] = {
+            "center": center,
+            "points": points,
+            "geometryConfidence": geometry_confidence,
+            "normalAlignment": normal_alignment,
+            "lateralSpan": lateral_span,
+            "verticalSpan": vertical_span,
+        }
 
     symmetry_confidence = 0.0
     if "left" in side_clusters and "right" in side_clusters:
-        left_center = side_clusters["left"][0]
-        right_center = side_clusters["right"][0]
+        left_center = side_clusters["left"]["center"]
+        right_center = side_clusters["right"]["center"]
         height_delta = abs(left_center.z - right_center.z) / head_height
         depth_delta = abs(left_center.y - right_center.y) / max(head_height, 1e-8)
         symmetry_confidence = max(0.0, min(1.0, 1.0 - height_delta * 4.0 - depth_delta * 2.0))
 
-    for side, suffix, sign in (("left", "l", 1.0), ("right", "r", -1.0)):
-        if side not in side_clusters:
+    for side, suffix, _sign in (("left", "l", 1.0), ("right", "r", -1.0)):
+        cluster_data = side_clusters.get(side)
+        if not cluster_data:
             continue
-        center, points, geometry_confidence, _lateral_span, _vertical_span = side_clusters[side]
+        center = cluster_data["center"]
+        points = cluster_data["points"]
+        geometry_confidence = float(cluster_data["geometryConfidence"])
+        normal_alignment = float(cluster_data["normalAlignment"])
         values = {
             "center": center,
             "top": max(points, key=lambda point: point.z),
@@ -88,18 +105,29 @@ def _ear_landmarks(segmentation, body_vectors: Dict[str, Vector], body_width: fl
         for label, point in values.items():
             name = f"ear_{suffix}_{label}"
             output[name] = {
-                "name": name, "position": _vec(point),
-                "surfaceDisplayPosition": _vec(point), "displayPosition": _vec(point),
-                "region": "head", "surfaceRegion": "head", "landmarkType": "surface",
-                "accepted": accepted, "verified": accepted, "display": accepted,
+                "name": name,
+                "position": _vec(point),
+                "surfaceDisplayPosition": _vec(point),
+                "displayPosition": _vec(point),
+                "region": "head",
+                "surfaceRegion": "head",
+                "landmarkType": "surface",
+                "accepted": accepted,
+                "verified": accepted,
+                "display": accepted,
                 "confidence": float(final if accepted else min(final, 0.39)),
                 "finalConfidence": float(final if accepted else min(final, 0.39)),
-                "detectorConfidence": 0.0, "viewQualityConfidence": 0.0,
-                "silhouetteConfidence": float(geometry_confidence),
-                "depthConfidence": 0.5, "normalConfidence": float(normal_alignment if 'normal_alignment' in locals() else 0.5),
-                "triangulationConfidence": 0.0, "regionConfidence": 1.0,
-                "geodesicConfidence": 0.0, "topologyConfidence": float(geometry_confidence),
-                "symmetryConfidence": float(symmetry_confidence), "viewsConfirmed": 1,
+                "detectorConfidence": 0.0,
+                "viewQualityConfidence": 0.0,
+                "silhouetteConfidence": geometry_confidence,
+                "depthConfidence": 0.5,
+                "normalConfidence": normal_alignment,
+                "triangulationConfidence": 0.0,
+                "regionConfidence": 1.0,
+                "geodesicConfidence": 0.0,
+                "topologyConfidence": geometry_confidence,
+                "symmetryConfidence": float(symmetry_confidence),
+                "viewsConfirmed": 1,
                 "methods": ["segmented_head_lateral_normal_cluster", "bilateral_ear_symmetry"],
                 "method": "geometry-normal-symmetry-ear-v3",
                 "rejectionReasons": [] if accepted else ["EAR_EVIDENCE_INSUFFICIENT"],
@@ -128,11 +156,18 @@ def _eye_rotation_centers(meshes: Iterable[bpy.types.Object], classifications: D
     for suffix, (_x, center, object_name, sphere_confidence, radius) in zip(("l", "r"), eyes[:2]):
         name = f"eye_{suffix}_rotation_center"
         result[name] = {
-            "name": name, "position": _vec(center), "internalJointPosition": _vec(center),
-            "region": "eyes", "landmarkType": "internal_joint",
-            "accepted": sphere_confidence >= 0.55, "verified": sphere_confidence >= 0.55,
-            "display": False, "confidence": float(sphere_confidence), "finalConfidence": float(sphere_confidence),
-            "eyeRadius": float(radius), "sourceObject": object_name,
+            "name": name,
+            "position": _vec(center),
+            "internalJointPosition": _vec(center),
+            "region": "eyes",
+            "landmarkType": "internal_joint",
+            "accepted": sphere_confidence >= 0.55,
+            "verified": sphere_confidence >= 0.55,
+            "display": False,
+            "confidence": float(sphere_confidence),
+            "finalConfidence": float(sphere_confidence),
+            "eyeRadius": float(radius),
+            "sourceObject": object_name,
             "methods": ["separate_eye_object_centroid", "sphere_fit_residual"],
             "method": "separate-eye-sphere-fit-v3",
             "rejectionReasons": [] if sphere_confidence >= 0.55 else ["EYE_SPHERE_FIT_LOW_CONFIDENCE"],
@@ -147,17 +182,25 @@ def _validate(landmarks: Dict[str, dict]):
     for above, below in zip(present, present[1:]):
         if _internal(landmarks[above]).z <= _internal(landmarks[below]).z:
             for name in (above, below):
-                landmarks[name]["accepted"] = False; landmarks[name]["verified"] = False; landmarks[name]["display"] = False
+                landmarks[name]["accepted"] = False
+                landmarks[name]["verified"] = False
+                landmarks[name]["display"] = False
                 landmarks[name]["confidence"] = min(float(landmarks[name].get("confidence", 0.0)), 0.39)
                 landmarks[name].setdefault("rejectionReasons", []).append("FACE_VERTICAL_ORDER_INVALID")
             warnings.append({"code": "FACE_VERTICAL_ORDER_INVALID", "above": above, "below": below})
-    for left, right, label in (("eye_l_inner", "eye_r_inner", "eyes"), ("mouth_corner_l", "mouth_corner_r", "mouth"), ("ear_l_center", "ear_r_center", "ears")):
+    for left, right, label in (
+        ("eye_l_inner", "eye_r_inner", "eyes"),
+        ("mouth_corner_l", "mouth_corner_r", "mouth"),
+        ("ear_l_center", "ear_r_center", "ears"),
+    ):
         if all(name in landmarks and landmarks[name].get("accepted", False) for name in (left, right)):
             separation = abs(_internal(landmarks[left]).x - _internal(landmarks[right]).x)
             if separation <= 1e-5:
                 warnings.append({"code": f"{label.upper()}_SEPARATION_INVALID"})
                 for name in (left, right):
-                    landmarks[name]["accepted"] = False; landmarks[name]["display"] = False; landmarks[name]["verified"] = False
+                    landmarks[name]["accepted"] = False
+                    landmarks[name]["display"] = False
+                    landmarks[name]["verified"] = False
                     landmarks[name]["confidence"] = min(float(landmarks[name].get("confidence", 0.0)), 0.39)
     return warnings
 
@@ -166,7 +209,10 @@ def analyze_face(detector_output: dict, manifest: dict, meshes: Iterable[bpy.typ
                  classifications: Dict[str, str], body_vectors: Dict[str, Vector],
                  body_width: float, segmentation, anatomy_bvh):
     meshes = list(meshes)
-    face_output = {**detector_output, "views": [item for item in detector_output.get("views", []) if item.get("region") == "face"]}
+    face_output = {
+        **detector_output,
+        "views": [item for item in detector_output.get("views", []) if item.get("region") == "face"],
+    }
     projected, projection_failures = project_candidates(face_output, manifest, classifications, anatomy_bvh)
     grouped = _group(projected)
     head_scale = max((body_vectors["head_top"] - body_vectors["skull_base"]).length, 1e-5)
@@ -174,8 +220,13 @@ def analyze_face(detector_output: dict, manifest: dict, meshes: Iterable[bpy.typ
     for name, candidates in grouped.items():
         allowed = ("eyes", "head") if name.startswith("eye_") and anatomy_bvh.has_region("eyes") else ("head",)
         landmarks[name] = triangulate_landmark(
-            name, candidates, segmentation, allowed, head_scale,
-            minimum_views=2, preferred_view_tokens=("face_front", "three_quarter"),
+            name,
+            candidates,
+            segmentation,
+            allowed,
+            head_scale,
+            minimum_views=2,
+            preferred_view_tokens=("face_front", "three_quarter"),
             anatomy_bvh=anatomy_bvh,
         )
         landmarks[name]["landmarkType"] = "surface"
@@ -190,7 +241,10 @@ def analyze_face(detector_output: dict, manifest: dict, meshes: Iterable[bpy.typ
         "nose_tip", "nose_base", "mouth_corner_l", "mouth_corner_r",
         "upper_lip_center", "lower_lip_center", "chin", "ear_l_center", "ear_r_center",
     ]
-    missing_or_rejected = [name for name in required if name not in landmarks or not landmarks[name].get("accepted", False)]
+    missing_or_rejected = [
+        name for name in required
+        if name not in landmarks or not landmarks[name].get("accepted", False)
+    ]
     if missing_or_rejected:
         status = "needs_review"
         warnings.append({"code": "FACE_REQUIRED_LANDMARKS_NOT_VERIFIED", "landmarks": missing_or_rejected})
@@ -199,10 +253,13 @@ def analyze_face(detector_output: dict, manifest: dict, meshes: Iterable[bpy.typ
     else:
         status = "valid"
     return {
-        "status": status, "landmarks": landmarks, "projectedCandidates": projected,
+        "status": status,
+        "landmarks": landmarks,
+        "projectedCandidates": projected,
         "triangulatedLandmarks": sum(1 for item in landmarks.values() if item.get("position")),
         "acceptedLandmarks": sum(1 for item in landmarks.values() if item.get("accepted", False)),
         "visibleSurfaceLandmarks": sum(1 for item in landmarks.values() if item.get("display", False)),
-        "warnings": warnings, "viewsDetected": len(face_output.get("views", [])),
+        "warnings": warnings,
+        "viewsDetected": len(face_output.get("views", [])),
         "method": "mediapipe-dual-render-plus-head-eye-region-bvh-v3",
     }
