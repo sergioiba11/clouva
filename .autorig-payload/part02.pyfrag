@@ -1,0 +1,100 @@
+    )
+    transform = (
+        Matrix.Translation(target_center)
+        @ Matrix.Diagonal((fitted_scale.x, fitted_scale.y, fitted_scale.z, 1.0))
+        @ Matrix.Translation(-ref_center)
+    )
+
+    objects = [armature, *reference_meshes]
+    for obj in objects:
+        detach_preserve_world(obj)
+        obj.matrix_world = transform @ obj.matrix_world
+    bpy.context.view_layer.update()
+    for obj in objects:
+        apply_rotation_and_scale(obj)
+    bpy.context.view_layer.update()
+
+    return {
+        "targetBounds": {
+            "minimum": [float(value) for value in target_minimum],
+            "maximum": [float(value) for value in target_maximum],
+            "size": [float(value) for value in target_size],
+        },
+        "referenceBounds": {
+            "minimum": [float(value) for value in ref_minimum],
+            "maximum": [float(value) for value in ref_maximum],
+            "size": [float(value) for value in ref_size],
+        },
+        "fitScale": [float(value) for value in fitted_scale],
+        "canonicalLocalScale": [1.0, 1.0, 1.0],
+    }
+
+
+def join_reference_meshes(reference_meshes):
+    if len(reference_meshes) == 1:
+        source = reference_meshes[0]
+    else:
+        bpy.ops.object.select_all(action="DESELECT")
+        source = max(reference_meshes, key=lambda item: len(item.data.vertices))
+        for mesh in reference_meshes:
+            mesh.select_set(True)
+        bpy.context.view_layer.objects.active = source
+        bpy.ops.object.join()
+    source.name = "CLOUVA_AutoRig_WeightSource"
+    for modifier in list(source.modifiers):
+        source.modifiers.remove(modifier)
+    return source
+
+
+def point_segment_distance(point, start, end):
+    segment = end - start
+    if segment.length_squared <= 1e-12:
+        return (point - start).length
+    factor = clamp((point - start).dot(segment) / segment.length_squared, 0.0, 1.0)
+    return (point - (start + segment * factor)).length
+
+
+def deform_bone_segments(armature):
+    result = []
+    for bone in armature.data.bones:
+        if not bone.use_deform or any(bone.name.lower().startswith(prefix) for prefix in GENERATED_PREFIXES):
+            continue
+        start = armature.matrix_world @ bone.head_local
+        end = armature.matrix_world @ bone.tail_local
+        if (end - start).length > 1e-7:
+            result.append((bone.name, start, end))
+    return result
+
+
+def transfer_weights(source, target_meshes, armature):
+    source_groups = [group.name for group in source.vertex_groups]
+    if not source_groups:
+        raise RuntimeError("AvatarReference has no skin-weight groups")
+
+    segments = deform_bone_segments(armature)
+    weighted = 0
+    vertices = 0
+    fallback_vertices = 0
+
+    for mesh in target_meshes:
+        mesh.vertex_groups.clear()
+        for name in source_groups:
+            mesh.vertex_groups.new(name=name)
+
+        modifier = mesh.modifiers.new("CLOUVA Blender AutoRig Weights", "DATA_TRANSFER")
+        modifier.object = source
+        modifier.use_vert_data = True
+        modifier.data_types_verts = {"VGROUP_WEIGHTS"}
+        modifier.vert_mapping = "POLYINTERP_NEAREST"
+        modifier.layers_vgroup_select_src = "ALL"
+        modifier.layers_vgroup_select_dst = "NAME"
+        modifier.mix_mode = "REPLACE"
+        modifier.mix_factor = 1.0
+
+        bpy.ops.object.select_all(action="DESELECT")
+        mesh.select_set(True)
+        bpy.context.view_layer.objects.active = mesh
+        bpy.ops.object.modifier_apply(modifier=modifier.name)
+
+        armature_modifier = mesh.modifiers.new("CLOUVA Armature", "ARMATURE")
+        armature_modifier.object = armature
