@@ -1,4 +1,9 @@
-"""Create anatomically isolated technical renders inside Blender."""
+"""Create anatomically isolated technical renders inside Blender.
+
+V3 keeps the isolated proxies alive through projection and derives them from the
+same AnatomyBVH triangles used by ray casting. Each view includes lossless depth,
+normal, curvature, region-id, object-id and triangle-id passes.
+"""
 from __future__ import annotations
 
 import json
@@ -7,6 +12,8 @@ from typing import Dict, Iterable, List, Sequence
 
 import bpy
 from mathutils import Vector
+
+from technical_passes import generate_technical_passes
 
 
 def _vec(value: Vector):
@@ -43,12 +50,12 @@ def _configure_scene(output_dir: Path, resolution: int):
         scene.display.shading.studio_light = "paint.sl"
     except (TypeError, ValueError):
         pass
-    scene.display.shading.show_shadows = True
+    scene.display.shading.show_shadows = False
     scene.display.shading.show_cavity = True
     scene.display.shading.cavity_type = "WORLD"
     scene.display.shading.color_type = "MATERIAL"
     scene.display.shading.background_type = "WORLD"
-    scene.display.shading.show_specular_highlight = True
+    scene.display.shading.show_specular_highlight = False
     scene.render.resolution_x = resolution
     scene.render.resolution_y = resolution
     scene.render.resolution_percentage = 100
@@ -75,12 +82,6 @@ def _proxy_from_regions(source: bpy.types.Object, labels: Sequence[str], regions
     mesh.update()
     proxy = bpy.data.objects.new(name, mesh)
     bpy.context.collection.objects.link(proxy)
-    for slot in source.material_slots:
-        if slot.material:
-            mesh.materials.append(slot.material)
-    for target_polygon, source_polygon in zip(mesh.polygons, selected_faces):
-        if mesh.materials:
-            target_polygon.material_index = min(source_polygon.material_index, len(mesh.materials) - 1)
     proxy["clouva_render_proxy"] = True
     proxy["source_object"] = source.name
     proxy["regions"] = sorted(regions)
@@ -98,19 +99,24 @@ def _complete_proxy(source: bpy.types.Object, name: str):
     mesh.update()
     proxy = bpy.data.objects.new(name, mesh)
     bpy.context.collection.objects.link(proxy)
-    for slot in source.material_slots:
-        if slot.material:
-            mesh.materials.append(slot.material)
-    for target_polygon, source_polygon in zip(mesh.polygons, source.data.polygons):
-        if mesh.materials:
-            target_polygon.material_index = min(source_polygon.material_index, len(mesh.materials) - 1)
     proxy["clouva_render_proxy"] = True
     proxy["source_object"] = source.name
     return proxy
 
 
-def _build_proxies(meshes: Iterable[bpy.types.Object], segmentation, classifications: dict):
+def _build_proxies(meshes: Iterable[bpy.types.Object], segmentation, classifications: dict, anatomy_bvh=None):
     groups = {"face": [], "left": [], "right": []}
+    if anatomy_bvh is not None:
+        specifications = {
+            "face": ("head", "neck", "eyes"),
+            "left": ("hand_l",),
+            "right": ("hand_r",),
+        }
+        for key, regions in specifications.items():
+            proxy = anatomy_bvh.proxy(regions, f"CLOUVA_PROXY_{key}_V3")
+            if proxy:
+                groups[key].append(proxy)
+        return groups
     if segmentation is None:
         return groups
     for obj in meshes:
@@ -158,10 +164,34 @@ def _render_mask(scene, path: Path):
         scene.world.color = previous_background
 
 
+def _render_edges(scene, path: Path):
+    previous_type = scene.display.shading.color_type
+    previous_background = tuple(scene.world.color)
+    previous_shadows = bool(scene.display.shading.show_shadows)
+    previous_cavity = bool(scene.display.shading.show_cavity)
+    try:
+        scene.display.shading.color_type = "SINGLE"
+        scene.display.shading.single_color = (0.76, 0.76, 0.76)
+        scene.display.shading.show_shadows = False
+        scene.display.shading.show_cavity = True
+        scene.world.color = (0.08, 0.08, 0.08)
+        scene.render.filepath = str(path)
+        bpy.ops.render.render(write_still=True)
+        return str(path) if path.is_file() else None
+    except Exception:
+        return None
+    finally:
+        scene.display.shading.color_type = previous_type
+        scene.display.shading.show_shadows = previous_shadows
+        scene.display.shading.show_cavity = previous_cavity
+        scene.world.color = previous_background
+
+
 def _render_view(scene, output_dir: Path, name: str, region: str, side: str | None,
                  target: Vector, direction: Vector, region_size: float,
                  visible_objects: Sequence[bpy.types.Object], all_meshes: Sequence[bpy.types.Object],
-                 framing: float = 1.78):
+                 anatomy_bvh, allowed_regions: Sequence[str], framing: float = 1.78,
+                 technical_resolution: int = 192):
     _set_visible_meshes(all_meshes, visible_objects)
     camera = _new_camera(f"CLOUVA_CAMERA_{name}", target, direction, region_size, framing)
     scene.camera = camera
@@ -170,11 +200,18 @@ def _render_view(scene, output_dir: Path, name: str, region: str, side: str | No
     scene.display.shading.color_type = "MATERIAL"
     bpy.ops.render.render(write_still=True)
     mask_path = _render_mask(scene, output_dir / f"{name}_silhouette.png")
+    edge_path = _render_edges(scene, output_dir / f"{name}_edges.png")
+    technical = generate_technical_passes(
+        output_dir, name, camera, anatomy_bvh, allowed_regions, technical_resolution,
+    ) if anatomy_bvh is not None else None
+    if technical and technical.get("paths", {}).get("exactSilhouettePng"):
+        mask_path = technical["paths"]["exactSilhouettePng"]
     return {
         "name": name,
         "region": region,
         "side": side,
         "path": str(path),
+        "edgePath": edge_path,
         "silhouettePath": mask_path,
         "cameraObject": camera.name,
         "cameraType": camera.data.type,
@@ -183,9 +220,13 @@ def _render_view(scene, output_dir: Path, name: str, region: str, side: str | No
         "resolution": [int(scene.render.resolution_x), int(scene.render.resolution_y)],
         "target": _vec(target),
         "directionToCamera": _vec(direction.normalized()),
-        "renderScope": "anatomically-isolated-proxy" if visible_objects else "full-scene-fallback",
+        "renderScope": "region-bvh-exact-proxy" if anatomy_bvh is not None else (
+            "anatomically-isolated-proxy" if visible_objects else "full-scene-fallback"
+        ),
         "proxyObjects": [obj.name for obj in visible_objects],
-        "geometryPass": "raycast-on-demand",
+        "allowedRegions": list(allowed_regions),
+        "technicalPasses": technical,
+        "geometryPass": "exact-region-bvh-v3" if anatomy_bvh is not None else "scene-raycast-fallback",
     }
 
 
@@ -195,15 +236,27 @@ def _average(points: Sequence[Vector], fallback: Vector):
     return sum(points, Vector((0.0, 0.0, 0.0))) / len(points)
 
 
+def cleanup_render_proxies(manifest: dict):
+    for name in manifest.get("cleanupProxyNames", []):
+        proxy = bpy.data.objects.get(name)
+        if proxy is None:
+            continue
+        mesh_data = proxy.data if proxy.type == "MESH" else None
+        bpy.data.objects.remove(proxy, do_unlink=True)
+        if mesh_data is not None and mesh_data.users == 0:
+            bpy.data.meshes.remove(mesh_data)
+
+
 def render_multiview(output_dir: Path, vectors: Dict[str, Vector], height: float,
                      meshes: Iterable[bpy.types.Object] | None = None, segmentation=None,
-                     classifications: dict | None = None, resolution: int = 512):
-    """Render isolated face and per-hand views while retaining camera matrices."""
+                     classifications: dict | None = None, anatomy_bvh=None,
+                     resolution: int = 512, technical_resolution: int = 192):
+    """Render isolated face and per-hand views while retaining exact region geometry."""
     output_dir = Path(output_dir)
     scene = _configure_scene(output_dir, resolution)
     meshes = list(meshes or [obj for obj in scene.objects if obj.type == "MESH"])
     classifications = classifications or {}
-    proxies = _build_proxies(meshes, segmentation, classifications)
+    proxies = _build_proxies(meshes, segmentation, classifications, anatomy_bvh)
     all_meshes = [obj for obj in scene.objects if obj.type == "MESH"]
     original_hide = {obj.name: bool(obj.hide_render) for obj in all_meshes}
     views: List[dict] = []
@@ -225,7 +278,8 @@ def render_multiview(output_dir: Path, vectors: Dict[str, Vector], height: float
         for name, direction in face_directions.items():
             views.append(_render_view(
                 scene, output_dir, name, "face", None, face_target, direction,
-                face_size, face_visible, all_meshes, framing=1.92,
+                face_size, face_visible, all_meshes, anatomy_bvh,
+                ("head", "eyes"), framing=1.92, technical_resolution=technical_resolution,
             ))
 
         for side, short in (("left", "l"), ("right", "r")):
@@ -262,7 +316,8 @@ def render_multiview(output_dir: Path, vectors: Dict[str, Vector], height: float
             for name, direction in directions.items():
                 views.append(_render_view(
                     scene, output_dir, name, "hand", side, target, direction,
-                    hand_size, visible, all_meshes, framing=1.58,
+                    hand_size, visible, all_meshes, anatomy_bvh, (f"hand_{short}",),
+                    framing=1.58, technical_resolution=technical_resolution,
                 ))
     finally:
         for obj in all_meshes:
@@ -270,13 +325,10 @@ def render_multiview(output_dir: Path, vectors: Dict[str, Vector], height: float
                 obj.hide_render = original_hide[obj.name]
         for group in proxies.values():
             for proxy in group:
-                mesh_data = proxy.data
-                bpy.data.objects.remove(proxy, do_unlink=True)
-                if mesh_data.users == 0:
-                    bpy.data.meshes.remove(mesh_data)
+                proxy.hide_render = True
 
     manifest = {
-        "version": "clouva-multiview-v2-anatomy-isolated",
+        "version": "clouva-multiview-v3-region-bvh",
         "renderer": "BLENDER_WORKBENCH",
         "frontConvention": "-Y",
         "views": views,
@@ -284,6 +336,8 @@ def render_multiview(output_dir: Path, vectors: Dict[str, Vector], height: float
             "left": segmentation.hand_measurement("left") if segmentation else {},
             "right": segmentation.hand_measurement("right") if segmentation else {},
         },
+        "regionBvh": anatomy_bvh.report() if anatomy_bvh is not None else None,
+        "cleanupProxyNames": [proxy.name for group in proxies.values() for proxy in group],
     }
     manifest_path = output_dir / "camera_manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
