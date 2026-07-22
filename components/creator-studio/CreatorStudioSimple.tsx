@@ -59,6 +59,13 @@ type UnrealStatus = {
 type RigFeatureReport = {
   complete?: boolean;
   boneCount?: number;
+  version?: string;
+  rigSource?: string;
+  inputSource?: string;
+  runId?: string;
+  durationMs?: number;
+  inputSha256?: string;
+  outputSha256?: string;
   fingers?: { complete?: boolean; leftChains?: number; rightChains?: number; weightedVertices?: number };
   ears?: { complete?: boolean; left?: boolean; right?: boolean; weightedVertices?: number };
 };
@@ -71,6 +78,11 @@ type RigApiResponse = {
   newAvatarUrl?: string;
   sourceAvatarId?: string | null;
   rigProfile?: RigFeatureReport | null;
+  workerVersion?: string;
+  rigRunId?: string;
+  rigDurationMs?: number;
+  inputSha256?: string;
+  outputSha256?: string;
   task?: { status?: string; progress?: number; task_error?: { message?: string } };
   task_error?: { message?: string };
   error?: string;
@@ -363,7 +375,9 @@ updatedAt: new Date().toISOString(),
         await loadActiveAvatar(user?.id ?? null);
         await loadAvatars();
         setViewerRevision((value) => value + 1);
-        setMessage("Listo para Unreal. Revisá Huesos, Animación y Diagnóstico antes de aprobar.");
+        const durationSeconds = Math.max(0.001, Number(created.rigDurationMs ?? created.rigProfile.durationMs ?? 0) / 1000);
+        const runId = String(created.rigRunId ?? created.rigProfile.runId ?? "").slice(0, 8);
+        setMessage(`Blender V12 creó un rig nuevo en ${durationSeconds.toFixed(2)} s · ejecución ${runId}. Revisá Animación antes de aprobar.`);
         return;
       }
 

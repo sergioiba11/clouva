@@ -94,3 +94,12 @@ test("el Worker crea un rig desde una malla limpia usando la referencia oficial 
   assert.match(workerAutorig, /target-mesh-hand-envelope/);
   assert.match(dockerfile, /test_autorig_avatar_v12\.py/);
 });
+
+test("cada Rehacer rig exige prueba criptográfica de una ejecución nueva de Blender V12", () => {
+  assert.match(rigRoute, /EXPECTED_WORKER_RIG_VERSION = "v12-real-blender-autorig"/);
+  assert.match(rigRoute, /EXPECTED_PROFILE_VERSION = "clouva-blender-autorig-v12-official-reference"/);
+  assert.match(rigRoute, /proof\.inputSha256 === proof\.outputSha256/);
+  assert.match(workerAutorig, /uuid\.uuid4\(\)\.hex/);
+  assert.match(workerAutorig, /sha256_file\(output_path\)/);
+  assert.match(creatorStudio, /Blender V12 creó un rig nuevo/);
+});
