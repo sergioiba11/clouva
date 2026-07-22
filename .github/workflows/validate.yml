@@ -8,14 +8,14 @@ permissions:
   contents: write
 
 jobs:
-  diagnose-autorig-v14:
+  apply-autorig-v14:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.head_ref }}
 
-      - name: Save embedded patch result
+      - name: Apply and commit AutoRig V14 code
         run: |
           set +e
           python - <<'PY' > /tmp/patch-output.txt 2>&1
@@ -39,12 +39,30 @@ jobs:
           exec(compile('\n'.join(output), 'apply-landmark-autorig-v14', 'exec'))
           PY
           status=$?
-          git reset --hard HEAD
-          printf 'exit=%s\n' "$status" > PATCH_AUTORIG_V14_FINAL_ERROR.txt
-          cat /tmp/patch-output.txt >> PATCH_AUTORIG_V14_FINAL_ERROR.txt
+          if [ "$status" -eq 0 ]; then
+            node --test tests-avatar-blender-autorig.mjs >> /tmp/patch-output.txt 2>&1
+            status=$?
+          fi
+          if [ "$status" -eq 0 ]; then
+            python -m py_compile worker/garment-rig/autorig_avatar_v12.py worker/garment-rig/app_v16.py worker/garment-rig/test_autorig_avatar_v12.py >> /tmp/patch-output.txt 2>&1
+            status=$?
+          fi
+          if [ "$status" -ne 0 ]; then
+            git reset --hard HEAD
+            printf 'exit=%s\n' "$status" > PATCH_AUTORIG_V14_FINAL_ERROR.txt
+            cat /tmp/patch-output.txt >> PATCH_AUTORIG_V14_FINAL_ERROR.txt
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add PATCH_AUTORIG_V14_FINAL_ERROR.txt
+            git commit -m "Update final AutoRig V14 diagnostics"
+            git push origin HEAD:${{ github.head_ref }}
+            exit 0
+          fi
+
+          git checkout HEAD -- .github/workflows/apply-landmark-autorig-v14.yml .github/workflows/validate.yml
+          rm -f PATCH_AUTORIG_V14_FINAL_ERROR.txt
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add PATCH_AUTORIG_V14_FINAL_ERROR.txt
-          git commit -m "Capture final AutoRig V14 diagnostics"
+          git add app/api/avatar/rig/route.ts components/creator-studio/CreatorStudioSimple.tsx tests-avatar-blender-autorig.mjs worker/garment-rig/Dockerfile worker/garment-rig/app_v16.py worker/garment-rig/autorig_avatar_v12.py worker/garment-rig/test_autorig_avatar_v12.py
+          git commit -m "Fit avatar rig from mesh landmarks and automatic weights"
           git push origin HEAD:${{ github.head_ref }}
-          exit 0
