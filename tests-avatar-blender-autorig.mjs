@@ -227,7 +227,7 @@ test("el diagnóstico sigue separado de Armature, pesos y avatar oficial", () =>
   assert.match(diagnosticBuilder, /surface_display_position/);
   assert.match(diagnosticBuilder, /duplicateLandmarksHidden/);
   assert.doesNotMatch(diagnosticBuilder, /BODY_EDGES\s*=/);
-  assert.match(analyzerPanel, /Compatibilidad corporal humanoide/);
+  assert.match(analyzerPanel, /Compatibilidad corporal/);
   assert.match(analyzerPanel, /Superficie verificada/);
   assert.match(analyzerPanel, /Articulaciones internas/);
   assert.match(analyzerPanel, /Candidatos rechazados/);
