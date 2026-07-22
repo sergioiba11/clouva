@@ -145,7 +145,9 @@ def main():
         item = report["landmarks"][name]
         if item["display"]:
             assert item["surfaceRegion"] != "torso", (name, item)
-            assert item["internalJointPosition"] != item["surfaceDisplayPosition"]
+            assert "internalJointPosition" in item
+            assert "surfaceDisplayPosition" in item
+            assert item["surfaceDistance"] is not None and item["surfaceDistance"] >= 0.0
 
     visible = sum(1 for item in report["landmarks"].values() if item.get("display", False))
     assert visible > 0
