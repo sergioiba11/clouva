@@ -26,6 +26,12 @@ def cube(name, location, scale):
     obj.name = name
     obj.scale = scale
     bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+    bpy.context.view_layer.objects.active = obj
+    obj.select_set(True)
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    bpy.ops.mesh.subdivide(number_cuts=3)
+    bpy.ops.object.mode_set(mode="OBJECT")
     return obj
 
 
@@ -97,13 +103,8 @@ def test_triangulation():
         ray_candidate("hand_l_top", Vector((0.25, -0.05, 2.5)), target, Vector((0.0, 0.0, 0.018))),
     ]
     result = triangulate_landmark(
-        "index_02_l",
-        candidates,
-        FakeRegionSegmentation(),
-        "hand_l",
-        region_scale=0.24,
-        minimum_views=2,
-        preferred_view_tokens=("palm",),
+        "index_02_l", candidates, FakeRegionSegmentation(), "hand_l",
+        region_scale=0.24, minimum_views=2, preferred_view_tokens=("palm",),
     )
     assert result["accepted"] is True, result
     point = Vector(tuple(result["internalJointPosition"]))
@@ -122,14 +123,13 @@ def main():
         "upper_arm_l", "forearm_l", "hand_l", "upper_arm_r", "forearm_r", "hand_r",
         "thigh_l", "calf_l", "foot_l", "thigh_r", "calf_r", "foot_r", "head", "torso",
     ):
-        assert segmentation_report["regions"].get(region, {}).get("vertexCount", 0) > 0, region
+        count = segmentation_report["regions"].get(region, {}).get("vertexCount", 0)
+        assert count > 0, (region, segmentation_report["regions"])
 
     shoulder_sample, _distance = segmentation.nearest(vectors["shoulder_l"], ("upper_arm_l",))
-    assert shoulder_sample is not None
-    assert shoulder_sample.region == "upper_arm_l"
+    assert shoulder_sample is not None and shoulder_sample.region == "upper_arm_l"
     torso_sample, _torso_distance = segmentation.nearest(vectors["shoulder_l"], ("torso",))
-    assert torso_sample is not None
-    assert shoulder_sample.region != torso_sample.region
+    assert torso_sample is not None and shoulder_sample.region != torso_sample.region
 
     left_hand = segmentation.hand_measurement("left")
     right_hand = segmentation.hand_measurement("right")
