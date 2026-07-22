@@ -259,7 +259,7 @@ export function ActiveAvatarDownload() {
     ];
 
     try {
-      let result = await requestRigApi({ action: "create", force: retry });
+      let result = await requestRigApi({ action: retry ? "retry" : "create" });
 
       if (String(result.status ?? "").toUpperCase() === "IN_PROGRESS") {
         const taskId = String(result.taskId ?? "");

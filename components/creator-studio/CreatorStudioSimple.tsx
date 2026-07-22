@@ -331,9 +331,13 @@ export function CreatorStudioSimple() {
     setAvatarFbx(null);
     setBodyDataReady(false);
     setError(null);
-    setMessage("Preparando el rig completo del avatar…");
+    setMessage("Preparando avatar en Blender");
+    const rigStageTimers = [
+      window.setTimeout(() => setMessage("Creando esqueleto"), 1500),
+      window.setTimeout(() => setMessage("Asignando pesos"), 10000),
+    ];
     try {
-      const created = await requestRig({ action: "create", force: avatarRigReady });
+      const created = await requestRig({ action: avatarRigReady ? "retry" : "create" });
       if (created.alreadyRigged && created.newAvatarUrl) {
         const profile = created.rigProfile ?? { complete: true };
         setRigProfile(profile);
@@ -342,6 +346,24 @@ export function CreatorStudioSimple() {
         await loadAvatars();
         setViewerRevision((value) => value + 1);
         setMessage("Rig completo generado. Revisá Huesos, Animación y Diagnóstico antes de aprobarlo.");
+        return;
+      }
+
+      if (created.status === "SUCCEEDED" && created.newAvatarUrl && created.rigProfile?.complete === true) {
+        const completedAvatar: ActiveAvatar = {
+...activeAvatar,
+id: created.sourceAvatarId || activeAvatar.id,
+modelUrl: created.newAvatarUrl,
+status: "ready",
+updatedAt: new Date().toISOString(),
+        };
+        setActiveAvatar(completedAvatar);
+        setRigProfile(created.rigProfile);
+        setAvatarRigProgress(100);
+        await loadActiveAvatar(user?.id ?? null);
+        await loadAvatars();
+        setViewerRevision((value) => value + 1);
+        setMessage("Listo para Unreal. Revisá Huesos, Animación y Diagnóstico antes de aprobar.");
         return;
       }
 
@@ -388,6 +410,7 @@ export function CreatorStudioSimple() {
       setError(nextError);
       setMessage(nextError);
     } finally {
+      rigStageTimers.forEach((timer) => window.clearTimeout(timer));
       setAvatarRigging(false);
     }
   };

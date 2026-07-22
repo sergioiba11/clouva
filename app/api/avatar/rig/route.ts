@@ -481,6 +481,8 @@ export async function POST(request: NextRequest) {
     supabaseForCleanup = supabase;
     const body = await request.json();
     const action = String(body?.action ?? "");
+    const retry = action === "retry";
+    const createRequested = action === "create" || retry;
 
     stage = "buscar-glb-original";
     const source = await resolveSource(supabase, user.id);
@@ -496,8 +498,8 @@ export async function POST(request: NextRequest) {
     const storedProfile = readProfile(metadata);
     const alreadyRigged = source.currentUrl.includes(COMPLETE_FILENAME);
 
-    if (action === "create") {
-      if (alreadyRigged) {
+    if (createRequested) {
+      if (alreadyRigged && !retry) {
         await updateMetadata(supabase, user.id, { job: null });
         return NextResponse.json({
           alreadyRigged: true,
@@ -534,7 +536,11 @@ export async function POST(request: NextRequest) {
         status: "IN_PROGRESS",
         stage: RIG_STAGES.preparing,
       };
-      await updateMetadata(supabase, user.id, { job });
+      await updateMetadata(
+        supabase,
+        user.id,
+        retry ? { job, profile: null } : { job },
+      );
 
       stage = RIG_STAGES.skeleton;
       job = { ...job, stage };
@@ -565,6 +571,7 @@ export async function POST(request: NextRequest) {
         rigProfile: completed.profile,
         sourceKind: "original-clean-glb",
         freshRig: true,
+        retried: retry,
       });
     }
 
