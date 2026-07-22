@@ -111,3 +111,12 @@ test("AutoRig V14 ajusta cada cadena con landmarks y usa pesos automáticos de B
   assert.match(workerAutorig, /automatic-heat-body-plus-projected-parts-v14/);
   assert.match(rigRoute, /landmarkFit\?\.method !== "mesh-landmarks-per-chain-v14"/);
 });
+
+test("el Worker V14 conserva el origen geométrico y responde el contrato esperado por la API", () => {
+  assert.match(workerApp, /V14_METHOD_SOURCE = "Blender geometry landmarks \+ official Unreal hierarchy"/);
+  assert.match(workerApp, /API_COMPATIBLE_RIG_SOURCE = "Blender official Unreal reference"/);
+  assert.match(workerApp, /profile\["rigMethodSource"\] = method_source/);
+  assert.match(workerApp, /profile\["rigSource"\] = API_COMPATIBLE_RIG_SOURCE/);
+  assert.match(workerApp, /landmarkFit.*mesh-landmarks-per-chain-v14/s);
+  assert.match(workerApp, /weightedRatio.*0\.995/s);
+});
