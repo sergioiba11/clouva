@@ -46,6 +46,7 @@ type RuntimeRigDiagnostics = {
   weightedRatio: number;
   localScaleOk: boolean;
   animationReady: boolean;
+  issues: string[];
   valid: boolean;
 };
 
@@ -331,6 +332,16 @@ function inspectRig(root: Object3D): RuntimeRigDiagnostics {
   const namedLimbsReady = leftArm && rightArm && leftLeg && rightLeg;
   const structurallyCompleteRig = bones.size >= 40 && leftFingers.size >= 5 && rightFingers.size >= 5;
   const animationReady = namedLimbsReady || structurallyCompleteRig;
+  const issues = [
+    !headPresent ? "falta el hueso Head" : null,
+    headPresent && !headGeometryOk ? "Head no llega correctamente a la coronilla" : null,
+    !fingerGeometryOk ? "los dedos no siguen el eje y ancho real de las manos" : null,
+    !earGeometryOk ? "las orejas no están centradas y simétricas sobre la cabeza" : null,
+    weightedRatio < 0.995 ? `pesos incompletos (${(weightedRatio * 100).toFixed(1)}%)` : null,
+    !localScaleOk ? "Mesh o Armature no están en escala 1,1,1" : null,
+    !animationReady ? "faltan cadenas de brazos o piernas" : null,
+  ].filter((value): value is string => Boolean(value));
+
   const valid = bones.size >= 20
     && skinnedMeshCount > 0
     && leftFingers.size >= 5
@@ -361,6 +372,7 @@ function inspectRig(root: Object3D): RuntimeRigDiagnostics {
     weightedRatio,
     localScaleOk,
     animationReady,
+    issues,
     valid,
   };
 }
@@ -404,7 +416,7 @@ export function RigApprovalWorkspace({
     if (next.valid) {
       onStatus?.(`Rig cargado en el visor: ${next.boneCount} huesos, cabeza, dedos alineados con las manos, orejas, pesos y escala validados.`);
     } else {
-      onStatus?.("Rig rechazado: revisá cabeza, orejas y la dirección de los dedos. Abrí Diagnóstico y después tocá Rehacer rig.");
+      onStatus?.(`Rig rechazado: ${next.issues.join(" · ") || "la anatomía no coincide con la malla"}. Abrí Diagnóstico y después tocá Rehacer rig.`);
     }
   }, [onStatus]);
 

@@ -95,21 +95,24 @@ test("el Worker crea un rig desde una malla limpia usando la referencia oficial 
   assert.match(dockerfile, /test_autorig_avatar_v12\.py/);
 });
 
-test("cada Rehacer rig exige prueba criptográfica de una ejecución nueva de Blender V12", () => {
-  assert.match(rigRoute, /EXPECTED_WORKER_RIG_VERSION = "v14-landmark-autorig"/);
-  assert.match(rigRoute, /EXPECTED_PROFILE_VERSION = "clouva-blender-autorig-v14-landmarks-heat"/);
+test("cada Rehacer rig exige prueba criptográfica de una ejecución nueva de Blender V15", () => {
+  assert.match(rigRoute, /EXPECTED_WORKER_RIG_VERSION = "v15-anatomical-landmark-autorig"/);
+  assert.match(rigRoute, /EXPECTED_PROFILE_VERSION = "clouva-blender-autorig-v15-skull-hand-axis"/);
   assert.match(rigRoute, /proof\.inputSha256 === proof\.outputSha256/);
   assert.match(workerAutorig, /uuid\.uuid4\(\)\.hex/);
   assert.match(workerAutorig, /sha256_file\(output_path\)/);
-  assert.match(creatorStudio, /Blender V14 ajustó articulaciones y creó un rig nuevo/);
+  assert.match(creatorStudio, /Blender V15 ajustó cabeza, manos y articulaciones y creó un rig nuevo/);
 });
 
 
-test("AutoRig V14 ajusta cada cadena con landmarks y usa pesos automáticos de Blender", () => {
-  assert.match(workerAutorig, /mesh-landmarks-per-chain-v14/);
+test("AutoRig V15 ajusta cabeza y cada cadena con landmarks y usa pesos automáticos de Blender", () => {
+  assert.match(workerAutorig, /mesh-landmarks-per-chain-v15/);
   assert.match(workerAutorig, /ARMATURE_AUTO/);
-  assert.match(workerAutorig, /automatic-heat-body-plus-projected-parts-v14/);
-  assert.match(rigRoute, /landmarkFit\?\.method !== "mesh-landmarks-per-chain-v14"/);
+  assert.match(workerAutorig, /automatic-heat-body-plus-projected-parts-v15/);
+  assert.match(rigRoute, /landmarkFit\?\.method !== "mesh-landmarks-per-chain-v15"/);
+  assert.match(workerAutorig, /mesh-skull-base-to-crown-v15/);
+  assert.match(workerAutorig, /target-mesh-distal-axis-and-lateral-spread-v15/);
+  assert.match(workerApp, /v15-anatomical-landmark-autorig/);
 });
 
 test("el Worker V14 conserva el origen geométrico y responde el contrato esperado por la API", () => {
@@ -117,6 +120,6 @@ test("el Worker V14 conserva el origen geométrico y responde el contrato espera
   assert.match(workerApp, /API_COMPATIBLE_RIG_SOURCE = "Blender official Unreal reference"/);
   assert.match(workerApp, /profile\["rigMethodSource"\] = method_source/);
   assert.match(workerApp, /profile\["rigSource"\] = API_COMPATIBLE_RIG_SOURCE/);
-  assert.match(workerApp, /landmarkFit.*mesh-landmarks-per-chain-v14/s);
+  assert.match(workerApp, /landmarkFit.*mesh-landmarks-per-chain-v15/s);
   assert.match(workerApp, /weightedRatio.*0\.995/s);
 });

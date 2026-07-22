@@ -63,6 +63,12 @@ def validate_output(path):
     armature = armatures[0]
     names = {bone.name for bone in armature.data.bones}
     assert len(names) >= 50
+    assert "clouva_head_end" in names or "Head_end" in names
+    head = next((bone for bone in armature.data.bones if bone.name.lower() == "head"), None)
+    assert head is not None
+    minimum, maximum, size = autorig.bounds(meshes)
+    head_ratio = (armature.matrix_world.to_3x3() @ (head.tail_local - head.head_local)).length / max(float(size.z), 1e-6)
+    assert 0.10 <= head_ratio <= 0.20
     for side in ("l", "r"):
         for finger in autorig.v11.v5.legacy.FINGER_NAMES:
             for segment in range(1, 4):
@@ -88,25 +94,27 @@ def main():
         stored = json.loads(metadata.read_text(encoding="utf-8"))
         assert profile["complete"] is True
         assert stored["rigSource"] == "Blender geometry landmarks + official Unreal hierarchy"
-        assert stored["version"] == "clouva-blender-autorig-v14-landmarks-heat"
-        assert stored["landmarkFit"]["method"] == "mesh-landmarks-per-chain-v14"
+        assert stored["version"] == "clouva-blender-autorig-v15-skull-hand-axis"
+        assert stored["landmarkFit"]["method"] == "mesh-landmarks-per-chain-v15"
         assert len(stored["landmarkFit"]["sides"]) == 2
-        assert stored["weights"]["method"] == "automatic-heat-body-plus-projected-parts-v14"
+        assert stored["weights"]["method"] == "automatic-heat-body-plus-projected-parts-v15"
         assert stored["inputSource"] == "original-clean-meshy-avatar"
         assert stored["weights"]["weightedRatio"] >= 0.995
         assert stored["fingers"]["leftChains"] == 5
         assert stored["fingers"]["rightChains"] == 5
         assert stored["ears"]["complete"] is True
         assert stored["normalization"]["canonicalLocalScale"] == [1.0, 1.0, 1.0]
-        assert stored["handFit"]["l"]["method"] == "target-mesh-hand-envelope"
-        assert stored["handFit"]["r"]["method"] == "target-mesh-hand-envelope"
+        assert stored["headFit"]["method"] == "mesh-skull-base-to-crown-v15"
+        assert 0.10 <= stored["headFit"]["lengthRatio"] <= 0.20
+        assert stored["handFit"]["l"]["method"] == "target-mesh-distal-axis-and-lateral-spread-v15"
+        assert stored["handFit"]["r"]["method"] == "target-mesh-distal-axis-and-lateral-spread-v15"
         assert stored["runId"]
         assert stored["durationMs"] > 0
         assert len(stored["inputSha256"]) == 64
         assert len(stored["outputSha256"]) == 64
         assert stored["inputSha256"] != stored["outputSha256"]
         validate_output(output)
-        print("[clouva] Blender AutoRig V14 landmark + heat weights validated", flush=True)
+        print("[clouva] Blender AutoRig V15 anatomical head + hand axis validated", flush=True)
 
 
 if __name__ == "__main__":

@@ -144,6 +144,14 @@ function fingerInfo(name: string) {
   return { finger: match[1], segment: Number(match[2]), side: match[3] };
 }
 
+function anatomicalSide(name: string): "left" | "right" | null {
+  const raw = name.toLowerCase();
+  const normalized = clean(name);
+  if (normalized.includes("left") || /(^|[_.:\- ])l($|[_.:\- ])/i.test(raw) || /_l$/i.test(raw)) return "left";
+  if (normalized.includes("right") || /(^|[_.:\- ])r($|[_.:\- ])/i.test(raw) || /_r$/i.test(raw)) return "right";
+  return null;
+}
+
 function isUnsafeHelper(name: string) {
   const normalized = clean(name);
   return normalized.endsWith("end")
@@ -401,7 +409,7 @@ function buildBasePreviewLinks(root: Object3D) {
   return links;
 }
 
-function createSkeletonPreview(root: Object3D, rig: HumanRig) {
+function createSkeletonPreview(root: Object3D, rig: HumanRig, camera: PerspectiveCamera) {
   root.updateMatrixWorld(true);
   const bones = uniqueBones(root);
   const links = buildBasePreviewLinks(root);
@@ -412,6 +420,8 @@ function createSkeletonPreview(root: Object3D, rig: HumanRig) {
   const maxLinkLength = height * 0.45;
   const segmentCapacity = links.length + 1 + ears.length + fingerTips.length;
   const linePositions = new Float32Array(Math.max(segmentCapacity * 6, 6));
+  const cameraWorld = new Vector3();
+  const cameraLocal = new Vector3();
 
   const lineGeometry = new BufferGeometry();
   lineGeometry.setAttribute("position", new Float32BufferAttribute(linePositions, 3));
@@ -438,8 +448,20 @@ function createSkeletonPreview(root: Object3D, rig: HumanRig) {
     const lineAttribute = lineGeometry.getAttribute("position") as Float32BufferAttribute;
     const lineArray = lineAttribute.array as Float32Array;
     let lineOffset = 0;
+    camera.getWorldPosition(cameraWorld);
+    cameraLocal.copy(cameraWorld);
+    root.worldToLocal(cameraLocal);
+    const sideView = Math.abs(cameraLocal.x) > Math.abs(cameraLocal.z) * 0.72;
+    let nearSide: "left" | "right" | null = null;
+    if (sideView && rig.leftHand && rig.rightHand) {
+      rig.leftHand.getWorldPosition(tmpA);
+      rig.rightHand.getWorldPosition(tmpB);
+      nearSide = cameraWorld.distanceToSquared(tmpA) <= cameraWorld.distanceToSquared(tmpB) ? "left" : "right";
+    }
 
     for (const link of links) {
+      const linkSide = anatomicalSide(link.child.name) ?? anatomicalSide(link.parent.name);
+      if (nearSide && linkSide && linkSide !== nearSide) continue;
       link.parent.getWorldPosition(tmpA);
       link.child.getWorldPosition(tmpB);
       const distance = tmpA.distanceTo(tmpB);
@@ -475,6 +497,8 @@ function createSkeletonPreview(root: Object3D, rig: HumanRig) {
     const right = tmpB.set(1, 0, 0).applyQuaternion(tmpRootWorldQuaternion).normalize().clone();
     box.getCenter(tmpCenter);
     for (const ear of ears) {
+      const earSide = anatomicalSide(ear.name);
+      if (nearSide && earSide && earSide !== nearSide) continue;
       ear.getWorldPosition(tmpA);
       const sign = tmpA.x >= tmpCenter.x ? 1 : -1;
       tmpC.copy(tmpA).addScaledVector(right, sign * height * 0.020);
@@ -483,6 +507,8 @@ function createSkeletonPreview(root: Object3D, rig: HumanRig) {
 
     // glTF no conserva el tail del último hueso. Proyectamos la última falange desde 02→03.
     for (const tip of fingerTips) {
+      const tipSide = anatomicalSide(tip.name);
+      if (nearSide && tipSide && tipSide !== nearSide) continue;
       const parent = nearestPreviewAncestor(tip);
       tip.getWorldPosition(tmpB);
       if (parent && fingerInfo(parent.name)) {
@@ -637,7 +663,7 @@ export function CreatorStudioAvatarViewer({
       mixer = clips.length ? new AnimationMixer(model) : null;
       scene.add(model);
 
-      skeletonPreview = createSkeletonPreview(model, rig);
+      skeletonPreview = createSkeletonPreview(model, rig, camera);
       skeletonPreview.group.visible = showSkeletonRef.current;
       scene.add(skeletonPreview.group);
 
