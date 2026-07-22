@@ -25,10 +25,19 @@ def _medoid(candidates: List[dict]):
 
 
 def fuse_projected(projected: Iterable[dict], region_scale: float,
-                   minimum_views: int = 2, tolerance_ratio: float = 0.055):
+                    minimum_views: int = 2, tolerance_ratio: float = 0.055):
+    """Fuse candidates only when independent camera views agree.
+
+    Phase 1 incorrectly treated one ray hit as a verified anatomical point. V2
+    keeps the candidate in JSON for diagnosis, but caps it below 0.40 and hides
+    it from the GLB whenever fewer than ``minimum_views`` agree or the cluster is
+    geometrically inconsistent.
+    """
     grouped: Dict[str, List[dict]] = defaultdict(list)
     for item in projected:
-        grouped[str(item.get("name"))].append(item)
+        name = str(item.get("name") or "")
+        if name:
+            grouped[name].append(item)
 
     fused = {}
     for name, candidates in grouped.items():
@@ -52,13 +61,25 @@ def fuse_projected(projected: Iterable[dict], region_scale: float,
         point /= max(total_weight, 1e-8)
         if normal.length > 1e-8:
             normal.normalize()
-        views = sorted({str(item.get("view")) for item in cluster})
+
+        views = sorted({str(item.get("view")) for item in cluster if item.get("view")})
         spread = max(((_as_vector(item) - point).length for item in cluster), default=0.0)
         visual = sum(float(item.get("visualConfidence", 0.5)) for item in cluster) / len(cluster)
         geometry = sum(float(item.get("geometryConfidence", 0.5)) for item in cluster) / len(cluster)
         multiview = min(1.0, len(views) / max(minimum_views, 1))
         consistency = max(0.0, min(1.0, 1.0 - spread / max(tolerance, 1e-8)))
-        final = visual * 0.30 + geometry * 0.30 + multiview * 0.24 + consistency * 0.16
+        hit_objects = sorted({str(item.get("hitObject")) for item in cluster if item.get("hitObject")})
+        same_surface = len(hit_objects) <= 1
+        verified = (
+            len(views) >= minimum_views
+            and consistency >= 0.45
+            and geometry >= 0.60
+            and same_surface
+        )
+        final = visual * 0.26 + geometry * 0.28 + multiview * 0.26 + consistency * 0.20
+        if not verified:
+            final = min(final, 0.39)
+
         fused[name] = {
             "position": _vec(point),
             "surfaceNormal": _vec(normal),
@@ -73,8 +94,17 @@ def fuse_projected(projected: Iterable[dict], region_scale: float,
             "candidateCount": len(candidates),
             "clusterCount": len(cluster),
             "spread": spread,
-            "method": "mediapipe-tasks-plus-raycast-multiview-v1",
-            "hitObjects": sorted({str(item.get("hitObject")) for item in cluster}),
+            "method": "mediapipe-tasks-plus-raycast-multiview-v2",
+            "hitObjects": hit_objects,
+            "verified": verified,
+            "display": verified,
+            "landmarkType": "surface",
+            "rejectionReasons": [
+                *( ["INSUFFICIENT_VIEWS"] if len(views) < minimum_views else [] ),
+                *( ["MULTIVIEW_SPREAD_TOO_HIGH"] if consistency < 0.45 else [] ),
+                *( ["GEOMETRY_CONFIDENCE_LOW"] if geometry < 0.60 else [] ),
+                *( ["MULTIPLE_SURFACES_HIT"] if not same_surface else [] ),
+            ],
         }
     return fused
 
@@ -82,11 +112,16 @@ def fuse_projected(projected: Iterable[dict], region_scale: float,
 def apply_anatomical_confidence(landmark: dict, score: float):
     score = max(0.0, min(1.0, float(score)))
     landmark["anatomicalConfidence"] = score
-    landmark["finalConfidence"] = (
-        float(landmark.get("visualConfidence", 0.0)) * 0.25
-        + float(landmark.get("geometryConfidence", 0.0)) * 0.25
+    final = (
+        float(landmark.get("visualConfidence", 0.0)) * 0.22
+        + float(landmark.get("geometryConfidence", 0.0)) * 0.24
         + float(landmark.get("multiviewConfidence", 0.0)) * 0.20
-        + score * 0.30
+        + score * 0.34
     )
-    landmark["confidence"] = landmark["finalConfidence"]
+    if not landmark.get("verified", True):
+        final = min(final, 0.39)
+    landmark["finalConfidence"] = final
+    landmark["confidence"] = final
+    if final < 0.40:
+        landmark["display"] = False
     return landmark

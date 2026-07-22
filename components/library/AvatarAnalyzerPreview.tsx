@@ -9,10 +9,13 @@ type AnalysisSummary = {
   status: string;
   runId: string;
   humanoidConfidence: number;
+  bodyAnalysis?: string;
   faceAnalysis: string;
   leftHandAnalysis: string;
   rightHandAnalysis: string;
   landmarkCount: number;
+  rawLandmarkCount?: number;
+  hiddenLandmarkCount?: number;
   warningCount: number;
   rigModified: boolean;
 };
@@ -97,14 +100,14 @@ export function AvatarAnalyzerPreview() {
           {createElement("model-viewer", {
             className: styles.model,
             src: previewUrl,
-            alt: "Avatar CLOUVA con landmarks anatómicos",
+            alt: "Avatar CLOUVA con landmarks anatómicos verificados",
             "auto-rotate": true,
             "rotation-per-second": "12deg",
             "camera-controls": true,
             "shadow-intensity": "1",
             exposure: "1",
           })}
-          <span className={styles.viewerBadge}>PUNTOS REALES SOBRE LA MALLA</span>
+          <span className={styles.viewerBadge}>SOLO PUNTOS DE SUPERFICIE VERIFICADOS</span>
         </div>
       ) : (
         <div className={styles.empty}>
@@ -115,14 +118,24 @@ export function AvatarAnalyzerPreview() {
       )}
 
       {summary ? (
-        <div className={styles.summary}>
-          <div><span>Humanoide</span><strong>{Math.round(summary.humanoidConfidence * 100)}%</strong></div>
-          <div><span>Landmarks</span><strong>{summary.landmarkCount}</strong></div>
-          <div><span>Rostro</span><strong>{statusLabel(summary.faceAnalysis)}</strong></div>
-          <div><span>Mano izquierda</span><strong>{statusLabel(summary.leftHandAnalysis)}</strong></div>
-          <div><span>Mano derecha</span><strong>{statusLabel(summary.rightHandAnalysis)}</strong></div>
-          <div><span>Advertencias</span><strong>{summary.warningCount}</strong></div>
-        </div>
+        <>
+          <div className={styles.summary}>
+            <div><span>Resultado</span><strong>{statusLabel(summary.status)}</strong></div>
+            <div><span>Forma humanoide</span><strong>{Math.round(summary.humanoidConfidence * 100)}%</strong></div>
+            <div><span>Puntos verificados</span><strong>{summary.landmarkCount}</strong></div>
+            <div><span>Cuerpo</span><strong>{statusLabel(summary.bodyAnalysis || "unknown")}</strong></div>
+            <div><span>Rostro</span><strong>{statusLabel(summary.faceAnalysis)}</strong></div>
+            <div><span>Mano izquierda</span><strong>{statusLabel(summary.leftHandAnalysis)}</strong></div>
+            <div><span>Mano derecha</span><strong>{statusLabel(summary.rightHandAnalysis)}</strong></div>
+            <div><span>Ocultos por inválidos/internos</span><strong>{summary.hiddenLandmarkCount ?? 0}</strong></div>
+            <div><span>Advertencias</span><strong>{summary.warningCount}</strong></div>
+          </div>
+          {summary.status === "needs_review" || summary.status === "invalid" ? (
+            <p className={styles.error}>
+              <TriangleAlert /> El análisis no está aprobado. Los puntos flotantes, repetidos o sin dos vistas confirmadas fueron ocultados.
+            </p>
+          ) : null}
+        </>
       ) : null}
 
       <button
@@ -138,7 +151,7 @@ export function AvatarAnalyzerPreview() {
       {analyzing ? (
         <div className={styles.processing}>
           <span />
-          <p>Blender genera vistas técnicas, MediaPipe detecta puntos y el Worker los proyecta sobre la malla 3D.</p>
+          <p>Blender genera vistas técnicas, MediaPipe detecta candidatos y el Worker conserva únicamente los que coinciden sobre la malla.</p>
         </div>
       ) : null}
 

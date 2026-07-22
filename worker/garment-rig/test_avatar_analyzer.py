@@ -1,4 +1,4 @@
-"""Blender smoke test for Avatar Analyzer phase 1 geometry and diagnostic GLB."""
+"""Blender smoke test for strict Avatar Analyzer surface diagnostics."""
 from __future__ import annotations
 
 import sys
@@ -11,6 +11,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+from avatar_analyzer import _sanitize_body_landmarks
 from body_analyzer import analyze_body
 from diagnostic_builder import build_diagnostic_glb
 
@@ -58,7 +59,8 @@ def build_avatar():
 
 def main():
     meshes = build_avatar()
-    report, _vectors, _classes = analyze_body(meshes)
+    report, vectors, classes = analyze_body(meshes)
+    report = _sanitize_body_landmarks(meshes, report, vectors, classes)
     required = [
         "pelvis", "neck", "head", "shoulder_l", "shoulder_r", "elbow_l",
         "elbow_r", "wrist_l", "wrist_r", "knee_l", "knee_r", "ankle_l", "ankle_r",
@@ -67,12 +69,21 @@ def main():
     assert not missing, missing
     assert report["dimensions"]["height"] > 1.5
     assert 0.0 <= report["symmetry"]["score"] <= 1.0
+    assert report["landmarks"]["root"]["display"] is False
+    assert report["landmarks"]["clavicle_l"]["display"] is False
+    assert report["landmarks"]["clavicle_r"]["display"] is False
+    visible = sum(1 for item in report["landmarks"].values() if item.get("display", False))
+    assert visible > 0
+
     with tempfile.TemporaryDirectory(prefix="clouva-avatar-analyzer-test-") as temp:
         output = Path(temp) / "diagnostic_landmarks.glb"
         proof = build_diagnostic_glb(output, meshes, report["landmarks"], report["dimensions"]["height"])
         assert output.is_file() and output.stat().st_size > 1024
-        assert proof["landmarkObjects"] >= len(required)
-    print("[clouva] Avatar Analyzer phase 1 body + diagnostic GLB OK")
+        assert proof["surfaceOnly"] is True
+        assert proof["landmarkObjects"] == visible
+        assert proof["edgeObjects"] == 0
+        assert proof["hiddenLandmarks"] > 0
+    print("[clouva] Avatar Analyzer strict surface-only body diagnostic GLB OK")
 
 
 if __name__ == "__main__":
