@@ -1,0 +1,4 @@
+Clean redeploy trigger for Railway.
+
+Reason: the previous deployment for commit efa99296c5b20da80706852412fd00470837e82a failed during Railway initialization before build started.
+This file does not change application behavior.
