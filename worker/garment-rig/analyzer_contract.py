@@ -78,8 +78,6 @@ def classify_landmark_state(record: dict):
     reasons = _reasons(record)
     if not record.get("supported", True):
         return "unsupported", "unsupported", True
-    # A projected detector candidate that failed BVH/depth is technical evidence,
-    # even when no observation survived to viewsConfirmed.
     if reasons.intersection(TECHNICAL_REASONS):
         return "technical_mismatch", "projection", True
     if reasons.intersection(TOPOLOGY_REASONS):
@@ -119,22 +117,22 @@ def annotate_landmarks(landmarks: dict):
         if not isinstance(record, dict):
             continue
         record.setdefault("name", name)
-        raw = record.get("rawFinalConfidence")
-        if raw is None:
-            raw = record.get("rawConfidence")
-        if raw is None:
-            components = [
-                record.get("finalConfidence"), record.get("confidence"),
-                record.get("detectorConfidence"), record.get("topologyConfidence"),
-                record.get("geodesicConfidence"), record.get("geometryConfidence"),
-                record.get("silhouetteConfidence"), record.get("triangulationConfidence"),
-            ]
-            raw = max((_float(value) for value in components if value is not None), default=0.0)
-        raw = max(0.0, min(1.0, _float(raw)))
+        explicit_pre_gate = record.get("preGateConfidence")
+        measured = [
+            record.get("rawFinalConfidence"), record.get("rawConfidence"),
+            record.get("finalConfidence"), record.get("confidence"),
+            record.get("detectorConfidence"), record.get("topologyConfidence"),
+            record.get("geodesicConfidence"), record.get("geometryConfidence"),
+            record.get("silhouetteConfidence"), record.get("triangulationConfidence"),
+            record.get("symmetryConfidence"),
+        ]
+        if explicit_pre_gate is not None:
+            raw = _float(explicit_pre_gate)
+        else:
+            raw = max((_float(value) for value in measured if value is not None), default=0.0)
+        raw = max(0.0, min(1.0, raw))
         record["rawConfidence"] = raw
         record["rawFinalConfidence"] = raw
-        # Approval is expressed by state/blocking, never by forcing all failures
-        # to 0.39. UI and datasets therefore keep the actual measured score.
         record["finalConfidence"] = raw
         record["confidence"] = raw
         state, evidence, blocking = classify_landmark_state(record)
@@ -175,6 +173,130 @@ def _failure_group(warning: dict):
     return None
 
 
+def _landmark_group(name: str):
+    if name in FACE_REQUIRED or name.startswith((
+        "eye_", "nose_", "mouth_", "upper_lip", "lower_lip", "chin",
+        "jaw_", "cheek_", "forehead_", "temple_", "brow_", "ear_",
+    )):
+        return "face"
+    if name.endswith("_l") and name in HAND_REQUIRED["left"]:
+        return "leftHand"
+    if name.endswith("_r") and name in HAND_REQUIRED["right"]:
+        return "rightHand"
+    return None
+
+
+def _failure_stage_code(record: dict, rendered: int, detector_count: int,
+                        projected_count: int):
+    state = str(record.get("state") or record.get("validationState") or "")
+    code = str(record.get("failureCode") or "")
+    reasons = _reasons(record)
+    if state in VERIFIED_STATES or record.get("accepted"):
+        return "verified"
+    if rendered == 0:
+        return "render_empty"
+    if detector_count == 0:
+        return "detector_not_found"
+    if code == "LANDMARK_REGION_BVH_MISS" or "LANDMARK_REGION_BVH_MISS" in reasons:
+        return "region_bvh_miss"
+    if code in TECHNICAL_REASONS or reasons.intersection(TECHNICAL_REASONS):
+        return "technical_pass_mismatch"
+    if code == "RAY_TRIANGULATION_UNSTABLE" or "RAY_TRIANGULATION_UNSTABLE" in reasons:
+        return "unstable_triangulation"
+    if state == "insufficient_views" or int(record.get("viewsConfirmed") or 0) < 2:
+        return "insufficient_views"
+    if state == "topology_invalid" or reasons.intersection(TOPOLOGY_REASONS):
+        return "topology_invalid"
+    if projected_count == 0:
+        return "technical_pass_mismatch"
+    return "insufficient_views"
+
+
+def build_landmark_evidence(manifest: dict, detector_output: dict, face: dict, hands: dict):
+    """Build stage-by-stage evidence for every required facial and hand landmark."""
+    views = manifest.get("views") or []
+    detector_views = detector_output.get("views") or []
+    detector_by_view = {str(item.get("name") or ""): item for item in detector_views}
+    region_reports = {
+        "face": face,
+        "leftHand": hands.get("left") or {},
+        "rightHand": hands.get("right") or {},
+    }
+    required = [*FACE_REQUIRED, *HAND_REQUIRED["left"], *HAND_REQUIRED["right"]]
+    evidence = {}
+
+    for name in required:
+        group = _landmark_group(name)
+        report = region_reports.get(group) or {}
+        record = (report.get("landmarks") or {}).get(name) or _placeholder(
+            name, "head" if group == "face" else "hand_l" if group == "leftHand" else "hand_r",
+        )
+        relevant_views = [view for view in views if _view_group(view) == group]
+        rendered = sum(1 for view in relevant_views if bool(view.get("rendered", view.get("path"))))
+        detector_candidates = []
+        projected_candidates = [
+            item for item in (report.get("projectedCandidates") or [])
+            if str(item.get("name") or "") == name
+        ]
+        view_stats = []
+        for view in relevant_views:
+            detector_view = detector_by_view.get(str(view.get("name") or "")) or {}
+            local_detector = [
+                item for item in (detector_view.get("candidates") or [])
+                if str(item.get("name") or "") == name
+            ]
+            detector_candidates.extend(local_detector)
+            local_projected = [
+                item for item in projected_candidates
+                if str(item.get("view") or "") == str(view.get("name") or "")
+            ]
+            view_stats.append({
+                "view": view.get("name"),
+                "rendered": bool(view.get("rendered", view.get("path"))),
+                "proxyVertexCount": int(view.get("proxyVertexCount") or 0),
+                "silhouetteCoverage": _float(view.get("silhouetteCoverage")),
+                "detectorCandidates": len(local_detector),
+                "projectedCandidates": len(local_projected),
+                "technicalPassAcceptedCandidates": len(local_projected),
+                "framingValid": bool(view.get("framingValid", True)),
+                "clippingDetected": bool(view.get("clippingDetected", False)),
+                "attempt": view.get("attempt", "final"),
+            })
+        failure_stage = _failure_stage_code(
+            record, rendered, len(detector_candidates), len(projected_candidates),
+        )
+        item = {
+            "name": name,
+            "group": group,
+            "region": record.get("region"),
+            "side": "left" if group == "leftHand" else "right" if group == "rightHand" else None,
+            "rendered": rendered,
+            "proxyVertexCount": max((entry["proxyVertexCount"] for entry in view_stats), default=0),
+            "silhouetteCoverage": (
+                sum(entry["silhouetteCoverage"] for entry in view_stats) / max(len(view_stats), 1)
+            ),
+            "detectorCandidates": len(detector_candidates),
+            "projectedCandidates": len(projected_candidates),
+            "technicalPassAcceptedCandidates": len(projected_candidates),
+            "triangulationInliers": int(record.get("triangulationInliers") or 0),
+            "viewsConfirmed": int(record.get("viewsConfirmed") or 0),
+            "topologyRecovered": bool(
+                record.get("topologyRecovered") or record.get("geometryFallback")
+                or "topology" in str(record.get("method") or "")
+            ),
+            "finalState": record.get("state") or record.get("validationState") or "no_visual_evidence",
+            "failureStage": record.get("failureStage") or failure_stage,
+            "failureCode": record.get("failureCode") or failure_stage,
+            "classifiedFailure": failure_stage,
+            "rawConfidence": _float(record.get("rawConfidence", record.get("finalConfidence"))),
+            "viewStats": view_stats,
+        }
+        evidence[name] = item
+        if isinstance(record, dict):
+            record["evidenceDiagnostics"] = item
+    return evidence
+
+
 def build_detection_coverage(manifest: dict, detector_output: dict, face: dict, hands: dict,
                              attempts: list[dict] | None = None):
     groups = {
@@ -204,6 +326,7 @@ def build_detection_coverage(manifest: dict, detector_output: dict, face: dict, 
             "silhouetteCoverage": _float(view.get("silhouetteCoverage")),
             "detectorCandidates": len(candidates),
             "framingValid": bool(view.get("framingValid", True)),
+            "clippingDetected": bool(view.get("clippingDetected", False)),
             "attempt": view.get("attempt", "final"),
         })
 
@@ -267,6 +390,7 @@ def build_detection_coverage(manifest: dict, detector_output: dict, face: dict, 
             "geometricCoverage": projected / max(detector, 1),
             "views": view_details[group],
         }
+    output["landmarks"] = build_landmark_evidence(manifest, detector_output, face, hands)
     if attempts:
         output["attempts"] = attempts
     return output
@@ -343,10 +467,11 @@ def calculate_rig_readiness(body_report: dict, face: dict, hands: dict, landmark
 
     gates = list(dict.fromkeys(gates))
     approved = not gates and weighted >= 0.82
+    status = "valid" if approved else "needs_review"
     return {
         "score": max(0.0, min(1.0, weighted)),
         "approved": approved,
-        "status": "valid" if approved else "needs_review",
+        "status": status,
         "gates": gates,
         "components": {
             "body": body_score,
