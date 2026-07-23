@@ -455,15 +455,39 @@ def analyze_hands(detector_output: dict, manifest: dict, classifications: Dict[s
         landmarks = refined["landmarks"]
         blocking = list(refined.get("blockingWarnings") or [])
         informative = list(refined.get("informativeWarnings") or [])
+        classification = topologies[side].diagnostics.get("classification") or {}
+        hand_mode = str(classification.get("mode") or "unsupported_or_corrupt")
         if wrist_fallback:
             informative.append({"code": "WRIST_GEOMETRY_FALLBACK_USED", "side": side})
-        blocking.extend(_derive_palm_and_metacarpals(landmarks, final_bvh, side))
+        palm_warnings = _derive_palm_and_metacarpals(landmarks, final_bvh, side)
+        if hand_mode != "simplified_mitten":
+            blocking.extend(palm_warnings)
         valid_fingers = int(refined.get("validFingers") or 0)
         rejected_names = sorted(
             name for name, item in landmarks.items()
             if isinstance(item, dict) and not item.get("accepted", False)
         )
-        if valid_fingers == 5 and not rejected_names and not blocking:
+        hand_base_ready = bool(
+            (landmarks.get(f"wrist_{suffix}") or {}).get("accepted")
+            and classification.get("handBaseSupported")
+        )
+        finger_rig_ready = bool(
+            classification.get("fullFingerRigSupported")
+            and valid_fingers == 5
+            and not rejected_names
+        )
+        if hand_mode == "simplified_mitten" and hand_base_ready:
+            informative.extend({**item, "blocking": False} for item in blocking)
+            blocking = []
+            informative.append({
+                "code": "HAND_FINGER_RIG_UNSUPPORTED",
+                "side": side,
+                "handMode": hand_mode,
+                "message": "La base de la mano es válida; la topología tipo mitón no expone dedos reales.",
+                "blocking": False,
+            })
+            status = "valid_base_only"
+        elif finger_rig_ready and not blocking:
             status = "valid_with_warnings" if informative or topologies[side].diagnostics.get("status") != "valid" else "valid"
         else:
             status = "needs_review"
@@ -475,6 +499,10 @@ def analyze_hands(detector_output: dict, manifest: dict, classifications: Dict[s
         side_warnings = [*blocking, *informative]
         result[side] = {
             "status": status, "landmarks": landmarks, "validFingers": valid_fingers,
+            "handMode": hand_mode,
+            "fingerRigMode": classification.get("fingerRigMode") or "unsupported",
+            "handBaseReady": hand_base_ready,
+            "fingerRigReady": finger_rig_ready,
             "measurements": {**measurement, "fingerLengths": refined.get("fingerLengths") or {}},
             "topology": topologies[side].as_report(),
             "triangulatedLandmarks": sum(1 for item in landmarks.values() if item.get("internalJointPosition")),

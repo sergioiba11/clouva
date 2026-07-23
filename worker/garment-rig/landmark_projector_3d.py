@@ -83,31 +83,59 @@ def _cast_scene_fallback(origin: Vector, direction: Vector, classifications: Dic
     return None, rejected
 
 
-def _technical_sample(view: dict, x: float, y: float):
+def _pixel_from_normalized(x: float, y: float, resolution):
+    width, height = max(int(resolution[0]), 1), max(int(resolution[1]), 1)
+    column = min(width - 1, max(0, int(float(x) * width)))
+    row = min(height - 1, max(0, int(float(y) * height)))
+    return column, row
+
+
+def _technical_sample(view: dict, column: int, row: int):
     technical = view.get("technicalPasses") or {}
     paths = technical.get("paths") or {}
     resolution = technical.get("resolution") or [0, 0]
     if len(resolution) != 2 or not resolution[0] or not resolution[1]:
         return None
     width, height = int(resolution[0]), int(resolution[1])
-    column = min(width - 1, max(0, int(float(x) * width)))
-    row = min(height - 1, max(0, int(float(y) * height)))
+    column = min(width - 1, max(0, int(column)))
+    row = min(height - 1, max(0, int(row)))
     depth = _load_array(paths.get("depthNpy"))
     normal = _load_array(paths.get("normalNpy"))
-    region_id = _load_array(paths.get("regionIdNpy"))
+    world_position = _load_array(paths.get("worldPositionNpy"))
+    valid_mask = _load_array(paths.get("validMaskNpy"))
+    region_id = _load_array(paths.get("primaryRegionIdNpy") or paths.get("regionIdNpy"))
+    primary_weight = _load_array(paths.get("primaryRegionWeightNpy"))
+    secondary_mask = _load_array(paths.get("secondaryRegionMaskNpy"))
     object_id = _load_array(paths.get("objectIdNpy"))
     triangle_id = _load_array(paths.get("triangleIdNpy"))
+    barycentric = _load_array(paths.get("barycentricNpy"))
     curvature = _load_array(paths.get("curvatureNpy"))
     if depth is None or region_id is None:
         return None
     value = float(depth[row, column])
+    valid = bool(valid_mask[row, column]) if valid_mask is not None else bool(
+        np.isfinite(value) and int(triangle_id[row, column] if triangle_id is not None else -1) >= 0
+    )
     return {
         "row": row, "column": column,
+        "valid": valid,
         "depth": value if np.isfinite(value) else None,
         "normal": [float(component) for component in normal[row, column]] if normal is not None else None,
+        "worldPosition": (
+            [float(component) for component in world_position[row, column]]
+            if world_position is not None and np.all(np.isfinite(world_position[row, column]))
+            else None
+        ),
         "regionId": int(region_id[row, column]),
+        "primaryRegionWeight": float(primary_weight[row, column]) if primary_weight is not None else 1.0,
+        "secondaryRegionMask": int(secondary_mask[row, column]) if secondary_mask is not None else 0,
         "objectId": int(object_id[row, column]) if object_id is not None else 0,
         "triangleId": int(triangle_id[row, column]) if triangle_id is not None else -1,
+        "barycentricCoordinates": (
+            [float(component) for component in barycentric[row, column]]
+            if barycentric is not None and np.all(np.isfinite(barycentric[row, column]))
+            else None
+        ),
         "curvature": float(curvature[row, column]) if curvature is not None else 0.0,
         "coverage": float(technical.get("coverage") or 0.0),
     }
@@ -137,34 +165,74 @@ def _sample_radius(candidate: dict, view: dict):
     name = str(candidate.get("name") or "")
     region = str(candidate.get("region") or view.get("region") or "")
     if region == "hand" or any(name.startswith(prefix) for prefix in ("thumb_", "index_", "middle_", "ring_", "pinky_")):
-        return 2
-    if region == "face" or any(name.startswith(prefix) for prefix in ("eye_", "nose_", "mouth_", "lip_", "brow_")):
-        return 2
-    return 1
+        base = 6
+    elif region == "face" or any(name.startswith(prefix) for prefix in ("eye_", "nose_", "mouth_", "lip_", "brow_")):
+        base = 4
+    else:
+        base = 3
+    technical = view.get("technicalPasses") or {}
+    resolution = technical.get("resolution") or [256, 256]
+    minimum_axis = max(1, min(int(resolution[0]), int(resolution[1])))
+    resolution_factor = max(0, int(round(512 / minimum_axis)) - 1)
+    projected_region_size = float(candidate.get("projectedRegionSize") or candidate.get("regionPixelSpan") or 0.0)
+    region_factor = 2 if projected_region_size and projected_region_size < base * 6 else 0
+    boundary_factor = 2 if candidate.get("nearAnatomicalBoundary") else 0
+    curvature_factor = 1 if float(candidate.get("curvature") or 0.0) >= 0.45 else 0
+    return min(14, base + resolution_factor + region_factor + boundary_factor + curvature_factor)
 
 
 def _candidate_samples(candidate: dict, view: dict):
-    resolution = view.get("resolution", [512, 512])
-    width = max(int(resolution[0]), 1)
-    height = max(int(resolution[1]), 1)
+    rgb_resolution = view.get("resolution", [512, 512])
+    technical_resolution = (view.get("technicalPasses") or {}).get("resolution") or rgb_resolution
+    rgb_width = max(int(rgb_resolution[0]), 1)
+    rgb_height = max(int(rgb_resolution[1]), 1)
+    technical_width = max(int(technical_resolution[0]), 1)
+    technical_height = max(int(technical_resolution[1]), 1)
     requested_x = float(candidate["x"])
     requested_y = float(candidate["y"])
-    for dx, dy in _offsets(_sample_radius(candidate, view)):
-        x = min(1.0 - 1.0 / width, max(0.0, requested_x + dx / width))
-        y = min(1.0 - 1.0 / height, max(0.0, requested_y + dy / height))
-        yield x, y, dx, dy
+    mapped_column, mapped_row = _pixel_from_normalized(
+        requested_x, requested_y, (technical_width, technical_height),
+    )
+    requested_rgb_column, requested_rgb_row = _pixel_from_normalized(
+        requested_x, requested_y, (rgb_width, rgb_height),
+    )
+    radius = _sample_radius(candidate, view)
+    for dx, dy in _offsets(radius):
+        column = min(technical_width - 1, max(0, mapped_column + dx))
+        row = min(technical_height - 1, max(0, mapped_row + dy))
+        yield {
+            "x": (column + 0.5) / technical_width,
+            "y": (row + 0.5) / technical_height,
+            "column": column,
+            "row": row,
+            "dx": column - mapped_column,
+            "dy": row - mapped_row,
+            "requestedRgbPixel": [requested_rgb_column, requested_rgb_row],
+            "mappedTechnicalPixel": [mapped_column, mapped_row],
+            "searchRadiusTechnicalPixels": radius,
+            "technicalResolution": [technical_width, technical_height],
+        }
 
 
 def _sample_projection(candidate: dict, view: dict, camera, classifications, anatomy_bvh, allowed_regions):
-    resolution = view.get("resolution", [512, 512])
     tested = []
-    for x, y, dx, dy in _candidate_samples(candidate, view):
+    allowed_region_ids = {
+        int(anatomy_bvh.region_ids[name])
+        for name in allowed_regions
+        if anatomy_bvh is not None and name in anatomy_bvh.region_ids
+    }
+    for sample in _candidate_samples(candidate, view):
+        x, y = float(sample["x"]), float(sample["y"])
+        resolution = sample["technicalResolution"]
         if camera.data.type == "ORTHO":
             origin, direction = _orthographic_ray(camera, x, y, resolution)
         else:
             origin, direction = _perspective_ray(camera, x, y, resolution)
 
+        technical = _technical_sample(view, sample["column"], sample["row"])
         if anatomy_bvh is not None:
+            # Recasting verifies metadata/visibility; the lossless world-position
+            # pass remains the primary 3D observation.
             hit = anatomy_bvh.ray_cast(origin, direction, allowed_regions)
             rejected = []
         else:
@@ -173,33 +241,68 @@ def _sample_projection(candidate: dict, view: dict, camera, classifications, ana
                 allowed_classes.add("eyes")
             hit, rejected = _cast_scene_fallback(origin, direction, classifications, allowed_classes)
 
-        technical = _technical_sample(view, x, y)
         item = {
-            "x": x, "y": y, "dx": dx, "dy": dy,
+            **sample,
             "origin": origin, "direction": direction,
             "hit": hit, "technical": technical, "rejected": rejected,
         }
-        if hit is None:
+        world_position = technical.get("worldPosition") if technical else None
+        if hit is None and world_position is None:
             item.update({"regionCompatible": False, "objectCompatible": False, "depthConfidence": 0.0,
                          "normalCompatibility": 0.0, "depthResidual": None, "eligible": False})
             tested.append(item)
             continue
 
-        hit_distance = float(hit.get("distance") or (hit["location"] - origin).length)
+        technical_point = Vector(tuple(world_position)) if world_position is not None else None
+        hit_distance = float(
+            (technical_point - origin).length
+            if technical_point is not None
+            else hit.get("distance") or (hit["location"] - origin).length
+        )
         depth_observation = technical.get("depth") if technical else None
         depth_residual = abs(hit_distance - depth_observation) if depth_observation is not None else None
         expected_region_id = int(technical.get("regionId") or 0) if technical else 0
         expected_object_id = int(technical.get("objectId") or 0) if technical else 0
-        region_compatible = bool(
-            hit.get("region") in allowed_regions
-            and (expected_region_id == 0 or expected_region_id == int(hit.get("regionId") or 0))
+        secondary_mask = int(technical.get("secondaryRegionMask") or 0) if technical else 0
+        secondary_region_compatible = any(
+            secondary_mask & (1 << (region_id - 1))
+            for region_id in allowed_region_ids
+            if 0 < region_id <= 64
         )
-        object_compatible = bool(expected_object_id == 0 or expected_object_id == int(hit.get("objectId") or 0))
-        normal_compatibility = _normal_compatibility(hit["normal"], technical.get("normal") if technical else None)
+        hit_region_penalty = float(hit.get("regionConfidencePenalty") or 1.0) if hit else 0.75
+        region_compatible = bool(
+            expected_region_id in allowed_region_ids
+            or secondary_region_compatible
+            or (hit is not None and hit_region_penalty > 0.0)
+        )
+        object_compatible = bool(
+            expected_object_id == 0
+            or hit is None
+            or expected_object_id == int(hit.get("objectId") or 0)
+        )
+        verification_normal = hit["normal"] if hit is not None else Vector(tuple(technical.get("normal") or (0.0, 0.0, 1.0)))
+        normal_compatibility = _normal_compatibility(
+            verification_normal,
+            technical.get("normal") if technical else None,
+        )
         scale = max(float(camera.data.ortho_scale if camera.data.type == "ORTHO" else 1.0), 1e-5)
         depth_confidence = 0.5 if depth_residual is None else max(0.0, min(1.0, 1.0 - depth_residual / (scale * 0.025)))
-        silhouette = expected_region_id > 0
-        eligible = bool(region_compatible and object_compatible and silhouette and depth_confidence >= 0.25)
+        curvature = float(technical.get("curvature") or 0.0) if technical else 0.0
+        curvature_confidence = max(0.0, 1.0 - min(curvature, 1.0) * 0.55)
+        visibility = bool(technical and technical.get("valid") and world_position is not None)
+        pixel_distance = (float(sample["dx"]) ** 2 + float(sample["dy"]) ** 2) ** 0.5
+        radius = max(float(sample["searchRadiusTechnicalPixels"]), 1.0)
+        pixel_confidence = max(0.0, 1.0 - pixel_distance / radius)
+        eligible = bool(region_compatible and object_compatible and visibility and depth_confidence >= 0.25)
+        score_components = {
+            "pixelDistance": pixel_confidence,
+            "region": hit_region_penalty if region_compatible else 0.0,
+            "depth": depth_confidence,
+            "normal": normal_compatibility,
+            "curvature": curvature_confidence,
+            "bodyObject": 1.0 if object_compatible else 0.0,
+            "visibility": 1.0 if visibility else 0.0,
+        }
         item.update({
             "hitDistance": hit_distance,
             "depthObservation": depth_observation,
@@ -210,15 +313,19 @@ def _sample_projection(candidate: dict, view: dict, camera, classifications, ana
             "objectCompatible": object_compatible,
             "normalCompatibility": normal_compatibility,
             "depthConfidence": depth_confidence,
-            "silhouette": silhouette,
+            "silhouette": visibility,
+            "visibility": visibility,
+            "worldPosition": world_position,
+            "scoreComponents": score_components,
             "eligible": eligible,
-            "score": (
-                (1.0 if region_compatible else 0.0) * 1000.0
-                + (1.0 if object_compatible else 0.0) * 500.0
-                + (1.0 if silhouette else 0.0) * 250.0
-                + depth_confidence * 100.0
-                + normal_compatibility * 25.0
-                - (abs(dx) + abs(dy)) * 2.0
+            "score": 100.0 * (
+                pixel_confidence * 0.18
+                + score_components["region"] * 0.25
+                + depth_confidence * 0.18
+                + normal_compatibility * 0.10
+                + curvature_confidence * 0.07
+                + score_components["bodyObject"] * 0.10
+                + score_components["visibility"] * 0.12
             ),
         })
         tested.append(item)
@@ -279,13 +386,29 @@ def project_candidates(detector_output: dict, manifest: dict, classifications: D
                 })
                 continue
 
-            hit = selected["hit"]
+            hit = selected.get("hit") or {}
             technical = selected.get("technical") or {}
+            world_position = technical.get("worldPosition") or selected.get("worldPosition")
+            surface_point = (
+                Vector(tuple(float(value) for value in world_position))
+                if world_position is not None
+                else hit["location"]
+            )
+            surface_normal_values = technical.get("normal")
+            surface_normal = (
+                Vector(tuple(float(value) for value in surface_normal_values))
+                if surface_normal_values is not None
+                else hit.get("normal") or Vector((0.0, 0.0, 1.0))
+            )
             hit_distance = float(selected.get("hitDistance") or 0.0)
             depth_residual = selected.get("depthResidual")
             normal_compatibility = float(selected.get("normalCompatibility") or 0.0)
             depth_confidence = float(selected.get("depthConfidence") or 0.0)
-            region_confidence = 1.0
+            region_confidence = float(
+                (selected.get("scoreComponents") or {}).get("region")
+                or hit.get("regionConfidencePenalty")
+                or 0.72
+            )
             silhouette_confidence = 1.0
             geometry_confidence = (
                 depth_confidence * 0.35 + normal_compatibility * 0.25
@@ -293,15 +416,21 @@ def project_candidates(detector_output: dict, manifest: dict, classifications: D
             )
             projected.append({
                 **candidate,
-                "position3d": _vec(hit["location"]),
-                "surfaceNormal": _vec(hit["normal"]),
+                "position3d": _vec(surface_point),
+                "worldPosition": _vec(surface_point),
+                "surfaceNormal": _vec(surface_normal),
                 "hitObject": hit.get("sourceObject") or "",
                 "hitObjectClass": "anatomy_region",
-                "hitRegion": hit.get("region"),
-                "regionId": int(hit.get("regionId") or 0),
+                "hitRegion": hit.get("primaryRegion") or hit.get("region"),
+                "primaryRegion": hit.get("primaryRegion") or hit.get("region"),
+                "secondaryRegions": list(hit.get("secondaryRegions") or []),
+                "semanticWeights": dict(hit.get("semanticWeights") or {}),
+                "regionId": int(technical.get("regionId") or hit.get("regionId") or 0),
                 "objectId": int(hit.get("objectId") or 0),
-                "faceIndex": int(hit.get("sourcePolygon", hit.get("triangleIndex", -1))),
-                "triangleIndex": int(hit.get("triangleIndex", -1)),
+                "faceIndex": int(hit.get("sourcePolygon", technical.get("triangleId", -1))),
+                "triangleIndex": int(technical.get("triangleId", hit.get("triangleIndex", -1))),
+                "triangleId": int(technical.get("triangleId", hit.get("triangleIndex", -1))),
+                "barycentricCoordinates": technical.get("barycentricCoordinates"),
                 "sourceVertices": list(hit.get("sourceVertices") or []),
                 "rayOrigin": _vec(selected["origin"]), "rayDirection": _vec(selected["direction"]),
                 "rayHitDistance": hit_distance, "depthObservation": selected.get("depthObservation"),
@@ -320,11 +449,29 @@ def project_candidates(detector_output: dict, manifest: dict, classifications: D
                 "requestedPixel": [float(candidate["x"]), float(candidate["y"])],
                 "selectedPixel": [float(selected["x"]), float(selected["y"])],
                 "pixelOffset": [int(selected["dx"]), int(selected["dy"])],
+                "requestedRgbPixel": list(selected["requestedRgbPixel"]),
+                "mappedTechnicalPixel": list(selected["mappedTechnicalPixel"]),
+                "selectedTechnicalPixel": [int(selected["column"]), int(selected["row"])],
+                "searchRadiusTechnicalPixels": int(selected["searchRadiusTechnicalPixels"]),
                 "samplesTested": len(tested),
                 "matchingSamples": sum(1 for item in tested if item.get("eligible")),
                 "selectedRegionId": int(technical.get("regionId") or 0),
                 "selectedDepthResidual": depth_residual,
                 "selectedNormalCompatibility": normal_compatibility,
-                "projectionMethod": "adaptive-5x5-region-bvh-technical-pass-v3.2" if anatomy_bvh is not None else "adaptive-scene-fallback-v3.2",
+                "candidateScores": [
+                    {
+                        "technicalPixel": [int(item["column"]), int(item["row"])],
+                        "score": float(item.get("score") or 0.0),
+                        "eligible": bool(item.get("eligible")),
+                        "components": item.get("scoreComponents") or {},
+                    }
+                    for item in sorted(
+                        tested,
+                        key=lambda item: float(item.get("score") or 0.0),
+                        reverse=True,
+                    )[:24]
+                ],
+                "legacyProjectionMethod": "adaptive-5x5-region-bvh-technical-pass-v3.2",
+                "projectionMethod": "world-position-technical-pixel-search-v4.1" if anatomy_bvh is not None else "adaptive-scene-fallback-v4.1",
             })
     return projected, failures

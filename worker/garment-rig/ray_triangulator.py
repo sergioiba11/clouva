@@ -87,6 +87,28 @@ def _spread(points: Sequence[Vector]):
     return _mean(distances)
 
 
+def _surface_medoid(candidates: Sequence[dict]):
+    """Return an observed mesh point; never an off-surface average."""
+    if not candidates:
+        return None, None
+    points = [_surface_point(item) for item in candidates]
+    scored = []
+    for index, candidate in enumerate(candidates):
+        robust_distance = sum(
+            (points[index] - other).length
+            for other_index, other in enumerate(points)
+            if other_index != index
+        )
+        quality = (
+            float(candidate.get("depthConfidence") or 0.0)
+            + float(candidate.get("normalCompatibility") or 0.0)
+            + float(candidate.get("regionCompatibility") or 0.0)
+        ) / 3.0
+        scored.append((robust_distance - quality * 0.05, index))
+    _score, selected_index = min(scored)
+    return points[selected_index], candidates[selected_index]
+
+
 def _region_nearest(internal: Vector, allowed: List[str], segmentation, anatomy_bvh=None):
     if anatomy_bvh is not None:
         hit = anatomy_bvh.nearest(internal, allowed)
@@ -129,7 +151,7 @@ def _base_failure(name: str, allowed: List[str], views: list[str], rejected: lis
 def triangulate_landmark(name: str, candidates: List[dict], segmentation,
                          allowed_regions: str | Iterable[str], region_scale: float,
                          minimum_views: int = 2, preferred_view_tokens: Sequence[str] = (),
-                         anatomy_bvh=None):
+                         anatomy_bvh=None, landmark_type: str = "internal_joint"):
     scale = max(float(region_scale), 1e-5)
     allowed = [allowed_regions] if isinstance(allowed_regions, str) else list(allowed_regions)
     usable = []
@@ -138,11 +160,15 @@ def triangulate_landmark(name: str, candidates: List[dict], segmentation,
         if not all(key in candidate for key in ("rayOrigin", "rayDirection", "position3d")):
             rejected.append({"view": candidate.get("view"), "reason": "RAY_DATA_MISSING"})
             continue
-        region_ok = float(candidate.get("regionCompatibility", 0.0)) >= 0.99
+        region_ok = float(candidate.get("regionCompatibility", 0.0)) >= 0.70
         silhouette_ok = float(candidate.get("silhouetteConfidence", 0.0)) >= 0.5
         depth_ok = float(candidate.get("depthConfidence", 0.0)) >= 0.35
         normal_ok = float(candidate.get("normalCompatibility", 0.0)) >= 0.25
-        region_name_ok = str(candidate.get("hitRegion") or "") in allowed
+        hit_regions = {
+            str(candidate.get("hitRegion") or candidate.get("primaryRegion") or ""),
+            *[str(value) for value in candidate.get("secondaryRegions") or []],
+        }
+        region_name_ok = bool(hit_regions.intersection(allowed))
         if not (region_ok and silhouette_ok and depth_ok and normal_ok and region_name_ok):
             rejected.append({
                 "view": candidate.get("view"),
@@ -157,7 +183,15 @@ def triangulate_landmark(name: str, candidates: List[dict], segmentation,
         usable.append(dict(candidate))
 
     views = _unique_views(usable)
-    if len(views) < minimum_views:
+    exact_single_view = bool(
+        landmark_type == "surface"
+        and len(views) == 1
+        and len(usable) >= 1
+        and max(float(item.get("depthConfidence") or 0.0) for item in usable) >= 0.72
+        and any(int(item.get("triangleId", item.get("triangleIndex", -1))) >= 0 for item in usable)
+        and any(item.get("barycentricCoordinates") for item in usable)
+    )
+    if len(views) < minimum_views and not exact_single_view:
         state = "no_visual_evidence" if len(views) == 0 else "insufficient_views"
         reason = "NO_VISUAL_EVIDENCE" if len(views) == 0 else "INSUFFICIENT_TECHNICALLY_VALID_VIEWS"
         return _base_failure(name, allowed, views, rejected, state, reason,
@@ -165,23 +199,39 @@ def triangulate_landmark(name: str, candidates: List[dict], segmentation,
 
     ray_tolerance = scale * 0.11
     hypotheses = []
-    for first, second in combinations(usable, 2):
-        if first.get("view") == second.get("view"):
-            continue
-        midpoint = _closest_midpoint(first, second)
-        if midpoint is None:
-            continue
-        inliers = []
-        residuals = []
-        for candidate in usable:
-            residual = _distance_to_ray(midpoint, *_candidate_ray(candidate))
-            residuals.append(residual)
-            if residual <= ray_tolerance:
-                inliers.append(candidate)
-        if len(_unique_views(inliers)) >= minimum_views:
-            hypotheses.append((len(_unique_views(inliers)), _mean(residuals, 999.0), midpoint, inliers))
+    if exact_single_view:
+        selected_single = max(
+            usable,
+            key=lambda item: (
+                float(item.get("depthConfidence") or 0.0),
+                float(item.get("geometryConfidence") or 0.0),
+            ),
+        )
+        hypothesis = _surface_point(selected_single)
+        inliers = [selected_single]
+    else:
+        for first, second in combinations(usable, 2):
+            if first.get("view") == second.get("view"):
+                continue
+            midpoint = _closest_midpoint(first, second)
+            if midpoint is None:
+                continue
+            inlier_candidates = []
+            residuals = []
+            for candidate in usable:
+                residual = _distance_to_ray(midpoint, *_candidate_ray(candidate))
+                residuals.append(residual)
+                if residual <= ray_tolerance:
+                    inlier_candidates.append(candidate)
+            if len(_unique_views(inlier_candidates)) >= minimum_views:
+                hypotheses.append((
+                    len(_unique_views(inlier_candidates)),
+                    _mean(residuals, 999.0),
+                    midpoint,
+                    inlier_candidates,
+                ))
 
-    if not hypotheses:
+    if not exact_single_view and not hypotheses:
         result = _base_failure(
             name, allowed, views, rejected, "insufficient_views",
             "RAY_TRIANGULATION_UNSTABLE", "triangulation",
@@ -189,15 +239,19 @@ def triangulate_landmark(name: str, candidates: List[dict], segmentation,
         result["failureCode"] = "RAY_TRIANGULATION_UNSTABLE"
         return result
 
-    hypotheses.sort(key=lambda item: (-item[0], item[1]))
-    _view_count, _residual, hypothesis, inliers = hypotheses[0]
-    internal = _least_squares(inliers) or hypothesis
+    if not exact_single_view:
+        hypotheses.sort(key=lambda item: (-item[0], item[1]))
+        _view_count, _residual, hypothesis, inliers = hypotheses[0]
+    ray_solution = _least_squares(inliers) or hypothesis
+    surface_medoid, surface_candidate = _surface_medoid(inliers)
+    final_position = surface_medoid if landmark_type == "surface" and surface_medoid is not None else ray_solution
+    internal = ray_solution
     ray_residuals = [_distance_to_ray(internal, *_candidate_ray(item)) for item in inliers]
     mean_ray_residual = _mean(ray_residuals)
     surface_points = [_surface_point(item) for item in inliers]
     multiview_spread = _spread(surface_points)
     surface, region_distance, nearest_region = _region_nearest(
-        internal, allowed, segmentation, anatomy_bvh,
+        final_position, allowed, segmentation, anatomy_bvh,
     )
 
     ray_confidence = max(0.0, min(1.0, 1.0 - mean_ray_residual / max(ray_tolerance, 1e-8)))
@@ -225,7 +279,7 @@ def triangulate_landmark(name: str, candidates: List[dict], segmentation,
     inside_geometry = surface is not None and region_distance <= scale * 0.30
     accepted = bool(
         correct_region and inside_geometry
-        and ray_confidence >= 0.48
+        and (exact_single_view or ray_confidence >= 0.48)
         and depth_confidence >= 0.50
         and region_confidence >= 0.45
         and raw_final_confidence >= 0.60
@@ -240,8 +294,8 @@ def triangulate_landmark(name: str, candidates: List[dict], segmentation,
         *([] if raw_final_confidence >= 0.60 else ["FINAL_CONFIDENCE_LOW"]),
     ]
     if accepted:
-        state = "verified"
-        evidence_state = "visual_geometry"
+        state = "verified_single_view_depth" if exact_single_view else "verified_visual_geometry"
+        evidence_state = "single_view_exact_depth" if exact_single_view else "visual_geometry"
         failure_stage = None
         failure_code = None
     elif not correct_region or not inside_geometry or depth_confidence < 0.50 or region_confidence < 0.45:
@@ -263,20 +317,23 @@ def triangulate_landmark(name: str, candidates: List[dict], segmentation,
             -float(candidate.get("depthConfidence", 0.0)),
         ),
     )
-    display_observation = _surface_point(preferred_candidates[0])
-    display_surface = surface if surface is not None else display_observation
+    representative = surface_candidate or preferred_candidates[0]
+    display_observation = _surface_point(representative)
+    display_surface = final_position if landmark_type == "surface" else (
+        surface if surface is not None else display_observation
+    )
     depth_residual = _mean((item.get("depthResidual") for item in inliers), 0.0)
 
     return {
         "name": name,
-        "position": _vec(internal),
-        "internalJointPosition": _vec(internal),
+        "position": _vec(final_position),
+        **({"internalJointPosition": _vec(internal)} if landmark_type != "surface" else {}),
         "surfaceDisplayPosition": _vec(display_surface),
         "displayPosition": _vec(display_surface),
-        "surfaceNormal": list(preferred_candidates[0].get("surfaceNormal") or (0.0, 0.0, 1.0)),
+        "surfaceNormal": list(representative.get("surfaceNormal") or (0.0, 0.0, 1.0)),
         "region": nearest_region or (allowed[0] if allowed else "unknown"),
         "surfaceRegion": nearest_region or "unknown",
-        "landmarkType": "internal_joint",
+        "landmarkType": "surface_landmark" if landmark_type == "surface" else "internal_joint",
         "accepted": accepted,
         "verified": accepted,
         "display": accepted,
@@ -309,9 +366,11 @@ def triangulate_landmark(name: str, candidates: List[dict], segmentation,
         "depthResidual": float(depth_residual),
         "multiviewSpread": float(multiview_spread),
         "regionDistance": float(region_distance),
-        "surfaceHitObject": str(preferred_candidates[0].get("hitObject") or ""),
-        "surfaceHitFace": int(preferred_candidates[0].get("faceIndex", -1)),
-        "surfaceTriangle": int(preferred_candidates[0].get("triangleIndex", -1)),
+        "surfaceHitObject": str(representative.get("hitObject") or ""),
+        "surfaceHitFace": int(representative.get("faceIndex", -1)),
+        "surfaceTriangle": int(representative.get("triangleId", representative.get("triangleIndex", -1))),
+        "triangleId": int(representative.get("triangleId", representative.get("triangleIndex", -1))),
+        "barycentricCoordinates": representative.get("barycentricCoordinates"),
         "methods": [
             "exact_region_bvh", "adaptive_rgb_edge_detector_agreement",
             "depth_normal_region_validation", "robust_ray_triangulation",

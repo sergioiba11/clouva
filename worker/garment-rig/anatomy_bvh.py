@@ -1,9 +1,8 @@
-"""Region-exact BVH geometry for CLOUVA Avatar Analyzer V3.
+"""Boundary-aware global and regional BVHs for CLOUVA Avatar Analyzer V4.1.
 
-The same triangulated region data is used for technical renders, ray projection,
-nearest-surface queries and diagnostic metadata. This removes the V2 mismatch
-where MediaPipe saw an isolated proxy but Blender projected against the complete
-body object.
+Every valid body triangle is kept in the global BVH.  Mixed semantic labels are
+represented as weighted metadata and are shared with compatible regional BVHs;
+they are never deleted merely because they cross an anatomical boundary.
 """
 from __future__ import annotations
 
@@ -14,15 +13,34 @@ import bpy
 from mathutils import Vector
 from mathutils.bvhtree import BVHTree
 
+from anatomy_semantics import (
+    ANATOMICAL_ADJACENCY,
+    UNASSIGNED_REGION,
+    are_anatomical_neighbors,
+    region_match,
+    triangle_semantics,
+)
+
 
 @dataclass(frozen=True)
 class TriangleMetadata:
-    region: str
+    global_triangle_id: int
+    primary_region: str
+    secondary_regions: Tuple[str, ...]
+    region_weights: Tuple[Tuple[str, float], ...]
+    is_boundary: bool
     source_object: str
     source_polygon: int
     source_vertices: Tuple[int, int, int]
     material_index: int
     component: str
+
+    @property
+    def region(self) -> str:
+        return self.primary_region
+
+    def weights_dict(self) -> dict[str, float]:
+        return {name: float(weight) for name, weight in self.region_weights}
 
 
 @dataclass
@@ -33,19 +51,25 @@ class RegionGeometry:
     metadata: List[TriangleMetadata]
     bvh: BVHTree
 
-    def ray_cast(self, origin: Vector, direction: Vector, max_distance: float = 10000.0):
-        location, normal, triangle_index, distance = self.bvh.ray_cast(
-            origin, direction, max_distance,
-        )
+    def _hit(self, location, normal, triangle_index, distance):
         if location is None or triangle_index is None:
             return None
-        metadata = self.metadata[int(triangle_index)]
+        local_triangle_index = int(triangle_index)
+        metadata = self.metadata[local_triangle_index]
+        triangle = self.triangles[local_triangle_index]
+        world_vertices = [self.vertices[index] for index in triangle]
         return {
             "location": location,
             "normal": normal,
-            "triangleIndex": int(triangle_index),
+            "triangleIndex": int(metadata.global_triangle_id),
+            "localTriangleIndex": local_triangle_index,
+            "triangleWorldVertices": [list(map(float, point)) for point in world_vertices],
             "distance": float(distance),
-            "region": self.name,
+            "region": metadata.primary_region,
+            "primaryRegion": metadata.primary_region,
+            "secondaryRegions": list(metadata.secondary_regions),
+            "semanticWeights": metadata.weights_dict(),
+            "isBoundaryTriangle": bool(metadata.is_boundary),
             "sourceObject": metadata.source_object,
             "sourcePolygon": metadata.source_polygon,
             "sourceVertices": list(metadata.source_vertices),
@@ -53,23 +77,11 @@ class RegionGeometry:
             "component": metadata.component,
         }
 
+    def ray_cast(self, origin: Vector, direction: Vector, max_distance: float = 10000.0):
+        return self._hit(*self.bvh.ray_cast(origin, direction, max_distance))
+
     def nearest(self, point: Vector, max_distance: float = 10000.0):
-        location, normal, triangle_index, distance = self.bvh.find_nearest(point, max_distance)
-        if location is None or triangle_index is None:
-            return None
-        metadata = self.metadata[int(triangle_index)]
-        return {
-            "location": location,
-            "normal": normal,
-            "triangleIndex": int(triangle_index),
-            "distance": float(distance),
-            "region": self.name,
-            "sourceObject": metadata.source_object,
-            "sourcePolygon": metadata.source_polygon,
-            "sourceVertices": list(metadata.source_vertices),
-            "materialIndex": metadata.material_index,
-            "component": metadata.component,
-        }
+        return self._hit(*self.bvh.find_nearest(point, max_distance))
 
     def bounds(self):
         if not self.vertices:
@@ -92,14 +104,32 @@ class RegionGeometry:
 
 
 class AnatomyBVH:
-    def __init__(self, regions: Dict[str, RegionGeometry], rejected: List[dict]):
+    def __init__(
+        self,
+        regions: Dict[str, RegionGeometry],
+        global_geometry: RegionGeometry | None,
+        rejected: List[dict],
+        body_source_triangle_count: int,
+    ):
         self.regions = regions
+        self.global_geometry = global_geometry
         self.rejected = rejected
-        self.region_ids = {name: index + 1 for index, name in enumerate(sorted(regions))}
-        object_names = sorted({
-            meta.source_object
+        self.body_source_triangle_count = int(body_source_triangle_count)
+        semantic_names = {
+            name
             for geometry in regions.values()
-            for meta in geometry.metadata
+            for metadata in geometry.metadata
+            for name in (metadata.primary_region, *metadata.secondary_regions)
+            if name != UNASSIGNED_REGION
+        }
+        self.region_ids = {
+            name: index + 1
+            for index, name in enumerate(sorted(semantic_names))
+        }
+        object_names = sorted({
+            metadata.source_object
+            for geometry in ([global_geometry] if global_geometry else [])
+            for metadata in geometry.metadata
         })
         self.object_ids = {name: index + 1 for index, name in enumerate(object_names)}
 
@@ -107,54 +137,127 @@ class AnatomyBVH:
         geometry = self.regions.get(region)
         return bool(geometry and geometry.triangles)
 
-    def ray_cast(self, origin: Vector, direction: Vector,
-                 regions: str | Iterable[str], max_distance: float = 10000.0):
-        names = [regions] if isinstance(regions, str) else list(regions)
-        best = None
-        for name in names:
-            geometry = self.regions.get(name)
-            if geometry is None:
-                continue
-            hit = geometry.ray_cast(origin, direction, max_distance)
-            if hit is None:
-                continue
-            if best is None or hit["distance"] < best["distance"]:
-                best = hit
-        if best is not None:
-            best["regionId"] = self.region_ids.get(best["region"], 0)
-            best["objectId"] = self.object_ids.get(best["sourceObject"], 0)
-        return best
+    def _annotate(self, hit: dict | None, requested: Iterable[str] | None = None):
+        if hit is None:
+            return None
+        if requested is None:
+            accepted, match_kind, penalty = True, "global", 1.0
+        else:
+            accepted, match_kind, penalty = region_match(
+                hit.get("primaryRegion") or hit.get("region") or UNASSIGNED_REGION,
+                hit.get("secondaryRegions") or (),
+                requested,
+                bool(hit.get("isBoundaryTriangle")),
+            )
+        if not accepted:
+            return None
+        hit["regionMatchType"] = match_kind
+        hit["regionConfidencePenalty"] = float(penalty)
+        hit["regionId"] = self.region_ids.get(hit.get("primaryRegion") or "", 0)
+        hit["primaryRegionId"] = hit["regionId"]
+        hit["secondaryRegionIds"] = [
+            self.region_ids[name]
+            for name in hit.get("secondaryRegions") or []
+            if name in self.region_ids
+        ]
+        hit["objectId"] = self.object_ids.get(hit.get("sourceObject") or "", 0)
+        return hit
 
-    def nearest(self, point: Vector, regions: str | Iterable[str], max_distance: float = 10000.0):
+    def ray_cast_global(self, origin: Vector, direction: Vector, max_distance: float = 10000.0):
+        if self.global_geometry is None:
+            return None
+        return self._annotate(self.global_geometry.ray_cast(origin, direction, max_distance))
+
+    def nearest_global(self, point: Vector, max_distance: float = 10000.0):
+        if self.global_geometry is None:
+            return None
+        return self._annotate(self.global_geometry.nearest(point, max_distance))
+
+    def ray_cast(
+        self,
+        origin: Vector,
+        direction: Vector,
+        regions: str | Iterable[str] | None = None,
+        max_distance: float = 10000.0,
+    ):
+        if regions is None:
+            return self.ray_cast_global(origin, direction, max_distance)
         names = [regions] if isinstance(regions, str) else list(regions)
-        best = None
+        candidates = []
+        seen = set()
         for name in names:
             geometry = self.regions.get(name)
             if geometry is None:
                 continue
-            hit = geometry.nearest(point, max_distance)
+            hit = self._annotate(geometry.ray_cast(origin, direction, max_distance), names)
             if hit is None:
                 continue
-            if best is None or hit["distance"] < best["distance"]:
-                best = hit
-        if best is not None:
-            best["regionId"] = self.region_ids.get(best["region"], 0)
-            best["objectId"] = self.object_ids.get(best["sourceObject"], 0)
-        return best
+            key = int(hit["triangleIndex"])
+            if key not in seen:
+                candidates.append(hit)
+                seen.add(key)
+        if not candidates:
+            return None
+        return min(
+            candidates,
+            key=lambda item: (
+                float(item["distance"]),
+                -float(item.get("regionConfidencePenalty") or 0.0),
+                int(item["triangleIndex"]),
+            ),
+        )
+
+    def nearest(
+        self,
+        point: Vector,
+        regions: str | Iterable[str] | None = None,
+        max_distance: float = 10000.0,
+    ):
+        if regions is None:
+            return self.nearest_global(point, max_distance)
+        names = [regions] if isinstance(regions, str) else list(regions)
+        candidates = []
+        seen = set()
+        for name in names:
+            geometry = self.regions.get(name)
+            if geometry is None:
+                continue
+            hit = self._annotate(geometry.nearest(point, max_distance), names)
+            if hit is None:
+                continue
+            key = int(hit["triangleIndex"])
+            if key not in seen:
+                candidates.append(hit)
+                seen.add(key)
+        if not candidates:
+            return None
+        return min(
+            candidates,
+            key=lambda item: (
+                float(item["distance"]),
+                -float(item.get("regionConfidencePenalty") or 0.0),
+                int(item["triangleIndex"]),
+            ),
+        )
 
     def proxy(self, regions: str | Iterable[str], name: str):
         names = [regions] if isinstance(regions, str) else list(regions)
         vertices: List[Vector] = []
         triangles: List[Tuple[int, int, int]] = []
         sources = []
+        included_global_ids = set()
         for region in names:
             geometry = self.regions.get(region)
             if geometry is None:
                 continue
-            offset = len(vertices)
-            vertices.extend(point.copy() for point in geometry.vertices)
-            triangles.extend(tuple(offset + value for value in triangle) for triangle in geometry.triangles)
-            sources.extend(geometry.metadata)
+            for triangle, metadata in zip(geometry.triangles, geometry.metadata):
+                if metadata.global_triangle_id in included_global_ids:
+                    continue
+                included_global_ids.add(metadata.global_triangle_id)
+                offset = len(vertices)
+                vertices.extend(geometry.vertices[index].copy() for index in triangle)
+                triangles.append((offset, offset + 1, offset + 2))
+                sources.append(metadata)
         if not triangles:
             return None
         mesh = bpy.data.meshes.new(f"{name}_MESH")
@@ -169,13 +272,21 @@ class AnatomyBVH:
         return proxy
 
     def report(self) -> dict:
+        total = len(self.global_geometry.triangles) if self.global_geometry else 0
+        metadata = self.global_geometry.metadata if self.global_geometry else []
+        boundary_count = sum(1 for item in metadata if item.is_boundary)
+        explained = sum(1 for item in metadata if item.primary_region != UNASSIGNED_REGION)
+        coverage = total / max(self.body_source_triangle_count, 1)
+        semantic_coverage = explained / max(self.body_source_triangle_count, 1)
         return {
-            "version": "clouva-region-bvh-v3",
+            "version": "clouva-region-bvh-v4.1",
             "regionCount": len(self.regions),
             "regions": {
                 name: {
                     "vertexCount": len(geometry.vertices),
                     "triangleCount": len(geometry.triangles),
+                    "uniqueTriangleCount": len({item.global_triangle_id for item in geometry.metadata}),
+                    "boundaryTriangleCount": sum(1 for item in geometry.metadata if item.is_boundary),
                     "sourceObjects": sorted({item.source_object for item in geometry.metadata}),
                     "sourcePolygons": len({(item.source_object, item.source_polygon) for item in geometry.metadata}),
                     "bounds": geometry.bounds(),
@@ -189,8 +300,16 @@ class AnatomyBVH:
             },
             "regionIds": self.region_ids,
             "objectIds": self.object_ids,
+            "adjacency": [list(pair) for pair in sorted(ANATOMICAL_ADJACENCY)],
+            "totalBodyTriangles": self.body_source_triangle_count,
+            "globalTriangleCount": total,
+            "boundaryTriangleCount": boundary_count,
+            "discardedTriangleCount": len(self.rejected),
             "rejectedPolygonCount": len(self.rejected),
             "rejectedPolygons": self.rejected[:250],
+            "geometricCoverage": float(coverage),
+            "semanticCoverage": float(semantic_coverage),
+            "coverageTargetMet": bool(coverage >= 0.995),
         }
 
 
@@ -198,38 +317,62 @@ def _triangulate(indices: Sequence[int]):
     if len(indices) < 3:
         return []
     first = int(indices[0])
-    return [(first, int(indices[index]), int(indices[index + 1])) for index in range(1, len(indices) - 1)]
+    return [
+        (first, int(indices[index]), int(indices[index + 1]))
+        for index in range(1, len(indices) - 1)
+    ]
 
 
-def _majority_region(labels: Sequence[str], indices: Sequence[int]):
-    counts: Dict[str, int] = {}
-    for index in indices:
-        region = labels[int(index)] if int(index) < len(labels) else "unassigned"
-        counts[region] = counts.get(region, 0) + 1
-    if not counts:
+def _query_regions(primary: str, secondary: Iterable[str], boundary: bool) -> set[str]:
+    regions = {primary, *secondary}
+    if boundary:
+        semantic = set(regions)
+        regions.update({
+            candidate
+            for pair in ANATOMICAL_ADJACENCY
+            for candidate in pair
+            if any(are_anatomical_neighbors(candidate, region) for region in semantic)
+        })
+    return {region for region in regions if region != UNASSIGNED_REGION}
+
+
+def _make_geometry(
+    name: str,
+    primitives: list[tuple[Sequence[Vector], TriangleMetadata]],
+) -> RegionGeometry | None:
+    if not primitives:
         return None
-    region, count = max(counts.items(), key=lambda item: item[1])
-    minimum = max(3, int(len(indices) * 0.67 + 0.999))
-    if region == "unassigned" or count < minimum:
-        return None
-    return region
-
-
-def build_anatomy_bvh(meshes: Iterable[bpy.types.Object], segmentation,
-                      classifications: Dict[str, str]) -> AnatomyBVH:
-    region_vertices: Dict[str, List[Vector]] = {}
-    region_triangles: Dict[str, List[Tuple[int, int, int]]] = {}
-    region_metadata: Dict[str, List[TriangleMetadata]] = {}
-    rejected: List[dict] = []
-
-    def append_triangle(region: str, points: Sequence[Vector], metadata: TriangleMetadata):
-        vertices = region_vertices.setdefault(region, [])
-        triangles = region_triangles.setdefault(region, [])
-        records = region_metadata.setdefault(region, [])
+    vertices: List[Vector] = []
+    triangles: List[Tuple[int, int, int]] = []
+    metadata: List[TriangleMetadata] = []
+    for points, record in primitives:
+        if len(points) != 3:
+            continue
         offset = len(vertices)
         vertices.extend(point.copy() for point in points)
         triangles.append((offset, offset + 1, offset + 2))
-        records.append(metadata)
+        metadata.append(record)
+    if not triangles:
+        return None
+    return RegionGeometry(
+        name=name,
+        vertices=vertices,
+        triangles=triangles,
+        metadata=metadata,
+        bvh=BVHTree.FromPolygons(vertices, triangles, all_triangles=True),
+    )
+
+
+def build_anatomy_bvh(
+    meshes: Iterable[bpy.types.Object],
+    segmentation,
+    classifications: Dict[str, str],
+) -> AnatomyBVH:
+    regional_primitives: Dict[str, list[tuple[Sequence[Vector], TriangleMetadata]]] = {}
+    global_primitives: list[tuple[Sequence[Vector], TriangleMetadata]] = []
+    rejected: List[dict] = []
+    body_source_triangle_count = 0
+    global_triangle_id = 0
 
     for obj in meshes:
         category = classifications.get(obj.name, "unknown_rejected")
@@ -242,41 +385,61 @@ def build_anatomy_bvh(meshes: Iterable[bpy.types.Object], segmentation,
 
         for polygon in obj.data.polygons:
             source_indices = list(polygon.vertices)
-            region = "eyes" if category == "eyes" else _majority_region(labels, source_indices)
-            if region is None:
-                rejected.append({
-                    "object": obj.name,
-                    "polygon": int(polygon.index),
-                    "reason": "MIXED_OR_UNASSIGNED_REGION",
-                    "labels": sorted({labels[index] if index < len(labels) else "missing" for index in source_indices}),
-                })
-                continue
-            for triangle in _triangulate(source_indices):
+            triangles = _triangulate(source_indices)
+            body_source_triangle_count += len(triangles)
+            for triangle in triangles:
                 points = [world @ obj.data.vertices[index].co for index in triangle]
-                append_triangle(
-                    region,
-                    points,
-                    TriangleMetadata(
-                        region=region,
-                        source_object=obj.name,
-                        source_polygon=int(polygon.index),
-                        source_vertices=tuple(int(value) for value in triangle),
-                        material_index=int(polygon.material_index),
-                        component=obj.name,
-                    ),
+                if len({tuple(round(float(value), 12) for value in point) for point in points}) < 3:
+                    rejected.append({
+                        "object": obj.name,
+                        "polygon": int(polygon.index),
+                        "vertices": list(triangle),
+                        "reason": "DEGENERATE_TRIANGLE",
+                    })
+                    continue
+                semantics = (
+                    {
+                        "primary_region": "eyes",
+                        "secondary_regions": (),
+                        "region_weights": {"eyes": 1.0},
+                        "is_boundary": False,
+                    }
+                    if category == "eyes"
+                    else triangle_semantics(labels, triangle)
                 )
+                metadata = TriangleMetadata(
+                    global_triangle_id=global_triangle_id,
+                    primary_region=str(semantics["primary_region"]),
+                    secondary_regions=tuple(semantics["secondary_regions"]),
+                    region_weights=tuple(
+                        (str(name), float(weight))
+                        for name, weight in semantics["region_weights"].items()
+                    ),
+                    is_boundary=bool(semantics["is_boundary"]),
+                    source_object=obj.name,
+                    source_polygon=int(polygon.index),
+                    source_vertices=tuple(int(value) for value in triangle),
+                    material_index=int(polygon.material_index),
+                    component=obj.name,
+                )
+                global_primitives.append((points, metadata))
+                for region in _query_regions(
+                    metadata.primary_region,
+                    metadata.secondary_regions,
+                    metadata.is_boundary,
+                ):
+                    regional_primitives.setdefault(region, []).append((points, metadata))
+                global_triangle_id += 1
 
-    regions: Dict[str, RegionGeometry] = {}
-    for region, triangles in region_triangles.items():
-        vertices = region_vertices[region]
-        if not triangles:
-            continue
-        bvh = BVHTree.FromPolygons(vertices, triangles, all_triangles=True)
-        regions[region] = RegionGeometry(
-            name=region,
-            vertices=vertices,
-            triangles=triangles,
-            metadata=region_metadata[region],
-            bvh=bvh,
-        )
-    return AnatomyBVH(regions, rejected)
+    global_geometry = _make_geometry("__global_body__", global_primitives)
+    regions = {
+        name: geometry
+        for name, primitives in regional_primitives.items()
+        if (geometry := _make_geometry(name, primitives)) is not None
+    }
+    return AnatomyBVH(
+        regions,
+        global_geometry,
+        rejected,
+        body_source_triangle_count,
+    )

@@ -8,6 +8,7 @@ from mathutils import Vector
 
 from anatomy_segmenter import VertexSample
 from finger_branch_detector import assign_finger_branches
+from hand_modes import classify_hand_mode
 from hand_medial_graph import HandBranch, detect_medial_branches
 from mesh_geodesics import build_region_graph
 
@@ -80,6 +81,10 @@ class HandTopology:
     def branch(self, finger: str):
         return self.branches.get(finger)
 
+    @property
+    def hand_mode(self):
+        return str((self.diagnostics.get("classification") or {}).get("mode") or "unsupported_or_corrupt")
+
     def nearest_on_branch(self, finger: str, point: Vector):
         branch = self.branch(finger)
         if branch is None:
@@ -98,8 +103,15 @@ class HandTopology:
         return branch.centerline[lower].lerp(branch.centerline[upper], index - lower)
 
     def as_report(self):
+        classification = self.diagnostics.get("classification") or {}
         return {
             "side": self.side,
+            "handMode": classification.get("mode"),
+            "fingerRigMode": classification.get("fingerRigMode"),
+            "handBaseReady": bool(classification.get("handBaseSupported")),
+            "fullFingerRigReady": bool(
+                classification.get("fullFingerRigSupported") and len(self.branches) == 5
+            ),
             "branches": {finger: branch.as_dict() for finger, branch in self.branches.items()},
             "metrics": self.metrics,
             "diagnostics": self.diagnostics,
@@ -116,6 +128,20 @@ def detect_hand_topology(meshes: Iterable, segmentation, side: str,
     wrist = Vector(tuple(measurement.get("origin") or (0.0, 0.0, 0.0)))
     graph = build_region_graph(meshes, segmentation, region)
     branches, medial_diagnostics = detect_medial_branches(graph, wrist, hand_scale, 5)
+    visual_tip_count = sum(
+        1
+        for finger in FINGERS
+        if bool((visual_landmarks.get(f"{finger}_tip_{suffix}") or {}).get("accepted"))
+        or int((visual_landmarks.get(f"{finger}_tip_{suffix}") or {}).get("viewsConfirmed") or 0) > 0
+    )
+    classification = classify_hand_mode({
+        "vertex_count": len(graph.points),
+        "connected_components": len(graph.connected_components()),
+        "geodesic_branches": len(branches),
+        "visual_fingertips": visual_tip_count,
+        "silhouette_valleys": int(measurement.get("silhouetteValleys") or 0),
+        "corrupt_geometry": not bool(graph.points),
+    })
     mapping, mapping_diagnostics = assign_finger_branches(
         branches, visual_landmarks, measurement, side,
     )
@@ -125,13 +151,15 @@ def detect_hand_topology(meshes: Iterable, segmentation, side: str,
         for finger, branch in mapping.items()
     }
     status = "valid" if (
-        medial_diagnostics.get("status") == "valid"
+        classification["fullFingerRigSupported"]
+        and medial_diagnostics.get("status") == "valid"
         and mapping_diagnostics.get("status") == "valid"
         and len(mapping) == 5
-    ) else "needs_review"
+    ) else "valid_base_only" if classification["mode"] == "simplified_mitten" else "needs_review"
     diagnostics = {
-        "version": "clouva-hand-topology-v3",
+        "version": "clouva-hand-topology-v4.1",
         "status": status,
+        "classification": classification,
         "medialGraph": medial_diagnostics,
         "branchAssignment": mapping_diagnostics,
         "geometryFirst": True,

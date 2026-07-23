@@ -38,6 +38,7 @@ RUN mkdir -p /app/models \
 
 WORKDIR /app
 COPY *.py ./
+COPY avatar_analyzer_version.json ./
 COPY avatar-reference ./avatar-reference
 
 RUN mv app.py app_legacy.py \
@@ -93,7 +94,7 @@ ENV CLOUVA_GARMENT_SOURCE_ROUTING=v30
 ENV CLOUVA_GARMENT_MESH_NORMALIZATION=v31
 ENV CLOUVA_GARMENT_MODULE_LOADER=v31.2
 ENV CLOUVA_AVATAR_COMPLETE_RIG=v16-analyzer-v4-profile-gated
-ENV CLOUVA_AVATAR_ANALYZER=v4.0-hybrid-multiview-profile-gated
+ENV CLOUVA_AVATAR_ANALYZER=v4.1-exact-surface-boundary-aware
 ENV CLOUVA_AVATAR_ANALYZER_V32_PRESERVED=true
 ENV CLOUVA_AUX_PYTHON=/usr/local/bin/python3
 ENV CLOUVA_FACE_LANDMARKER_MODEL=/app/models/face_landmarker.task
@@ -137,7 +138,7 @@ RUN test -f /app/app.py \
     && python3 -m py_compile /app/*.py
 
 RUN python3 -c "from mediapipe.tasks import python; from mediapipe.tasks.python import vision; face=vision.FaceLandmarker.create_from_options(vision.FaceLandmarkerOptions(base_options=python.BaseOptions(model_asset_path='/app/models/face_landmarker.task'),running_mode=vision.RunningMode.IMAGE,num_faces=1)); hand=vision.HandLandmarker.create_from_options(vision.HandLandmarkerOptions(base_options=python.BaseOptions(model_asset_path='/app/models/hand_landmarker.task'),running_mode=vision.RunningMode.IMAGE,num_hands=1)); face.close(); hand.close(); print('[clouva] MediaPipe Face + Hand Landmarker models load OK')"
-RUN cd /app && python3 -m unittest -v test_avatar_analyzer_v4_contract.py
+RUN cd /app && python3 -m unittest -v test_avatar_analyzer_v4_contract.py test_avatar_analyzer_v41.py
 RUN python3 /app/test_worker_api_v32.py
 RUN python3 /app/test_worker_api_v4.py
 

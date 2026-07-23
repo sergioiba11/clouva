@@ -29,12 +29,12 @@ jobs:
           node-version: 22
       - name: Pure V4 contract tests
         working-directory: worker/garment-rig
-        run: python -m unittest -v test_avatar_analyzer_v4_contract.py
+        run: python -m unittest -v test_avatar_analyzer_v4_contract.py test_avatar_analyzer_v41.py
       - name: Frontend/API source contract
         run: node --test tests-avatar-analyzer-v4.mjs
       - name: Compile pure Python modules
         working-directory: worker/garment-rig
-        run: python -m py_compile analyzer_v4_contract.py camera_projection_self_test_v4.py
+        run: python -m py_compile analyzer_v4_contract.py anatomy_semantics.py hand_modes.py camera_projection_self_test_v4.py
 
   frontend:
     runs-on: ubuntu-latest

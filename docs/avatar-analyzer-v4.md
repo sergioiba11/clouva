@@ -1,69 +1,103 @@
-# CLOUVA Avatar Analyzer V4.0
+# CLOUVA Avatar Analyzer V4.1
 
-## Objetivo
+## Objetivo y garantías
 
-Avatar Analyzer V4.0 se ejecuta antes del Skeleton Planner y conserva el AutoRig V16 como creador oficial del Armature, pesos y exportación para Unreal. V3.2 sigue disponible durante la verificación: V4 usa rutas, scripts y resultados independientes y guarda la procedencia del resultado heredado.
+Avatar Analyzer V4.1 se ejecuta antes del Skeleton Planner y conserva el AutoRig como único creador del Armature, los pesos y la exportación. El GLB original es inmutable: cada ejecución abre una escena Blender limpia y trabaja sobre una copia temporal. V3.2 continúa disponible en sus rutas existentes mientras V4.1 usa scripts, resultados y caché versionados.
 
-El archivo original no se modifica. Cada análisis descarga el GLB/FBX limpio a un directorio temporal, Blender abre una escena nueva, duplica los datos de malla y aplica la normalización únicamente a esa copia.
+El contrato compartido `avatar_analyzer_version.json` identifica el Analyzer, el mapa anatómico, los thresholds de confianza, el frontend y la caché. Un resultado de otra versión devuelve `410 ANALYZER_RESULT_STALE` en vez de mezclarse con el mapa actual.
 
 ## Flujo
 
 ```text
-avatar original limpio
+GLB original limpio
   -> copia temporal + canonicalización
-  -> preflight de unidades/topología
-  -> Analyzer V3.2 retenido
-  -> cámaras adaptativas V4
-  -> self-test matriz/depth/ID
-  -> evidencia visual + geométrica
-  -> confidence gates V4
-  -> perfiles soportados
-  -> Skeleton Planner con landmarks aprobados
-  -> AutoRig V16
+  -> preflight de escala, orientación y topología
+  -> segmentación con fronteras anatómicas solapadas
+  -> BVH global + BVH por región con IDs globales
+  -> cámaras adaptativas multivista
+  -> RGB + world position + valid mask + normal + depth
+     + primary/secondary region + object + triangle + barycentric
+  -> detector robusto por variantes
+  -> mapeo exacto píxel RGB -> píxel técnico -> punto de superficie
+  -> triangulación separada para superficie e interiores
+  -> confidence gates y readiness por subsistema
+  -> Skeleton Planner recibe sólo estados aprobados
+  -> AutoRig
 ```
 
-## Módulos
+## Correcciones V4.1
 
-- `preflight_v4.py`: bounding box, unidades estimadas, triangulación sobre BMesh temporal, duplicados, degeneradas, normales, bordes abiertos/no-manifold, componentes sueltos y chequeo aproximado de autointersecciones.
-- `multiview_renderer_v4.py`: 8 vistas corporales a 1024 px, 5 de rostro y 5 por mano a 512 px; RGB, máscara, depth, normal, region ID y object ID.
-- `camera_projection_self_test_v4.py`: valida matrices, determinante/handedness, resolución, clipping, pases técnicos y round-trip píxel -> rayo + profundidad -> 3D -> píxel. Una vista inválida se descarta completa antes del detector.
-- `analyzer_v4_contract.py`: capacidades topológicas, joint corridors, reparación de hombro derecho, confidence gates, perfiles de rig, causas raíz y contrato JSON determinista.
-- `avatar_analyzer_v4.py`: orquestador Blender; V3.2 se conserva y V4 agrega el nuevo análisis sin modificar el rig.
-- `autorig_avatar_v19.py`: wrapper profile-aware del AutoRig V16. Solo entrega al Skeleton Planner estados aprobados.
-- `app_v18.py`: API V4 paralela a las rutas V3.2.
+- Los triángulos mixtos nunca se descartan por mayoría. Conservan región primaria, regiones secundarias, pesos semánticos, estado de frontera, ID global y vértices del triángulo. Las regiones vecinas pueden compartir primitivas de frontera con penalización explícita.
+- Los pases técnicos escriben `world_position.npy`, `valid_mask.npy`, `normal.npy`, `depth.npy`, `primary_region_id.npy`, `primary_region_weight.npy`, `secondary_region_mask.npy`, `object_id.npy`, `triangle_id.npy` y `barycentric.npy`.
+- El proyector transforma coordenadas normalizadas al píxel técnico real, usa radios adaptativos por región y resolución, puntúa región/profundidad/normal/curvatura/visibilidad y registra todos los candidatos.
+- Un landmark de superficie termina en un punto observado sobre un triángulo real. La solución de mínimos cuadrados queda reservada a centros internos.
+- El hombro derecho se valida dentro del corredor `torso + clavicle_r + upper_arm_r`. La simetría es un prior minoritario, no un reemplazo de la geometría observada.
+- Las manos se clasifican como `five_finger_separated`, `five_finger_connected`, `partial_fingers`, `simplified_mitten` o `unsupported_or_corrupt`. Una mitten puede habilitar la base de mano, pero nunca inventa cinco cadenas.
+- Cara y manos usan siete vistas adaptativas. Todos los intentos robustos del detector se fusionan y los outliers se rechazan.
 
-## Confidence gates
+## Estados y confianza
 
-Cada landmark conserva puntuaciones separadas:
+Cada landmark conserva por separado:
 
-| Campo | Gate |
+| Componente | Significado |
 |---|---|
-| `detection_confidence` | Confianza bruta del detector, nunca suficiente por sí sola. |
-| `visual_confidence` | Es cero cuando `views == 0`. |
-| `triangulation_confidence` | Es cero cuando `inliers == 0`. |
-| `region_confidence` | Coincidencia con superficie, depth, ID y zona anatómica. |
-| `topology_confidence` | Es cero si la rama geométrica requerida no existe. |
-| `symmetry_confidence` | Solo se usa en fallback bilateral explícito. |
-| `final_confidence` | Se calcula después de todos los gates y nunca muestra 100% sin evidencia válida. |
+| `detection_confidence` | Evidencia del detector 2D. |
+| `visual_confidence` | Consenso multivista; vale cero con `views == 0`. |
+| `triangulation_confidence` | Calidad geométrica; vale cero con `inliers == 0`. |
+| `region_confidence` | Compatibilidad con región primaria/secundaria. |
+| `topology_confidence` | Capacidad real de la malla. |
+| `geometry_confidence` | Coherencia de superficie o sección interna. |
+| `semantic_confidence` | Compatibilidad anatómica. |
+| `symmetry_confidence` | Prior bilateral opcional. |
+| `final_confidence` | Combinación posterior a todos los gates. |
 
-Estados: `verified`, `verified_with_fallback`, `needs_review`, `unsupported_by_topology`, `no_visual_evidence`, `technically_invalid`, `manually_verified`.
+Estados V4.1:
 
-## Perfiles
+- Aprobados: `verified_visual_geometry`, `verified_geometry_fallback`, `verified_single_view_depth`, `manually_corrected`.
+- No aprobados: `inferred_template_prior`, `insufficient_views`, `projection_mismatch`, `topology_invalid`, `unsupported`, `corrupt_geometry`.
 
-- `BODY_BASIC`: cuerpo, hombros, brazos, muñecas, piernas, tobillos y pies.
-- `BODY_FACE`: BODY_BASIC + mandíbula y ojos cuando la cara es compatible.
-- `BODY_HANDS_BASIC`: BODY_BASIC + muñecas/manos simplificadas.
-- `FULL_BODY_HANDS_FACE`: cuerpo, cara y cinco dedos reales en ambas manos.
+Un rechazado nunca se convierte en 100% por usar el máximo de señales parciales.
 
-Cara o dedos incompletos no bloquean `BODY_BASIC`. Una mano tipo mitten queda `HAND_TOPOLOGY_LIMITED`; no se crean cinco cadenas falsas.
+## Readiness y perfiles
 
-## Shoulder Derecha
+El resultado publica readiness independiente para:
 
-`shoulder_r` usa el corredor solapado `torso + clavicle_r + upper_arm_r`. Si la validación estricta falla, V4 compara un candidato espejado con longitudes de brazo, ángulos clavícula-hombro-codo, desplazamiento relativo a la altura y límites corporales. Un resultado aceptado queda `verified_with_fallback` con `verificationMethod=symmetry_fallback`; no se afirma evidencia visual.
+- `bodyRigScore` / `bodyRigReady`
+- `faceAnalysisScore` / `faceAnalysisReady`
+- `leftHandBaseReady` / `rightHandBaseReady`
+- `leftFingerRigReady` / `rightFingerRigReady`
+- `fullHumanoidRigReady`
+- `unrealExportReady`
+
+Perfiles canónicos:
+
+- `body_only`
+- `body_with_hands`
+- `full_humanoid`
+- `full_humanoid_with_face`
+
+Los nombres históricos en mayúsculas siguen aceptados por compatibilidad. Una cara o unos dedos incompletos no bloquean `body_only`.
+
+## Visualizer V4.1
+
+La ruta `/avatar-analyzer-v4/{runId}` carga el `diagnostic_landmarks.glb` real y presenta:
+
+- malla original, regiones, landmarks superficiales, articulaciones internas, cadenas óseas, centerlines, raycasts, rechazados, fronteras, heatmap, volúmenes y correcciones manuales;
+- filtros por cuerpo, cara y cada mano;
+- inspector con estado, confianza, método, vistas, inliers, posición, triángulo, baricéntricas, píxel RGB/técnico, región y depth;
+- hasta siete capturas de evidencia por región;
+- readiness por subsistema, trazabilidad de versiones, SHA y run;
+- X-Ray, pantalla completa, siguiente error y comparación automática/manual.
+
+Los puntos rechazados siguen visibles en rojo dentro del GLB diagnóstico.
+
+## Reanálisis y corrección manual
+
+`POST /avatar/analyze-v4/result/{run_id}/reanalyze` recupera el GLB inmutable guardado por el run y ejecuta un pipeline Blender completo en una escena nueva. Devuelve un `newRunId`; no muta el resultado anterior ni simula un reanálisis reutilizando JSON viejo.
+
+El clic manual de superficie se guarda como evidencia. Nunca se usa directamente como centro articular: la API exige un centro interno del solver o conserva el centro interno actual. Una corrección aprobada queda `manually_corrected` y auditada por run.
 
 ## API
-
-V3.2 permanece sin cambios. V4 agrega:
 
 - `POST /avatar/analyze-v4`
 - `POST /avatar/analyze-v4-preview`
@@ -74,42 +108,14 @@ V3.2 permanece sin cambios. V4 agrega:
 - `POST /avatar/complete-rig-v4`
 - `GET /diagnostics/avatar-analyzer-v4`
 
-`/avatar/complete-rig-v4` exige que el perfil pedido aparezca en `supported_rig_profiles`, que el SHA analizado coincida con el riggeado y que el Skeleton Planner no reciba landmarks inventados.
-
-## Reanálisis dirigido
-
-El contrato define cámara, región, landmark, cara, cada mano, cuerpo, hombro derecho y pipeline completo. La reparación del hombro derecho se recalcula en el resultado existente. Los demás planes quedan explícitos en la API y actualmente responden `requires_fresh_region_job`: todavía falta conectar el scheduler que vuelve a abrir una escena Blender temporal desde el archivo limpio, sin reutilizar una escena parcialmente modificada.
-
-## Manual Correction Pro
-
-El clic de superficie se guarda como evidencia. Nunca se usa directamente como centro articular. La API exige un candidato interno producido por el solver de sección corporal o conserva el centro interno actual. Las correcciones se etiquetan `manually_verified` y quedan registradas por run.
-
-## Contrato JSON
-
-```json
-{
-  "analyzer_version": "4.0",
-  "requested_rig_profile": "BODY_BASIC",
-  "supported_rig_profiles": ["BODY_BASIC", "BODY_HANDS_BASIC"],
-  "overall_status": "approved_with_fallbacks",
-  "regions": {},
-  "landmarks": {},
-  "camera_calibration": {},
-  "topology_capabilities": {},
-  "root_causes": [],
-  "fallbacks_used": [],
-  "manual_corrections": [],
-  "blocking_reasons": [],
-  "recommended_next_action": "create_body_basic"
-}
-```
-
-## Determinismo y logs
-
-El resultado incluye `diagnostic_fingerprint`, calculado con SHA-256 sobre capacidades, perfiles, posiciones/estados y causas raíz ordenadas. Los scripts imprimen una línea JSON estructurada por run. La misma entrada, configuración y perfil deben producir el mismo fingerprint.
+`/avatar/complete-rig-v4` exige que el perfil aparezca en `supported_rig_profiles`, que el SHA analizado coincida con el riggeado y que el Skeleton Planner reciba únicamente estados aprobados.
 
 ## Pruebas
 
-`test_avatar_analyzer_v4_contract.py` cubre confidence gates, topología limitada, aislamiento de perfiles, hombro derecho, causas raíz, cámaras inválidas, determinismo y filtrado del Skeleton Planner. `test_worker_api_v4.py` comprueba que V3.2 siga disponible junto con todas las rutas V4.
+- `npm run test:avatar-analyzer`
+- `npm run test:avatar-analyzer:python`
+- `npm run typecheck`
+- `npm run lint`
+- `npm run build`
 
-Casos Blender/integración previstos por el preflight y Docker: escala/orientación, determinante negativo, chibi, mitten/sin dedos, cabeza grande, brazos cortos, malla abierta, componentes desconectados y matriz de cámara inválida.
+Las pruebas V4.1 cubren fronteras hombro/torso, vecinos cuello/cabeza, manos conectadas y mitten, superficie con profundidad exacta, confianza rechazada, aislamiento de readiness, contratos de pases técnicos, versionado y preservación de V3.2.

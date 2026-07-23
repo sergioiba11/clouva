@@ -89,6 +89,30 @@ def _curvature_from_normals(normals: np.ndarray, valid: np.ndarray):
     return curvature, rgba
 
 
+def _barycentric(point: Vector, vertices):
+    if not isinstance(vertices, (list, tuple)) or len(vertices) != 3:
+        return (np.nan, np.nan, np.nan)
+    first, second, third = (
+        Vector(tuple(float(value) for value in vertex))
+        for vertex in vertices
+    )
+    edge_a = second - first
+    edge_b = third - first
+    offset = point - first
+    d00 = edge_a.dot(edge_a)
+    d01 = edge_a.dot(edge_b)
+    d11 = edge_b.dot(edge_b)
+    d20 = offset.dot(edge_a)
+    d21 = offset.dot(edge_b)
+    denominator = d00 * d11 - d01 * d01
+    if abs(float(denominator)) <= 1e-14:
+        return (np.nan, np.nan, np.nan)
+    second_weight = (d11 * d20 - d01 * d21) / denominator
+    third_weight = (d00 * d21 - d01 * d20) / denominator
+    first_weight = 1.0 - second_weight - third_weight
+    return (float(first_weight), float(second_weight), float(third_weight))
+
+
 def generate_technical_passes(output_dir: Path, view_name: str, camera: bpy.types.Object,
                               anatomy_bvh, allowed_regions: str | Iterable[str],
                               resolution: int = 192):
@@ -98,7 +122,11 @@ def generate_technical_passes(output_dir: Path, view_name: str, camera: bpy.type
     width = height = int(max(64, resolution))
     depth = np.full((height, width), np.nan, dtype=np.float32)
     normals = np.zeros((height, width, 3), dtype=np.float32)
+    world_positions = np.full((height, width, 3), np.nan, dtype=np.float32)
+    barycentric = np.full((height, width, 3), np.nan, dtype=np.float32)
     region_ids = np.zeros((height, width), dtype=np.int16)
+    primary_region_weights = np.zeros((height, width), dtype=np.float16)
+    secondary_region_masks = np.zeros((height, width), dtype=np.uint64)
     object_ids = np.zeros((height, width), dtype=np.int16)
     triangle_ids = np.full((height, width), -1, dtype=np.int32)
 
@@ -120,16 +148,39 @@ def generate_technical_passes(output_dir: Path, view_name: str, camera: bpy.type
             if normal.length > 1e-8:
                 normal = normal.normalized()
             normals[row, column] = (float(normal.x), float(normal.y), float(normal.z))
-            region_ids[row, column] = int(hit.get("regionId") or 0)
+            location = hit["location"]
+            world_positions[row, column] = (
+                float(location.x), float(location.y), float(location.z),
+            )
+            barycentric[row, column] = _barycentric(
+                location,
+                hit.get("triangleWorldVertices"),
+            )
+            region_ids[row, column] = int(hit.get("primaryRegionId", hit.get("regionId")) or 0)
+            primary_region = str(hit.get("primaryRegion") or hit.get("region") or "")
+            primary_region_weights[row, column] = float(
+                (hit.get("semanticWeights") or {}).get(primary_region, 1.0)
+            )
+            mask = 0
+            for region_id in hit.get("secondaryRegionIds") or []:
+                if 0 < int(region_id) <= 64:
+                    mask |= 1 << (int(region_id) - 1)
+            secondary_region_masks[row, column] = np.uint64(mask)
             object_ids[row, column] = int(hit.get("objectId") or 0)
             triangle_ids[row, column] = int(hit.get("triangleIndex", -1))
 
-    valid = region_ids > 0
+    valid = triangle_ids >= 0
+    valid_mask = valid.astype(np.uint8)
     np.save(output_dir / f"{view_name}_depth.npy", depth)
     np.save(output_dir / f"{view_name}_normal.npy", normals)
-    np.save(output_dir / f"{view_name}_region_id.npy", region_ids)
+    np.save(output_dir / f"{view_name}_world_position.npy", world_positions)
+    np.save(output_dir / f"{view_name}_valid_mask.npy", valid_mask)
+    np.save(output_dir / f"{view_name}_primary_region_id.npy", region_ids)
+    np.save(output_dir / f"{view_name}_primary_region_weight.npy", primary_region_weights)
+    np.save(output_dir / f"{view_name}_secondary_region_mask.npy", secondary_region_masks)
     np.save(output_dir / f"{view_name}_object_id.npy", object_ids)
     np.save(output_dir / f"{view_name}_triangle_id.npy", triangle_ids)
+    np.save(output_dir / f"{view_name}_barycentric.npy", barycentric)
 
     normal_rgba = np.zeros((height, width, 4), dtype=np.float32)
     normal_rgba[..., :3] = normals * 0.5 + 0.5
@@ -143,9 +194,15 @@ def generate_technical_passes(output_dir: Path, view_name: str, camera: bpy.type
     paths = {
         "depthNpy": str(output_dir / f"{view_name}_depth.npy"),
         "normalNpy": str(output_dir / f"{view_name}_normal.npy"),
-        "regionIdNpy": str(output_dir / f"{view_name}_region_id.npy"),
+        "worldPositionNpy": str(output_dir / f"{view_name}_world_position.npy"),
+        "validMaskNpy": str(output_dir / f"{view_name}_valid_mask.npy"),
+        "regionIdNpy": str(output_dir / f"{view_name}_primary_region_id.npy"),
+        "primaryRegionIdNpy": str(output_dir / f"{view_name}_primary_region_id.npy"),
+        "primaryRegionWeightNpy": str(output_dir / f"{view_name}_primary_region_weight.npy"),
+        "secondaryRegionMaskNpy": str(output_dir / f"{view_name}_secondary_region_mask.npy"),
         "objectIdNpy": str(output_dir / f"{view_name}_object_id.npy"),
         "triangleIdNpy": str(output_dir / f"{view_name}_triangle_id.npy"),
+        "barycentricNpy": str(output_dir / f"{view_name}_barycentric.npy"),
         "curvatureNpy": str(output_dir / f"{view_name}_curvature.npy"),
         "depthPng": str(output_dir / f"{view_name}_depth.png"),
         "normalPng": str(output_dir / f"{view_name}_normal.png"),
@@ -162,7 +219,7 @@ def generate_technical_passes(output_dir: Path, view_name: str, camera: bpy.type
     _save_png(Path(paths["exactSilhouettePng"]), silhouette_rgba)
 
     report = {
-        "version": "clouva-technical-passes-v3",
+        "version": "clouva-technical-passes-v4.1",
         "view": view_name,
         "resolution": [width, height],
         "allowedRegions": allowed,
@@ -170,6 +227,8 @@ def generate_technical_passes(output_dir: Path, view_name: str, camera: bpy.type
         "coverage": float(np.count_nonzero(valid) / max(width * height, 1)),
         "regionIds": anatomy_bvh.region_ids,
         "objectIds": anatomy_bvh.object_ids,
+        "coordinateConvention": "top-left-pixel-centers",
+        "worldPositionSource": "same-regional-bvh-raycast",
         "paths": paths,
     }
     report_path = output_dir / f"{view_name}_technical.json"

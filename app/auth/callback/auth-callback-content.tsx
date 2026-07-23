@@ -78,7 +78,7 @@ export default function AuthCallbackContent() {
           (user.user_metadata?.name as string | undefined) ??
           (user.email ? user.email.split("@")[0] : "Usuario");
 
-        let { data: profile, error: profileError } = await raceTimeout(
+        const { data: loadedProfile, error: profileError } = await raceTimeout(
           supabase
             .from("profiles")
             .select("id, role, display_name, full_name")
@@ -87,6 +87,7 @@ export default function AuthCallbackContent() {
           6000,
           "El perfil tardó demasiado en cargar",
         );
+        let profile = loadedProfile;
 
         if (profileError) throw profileError;
 

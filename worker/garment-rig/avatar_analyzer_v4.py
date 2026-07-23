@@ -24,11 +24,13 @@ from analyzer_v4_contract import ANALYZER_VERSION, DEFAULT_CONFIG, upgrade_analy
 from anatomy_bvh import build_anatomy_bvh
 from anatomy_segmenter_v3 import segment_anatomy_v3
 from camera_projection_self_test_v4 import filter_invalid_views, validate_manifest
+from diagnostic_builder import build_diagnostic_glb
 from multiview_renderer_v4 import cleanup_render_proxies, render_multiview_v4
 from preflight_v4 import run_preflight
 
 VERSION = ANALYZER_VERSION
 REQUESTED_PROFILE_ENV = "CLOUVA_REQUESTED_RIG_PROFILE"
+REANALYSIS_ENV = "CLOUVA_REANALYSIS_OPERATION"
 
 
 def _args():
@@ -172,7 +174,8 @@ def _refresh_optional_modules(analysis: dict, output_dir: Path):
 
 def run(input_path: Path, output_dir: Path):
     started = time.perf_counter()
-    requested_profile = os.environ.get(REQUESTED_PROFILE_ENV, "BODY_BASIC").strip().upper() or "BODY_BASIC"
+    requested_profile = os.environ.get(REQUESTED_PROFILE_ENV, "body_only").strip() or "body_only"
+    requested_operation = os.environ.get(REANALYSIS_ENV, "").strip() or None
     legacy_analysis, legacy_report = analyzer_v32.run(input_path, output_dir)
     calibration, v4_attempt = _refresh_optional_modules(legacy_analysis, output_dir)
     analysis = upgrade_analysis_v4(
@@ -181,10 +184,19 @@ def run(input_path: Path, output_dir: Path):
         camera_calibration=calibration,
         config=DEFAULT_CONFIG,
     )
+    diagnostic_build = build_diagnostic_glb(
+        output_dir / "diagnostic_landmarks.glb",
+        _real_meshes(),
+        analysis.get("landmarks") or {},
+        float((analysis.get("dimensions") or {}).get("height") or 1.0),
+        include_all_states=True,
+    )
     analysis.setdefault("diagnostics", {})["v4Upgrade"] = {
         "version": VERSION,
         "requestedRigProfile": requested_profile,
         "optionalReanalysis": v4_attempt,
+        "requestedReanalysisOperation": requested_operation,
+        "executedAsCleanPipeline": True,
         "durationMs": max(1, int((time.perf_counter() - started) * 1000)),
     }
     analysis_path = output_dir / "avatar_analysis.json"
@@ -203,6 +215,7 @@ def run(input_path: Path, output_dir: Path):
         "blockingReasons": analysis.get("blocking_reasons") or [],
         "recommendedNextAction": analysis.get("recommended_next_action"),
         "diagnosticFingerprint": analysis.get("diagnostic_fingerprint"),
+        "diagnosticBuild": diagnostic_build,
         "legacyV32Preserved": True,
         "durationMs": max(1, int((time.perf_counter() - started) * 1000)),
     })

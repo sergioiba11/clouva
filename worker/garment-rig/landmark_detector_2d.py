@@ -159,17 +159,45 @@ def _mediapipe_images(path: str | None):
     return images
 
 
+def _robust_fuse(points: list[dict]):
+    if not points:
+        return None
+    xs = sorted(float(item["x"]) for item in points)
+    ys = sorted(float(item["y"]) for item in points)
+    median_x = xs[len(xs) // 2]
+    median_y = ys[len(ys) // 2]
+    inliers = [
+        item for item in points
+        if math.hypot(float(item["x"]) - median_x, float(item["y"]) - median_y) <= 0.075
+    ] or points
+    return {
+        "x": sum(float(item["x"]) for item in inliers) / len(inliers),
+        "y": sum(float(item["y"]) for item in inliers) / len(inliers),
+        "z": sum(float(item.get("z", 0.0)) for item in inliers) / len(inliers),
+        "variantCount": len(points),
+        "variantInliers": len(inliers),
+        "variantAgreement": min(1.0, len(inliers) / max(len(points), 1)),
+    }
+
+
 def _face_points(detector, path: str | None):
+    detected = []
     for image in _mediapipe_images(path):
         result = detector.detect(image)
         if not result.face_landmarks:
             continue
         landmarks = result.face_landmarks[0]
-        return {name: _average(landmarks, indices) for name, indices in FACE_MAP.items()}
-    return {}
+        detected.append({name: _average(landmarks, indices) for name, indices in FACE_MAP.items()})
+    return {
+        name: fused
+        for name in FACE_MAP
+        if (fused := _robust_fuse([item[name] for item in detected if item.get(name)])) is not None
+    }
 
 
 def _hand_points(detector, path: str | None):
+    detected = []
+    handedness = []
     for image in _mediapipe_images(path):
         result = detector.detect(image)
         if not result.hand_landmarks:
@@ -180,16 +208,32 @@ def _hand_points(detector, path: str | None):
             category = result.handedness[0][0]
             detector_handedness = category.category_name
             handedness_score = float(category.score or handedness_score)
+            handedness.append((detector_handedness, handedness_score))
         landmarks = result.hand_landmarks[0]
-        return {
+        detected.append({
             base_name: {
                 "x": float(landmarks[index].x),
                 "y": float(landmarks[index].y),
                 "z": float(landmarks[index].z),
             }
             for base_name, index in HAND_MAP.items() if index < len(landmarks)
-        }, detector_handedness, handedness_score
-    return {}, None, 0.0
+        })
+    if not detected:
+        return {}, None, 0.0
+    fused = {
+        name: point
+        for name in HAND_MAP
+        if (point := _robust_fuse([item[name] for item in detected if item.get(name)])) is not None
+    }
+    detector_handedness = None
+    handedness_score = 0.55
+    if handedness:
+        totals = {}
+        for label, score in handedness:
+            totals[label] = totals.get(label, 0.0) + float(score)
+        detector_handedness = max(totals, key=totals.get)
+        handedness_score = min(1.0, totals[detector_handedness] / max(len(handedness), 1))
+    return fused, detector_handedness, handedness_score
 
 
 def _detect_face(detector, view: dict):
@@ -213,6 +257,16 @@ def _detect_face(detector, view: dict):
             "visualConfidence": confidence,
             "view": view["name"], "region": "face",
             "indices": FACE_MAP[name], "renderVariants": variants,
+            "variantConsensus": {
+                "rgb": {
+                    "attemptsWithDetection": int((rgb.get(name) or {}).get("variantCount") or 0),
+                    "inliers": int((rgb.get(name) or {}).get("variantInliers") or 0),
+                },
+                "edge": {
+                    "attemptsWithDetection": int((edge.get(name) or {}).get("variantCount") or 0),
+                    "inliers": int((edge.get(name) or {}).get("variantInliers") or 0),
+                },
+            },
         })
     return candidates, None
 
@@ -247,6 +301,16 @@ def _detect_hand(detector, view: dict):
             "detectorHandedness": detector_handedness,
             "handednessConfidence": handedness_score,
             "index": index, "canonicalIndex": index, "renderVariants": variants,
+            "variantConsensus": {
+                "rgbOrSilhouette": {
+                    "attemptsWithDetection": int((first or {}).get("variantCount") or 0),
+                    "inliers": int((first or {}).get("variantInliers") or 0),
+                },
+                "edge": {
+                    "attemptsWithDetection": int((second or {}).get("variantCount") or 0),
+                    "inliers": int((second or {}).get("variantInliers") or 0),
+                },
+            },
         })
     return candidates, None
 
