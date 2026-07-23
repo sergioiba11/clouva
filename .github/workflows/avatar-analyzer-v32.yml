@@ -32,9 +32,14 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run typecheck
-      - run: npm test
-      - run: npm run build
+      - name: TypeScript typecheck
+        run: npm run typecheck
+      - name: Existing CLOUVA tests
+        run: npm run test:legacy
+      - name: Avatar Analyzer V3.2 integration tests
+        run: npm run test:avatar-analyzer
+      - name: Next production build
+        run: npm run build
 
   worker:
     name: Blender Worker Docker tests
