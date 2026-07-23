@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
+// Validation-branch marker: this commit exists only to trigger fresh PR checks.
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
 test("Analyzer V3.2 preserves raw confidence and explicit evidence states", async () => {
