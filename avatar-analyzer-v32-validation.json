@@ -1,0 +1,11 @@
+{
+  "sourceCommit": "ce2f7291e2e0ef4cee9a8871e172783dfe082531",
+  "workflowRunId": "29990596973",
+  "install": "success",
+  "typecheck": "success",
+  "lint": "failure",
+  "tests": "success",
+  "build": "failure",
+  "pythonCompile": "success",
+  "blenderWorkerDocker": "success"
+}
