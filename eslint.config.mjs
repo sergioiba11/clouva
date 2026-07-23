@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 const currentDirectory = dirname(fileURLToPath(import.meta.url));
 const compat = new FlatCompat({ baseDirectory: currentDirectory });
 
+// Next 15 no longer owns the lint command in this project. ESLint validates the
+// application, components, shared libraries and integration tests directly.
 export default [
   {
     ignores: [
