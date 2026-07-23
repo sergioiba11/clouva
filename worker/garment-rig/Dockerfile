@@ -137,6 +137,7 @@ RUN test -f /app/app.py \
     && test -f /app/test_avatar_analyzer.py \
     && test -f /app/test_avatar_analyzer_v32.py \
     && test -f /app/test_avatar_analyzer_v4_contract.py \
+    && test -f /app/analysis_memory_guard.py \
     && test -f /app/test_analysis_memory_guard.py \
     && test -f /app/test_blender_headless_render.py \
     && test -f /app/test_worker_api_v32.py \

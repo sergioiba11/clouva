@@ -2,10 +2,16 @@
 from __future__ import annotations
 
 import os
+import sys
+from pathlib import Path
 
 os.environ["CLOUVA_AVATAR_ANALYZER_MAX_POLYGONS"] = "2000"
 
 import bpy
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
 from analysis_memory_guard import prepare_analysis_meshes
 
