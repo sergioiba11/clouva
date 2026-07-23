@@ -106,3 +106,19 @@ test("V4.1 has a permanent in-app entry and the Biblioteca flow calls V4", () =>
   assert.match(assetRoute, /\/avatar\/analyze-v4\/result/);
   assert.match(latestRoute, /avatar_analyzer_v4/);
 });
+
+test("Blender Worker provides a software-rendered display for Workbench", () => {
+  const dockerfile = read("./worker/garment-rig/Dockerfile");
+  const launcher = read("./worker/garment-rig/blender-headless.sh");
+  const smokeTest = read("./worker/garment-rig/test_blender_headless_render.py");
+
+  assert.match(dockerfile, /xvfb/);
+  assert.match(dockerfile, /xauth/);
+  assert.match(dockerfile, /BLENDER_BIN=\/usr\/local\/bin\/blender-headless/);
+  assert.match(dockerfile, /test_blender_headless_render\.py/);
+  assert.match(launcher, /LIBGL_ALWAYS_SOFTWARE/);
+  assert.match(launcher, /GALLIUM_DRIVER/);
+  assert.match(launcher, /xvfb-run/);
+  assert.match(smokeTest, /BLENDER_WORKBENCH/);
+  assert.match(smokeTest, /bpy\.ops\.render\.render/);
+});
