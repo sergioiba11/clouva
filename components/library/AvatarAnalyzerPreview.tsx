@@ -454,11 +454,11 @@ export function AvatarAnalyzerPreview() {
     window.setTimeout(updateViewer, 90);
   };
 
-  const usePreset = (preset: CameraPreset) => {
+  const applyPreset = (preset: CameraPreset) => {
     applyCamera(preset.orbit, cameraTarget(landmarks, preset.targetLandmarks, fallbackCenter));
   };
 
-  const resetCamera = () => usePreset(CAMERA_PRESETS[0]);
+  const resetCamera = () => applyPreset(CAMERA_PRESETS[0]);
 
   useEffect(() => () => {
     if (previewUrl) URL.revokeObjectURL(previewUrl);
@@ -656,7 +656,7 @@ export function AvatarAnalyzerPreview() {
           </div>
           <div className={styles.cameraBar} aria-label="Vistas del diagnóstico">
             {CAMERA_PRESETS.map((preset) => (
-              <button type="button" key={preset.label} onClick={() => usePreset(preset)}>
+              <button type="button" key={preset.label} onClick={() => applyPreset(preset)}>
                 {preset.icon === "face" ? <Eye /> : preset.icon === "hand" ? <Hand /> : null}
                 {preset.label}
               </button>

@@ -15,6 +15,7 @@ import app_v17 as v32
 from analyzer_v4_contract import (
     ANALYZER_VERSION,
     APPROVED_STATES,
+    MAP_VERSION,
     RIG_PROFILES,
     build_targeted_reanalysis_plan,
     upgrade_analysis_v4,
@@ -40,21 +41,21 @@ AVATAR_ANALYZER_V4_SCRIPT = Path(__file__).with_name("avatar_analyzer_v4.py")
 ANALYZER_AUTORIG_V4_SCRIPT = Path(__file__).with_name("autorig_avatar_v19.py")
 REQUESTED_PROFILE_ENV = "CLOUVA_REQUESTED_RIG_PROFILE"
 REANALYSIS_ENV = "CLOUVA_REANALYSIS_OPERATION"
+RigProfileLiteral = Literal[
+    "BODY_BASIC", "BODY_FACE", "BODY_HANDS_BASIC", "FULL_HUMANOID", "FULL_BODY_HANDS_FACE",
+    "body_only", "body_with_hands", "full_humanoid", "full_humanoid_with_face",
+]
 
 
 class AvatarAnalyzeV4Request(BaseModel):
     source_url: AnyHttpUrl
     include_renders: bool = True
-    requested_rig_profile: Literal[
-        "BODY_BASIC", "BODY_FACE", "BODY_HANDS_BASIC", "FULL_BODY_HANDS_FACE"
-    ] = "BODY_BASIC"
+    requested_rig_profile: RigProfileLiteral = "body_only"
 
 
 class AnalyzerV4CompleteRigRequest(v32.current.CompleteAvatarRigRequest):
     force_analyzer: bool = True
-    requested_rig_profile: Literal[
-        "BODY_BASIC", "BODY_FACE", "BODY_HANDS_BASIC", "FULL_BODY_HANDS_FACE"
-    ] = "BODY_BASIC"
+    requested_rig_profile: RigProfileLiteral = "body_only"
 
 
 class ManualLandmarkCorrectionV4(BaseModel):
@@ -66,9 +67,7 @@ class ManualLandmarkCorrectionV4(BaseModel):
 
 
 class ManualCorrectionRequestV4(BaseModel):
-    requested_rig_profile: Literal[
-        "BODY_BASIC", "BODY_FACE", "BODY_HANDS_BASIC", "FULL_BODY_HANDS_FACE"
-    ] = "BODY_BASIC"
+    requested_rig_profile: RigProfileLiteral = "body_only"
     corrections: list[ManualLandmarkCorrectionV4] = Field(default_factory=list, max_length=300)
 
 
@@ -81,9 +80,7 @@ class TargetedReanalysisRequestV4(BaseModel):
     camera_id: str | None = Field(default=None, max_length=128)
     region: str | None = Field(default=None, max_length=128)
     landmark: str | None = Field(default=None, max_length=128)
-    requested_rig_profile: Literal[
-        "BODY_BASIC", "BODY_FACE", "BODY_HANDS_BASIC", "FULL_BODY_HANDS_FACE"
-    ] = "BODY_BASIC"
+    requested_rig_profile: RigProfileLiteral = "body_only"
 
 
 def _summary(analysis: dict[str, Any]):
@@ -102,6 +99,16 @@ def _summary(analysis: dict[str, Any]):
         "supportedRigProfiles": analysis.get("supported_rig_profiles") or [],
         "rigReadinessScore": float(analysis.get("rigReadinessScore") or 0.0),
         "rigReadinessApproved": bool(analysis.get("rigReadinessApproved")),
+        "bodyRigScore": float(analysis.get("bodyRigScore") or 0.0),
+        "bodyRigReady": bool(analysis.get("bodyRigReady")),
+        "faceAnalysisScore": float(analysis.get("faceAnalysisScore") or 0.0),
+        "faceAnalysisReady": bool(analysis.get("faceAnalysisReady")),
+        "leftHandBaseReady": bool(analysis.get("leftHandBaseReady")),
+        "rightHandBaseReady": bool(analysis.get("rightHandBaseReady")),
+        "leftFingerRigReady": bool(analysis.get("leftFingerRigReady")),
+        "rightFingerRigReady": bool(analysis.get("rightFingerRigReady")),
+        "fullHumanoidRigReady": bool(analysis.get("fullHumanoidRigReady")),
+        "unrealExportReady": bool(analysis.get("unrealExportReady")),
         "criticalLandmarksVerified": bool(analysis.get("criticalLandmarksVerified")),
         "topologyCapabilities": analysis.get("topology_capabilities") or {},
         "rootCauseCount": len(analysis.get("root_causes") or []),
@@ -182,8 +189,74 @@ def _run_analysis_v4(source_url: str, requested_profile: str, operation: str | N
         raise HTTPException(status_code=422, detail=f"No se pudo analizar el avatar con V4: {exc}") from exc
 
 
+def _rerun_cached_source_v4(source_path: Path, requested_profile: str, operation: str):
+    """Execute a clean Blender scene from the immutable GLB cached for a previous run."""
+    if not source_path.is_file():
+        raise HTTPException(status_code=410, detail={
+            "code": "ANALYZER_SOURCE_EXPIRED",
+            "message": "El GLB original de este run ya no está disponible para reanálisis.",
+        })
+    job_dir = Path(tempfile.mkdtemp(prefix="clouva-avatar-analyzer-v4-reanalysis-"))
+    input_path = job_dir / "avatar-original-clean.glb"
+    output_dir = job_dir / "analysis"
+    try:
+        shutil.copy2(source_path, input_path)
+        command = [
+            legacy.BLENDER_BIN, "--background", "--factory-startup",
+            "--python-exit-code", "1", "--python", str(AVATAR_ANALYZER_V4_SCRIPT),
+            "--", str(input_path), str(output_dir),
+        ]
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=max(legacy.BLENDER_TIMEOUT_SECONDS, 900),
+            cwd=str(job_dir),
+            env={
+                **os.environ,
+                REQUESTED_PROFILE_ENV: requested_profile,
+                REANALYSIS_ENV: operation,
+            },
+        )
+        required = (
+            output_dir / "diagnostic_report.json",
+            output_dir / "avatar_analysis.json",
+            output_dir / "diagnostic_landmarks.glb",
+        )
+        if result.returncode != 0:
+            technical = (result.stderr or result.stdout or "Blender Avatar Analyzer V4 failed")[-12000:]
+            raise RuntimeError(technical)
+        missing = [path.name for path in required if not path.is_file()]
+        if missing:
+            raise RuntimeError(f"Avatar Analyzer V4 no generó: {', '.join(missing)}")
+        analysis = json.loads((output_dir / "avatar_analysis.json").read_text(encoding="utf-8"))
+        cached = v32._persist_run(output_dir, analysis)
+        cached_source = cached / "source"
+        cached_source.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(input_path, cached_source / "avatar-original-clean.glb")
+        return job_dir, cached, analysis
+    except subprocess.TimeoutExpired as exc:
+        shutil.rmtree(job_dir, ignore_errors=True)
+        raise HTTPException(status_code=504, detail="El reanálisis V4 agotó el tiempo de procesamiento") from exc
+    except HTTPException:
+        shutil.rmtree(job_dir, ignore_errors=True)
+        raise
+    except Exception as exc:
+        shutil.rmtree(job_dir, ignore_errors=True)
+        raise HTTPException(status_code=422, detail=f"No se pudo reanalizar el avatar con V4: {exc}") from exc
+
+
 def _public_result(run_dir: Path):
     analysis = json.loads((run_dir / "avatar_analysis.json").read_text(encoding="utf-8"))
+    if analysis.get("version") != ANALYZER_VERSION or analysis.get("mapVersion") != MAP_VERSION:
+        raise HTTPException(status_code=410, detail={
+            "code": "ANALYZER_RESULT_STALE",
+            "message": "El resultado fue invalidado porque cambió el Analyzer o el mapa anatómico.",
+            "storedAnalyzerVersion": analysis.get("version"),
+            "currentAnalyzerVersion": ANALYZER_VERSION,
+            "storedMapVersion": analysis.get("mapVersion"),
+            "currentMapVersion": MAP_VERSION,
+        })
     report = json.loads((run_dir / "diagnostic_report.json").read_text(encoding="utf-8"))
     landmarks = analysis.get("landmarks") or {}
     accepted = {
@@ -204,6 +277,10 @@ def _public_result(run_dir: Path):
                 if path.is_file() and path.suffix.lower() in {".png", ".json", ".npy"}
             )
     return {
+        "id": analysis.get("runId"),
+        "runId": analysis.get("runId"),
+        "createdAt": analysis.get("createdAt") or analysis.get("timestamp"),
+        "source": analysis.get("source") or {},
         "summary": _summary(analysis),
         "analysis": analysis,
         "report": report,
@@ -341,7 +418,7 @@ def save_v4_manual_corrections(run_id: str, request: ManualCorrectionRequestV4):
     )
     path.write_text(json.dumps(upgraded, indent=2, ensure_ascii=False), encoding="utf-8")
     payload = {
-        "version": "clouva-avatar-analysis-manual-corrections-v4.0",
+        "version": "clouva-avatar-analysis-manual-corrections-v4.1",
         "runId": run_id,
         "timestamp": time.time(),
         "corrections": serialized,
@@ -356,30 +433,32 @@ def save_v4_manual_corrections(run_id: str, request: ManualCorrectionRequestV4):
 @app.post("/avatar/analyze-v4/result/{run_id}/reanalyze")
 def targeted_reanalysis_v4(run_id: str, request: TargetedReanalysisRequestV4):
     run_dir = v32._safe_run_dir(run_id)
-    analysis_path = run_dir / "avatar_analysis.json"
-    analysis = json.loads(analysis_path.read_text(encoding="utf-8"))
     plan = build_targeted_reanalysis_plan(request.operation, request.landmark)
     if request.camera_id:
         plan["cameras"] = [request.camera_id]
     if request.region:
         plan["regions"] = [request.region]
-    if request.operation == "reanalyze_right_shoulder":
-        upgraded = upgrade_analysis_v4(
-            analysis,
-            requested_rig_profile=request.requested_rig_profile,
-            camera_calibration=analysis.get("camera_calibration") or {},
-            config=analysis.get("confidence_gate_config") or None,
+    source_path = run_dir / "source" / "avatar-original-clean.glb"
+    with v32.ANALYZER_RIG_LOCK:
+        job_dir, _cached, analysis = _rerun_cached_source_v4(
+            source_path,
+            request.requested_rig_profile,
+            request.operation,
         )
-        analysis_path.write_text(json.dumps(upgraded, indent=2, ensure_ascii=False), encoding="utf-8")
-        return {"status": "completed", "targeted": True, "plan": plan, "summary": _summary(upgraded)}
-    # Fresh Blender scenes cannot retain a previous scene graph. Region/camera
-    # requests are made explicit rather than silently pretending to be targeted.
-    return JSONResponse(status_code=409, content={
-        "status": "requires_fresh_region_job",
-        "targeted": True,
-        "plan": plan,
-        "message": "La operación quedó definida, pero requiere reenviar source_url para ejecutar una escena Blender temporal nueva.",
-    })
+    try:
+        new_run_id = str(analysis.get("runId") or "")
+        return {
+            "status": "completed",
+            "targeted": True,
+            "executedAsCleanPipeline": True,
+            "sourceRunId": run_id,
+            "newRunId": new_run_id,
+            "resultPath": f"/avatar/analyze-v4/result/{new_run_id}",
+            "plan": plan,
+            "summary": _summary(analysis),
+        }
+    finally:
+        shutil.rmtree(job_dir, ignore_errors=True)
 
 
 @app.post("/avatar/complete-rig-v4")
@@ -434,7 +513,7 @@ def avatar_analyzer_v4_health():
         "ok": AVATAR_ANALYZER_V4_SCRIPT.is_file() and ANALYZER_AUTORIG_V4_SCRIPT.is_file(),
         "version": AVATAR_ANALYZER_V4_VERSION,
         "legacyV32Preserved": True,
-        "defaultRigProfile": "BODY_BASIC",
+        "defaultRigProfile": "body_only",
         "rigProfiles": list(RIG_PROFILES),
         "createsArmature": False,
         "modifiesOriginalAvatar": False,

@@ -228,9 +228,9 @@ def analyze_face(detector_output: dict, manifest: dict, meshes: Iterable[bpy.typ
             minimum_views=2,
             preferred_view_tokens=("face_front", "three_quarter"),
             anatomy_bvh=anatomy_bvh,
+            landmark_type="surface",
         )
-        landmarks[name]["landmarkType"] = "surface"
-        landmarks[name].pop("internalJointPosition", None)
+        landmarks[name]["landmarkType"] = "surface_landmark"
 
     ears, ear_warnings = _ear_landmarks(segmentation, body_vectors, body_width)
     landmarks.update(ears)

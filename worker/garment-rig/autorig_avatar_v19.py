@@ -36,8 +36,13 @@ def _analysis_path():
 
 
 def _requested_profile(analysis: dict):
-    value = os.environ.get(REQUESTED_PROFILE_ENV, "").strip().upper()
-    profile = value or str(analysis.get("requested_rig_profile") or "BODY_BASIC").upper()
+    value = os.environ.get(REQUESTED_PROFILE_ENV, "").strip()
+    profile = value or str(analysis.get("requested_rig_profile") or "body_only")
+    if profile not in RIG_PROFILES:
+        profile = next(
+            (candidate for candidate in RIG_PROFILES if candidate.upper() == profile.upper()),
+            profile,
+        )
     if profile not in RIG_PROFILES:
         raise RuntimeError(f"Unsupported rig profile: {profile}")
     return profile
@@ -60,7 +65,7 @@ def _load_analysis(input_path: Path):
     input_sha = base.sha256_file(input_path)
     if not source_sha or source_sha != input_sha:
         raise RuntimeError("Analyzer source SHA-256 does not match AutoRig input")
-    if requested == "BODY_BASIC" and analysis.get("criticalLandmarksVerified") is not True:
+    if requested in {"BODY_BASIC", "body_only"} and analysis.get("criticalLandmarksVerified") is not True:
         raise RuntimeError("BODY_BASIC critical landmarks were not approved")
     return path, analysis, requested
 

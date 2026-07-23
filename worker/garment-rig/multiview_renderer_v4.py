@@ -31,6 +31,8 @@ FACE_DIRECTIONS = {
     "face_front": Vector((0.0, -1.0, 0.0)),
     "face_left_30": Vector((0.5, -0.866, 0.0)),
     "face_right_30": Vector((-0.5, -0.866, 0.0)),
+    "face_left_60": Vector((0.866, -0.5, 0.0)),
+    "face_right_60": Vector((-0.866, -0.5, 0.0)),
     "face_left_profile": Vector((1.0, 0.0, 0.0)),
     "face_right_profile": Vector((-1.0, 0.0, 0.0)),
 }
@@ -57,7 +59,11 @@ def _enrich(view: dict, visible, attempt: str, crop: str) -> dict:
         "silhouetteCoverage": coverage,
         "framingValid": bool(0.001 <= coverage <= 0.965),
         "clippingDetected": bool(coverage >= 0.965),
-        "requiredPasses": ["rgb", "mask", "depth", "normal", "object_id", "region_id"],
+        "requiredPasses": [
+            "rgb", "mask", "depth", "normal", "object_id",
+            "primary_region_id", "secondary_region_mask",
+            "world_position", "triangle_id", "barycentric",
+        ],
     })
     return view
 
@@ -158,6 +164,8 @@ def render_multiview_v4(
                 f"hand_{suffix}_radial": lateral,
                 f"hand_{suffix}_ulnar": -lateral,
                 f"hand_{suffix}_oblique": (-normal + lateral * 0.58 + forward * 0.16).normalized(),
+                f"hand_{suffix}_three_quarter_dorsal": (normal + lateral * 0.62 + forward * 0.12).normalized(),
+                f"hand_{suffix}_three_quarter_palmar": (-normal - lateral * 0.62 + forward * 0.12).normalized(),
             }
             visible = proxies[side] or meshes
             allowed = [f"hand_{suffix}"] + [
@@ -182,7 +190,7 @@ def render_multiview_v4(
                 proxy.hide_render = True
 
     manifest = {
-        "version": "clouva-adaptive-multiview-camera-rig-v4.0",
+        "version": "clouva-adaptive-multiview-camera-rig-v4.1",
         "renderer": "BLENDER_WORKBENCH_PLUS_TECHNICAL_PASSES",
         "frontConvention": "-Y",
         "upConvention": "+Z",

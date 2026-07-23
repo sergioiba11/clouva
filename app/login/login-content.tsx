@@ -70,11 +70,12 @@ export default function LoginContent() {
 
   const redirectByRole = async (userId: string, forceSwitcher = false) => {
     const { supabase } = await import("@/lib/supabase");
-    let { data: profile, error: profileError } = await supabase
+    const { data: loadedProfile, error: profileError } = await supabase
       .from("profiles")
       .select("role")
       .eq("id", userId)
       .maybeSingle();
+    let profile = loadedProfile;
 
     if (profileError) throw profileError;
 

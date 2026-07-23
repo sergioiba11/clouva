@@ -103,7 +103,7 @@ class ConfidenceGateTests(unittest.TestCase):
             "left_five_fingers_supported": False,
             "right_five_fingers_supported": False,
         })
-        self.assertEqual(record["state"], "unsupported_by_topology")
+        self.assertEqual(record["state"], "topology_invalid")
         self.assertEqual(record["final_confidence"], 0.0)
         self.assertFalse(record["accepted"])
 
@@ -140,8 +140,8 @@ class ShoulderCorridorTests(unittest.TestCase):
         })
         result = upgrade_analysis_v4(analysis, "BODY_BASIC", {"invalid_views": [], "all_views_invalid": False})
         repaired = result["landmarks"]["shoulder_r"]
-        self.assertEqual(repaired["state"], "verified_with_fallback")
-        self.assertEqual(repaired["verificationMethod"], "symmetry_fallback")
+        self.assertEqual(repaired["state"], "verified_geometry_fallback")
+        self.assertEqual(repaired["verificationMethod"], "joint_corridor_with_symmetry_prior")
         self.assertTrue(result["right_shoulder_repair"]["attempted"])
         self.assertTrue(result["right_shoulder_repair"]["accepted"])
         self.assertIn("BODY_BASIC", result["supported_rig_profiles"])

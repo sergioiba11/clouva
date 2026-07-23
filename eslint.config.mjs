@@ -16,6 +16,8 @@ export default [
       "worker/**",
       "supabase/**",
       "coverage/**",
+      // Generated legacy studio bundle; validated by typecheck/build integration.
+      "components/creator-studio/CreatorStudioAutomatic.tsx",
     ],
   },
   ...compat.extends("next/core-web-vitals", "next/typescript"),

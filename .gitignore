@@ -2,3 +2,6 @@ node_modules/
 .next/
 tsconfig.tsbuildinfo
 .env*.local
+__pycache__/
+*.py[cod]
+/work/

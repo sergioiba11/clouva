@@ -23,7 +23,7 @@ def main():
     print(f"[clouva] V4 route count={len(paths)} missing={missing}", flush=True)
     assert not missing, f"Missing V4 Worker routes: {missing}"
     check("legacy V3.2 preserved", app.AVATAR_ANALYZER_VERSION, "clouva-avatar-analyzer-v3.2")
-    check("V4 version", app.AVATAR_ANALYZER_V4_VERSION, "clouva-avatar-analyzer-v4.0")
+    check("V4 version", app.AVATAR_ANALYZER_V4_VERSION, "clouva-avatar-analyzer-v4.1")
     check("V4 analyzer script", app.AVATAR_ANALYZER_V4_SCRIPT.name, "avatar_analyzer_v4.py")
     check("V4 autorig script", app.ANALYZER_AUTORIG_V4_SCRIPT.name, "autorig_avatar_v19.py")
     check("V4 analyzer available", app.AVATAR_ANALYZER_V4_SCRIPT.is_file(), True)
