@@ -127,3 +127,21 @@ test("Blender Worker provides a software-rendered display for Workbench", () => 
   assert.match(smokeTest, /BLENDER_WORKBENCH/);
   assert.match(smokeTest, /bpy\.ops\.render\.render/);
 });
+
+test("Avatar Analyzer bounds topology, textures and orientation memory", () => {
+  const guard = read("./worker/garment-rig/analysis_memory_guard.py");
+  const orientation = read("./worker/garment-rig/canonical_orientation.py");
+  const analyzer = read("./worker/garment-rig/avatar_analyzer.py");
+  const contract = read("./worker/garment-rig/analyzer_v4_contract.py");
+  const dockerfile = read("./worker/garment-rig/Dockerfile");
+
+  assert.match(guard, /CLOUVA_AVATAR_ANALYZER_MAX_POLYGONS/);
+  assert.match(guard, /MAX_ANALYSIS_POLYGONS/);
+  assert.match(guard, /DECIMATE/);
+  assert.match(guard, /_release_analysis_images/);
+  assert.match(orientation, /MAX_ORIENTATION_POINTS/);
+  assert.match(orientation, /obj\.data\.users > 1/);
+  assert.match(analyzer, /prepare_analysis_meshes/);
+  assert.match(contract, /"technical_resolution": 256/);
+  assert.match(dockerfile, /test_analysis_memory_guard\.py/);
+});

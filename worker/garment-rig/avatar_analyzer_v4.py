@@ -6,6 +6,7 @@ confidence calibration, joint corridors and versioned rig-profile result.
 """
 from __future__ import annotations
 
+import gc
 import json
 import os
 from pathlib import Path
@@ -154,6 +155,7 @@ def run(input_path: Path, output_dir: Path):
     requested_profile = os.environ.get(REQUESTED_PROFILE_ENV, "body_only").strip() or "body_only"
     requested_operation = os.environ.get(REANALYSIS_ENV, "").strip() or None
     legacy_analysis, legacy_report = analyzer_v32.run(input_path, output_dir)
+    gc.collect()
     calibration, v4_attempt = _refresh_optional_modules(legacy_analysis, output_dir)
     analysis = upgrade_analysis_v4(
         legacy_analysis,

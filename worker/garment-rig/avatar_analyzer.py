@@ -31,6 +31,7 @@ from analyzer_contract import (
     landmark_metrics,
 )
 from anatomy_bvh import build_anatomy_bvh
+from analysis_memory_guard import prepare_analysis_meshes
 from anatomy_segmenter import segment_anatomy
 from anatomy_segmenter_v3 import segment_anatomy_v3
 from body_analyzer import analyze_body
@@ -440,6 +441,8 @@ def run(input_path: Path, output_dir: Path):
     try:
         current = time.perf_counter()
         meshes = autorig_v16.import_original_fresh(input_path)
+        memory_guard = prepare_analysis_meshes(meshes)
+        autorig_v16._IMPORT_REPORT["analysisMemoryGuard"] = memory_guard
         canonical_orientation = canonicalize_temporary_copy(meshes)
         stage("loading_and_canonicalizing_clean_analysis_copy", current)
 
