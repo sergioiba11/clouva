@@ -1,7 +1,8 @@
 """Project 2D candidates against exact anatomy-region BVHs.
 
-V3 verifies every observation with the lossless depth, normal and region-id
-passes generated from the same triangles that were shown to MediaPipe.
+V3.2 samples a small adaptive pixel neighborhood instead of treating one
+sub-pixel MediaPipe coordinate as absolute truth. A nearby sample is only
+eligible when it still belongs to the requested region and technical object.
 """
 from __future__ import annotations
 
@@ -103,7 +104,7 @@ def _technical_sample(view: dict, x: float, y: float):
     return {
         "row": row, "column": column,
         "depth": value if np.isfinite(value) else None,
-        "normal": [float(value) for value in normal[row, column]] if normal is not None else None,
+        "normal": [float(component) for component in normal[row, column]] if normal is not None else None,
         "regionId": int(region_id[row, column]),
         "objectId": int(object_id[row, column]) if object_id is not None else 0,
         "triangleId": int(triangle_id[row, column]) if triangle_id is not None else -1,
@@ -120,6 +121,125 @@ def _normal_compatibility(first: Vector, second_values):
         return 0.5
     first = first.normalized(); second = second.normalized()
     return max(0.0, min(1.0, first.dot(second) * 0.5 + 0.5))
+
+
+def _offsets(radius: int):
+    values = [(0, 0)]
+    for ring in range(1, radius + 1):
+        for dy in range(-ring, ring + 1):
+            for dx in range(-ring, ring + 1):
+                if max(abs(dx), abs(dy)) == ring:
+                    values.append((dx, dy))
+    return values
+
+
+def _sample_radius(candidate: dict, view: dict):
+    name = str(candidate.get("name") or "")
+    region = str(candidate.get("region") or view.get("region") or "")
+    if region == "hand" or any(name.startswith(prefix) for prefix in ("thumb_", "index_", "middle_", "ring_", "pinky_")):
+        return 2
+    if region == "face" or any(name.startswith(prefix) for prefix in ("eye_", "nose_", "mouth_", "lip_", "brow_")):
+        return 2
+    return 1
+
+
+def _candidate_samples(candidate: dict, view: dict):
+    resolution = view.get("resolution", [512, 512])
+    width = max(int(resolution[0]), 1)
+    height = max(int(resolution[1]), 1)
+    requested_x = float(candidate["x"])
+    requested_y = float(candidate["y"])
+    for dx, dy in _offsets(_sample_radius(candidate, view)):
+        x = min(1.0 - 1.0 / width, max(0.0, requested_x + dx / width))
+        y = min(1.0 - 1.0 / height, max(0.0, requested_y + dy / height))
+        yield x, y, dx, dy
+
+
+def _sample_projection(candidate: dict, view: dict, camera, classifications, anatomy_bvh, allowed_regions):
+    resolution = view.get("resolution", [512, 512])
+    tested = []
+    for x, y, dx, dy in _candidate_samples(candidate, view):
+        if camera.data.type == "ORTHO":
+            origin, direction = _orthographic_ray(camera, x, y, resolution)
+        else:
+            origin, direction = _perspective_ray(camera, x, y, resolution)
+
+        if anatomy_bvh is not None:
+            hit = anatomy_bvh.ray_cast(origin, direction, allowed_regions)
+            rejected = []
+        else:
+            allowed_classes = {"body"}
+            if str(candidate.get("name") or "").startswith("eye_"):
+                allowed_classes.add("eyes")
+            hit, rejected = _cast_scene_fallback(origin, direction, classifications, allowed_classes)
+
+        technical = _technical_sample(view, x, y)
+        item = {
+            "x": x, "y": y, "dx": dx, "dy": dy,
+            "origin": origin, "direction": direction,
+            "hit": hit, "technical": technical, "rejected": rejected,
+        }
+        if hit is None:
+            item.update({"regionCompatible": False, "objectCompatible": False, "depthConfidence": 0.0,
+                         "normalCompatibility": 0.0, "depthResidual": None, "eligible": False})
+            tested.append(item)
+            continue
+
+        hit_distance = float(hit.get("distance") or (hit["location"] - origin).length)
+        depth_observation = technical.get("depth") if technical else None
+        depth_residual = abs(hit_distance - depth_observation) if depth_observation is not None else None
+        expected_region_id = int(technical.get("regionId") or 0) if technical else 0
+        expected_object_id = int(technical.get("objectId") or 0) if technical else 0
+        region_compatible = bool(
+            hit.get("region") in allowed_regions
+            and (expected_region_id == 0 or expected_region_id == int(hit.get("regionId") or 0))
+        )
+        object_compatible = bool(expected_object_id == 0 or expected_object_id == int(hit.get("objectId") or 0))
+        normal_compatibility = _normal_compatibility(hit["normal"], technical.get("normal") if technical else None)
+        scale = max(float(camera.data.ortho_scale if camera.data.type == "ORTHO" else 1.0), 1e-5)
+        depth_confidence = 0.5 if depth_residual is None else max(0.0, min(1.0, 1.0 - depth_residual / (scale * 0.025)))
+        silhouette = expected_region_id > 0
+        eligible = bool(region_compatible and object_compatible and silhouette and depth_confidence >= 0.25)
+        item.update({
+            "hitDistance": hit_distance,
+            "depthObservation": depth_observation,
+            "depthResidual": depth_residual,
+            "expectedRegionId": expected_region_id,
+            "expectedObjectId": expected_object_id,
+            "regionCompatible": region_compatible,
+            "objectCompatible": object_compatible,
+            "normalCompatibility": normal_compatibility,
+            "depthConfidence": depth_confidence,
+            "silhouette": silhouette,
+            "eligible": eligible,
+            "score": (
+                (1.0 if region_compatible else 0.0) * 1000.0
+                + (1.0 if object_compatible else 0.0) * 500.0
+                + (1.0 if silhouette else 0.0) * 250.0
+                + depth_confidence * 100.0
+                + normal_compatibility * 25.0
+                - (abs(dx) + abs(dy)) * 2.0
+            ),
+        })
+        tested.append(item)
+
+    eligible = [item for item in tested if item.get("eligible")]
+    selected = max(eligible, key=lambda item: item.get("score", 0.0)) if eligible else None
+    return selected, tested
+
+
+def _failure_code(tested):
+    if not any(item.get("hit") is not None for item in tested):
+        return "LANDMARK_REGION_BVH_MISS"
+    if not any(item.get("regionCompatible") for item in tested):
+        return "LANDMARK_WRONG_REGION"
+    if not any(item.get("silhouette") for item in tested):
+        return "LANDMARK_SILHOUETTE_MISS"
+    if not any(item.get("objectCompatible") for item in tested):
+        return "LANDMARK_OBJECT_ID_MISMATCH"
+    if not any(float(item.get("depthConfidence") or 0.0) >= 0.25 for item in tested):
+        return "LANDMARK_DEPTH_INCONSISTENT"
+    return "LANDMARK_TECHNICAL_PASS_MISMATCH"
 
 
 def project_candidates(detector_output: dict, manifest: dict, classifications: Dict[str, str],
@@ -139,58 +259,38 @@ def project_candidates(detector_output: dict, manifest: dict, classifications: D
             continue
         allowed_regions = list(view.get("allowedRegions") or [])
         for candidate in view_result.get("candidates", []):
-            resolution = view.get("resolution", [512, 512])
-            if camera.data.type == "ORTHO":
-                origin, direction = _orthographic_ray(camera, candidate["x"], candidate["y"], resolution)
-            else:
-                origin, direction = _perspective_ray(camera, candidate["x"], candidate["y"], resolution)
-            if anatomy_bvh is not None:
-                hit = anatomy_bvh.ray_cast(origin, direction, allowed_regions)
-                rejected = []
-            else:
-                allowed_classes = {"body"}
-                if str(candidate.get("name") or "").startswith("eye_"):
-                    allowed_classes.add("eyes")
-                hit, rejected = _cast_scene_fallback(origin, direction, classifications, allowed_classes)
-            if hit is None:
+            selected, tested = _sample_projection(
+                candidate, view, camera, classifications, anatomy_bvh, allowed_regions,
+            )
+            if selected is None:
+                code = _failure_code(tested)
                 failures.append({
-                    "code": "LANDMARK_REGION_BVH_MISS",
-                    "name": candidate.get("name"), "view": view_name,
-                    "allowedRegions": allowed_regions, "rejected": rejected,
+                    "code": code,
+                    "name": candidate.get("name"),
+                    "landmark": candidate.get("name"),
+                    "view": view_name,
+                    "region": candidate.get("region"),
+                    "side": candidate.get("side"),
+                    "allowedRegions": allowed_regions,
+                    "requestedPixel": [float(candidate["x"]), float(candidate["y"])],
+                    "samplesTested": len(tested),
+                    "matchingSamples": 0,
+                    "failureStage": "projection",
                 })
                 continue
 
-            technical = _technical_sample(view, candidate["x"], candidate["y"])
-            hit_distance = float(hit.get("distance") or (hit["location"] - origin).length)
-            depth_observation = technical.get("depth") if technical else None
-            depth_residual = abs(hit_distance - depth_observation) if depth_observation is not None else None
-            expected_region_id = int(technical.get("regionId") or 0) if technical else 0
-            expected_object_id = int(technical.get("objectId") or 0) if technical else 0
-            region_compatible = bool(
-                hit.get("region") in allowed_regions
-                and (expected_region_id == 0 or expected_region_id == int(hit.get("regionId") or 0))
-            )
-            object_compatible = bool(expected_object_id == 0 or expected_object_id == int(hit.get("objectId") or 0))
-            normal_compatibility = _normal_compatibility(hit["normal"], technical.get("normal") if technical else None)
-            scale = max(float(camera.data.ortho_scale if camera.data.type == "ORTHO" else 1.0), 1e-5)
-            depth_confidence = 0.5 if depth_residual is None else max(0.0, min(1.0, 1.0 - depth_residual / (scale * 0.025)))
-            region_confidence = 1.0 if region_compatible and object_compatible else 0.0
-            silhouette_confidence = 1.0 if expected_region_id > 0 else 0.0
+            hit = selected["hit"]
+            technical = selected.get("technical") or {}
+            hit_distance = float(selected.get("hitDistance") or 0.0)
+            depth_residual = selected.get("depthResidual")
+            normal_compatibility = float(selected.get("normalCompatibility") or 0.0)
+            depth_confidence = float(selected.get("depthConfidence") or 0.0)
+            region_confidence = 1.0
+            silhouette_confidence = 1.0
             geometry_confidence = (
                 depth_confidence * 0.35 + normal_compatibility * 0.25
                 + region_confidence * 0.30 + silhouette_confidence * 0.10
             )
-            if not region_compatible or not object_compatible or depth_confidence < 0.25:
-                failures.append({
-                    "code": "LANDMARK_TECHNICAL_PASS_MISMATCH",
-                    "name": candidate.get("name"), "view": view_name,
-                    "hitRegion": hit.get("region"), "allowedRegions": allowed_regions,
-                    "hitRegionId": hit.get("regionId"), "pixelRegionId": expected_region_id,
-                    "hitObjectId": hit.get("objectId"), "pixelObjectId": expected_object_id,
-                    "depthResidual": depth_residual, "normalCompatibility": normal_compatibility,
-                })
-                continue
-
             projected.append({
                 **candidate,
                 "position3d": _vec(hit["location"]),
@@ -203,20 +303,28 @@ def project_candidates(detector_output: dict, manifest: dict, classifications: D
                 "faceIndex": int(hit.get("sourcePolygon", hit.get("triangleIndex", -1))),
                 "triangleIndex": int(hit.get("triangleIndex", -1)),
                 "sourceVertices": list(hit.get("sourceVertices") or []),
-                "rayOrigin": _vec(origin), "rayDirection": _vec(direction),
-                "rayHitDistance": hit_distance, "depthObservation": depth_observation,
+                "rayOrigin": _vec(selected["origin"]), "rayDirection": _vec(selected["direction"]),
+                "rayHitDistance": hit_distance, "depthObservation": selected.get("depthObservation"),
                 "depthResidual": depth_residual,
-                "depthConfidence": float(depth_confidence),
-                "normalCompatibility": float(normal_compatibility),
-                "regionCompatibility": float(region_confidence),
-                "silhouetteConfidence": float(silhouette_confidence),
-                "viewCoverage": float(technical.get("coverage") or 0.0) if technical else 0.0,
-                "curvatureObservation": float(technical.get("curvature") or 0.0) if technical else 0.0,
+                "depthConfidence": depth_confidence,
+                "normalCompatibility": normal_compatibility,
+                "regionCompatibility": region_confidence,
+                "silhouetteConfidence": silhouette_confidence,
+                "viewCoverage": float(technical.get("coverage") or 0.0),
+                "curvatureObservation": float(technical.get("curvature") or 0.0),
                 "renderScope": view.get("renderScope"),
                 "silhouettePath": view.get("silhouettePath"),
                 "technicalPasses": view.get("technicalPasses"),
-                "rejectedHits": rejected,
+                "rejectedHits": selected.get("rejected") or [],
                 "geometryConfidence": float(geometry_confidence),
-                "projectionMethod": "exact-region-bvh-plus-technical-pass-v3" if anatomy_bvh is not None else "scene-fallback",
+                "requestedPixel": [float(candidate["x"]), float(candidate["y"])],
+                "selectedPixel": [float(selected["x"]), float(selected["y"])],
+                "pixelOffset": [int(selected["dx"]), int(selected["dy"])],
+                "samplesTested": len(tested),
+                "matchingSamples": sum(1 for item in tested if item.get("eligible")),
+                "selectedRegionId": int(technical.get("regionId") or 0),
+                "selectedDepthResidual": depth_residual,
+                "selectedNormalCompatibility": normal_compatibility,
+                "projectionMethod": "adaptive-5x5-region-bvh-technical-pass-v3.2" if anatomy_bvh is not None else "adaptive-scene-fallback-v3.2",
             })
     return projected, failures
