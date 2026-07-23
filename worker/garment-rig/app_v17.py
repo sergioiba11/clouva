@@ -43,7 +43,7 @@ RUN_CACHE_ROOT = Path(os.environ.get(
     "CLOUVA_AVATAR_ANALYZER_RUN_CACHE",
     str(Path(tempfile.gettempdir()) / "clouva-avatar-analyzer-runs"),
 ))
-RUN_TTL_SECONDS = int(os.environ.get("CLOUVA_AVATAR_ANALYZER_RUN_TTL_SECONDS", "3600"))
+RUN_TTL_SECONDS = int(os.environ.get("CLOUVA_AVATAR_ANALYZER_RUN_TTL_SECONDS", "2592000"))
 RUN_ID_PATTERN = re.compile(r"^[a-f0-9]{32}$")
 ANALYZER_ENV = "CLOUVA_ANALYZER_ANALYSIS_PATH"
 ANALYZER_RIG_LOCK = threading.Lock()

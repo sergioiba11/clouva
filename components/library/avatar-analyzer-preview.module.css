@@ -461,6 +461,33 @@
 .action:disabled { cursor: not-allowed; opacity: 0.68; }
 .action svg { width: 19px; height: 19px; flex: 0 0 auto; }
 
+.secondaryActions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+  margin-top: 9px;
+}
+.secondaryActions button,
+.secondaryActions a {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 9px 12px;
+  border: 1px solid rgba(193, 145, 255, .28);
+  border-radius: 13px;
+  background: rgba(112, 52, 190, .11);
+  color: #dbc7f4;
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: .035em;
+  text-align: center;
+  text-decoration: none;
+}
+.secondaryActions button:disabled { opacity: .5; }
+.secondaryActions svg { width: 16px; height: 16px; flex: 0 0 auto; }
+
 .processing {
   display: flex;
   gap: 10px;
@@ -514,6 +541,7 @@
   .correctionGrid > button { grid-column: 1 / -1; }
   .landmarkInspector { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .action { font-size: 12px; }
+  .secondaryActions { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 720px) {

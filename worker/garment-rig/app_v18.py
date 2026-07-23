@@ -85,6 +85,8 @@ class TargetedReanalysisRequestV4(BaseModel):
 
 def _summary(analysis: dict[str, Any]):
     landmarks = analysis.get("landmarks") if isinstance(analysis.get("landmarks"), dict) else {}
+    warnings = analysis.get("warnings") if isinstance(analysis.get("warnings"), list) else []
+    metrics = analysis.get("metrics") if isinstance(analysis.get("metrics"), dict) else {}
     states: dict[str, int] = {}
     for record in landmarks.values():
         if isinstance(record, dict):
@@ -110,6 +112,28 @@ def _summary(analysis: dict[str, Any]):
         "fullHumanoidRigReady": bool(analysis.get("fullHumanoidRigReady")),
         "unrealExportReady": bool(analysis.get("unrealExportReady")),
         "criticalLandmarksVerified": bool(analysis.get("criticalLandmarksVerified")),
+        "humanoidConfidence": float(analysis.get("humanoidConfidence") or 0.0),
+        "bodyBaseConfidence": float(
+            analysis.get("bodyBaseConfidence", analysis.get("humanoidConfidence")) or 0.0
+        ),
+        "bodyAnalysis": str(analysis.get("bodyAnalysis") or "needs_review"),
+        "faceAnalysis": str(analysis.get("faceAnalysis") or "needs_review"),
+        "leftHandAnalysis": str(analysis.get("leftHandAnalysis") or "needs_review"),
+        "rightHandAnalysis": str(analysis.get("rightHandAnalysis") or "needs_review"),
+        "landmarkCount": int(metrics.get("verifiedSurfaceLandmarkCount") or 0),
+        "verifiedSurfaceLandmarkCount": int(metrics.get("verifiedSurfaceLandmarkCount") or 0),
+        "verifiedLandmarkCount": int(metrics.get("verifiedLandmarkCount") or 0),
+        "internalJointCount": int(metrics.get("internalJointCount") or 0),
+        "rejectedLandmarkCount": int(metrics.get("rejectedLandmarkCount") or 0),
+        "noVisualEvidenceCount": int(metrics.get("noVisualEvidenceCount") or 0),
+        "insufficientViewsCount": int(metrics.get("insufficientViewsCount") or 0),
+        "technicalMismatchCount": int(metrics.get("technicalMismatchCount") or 0),
+        "topologyInvalidCount": int(metrics.get("topologyInvalidCount") or 0),
+        "rawLandmarkCount": len(landmarks),
+        "hiddenLandmarkCount": int(metrics.get("hiddenLandmarkCount") or 0),
+        "warningCount": len(warnings),
+        "detectionCoverage": v32._compact_coverage(analysis.get("detectionCoverage")),
+        "orientation": v32._compact_orientation(analysis.get("orientation")),
         "topologyCapabilities": analysis.get("topology_capabilities") or {},
         "rootCauseCount": len(analysis.get("root_causes") or []),
         "blockingReasonCount": len(analysis.get("blocking_reasons") or []),
@@ -177,6 +201,7 @@ def _run_analysis_v4(source_url: str, requested_profile: str, operation: str | N
         source_dir = cached / "source"
         source_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(input_path, source_dir / "avatar-original-clean.glb")
+        _prune_cached_v4(cached)
         return job_dir, output_dir, cached, analysis
     except subprocess.TimeoutExpired as exc:
         shutil.rmtree(job_dir, ignore_errors=True)
@@ -234,6 +259,7 @@ def _rerun_cached_source_v4(source_path: Path, requested_profile: str, operation
         cached_source = cached / "source"
         cached_source.mkdir(parents=True, exist_ok=True)
         shutil.copy2(input_path, cached_source / "avatar-original-clean.glb")
+        _prune_cached_v4(cached)
         return job_dir, cached, analysis
     except subprocess.TimeoutExpired as exc:
         shutil.rmtree(job_dir, ignore_errors=True)
@@ -244,6 +270,20 @@ def _rerun_cached_source_v4(source_path: Path, requested_profile: str, operation
     except Exception as exc:
         shutil.rmtree(job_dir, ignore_errors=True)
         raise HTTPException(status_code=422, detail=f"No se pudo reanalizar el avatar con V4: {exc}") from exc
+
+
+def _prune_cached_v4(run_dir: Path):
+    """Keep durable user-facing evidence without filling the persistent volume.
+
+    NPY matrices are reproducible technical intermediates used during the
+    analysis itself. The stable result needs the JSON audit trail, PNG evidence,
+    diagnostic GLB and immutable source GLB for clean reanalysis.
+    """
+    for path in run_dir.rglob("*.npy"):
+        try:
+            path.unlink()
+        except OSError:
+            continue
 
 
 def _public_result(run_dir: Path):
@@ -525,6 +565,9 @@ def avatar_analyzer_v4_health():
         "profileAwareSkeletonPlanner": True,
         "rootCauseGrouping": True,
         "manualSurfaceClickIsEvidenceOnly": True,
+        "durableRunCache": str(v32.RUN_CACHE_ROOT),
+        "runTtlSeconds": v32.RUN_TTL_SECONDS,
+        "durableCachePolicy": "json-png-glb-source-30d",
         "routes": [
             "/avatar/analyze-v4",
             "/avatar/analyze-v4-preview",

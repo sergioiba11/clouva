@@ -19,7 +19,7 @@ export async function POST(
     const runId = safeAnalyzerRunId(rawRunId);
     const body = await request.json();
     const response = await fetchAvatarAnalyzerWorker(
-      `/avatar/analyze/result/${runId}/corrections`,
+      `/avatar/analyze-v4/result/${runId}/manual-corrections`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },

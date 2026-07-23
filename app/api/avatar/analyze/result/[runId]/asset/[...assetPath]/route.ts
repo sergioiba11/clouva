@@ -20,7 +20,7 @@ export async function GET(
     const runId = safeAnalyzerRunId(rawRunId);
     const safePath = safeAnalyzerAssetPath(assetPath);
     const response = await fetchAvatarAnalyzerWorker(
-      `/avatar/analyze/result/${runId}/asset/${safePath}`,
+      `/avatar/analyze-v4/result/${runId}/asset/${safePath}`,
     );
     if (!response.ok) {
       const raw = await response.text().catch(() => "");

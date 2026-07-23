@@ -13,6 +13,7 @@ import {
   Save,
   TriangleAlert,
 } from "lucide-react";
+import Link from "next/link";
 import {
   createElement,
   type MouseEvent as ReactMouseEvent,
@@ -50,17 +51,17 @@ type AnalysisSummary = {
   runId: string;
   analyzerVersion?: string;
   sourceSha256?: string;
-  humanoidConfidence: number;
+  humanoidConfidence?: number;
   bodyBaseConfidence?: number;
   rigReadinessScore?: number;
   rigReadinessApproved?: boolean;
   rigReadinessGates?: string[];
   criticalLandmarksVerified?: boolean;
   bodyAnalysis?: string;
-  faceAnalysis: string;
-  leftHandAnalysis: string;
-  rightHandAnalysis: string;
-  landmarkCount: number;
+  faceAnalysis?: string;
+  leftHandAnalysis?: string;
+  rightHandAnalysis?: string;
+  landmarkCount?: number;
   verifiedSurfaceLandmarkCount?: number;
   verifiedLandmarkCount?: number;
   internalJointCount?: number;
@@ -364,6 +365,7 @@ function compactCoverage(record?: CoverageRecord) {
 export function AvatarAnalyzerPreview() {
   const { user, session, loading: authLoading } = useAuth();
   const [analyzing, setAnalyzing] = useState(false);
+  const [restoringLatest, setRestoringLatest] = useState(false);
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [summary, setSummary] = useState<AnalysisSummary | null>(null);
@@ -543,6 +545,47 @@ export function AvatarAnalyzerPreview() {
     }
   };
 
+  const restoreLatest = async () => {
+    if (!session?.access_token) return;
+    setRestoringLatest(true);
+    setError(null);
+    try {
+      const authorization = { Authorization: `Bearer ${session.access_token}` };
+      const latestResponse = await fetch("/api/avatar/analyze/latest", {
+        headers: authorization,
+        cache: "no-store",
+      });
+      const latest = await latestResponse.json() as {
+        available?: boolean;
+        runId?: string;
+        error?: string;
+      };
+      if (!latestResponse.ok) throw new Error(latest.error || "No se pudo buscar el último análisis.");
+      if (!latest.available || !latest.runId) {
+        throw new Error("Este avatar todavía no tiene un análisis V4.1 guardado.");
+      }
+
+      await loadDetail(latest.runId, session.access_token);
+      const assetResponse = await fetch(
+        `/api/avatar/analyze/result/${latest.runId}/asset/diagnostic_landmarks.glb`,
+        { headers: authorization, cache: "no-store" },
+      );
+      if (!assetResponse.ok) {
+        throw new Error("El último análisis existe, pero no se pudo abrir su GLB diagnóstico.");
+      }
+      const blob = await assetResponse.blob();
+      const nextUrl = URL.createObjectURL(blob);
+      setPreviewUrl((current) => {
+        if (current) URL.revokeObjectURL(current);
+        return nextUrl;
+      });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "No se pudo abrir el último análisis.");
+    } finally {
+      setRestoringLatest(false);
+    }
+  };
+
   const pickSurfacePoint = (event: ReactMouseEvent<HTMLDivElement>) => {
     if (!visualCorrectionMode || !selectedName) return;
     const result = modelViewerRef.current?.positionAndNormalFromPoint?.(event.clientX, event.clientY);
@@ -575,15 +618,14 @@ export function AvatarAnalyzerPreview() {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
+            requested_rig_profile: "BODY_BASIC",
             corrections: [{
               name: selectedName,
-              corrected_position: parsed,
-              corrected_surface_position: parsed,
+              surface_click: parsed,
+              proposed_internal_position: parsed,
               approved: true,
               note: "Corrección manual desde Biblioteca CLOUVA",
             }],
-            region_decisions: {},
-            fused_fingers: [],
           }),
         },
       );
@@ -609,7 +651,24 @@ export function AvatarAnalyzerPreview() {
     return `/api/avatar/analyze/result/${effectiveSummary.runId}/asset/${path}`;
   };
 
-  if (authLoading || !user) return null;
+  if (authLoading) return null;
+  if (!user) {
+    return (
+      <section id="avatar-analyzer" className={styles.card} aria-label="Avatar Analyzer CLOUVA">
+        <header className={styles.header}>
+          <span className={styles.icon}><BrainCircuit /></span>
+          <div>
+            <small>BLENDER WORKER · AVATAR ANALYZER V4.1</small>
+            <h2>Avatar Analyzer V4.1</h2>
+            <p>Iniciá sesión para analizar el avatar activo y conservar su último diagnóstico.</p>
+          </div>
+        </header>
+        <Link className={styles.action} href="/login?next=/avatar-analyzer-v4">
+          INICIAR SESIÓN
+        </Link>
+      </section>
+    );
+  }
 
   const verified = effectiveSummary?.verifiedLandmarkCount
     ?? effectiveSummary?.verifiedSurfaceLandmarkCount
@@ -617,13 +676,13 @@ export function AvatarAnalyzerPreview() {
     ?? 0;
 
   return (
-    <section className={styles.card} aria-label="Avatar Analyzer CLOUVA">
+    <section id="avatar-analyzer" className={styles.card} aria-label="Avatar Analyzer CLOUVA">
       <div className={styles.glow} aria-hidden="true" />
       <header className={styles.header}>
         <span className={styles.icon}><BrainCircuit /></span>
         <div>
-          <small>BLENDER WORKER · AVATAR ANALYZER V3.2</small>
-          <h2>Avatar Analyzer</h2>
+          <small>BLENDER WORKER · AVATAR ANALYZER V4.1</small>
+          <h2>Avatar Analyzer V4.1</h2>
           <p>Normaliza una copia temporal, valida cada región y bloquea el AutoRig cuando falta evidencia confiable.</p>
         </div>
       </header>
@@ -917,6 +976,23 @@ export function AvatarAnalyzerPreview() {
         {analyzing ? <Loader2 className={styles.spin} /> : previewUrl ? <RotateCcw /> : <BrainCircuit />}
         {analyzing ? "ANALIZANDO ORIENTACIÓN, BVH, TOPOLOGÍA Y COBERTURA…" : previewUrl ? "VOLVER A ANALIZAR" : "ANALIZAR AVATAR"}
       </button>
+
+      <div className={styles.secondaryActions}>
+        <button
+          type="button"
+          onClick={() => void restoreLatest()}
+          disabled={restoringLatest || analyzing || !session?.access_token}
+        >
+          {restoringLatest ? <Loader2 className={styles.spin} /> : <RotateCcw />}
+          {restoringLatest ? "ABRIENDO ÚLTIMO ANÁLISIS…" : "ABRIR ÚLTIMO ANÁLISIS"}
+        </button>
+        {effectiveSummary?.runId ? (
+          <Link href={`/avatar-analyzer-v4/${effectiveSummary.runId}`}>
+            <ExternalLink />
+            ABRIR VISUALIZER PROFESIONAL
+          </Link>
+        ) : null}
+      </div>
 
       {analyzing ? (
         <div className={styles.processing}>
