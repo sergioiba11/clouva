@@ -1,0 +1,117 @@
+name: Avatar Analyzer V3.2 validation
+
+on:
+  pull_request:
+    paths:
+      - "app/api/avatar/**"
+      - "components/library/**"
+      - "worker/garment-rig/**"
+      - "tests-avatar-analyzer-v32.mjs"
+      - "eslint.config.mjs"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/avatar-analyzer-v32.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    name: Typecheck, lint, tests and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key
+      SUPABASE_SERVICE_ROLE_KEY: placeholder-service-role
+      BLENDER_WORKER_URL: https://worker.invalid
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: TypeScript typecheck
+        run: npm run typecheck
+      - name: ESLint
+        run: npm run lint
+      - name: Avatar Engine tests
+        run: node --import tsx --test tests-avatar-engine.mjs
+      - name: Avatar Blender AutoRig tests
+        id: avatar_blender_autorig
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          node --import tsx --test tests-avatar-blender-autorig.mjs 2>&1 | tee /tmp/avatar-blender-autorig.log
+      - name: Upload AutoRig test output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: avatar-blender-autorig-test-output
+          path: /tmp/avatar-blender-autorig.log
+          if-no-files-found: warn
+          retention-days: 1
+      - name: Enforce AutoRig test result
+        if: steps.avatar_blender_autorig.outcome == 'failure'
+        run: exit 1
+      - name: Creator Rig tests
+        run: node --import tsx --test tests-creator-rig.mjs
+      - name: Creator Studio tests
+        run: node --import tsx --test tests-creator-studio-simple.mjs
+      - name: Project access tests
+        run: node --import tsx --test tests-project-access.mjs
+      - name: Real garment review tests
+        run: node --import tsx --test tests-real-garment-review.mjs
+      - name: Automatic Unreal mold tests
+        run: node --import tsx --test tests-automatic-unreal-mold.mjs
+      - name: Reference asset tests
+        run: node --import tsx --test tests-reference-assets.mjs
+      - name: Avatar Analyzer V3.2 integration tests
+        run: npm run test:avatar-analyzer
+      - name: Aggregate npm test command
+        run: npm test
+      - name: Next production build
+        run: npm run build
+
+  worker:
+    name: Blender Worker Docker tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build Worker without publishing
+        id: worker_build
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          docker buildx build \
+            --progress=plain \
+            --cache-from type=gha,scope=avatar-analyzer-v32 \
+            --cache-to type=gha,mode=max,scope=avatar-analyzer-v32 \
+            --output type=cacheonly \
+            --file worker/garment-rig/Dockerfile \
+            worker/garment-rig > /tmp/clouva-worker-build.log 2>&1
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            echo "Worker build failed. Last 240 lines:"
+            tail -n 240 /tmp/clouva-worker-build.log
+            exit "$status"
+          fi
+          echo "Worker build passed. Final 40 lines:"
+          tail -n 40 /tmp/clouva-worker-build.log
+      - name: Upload Worker build output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: avatar-analyzer-worker-build-output
+          path: /tmp/clouva-worker-build.log
+          if-no-files-found: warn
+          retention-days: 1
+      - name: Enforce Worker build result
+        if: steps.worker_build.outcome == 'failure'
+        run: exit 1

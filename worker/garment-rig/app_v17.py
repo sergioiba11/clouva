@@ -1,4 +1,4 @@
-"""Worker wrapper exposing Avatar Analyzer V3 without changing AutoRig V16."""
+"""Worker wrapper enforcing Avatar Analyzer V3.2 before the existing AutoRig V16."""
 from __future__ import annotations
 
 import base64
@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -33,22 +34,40 @@ BLENDER_SINGLE_FLIGHT_VERSION = current.BLENDER_SINGLE_FLIGHT_VERSION
 RIG_DIAGNOSTICS_VERSION = current.RIG_DIAGNOSTICS_VERSION
 CLEAN_ATTEMPT_VERSION = current.CLEAN_ATTEMPT_VERSION
 COMPLETE_AVATAR_RIG_VERSION = current.COMPLETE_AVATAR_RIG_VERSION
-COMPLETE_AVATAR_RIG_SCRIPT = current.COMPLETE_AVATAR_RIG_SCRIPT
 UNREAL_MOLD_RIG_VERSION = current.UNREAL_MOLD_RIG_VERSION
 
-AVATAR_ANALYZER_VERSION = "v3-region-bvh-topology-geodesics"
+AVATAR_ANALYZER_VERSION = "clouva-avatar-analyzer-v3.2"
 AVATAR_ANALYZER_SCRIPT = Path(__file__).with_name("avatar_analyzer.py")
+ANALYZER_AUTORIG_SCRIPT = Path(__file__).with_name("autorig_avatar_v18.py")
 RUN_CACHE_ROOT = Path(os.environ.get(
     "CLOUVA_AVATAR_ANALYZER_RUN_CACHE",
     str(Path(tempfile.gettempdir()) / "clouva-avatar-analyzer-runs"),
 ))
 RUN_TTL_SECONDS = int(os.environ.get("CLOUVA_AVATAR_ANALYZER_RUN_TTL_SECONDS", "3600"))
 RUN_ID_PATTERN = re.compile(r"^[a-f0-9]{32}$")
+ANALYZER_ENV = "CLOUVA_ANALYZER_ANALYSIS_PATH"
+ANALYZER_RIG_LOCK = threading.Lock()
+
+# Replace only the public complete-rig route. AutoRig V16 remains the actual
+# skeleton, weighting, validation and export implementation.
+app.router.routes[:] = [
+    route for route in app.router.routes
+    if not (
+        getattr(route, "path", None) == "/avatar/complete-rig"
+        and "POST" in (getattr(route, "methods", set()) or set())
+    )
+]
+current.COMPLETE_AVATAR_RIG_SCRIPT = ANALYZER_AUTORIG_SCRIPT
+COMPLETE_AVATAR_RIG_SCRIPT = ANALYZER_AUTORIG_SCRIPT
 
 
 class AvatarAnalyzeRequest(BaseModel):
     source_url: AnyHttpUrl
     include_renders: bool = True
+
+
+class AnalyzerGatedCompleteRigRequest(current.CompleteAvatarRigRequest):
+    force_analyzer: bool = True
 
 
 class LandmarkCorrection(BaseModel):
@@ -65,37 +84,78 @@ class AvatarAnalysisCorrectionsRequest(BaseModel):
     fused_fingers: list[str] = Field(default_factory=list, max_length=20)
 
 
-def _analysis_summary(analysis: dict) -> dict:
+COVERAGE_FIELDS = (
+    "renderedViews", "detectorSuccessfulViews", "projectedSuccessfulViews",
+    "triangulatedViews", "candidateCount", "projectedCandidates",
+    "triangulatedLandmarks", "projectionFailureCount", "technicalMismatchCount",
+    "detectorFailureCount", "visualCoverage", "geometricCoverage",
+)
+
+
+def _compact_coverage(raw: object):
+    value = raw if isinstance(raw, dict) else {}
+    result = {}
+    for name in ("face", "leftHand", "rightHand"):
+        record = value.get(name) if isinstance(value.get(name), dict) else {}
+        result[name] = {field: record.get(field, 0) for field in COVERAGE_FIELDS}
+    return result
+
+
+def _compact_orientation(raw: object):
+    value = raw if isinstance(raw, dict) else {}
+    return {
+        "orientationConfidence": float(value.get("orientationConfidence") or 0.0),
+        "requiresOrientationReview": bool(value.get("requiresOrientationReview")),
+        "detectedUpAxis": value.get("detectedUpAxis"),
+        "detectedFrontAxis": value.get("detectedFrontAxis"),
+        "mirrored": bool(value.get("mirrored")),
+    }
+
+
+def _analysis_summary(analysis: dict):
     landmarks = analysis.get("landmarks") if isinstance(analysis.get("landmarks"), dict) else {}
     warnings = analysis.get("warnings") if isinstance(analysis.get("warnings"), list) else []
     metrics = analysis.get("metrics") if isinstance(analysis.get("metrics"), dict) else {}
     verified_surface = int(metrics.get("verifiedSurfaceLandmarkCount") or 0)
-    internal = int(metrics.get("internalJointCount") or 0)
-    rejected = int(metrics.get("rejectedLandmarkCount") or 0)
-    hidden = int(metrics.get("hiddenLandmarkCount") or 0)
     return {
         "status": str(analysis.get("status") or "unknown"),
         "runId": str(analysis.get("runId") or ""),
+        "analyzerVersion": str(analysis.get("version") or AVATAR_ANALYZER_VERSION),
+        "sourceSha256": str((analysis.get("source") or {}).get("sha256") or ""),
         "humanoidConfidence": float(analysis.get("humanoidConfidence") or 0.0),
+        "bodyBaseConfidence": float(analysis.get("bodyBaseConfidence", analysis.get("humanoidConfidence")) or 0.0),
+        "rigReadinessScore": float(analysis.get("rigReadinessScore") or 0.0),
+        "rigReadinessApproved": bool(analysis.get("rigReadinessApproved")),
+        "rigReadinessGates": list(analysis.get("rigReadinessGates") or []),
+        "criticalLandmarksVerified": bool(analysis.get("criticalLandmarksVerified")),
         "bodyAnalysis": str(analysis.get("bodyAnalysis") or "unknown"),
         "faceAnalysis": str(analysis.get("faceAnalysis") or "unknown"),
         "leftHandAnalysis": str(analysis.get("leftHandAnalysis") or "unknown"),
         "rightHandAnalysis": str(analysis.get("rightHandAnalysis") or "unknown"),
         "landmarkCount": verified_surface,
         "verifiedSurfaceLandmarkCount": verified_surface,
-        "internalJointCount": internal,
-        "rejectedLandmarkCount": rejected,
+        "verifiedLandmarkCount": int(metrics.get("verifiedLandmarkCount") or 0),
+        "internalJointCount": int(metrics.get("internalJointCount") or 0),
+        "rejectedLandmarkCount": int(metrics.get("rejectedLandmarkCount") or 0),
+        "noVisualEvidenceCount": int(metrics.get("noVisualEvidenceCount") or 0),
+        "insufficientViewsCount": int(metrics.get("insufficientViewsCount") or 0),
+        "technicalMismatchCount": int(metrics.get("technicalMismatchCount") or 0),
+        "topologyInvalidCount": int(metrics.get("topologyInvalidCount") or 0),
         "rawLandmarkCount": len(landmarks),
-        "hiddenLandmarkCount": hidden,
+        "hiddenLandmarkCount": int(metrics.get("hiddenLandmarkCount") or 0),
         "warningCount": len(warnings),
-        "bodySubsystems": analysis.get("bodySubsystems") or {},
+        "detectionCoverage": _compact_coverage(analysis.get("detectionCoverage")),
+        "orientation": _compact_orientation(analysis.get("orientation")),
         "rigModified": False,
     }
 
 
-def _summary_header(summary: dict) -> str:
+def _summary_header(summary: dict):
     raw = json.dumps(summary, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
-    return base64.urlsafe_b64encode(raw).decode("ascii")
+    encoded = base64.urlsafe_b64encode(raw).decode("ascii")
+    if len(encoded) > 7000:
+        raise RuntimeError("Avatar Analyzer summary exceeded the safe HTTP header size")
+    return encoded
 
 
 def _cleanup_expired_runs():
@@ -139,7 +199,7 @@ def _persist_run(output_dir: Path, analysis: dict):
 def _run_analysis(source_url: str):
     if not AVATAR_ANALYZER_SCRIPT.is_file():
         raise HTTPException(status_code=500, detail="Falta avatar_analyzer.py en el Blender Worker")
-    job_dir = Path(tempfile.mkdtemp(prefix="clouva-avatar-analyzer-v3-"))
+    job_dir = Path(tempfile.mkdtemp(prefix="clouva-avatar-analyzer-v3-2-"))
     input_path = job_dir / "avatar-original-clean.glb"
     output_dir = job_dir / "analysis"
     try:
@@ -151,7 +211,7 @@ def _run_analysis(source_url: str):
         ]
         result = subprocess.run(
             command, capture_output=True, text=True,
-            timeout=max(legacy.BLENDER_TIMEOUT_SECONDS, 360), cwd=str(job_dir),
+            timeout=max(legacy.BLENDER_TIMEOUT_SECONDS, 520), cwd=str(job_dir),
         )
         report_path = output_dir / "diagnostic_report.json"
         analysis_path = output_dir / "avatar_analysis.json"
@@ -159,7 +219,7 @@ def _run_analysis(source_url: str):
         if result.returncode != 0:
             technical = (result.stderr or result.stdout or "Blender Avatar Analyzer failed")[-12000:]
             raise RuntimeError(technical)
-        missing = [str(path.name) for path in (report_path, analysis_path, diagnostic_glb) if not path.is_file()]
+        missing = [path.name for path in (report_path, analysis_path, diagnostic_glb) if not path.is_file()]
         if missing:
             raise RuntimeError(f"Avatar Analyzer no generó: {', '.join(missing)}")
         analysis = json.loads(analysis_path.read_text(encoding="utf-8"))
@@ -182,6 +242,9 @@ def _headers(analysis: dict):
         "X-Clouva-Avatar-Analyzer-Version": AVATAR_ANALYZER_VERSION,
         "X-Clouva-Analysis-Status": summary["status"],
         "X-Clouva-Analysis-Run-Id": summary["runId"],
+        "X-Clouva-Analysis-Source-Sha256": summary["sourceSha256"],
+        "X-Clouva-Rig-Readiness": str(summary["rigReadinessScore"]),
+        "X-Clouva-Rig-Readiness-Approved": "true" if summary["rigReadinessApproved"] else "false",
         "X-Clouva-Face-Analysis": summary["faceAnalysis"],
         "X-Clouva-Left-Hand-Analysis": summary["leftHandAnalysis"],
         "X-Clouva-Right-Hand-Analysis": summary["rightHandAnalysis"],
@@ -196,12 +259,24 @@ def _public_analysis(run_dir: Path):
     corrections_path = run_dir / "avatar_analysis_corrections.json"
     corrections = json.loads(corrections_path.read_text(encoding="utf-8")) if corrections_path.is_file() else None
     landmarks = analysis.get("landmarks") or {}
-    accepted = {name: item for name, item in landmarks.items() if isinstance(item, dict) and item.get("accepted", False)}
-    rejected = {name: item for name, item in landmarks.items() if isinstance(item, dict) and not item.get("accepted", False)}
+    accepted_states = {"verified", "verified_geometry_fallback", "manually_corrected"}
+    accepted = {
+        name: item for name, item in landmarks.items()
+        if isinstance(item, dict) and item.get("state") in accepted_states
+    }
+    rejected = {
+        name: item for name, item in landmarks.items()
+        if isinstance(item, dict) and item.get("blocking", not item.get("accepted", False))
+    }
     render_files = []
-    renders = run_dir / "renders_temporales"
-    if renders.is_dir():
-        render_files = sorted(path.name for path in renders.iterdir() if path.is_file() and path.suffix.lower() in {".png", ".json"})
+    for directory_name in ("renders_temporales", "renders_initial"):
+        renders = run_dir / directory_name
+        if renders.is_dir():
+            render_files.extend(
+                f"{directory_name}/{path.name}"
+                for path in sorted(renders.iterdir())
+                if path.is_file() and path.suffix.lower() in {".png", ".json"}
+            )
     return {
         "summary": _analysis_summary(analysis),
         "analysis": analysis,
@@ -209,21 +284,77 @@ def _public_analysis(run_dir: Path):
         "acceptedLandmarks": accepted,
         "rejectedLandmarks": rejected,
         "corrections": corrections,
-        "assets": {
-            "diagnosticGlb": "diagnostic_landmarks.glb",
-            "renders": render_files,
-        },
+        "assets": {"diagnosticGlb": "diagnostic_landmarks.glb", "renders": render_files},
     }
+
+
+def _assert_rig_ready(analysis: dict):
+    summary = _analysis_summary(analysis)
+    if summary["status"] not in {"valid", "valid_with_warnings"}:
+        raise HTTPException(status_code=409, detail={
+            "code": "AVATAR_ANALYZER_NOT_APPROVED",
+            "message": "El mapa anatómico todavía necesita revisión",
+            "summary": summary,
+        })
+    if not summary["rigReadinessApproved"] or summary["rigReadinessScore"] < 0.82:
+        raise HTTPException(status_code=409, detail={
+            "code": "RIG_READINESS_BLOCKED",
+            "message": "El avatar no está listo para crear un rig de producción",
+            "summary": summary,
+        })
+    if not summary["criticalLandmarksVerified"]:
+        raise HTTPException(status_code=409, detail={
+            "code": "CRITICAL_LANDMARKS_MISSING",
+            "message": "Faltan articulaciones corporales críticas",
+            "summary": summary,
+        })
+    return summary
+
+
+@app.post("/avatar/complete-rig")
+def complete_avatar_rig_analyzer_gated(request: AnalyzerGatedCompleteRigRequest):
+    with ANALYZER_RIG_LOCK:
+        job_dir, _output_dir, cached, analysis = _run_analysis(str(request.source_url))
+        try:
+            summary = _assert_rig_ready(analysis)
+            analysis_path = cached / "avatar_analysis.json"
+            previous = os.environ.get(ANALYZER_ENV)
+            os.environ[ANALYZER_ENV] = str(analysis_path)
+            try:
+                response = current.complete_avatar_rig_v16(request)
+            finally:
+                if previous is None:
+                    os.environ.pop(ANALYZER_ENV, None)
+                else:
+                    os.environ[ANALYZER_ENV] = previous
+
+            profile = json.loads(response.headers.get("X-Clouva-Rig-Profile") or "{}")
+            if profile.get("analyzedInputSha256") != profile.get("rigInputSha256"):
+                raise HTTPException(status_code=422, detail="El SHA analizado no coincide con el archivo riggeado")
+            if profile.get("analyzedInputSha256") != summary["sourceSha256"]:
+                raise HTTPException(status_code=422, detail="El Worker intentó riggear otro archivo")
+            if profile.get("analyzerRunId") != summary["runId"]:
+                raise HTTPException(status_code=422, detail="El rig no conserva el runId del Analyzer")
+            response.headers["X-Clouva-Rig-Profile"] = json.dumps(profile, separators=(",", ":"))
+            response.headers["X-Clouva-Analyzer-Run-Id"] = summary["runId"]
+            response.headers["X-Clouva-Analyzer-Version"] = summary["analyzerVersion"]
+            response.headers["X-Clouva-Analyzed-Input-Sha256"] = summary["sourceSha256"]
+            response.headers["X-Clouva-Rig-Readiness"] = str(summary["rigReadinessScore"])
+            return response
+        finally:
+            shutil.rmtree(job_dir, ignore_errors=True)
 
 
 @app.post("/avatar/analyze")
 def analyze_avatar(request: AvatarAnalyzeRequest):
-    job_dir, output_dir, _cached, analysis = _run_analysis(str(request.source_url))
+    with ANALYZER_RIG_LOCK:
+        job_dir, output_dir, _cached, analysis = _run_analysis(str(request.source_url))
     archive_base = job_dir / "clouva-avatar-analysis"
     archive_path = archive_base.with_suffix(".zip")
     try:
         if not request.include_renders:
             shutil.rmtree(output_dir / "renders_temporales", ignore_errors=True)
+            shutil.rmtree(output_dir / "renders_initial", ignore_errors=True)
         shutil.make_archive(str(archive_base), "zip", root_dir=str(output_dir))
         return FileResponse(
             archive_path, media_type="application/zip", filename="clouva-avatar-analysis.zip",
@@ -236,7 +367,8 @@ def analyze_avatar(request: AvatarAnalyzeRequest):
 
 @app.post("/avatar/analyze-preview")
 def analyze_avatar_preview(request: AvatarAnalyzeRequest):
-    job_dir, output_dir, _cached, analysis = _run_analysis(str(request.source_url))
+    with ANALYZER_RIG_LOCK:
+        job_dir, output_dir, _cached, analysis = _run_analysis(str(request.source_url))
     return FileResponse(
         output_dir / "diagnostic_landmarks.glb", media_type="model/gltf-binary",
         filename="clouva-avatar-diagnostic.glb",
@@ -260,8 +392,8 @@ def avatar_analyze_asset(run_id: str, asset_path: str):
     if requested.suffix.lower() not in allowed:
         raise HTTPException(status_code=403, detail="Tipo de archivo no permitido")
     media_type = {
-        ".png": "image/png", ".json": "application/json", ".glb": "model/gltf-binary",
-        ".npy": "application/octet-stream",
+        ".png": "image/png", ".json": "application/json",
+        ".glb": "model/gltf-binary", ".npy": "application/octet-stream",
     }[requested.suffix.lower()]
     return FileResponse(requested, media_type=media_type, filename=requested.name)
 
@@ -298,8 +430,9 @@ def save_avatar_analysis_corrections(run_id: str, request: AvatarAnalysisCorrect
         "regionDecisions": request.region_decisions,
         "fusedFingers": request.fused_fingers,
     }
-    path = run_dir / "avatar_analysis_corrections.json"
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    (run_dir / "avatar_analysis_corrections.json").write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8",
+    )
     return payload
 
 
@@ -307,17 +440,33 @@ def save_avatar_analysis_corrections(run_id: str, request: AvatarAnalysisCorrect
 def avatar_analyzer_health():
     _cleanup_expired_runs()
     return {
-        "ok": AVATAR_ANALYZER_SCRIPT.is_file(), "version": AVATAR_ANALYZER_VERSION,
-        "script": AVATAR_ANALYZER_SCRIPT.name, "createsArmature": False,
-        "modifiesProductionRig": False, "surfaceOnlyPreview": True,
-        "internalJointsStoredSeparately": True, "regionBvh": True,
-        "depthNormalRegionPasses": True, "geodesicLimbCenterlines": True,
-        "topologyFirstHands": True, "temporaryCorrectionDataset": True,
+        "ok": AVATAR_ANALYZER_SCRIPT.is_file() and ANALYZER_AUTORIG_SCRIPT.is_file(),
+        "version": AVATAR_ANALYZER_VERSION,
+        "script": AVATAR_ANALYZER_SCRIPT.name,
+        "autorigWrapper": ANALYZER_AUTORIG_SCRIPT.name,
+        "createsArmature": False,
+        "modifiesProductionRig": False,
+        "surfaceOnlyPreview": True,
+        "internalJointsStoredSeparately": True,
+        "regionBvh": True,
+        "adaptivePixelProjection": True,
+        "depthNormalRegionPasses": True,
+        "geodesicLimbCenterlines": True,
+        "topologyFirstHands": True,
+        "secondPassRerender": True,
+        "canonicalTemporaryNormalization": True,
+        "autorigAnalyzerGate": True,
+        "singleFlightAnalyzerAndRig": True,
+        "temporaryCorrectionDataset": True,
         "runTtlSeconds": RUN_TTL_SECONDS,
-        "outputs": ["avatar_analysis.json", "diagnostic_report.json", "diagnostic_landmarks.glb", "renders_temporales/"],
+        "outputs": [
+            "avatar_analysis.json", "diagnostic_report.json",
+            "diagnostic_landmarks.glb", "renders_temporales/",
+        ],
         "routes": [
-            "/avatar/analyze", "/avatar/analyze-preview", "/avatar/analyze/result/{run_id}",
-            "/avatar/analyze/result/{run_id}/corrections",
+            "/avatar/analyze", "/avatar/analyze-preview",
+            "/avatar/analyze/result/{run_id}",
+            "/avatar/analyze/result/{run_id}/corrections", "/avatar/complete-rig",
         ],
         "detectors": ["MediaPipe Face Landmarker", "MediaPipe Hand Landmarker"],
     }

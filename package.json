@@ -8,9 +8,11 @@
     "prebuild": "node scripts/prepare-clouva-model.mjs",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint app components lib tests-*.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test tests-avatar-engine.mjs tests-avatar-blender-autorig.mjs tests-creator-rig.mjs tests-creator-studio-simple.mjs tests-project-access.mjs tests-real-garment-review.mjs tests-automatic-unreal-mold.mjs tests-reference-assets.mjs"
+    "test:legacy": "node --import tsx --test tests-avatar-engine.mjs tests-avatar-blender-autorig.mjs tests-creator-rig.mjs tests-creator-studio-simple.mjs tests-project-access.mjs tests-real-garment-review.mjs tests-automatic-unreal-mold.mjs tests-reference-assets.mjs",
+    "test:avatar-analyzer": "node --test tests-avatar-analyzer-v32.mjs",
+    "test": "npm run test:legacy && npm run test:avatar-analyzer"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.49.8",

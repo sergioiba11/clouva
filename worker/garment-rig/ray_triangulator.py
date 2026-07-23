@@ -1,7 +1,8 @@
-"""Robust multiview triangulation for CLOUVA Avatar Analyzer V3.
+"""Robust multiview triangulation for CLOUVA Avatar Analyzer V3.2.
 
 Observations must agree with exact regional BVH depth, normal, silhouette and
-region-id passes. Detector confidence cannot override invalid geometry.
+region-id passes. Validation state is kept separate from numeric confidence so
+zero-view and one-view records are never presented as a fabricated 39 percent.
 """
 from __future__ import annotations
 
@@ -98,6 +99,33 @@ def _region_nearest(internal: Vector, allowed: List[str], segmentation, anatomy_
     return sample.point, float(distance), sample.region
 
 
+def _base_failure(name: str, allowed: List[str], views: list[str], rejected: list[dict],
+                  state: str, reason: str, failure_stage: str):
+    return {
+        "name": name,
+        "accepted": False,
+        "verified": False,
+        "display": False,
+        "landmarkType": "internal_joint",
+        "region": allowed[0] if allowed else "unknown",
+        "viewsConfirmed": len(views),
+        "views": views,
+        "confidence": 0.0,
+        "finalConfidence": 0.0,
+        "rawConfidence": 0.0,
+        "rawFinalConfidence": 0.0,
+        "state": state,
+        "validationState": state,
+        "evidenceState": failure_stage,
+        "blocking": True,
+        "failureStage": failure_stage,
+        "failureCode": reason,
+        "rejectionReasons": [reason],
+        "rejectedCandidates": rejected,
+        "triangulationInliers": 0,
+    }
+
+
 def triangulate_landmark(name: str, candidates: List[dict], segmentation,
                          allowed_regions: str | Iterable[str], region_scale: float,
                          minimum_views: int = 2, preferred_view_tokens: Sequence[str] = (),
@@ -130,13 +158,10 @@ def triangulate_landmark(name: str, candidates: List[dict], segmentation,
 
     views = _unique_views(usable)
     if len(views) < minimum_views:
-        return {
-            "name": name, "accepted": False, "display": False,
-            "landmarkType": "internal_joint", "region": allowed[0] if allowed else "unknown",
-            "viewsConfirmed": len(views), "confidence": 0.0, "finalConfidence": 0.0,
-            "rejectionReasons": ["INSUFFICIENT_TECHNICALLY_VALID_VIEWS"],
-            "rejectedCandidates": rejected,
-        }
+        state = "no_visual_evidence" if len(views) == 0 else "insufficient_views"
+        reason = "NO_VISUAL_EVIDENCE" if len(views) == 0 else "INSUFFICIENT_TECHNICALLY_VALID_VIEWS"
+        return _base_failure(name, allowed, views, rejected, state, reason,
+                             "detector" if len(views) == 0 else "triangulation")
 
     ray_tolerance = scale * 0.11
     hypotheses = []
@@ -157,13 +182,12 @@ def triangulate_landmark(name: str, candidates: List[dict], segmentation,
             hypotheses.append((len(_unique_views(inliers)), _mean(residuals, 999.0), midpoint, inliers))
 
     if not hypotheses:
-        return {
-            "name": name, "accepted": False, "display": False,
-            "landmarkType": "internal_joint", "region": allowed[0] if allowed else "unknown",
-            "viewsConfirmed": len(views), "confidence": 0.0, "finalConfidence": 0.0,
-            "rejectionReasons": ["RAY_TRIANGULATION_UNSTABLE"],
-            "rejectedCandidates": rejected,
-        }
+        result = _base_failure(
+            name, allowed, views, rejected, "insufficient_views",
+            "RAY_TRIANGULATION_UNSTABLE", "triangulation",
+        )
+        result["failureCode"] = "RAY_TRIANGULATION_UNSTABLE"
+        return result
 
     hypotheses.sort(key=lambda item: (-item[0], item[1]))
     _view_count, _residual, hypothesis, inliers = hypotheses[0]
@@ -186,7 +210,7 @@ def triangulate_landmark(name: str, candidates: List[dict], segmentation,
     spread_confidence = max(0.0, min(1.0, 1.0 - multiview_spread / max(scale * 0.34, 1e-8)))
     view_confidence = min(1.0, len(_unique_views(inliers)) / max(minimum_views + 1, 1))
 
-    final_confidence = (
+    raw_final_confidence = (
         detector_confidence * 0.10
         + view_quality * 0.08
         + depth_confidence * 0.16
@@ -204,10 +228,32 @@ def triangulate_landmark(name: str, candidates: List[dict], segmentation,
         and ray_confidence >= 0.48
         and depth_confidence >= 0.50
         and region_confidence >= 0.45
-        and final_confidence >= 0.60
+        and raw_final_confidence >= 0.60
     )
-    if not accepted:
-        final_confidence = min(final_confidence, 0.39)
+
+    reasons = [
+        *([] if correct_region else ["TRIANGULATED_POINT_WRONG_REGION"]),
+        *([] if inside_geometry else ["TRIANGULATED_POINT_OUTSIDE_GEOMETRY"]),
+        *([] if ray_confidence >= 0.48 else ["RAY_RESIDUAL_TOO_HIGH"]),
+        *([] if depth_confidence >= 0.50 else ["DEPTH_EVIDENCE_LOW"]),
+        *([] if region_confidence >= 0.45 else ["REGION_EVIDENCE_LOW"]),
+        *([] if raw_final_confidence >= 0.60 else ["FINAL_CONFIDENCE_LOW"]),
+    ]
+    if accepted:
+        state = "verified"
+        evidence_state = "visual_geometry"
+        failure_stage = None
+        failure_code = None
+    elif not correct_region or not inside_geometry or depth_confidence < 0.50 or region_confidence < 0.45:
+        state = "technical_mismatch"
+        evidence_state = "projection"
+        failure_stage = "projection"
+        failure_code = reasons[0] if reasons else "TECHNICAL_MISMATCH"
+    else:
+        state = "low_confidence"
+        evidence_state = "validation"
+        failure_stage = "validation"
+        failure_code = reasons[0] if reasons else "LOW_CONFIDENCE"
 
     preferred_candidates = sorted(
         inliers,
@@ -231,8 +277,19 @@ def triangulate_landmark(name: str, candidates: List[dict], segmentation,
         "region": nearest_region or (allowed[0] if allowed else "unknown"),
         "surfaceRegion": nearest_region or "unknown",
         "landmarkType": "internal_joint",
-        "accepted": accepted, "verified": accepted, "display": accepted,
-        "confidence": float(final_confidence), "finalConfidence": float(final_confidence),
+        "accepted": accepted,
+        "verified": accepted,
+        "display": accepted,
+        "confidence": float(raw_final_confidence),
+        "finalConfidence": float(raw_final_confidence),
+        "rawConfidence": float(raw_final_confidence),
+        "rawFinalConfidence": float(raw_final_confidence),
+        "state": state,
+        "validationState": state,
+        "evidenceState": evidence_state,
+        "blocking": not accepted,
+        "failureStage": failure_stage,
+        "failureCode": failure_code,
         "detectorConfidence": float(detector_confidence),
         "viewQualityConfidence": float(view_quality),
         "silhouetteConfidence": float(silhouette_confidence),
@@ -247,6 +304,7 @@ def triangulate_landmark(name: str, candidates: List[dict], segmentation,
         "symmetryConfidence": 0.5,
         "viewsConfirmed": len(_unique_views(inliers)),
         "views": _unique_views(inliers),
+        "triangulationInliers": len(inliers),
         "rayResidual": float(mean_ray_residual),
         "depthResidual": float(depth_residual),
         "multiviewSpread": float(multiview_spread),
@@ -255,18 +313,11 @@ def triangulate_landmark(name: str, candidates: List[dict], segmentation,
         "surfaceHitFace": int(preferred_candidates[0].get("faceIndex", -1)),
         "surfaceTriangle": int(preferred_candidates[0].get("triangleIndex", -1)),
         "methods": [
-            "exact_region_bvh", "rgb_edge_detector_agreement",
+            "exact_region_bvh", "adaptive_rgb_edge_detector_agreement",
             "depth_normal_region_validation", "robust_ray_triangulation",
             "regional_surface_projection",
         ],
-        "method": "v3-region-bvh-depth-normal-ransac",
-        "rejectionReasons": [] if accepted else [
-            *( [] if correct_region else ["TRIANGULATED_POINT_WRONG_REGION"] ),
-            *( [] if inside_geometry else ["TRIANGULATED_POINT_OUTSIDE_GEOMETRY"] ),
-            *( [] if ray_confidence >= 0.48 else ["RAY_RESIDUAL_TOO_HIGH"] ),
-            *( [] if depth_confidence >= 0.50 else ["DEPTH_EVIDENCE_LOW"] ),
-            *( [] if region_confidence >= 0.45 else ["REGION_EVIDENCE_LOW"] ),
-            *( [] if final_confidence >= 0.60 else ["FINAL_CONFIDENCE_LOW"] ),
-        ],
+        "method": "v3.2-adaptive-region-bvh-depth-normal-ransac",
+        "rejectionReasons": [] if accepted else reasons,
         "rejectedCandidates": rejected,
     }
