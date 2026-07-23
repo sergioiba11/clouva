@@ -1,0 +1,110 @@
+name: Avatar Analyzer V3.2 isolated validation
+
+on:
+  push:
+    branches:
+      - codex/avatar-analyzer-v3-2-ci
+
+permissions:
+  contents: write
+
+concurrency:
+  group: avatar-analyzer-v32-isolated-validation
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key
+      SUPABASE_SERVICE_ROLE_KEY: placeholder-service-role
+      BLENDER_WORKER_URL: https://worker.invalid
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        id: install
+        continue-on-error: true
+        run: npm ci
+
+      - name: Typecheck
+        id: typecheck
+        if: steps.install.outcome == 'success'
+        continue-on-error: true
+        run: npm run typecheck
+
+      - name: ESLint
+        id: lint
+        if: steps.install.outcome == 'success'
+        continue-on-error: true
+        run: npm run lint
+
+      - name: Node tests
+        id: tests
+        if: steps.install.outcome == 'success'
+        continue-on-error: true
+        run: npm test
+
+      - name: Next production build
+        id: build
+        if: steps.install.outcome == 'success'
+        continue-on-error: true
+        run: npm run build
+
+      - name: Python compile
+        id: pycompile
+        continue-on-error: true
+        run: python3 -m py_compile worker/garment-rig/*.py tools/unreal_avatar_export/export_clouva_avatar.py
+
+      - name: Blender Worker Docker tests
+        id: worker
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          docker build --progress=plain -t clouva-avatar-analyzer-v32:test worker/garment-rig \
+            2>&1 | tee /tmp/avatar-analyzer-v32-worker.log
+
+      - name: Write validation report
+        if: always()
+        shell: bash
+        run: |
+          cat > avatar-analyzer-v32-validation.json <<JSON
+          {
+            "sourceCommit": "${GITHUB_SHA}",
+            "workflowRunId": "${GITHUB_RUN_ID}",
+            "install": "${{ steps.install.outcome }}",
+            "typecheck": "${{ steps.typecheck.outcome }}",
+            "lint": "${{ steps.lint.outcome }}",
+            "tests": "${{ steps.tests.outcome }}",
+            "build": "${{ steps.build.outcome }}",
+            "pythonCompile": "${{ steps.pycompile.outcome }}",
+            "blenderWorkerDocker": "${{ steps.worker.outcome }}"
+          }
+          JSON
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add avatar-analyzer-v32-validation.json
+          git commit -m "Record Avatar Analyzer V3.2 validation result" || true
+          git push
+
+      - name: Enforce validation
+        if: always()
+        shell: bash
+        run: |
+          test "${{ steps.install.outcome }}" = "success"
+          test "${{ steps.typecheck.outcome }}" = "success"
+          test "${{ steps.lint.outcome }}" = "success"
+          test "${{ steps.tests.outcome }}" = "success"
+          test "${{ steps.build.outcome }}" = "success"
+          test "${{ steps.pycompile.outcome }}" = "success"
+          test "${{ steps.worker.outcome }}" = "success"
