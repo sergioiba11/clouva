@@ -41,7 +41,7 @@ COPY *.py ./
 COPY avatar-reference ./avatar-reference
 
 RUN mv app.py app_legacy.py \
-    && mv app_v17.py app.py \
+    && mv app_v18.py app.py \
     && mv rig_garment.py rig_garment_legacy.py \
     && mv rig_garment_v5.py rig_garment_v9.py \
     && mv rig_garment_v10.py rig_garment_v10_base.py \
@@ -92,8 +92,9 @@ ENV CLOUVA_WORKER_INSPECTOR=v2
 ENV CLOUVA_GARMENT_SOURCE_ROUTING=v30
 ENV CLOUVA_GARMENT_MESH_NORMALIZATION=v31
 ENV CLOUVA_GARMENT_MODULE_LOADER=v31.2
-ENV CLOUVA_AVATAR_COMPLETE_RIG=v16-analyzer-v3.2-gated
-ENV CLOUVA_AVATAR_ANALYZER=v3.2-canonical-adaptive-two-pass
+ENV CLOUVA_AVATAR_COMPLETE_RIG=v16-analyzer-v4-profile-gated
+ENV CLOUVA_AVATAR_ANALYZER=v4.0-hybrid-multiview-profile-gated
+ENV CLOUVA_AVATAR_ANALYZER_V32_PRESERVED=true
 ENV CLOUVA_AUX_PYTHON=/usr/local/bin/python3
 ENV CLOUVA_FACE_LANDMARKER_MODEL=/app/models/face_landmarker.task
 ENV CLOUVA_HAND_LANDMARKER_MODEL=/app/models/hand_landmarker.task
@@ -104,10 +105,16 @@ ENV CLOUVA_AVATAR_REFERENCE_METADATA_PATH=/app/avatar-reference/clouva_avatar_da
 
 RUN test -f /app/app.py \
     && test -f /app/app_v16.py \
+    && test -f /app/app_v17.py \
     && test -f /app/avatar_analyzer.py \
+    && test -f /app/avatar_analyzer_v4.py \
     && test -f /app/analyzer_contract.py \
+    && test -f /app/analyzer_v4_contract.py \
     && test -f /app/canonical_orientation.py \
+    && test -f /app/preflight_v4.py \
+    && test -f /app/camera_projection_self_test_v4.py \
     && test -f /app/autorig_avatar_v18.py \
+    && test -f /app/autorig_avatar_v19.py \
     && test -f /app/anatomy_segmenter.py \
     && test -f /app/ray_triangulator.py \
     && test -f /app/finger_centerline.py \
@@ -116,18 +123,23 @@ RUN test -f /app/app.py \
     && test -f /app/hand_analyzer.py \
     && test -f /app/multiview_renderer.py \
     && test -f /app/multiview_renderer_v32.py \
+    && test -f /app/multiview_renderer_v4.py \
     && test -f /app/landmark_detector_2d.py \
     && test -f /app/landmark_projector_3d.py \
     && test -f /app/diagnostic_builder.py \
     && test -f /app/test_avatar_analyzer.py \
     && test -f /app/test_avatar_analyzer_v32.py \
+    && test -f /app/test_avatar_analyzer_v4_contract.py \
     && test -f /app/test_worker_api_v32.py \
+    && test -f /app/test_worker_api_v4.py \
     && test -f /app/avatar-reference/AvatarReference.fbx \
     && test -f /app/avatar-reference/clouva_avatar_data.json \
     && python3 -m py_compile /app/*.py
 
 RUN python3 -c "from mediapipe.tasks import python; from mediapipe.tasks.python import vision; face=vision.FaceLandmarker.create_from_options(vision.FaceLandmarkerOptions(base_options=python.BaseOptions(model_asset_path='/app/models/face_landmarker.task'),running_mode=vision.RunningMode.IMAGE,num_faces=1)); hand=vision.HandLandmarker.create_from_options(vision.HandLandmarkerOptions(base_options=python.BaseOptions(model_asset_path='/app/models/hand_landmarker.task'),running_mode=vision.RunningMode.IMAGE,num_hands=1)); face.close(); hand.close(); print('[clouva] MediaPipe Face + Hand Landmarker models load OK')"
+RUN cd /app && python3 -m unittest -v test_avatar_analyzer_v4_contract.py
 RUN python3 /app/test_worker_api_v32.py
+RUN python3 /app/test_worker_api_v4.py
 
 RUN env PYTHONPATH=/app /opt/blender/blender --background --factory-startup --python-exit-code 1 --python-expr "import importlib.util; spec=importlib.util.spec_from_file_location('clouva_autorig_v16','/app/autorig_avatar_v16.py'); module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module); armature,proof=module.create_fresh_schema_armature(); assert len(armature.data.bones)==24; assert proof['bonesCreated']==24; assert proof['reusedArmature'] is False; assert armature.get('clouva_generated_from_scratch') is True; print('[clouva] AutoRig V16 creates a brand-new 24-bone schema armature OK')"
 RUN env PYTHONPATH=/app /opt/blender/blender --background --factory-startup --python-exit-code 1 --python /app/test_avatar_analyzer.py

@@ -1,0 +1,52 @@
+{
+  "analyzer_version": "4.0",
+  "requested_rig_profile": "BODY_BASIC",
+  "supported_rig_profiles": ["BODY_BASIC", "BODY_HANDS_BASIC"],
+  "overall_status": "approved_with_fallbacks",
+  "regions": {
+    "body": {"right_arm": {"status": "approved_with_fallbacks"}},
+    "face": {"status": "needs_review"},
+    "left_hand": {"status": "HAND_TOPOLOGY_LIMITED"},
+    "right_hand": {"status": "HAND_TOPOLOGY_LIMITED"}
+  },
+  "landmarks": {
+    "shoulder_r": {
+      "state": "verified_with_fallback",
+      "detection_confidence": 1.0,
+      "visual_confidence": 0.0,
+      "triangulation_confidence": 0.0,
+      "region_confidence": 0.68,
+      "topology_confidence": 1.0,
+      "symmetry_confidence": 0.86,
+      "final_confidence": 0.84,
+      "views": 0,
+      "inliers": 0,
+      "verificationMethod": "symmetry_fallback"
+    }
+  },
+  "camera_calibration": {
+    "status": "invalid",
+    "invalid_views": ["face_front"],
+    "root_failure": "CAMERA_PROJECTION_INVALID"
+  },
+  "topology_capabilities": {
+    "body_supported": true,
+    "left_hand_supported": true,
+    "right_hand_supported": true,
+    "left_five_fingers_supported": false,
+    "right_five_fingers_supported": false,
+    "facial_rig_supported": false
+  },
+  "root_causes": [
+    {
+      "code": "PROJECTION_FAILURE",
+      "scope": "face_front",
+      "summary": "1 causa raíz / 25 landmarks afectados",
+      "possible_cause": "camera/world matrix mismatch, invalid depth scale or wrong handedness"
+    }
+  ],
+  "fallbacks_used": [{"landmark": "shoulder_r", "method": "symmetry_fallback"}],
+  "manual_corrections": [],
+  "blocking_reasons": [],
+  "recommended_next_action": "create_body_basic"
+}

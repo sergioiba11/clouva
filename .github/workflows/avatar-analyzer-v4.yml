@@ -1,0 +1,53 @@
+name: Avatar Analyzer V4 validation
+
+on:
+  pull_request:
+    paths:
+      - "app/avatar-analyzer-v4/**"
+      - "components/library/AvatarAnalyzerV4Diagnostics.tsx"
+      - "components/library/avatar-analyzer-v4-diagnostics.module.css"
+      - "worker/garment-rig/**"
+      - "tests-avatar-analyzer-v4.mjs"
+      - "docs/avatar-analyzer-v4.md"
+      - "examples/avatar-analyzer-v4-*.json"
+      - ".github/workflows/avatar-analyzer-v4.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Pure V4 contract tests
+        working-directory: worker/garment-rig
+        run: python -m unittest -v test_avatar_analyzer_v4_contract.py
+      - name: Frontend/API source contract
+        run: node --test tests-avatar-analyzer-v4.mjs
+      - name: Compile pure Python modules
+        working-directory: worker/garment-rig
+        run: python -m py_compile analyzer_v4_contract.py camera_projection_self_test_v4.py
+
+  worker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build Blender Worker without publishing
+        run: |
+          docker buildx build \
+            --progress=plain \
+            --cache-from type=gha,scope=avatar-analyzer-v4 \
+            --cache-to type=gha,mode=max,scope=avatar-analyzer-v4 \
+            --output type=cacheonly \
+            --file worker/garment-rig/Dockerfile \
+            worker/garment-rig
