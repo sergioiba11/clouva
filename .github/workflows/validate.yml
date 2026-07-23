@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [agent/base-mesh-auto-rig]
+    branches: [main, agent/base-mesh-auto-rig]
 
 permissions:
   contents: read
