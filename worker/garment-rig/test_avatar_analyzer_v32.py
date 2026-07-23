@@ -21,6 +21,7 @@ from analyzer_contract import (
     calculate_rig_readiness,
 )
 from canonical_orientation import canonicalize_temporary_copy
+from face_visual_cues import is_visual_face_cue
 from landmark_projector_3d import _offsets
 from multiview_renderer_v32 import HAND_VIEW_TOKENS
 
@@ -58,12 +59,20 @@ def test_states_preserve_raw_confidence():
             "confidence": 0.68, "finalConfidence": 0.68,
             "rejectionReasons": ["INSUFFICIENT_TECHNICALLY_VALID_VIEWS"],
         },
+        "geometry_recovered": {
+            "name": "geometry_recovered", "accepted": True, "viewsConfirmed": 0,
+            "geometryFallback": True, "rawFinalConfidence": 0.0,
+            "finalConfidence": 0.67, "topologyConfidence": 0.64,
+            "rejectionReasons": [],
+        },
     }
     annotate_landmarks(landmarks)
     assert landmarks["missing"]["state"] == "no_visual_evidence"
     assert abs(landmarks["missing"]["rawConfidence"] - 0.73) < 1e-8
     assert landmarks["single"]["state"] == "insufficient_views"
     assert abs(landmarks["single"]["rawConfidence"] - 0.68) < 1e-8
+    assert landmarks["geometry_recovered"]["state"] == "verified_geometry_fallback"
+    assert abs(landmarks["geometry_recovered"]["rawConfidence"] - 0.67) < 1e-8
 
 
 def full_landmarks():
@@ -136,6 +145,27 @@ def test_detection_coverage_is_symmetric():
     assert len(HAND_VIEW_TOKENS) == 7
     assert coverage["leftHand"]["renderedViews"] == coverage["rightHand"]["renderedViews"] == 7
     assert coverage["leftHand"]["detectorSuccessfulViews"] == coverage["rightHand"]["detectorSuccessfulViews"] == 7
+    assert coverage["landmarks"]["wrist_l"]["detectorCandidates"] == 7
+    assert coverage["landmarks"]["wrist_r"]["detectorCandidates"] == 7
+    assert coverage["landmarks"]["index_tip_r"]["classifiedFailure"] == "detector_not_found"
+    assert len(coverage["landmarks"]["index_tip_r"]["viewStats"]) == 7
+
+
+def test_visual_face_cues_never_include_hair_or_accessories():
+    clear_scene()
+    bpy.ops.mesh.primitive_cube_add()
+    eyebrow = bpy.context.object
+    eyebrow.name = "Stylized_Eyebrow_L"
+    bpy.ops.mesh.primitive_cube_add()
+    hair = bpy.context.object
+    hair.name = "Hair_Cap"
+    bpy.ops.mesh.primitive_cube_add()
+    mouth = bpy.context.object
+    mouth.name = "Mouth_Interior"
+    assert is_visual_face_cue(eyebrow, "eyebrows") is True
+    assert is_visual_face_cue(mouth, "body") is True
+    assert is_visual_face_cue(hair, "hair") is False
+    assert is_visual_face_cue(hair, "accessories") is False
 
 
 def create_humanoid_proxy(rotation=(0.0, 0.0, 0.0), mirrored=False):
@@ -194,9 +224,10 @@ def main():
     test_states_preserve_raw_confidence()
     test_readiness_gates_right_hand()
     test_detection_coverage_is_symmetric()
+    test_visual_face_cues_never_include_hair_or_accessories()
     test_canonical_orientation_rotated_and_mirrored()
     test_adaptive_pixel_window()
-    print("[clouva] Avatar Analyzer V3.2 contract + canonical orientation tests OK")
+    print("[clouva] Avatar Analyzer V3.2 evidence + orientation + visual cue tests OK")
 
 
 if __name__ == "__main__":
