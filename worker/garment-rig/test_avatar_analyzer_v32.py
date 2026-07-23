@@ -4,7 +4,7 @@ from __future__ import annotations
 import math
 
 import bpy
-from mathutils import Matrix, Vector
+from mathutils import Euler, Matrix, Vector
 
 from analyzer_contract import (
     CRITICAL_BODY,
@@ -148,7 +148,7 @@ def create_humanoid_proxy(rotation=(0.0, 0.0, 0.0), mirrored=False):
         obj.name = name
         obj.scale = scale
         objects.append(obj)
-    transform = Matrix.Euler(rotation, "XYZ").to_matrix().to_4x4()
+    transform = Euler(rotation, "XYZ").to_matrix().to_4x4()
     if mirrored:
         transform = Matrix.Diagonal((-1.0, 1.0, 1.0, 1.0)) @ transform
     for obj in objects:
