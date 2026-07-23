@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import { useMemo, useState } from "react";
 import styles from "./avatar-analyzer-v4-diagnostics.module.css";
 
@@ -163,8 +164,13 @@ export default function AvatarAnalyzerV4Diagnostics({
             </button>
           </div>
           {preferredRender ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={`${assetBaseUrl}/${preferredRender}`} alt={`Vista ${REGION_LABELS[region]}`} />
+            <Image
+              src={`${assetBaseUrl}/${preferredRender}`}
+              alt={`Vista ${REGION_LABELS[region]}`}
+              fill
+              unoptimized
+              sizes="(max-width: 900px) 100vw, 66vw"
+            />
           ) : (
             <div className={styles.viewerEmpty}>
               <strong>{REGION_LABELS[region]}</strong>
