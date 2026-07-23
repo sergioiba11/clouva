@@ -163,7 +163,8 @@ def _cleanup_expired_runs():
     cutoff = time.time() - RUN_TTL_SECONDS
     for child in RUN_CACHE_ROOT.iterdir():
         try:
-            if child.is_dir() and child.stat().st_mtime < cutoff:
+            incomplete = child.is_dir() and not (child / "expires_at.json").is_file()
+            if child.is_dir() and (incomplete or child.stat().st_mtime < cutoff):
                 shutil.rmtree(child, ignore_errors=True)
         except OSError:
             continue
@@ -187,12 +188,16 @@ def _persist_run(output_dir: Path, analysis: dict):
     _cleanup_expired_runs()
     destination = RUN_CACHE_ROOT / run_id
     shutil.rmtree(destination, ignore_errors=True)
-    shutil.copytree(output_dir, destination)
-    (destination / "expires_at.json").write_text(json.dumps({
-        "runId": run_id,
-        "createdAt": time.time(),
-        "expiresAt": time.time() + RUN_TTL_SECONDS,
-    }, indent=2), encoding="utf-8")
+    try:
+        shutil.copytree(output_dir, destination)
+        (destination / "expires_at.json").write_text(json.dumps({
+            "runId": run_id,
+            "createdAt": time.time(),
+            "expiresAt": time.time() + RUN_TTL_SECONDS,
+        }, indent=2), encoding="utf-8")
+    except Exception:
+        shutil.rmtree(destination, ignore_errors=True)
+        raise
     return destination
 
 
