@@ -15,6 +15,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libsm6 \
     libglib2.0-0 \
     libgomp1 \
+    xauth \
+    xvfb \
     && rm -rf /var/lib/apt/lists/*
 
 ENV BLENDER_VERSION=4.2.3
@@ -40,6 +42,9 @@ WORKDIR /app
 COPY *.py ./
 COPY avatar_analyzer_version.json ./
 COPY avatar-reference ./avatar-reference
+COPY blender-headless.sh /usr/local/bin/blender-headless
+
+RUN chmod 0755 /usr/local/bin/blender-headless
 
 RUN mv app.py app_legacy.py \
     && mv app_v18.py app.py \
@@ -132,6 +137,7 @@ RUN test -f /app/app.py \
     && test -f /app/test_avatar_analyzer.py \
     && test -f /app/test_avatar_analyzer_v32.py \
     && test -f /app/test_avatar_analyzer_v4_contract.py \
+    && test -f /app/test_blender_headless_render.py \
     && test -f /app/test_worker_api_v32.py \
     && test -f /app/test_worker_api_v4.py \
     && test -f /app/avatar-reference/AvatarReference.fbx \
@@ -139,6 +145,7 @@ RUN test -f /app/app.py \
     && python3 -m py_compile /app/*.py
 
 RUN python3 -c "from mediapipe.tasks import python; from mediapipe.tasks.python import vision; face=vision.FaceLandmarker.create_from_options(vision.FaceLandmarkerOptions(base_options=python.BaseOptions(model_asset_path='/app/models/face_landmarker.task'),running_mode=vision.RunningMode.IMAGE,num_faces=1)); hand=vision.HandLandmarker.create_from_options(vision.HandLandmarkerOptions(base_options=python.BaseOptions(model_asset_path='/app/models/hand_landmarker.task'),running_mode=vision.RunningMode.IMAGE,num_hands=1)); face.close(); hand.close(); print('[clouva] MediaPipe Face + Hand Landmarker models load OK')"
+RUN env PYTHONPATH=/app /usr/local/bin/blender-headless --background --factory-startup --python-exit-code 1 --python /app/test_blender_headless_render.py
 RUN cd /app && python3 -m unittest -v test_avatar_analyzer_v4_contract.py test_avatar_analyzer_v41.py
 RUN python3 /app/test_worker_api_v32.py
 RUN python3 /app/test_worker_api_v4.py
@@ -162,6 +169,6 @@ RUN env PYTHONPATH=/app /opt/blender/blender --background --factory-startup --py
 RUN env PYTHONPATH=/app /opt/blender/blender --background --factory-startup --python-exit-code 1 --python /app/test_anatomical_fit_v41.py
 RUN env PYTHONPATH=/app /opt/blender/blender --background --factory-startup --python-exit-code 1 --python /app/test_canonical_bind_v43.py
 
-ENV BLENDER_BIN=/usr/local/bin/blender
+ENV BLENDER_BIN=/usr/local/bin/blender-headless
 EXPOSE 8000
 CMD ["python3", "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
