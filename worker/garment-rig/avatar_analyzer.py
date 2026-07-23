@@ -1,7 +1,7 @@
-"""CLOUVA Avatar Analyzer V3 Blender entrypoint.
+"""CLOUVA Avatar Analyzer V3.2 Blender entrypoint.
 
-The analyzer produces diagnostics only. It never creates an Armature, binds
-weights, changes the active avatar or exports a production Unreal asset.
+The analyzer works on a fresh temporary copy, canonicalizes it non-destructively,
+creates an evidence-rich anatomical map and never creates the production rig.
 """
 from __future__ import annotations
 
@@ -22,17 +22,26 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 import autorig_avatar_v16 as autorig_v16
+from analyzer_contract import (
+    ANALYZER_VERSION,
+    annotate_landmarks,
+    build_detection_coverage,
+    calculate_rig_readiness,
+    critical_landmarks_verified,
+    landmark_metrics,
+)
 from anatomy_bvh import build_anatomy_bvh
 from anatomy_segmenter import segment_anatomy
 from anatomy_segmenter_v3 import segment_anatomy_v3
 from body_analyzer import analyze_body
+from canonical_orientation import add_original_positions, canonicalize_temporary_copy
 from diagnostic_builder import build_diagnostic_glb
 from face_analyzer import analyze_face
 from hand_analyzer import analyze_hands
 from limb_centerline import refine_limb_joints
-from multiview_renderer import cleanup_render_proxies, render_multiview
+from multiview_renderer_v32 import cleanup_render_proxies, render_multiview_v32
 
-VERSION = "clouva-avatar-analyzer-v3.1-boundary-aware"
+VERSION = ANALYZER_VERSION
 AUX_PYTHON = os.environ.get("CLOUVA_AUX_PYTHON", "/usr/local/bin/python3")
 DETECTOR_SCRIPT = Path(os.environ.get(
     "CLOUVA_LANDMARK_DETECTOR_SCRIPT",
@@ -68,7 +77,7 @@ def _vec(value: Vector):
 
 def _warning_key(item: dict):
     return tuple(str(item.get(name) or "") for name in (
-        "code", "landmark", "region", "side", "finger", "message",
+        "code", "landmark", "name", "region", "side", "finger", "message", "attempt",
     ))
 
 
@@ -96,14 +105,14 @@ def _dedupe_warnings(items):
     return list(grouped.values())
 
 
-def _run_detector(manifest: dict, output_dir: Path):
-    request_path = output_dir / "detector_request.json"
-    response_path = output_dir / "detector_output.json"
-    _write_json(request_path, {"version": VERSION, "views": manifest.get("views", [])})
+def _run_detector(manifest: dict, output_dir: Path, attempt: str):
+    request_path = output_dir / f"detector_request_{attempt}.json"
+    response_path = output_dir / f"detector_output_{attempt}.json"
+    _write_json(request_path, {"version": VERSION, "attempt": attempt, "views": manifest.get("views", [])})
     if not DETECTOR_SCRIPT.is_file():
         return {
-            "version": "unavailable", "views": [],
-            "errors": [{"code": "DETECTOR_SCRIPT_MISSING", "path": str(DETECTOR_SCRIPT)}],
+            "version": "unavailable", "views": [], "attempt": attempt,
+            "errors": [{"code": "DETECTOR_SCRIPT_MISSING", "path": str(DETECTOR_SCRIPT), "attempt": attempt}],
         }, {"returnCode": None, "stdout": "", "stderr": "detector script missing"}
     command = [AUX_PYTHON, str(DETECTOR_SCRIPT), str(request_path), str(response_path)]
     try:
@@ -114,22 +123,25 @@ def _run_detector(manifest: dict, output_dir: Path):
         )
     except subprocess.TimeoutExpired as exc:
         return {
-            "version": "timeout", "views": [],
-            "errors": [{"code": "MEDIAPIPE_TIMEOUT", "seconds": DETECTOR_TIMEOUT_SECONDS}],
+            "version": "timeout", "views": [], "attempt": attempt,
+            "errors": [{"code": "MEDIAPIPE_TIMEOUT", "seconds": DETECTOR_TIMEOUT_SECONDS, "attempt": attempt}],
         }, {"returnCode": None, "stdout": exc.stdout or "", "stderr": exc.stderr or ""}
     diagnostics = {
-        "command": command, "returnCode": result.returncode,
+        "attempt": attempt, "command": command, "returnCode": result.returncode,
         "stdout": result.stdout[-12000:], "stderr": result.stderr[-12000:],
     }
     if result.returncode != 0 or not response_path.is_file():
         return {
-            "version": "failed", "views": [],
+            "version": "failed", "views": [], "attempt": attempt,
             "errors": [{
                 "code": "MEDIAPIPE_PROCESS_FAILED", "returnCode": result.returncode,
-                "message": result.stderr[-2000:] or result.stdout[-2000:],
+                "message": result.stderr[-2000:] or result.stdout[-2000:], "attempt": attempt,
             }],
         }, diagnostics
     output = json.loads(response_path.read_text(encoding="utf-8"))
+    output["attempt"] = attempt
+    for error in output.get("errors") or []:
+        error.setdefault("attempt", attempt)
     output["errors"] = _dedupe_warnings(output.get("errors") or [])
     return output, diagnostics
 
@@ -223,7 +235,7 @@ def _apply_refined_body_vectors(body_report: dict, body_vectors: dict,
         item["position"] = _vec(point)
         item["internalJointPosition"] = _vec(point)
         item["refinedFrom"] = source_name
-        item["method"] = "geodesic-cross-section-limb-centerline-v3"
+        item["method"] = "geodesic-cross-section-limb-centerline-v3.2"
         item["geometryEvidence"] = limb_diagnostics.get("limbs", {}).get(
             f"{'arm' if source_name.startswith(('shoulder','elbow','wrist','hand')) else 'leg'}_{source_name[-1]}",
             {},
@@ -237,7 +249,7 @@ def _apply_refined_body_vectors(body_report: dict, body_vectors: dict,
                 clavicle["roughCandidatePosition"] = list(clavicle.get("position") or [])
                 clavicle["position"] = _vec(body_vectors[f"clavicle_{suffix}"])
                 clavicle["internalJointPosition"] = list(clavicle["position"])
-                clavicle["method"] = "chest-to-geodesic-shoulder-internal-v3"
+                clavicle["method"] = "chest-to-geodesic-shoulder-internal-v3.2"
     body_report["refinedBodyAxesApplied"] = True
     body_report["refinedBodyVectors"] = {name: _vec(value) for name, value in refined.items()}
     body_report["limbCenterlineEvidence"] = limb_diagnostics
@@ -270,10 +282,13 @@ def _sanitize_body_landmarks(body_report: dict, body_vectors: dict,
     for name, item in landmarks.items():
         if not isinstance(item, dict) or "position" not in item:
             continue
+        raw_confidence = float(item.get("rawConfidence", item.get("confidence", 0.0)))
         item["name"] = name
+        item["rawConfidence"] = raw_confidence
+        item["finalConfidence"] = raw_confidence
         item["internalJointPosition"] = list(item["position"])
         item["landmarkType"] = "internal_joint"
-        item["internalAccepted"] = float(item.get("confidence", 0.0)) >= 0.40
+        item["internalAccepted"] = raw_confidence >= 0.40
         item["surfaceAccepted"] = False
         item["accepted"] = item["internalAccepted"]
         item["verified"] = item["internalAccepted"]
@@ -291,7 +306,7 @@ def _sanitize_body_landmarks(body_report: dict, body_vectors: dict,
     for name, regions in _body_region_map().items():
         item = landmarks.get(name)
         if not item or "position" not in item:
-            blocking.append({"code": "BODY_JOINT_MISSING", "landmark": name})
+            blocking.append({"code": "BODY_JOINT_MISSING", "landmark": name, "failureStage": "body"})
             continue
         internal = Vector(tuple(float(value) for value in item["position"]))
         nearest = anatomy_bvh.nearest(internal, regions)
@@ -299,7 +314,7 @@ def _sanitize_body_landmarks(body_report: dict, body_vectors: dict,
         hand_scale = float(segmentation.hand_measurement(measurement_side).get("handScale") or 0.0)
         threshold = _joint_threshold(name, height, hand_scale, anatomy_bvh, regions)
         distance = float(nearest["distance"]) if nearest else float("inf")
-        confidence = float(item.get("confidence", 0.0))
+        confidence = float(item.get("rawConfidence", item.get("confidence", 0.0)))
         distance_valid = nearest is not None and distance <= threshold
         confidence_valid = confidence >= 0.40
         internal_accepted = bool(distance_valid and confidence_valid)
@@ -316,21 +331,23 @@ def _sanitize_body_landmarks(body_report: dict, body_vectors: dict,
         item["displayEdge"] = False
         item["surfaceDisplayPosition"] = _vec(nearest["location"] if nearest else internal)
         item["displayPosition"] = list(item["surfaceDisplayPosition"])
-        item["surfaceMethod"] = "boundary-aware-named-region-bvh-v3.1"
+        item["surfaceMethod"] = "boundary-aware-named-region-bvh-v3.2"
         if not distance_valid:
-            item["confidence"] = min(confidence, 0.39)
             item.setdefault("rejectionReasons", []).append("BODY_INTERNAL_JOINT_OUTSIDE_REGION")
+            item["failureStage"] = "body_region_validation"
             blocking.append({
                 "code": "BODY_INTERNAL_JOINT_OUTSIDE_REGION", "landmark": name,
                 "allowedRegions": list(regions), "surfaceRegion": item.get("surfaceRegion"),
                 "regionDistance": item.get("surfaceDistance"), "threshold": threshold,
+                "failureStage": "body_region_validation",
             })
         elif not confidence_valid:
-            item["confidence"] = min(confidence, 0.39)
             item.setdefault("rejectionReasons", []).append("BODY_JOINT_CONFIDENCE_LOW")
+            item["failureStage"] = "body_confidence"
             blocking.append({
                 "code": "BODY_JOINT_CONFIDENCE_LOW", "landmark": name,
                 "confidence": confidence, "minimumConfidence": 0.40,
+                "failureStage": "body_confidence",
             })
 
     segmentation_report = segmentation.as_report()
@@ -387,41 +404,35 @@ def _combine_landmarks(body: dict, face: dict, hands: dict):
     return combined
 
 
-def _analysis_status(body_report: dict, face: dict, hands: dict):
+def _attempt_summary(name: str, manifest: dict, detector: dict, face: dict, hands: dict):
+    coverage = detector.get("detectionCoverage") or {}
+    return {
+        "name": name,
+        "resolution": manifest.get("resolution"),
+        "handFraming": manifest.get("handFraming"),
+        "renderedViews": sum(1 for item in manifest.get("views") or [] if item.get("rendered")),
+        "invalidFramingViews": [item.get("name") for item in manifest.get("views") or [] if not item.get("framingValid", True)],
+        "detectorCoverage": coverage,
+        "faceStatus": face.get("status"),
+        "leftHandStatus": (hands.get("left") or {}).get("status"),
+        "rightHandStatus": (hands.get("right") or {}).get("status"),
+    }
+
+
+def _global_status(body_report: dict, readiness: dict, warnings: list[dict]):
     if not bool(body_report.get("isHumanoid")) or float(body_report.get("humanoidConfidence", 0.0)) < 0.40:
         return "invalid"
-    states = [
-        body_report.get("status"), face.get("status"),
-        hands.get("left", {}).get("status"), hands.get("right", {}).get("status"),
-    ]
-    if any(state == "invalid" for state in states):
-        return "invalid"
-    if any(state == "needs_review" for state in states):
+    if not readiness.get("approved"):
         return "needs_review"
-    if any(state == "valid_with_warnings" for state in states):
-        return "valid_with_warnings"
-    return "valid"
-
-
-def _landmark_metrics(landmarks: dict):
-    values = [item for item in landmarks.values() if isinstance(item, dict) and "position" in item]
-    return {
-        "totalLandmarkRecords": len(values),
-        "verifiedSurfaceLandmarkCount": sum(1 for item in values if item.get("display", False) and item.get("accepted", False)),
-        "internalJointCount": sum(1 for item in values if item.get("landmarkType") in {"internal_joint", "derived_internal"}),
-        "rejectedLandmarkCount": sum(1 for item in values if not item.get("accepted", False)),
-        "hiddenLandmarkCount": sum(1 for item in values if not item.get("display", False)),
-        "blockingRejectionCount": sum(1 for item in values if not item.get("internalAccepted", item.get("accepted", False))),
-    }
+    return "valid_with_warnings" if warnings else "valid"
 
 
 def run(input_path: Path, output_dir: Path):
     started = time.perf_counter()
     run_id = uuid.uuid4().hex
     output_dir.mkdir(parents=True, exist_ok=True)
-    renders_dir = output_dir / "renders_temporales"
     stages = []
-    manifest = None
+    manifests = []
 
     def stage(name, stage_started):
         stages.append({"stage": name, "durationMs": max(1, int((time.perf_counter() - stage_started) * 1000))})
@@ -429,10 +440,12 @@ def run(input_path: Path, output_dir: Path):
     try:
         current = time.perf_counter()
         meshes = autorig_v16.import_original_fresh(input_path)
-        stage("loading_scene_and_clean_analysis_copy", current)
+        canonical_orientation = canonicalize_temporary_copy(meshes)
+        stage("loading_and_canonicalizing_clean_analysis_copy", current)
 
         current = time.perf_counter()
         body_report, body_vectors, classifications = analyze_body(meshes)
+        body_report["orientation"] = canonical_orientation
         initial_segmentation = segment_anatomy(meshes, classifications, body_vectors, body_report["dimensions"])
         refined_vectors, limb_diagnostics = refine_limb_joints(meshes, initial_segmentation, body_vectors)
         segmentation = segment_anatomy_v3(
@@ -446,67 +459,140 @@ def run(input_path: Path, output_dir: Path):
         stage("segmenting_geodesic_limbs_and_building_region_bvh", current)
 
         current = time.perf_counter()
-        manifest = render_multiview(
-            renders_dir, body_vectors, float(body_report["dimensions"]["height"]),
+        initial_render_dir = output_dir / "renders_initial"
+        initial_manifest = render_multiview_v32(
+            initial_render_dir, body_vectors, float(body_report["dimensions"]["height"]),
             meshes=meshes, segmentation=segmentation, classifications=classifications,
-            anatomy_bvh=anatomy_bvh,
+            anatomy_bvh=anatomy_bvh, resolution=512, technical_resolution=256,
+            hand_framing=1.72, attempt="initial",
         )
-        stage("rendering_rgb_edges_depth_normals_region_ids", current)
+        manifests.append(initial_manifest)
+        stage("rendering_initial_rgb_edges_depth_normals_region_ids", current)
 
         current = time.perf_counter()
-        detector_output, detector_process = _run_detector(manifest, output_dir)
-        stage("detecting_face_and_hands_dual_render", current)
-
-        current = time.perf_counter()
-        face = analyze_face(
-            detector_output, manifest, meshes, classifications, body_vectors,
+        initial_detector, initial_detector_process = _run_detector(initial_manifest, output_dir, "initial")
+        initial_face = analyze_face(
+            initial_detector, initial_manifest, meshes, classifications, body_vectors,
             float(body_report["dimensions"]["width"]), segmentation, anatomy_bvh,
         )
-        stage("triangulating_face_against_head_eye_bvh", current)
+        initial_hands = analyze_hands(
+            initial_detector, initial_manifest, classifications, segmentation, meshes, anatomy_bvh,
+        )
+        topology_bvh = initial_hands.pop("_anatomy_bvh", anatomy_bvh)
+        stage("initial_detection_and_topology_segmentation", current)
+
+        initial_attempt = _attempt_summary("initial", initial_manifest, initial_detector, initial_face, initial_hands)
+        initial_coverage = initial_detector.get("detectionCoverage") or {}
+        low_hand_evidence = any(int(initial_coverage.get(key) or 0) < 2 for key in ("leftHandViews", "rightHandViews"))
+        low_face_evidence = int(initial_coverage.get("faceViews") or 0) < 2
+
+        # Finger labels now exist in segmentation. Remove the initial proxies and
+        # regenerate every visual and technical pass from the final regional BVH.
+        cleanup_render_proxies(initial_manifest)
 
         current = time.perf_counter()
-        hands = analyze_hands(
-            detector_output, manifest, classifications, segmentation, meshes, anatomy_bvh,
+        final_render_dir = output_dir / "renders_temporales"
+        final_manifest = render_multiview_v32(
+            final_render_dir, body_vectors, float(body_report["dimensions"]["height"]),
+            meshes=meshes, segmentation=segmentation, classifications=classifications,
+            anatomy_bvh=topology_bvh,
+            resolution=768 if low_hand_evidence or low_face_evidence else 512,
+            technical_resolution=320 if low_hand_evidence or low_face_evidence else 256,
+            hand_framing=1.92 if low_hand_evidence else 1.76,
+            face_framing=2.08 if low_face_evidence else 1.98,
+            attempt="retry" if low_hand_evidence or low_face_evidence else "final",
         )
-        final_bvh = hands.pop("_anatomy_bvh", anatomy_bvh)
-        stage("detecting_geodesic_finger_branches_and_retriangulating", current)
+        manifests.append(final_manifest)
+        stage("regenerating_final_images_and_technical_passes", current)
 
-        landmarks = _combine_landmarks(body_report, face, hands)
-        status = _analysis_status(body_report, face, hands)
+        current = time.perf_counter()
+        final_detector, final_detector_process = _run_detector(final_manifest, output_dir, "final")
+        face = analyze_face(
+            final_detector, final_manifest, meshes, classifications, body_vectors,
+            float(body_report["dimensions"]["width"]), segmentation, topology_bvh,
+        )
+        hands = analyze_hands(
+            final_detector, final_manifest, classifications, segmentation, meshes, topology_bvh,
+        )
+        final_bvh = hands.pop("_anatomy_bvh", topology_bvh)
+        stage("final_face_hand_projection_and_triangulation", current)
+
+        final_attempt = _attempt_summary("final", final_manifest, final_detector, face, hands)
+        attempts = [initial_attempt, final_attempt]
+        landmarks = annotate_landmarks(_combine_landmarks(body_report, face, hands))
+        add_original_positions(landmarks, canonical_orientation["inverseCanonicalMatrix"])
+        coverage = build_detection_coverage(final_manifest, final_detector, face, hands, attempts)
+        readiness = calculate_rig_readiness(
+            body_report, face, hands, landmarks, coverage, canonical_orientation,
+        )
         warnings = _dedupe_warnings([
-            *(body_report.get("warnings") or []), *(detector_output.get("errors") or []),
-            *(face.get("warnings") or []), *(hands.get("warnings") or []),
+            *({**item, "attempt": "initial"} for item in (initial_detector.get("errors") or [])),
+            *(body_report.get("warnings") or []),
+            *(final_detector.get("errors") or []),
+            *(face.get("warnings") or []),
+            *(hands.get("warnings") or []),
+            *({"code": gate, "failureStage": "rig_readiness", "blocking": True} for gate in readiness.get("gates") or []),
         ])
-        metrics = _landmark_metrics(landmarks)
+        status = _global_status(body_report, readiness, warnings)
+        metrics = landmark_metrics(landmarks)
+        source_sha = _sha256(input_path)
         analysis = {
-            "version": VERSION, "runId": run_id, "status": status,
+            "version": VERSION,
+            "mapVersion": "clouva-anatomical-map-v3.2",
+            "runId": run_id,
+            "status": status,
             "source": {
-                "filename": input_path.name, "sha256": _sha256(input_path),
+                "filename": input_path.name,
+                "sha256": source_sha,
                 "meshCount": len(meshes),
                 "vertexCount": sum(len(mesh.data.vertices) for mesh in meshes),
                 "polygonCount": sum(len(mesh.data.polygons) for mesh in meshes),
                 "cleanup": dict(autorig_v16._IMPORT_REPORT),
             },
-            "dimensions": body_report["dimensions"], "orientation": body_report["orientation"],
-            "symmetry": body_report["symmetry"], "pose": body_report["pose"],
+            "dimensions": body_report["dimensions"],
+            "orientation": canonical_orientation,
+            "symmetry": body_report["symmetry"],
+            "pose": body_report["pose"],
             "isHumanoid": body_report["isHumanoid"],
             "humanoidConfidence": body_report["humanoidConfidence"],
+            "bodyBaseConfidence": body_report["humanoidConfidence"],
+            "rigReadinessScore": readiness["score"],
+            "rigReadinessApproved": readiness["approved"],
+            "rigReadinessGates": readiness["gates"],
+            "rigReadinessComponents": readiness["components"],
+            "criticalLandmarksVerified": critical_landmarks_verified(landmarks),
             "bodyAnalysis": body_report.get("status", "needs_review"),
             "bodySubsystems": body_report.get("subsystems") or {},
             "faceAnalysis": face.get("status"),
             "leftHandAnalysis": hands.get("left", {}).get("status"),
             "rightHandAnalysis": hands.get("right", {}).get("status"),
-            "fingerRig": "not_connected_analysis_only",
-            "facialRig": "not_connected_analysis_only",
+            "detectionCoverage": coverage,
+            "fingerRig": "anatomical_map_ready" if readiness["approved"] else "blocked_by_analyzer",
+            "facialRig": "analysis_only",
             "meshClassifications": classifications,
             "segmentation": segmentation.as_report(),
             "regionBvh": final_bvh.report(),
             "limbCenterlines": limb_diagnostics,
-            "metrics": metrics, "landmarks": landmarks, "warnings": warnings,
+            "metrics": metrics,
+            "landmarks": landmarks,
+            "warnings": warnings,
             "diagnostics": {
-                "body": body_report, "face": face, "hands": hands,
-                "detector": detector_output, "detectorProcess": detector_process,
-                "cameraManifest": manifest, "stages": stages,
+                "body": body_report,
+                "face": face,
+                "hands": hands,
+                "initialAttempt": {
+                    "summary": initial_attempt,
+                    "detector": initial_detector,
+                    "detectorProcess": initial_detector_process,
+                    "cameraManifest": initial_manifest,
+                },
+                "finalAttempt": {
+                    "summary": final_attempt,
+                    "detector": final_detector,
+                    "detectorProcess": final_detector_process,
+                    "cameraManifest": final_manifest,
+                },
+                "stages": stages,
             },
         }
         analysis_path = output_dir / "avatar_analysis.json"
@@ -520,16 +606,23 @@ def run(input_path: Path, output_dir: Path):
         stage("building_layered_diagnostic_glb", current)
 
         report = {
-            "version": VERSION, "runId": run_id, "status": status,
-            "analysisPath": str(analysis_path), "diagnosticGlbPath": str(diagnostic_glb),
-            "rendersDirectory": str(renders_dir), "metrics": metrics,
+            "version": VERSION,
+            "runId": run_id,
+            "status": status,
+            "analysisPath": str(analysis_path),
+            "diagnosticGlbPath": str(diagnostic_glb),
+            "rendersDirectory": str(final_render_dir),
+            "metrics": metrics,
+            "rigReadiness": readiness,
+            "detectionCoverage": coverage,
+            "orientation": canonical_orientation,
             "bodySubsystems": body_report.get("subsystems") or {},
-            "diagnosticBuild": diagnostic_build, "regionBvh": final_bvh.report(),
+            "diagnosticBuild": diagnostic_build,
+            "regionBvh": final_bvh.report(),
             "stageTimings": stages,
             "durationMs": max(1, int((time.perf_counter() - started) * 1000)),
             "limitations": [
                 "The analyzer does not create or modify the production Armature.",
-                "The active CLOUVA avatar must be visually approved before Skeleton Planner integration.",
                 "Fused or texture-only fingers remain needs_review instead of receiving invented joints.",
             ],
         }
@@ -537,8 +630,11 @@ def run(input_path: Path, output_dir: Path):
         print(f"[clouva-avatar-analyzer] {json.dumps(report, separators=(',', ':'))}", flush=True)
         return analysis, report
     finally:
-        if manifest is not None:
-            cleanup_render_proxies(manifest)
+        for manifest in manifests:
+            try:
+                cleanup_render_proxies(manifest)
+            except Exception:
+                pass
 
 
 def main():
