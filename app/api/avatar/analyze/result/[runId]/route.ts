@@ -287,7 +287,7 @@ export async function GET(
     await requireAvatarAnalyzerUser(request);
     const { runId: rawRunId } = await context.params;
     const runId = safeAnalyzerRunId(rawRunId);
-    const response = await fetchAvatarAnalyzerWorker(`/avatar/analyze/result/${runId}`);
+    const response = await fetchAvatarAnalyzerWorker(`/avatar/analyze-v4/result/${runId}`);
     const raw = await response.text();
     if (!response.ok) {
       throw new Error(raw || `El Worker no pudo devolver el diagnóstico (${response.status})`);

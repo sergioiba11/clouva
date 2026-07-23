@@ -28,6 +28,7 @@ def main():
     check("V4 autorig script", app.ANALYZER_AUTORIG_V4_SCRIPT.name, "autorig_avatar_v19.py")
     check("V4 analyzer available", app.AVATAR_ANALYZER_V4_SCRIPT.is_file(), True)
     check("V4 autorig available", app.ANALYZER_AUTORIG_V4_SCRIPT.is_file(), True)
+    assert app.v32.RUN_TTL_SECONDS >= 30 * 24 * 60 * 60, "Analyzer results must survive normal user return windows"
     print("[clouva] Worker API exposes V3.2 and V4 side by side OK", flush=True)
 
 

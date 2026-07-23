@@ -32,6 +32,8 @@ test("V4 API remains side-by-side with V3.2 and reanalysis uses a clean source",
   assert.match(source, /\/avatar\/complete-rig-v4/);
   assert.match(source, /legacyV32Preserved/);
   assert.match(source, /_rerun_cached_source_v4/);
+  assert.match(source, /_prune_cached_v4/);
+  assert.match(source, /rglob\("\*\.npy"\)/);
   assert.match(source, /executedAsCleanPipeline/);
   assert.match(source, /ANALYZER_RESULT_STALE/);
 });
@@ -83,4 +85,24 @@ test("shared version contract drives backend and frontend", () => {
   assert.equal(version.analyzerVersion, "clouva-avatar-analyzer-v4.1");
   assert.equal(version.mapVersion, "clouva-anatomical-map-v4.1");
   assert.equal(version.frontendVersion, "clouva-avatar-visualizer-v4.1");
+});
+
+test("V4.1 has a permanent in-app entry and the Biblioteca flow calls V4", () => {
+  const landing = read("./app/avatar-analyzer-v4/page.tsx");
+  const navigation = read("./components/clouva/MinimalNavigation.tsx");
+  const preview = read("./components/library/AvatarAnalyzerPreview.tsx");
+  const analyzeRoute = read("./app/api/avatar/analyze/route.ts");
+  const resultRoute = read("./app/api/avatar/analyze/result/[runId]/route.ts");
+  const assetRoute = read("./app/api/avatar/analyze/result/[runId]/asset/[...assetPath]/route.ts");
+  const latestRoute = read("./app/api/avatar/analyze/latest/route.ts");
+
+  assert.match(landing, /AvatarAnalyzerPreview/);
+  assert.match(navigation, /href: "\/avatar-analyzer-v4"/);
+  assert.match(preview, /AVATAR ANALYZER V4\.1/);
+  assert.match(preview, /ABRIR ÚLTIMO ANÁLISIS/);
+  assert.match(preview, /ABRIR VISUALIZER PROFESIONAL/);
+  assert.match(analyzeRoute, /\/avatar\/analyze-v4-preview/);
+  assert.match(resultRoute, /\/avatar\/analyze-v4\/result/);
+  assert.match(assetRoute, /\/avatar\/analyze-v4\/result/);
+  assert.match(latestRoute, /avatar_analyzer_v4/);
 });

@@ -6,7 +6,7 @@ import type { NextRequest } from "next/server";
 const RUN_ID_PATTERN = /^[a-f0-9]{32}$/;
 const ASSET_PATH_PATTERN = /^[a-zA-Z0-9._/-]+$/;
 
-function adminClient() {
+export function avatarAnalyzerAdminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const serviceRole = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !serviceRole) throw new Error("Faltan credenciales de Supabase en el servidor");
@@ -19,7 +19,7 @@ export async function requireAvatarAnalyzerUser(request: NextRequest) {
   const authorization = request.headers.get("authorization");
   const accessToken = authorization?.startsWith("Bearer ") ? authorization.slice(7) : null;
   if (!accessToken) throw new Error("Sesión requerida");
-  const supabase = adminClient();
+  const supabase = avatarAnalyzerAdminClient();
   const { data, error } = await supabase.auth.getUser(accessToken);
   if (error || !data.user) throw new Error("Sesión inválida");
   return data.user;
