@@ -6,10 +6,15 @@ const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
 test("Analyzer V3.2 preserves raw confidence and explicit evidence states", async () => {
   const triangulator = await read("./worker/garment-rig/ray_triangulator.py");
+  const contract = await read("./worker/garment-rig/analyzer_contract.py");
   assert.match(triangulator, /rawFinalConfidence/);
   assert.match(triangulator, /no_visual_evidence/);
   assert.match(triangulator, /insufficient_views/);
   assert.doesNotMatch(triangulator, /min\(final_confidence,\s*0\.39\)/);
+  assert.match(contract, /explicit_pre_gate/);
+  assert.match(contract, /measured = \[/);
+  assert.match(contract, /build_landmark_evidence/);
+  assert.match(contract, /classifiedFailure/);
 });
 
 test("adaptive projection checks a neighborhood without accepting another region", async () => {
@@ -19,6 +24,16 @@ test("adaptive projection checks a neighborhood without accepting another region
   assert.match(projector, /selectedPixel/);
   assert.match(projector, /regionCompatible/);
   assert.match(projector, /LANDMARK_WRONG_REGION/);
+});
+
+test("stylized facial signals are visual-only and projection remains strict", async () => {
+  const cues = await read("./worker/garment-rig/face_visual_cues.py");
+  const renderer = await read("./worker/garment-rig/multiview_renderer_v32.py");
+  assert.match(cues, /projectionAllowed": False/);
+  assert.match(cues, /EXCLUDED_CLASSES = \{"hair", "clothing", "accessories", "unknown_rejected"\}/);
+  assert.match(renderer, /visualOnlyFaceCues/);
+  assert.match(renderer, /rgb-and-edges-only-strict-anatomy-bvh-for-final-points/);
+  assert.match(renderer, /\("head", "eyes"\)/);
 });
 
 test("AutoRig is gated by Analyzer version, readiness and source SHA", async () => {
