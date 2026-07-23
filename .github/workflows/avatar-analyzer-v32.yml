@@ -81,6 +81,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
       - name: Build Worker without publishing
+        id: worker_build
+        continue-on-error: true
         shell: bash
         run: |
           set +e
@@ -99,3 +101,14 @@ jobs:
           fi
           echo "Worker build passed. Final 40 lines:"
           tail -n 40 /tmp/clouva-worker-build.log
+      - name: Upload Worker build output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: avatar-analyzer-worker-build-output
+          path: /tmp/clouva-worker-build.log
+          if-no-files-found: warn
+          retention-days: 1
+      - name: Enforce Worker build result
+        if: steps.worker_build.outcome == 'failure'
+        run: exit 1
