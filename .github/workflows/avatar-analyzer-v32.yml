@@ -37,7 +37,23 @@ jobs:
       - name: Avatar Engine tests
         run: node --import tsx --test tests-avatar-engine.mjs
       - name: Avatar Blender AutoRig tests
-        run: node --import tsx --test tests-avatar-blender-autorig.mjs
+        id: avatar_blender_autorig
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          node --import tsx --test tests-avatar-blender-autorig.mjs 2>&1 | tee /tmp/avatar-blender-autorig.log
+      - name: Upload AutoRig test output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: avatar-blender-autorig-test-output
+          path: /tmp/avatar-blender-autorig.log
+          if-no-files-found: warn
+          retention-days: 1
+      - name: Enforce AutoRig test result
+        if: steps.avatar_blender_autorig.outcome == 'failure'
+        run: exit 1
       - name: Creator Rig tests
         run: node --import tsx --test tests-creator-rig.mjs
       - name: Creator Studio tests
