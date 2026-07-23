@@ -24,10 +24,13 @@ const libraryButton = readFileSync("components/library/ActiveAvatarDownload.tsx"
 const meshy = readFileSync("lib/meshy.ts", "utf8");
 const creatorStudio = readFileSync("components/creator-studio/CreatorStudioSimple.tsx", "utf8");
 const workerAutorig = readFileSync("worker/garment-rig/autorig_avatar_v16.py", "utf8");
+const analyzerAutorig = readFileSync("worker/garment-rig/autorig_avatar_v18.py", "utf8");
 const workerApp = readFileSync("worker/garment-rig/app_v16.py", "utf8");
 const analyzerWorker = readFileSync("worker/garment-rig/app_v17.py", "utf8");
 const dockerfile = readFileSync("worker/garment-rig/Dockerfile", "utf8");
 const analyzer = readFileSync("worker/garment-rig/avatar_analyzer.py", "utf8");
+const analyzerContract = readFileSync("worker/garment-rig/analyzer_contract.py", "utf8");
+const canonicalOrientation = readFileSync("worker/garment-rig/canonical_orientation.py", "utf8");
 const segmenterV3 = readFileSync("worker/garment-rig/anatomy_segmenter_v3.py", "utf8");
 const anatomyBvh = readFileSync("worker/garment-rig/anatomy_bvh.py", "utf8");
 const technicalPasses = readFileSync("worker/garment-rig/technical_passes.py", "utf8");
@@ -43,6 +46,7 @@ const handAnalyzer = readFileSync("worker/garment-rig/hand_analyzer.py", "utf8")
 const detector2d = readFileSync("worker/garment-rig/landmark_detector_2d.py", "utf8");
 const diagnosticBuilder = readFileSync("worker/garment-rig/diagnostic_builder.py", "utf8");
 const multiview = readFileSync("worker/garment-rig/multiview_renderer.py", "utf8");
+const multiviewV32 = readFileSync("worker/garment-rig/multiview_renderer_v32.py", "utf8");
 const analyzerPanel = readFileSync("components/library/AvatarAnalyzerPreview.tsx", "utf8");
 
 
@@ -59,49 +63,58 @@ test("Meshy sigue disponible para generar avatares y prendas", () => {
   assert.match(meshy, /multi-image-to-3d/);
 });
 
-test("AUTORIGGEAR AVATAR envía el original limpio al Blender Worker", () => {
+test("ANALIZAR Y AUTORIGGEAR envía el original limpio al Blender Worker", () => {
   assert.match(libraryButton, /fetch\("\/api\/avatar\/rig"/);
   assert.doesNotMatch(libraryButton, /debug\/rig-official/);
   assert.match(rigRoute, /\/avatar\/complete-rig/);
   assert.match(rigRoute, /completeRigWithWorker\(source\.originalUrl\)/);
-  assert.match(rigRoute, /sourceKind: "original-clean-glb"/);
+  assert.match(rigRoute, /sourceKind: "original-clean-glb-analyzed-and-rigged"/);
   assert.match(rigRoute, /randomUUID\(\)/);
   assert.match(rigRoute, /jobIsActive\(storedJob, source\)/);
 });
 
-test("un avatar terminado no vuelve a riggearse y un trabajo activo no se duplica", () => {
+test("un avatar terminado solo se reutiliza con prueba vigente del Analyzer", () => {
+  assert.match(rigRoute, /const alreadyRigged = hasDerivedRig && profileIsAnalyzerApproved\(storedProfile\)/);
   assert.match(rigRoute, /if \(alreadyRigged && !retry\) \{/);
   assert.match(rigRoute, /const retry = action === "retry"/);
   assert.match(rigRoute, /if \(jobIsActive\(storedJob, source\)\) \{/);
   assert.match(rigRoute, /resumed: true/);
 });
 
-test("Blender guarda el resultado en Supabase y actualiza el avatar activo", () => {
+test("Blender guarda únicamente el resultado aprobado y actualiza el avatar activo", () => {
   assert.match(rigRoute, /storage\.from\("avatars"\)\.upload/);
   assert.match(rigRoute, /COMPLETE_FILENAME/);
+  assert.match(rigRoute, /profile\.analyzedInputSha256 !== profile\.rigInputSha256/);
+  assert.match(rigRoute, /criticalLandmarksVerified/);
   assert.match(rigRoute, /model_url: publicUrl/);
   assert.match(rigRoute, /is_active: true/);
   assert.match(rigRoute, /avatar_3d_url: publicUrl/);
 });
 
-test("la interfaz muestra las cuatro etapas oficiales de Blender", () => {
-  for (const label of ["Preparando avatar en Blender", "Creando esqueleto", "Asignando pesos", "Listo para Unreal"]) {
+test("la interfaz y la API muestran las etapas oficiales con Analyzer previo", () => {
+  for (const label of [
+    "Preparando avatar original",
+    "Analizando cuerpo, rostro y manos",
+    "Creando esqueleto",
+    "Asignando pesos",
+    "Listo para Unreal",
+  ]) {
     assert.ok(rigRoute.includes(label), `Falta la etapa ${label} en la API`);
     assert.ok(libraryButton.includes(label), `Falta la etapa ${label} en la interfaz`);
   }
 });
 
-test("Rehacer rig ejecuta Blender desde el original y no devuelve el rig anterior", () => {
+test("Rehacer rig ejecuta Analyzer y Blender desde el original", () => {
   assert.match(creatorStudio, /action: avatarRigReady \? "retry" : "create"/);
   assert.match(rigRoute, /const createRequested = action === "create" \|\| retry/);
   assert.match(rigRoute, /completeRigWithWorker\(source\.originalUrl\)/);
-  assert.match(rigRoute, /retry \? \{ job, profile: null \} : \{ job \}/);
+  assert.match(rigRoute, /retry \|\| hasDerivedRig \? \{ job, profile: null \} : \{ job \}/);
   assert.match(workerAutorig, /import_original_fresh/);
   assert.match(workerAutorig, /oldArmaturesRemoved/);
   assert.match(workerAutorig, /vertexGroupsRemoved/);
 });
 
-test("AutoRig V16 crea un Armature nuevo desde CLOUVA_SKELETON_SCHEMA", () => {
+test("AutoRig V16 sigue creando el Armature nuevo desde CLOUVA_SKELETON_SCHEMA", () => {
   assert.match(workerApp, /autorig_avatar_v16\.py/);
   assert.match(workerAutorig, /create_fresh_schema_armature/);
   assert.match(workerAutorig, /bpy\.data\.armatures\.new\("CLOUVA_SKELETON_SCHEMA"\)/);
@@ -110,7 +123,7 @@ test("AutoRig V16 crea un Armature nuevo desde CLOUVA_SKELETON_SCHEMA", () => {
   assert.match(dockerfile, /AutoRig V16 creates a brand-new 24-bone schema armature OK/);
 });
 
-test("cada Rehacer rig exige prueba criptográfica de una ejecución nueva", () => {
+test("AutoRig conserva prueba criptográfica de una ejecución nueva", () => {
   assert.match(rigRoute, /EXPECTED_WORKER_RIG_VERSION = "v15-anatomical-landmark-autorig"/);
   assert.match(rigRoute, /proof\.inputSha256 === proof\.outputSha256/);
   assert.match(workerAutorig, /uuid\.uuid4\(\)\.hex/);
@@ -139,7 +152,7 @@ test("AutoRig V16 genera pesos nuevos, limita cuatro influencias y prueba articu
   assert.match(workerAutorig, /poseValidation/);
 });
 
-test("el Worker conserva temporalmente el contrato web V15 pero adjunta la prueba real V16", () => {
+test("el Worker conserva el contrato web V15 y adjunta la prueba real V16", () => {
   assert.match(workerApp, /actualVersion/);
   assert.match(workerApp, /actualRigSource/);
   assert.match(workerApp, /V16_METHOD_SOURCE = "Blender fresh CLOUVA schema"/);
@@ -148,7 +161,16 @@ test("el Worker conserva temporalmente el contrato web V15 pero adjunta la prueb
   assert.match(workerApp, /weightedRatio.*0\.995/s);
 });
 
-test("Avatar Analyzer V3 proyecta contra BVH exclusivos de la región renderizada", () => {
+test("Analyzer normaliza una copia temporal y conserva matrices de retorno", () => {
+  assert.match(analyzer, /canonicalize_temporary_copy/);
+  assert.match(canonicalOrientation, /canonicalMatrix/);
+  assert.match(canonicalOrientation, /inverseCanonicalMatrix/);
+  assert.match(canonicalOrientation, /requiresOrientationReview/);
+  assert.match(canonicalOrientation, /negativeDeterminantObjects/);
+  assert.doesNotMatch(canonicalOrientation, /bpy\.ops\.wm\.save/);
+});
+
+test("Avatar Analyzer V3.2 proyecta contra BVH exclusivos con muestreo adaptativo", () => {
   assert.match(analyzer, /build_anatomy_bvh/);
   assert.match(anatomyBvh, /class AnatomyBVH/);
   assert.match(anatomyBvh, /BVHTree\.FromPolygons/);
@@ -157,7 +179,9 @@ test("Avatar Analyzer V3 proyecta contra BVH exclusivos de la región renderizad
   assert.match(multiview, /anatomy_bvh\.proxy/);
   assert.match(projector, /if anatomy_bvh is not None:/);
   assert.match(projector, /hit = anatomy_bvh\.ray_cast/);
-  assert.match(projector, /exact-region-bvh-plus-technical-pass-v3/);
+  assert.match(projector, /adaptive-5x5-region-bvh-technical-pass-v3\.2/);
+  assert.match(projector, /requestedPixel/);
+  assert.match(projector, /selectedPixel/);
 });
 
 test("cada vista genera profundidad, normales, curvatura e IDs exactos", () => {
@@ -173,7 +197,15 @@ test("cada vista genera profundidad, normales, curvatura e IDs exactos", () => {
   assert.match(triangulator, /normal_confidence/);
 });
 
-test("brazos y piernas usan grafos geodésicos y secciones, no porcentajes finales", () => {
+test("la segunda pasada regenera imágenes y detector después de segmentar dedos", () => {
+  assert.match(analyzer, /initial_detection_and_topology_segmentation/);
+  assert.match(analyzer, /regenerating_final_images_and_technical_passes/);
+  assert.match(analyzer, /_run_detector\(final_manifest/);
+  assert.match(multiviewV32, /attempt/);
+  assert.match(multiviewV32, /resolution=768|resolution: int = 512/);
+});
+
+test("brazos y piernas usan grafos geodésicos y secciones", () => {
   assert.match(geodesics, /class RegionGraph/);
   assert.match(geodesics, /def dijkstra/);
   assert.match(limbCenterline, /original-mesh-geodesic-centerline/);
@@ -194,13 +226,23 @@ test("manos topology-first detectan ramas antes de asignar nombres MediaPipe", (
   assert.doesNotMatch(handAnalyzer, /body_height\s*\*/);
 });
 
-test("MediaPipe usa RGB y bordes y no asigna confianza fija a todos los puntos", () => {
+test("MediaPipe usa variantes visuales y no asigna confianza fija", () => {
   assert.match(detector2d, /edgePath/);
+  assert.match(detector2d, /silhouettePath/);
   assert.match(detector2d, /_agreement_confidence/);
   assert.match(detector2d, /detectorConfidence/);
   assert.match(detector2d, /viewQualityConfidence/);
   assert.doesNotMatch(detector2d, /"visualConfidence": 0\.88/);
   assert.doesNotMatch(detector2d, /"thumb_metacarpal"\s*:/);
+});
+
+test("los estados no usan 39% como sustituto universal del motivo", () => {
+  assert.match(analyzerContract, /rawConfidence/);
+  assert.match(analyzerContract, /no_visual_evidence/);
+  assert.match(analyzerContract, /technical_mismatch/);
+  assert.match(analyzerContract, /topology_invalid/);
+  assert.match(triangulator, /rawFinalConfidence/);
+  assert.doesNotMatch(triangulator, /min\(final_confidence,\s*0\.39\)/);
 });
 
 test("el estado corporal distingue subsistemas y warnings bloqueantes", () => {
@@ -212,7 +254,7 @@ test("el estado corporal distingue subsistemas y warnings bloqueantes", () => {
   assert.match(analyzer, /BODY_INTERNAL_JOINT_OUTSIDE_REGION/);
 });
 
-test("el diagnóstico V3 se conserva por run_id y acepta correcciones separadas", () => {
+test("el diagnóstico se conserva por run_id y acepta correcciones separadas", () => {
   assert.match(analyzerWorker, /RUN_CACHE_ROOT/);
   assert.match(analyzerWorker, /avatar_analysis_corrections\.json/);
   assert.match(analyzerWorker, /\/avatar\/analyze\/result\/\{run_id\}/);
@@ -221,14 +263,26 @@ test("el diagnóstico V3 se conserva por run_id y acepta correcciones separadas"
   assert.doesNotMatch(analyzerWorker, /storage\.from\(/);
 });
 
+test("Analyzer es obligatorio y AutoRig V16 recibe solo landmarks aprobados del mismo SHA", () => {
+  assert.match(analyzerWorker, /_assert_rig_ready/);
+  assert.match(analyzerWorker, /ANALYZER_RIG_LOCK/);
+  assert.match(analyzerAutorig, /Analyzer source SHA-256 does not match AutoRig input/);
+  assert.match(analyzerAutorig, /autorig-v16-plus-approved-analyzer-v3\.2-seeds/);
+  assert.match(analyzerAutorig, /inventedLandmarks": 0/);
+  assert.match(rigRoute, /analyzedInputSha256/);
+  assert.match(rigRoute, /rigInputSha256/);
+});
+
 test("el diagnóstico sigue separado de Armature, pesos y avatar oficial", () => {
   assert.doesNotMatch(analyzer, /create_fresh_schema_armature|bind_geometry_aware_weights/);
   assert.match(diagnosticBuilder, /internal_joint_position/);
   assert.match(diagnosticBuilder, /surface_display_position/);
   assert.match(diagnosticBuilder, /duplicateLandmarksHidden/);
   assert.doesNotMatch(diagnosticBuilder, /BODY_EDGES\s*=/);
-  assert.match(analyzerPanel, /Compatibilidad corporal/);
-  assert.match(analyzerPanel, /Superficie verificada/);
-  assert.match(analyzerPanel, /Articulaciones internas/);
-  assert.match(analyzerPanel, /Candidatos rechazados/);
+  assert.match(analyzerPanel, /Confianza del cuerpo base/);
+  assert.match(analyzerPanel, /Preparación para rig/);
+  assert.match(analyzerPanel, /Puntos verificados/);
+  assert.match(analyzerPanel, /Sin evidencia visual/);
+  assert.doesNotMatch(analyzerPanel, /Compatibilidad corporal/);
+  assert.doesNotMatch(analyzerPanel, /SUPERFICIE ANATÓMICA VERIFICADA/);
 });
