@@ -1,7 +1,7 @@
 """Pure evidence, state and readiness contract for CLOUVA Avatar Analyzer V3.2.
 
-This module deliberately has no Blender dependency so the scoring and state rules
-can be exercised in CI without inventing geometry or relaxing technical gates.
+This module deliberately has no Blender dependency so scoring and state rules can
+be exercised in CI without inventing geometry or relaxing technical gates.
 """
 from __future__ import annotations
 
@@ -12,12 +12,8 @@ ANALYZER_VERSION = "clouva-avatar-analyzer-v3.2"
 
 VERIFIED_STATES = {"verified", "verified_geometry_fallback", "manually_corrected"}
 BLOCKING_STATES = {
-    "low_confidence",
-    "insufficient_views",
-    "no_visual_evidence",
-    "technical_mismatch",
-    "topology_invalid",
-    "unsupported",
+    "low_confidence", "insufficient_views", "no_visual_evidence",
+    "technical_mismatch", "topology_invalid", "unsupported",
 }
 
 FACE_REQUIRED = [
@@ -25,25 +21,37 @@ FACE_REQUIRED = [
     "nose_tip", "nose_base", "mouth_corner_l", "mouth_corner_r",
     "upper_lip_center", "lower_lip_center", "chin", "ear_l_center", "ear_r_center",
 ]
-
 FINGERS = ("thumb", "index", "middle", "ring", "pinky")
 HAND_REQUIRED = {
     side: [
         f"wrist_{suffix}",
         *[
             f"{finger}_{joint}_{suffix}"
-            for finger in FINGERS
-            for joint in ("01", "02", "03", "tip")
+            for finger in FINGERS for joint in ("01", "02", "03", "tip")
         ],
     ]
     for side, suffix in (("left", "l"), ("right", "r"))
 }
-
 CRITICAL_BODY = [
     "pelvis", "neck", "head",
     "shoulder_l", "shoulder_r", "elbow_l", "elbow_r", "wrist_l", "wrist_r",
     "hip_l", "hip_r", "knee_l", "knee_r", "ankle_l", "ankle_r",
 ]
+
+TECHNICAL_REASONS = {
+    "LANDMARK_REGION_BVH_MISS", "LANDMARK_WRONG_REGION",
+    "LANDMARK_SILHOUETTE_MISS", "LANDMARK_OBJECT_ID_MISMATCH",
+    "LANDMARK_DEPTH_INCONSISTENT", "LANDMARK_TECHNICAL_PASS_MISMATCH",
+    "TECHNICAL_EVIDENCE_GATE_FAILED", "TRIANGULATED_POINT_WRONG_REGION",
+    "TRIANGULATED_POINT_OUTSIDE_GEOMETRY", "DEPTH_EVIDENCE_LOW",
+    "REGION_EVIDENCE_LOW",
+}
+TOPOLOGY_REASONS = {
+    "FINGER_SEGMENT_SCALE_INVALID", "FINGER_BRANCH_CONFIDENCE_LOW",
+    "FINGER_BRANCH_LABEL_UNCERTAIN", "FINGER_REGION_BVH_UNAVAILABLE",
+    "FINGER_CHAINS_CROSS", "GEOMETRIC_FINGER_BRANCH_UNAVAILABLE",
+    "FINGER_CENTERLINE_SAMPLING_FAILED", "SOURCE_CHAIN_NOT_VERIFIED",
+}
 
 
 def _float(value, fallback=0.0):
@@ -70,44 +78,28 @@ def classify_landmark_state(record: dict):
     reasons = _reasons(record)
     if not record.get("supported", True):
         return "unsupported", "unsupported", True
+    # A projected detector candidate that failed BVH/depth is technical evidence,
+    # even when no observation survived to viewsConfirmed.
+    if reasons.intersection(TECHNICAL_REASONS):
+        return "technical_mismatch", "projection", True
+    if reasons.intersection(TOPOLOGY_REASONS):
+        return "topology_invalid", "topology", True
     if not views and not record.get("topologyRecovered") and not record.get("geometryFallback"):
         return "no_visual_evidence", "detector", True
     if views == 1 or "INSUFFICIENT_TECHNICALLY_VALID_VIEWS" in reasons:
         return "insufficient_views", "triangulation", True
-    if reasons.intersection({
-        "LANDMARK_REGION_BVH_MISS", "LANDMARK_TECHNICAL_PASS_MISMATCH",
-        "TECHNICAL_EVIDENCE_GATE_FAILED", "TRIANGULATED_POINT_WRONG_REGION",
-        "TRIANGULATED_POINT_OUTSIDE_GEOMETRY", "DEPTH_EVIDENCE_LOW",
-        "REGION_EVIDENCE_LOW",
-    }):
-        return "technical_mismatch", "projection", True
-    if reasons.intersection({
-        "FINGER_SEGMENT_SCALE_INVALID", "FINGER_BRANCH_CONFIDENCE_LOW",
-        "FINGER_BRANCH_LABEL_UNCERTAIN", "FINGER_REGION_BVH_UNAVAILABLE",
-        "FINGER_CHAINS_CROSS", "GEOMETRIC_FINGER_BRANCH_UNAVAILABLE",
-        "FINGER_CENTERLINE_SAMPLING_FAILED", "SOURCE_CHAIN_NOT_VERIFIED",
-    }):
-        return "topology_invalid", "topology", True
     return "low_confidence", "validation", True
 
 
 def _placeholder(name: str, region: str):
     return {
-        "name": name,
-        "region": region,
-        "accepted": False,
-        "verified": False,
-        "display": False,
-        "rawConfidence": 0.0,
-        "confidence": 0.0,
-        "finalConfidence": 0.0,
+        "name": name, "region": region,
+        "accepted": False, "verified": False, "display": False,
+        "rawConfidence": 0.0, "confidence": 0.0, "finalConfidence": 0.0,
         "viewsConfirmed": 0,
-        "state": "no_visual_evidence",
-        "evidenceState": "detector",
-        "failureStage": "detector",
-        "failureCode": "DETECTOR_NOT_FOUND",
-        "blocking": True,
-        "rejectionReasons": ["NO_VISUAL_EVIDENCE"],
+        "state": "no_visual_evidence", "evidenceState": "detector",
+        "failureStage": "detector", "failureCode": "DETECTOR_NOT_FOUND",
+        "blocking": True, "rejectionReasons": ["NO_VISUAL_EVIDENCE"],
     }
 
 
@@ -135,13 +127,19 @@ def annotate_landmarks(landmarks: dict):
                 record.get("finalConfidence"), record.get("confidence"),
                 record.get("detectorConfidence"), record.get("topologyConfidence"),
                 record.get("geodesicConfidence"), record.get("geometryConfidence"),
+                record.get("silhouetteConfidence"), record.get("triangulationConfidence"),
             ]
             raw = max((_float(value) for value in components if value is not None), default=0.0)
-        record["rawConfidence"] = _float(raw)
-        record.setdefault("finalConfidence", record["rawConfidence"])
-        record.setdefault("confidence", record["rawConfidence"])
+        raw = max(0.0, min(1.0, _float(raw)))
+        record["rawConfidence"] = raw
+        record["rawFinalConfidence"] = raw
+        # Approval is expressed by state/blocking, never by forcing all failures
+        # to 0.39. UI and datasets therefore keep the actual measured score.
+        record["finalConfidence"] = raw
+        record["confidence"] = raw
         state, evidence, blocking = classify_landmark_state(record)
         record["state"] = state
+        record["validationState"] = state
         record["evidenceState"] = evidence
         record["blocking"] = bool(blocking)
         if blocking:
@@ -199,7 +197,7 @@ def build_detection_coverage(manifest: dict, detector_output: dict, face: dict, 
         if candidates:
             groups[group]["detectorSuccessfulViews"] += 1
         groups[group]["candidateCount"] += len(candidates)
-        detail = {
+        view_details[group].append({
             "name": view.get("name"),
             "rendered": rendered,
             "proxyVertexCount": int(view.get("proxyVertexCount") or 0),
@@ -207,8 +205,7 @@ def build_detection_coverage(manifest: dict, detector_output: dict, face: dict, 
             "detectorCandidates": len(candidates),
             "framingValid": bool(view.get("framingValid", True)),
             "attempt": view.get("attempt", "final"),
-        }
-        view_details[group].append(detail)
+        })
 
     for warning in detector_output.get("errors") or []:
         group = _failure_group(warning)
@@ -239,12 +236,15 @@ def build_detection_coverage(manifest: dict, detector_output: dict, face: dict, 
         groups[group]["projectionFailureCount"] = sum(
             int(item.get("occurrences") or 1)
             for item in warnings
-            if str(item.get("code") or "") in {"LANDMARK_REGION_BVH_MISS", "RAY_TRIANGULATION_UNSTABLE"}
+            if str(item.get("code") or "") in {
+                "LANDMARK_REGION_BVH_MISS", "LANDMARK_WRONG_REGION",
+                "LANDMARK_SILHOUETTE_MISS", "RAY_TRIANGULATION_UNSTABLE",
+            }
         )
         groups[group]["technicalMismatchCount"] = sum(
             int(item.get("occurrences") or 1)
             for item in warnings
-            if str(item.get("code") or "") in {"LANDMARK_TECHNICAL_PASS_MISMATCH", "TECHNICAL_EVIDENCE_GATE_FAILED"}
+            if str(item.get("code") or "") in TECHNICAL_REASONS
         )
 
     output = {}
@@ -292,7 +292,10 @@ def _coverage_score(coverage: dict):
     values = []
     for key in ("face", "leftHand", "rightHand"):
         item = coverage.get(key) or {}
-        values.append(_float(item.get("visualCoverage")) * 0.55 + _float(item.get("geometricCoverage")) * 0.45)
+        values.append(
+            _float(item.get("visualCoverage")) * 0.55
+            + _float(item.get("geometricCoverage")) * 0.45
+        )
     return sum(values) / max(len(values), 1)
 
 
@@ -340,11 +343,10 @@ def calculate_rig_readiness(body_report: dict, face: dict, hands: dict, landmark
 
     gates = list(dict.fromkeys(gates))
     approved = not gates and weighted >= 0.82
-    status = "valid" if approved else "needs_review"
     return {
         "score": max(0.0, min(1.0, weighted)),
         "approved": approved,
-        "status": status,
+        "status": "valid" if approved else "needs_review",
         "gates": gates,
         "components": {
             "body": body_score,
@@ -380,4 +382,7 @@ def landmark_metrics(landmarks: dict):
 
 
 def critical_landmarks_verified(landmarks: dict):
-    return all(isinstance(landmarks.get(name), dict) and landmarks[name].get("accepted", False) for name in CRITICAL_BODY)
+    return all(
+        isinstance(landmarks.get(name), dict) and landmarks[name].get("accepted", False)
+        for name in CRITICAL_BODY
+    )
