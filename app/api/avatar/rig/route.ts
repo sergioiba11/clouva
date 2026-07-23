@@ -11,11 +11,14 @@ const PROFILE_KEY = "clouva_avatar_complete_rig_profile";
 const COMPLETE_FILENAME = "clouva-complete-rigged.glb";
 const EXPECTED_WORKER_RIG_VERSION = "v15-anatomical-landmark-autorig";
 const EXPECTED_PROFILE_VERSION = "clouva-blender-autorig-v15-skull-hand-axis";
+const EXPECTED_ANALYZER_VERSION = "clouva-avatar-analyzer-v3.2";
+const MIN_RIG_READINESS = 0.82;
 const DERIVED_RIG_PATTERN = /(?:complete-rigged|rigged|processed|final)(?:[-_.]|$)/i;
 const MAX_ACTIVE_JOB_AGE_MS = 10 * 60 * 1000;
 
 const RIG_STAGES = {
-  preparing: "Preparando avatar en Blender",
+  preparing: "Preparando avatar original",
+  analyzer: "Analizando cuerpo, rostro y manos",
   skeleton: "Creando esqueleto",
   weights: "Asignando pesos",
   ready: "Listo para Unreal",
@@ -42,9 +45,24 @@ type RigSource = {
 
 type RigProfile = {
   complete?: boolean;
+  version?: string;
   boneCount?: number;
   addedBones?: string[];
   normalization?: Record<string, unknown>;
+  analyzerRunId?: string;
+  analyzerVersion?: string;
+  analyzerStatus?: string;
+  analyzedInputSha256?: string;
+  rigInputSha256?: string;
+  rigReadinessScore?: number;
+  criticalLandmarksVerified?: boolean;
+  analysisTimestamp?: number;
+  analyzerMapVersion?: string;
+  analyzerSeedCount?: number;
+  inputSha256?: string;
+  outputSha256?: string;
+  weights?: { weightedRatio?: number };
+  skeletonPlanner?: { method?: string; inventedLandmarks?: number };
   fingers?: {
     complete?: boolean;
     leftChains?: number;
@@ -139,6 +157,24 @@ function asHttpsUrl(value: unknown) {
 
 function looksDerivedRig(value: string | null) {
   return Boolean(value && DERIVED_RIG_PATTERN.test(value));
+}
+
+function profileIsAnalyzerApproved(profile: RigProfile | null) {
+  return Boolean(
+    profile
+    && profile.complete === true
+    && profile.fingers?.complete === true
+    && profile.ears?.complete === true
+    && profile.analyzerVersion === EXPECTED_ANALYZER_VERSION
+    && ["valid", "valid_with_warnings"].includes(String(profile.analyzerStatus || ""))
+    && Number(profile.rigReadinessScore ?? 0) >= MIN_RIG_READINESS
+    && profile.criticalLandmarksVerified === true
+    && Boolean(profile.analyzerRunId)
+    && Boolean(profile.analyzedInputSha256)
+    && profile.analyzedInputSha256 === profile.rigInputSha256
+    && (!profile.inputSha256 || profile.inputSha256 === profile.rigInputSha256)
+    && Number(profile.weights?.weightedRatio ?? 0) >= 0.995
+  );
 }
 
 async function resolveStoredOriginalUrl(
@@ -321,7 +357,8 @@ function jobIsActive(job: RigJob | null, source: RigSource) {
 
 function progressForStage(stage: RigStage) {
   if (stage === RIG_STAGES.preparing) return 10;
-  if (stage === RIG_STAGES.skeleton) return 45;
+  if (stage === RIG_STAGES.analyzer) return 28;
+  if (stage === RIG_STAGES.skeleton) return 55;
   if (stage === RIG_STAGES.weights) return 80;
   return 100;
 }
@@ -364,6 +401,7 @@ async function completeRigWithWorker(sourceUrl: string) {
       require_fingers: true,
       require_ears: true,
       finger_segments: 3,
+      force_analyzer: true,
     }),
     cache: "no-store",
     signal: AbortSignal.timeout(5 * 60 * 1000),
@@ -376,22 +414,24 @@ async function completeRigWithWorker(sourceUrl: string) {
   }
 
   const workerVersion = response.headers.get("x-clouva-rig-version") ?? "";
+  const analyzerHeader = response.headers.get("x-clouva-analyzer-version") ?? "";
+  const analyzedShaHeader = response.headers.get("x-clouva-analyzed-input-sha256") ?? "";
   const profile = parseRigProfile(response);
   const proof = profile as RigProfile & {
-    version?: string;
     rigSource?: string;
     inputSource?: string;
     runId?: string;
     durationMs?: number;
-    inputSha256?: string;
-    outputSha256?: string;
-    weights?: { weightedRatio?: number };
     handFit?: Record<string, { method?: string }>;
     landmarkFit?: { method?: string };
     headFit?: { method?: string; lengthRatio?: number };
   };
+
   if (workerVersion !== EXPECTED_WORKER_RIG_VERSION) {
     throw new Error(`Railway respondió con el rig ${workerVersion || "sin versión"}; se exige ${EXPECTED_WORKER_RIG_VERSION}`);
+  }
+  if (analyzerHeader !== EXPECTED_ANALYZER_VERSION) {
+    throw new Error(`Railway respondió con ${analyzerHeader || "Analyzer sin versión"}; se exige ${EXPECTED_ANALYZER_VERSION}`);
   }
   if (
     proof.version !== EXPECTED_PROFILE_VERSION
@@ -409,10 +449,29 @@ async function completeRigWithWorker(sourceUrl: string) {
     || Number(proof.headFit?.lengthRatio ?? 0) < 0.10
     || Number(proof.headFit?.lengthRatio ?? 1) > 0.20
   ) {
-    throw new Error("Blender devolvió un resultado sin prueba de AutoRig V15 anatómico fresco; no se guardará como aprobado");
+    throw new Error("Blender devolvió un resultado sin prueba de AutoRig V15/V16 anatómico fresco; no se guardará como aprobado");
   }
-  if (profile.complete !== true || profile.fingers?.complete !== true || profile.ears?.complete !== true) {
+  if (
+    profile.complete !== true
+    || profile.fingers?.complete !== true
+    || profile.ears?.complete !== true
+  ) {
     throw new Error("El avatar no superó la validación del esqueleto y los pesos");
+  }
+  if (
+    profile.analyzerVersion !== EXPECTED_ANALYZER_VERSION
+    || !["valid", "valid_with_warnings"].includes(String(profile.analyzerStatus || ""))
+    || Number(profile.rigReadinessScore ?? 0) < MIN_RIG_READINESS
+    || profile.criticalLandmarksVerified !== true
+    || !profile.analyzerRunId
+    || !profile.analysisTimestamp
+    || profile.analyzedInputSha256 !== profile.rigInputSha256
+    || profile.rigInputSha256 !== proof.inputSha256
+    || analyzedShaHeader !== proof.inputSha256
+    || profile.skeletonPlanner?.method !== "autorig-v16-plus-approved-analyzer-v3.2-seeds"
+    || Number(profile.skeletonPlanner?.inventedLandmarks ?? 1) !== 0
+  ) {
+    throw new Error("Blender devolvió un rig sin prueba completa del Avatar Analyzer V3.2 sobre el mismo GLB; no se guardará como aprobado");
   }
 
   const bytes = await response.arrayBuffer();
@@ -424,6 +483,9 @@ async function completeRigWithWorker(sourceUrl: string) {
     profile,
     workerVersion,
     rigRunId: proof.runId,
+    analyzerRunId: profile.analyzerRunId,
+    analyzerVersion: profile.analyzerVersion,
+    rigReadinessScore: Number(profile.rigReadinessScore ?? 0),
     rigDurationMs: Number(proof.durationMs ?? 0),
     inputSha256: proof.inputSha256,
     outputSha256: proof.outputSha256,
@@ -541,7 +603,8 @@ export async function POST(request: NextRequest) {
     const metadata = freshUser.data.user.app_metadata as Record<string, unknown> | undefined;
     const storedJob = readJob(metadata);
     const storedProfile = readProfile(metadata);
-    const alreadyRigged = source.currentUrl.includes(COMPLETE_FILENAME);
+    const hasDerivedRig = source.currentUrl.includes(COMPLETE_FILENAME) || looksDerivedRig(source.currentUrl);
+    const alreadyRigged = hasDerivedRig && profileIsAnalyzerApproved(storedProfile);
 
     if (createRequested) {
       if (alreadyRigged && !retry) {
@@ -554,8 +617,8 @@ export async function POST(request: NextRequest) {
           stage: RIG_STAGES.ready,
           newAvatarUrl: source.currentUrl,
           sourceAvatarId: source.avatarId,
-          rigProfile: storedProfile ?? { complete: true },
-          sourceKind: "current-complete-rig",
+          rigProfile: storedProfile,
+          sourceKind: "current-analyzer-approved-rig",
         });
       }
 
@@ -584,10 +647,10 @@ export async function POST(request: NextRequest) {
       await updateMetadata(
         supabase,
         user.id,
-        retry ? { job, profile: null } : { job },
+        retry || hasDerivedRig ? { job, profile: null } : { job },
       );
 
-      stage = RIG_STAGES.skeleton;
+      stage = RIG_STAGES.analyzer;
       job = { ...job, stage };
       await updateMetadata(supabase, user.id, { job });
       const completed = await completeRigWithWorker(source.originalUrl);
@@ -614,11 +677,14 @@ export async function POST(request: NextRequest) {
         newAvatarUrl: publicUrl,
         sourceAvatarId: source.avatarId,
         rigProfile: completed.profile,
-        sourceKind: "original-clean-glb",
+        sourceKind: "original-clean-glb-analyzed-and-rigged",
         freshRig: true,
         retried: retry,
         workerVersion: completed.workerVersion,
         rigRunId: completed.rigRunId,
+        analyzerRunId: completed.analyzerRunId,
+        analyzerVersion: completed.analyzerVersion,
+        rigReadinessScore: completed.rigReadinessScore,
         rigDurationMs: completed.rigDurationMs,
         inputSha256: completed.inputSha256,
         outputSha256: completed.outputSha256,
@@ -636,7 +702,7 @@ export async function POST(request: NextRequest) {
           stage: RIG_STAGES.ready,
           newAvatarUrl: source.currentUrl,
           sourceAvatarId: source.avatarId,
-          rigProfile: storedProfile ?? { complete: true },
+          rigProfile: storedProfile,
         });
       }
 
@@ -659,6 +725,8 @@ export async function POST(request: NextRequest) {
         progress: 0,
         stage: RIG_STAGES.preparing,
         sourceAvatarId: source.avatarId,
+        unvalidatedRig: hasDerivedRig,
+        rigProfile: storedProfile,
       });
     }
 
@@ -672,16 +740,19 @@ export async function POST(request: NextRequest) {
           stage: RIG_STAGES.ready,
           newAvatarUrl: source.currentUrl,
           sourceAvatarId: source.avatarId,
-          rigProfile: storedProfile ?? { complete: true },
+          rigProfile: storedProfile,
         });
       }
       return NextResponse.json(
         {
           error: jobIsActive(storedJob, source)
             ? "Blender todavía está procesando el avatar"
-            : "No hay un resultado de Blender para finalizar",
+            : hasDerivedRig
+              ? "El rig existente no está aprobado por Avatar Analyzer V3.2"
+              : "No hay un resultado de Blender para finalizar",
           status: jobIsActive(storedJob, source) ? "IN_PROGRESS" : "NOT_STARTED",
           stage: storedJob?.stage ?? RIG_STAGES.preparing,
+          unvalidatedRig: hasDerivedRig,
         },
         { status: 409 },
       );
@@ -708,11 +779,13 @@ export async function POST(request: NextRequest) {
     const message = `[${stage}] ${technicalError}`;
     const status = /sesión/i.test(technicalError)
       ? 401
-      : /original limpio|GLB original|no hay un avatar original/i.test(technicalError)
-        ? 422
-        : /Blender no pudo|validación del esqueleto/i.test(technicalError)
+      : /Avatar Analyzer|Rig readiness|mapa anatómico|no está aprobado/i.test(technicalError)
+        ? 409
+        : /original limpio|GLB original|no hay un avatar original/i.test(technicalError)
           ? 422
-          : 500;
+          : /Blender no pudo|validación del esqueleto/i.test(technicalError)
+            ? 422
+            : 500;
 
     return NextResponse.json({ error: message, stage, technicalError }, { status });
   }
