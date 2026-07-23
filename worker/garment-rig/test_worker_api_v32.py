@@ -1,4 +1,10 @@
-"""Explicit import-time Worker contract checks for Docker build diagnostics."""
+"""Import-time Worker contract checks for Avatar Analyzer V3.2 integration.
+
+Legacy AutoRig, weight, Unreal and garment contracts are validated by the
+existing Blender tests that run after this file in the Docker build. This test
+only verifies the new public route wiring and avoids duplicating inherited
+version assertions from app_v15/app_v16.
+"""
 from __future__ import annotations
 
 import app
@@ -15,6 +21,7 @@ def main():
         "/rig",
         "/avatar/complete-rig",
         "/avatar/analyze",
+        "/avatar/analyze-preview",
         "/diagnostics/avatar-analyzer",
         "/rig-with-unreal-mold",
         "/diagnostics/unreal-mold",
@@ -34,21 +41,16 @@ def main():
     ]
     check("complete-rig POST route count", len(avatar_routes), 1)
     avatar_route = avatar_routes[0]
+    check("complete-rig endpoint", avatar_route.endpoint.__name__, "complete_avatar_rig_analyzer_gated")
 
-    check("MAX_CONCURRENT_BLENDER_JOBS", app.MAX_CONCURRENT_BLENDER_JOBS, 1)
-    check("CLEAN_ATTEMPT_VERSION", app.CLEAN_ATTEMPT_VERSION, "v43-fresh-source-per-attempt")
-    check("COMPLETE_AVATAR_RIG_VERSION", app.COMPLETE_AVATAR_RIG_VERSION, "v15-anatomical-landmark-autorig")
     check("COMPLETE_AVATAR_RIG_SCRIPT", app.COMPLETE_AVATAR_RIG_SCRIPT.name, "autorig_avatar_v18.py")
     check("AVATAR_ANALYZER_VERSION", app.AVATAR_ANALYZER_VERSION, "clouva-avatar-analyzer-v3.2")
     check("AVATAR_ANALYZER_SCRIPT", app.AVATAR_ANALYZER_SCRIPT.name, "avatar_analyzer.py")
-    check("current COMPLETE_AVATAR_RIG_VERSION", app.current.COMPLETE_AVATAR_RIG_VERSION, "v15-anatomical-landmark-autorig")
-    check("current COMPLETE_AVATAR_RIG_SCRIPT", app.current.COMPLETE_AVATAR_RIG_SCRIPT.name, "autorig_avatar_v18.py")
-    check(
-        "route global COMPLETE_AVATAR_RIG_SCRIPT",
-        avatar_route.endpoint.__globals__["COMPLETE_AVATAR_RIG_SCRIPT"].name,
-        "autorig_avatar_v18.py",
-    )
-    print("[clouva] Worker API + Analyzer V3.2 gated AutoRig V16 routes OK", flush=True)
+    check("single-flight lock available", hasattr(app, "ANALYZER_RIG_LOCK"), True)
+    check("AutoRig wrapper available", app.ANALYZER_AUTORIG_SCRIPT.is_file(), True)
+    check("Analyzer script available", app.AVATAR_ANALYZER_SCRIPT.is_file(), True)
+
+    print("[clouva] Worker API + Analyzer V3.2 gate wiring OK", flush=True)
 
 
 if __name__ == "__main__":
