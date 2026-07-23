@@ -13,6 +13,7 @@ from typing import Dict, Iterable, List
 import bpy
 from mathutils import Vector
 
+from face_visual_cues import add_visual_face_cues
 from multiview_renderer import (
     _average,
     _build_proxies,
@@ -46,6 +47,7 @@ def _enrich_view(view: dict, visible, attempt: str):
     coverage = float(technical.get("coverage") or 0.0)
     path = Path(str(view.get("path") or ""))
     proxy_vertices = _proxy_vertex_count(visible)
+    visual_cues = [obj.name for obj in visible if bool(obj.get("clouva_visual_only", False))]
     view.update({
         "attempt": attempt,
         "rendered": path.is_file() and path.stat().st_size > 0,
@@ -53,23 +55,26 @@ def _enrich_view(view: dict, visible, attempt: str):
         "silhouetteCoverage": coverage,
         "framingValid": bool(proxy_vertices >= 4 and 0.002 <= coverage <= 0.94),
         "clippingDetected": bool(coverage >= 0.94),
+        "visualCueObjects": visual_cues,
+        "visualCueProjectionAllowed": False,
     })
     return view
 
 
 def render_multiview_v32(output_dir: Path, vectors: Dict[str, Vector], height: float,
-                         meshes: Iterable[bpy.types.Object] | None = None,
-                         segmentation=None, classifications: dict | None = None,
-                         anatomy_bvh=None, resolution: int = 512,
-                         technical_resolution: int = 256,
-                         hand_framing: float = 1.72,
-                         face_framing: float = 1.98,
-                         attempt: str = "initial"):
+                          meshes: Iterable[bpy.types.Object] | None = None,
+                          segmentation=None, classifications: dict | None = None,
+                          anatomy_bvh=None, resolution: int = 512,
+                          technical_resolution: int = 256,
+                          hand_framing: float = 1.72,
+                          face_framing: float = 1.98,
+                          attempt: str = "initial"):
     output_dir = Path(output_dir)
     scene = _configure_scene(output_dir, resolution)
     meshes = list(meshes or [obj for obj in scene.objects if obj.type == "MESH"])
     classifications = classifications or {}
     proxies = _build_proxies(meshes, segmentation, classifications, anatomy_bvh)
+    visual_face_cues = add_visual_face_cues(proxies, meshes, classifications, anatomy_bvh)
     all_meshes = [obj for obj in scene.objects if obj.type == "MESH"]
     original_hide = {obj.name: bool(obj.hide_render) for obj in all_meshes}
     views: List[dict] = []
@@ -148,6 +153,8 @@ def render_multiview_v32(output_dir: Path, vectors: Dict[str, Vector], height: f
         "handFraming": hand_framing,
         "faceFraming": face_framing,
         "views": views,
+        "visualOnlyFaceCues": visual_face_cues,
+        "visualCueProjectionPolicy": "rgb-and-edges-only-strict-anatomy-bvh-for-final-points",
         "handMeasurements": {
             "left": segmentation.hand_measurement("left") if segmentation else {},
             "right": segmentation.hand_measurement("right") if segmentation else {},
