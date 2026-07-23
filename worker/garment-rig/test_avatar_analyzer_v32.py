@@ -2,9 +2,15 @@
 from __future__ import annotations
 
 import math
+import sys
+from pathlib import Path
 
 import bpy
 from mathutils import Euler, Matrix, Vector
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 
 from analyzer_contract import (
     CRITICAL_BODY,
