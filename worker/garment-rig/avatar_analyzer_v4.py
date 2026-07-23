@@ -21,6 +21,7 @@ if str(SCRIPT_DIR) not in sys.path:
 
 import avatar_analyzer as analyzer_v32
 from analyzer_v4_contract import ANALYZER_VERSION, DEFAULT_CONFIG, upgrade_analysis_v4
+from analyzer_v4_bootstrap import resolve_camera_vector_values
 from anatomy_bvh import build_anatomy_bvh
 from anatomy_segmenter_v3 import segment_anatomy_v3
 from camera_projection_self_test_v4 import filter_invalid_views, validate_manifest
@@ -46,39 +47,15 @@ def _write(path: Path, payload):
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
-def _vector(record):
-    if not isinstance(record, dict):
-        return None
-    value = record.get("internalJointPosition") or record.get("position")
-    if not isinstance(value, list) or len(value) != 3:
-        return None
-    return Vector(tuple(float(component) for component in value))
-
-
 def _body_vectors(analysis: dict):
-    landmarks = analysis.get("landmarks") or {}
-    aliases = {
-        "root": "root", "pelvis": "pelvis", "spine_01": "spine_01",
-        "spine_02": "spine_02", "chest": "chest", "neck": "neck",
-        "skull_base": "skull_base", "head_top": "head_top", "head": "head",
-        "clavicle_l": "clavicle_l", "clavicle_r": "clavicle_r",
-        "shoulder_l": "shoulder_l", "elbow_l": "elbow_l", "wrist_l": "wrist_l", "hand_l": "hand_l",
-        "shoulder_r": "shoulder_r", "elbow_r": "elbow_r", "wrist_r": "wrist_r", "hand_r": "hand_r",
-        "hip_l": "hip_l", "knee_l": "knee_l", "ankle_l": "ankle_l", "foot_l": "foot_l",
-        "hip_r": "hip_r", "knee_r": "knee_r", "ankle_r": "ankle_r", "foot_r": "foot_r",
-        "upperarm_l": "shoulder_l", "lowerarm_l": "elbow_l",
-        "upperarm_r": "shoulder_r", "lowerarm_r": "elbow_r",
-        "thigh_l": "hip_l", "calf_l": "knee_l", "thigh_r": "hip_r", "calf_r": "knee_r",
+    values, diagnostics = resolve_camera_vector_values(analysis)
+    analysis.setdefault("diagnostics", {})["v4CameraBootstrap"] = diagnostics
+    if diagnostics["missing"]:
+        raise RuntimeError(f"V4 camera rig missing body vectors: {', '.join(diagnostics['missing'])}")
+    return {
+        name: Vector(tuple(components))
+        for name, components in values.items()
     }
-    result = {}
-    for target, source in aliases.items():
-        value = _vector(landmarks.get(source))
-        if value is not None:
-            result[target] = value
-    missing = [name for name in ("pelvis", "chest", "neck", "skull_base", "head_top", "wrist_l", "hand_l", "wrist_r", "hand_r") if name not in result]
-    if missing:
-        raise RuntimeError(f"V4 camera rig missing body vectors: {', '.join(missing)}")
-    return result
 
 
 def _real_meshes():

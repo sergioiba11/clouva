@@ -111,6 +111,7 @@ RUN test -f /app/app.py \
     && test -f /app/avatar_analyzer_v4.py \
     && test -f /app/analyzer_contract.py \
     && test -f /app/analyzer_v4_contract.py \
+    && test -f /app/analyzer_v4_bootstrap.py \
     && test -f /app/canonical_orientation.py \
     && test -f /app/preflight_v4.py \
     && test -f /app/camera_projection_self_test_v4.py \

@@ -4,6 +4,7 @@ import copy
 import unittest
 
 from anatomy_semantics import region_match, triangle_semantics
+from analyzer_v4_bootstrap import resolve_camera_vector_values
 from analyzer_v4_contract import calibrate_landmark, upgrade_analysis_v4
 from hand_modes import classify_hand_mode
 from test_avatar_analyzer_v4_contract import base_analysis, verified
@@ -131,6 +132,31 @@ class ConfidenceAndReadinessTests(unittest.TestCase):
         self.assertFalse(result["rightFingerRigReady"])
         self.assertFalse(result["fullHumanoidRigReady"])
         self.assertEqual(result["overall_status"], "incompatible_with_requested_profile")
+
+
+class CameraBootstrapTests(unittest.TestCase):
+    def test_rejected_hand_detection_does_not_erase_body_wrist_anchor(self):
+        analysis = base_analysis()
+        analysis["landmarks"]["wrist_l"] = {
+            "state": "insufficient_views",
+            "accepted": False,
+            "rejectionReasons": ["NO_VISUAL_EVIDENCE"],
+        }
+        analysis["landmarks"]["wrist_r"] = {
+            "state": "projection_mismatch",
+            "accepted": False,
+            "rejectionReasons": ["NO_RAY_HIT"],
+        }
+        analysis["segmentation"]["refinedVectors"] = {
+            "wrist_l": [0.72, 0.0, 0.98],
+            "wrist_r": [-0.72, 0.0, 0.98],
+        }
+        values, diagnostics = resolve_camera_vector_values(analysis)
+        self.assertEqual(values["wrist_l"], [0.72, 0.0, 0.98])
+        self.assertEqual(values["wrist_r"], [-0.72, 0.0, 0.98])
+        self.assertIn("wrist_l", diagnostics["fallbackVectors"])
+        self.assertIn("wrist_r", diagnostics["fallbackVectors"])
+        self.assertTrue(diagnostics["ready"])
 
 
 if __name__ == "__main__":
