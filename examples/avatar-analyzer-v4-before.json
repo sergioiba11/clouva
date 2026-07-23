@@ -1,0 +1,20 @@
+{
+  "version": "clouva-avatar-analyzer-v3.2",
+  "status": "needs_review",
+  "rigReadinessApproved": false,
+  "faceAnalysis": "needs_review",
+  "rightHandAnalysis": "needs_review",
+  "landmarks": {
+    "shoulder_r": {
+      "confidence": 1.0,
+      "viewsConfirmed": 0,
+      "triangulationInliers": 0,
+      "accepted": false,
+      "rejectionReasons": ["BODY_INTERNAL_JOINT_OUTSIDE_REGION"]
+    }
+  },
+  "warnings": [
+    {"code": "RAY DID NOT HIT EXPECTED ANATOMICAL REGION", "view": "face_front", "landmark": "eye_l_inner"},
+    {"code": "RAY DID NOT HIT EXPECTED ANATOMICAL REGION", "view": "face_front", "landmark": "eye_l_outer"}
+  ]
+}

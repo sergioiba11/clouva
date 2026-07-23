@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900">
+  <rect width="1440" height="900" fill="#09070f"/>
+  <text x="58" y="70" fill="#ffffff" font-family="Arial" font-size="30" font-weight="700">Avatar Analyzer V4.0</text>
+  <text x="58" y="104" fill="#a99bbd" font-family="Arial" font-size="16">BODY_BASIC · approved_with_fallbacks · V3.2 preservado</text>
+  <g font-family="Arial" font-size="17">
+    <rect x="58" y="138" rx="16" width="132" height="48" fill="#7b38f2"/><text x="92" y="169" fill="white">Cuerpo</text>
+    <rect x="202" y="138" rx="16" width="110" height="48" fill="#211a2d"/><text x="235" y="169" fill="#d8cfe5">Cara</text>
+    <rect x="324" y="138" rx="16" width="174" height="48" fill="#211a2d"/><text x="351" y="169" fill="#d8cfe5">Mano izquierda</text>
+    <rect x="510" y="138" rx="16" width="168" height="48" fill="#211a2d"/><text x="538" y="169" fill="#d8cfe5">Mano derecha</text>
+  </g>
+  <rect x="58" y="210" rx="24" width="860" height="610" fill="#120e1a" stroke="#31233f"/>
+  <ellipse cx="478" cy="760" rx="205" ry="28" fill="#261a34"/>
+  <circle cx="478" cy="330" r="78" fill="#4d4657"/>
+  <path d="M410 400 Q478 370 546 400 L585 630 Q478 690 371 630 Z" fill="#3b3544"/>
+  <path d="M407 430 L250 570" stroke="#3b3544" stroke-width="52" stroke-linecap="round"/>
+  <path d="M549 430 L706 570" stroke="#3b3544" stroke-width="52" stroke-linecap="round"/>
+  <path d="M420 635 L365 770" stroke="#3b3544" stroke-width="60" stroke-linecap="round"/>
+  <path d="M536 635 L591 770" stroke="#3b3544" stroke-width="60" stroke-linecap="round"/>
+  <g fill="#36d78b" stroke="#e8fff5" stroke-width="3">
+    <circle cx="478" cy="408" r="9"/><circle cx="408" cy="435" r="9"/><circle cx="250" cy="570" r="9"/>
+    <circle cx="420" cy="635" r="9"/><circle cx="365" cy="770" r="9"/><circle cx="536" cy="635" r="9"/><circle cx="591" cy="770" r="9"/>
+  </g>
+  <circle cx="548" cy="435" r="11" fill="#f4c34f" stroke="#fff5cf" stroke-width="3"/>
+  <path d="M408 435 L548 435" stroke="#8d55ff" stroke-width="3" stroke-dasharray="10 8"/>
+  <path d="M548 435 L706 570" stroke="#f4c34f" stroke-width="3"/>
+  <rect x="82" y="236" rx="12" width="194" height="38" fill="#251b32"/><text x="103" y="261" fill="#d8cfe5" font-family="Arial" font-size="15">Heatmap por región</text>
+  <rect x="948" y="210" rx="24" width="434" height="610" fill="#120e1a" stroke="#31233f"/>
+  <text x="980" y="254" fill="#ffffff" font-family="Arial" font-size="21" font-weight="700">Diagnóstico</text>
+  <rect x="980" y="280" rx="14" width="370" height="112" fill="#21172a" stroke="#9a3f55"/>
+  <text x="1002" y="311" fill="#ff738c" font-family="Arial" font-size="16" font-weight="700">PROJECTION FAILURE — FACE_FRONT</text>
+  <text x="1002" y="340" fill="#ffffff" font-family="Arial" font-size="15">1 causa raíz / 25 landmarks afectados</text>
+  <text x="1002" y="369" fill="#b9adc8" font-family="Arial" font-size="14">camera/world matrix mismatch</text>
+  <rect x="980" y="410" rx="14" width="370" height="128" fill="#211d16" stroke="#957633"/>
+  <text x="1002" y="442" fill="#f4c34f" font-family="Arial" font-size="16" font-weight="700">Shoulder Derecha</text>
+  <text x="1002" y="472" fill="#ffffff" font-family="Arial" font-size="15">verified_with_fallback</text>
+  <text x="1002" y="500" fill="#b9adc8" font-family="Arial" font-size="14">joint corridor + simetría bilateral</text>
+  <rect x="980" y="558" rx="14" width="370" height="94" fill="#191724"/>
+  <text x="1002" y="590" fill="#c7bdcf" font-family="Arial" font-size="15">Perfiles soportados</text>
+  <text x="1002" y="624" fill="#36d78b" font-family="Arial" font-size="16">BODY_BASIC · BODY_HANDS_BASIC</text>
+  <rect x="980" y="690" rx="14" width="176" height="54" fill="#2a2035"/><text x="1004" y="723" fill="white" font-family="Arial" font-size="15">Corregir análisis</text>
+  <rect x="1172" y="690" rx="14" width="178" height="54" fill="#7b38f2"/><text x="1193" y="723" fill="white" font-family="Arial" font-size="15">Analizar y riggear</text>
+  <text x="58" y="866" fill="#81758f" font-family="Arial" font-size="14">Mock de referencia del nuevo visor; el avatar activo ya no queda cubierto por tarjetas flotantes.</text>
+</svg>
