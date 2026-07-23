@@ -27,13 +27,18 @@ test("V4.1 visualizer exposes the real GLB, evidence and professional controls",
 
 test("V4 API remains side-by-side with V3.2 and reanalysis uses a clean source", () => {
   const source = read("./worker/garment-rig/app_v18.py");
+  const persistedCache = read("./worker/garment-rig/app_v17.py");
   assert.match(source, /import app_v17 as v32/);
   assert.match(source, /\/avatar\/analyze-v4/);
   assert.match(source, /\/avatar\/complete-rig-v4/);
   assert.match(source, /legacyV32Preserved/);
   assert.match(source, /_rerun_cached_source_v4/);
-  assert.match(source, /_prune_cached_v4/);
-  assert.match(source, /rglob\("\*\.npy"\)/);
+  assert.match(source, /_persist_run_v4/);
+  assert.match(source, /V4_DURABLE_SUFFIXES/);
+  assert.match(source, /partial-/);
+  assert.doesNotMatch(source, /shutil\.copytree\(output_dir/);
+  assert.match(persistedCache, /incomplete/);
+  assert.match(persistedCache, /shutil\.rmtree\(destination/);
   assert.match(source, /executedAsCleanPipeline/);
   assert.match(source, /ANALYZER_RESULT_STALE/);
 });

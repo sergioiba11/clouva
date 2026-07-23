@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import time
 from typing import Any, Literal
+import uuid
 
 import app_v17 as v32
 from analyzer_v4_contract import (
@@ -41,6 +42,7 @@ AVATAR_ANALYZER_V4_SCRIPT = Path(__file__).with_name("avatar_analyzer_v4.py")
 ANALYZER_AUTORIG_V4_SCRIPT = Path(__file__).with_name("autorig_avatar_v19.py")
 REQUESTED_PROFILE_ENV = "CLOUVA_REQUESTED_RIG_PROFILE"
 REANALYSIS_ENV = "CLOUVA_REANALYSIS_OPERATION"
+V4_DURABLE_SUFFIXES = {".glb", ".json", ".png"}
 RigProfileLiteral = Literal[
     "BODY_BASIC", "BODY_FACE", "BODY_HANDS_BASIC", "FULL_HUMANOID", "FULL_BODY_HANDS_FACE",
     "body_only", "body_with_hands", "full_humanoid", "full_humanoid_with_face",
@@ -197,11 +199,7 @@ def _run_analysis_v4(source_url: str, requested_profile: str, operation: str | N
         if missing:
             raise RuntimeError(f"Avatar Analyzer V4 no generó: {', '.join(missing)}")
         analysis = json.loads(analysis_path.read_text(encoding="utf-8"))
-        cached = v32._persist_run(output_dir, analysis)
-        source_dir = cached / "source"
-        source_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(input_path, source_dir / "avatar-original-clean.glb")
-        _prune_cached_v4(cached)
+        cached = _persist_run_v4(output_dir, analysis, input_path)
         return job_dir, output_dir, cached, analysis
     except subprocess.TimeoutExpired as exc:
         shutil.rmtree(job_dir, ignore_errors=True)
@@ -255,11 +253,7 @@ def _rerun_cached_source_v4(source_path: Path, requested_profile: str, operation
         if missing:
             raise RuntimeError(f"Avatar Analyzer V4 no generó: {', '.join(missing)}")
         analysis = json.loads((output_dir / "avatar_analysis.json").read_text(encoding="utf-8"))
-        cached = v32._persist_run(output_dir, analysis)
-        cached_source = cached / "source"
-        cached_source.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(input_path, cached_source / "avatar-original-clean.glb")
-        _prune_cached_v4(cached)
+        cached = _persist_run_v4(output_dir, analysis, input_path)
         return job_dir, cached, analysis
     except subprocess.TimeoutExpired as exc:
         shutil.rmtree(job_dir, ignore_errors=True)
@@ -272,18 +266,37 @@ def _rerun_cached_source_v4(source_path: Path, requested_profile: str, operation
         raise HTTPException(status_code=422, detail=f"No se pudo reanalizar el avatar con V4: {exc}") from exc
 
 
-def _prune_cached_v4(run_dir: Path):
-    """Keep durable user-facing evidence without filling the persistent volume.
-
-    NPY matrices are reproducible technical intermediates used during the
-    analysis itself. The stable result needs the JSON audit trail, PNG evidence,
-    diagnostic GLB and immutable source GLB for clean reanalysis.
-    """
-    for path in run_dir.rglob("*.npy"):
-        try:
-            path.unlink()
-        except OSError:
-            continue
+def _persist_run_v4(output_dir: Path, analysis: dict[str, Any], source_path: Path):
+    """Atomically retain only user-facing evidence on the bounded volume."""
+    run_id = str(analysis.get("runId") or "")
+    if not v32.RUN_ID_PATTERN.fullmatch(run_id):
+        raise RuntimeError("Avatar Analyzer V4 returned an invalid runId")
+    v32._cleanup_expired_runs()
+    v32.RUN_CACHE_ROOT.mkdir(parents=True, exist_ok=True)
+    destination = v32.RUN_CACHE_ROOT / run_id
+    staging = v32.RUN_CACHE_ROOT / f".{run_id}.partial-{uuid.uuid4().hex}"
+    try:
+        staging.mkdir(parents=True)
+        for source in output_dir.rglob("*"):
+            if not source.is_file() or source.suffix.lower() not in V4_DURABLE_SUFFIXES:
+                continue
+            target = staging / source.relative_to(output_dir)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+        source_dir = staging / "source"
+        source_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source_path, source_dir / "avatar-original-clean.glb")
+        (staging / "expires_at.json").write_text(json.dumps({
+            "runId": run_id,
+            "createdAt": time.time(),
+            "expiresAt": time.time() + v32.RUN_TTL_SECONDS,
+        }, indent=2), encoding="utf-8")
+        shutil.rmtree(destination, ignore_errors=True)
+        staging.replace(destination)
+        return destination
+    except Exception:
+        shutil.rmtree(staging, ignore_errors=True)
+        raise
 
 
 def _public_result(run_dir: Path):
