@@ -96,12 +96,13 @@ test("la interfaz y la API muestran las etapas oficiales con Analyzer previo", (
     "Preparando avatar original",
     "Analizando cuerpo, rostro y manos",
     "Creando esqueleto",
-    "Asignando pesos",
     "Listo para Unreal",
   ]) {
     assert.ok(rigRoute.includes(label), `Falta la etapa ${label} en la API`);
     assert.ok(libraryButton.includes(label), `Falta la etapa ${label} en la interfaz`);
   }
+  assert.ok(rigRoute.includes("Asignando pesos"), "Falta la etapa de pesos en la API");
+  assert.match(libraryButton, /Asignando(?: y validando)? pesos/);
 });
 
 test("Rehacer rig ejecuta Analyzer y Blender desde el original", () => {
