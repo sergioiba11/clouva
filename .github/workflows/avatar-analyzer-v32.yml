@@ -7,6 +7,7 @@ on:
       - "components/library/**"
       - "worker/garment-rig/**"
       - "tests-avatar-analyzer-v32.mjs"
+      - "eslint.config.mjs"
       - "package.json"
       - "package-lock.json"
       - ".github/workflows/avatar-analyzer-v32.yml"
@@ -17,7 +18,7 @@ permissions:
 
 jobs:
   frontend:
-    name: Typecheck, tests and build
+    name: Typecheck, lint, tests and build
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -34,6 +35,8 @@ jobs:
       - run: npm ci
       - name: TypeScript typecheck
         run: npm run typecheck
+      - name: ESLint
+        run: npm run lint
       - name: Avatar Engine tests
         run: node --import tsx --test tests-avatar-engine.mjs
       - name: Avatar Blender AutoRig tests
