@@ -100,6 +100,7 @@ class AnalysisGlbSanitizerTests(unittest.TestCase):
             self.assertEqual(report["attributesRemoved"], 4)
             self.assertEqual(report["morphTargetsRemoved"], 1)
             self.assertEqual(report["imagesRemoved"], 1)
+            self.assertEqual(report["totalVertices"], 3)
 
     def test_rejects_overwriting_or_invalid_input(self):
         with tempfile.TemporaryDirectory() as directory:

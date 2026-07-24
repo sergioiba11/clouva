@@ -46,6 +46,10 @@ REQUESTED_PROFILE_ENV = "CLOUVA_REQUESTED_RIG_PROFILE"
 REANALYSIS_ENV = "CLOUVA_REANALYSIS_OPERATION"
 V4_PHASE_ENV = "CLOUVA_AVATAR_ANALYZER_V4_PHASE"
 V4_DURABLE_SUFFIXES = {".glb", ".json", ".png"}
+MAX_ANALYSIS_INPUT_VERTICES = max(
+    20_000,
+    int(os.environ.get("CLOUVA_AVATAR_ANALYZER_MAX_INPUT_VERTICES", "2000000")),
+)
 RigProfileLiteral = Literal[
     "BODY_BASIC", "BODY_FACE", "BODY_HANDS_BASIC", "FULL_HUMANOID", "FULL_BODY_HANDS_FACE",
     "body_only", "body_with_hands", "full_humanoid", "full_humanoid_with_face",
@@ -168,6 +172,19 @@ def _headers(analysis: dict[str, Any]):
     }
 
 
+def _reject_if_too_heavy(sanitization: dict) -> None:
+    total_vertices = int(sanitization.get("totalVertices") or 0)
+    if total_vertices > MAX_ANALYSIS_INPUT_VERTICES:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "El avatar tiene demasiada geometría para analizarse "
+                f"({total_vertices} vertices, limite {MAX_ANALYSIS_INPUT_VERTICES}). "
+                "Reduci el detalle de la malla antes de subirla."
+            ),
+        )
+
+
 def _run_v4_blender_phases(
     input_path: Path,
     output_dir: Path,
@@ -215,9 +232,11 @@ def _run_analysis_v4(source_url: str, requested_profile: str, operation: str | N
             f"bytes={sanitization['sourceBytes']}->{sanitization['analysisBytes']} "
             f"attributesRemoved={sanitization['attributesRemoved']} "
             f"imagesRemoved={sanitization['imagesRemoved']} "
-            f"morphTargetsRemoved={sanitization['morphTargetsRemoved']}",
+            f"morphTargetsRemoved={sanitization['morphTargetsRemoved']} "
+            f"totalVertices={sanitization['totalVertices']}",
             flush=True,
         )
+        _reject_if_too_heavy(sanitization)
         gc.collect()
         environment = {**os.environ, REQUESTED_PROFILE_ENV: requested_profile}
         if operation:
@@ -261,7 +280,8 @@ def _rerun_cached_source_v4(source_path: Path, requested_profile: str, operation
     output_dir = job_dir / "analysis"
     try:
         shutil.copy2(source_path, input_path)
-        sanitize_glb_for_analysis(input_path, analysis_input_path)
+        sanitization = sanitize_glb_for_analysis(input_path, analysis_input_path)
+        _reject_if_too_heavy(sanitization)
         gc.collect()
         _run_v4_blender_phases(
             analysis_input_path,

@@ -41,6 +41,29 @@ def _clean_extensions(document: dict[str, Any]) -> None:
             document.pop("extensions", None)
 
 
+def _count_position_vertices(document: dict[str, Any]) -> int:
+    accessors = document.get("accessors")
+    if not isinstance(accessors, list):
+        return 0
+    total = 0
+    for mesh in document.get("meshes") or []:
+        if not isinstance(mesh, dict):
+            continue
+        for primitive in mesh.get("primitives") or []:
+            if not isinstance(primitive, dict):
+                continue
+            attributes = primitive.get("attributes")
+            if not isinstance(attributes, dict):
+                continue
+            accessor_index = attributes.get("POSITION")
+            if not isinstance(accessor_index, int) or not 0 <= accessor_index < len(accessors):
+                continue
+            accessor = accessors[accessor_index]
+            if isinstance(accessor, dict) and isinstance(accessor.get("count"), int):
+                total += accessor["count"]
+    return total
+
+
 def _sanitize_document(document: dict[str, Any]) -> dict[str, int]:
     report = {
         "attributesRemoved": 0,
@@ -50,6 +73,7 @@ def _sanitize_document(document: dict[str, Any]) -> dict[str, int]:
         "imagesRemoved": len(document.get("images") or []),
         "animationsRemoved": len(document.get("animations") or []),
         "skinsRemoved": len(document.get("skins") or []),
+        "totalVertices": _count_position_vertices(document),
     }
 
     for mesh in document.get("meshes") or []:
