@@ -73,6 +73,7 @@ export default function AvatarIaPage() {
   const [libraryRevision, setLibraryRevision] = useState(0);
 
   const cropVersionRef = useRef(0);
+  const cropControllerRef = useRef<AbortController | null>(null);
   const requestControllerRef = useRef<AbortController | null>(null);
   const objectUrlsRef = useRef(new Set<string>());
 
@@ -92,13 +93,15 @@ export default function AvatarIaPage() {
 
   useEffect(() => () => {
     cropVersionRef.current += 1;
+    cropControllerRef.current?.abort();
     requestControllerRef.current?.abort();
     revokeAllObjectUrls();
   }, []);
 
   const pollTask = async (taskId: string, signal: AbortSignal): Promise<TaskResult> => {
     while (!signal.aborted) {
-      const response = await fetch(`/api/meshy/status?taskId=${encodeURIComponent(taskId)}&kind=multi-image`, {
+      const response = await fetch(`/api/meshy/status?taskId=${encodeURIComponent(taskId)}&kind=avatar-multi-image`, {
+        headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : undefined,
         cache: "no-store",
         signal,
       });
@@ -114,6 +117,8 @@ export default function AvatarIaPage() {
   const chooseSheet = async (file: File | null) => {
     const cropVersion = cropVersionRef.current + 1;
     cropVersionRef.current = cropVersion;
+    cropControllerRef.current?.abort();
+    cropControllerRef.current = null;
     requestControllerRef.current?.abort();
     requestControllerRef.current = null;
     revokeAllObjectUrls();
@@ -137,13 +142,15 @@ export default function AvatarIaPage() {
       return;
     }
 
+    const cropController = new AbortController();
+    cropControllerRef.current = cropController;
     setSheet(file);
     setSheetPreview(rememberObjectUrl(file));
     setPhase("processing");
 
     try {
-      const cropped = await cropAvatarTriptych(file);
-      if (cropVersionRef.current !== cropVersion) return;
+      const cropped = await cropAvatarTriptych(file, cropController.signal);
+      if (cropController.signal.aborted || cropVersionRef.current !== cropVersion) return;
 
       const nextFiles = { ...EMPTY_FILES };
       const nextPreviews = { ...EMPTY_PREVIEWS };
@@ -156,7 +163,7 @@ export default function AvatarIaPage() {
         nextPreviews[reference.role] = previewUrl;
       }
 
-      if (cropVersionRef.current !== cropVersion) {
+      if (cropController.signal.aborted || cropVersionRef.current !== cropVersion) {
         localUrls.forEach((url) => URL.revokeObjectURL(url));
         return;
       }
@@ -167,9 +174,12 @@ export default function AvatarIaPage() {
       setSourceDimensions({ width: cropped.sourceWidth, height: cropped.sourceHeight });
       setPhase("idle");
     } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
       if (cropVersionRef.current !== cropVersion) return;
       setErrorMsg(error instanceof Error ? error.message : "No pudimos preparar la lámina.");
       setPhase("error");
+    } finally {
+      if (cropControllerRef.current === cropController) cropControllerRef.current = null;
     }
   };
 
@@ -268,7 +278,7 @@ export default function AvatarIaPage() {
         <p className="text-xs font-semibold uppercase tracking-[0.24em] text-violet-300/80">Frente | Espalda | Costado</p>
         <h1 className="mt-3 text-3xl font-semibold text-white sm:text-5xl">Creá el personaje desde una lámina</h1>
         <p className="mt-3 max-w-2xl text-sm leading-6 text-white/60 sm:text-base">
-          Subí una única imagen horizontal con las tres vistas del mismo personaje. Esta etapa crea y guarda el GLB original de Meshy como borrador, sin ejecutar todavía el Analyzer ni el AutoRig.
+          Subí una única imagen horizontal con frente, espalda y costado izquierdo del mismo personaje. Esta etapa crea y guarda el GLB original de Meshy como borrador, sin ejecutar todavía el Analyzer ni el AutoRig.
         </p>
 
         <div className="mt-6 grid grid-cols-3 overflow-hidden rounded-2xl border border-white/10 bg-black/25 text-center text-xs font-medium text-white/70">
@@ -293,7 +303,11 @@ export default function AvatarIaPage() {
             accept="image/png,image/jpeg,image/webp"
             className="hidden"
             disabled={busy}
-            onChange={(event) => void chooseSheet(event.target.files?.[0] ?? null)}
+            onChange={(event) => {
+              const file = event.currentTarget.files?.[0] ?? null;
+              event.currentTarget.value = "";
+              void chooseSheet(file);
+            }}
           />
         </label>
 
