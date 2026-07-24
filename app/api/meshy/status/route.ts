@@ -47,7 +47,7 @@ export async function GET(request: NextRequest) {
   try {
     if (kind === "avatar-multi-image") {
       const ownership = await getOwnedAvatarTask(request, taskId);
-      if (ownership.error) return ownership.error;
+      if ("error" in ownership) return ownership.error;
       return NextResponse.json(await getMultiImageTask(taskId));
     }
 
