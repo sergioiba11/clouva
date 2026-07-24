@@ -466,7 +466,7 @@ def run(input_path: Path, output_dir: Path):
         initial_manifest = render_multiview_v32(
             initial_render_dir, body_vectors, float(body_report["dimensions"]["height"]),
             meshes=meshes, segmentation=segmentation, classifications=classifications,
-            anatomy_bvh=anatomy_bvh, resolution=512, technical_resolution=256,
+            anatomy_bvh=anatomy_bvh, resolution=384, technical_resolution=192,
             hand_framing=1.72, attempt="initial",
         )
         manifests.append(initial_manifest)
@@ -499,8 +499,8 @@ def run(input_path: Path, output_dir: Path):
             final_render_dir, body_vectors, float(body_report["dimensions"]["height"]),
             meshes=meshes, segmentation=segmentation, classifications=classifications,
             anatomy_bvh=topology_bvh,
-            resolution=768 if low_hand_evidence or low_face_evidence else 512,
-            technical_resolution=320 if low_hand_evidence or low_face_evidence else 256,
+            resolution=512,
+            technical_resolution=224,
             hand_framing=1.92 if low_hand_evidence else 1.76,
             face_framing=2.08 if low_face_evidence else 1.98,
             attempt="retry" if low_hand_evidence or low_face_evidence else "final",
