@@ -44,6 +44,7 @@ AVATAR_ANALYZER_V4_SCRIPT = Path(__file__).with_name("avatar_analyzer_v4.py")
 ANALYZER_AUTORIG_V4_SCRIPT = Path(__file__).with_name("autorig_avatar_v19.py")
 REQUESTED_PROFILE_ENV = "CLOUVA_REQUESTED_RIG_PROFILE"
 REANALYSIS_ENV = "CLOUVA_REANALYSIS_OPERATION"
+V4_PHASE_ENV = "CLOUVA_AVATAR_ANALYZER_V4_PHASE"
 V4_DURABLE_SUFFIXES = {".glb", ".json", ".png"}
 RigProfileLiteral = Literal[
     "BODY_BASIC", "BODY_FACE", "BODY_HANDS_BASIC", "FULL_HUMANOID", "FULL_BODY_HANDS_FACE",
@@ -167,6 +168,38 @@ def _headers(analysis: dict[str, Any]):
     }
 
 
+def _run_v4_blender_phases(
+    input_path: Path,
+    output_dir: Path,
+    environment: dict[str, str],
+    job_dir: Path,
+):
+    phase_logs = []
+    for phase in ("base", "upgrade"):
+        result = subprocess.run(
+            [
+                legacy.BLENDER_BIN, "--background", "--factory-startup",
+                "--python-exit-code", "1", "--python", str(AVATAR_ANALYZER_V4_SCRIPT),
+                "--", str(input_path), str(output_dir),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=max(legacy.BLENDER_TIMEOUT_SECONDS, 900),
+            cwd=str(job_dir),
+            env={**environment, V4_PHASE_ENV: phase},
+        )
+        phase_logs.append(result.stderr or result.stdout or "")
+        if result.returncode != 0:
+            technical = (
+                result.stderr
+                or result.stdout
+                or f"Blender Avatar Analyzer V4 {phase} phase failed"
+            )[-12000:]
+            raise RuntimeError(technical)
+        gc.collect()
+    return phase_logs
+
+
 def _run_analysis_v4(source_url: str, requested_profile: str, operation: str | None = None):
     if not AVATAR_ANALYZER_V4_SCRIPT.is_file():
         raise HTTPException(status_code=500, detail="Falta avatar_analyzer_v4.py en el Blender Worker")
@@ -186,28 +219,18 @@ def _run_analysis_v4(source_url: str, requested_profile: str, operation: str | N
             flush=True,
         )
         gc.collect()
-        command = [
-            legacy.BLENDER_BIN, "--background", "--factory-startup",
-            "--python-exit-code", "1", "--python", str(AVATAR_ANALYZER_V4_SCRIPT),
-            "--", str(analysis_input_path), str(output_dir),
-        ]
         environment = {**os.environ, REQUESTED_PROFILE_ENV: requested_profile}
         if operation:
             environment[REANALYSIS_ENV] = operation
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            timeout=max(legacy.BLENDER_TIMEOUT_SECONDS, 900),
-            cwd=str(job_dir),
-            env=environment,
+        _run_v4_blender_phases(
+            analysis_input_path,
+            output_dir,
+            environment,
+            job_dir,
         )
         report_path = output_dir / "diagnostic_report.json"
         analysis_path = output_dir / "avatar_analysis.json"
         diagnostic_glb = output_dir / "diagnostic_landmarks.glb"
-        if result.returncode != 0:
-            technical = (result.stderr or result.stdout or "Blender Avatar Analyzer V4 failed")[-12000:]
-            raise RuntimeError(technical)
         missing = [path.name for path in (report_path, analysis_path, diagnostic_glb) if not path.is_file()]
         if missing:
             raise RuntimeError(f"Avatar Analyzer V4 no generó: {', '.join(missing)}")
@@ -240,31 +263,21 @@ def _rerun_cached_source_v4(source_path: Path, requested_profile: str, operation
         shutil.copy2(source_path, input_path)
         sanitize_glb_for_analysis(input_path, analysis_input_path)
         gc.collect()
-        command = [
-            legacy.BLENDER_BIN, "--background", "--factory-startup",
-            "--python-exit-code", "1", "--python", str(AVATAR_ANALYZER_V4_SCRIPT),
-            "--", str(analysis_input_path), str(output_dir),
-        ]
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            timeout=max(legacy.BLENDER_TIMEOUT_SECONDS, 900),
-            cwd=str(job_dir),
-            env={
+        _run_v4_blender_phases(
+            analysis_input_path,
+            output_dir,
+            {
                 **os.environ,
                 REQUESTED_PROFILE_ENV: requested_profile,
                 REANALYSIS_ENV: operation,
             },
+            job_dir,
         )
         required = (
             output_dir / "diagnostic_report.json",
             output_dir / "avatar_analysis.json",
             output_dir / "diagnostic_landmarks.glb",
         )
-        if result.returncode != 0:
-            technical = (result.stderr or result.stdout or "Blender Avatar Analyzer V4 failed")[-12000:]
-            raise RuntimeError(technical)
         missing = [path.name for path in required if not path.is_file()]
         if missing:
             raise RuntimeError(f"Avatar Analyzer V4 no generó: {', '.join(missing)}")

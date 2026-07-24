@@ -151,10 +151,21 @@ test("Avatar Analyzer sanitizes the GLB before Blender without touching the sour
   const sanitizer = read("worker/garment-rig/analysis_glb_sanitizer.py");
   const dockerfile = read("worker/garment-rig/Dockerfile");
   assert.match(api, /sanitize_glb_for_analysis\(input_path, analysis_input_path\)/);
-  assert.match(api, /str\(analysis_input_path\), str\(output_dir\)/);
+  assert.match(api, /_run_v4_blender_phases\(\s*analysis_input_path,/);
+  assert.match(api, /"--", str\(input_path\), str\(output_dir\)/);
   assert.match(api, /_persist_run_v4\(output_dir, analysis, input_path\)/);
   assert.match(sanitizer, /clouvaAnalysisSanitized/);
   assert.match(sanitizer, /primitive\.pop\("material", None\)/);
   assert.match(sanitizer, /"animations",/);
   assert.match(dockerfile, /test_analysis_glb_sanitizer\.py/);
+});
+
+test("Avatar Analyzer resets Blender memory between the base and V4 upgrade phases", () => {
+  const api = read("worker/garment-rig/app_v18.py");
+  const analyzer = read("worker/garment-rig/avatar_analyzer_v4.py");
+  assert.match(api, /for phase in \("base", "upgrade"\)/);
+  assert.match(api, /V4_PHASE_ENV: phase/);
+  assert.match(analyzer, /if phase == "base"/);
+  assert.match(analyzer, /if phase == "upgrade"/);
+  assert.match(analyzer, /_restore_clean_analysis_scene\(input_path\)/);
 });
