@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { TRIPTYCH_AVATAR_GENERATION_KIND } from "@/lib/avatar-generation-server";
 import { AVATAR_MULTI_IMAGE_TASK_CONFIG, createAvatarMultiImageTask } from "@/lib/meshy";
 import {
   ALLOWED_AVATAR_REFERENCE_TYPES,
@@ -33,9 +34,13 @@ export async function POST(request: NextRequest) {
     if (userError || !userData.user) return NextResponse.json({ error: "Invalid session" }, { status: 401 });
 
     const form = await request.formData();
+    const entries = [...form.entries()];
     const files = {} as Record<AvatarReferenceRole, File>;
 
-    for (const [key] of form.entries()) {
+    if (entries.length !== AVATAR_REFERENCE_ORDER.length) {
+      return NextResponse.json({ error: "Se requieren exactamente front, back y side" }, { status: 400 });
+    }
+    for (const [key] of entries) {
       if (!AVATAR_REFERENCE_ORDER.includes(key as AvatarReferenceRole)) {
         return NextResponse.json({ error: `Campo inesperado: ${key}` }, { status: 400 });
       }
@@ -78,11 +83,12 @@ export async function POST(request: NextRequest) {
         if (uploadError) throw uploadError;
         uploadedPaths.push(storagePath);
         const { data } = supabase.storage.from("avatars").getPublicUrl(storagePath);
+        if (!data.publicUrl) throw new Error("Reference URL generation failed");
         uploads.push({ role, storagePath, publicUrl: data.publicUrl });
       }
 
       const imageUrls = AVATAR_REFERENCE_ORDER.map((role) => uploads.find((item) => item.role === role)?.publicUrl ?? "");
-      if (imageUrls.some((url) => !url)) throw new Error("No se pudo conservar el orden frente, espalda y costado");
+      if (imageUrls.some((url) => !url)) throw new Error("Reference order validation failed");
 
       const taskId = await createAvatarMultiImageTask(imageUrls);
       const referencePaths = Object.fromEntries(uploads.map((item) => [item.role, item.storagePath]));
@@ -104,7 +110,7 @@ export async function POST(request: NextRequest) {
           is_active: false,
           config: {},
           metadata: {
-            generation_kind: "triptych-multi-image",
+            generation_kind: TRIPTYCH_AVATAR_GENERATION_KIND,
             reference_order: [...AVATAR_REFERENCE_ORDER],
             reference_paths: referencePaths,
             reference_urls: referenceUrls,
@@ -131,7 +137,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error("Triptych avatar generation failed", error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "No se pudo iniciar la generación" },
+      { error: "No se pudo iniciar la generación del personaje" },
       { status: 500 },
     );
   }
