@@ -17,6 +17,7 @@ const page = readFileSync("app/mi-flow/avatar-ia/page.tsx", "utf8");
 const fromImageRoute = readFileSync("app/api/avatar/from-image/route.ts", "utf8");
 const finalizeRoute = readFileSync("app/api/avatar/finalize/route.ts", "utf8");
 const syncRoute = readFileSync("app/api/avatar/sync/route.ts", "utf8");
+const statusRoute = readFileSync("app/api/meshy/status/route.ts", "utf8");
 const generationServer = readFileSync("lib/avatar-generation-server.ts", "utf8");
 const triptychClient = readFileSync("lib/avatar-triptych-client.ts", "utf8");
 const library = readFileSync("components/avatar-engine/AvatarLibrary.tsx", "utf8");
@@ -56,6 +57,8 @@ test("las proporciones incompatibles se rechazan", () => {
 
 
 test("la API exige exactamente front, back y side y valida tipo y tamaño", () => {
+  assert.match(fromImageRoute, /const entries = \[\.\.\.form\.entries\(\)\]/);
+  assert.match(fromImageRoute, /entries\.length !== AVATAR_REFERENCE_ORDER\.length/);
   assert.match(fromImageRoute, /form\.getAll\(role\)/);
   assert.match(fromImageRoute, /values\.length !== 1/);
   assert.match(fromImageRoute, /Se requieren exactamente front, back y side/);
@@ -66,7 +69,7 @@ test("la API exige exactamente front, back y side y valida tipo y tamaño", () =
 });
 
 
-test("el navegador recorta sin reescalar y exporta WEBP con nombres estables", () => {
+test("el navegador recorta sin reescalar, cancela resultados viejos y exporta WEBP", () => {
   assert.match(triptychClient, /canvas\.width = region\.width/);
   assert.match(triptychClient, /canvas\.height = region\.height/);
   assert.match(triptychClient, /context\.drawImage\([\s\S]*region\.x[\s\S]*region\.width[\s\S]*region\.width/);
@@ -75,6 +78,10 @@ test("el navegador recorta sin reescalar y exporta WEBP con nombres estables", (
   assert.match(triptychClient, /avatar-back\.webp/);
   assert.match(triptychClient, /avatar-side\.webp/);
   assert.match(triptychClient, /imageOrientation: "from-image"/);
+  assert.match(triptychClient, /signal\?\.aborted/);
+  assert.match(page, /cropControllerRef\.current\?\.abort\(\)/);
+  assert.match(page, /cropAvatarTriptych\(file, cropController\.signal\)/);
+  assert.match(page, /URL\.revokeObjectURL/);
 });
 
 
@@ -117,10 +124,21 @@ test("Meshy recibe exactamente tres URLs y la configuración específica de avat
 
 
 test("el flujo de avatar no cambia el comportamiento general de createMultiImageTask", () => {
-  assert.match(meshy, /export async function createMultiImageTask\(imageUrls: string\[], texturePrompt\?: string\)/);
+  assert.match(meshy, /export async function createMultiImageTask\(imageUrls: string\[\], texturePrompt\?: string\)/);
   assert.match(meshy, /enable_pbr: true/);
   assert.match(meshy, /body\.texture_prompt = texturePrompt/);
   assert.match(meshy, /export async function createAvatarMultiImageTask/);
+});
+
+
+test("el polling del avatar exige sesión y verifica la propiedad del task", () => {
+  assert.match(page, /kind=avatar-multi-image/);
+  assert.match(page, /Authorization: `Bearer \$\{session\.access_token\}`/);
+  assert.match(statusRoute, /kind === "avatar-multi-image"/);
+  assert.match(statusRoute, /supabase\.auth\.getUser\(accessToken\)/);
+  assert.match(statusRoute, /\.eq\("user_id", userData\.user\.id\)/);
+  assert.match(statusRoute, /\.eq\("meshy_task_id", taskId\)/);
+  assert.match(statusRoute, /isTriptychAvatarMetadata/);
 });
 
 
@@ -130,19 +148,24 @@ test("el guardado consulta Meshy por task ID y no acepta una URL arbitraria", ()
   assert.match(generationServer, /getMultiImageTask\(meshyTaskId\)/);
   assert.match(generationServer, /\.eq\("user_id", userId\)/);
   assert.match(generationServer, /\.eq\("meshy_task_id", meshyTaskId\)/);
+  assert.match(generationServer, /isTriptychAvatarMetadata/);
   assert.match(generationServer, /task\.status !== "SUCCEEDED"/);
 });
 
 
-test("el GLB se valida, hashea y copia permanentemente a Supabase", () => {
+test("el GLB se valida, hashea y copia permanentemente de forma reintentable", () => {
   assert.match(generationServer, /MAX_AVATAR_GLB_BYTES = 25 \* 1024 \* 1024/);
+  assert.match(generationServer, /bytes\.byteLength < 12/);
   assert.match(generationServer, /subarray\(0, 4\)\.toString\("ascii"\) !== "glTF"/);
   assert.match(generationServer, /createHash\("sha256"\)/);
   assert.match(generationServer, /source\/avatar-meshy\.glb/);
   assert.match(generationServer, /source\/avatar-pre-remeshed\.glb/);
   assert.match(generationServer, /upsert: false/);
+  assert.match(generationServer, /bucket\.download\(storagePath\)/);
+  assert.match(generationServer, /existingSha256 === glb\.sha256/);
   assert.match(generationServer, /glb_sha256/);
   assert.match(generationServer, /timestamp: now/);
+  assert.match(generationServer, /source_immutable: true/);
   assert.match(generationServer, /meshy_remote_urls:[\s\S]*temporary: true/);
 });
 
@@ -158,11 +181,20 @@ test("el avatar queda pending_analysis, inactivo y conserva el activo anterior",
 });
 
 
-test("sync también conserva el borrador pendiente sin marcarlo ready", () => {
+test("sync aísla la lámina y conserva el comportamiento de generaciones anteriores", () => {
+  assert.match(syncRoute, /isTriptychAvatarMetadata\(previousMetadata\)/);
   assert.match(syncRoute, /finalizePendingAvatarGeneration/);
   assert.match(syncRoute, /status: "pending_analysis"/);
-  assert.doesNotMatch(syncRoute, /status: "ready"/);
+  assert.match(syncRoute, /finalizeLegacyMultiImageAvatar/);
+  assert.match(syncRoute, /status: "ready"/);
   assert.doesNotMatch(syncRoute, /from\("profiles"\)/);
+});
+
+
+test("las rutas del avatar no exponen errores internos inesperados", () => {
+  assert.match(fromImageRoute, /No se pudo iniciar la generación del personaje/);
+  assert.match(finalizeRoute, /No se pudo guardar permanentemente el personaje/);
+  assert.match(syncRoute, /No se pudo sincronizar la biblioteca de avatares/);
 });
 
 
@@ -178,6 +210,7 @@ test("la página no ejecuta rig ni activa el avatar", () => {
 test("la interfaz muestra la lámina, los tres recortes y el GLB permanente", () => {
   assert.match(page, /Lámina del personaje/);
   assert.match(page, /Frente \| Espalda \| Costado/);
+  assert.match(page, /costado izquierdo/);
   assert.match(page, /3072 × 1024/);
   assert.match(page, /referencePreviews\[role\]/);
   assert.match(page, /<model-viewer/);
