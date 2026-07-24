@@ -30,7 +30,6 @@ async function loadWithImageElement(file: File, signal?: AbortSignal): Promise<L
   try {
     await new Promise<void>((resolve, reject) => {
       const cleanup = () => {
-        signal?.removeEventListener("abort", abort);
         image.onload = null;
         image.onerror = null;
       };
@@ -40,10 +39,12 @@ async function loadWithImageElement(file: File, signal?: AbortSignal): Promise<L
       };
       signal?.addEventListener("abort", abort, { once: true });
       image.onload = () => {
+        signal?.removeEventListener("abort", abort);
         cleanup();
         resolve();
       };
       image.onerror = () => {
+        signal?.removeEventListener("abort", abort);
         cleanup();
         reject(new Error("No pudimos abrir la lámina."));
       };
