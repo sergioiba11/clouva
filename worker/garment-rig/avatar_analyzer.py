@@ -5,6 +5,7 @@ creates an evidence-rich anatomical map and never creates the production rig.
 """
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -12,6 +13,8 @@ import subprocess
 import sys
 import time
 import traceback
+import urllib.error
+import urllib.request
 import uuid
 from pathlib import Path
 
@@ -49,6 +52,8 @@ DETECTOR_SCRIPT = Path(os.environ.get(
     SCRIPT_DIR / "landmark_detector_2d.py",
 ))
 DETECTOR_TIMEOUT_SECONDS = int(os.environ.get("CLOUVA_LANDMARK_DETECTOR_TIMEOUT_SECONDS", "180"))
+DETECTOR_SERVICE_URL = os.environ.get("CLOUVA_MEDIAPIPE_SERVICE_URL", "").strip().rstrip("/")
+DETECTOR_SERVICE_TOKEN = os.environ.get("CLOUVA_MEDIAPIPE_SERVICE_TOKEN")
 
 
 def _args():
@@ -106,7 +111,56 @@ def _dedupe_warnings(items):
     return list(grouped.values())
 
 
+def _encode_image_field(view: dict, field: str) -> str | None:
+    path = view.get(field)
+    if not path or not Path(path).is_file():
+        return None
+    return base64.b64encode(Path(path).read_bytes()).decode("ascii")
+
+
+def _run_detector_remote(manifest: dict, attempt: str):
+    views = manifest.get("views", [])
+    body = json.dumps({
+        "version": VERSION,
+        "attempt": attempt,
+        "views": [
+            {
+                "name": view.get("name"),
+                "region": view.get("region"),
+                "side": view.get("side"),
+                "pathB64": _encode_image_field(view, "path"),
+                "edgePathB64": _encode_image_field(view, "edgePath"),
+                "silhouettePathB64": _encode_image_field(view, "silhouettePath"),
+            }
+            for view in views
+        ],
+    }).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    if DETECTOR_SERVICE_TOKEN:
+        headers["Authorization"] = f"Bearer {DETECTOR_SERVICE_TOKEN}"
+    request = urllib.request.Request(
+        f"{DETECTOR_SERVICE_URL}/detect", data=body, headers=headers, method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=DETECTOR_TIMEOUT_SECONDS) as response:
+            output = json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError) as exc:
+        return {
+            "version": "failed", "views": [], "attempt": attempt,
+            "errors": [{
+                "code": "MEDIAPIPE_SERVICE_UNREACHABLE", "message": str(exc), "attempt": attempt,
+            }],
+        }, {"returnCode": None, "stdout": "", "stderr": str(exc)}
+    output["attempt"] = attempt
+    for error in output.get("errors") or []:
+        error.setdefault("attempt", attempt)
+    output["errors"] = _dedupe_warnings(output.get("errors") or [])
+    return output, {"returnCode": 0, "stdout": "", "stderr": "", "remote": DETECTOR_SERVICE_URL}
+
+
 def _run_detector(manifest: dict, output_dir: Path, attempt: str):
+    if DETECTOR_SERVICE_URL:
+        return _run_detector_remote(manifest, attempt)
     request_path = output_dir / f"detector_request_{attempt}.json"
     response_path = output_dir / f"detector_output_{attempt}.json"
     _write_json(request_path, {"version": VERSION, "attempt": attempt, "views": manifest.get("views", [])})
