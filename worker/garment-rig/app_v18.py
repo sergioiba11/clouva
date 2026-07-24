@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import gc
 import json
 import os
 from pathlib import Path
@@ -13,6 +14,7 @@ from typing import Any, Literal
 import uuid
 
 import app_v17 as v32
+from analysis_glb_sanitizer import sanitize_glb_for_analysis
 from analyzer_v4_contract import (
     ANALYZER_VERSION,
     APPROVED_STATES,
@@ -170,13 +172,24 @@ def _run_analysis_v4(source_url: str, requested_profile: str, operation: str | N
         raise HTTPException(status_code=500, detail="Falta avatar_analyzer_v4.py en el Blender Worker")
     job_dir = Path(tempfile.mkdtemp(prefix="clouva-avatar-analyzer-v4-"))
     input_path = job_dir / "avatar-original-clean.glb"
+    analysis_input_path = job_dir / "avatar-analysis-sanitized.glb"
     output_dir = job_dir / "analysis"
     try:
         legacy.download(source_url, input_path)
+        sanitization = sanitize_glb_for_analysis(input_path, analysis_input_path)
+        print(
+            "[clouva-avatar-analyzer] pre-Blender GLB sanitizer "
+            f"bytes={sanitization['sourceBytes']}->{sanitization['analysisBytes']} "
+            f"attributesRemoved={sanitization['attributesRemoved']} "
+            f"imagesRemoved={sanitization['imagesRemoved']} "
+            f"morphTargetsRemoved={sanitization['morphTargetsRemoved']}",
+            flush=True,
+        )
+        gc.collect()
         command = [
             legacy.BLENDER_BIN, "--background", "--factory-startup",
             "--python-exit-code", "1", "--python", str(AVATAR_ANALYZER_V4_SCRIPT),
-            "--", str(input_path), str(output_dir),
+            "--", str(analysis_input_path), str(output_dir),
         ]
         environment = {**os.environ, REQUESTED_PROFILE_ENV: requested_profile}
         if operation:
@@ -221,13 +234,16 @@ def _rerun_cached_source_v4(source_path: Path, requested_profile: str, operation
         })
     job_dir = Path(tempfile.mkdtemp(prefix="clouva-avatar-analyzer-v4-reanalysis-"))
     input_path = job_dir / "avatar-original-clean.glb"
+    analysis_input_path = job_dir / "avatar-analysis-sanitized.glb"
     output_dir = job_dir / "analysis"
     try:
         shutil.copy2(source_path, input_path)
+        sanitize_glb_for_analysis(input_path, analysis_input_path)
+        gc.collect()
         command = [
             legacy.BLENDER_BIN, "--background", "--factory-startup",
             "--python-exit-code", "1", "--python", str(AVATAR_ANALYZER_V4_SCRIPT),
-            "--", str(input_path), str(output_dir),
+            "--", str(analysis_input_path), str(output_dir),
         ]
         result = subprocess.run(
             command,

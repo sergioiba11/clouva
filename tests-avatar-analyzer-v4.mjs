@@ -145,3 +145,16 @@ test("Avatar Analyzer bounds topology, textures and orientation memory", () => {
   assert.match(contract, /"technical_resolution": 256/);
   assert.match(dockerfile, /test_analysis_memory_guard\.py/);
 });
+
+test("Avatar Analyzer sanitizes the GLB before Blender without touching the source", () => {
+  const api = read("worker/garment-rig/app_v18.py");
+  const sanitizer = read("worker/garment-rig/analysis_glb_sanitizer.py");
+  const dockerfile = read("worker/garment-rig/Dockerfile");
+  assert.match(api, /sanitize_glb_for_analysis\(input_path, analysis_input_path\)/);
+  assert.match(api, /str\(analysis_input_path\), str\(output_dir\)/);
+  assert.match(api, /_persist_run_v4\(output_dir, analysis, input_path\)/);
+  assert.match(sanitizer, /clouvaAnalysisSanitized/);
+  assert.match(sanitizer, /primitive\.pop\("material", None\)/);
+  assert.match(sanitizer, /"animations",/);
+  assert.match(dockerfile, /test_analysis_glb_sanitizer\.py/);
+});
