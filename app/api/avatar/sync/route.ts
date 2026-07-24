@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createClient } from "@supabase/supabase-js";
-import { finalizePendingAvatarGeneration } from "@/lib/avatar-generation-server";
-import { getMultiImageTask } from "@/lib/meshy";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import {
+  AvatarGenerationError,
+  asAvatarMetadata,
+  downloadGeneratedGlb,
+  finalizePendingAvatarGeneration,
+  isTriptychAvatarMetadata,
+} from "@/lib/avatar-generation-server";
+import { getMultiImageTask, type MeshyTask } from "@/lib/meshy";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -13,8 +19,46 @@ function getAdminClient() {
   return createClient(url, serviceRole, { auth: { persistSession: false, autoRefreshToken: false } });
 }
 
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+async function finalizeLegacyMultiImageAvatar(args: {
+  supabase: SupabaseClient;
+  userId: string;
+  avatar: { id: string; metadata: unknown };
+  task: MeshyTask;
+}) {
+  const { supabase, userId, avatar, task } = args;
+  if (!task.model_urls?.glb) throw new AvatarGenerationError("Meshy terminó sin devolver un GLB", 502);
+
+  const glb = await downloadGeneratedGlb(task.model_urls.glb, "GLB de Meshy");
+  const storagePath = `${userId}/${avatar.id}/avatar.glb`;
+  const bucket = supabase.storage.from("avatars");
+  const { error: uploadError } = await bucket.upload(storagePath, glb.bytes, {
+    contentType: "model/gltf-binary",
+    cacheControl: "3600",
+    upsert: true,
+  });
+  if (uploadError) throw new AvatarGenerationError("No se pudo guardar el GLB generado", 500);
+
+  const { data: publicData } = bucket.getPublicUrl(storagePath);
+  const now = new Date().toISOString();
+  const { error: updateError } = await supabase
+    .from("user_avatars")
+    .update({
+      status: "ready",
+      model_url: publicData.publicUrl,
+      storage_path: storagePath,
+      updated_at: now,
+      metadata: {
+        ...asAvatarMetadata(avatar.metadata),
+        original_meshy_url: task.model_urls.glb,
+        glb_sha256: glb.sha256,
+        glb_size_bytes: glb.sizeBytes,
+        remote_status: task.status,
+      },
+    })
+    .eq("id", avatar.id)
+    .eq("user_id", userId)
+    .eq("status", "generating");
+  if (updateError) throw new AvatarGenerationError("No se pudo actualizar la generación anterior", 500);
 }
 
 export async function POST(request: NextRequest) {
@@ -38,9 +82,12 @@ export async function POST(request: NextRequest) {
     const results: Array<{ id: string; status: string; remoteStatus?: string; progress?: number; error?: string }> = [];
 
     for (const avatar of pending ?? []) {
+      const meshyTaskId = String(avatar.meshy_task_id ?? "");
+      if (!meshyTaskId) continue;
+
       try {
-        const task = await getMultiImageTask(avatar.meshy_task_id);
-        const previousMetadata = asRecord(avatar.metadata);
+        const task = await getMultiImageTask(meshyTaskId);
+        const previousMetadata = asAvatarMetadata(avatar.metadata);
 
         if (["FAILED", "EXPIRED", "CANCELED"].includes(task.status)) {
           const message = task.task_error?.message
@@ -72,14 +119,22 @@ export async function POST(request: NextRequest) {
           continue;
         }
 
-        await finalizePendingAvatarGeneration(supabase, userData.user.id, avatar.meshy_task_id);
-        results.push({ id: avatar.id, status: "pending_analysis", remoteStatus: task.status, progress: 100 });
+        if (isTriptychAvatarMetadata(previousMetadata)) {
+          await finalizePendingAvatarGeneration(supabase, userData.user.id, meshyTaskId);
+          results.push({ id: avatar.id, status: "pending_analysis", remoteStatus: task.status, progress: 100 });
+        } else {
+          await finalizeLegacyMultiImageAvatar({ supabase, userId: userData.user.id, avatar, task });
+          results.push({ id: avatar.id, status: "ready", remoteStatus: task.status, progress: 100 });
+        }
       } catch (error) {
-        const message = error instanceof Error ? error.message : "Sync failed";
+        console.error("Avatar sync item failed", { avatarId: avatar.id, error });
+        const message = error instanceof AvatarGenerationError
+          ? error.message
+          : "No se pudo sincronizar esta generación";
         await supabase
           .from("user_avatars")
           .update({
-            metadata: { ...asRecord(avatar.metadata), sync_error: message },
+            metadata: { ...asAvatarMetadata(avatar.metadata), sync_error: message },
             updated_at: new Date().toISOString(),
           })
           .eq("id", avatar.id)
@@ -91,6 +146,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true, results });
   } catch (error) {
     console.error("Avatar sync failed", error);
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Avatar sync failed" }, { status: 500 });
+    return NextResponse.json({ error: "No se pudo sincronizar la biblioteca de avatares" }, { status: 500 });
   }
 }
