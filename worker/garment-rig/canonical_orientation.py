@@ -6,9 +6,17 @@ matrices required to map back to the source coordinate system are retained.
 """
 from __future__ import annotations
 
+import gc
+import math
+import os
+
 from mathutils import Matrix, Vector
 
 AXIS_NAMES = ("X", "Y", "Z")
+MAX_ORIENTATION_POINTS = max(
+    20_000,
+    int(os.environ.get("CLOUVA_AVATAR_ANALYZER_ORIENTATION_POINTS", "100000")),
+)
 
 
 def _vec(value: Vector):
@@ -20,7 +28,21 @@ def _matrix(value: Matrix):
 
 
 def _points(meshes):
-    return [obj.matrix_world @ vertex.co for obj in meshes for vertex in obj.data.vertices]
+    meshes = list(meshes)
+    total = sum(len(obj.data.vertices) for obj in meshes)
+    stride = max(1, math.ceil(total / MAX_ORIENTATION_POINTS))
+    points = [
+        obj.matrix_world @ vertex.co
+        for obj in meshes
+        for index, vertex in enumerate(obj.data.vertices)
+        if index % stride == 0
+    ]
+    points.extend(
+        obj.matrix_world @ Vector(corner)
+        for obj in meshes
+        for corner in obj.bound_box
+    )
+    return points
 
 
 def _bounds(points):
@@ -126,10 +148,16 @@ def canonicalize_temporary_copy(meshes):
     canonical = horizontal_transform @ mirror_transform @ up_transform
     inverse = canonical.inverted_safe()
 
+    del up_aligned
+    del points
+    gc.collect()
+
     for obj in meshes:
-        # The scene was imported fresh for this operation. Copying the data keeps
-        # linked meshes isolated and makes the normalization temporary by design.
-        obj.data = obj.data.copy()
+        # The scene was imported fresh for this operation, so single-user mesh
+        # data is already isolated from the immutable GLB on disk. Duplicate only
+        # genuinely shared datablocks to avoid doubling peak memory.
+        if obj.data.users > 1:
+            obj.data = obj.data.copy()
         transform = canonical @ obj.matrix_world
         obj.data.transform(transform, shape_keys=True)
         obj.matrix_world = Matrix.Identity(4)
@@ -139,6 +167,8 @@ def canonicalize_temporary_copy(meshes):
 
     canonical_points = _points(meshes)
     canonical_minimum, canonical_maximum, canonical_size = _bounds(canonical_points)
+    del canonical_points
+    gc.collect()
     up_confidence = max(0.0, min(1.0, (elongation - 1.0) / 0.85))
     front_confidence = max(0.0, min(1.0, float(horizontal_report["frontEvidence"]["asymmetry"]) * 2.4))
     orientation_confidence = up_confidence * 0.72 + front_confidence * 0.28
