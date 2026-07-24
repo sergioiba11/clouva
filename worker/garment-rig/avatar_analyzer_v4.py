@@ -33,6 +33,7 @@ from preflight_v4 import run_preflight
 VERSION = ANALYZER_VERSION
 REQUESTED_PROFILE_ENV = "CLOUVA_REQUESTED_RIG_PROFILE"
 REANALYSIS_ENV = "CLOUVA_REANALYSIS_OPERATION"
+PHASE_ENV = "CLOUVA_AVATAR_ANALYZER_V4_PHASE"
 
 
 def _args():
@@ -150,12 +151,15 @@ def _refresh_optional_modules(analysis: dict, output_dir: Path):
                 pass
 
 
-def run(input_path: Path, output_dir: Path):
-    started = time.perf_counter()
+def _upgrade_from_v32(
+    input_path: Path,
+    output_dir: Path,
+    legacy_analysis: dict,
+    legacy_report: dict,
+    started: float,
+):
     requested_profile = os.environ.get(REQUESTED_PROFILE_ENV, "body_only").strip() or "body_only"
     requested_operation = os.environ.get(REANALYSIS_ENV, "").strip() or None
-    legacy_analysis, legacy_report = analyzer_v32.run(input_path, output_dir)
-    gc.collect()
     calibration, v4_attempt = _refresh_optional_modules(legacy_analysis, output_dir)
     analysis = upgrade_analysis_v4(
         legacy_analysis,
@@ -201,6 +205,48 @@ def run(input_path: Path, output_dir: Path):
     _write(report_path, report)
     print(f"[clouva-avatar-analyzer-v4] {json.dumps(report, separators=(',', ':'))}", flush=True)
     return analysis, report
+
+
+def _restore_clean_analysis_scene(input_path: Path):
+    meshes = analyzer_v32.autorig_v16.import_original_fresh(input_path)
+    memory_guard = analyzer_v32.prepare_analysis_meshes(meshes)
+    analyzer_v32.autorig_v16._IMPORT_REPORT["analysisMemoryGuard"] = memory_guard
+    analyzer_v32.canonicalize_temporary_copy(meshes)
+    return meshes
+
+
+def run(input_path: Path, output_dir: Path):
+    started = time.perf_counter()
+    phase = os.environ.get(PHASE_ENV, "").strip().lower()
+    if phase == "base":
+        result = analyzer_v32.run(input_path, output_dir)
+        print("[clouva-avatar-analyzer-v4] base phase completed", flush=True)
+        return result
+    if phase == "upgrade":
+        analysis_path = output_dir / "avatar_analysis.json"
+        report_path = output_dir / "diagnostic_report.json"
+        if not analysis_path.is_file() or not report_path.is_file():
+            raise RuntimeError("V4 upgrade phase requires completed V3.2 output")
+        legacy_analysis = json.loads(analysis_path.read_text(encoding="utf-8"))
+        legacy_report = json.loads(report_path.read_text(encoding="utf-8"))
+        _restore_clean_analysis_scene(input_path)
+        return _upgrade_from_v32(
+            input_path,
+            output_dir,
+            legacy_analysis,
+            legacy_report,
+            started,
+        )
+
+    legacy_analysis, legacy_report = analyzer_v32.run(input_path, output_dir)
+    gc.collect()
+    return _upgrade_from_v32(
+        input_path,
+        output_dir,
+        legacy_analysis,
+        legacy_report,
+        started,
+    )
 
 
 def main():
