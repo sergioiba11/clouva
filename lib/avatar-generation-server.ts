@@ -149,6 +149,7 @@ export async function finalizePendingAvatarGeneration(
       reference_order: [...AVATAR_REFERENCE_ORDER],
       meshy_task_id: meshyTaskId,
       analyzer_status: "not_started",
+      timestamp: now,
       generated_at: now,
       glb_sha256: mainGlb.sha256,
       glb_size_bytes: mainGlb.sizeBytes,

@@ -61,7 +61,8 @@ test("la API exige exactamente front, back y side y valida tipo y tamaño", () =
   assert.match(fromImageRoute, /Se requieren exactamente front, back y side/);
   assert.match(fromImageRoute, /ALLOWED_AVATAR_REFERENCE_TYPES/);
   assert.match(fromImageRoute, /MAX_AVATAR_REFERENCE_BYTES/);
-  assert.match(fromImageRoute, /Archivo inesperado/);
+  assert.match(fromImageRoute, /Campo inesperado/);
+  assert.doesNotMatch(fromImageRoute, /form\.get\("prompt"\)/);
 });
 
 
@@ -141,6 +142,7 @@ test("el GLB se valida, hashea y copia permanentemente a Supabase", () => {
   assert.match(generationServer, /source\/avatar-pre-remeshed\.glb/);
   assert.match(generationServer, /upsert: false/);
   assert.match(generationServer, /glb_sha256/);
+  assert.match(generationServer, /timestamp: now/);
   assert.match(generationServer, /meshy_remote_urls:[\s\S]*temporary: true/);
 });
 
