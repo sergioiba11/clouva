@@ -1,15 +1,41 @@
 const MESHY_BASE = "https://api.meshy.ai/openapi/v2/text-to-3d";
 const MESHY_MULTI_IMAGE_BASE = "https://api.meshy.ai/openapi/v1/multi-image-to-3d";
 
-type MeshyTask = {
+export type MeshyTaskStatus = "PENDING" | "IN_PROGRESS" | "SUCCEEDED" | "FAILED" | "EXPIRED" | "CANCELED";
+
+export type MeshyModelUrls = {
+  glb?: string;
+  pre_remeshed_glb?: string;
+  fbx?: string;
+  obj?: string;
+};
+
+export type MeshyTask = {
   id?: string;
-  status: "PENDING" | "IN_PROGRESS" | "SUCCEEDED" | "FAILED" | "EXPIRED" | "CANCELED";
+  status: MeshyTaskStatus;
   progress?: number;
-  model_urls?: { glb?: string; fbx?: string; obj?: string };
+  model_urls?: MeshyModelUrls;
   result?: Record<string, unknown> | null;
   thumbnail_url?: string;
-  task_error?: { message?: string };
+  thumbnail_urls?: string[] | Record<string, string>;
+  task_error?: { message?: string; code?: string };
+  error?: { message?: string; code?: string } | string;
 };
+
+export const AVATAR_MULTI_IMAGE_TASK_CONFIG = {
+  ai_model: "meshy-6",
+  pose_mode: "a-pose",
+  should_texture: true,
+  enable_pbr: false,
+  should_remesh: true,
+  topology: "quad",
+  target_polycount: 100000,
+  save_pre_remeshed_model: true,
+  image_enhancement: false,
+  remove_lighting: true,
+  multi_view_thumbnails: true,
+  target_formats: ["glb"],
+} as const;
 
 function getMeshyApiKey() {
   const apiKey = process.env.MESHY_API_KEY?.trim();
@@ -94,6 +120,19 @@ export async function createMultiImageTask(imageUrls: string[], texturePrompt?: 
   };
   if (texturePrompt?.trim()) body.texture_prompt = texturePrompt.trim().slice(0, 600);
   const data = await meshyFetchAbsolute(MESHY_MULTI_IMAGE_BASE, { method: "POST", body: JSON.stringify(body) });
+  if (!data?.result || typeof data.result !== "string") throw new Error("Meshy no devolvió un ID de generación válido");
+  return data.result as string;
+}
+
+export async function createAvatarMultiImageTask(imageUrls: string[]) {
+  if (imageUrls.length !== 3) throw new Error("El avatar necesita exactamente tres referencias: frente, espalda y costado");
+  const data = await meshyFetchAbsolute(MESHY_MULTI_IMAGE_BASE, {
+    method: "POST",
+    body: JSON.stringify({
+      image_urls: imageUrls,
+      ...AVATAR_MULTI_IMAGE_TASK_CONFIG,
+    }),
+  });
   if (!data?.result || typeof data.result !== "string") throw new Error("Meshy no devolvió un ID de generación válido");
   return data.result as string;
 }

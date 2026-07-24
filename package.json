@@ -10,7 +10,7 @@
     "start": "next start",
     "lint": "eslint app components lib tests-*.mjs",
     "typecheck": "tsc --noEmit",
-    "test:legacy": "node --import tsx --test tests-avatar-engine.mjs tests-avatar-blender-autorig.mjs tests-creator-rig.mjs tests-creator-studio-simple.mjs tests-project-access.mjs tests-real-garment-review.mjs tests-automatic-unreal-mold.mjs tests-reference-assets.mjs",
+    "test:legacy": "node --import tsx --test tests-avatar-engine.mjs tests-avatar-blender-autorig.mjs tests-avatar-triptych.mjs tests-creator-rig.mjs tests-creator-studio-simple.mjs tests-project-access.mjs tests-real-garment-review.mjs tests-automatic-unreal-mold.mjs tests-reference-assets.mjs",
     "test:avatar-analyzer": "node --test tests-avatar-analyzer-v32.mjs tests-avatar-analyzer-v4.mjs",
     "test:avatar-analyzer:python": "cd worker/garment-rig && python -m unittest test_avatar_analyzer_v4_contract.py test_avatar_analyzer_v41.py",
     "test": "npm run test:legacy && npm run test:avatar-analyzer"

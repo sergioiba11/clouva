@@ -24,6 +24,14 @@ type SyncResult = {
   error?: string;
 };
 
+function statusLabel(status: string) {
+  if (status === "generating") return "En proceso";
+  if (status === "pending_analysis") return "Pendiente de análisis";
+  if (status === "ready") return "Listo";
+  if (status === "failed") return "Falló";
+  return status;
+}
+
 export function AvatarLibrary() {
   const { session } = useAuth();
   const setActiveAvatar = useActiveAvatarStore((state) => state.setActiveAvatar);
@@ -74,8 +82,8 @@ export function AvatarLibrary() {
             const remote = pending.remoteStatus ? `Meshy: ${pending.remoteStatus}` : "Meshy todavía la está procesando";
             const progress = typeof pending.progress === "number" ? ` · ${pending.progress}%` : "";
             setSyncInfo(`${remote}${progress}`);
-          } else if (results.some((result) => result.status === "ready")) {
-            setSyncInfo("La generación terminó y ya fue guardada.");
+          } else if (results.some((result) => result.status === "pending_analysis")) {
+            setSyncInfo("La generación terminó y quedó pendiente de análisis.");
           }
         }
         await fetchLibrary();
@@ -169,11 +177,12 @@ export function AvatarLibrary() {
 
       <div className="mt-5 grid gap-4 sm:grid-cols-2">
         {avatars.map((avatar) => {
-          const ready = avatar.status === "ready" && Boolean(avatar.model_url);
+          const hasModel = Boolean(avatar.model_url);
+          const activatable = avatar.status === "ready" && hasModel;
           return (
             <article key={avatar.id} className={`overflow-hidden rounded-3xl border ${avatar.is_active ? "border-violet-400/70" : "border-white/10"} bg-white/[0.03]`}>
               <div className="aspect-square bg-black/30">
-                {ready ? (
+                {hasModel ? (
                   <model-viewer src={avatar.model_url ?? ""} alt={avatar.name} camera-controls auto-rotate style={{ width: "100%", height: "100%" }} />
                 ) : avatar.preview_image_url ? (
                   <img src={avatar.preview_image_url} alt={avatar.name} className="h-full w-full object-contain" />
@@ -186,14 +195,14 @@ export function AvatarLibrary() {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <h3 className="text-sm font-medium text-white">{avatar.name}</h3>
-                    <p className="mt-1 text-xs text-white/45">
-                      {avatar.status === "generating" ? "En proceso" : avatar.status === "ready" ? "Listo" : avatar.status === "failed" ? "Falló" : avatar.status}
+                    <p className={`mt-1 text-xs ${avatar.status === "pending_analysis" ? "text-amber-200" : "text-white/45"}`}>
+                      {statusLabel(avatar.status)}
                     </p>
                   </div>
                   {avatar.is_active ? <span className="rounded-full bg-violet-400/15 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-violet-200">Activo</span> : null}
                 </div>
 
-                {ready && !avatar.is_active ? (
+                {activatable && !avatar.is_active ? (
                   <button
                     type="button"
                     onClick={() => void activate(avatar)}

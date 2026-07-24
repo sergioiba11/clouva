@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { createMultiImageTask } from "@/lib/meshy";
+import { AVATAR_MULTI_IMAGE_TASK_CONFIG, createAvatarMultiImageTask } from "@/lib/meshy";
+import {
+  ALLOWED_AVATAR_REFERENCE_TYPES,
+  AVATAR_REFERENCE_ORDER,
+  MAX_AVATAR_REFERENCE_BYTES,
+  type AvatarReferenceRole,
+} from "@/lib/avatar-triptych";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
-const ALLOWED_TYPES = new Set(["image/png", "image/jpeg", "image/webp"]);
 
 function getAdminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -30,69 +33,102 @@ export async function POST(request: NextRequest) {
     if (userError || !userData.user) return NextResponse.json({ error: "Invalid session" }, { status: 401 });
 
     const form = await request.formData();
-    const front = form.get("front");
-    const back = form.get("back");
-    const prompt = typeof form.get("prompt") === "string" ? String(form.get("prompt")) : "";
+    const files = {} as Record<AvatarReferenceRole, File>;
 
-    if (!(front instanceof File) || !(back instanceof File)) {
-      return NextResponse.json({ error: "Faltan las imágenes de frente y espalda" }, { status: 400 });
+    for (const [key, value] of form.entries()) {
+      if (value instanceof File && !AVATAR_REFERENCE_ORDER.includes(key as AvatarReferenceRole)) {
+        return NextResponse.json({ error: `Archivo inesperado: ${key}` }, { status: 400 });
+      }
     }
 
-    for (const file of [front, back]) {
-      if (!ALLOWED_TYPES.has(file.type)) return NextResponse.json({ error: "Usá PNG, JPG o WEBP" }, { status: 415 });
-      if (file.size > MAX_IMAGE_BYTES) return NextResponse.json({ error: "Cada imagen debe pesar menos de 8 MB" }, { status: 413 });
+    for (const role of AVATAR_REFERENCE_ORDER) {
+      const values = form.getAll(role);
+      if (values.length !== 1 || !(values[0] instanceof File)) {
+        return NextResponse.json({ error: "Se requieren exactamente front, back y side" }, { status: 400 });
+      }
+      const file = values[0];
+      if (!ALLOWED_AVATAR_REFERENCE_TYPES.has(file.type)) {
+        return NextResponse.json({ error: `${role}: usá PNG, JPG o WEBP` }, { status: 415 });
+      }
+      if (file.size <= 0 || file.size > MAX_AVATAR_REFERENCE_BYTES) {
+        return NextResponse.json({ error: `${role}: cada referencia debe pesar entre 1 byte y 8 MB` }, { status: 413 });
+      }
+      files[role] = file;
     }
 
-    const referenceId = crypto.randomUUID();
-    const uploads = await Promise.all(
-      [
-        { key: "front", file: front },
-        { key: "back", file: back },
-      ].map(async ({ key, file }) => {
-        const storagePath = `${userData.user.id}/references/${referenceId}-${key}.${extensionFor(file)}`;
+    const avatarId = crypto.randomUUID();
+    const executionId = crypto.randomUUID();
+    const uploadedPaths: string[] = [];
+
+    try {
+      const uploads: Array<{
+        role: AvatarReferenceRole;
+        storagePath: string;
+        publicUrl: string;
+      }> = [];
+
+      for (const role of AVATAR_REFERENCE_ORDER) {
+        const file = files[role];
+        const storagePath = `${userData.user.id}/${avatarId}/references/${executionId}/avatar-${role}.${extensionFor(file)}`;
         const { error: uploadError } = await supabase.storage.from("avatars").upload(storagePath, await file.arrayBuffer(), {
           contentType: file.type,
-          cacheControl: "3600",
+          cacheControl: "31536000",
           upsert: false,
         });
         if (uploadError) throw uploadError;
+        uploadedPaths.push(storagePath);
         const { data } = supabase.storage.from("avatars").getPublicUrl(storagePath);
-        return { key, storagePath, publicUrl: data.publicUrl };
-      }),
-    );
+        uploads.push({ role, storagePath, publicUrl: data.publicUrl });
+      }
 
-    const imageUrls = uploads.map((item) => item.publicUrl);
-    const taskId = await createMultiImageTask(imageUrls, prompt);
-    const avatarId = crypto.randomUUID();
+      const imageUrls = AVATAR_REFERENCE_ORDER.map((role) => uploads.find((item) => item.role === role)?.publicUrl ?? "");
+      if (imageUrls.some((url) => !url)) throw new Error("No se pudo conservar el orden frente, espalda y costado");
 
-    const { data: avatar, error: insertError } = await supabase
-      .from("user_avatars")
-      .insert({
-        id: avatarId,
-        user_id: userData.user.id,
-        name: "Avatar frente + espalda",
-        source: "generated",
-        status: "generating",
-        model_url: null,
-        storage_path: null,
-        preview_image_url: imageUrls[0],
-        meshy_task_id: taskId,
-        is_active: false,
-        config: {},
-        metadata: {
-          generation_kind: "multi-image",
-          reference_paths: uploads.map((item) => item.storagePath),
-          reference_urls: imageUrls,
-          texture_prompt: prompt || null,
-        },
-      })
-      .select("id,user_id,name,status,preview_image_url,meshy_task_id,is_active,created_at,updated_at")
-      .single();
-    if (insertError) throw insertError;
+      const taskId = await createAvatarMultiImageTask(imageUrls);
+      const referencePaths = Object.fromEntries(uploads.map((item) => [item.role, item.storagePath]));
+      const referenceUrls = Object.fromEntries(uploads.map((item) => [item.role, item.publicUrl]));
+      const now = new Date().toISOString();
 
-    return NextResponse.json({ taskId, imageUrls, avatar });
+      const { data: avatar, error: insertError } = await supabase
+        .from("user_avatars")
+        .insert({
+          id: avatarId,
+          user_id: userData.user.id,
+          name: "Avatar por lámina",
+          source: "generated",
+          status: "generating",
+          model_url: null,
+          storage_path: null,
+          preview_image_url: referenceUrls.front,
+          meshy_task_id: taskId,
+          is_active: false,
+          config: {},
+          metadata: {
+            generation_kind: "triptych-multi-image",
+            reference_order: [...AVATAR_REFERENCE_ORDER],
+            reference_paths: referencePaths,
+            reference_urls: referenceUrls,
+            reference_execution_id: executionId,
+            meshy_task_id: taskId,
+            meshy_configuration: {
+              image_urls: imageUrls,
+              ...AVATAR_MULTI_IMAGE_TASK_CONFIG,
+            },
+            analyzer_status: "not_started",
+            created_at: now,
+          },
+        })
+        .select("id,user_id,name,status,preview_image_url,meshy_task_id,is_active,created_at,updated_at")
+        .single();
+      if (insertError) throw insertError;
+
+      return NextResponse.json({ taskId, avatar });
+    } catch (error) {
+      if (uploadedPaths.length) await supabase.storage.from("avatars").remove(uploadedPaths);
+      throw error;
+    }
   } catch (error) {
-    console.error("Image avatar generation failed", error);
+    console.error("Triptych avatar generation failed", error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "No se pudo iniciar la generación" },
       { status: 500 },
