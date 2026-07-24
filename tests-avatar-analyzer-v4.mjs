@@ -142,7 +142,12 @@ test("Avatar Analyzer bounds topology, textures and orientation memory", () => {
   assert.match(orientation, /MAX_ORIENTATION_POINTS/);
   assert.match(orientation, /obj\.data\.users > 1/);
   assert.match(analyzer, /prepare_analysis_meshes/);
-  assert.match(contract, /"technical_resolution": 256/);
+  assert.match(contract, /"body_resolution": 512/);
+  assert.match(contract, /"face_crop_resolution": 384/);
+  assert.match(contract, /"hand_crop_resolution": 320/);
+  assert.match(contract, /"technical_resolution": 192/);
+  assert.match(analyzer, /resolution=384, technical_resolution=192/);
+  assert.match(analyzer, /resolution=512,\s*technical_resolution=224/);
   assert.match(dockerfile, /test_analysis_memory_guard\.py/);
 });
 

@@ -82,10 +82,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "minimum_matrix_determinant": 1e-9,
     },
     "render": {
-        "body_resolution": 640,
-        "face_crop_resolution": 512,
-        "hand_crop_resolution": 384,
-        "technical_resolution": 256,
+        "body_resolution": 512,
+        "face_crop_resolution": 384,
+        "hand_crop_resolution": 320,
+        "technical_resolution": 192,
     },
 }
 
