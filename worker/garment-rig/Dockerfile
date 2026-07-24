@@ -137,6 +137,8 @@ RUN test -f /app/app.py \
     && test -f /app/test_avatar_analyzer.py \
     && test -f /app/test_avatar_analyzer_v32.py \
     && test -f /app/test_avatar_analyzer_v4_contract.py \
+    && test -f /app/analysis_glb_sanitizer.py \
+    && test -f /app/test_analysis_glb_sanitizer.py \
     && test -f /app/analysis_memory_guard.py \
     && test -f /app/test_analysis_memory_guard.py \
     && test -f /app/test_blender_headless_render.py \
@@ -149,7 +151,7 @@ RUN test -f /app/app.py \
 RUN python3 -c "from mediapipe.tasks import python; from mediapipe.tasks.python import vision; face=vision.FaceLandmarker.create_from_options(vision.FaceLandmarkerOptions(base_options=python.BaseOptions(model_asset_path='/app/models/face_landmarker.task'),running_mode=vision.RunningMode.IMAGE,num_faces=1)); hand=vision.HandLandmarker.create_from_options(vision.HandLandmarkerOptions(base_options=python.BaseOptions(model_asset_path='/app/models/hand_landmarker.task'),running_mode=vision.RunningMode.IMAGE,num_hands=1)); face.close(); hand.close(); print('[clouva] MediaPipe Face + Hand Landmarker models load OK')"
 RUN env PYTHONPATH=/app /usr/local/bin/blender-headless --background --factory-startup --python-exit-code 1 --python /app/test_blender_headless_render.py
 RUN env PYTHONPATH=/app /usr/local/bin/blender-headless --background --factory-startup --python-exit-code 1 --python /app/test_analysis_memory_guard.py
-RUN cd /app && python3 -m unittest -v test_avatar_analyzer_v4_contract.py test_avatar_analyzer_v41.py
+RUN cd /app && python3 -m unittest -v test_avatar_analyzer_v4_contract.py test_avatar_analyzer_v41.py test_analysis_glb_sanitizer.py
 RUN python3 /app/test_worker_api_v32.py
 RUN python3 /app/test_worker_api_v4.py
 
