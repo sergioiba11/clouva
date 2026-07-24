@@ -35,9 +35,9 @@ export async function POST(request: NextRequest) {
     const form = await request.formData();
     const files = {} as Record<AvatarReferenceRole, File>;
 
-    for (const [key, value] of form.entries()) {
-      if (value instanceof File && !AVATAR_REFERENCE_ORDER.includes(key as AvatarReferenceRole)) {
-        return NextResponse.json({ error: `Archivo inesperado: ${key}` }, { status: 400 });
+    for (const [key] of form.entries()) {
+      if (!AVATAR_REFERENCE_ORDER.includes(key as AvatarReferenceRole)) {
+        return NextResponse.json({ error: `Campo inesperado: ${key}` }, { status: 400 });
       }
     }
 
@@ -115,6 +115,7 @@ export async function POST(request: NextRequest) {
               ...AVATAR_MULTI_IMAGE_TASK_CONFIG,
             },
             analyzer_status: "not_started",
+            timestamp: now,
             created_at: now,
           },
         })
