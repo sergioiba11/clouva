@@ -316,16 +316,24 @@ def _rerun_cached_source_v4(source_path: Path, requested_profile: str, operation
 
 
 def _persist_run_v4(output_dir: Path, analysis: dict[str, Any], source_path: Path):
-    """Atomically retain only user-facing evidence on the bounded volume."""
+    """Build the durable run evidence on local disk, then commit it to the
+    (possibly network-backed, e.g. GCS FUSE) run cache volume in one move.
+
+    Staging directly on the cache volume made every intermediate write and
+    the final directory rename go through the network filesystem; a rename
+    of a directory with many small files is emulated by FUSE as one rename
+    per object and can exhaust file handles. Building the tree on local disk
+    keeps that churn off the network mount, and shutil.move() copies once
+    when crossing filesystems instead of renaming per file.
+    """
     run_id = str(analysis.get("runId") or "")
     if not v32.RUN_ID_PATTERN.fullmatch(run_id):
         raise RuntimeError("Avatar Analyzer V4 returned an invalid runId")
     v32._cleanup_expired_runs()
     v32.RUN_CACHE_ROOT.mkdir(parents=True, exist_ok=True)
     destination = v32.RUN_CACHE_ROOT / run_id
-    staging = v32.RUN_CACHE_ROOT / f".{run_id}.partial-{uuid.uuid4().hex}"
+    staging = Path(tempfile.mkdtemp(prefix=f"clouva-run-staging-{run_id}-"))
     try:
-        staging.mkdir(parents=True)
         for source in output_dir.rglob("*"):
             if not source.is_file() or source.suffix.lower() not in V4_DURABLE_SUFFIXES:
                 continue
@@ -341,7 +349,7 @@ def _persist_run_v4(output_dir: Path, analysis: dict[str, Any], source_path: Pat
             "expiresAt": time.time() + v32.RUN_TTL_SECONDS,
         }, indent=2), encoding="utf-8")
         shutil.rmtree(destination, ignore_errors=True)
-        staging.replace(destination)
+        shutil.move(str(staging), str(destination))
         return destination
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)
