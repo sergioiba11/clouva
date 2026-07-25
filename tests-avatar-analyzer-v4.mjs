@@ -35,7 +35,8 @@ test("V4 API remains side-by-side with V3.2 and reanalysis uses a clean source",
   assert.match(source, /_rerun_cached_source_v4/);
   assert.match(source, /_persist_run_v4/);
   assert.match(source, /V4_DURABLE_SUFFIXES/);
-  assert.match(source, /partial-/);
+  assert.match(source, /tempfile\.mkdtemp\(prefix=f"clouva-run-staging-/);
+  assert.match(source, /shutil\.move\(str\(staging\), str\(destination\)\)/);
   assert.doesNotMatch(source, /shutil\.copytree\(output_dir/);
   assert.match(persistedCache, /incomplete/);
   assert.match(persistedCache, /shutil\.rmtree\(destination/);
