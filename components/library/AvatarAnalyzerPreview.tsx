@@ -360,20 +360,55 @@ type JobStatus = {
 
 const JOB_POLL_INTERVAL_MS = 4000;
 const JOB_POLL_TIMEOUT_MS = 20 * 60 * 1000;
+const ACTIVE_JOB_KEY = "clouva.avatarAnalyzer.activeJob.v1";
+
+type PersistedJob = { jobId: string; startedAt: number };
+
+function saveActiveJob(job: PersistedJob | null) {
+  if (typeof window === "undefined") return;
+  if (job) window.localStorage.setItem(ACTIVE_JOB_KEY, JSON.stringify(job));
+  else window.localStorage.removeItem(ACTIVE_JOB_KEY);
+}
+
+function loadActiveJob(): PersistedJob | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(ACTIVE_JOB_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<PersistedJob>;
+    if (!parsed.jobId || !parsed.startedAt) return null;
+    return { jobId: parsed.jobId, startedAt: parsed.startedAt };
+  } catch {
+    return null;
+  }
+}
 
 async function pollAnalysisJob(jobId: string, accessToken: string): Promise<JobStatus> {
   const deadline = Date.now() + JOB_POLL_TIMEOUT_MS;
   while (Date.now() < deadline) {
-    const response = await fetch(`/api/avatar/analyze/job/${jobId}`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
-      cache: "no-store",
-    });
-    const data = await response.json() as JobStatus & { error?: string };
+    let response: Response;
+    try {
+      response = await fetch(`/api/avatar/analyze/job/${jobId}`, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+        cache: "no-store",
+      });
+    } catch (cause) {
+      // La red se corta cuando el celular se bloquea/la pestaña queda en segundo plano.
+      // Es transitorio: reintentamos en vez de abortar el análisis en curso.
+      console.warn("Avatar Analyzer poll: sin red, reintentando", cause);
+      await new Promise((resolve) => window.setTimeout(resolve, JOB_POLL_INTERVAL_MS));
+      continue;
+    }
+    const data = await response.json().catch(() => null) as (JobStatus & { error?: string }) | null;
+    if (!data) {
+      await new Promise((resolve) => window.setTimeout(resolve, JOB_POLL_INTERVAL_MS));
+      continue;
+    }
     if (!response.ok) throw new Error(data.error || `No se pudo consultar el estado del análisis (${response.status}).`);
     if (data.status === "done" || data.status === "error") return data;
     await new Promise((resolve) => window.setTimeout(resolve, JOB_POLL_INTERVAL_MS));
   }
-  throw new Error("El análisis tardó demasiado y se canceló la espera. Probá de nuevo en unos minutos.");
+  throw new Error("El análisis está tardando demasiado y se canceló la espera en este dispositivo. Si el celular se bloqueó, esperá un momento y probá \"ABRIR ÚLTIMO ANÁLISIS\".");
 }
 
 export function AvatarAnalyzerPreview() {
@@ -520,27 +555,11 @@ export function AvatarAnalyzerPreview() {
     }
   };
 
-  const analyze = async () => {
+  const runJob = async (jobId: string, startedAt: number = Date.now()) => {
     if (!session?.access_token) return;
-    setAnalyzing(true);
-    setError(null);
-    setSummary(null);
-    setDetail(null);
-    setSelectedName("");
-    setCorrectionMessage(null);
-    setVisualCorrectionMode(false);
+    saveActiveJob({ jobId, startedAt });
     try {
-      const kickoff = await fetch("/api/avatar/analyze", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${session.access_token}` },
-        cache: "no-store",
-      });
-      const kickoffData = await kickoff.json().catch(() => ({})) as { jobId?: string; error?: string };
-      if (!kickoff.ok || !kickoffData.jobId) {
-        throw new Error(kickoffData.error || `No se pudo iniciar el análisis (${kickoff.status}).`);
-      }
-
-      const job = await pollAnalysisJob(kickoffData.jobId, session.access_token);
+      const job = await pollAnalysisJob(jobId, session.access_token);
       if (job.status === "error" || !job.runId) {
         throw new Error(job.detail || "No se pudo analizar el avatar.");
       }
@@ -561,6 +580,32 @@ export function AvatarAnalyzerPreview() {
       setCameraOrbit(CAMERA_PRESETS[0].orbit);
       setCameraTargetValue(targetValue(fallbackCenter));
       await loadDetail(job.runId, session.access_token);
+    } finally {
+      saveActiveJob(null);
+    }
+  };
+
+  const analyze = async () => {
+    if (!session?.access_token) return;
+    setAnalyzing(true);
+    setError(null);
+    setSummary(null);
+    setDetail(null);
+    setSelectedName("");
+    setCorrectionMessage(null);
+    setVisualCorrectionMode(false);
+    try {
+      const kickoff = await fetch("/api/avatar/analyze", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${session.access_token}` },
+        cache: "no-store",
+      });
+      const kickoffData = await kickoff.json().catch(() => ({})) as { jobId?: string; error?: string };
+      if (!kickoff.ok || !kickoffData.jobId) {
+        throw new Error(kickoffData.error || `No se pudo iniciar el análisis (${kickoff.status}).`);
+      }
+
+      await runJob(kickoffData.jobId);
     } catch (cause) {
       console.error("Avatar Analyzer UI failed", cause);
       setError(cause instanceof Error ? cause.message : "No se pudo analizar el avatar.");
@@ -568,6 +613,28 @@ export function AvatarAnalyzerPreview() {
       setAnalyzing(false);
     }
   };
+
+  const resumeAttemptedRef = useRef(false);
+  useEffect(() => {
+    if (resumeAttemptedRef.current) return;
+    if (authLoading || !session?.access_token) return;
+    resumeAttemptedRef.current = true;
+    const pending = loadActiveJob();
+    if (!pending) return;
+    if (Date.now() - pending.startedAt >= JOB_POLL_TIMEOUT_MS) {
+      saveActiveJob(null);
+      return;
+    }
+    setAnalyzing(true);
+    setError(null);
+    void runJob(pending.jobId, pending.startedAt)
+      .catch((cause) => {
+        console.error("Avatar Analyzer resume failed", cause);
+        setError(cause instanceof Error ? cause.message : "No se pudo retomar el análisis anterior.");
+      })
+      .finally(() => setAnalyzing(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authLoading, session?.access_token]);
 
   const restoreLatest = async () => {
     if (!session?.access_token) return;
