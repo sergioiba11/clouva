@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Shield, WandSparkles } from "lucide-react";
+import { ArrowLeft, BrainCircuit, Shield, WandSparkles } from "lucide-react";
 import { AvatarCanvas } from "@/components/avatar-engine/AvatarCanvas";
 import { AvatarControls } from "@/components/avatar-engine/AvatarControls";
 import { useAvatarStore } from "@/lib/avatar-engine/avatar-store";
@@ -51,6 +51,9 @@ export default function AvatarPage() {
           <Link href="/mi-flow/avatar-customizer" className="whitespace-nowrap rounded-full px-3 py-1.5 text-xs text-white/80 hover:bg-white/10">Personalizar</Link>
           <Link href="/mi-flow/crear-prenda" className="whitespace-nowrap rounded-full px-3 py-1.5 text-xs text-white/80 hover:bg-white/10">Crear prenda</Link>
           <Link href="/mi-flow/armario" className="whitespace-nowrap rounded-full px-3 py-1.5 text-xs text-white/80 hover:bg-white/10">Mi armario</Link>
+          <Link href="/avatar-analyzer-v4" className="flex whitespace-nowrap rounded-full px-3 py-1.5 text-xs text-sky-200 hover:bg-sky-500/20">
+            <BrainCircuit className="mr-1 h-3.5 w-3.5" /> Analyzer V4
+          </Link>
           <Link href="/creator-studio" className="flex whitespace-nowrap rounded-full px-3 py-1.5 text-xs text-violet-200 hover:bg-violet-500/20">
             <WandSparkles className="mr-1 h-3.5 w-3.5" /> Creator Studio
           </Link>
