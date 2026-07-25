@@ -18,7 +18,6 @@ import app_v17 as v32
 from analysis_glb_sanitizer import sanitize_glb_for_analysis
 from analyzer_v4_contract import (
     ANALYZER_VERSION,
-    APPROVED_STATES,
     MAP_VERSION,
     RIG_PROFILES,
     build_targeted_reanalysis_plan,
@@ -369,15 +368,10 @@ def _public_result(run_dir: Path):
             "currentMapVersion": MAP_VERSION,
         })
     report = json.loads((run_dir / "diagnostic_report.json").read_text(encoding="utf-8"))
-    landmarks = analysis.get("landmarks") or {}
-    accepted = {
-        name: item for name, item in landmarks.items()
-        if isinstance(item, dict) and item.get("state") in APPROVED_STATES
-    }
-    rejected = {
-        name: item for name, item in landmarks.items()
-        if isinstance(item, dict) and item.get("state") not in APPROVED_STATES
-    }
+    diagnostics = analysis.get("diagnostics")
+    if isinstance(diagnostics, dict):
+        diagnostics.pop("initialAttempt", None)
+        diagnostics.pop("finalAttempt", None)
     renders = []
     for directory_name in ("renders_v4", "renders_temporales", "renders_initial"):
         directory = run_dir / directory_name
@@ -395,8 +389,6 @@ def _public_result(run_dir: Path):
         "summary": _summary(analysis),
         "analysis": analysis,
         "report": report,
-        "acceptedLandmarks": accepted,
-        "rejectedLandmarks": rejected,
         "assets": {"diagnosticGlb": "diagnostic_landmarks.glb", "renders": renders},
     }
 
