@@ -232,17 +232,6 @@ const FAILURE_LABELS: Record<string, string> = {
   rig_readiness: "Preparación para rig",
 };
 
-function decodeSummary(value: string | null): AnalysisSummary | null {
-  if (!value) return null;
-  try {
-    const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
-    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
-    return JSON.parse(window.atob(padded)) as AnalysisSummary;
-  } catch {
-    return null;
-  }
-}
-
 function statusLabel(value?: string) {
   if (value === "valid") return "Válido";
   if (value === "valid_with_warnings") return "Válido con advertencias";
@@ -360,6 +349,31 @@ function renderToken(group: LandmarkGroup) {
 function compactCoverage(record?: CoverageRecord) {
   if (!record) return "Sin datos";
   return `${record.detectorSuccessfulViews ?? 0}/${record.renderedViews ?? 0} vistas · ${record.projectedSuccessfulViews ?? 0} proyectadas`;
+}
+
+type JobStatus = {
+  status: "pending" | "done" | "error";
+  runId?: string;
+  summary?: AnalysisSummary;
+  detail?: string;
+};
+
+const JOB_POLL_INTERVAL_MS = 4000;
+const JOB_POLL_TIMEOUT_MS = 20 * 60 * 1000;
+
+async function pollAnalysisJob(jobId: string, accessToken: string): Promise<JobStatus> {
+  const deadline = Date.now() + JOB_POLL_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const response = await fetch(`/api/avatar/analyze/job/${jobId}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      cache: "no-store",
+    });
+    const data = await response.json() as JobStatus & { error?: string };
+    if (!response.ok) throw new Error(data.error || `No se pudo consultar el estado del análisis (${response.status}).`);
+    if (data.status === "done" || data.status === "error") return data;
+    await new Promise((resolve) => window.setTimeout(resolve, JOB_POLL_INTERVAL_MS));
+  }
+  throw new Error("El análisis tardó demasiado y se canceló la espera. Probá de nuevo en unos minutos.");
 }
 
 export function AvatarAnalyzerPreview() {
@@ -516,27 +530,37 @@ export function AvatarAnalyzerPreview() {
     setCorrectionMessage(null);
     setVisualCorrectionMode(false);
     try {
-      const response = await fetch("/api/avatar/analyze", {
+      const kickoff = await fetch("/api/avatar/analyze", {
         method: "POST",
         headers: { Authorization: `Bearer ${session.access_token}` },
         cache: "no-store",
       });
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({})) as { error?: string };
-        throw new Error(data.error || `No se pudo analizar el avatar (${response.status}).`);
+      const kickoffData = await kickoff.json().catch(() => ({})) as { jobId?: string; error?: string };
+      if (!kickoff.ok || !kickoffData.jobId) {
+        throw new Error(kickoffData.error || `No se pudo iniciar el análisis (${kickoff.status}).`);
       }
-      const decoded = decodeSummary(response.headers.get("x-clouva-analysis-summary"));
-      const blob = await response.blob();
+
+      const job = await pollAnalysisJob(kickoffData.jobId, session.access_token);
+      if (job.status === "error" || !job.runId) {
+        throw new Error(job.detail || "No se pudo analizar el avatar.");
+      }
+
+      const assetResponse = await fetch(
+        `/api/avatar/analyze/result/${job.runId}/asset/diagnostic_landmarks.glb`,
+        { headers: { Authorization: `Bearer ${session.access_token}` }, cache: "no-store" },
+      );
+      if (!assetResponse.ok) throw new Error("El análisis terminó, pero no se pudo abrir su GLB diagnóstico.");
+      const blob = await assetResponse.blob();
       if (blob.size < 1024) throw new Error("El diagnóstico llegó vacío.");
       const nextUrl = URL.createObjectURL(blob);
       setPreviewUrl((current) => {
         if (current) URL.revokeObjectURL(current);
         return nextUrl;
       });
-      setSummary(decoded);
+      setSummary(job.summary ?? null);
       setCameraOrbit(CAMERA_PRESETS[0].orbit);
       setCameraTargetValue(targetValue(fallbackCenter));
-      if (decoded?.runId) await loadDetail(decoded.runId, session.access_token);
+      await loadDetail(job.runId, session.access_token);
     } catch (cause) {
       console.error("Avatar Analyzer UI failed", cause);
       setError(cause instanceof Error ? cause.message : "No se pudo analizar el avatar.");

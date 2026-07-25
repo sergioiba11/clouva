@@ -9,6 +9,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 from typing import Any, Literal
 import uuid
@@ -420,6 +421,66 @@ def _assert_profile_ready(analysis: dict[str, Any], requested_profile: str):
             "summary": _summary(analysis),
         })
     return _summary(analysis)
+
+
+JOBS_ROOT = v32.RUN_CACHE_ROOT.parent / "avatar-analyzer-jobs"
+
+
+def _job_status_path(job_id: str) -> Path:
+    return JOBS_ROOT / f"{job_id}.json"
+
+
+def _write_job_status(job_id: str, payload: dict[str, Any]) -> None:
+    path = _job_status_path(job_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(payload), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _run_analysis_v4_background(job_id: str, source_url: str, requested_profile: str) -> None:
+    try:
+        with v32.ANALYZER_RIG_LOCK:
+            job_dir, _output_dir, _cached, analysis = _run_analysis_v4(source_url, requested_profile)
+        shutil.rmtree(job_dir, ignore_errors=True)
+        _write_job_status(job_id, {
+            "status": "done",
+            "runId": analysis.get("runId"),
+            "summary": _summary(analysis),
+        })
+    except HTTPException as exc:
+        _write_job_status(job_id, {"status": "error", "detail": str(exc.detail)[:2000]})
+    except Exception as exc:
+        _write_job_status(job_id, {"status": "error", "detail": str(exc)[:2000]})
+
+
+@app.post("/avatar/analyze-v4-preview-async")
+def analyze_avatar_v4_preview_async(request: AvatarAnalyzeV4Request):
+    """Kick off analysis in the background and return immediately.
+
+    A full analysis run can take several minutes, which exceeds typical
+    proxy/gateway idle timeouts (Railway's edge, Node's fetch headers
+    timeout) if held open as one synchronous request. Callers should poll
+    GET /avatar/analyze-v4/job/{job_id} until status is done or error.
+    """
+    job_id = uuid.uuid4().hex
+    _write_job_status(job_id, {"status": "pending"})
+    threading.Thread(
+        target=_run_analysis_v4_background,
+        args=(job_id, str(request.source_url), request.requested_rig_profile),
+        daemon=True,
+    ).start()
+    return {"jobId": job_id, "status": "pending"}
+
+
+@app.get("/avatar/analyze-v4/job/{job_id}")
+def avatar_analyze_v4_job_status(job_id: str):
+    if not v32.RUN_ID_PATTERN.fullmatch(job_id):
+        raise HTTPException(status_code=400, detail="job_id inválido")
+    path = _job_status_path(job_id)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Job no encontrado")
+    return JSONResponse(json.loads(path.read_text(encoding="utf-8")))
 
 
 @app.post("/avatar/analyze-v4")
