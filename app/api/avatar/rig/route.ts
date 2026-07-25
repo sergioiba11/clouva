@@ -4,7 +4,7 @@ import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 300;
+export const maxDuration = 1200;
 
 const JOB_KEY = "clouva_avatar_complete_rig_job";
 const PROFILE_KEY = "clouva_avatar_complete_rig_profile";
@@ -404,7 +404,7 @@ async function completeRigWithWorker(sourceUrl: string) {
       force_analyzer: true,
     }),
     cache: "no-store",
-    signal: AbortSignal.timeout(5 * 60 * 1000),
+    signal: AbortSignal.timeout(20 * 60 * 1000),
   });
 
   if (!response.ok) {

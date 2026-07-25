@@ -3,7 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 300;
+export const maxDuration = 1200;
 
 const DERIVED_RIG_PATTERN = /(?:complete-rigged|rigged|processed|final)(?:[-_.]|$)/i;
 
@@ -162,7 +162,7 @@ export async function POST(request: NextRequest) {
         requested_rig_profile: "BODY_BASIC",
       }),
       cache: "no-store",
-      signal: AbortSignal.timeout(5 * 60 * 1000),
+      signal: AbortSignal.timeout(20 * 60 * 1000),
     });
     if (!response.ok) {
       const raw = await response.text().catch(() => "");
