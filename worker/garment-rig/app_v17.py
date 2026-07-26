@@ -158,13 +158,23 @@ def _summary_header(summary: dict):
     return encoded
 
 
+INCOMPLETE_RUN_GRACE_SECONDS = 120
+
+
 def _cleanup_expired_runs():
     RUN_CACHE_ROOT.mkdir(parents=True, exist_ok=True)
     cutoff = time.time() - RUN_TTL_SECONDS
+    incomplete_cutoff = time.time() - INCOMPLETE_RUN_GRACE_SECONDS
     for child in RUN_CACHE_ROOT.iterdir():
         try:
-            incomplete = child.is_dir() and not (child / "expires_at.json").is_file()
-            if child.is_dir() and (incomplete or child.stat().st_mtime < cutoff):
+            if not child.is_dir():
+                continue
+            mtime = child.stat().st_mtime
+            # A run still being persisted (see _persist_run_v4) has no
+            # expires_at.json yet; only treat that as abandoned once it has
+            # had time to finish, so an in-flight commit is never swept.
+            incomplete = not (child / "expires_at.json").is_file() and mtime < incomplete_cutoff
+            if incomplete or mtime < cutoff:
                 shutil.rmtree(child, ignore_errors=True)
         except OSError:
             continue

@@ -344,13 +344,16 @@ def _persist_run_v4(output_dir: Path, analysis: dict[str, Any], source_path: Pat
         source_dir = staging / "source"
         source_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source_path, source_dir / "avatar-original-clean.glb")
-        (staging / "expires_at.json").write_text(json.dumps({
+        shutil.rmtree(destination, ignore_errors=True)
+        shutil.move(str(staging), str(destination))
+        # Written only after every evidence file is already visible at
+        # `destination`: _cleanup_expired_runs treats its absence as "still
+        # being written", so it must never land before the move completes.
+        (destination / "expires_at.json").write_text(json.dumps({
             "runId": run_id,
             "createdAt": time.time(),
             "expiresAt": time.time() + v32.RUN_TTL_SECONDS,
         }, indent=2), encoding="utf-8")
-        shutil.rmtree(destination, ignore_errors=True)
-        shutil.move(str(staging), str(destination))
         return destination
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)
@@ -526,7 +529,16 @@ def analyze_avatar_v4_preview(request: AvatarAnalyzeV4Request):
 @app.get("/avatar/analyze-v4/result/{run_id}")
 def avatar_analyze_v4_result(run_id: str):
     v32._cleanup_expired_runs()
-    return JSONResponse(_public_result(v32._safe_run_dir(run_id)))
+    run_dir = v32._safe_run_dir(run_id)
+    try:
+        return JSONResponse(_public_result(run_dir))
+    except HTTPException:
+        raise
+    except (json.JSONDecodeError, FileNotFoundError, OSError) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="El diagnóstico todavía se está guardando, probá de nuevo en unos segundos.",
+        ) from exc
 
 
 @app.get("/avatar/analyze-v4/result/{run_id}/asset/{asset_path:path}")
