@@ -7,6 +7,7 @@ region back toward the torso.
 """
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Sequence, Tuple
@@ -123,10 +124,39 @@ class AnatomySegmentation:
 def _hand_frame(points: Sequence[Vector], wrist: Vector, distal: Vector):
     forward = _safe_normal(distal - wrist, Vector((0.0, 0.0, -1.0)))
     front = Vector((0.0, -1.0, 0.0))
-    normal = front - forward * front.dot(forward)
-    normal = _safe_normal(normal, Vector((0.0, 0.0, 1.0)))
-    lateral = _safe_normal(forward.cross(normal), Vector((1.0, 0.0, 0.0)))
-    normal = _safe_normal(lateral.cross(forward), normal)
+    fallback_normal = _safe_normal(front - forward * front.dot(forward), Vector((0.0, 0.0, 1.0)))
+    fallback_lateral = _safe_normal(forward.cross(fallback_normal), Vector((1.0, 0.0, 0.0)))
+
+    # The old normal/lateral came purely from the avatar's world-facing
+    # direction, which only points the palm/dorsal cameras at the real palm
+    # when the hand happens to be posed like a T-pose. Any bent or rotated
+    # wrist throws the camera off-angle (see error-500-hand-detection-9e2cb4:
+    # hand_l_palm/hand_l_dorsum renders showed the hand raking from above
+    # instead of face-on). Derive the width/thickness axes from the hand's
+    # own vertices instead: within the plane perpendicular to `forward`, a
+    # hand is much wider across the knuckles than it is thick front-to-back,
+    # so the higher-variance in-plane axis is the true lateral (width) axis
+    # and the lower-variance one is the true normal (palm/dorsal) axis.
+    relative = [point - wrist for point in points]
+    in_plane = [value - forward * value.dot(forward) for value in relative]
+    if len(in_plane) >= 8:
+        u, v = fallback_lateral, forward.cross(fallback_lateral)
+        coords = [(value.dot(u), value.dot(v)) for value in in_plane]
+        mean_a = sum(a for a, _ in coords) / len(coords)
+        mean_b = sum(b for _, b in coords) / len(coords)
+        sxx = sum((a - mean_a) ** 2 for a, _ in coords)
+        syy = sum((b - mean_b) ** 2 for _, b in coords)
+        sxy = sum((a - mean_a) * (b - mean_b) for a, b in coords)
+        angle = 0.5 * math.atan2(2.0 * sxy, sxx - syy)
+        wide_axis = _safe_normal(u * math.cos(angle) + v * math.sin(angle), fallback_lateral)
+        thin_axis = _safe_normal(forward.cross(wide_axis), fallback_normal)
+        # Sign is ambiguous from variance alone; keep whichever orientation
+        # agrees with the old world-front heuristic so "palmar"/"dorsal" and
+        # "radial"/"ulnar" keep meaning roughly what they used to.
+        lateral = wide_axis if wide_axis.dot(fallback_lateral) >= 0.0 else -wide_axis
+        normal = thin_axis if thin_axis.dot(fallback_normal) >= 0.0 else -thin_axis
+    else:
+        lateral, normal = fallback_lateral, fallback_normal
     return forward, lateral, normal
 
 
