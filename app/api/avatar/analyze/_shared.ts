@@ -1,7 +1,9 @@
+
 import { NextRequest } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
 const DERIVED_RIG_PATTERN = /(?:complete-rigged|rigged|processed|final)(?:[-_.]|$)/i;
+const METADATA_UPDATE_ATTEMPTS = 3;
 
 type ErrorLike = {
   message?: unknown;
@@ -10,6 +12,35 @@ type ErrorLike = {
   code?: unknown;
   error?: unknown;
 };
+
+type MetadataRecord = Record<string, unknown>;
+
+export type AnalyzerPendingJob = {
+  jobId: string;
+  avatarId: string;
+  requestedRigProfile: "BODY_BASIC";
+  startedAt: string;
+  sourceKind: "active_avatar_original";
+  status: "pending" | "error";
+  error?: string;
+  updatedAt: string;
+};
+
+function asMetadata(value: unknown): MetadataRecord {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as MetadataRecord
+    : {};
+}
+
+function asRecord(value: unknown): MetadataRecord | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as MetadataRecord
+    : null;
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 export function getAdminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -85,9 +116,7 @@ export async function resolveOriginalAvatar(
     const storagePath = typeof row.storage_path === "string" && row.storage_path.trim()
       ? row.storage_path.trim()
       : null;
-    const metadata = row.metadata && typeof row.metadata === "object"
-      ? row.metadata as Record<string, unknown>
-      : {};
+    const metadata = asMetadata(row.metadata);
     const storedOriginal = storagePath && !looksDerivedRig(storagePath)
       ? await signedAvatarUrl(supabase, storagePath)
       : null;
@@ -118,11 +147,135 @@ export async function resolveOriginalAvatar(
   throw new Error("No encontramos el GLB original limpio del avatar para analizar");
 }
 
+async function mutateAvatarMetadata(
+  supabase: ReturnType<typeof getAdminClient>,
+  userId: string,
+  avatarId: string,
+  mutate: (metadata: MetadataRecord) => MetadataRecord,
+) {
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < METADATA_UPDATE_ATTEMPTS; attempt += 1) {
+    const current = await supabase
+      .from("user_avatars")
+      .select("metadata,updated_at")
+      .eq("id", avatarId)
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (current.error || !current.data) throw current.error || new Error("Avatar activo no encontrado");
+
+    const updatedAt = new Date().toISOString();
+    const nextMetadata = mutate(asMetadata(current.data.metadata));
+    const baseUpdate = supabase
+      .from("user_avatars")
+      .update({ metadata: nextMetadata, updated_at: updatedAt })
+      .eq("id", avatarId)
+      .eq("user_id", userId);
+    const result = current.data.updated_at
+      ? await baseUpdate.eq("updated_at", current.data.updated_at).select("id").maybeSingle()
+      : await baseUpdate.select("id").maybeSingle();
+    if (!result.error && result.data) return nextMetadata;
+    lastError = result.error || new Error("La metadata cambió durante la actualización");
+    await sleep(60 * (attempt + 1));
+  }
+  throw lastError || new Error("No se pudo actualizar la metadata del Analyzer");
+}
+
+export async function persistPendingAnalyzerJob(args: {
+  supabase: ReturnType<typeof getAdminClient>;
+  userId: string;
+  avatarId: string;
+  jobId: string;
+  startedAt?: string;
+}) {
+  const startedAt = args.startedAt || new Date().toISOString();
+  return mutateAvatarMetadata(args.supabase, args.userId, args.avatarId, (metadata) => ({
+    ...metadata,
+    avatar_analyzer_v4_pending: {
+      jobId: args.jobId,
+      avatarId: args.avatarId,
+      requestedRigProfile: "BODY_BASIC",
+      startedAt,
+      sourceKind: "active_avatar_original",
+      status: "pending",
+      updatedAt: new Date().toISOString(),
+    } satisfies AnalyzerPendingJob,
+  }));
+}
+
+export async function findAvatarForAnalyzerJob(
+  supabase: ReturnType<typeof getAdminClient>,
+  userId: string,
+  jobId: string,
+) {
+  const { data, error } = await supabase
+    .from("user_avatars")
+    .select("id,metadata,updated_at")
+    .eq("user_id", userId)
+    .is("archived_at", null)
+    .order("updated_at", { ascending: false })
+    .limit(30);
+  if (error) throw error;
+  for (const row of data || []) {
+    const metadata = asMetadata(row.metadata);
+    const pending = asRecord(metadata.avatar_analyzer_v4_pending);
+    if (pending?.jobId === jobId) return { avatarId: row.id as string, metadata };
+  }
+  return null;
+}
+
+export async function persistCompletedAnalyzerJob(args: {
+  supabase: ReturnType<typeof getAdminClient>;
+  userId: string;
+  avatarId: string;
+  jobId: string;
+  runId: string;
+  summary: MetadataRecord;
+}) {
+  return mutateAvatarMetadata(args.supabase, args.userId, args.avatarId, (metadata) => {
+    const next = { ...metadata };
+    const pending = asRecord(next.avatar_analyzer_v4_pending);
+    if (!pending || pending.jobId === args.jobId) delete next.avatar_analyzer_v4_pending;
+    next.avatar_analyzer_v4 = {
+      runId: args.runId,
+      analyzerVersion: String(args.summary.analyzerVersion ?? "clouva-avatar-analyzer-v4.1"),
+      mapVersion: "clouva-anatomical-map-v4.1",
+      sourceSha256: String(args.summary.sourceSha256 ?? ""),
+      status: String(args.summary.status ?? "needs_review"),
+      requestedRigProfile: String(args.summary.requestedRigProfile ?? "BODY_BASIC"),
+      updatedAt: new Date().toISOString(),
+    };
+    return next;
+  });
+}
+
+export async function persistAnalyzerJobError(args: {
+  supabase: ReturnType<typeof getAdminClient>;
+  userId: string;
+  avatarId: string;
+  jobId: string;
+  error: string;
+}) {
+  return mutateAvatarMetadata(args.supabase, args.userId, args.avatarId, (metadata) => {
+    const pending = asRecord(metadata.avatar_analyzer_v4_pending);
+    if (!pending || pending.jobId !== args.jobId) return metadata;
+    return {
+      ...metadata,
+      avatar_analyzer_v4_pending: {
+        ...pending,
+        status: "error",
+        error: args.error.slice(0, 1000),
+        updatedAt: new Date().toISOString(),
+      },
+    };
+  });
+}
+
 export function workerError(raw: string) {
   if (!raw.trim()) return "";
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const value = parsed.detail ?? parsed.error ?? parsed.message;
+    const detail = asRecord(parsed.detail);
+    const value = detail?.message ?? parsed.detail ?? parsed.error ?? parsed.message;
     return typeof value === "string" ? value : JSON.stringify(value ?? parsed);
   } catch {
     return raw;

@@ -11,6 +11,32 @@ export const dynamic = "force-dynamic";
 
 type JsonRecord = Record<string, unknown>;
 
+const FORWARDED_WORKER_STATUSES = new Set([404, 409, 410, 422, 429, 502, 503]);
+
+function workerErrorPayload(raw: string, status: number) {
+  try {
+    const parsed = JSON.parse(raw) as JsonRecord;
+    const detail = asRecord(parsed.detail);
+    const code = String(detail?.code ?? parsed.code ?? (status === 503 ? "ANALYZER_RESULT_STILL_PERSISTING" : "ANALYZER_WORKER_ERROR"));
+    const messageValue = detail?.message ?? parsed.error ?? parsed.message ?? parsed.detail;
+    const message = typeof messageValue === "string"
+      ? messageValue
+      : status === 503
+        ? "El diagnóstico todavía se está guardando."
+        : `El Worker no pudo devolver el diagnóstico (${status}).`;
+    return { error: message, code, retryable: [429, 502, 503].includes(status) };
+  } catch {
+    return {
+      error: status === 503
+        ? "El diagnóstico todavía se está guardando."
+        : `El Worker no pudo devolver el diagnóstico (${status}).`,
+      code: status === 503 ? "ANALYZER_RESULT_STILL_PERSISTING" : "ANALYZER_WORKER_ERROR",
+      retryable: [429, 502, 503].includes(status),
+    };
+  }
+}
+
+
 const WARNING_MESSAGES: Record<string, string> = {
   FACE_NOT_DETECTED: "El detector visual no reconoció el rostro en las vistas técnicas.",
   HAND_NOT_DETECTED: "El detector visual no reconoció la mano en las vistas técnicas.",
@@ -290,13 +316,26 @@ export async function GET(
     const response = await fetchAvatarAnalyzerWorker(`/avatar/analyze-v4/result/${runId}`);
     const raw = await response.text();
     if (!response.ok) {
-      throw new Error(raw || `El Worker no pudo devolver el diagnóstico (${response.status})`);
+      const status = FORWARDED_WORKER_STATUSES.has(response.status) ? response.status : 502;
+      const headers = new Headers({ "Cache-Control": "no-store" });
+      const retryAfter = response.headers.get("retry-after");
+      if (retryAfter) headers.set("Retry-After", retryAfter);
+      return NextResponse.json(workerErrorPayload(raw, status), { status, headers });
     }
-    const data = normalizePayload(JSON.parse(raw));
-    return NextResponse.json(data, {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return NextResponse.json({
+        error: "El Worker devolvió un diagnóstico incompleto. Reintentá la carga del detalle.",
+        code: "ANALYZER_RESULT_INVALID_JSON",
+        retryable: true,
+      }, { status: 502, headers: { "Cache-Control": "no-store", "Retry-After": "2" } });
+    }
+    return NextResponse.json(normalizePayload(parsed), {
       headers: { "Cache-Control": "no-store" },
     });
   } catch (cause) {
-    return NextResponse.json({ error: avatarAnalyzerError(cause) }, { status: 422 });
+    return NextResponse.json({ error: avatarAnalyzerError(cause), code: "ANALYZER_REQUEST_REJECTED", retryable: false }, { status: 422 });
   }
 }

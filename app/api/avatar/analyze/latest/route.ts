@@ -1,20 +1,22 @@
+
 import { NextRequest, NextResponse } from "next/server";
-import {
-  avatarAnalyzerAdminClient,
-  avatarAnalyzerError,
-  requireAvatarAnalyzerUser,
-  safeAnalyzerRunId,
-} from "@/lib/avatar-analyzer-server";
+import { errorMessage, requireUser } from "../_shared";
+import { safeAnalyzerRunId } from "@/lib/avatar-analyzer-server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type MetadataRecord = Record<string, unknown>;
 
+function asRecord(value: unknown): MetadataRecord | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as MetadataRecord
+    : null;
+}
+
 export async function GET(request: NextRequest) {
   try {
-    const user = await requireAvatarAnalyzerUser(request);
-    const supabase = avatarAnalyzerAdminClient();
+    const { supabase, user } = await requireUser(request);
     const { data, error } = await supabase
       .from("user_avatars")
       .select("id,metadata,updated_at")
@@ -26,31 +28,38 @@ export async function GET(request: NextRequest) {
       .maybeSingle();
     if (error) throw error;
 
-    const metadata = data?.metadata && typeof data.metadata === "object"
-      ? data.metadata as MetadataRecord
-      : {};
-    const stored = metadata.avatar_analyzer_v4 && typeof metadata.avatar_analyzer_v4 === "object"
-      ? metadata.avatar_analyzer_v4 as MetadataRecord
-      : null;
-    if (!stored || typeof stored.runId !== "string") {
-      return NextResponse.json({ available: false }, {
-        headers: { "Cache-Control": "no-store" },
-      });
+    const metadata = asRecord(data?.metadata) || {};
+    const stored = asRecord(metadata.avatar_analyzer_v4);
+    if (stored && typeof stored.runId === "string") {
+      return NextResponse.json({
+        available: true,
+        pending: false,
+        runId: safeAnalyzerRunId(stored.runId),
+        analyzerVersion: stored.analyzerVersion,
+        mapVersion: stored.mapVersion,
+        sourceSha256: stored.sourceSha256,
+        status: stored.status,
+        requestedRigProfile: stored.requestedRigProfile,
+        updatedAt: stored.updatedAt,
+      }, { headers: { "Cache-Control": "no-store" } });
     }
 
-    return NextResponse.json({
-      available: true,
-      runId: safeAnalyzerRunId(stored.runId),
-      analyzerVersion: stored.analyzerVersion,
-      mapVersion: stored.mapVersion,
-      sourceSha256: stored.sourceSha256,
-      status: stored.status,
-      requestedRigProfile: stored.requestedRigProfile,
-      updatedAt: stored.updatedAt,
-    }, {
+    const pending = asRecord(metadata.avatar_analyzer_v4_pending);
+    if (pending && typeof pending.jobId === "string") {
+      return NextResponse.json({
+        available: false,
+        pending: true,
+        jobId: pending.jobId,
+        startedAt: pending.startedAt,
+        pendingStatus: pending.status,
+        pendingError: pending.error,
+      }, { headers: { "Cache-Control": "no-store" } });
+    }
+
+    return NextResponse.json({ available: false, pending: false }, {
       headers: { "Cache-Control": "no-store" },
     });
   } catch (cause) {
-    return NextResponse.json({ error: avatarAnalyzerError(cause) }, { status: 422 });
+    return NextResponse.json({ error: errorMessage(cause) }, { status: 422 });
   }
 }
