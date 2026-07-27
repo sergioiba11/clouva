@@ -233,6 +233,16 @@ const FAILURE_LABELS: Record<string, string> = {
   rig_readiness: "Preparación para rig",
 };
 
+function recommendedActionLabel(value?: string | Record<string, unknown>) {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (!value || typeof value !== "object") return "";
+  for (const key of ["message", "action", "operation", "label", "reason"]) {
+    const candidate = value[key];
+    if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+  }
+  return "";
+}
+
 function statusLabel(value?: string) {
   if (value === "valid") return "Válido";
   if (value === "valid_with_warnings") return "Válido con advertencias";
@@ -794,6 +804,7 @@ export function AvatarAnalyzerPreview() {
         startedAt?: string;
         pendingStatus?: string;
         pendingError?: string;
+        summary?: AnalysisSummary;
         error?: string;
       };
       if (!latestResponse.ok) throw new Error(latest.error || "No se pudo buscar el último análisis.");
@@ -811,6 +822,7 @@ export function AvatarAnalyzerPreview() {
       if (!latest.available || !latest.runId) {
         throw new Error("Este avatar todavía no tiene un análisis V4.1 guardado.");
       }
+      setSummary(latest.summary ?? null);
       setAnalysisProcessState("summary_ready");
       const [assetReady, detailReady] = await Promise.all([
         loadAsset(latest.runId, session.access_token),
@@ -1004,6 +1016,7 @@ export function AvatarAnalyzerPreview() {
             <p className={styles.metricExplanation}>
               La confianza corporal mide el cuerpo base. La preparación para rig aplica además los gates bloqueantes.
               La cobertura geométrica puede ser alta aunque el detector visual no reconozca una región en sus vistas.
+              0/7 vistas significa que el detector no reconoció esa región en ninguna de las siete cámaras renderizadas.
             </p>
           </details>
 
@@ -1032,6 +1045,9 @@ export function AvatarAnalyzerPreview() {
                 {pendingBreakdown ? ` Pendientes: ${pendingBreakdown}.` : ""}
                 {(effectiveSummary.rigReadinessGates || []).length
                   ? ` Bloqueos: ${(effectiveSummary.rigReadinessGates || []).map(readableName).join(", ")}.`
+                  : ""}
+                {recommendedActionLabel(effectiveSummary.recommendedNextAction)
+                  ? ` Próxima acción: ${recommendedActionLabel(effectiveSummary.recommendedNextAction)}.`
                   : ""}
               </span>
             </p>

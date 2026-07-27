@@ -214,3 +214,15 @@ test("Avatar Analyzer frontend separates process, detail and asset failures", ()
   assert.match(styles, /cameraActive/);
   assert.match(styles, /safe-area-inset-bottom/);
 });
+
+
+test("restored Analyzer results retain their compact summary and next action", () => {
+  const shared = read("./app/api/avatar/analyze/_shared.ts");
+  const latest = read("./app/api/avatar/analyze/latest/route.ts");
+  const preview = read("./components/library/AvatarAnalyzerPreview.tsx");
+  assert.match(shared, /summary: args\.summary/);
+  assert.match(latest, /summary: asRecord\(stored\.summary\)/);
+  assert.match(preview, /setSummary\(latest\.summary/);
+  assert.match(preview, /Próxima acción/);
+  assert.match(preview, /0\/7 vistas significa/);
+});

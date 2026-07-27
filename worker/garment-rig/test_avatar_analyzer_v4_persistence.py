@@ -8,7 +8,10 @@ import tempfile
 import time
 import unittest
 
-import app_v18
+try:
+    import app_v18
+except ModuleNotFoundError:  # Docker promotes app_v18.py to app.py.
+    import app as app_v18
 
 
 class AvatarAnalyzerV4PersistenceTests(unittest.TestCase):

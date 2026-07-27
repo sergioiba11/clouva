@@ -617,9 +617,8 @@ def avatar_analyze_v4_result(run_id: str):
         return JSONResponse(_public_result(run_dir))
     except HTTPException:
         raise
-    except (json.JSONDecodeError, FileNotFoundError, OSError) as exc:
+    except (json.JSONDecodeError, FileNotFoundError, OSError):
         _result_still_persisting(run_id)
-        raise exc
 
 
 @app.get("/avatar/analyze-v4/result/{run_id}/asset/{asset_path:path}")

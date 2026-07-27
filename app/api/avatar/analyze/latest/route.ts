@@ -40,6 +40,15 @@ export async function GET(request: NextRequest) {
         sourceSha256: stored.sourceSha256,
         status: stored.status,
         requestedRigProfile: stored.requestedRigProfile,
+        summary: asRecord(stored.summary) || {
+          status: String(stored.status ?? "needs_review"),
+          runId: safeAnalyzerRunId(stored.runId),
+          analyzerVersion: stored.analyzerVersion,
+          sourceSha256: stored.sourceSha256,
+          requestedRigProfile: stored.requestedRigProfile,
+          warningCount: 0,
+          rigModified: false,
+        },
         updatedAt: stored.updatedAt,
       }, { headers: { "Cache-Control": "no-store" } });
     }

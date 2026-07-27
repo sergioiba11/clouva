@@ -242,6 +242,7 @@ export async function persistCompletedAnalyzerJob(args: {
       sourceSha256: String(args.summary.sourceSha256 ?? ""),
       status: String(args.summary.status ?? "needs_review"),
       requestedRigProfile: String(args.summary.requestedRigProfile ?? "BODY_BASIC"),
+      summary: args.summary,
       updatedAt: new Date().toISOString(),
     };
     return next;
