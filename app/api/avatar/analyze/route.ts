@@ -1,5 +1,13 @@
+
 import { NextRequest, NextResponse } from "next/server";
-import { errorMessage, requireUser, resolveOriginalAvatar, workerBaseUrlAndToken, workerError } from "./_shared";
+import {
+  errorMessage,
+  persistPendingAnalyzerJob,
+  requireUser,
+  resolveOriginalAvatar,
+  workerBaseUrlAndToken,
+  workerError,
+} from "./_shared";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,7 +42,25 @@ export async function POST(request: NextRequest) {
 
     const data = await response.json() as { jobId?: string };
     if (!data.jobId) throw new Error("El worker no devolvió un jobId");
-    return NextResponse.json({ jobId: data.jobId });
+
+    let pendingPersisted = false;
+    if (avatar.avatarId) {
+      try {
+        await persistPendingAnalyzerJob({
+          supabase,
+          userId: user.id,
+          avatarId: avatar.avatarId,
+          jobId: data.jobId,
+        });
+        pendingPersisted = true;
+      } catch (cause) {
+        console.error("Avatar Analyzer pending job persistence failed", {
+          jobId: data.jobId,
+          cause: errorMessage(cause),
+        });
+      }
+    }
+    return NextResponse.json({ jobId: data.jobId, pendingPersisted });
   } catch (cause) {
     console.error("Avatar Analyzer kickoff failed", cause);
     return NextResponse.json({ error: errorMessage(cause) }, { status: 422 });

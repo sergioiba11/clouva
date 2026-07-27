@@ -1,5 +1,14 @@
+
 import { NextRequest, NextResponse } from "next/server";
-import { errorMessage, requireUser, resolveOriginalAvatar, workerBaseUrlAndToken } from "../../_shared";
+import {
+  errorMessage,
+  findAvatarForAnalyzerJob,
+  persistAnalyzerJobError,
+  persistCompletedAnalyzerJob,
+  requireUser,
+  workerBaseUrlAndToken,
+  workerError,
+} from "../../_shared";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -29,44 +38,43 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       signal: AbortSignal.timeout(15 * 1000),
     });
     if (response.status === 404) {
-      return NextResponse.json({ error: "Job no encontrado" }, { status: 404 });
+      return NextResponse.json({ error: "Job no encontrado", code: "ANALYZER_JOB_NOT_FOUND" }, { status: 404 });
     }
     if (!response.ok) {
       const raw = await response.text().catch(() => "");
-      throw new Error(`No se pudo consultar el estado del análisis (${response.status})${raw ? `: ${raw.slice(0, 800)}` : ""}`);
+      throw new Error(`No se pudo consultar el estado del análisis (${response.status})${raw ? `: ${workerError(raw).slice(0, 800)}` : ""}`);
     }
     const job = await response.json() as WorkerJobStatus;
+    const avatar = await findAvatarForAnalyzerJob(supabase, user.id, jobId).catch(() => null);
 
-    if (job.status === "done" && job.runId && /^[a-f0-9]{32}$/.test(job.runId)) {
-      const summary = job.summary || {};
-      const avatar = await resolveOriginalAvatar(supabase, user.id).catch(() => null);
-      if (avatar?.avatarId) {
-        const { error: metadataError } = await supabase
-          .from("user_avatars")
-          .update({
-            metadata: {
-              ...avatar.metadata,
-              avatar_analyzer_v4: {
-                runId: job.runId,
-                analyzerVersion: String(summary.analyzerVersion ?? "clouva-avatar-analyzer-v4.1"),
-                mapVersion: "clouva-anatomical-map-v4.1",
-                sourceSha256: String(summary.sourceSha256 ?? ""),
-                status: String(summary.status ?? "needs_review"),
-                requestedRigProfile: String(summary.requestedRigProfile ?? "BODY_BASIC"),
-                updatedAt: new Date().toISOString(),
-              },
-            },
-            updated_at: new Date().toISOString(),
-          })
-          .eq("id", avatar.avatarId)
-          .eq("user_id", user.id);
-        if (metadataError) {
-          console.error("Avatar Analyzer V4 metadata persistence failed", metadataError);
-        }
-      }
+    if (job.status === "done" && job.runId && /^[a-f0-9]{32}$/.test(job.runId) && avatar) {
+      await persistCompletedAnalyzerJob({
+        supabase,
+        userId: user.id,
+        avatarId: avatar.avatarId,
+        jobId,
+        runId: job.runId,
+        summary: job.summary || {},
+      }).catch((cause) => {
+        console.error("Avatar Analyzer V4 completion persistence failed", {
+          jobId,
+          runId: job.runId,
+          cause: errorMessage(cause),
+        });
+      });
+    } else if (job.status === "error" && avatar) {
+      await persistAnalyzerJobError({
+        supabase,
+        userId: user.id,
+        avatarId: avatar.avatarId,
+        jobId,
+        error: job.detail || "El Worker no pudo completar el análisis",
+      }).catch((cause) => {
+        console.error("Avatar Analyzer V4 error persistence failed", { jobId, cause: errorMessage(cause) });
+      });
     }
 
-    return NextResponse.json(job);
+    return NextResponse.json(job, { headers: { "Cache-Control": "no-store" } });
   } catch (cause) {
     console.error("Avatar Analyzer job status failed", cause);
     return NextResponse.json({ error: errorMessage(cause) }, { status: 422 });

@@ -56,6 +56,7 @@ type AnalysisSummary = {
   rigReadinessScore?: number;
   rigReadinessApproved?: boolean;
   rigReadinessGates?: string[];
+  recommendedNextAction?: string | Record<string, unknown>;
   criticalLandmarksVerified?: boolean;
   bodyAnalysis?: string;
   faceAnalysis?: string;
@@ -232,6 +233,16 @@ const FAILURE_LABELS: Record<string, string> = {
   rig_readiness: "Preparación para rig",
 };
 
+function recommendedActionLabel(value?: string | Record<string, unknown>) {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  if (!value || typeof value !== "object") return "";
+  for (const key of ["message", "action", "operation", "label", "reason"]) {
+    const candidate = value[key];
+    if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+  }
+  return "";
+}
+
 function statusLabel(value?: string) {
   if (value === "valid") return "Válido";
   if (value === "valid_with_warnings") return "Válido con advertencias";
@@ -358,6 +369,58 @@ type JobStatus = {
   detail?: string;
 };
 
+type AnalysisProcessState = "idle" | "starting" | "running" | "summary_ready" | "ready" | "failed";
+type DetailState = "idle" | "loading" | "ready" | "retrying" | "temporarily_unavailable" | "failed";
+type AssetState = "idle" | "loading" | "ready" | "failed";
+
+type ApiErrorPayload = {
+  error?: string;
+  code?: string;
+  retryable?: boolean;
+};
+
+const DETAIL_RETRYABLE_STATUSES = new Set([429, 502, 503]);
+const DETAIL_MAX_ATTEMPTS = 5;
+
+function wait(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function readApiError(response: Response): Promise<ApiErrorPayload> {
+  const data = await response.json().catch(() => null) as ApiErrorPayload | null;
+  return data || {
+    error: `No se pudo consultar el diagnóstico (${response.status}).`,
+    code: "ANALYZER_HTTP_ERROR",
+    retryable: DETAIL_RETRYABLE_STATUSES.has(response.status),
+  };
+}
+
+function processStateLabel(state: AnalysisProcessState) {
+  return {
+    idle: "Sin iniciar",
+    starting: "Iniciando",
+    running: "Analizando",
+    summary_ready: "Resultado persistido",
+    ready: "Completado",
+    failed: "Falló",
+  }[state];
+}
+
+function detailStateLabel(state: DetailState) {
+  return {
+    idle: "Sin solicitar",
+    loading: "Cargando",
+    ready: "Recuperado",
+    retrying: "Reintentando",
+    temporarily_unavailable: "Temporalmente no disponible",
+    failed: "Falló",
+  }[state];
+}
+
+function assetStateLabel(state: AssetState) {
+  return { idle: "Sin solicitar", loading: "Cargando", ready: "Recuperado", failed: "Falló" }[state];
+}
+
 const JOB_POLL_INTERVAL_MS = 4000;
 const JOB_POLL_TIMEOUT_MS = 20 * 60 * 1000;
 const ACTIVE_JOB_KEY = "clouva.avatarAnalyzer.activeJob.v1";
@@ -413,15 +476,20 @@ async function pollAnalysisJob(jobId: string, accessToken: string): Promise<JobS
 
 export function AvatarAnalyzerPreview() {
   const { user, session, loading: authLoading } = useAuth();
-  const [analyzing, setAnalyzing] = useState(false);
+  const [analysisProcessState, setAnalysisProcessState] = useState<AnalysisProcessState>("idle");
+  const [detailState, setDetailState] = useState<DetailState>("idle");
+  const [assetState, setAssetState] = useState<AssetState>("idle");
   const [restoringLatest, setRestoringLatest] = useState(false);
-  const [loadingDetail, setLoadingDetail] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [summary, setSummary] = useState<AnalysisSummary | null>(null);
   const [detail, setDetail] = useState<AnalysisDetail | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [transportError, setTransportError] = useState<string | null>(null);
+  const [workerErrorMessage, setWorkerErrorMessage] = useState<string | null>(null);
+  const [persistenceNotice, setPersistenceNotice] = useState<string | null>(null);
+  const [detailRetryCount, setDetailRetryCount] = useState(0);
   const [cameraOrbit, setCameraOrbit] = useState(CAMERA_PRESETS[0].orbit);
   const [cameraTargetValue, setCameraTargetValue] = useState("0m 0m 0m");
+  const [activeCamera, setActiveCamera] = useState(CAMERA_PRESETS[0].label);
   const [selectedName, setSelectedName] = useState("");
   const [correction, setCorrection] = useState<[string, string, string]>(["", "", ""]);
   const [savingCorrection, setSavingCorrection] = useState(false);
@@ -435,6 +503,9 @@ export function AvatarAnalyzerPreview() {
     "piernas y pies": true,
   });
   const modelViewerRef = useRef<ModelViewerElement | null>(null);
+  const cameraButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const analyzing = analysisProcessState === "starting" || analysisProcessState === "running";
+  const loadingDetail = detailState === "loading" || detailState === "retrying";
 
   const landmarks = useMemo(
     () => detail?.analysis.landmarks || {},
@@ -475,16 +546,24 @@ export function AvatarAnalyzerPreview() {
   const fallbackCenter = analysisCenter(detail);
 
   const viewerState = useMemo(() => {
-    if (error) return { label: "ERROR TÉCNICO", className: styles.badgeError };
+    if (!effectiveSummary && analysisProcessState === "failed") {
+      return { label: "ERROR DEL WORKER", className: styles.badgeError };
+    }
+    if (analysisProcessState === "starting" || analysisProcessState === "running") {
+      return { label: "ANALIZANDO", className: styles.badgeNotice };
+    }
     if (!effectiveSummary) return { label: "SIN ANALIZAR", className: styles.badgeEmpty };
+    if (detailState === "temporarily_unavailable") {
+      return { label: "DETALLE TEMPORALMENTE NO DISPONIBLE", className: styles.badgeNotice };
+    }
     if (effectiveSummary.rigReadinessApproved && ["valid", "valid_with_warnings"].includes(effectiveSummary.status)) {
       return { label: "ANÁLISIS APROBADO", className: styles.badgeApproved };
     }
-    if ((effectiveSummary.noVisualEvidenceCount ?? 0) > 0 && (effectiveSummary.verifiedLandmarkCount ?? 0) === 0) {
-      return { label: "SIN EVIDENCIA", className: styles.badgeEmpty };
+    if (effectiveSummary.status === "needs_review") {
+      return { label: "NECESITA REVISIÓN", className: styles.badgePartial };
     }
     return { label: "ANÁLISIS PARCIAL", className: styles.badgePartial };
-  }, [effectiveSummary, error]);
+  }, [analysisProcessState, detailState, effectiveSummary]);
 
   const applyCamera = (orbit: string, target: string) => {
     setCameraOrbit(orbit);
@@ -506,7 +585,11 @@ export function AvatarAnalyzerPreview() {
   };
 
   const applyPreset = (preset: CameraPreset) => {
+    setActiveCamera(preset.label);
     applyCamera(preset.orbit, cameraTarget(landmarks, preset.targetLandmarks, fallbackCenter));
+    window.setTimeout(() => {
+      cameraButtonRefs.current[preset.label]?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
+    }, 0);
   };
 
   const resetCamera = () => applyPreset(CAMERA_PRESETS[0]);
@@ -537,36 +620,12 @@ export function AvatarAnalyzerPreview() {
     }
   };
 
-  const loadDetail = async (runId: string, accessToken: string) => {
-    setLoadingDetail(true);
+  const loadAsset = async (runId: string, accessToken: string) => {
+    setAssetState("loading");
     try {
-      const response = await fetch(`/api/avatar/analyze/result/${runId}`, {
-        headers: { Authorization: `Bearer ${accessToken}` },
-        cache: "no-store",
-      });
-      const data = await response.json() as AnalysisDetail & { error?: string };
-      if (!response.ok) throw new Error(data.error || "No se pudo leer el reporte anatómico.");
-      setDetail(data);
-      setSummary(data.summary);
-      const firstBlocking = Object.keys(data.rejectedLandmarks || {})[0];
-      if (firstBlocking) selectLandmark(firstBlocking, data.analysis.landmarks || {}, false);
-    } finally {
-      setLoadingDetail(false);
-    }
-  };
-
-  const runJob = async (jobId: string, startedAt: number = Date.now()) => {
-    if (!session?.access_token) return;
-    saveActiveJob({ jobId, startedAt });
-    try {
-      const job = await pollAnalysisJob(jobId, session.access_token);
-      if (job.status === "error" || !job.runId) {
-        throw new Error(job.detail || "No se pudo analizar el avatar.");
-      }
-
       const assetResponse = await fetch(
-        `/api/avatar/analyze/result/${job.runId}/asset/diagnostic_landmarks.glb`,
-        { headers: { Authorization: `Bearer ${session.access_token}` }, cache: "no-store" },
+        `/api/avatar/analyze/result/${runId}/asset/diagnostic_landmarks.glb`,
+        { headers: { Authorization: `Bearer ${accessToken}` }, cache: "no-store" },
       );
       if (!assetResponse.ok) throw new Error("El análisis terminó, pero no se pudo abrir su GLB diagnóstico.");
       const blob = await assetResponse.blob();
@@ -576,19 +635,110 @@ export function AvatarAnalyzerPreview() {
         if (current) URL.revokeObjectURL(current);
         return nextUrl;
       });
+      setAssetState("ready");
+      return true;
+    } catch (cause) {
+      setAssetState("failed");
+      setTransportError(cause instanceof Error ? cause.message : "No se pudo recuperar el GLB diagnóstico.");
+      return false;
+    }
+  };
+
+  const loadDetail = async (runId: string, accessToken: string, manualRetry = false) => {
+    setDetailState(manualRetry ? "retrying" : "loading");
+    setPersistenceNotice(null);
+    setDetailRetryCount(0);
+    for (let attempt = 0; attempt < DETAIL_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        const response = await fetch(`/api/avatar/analyze/result/${runId}`, {
+          headers: { Authorization: `Bearer ${accessToken}` },
+          cache: "no-store",
+        });
+        if (response.ok) {
+          const data = await response.json().catch(() => null) as AnalysisDetail | null;
+          if (!data?.analysis || !data.summary) throw new Error("El diagnóstico llegó incompleto.");
+          setDetail(data);
+          setSummary(data.summary);
+          setDetailState("ready");
+          setTransportError(null);
+          setPersistenceNotice(null);
+          const firstBlocking = Object.keys(data.rejectedLandmarks || {})[0];
+          if (firstBlocking) selectLandmark(firstBlocking, data.analysis.landmarks || {}, false);
+          return true;
+        }
+        const apiError = await readApiError(response);
+        const retryable = apiError.retryable || DETAIL_RETRYABLE_STATUSES.has(response.status);
+        if (!retryable) {
+          setDetailState("failed");
+          setTransportError(apiError.error || "No se pudo leer el reporte anatómico.");
+          return false;
+        }
+        setDetailState("retrying");
+        setDetailRetryCount(attempt + 1);
+        setPersistenceNotice(apiError.error || "El diagnóstico todavía se está guardando.");
+        const retryAfter = Number(response.headers.get("retry-after"));
+        const baseDelay = Number.isFinite(retryAfter) && retryAfter > 0
+          ? retryAfter * 1000
+          : Math.min(8000, 700 * (2 ** attempt));
+        await wait(baseDelay + Math.round(Math.random() * 350));
+      } catch (cause) {
+        if (attempt === DETAIL_MAX_ATTEMPTS - 1) {
+          setDetailState("temporarily_unavailable");
+          setTransportError(cause instanceof Error ? cause.message : "No se pudo recuperar el detalle.");
+          return false;
+        }
+        setDetailState("retrying");
+        setDetailRetryCount(attempt + 1);
+        await wait(Math.min(8000, 700 * (2 ** attempt)) + Math.round(Math.random() * 350));
+      }
+    }
+    setDetailState("temporarily_unavailable");
+    setPersistenceNotice("El análisis está completo, pero el detalle continúa temporalmente inaccesible.");
+    return false;
+  };
+
+  const runJob = async (jobId: string, startedAt: number = Date.now()) => {
+    if (!session?.access_token) return;
+    saveActiveJob({ jobId, startedAt });
+    setAnalysisProcessState("running");
+    setWorkerErrorMessage(null);
+    let terminal = false;
+    try {
+      const job = await pollAnalysisJob(jobId, session.access_token);
+      if (job.status === "error" || !job.runId) {
+        terminal = true;
+        setAnalysisProcessState("failed");
+        setWorkerErrorMessage(job.detail || "El Worker no pudo completar el análisis.");
+        return;
+      }
+      terminal = true;
       setSummary(job.summary ?? null);
+      setAnalysisProcessState("summary_ready");
       setCameraOrbit(CAMERA_PRESETS[0].orbit);
       setCameraTargetValue(targetValue(fallbackCenter));
-      await loadDetail(job.runId, session.access_token);
+      const [assetReady, detailReady] = await Promise.all([
+        loadAsset(job.runId, session.access_token),
+        loadDetail(job.runId, session.access_token),
+      ]);
+      if (job.summary || assetReady || detailReady) {
+        setAnalysisProcessState("ready");
+      } else {
+        setAnalysisProcessState("failed");
+        setWorkerErrorMessage("El proceso terminó sin un resultado utilizable.");
+      }
     } finally {
-      saveActiveJob(null);
+      if (terminal) saveActiveJob(null);
     }
   };
 
   const analyze = async () => {
     if (!session?.access_token) return;
-    setAnalyzing(true);
-    setError(null);
+    setAnalysisProcessState("starting");
+    setDetailState("idle");
+    setAssetState("idle");
+    setTransportError(null);
+    setWorkerErrorMessage(null);
+    setPersistenceNotice(null);
     setSummary(null);
     setDetail(null);
     setSelectedName("");
@@ -600,17 +750,22 @@ export function AvatarAnalyzerPreview() {
         headers: { Authorization: `Bearer ${session.access_token}` },
         cache: "no-store",
       });
-      const kickoffData = await kickoff.json().catch(() => ({})) as { jobId?: string; error?: string };
+      const kickoffData = await kickoff.json().catch(() => ({})) as {
+        jobId?: string;
+        pendingPersisted?: boolean;
+        error?: string;
+      };
       if (!kickoff.ok || !kickoffData.jobId) {
         throw new Error(kickoffData.error || `No se pudo iniciar el análisis (${kickoff.status}).`);
       }
-
+      if (kickoffData.pendingPersisted === false) {
+        setPersistenceNotice("El job quedó guardado en este dispositivo, pero Supabase no confirmó todavía la recuperación entre dispositivos.");
+      }
       await runJob(kickoffData.jobId);
     } catch (cause) {
       console.error("Avatar Analyzer UI failed", cause);
-      setError(cause instanceof Error ? cause.message : "No se pudo analizar el avatar.");
-    } finally {
-      setAnalyzing(false);
+      setAnalysisProcessState("failed");
+      setWorkerErrorMessage(cause instanceof Error ? cause.message : "No se pudo analizar el avatar.");
     }
   };
 
@@ -621,25 +776,20 @@ export function AvatarAnalyzerPreview() {
     resumeAttemptedRef.current = true;
     const pending = loadActiveJob();
     if (!pending) return;
-    if (Date.now() - pending.startedAt >= JOB_POLL_TIMEOUT_MS) {
-      saveActiveJob(null);
-      return;
-    }
-    setAnalyzing(true);
-    setError(null);
-    void runJob(pending.jobId, pending.startedAt)
-      .catch((cause) => {
-        console.error("Avatar Analyzer resume failed", cause);
-        setError(cause instanceof Error ? cause.message : "No se pudo retomar el análisis anterior.");
-      })
-      .finally(() => setAnalyzing(false));
+    if (Date.now() - pending.startedAt >= JOB_POLL_TIMEOUT_MS) return;
+    void runJob(pending.jobId, pending.startedAt).catch((cause) => {
+      console.error("Avatar Analyzer resume failed", cause);
+      setAnalysisProcessState("failed");
+      setWorkerErrorMessage(cause instanceof Error ? cause.message : "No se pudo retomar el análisis anterior.");
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [authLoading, session?.access_token]);
 
   const restoreLatest = async () => {
     if (!session?.access_token) return;
     setRestoringLatest(true);
-    setError(null);
+    setTransportError(null);
+    setWorkerErrorMessage(null);
     try {
       const authorization = { Authorization: `Bearer ${session.access_token}` };
       const latestResponse = await fetch("/api/avatar/analyze/latest", {
@@ -648,33 +798,48 @@ export function AvatarAnalyzerPreview() {
       });
       const latest = await latestResponse.json() as {
         available?: boolean;
+        pending?: boolean;
         runId?: string;
+        jobId?: string;
+        startedAt?: string;
+        pendingStatus?: string;
+        pendingError?: string;
+        summary?: AnalysisSummary;
         error?: string;
       };
       if (!latestResponse.ok) throw new Error(latest.error || "No se pudo buscar el último análisis.");
+      if (latest.pending && latest.jobId) {
+        if (latest.pendingStatus === "error") {
+          setAnalysisProcessState("failed");
+          setWorkerErrorMessage(latest.pendingError || "El último job terminó con error.");
+          return;
+        }
+        const startedAt = latest.startedAt ? Date.parse(latest.startedAt) : Date.now();
+        setPersistenceNotice("Se recuperó un análisis pendiente desde Supabase.");
+        await runJob(latest.jobId, Number.isFinite(startedAt) ? startedAt : Date.now());
+        return;
+      }
       if (!latest.available || !latest.runId) {
         throw new Error("Este avatar todavía no tiene un análisis V4.1 guardado.");
       }
-
-      await loadDetail(latest.runId, session.access_token);
-      const assetResponse = await fetch(
-        `/api/avatar/analyze/result/${latest.runId}/asset/diagnostic_landmarks.glb`,
-        { headers: authorization, cache: "no-store" },
-      );
-      if (!assetResponse.ok) {
-        throw new Error("El último análisis existe, pero no se pudo abrir su GLB diagnóstico.");
-      }
-      const blob = await assetResponse.blob();
-      const nextUrl = URL.createObjectURL(blob);
-      setPreviewUrl((current) => {
-        if (current) URL.revokeObjectURL(current);
-        return nextUrl;
-      });
+      setSummary(latest.summary ?? null);
+      setAnalysisProcessState("summary_ready");
+      const [assetReady, detailReady] = await Promise.all([
+        loadAsset(latest.runId, session.access_token),
+        loadDetail(latest.runId, session.access_token),
+      ]);
+      setAnalysisProcessState(assetReady || detailReady ? "ready" : "failed");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "No se pudo abrir el último análisis.");
+      setAnalysisProcessState("failed");
+      setWorkerErrorMessage(cause instanceof Error ? cause.message : "No se pudo abrir el último análisis.");
     } finally {
       setRestoringLatest(false);
     }
+  };
+
+  const retryDetail = () => {
+    if (!effectiveSummary?.runId || !session?.access_token) return;
+    void loadDetail(effectiveSummary.runId, session.access_token, true);
   };
 
   const pickSurfacePoint = (event: ReactMouseEvent<HTMLDivElement>) => {
@@ -806,7 +971,14 @@ export function AvatarAnalyzerPreview() {
           </div>
           <div className={styles.cameraBar} aria-label="Vistas del diagnóstico">
             {CAMERA_PRESETS.map((preset) => (
-              <button type="button" key={preset.label} onClick={() => applyPreset(preset)}>
+              <button
+                type="button"
+                key={preset.label}
+                ref={(node) => { cameraButtonRefs.current[preset.label] = node; }}
+                className={activeCamera === preset.label ? styles.cameraActive : undefined}
+                aria-pressed={activeCamera === preset.label}
+                onClick={() => applyPreset(preset)}
+              >
                 {preset.icon === "face" ? <Eye /> : preset.icon === "hand" ? <Hand /> : null}
                 {preset.label}
               </button>
@@ -824,19 +996,29 @@ export function AvatarAnalyzerPreview() {
 
       {effectiveSummary ? (
         <>
-          <div className={styles.summary}>
-            <div><span>Resultado</span><strong>{statusLabel(effectiveSummary.status)}</strong></div>
+          <div className={styles.primarySummary}>
+            <div><span>Resultado anatómico</span><strong>{statusLabel(effectiveSummary.status)}</strong></div>
             <div><span>Confianza del cuerpo base</span><strong>{percent(effectiveSummary.bodyBaseConfidence ?? effectiveSummary.humanoidConfidence)}</strong></div>
             <div className={effectiveSummary.rigReadinessApproved ? styles.metricApproved : styles.metricBlocked}>
               <span>Preparación para rig</span><strong>{percent(effectiveSummary.rigReadinessScore)}</strong>
             </div>
-            <div><span>Puntos verificados</span><strong>{verified}</strong></div>
-            <div><span>Sin evidencia visual</span><strong>{effectiveSummary.noVisualEvidenceCount ?? 0}</strong></div>
-            <div><span>Faltan vistas</span><strong>{effectiveSummary.insufficientViewsCount ?? 0}</strong></div>
-            <div><span>Errores técnicos</span><strong>{effectiveSummary.technicalMismatchCount ?? 0}</strong></div>
-            <div><span>Topología inválida</span><strong>{effectiveSummary.topologyInvalidCount ?? 0}</strong></div>
-            <div><span>Articulaciones internas</span><strong>{effectiveSummary.internalJointCount ?? 0}</strong></div>
+            <div><span>Puntos verificados</span><strong>{verified} puntos</strong></div>
           </div>
+          <details className={styles.technicalDetails}>
+            <summary>VER DIAGNÓSTICO TÉCNICO</summary>
+            <div className={styles.technicalGrid}>
+              <div><span>Landmarks sin evidencia visual</span><strong>{effectiveSummary.noVisualEvidenceCount ?? 0} landmarks</strong></div>
+              <div><span>Landmarks con vistas insuficientes</span><strong>{effectiveSummary.insufficientViewsCount ?? 0} landmarks</strong></div>
+              <div><span>Incompatibilidades visuales/técnicas</span><strong>{effectiveSummary.technicalMismatchCount ?? 0} landmarks</strong></div>
+              <div><span>Landmarks con topología inválida</span><strong>{effectiveSummary.topologyInvalidCount ?? 0} landmarks</strong></div>
+              <div><span>Articulaciones internas calculadas</span><strong>{effectiveSummary.internalJointCount ?? 0} articulaciones</strong></div>
+            </div>
+            <p className={styles.metricExplanation}>
+              La confianza corporal mide el cuerpo base. La preparación para rig aplica además los gates bloqueantes.
+              La cobertura geométrica puede ser alta aunque el detector visual no reconozca una región en sus vistas.
+              0/7 vistas significa que el detector no reconoció esa región en ninguna de las siete cámaras renderizadas.
+            </p>
+          </details>
 
           <div className={styles.coverageGrid}>
             {([
@@ -848,8 +1030,9 @@ export function AvatarAnalyzerPreview() {
                 <span>{label}</span>
                 <strong>{compactCoverage(record)}</strong>
                 <small>
-                  Visual {percent(record?.visualCoverage)} · Geométrica {percent(record?.geometricCoverage)}
+                  Detectadas {record?.detectorSuccessfulViews ?? 0}/{record?.renderedViews ?? 0} · Proyectadas {record?.projectedSuccessfulViews ?? 0}
                 </small>
+                <small>Visual {percent(record?.visualCoverage)} · Geométrica {percent(record?.geometricCoverage)}</small>
               </article>
             ))}
           </div>
@@ -863,6 +1046,9 @@ export function AvatarAnalyzerPreview() {
                 {(effectiveSummary.rigReadinessGates || []).length
                   ? ` Bloqueos: ${(effectiveSummary.rigReadinessGates || []).map(readableName).join(", ")}.`
                   : ""}
+                {recommendedActionLabel(effectiveSummary.recommendedNextAction)
+                  ? ` Próxima acción: ${recommendedActionLabel(effectiveSummary.recommendedNextAction)}.`
+                  : ""}
               </span>
             </p>
           ) : (
@@ -872,7 +1058,25 @@ export function AvatarAnalyzerPreview() {
       ) : null}
 
       {loadingDetail ? (
-        <div className={styles.processing}><Loader2 className={styles.spin} /><p>Cargando cobertura, estados y motivos exactos…</p></div>
+        <div className={styles.processing}><Loader2 className={styles.spin} /><p>Cargando cobertura, estados y motivos exactos… Reintentos: {detailRetryCount}</p></div>
+      ) : null}
+
+      {detailState === "temporarily_unavailable" ? (
+        <div className={styles.detailNotice}>
+          <div><strong>DETALLE TEMPORALMENTE NO DISPONIBLE</strong><span>El resultado anatómico y el GLB se conservan. No hace falta volver a ejecutar Blender.</span></div>
+          <button type="button" onClick={retryDetail}>REINTENTAR CARGA DEL DETALLE</button>
+        </div>
+      ) : null}
+
+      {analysisProcessState !== "idle" || effectiveSummary ? (
+        <section className={styles.systemHealth} aria-label="Salud del sistema del Analyzer">
+          <div><span>Worker</span><strong>{analysisProcessState === "failed" ? "Error" : "Disponible"}</strong></div>
+          <div><span>Proceso</span><strong>{processStateLabel(analysisProcessState)}</strong></div>
+          <div><span>Resultado persistido</span><strong>{effectiveSummary ? "Sí" : analysisProcessState === "running" ? "En proceso" : "No"}</strong></div>
+          <div><span>Detalle</span><strong>{detailStateLabel(detailState)}</strong></div>
+          <div><span>GLB diagnóstico</span><strong>{assetStateLabel(assetState)}</strong></div>
+          <div><span>Reintentos</span><strong>{detailRetryCount}</strong></div>
+        </section>
       ) : null}
 
       {detail ? (
@@ -1092,7 +1296,9 @@ export function AvatarAnalyzerPreview() {
         </div>
       ) : null}
 
-      {error ? <p className={styles.error}><TriangleAlert /> {error}</p> : null}
+      {persistenceNotice ? <p className={styles.notice}><Loader2 className={loadingDetail ? styles.spin : undefined} /> {persistenceNotice}</p> : null}
+      {transportError ? <p className={styles.transportError}><TriangleAlert /> {transportError}</p> : null}
+      {workerErrorMessage ? <p className={styles.error}><TriangleAlert /> {workerErrorMessage}</p> : null}
     </section>
   );
 }

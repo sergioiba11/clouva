@@ -521,7 +521,11 @@ def run(input_path: Path, output_dir: Path):
             initial_render_dir, body_vectors, float(body_report["dimensions"]["height"]),
             meshes=meshes, segmentation=segmentation, classifications=classifications,
             anatomy_bvh=anatomy_bvh, resolution=384, technical_resolution=192,
-            hand_framing=1.72, attempt="initial",
+            # Real runs show hand silhouette coverage of only ~1-4% of frame at
+            # 1.72 (vs. ~15% for face at a similar framing ratio), with tons of
+            # headroom before the 0.965 clipping threshold - tighter framing
+            # gives the landmark detector more actual hand detail to work with.
+            hand_framing=1.3, attempt="initial",
         )
         manifests.append(initial_manifest)
         stage("rendering_initial_rgb_edges_depth_normals_region_ids", current)
@@ -555,7 +559,12 @@ def run(input_path: Path, output_dir: Path):
             anatomy_bvh=topology_bvh,
             resolution=512,
             technical_resolution=224,
-            hand_framing=1.92 if low_hand_evidence else 1.76,
+            # Confirmed against real runs that low hand evidence isn't caused
+            # by clipping (framingValid stayed true, coverage stayed far below
+            # the 0.965 clip threshold) - it was low pixel detail. Zoom in
+            # further on retry instead of widening, which only shrank the hand
+            # more without fixing anything.
+            hand_framing=1.05 if low_hand_evidence else 1.2,
             face_framing=2.08 if low_face_evidence else 1.98,
             attempt="retry" if low_hand_evidence or low_face_evidence else "final",
         )

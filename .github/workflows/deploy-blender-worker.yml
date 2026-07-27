@@ -1,0 +1,40 @@
+name: Deploy Avatar Analyzer Blender worker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "worker/garment-rig/**"
+      - ".github/workflows/deploy-blender-worker.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-blender-worker
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA_EMAIL }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy clouva-blender-worker to Cloud Run
+        run: |
+          gcloud run deploy clouva-blender-worker \
+            --project gen-lang-client-0737053175 \
+            --region us-central1 \
+            --source worker/garment-rig \
+            --quiet

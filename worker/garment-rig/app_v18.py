@@ -18,7 +18,6 @@ import app_v17 as v32
 from analysis_glb_sanitizer import sanitize_glb_for_analysis
 from analyzer_v4_contract import (
     ANALYZER_VERSION,
-    APPROVED_STATES,
     MAP_VERSION,
     RIG_PROFILES,
     build_targeted_reanalysis_plan,
@@ -47,6 +46,9 @@ REQUESTED_PROFILE_ENV = "CLOUVA_REQUESTED_RIG_PROFILE"
 REANALYSIS_ENV = "CLOUVA_REANALYSIS_OPERATION"
 V4_PHASE_ENV = "CLOUVA_AVATAR_ANALYZER_V4_PHASE"
 V4_DURABLE_SUFFIXES = {".glb", ".json", ".png"}
+V4_REQUIRED_FILES = ("avatar_analysis.json", "diagnostic_report.json", "diagnostic_landmarks.glb")
+PUBLIC_RESULT_BUDGET_BYTES = 24 * 1024 * 1024
+RESULT_RETRY_AFTER_SECONDS = 3
 MAX_ANALYSIS_INPUT_VERTICES = max(
     20_000,
     int(os.environ.get("CLOUVA_AVATAR_ANALYZER_MAX_INPUT_VERTICES", "2000000")),
@@ -316,17 +318,20 @@ def _rerun_cached_source_v4(source_path: Path, requested_profile: str, operation
         raise HTTPException(status_code=422, detail=f"No se pudo reanalizar el avatar con V4: {exc}") from exc
 
 
-def _persist_run_v4(output_dir: Path, analysis: dict[str, Any], source_path: Path):
-    """Build the durable run evidence on local disk, then commit it to the
-    (possibly network-backed, e.g. GCS FUSE) run cache volume in one move.
+def _validate_staged_run(staging: Path, run_id: str) -> None:
+    missing = [name for name in V4_REQUIRED_FILES if not (staging / name).is_file()]
+    if missing:
+        raise RuntimeError(f"Avatar Analyzer V4 durable result incomplete: {', '.join(missing)}")
+    staged_analysis = json.loads((staging / "avatar_analysis.json").read_text(encoding="utf-8"))
+    json.loads((staging / "diagnostic_report.json").read_text(encoding="utf-8"))
+    if str(staged_analysis.get("runId") or "") != run_id:
+        raise RuntimeError("Avatar Analyzer V4 staged runId does not match its destination")
+    if (staging / "diagnostic_landmarks.glb").stat().st_size < 1024:
+        raise RuntimeError("Avatar Analyzer V4 diagnostic GLB is empty")
 
-    Staging directly on the cache volume made every intermediate write and
-    the final directory rename go through the network filesystem; a rename
-    of a directory with many small files is emulated by FUSE as one rename
-    per object and can exhaust file handles. Building the tree on local disk
-    keeps that churn off the network mount, and shutil.move() copies once
-    when crossing filesystems instead of renaming per file.
-    """
+
+def _persist_run_v4(output_dir: Path, analysis: dict[str, Any], source_path: Path):
+    """Validate a local staging tree and publish it with a final commit marker."""
     run_id = str(analysis.get("runId") or "")
     if not v32.RUN_ID_PATTERN.fullmatch(run_id):
         raise RuntimeError("Avatar Analyzer V4 returned an invalid runId")
@@ -334,31 +339,63 @@ def _persist_run_v4(output_dir: Path, analysis: dict[str, Any], source_path: Pat
     v32.RUN_CACHE_ROOT.mkdir(parents=True, exist_ok=True)
     destination = v32.RUN_CACHE_ROOT / run_id
     staging = Path(tempfile.mkdtemp(prefix=f"clouva-run-staging-{run_id}-"))
+    started = time.perf_counter()
     try:
-        for source in output_dir.rglob("*"):
-            if not source.is_file() or source.suffix.lower() not in V4_DURABLE_SUFFIXES:
+        for source_file in output_dir.rglob("*"):
+            if not source_file.is_file() or source_file.suffix.lower() not in V4_DURABLE_SUFFIXES:
                 continue
-            target = staging / source.relative_to(output_dir)
+            target = staging / source_file.relative_to(output_dir)
             target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, target)
+            shutil.copy2(source_file, target)
         source_dir = staging / "source"
         source_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source_path, source_dir / "avatar-original-clean.glb")
-        (staging / "expires_at.json").write_text(json.dumps({
+        _validate_staged_run(staging, run_id)
+        shutil.rmtree(destination, ignore_errors=True)
+        shutil.move(str(staging), str(destination))
+        marker = destination / "expires_at.json"
+        marker_tmp = destination / ".expires_at.json.tmp"
+        marker_tmp.write_text(json.dumps({
             "runId": run_id,
             "createdAt": time.time(),
             "expiresAt": time.time() + v32.RUN_TTL_SECONDS,
-        }, indent=2), encoding="utf-8")
-        shutil.rmtree(destination, ignore_errors=True)
-        shutil.move(str(staging), str(destination))
+            "state": "completed",
+        }, separators=(",", ":")), encoding="utf-8")
+        marker_tmp.replace(marker)
+        print(json.dumps({
+            "event": "avatar_analyzer_run_persisted",
+            "runId": run_id,
+            "state": "completed",
+            "durationMs": round((time.perf_counter() - started) * 1000, 3),
+            "persistentBytes": sum(path.stat().st_size for path in destination.rglob("*") if path.is_file()),
+        }, separators=(",", ":")), flush=True)
         return destination
     except Exception:
         shutil.rmtree(staging, ignore_errors=True)
+        if destination.is_dir() and not (destination / "expires_at.json").is_file():
+            shutil.rmtree(destination, ignore_errors=True)
         raise
 
 
+def _strip_public_debug(value: Any):
+    if isinstance(value, list):
+        return [_strip_public_debug(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    omitted = {
+        "initialAttempt", "finalAttempt", "stdout", "stderr", "subprocessLogs",
+        "phaseLogs", "rawDetectorOutput", "rawDetections", "detectorDump",
+    }
+    return {
+        key: _strip_public_debug(item)
+        for key, item in value.items()
+        if key not in omitted
+    }
+
+
 def _public_result(run_dir: Path):
-    analysis = json.loads((run_dir / "avatar_analysis.json").read_text(encoding="utf-8"))
+    analysis_path = run_dir / "avatar_analysis.json"
+    analysis = json.loads(analysis_path.read_text(encoding="utf-8"))
     if analysis.get("version") != ANALYZER_VERSION or analysis.get("mapVersion") != MAP_VERSION:
         raise HTTPException(status_code=410, detail={
             "code": "ANALYZER_RESULT_STALE",
@@ -368,16 +405,10 @@ def _public_result(run_dir: Path):
             "storedMapVersion": analysis.get("mapVersion"),
             "currentMapVersion": MAP_VERSION,
         })
-    report = json.loads((run_dir / "diagnostic_report.json").read_text(encoding="utf-8"))
-    landmarks = analysis.get("landmarks") or {}
-    accepted = {
-        name: item for name, item in landmarks.items()
-        if isinstance(item, dict) and item.get("state") in APPROVED_STATES
-    }
-    rejected = {
-        name: item for name, item in landmarks.items()
-        if isinstance(item, dict) and item.get("state") not in APPROVED_STATES
-    }
+    report_path = run_dir / "diagnostic_report.json"
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    public_analysis = _strip_public_debug(analysis)
+    public_report = _strip_public_debug(report)
     renders = []
     for directory_name in ("renders_v4", "renders_temporales", "renders_initial"):
         directory = run_dir / directory_name
@@ -385,20 +416,60 @@ def _public_result(run_dir: Path):
             renders.extend(
                 f"{directory_name}/{path.name}"
                 for path in sorted(directory.iterdir())
-                if path.is_file() and path.suffix.lower() in {".png", ".json", ".npy"}
+                if path.is_file() and path.suffix.lower() in {".png", ".json"}
             )
-    return {
+    payload = {
         "id": analysis.get("runId"),
         "runId": analysis.get("runId"),
         "createdAt": analysis.get("createdAt") or analysis.get("timestamp"),
         "source": analysis.get("source") or {},
         "summary": _summary(analysis),
-        "analysis": analysis,
-        "report": report,
-        "acceptedLandmarks": accepted,
-        "rejectedLandmarks": rejected,
+        "analysis": public_analysis,
+        "report": public_report,
         "assets": {"diagnosticGlb": "diagnostic_landmarks.glb", "renders": renders},
     }
+    encoded = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    if len(encoded) > PUBLIC_RESULT_BUDGET_BYTES:
+        public_analysis.pop("diagnostics", None)
+        if isinstance(public_report, dict):
+            public_report.pop("diagnostics", None)
+            public_report.pop("debug", None)
+        payload["publicPayloadTrimmed"] = True
+        encoded = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    if len(encoded) > PUBLIC_RESULT_BUDGET_BYTES:
+        essential = {
+            "version", "mapVersion", "runId", "createdAt", "timestamp", "source",
+            "overall_status", "status", "requested_rig_profile", "supported_rig_profiles",
+            "rigReadinessScore", "rigReadinessApproved", "rigReadinessGates",
+            "bodyBaseConfidence", "humanoidConfidence", "criticalLandmarksVerified",
+            "bodyAnalysis", "faceAnalysis", "leftHandAnalysis", "rightHandAnalysis",
+            "landmarks", "warnings", "bodySubsystems", "detectionCoverage", "dimensions",
+            "metrics", "orientation", "root_causes", "blocking_reasons",
+            "recommended_next_action", "topology_capabilities", "diagnostic_fingerprint",
+        }
+        payload["analysis"] = {key: value for key, value in public_analysis.items() if key in essential}
+        payload["report"] = {"publicPayloadTrimmed": True}
+        payload["publicPayloadTrimmed"] = True
+        encoded = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    if len(encoded) > PUBLIC_RESULT_BUDGET_BYTES:
+        raise HTTPException(status_code=413, detail={
+            "code": "ANALYZER_PUBLIC_RESULT_BUDGET_EXCEEDED",
+            "message": "El diagnóstico supera el presupuesto público aun después de eliminar evidencia regenerable.",
+            "publicBytes": len(encoded),
+            "budgetBytes": PUBLIC_RESULT_BUDGET_BYTES,
+        })
+    landmarks = analysis.get("landmarks") if isinstance(analysis.get("landmarks"), dict) else {}
+    print(json.dumps({
+        "event": "avatar_analyzer_public_result",
+        "runId": analysis.get("runId"),
+        "persistedAnalysisBytes": analysis_path.stat().st_size,
+        "persistedReportBytes": report_path.stat().st_size,
+        "publicBytes": len(encoded),
+        "landmarkCount": len(landmarks),
+        "renderCount": len(renders),
+        "trimmed": bool(payload.get("publicPayloadTrimmed")),
+    }, separators=(",", ":")), flush=True)
+    return payload
 
 
 def _assert_profile_ready(analysis: dict[str, Any], requested_profile: str):
@@ -523,15 +594,38 @@ def analyze_avatar_v4_preview(request: AvatarAnalyzeV4Request):
     )
 
 
+def _result_still_persisting(run_id: str):
+    raise HTTPException(
+        status_code=503,
+        detail={
+            "code": "ANALYZER_RESULT_STILL_PERSISTING",
+            "message": "El diagnóstico todavía se está guardando. Probá de nuevo en unos segundos.",
+            "runId": run_id,
+            "retryAfterSeconds": RESULT_RETRY_AFTER_SECONDS,
+        },
+        headers={"Retry-After": str(RESULT_RETRY_AFTER_SECONDS)},
+    )
+
+
 @app.get("/avatar/analyze-v4/result/{run_id}")
 def avatar_analyze_v4_result(run_id: str):
     v32._cleanup_expired_runs()
-    return JSONResponse(_public_result(v32._safe_run_dir(run_id)))
+    run_dir = v32._safe_run_dir(run_id)
+    if not (run_dir / "expires_at.json").is_file():
+        _result_still_persisting(run_id)
+    try:
+        return JSONResponse(_public_result(run_dir))
+    except HTTPException:
+        raise
+    except (json.JSONDecodeError, FileNotFoundError, OSError):
+        _result_still_persisting(run_id)
 
 
 @app.get("/avatar/analyze-v4/result/{run_id}/asset/{asset_path:path}")
 def avatar_analyze_v4_asset(run_id: str, asset_path: str):
     run_dir = v32._safe_run_dir(run_id)
+    if not (run_dir / "expires_at.json").is_file():
+        _result_still_persisting(run_id)
     requested = (run_dir / asset_path).resolve()
     if run_dir not in requested.parents or not requested.is_file():
         raise HTTPException(status_code=404, detail="Archivo de diagnóstico V4 no encontrado")

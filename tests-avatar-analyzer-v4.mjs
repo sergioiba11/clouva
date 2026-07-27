@@ -35,7 +35,11 @@ test("V4 API remains side-by-side with V3.2 and reanalysis uses a clean source",
   assert.match(source, /_rerun_cached_source_v4/);
   assert.match(source, /_persist_run_v4/);
   assert.match(source, /V4_DURABLE_SUFFIXES/);
-  assert.match(source, /partial-/);
+  assert.match(source, /clouva-run-staging-/);
+  assert.match(source, /ANALYZER_RESULT_STILL_PERSISTING/);
+  assert.match(source, /PUBLIC_RESULT_BUDGET_BYTES/);
+  assert.doesNotMatch(source, /"acceptedLandmarks": accepted/);
+  assert.doesNotMatch(source, /"rejectedLandmarks": rejected/);
   assert.doesNotMatch(source, /shutil\.copytree\(output_dir/);
   assert.match(persistedCache, /incomplete/);
   assert.match(persistedCache, /shutil\.rmtree\(destination/);
@@ -173,4 +177,52 @@ test("Avatar Analyzer resets Blender memory between the base and V4 upgrade phas
   assert.match(analyzer, /if phase == "base"/);
   assert.match(analyzer, /if phase == "upgrade"/);
   assert.match(analyzer, /_restore_clean_analysis_scene\(input_path\)/);
+});
+
+
+test("Avatar Analyzer preserves retryable HTTP states and pending jobs across devices", () => {
+  const resultRoute = read("./app/api/avatar/analyze/result/[runId]/route.ts");
+  const kickoff = read("./app/api/avatar/analyze/route.ts");
+  const job = read("./app/api/avatar/analyze/job/[jobId]/route.ts");
+  const latest = read("./app/api/avatar/analyze/latest/route.ts");
+  const shared = read("./app/api/avatar/analyze/_shared.ts");
+  assert.match(resultRoute, /FORWARDED_WORKER_STATUSES/);
+  assert.match(resultRoute, /Retry-After/);
+  assert.match(resultRoute, /ANALYZER_RESULT_INVALID_JSON/);
+  assert.match(kickoff, /persistPendingAnalyzerJob/);
+  assert.match(job, /persistCompletedAnalyzerJob/);
+  assert.match(job, /findAvatarForAnalyzerJob/);
+  assert.match(latest, /pendingStatus/);
+  assert.match(shared, /METADATA_UPDATE_ATTEMPTS/);
+  assert.match(shared, /avatar_analyzer_v4_pending/);
+});
+
+
+test("Avatar Analyzer frontend separates process, detail and asset failures", () => {
+  const preview = read("./components/library/AvatarAnalyzerPreview.tsx");
+  const styles = read("./components/library/avatar-analyzer-preview.module.css");
+  assert.match(preview, /type AnalysisProcessState/);
+  assert.match(preview, /type DetailState/);
+  assert.match(preview, /type AssetState/);
+  assert.match(preview, /Promise\.all\(\[/);
+  assert.match(preview, /DETAIL_MAX_ATTEMPTS/);
+  assert.match(preview, /REINTENTAR CARGA DEL DETALLE/);
+  assert.match(preview, /Incompatibilidades visuales\/técnicas/);
+  assert.match(preview, /Resultado persistido/);
+  assert.doesNotMatch(preview, /if \(error\) return \{ label: "ERROR TÉCNICO"/);
+  assert.match(styles, /scroll-snap-type/);
+  assert.match(styles, /cameraActive/);
+  assert.match(styles, /safe-area-inset-bottom/);
+});
+
+
+test("restored Analyzer results retain their compact summary and next action", () => {
+  const shared = read("./app/api/avatar/analyze/_shared.ts");
+  const latest = read("./app/api/avatar/analyze/latest/route.ts");
+  const preview = read("./components/library/AvatarAnalyzerPreview.tsx");
+  assert.match(shared, /summary: args\.summary/);
+  assert.match(latest, /summary: asRecord\(stored\.summary\)/);
+  assert.match(preview, /setSummary\(latest\.summary/);
+  assert.match(preview, /Próxima acción/);
+  assert.match(preview, /0\/7 vistas significa/);
 });

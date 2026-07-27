@@ -577,3 +577,132 @@
   .landmarkInspector { grid-template-columns: 1fr 1fr; }
   .action { min-height: 49px; padding: 9px; font-size: 10px; line-height: 1.35; }
 }
+
+
+/* Avatar Analyzer V4.1 hardening: independent process, detail and asset states. */
+.card { overflow-x: hidden; }
+.badgeNotice { border-color: rgba(91, 180, 255, .45); color: #b9ddff; }
+.cameraBar {
+  scroll-snap-type: x proximity;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.cameraBar::-webkit-scrollbar { display: none; }
+.cameraBar button { min-height: 44px; scroll-snap-align: center; }
+.cameraBar .cameraActive {
+  border-color: rgba(204, 160, 255, .78);
+  background: rgba(137, 66, 235, .3);
+  color: #fff;
+  box-shadow: inset 0 0 0 1px rgba(210, 177, 255, .16);
+}
+.primarySummary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 9px;
+  margin: 14px 0 9px;
+}
+.primarySummary > div,
+.technicalGrid > div,
+.systemHealth > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid rgba(170, 111, 255, .17);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, .035);
+}
+.primarySummary span,
+.technicalGrid span,
+.systemHealth span { color: #938a9f; font-size: 10px; }
+.primarySummary strong,
+.technicalGrid strong,
+.systemHealth strong { color: #f5edff; font-size: 12px; overflow-wrap: anywhere; }
+.primarySummary .metricApproved { border-color: rgba(71, 221, 144, .28); background: rgba(23, 106, 69, .12); }
+.primarySummary .metricBlocked { border-color: rgba(255, 93, 115, .25); background: rgba(116, 18, 35, .13); }
+.technicalDetails {
+  margin-bottom: 13px;
+  border: 1px solid rgba(170, 111, 255, .14);
+  border-radius: 14px;
+  background: rgba(4, 3, 8, .28);
+}
+.technicalDetails summary {
+  min-height: 44px;
+  padding: 13px;
+  color: #cdb4ec;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .06em;
+  cursor: pointer;
+}
+.technicalGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  padding: 0 11px 11px;
+}
+.metricExplanation { margin: 0; padding: 0 12px 13px; color: #8d8199; font-size: 10px; line-height: 1.55; }
+.systemHealth {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 12px 0;
+}
+.systemHealth > div { padding: 10px; border-radius: 11px; }
+.detailNotice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid rgba(91, 180, 255, .28);
+  border-radius: 13px;
+  background: rgba(25, 83, 126, .15);
+}
+.detailNotice > div { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+.detailNotice strong { color: #cfe9ff; font-size: 11px; }
+.detailNotice span { color: #9bbbd2; font-size: 10px; line-height: 1.45; }
+.detailNotice button {
+  min-height: 42px;
+  padding: 8px 11px;
+  border: 1px solid rgba(128, 199, 255, .34);
+  border-radius: 10px;
+  background: rgba(45, 122, 181, .18);
+  color: #e5f4ff;
+  font-size: 9px;
+  font-weight: 900;
+}
+.notice,
+.transportError {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 11px 12px;
+  border-radius: 13px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.notice { border: 1px solid rgba(91, 180, 255, .23); background: rgba(25, 83, 126, .14); color: #b9ddff; }
+.transportError { border: 1px solid rgba(255, 181, 80, .24); background: rgba(112, 68, 13, .17); color: #ffd29a; }
+.notice svg,
+.transportError svg { width: 16px; height: 16px; flex: 0 0 auto; }
+
+@media (max-width: 820px) {
+  .primarySummary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .technicalGrid,
+  .systemHealth { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .detailNotice { align-items: stretch; flex-direction: column; }
+  .detailNotice button { width: 100%; }
+}
+
+@media (max-width: 480px) {
+  .card { padding-bottom: calc(max(20px, env(safe-area-inset-bottom)) + 92px); }
+  .cameraBar { margin-right: -12px; padding-right: 18px; }
+  .primarySummary { grid-template-columns: 1fr 1fr; }
+  .technicalGrid,
+  .systemHealth { grid-template-columns: 1fr 1fr; }
+  .primarySummary > div { min-height: 66px; padding: 9px; }
+}

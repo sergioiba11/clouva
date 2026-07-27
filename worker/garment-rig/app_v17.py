@@ -158,15 +158,42 @@ def _summary_header(summary: dict):
     return encoded
 
 
+INCOMPLETE_RUN_GRACE_SECONDS = 120
+
+
+def _cache_event(run_id: str, state: str, reason: str, age_seconds: float):
+    print(json.dumps({
+        "event": "avatar_analyzer_run_cache",
+        "runId": run_id,
+        "state": state,
+        "reason": reason,
+        "ageSeconds": round(max(0.0, age_seconds), 3),
+    }, separators=(",", ":")), flush=True)
+
+
 def _cleanup_expired_runs():
     RUN_CACHE_ROOT.mkdir(parents=True, exist_ok=True)
-    cutoff = time.time() - RUN_TTL_SECONDS
+    now = time.time()
+    cutoff = now - RUN_TTL_SECONDS
+    incomplete_cutoff = now - INCOMPLETE_RUN_GRACE_SECONDS
     for child in RUN_CACHE_ROOT.iterdir():
         try:
-            incomplete = child.is_dir() and not (child / "expires_at.json").is_file()
-            if child.is_dir() and (incomplete or child.stat().st_mtime < cutoff):
+            if not child.is_dir():
+                continue
+            mtime = child.stat().st_mtime
+            marker = child / "expires_at.json"
+            age = now - mtime
+            if not marker.is_file():
+                if mtime >= incomplete_cutoff:
+                    continue
+                _cache_event(child.name, "abandoned", "commit_marker_missing_after_grace", age)
                 shutil.rmtree(child, ignore_errors=True)
-        except OSError:
+                continue
+            if mtime < cutoff:
+                _cache_event(child.name, "expired", "ttl_elapsed", age)
+                shutil.rmtree(child, ignore_errors=True)
+        except OSError as exc:
+            _cache_event(child.name, "cleanup_error", type(exc).__name__, 0.0)
             continue
 
 
