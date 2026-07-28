@@ -23,7 +23,7 @@ test("adaptive projection checks a neighborhood without accepting another region
   assert.match(projector, /requestedPixel/);
   assert.match(projector, /selectedPixel/);
   assert.match(projector, /regionCompatible/);
-  assert.match(projector, /LANDMARK_WRONG_REGION/);
+  assert.match(projector, /TECHNICAL_REGION_MISMATCH|LANDMARK_WRONG_REGION/);
 });
 
 test("stylized facial signals are visual-only and projection remains strict", async () => {
@@ -59,13 +59,15 @@ test("Biblioteca blocks filename-only rigs", async () => {
   assert.doesNotMatch(component, /if \(!avatar \|\| !avatar\.isRigged\) return/);
 });
 
-test("Analyzer UI uses dynamic badge and mobile cards", async () => {
+test("Analyzer UI uses dynamic requested-profile status and mobile cards", async () => {
   const component = await read("./components/library/AvatarAnalyzerPreview.tsx");
   const css = await read("./components/library/avatar-analyzer-preview.module.css");
   assert.match(component, /Confianza del cuerpo base/);
-  assert.match(component, /Preparación para rig/);
-  assert.match(component, /ANÁLISIS APROBADO/);
-  assert.match(component, /ANÁLISIS PARCIAL/);
+  assert.match(component, /Preparación para el perfil/);
+  assert.match(component, /Perfil solicitado/);
+  assert.match(component, /Estado del perfil/);
+  assert.match(component, /Listo para rig corporal/);
+  assert.match(component, /Rig corporal disponible · análisis avanzado pendiente/);
   assert.doesNotMatch(component, /SUPERFICIE ANATÓMICA VERIFICADA/);
   assert.doesNotMatch(component, /Compatibilidad corporal/);
   assert.match(css, /@media \(max-width: 720px\)[\s\S]*\.desktopTable \{ display: none; \}/);

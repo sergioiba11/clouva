@@ -165,6 +165,7 @@ def triangulate_landmark(name: str, candidates: List[dict], segmentation,
         depth_ok = float(candidate.get("depthConfidence", 0.0)) >= 0.35
         normal_ok = float(candidate.get("normalCompatibility", 0.0)) >= 0.25
         hit_regions = {
+            str(candidate.get("technicalRegion") or ""),
             str(candidate.get("hitRegion") or candidate.get("primaryRegion") or ""),
             *[str(value) for value in candidate.get("secondaryRegions") or []],
         }
@@ -190,6 +191,7 @@ def triangulate_landmark(name: str, candidates: List[dict], segmentation,
         and max(float(item.get("depthConfidence") or 0.0) for item in usable) >= 0.72
         and any(int(item.get("triangleId", item.get("triangleIndex", -1))) >= 0 for item in usable)
         and any(item.get("barycentricCoordinates") for item in usable)
+        and any(item.get("projectionSource") in {"technical_world_position", "anatomy_bvh_recast"} for item in usable)
     )
     if len(views) < minimum_views and not exact_single_view:
         state = "no_visual_evidence" if len(views) == 0 else "insufficient_views"

@@ -60,6 +60,11 @@ def base_analysis():
         "source": {"sha256": "b" * 64},
         "isHumanoid": True,
         "humanoidConfidence": 0.91,
+        "orientation": {"requiresOrientationReview": False},
+        "bodySubsystems": {
+            name: {"status": "valid", "missingOrInvalid": [], "blockingWarnings": []}
+            for name in ("body_core", "left_arm", "right_arm", "left_leg", "right_leg")
+        },
         "dimensions": {
             "height": 1.88,
             "width": 0.58,

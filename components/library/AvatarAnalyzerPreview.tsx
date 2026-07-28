@@ -55,6 +55,17 @@ type AnalysisSummary = {
   bodyBaseConfidence?: number;
   rigReadinessScore?: number;
   rigReadinessApproved?: boolean;
+  requestedRigProfile?: string;
+  supportedRigProfiles?: string[];
+  requestedProfileReady?: boolean;
+  requestedProfileBlockingReasons?: Array<{ landmark?: string; state?: string; reasons?: string[] }>;
+  advancedAnalysisWarnings?: Array<{ capability?: string; status?: string; blocking?: boolean }>;
+  bodyRigReady?: boolean;
+  faceAnalysisReady?: boolean;
+  leftHandBaseReady?: boolean;
+  rightHandBaseReady?: boolean;
+  leftFingerRigReady?: boolean;
+  rightFingerRigReady?: boolean;
   rigReadinessGates?: string[];
   recommendedNextAction?: string | Record<string, unknown>;
   criticalLandmarksVerified?: boolean;
@@ -109,6 +120,10 @@ type LandmarkRecord = {
   blocking?: boolean;
   state?: string;
   evidenceState?: string;
+  evidenceType?: string;
+  requiresVisualViews?: boolean;
+  manualCorrectionRecommended?: boolean;
+  manual_verified?: boolean;
   failureStage?: string | null;
   failureCode?: string | null;
   rawConfidence?: number;
@@ -212,10 +227,15 @@ const CAMERA_PRESETS: CameraPreset[] = [
 
 const STATE_LABELS: Record<string, string> = {
   verified: "Verificado",
+  verified_internal_geometry: "Verificado internamente",
+  verified_visual_geometry: "Verificado visualmente",
+  verified_single_view_depth: "Verificado con profundidad",
   verified_geometry_fallback: "Verificado por geometría",
   low_confidence: "Confianza baja",
   insufficient_views: "Faltan vistas",
   no_visual_evidence: "Sin evidencia visual",
+  projection_mismatch: "Proyección incompatible",
+  manual_review_required: "Revisión manual requerida",
   technical_mismatch: "Evidencia técnica incompatible",
   topology_invalid: "Topología inválida",
   manually_corrected: "Corregido manualmente",
@@ -495,12 +515,13 @@ export function AvatarAnalyzerPreview() {
   const [savingCorrection, setSavingCorrection] = useState(false);
   const [correctionMessage, setCorrectionMessage] = useState<string | null>(null);
   const [visualCorrectionMode, setVisualCorrectionMode] = useState(false);
+  const [showAllTechnical, setShowAllTechnical] = useState(false);
   const [openGroups, setOpenGroups] = useState<Record<LandmarkGroup, boolean>>({
-    cuerpo: true,
-    rostro: true,
-    "mano izquierda": true,
-    "mano derecha": true,
-    "piernas y pies": true,
+    cuerpo: false,
+    rostro: false,
+    "mano izquierda": false,
+    "mano derecha": false,
+    "piernas y pies": false,
   });
   const modelViewerRef = useRef<ModelViewerElement | null>(null);
   const cameraButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
@@ -529,9 +550,15 @@ export function AvatarAnalyzerPreview() {
   );
   const groupedEntries = useMemo(() => {
     const groups = new Map<LandmarkGroup, [string, LandmarkRecord][]>(GROUP_ORDER.map((group) => [group, []]));
-    for (const entry of selectableEntries) groups.get(landmarkGroup(entry[0]))?.push(entry);
+    for (const entry of selectableEntries) {
+      const record = entry[1];
+      const shouldShow = showAllTechnical
+        || Boolean(record.blocking ?? !record.accepted)
+        || Boolean(record.manualCorrectionRecommended || record.manual_verified);
+      if (shouldShow) groups.get(landmarkGroup(entry[0]))?.push(entry);
+    }
     return groups;
-  }, [selectableEntries]);
+  }, [selectableEntries, showAllTechnical]);
   const pendingBreakdown = useMemo(() => GROUP_ORDER
     .map((group) => [group, groupedEntries.get(group)?.filter(([, record]) => record.blocking ?? !record.accepted).length ?? 0] as const)
     .filter(([, count]) => count > 0)
@@ -556,8 +583,11 @@ export function AvatarAnalyzerPreview() {
     if (detailState === "temporarily_unavailable") {
       return { label: "DETALLE TEMPORALMENTE NO DISPONIBLE", className: styles.badgeNotice };
     }
-    if (effectiveSummary.rigReadinessApproved && ["valid", "valid_with_warnings"].includes(effectiveSummary.status)) {
-      return { label: "ANÁLISIS APROBADO", className: styles.badgeApproved };
+    if (effectiveSummary.requestedProfileReady ?? effectiveSummary.rigReadinessApproved) {
+      return {
+        label: effectiveSummary.requestedRigProfile === "BODY_BASIC" ? "RIG CORPORAL LISTO" : "PERFIL SOLICITADO LISTO",
+        className: styles.badgeApproved,
+      };
     }
     if (effectiveSummary.status === "needs_review") {
       return { label: "NECESITA REVISIÓN", className: styles.badgePartial };
@@ -997,12 +1027,24 @@ export function AvatarAnalyzerPreview() {
       {effectiveSummary ? (
         <>
           <div className={styles.primarySummary}>
-            <div><span>Resultado anatómico</span><strong>{statusLabel(effectiveSummary.status)}</strong></div>
-            <div><span>Confianza del cuerpo base</span><strong>{percent(effectiveSummary.bodyBaseConfidence ?? effectiveSummary.humanoidConfidence)}</strong></div>
-            <div className={effectiveSummary.rigReadinessApproved ? styles.metricApproved : styles.metricBlocked}>
-              <span>Preparación para rig</span><strong>{percent(effectiveSummary.rigReadinessScore)}</strong>
+            <div><span>Perfil solicitado</span><strong>{effectiveSummary.requestedRigProfile || "BODY_BASIC"}</strong></div>
+            <div className={(effectiveSummary.requestedProfileReady ?? effectiveSummary.rigReadinessApproved) ? styles.metricApproved : styles.metricBlocked}>
+              <span>Estado del perfil</span>
+              <strong>{(effectiveSummary.requestedProfileReady ?? effectiveSummary.rigReadinessApproved) ? "Listo para rig corporal" : "Bloqueado"}</strong>
             </div>
-            <div><span>Puntos verificados</span><strong>{verified} puntos</strong></div>
+            <div><span>Confianza del cuerpo base</span><strong>{percent(effectiveSummary.bodyBaseConfidence ?? effectiveSummary.humanoidConfidence)}</strong></div>
+            <div className={(effectiveSummary.requestedProfileReady ?? effectiveSummary.rigReadinessApproved) ? styles.metricApproved : styles.metricBlocked}>
+              <span>Preparación para el perfil</span><strong>{percent(effectiveSummary.rigReadinessScore)}</strong>
+            </div>
+          </div>
+          <div className={styles.profileStatusLine}>
+            <strong>{effectiveSummary.bodyRigReady ? "Cuerpo válido" : "Cuerpo pendiente"}</strong>
+            <span>
+              {effectiveSummary.faceAnalysisReady && effectiveSummary.leftFingerRigReady && effectiveSummary.rightFingerRigReady
+                ? "Análisis avanzado completo"
+                : "Rig corporal disponible · análisis avanzado pendiente"}
+            </span>
+            <small>{verified} puntos verificados</small>
           </div>
           <details className={styles.technicalDetails}>
             <summary>VER DIAGNÓSTICO TÉCNICO</summary>
@@ -1037,11 +1079,11 @@ export function AvatarAnalyzerPreview() {
             ))}
           </div>
 
-          {!effectiveSummary.rigReadinessApproved ? (
+          {!(effectiveSummary.requestedProfileReady ?? effectiveSummary.rigReadinessApproved) ? (
             <p className={styles.error}>
               <TriangleAlert />
               <span>
-                El AutoRig de producción está bloqueado hasta verificar la anatomía crítica.
+                El perfil solicitado está bloqueado hasta verificar sus requisitos anatómicos.
                 {pendingBreakdown ? ` Pendientes: ${pendingBreakdown}.` : ""}
                 {(effectiveSummary.rigReadinessGates || []).length
                   ? ` Bloqueos: ${(effectiveSummary.rigReadinessGates || []).map(readableName).join(", ")}.`
@@ -1052,7 +1094,12 @@ export function AvatarAnalyzerPreview() {
               </span>
             </p>
           ) : (
-            <p className={styles.success}><CheckCircle2 /> Mapa anatómico aprobado para el AutoRig del mismo archivo fuente.</p>
+            <p className={styles.success}>
+              <CheckCircle2 />
+              {(effectiveSummary.advancedAnalysisWarnings || []).length
+                ? "Rig corporal disponible · análisis avanzado pendiente."
+                : "Mapa anatómico aprobado para el AutoRig del mismo archivo fuente."}
+            </p>
           )}
         </>
       ) : null}
@@ -1156,6 +1203,11 @@ export function AvatarAnalyzerPreview() {
               </div>
             </div>
 
+            <div className={styles.technicalToggleRow}>
+              <button type="button" onClick={() => setShowAllTechnical((current) => !current)}>
+                {showAllTechnical ? "OCULTAR PUNTOS INTERNOS APROBADOS" : "MOSTRAR TODOS LOS PUNTOS TÉCNICOS"}
+              </button>
+            </div>
             <div className={styles.mobileLandmarks}>
               {GROUP_ORDER.map((group) => {
                 const entries = groupedEntries.get(group) || [];
@@ -1182,12 +1234,14 @@ export function AvatarAnalyzerPreview() {
                               </button>
                               <div className={styles.cardMetrics}>
                                 <span>Confianza <strong>{percent(confidenceOf(record))}</strong></span>
-                                <span>Vistas <strong>{record.viewsConfirmed ?? 0}</strong></span>
-                                <span>Etapa <strong>{record.failureStage ? (FAILURE_LABELS[record.failureStage] || readableName(record.failureStage)) : "Completada"}</strong></span>
+                                <span>Vistas <strong>{record.requiresVisualViews === false ? "No requiere" : (record.viewsConfirmed ?? 0)}</strong></span>
+                                <span>Etapa <strong>{record.requiresVisualViews === false ? "Geometría interna" : record.failureStage ? (FAILURE_LABELS[record.failureStage] || readableName(record.failureStage)) : "Completada"}</strong></span>
                               </div>
                               <p>{(record.rejectionReasons || []).map(readableName).join(", ") || "Sin motivos de rechazo."}</p>
                               <div className={styles.cardActions}>
-                                <button type="button" onClick={() => selectLandmark(name)}><Crosshair /> Corregir</button>
+                                {(record.blocking ?? !record.accepted) && (record.requiresVisualViews !== false || record.manualCorrectionRecommended) ? (
+                                  <button type="button" onClick={() => selectLandmark(name)}><Crosshair /> Corregir</button>
+                                ) : null}
                                 {evidence ? <a href={evidence} target="_blank" rel="noreferrer"><ExternalLink /> Ver evidencia</a> : null}
                               </div>
                             </article>
