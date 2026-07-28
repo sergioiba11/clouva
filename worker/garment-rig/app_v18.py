@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import gc
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -934,70 +935,116 @@ def _gcs_client_from_env():
     return gcs_storage.Client(project=info.get("project_id"), credentials=credentials)
 
 
+_MIGRATION_JOBS_LOCK = threading.Lock()
+_MIGRATION_JOBS: dict[str, dict[str, Any]] = {}
+
+
+def _file_sha256(path: Path) -> str:
+    with open(path, "rb") as handle:
+        return hashlib.file_digest(handle, "sha256").hexdigest()
+
+
+def _run_migration_to_gcs_background(migration_job_id: str, bucket_name: str, prefix: str) -> None:
+    def _update(**changes: Any) -> None:
+        with _MIGRATION_JOBS_LOCK:
+            _MIGRATION_JOBS[migration_job_id].update(changes)
+
+    try:
+        client = _gcs_client_from_env()
+        bucket = client.bucket(bucket_name)
+
+        run_cache_root = v32.RUN_CACHE_ROOT
+        sources: list[tuple[Path, Path]] = []
+        if run_cache_root.is_dir():
+            for file_path in run_cache_root.rglob("*"):
+                if file_path.is_file():
+                    sources.append((file_path, run_cache_root))
+        if JOBS_ROOT.is_dir():
+            for file_path in JOBS_ROOT.glob("*.json"):
+                if file_path.is_file():
+                    sources.append((file_path, JOBS_ROOT.parent))
+
+        _update(filesConsidered=len(sources))
+        uploaded = {"count": 0, "bytes": 0}
+        skipped_identical = {"count": 0, "bytes": 0}
+        failures: list[dict[str, str]] = []
+
+        for file_path, root in sources:
+            relative = file_path.relative_to(root)
+            blob_name = f"{prefix}/{relative.as_posix()}"
+            size = file_path.stat().st_size
+            local_sha256 = _file_sha256(file_path)
+            blob = bucket.blob(blob_name)
+            try:
+                blob.reload()
+                existing_sha256 = (blob.metadata or {}).get("sha256")
+                if blob.size == size and existing_sha256 == local_sha256:
+                    skipped_identical["count"] += 1
+                    skipped_identical["bytes"] += size
+                    _update(skippedIdentical=dict(skipped_identical))
+                    continue
+            except Exception:
+                pass
+            try:
+                blob.metadata = {"sha256": local_sha256, "migratedFrom": "railway-clouva-volume"}
+                blob.upload_from_filename(str(file_path), checksum="crc32c")
+                blob.reload()
+                if (blob.metadata or {}).get("sha256") != local_sha256:
+                    raise RuntimeError("sha256 mismatch after upload")
+                uploaded["count"] += 1
+                uploaded["bytes"] += size
+                _update(uploaded=dict(uploaded))
+            except Exception as exc:
+                failures.append({"path": str(relative), "error": str(exc)[:500]})
+                _update(failures=list(failures))
+
+        _update(status="done", uploaded=uploaded, skippedIdentical=skipped_identical, failures=failures)
+    except Exception as exc:
+        _update(status="error", detail=str(exc)[:2000])
+
+
 @app.post("/diagnostics/avatar-analyzer-v4-migrate-to-gcs")
 def avatar_analyzer_v4_migrate_to_gcs(
     request: MigrateToGcsRequest,
     x_migration_token: str | None = Header(default=None, alias="X-Migration-Token"),
 ):
-    import hashlib
-
     expected_token = os.environ.get("CLOUVA_MIGRATION_TOKEN")
     if not expected_token or x_migration_token != expected_token:
         raise HTTPException(status_code=403, detail="Token de migración inválido o faltante")
 
-    client = _gcs_client_from_env()
-    bucket = client.bucket(request.bucket)
     prefix = request.destination_prefix.strip("/")
+    migration_job_id = uuid.uuid4().hex
+    with _MIGRATION_JOBS_LOCK:
+        _MIGRATION_JOBS[migration_job_id] = {
+            "status": "running",
+            "bucket": request.bucket,
+            "destinationPrefix": prefix,
+            "filesConsidered": 0,
+            "uploaded": {"count": 0, "bytes": 0},
+            "skippedIdentical": {"count": 0, "bytes": 0},
+            "failures": [],
+        }
+    threading.Thread(
+        target=_run_migration_to_gcs_background,
+        args=(migration_job_id, request.bucket, prefix),
+        daemon=True,
+    ).start()
+    return {"migrationJobId": migration_job_id, "status": "running"}
 
-    run_cache_root = v32.RUN_CACHE_ROOT
-    sources: list[tuple[Path, Path]] = []
-    if run_cache_root.is_dir():
-        for file_path in run_cache_root.rglob("*"):
-            if file_path.is_file():
-                sources.append((file_path, run_cache_root))
-    if JOBS_ROOT.is_dir():
-        for file_path in JOBS_ROOT.glob("*.json"):
-            if file_path.is_file():
-                sources.append((file_path, JOBS_ROOT.parent))
 
-    uploaded = {"count": 0, "bytes": 0}
-    skipped_identical = {"count": 0, "bytes": 0}
-    failures: list[dict[str, str]] = []
-
-    for file_path, root in sources:
-        relative = file_path.relative_to(root)
-        blob_name = f"{prefix}/{relative.as_posix()}"
-        size = file_path.stat().st_size
-        local_sha256 = hashlib.sha256(file_path.read_bytes()).hexdigest()
-        blob = bucket.blob(blob_name)
-        try:
-            blob.reload()
-            existing_sha256 = (blob.metadata or {}).get("sha256")
-            if blob.size == size and existing_sha256 == local_sha256:
-                skipped_identical["count"] += 1
-                skipped_identical["bytes"] += size
-                continue
-        except Exception:
-            pass
-        try:
-            blob.metadata = {"sha256": local_sha256, "migratedFrom": "railway-clouva-volume"}
-            blob.upload_from_filename(str(file_path), checksum="crc32c")
-            blob.reload()
-            if (blob.metadata or {}).get("sha256") != local_sha256:
-                raise RuntimeError("sha256 mismatch after upload")
-            uploaded["count"] += 1
-            uploaded["bytes"] += size
-        except Exception as exc:
-            failures.append({"path": str(relative), "error": str(exc)[:500]})
-
-    return {
-        "bucket": request.bucket,
-        "destinationPrefix": prefix,
-        "filesConsidered": len(sources),
-        "uploaded": uploaded,
-        "skippedIdentical": skipped_identical,
-        "failures": failures,
-    }
+@app.get("/diagnostics/avatar-analyzer-v4-migrate-to-gcs/{migration_job_id}")
+def avatar_analyzer_v4_migrate_to_gcs_status(
+    migration_job_id: str,
+    x_migration_token: str | None = Header(default=None, alias="X-Migration-Token"),
+):
+    expected_token = os.environ.get("CLOUVA_MIGRATION_TOKEN")
+    if not expected_token or x_migration_token != expected_token:
+        raise HTTPException(status_code=403, detail="Token de migración inválido o faltante")
+    with _MIGRATION_JOBS_LOCK:
+        job = _MIGRATION_JOBS.get(migration_job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="Migration job no encontrado")
+        return dict(job)
 
 
 @app.get("/diagnostics/avatar-analyzer-v4-storage-inventory")

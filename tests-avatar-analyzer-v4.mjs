@@ -310,4 +310,8 @@ test("volume-to-GCS migration endpoint is token-gated and verifies checksums bef
   assert.match(api, /sha256 mismatch after upload/);
   assert.match(api, /CLOUVA_GCS_MIGRATION_CREDENTIALS_JSON/);
   assert.match(dockerfile, /google-cloud-storage==/);
+  assert.match(api, /def _run_migration_to_gcs_background\(/);
+  assert.match(api, /threading\.Thread\(\s*\n\s*target=_run_migration_to_gcs_background/);
+  assert.match(api, /@app\.get\("\/diagnostics\/avatar-analyzer-v4-migrate-to-gcs\/\{migration_job_id\}"\)/);
+  assert.match(api, /"migrationJobId": migration_job_id, "status": "running"/);
 });
