@@ -1,0 +1,48 @@
+name: Fix Avatar Analyzer V4.1 CI regression
+
+on:
+  push:
+    branches:
+      - codex/avatar-analyzer-v41-profile-projection-fix
+    paths:
+      - .github/workflows/fix-avatar-v41-ci-regression.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: codex/avatar-analyzer-v41-profile-projection-fix
+      - name: Restore stable UI contract
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('components/library/AvatarAnalyzerPreview.tsx')
+          text = path.read_text()
+          old = '''            <div className={(effectiveSummary.requestedProfileReady ?? effectiveSummary.rigReadinessApproved) ? styles.metricApproved : styles.metricBlocked}>
+              <span>Preparación para el perfil</span><strong>{percent(effectiveSummary.rigReadinessScore)}</strong>
+            </div>
+          </div>'''
+          new = '''            <div className={(effectiveSummary.requestedProfileReady ?? effectiveSummary.rigReadinessApproved) ? styles.metricApproved : styles.metricBlocked}>
+              <span>Preparación para el perfil</span><strong>{percent(effectiveSummary.rigReadinessScore)}</strong>
+            </div>
+            <div><span>Puntos verificados</span><strong>{verified} puntos</strong></div>
+          </div>'''
+          if text.count(old) != 1:
+              raise SystemExit('primary summary block not found exactly once')
+          path.write_text(text.replace(old, new, 1))
+          Path('.github/workflows/fix-avatar-v41-ci-regression.yml').unlink()
+          PY
+      - name: Commit fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "fix: preserve verified-points analyzer UI contract"
+          git push origin HEAD:codex/avatar-analyzer-v41-profile-projection-fix
