@@ -62,6 +62,36 @@ class AnalyzerJobEntrypointTests(unittest.TestCase):
         with patch.object(entry, "_supabase_call", side_effect=fake_supabase_call):
             self.assertEqual(entry.main(), 1)
 
+    def test_external_url_source_is_used_directly_without_signing(self):
+        job_row = {
+            "id": "job-1",
+            "status": "queued",
+            "source_storage_path": "https://meshy.example/avatar-original.glb",
+            "requested_rig_profile": "BODY_BASIC",
+            "operation": "full_analysis",
+        }
+        seen_source_urls: list[str] = []
+
+        def fake_supabase_call(method, url, body=None):
+            if method == "GET":
+                return [job_row]
+            if method == "POST":
+                raise AssertionError("should not mint a signed URL for an external source")
+            if method == "PATCH":
+                return {}
+            raise AssertionError(f"unexpected method {method}")
+
+        def fake_run_analysis(source_url, *_args, **_kwargs):
+            seen_source_urls.append(source_url)
+            return ("job_dir", "output_dir", False, {"runId": "r" * 32, "overall_status": "approved", "landmarks": {}, "warnings": []})
+
+        with patch.object(entry, "_supabase_call", side_effect=fake_supabase_call), \
+             patch.object(app_v18, "_run_analysis_v4", side_effect=fake_run_analysis), \
+             patch("shutil.rmtree"):
+            self.assertEqual(entry.main(), 0)
+
+        self.assertEqual(seen_source_urls, ["https://meshy.example/avatar-original.glb"])
+
     def test_successful_run_persists_completion_and_clears_running_registry(self):
         job_row = {
             "id": "job-1",
@@ -92,6 +122,7 @@ class AnalyzerJobEntrypointTests(unittest.TestCase):
         statuses = [fields["status"] for fields in patched_fields]
         self.assertEqual(statuses, ["starting", "running", "persisting", "completed"])
         self.assertEqual(patched_fields[-1]["run_id"], "r" * 32)
+        self.assertEqual(patched_fields[-1]["summary"]["status"], "approved")
         self.assertNotIn("job-1", app_v18._RUNNING_JOBS)
         rmtree_mock.assert_called_once_with("job_dir", ignore_errors=True)
 

@@ -146,7 +146,15 @@ def main() -> int:
 
     job_dir = None
     try:
-        source_url = _signed_source_url(storage_path)
+        # source_storage_path is either a bucket-relative path (Supabase Storage,
+        # needs a freshly minted signed URL) or an already-fetchable external
+        # URL (Meshy/profile fallback source, per resolveOriginalAvatar in
+        # app/api/avatar/analyze/_shared.ts) -- used directly either way.
+        source_url = (
+            storage_path
+            if storage_path.startswith("http://") or storage_path.startswith("https://")
+            else _signed_source_url(storage_path)
+        )
         with app.ANALYZER_RIG_LOCK:
             if _CANCEL_REQUESTED or app._job_cancel_requested(job_id):
                 raise app.AnalysisCancelled()
@@ -163,6 +171,7 @@ def main() -> int:
             "progress": 100,
             "phase": "completed",
             "finished_at": _now_iso(),
+            "summary": summary,
         })
         print(f"[analyzer-job] {job_id} completed runId={analysis.get('runId')} status={summary.get('status')}")
         return 0
