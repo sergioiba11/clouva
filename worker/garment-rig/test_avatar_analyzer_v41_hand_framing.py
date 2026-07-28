@@ -24,6 +24,17 @@ class HandFramingSourceContractTests(unittest.TestCase):
         self.assertIn("_projected_extent(focus_points", self.source)
         self.assertNotIn("_projected_extent(context_points", self.source)
 
+    def test_technical_coverage_excludes_full_forearm(self):
+        self.assertIn("projection_regions = list(focus_regions)", self.source)
+        self.assertNotIn('projection_regions = [f"forearm_{suffix}"', self.source)
+
+    def test_context_clipping_uses_proxy_geometry(self):
+        self.assertIn("_required_framing(", self.source)
+        self.assertIn("_projection_frame(context_points", self.source)
+        self.assertIn('"contextProjectionBounds"', self.source)
+        self.assertIn('"wristVisible"', self.source)
+        self.assertIn('"allWristsVisible"', self.source)
+
     def test_manifest_keeps_required_hand_diagnostics(self):
         for field in (
             '"focusProxyRegions"', '"contextProxyRegions"', '"distalForearmRatio"',
@@ -41,6 +52,11 @@ class HandFramingSourceContractTests(unittest.TestCase):
     def test_threshold_is_not_lowered_below_fifteen_percent(self):
         self.assertIn('"minimum_coverage": 0.15', self.source)
         self.assertIn('hand_config["minimum_coverage"] <= after', self.source)
+
+    def test_camera_target_is_not_changed_during_retry(self):
+        self.assertEqual(self.source.count("target = _average(focus_points"), 1)
+        retry_fragment = self.source.split("while retry_count", 1)[1]
+        self.assertNotIn("target =", retry_fragment.split("after =", 1)[0])
 
 
 if __name__ == "__main__":
