@@ -6,6 +6,7 @@ from analyzer_v4_contract import BODY_REQUIRED, infer_topology_capabilities, upg
 from projection_contract_v41 import region_name_from_id, technical_projection_identity
 
 # Regression baseline: production run 494bd2980be14f398b09539991ba90ed requested BODY_BASIC.
+# Orientation and subsystem cases protect the complete BODY_BASIC readiness matrix.
 
 
 def internal_joint(name: str):
