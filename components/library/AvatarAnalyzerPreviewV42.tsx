@@ -14,6 +14,10 @@ function normalize(value: string) {
     .trim();
 }
 
+function setText(node: HTMLElement | null | undefined, value: string) {
+  if (node && node.textContent !== value) node.textContent = value;
+}
+
 function extractRunId(root: HTMLElement) {
   const link = root.querySelector<HTMLAnchorElement>('a[href^="/avatar-analyzer-v4/"]');
   if (!link) return null;
@@ -36,17 +40,17 @@ function bodyIsApproved(root: HTMLElement) {
 function decorateLegacyUi(root: HTMLElement) {
   for (const node of root.querySelectorAll<HTMLElement>("small, h2")) {
     if (node.textContent?.includes("Avatar Analyzer V4.1")) {
-      node.textContent = node.textContent.replace("Avatar Analyzer V4.1", "Avatar Analyzer V4.2");
+      setText(node, node.textContent.replace("Avatar Analyzer V4.1", "Avatar Analyzer V4.2"));
     }
   }
 
   for (const paragraph of root.querySelectorAll<HTMLParagraphElement>("p")) {
     const text = paragraph.textContent || "";
     if (text.includes("0/7 vistas significa")) {
-      paragraph.textContent = "Los módulos no solicitados no generan cámaras ni errores. La cobertura visual solo se calcula para los módulos ejecutados por el perfil actual.";
+      setText(paragraph, "Los módulos no solicitados no generan cámaras ni errores. La cobertura visual solo se calcula para los módulos ejecutados por el perfil actual.");
     }
     if (text.includes("crea dos pasadas regionales")) {
-      paragraph.textContent = "Blender reutiliza la base geométrica, ejecuta solo los módulos solicitados y no genera el rig hasta aprobar el perfil anatómico.";
+      setText(paragraph, "Blender reutiliza la base geométrica, ejecuta solo los módulos solicitados y no genera el rig hasta aprobar el perfil anatómico.");
     }
   }
 
@@ -68,13 +72,13 @@ function decorateLegacyUi(root: HTMLElement) {
     const hasNoRenderedViews = /0\/0/.test(renderedText) || renderedText.includes("Detectadas 0/0");
     if (!hasNoRenderedViews) continue;
     if (mode === "not_run") {
-      if (strong) strong.textContent = "Módulo no ejecutado";
-      if (smalls[0]) smalls[0].textContent = "Sin cámaras solicitadas para este perfil";
-      if (smalls[1]) smalls[1].textContent = "No bloquea el perfil actual";
+      setText(strong, "Módulo no ejecutado");
+      setText(smalls[0], "Sin cámaras solicitadas para este perfil");
+      setText(smalls[1], "No bloquea el perfil actual");
     } else if (mode === "base") {
-      if (strong) strong.textContent = "Base geométrica";
-      if (smalls[0]) smalls[0].textContent = "Muñeca y palma · sin cámaras de dedos";
-      if (smalls[1]) smalls[1].textContent = "La verificación visual completa no fue solicitada";
+      setText(strong, "Base geométrica");
+      setText(smalls[0], "Muñeca y palma · sin cámaras de dedos");
+      setText(smalls[1], "La verificación visual completa no fue solicitada");
     }
   }
 
@@ -86,16 +90,16 @@ function decorateLegacyUi(root: HTMLElement) {
     const current = normalize(small.textContent || "");
     if (!current.startsWith("0 puntos")) continue;
     if ((group === "cuerpo" || group === "piernas y pies") && bodyApproved) {
-      small.textContent = "Subsistemas aprobados · sin pendientes";
+      setText(small, "Subsistemas aprobados · sin pendientes");
       continue;
     }
     const execution = optionalExecution[group];
     if (execution === "not_run") {
-      small.textContent = "Módulo no ejecutado";
+      setText(small, "Módulo no ejecutado");
     } else if (execution === "base") {
-      small.textContent = "Base geométrica · sin dedos requeridos";
+      setText(small, "Base geométrica · sin dedos requeridos");
     } else if (execution === "full") {
-      small.textContent = "Módulo aprobado · sin pendientes";
+      setText(small, "Módulo aprobado · sin pendientes");
     }
   }
 }
@@ -104,7 +108,6 @@ function AnalyzerV42Bridge({ accessToken }: { accessToken?: string }) {
   useEffect(() => {
     let disposed = false;
     let objectUrl: string | null = null;
-    let activeMode: DiagnosticMode = "approved";
     let activeKey = "";
     let scheduled = false;
 
@@ -114,7 +117,7 @@ function AnalyzerV42Bridge({ accessToken }: { accessToken?: string }) {
     const applyObjectUrl = () => {
       if (!objectUrl) return;
       const viewer = root.querySelector<HTMLElement>("model-viewer");
-      if (!viewer) return;
+      if (!viewer || viewer.getAttribute("src") === objectUrl) return;
       viewer.setAttribute("src", objectUrl);
       (viewer as HTMLElement & { src?: string }).src = objectUrl;
     };
@@ -128,7 +131,6 @@ function AnalyzerV42Bridge({ accessToken }: { accessToken?: string }) {
         return;
       }
       activeKey = key;
-      activeMode = mode;
       const filename = mode === "full" ? "diagnostic-full.glb" : "diagnostic-approved.glb";
       const response = await fetch(
         `/api/avatar/analyze/result/${runId}/asset/${filename}`,
@@ -182,7 +184,6 @@ function AnalyzerV42Bridge({ accessToken }: { accessToken?: string }) {
       if (objectUrl) URL.revokeObjectURL(objectUrl);
       objectUrl = null;
       activeKey = "";
-      activeMode = "approved";
     };
   }, [accessToken]);
 
