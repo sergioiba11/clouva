@@ -21,7 +21,7 @@ def body_analysis():
     return {
         "version": "clouva-avatar-analyzer-v3.2", "isHumanoid": True, "humanoidConfidence": 0.97,
         "bodyBaseConfidence": 0.97, "dimensions": {"height": 1.8}, "orientation": {"requiresOrientationReview": False},
-        "bodySubsystems": {name: {"status": "valid", "missingOrInvalid": []} for name in ("body_core", "left_arm", "right_arm", "left_leg", "right_leg")},
+        "bodySubsystems": {name: {"status": "valid", "missingOrInvalid": [], "blockingWarnings": []} for name in ("body_core", "left_arm", "right_arm", "left_leg", "right_leg")},
         "landmarks": {name: internal_joint(name) for name in BODY_REQUIRED},
         "segmentation": {"regions": {"head": {"vertexCount": 500}, "hand_l": {"vertexCount": 300}, "hand_r": {"vertexCount": 320}}},
         "diagnostics": {"hands": {
@@ -42,6 +42,21 @@ class ProfileReadinessTests(unittest.TestCase):
         self.assertEqual(result["overall_status"], "approved")
         self.assertTrue(all(result["landmarks"][name]["state"] == "verified_internal_geometry" for name in BODY_REQUIRED))
         self.assertEqual(result["metrics"]["insufficientViewsCount"], 0)
+
+    def test_body_basic_blocks_orientation_review(self):
+        analysis = body_analysis()
+        analysis["orientation"]["requiresOrientationReview"] = True
+        result = upgrade_analysis_v4(analysis, "BODY_BASIC", {"invalid_views": [], "all_views_invalid": False})
+        self.assertFalse(result["requestedProfileReady"])
+        self.assertIn("orientation", result["rig_profiles"]["BODY_BASIC"]["missing"])
+
+    def test_body_basic_blocks_invalid_subsystem(self):
+        analysis = body_analysis()
+        analysis["bodySubsystems"]["left_arm"]["status"] = "needs_review"
+        analysis["bodySubsystems"]["left_arm"]["missingOrInvalid"] = ["elbow_l"]
+        result = upgrade_analysis_v4(analysis, "BODY_BASIC", {"invalid_views": [], "all_views_invalid": False})
+        self.assertFalse(result["requestedProfileReady"])
+        self.assertIn("subsystem:left_arm", result["rig_profiles"]["BODY_BASIC"]["missing"])
 
     def test_body_face_stays_blocked_without_surface_face(self):
         result = upgrade_analysis_v4(body_analysis(), "BODY_FACE", {"invalid_views": [], "all_views_invalid": False})
@@ -79,6 +94,21 @@ class TechnicalProjectionIdentityTests(unittest.TestCase):
         self.assertTrue(identity["valid"])
         self.assertTrue(identity["regionCompatible"])
         self.assertEqual(identity["region"], "head")
+
+    def test_triangle_zero_is_valid(self):
+        identity = technical_projection_identity({
+            "valid": True, "worldPosition": [0.1, -0.2, 1.7], "regionId": 7, "objectId": 0,
+            "triangleId": 0, "barycentricCoordinates": [1.0, 0.0, 0.0],
+        }, {"head": 7}, ["head"])
+        self.assertTrue(identity["valid"])
+        self.assertEqual(identity["triangleId"], 0)
+
+    def test_non_finite_technical_point_is_rejected(self):
+        identity = technical_projection_identity({
+            "valid": True, "worldPosition": [0.1, float("nan"), 1.7], "regionId": 7,
+            "triangleId": 41, "barycentricCoordinates": [0.2, 0.3, 0.5],
+        }, {"head": 7}, ["head"])
+        self.assertFalse(identity["valid"])
 
     def test_wrong_technical_region_is_rejected(self):
         identity = technical_projection_identity({
