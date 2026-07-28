@@ -46,11 +46,14 @@ jobs:
             -o "$output/camera_manifest_v4.json"
           for side in l r; do
             for view in dorsal palmar radial ulnar distal three_quarter_dorsal three_quarter_palmar; do
-              name="hand_${side}_${view}.png"
-              curl --fail --silent --show-error --retry 6 --retry-all-errors \
-                "$WORKER_URL/avatar/analyze-v4/result/$RUN_ID/asset/renders_v4/$name" \
-                -o "$output/renders_v4/$name"
-              test -s "$output/renders_v4/$name"
+              base="hand_${side}_${view}"
+              for suffix in "" "_exact_silhouette"; do
+                name="${base}${suffix}.png"
+                curl --fail --silent --show-error --retry 6 --retry-all-errors \
+                  "$WORKER_URL/avatar/analyze-v4/result/$RUN_ID/asset/renders_v4/$name" \
+                  -o "$output/renders_v4/$name"
+                test -s "$output/renders_v4/$name"
+              done
             done
           done
 
@@ -59,20 +62,27 @@ jobs:
           RUN_ID: ${{ steps.request.outputs.run_id }}
           LABEL: ${{ steps.request.outputs.label }}
         run: |
+          python -m pip install --quiet pillow
           python - <<'PY'
           import hashlib
           import json
           import os
           from pathlib import Path
 
+          from PIL import Image
+
           root = Path("avatar-analyzer-evidence") / f"{os.environ['LABEL']}-{os.environ['RUN_ID']}"
           result = json.loads((root / "result.json").read_text(encoding="utf-8"))
           manifest = json.loads((root / "camera_manifest_v4.json").read_text(encoding="utf-8"))
-          pngs = sorted((root / "renders_v4").glob("hand_*.png"))
-          if len(pngs) != 14:
-              raise SystemExit(f"expected 14 hand PNGs, found {len(pngs)}")
+          color_pngs = sorted(path for path in (root / "renders_v4").glob("hand_*.png") if "_exact_silhouette" not in path.name)
+          silhouette_pngs = sorted((root / "renders_v4").glob("hand_*_exact_silhouette.png"))
+          if len(color_pngs) != 14:
+              raise SystemExit(f"expected 14 color hand PNGs, found {len(color_pngs)}")
+          if len(silhouette_pngs) != 14:
+              raise SystemExit(f"expected 14 hand silhouette PNGs, found {len(silhouette_pngs)}")
+
           files = []
-          for path in pngs:
+          for path in [*color_pngs, *silhouette_pngs]:
               data = path.read_bytes()
               if len(data) < 1024:
                   raise SystemExit(f"empty or invalid PNG: {path}")
@@ -83,14 +93,42 @@ jobs:
                   "bytes": len(data),
                   "sha256": hashlib.sha256(data).hexdigest(),
               })
+
+          silhouettes = {}
+          for path in silhouette_pngs:
+              image = Image.open(path).convert("L")
+              width, height = image.size
+              mask = image.point(lambda value: 255 if value >= 128 else 0)
+              bbox = mask.getbbox()
+              pixels = list(mask.getdata())
+              occupied = [index for index, value in enumerate(pixels) if value]
+              coverage = len(occupied) / max(width * height, 1)
+              if occupied:
+                  xs = [index % width for index in occupied]
+                  ys = [index // width for index in occupied]
+                  center = [sum(xs) / len(xs) / width, sum(ys) / len(ys) / height]
+                  touches_edge = min(xs) == 0 or max(xs) == width - 1 or min(ys) == 0 or max(ys) == height - 1
+              else:
+                  center = [None, None]
+                  touches_edge = False
+              color_name = path.name.replace("_exact_silhouette", "")
+              silhouettes[color_name] = {
+                  "coverage": coverage,
+                  "bbox": list(bbox) if bbox else None,
+                  "center": center,
+                  "touchesEdge": touches_edge,
+              }
+
           summary = result.get("summary") or {}
           analysis = result.get("analysis") or {}
           evidence = {
               "runId": os.environ["RUN_ID"],
               "label": os.environ["LABEL"],
               "sourceSha256": summary.get("sourceSha256") or (analysis.get("source") or {}).get("sha256"),
-              "pngCount": len(files),
+              "colorPngCount": len(color_pngs),
+              "silhouettePngCount": len(silhouette_pngs),
               "files": files,
+              "silhouetteDiagnostics": silhouettes,
               "handDiagnostics": manifest.get("handDiagnostics") or {},
           }
           (root / "evidence_manifest.json").write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
