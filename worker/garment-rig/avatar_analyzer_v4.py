@@ -158,7 +158,7 @@ def _upgrade_from_v32(
     legacy_report: dict,
     started: float,
 ):
-    requested_profile = os.environ.get(REQUESTED_PROFILE_ENV, "body_only").strip() or "body_only"
+    requested_profile = os.environ.get(REQUESTED_PROFILE_ENV, "BODY_BASIC").strip() or "BODY_BASIC"
     requested_operation = os.environ.get(REANALYSIS_ENV, "").strip() or None
     calibration, v4_attempt = _refresh_optional_modules(legacy_analysis, output_dir)
     analysis = upgrade_analysis_v4(

@@ -13,6 +13,8 @@ import bpy
 import numpy as np
 from mathutils import Vector
 
+from projection_contract_v41 import technical_projection_identity
+
 _ARRAY_CACHE: Dict[str, np.ndarray] = {}
 
 
@@ -88,6 +90,20 @@ def _pixel_from_normalized(x: float, y: float, resolution):
     column = min(width - 1, max(0, int(float(x) * width)))
     row = min(height - 1, max(0, int(float(y) * height)))
     return column, row
+
+
+def _allowed_regions_for_candidate(candidate: dict, view_regions):
+    name = str(candidate.get("name") or "")
+    side = str(candidate.get("side") or "")
+    suffix = "l" if side == "left" or name.endswith("_l") else "r" if side == "right" or name.endswith("_r") else ""
+    if suffix and name.startswith("wrist_"):
+        return [f"forearm_{suffix}", f"hand_{suffix}"]
+    if suffix and any(name.startswith(f"{finger}_") for finger in ("thumb", "index", "middle", "ring", "pinky")):
+        finger = name.split("_", 1)[0]
+        return [f"hand_{suffix}", f"{finger}_{suffix}"]
+    if suffix and name.startswith(("palm_", "hand_")):
+        return [f"hand_{suffix}"]
+    return list(view_regions or [])
 
 
 def _technical_sample(view: dict, column: int, row: int):
@@ -253,6 +269,11 @@ def _sample_projection(candidate: dict, view: dict, camera, classifications, ana
             tested.append(item)
             continue
 
+        identity = technical_projection_identity(
+            technical,
+            getattr(anatomy_bvh, "region_ids", {}) if anatomy_bvh is not None else {},
+            allowed_regions,
+        )
         technical_point = Vector(tuple(world_position)) if world_position is not None else None
         hit_distance = float(
             (technical_point - origin).length
@@ -261,24 +282,28 @@ def _sample_projection(candidate: dict, view: dict, camera, classifications, ana
         )
         depth_observation = technical.get("depth") if technical else None
         depth_residual = abs(hit_distance - depth_observation) if depth_observation is not None else None
-        expected_region_id = int(technical.get("regionId") or 0) if technical else 0
-        expected_object_id = int(technical.get("objectId") or 0) if technical else 0
-        secondary_mask = int(technical.get("secondaryRegionMask") or 0) if technical else 0
-        secondary_region_compatible = any(
-            secondary_mask & (1 << (region_id - 1))
-            for region_id in allowed_region_ids
-            if 0 < region_id <= 64
-        )
-        hit_region_penalty = float(hit.get("regionConfidencePenalty") or 1.0) if hit else 0.75
+        expected_region_id = int(identity.get("regionId") or 0)
+        expected_object_id = int(identity.get("objectId") or 0)
+        technical_region = identity.get("region")
+        technical_secondary_regions = list(identity.get("secondaryRegions") or [])
+        secondary_region_compatible = bool(set(technical_secondary_regions).intersection(allowed_regions))
+        recast_region_penalty = float(hit.get("regionConfidencePenalty") or 1.0) if hit else 0.0
+        technical_region_penalty = float(technical.get("primaryRegionWeight") or 1.0) if identity.get("regionCompatible") else 0.0
+        hit_region_penalty = max(recast_region_penalty, technical_region_penalty)
         region_compatible = bool(
-            expected_region_id in allowed_region_ids
+            identity.get("regionCompatible")
             or secondary_region_compatible
-            or (hit is not None and hit_region_penalty > 0.0)
+            or (hit is not None and recast_region_penalty > 0.0)
         )
         object_compatible = bool(
             expected_object_id == 0
             or hit is None
             or expected_object_id == int(hit.get("objectId") or 0)
+        )
+        recast_distance = (
+            float((technical_point - hit["location"]).length)
+            if technical_point is not None and hit is not None
+            else None
         )
         verification_normal = hit["normal"] if hit is not None else Vector(tuple(technical.get("normal") or (0.0, 0.0, 1.0)))
         normal_compatibility = _normal_compatibility(
@@ -289,7 +314,7 @@ def _sample_projection(candidate: dict, view: dict, camera, classifications, ana
         depth_confidence = 0.5 if depth_residual is None else max(0.0, min(1.0, 1.0 - depth_residual / (scale * 0.025)))
         curvature = float(technical.get("curvature") or 0.0) if technical else 0.0
         curvature_confidence = max(0.0, 1.0 - min(curvature, 1.0) * 0.55)
-        visibility = bool(technical and technical.get("valid") and world_position is not None)
+        visibility = bool(identity.get("valid"))
         pixel_distance = (float(sample["dx"]) ** 2 + float(sample["dy"]) ** 2) ** 0.5
         radius = max(float(sample["searchRadiusTechnicalPixels"]), 1.0)
         pixel_confidence = max(0.0, 1.0 - pixel_distance / radius)
@@ -316,6 +341,14 @@ def _sample_projection(candidate: dict, view: dict, camera, classifications, ana
             "silhouette": visibility,
             "visibility": visibility,
             "worldPosition": world_position,
+            "technicalRegion": technical_region,
+            "technicalSecondaryRegions": technical_secondary_regions,
+            "technicalObjectId": expected_object_id,
+            "technicalTriangleId": int(identity.get("triangleId") or -1),
+            "projectionSource": "technical_world_position" if identity.get("valid") else "anatomy_bvh_recast" if hit is not None else "scene_raycast_fallback",
+            "recastMatched": hit is not None,
+            "recastDistance": recast_distance,
+            "projectionWarning": "BVH_RECAST_MISS_WITH_VALID_TECHNICAL_POINT" if identity.get("valid") and hit is None else None,
             "scoreComponents": score_components,
             "eligible": eligible,
             "score": 100.0 * (
@@ -336,18 +369,20 @@ def _sample_projection(candidate: dict, view: dict, camera, classifications, ana
 
 
 def _failure_code(tested):
-    if not any(item.get("hit") is not None for item in tested):
-        return "LANDMARK_REGION_BVH_MISS"
+    if not tested:
+        return "COMPLETE_PROJECTION_FAILURE"
+    technical = [item.get("technical") or {} for item in tested]
+    if not any(item.get("valid") and item.get("worldPosition") is not None for item in technical):
+        return "TECHNICAL_PIXEL_EMPTY"
     if not any(item.get("regionCompatible") for item in tested):
-        return "LANDMARK_WRONG_REGION"
-    if not any(item.get("silhouette") for item in tested):
-        return "LANDMARK_SILHOUETTE_MISS"
+        return "TECHNICAL_REGION_MISMATCH"
     if not any(item.get("objectCompatible") for item in tested):
-        return "LANDMARK_OBJECT_ID_MISMATCH"
+        return "TECHNICAL_OBJECT_MISMATCH"
     if not any(float(item.get("depthConfidence") or 0.0) >= 0.25 for item in tested):
-        return "LANDMARK_DEPTH_INCONSISTENT"
-    return "LANDMARK_TECHNICAL_PASS_MISMATCH"
-
+        return "TECHNICAL_DEPTH_INVALID"
+    if any(item.get("projectionWarning") == "BVH_RECAST_MISS_WITH_VALID_TECHNICAL_POINT" for item in tested):
+        return "BVH_RECAST_MISS_WITH_VALID_TECHNICAL_POINT"
+    return "COMPLETE_PROJECTION_FAILURE"
 
 def project_candidates(detector_output: dict, manifest: dict, classifications: Dict[str, str],
                        anatomy_bvh=None):
@@ -364,8 +399,9 @@ def project_candidates(detector_output: dict, manifest: dict, classifications: D
         if camera is None or camera.type != "CAMERA":
             failures.append({"code": "CAMERA_OBJECT_MISSING", "view": view_name})
             continue
-        allowed_regions = list(view.get("allowedRegions") or [])
+        view_allowed_regions = list(view.get("allowedRegions") or [])
         for candidate in view_result.get("candidates", []):
+            allowed_regions = _allowed_regions_for_candidate(candidate, view_allowed_regions)
             selected, tested = _sample_projection(
                 candidate, view, camera, classifications, anatomy_bvh, allowed_regions,
             )
@@ -421,12 +457,17 @@ def project_candidates(detector_output: dict, manifest: dict, classifications: D
                 "surfaceNormal": _vec(surface_normal),
                 "hitObject": hit.get("sourceObject") or "",
                 "hitObjectClass": "anatomy_region",
-                "hitRegion": hit.get("primaryRegion") or hit.get("region"),
-                "primaryRegion": hit.get("primaryRegion") or hit.get("region"),
-                "secondaryRegions": list(hit.get("secondaryRegions") or []),
+                "hitRegion": selected.get("technicalRegion") or hit.get("primaryRegion") or hit.get("region"),
+                "primaryRegion": selected.get("technicalRegion") or hit.get("primaryRegion") or hit.get("region"),
+                "technicalRegion": selected.get("technicalRegion"),
+                "secondaryRegions": sorted(set(
+                    list(selected.get("technicalSecondaryRegions") or [])
+                    + list(hit.get("secondaryRegions") or [])
+                )),
                 "semanticWeights": dict(hit.get("semanticWeights") or {}),
                 "regionId": int(technical.get("regionId") or hit.get("regionId") or 0),
-                "objectId": int(hit.get("objectId") or 0),
+                "objectId": int(technical.get("objectId") or hit.get("objectId") or 0),
+                "technicalObjectId": int(selected.get("technicalObjectId") or 0),
                 "faceIndex": int(hit.get("sourcePolygon", technical.get("triangleId", -1))),
                 "triangleIndex": int(technical.get("triangleId", hit.get("triangleIndex", -1))),
                 "triangleId": int(technical.get("triangleId", hit.get("triangleIndex", -1))),
@@ -445,6 +486,10 @@ def project_candidates(detector_output: dict, manifest: dict, classifications: D
                 "silhouettePath": view.get("silhouettePath"),
                 "technicalPasses": view.get("technicalPasses"),
                 "rejectedHits": selected.get("rejected") or [],
+                "projectionSource": selected.get("projectionSource"),
+                "recastMatched": bool(selected.get("recastMatched")),
+                "recastDistance": selected.get("recastDistance"),
+                "projectionWarning": selected.get("projectionWarning"),
                 "geometryConfidence": float(geometry_confidence),
                 "requestedPixel": [float(candidate["x"]), float(candidate["y"])],
                 "selectedPixel": [float(selected["x"]), float(selected["y"])],

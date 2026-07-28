@@ -62,12 +62,12 @@ RigProfileLiteral = Literal[
 class AvatarAnalyzeV4Request(BaseModel):
     source_url: AnyHttpUrl
     include_renders: bool = True
-    requested_rig_profile: RigProfileLiteral = "body_only"
+    requested_rig_profile: RigProfileLiteral = "BODY_BASIC"
 
 
 class AnalyzerV4CompleteRigRequest(v32.current.CompleteAvatarRigRequest):
     force_analyzer: bool = True
-    requested_rig_profile: RigProfileLiteral = "body_only"
+    requested_rig_profile: RigProfileLiteral = "BODY_BASIC"
 
 
 class ManualLandmarkCorrectionV4(BaseModel):
@@ -79,7 +79,7 @@ class ManualLandmarkCorrectionV4(BaseModel):
 
 
 class ManualCorrectionRequestV4(BaseModel):
-    requested_rig_profile: RigProfileLiteral = "body_only"
+    requested_rig_profile: RigProfileLiteral = "BODY_BASIC"
     corrections: list[ManualLandmarkCorrectionV4] = Field(default_factory=list, max_length=300)
 
 
@@ -92,7 +92,7 @@ class TargetedReanalysisRequestV4(BaseModel):
     camera_id: str | None = Field(default=None, max_length=128)
     region: str | None = Field(default=None, max_length=128)
     landmark: str | None = Field(default=None, max_length=128)
-    requested_rig_profile: RigProfileLiteral = "body_only"
+    requested_rig_profile: RigProfileLiteral = "BODY_BASIC"
 
 
 def _summary(analysis: dict[str, Any]):
@@ -109,8 +109,11 @@ def _summary(analysis: dict[str, Any]):
         "runId": analysis.get("runId"),
         "analyzerVersion": analysis.get("version") or AVATAR_ANALYZER_V4_VERSION,
         "sourceSha256": (analysis.get("source") or {}).get("sha256"),
-        "requestedRigProfile": analysis.get("requested_rig_profile"),
-        "supportedRigProfiles": analysis.get("supported_rig_profiles") or [],
+        "requestedRigProfile": analysis.get("requestedRigProfile") or analysis.get("requested_rig_profile"),
+        "supportedRigProfiles": analysis.get("supportedRigProfiles") or analysis.get("supported_rig_profiles") or [],
+        "requestedProfileReady": bool(analysis.get("requestedProfileReady", analysis.get("rigReadinessApproved"))),
+        "requestedProfileBlockingReasons": analysis.get("requestedProfileBlockingReasons") or analysis.get("blocking_reasons") or [],
+        "advancedAnalysisWarnings": analysis.get("advancedAnalysisWarnings") or [],
         "rigReadinessScore": float(analysis.get("rigReadinessScore") or 0.0),
         "rigReadinessApproved": bool(analysis.get("rigReadinessApproved")),
         "bodyRigScore": float(analysis.get("bodyRigScore") or 0.0),
@@ -778,7 +781,7 @@ def avatar_analyzer_v4_health():
         "ok": AVATAR_ANALYZER_V4_SCRIPT.is_file() and ANALYZER_AUTORIG_V4_SCRIPT.is_file(),
         "version": AVATAR_ANALYZER_V4_VERSION,
         "legacyV32Preserved": True,
-        "defaultRigProfile": "body_only",
+        "defaultRigProfile": "BODY_BASIC",
         "rigProfiles": list(RIG_PROFILES),
         "createsArmature": False,
         "modifiesOriginalAvatar": False,

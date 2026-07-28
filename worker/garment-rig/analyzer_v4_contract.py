@@ -34,18 +34,22 @@ RIG_PROFILES = (
 )
 
 LANDMARK_STATES = {
+    "verified_internal_geometry",
     "verified_visual_geometry",
     "verified_geometry_fallback",
     "verified_single_view_depth",
     "inferred_template_prior",
     "manually_corrected",
+    "no_visual_evidence",
     "insufficient_views",
     "projection_mismatch",
     "topology_invalid",
     "unsupported",
+    "manual_review_required",
     "corrupt_geometry",
 }
 APPROVED_STATES = {
+    "verified_internal_geometry",
     "verified_visual_geometry",
     "verified_geometry_fallback",
     "verified_single_view_depth",
@@ -59,6 +63,19 @@ PROFILE_ALIASES = {
     "FULL_HUMANOID": "full_humanoid",
     "FULL_BODY_HANDS_FACE": "full_humanoid_with_face",
 }
+CANONICAL_PROFILE_ALIASES = {
+    "body_only": "BODY_BASIC",
+    "body_with_hands": "BODY_HANDS_BASIC",
+    "full_humanoid": "FULL_HUMANOID",
+    "full_humanoid_with_face": "FULL_BODY_HANDS_FACE",
+}
+CANONICAL_PROFILES = (
+    "BODY_BASIC",
+    "BODY_FACE",
+    "BODY_HANDS_BASIC",
+    "FULL_HUMANOID",
+    "FULL_BODY_HANDS_FACE",
+)
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "version": CONFIG_VERSION,
@@ -262,6 +279,23 @@ def calibrate_landmark(
         record["invalidCameraEvidence"] = sorted(observations_from_invalid_camera)
 
     views, inliers, any_ray_hit, has_visual = _observation_stats(record)
+    landmark_type = str(record.get("landmarkType") or "")
+    internal_geometry = bool(
+        landmark_type == "internal_joint"
+        and _position(record) is not None
+        and record.get("internalAccepted", record.get("accepted", False))
+    )
+    requires_visual_views = not internal_geometry
+    exact_technical_surface = bool(
+        record.get("projectionSource") == "technical_world_position"
+        or (
+            record.get("worldPosition")
+            and int(record.get("triangleId", record.get("surfaceTriangle", -1)) or -1) >= 0
+            and record.get("barycentricCoordinates")
+        )
+    )
+    if exact_technical_surface:
+        any_ray_hit = True
     detector = _confidence(record, "detectorConfidence", "detectionConfidence", "rawConfidence")
     visual = _confidence(record, "visualConfidence", "silhouetteConfidence", default=detector)
     triangulation = _confidence(record, "triangulationConfidence", default=record.get("finalConfidence", 0.0))
@@ -280,7 +314,7 @@ def calibrate_landmark(
         visual = 0.0
     if inliers == 0:
         triangulation = 0.0
-    if has_visual and not any_ray_hit and not record.get("geometryFallback"):
+    if has_visual and not any_ray_hit and not record.get("geometryFallback") and not internal_geometry:
         reasons.add("NO_RAY_HIT")
     hand_side = "left" if name.endswith("_l") else "right" if name.endswith("_r") else None
     is_finger = any(name.startswith(f"{finger}_") for finger in FINGERS)
@@ -293,7 +327,10 @@ def calibrate_landmark(
 
     manual = bool(record.get("manualCorrectionApproved") or record.get("approvedByUser") or record.get("manual_verified"))
     fallback = bool(record.get("geometryFallback") or record.get("symmetryFallback") or record.get("verifiedWithFallback"))
-    technical_invalid = bool(reasons.intersection(TECHNICAL_REASONS) or "NO_RAY_HIT" in reasons)
+    technical_invalid = bool(
+        not internal_geometry
+        and (reasons.intersection(TECHNICAL_REASONS) or "NO_RAY_HIT" in reasons)
+    )
     minimum_views = int(config["minimum_views"].get(region, 2))
     visual_gate = views >= minimum_views and inliers >= minimum_views and any_ray_hit
     single_view_depth = bool(
@@ -320,6 +357,19 @@ def calibrate_landmark(
         state = "manually_corrected"
         final = max(config["confidence"]["manual"], geometry, region_confidence)
         evidence_method = "manual"
+    elif internal_geometry:
+        state = "verified_internal_geometry"
+        final = max(
+            _confidence(record, "rawConfidence", "finalConfidence", "confidence"),
+            geometry,
+            region_confidence,
+        )
+        evidence_method = "internal_geometry"
+        reasons.difference_update({
+            "NO_VISUAL_EVIDENCE",
+            "INSUFFICIENT_TECHNICALLY_VALID_VIEWS",
+            "NO_RAY_HIT",
+        })
     elif corrupt:
         state = "corrupt_geometry"
         final = 0.0
@@ -358,10 +408,10 @@ def calibrate_landmark(
         final = min(0.49, (geometry + semantic) * 0.5)
         evidence_method = "template_prior"
     else:
-        state = "insufficient_views"
+        state = "no_visual_evidence" if views == 0 else "insufficient_views"
         components = (detector, visual, triangulation, region_confidence, topology, geometry, semantic)
         final = min(sum(components) / len(components), 0.59)
-        evidence_method = "insufficient_views"
+        evidence_method = "detector" if views == 0 else "insufficient_views"
 
     final = _clamp(final)
     if not manual and final >= 1.0:
@@ -390,9 +440,13 @@ def calibrate_landmark(
         "blocking": state not in APPROVED_STATES,
         "manual_verified": manual,
         "evidenceType": evidence_method,
+        "requiresVisualViews": requires_visual_views,
         "rejectionReasons": sorted(reasons),
         "confidenceGateVersion": CONFIG_VERSION,
     })
+    if state in APPROVED_STATES:
+        record["failureStage"] = None
+        record["failureCode"] = None
     return record
 
 
@@ -436,22 +490,36 @@ def infer_topology_capabilities(analysis: dict[str, Any]) -> dict[str, Any]:
         count = _branch_count(report)
         hand_vertices = int((regions.get(f"hand_{suffix}") or {}).get("vertexCount") or 0)
         topology = report.get("topology") if isinstance(report.get("topology"), dict) else {}
-        hand_mode = str(
+        reported_mode = str(
             report.get("handMode")
             or topology.get("handMode")
             or (topology.get("diagnostics") or {}).get("classification", {}).get("mode")
-            or ("five_finger_separated" if count >= 5 else "simplified_mitten" if hand_vertices >= 4 else "unsupported_or_corrupt")
+            or ""
         )
+        corrupt = reported_mode == "unsupported_or_corrupt" or bool(report.get("corruptGeometry"))
         hand_supported = bool(
-            report.get("handBaseReady")
-            if report.get("handBaseReady") is not None
-            else hand_vertices >= 4 or bool(report.get("landmarks"))
+            not corrupt
+            and (
+                report.get("handBaseReady")
+                if report.get("handBaseReady") is not None
+                else hand_vertices >= 4 or bool(report.get("landmarks"))
+            )
         )
         five_supported = bool(
-            report.get("fingerRigReady")
-            if report.get("fingerRigReady") is not None
-            else hand_supported and count >= 5
+            hand_supported
+            and count >= 5
+            and (
+                report.get("fingerRigReady")
+                if report.get("fingerRigReady") is not None
+                else True
+            )
         )
+        if five_supported:
+            hand_mode = reported_mode if reported_mode in {"five_finger_connected", "five_finger_separated"} else "five_finger_connected"
+        elif hand_supported:
+            hand_mode = "simplified_mitten"
+        else:
+            hand_mode = "unsupported_or_corrupt"
         result[f"{side}_hand_supported"] = hand_supported
         result[f"{side}_five_fingers_supported"] = five_supported
         result[f"{side}_detected_finger_branches"] = count
@@ -462,7 +530,16 @@ def infer_topology_capabilities(analysis: dict[str, Any]) -> dict[str, Any]:
             or ("full" if five_supported else "simplified" if hand_mode == "simplified_mitten" else "unsupported")
         )
         result[f"{side}_hand_status"] = (
-            "supported" if five_supported else "unsupported" if hand_mode == "simplified_mitten" else "topology_invalid" if hand_supported else "corrupt_geometry"
+            "topology_five_finger"
+            if five_supported
+            else "hand_base_valid"
+            if hand_supported
+            else "hand_base_invalid"
+        )
+        result[f"{side}_visual_evidence_status"] = (
+            "detector_visual_evidence"
+            if int(report.get("viewsDetected") or 0) > 0
+            else "detector_no_visual_evidence"
         )
     face_landmarks = analysis.get("landmarks") if isinstance(analysis.get("landmarks"), dict) else {}
     face_count = sum(1 for name in face_landmarks if _region_for_landmark(str(name)) == "face")
@@ -683,54 +760,93 @@ def _alias_approved(landmarks: dict[str, dict[str, Any]], alias: str) -> bool:
     return any(_approved(landmarks, name) for name in FACE_SURFACE_ALIASES.get(alias, (alias,)))
 
 
-def compute_rig_profiles(
+def _profile_result(supported: bool, missing: Iterable[str]) -> dict[str, Any]:
+    return {"supported": bool(supported), "missing": sorted(set(str(value) for value in missing if value))}
+
+
+def evaluate_body_basic_readiness(
     landmarks: dict[str, dict[str, Any]],
     capabilities: dict[str, Any],
-) -> tuple[list[str], dict[str, Any]]:
-    body_missing = [name for name in BODY_REQUIRED if not _approved(landmarks, name)]
-    body_ok = bool(capabilities.get("body_supported")) and not body_missing
+) -> dict[str, Any]:
+    missing = [name for name in BODY_REQUIRED if not _approved(landmarks, name)]
+    return _profile_result(bool(capabilities.get("body_supported")) and not missing, missing)
+
+
+def evaluate_body_face_readiness(
+    landmarks: dict[str, dict[str, Any]],
+    capabilities: dict[str, Any],
+) -> dict[str, Any]:
+    body = evaluate_body_basic_readiness(landmarks, capabilities)
     face_missing = [name for name in FACE_BASIC_REQUIRED if not _alias_approved(landmarks, name)]
-    face_ok = bool(body_ok and capabilities.get("facial_rig_supported") and not face_missing)
-    hand_missing = [name for name in ("wrist_l", "wrist_r") if not _approved(landmarks, name)]
-    hand_basic_ok = bool(
-        body_ok
-        and capabilities.get("left_hand_supported")
-        and capabilities.get("right_hand_supported")
-        and not hand_missing
-    )
-    finger_missing = [
+    supported = bool(body["supported"] and capabilities.get("facial_rig_supported") and not face_missing)
+    return _profile_result(supported, [*body["missing"], *face_missing])
+
+
+def evaluate_body_hands_basic_readiness(
+    landmarks: dict[str, dict[str, Any]],
+    capabilities: dict[str, Any],
+) -> dict[str, Any]:
+    body = evaluate_body_basic_readiness(landmarks, capabilities)
+    missing = [name for name in ("wrist_l", "wrist_r") if not _approved(landmarks, name)]
+    if not capabilities.get("left_hand_supported"):
+        missing.append("left_hand_base")
+    if not capabilities.get("right_hand_supported"):
+        missing.append("right_hand_base")
+    return _profile_result(body["supported"] and not missing, [*body["missing"], *missing])
+
+
+def _finger_missing(landmarks: dict[str, dict[str, Any]]) -> list[str]:
+    return [
         f"{finger}_{joint}_{suffix}"
         for suffix in ("l", "r")
         for finger in FINGERS
         for joint in ("01", "02", "03", "tip")
         if not _approved(landmarks, f"{finger}_{joint}_{suffix}")
     ]
-    full_ok = bool(
-        face_ok and hand_basic_ok
-        and capabilities.get("left_five_fingers_supported")
-        and capabilities.get("right_five_fingers_supported")
-        and not finger_missing
-    )
-    full_humanoid_ok = bool(
-        body_ok and hand_basic_ok
-        and capabilities.get("left_five_fingers_supported")
-        and capabilities.get("right_five_fingers_supported")
-        and not finger_missing
-    )
+
+
+def evaluate_full_humanoid_readiness(
+    landmarks: dict[str, dict[str, Any]],
+    capabilities: dict[str, Any],
+) -> dict[str, Any]:
+    hands = evaluate_body_hands_basic_readiness(landmarks, capabilities)
+    missing = _finger_missing(landmarks)
+    if not capabilities.get("left_five_fingers_supported"):
+        missing.append("left_five_finger_topology")
+    if not capabilities.get("right_five_fingers_supported"):
+        missing.append("right_five_finger_topology")
+    return _profile_result(hands["supported"] and not missing, [*hands["missing"], *missing])
+
+
+def evaluate_full_body_hands_face_readiness(
+    landmarks: dict[str, dict[str, Any]],
+    capabilities: dict[str, Any],
+) -> dict[str, Any]:
+    full = evaluate_full_humanoid_readiness(landmarks, capabilities)
+    face = evaluate_body_face_readiness(landmarks, capabilities)
+    return _profile_result(full["supported"] and face["supported"], [*full["missing"], *face["missing"]])
+
+
+def compute_rig_profiles(
+    landmarks: dict[str, dict[str, Any]],
+    capabilities: dict[str, Any],
+) -> tuple[list[str], dict[str, Any]]:
+    canonical = {
+        "BODY_BASIC": evaluate_body_basic_readiness(landmarks, capabilities),
+        "BODY_FACE": evaluate_body_face_readiness(landmarks, capabilities),
+        "BODY_HANDS_BASIC": evaluate_body_hands_basic_readiness(landmarks, capabilities),
+        "FULL_HUMANOID": evaluate_full_humanoid_readiness(landmarks, capabilities),
+        "FULL_BODY_HANDS_FACE": evaluate_full_body_hands_face_readiness(landmarks, capabilities),
+    }
     profiles = {
-        "BODY_BASIC": {"supported": body_ok, "missing": body_missing},
-        "BODY_FACE": {"supported": face_ok, "missing": [*body_missing, *face_missing]},
-        "BODY_HANDS_BASIC": {"supported": hand_basic_ok, "missing": [*body_missing, *hand_missing]},
-        "FULL_HUMANOID": {"supported": full_humanoid_ok, "missing": [*body_missing, *hand_missing, *finger_missing]},
-        "FULL_BODY_HANDS_FACE": {"supported": full_ok, "missing": [*body_missing, *face_missing, *hand_missing, *finger_missing]},
-        "body_only": {"supported": body_ok, "missing": body_missing},
-        "body_with_hands": {"supported": hand_basic_ok, "missing": [*body_missing, *hand_missing]},
-        "full_humanoid": {"supported": full_humanoid_ok, "missing": [*body_missing, *hand_missing, *finger_missing]},
-        "full_humanoid_with_face": {"supported": full_ok, "missing": [*body_missing, *face_missing, *hand_missing, *finger_missing]},
+        **canonical,
+        "body_only": canonical["BODY_BASIC"],
+        "body_with_hands": canonical["BODY_HANDS_BASIC"],
+        "full_humanoid": canonical["FULL_HUMANOID"],
+        "full_humanoid_with_face": canonical["FULL_BODY_HANDS_FACE"],
     }
     supported = [name for name in RIG_PROFILES if profiles[name]["supported"]]
     return supported, profiles
-
 
 def build_targeted_reanalysis_plan(target: str, landmark: str | None = None) -> dict[str, Any]:
     mapping = {
@@ -749,6 +865,64 @@ def build_targeted_reanalysis_plan(target: str, landmark: str | None = None) -> 
     return result
 
 
+def normalize_landmark_state(record: dict[str, Any]) -> str:
+    state = str(record.get("state") or record.get("validationState") or "").strip()
+    aliases = {
+        "verified": "verified_visual_geometry",
+        "low_confidence": "manual_review_required",
+        "technical_mismatch": "projection_mismatch",
+        "manually_corrected": "manually_corrected",
+    }
+    state = aliases.get(state, state)
+    if state in LANDMARK_STATES:
+        return state
+    if record.get("accepted") and record.get("evidenceType") == "internal_geometry":
+        return "verified_internal_geometry"
+    if record.get("accepted"):
+        return "verified_visual_geometry"
+    if int(record.get("viewsConfirmed") or 0) == 0:
+        return "no_visual_evidence"
+    return "manual_review_required"
+
+
+def canonical_landmark_metrics(landmarks: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    states: dict[str, int] = {}
+    internal = 0
+    verified = 0
+    verified_surface = 0
+    hidden = 0
+    for record in landmarks.values():
+        if not isinstance(record, dict):
+            continue
+        state = normalize_landmark_state(record)
+        record["state"] = state
+        record["validationState"] = state
+        states[state] = states.get(state, 0) + 1
+        if state in APPROVED_STATES:
+            verified += 1
+            if record.get("display"):
+                verified_surface += 1
+        if state == "verified_internal_geometry":
+            internal += 1
+        if not record.get("display", False):
+            hidden += 1
+    total = len([record for record in landmarks.values() if isinstance(record, dict)])
+    return {
+        "verifiedLandmarkCount": verified,
+        "verifiedSurfaceLandmarkCount": verified_surface,
+        "internalJointCount": internal,
+        "rejectedLandmarkCount": max(0, total - verified),
+        "noVisualEvidenceCount": states.get("no_visual_evidence", 0),
+        "insufficientViewsCount": states.get("insufficient_views", 0),
+        "technicalMismatchCount": states.get("projection_mismatch", 0),
+        "topologyInvalidCount": states.get("topology_invalid", 0),
+        "unsupportedCount": states.get("unsupported", 0),
+        "manualReviewRequiredCount": states.get("manual_review_required", 0),
+        "hiddenLandmarkCount": hidden,
+        "landmarkStates": states,
+    }
+
+
 def _stable_fingerprint(payload: dict[str, Any]) -> str:
     serialized = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return sha256(serialized.encode("utf-8")).hexdigest()
@@ -761,7 +935,8 @@ def upgrade_analysis_v4(
     config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     config = deepcopy(config or DEFAULT_CONFIG)
-    if requested_rig_profile not in RIG_PROFILES:
+    requested_rig_profile = CANONICAL_PROFILE_ALIASES.get(requested_rig_profile, requested_rig_profile)
+    if requested_rig_profile not in CANONICAL_PROFILES:
         requested_rig_profile = "BODY_BASIC"
     legacy = deepcopy(source_analysis)
     analysis = deepcopy(source_analysis)
@@ -776,7 +951,8 @@ def upgrade_analysis_v4(
     }
     analysis["landmarks"] = landmarks
     supported_profiles, profile_diagnostics = compute_rig_profiles(landmarks, capabilities)
-    requested_supported = requested_rig_profile in supported_profiles
+    canonical_supported_profiles = [name for name in CANONICAL_PROFILES if profile_diagnostics[name]["supported"]]
+    requested_supported = requested_rig_profile in canonical_supported_profiles
     warnings = [item for item in analysis.get("warnings") or [] if isinstance(item, dict)]
     if shoulder_repair.get("attempted"):
         warnings.append({
@@ -864,7 +1040,7 @@ def upgrade_analysis_v4(
     ]
     face_scores = [_float(landmarks[name].get("final_confidence")) for name in face_names]
     face_score = sum(face_scores) / len(face_scores) if face_scores else 0.0
-    body_ready = bool(profile_diagnostics["body_only"]["supported"])
+    body_ready = bool(profile_diagnostics["BODY_BASIC"]["supported"])
     face_ready = bool(
         capabilities.get("facial_rig_supported")
         and all(_alias_approved(landmarks, name) for name in FACE_BASIC_REQUIRED)
@@ -893,13 +1069,26 @@ def upgrade_analysis_v4(
     )
     full_humanoid_ready = bool(body_ready and left_finger_ready and right_finger_ready)
     requested_profile_key = PROFILE_ALIASES.get(requested_rig_profile, requested_rig_profile)
+    canonical_metrics = canonical_landmark_metrics(landmarks)
+    advanced_warnings = []
+    if not face_ready:
+        advanced_warnings.append({"capability": "face", "status": "needs_review", "blocking": requested_rig_profile in {"BODY_FACE", "FULL_BODY_HANDS_FACE"}})
+    if not left_hand_base_ready or not right_hand_base_ready:
+        advanced_warnings.append({"capability": "hands_basic", "status": "needs_review", "blocking": requested_rig_profile in {"BODY_HANDS_BASIC", "FULL_HUMANOID", "FULL_BODY_HANDS_FACE"}})
+    if not left_finger_ready or not right_finger_ready:
+        advanced_warnings.append({"capability": "finger_rig", "status": "needs_review", "blocking": requested_rig_profile in {"FULL_HUMANOID", "FULL_BODY_HANDS_FACE"}})
     analysis.update({
         "version": ANALYZER_VERSION,
         "analyzer_version": "4.1",
         "mapVersion": MAP_VERSION,
         "requested_rig_profile": requested_rig_profile,
+        "requestedRigProfile": requested_rig_profile,
         "requested_rig_profile_key": requested_profile_key,
         "supported_rig_profiles": supported_profiles,
+        "supportedRigProfiles": canonical_supported_profiles,
+        "requestedProfileReady": requested_supported,
+        "requestedProfileBlockingReasons": blocking_reasons,
+        "advancedAnalysisWarnings": advanced_warnings,
         "rig_profiles": profile_diagnostics,
         "overall_status": overall,
         "status": "valid_with_warnings" if overall == "approved_with_fallbacks" else "valid" if overall == "approved" else "needs_review" if overall != "technical_failure" else "failed",
@@ -941,6 +1130,7 @@ def upgrade_analysis_v4(
         "unrealExportReady": bool(requested_supported and body_ready),
         "criticalLandmarksVerified": profile_diagnostics["BODY_BASIC"]["supported"],
         "rigReadinessGates": [item["landmark"] for item in blocking_reasons],
+        "metrics": {**(analysis.get("metrics") or {}), **canonical_metrics},
         "warnings": warnings,
         "legacy_analyzer": {
             "version": legacy.get("version"),

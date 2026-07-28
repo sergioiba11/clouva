@@ -226,3 +226,34 @@ test("restored Analyzer results retain their compact summary and next action", (
   assert.match(preview, /Próxima acción/);
   assert.match(preview, /0\/7 vistas significa/);
 });
+
+
+test("requested profile semantics remain separate from advanced modules", () => {
+  const contract = read("worker/garment-rig/analyzer_v4_contract.py");
+  assert.match(contract, /def evaluate_body_basic_readiness/);
+  assert.match(contract, /"requestedProfileReady": requested_supported/);
+  assert.match(contract, /"verified_internal_geometry"/);
+  assert.match(contract, /"requiresVisualViews": requires_visual_views/);
+});
+
+test("technical projection preserves region identity without requiring a recast hit", () => {
+  const projector = read("worker/garment-rig/landmark_projector_3d.py");
+  assert.match(projector, /technical_projection_identity/);
+  assert.match(projector, /"technicalRegion": technical_region/);
+  assert.match(projector, /BVH_RECAST_MISS_WITH_VALID_TECHNICAL_POINT/);
+});
+
+test("hand renderer includes wrist context and coverage auto-fit", () => {
+  const renderer = read("worker/garment-rig/multiview_renderer_v4.py");
+  assert.match(renderer, /HAND_TARGET_COVERAGE/);
+  assert.match(renderer, /handRetryPerformed/);
+  assert.match(renderer, /hand_\{suffix\}_distal/);
+});
+
+test("mobile analyzer prioritizes requested profile and hides internal correction noise", () => {
+  const component = read("components/library/AvatarAnalyzerPreview.tsx");
+  assert.match(component, /Perfil solicitado/);
+  assert.match(component, /Listo para rig corporal/);
+  assert.match(component, /MOSTRAR TODOS LOS PUNTOS TÉCNICOS/);
+  assert.match(component, /record\.requiresVisualViews === false \? "No requiere"/);
+});
