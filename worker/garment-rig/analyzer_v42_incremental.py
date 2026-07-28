@@ -34,11 +34,11 @@ PROFILE_ALIASES = {
     "body_with_hands": "BODY_HANDS_BASIC",
     "full_humanoid": "FULL_HUMANOID",
     "full_humanoid_with_face": "FULL_BODY_HANDS_FACE",
-    "BODY_FACE": "FULL_BODY_HANDS_FACE",
 }
 
 PROFILE_MODULES = {
     "BODY_BASIC": ("body", "measurements"),
+    "BODY_FACE": ("body", "face", "measurements"),
     "BODY_HANDS_BASIC": ("body", "left_hand", "right_hand", "measurements"),
     "FULL_HUMANOID": ("body", "left_hand", "right_hand", "measurements"),
     "FULL_BODY_HANDS_FACE": ("body", "left_hand", "right_hand", "face", "measurements"),
@@ -85,6 +85,17 @@ def module_for_landmark(name: str | None) -> str:
         return "right_hand"
     if value.startswith(("eye_", "brow_", "nose_", "mouth_", "upper_lip", "lower_lip", "jaw", "chin", "ear_", "cheek_", "temple_", "forehead_")):
         return "face"
+    return "body"
+
+
+def module_for_region(region: str | None) -> str:
+    value = str(region or "body")
+    if value in {"face", "head", "eyes"}:
+        return "face"
+    if value.endswith("_l") and value.startswith(("hand", "forearm", *FINGERS)):
+        return "left_hand"
+    if value.endswith("_r") and value.startswith(("hand", "forearm", *FINGERS)):
+        return "right_hand"
     return "body"
 
 
@@ -136,7 +147,7 @@ def build_incremental_plan(
         plan = {"operation": operation, "requestedProfile": profile, "modules": [module], "regions": sorted(MODULE_REGIONS.get(module, {module})), "cameras": [selected] if selected else list(MODULE_CAMERAS.get(module, ()))[:1], "landmarks": [], "full": False}
     elif operation == "reanalyze_region":
         selected = str(region or "body")
-        module = "left_hand" if selected.endswith("_l") and "hand" in selected else "right_hand" if selected.endswith("_r") and "hand" in selected else "face" if selected in {"face", "head", "eyes"} else "body"
+        module = module_for_region(selected)
         plan = {"operation": operation, "requestedProfile": profile, "modules": [module], "regions": [selected], "cameras": list(MODULE_CAMERAS.get(module, ())), "landmarks": [], "full": False}
     else:
         plan = build_incremental_plan("initial", requested_profile=profile)
@@ -214,6 +225,17 @@ def warning_fingerprint(item: dict[str, Any]) -> str:
     return stable_hash(payload)
 
 
+def root_cause_fingerprint(item: dict[str, Any]) -> str:
+    return stable_hash({
+        "code": str(item.get("code") or item.get("failureCode") or "UNKNOWN"),
+        "module": warning_module(item),
+        "failureStage": str(item.get("failureStage") or ""),
+        "expectedRegion": item.get("expectedRegion") or item.get("expected_region"),
+        "actualRegion": item.get("actualRegion") or item.get("actual_region") or item.get("surfaceRegion"),
+        "sourceVersion": item.get("sourceVersion") or item.get("version"),
+    })
+
+
 def dedupe_warnings(items: Iterable[dict[str, Any]], previous_fingerprints: set[str] | None = None) -> list[dict[str, Any]]:
     previous_fingerprints = previous_fingerprints or set()
     grouped: dict[str, dict[str, Any]] = {}
@@ -222,25 +244,31 @@ def dedupe_warnings(items: Iterable[dict[str, Any]], previous_fingerprints: set[
             continue
         item = deepcopy(raw)
         fingerprint = warning_fingerprint(item)
+        root_fingerprint = root_cause_fingerprint(item)
         item["fingerprint"] = fingerprint
+        item["rootCauseFingerprint"] = root_fingerprint
         item["module"] = warning_module(item)
-        item["same_root_cause_repeated"] = fingerprint in previous_fingerprints
+        item["same_root_cause_repeated"] = root_fingerprint in previous_fingerprints or fingerprint in previous_fingerprints
         view = item.get("view") or item.get("camera") or item.get("camera_id")
-        if fingerprint not in grouped:
+        evidence_record = {
+            key: value for key, value in item.items()
+            if key not in {"message", "evidence", "occurrences"}
+        }
+        if root_fingerprint not in grouped:
             item["occurrences"] = int(item.get("occurrences") or 1)
-            item["evidence"] = list(item.get("evidence") or [])
+            item["evidence"] = list(item.get("evidence") or [evidence_record])
             if view:
                 item.setdefault("cameras", []).append(str(view))
-            grouped[fingerprint] = item
+            grouped[root_fingerprint] = item
             continue
-        current = grouped[fingerprint]
+        current = grouped[root_fingerprint]
         current["occurrences"] = int(current.get("occurrences") or 1) + int(item.get("occurrences") or 1)
         cameras = current.setdefault("cameras", [])
         if view and str(view) not in cameras:
             cameras.append(str(view))
         evidence = current.setdefault("evidence", [])
         if len(evidence) < 30:
-            evidence.append({key: value for key, value in item.items() if key not in {"message", "evidence"}})
+            evidence.append(evidence_record)
         current["same_root_cause_repeated"] = bool(current.get("same_root_cause_repeated") or item["same_root_cause_repeated"])
     return list(grouped.values())
 
@@ -252,7 +280,10 @@ def merge_incremental_analysis(
 ) -> dict[str, Any]:
     analysis = deepcopy(previous)
     previous_warnings = [item for item in analysis.get("warnings") or [] if isinstance(item, dict)]
-    previous_fingerprints = {str(item.get("fingerprint") or warning_fingerprint(item)) for item in previous_warnings}
+    previous_fingerprints = {
+        str(item.get("rootCauseFingerprint") or root_cause_fingerprint(item))
+        for item in previous_warnings
+    }
     replace_modules = set(plan.get("replaceModules") or plan.get("modules") or [])
     preserved_warnings = [item for item in previous_warnings if warning_module(item) not in replace_modules]
     landmarks = dict(analysis.get("landmarks") or {})
