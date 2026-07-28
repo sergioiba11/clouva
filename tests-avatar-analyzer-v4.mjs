@@ -287,3 +287,15 @@ test("cancellation is wired end to end through the API layer and the mobile UI",
   assert.doesNotMatch(preview, /analysisProcessState === "failed" \? "Error" : "Disponible"/);
   assert.match(styles, /\.cancelAction/);
 });
+
+test("storage inventory diagnostics classify the run-cache disk without leaking file names", () => {
+  const api = read("worker/garment-rig/app_v18.py");
+  assert.match(api, /@app\.get\("\/diagnostics\/avatar-analyzer-v4-storage-inventory"\)/);
+  assert.match(api, /def _classify_cache_file\(path: Path, run_cache_root: Path\) -> str/);
+  assert.match(api, /"glb_source"/);
+  assert.match(api, /"glb_diagnostic"/);
+  assert.match(api, /"renders"/);
+  assert.match(api, /"results_json"/);
+  assert.match(api, /incompleteOrAbandonedRuns/);
+  assert.match(api, /jobStatusCache/);
+});

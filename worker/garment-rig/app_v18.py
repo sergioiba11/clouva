@@ -893,6 +893,79 @@ def complete_avatar_rig_v4(request: AnalyzerV4CompleteRigRequest):
             shutil.rmtree(job_dir, ignore_errors=True)
 
 
+def _classify_cache_file(path: Path, run_cache_root: Path) -> str:
+    try:
+        relative = path.relative_to(run_cache_root)
+    except ValueError:
+        return "other"
+    parts = relative.parts
+    name = path.name
+    if "source" in parts and path.suffix.lower() == ".glb":
+        return "glb_source"
+    if name == "diagnostic_landmarks.glb":
+        return "glb_diagnostic"
+    if any(part.startswith("renders_") for part in parts):
+        return "renders"
+    if name in ("avatar_analysis.json", "diagnostic_report.json", "avatar_analysis_corrections_v4.json"):
+        return "results_json"
+    if name == "expires_at.json":
+        return "expiry_marker"
+    return "other"
+
+
+@app.get("/diagnostics/avatar-analyzer-v4-storage-inventory")
+def avatar_analyzer_v4_storage_inventory():
+    """Read-only inventory of this worker's local run-cache disk, by category.
+
+    Reports aggregate counts/bytes only (no filenames or run IDs), so it is
+    safe to leave world-readable like the existing health diagnostics route.
+    """
+    run_cache_root = v32.RUN_CACHE_ROOT
+    categories: dict[str, dict[str, int]] = {}
+
+    def _bump(category: str, size: int) -> None:
+        entry = categories.setdefault(category, {"count": 0, "bytes": 0})
+        entry["count"] += 1
+        entry["bytes"] += size
+
+    run_dir_count = 0
+    incomplete_run_count = 0
+    incomplete_run_bytes = 0
+    if run_cache_root.is_dir():
+        for run_dir in run_cache_root.iterdir():
+            if not run_dir.is_dir():
+                continue
+            run_dir_count += 1
+            has_marker = (run_dir / "expires_at.json").is_file()
+            for file_path in run_dir.rglob("*"):
+                if not file_path.is_file():
+                    continue
+                size = file_path.stat().st_size
+                _bump(_classify_cache_file(file_path, run_cache_root), size)
+                if not has_marker:
+                    incomplete_run_bytes += size
+            if not has_marker:
+                incomplete_run_count += 1
+
+    job_status_count = 0
+    job_status_bytes = 0
+    if JOBS_ROOT.is_dir():
+        for job_file in JOBS_ROOT.glob("*.json"):
+            if job_file.is_file():
+                job_status_count += 1
+                job_status_bytes += job_file.stat().st_size
+
+    return {
+        "inspectedPath": str(run_cache_root),
+        "jobsPath": str(JOBS_ROOT),
+        "runDirectoryCount": run_dir_count,
+        "incompleteOrAbandonedRuns": {"count": incomplete_run_count, "bytes": incomplete_run_bytes},
+        "categories": categories,
+        "jobStatusCache": {"count": job_status_count, "bytes": job_status_bytes},
+        "runTtlSeconds": v32.RUN_TTL_SECONDS,
+    }
+
+
 @app.get("/diagnostics/avatar-analyzer-v4")
 def avatar_analyzer_v4_health():
     v32._cleanup_expired_runs()
@@ -916,6 +989,7 @@ def avatar_analyzer_v4_health():
         "runTtlSeconds": v32.RUN_TTL_SECONDS,
         "durableCachePolicy": "json-png-glb-source-30d",
         "routes": [
+            "/diagnostics/avatar-analyzer-v4-storage-inventory",
             "/avatar/analyze-v4",
             "/avatar/analyze-v4-preview",
             "/avatar/analyze-v4/result/{run_id}",
