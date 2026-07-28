@@ -9,6 +9,7 @@ ROOT = Path(__file__).parent
 SHIM_PATH = ROOT / "multiview_renderer_v4.py"
 BASE_PATH = ROOT / "multiview_renderer_v4_base.py"
 PATCH_PATH = ROOT / "hand_framing_v41.py"
+FAST_PATH = ROOT / "hand_framing_v41_fast.py"
 
 
 class HandFramingSourceContractTests(unittest.TestCase):
@@ -17,12 +18,14 @@ class HandFramingSourceContractTests(unittest.TestCase):
         cls.shim = SHIM_PATH.read_text(encoding="utf-8")
         cls.base = BASE_PATH.read_text(encoding="utf-8")
         cls.patch = PATCH_PATH.read_text(encoding="utf-8")
-        ast.parse(cls.shim)
-        ast.parse(cls.base)
-        ast.parse(cls.patch)
+        cls.fast = FAST_PATH.read_text(encoding="utf-8")
+        cls.combined_patch = cls.patch + "\n" + cls.fast
+        for source in (cls.shim, cls.base, cls.patch, cls.fast):
+            ast.parse(source)
 
     def test_retained_renderer_is_patched_not_rewritten(self):
         self.assertIn("multiview_renderer_v4_base", self.shim)
+        self.assertIn("hand_framing_v41_fast", self.shim)
         self.assertIn("install_hand_framing_patch", self.shim)
         self.assertIn("render_multiview_v4 = _base.render_multiview_v4", self.shim)
 
@@ -44,11 +47,14 @@ class HandFramingSourceContractTests(unittest.TestCase):
         self.assertIn("region in metadata.secondary_regions", self.patch)
         self.assertNotIn("anatomy_bvh.has_region", self.patch)
 
-    def test_focus_mask_is_the_canonical_coverage(self):
-        self.assertIn('technical["coverage"] = float(focus_mask.get("coverage") or 0.0)', self.patch)
+    def test_existing_exact_focus_mask_is_canonical_coverage(self):
+        self.assertIn('view.get("silhouettePath")', self.fast)
+        self.assertIn('technical["coverage"] = float(focus_mask.get("coverage") or 0.0)', self.fast)
         self.assertIn('"silhouetteCoverage": coverage', self.patch)
         self.assertIn('context.get("touchesEdge")', self.patch)
         self.assertIn('"technicalSilhouetteCoverage": coverage', self.patch)
+        self.assertIn('"duplicateFocusRenderSkipped"] = True', self.fast)
+        self.assertNotIn("_render_mask", self.fast)
 
     def test_retry_contract_remains_in_retained_renderer(self):
         self.assertIn('"maximum_retries": 2', self.base)
@@ -86,6 +92,7 @@ class HandFramingSourceContractTests(unittest.TestCase):
         self.assertIn("_clouva_hand_framing_v41_installed", self.patch)
         self.assertIn("base_module._render_view = _render_view", self.patch)
         self.assertIn("base_module._enrich = _enrich", self.patch)
+        self.assertIn("_geometry_patch._render_view = _render_view", self.fast)
 
 
 if __name__ == "__main__":

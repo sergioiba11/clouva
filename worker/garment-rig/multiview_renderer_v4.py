@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import multiview_renderer_v4_base as _base
-from hand_framing_v41 import install_hand_framing_patch
+from hand_framing_v41_fast import install_hand_framing_patch
 
 install_hand_framing_patch(_base)
 

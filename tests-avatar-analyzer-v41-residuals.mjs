@@ -7,6 +7,7 @@ const renderer = [
   readFileSync("worker/garment-rig/multiview_renderer_v4.py", "utf8"),
   readFileSync("worker/garment-rig/multiview_renderer_v4_base.py", "utf8"),
   readFileSync("worker/garment-rig/hand_framing_v41.py", "utf8"),
+  readFileSync("worker/garment-rig/hand_framing_v41_fast.py", "utf8"),
 ].join("\n");
 const entrypoint = readFileSync("worker/garment-rig/avatar_analyzer_v4.py", "utf8");
 const panel = readFileSync("components/library/AvatarAnalyzerResidualMetrics.tsx", "utf8");
@@ -41,6 +42,8 @@ test("hand framing uses verified focus geometry and distal forearm context", () 
   assert.match(renderer, /_verified_region/);
   assert.match(renderer, /_clip_polygon_halfspace/);
   assert.match(renderer, /focusSilhouetteCoverage/);
+  assert.match(renderer, /existing_exact_technical_silhouette/);
+  assert.match(renderer, /duplicateFocusRenderSkipped/);
 });
 
 test("mobile analyzer page renders the residual diagnostic panel", () => {
