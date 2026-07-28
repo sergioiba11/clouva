@@ -1,7 +1,7 @@
 {
-  "analyzerVersion": "clouva-avatar-analyzer-v4.1",
-  "mapVersion": "clouva-anatomical-map-v4.1",
-  "confidenceConfigVersion": "clouva-avatar-analyzer-v4.1-thresholds-1",
-  "frontendVersion": "clouva-avatar-visualizer-v4.1",
-  "cacheContractVersion": "clouva-avatar-analysis-cache-v4.1"
+  "analyzerVersion": "clouva-avatar-analyzer-v4.2",
+  "mapVersion": "clouva-anatomical-map-v4.2",
+  "confidenceConfigVersion": "clouva-avatar-analyzer-v4.2-thresholds-1",
+  "frontendVersion": "clouva-avatar-visualizer-v4.2",
+  "cacheContractVersion": "clouva-avatar-analysis-cache-v4.2"
 }
