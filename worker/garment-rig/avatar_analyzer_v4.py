@@ -23,7 +23,7 @@ if str(SCRIPT_DIR) not in sys.path:
 import avatar_analyzer as analyzer_v32
 from analyzer_v4_contract import ANALYZER_VERSION, DEFAULT_CONFIG, upgrade_analysis_v4
 from analyzer_v4_bootstrap import resolve_camera_vector_values
-from analyzer_v41_residuals import apply_residual_repairs_v41
+from analyzer_v41_residuals_finalize import apply_residual_repairs_v41
 from anatomy_bvh import build_anatomy_bvh
 from anatomy_segmenter_v3 import segment_anatomy_v3
 from camera_projection_self_test_v4 import filter_invalid_views, validate_manifest
