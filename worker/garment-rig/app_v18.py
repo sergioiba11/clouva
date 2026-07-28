@@ -1,4 +1,7 @@
-"""Side-by-side CLOUVA Avatar Analyzer V4 API while retaining V3.2 routes."""
+"""Side-by-side CLOUVA Avatar Analyzer V4 API while retaining V3.2 routes.
+
+Build marker: forces a fresh Railway build after a skipped deploy.
+"""
 from __future__ import annotations
 
 import base64
