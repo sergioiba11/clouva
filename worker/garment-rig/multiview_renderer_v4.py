@@ -35,6 +35,10 @@ DEFAULT_HAND_CAMERA_CONFIG = {
     "maximum_coverage": 0.90,
     "maximum_retries": 2,
 }
+# Backward-compatible public constants retained for V4.1 callers and source contracts.
+HAND_TARGET_COVERAGE = DEFAULT_HAND_CAMERA_CONFIG["target_coverage"]
+HAND_MIN_COVERAGE = DEFAULT_HAND_CAMERA_CONFIG["minimum_coverage"]
+HAND_MAX_COVERAGE = DEFAULT_HAND_CAMERA_CONFIG["maximum_coverage"]
 
 
 def _vec(value: Vector):
