@@ -12,6 +12,7 @@ import {
   RotateCcw,
   Save,
   TriangleAlert,
+  XCircle,
 } from "lucide-react";
 import Link from "next/link";
 import {
@@ -383,7 +384,7 @@ function compactCoverage(record?: CoverageRecord) {
 }
 
 type JobStatus = {
-  status: "pending" | "done" | "error";
+  status: "pending" | "done" | "error" | "cancelled";
   runId?: string;
   summary?: AnalysisSummary;
   detail?: string;
@@ -413,6 +414,12 @@ async function readApiError(response: Response): Promise<ApiErrorPayload> {
     code: "ANALYZER_HTTP_ERROR",
     retryable: DETAIL_RETRYABLE_STATUSES.has(response.status),
   };
+}
+
+function workerStateLabel(state: AnalysisProcessState) {
+  if (state === "failed") return "Error";
+  if (state === "starting" || state === "running") return "Ocupado";
+  return "Disponible";
 }
 
 function processStateLabel(state: AnalysisProcessState) {
@@ -466,9 +473,10 @@ function loadActiveJob(): PersistedJob | null {
   }
 }
 
-async function pollAnalysisJob(jobId: string, accessToken: string): Promise<JobStatus> {
+async function pollAnalysisJob(jobId: string, accessToken: string, shouldStop: () => boolean): Promise<JobStatus> {
   const deadline = Date.now() + JOB_POLL_TIMEOUT_MS;
   while (Date.now() < deadline) {
+    if (shouldStop()) return { status: "cancelled" };
     let response: Response;
     try {
       response = await fetch(`/api/avatar/analyze/job/${jobId}`, {
@@ -488,10 +496,27 @@ async function pollAnalysisJob(jobId: string, accessToken: string): Promise<JobS
       continue;
     }
     if (!response.ok) throw new Error(data.error || `No se pudo consultar el estado del análisis (${response.status}).`);
-    if (data.status === "done" || data.status === "error") return data;
+    if (data.status === "done" || data.status === "error" || data.status === "cancelled") return data;
+    if (shouldStop()) return { status: "cancelled" };
     await new Promise((resolve) => window.setTimeout(resolve, JOB_POLL_INTERVAL_MS));
   }
   throw new Error("El análisis está tardando demasiado y se canceló la espera en este dispositivo. Si el celular se bloqueó, esperá un momento y probá \"ABRIR ÚLTIMO ANÁLISIS\".");
+}
+
+async function requestJobCancellation(jobId: string, accessToken: string) {
+  try {
+    const response = await fetch(`/api/avatar/analyze/job/${jobId}/cancel`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${accessToken}` },
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => null) as { error?: string } | null;
+      console.error("Avatar Analyzer cancel failed", data?.error || response.status);
+    }
+  } catch (cause) {
+    console.error("Avatar Analyzer cancel request failed", cause);
+  }
 }
 
 export function AvatarAnalyzerPreview() {
@@ -500,6 +525,9 @@ export function AvatarAnalyzerPreview() {
   const [detailState, setDetailState] = useState<DetailState>("idle");
   const [assetState, setAssetState] = useState<AssetState>("idle");
   const [restoringLatest, setRestoringLatest] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
+  const activeJobIdRef = useRef<string | null>(null);
+  const cancelRequestedRef = useRef(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [summary, setSummary] = useState<AnalysisSummary | null>(null);
   const [detail, setDetail] = useState<AnalysisDetail | null>(null);
@@ -729,12 +757,26 @@ export function AvatarAnalyzerPreview() {
 
   const runJob = async (jobId: string, startedAt: number = Date.now()) => {
     if (!session?.access_token) return;
+    activeJobIdRef.current = jobId;
     saveActiveJob({ jobId, startedAt });
     setAnalysisProcessState("running");
     setWorkerErrorMessage(null);
     let terminal = false;
     try {
-      const job = await pollAnalysisJob(jobId, session.access_token);
+      if (cancelRequestedRef.current) {
+        terminal = true;
+        setAnalysisProcessState("idle");
+        void requestJobCancellation(jobId, session.access_token);
+        return;
+      }
+      const job = await pollAnalysisJob(jobId, session.access_token, () => cancelRequestedRef.current);
+      if (activeJobIdRef.current !== jobId) return;
+      if (job.status === "cancelled") {
+        terminal = true;
+        setAnalysisProcessState("idle");
+        setWorkerErrorMessage(null);
+        return;
+      }
       if (job.status === "error" || !job.runId) {
         terminal = true;
         setAnalysisProcessState("failed");
@@ -758,11 +800,30 @@ export function AvatarAnalyzerPreview() {
       }
     } finally {
       if (terminal) saveActiveJob(null);
+      if (activeJobIdRef.current === jobId) activeJobIdRef.current = null;
+    }
+  };
+
+  const cancelAnalysis = () => {
+    if (cancelRequestedRef.current) return;
+    cancelRequestedRef.current = true;
+    setCancelling(true);
+    setAnalysisProcessState("idle");
+    setWorkerErrorMessage(null);
+    setPersistenceNotice(null);
+    saveActiveJob(null);
+    const jobId = activeJobIdRef.current;
+    const accessToken = session?.access_token;
+    if (jobId && accessToken) {
+      void requestJobCancellation(jobId, accessToken).finally(() => setCancelling(false));
+    } else {
+      setCancelling(false);
     }
   };
 
   const analyze = async () => {
     if (!session?.access_token) return;
+    cancelRequestedRef.current = false;
     setAnalysisProcessState("starting");
     setDetailState("idle");
     setAssetState("idle");
@@ -807,6 +868,7 @@ export function AvatarAnalyzerPreview() {
     const pending = loadActiveJob();
     if (!pending) return;
     if (Date.now() - pending.startedAt >= JOB_POLL_TIMEOUT_MS) return;
+    cancelRequestedRef.current = false;
     void runJob(pending.jobId, pending.startedAt).catch((cause) => {
       console.error("Avatar Analyzer resume failed", cause);
       setAnalysisProcessState("failed");
@@ -817,6 +879,7 @@ export function AvatarAnalyzerPreview() {
 
   const restoreLatest = async () => {
     if (!session?.access_token) return;
+    cancelRequestedRef.current = false;
     setRestoringLatest(true);
     setTransportError(null);
     setWorkerErrorMessage(null);
@@ -1117,7 +1180,7 @@ export function AvatarAnalyzerPreview() {
 
       {analysisProcessState !== "idle" || effectiveSummary ? (
         <section className={styles.systemHealth} aria-label="Salud del sistema del Analyzer">
-          <div><span>Worker</span><strong>{analysisProcessState === "failed" ? "Error" : "Disponible"}</strong></div>
+          <div><span>Worker</span><strong>{workerStateLabel(analysisProcessState)}</strong></div>
           <div><span>Proceso</span><strong>{processStateLabel(analysisProcessState)}</strong></div>
           <div><span>Resultado persistido</span><strong>{effectiveSummary ? "Sí" : analysisProcessState === "running" ? "En proceso" : "No"}</strong></div>
           <div><span>Detalle</span><strong>{detailStateLabel(detailState)}</strong></div>
@@ -1325,6 +1388,18 @@ export function AvatarAnalyzerPreview() {
         {analyzing ? <Loader2 className={styles.spin} /> : previewUrl ? <RotateCcw /> : <BrainCircuit />}
         {analyzing ? "ANALIZANDO ORIENTACIÓN, BVH, TOPOLOGÍA Y COBERTURA…" : previewUrl ? "VOLVER A ANALIZAR" : "ANALIZAR AVATAR"}
       </button>
+
+      {analyzing ? (
+        <button
+          type="button"
+          className={styles.cancelAction}
+          onClick={cancelAnalysis}
+          disabled={cancelling}
+        >
+          {cancelling ? <Loader2 className={styles.spin} /> : <XCircle />}
+          {cancelling ? "CANCELANDO…" : "CANCELAR ANÁLISIS"}
+        </button>
+      ) : null}
 
       <div className={styles.secondaryActions}>
         <button

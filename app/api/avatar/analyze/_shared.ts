@@ -271,6 +271,21 @@ export async function persistAnalyzerJobError(args: {
   });
 }
 
+export async function persistCancelledAnalyzerJob(args: {
+  supabase: ReturnType<typeof getAdminClient>;
+  userId: string;
+  avatarId: string;
+  jobId: string;
+}) {
+  return mutateAvatarMetadata(args.supabase, args.userId, args.avatarId, (metadata) => {
+    const pending = asRecord(metadata.avatar_analyzer_v4_pending);
+    if (!pending || pending.jobId !== args.jobId) return metadata;
+    const next = { ...metadata };
+    delete next.avatar_analyzer_v4_pending;
+    return next;
+  });
+}
+
 export function workerError(raw: string) {
   if (!raw.trim()) return "";
   try {
