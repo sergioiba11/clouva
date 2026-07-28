@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from analyzer_v41_residuals import apply_residual_repairs_v41
+from analyzer_v41_residuals_finalize import apply_residual_repairs_v41
 
 
 def _landmark(state: str, reasons=None, accepted=False):
@@ -111,6 +111,34 @@ class FingerRigResidualTests(unittest.TestCase):
         result = apply_residual_repairs_v41(analysis)
         self.assertEqual(result["topology_capabilities"]["right_finger_rig_mode"], "unsupported")
 
+    def test_corrupt_hand_is_unsupported_even_when_legacy_capability_is_true(self):
+        report = {
+            "handBaseReady": True,
+            "fingerRigMode": "full",
+            "handMode": "unsupported_or_corrupt",
+            "corruptGeometry": True,
+            "topology": {"verifiedGeodesicBranchCount": 5},
+        }
+        result = apply_residual_repairs_v41(_analysis(right_report=report))
+        capabilities = result["topology_capabilities"]
+        self.assertFalse(capabilities["right_hand_supported"])
+        self.assertFalse(capabilities["right_five_fingers_supported"])
+        self.assertEqual(capabilities["right_finger_rig_mode"], "unsupported")
+        self.assertEqual(capabilities["right_hand_mode"], "unsupported_or_corrupt")
+        self.assertFalse(result["rightHandBaseReady"])
+        self.assertFalse(result["rightFingerRigReady"])
+        self.assertFalse(result["rig_profiles"]["BODY_HANDS_BASIC"]["supported"])
+
+    def test_left_and_right_branch_derivation_is_symmetric(self):
+        left = {"handBaseReady": True, "topology": {"validGeodesicBranches": [1, 2, 3]}}
+        right = {"handBaseReady": True, "topology": {"validGeodesicBranches": [1, 2, 3]}}
+        result = apply_residual_repairs_v41(_analysis(left_report=left, right_report=right))
+        capabilities = result["topology_capabilities"]
+        self.assertEqual(capabilities["left_verified_finger_branch_count"], 3)
+        self.assertEqual(capabilities["right_verified_finger_branch_count"], 3)
+        self.assertEqual(capabilities["left_finger_rig_mode"], "partial")
+        self.assertEqual(capabilities["right_finger_rig_mode"], "partial")
+
 
 class MetricResidualTests(unittest.TestCase):
     def test_low_confidence_and_projection_counts_do_not_overlap(self):
@@ -140,6 +168,19 @@ class MetricResidualTests(unittest.TestCase):
         self.assertEqual(result["landmarks"]["eye_r_center"]["state"], "insufficient_views")
         self.assertEqual(result["metrics"]["insufficientViewsCount"], 1)
         self.assertEqual(result["metrics"]["lowConfidenceCount"], 1)
+
+    def test_unstable_triangulation_is_low_confidence_not_missing_views(self):
+        analysis = _analysis()
+        analysis["landmarks"]["unstable_point"] = _landmark(
+            "insufficient_views", ["RAY_TRIANGULATION_UNSTABLE"],
+        )
+        result = apply_residual_repairs_v41(analysis)
+        metrics = result["metrics"]
+        self.assertEqual(result["landmarks"]["unstable_point"]["state"], "low_confidence")
+        self.assertEqual(metrics["lowConfidenceCount"], 2)
+        self.assertEqual(metrics["insufficientViewsCount"], 1)
+        self.assertEqual(metrics["projectionMismatchCount"], 1)
+        self.assertEqual(metrics["technicalMismatchCount"], 1)
 
     def test_body_basic_remains_approved(self):
         result = apply_residual_repairs_v41(_analysis())
