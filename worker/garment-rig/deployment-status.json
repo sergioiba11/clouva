@@ -8,5 +8,6 @@
   "sourceRef": "codex/avatar-analyzer-v41-real-run-followup",
   "healthEndpoint": "/diagnostics/avatar-analyzer-v4",
   "healthVerified": true,
-  "deployedAt": "2026-07-28T04:29:42.554292+00:00"
+  "deployedAt": "2026-07-28T04:29:42.554292+00:00",
+  "redeployRequested": true
 }
