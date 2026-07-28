@@ -5,58 +5,87 @@ from pathlib import Path
 import unittest
 
 
-SOURCE_PATH = Path(__file__).with_name("multiview_renderer_v4.py")
+ROOT = Path(__file__).parent
+SHIM_PATH = ROOT / "multiview_renderer_v4.py"
+BASE_PATH = ROOT / "multiview_renderer_v4_base.py"
+PATCH_PATH = ROOT / "hand_framing_v41.py"
 
 
 class HandFramingSourceContractTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.source = SOURCE_PATH.read_text(encoding="utf-8")
-        cls.tree = ast.parse(cls.source)
+        cls.shim = SHIM_PATH.read_text(encoding="utf-8")
+        cls.base = BASE_PATH.read_text(encoding="utf-8")
+        cls.patch = PATCH_PATH.read_text(encoding="utf-8")
+        ast.parse(cls.shim)
+        ast.parse(cls.base)
+        ast.parse(cls.patch)
+
+    def test_retained_renderer_is_patched_not_rewritten(self):
+        self.assertIn("multiview_renderer_v4_base", self.shim)
+        self.assertIn("install_hand_framing_patch", self.shim)
+        self.assertIn("render_multiview_v4 = _base.render_multiview_v4", self.shim)
 
     def test_focus_and_distal_context_are_separate(self):
-        self.assertIn("HAND_FOCUS_V41", self.source)
-        self.assertIn("HAND_CONTEXT_DISTAL_V41", self.source)
-        self.assertIn("forearm_{suffix}_distal", self.source)
-        self.assertNotIn("def _hand_detection_proxy", self.source)
+        self.assertIn("HAND_FOCUS_V41", self.patch)
+        self.assertIn("HAND_CONTEXT_DISTAL_V41", self.patch)
+        self.assertIn('f"forearm_{suffix}_distal"', self.patch)
+        self.assertNotIn("HAND_CONTEXT_FULL_V41", self.patch)
 
-    def test_camera_extent_uses_focus_points(self):
-        self.assertIn("_projected_extent(focus_points", self.source)
-        self.assertNotIn("_projected_extent(context_points", self.source)
+    def test_distal_forearm_is_geometrically_clipped(self):
+        self.assertIn("def _clip_polygon_halfspace", self.patch)
+        self.assertIn("_clip_polygon_halfspace(points", self.patch)
+        self.assertIn("distal_forearm_length", self.patch)
+        self.assertNotIn("triangle_centroid", self.patch)
 
-    def test_technical_coverage_excludes_full_forearm(self):
-        self.assertIn("projection_regions = list(focus_regions)", self.source)
-        self.assertNotIn('projection_regions = [f"forearm_{suffix}"', self.source)
+    def test_unverified_finger_aliases_do_not_enter_focus_proxy(self):
+        self.assertIn("def _verified_region", self.patch)
+        self.assertIn("metadata.primary_region == region", self.patch)
+        self.assertIn("region in metadata.secondary_regions", self.patch)
+        self.assertNotIn("anatomy_bvh.has_region", self.patch)
 
-    def test_context_clipping_uses_proxy_geometry(self):
-        self.assertIn("_required_framing(", self.source)
-        self.assertIn("_projection_frame(context_points", self.source)
-        self.assertIn('"contextProjectionBounds"', self.source)
-        self.assertIn('"wristVisible"', self.source)
-        self.assertIn('"allWristsVisible"', self.source)
+    def test_focus_mask_is_the_canonical_coverage(self):
+        self.assertIn('technical["coverage"] = float(focus_mask.get("coverage") or 0.0)', self.patch)
+        self.assertIn('"silhouetteCoverage": coverage', self.patch)
+        self.assertIn('context.get("touchesEdge")', self.patch)
+        self.assertIn('"technicalSilhouetteCoverage": coverage', self.patch)
 
-    def test_manifest_keeps_required_hand_diagnostics(self):
+    def test_retry_contract_remains_in_retained_renderer(self):
+        self.assertIn('"maximum_retries": 2', self.base)
+        self.assertIn('float(final_view.get("silhouetteCoverage") or 0.0) < hand_config["minimum_coverage"]', self.base)
+        self.assertIn('float(final_view.get("silhouetteCoverage") or 0.0) > hand_config["maximum_coverage"]', self.base)
+        self.assertIn('or bool(final_view.get("clippingDetected"))', self.base)
+
+    def test_threshold_is_not_lowered(self):
+        self.assertIn("HAND_MIN_COVERAGE = 0.15", self.patch)
+        self.assertIn("HAND_MAX_COVERAGE = 0.90", self.patch)
+        self.assertIn('"minimum_coverage": 0.15', self.base)
+
+    def test_camera_target_stays_fixed_during_retry(self):
+        retry_fragment = self.base.split("while retry_count", 1)[1]
+        self.assertNotIn("target =", retry_fragment.split("after =", 1)[0])
+
+    def test_context_and_focus_diagnostics_are_retained(self):
         for field in (
             '"focusProxyRegions"', '"contextProxyRegions"', '"distalForearmRatio"',
             '"focusProxyBounds"', '"contextProxyBounds"', '"focusProxyVertexCount"',
             '"contextProxyVertexCount"', '"beforeCoverage"', '"afterCoverage"',
             '"retryCount"', '"handCameraOrthoScale"', '"framingValid"',
-            '"clippingDetected"',
+            '"clippingDetected"', '"contextProjectionBounds"', '"wristVisible"',
         ):
-            self.assertIn(field, self.source)
+            self.assertIn(field, self.base)
 
-    def test_retry_budget_is_capped_at_two(self):
-        self.assertIn('"maximum_retries": 2', self.source)
-        self.assertIn('min(2, int(merged["maximum_retries"]))', self.source)
+    def test_focus_center_and_context_edge_diagnostics_are_added(self):
+        for field in (
+            '"focusSilhouetteCenter"', '"focusSilhouetteCentered"',
+            '"focusSilhouetteTouchesEdge"', '"contextSilhouetteTouchesEdge"',
+        ):
+            self.assertIn(field, self.patch)
 
-    def test_threshold_is_not_lowered_below_fifteen_percent(self):
-        self.assertIn('"minimum_coverage": 0.15', self.source)
-        self.assertIn('hand_config["minimum_coverage"] <= after', self.source)
-
-    def test_camera_target_is_not_changed_during_retry(self):
-        self.assertEqual(self.source.count("target = _average(focus_points"), 1)
-        retry_fragment = self.source.split("while retry_count", 1)[1]
-        self.assertNotIn("target =", retry_fragment.split("after =", 1)[0])
+    def test_patch_installation_is_idempotent(self):
+        self.assertIn("_clouva_hand_framing_v41_installed", self.patch)
+        self.assertIn("base_module._render_view = _render_view", self.patch)
+        self.assertIn("base_module._enrich = _enrich", self.patch)
 
 
 if __name__ == "__main__":
