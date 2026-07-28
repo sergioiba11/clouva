@@ -34,6 +34,7 @@ DEFAULT_HAND_CAMERA_CONFIG = {
     "minimum_coverage": 0.15,
     "maximum_coverage": 0.90,
     "maximum_retries": 2,
+    "context_frame_margin": 1.06,
 }
 # Backward-compatible public constants retained for V4.1 callers and source contracts.
 HAND_TARGET_COVERAGE = DEFAULT_HAND_CAMERA_CONFIG["target_coverage"]
@@ -78,6 +79,48 @@ def _projected_extent(points, direction, fallback):
     return max(width, height, fallback * 0.72, 0.02), {"right": _vec(right), "up": _vec(up), "width": float(width), "height": float(height)}
 
 
+def _projection_frame(points, target: Vector, direction: Vector, ortho_scale: float):
+    """Return exact orthographic occupancy for proxy geometry around the fixed target."""
+    half = max(float(ortho_scale) * 0.5, 1e-8)
+    right, up = _camera_axes(direction)
+    if not points:
+        return {
+            "minimum": [0.5, 0.5], "maximum": [0.5, 0.5],
+            "width": 0.0, "height": 0.0, "touchesFrame": False,
+        }
+    horizontal = [(point - target).dot(right) for point in points]
+    vertical = [(point - target).dot(up) for point in points]
+    minimum = [0.5 + min(horizontal) / (2.0 * half), 0.5 - max(vertical) / (2.0 * half)]
+    maximum = [0.5 + max(horizontal) / (2.0 * half), 0.5 - min(vertical) / (2.0 * half)]
+    touches = bool(minimum[0] <= 0.0 or minimum[1] <= 0.0 or maximum[0] >= 1.0 or maximum[1] >= 1.0)
+    return {
+        "minimum": [float(value) for value in minimum],
+        "maximum": [float(value) for value in maximum],
+        "width": float(maximum[0] - minimum[0]),
+        "height": float(maximum[1] - minimum[1]),
+        "touchesFrame": touches,
+    }
+
+
+def _required_framing(points, target: Vector, direction: Vector, fitted_size: float, margin: float):
+    """Minimum framing that contains the rendered context without moving the hand target."""
+    if not points:
+        return 1.0
+    right, up = _camera_axes(direction)
+    maximum = max(
+        max(abs((point - target).dot(right)), abs((point - target).dot(up)))
+        for point in points
+    )
+    required_scale = max(2.0 * maximum * margin, 0.02)
+    return max(0.12, required_scale / max(float(fitted_size), 1e-8))
+
+
+def _point_visible(point: Vector, target: Vector, direction: Vector, ortho_scale: float):
+    frame = _projection_frame([point], target, direction, ortho_scale)
+    x, y = frame["minimum"]
+    return bool(0.0 < x < 1.0 and 0.0 < y < 1.0)
+
+
 def _enrich(view, visible, attempt, crop):
     technical = view.get("technicalPasses") or {}; coverage = float(technical.get("coverage") or 0.0)
     path = Path(str(view.get("path") or ""))
@@ -111,6 +154,7 @@ def _hand_camera_config(config: dict) -> dict:
         "minimum_coverage": max(0.15, min(0.50, float(merged["minimum_coverage"]))),
         "maximum_coverage": max(0.55, min(0.90, float(merged["maximum_coverage"]))),
         "maximum_retries": max(0, min(2, int(merged["maximum_retries"]))),
+        "context_frame_margin": max(1.01, min(1.25, float(merged["context_frame_margin"]))),
     }
 
 
@@ -193,8 +237,8 @@ def _hand_proxies(anatomy_bvh, side: str, suffix: str, wrist: Vector, distal: Ve
 
 def _coverage_adjusted_framing(coverage, framing, target_coverage):
     if coverage <= 0.0:
-        return max(0.48, framing * 0.55)
-    return max(0.48, min(2.40, framing * math.sqrt(coverage / target_coverage)))
+        return max(0.12, framing * 0.55)
+    return max(0.12, min(2.40, framing * math.sqrt(coverage / target_coverage)))
 
 
 def render_multiview_v4(output_dir: Path, vectors: Dict[str, Vector], height: float, meshes: Iterable[bpy.types.Object] | None = None,
@@ -247,13 +291,22 @@ def render_multiview_v4(output_dir: Path, vectors: Dict[str, Vector], height: fl
                 f"hand_{suffix}_three_quarter_dorsal": (normal + lateral * 0.62 + forward * 0.12).normalized(),
                 f"hand_{suffix}_three_quarter_palmar": (-normal - lateral * 0.62 + forward * 0.12).normalized(),
             }
-            projection_regions = [f"forearm_{suffix}", *focus_regions]
+            # Coverage is hand/finger evidence only. The distal forearm context is
+            # rendered separately and checked geometrically for clipping.
+            projection_regions = list(focus_regions)
             side_views = []
             for name, direction in directions.items():
-                fitted_size, axes = _projected_extent(focus_points, direction, hand_size); initial_framing = 1.10
+                fitted_size, axes = _projected_extent(focus_points, direction, hand_size)
+                context_minimum_framing = _required_framing(
+                    context_points, target, direction, fitted_size,
+                    hand_config["context_frame_margin"],
+                )
+                initial_framing = max(1.10, context_minimum_framing)
                 current_framing = initial_framing
                 final_view = _enrich(_render_view(hand_scene, output_dir, name, "hand", side, target, direction, fitted_size, context_visible, all_meshes,
                                                   anatomy_bvh, projection_regions, framing=current_framing, technical_resolution=technical_resolution), context_visible, attempt, f"hand_{suffix}")
+                context_frame = _projection_frame(context_points, target, direction, float(final_view.get("orthoScale") or 0.0))
+                final_view["clippingDetected"] = bool(context_frame["touchesFrame"])
                 before = float(final_view.get("silhouetteCoverage") or 0.0)
                 retry_count = 0
                 while retry_count < hand_config["maximum_retries"] and (
@@ -262,13 +315,17 @@ def render_multiview_v4(output_dir: Path, vectors: Dict[str, Vector], height: fl
                     or bool(final_view.get("clippingDetected"))
                 ):
                     current_coverage = float(final_view.get("silhouetteCoverage") or 0.0)
-                    current_framing = _coverage_adjusted_framing(
+                    desired_framing = _coverage_adjusted_framing(
                         current_coverage, current_framing, hand_config["target_coverage"],
                     )
+                    current_framing = max(desired_framing, context_minimum_framing)
                     retry_count += 1
                     final_view = _enrich(_render_view(hand_scene, output_dir, name, "hand", side, target, direction, fitted_size, context_visible, all_meshes,
                                                        anatomy_bvh, projection_regions, framing=current_framing, technical_resolution=technical_resolution), context_visible, f"{attempt}_autofit_{retry_count}", f"hand_{suffix}")
+                    context_frame = _projection_frame(context_points, target, direction, float(final_view.get("orthoScale") or 0.0))
+                    final_view["clippingDetected"] = bool(context_frame["touchesFrame"])
                 after = float(final_view.get("silhouetteCoverage") or 0.0)
+                wrist_visible = _point_visible(wrist, target, direction, float(final_view.get("orthoScale") or 0.0))
                 final_view.update({
                     "wristTarget": _vec(wrist), "distalTarget": _vec(distal),
                     "focusProxyRegions": focus_regions, "contextProxyRegions": context_regions,
@@ -279,8 +336,15 @@ def render_multiview_v4(output_dir: Path, vectors: Dict[str, Vector], height: fl
                     "handViewCoverage": after, "beforeCoverage": before, "afterCoverage": after,
                     "retryCount": retry_count, "handRetryPerformed": retry_count > 0,
                     "initialFraming": initial_framing, "finalFraming": current_framing,
-                    "framingValid": bool(hand_config["minimum_coverage"] <= after <= hand_config["maximum_coverage"]),
-                    "clippingDetected": bool(final_view.get("clippingDetected") or after > hand_config["maximum_coverage"]),
+                    "contextMinimumFraming": context_minimum_framing,
+                    "contextProjectionBounds": context_frame,
+                    "wristVisible": wrist_visible,
+                    "framingValid": bool(
+                        hand_config["minimum_coverage"] <= after <= hand_config["maximum_coverage"]
+                        and not final_view.get("clippingDetected")
+                        and wrist_visible
+                    ),
+                    "clippingDetected": bool(final_view.get("clippingDetected")),
                     "projectionRegions": projection_regions,
                 })
                 views.append(final_view)
@@ -288,6 +352,9 @@ def render_multiview_v4(output_dir: Path, vectors: Dict[str, Vector], height: fl
                     "view": name, "beforeCoverage": before, "afterCoverage": after,
                     "retryCount": retry_count, "retryPerformed": retry_count > 0,
                     "orthoScale": final_view["handCameraOrthoScale"], "axes": axes,
+                    "contextMinimumFraming": context_minimum_framing,
+                    "contextProjectionBounds": context_frame,
+                    "wristVisible": wrist_visible,
                     "framingValid": final_view["framingValid"], "clippingDetected": final_view["clippingDetected"],
                 })
             hand_diagnostics[side] = {
@@ -297,6 +364,7 @@ def render_multiview_v4(output_dir: Path, vectors: Dict[str, Vector], height: fl
                 "distalForearmRatio": hand_config["distal_forearm_ratio"], "handViewCoverage": side_views,
                 "handRetryPerformed": any(item["retryPerformed"] for item in side_views),
                 "allViewsFramingValid": all(item["framingValid"] and not item["clippingDetected"] for item in side_views),
+                "allWristsVisible": all(item["wristVisible"] for item in side_views),
             }
     finally:
         for obj in all_meshes:
