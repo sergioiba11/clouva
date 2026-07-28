@@ -480,8 +480,28 @@ def infer_topology_capabilities(analysis: dict[str, Any]) -> dict[str, Any]:
     hands = diagnostics.get("hands") if isinstance(diagnostics.get("hands"), dict) else {}
     segmentation = analysis.get("segmentation") if isinstance(analysis.get("segmentation"), dict) else {}
     regions = segmentation.get("regions") if isinstance(segmentation.get("regions"), dict) else {}
+    orientation = analysis.get("orientation") if isinstance(analysis.get("orientation"), dict) else {}
+    orientation_valid = not bool(orientation.get("requiresOrientationReview"))
+    subsystem_reports = analysis.get("bodySubsystems") if isinstance(analysis.get("bodySubsystems"), dict) else {}
+    required_subsystems = ("body_core", "left_arm", "right_arm", "left_leg", "right_leg")
+    subsystem_failures = [
+        name for name in required_subsystems
+        if not isinstance(subsystem_reports.get(name), dict)
+        or str((subsystem_reports.get(name) or {}).get("status") or "") not in {"valid", "valid_with_warnings"}
+        or bool((subsystem_reports.get(name) or {}).get("missingOrInvalid"))
+        or bool((subsystem_reports.get(name) or {}).get("blockingWarnings"))
+    ]
+    subsystems_valid = not subsystem_failures
     result: dict[str, Any] = {
-        "body_supported": bool(analysis.get("isHumanoid", True)) and _float(analysis.get("humanoidConfidence"), 0.0) >= 0.40,
+        "body_supported": bool(
+            analysis.get("isHumanoid", True)
+            and _float(analysis.get("humanoidConfidence"), 0.0) >= 0.40
+            and orientation_valid
+            and subsystems_valid
+        ),
+        "orientation_valid": orientation_valid,
+        "body_subsystems_valid": subsystems_valid,
+        "body_subsystem_failures": subsystem_failures,
         "face_surface_supported": int((regions.get("head") or {}).get("vertexCount") or 0) >= 4,
         "facial_rig_supported": False,
     }
@@ -769,6 +789,11 @@ def evaluate_body_basic_readiness(
     capabilities: dict[str, Any],
 ) -> dict[str, Any]:
     missing = [name for name in BODY_REQUIRED if not _approved(landmarks, name)]
+    if not capabilities.get("orientation_valid", True):
+        missing.append("orientation")
+    if not capabilities.get("body_subsystems_valid", True):
+        failures = capabilities.get("body_subsystem_failures") or ["body_subsystems"]
+        missing.extend(f"subsystem:{name}" for name in failures)
     return _profile_result(bool(capabilities.get("body_supported")) and not missing, missing)
 
 

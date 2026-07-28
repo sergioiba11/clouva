@@ -11,40 +11,13 @@ on:
       - "docs/avatar-analyzer-v4.md"
       - "examples/avatar-analyzer-v4-*.json"
       - ".github/workflows/avatar-analyzer-v4.yml"
-  push:
-    branches:
-      - codex/avatar-analyzer-v41-profile-projection-fix
-    paths:
-      - ".github/workflows/avatar-analyzer-v4.yml"
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  apply-body-basic-gates:
-    if: github.event_name == 'push' && github.actor != 'github-actions[bot]'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: codex/avatar-analyzer-v41-profile-projection-fix
-          fetch-depth: 0
-      - name: Apply contract patch
-        run: |
-          base64 -d .github/scripts/avatar_v41_body_gates_patch.py.gz.b64 | gzip -d > /tmp/avatar_v41_body_gates_patch.py
-          python /tmp/avatar_v41_body_gates_patch.py
-          git checkout origin/main -- .github/workflows/avatar-analyzer-v4.yml
-      - name: Commit implementation
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "fix: require valid orientation and body subsystems for BODY_BASIC"
-          git push origin HEAD:codex/avatar-analyzer-v41-profile-projection-fix
-
   contract:
-    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -64,7 +37,6 @@ jobs:
         run: python -m py_compile analyzer_v4_contract.py analyzer_v4_bootstrap.py anatomy_semantics.py hand_modes.py camera_projection_self_test_v4.py
 
   frontend:
-    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -78,7 +50,6 @@ jobs:
         run: npx eslint app/avatar-analyzer-v4 components/library/AvatarAnalyzerV4Diagnostics.tsx tests-avatar-analyzer-v4.mjs
 
   worker:
-    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
