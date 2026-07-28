@@ -33,6 +33,25 @@ class ProfileAwareHandPlanTests(unittest.TestCase):
         self.assertEqual(plan["landmarks"], ["wrist_l", "palm_l"])
         self.assertFalse(plan["moduleOptions"]["left_hand"]["includeFingers"])
 
+    def test_explicit_hand_reanalysis_from_body_basic_runs_full_hand(self):
+        plan = build_incremental_plan(
+            "reanalyze_right_hand",
+            requested_profile="BODY_BASIC",
+        )
+        self.assertTrue(plan["moduleOptions"]["right_hand"]["includeFingers"])
+        self.assertTrue(any(camera.startswith("hand_r_") for camera in plan["cameras"]))
+        self.assertTrue(plan["moduleOptions"]["right_hand"]["explicitEvidenceRequest"])
+
+    def test_explicit_finger_landmark_overrides_basic_hand_profile(self):
+        plan = build_incremental_plan(
+            "reanalyze_landmark",
+            requested_profile="BODY_HANDS_BASIC",
+            landmark="index_02_l",
+        )
+        self.assertEqual(plan["landmarks"], ["index_02_l"])
+        self.assertTrue(plan["moduleOptions"]["left_hand"]["includeFingers"])
+        self.assertLessEqual(len(plan["cameras"]), 2)
+
     def test_full_landmark_reanalysis_uses_only_two_hand_views(self):
         plan = build_incremental_plan(
             "reanalyze_landmark",
