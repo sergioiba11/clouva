@@ -88,15 +88,6 @@ export async function requireUser(request: NextRequest) {
   return { supabase, user: data.user };
 }
 
-async function signedAvatarUrl(
-  supabase: ReturnType<typeof getAdminClient>,
-  storagePath: string,
-) {
-  const { data: signed } = await supabase.storage.from("avatars").createSignedUrl(storagePath, 60 * 60);
-  if (signed?.signedUrl) return asHttpsUrl(signed.signedUrl);
-  return asHttpsUrl(supabase.storage.from("avatars").getPublicUrl(storagePath).data.publicUrl);
-}
-
 export async function resolveOriginalAvatar(
   supabase: ReturnType<typeof getAdminClient>,
   userId: string,
@@ -117,19 +108,21 @@ export async function resolveOriginalAvatar(
       ? row.storage_path.trim()
       : null;
     const metadata = asMetadata(row.metadata);
-    const storedOriginal = storagePath && !looksDerivedRig(storagePath)
-      ? await signedAvatarUrl(supabase, storagePath)
-      : null;
+    // sourceRef is either a bucket-relative Supabase Storage path (the
+    // Cloud Run Job mints its own short-lived signed URL right before
+    // downloading it -- see analyzer_job_entrypoint.py) or an already
+    // fetchable external URL (Meshy/profile fallback below).
+    const usableStoragePath = storagePath && !looksDerivedRig(storagePath) ? storagePath : null;
     const meshyOriginal = asHttpsUrl(metadata.original_meshy_url);
     const modelUrl = asHttpsUrl(row.model_url);
-    const originalUrl = storedOriginal
+    const sourceRef = usableStoragePath
       ?? meshyOriginal
       ?? (modelUrl && !looksDerivedRig(modelUrl) ? modelUrl : null);
-    if (originalUrl) {
+    if (sourceRef) {
       return {
         avatarId: typeof row.id === "string" ? row.id : null,
         metadata,
-        sourceUrl: originalUrl,
+        sourceRef,
       };
     }
   }
@@ -142,9 +135,150 @@ export async function resolveOriginalAvatar(
   if (profile.error) throw new Error(`No se pudo leer el avatar: ${errorMessage(profile.error)}`);
   const profileUrl = asHttpsUrl(profile.data?.avatar_3d_url);
   if (profileUrl && !looksDerivedRig(profileUrl)) {
-    return { avatarId: null, metadata: {}, sourceUrl: profileUrl };
+    return { avatarId: null, metadata: {}, sourceRef: profileUrl };
   }
   throw new Error("No encontramos el GLB original limpio del avatar para analizar");
+}
+
+export type AnalyzerJobRow = {
+  id: string;
+  user_id: string;
+  avatar_id: string | null;
+  operation: string;
+  requested_rig_profile: string | null;
+  status:
+    | "queued" | "starting" | "running" | "persisting"
+    | "completed" | "failed" | "cancel_requested" | "cancelled";
+  progress: number | null;
+  phase: string | null;
+  source_storage_path: string | null;
+  source_sha256: string | null;
+  cloud_run_execution: string | null;
+  run_id: string | null;
+  result_prefix: string | null;
+  error_code: string | null;
+  error_message: string | null;
+  summary: Record<string, unknown> | null;
+};
+
+export type WorkerJobStatus = {
+  status: "pending" | "done" | "error" | "cancelled";
+  runId?: string;
+  summary?: Record<string, unknown>;
+  detail?: string;
+};
+
+export function toWorkerJobStatus(row: AnalyzerJobRow): WorkerJobStatus {
+  switch (row.status) {
+    case "completed":
+      return { status: "done", runId: row.run_id ?? undefined, summary: row.summary ?? undefined };
+    case "failed":
+      return { status: "error", detail: row.error_message ?? "El análisis falló" };
+    case "cancelled":
+      return { status: "cancelled" };
+    default: // queued, starting, running, persisting, cancel_requested
+      return { status: "pending" };
+  }
+}
+
+const NON_TERMINAL_JOB_STATUSES = [
+  "queued", "starting", "running", "persisting", "cancel_requested",
+] as const;
+
+/** Enforces "one analysis at a time" for a given avatar (or user, when there's
+ * no avatarId) using the durable table as the source of truth -- unlike the
+ * old single in-process lock, this holds even across separate Cloud Run Job
+ * executions running on different container instances. */
+export async function findActiveAnalyzerJob(
+  supabase: ReturnType<typeof getAdminClient>,
+  userId: string,
+  avatarId: string | null,
+) {
+  let query = supabase
+    .from("avatar_analyzer_jobs")
+    .select("id")
+    .eq("user_id", userId)
+    .in("status", NON_TERMINAL_JOB_STATUSES)
+    .order("created_at", { ascending: false })
+    .limit(1);
+  query = avatarId ? query.eq("avatar_id", avatarId) : query.is("avatar_id", null);
+  const { data, error } = await query.maybeSingle();
+  if (error) throw new Error(`No se pudo verificar análisis en curso: ${errorMessage(error)}`);
+  return (data?.id as string | undefined) ?? null;
+}
+
+export async function createAnalyzerJob(args: {
+  supabase: ReturnType<typeof getAdminClient>;
+  userId: string;
+  avatarId: string | null;
+  sourceRef: string;
+  requestedRigProfile: string;
+  operation?: string;
+}) {
+  const { data, error } = await args.supabase
+    .from("avatar_analyzer_jobs")
+    .insert({
+      user_id: args.userId,
+      avatar_id: args.avatarId,
+      operation: args.operation ?? "full_analysis",
+      requested_rig_profile: args.requestedRigProfile,
+      source_storage_path: args.sourceRef,
+      status: "queued",
+    })
+    .select("id")
+    .single();
+  if (error || !data) throw new Error(`No se pudo crear el trabajo de análisis: ${errorMessage(error)}`);
+  return data.id as string;
+}
+
+export async function getAnalyzerJobForUser(
+  supabase: ReturnType<typeof getAdminClient>,
+  userId: string,
+  jobId: string,
+) {
+  const { data, error } = await supabase
+    .from("avatar_analyzer_jobs")
+    .select("*")
+    .eq("id", jobId)
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (error) throw new Error(`No se pudo consultar el trabajo de análisis: ${errorMessage(error)}`);
+  return data as AnalyzerJobRow | null;
+}
+
+export async function recordAnalyzerJobExecution(
+  supabase: ReturnType<typeof getAdminClient>,
+  jobId: string,
+  executionName: string,
+) {
+  await supabase
+    .from("avatar_analyzer_jobs")
+    .update({ cloud_run_execution: executionName })
+    .eq("id", jobId);
+}
+
+/** Marks a job cancel_requested (idempotent on already-terminal jobs). Returns
+ * the row as it is *after* this call so the caller can decide whether a real
+ * Cloud Run execution still needs to be cancelled. */
+export async function requestAnalyzerJobCancellation(
+  supabase: ReturnType<typeof getAdminClient>,
+  userId: string,
+  jobId: string,
+) {
+  const current = await getAnalyzerJobForUser(supabase, userId, jobId);
+  if (!current) return null;
+  const terminal: AnalyzerJobRow["status"][] = ["completed", "failed", "cancelled"];
+  if (terminal.includes(current.status) || current.status === "cancel_requested") return current;
+
+  const { data, error } = await supabase
+    .from("avatar_analyzer_jobs")
+    .update({ status: "cancel_requested", cancelled_at: new Date().toISOString() })
+    .eq("id", jobId)
+    .eq("user_id", userId)
+    .select("*")
+    .single();
+  if (error || !data) throw new Error(`No se pudo cancelar el análisis: ${errorMessage(error)}`);
+  return data as AnalyzerJobRow;
 }
 
 async function mutateAvatarMetadata(

@@ -2,12 +2,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   errorMessage,
-  findAvatarForAnalyzerJob,
+  getAnalyzerJobForUser,
   persistAnalyzerJobError,
   persistCompletedAnalyzerJob,
   requireUser,
-  workerBaseUrlAndToken,
-  workerError,
+  toWorkerJobStatus,
 } from "../../_shared";
 
 export const runtime = "nodejs";
@@ -16,13 +15,6 @@ export const maxDuration = 30;
 
 const JOB_ID_PATTERN = /^[a-f0-9]{32}$/;
 
-type WorkerJobStatus = {
-  status: "pending" | "done" | "error" | "cancelled";
-  runId?: string;
-  summary?: Record<string, unknown>;
-  detail?: string;
-};
-
 export async function GET(request: NextRequest, { params }: { params: Promise<{ jobId: string }> }) {
   try {
     const { supabase, user } = await requireUser(request);
@@ -30,28 +22,18 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     if (!JOB_ID_PATTERN.test(jobId)) {
       return NextResponse.json({ error: "jobId inválido" }, { status: 400 });
     }
-    const { workerBaseUrl, workerToken } = workerBaseUrlAndToken();
 
-    const response = await fetch(`${workerBaseUrl}/avatar/analyze-v4/job/${jobId}`, {
-      headers: workerToken ? { Authorization: `Bearer ${workerToken}` } : {},
-      cache: "no-store",
-      signal: AbortSignal.timeout(15 * 1000),
-    });
-    if (response.status === 404) {
+    const row = await getAnalyzerJobForUser(supabase, user.id, jobId);
+    if (!row) {
       return NextResponse.json({ error: "Job no encontrado", code: "ANALYZER_JOB_NOT_FOUND" }, { status: 404 });
     }
-    if (!response.ok) {
-      const raw = await response.text().catch(() => "");
-      throw new Error(`No se pudo consultar el estado del análisis (${response.status})${raw ? `: ${workerError(raw).slice(0, 800)}` : ""}`);
-    }
-    const job = await response.json() as WorkerJobStatus;
-    const avatar = await findAvatarForAnalyzerJob(supabase, user.id, jobId).catch(() => null);
+    const job = toWorkerJobStatus(row);
 
-    if (job.status === "done" && job.runId && /^[a-f0-9]{32}$/.test(job.runId) && avatar) {
+    if (job.status === "done" && job.runId && row.avatar_id) {
       await persistCompletedAnalyzerJob({
         supabase,
         userId: user.id,
-        avatarId: avatar.avatarId,
+        avatarId: row.avatar_id,
         jobId,
         runId: job.runId,
         summary: job.summary || {},
@@ -62,13 +44,13 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
           cause: errorMessage(cause),
         });
       });
-    } else if (job.status === "error" && avatar) {
+    } else if (job.status === "error" && row.avatar_id) {
       await persistAnalyzerJobError({
         supabase,
         userId: user.id,
-        avatarId: avatar.avatarId,
+        avatarId: row.avatar_id,
         jobId,
-        error: job.detail || "El Worker no pudo completar el análisis",
+        error: job.detail || "No se pudo completar el análisis",
       }).catch((cause) => {
         console.error("Avatar Analyzer V4 error persistence failed", { jobId, cause: errorMessage(cause) });
       });

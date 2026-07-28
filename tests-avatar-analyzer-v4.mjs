@@ -110,7 +110,7 @@ test("V4.1 has a permanent in-app entry and the Biblioteca flow calls V4", () =>
   assert.match(preview, /AVATAR ANALYZER V4\.1/);
   assert.match(preview, /ABRIR ÚLTIMO ANÁLISIS/);
   assert.match(preview, /ABRIR VISUALIZER PROFESIONAL/);
-  assert.match(analyzeRoute, /\/avatar\/analyze-v4-preview/);
+  assert.match(analyzeRoute, /runAnalyzerJob/);
   assert.match(resultRoute, /\/avatar\/analyze-v4\/result/);
   assert.match(assetRoute, /\/avatar\/analyze-v4\/result/);
   assert.match(latestRoute, /avatar_analyzer_v4/);
@@ -191,7 +191,7 @@ test("Avatar Analyzer preserves retryable HTTP states and pending jobs across de
   assert.match(resultRoute, /ANALYZER_RESULT_INVALID_JSON/);
   assert.match(kickoff, /persistPendingAnalyzerJob/);
   assert.match(job, /persistCompletedAnalyzerJob/);
-  assert.match(job, /findAvatarForAnalyzerJob/);
+  assert.match(job, /getAnalyzerJobForUser/);
   assert.match(latest, /pendingStatus/);
   assert.match(shared, /METADATA_UPDATE_ATTEMPTS/);
   assert.match(shared, /avatar_analyzer_v4_pending/);
@@ -275,7 +275,8 @@ test("cancellation is wired end to end through the API layer and the mobile UI",
   const shared = read("./app/api/avatar/analyze/_shared.ts");
   const preview = read("./components/library/AvatarAnalyzerPreview.tsx");
   const styles = read("./components/library/avatar-analyzer-preview.module.css");
-  assert.match(cancelRoute, /\/avatar\/analyze-v4\/job\/\$\{jobId\}\/cancel/);
+  assert.match(cancelRoute, /cancelAnalyzerExecution/);
+  assert.match(cancelRoute, /requestAnalyzerJobCancellation/);
   assert.match(cancelRoute, /persistCancelledAnalyzerJob/);
   assert.match(shared, /export async function persistCancelledAnalyzerJob/);
   assert.match(preview, /CANCELAR ANÁLISIS/);
