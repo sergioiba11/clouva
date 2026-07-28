@@ -482,7 +482,7 @@ def _global_status(body_report: dict, readiness: dict, warnings: list[dict]):
     return "valid_with_warnings" if warnings else "valid"
 
 
-def run(input_path: Path, output_dir: Path):
+def run(input_path: Path, output_dir: Path, skip_face_hands: bool = False):
     started = time.perf_counter()
     run_id = uuid.uuid4().hex
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -515,73 +515,95 @@ def run(input_path: Path, output_dir: Path):
         body_report = _sanitize_body_landmarks(body_report, body_vectors, segmentation, anatomy_bvh)
         stage("segmenting_geodesic_limbs_and_building_region_bvh", current)
 
-        current = time.perf_counter()
-        initial_render_dir = output_dir / "renders_initial"
-        initial_manifest = render_multiview_v32(
-            initial_render_dir, body_vectors, float(body_report["dimensions"]["height"]),
-            meshes=meshes, segmentation=segmentation, classifications=classifications,
-            anatomy_bvh=anatomy_bvh, resolution=384, technical_resolution=192,
-            # Real runs show hand silhouette coverage of only ~1-4% of frame at
-            # 1.72 (vs. ~15% for face at a similar framing ratio), with tons of
-            # headroom before the 0.965 clipping threshold - tighter framing
-            # gives the landmark detector more actual hand detail to work with.
-            hand_framing=1.3, attempt="initial",
-        )
-        manifests.append(initial_manifest)
-        stage("rendering_initial_rgb_edges_depth_normals_region_ids", current)
+        if skip_face_hands:
+            # BODY_BASIC never needs face/hand evidence (see
+            # evaluate_body_basic_readiness) - skip both V3.2 camera passes,
+            # the detector and the face/hand analyzers entirely instead of
+            # running them just to discard the result.
+            current = time.perf_counter()
+            initial_manifest = {"views": [], "attempt": "initial", "skippedFaceHands": True}
+            initial_detector, initial_face, initial_hands = {}, {}, {}
+            initial_detector_process = None
+            topology_bvh = anatomy_bvh
+            stage("skipped_face_hands_initial_pass", current)
 
-        current = time.perf_counter()
-        initial_detector, initial_detector_process = _run_detector(initial_manifest, output_dir, "initial")
-        initial_face = analyze_face(
-            initial_detector, initial_manifest, meshes, classifications, body_vectors,
-            float(body_report["dimensions"]["width"]), segmentation, anatomy_bvh,
-        )
-        initial_hands = analyze_hands(
-            initial_detector, initial_manifest, classifications, segmentation, meshes, anatomy_bvh,
-        )
-        topology_bvh = initial_hands.pop("_anatomy_bvh", anatomy_bvh)
-        stage("initial_detection_and_topology_segmentation", current)
+            initial_attempt = _attempt_summary("initial", initial_manifest, initial_detector, initial_face, initial_hands)
 
-        initial_attempt = _attempt_summary("initial", initial_manifest, initial_detector, initial_face, initial_hands)
-        initial_coverage = initial_detector.get("detectionCoverage") or {}
-        low_hand_evidence = any(int(initial_coverage.get(key) or 0) < 2 for key in ("leftHandViews", "rightHandViews"))
-        low_face_evidence = int(initial_coverage.get("faceViews") or 0) < 2
+            current = time.perf_counter()
+            final_render_dir = output_dir / "renders_temporales"
+            final_manifest = {"views": [], "attempt": "final", "skippedFaceHands": True}
+            final_detector, face, hands = {}, {}, {}
+            final_detector_process = None
+            final_bvh = topology_bvh
+            stage("skipped_face_hands_final_pass", current)
+        else:
+            current = time.perf_counter()
+            initial_render_dir = output_dir / "renders_initial"
+            initial_manifest = render_multiview_v32(
+                initial_render_dir, body_vectors, float(body_report["dimensions"]["height"]),
+                meshes=meshes, segmentation=segmentation, classifications=classifications,
+                anatomy_bvh=anatomy_bvh, resolution=384, technical_resolution=192,
+                # Real runs show hand silhouette coverage of only ~1-4% of frame at
+                # 1.72 (vs. ~15% for face at a similar framing ratio), with tons of
+                # headroom before the 0.965 clipping threshold - tighter framing
+                # gives the landmark detector more actual hand detail to work with.
+                hand_framing=1.3, attempt="initial",
+            )
+            manifests.append(initial_manifest)
+            stage("rendering_initial_rgb_edges_depth_normals_region_ids", current)
 
-        # Finger labels now exist in segmentation. Remove the initial proxies and
-        # regenerate every visual and technical pass from the final regional BVH.
-        cleanup_render_proxies(initial_manifest)
+            current = time.perf_counter()
+            initial_detector, initial_detector_process = _run_detector(initial_manifest, output_dir, "initial")
+            initial_face = analyze_face(
+                initial_detector, initial_manifest, meshes, classifications, body_vectors,
+                float(body_report["dimensions"]["width"]), segmentation, anatomy_bvh,
+            )
+            initial_hands = analyze_hands(
+                initial_detector, initial_manifest, classifications, segmentation, meshes, anatomy_bvh,
+            )
+            topology_bvh = initial_hands.pop("_anatomy_bvh", anatomy_bvh)
+            stage("initial_detection_and_topology_segmentation", current)
 
-        current = time.perf_counter()
-        final_render_dir = output_dir / "renders_temporales"
-        final_manifest = render_multiview_v32(
-            final_render_dir, body_vectors, float(body_report["dimensions"]["height"]),
-            meshes=meshes, segmentation=segmentation, classifications=classifications,
-            anatomy_bvh=topology_bvh,
-            resolution=512,
-            technical_resolution=224,
-            # Confirmed against real runs that low hand evidence isn't caused
-            # by clipping (framingValid stayed true, coverage stayed far below
-            # the 0.965 clip threshold) - it was low pixel detail. Zoom in
-            # further on retry instead of widening, which only shrank the hand
-            # more without fixing anything.
-            hand_framing=1.05 if low_hand_evidence else 1.2,
-            face_framing=2.08 if low_face_evidence else 1.98,
-            attempt="retry" if low_hand_evidence or low_face_evidence else "final",
-        )
-        manifests.append(final_manifest)
-        stage("regenerating_final_images_and_technical_passes", current)
+            initial_attempt = _attempt_summary("initial", initial_manifest, initial_detector, initial_face, initial_hands)
+            initial_coverage = initial_detector.get("detectionCoverage") or {}
+            low_hand_evidence = any(int(initial_coverage.get(key) or 0) < 2 for key in ("leftHandViews", "rightHandViews"))
+            low_face_evidence = int(initial_coverage.get("faceViews") or 0) < 2
 
-        current = time.perf_counter()
-        final_detector, final_detector_process = _run_detector(final_manifest, output_dir, "final")
-        face = analyze_face(
-            final_detector, final_manifest, meshes, classifications, body_vectors,
-            float(body_report["dimensions"]["width"]), segmentation, topology_bvh,
-        )
-        hands = analyze_hands(
-            final_detector, final_manifest, classifications, segmentation, meshes, topology_bvh,
-        )
-        final_bvh = hands.pop("_anatomy_bvh", topology_bvh)
-        stage("final_face_hand_projection_and_triangulation", current)
+            # Finger labels now exist in segmentation. Remove the initial proxies and
+            # regenerate every visual and technical pass from the final regional BVH.
+            cleanup_render_proxies(initial_manifest)
+
+            current = time.perf_counter()
+            final_render_dir = output_dir / "renders_temporales"
+            final_manifest = render_multiview_v32(
+                final_render_dir, body_vectors, float(body_report["dimensions"]["height"]),
+                meshes=meshes, segmentation=segmentation, classifications=classifications,
+                anatomy_bvh=topology_bvh,
+                resolution=512,
+                technical_resolution=224,
+                # Confirmed against real runs that low hand evidence isn't caused
+                # by clipping (framingValid stayed true, coverage stayed far below
+                # the 0.965 clip threshold) - it was low pixel detail. Zoom in
+                # further on retry instead of widening, which only shrank the hand
+                # more without fixing anything.
+                hand_framing=1.05 if low_hand_evidence else 1.2,
+                face_framing=2.08 if low_face_evidence else 1.98,
+                attempt="retry" if low_hand_evidence or low_face_evidence else "final",
+            )
+            manifests.append(final_manifest)
+            stage("regenerating_final_images_and_technical_passes", current)
+
+            current = time.perf_counter()
+            final_detector, final_detector_process = _run_detector(final_manifest, output_dir, "final")
+            face = analyze_face(
+                final_detector, final_manifest, meshes, classifications, body_vectors,
+                float(body_report["dimensions"]["width"]), segmentation, topology_bvh,
+            )
+            hands = analyze_hands(
+                final_detector, final_manifest, classifications, segmentation, meshes, topology_bvh,
+            )
+            final_bvh = hands.pop("_anatomy_bvh", topology_bvh)
+            stage("final_face_hand_projection_and_triangulation", current)
 
         final_attempt = _attempt_summary("final", final_manifest, final_detector, face, hands)
         attempts = [initial_attempt, final_attempt]

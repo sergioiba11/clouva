@@ -23,6 +23,7 @@ if str(SCRIPT_DIR) not in sys.path:
 import avatar_analyzer as analyzer_v32
 from analyzer_v4_contract import ANALYZER_VERSION, DEFAULT_CONFIG, upgrade_analysis_v4
 from analyzer_v4_bootstrap import resolve_camera_vector_values
+from analyzer_v41_residuals_finalize import apply_residual_repairs_v41
 from anatomy_bvh import build_anatomy_bvh
 from anatomy_segmenter_v3 import segment_anatomy_v3
 from camera_projection_self_test_v4 import filter_invalid_views, validate_manifest
@@ -160,13 +161,28 @@ def _upgrade_from_v32(
 ):
     requested_profile = os.environ.get(REQUESTED_PROFILE_ENV, "BODY_BASIC").strip() or "BODY_BASIC"
     requested_operation = os.environ.get(REANALYSIS_ENV, "").strip() or None
-    calibration, v4_attempt = _refresh_optional_modules(legacy_analysis, output_dir)
+    if requested_profile == "BODY_BASIC" and requested_operation is None:
+        # BODY_BASIC readiness only ever depends on body landmarks (see
+        # evaluate_body_basic_readiness in analyzer_v4_contract.py) - running
+        # the V4 face/hand camera pass and detector here just to discard the
+        # result is the same redundant work skipped in the V3.2 base phase.
+        calibration = {
+            "version": "clouva-camera-projection-self-test-v4.0",
+            "status": "skipped_body_basic",
+            "valid_views": [],
+            "invalid_views": [],
+            "all_views_invalid": False,
+        }
+        v4_attempt = {"status": "skipped_body_basic"}
+    else:
+        calibration, v4_attempt = _refresh_optional_modules(legacy_analysis, output_dir)
     analysis = upgrade_analysis_v4(
         legacy_analysis,
         requested_rig_profile=requested_profile,
         camera_calibration=calibration,
         config=DEFAULT_CONFIG,
     )
+    analysis = apply_residual_repairs_v41(analysis)
     diagnostic_build = build_diagnostic_glb(
         output_dir / "diagnostic_landmarks.glb",
         _real_meshes(),
@@ -218,8 +234,15 @@ def _restore_clean_analysis_scene(input_path: Path):
 def run(input_path: Path, output_dir: Path):
     started = time.perf_counter()
     phase = os.environ.get(PHASE_ENV, "").strip().lower()
+    requested_profile = os.environ.get(REQUESTED_PROFILE_ENV, "BODY_BASIC").strip() or "BODY_BASIC"
+    requested_operation = os.environ.get(REANALYSIS_ENV, "").strip() or None
+    # Only skip on a fresh, untargeted BODY_BASIC analysis. Any reanalysis
+    # operation (reanalyze_left_hand, reanalyze_face, rerun_full_pipeline...)
+    # must still run the full pass even if requested_rig_profile is left at
+    # its BODY_BASIC default, since that field isn't what selects the region.
+    skip_face_hands = requested_profile == "BODY_BASIC" and requested_operation is None
     if phase == "base":
-        result = analyzer_v32.run(input_path, output_dir)
+        result = analyzer_v32.run(input_path, output_dir, skip_face_hands=skip_face_hands)
         print("[clouva-avatar-analyzer-v4] base phase completed", flush=True)
         return result
     if phase == "upgrade":
@@ -238,7 +261,7 @@ def run(input_path: Path, output_dir: Path):
             started,
         )
 
-    legacy_analysis, legacy_report = analyzer_v32.run(input_path, output_dir)
+    legacy_analysis, legacy_report = analyzer_v32.run(input_path, output_dir, skip_face_hands=skip_face_hands)
     gc.collect()
     return _upgrade_from_v32(
         input_path,

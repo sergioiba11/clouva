@@ -68,16 +68,42 @@ def render_multiview_v32(output_dir: Path, vectors: Dict[str, Vector], height: f
                           technical_resolution: int = 256,
                           hand_framing: float = 1.72,
                           face_framing: float = 1.98,
-                          attempt: str = "initial"):
+                          attempt: str = "initial",
+                          skip_face_hands: bool = False):
     output_dir = Path(output_dir)
     scene = _configure_scene(output_dir, resolution)
     meshes = list(meshes or [obj for obj in scene.objects if obj.type == "MESH"])
     classifications = classifications or {}
+    all_meshes = [obj for obj in scene.objects if obj.type == "MESH"]
+    views: List[dict] = []
+
+    if skip_face_hands:
+        manifest = {
+            "version": "clouva-multiview-v3.2-final-pass",
+            "renderer": "BLENDER_WORKBENCH",
+            "frontConvention": "-Y",
+            "attempt": attempt,
+            "resolution": resolution,
+            "technicalResolution": technical_resolution,
+            "handFraming": hand_framing,
+            "faceFraming": face_framing,
+            "views": views,
+            "visualOnlyFaceCues": [],
+            "visualCueProjectionPolicy": "rgb-and-edges-only-strict-anatomy-bvh-for-final-points",
+            "handMeasurements": {
+                "left": segmentation.hand_measurement("left") if segmentation else {},
+                "right": segmentation.hand_measurement("right") if segmentation else {},
+            },
+            "regionBvh": anatomy_bvh.report() if anatomy_bvh is not None else None,
+            "cleanupProxyNames": [],
+            "skippedFaceHands": True,
+        }
+        (output_dir / "camera_manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        return manifest
+
     proxies = _build_proxies(meshes, segmentation, classifications, anatomy_bvh)
     visual_face_cues = add_visual_face_cues(proxies, meshes, classifications, anatomy_bvh)
-    all_meshes = [obj for obj in scene.objects if obj.type == "MESH"]
     original_hide = {obj.name: bool(obj.hide_render) for obj in all_meshes}
-    views: List[dict] = []
 
     try:
         skull_base = vectors["skull_base"]

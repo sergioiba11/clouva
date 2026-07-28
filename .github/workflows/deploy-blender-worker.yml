@@ -2,14 +2,22 @@ name: Deploy Avatar Analyzer Blender worker
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - codex/avatar-analyzer-v41-real-run-followup
     paths:
       - "worker/garment-rig/**"
       - ".github/workflows/deploy-blender-worker.yml"
   workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Branch or tag to deploy
+        required: true
+        default: main
+        type: string
 
 permissions:
-  contents: write
+  contents: read
   id-token: write
 
 concurrency:
@@ -18,12 +26,20 @@ concurrency:
 
 jobs:
   deploy:
+    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]')
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    env:
+      SOURCE_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.source_ref || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ env.SOURCE_REF }}
+          fetch-depth: 0
+
+      - name: Resolve source commit
+        id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - id: auth
         uses: google-github-actions/auth@v2
@@ -34,11 +50,16 @@ jobs:
       - uses: google-github-actions/setup-gcloud@v2
 
       - name: Deploy clouva-blender-worker to Cloud Run
+        env:
+          DEPLOYED_COMMIT: ${{ steps.source.outputs.sha }}
         run: |
           gcloud run deploy clouva-blender-worker \
             --project gen-lang-client-0737053175 \
             --region us-central1 \
             --source worker/garment-rig \
+            --command python3 \
+            --args=-m,uvicorn,runtime_app:app,--host,0.0.0.0,--port,8000 \
+            --update-env-vars "CLOUVA_DEPLOYED_COMMIT=$DEPLOYED_COMMIT,CLOUVA_DEPLOYED_REF=$SOURCE_REF" \
             --quiet
 
       - name: Resolve deployed revision
@@ -57,20 +78,34 @@ jobs:
           echo "service_url=$service_url" >> "$GITHUB_OUTPUT"
           echo "revision=$revision" >> "$GITHUB_OUTPUT"
 
-      - name: Verify Avatar Analyzer health
+      - name: Verify Avatar Analyzer health and deployed SHA
         env:
           SERVICE_URL: ${{ steps.deployed.outputs.service_url }}
+          EXPECTED_SHA: ${{ steps.source.outputs.sha }}
+          EXPECTED_REVISION: ${{ steps.deployed.outputs.revision }}
         run: |
           response="$(curl --fail --silent --show-error \
             --retry 8 --retry-all-errors --retry-delay 5 \
             "$SERVICE_URL/diagnostics/avatar-analyzer-v4")"
-          printf '%s' "$response" | python -c 'import json,sys; data=json.load(sys.stdin); assert data; print(json.dumps(data, indent=2))'
+          RESPONSE="$response" python - "$EXPECTED_SHA" "$EXPECTED_REVISION" <<'PY'
+          import json
+          import os
+          import sys
 
-      - name: Record deployment status
+          expected_sha, expected_revision = sys.argv[1:3]
+          data = json.loads(os.environ["RESPONSE"])
+          assert data.get("ok") is True, data
+          assert data.get("sourceCommit") == expected_sha, (data.get("sourceCommit"), expected_sha)
+          assert data.get("revision") == expected_revision, (data.get("revision"), expected_revision)
+          print(json.dumps(data, indent=2))
+          PY
+          printf '%s' "$response" > worker-health.json
+
+      - name: Build deployment evidence
         env:
           SERVICE_URL: ${{ steps.deployed.outputs.service_url }}
           REVISION: ${{ steps.deployed.outputs.revision }}
-          DEPLOYED_COMMIT: ${{ github.sha }}
+          DEPLOYED_COMMIT: ${{ steps.source.outputs.sha }}
         run: |
           python - <<'PY'
           import json
@@ -85,17 +120,22 @@ jobs:
               "url": os.environ["SERVICE_URL"],
               "revision": os.environ["REVISION"],
               "sourceCommit": os.environ["DEPLOYED_COMMIT"],
+              "sourceRef": os.environ.get("SOURCE_REF"),
               "healthEndpoint": "/diagnostics/avatar-analyzer-v4",
               "healthVerified": True,
               "deployedAt": datetime.now(timezone.utc).isoformat(),
           }
-          Path("worker/garment-rig/deployment-status.json").write_text(
+          Path("deployment-status.json").write_text(
               json.dumps(status, indent=2) + "\n",
               encoding="utf-8",
           )
           PY
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add worker/garment-rig/deployment-status.json
-          git diff --cached --quiet || git commit -m "chore: record Blender Worker deployment [skip ci]"
-          git push origin HEAD:main
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: blender-worker-deployment-${{ steps.deployed.outputs.revision }}
+          path: |
+            deployment-status.json
+            worker-health.json
+          if-no-files-found: error
+          retention-days: 30

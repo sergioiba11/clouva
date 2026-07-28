@@ -1,0 +1,266 @@
+name: Avatar Analyzer real run closure
+
+on:
+  pull_request:
+    paths:
+      - "docs/avatar-analyzer-real-run-request.json"
+      - ".github/workflows/avatar-analyzer-real-run.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-real-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read request
+        id: request
+        run: |
+          file=docs/avatar-analyzer-real-run-request.json
+          job_id="$(jq -r '.jobId' "$file")"
+          label="$(jq -r '.label' "$file")"
+          worker_url="$(jq -r '.workerUrl' "$file")"
+          source_sha="$(jq -r '.expectedSourceSha256' "$file")"
+          worker_commit="$(jq -r '.expectedWorkerCommit' "$file")"
+          revision="$(jq -r '.expectedRevision' "$file")"
+          [[ "$job_id" =~ ^[a-f0-9]{32}$ ]]
+          [[ "$source_sha" =~ ^[a-f0-9]{64}$ ]]
+          [[ "$worker_commit" =~ ^[a-f0-9]{40}$ ]]
+          echo "job_id=$job_id" >> "$GITHUB_OUTPUT"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+          echo "worker_url=$worker_url" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+          echo "worker_commit=$worker_commit" >> "$GITHUB_OUTPUT"
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+
+      - name: Verify deployed worker identity
+        env:
+          WORKER_URL: ${{ steps.request.outputs.worker_url }}
+          EXPECTED_COMMIT: ${{ steps.request.outputs.worker_commit }}
+          EXPECTED_REVISION: ${{ steps.request.outputs.revision }}
+        run: |
+          curl --fail --silent --show-error --retry 6 --retry-all-errors \
+            "$WORKER_URL/diagnostics/avatar-analyzer-v4" -o health.json
+          jq -e --arg commit "$EXPECTED_COMMIT" --arg revision "$EXPECTED_REVISION" \
+            '.ok == true and .sourceCommit == $commit and .revision == $revision' health.json
+
+      - name: Wait for the real job
+        env:
+          JOB_ID: ${{ steps.request.outputs.job_id }}
+          WORKER_URL: ${{ steps.request.outputs.worker_url }}
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 120); do
+            curl --fail --silent --show-error --retry 3 --retry-all-errors \
+              "$WORKER_URL/avatar/analyze-v4/job/$JOB_ID" -o job-status.json
+            status="$(jq -r '.status // "unknown"' job-status.json)"
+            echo "attempt=$attempt status=$status"
+            if [ "$status" = done ]; then
+              run_id="$(jq -r '.runId' job-status.json)"
+              [[ "$run_id" =~ ^[a-f0-9]{32}$ ]]
+              echo "$run_id" > run-id.txt
+              exit 0
+            fi
+            if [ "$status" = error ]; then
+              cat job-status.json
+              exit 1
+            fi
+            sleep 10
+          done
+          echo "Avatar Analyzer real job did not finish within 20 minutes"
+          exit 1
+
+      - name: Download result and visual evidence
+        env:
+          LABEL: ${{ steps.request.outputs.label }}
+          WORKER_URL: ${{ steps.request.outputs.worker_url }}
+        run: |
+          set -euo pipefail
+          run_id="$(cat run-id.txt)"
+          output="avatar-analyzer-real-run/$LABEL-$run_id"
+          mkdir -p "$output/renders_v4"
+          cp health.json job-status.json "$output/"
+          curl --fail --silent --show-error --retry 6 --retry-all-errors \
+            "$WORKER_URL/avatar/analyze-v4/result/$run_id" -o "$output/result.json"
+          curl --fail --silent --show-error --retry 6 --retry-all-errors \
+            "$WORKER_URL/avatar/analyze-v4/result/$run_id/asset/renders_v4/camera_manifest_v4.json" \
+            -o "$output/camera_manifest_v4.json"
+          for side in l r; do
+            for view in dorsal palmar radial ulnar distal three_quarter_dorsal three_quarter_palmar; do
+              base="hand_${side}_${view}"
+              for suffix in "" "_exact_silhouette"; do
+                name="${base}${suffix}.png"
+                curl --fail --silent --show-error --retry 6 --retry-all-errors \
+                  "$WORKER_URL/avatar/analyze-v4/result/$run_id/asset/renders_v4/$name" \
+                  -o "$output/renders_v4/$name"
+                test -s "$output/renders_v4/$name"
+              done
+            done
+          done
+
+      - name: Build comparison diagnostics
+        env:
+          LABEL: ${{ steps.request.outputs.label }}
+          EXPECTED_SOURCE_SHA: ${{ steps.request.outputs.source_sha }}
+          EXPECTED_COMMIT: ${{ steps.request.outputs.worker_commit }}
+          EXPECTED_REVISION: ${{ steps.request.outputs.revision }}
+        run: |
+          python -m pip install --quiet pillow
+          python - <<'PY'
+          import hashlib
+          import json
+          import math
+          import os
+          from pathlib import Path
+
+          from PIL import Image
+
+          run_id = Path("run-id.txt").read_text().strip()
+          root = Path("avatar-analyzer-real-run") / f"{os.environ['LABEL']}-{run_id}"
+          result = json.loads((root / "result.json").read_text(encoding="utf-8"))
+          camera = json.loads((root / "camera_manifest_v4.json").read_text(encoding="utf-8"))
+          health = json.loads((root / "health.json").read_text(encoding="utf-8"))
+          summary = result.get("summary") or {}
+          analysis = result.get("analysis") or {}
+          metrics = analysis.get("metrics") or {}
+          capabilities = analysis.get("topology_capabilities") or analysis.get("topologyCapabilities") or {}
+          profiles = analysis.get("rig_profiles") or {}
+          hand_diagnostics = camera.get("handDiagnostics") or {}
+
+          color_pngs = sorted(path for path in (root / "renders_v4").glob("hand_*.png") if "_exact_silhouette" not in path.name)
+          silhouette_pngs = sorted((root / "renders_v4").glob("hand_*_exact_silhouette.png"))
+          unique_color_hashes = set()
+          files = []
+          for path in [*color_pngs, *silhouette_pngs]:
+              data = path.read_bytes()
+              digest = hashlib.sha256(data).hexdigest()
+              if "_exact_silhouette" not in path.name:
+                  unique_color_hashes.add(digest)
+              files.append({"path": str(path.relative_to(root)), "bytes": len(data), "sha256": digest})
+
+          silhouettes = {}
+          for path in silhouette_pngs:
+              image = Image.open(path).convert("L")
+              width, height = image.size
+              mask = image.point(lambda value: 255 if value >= 128 else 0)
+              pixels = list(mask.getdata())
+              occupied = [index for index, value in enumerate(pixels) if value]
+              xs = [index % width for index in occupied]
+              ys = [index // width for index in occupied]
+              coverage = len(occupied) / max(width * height, 1)
+              center = [sum(xs) / len(xs) / width, sum(ys) / len(ys) / height] if occupied else [None, None]
+              touches = bool(occupied and (min(xs) == 0 or max(xs) == width - 1 or min(ys) == 0 or max(ys) == height - 1))
+              silhouettes[path.name.replace("_exact_silhouette", "")] = {
+                  "coverage": coverage,
+                  "center": center,
+                  "touchesEdge": touches,
+                  "bbox": list(mask.getbbox()) if mask.getbbox() else None,
+              }
+
+          def coverage_values(side):
+              values = []
+              for item in (hand_diagnostics.get(side) or {}).get("handViewCoverage") or []:
+                  if isinstance(item, dict):
+                      values.append(float(item.get("afterCoverage") or 0.0))
+              return values
+
+          left_coverage = coverage_values("left")
+          right_coverage = coverage_values("right")
+          source_sha = summary.get("sourceSha256") or (analysis.get("source") or {}).get("sha256")
+          checks = {
+              "healthCommitMatches": health.get("sourceCommit") == os.environ["EXPECTED_COMMIT"],
+              "healthRevisionMatches": health.get("revision") == os.environ["EXPECTED_REVISION"],
+              "sourceShaUnchanged": source_sha == os.environ["EXPECTED_SOURCE_SHA"],
+              "bodyBasicApproved": bool((profiles.get("BODY_BASIC") or {}).get("supported")),
+              "bodyHandsBasicApproved": bool((profiles.get("BODY_HANDS_BASIC") or {}).get("supported")),
+              "requestedProfileReady": bool(summary.get("requestedProfileReady", analysis.get("requestedProfileReady"))),
+              "bodyRigReady": bool(summary.get("bodyRigReady", analysis.get("bodyRigReady"))),
+              "rigReadinessApproved": bool(summary.get("rigReadinessApproved", analysis.get("rigReadinessApproved"))),
+              "leftCoverageValid": len(left_coverage) == 7 and all(0.15 <= value <= 0.90 for value in left_coverage),
+              "rightCoverageValid": len(right_coverage) == 7 and all(0.15 <= value <= 0.90 for value in right_coverage),
+              "allFramingValid": all(
+                  bool(item.get("framingValid")) and not bool(item.get("clippingDetected"))
+                  for side in ("left", "right")
+                  for item in (hand_diagnostics.get(side) or {}).get("handViewCoverage") or []
+              ),
+              "fourteenColorPngs": len(color_pngs) == 14,
+              "fourteenSilhouettePngs": len(silhouette_pngs) == 14,
+              "viewsDistinct": len(unique_color_hashes) == 14,
+              "silhouettesDoNotTouchEdges": len(silhouettes) == 14 and all(not item["touchesEdge"] for item in silhouettes.values()),
+              "silhouettesCentered": len(silhouettes) == 14 and all(
+                  item["center"][0] is not None
+                  and abs(item["center"][0] - 0.5) <= 0.20
+                  and abs(item["center"][1] - 0.5) <= 0.20
+                  for item in silhouettes.values()
+              ),
+              "leftHandSimplifiedMitten": capabilities.get("left_hand_mode") == "simplified_mitten",
+              "rightHandSimplifiedMitten": capabilities.get("right_hand_mode") == "simplified_mitten",
+              "leftFingerModeSimplified": capabilities.get("left_finger_rig_mode") == "simplified",
+              "rightFingerModeSimplified": capabilities.get("right_finger_rig_mode") == "simplified",
+              "leftVerifiedBranchesZero": int(capabilities.get("left_verified_finger_branch_count", capabilities.get("left_detected_finger_branches", -1))) == 0,
+              "rightVerifiedBranchesZero": int(capabilities.get("right_verified_finger_branch_count", capabilities.get("right_detected_finger_branches", -1))) == 0,
+              "leftFingerRigNotReady": not bool(summary.get("leftFingerRigReady", analysis.get("leftFingerRigReady"))),
+              "rightFingerRigNotReady": not bool(summary.get("rightFingerRigReady", analysis.get("rightFingerRigReady"))),
+              "separateLowConfidenceMetric": "lowConfidenceCount" in metrics,
+              "separateProjectionMetric": "projectionMismatchCount" in metrics,
+              "technicalAliasMatchesProjection": int(metrics.get("technicalMismatchCount", -1)) == int(metrics.get("projectionMismatchCount", -2)),
+              "originalGlbNotModified": not bool(summary.get("rigModified", False)),
+          }
+          payload = {
+              "runId": run_id,
+              "sourceSha256": source_sha,
+              "workerCommit": health.get("sourceCommit"),
+              "workerRevision": health.get("revision"),
+              "summary": {
+                  "BODY_BASIC": (profiles.get("BODY_BASIC") or {}).get("supported"),
+                  "BODY_HANDS_BASIC": (profiles.get("BODY_HANDS_BASIC") or {}).get("supported"),
+                  "requestedProfileReady": summary.get("requestedProfileReady", analysis.get("requestedProfileReady")),
+                  "bodyRigReady": summary.get("bodyRigReady", analysis.get("bodyRigReady")),
+                  "rigReadinessApproved": summary.get("rigReadinessApproved", analysis.get("rigReadinessApproved")),
+                  "rigReadinessScore": summary.get("rigReadinessScore", analysis.get("rigReadinessScore")),
+                  "leftHandCoverageMin": min(left_coverage) if left_coverage else None,
+                  "leftHandCoverageMax": max(left_coverage) if left_coverage else None,
+                  "rightHandCoverageMin": min(right_coverage) if right_coverage else None,
+                  "rightHandCoverageMax": max(right_coverage) if right_coverage else None,
+                  "leftHandMode": capabilities.get("left_hand_mode"),
+                  "rightHandMode": capabilities.get("right_hand_mode"),
+                  "leftFingerRigMode": capabilities.get("left_finger_rig_mode"),
+                  "rightFingerRigMode": capabilities.get("right_finger_rig_mode"),
+                  "leftVerifiedBranches": capabilities.get("left_verified_finger_branch_count", capabilities.get("left_detected_finger_branches")),
+                  "rightVerifiedBranches": capabilities.get("right_verified_finger_branch_count", capabilities.get("right_detected_finger_branches")),
+                  "lowConfidenceCount": metrics.get("lowConfidenceCount"),
+                  "projectionMismatchCount": metrics.get("projectionMismatchCount"),
+                  "technicalMismatchCount": metrics.get("technicalMismatchCount"),
+                  "topologyInvalidCount": metrics.get("topologyInvalidCount"),
+              },
+              "checks": checks,
+              "silhouetteDiagnostics": silhouettes,
+              "files": files,
+          }
+          payload["passed"] = all(checks.values())
+          (root / "closure_validation.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+          print(json.dumps(payload["summary"], indent=2))
+          print(json.dumps(checks, indent=2))
+          PY
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: avatar-analyzer-real-run-${{ steps.request.outputs.label }}-${{ steps.request.outputs.job_id }}
+          path: |
+            avatar-analyzer-real-run
+            health.json
+            job-status.json
+            run-id.txt
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Enforce closure criteria
+        run: |
+          validation="$(find avatar-analyzer-real-run -name closure_validation.json -print -quit)"
+          test -n "$validation"
+          jq -e '.passed == true' "$validation"
