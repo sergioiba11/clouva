@@ -1,14 +1,13 @@
-"""CLOUVA worker API V20: production routing for Avatar Analyzer V4.2.1."""
+"""CLOUVA worker API V20: production routing for Avatar Analyzer V4.2.2."""
 from __future__ import annotations
 
 import json
 from pathlib import Path
 import shutil
-import threading
 import time
 
 import app_v19 as v42
-from analyzer_v42_incremental import (
+from analyzer_v43_incremental import (
     ANALYZER_VERSION,
     MAP_VERSION,
     build_incremental_plan,
@@ -19,7 +18,7 @@ app = v42.app
 v41 = v42.v41
 v32 = v42.v32
 
-AVATAR_ANALYZER_V4_SCRIPT = Path(__file__).with_name("avatar_analyzer_v43.py")
+AVATAR_ANALYZER_V4_SCRIPT = Path(__file__).with_name("avatar_analyzer_v44.py")
 v42.AVATAR_ANALYZER_V4_SCRIPT = AVATAR_ANALYZER_V4_SCRIPT
 v41.AVATAR_ANALYZER_V4_SCRIPT = AVATAR_ANALYZER_V4_SCRIPT
 v41.AVATAR_ANALYZER_V4_VERSION = ANALYZER_VERSION
@@ -76,8 +75,6 @@ def _run_analysis_v42_background(job_id: str, source_url: str, requested_profile
         metrics = analysis.get("metrics") if isinstance(analysis.get("metrics"), dict) else {}
         completed_at = time.time()
         v41._write_job_status(job_id, {
-            # Keep the existing browser/server contract while exposing the richer
-            # V4.2 state machine in phaseStatus.
             "status": "done",
             "phaseStatus": "completed",
             "progress": 1.0,
@@ -193,6 +190,13 @@ def avatar_analyzer_v42_health():
         "persistentBaseGeometry": True,
         "exactSanitizedTopologyCache": True,
         "independentModules": ["body", "face", "left_hand", "right_hand", "measurements"],
+        "profileExecution": {
+            "BODY_BASIC": ["body", "measurements"],
+            "BODY_FACE": ["body", "face", "measurements"],
+            "BODY_HANDS_BASIC": ["body", "left_hand_base", "right_hand_base", "measurements"],
+            "FULL_HUMANOID": ["body", "left_hand_fingers", "right_hand_fingers", "measurements"],
+            "FULL_BODY_HANDS_FACE": ["body", "left_hand_fingers", "right_hand_fingers", "face", "measurements"],
+        },
         "targetedReanalysis": True,
         "sparseLandmarkProjection": True,
         "fullTechnicalPassesEnvironment": "CLOUVA_ANALYZER_FULL_TECHNICAL_PASSES",
