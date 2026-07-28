@@ -257,3 +257,33 @@ test("mobile analyzer prioritizes requested profile and hides internal correctio
   assert.match(component, /MOSTRAR TODOS LOS PUNTOS TÉCNICOS/);
   assert.match(component, /record\.requiresVisualViews === false \? "No requiere"/);
 });
+
+test("cancellation terminates the Blender subprocess and frees the worker lock", () => {
+  const api = read("worker/garment-rig/app_v18.py");
+  assert.match(api, /class AnalysisCancelled\(Exception\)/);
+  assert.match(api, /_RUNNING_JOBS_LOCK = threading\.Lock\(\)/);
+  assert.match(api, /def _kill_process_group\(proc: subprocess\.Popen\)/);
+  assert.match(api, /os\.killpg\(os\.getpgid\(proc\.pid\), signal\.SIGTERM\)/);
+  assert.match(api, /os\.killpg\(os\.getpgid\(proc\.pid\), signal\.SIGKILL\)/);
+  assert.match(api, /@app\.post\("\/avatar\/analyze-v4\/job\/\{job_id\}\/cancel"\)/);
+  assert.match(api, /if _job_cancel_requested\(job_id\):\s*\n\s*raise AnalysisCancelled\(\)/);
+  assert.match(api, /except AnalysisCancelled:\s*\n\s*_write_job_status\(job_id, \{"status": "cancelled"\}\)/);
+});
+
+test("cancellation is wired end to end through the API layer and the mobile UI", () => {
+  const cancelRoute = read("./app/api/avatar/analyze/job/[jobId]/cancel/route.ts");
+  const shared = read("./app/api/avatar/analyze/_shared.ts");
+  const preview = read("./components/library/AvatarAnalyzerPreview.tsx");
+  const styles = read("./components/library/avatar-analyzer-preview.module.css");
+  assert.match(cancelRoute, /\/avatar\/analyze-v4\/job\/\$\{jobId\}\/cancel/);
+  assert.match(cancelRoute, /persistCancelledAnalyzerJob/);
+  assert.match(shared, /export async function persistCancelledAnalyzerJob/);
+  assert.match(preview, /CANCELAR ANÁLISIS/);
+  assert.match(preview, /cancelRequestedRef/);
+  assert.match(preview, /activeJobIdRef/);
+  assert.match(preview, /shouldStop: \(\) => boolean/);
+  assert.match(preview, /data\.status === "cancelled"/);
+  assert.match(preview, /function workerStateLabel/);
+  assert.doesNotMatch(preview, /analysisProcessState === "failed" \? "Error" : "Disponible"/);
+  assert.match(styles, /\.cancelAction/);
+});

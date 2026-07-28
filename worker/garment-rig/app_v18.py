@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import tempfile
 import threading
@@ -191,31 +192,99 @@ def _reject_if_too_heavy(sanitization: dict) -> None:
         )
 
 
+class AnalysisCancelled(Exception):
+    """Raised when a background analyzer job is cancelled by the client."""
+
+
+_RUNNING_JOBS_LOCK = threading.Lock()
+_RUNNING_JOBS: dict[str, dict[str, Any]] = {}
+
+
+def _job_cancel_requested(job_id: str | None) -> bool:
+    if job_id is None:
+        return False
+    with _RUNNING_JOBS_LOCK:
+        entry = _RUNNING_JOBS.get(job_id)
+        return bool(entry and entry.get("cancelRequested"))
+
+
+def _register_job_process(job_id: str | None, proc: subprocess.Popen | None) -> bool:
+    """Track the Blender subprocess currently backing a job.
+
+    Returns False if cancellation was already requested, in which case the
+    caller must not let the process keep running.
+    """
+    if job_id is None:
+        return True
+    with _RUNNING_JOBS_LOCK:
+        entry = _RUNNING_JOBS.setdefault(job_id, {})
+        if entry.get("cancelRequested"):
+            return False
+        entry["proc"] = proc
+    return True
+
+
+def _kill_process_group(proc: subprocess.Popen) -> None:
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        return
+    try:
+        proc.wait(timeout=5)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        return
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        pass
+
+
 def _run_v4_blender_phases(
     input_path: Path,
     output_dir: Path,
     environment: dict[str, str],
     job_dir: Path,
+    job_id: str | None = None,
 ):
     phase_logs = []
     for phase in ("base", "upgrade"):
-        result = subprocess.run(
+        if _job_cancel_requested(job_id):
+            raise AnalysisCancelled()
+        proc = subprocess.Popen(
             [
                 legacy.BLENDER_BIN, "--background", "--factory-startup",
                 "--python-exit-code", "1", "--python", str(AVATAR_ANALYZER_V4_SCRIPT),
                 "--", str(input_path), str(output_dir),
             ],
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=max(legacy.BLENDER_TIMEOUT_SECONDS, 900),
             cwd=str(job_dir),
             env={**environment, V4_PHASE_ENV: phase},
+            start_new_session=True,
         )
-        phase_logs.append(result.stderr or result.stdout or "")
-        if result.returncode != 0:
+        if not _register_job_process(job_id, proc):
+            _kill_process_group(proc)
+            raise AnalysisCancelled()
+        try:
+            stdout, stderr = proc.communicate(timeout=max(legacy.BLENDER_TIMEOUT_SECONDS, 900))
+        except subprocess.TimeoutExpired:
+            _kill_process_group(proc)
+            raise
+        finally:
+            _register_job_process(job_id, None)
+        if _job_cancel_requested(job_id):
+            raise AnalysisCancelled()
+        phase_logs.append(stderr or stdout or "")
+        if proc.returncode != 0:
             technical = (
-                result.stderr
-                or result.stdout
+                stderr
+                or stdout
                 or f"Blender Avatar Analyzer V4 {phase} phase failed"
             )[-12000:]
             raise RuntimeError(technical)
@@ -223,7 +292,12 @@ def _run_v4_blender_phases(
     return phase_logs
 
 
-def _run_analysis_v4(source_url: str, requested_profile: str, operation: str | None = None):
+def _run_analysis_v4(
+    source_url: str,
+    requested_profile: str,
+    operation: str | None = None,
+    job_id: str | None = None,
+):
     if not AVATAR_ANALYZER_V4_SCRIPT.is_file():
         raise HTTPException(status_code=500, detail="Falta avatar_analyzer_v4.py en el Blender Worker")
     job_dir = Path(tempfile.mkdtemp(prefix="clouva-avatar-analyzer-v4-"))
@@ -231,6 +305,8 @@ def _run_analysis_v4(source_url: str, requested_profile: str, operation: str | N
     analysis_input_path = job_dir / "avatar-analysis-sanitized.glb"
     output_dir = job_dir / "analysis"
     try:
+        if _job_cancel_requested(job_id):
+            raise AnalysisCancelled()
         legacy.download(source_url, input_path)
         sanitization = sanitize_glb_for_analysis(input_path, analysis_input_path)
         print(
@@ -252,6 +328,7 @@ def _run_analysis_v4(source_url: str, requested_profile: str, operation: str | N
             output_dir,
             environment,
             job_dir,
+            job_id=job_id,
         )
         report_path = output_dir / "diagnostic_report.json"
         analysis_path = output_dir / "avatar_analysis.json"
@@ -262,6 +339,9 @@ def _run_analysis_v4(source_url: str, requested_profile: str, operation: str | N
         analysis = json.loads(analysis_path.read_text(encoding="utf-8"))
         cached = _persist_run_v4(output_dir, analysis, input_path)
         return job_dir, output_dir, cached, analysis
+    except AnalysisCancelled:
+        shutil.rmtree(job_dir, ignore_errors=True)
+        raise
     except subprocess.TimeoutExpired as exc:
         shutil.rmtree(job_dir, ignore_errors=True)
         raise HTTPException(status_code=504, detail="Avatar Analyzer V4 agotó el tiempo de procesamiento") from exc
@@ -515,17 +595,26 @@ def _write_job_status(job_id: str, payload: dict[str, Any]) -> None:
 def _run_analysis_v4_background(job_id: str, source_url: str, requested_profile: str) -> None:
     try:
         with v32.ANALYZER_RIG_LOCK:
-            job_dir, _output_dir, _cached, analysis = _run_analysis_v4(source_url, requested_profile)
+            if _job_cancel_requested(job_id):
+                raise AnalysisCancelled()
+            job_dir, _output_dir, _cached, analysis = _run_analysis_v4(
+                source_url, requested_profile, job_id=job_id,
+            )
         shutil.rmtree(job_dir, ignore_errors=True)
         _write_job_status(job_id, {
             "status": "done",
             "runId": analysis.get("runId"),
             "summary": _summary(analysis),
         })
+    except AnalysisCancelled:
+        _write_job_status(job_id, {"status": "cancelled"})
     except HTTPException as exc:
         _write_job_status(job_id, {"status": "error", "detail": str(exc.detail)[:2000]})
     except Exception as exc:
         _write_job_status(job_id, {"status": "error", "detail": str(exc)[:2000]})
+    finally:
+        with _RUNNING_JOBS_LOCK:
+            _RUNNING_JOBS.pop(job_id, None)
 
 
 @app.post("/avatar/analyze-v4-preview-async")
@@ -555,6 +644,36 @@ def avatar_analyze_v4_job_status(job_id: str):
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Job no encontrado")
     return JSONResponse(json.loads(path.read_text(encoding="utf-8")))
+
+
+@app.post("/avatar/analyze-v4/job/{job_id}/cancel")
+def avatar_analyze_v4_job_cancel(job_id: str):
+    """Cancel a queued or running analysis job.
+
+    Terminates the active Blender subprocess (if any), which unblocks the
+    background thread waiting on/holding ANALYZER_RIG_LOCK so it can release
+    it immediately, and marks the job as cancelled. Terminal jobs (done,
+    error, already cancelled) are returned unchanged.
+    """
+    if not v32.RUN_ID_PATTERN.fullmatch(job_id):
+        raise HTTPException(status_code=400, detail="job_id inválido")
+    path = _job_status_path(job_id)
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Job no encontrado")
+    current = json.loads(path.read_text(encoding="utf-8"))
+    if current.get("status") != "pending":
+        return JSONResponse(current)
+
+    with _RUNNING_JOBS_LOCK:
+        entry = _RUNNING_JOBS.setdefault(job_id, {})
+        entry["cancelRequested"] = True
+        proc = entry.get("proc")
+    if proc is not None and proc.poll() is None:
+        _kill_process_group(proc)
+
+    payload = {"status": "cancelled"}
+    _write_job_status(job_id, payload)
+    return JSONResponse(payload)
 
 
 @app.post("/avatar/analyze-v4")

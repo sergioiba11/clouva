@@ -461,6 +461,27 @@
 .action:disabled { cursor: not-allowed; opacity: 0.68; }
 .action svg { width: 19px; height: 19px; flex: 0 0 auto; }
 
+.cancelAction {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  margin-top: 9px;
+  border: 1px solid rgba(255, 93, 115, .38);
+  border-radius: 13px;
+  background: rgba(255, 93, 115, .1);
+  color: #ffbdc7;
+  font-weight: 850;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  text-align: center;
+}
+.cancelAction:disabled { cursor: not-allowed; opacity: 0.68; }
+.cancelAction svg { width: 17px; height: 17px; flex: 0 0 auto; }
+
 .secondaryActions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
