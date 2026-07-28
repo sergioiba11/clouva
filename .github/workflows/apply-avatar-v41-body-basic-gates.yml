@@ -1,5 +1,6 @@
 name: Apply Avatar Analyzer V4.1 BODY_BASIC gates
 
+# Branch-only implementation workflow; removes itself after applying the patch.
 on:
   push:
     branches:
