@@ -1,6 +1,7 @@
 """Pure technical-pixel identity helpers for Avatar Analyzer V4.1."""
 from __future__ import annotations
 
+import math
 from typing import Any, Iterable
 
 
@@ -36,6 +37,24 @@ def secondary_regions_from_mask(region_ids: dict[str, Any] | None, mask: Any) ->
     )
 
 
+def _integer(value: Any, fallback: int) -> int:
+    if value is None:
+        return fallback
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _finite_triplet(value: Any) -> bool:
+    if not isinstance(value, (list, tuple)) or len(value) != 3:
+        return False
+    try:
+        return all(math.isfinite(float(component)) for component in value)
+    except (TypeError, ValueError):
+        return False
+
+
 def technical_projection_identity(
     technical: dict[str, Any] | None,
     region_ids: dict[str, Any] | None,
@@ -43,14 +62,15 @@ def technical_projection_identity(
 ) -> dict[str, Any]:
     technical = technical or {}
     allowed = {str(value) for value in allowed_regions}
-    region_id = int(technical.get("regionId") or 0)
+    region_id = _integer(technical.get("regionId"), 0)
     region = region_name_from_id(region_ids, region_id)
-    triangle_id = int(technical.get("triangleId") or -1)
+    triangle_id = _integer(technical.get("triangleId"), -1)
+    object_id = _integer(technical.get("objectId"), 0)
     world_position = technical.get("worldPosition")
+    barycentric = technical.get("barycentricCoordinates")
     valid = bool(
         technical.get("valid")
-        and isinstance(world_position, (list, tuple))
-        and len(world_position) == 3
+        and _finite_triplet(world_position)
         and triangle_id >= 0
         and region
     )
@@ -63,8 +83,8 @@ def technical_projection_identity(
             region_ids,
             technical.get("secondaryRegionMask"),
         ),
-        "objectId": int(technical.get("objectId") or 0),
+        "objectId": object_id,
         "triangleId": triangle_id,
-        "worldPosition": list(world_position) if valid else None,
-        "barycentricCoordinates": technical.get("barycentricCoordinates"),
+        "worldPosition": [float(component) for component in world_position] if valid else None,
+        "barycentricCoordinates": [float(component) for component in barycentric] if _finite_triplet(barycentric) else None,
     }
