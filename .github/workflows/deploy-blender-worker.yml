@@ -50,11 +50,16 @@ jobs:
       - uses: google-github-actions/setup-gcloud@v2
 
       - name: Deploy clouva-blender-worker to Cloud Run
+        env:
+          DEPLOYED_COMMIT: ${{ steps.source.outputs.sha }}
         run: |
           gcloud run deploy clouva-blender-worker \
             --project gen-lang-client-0737053175 \
             --region us-central1 \
             --source worker/garment-rig \
+            --command python3 \
+            --args=-m,uvicorn,runtime_app:app,--host,0.0.0.0,--port,8000 \
+            --update-env-vars "CLOUVA_DEPLOYED_COMMIT=$DEPLOYED_COMMIT,CLOUVA_DEPLOYED_REF=$SOURCE_REF" \
             --quiet
 
       - name: Resolve deployed revision
@@ -73,15 +78,26 @@ jobs:
           echo "service_url=$service_url" >> "$GITHUB_OUTPUT"
           echo "revision=$revision" >> "$GITHUB_OUTPUT"
 
-      - name: Verify Avatar Analyzer health
+      - name: Verify Avatar Analyzer health and deployed SHA
         env:
           SERVICE_URL: ${{ steps.deployed.outputs.service_url }}
           EXPECTED_SHA: ${{ steps.source.outputs.sha }}
+          EXPECTED_REVISION: ${{ steps.deployed.outputs.revision }}
         run: |
           response="$(curl --fail --silent --show-error \
             --retry 8 --retry-all-errors --retry-delay 5 \
             "$SERVICE_URL/diagnostics/avatar-analyzer-v4")"
-          printf '%s' "$response" | python -c 'import json,sys; data=json.load(sys.stdin); assert data; print(json.dumps(data, indent=2))'
+          printf '%s' "$response" | python - "$EXPECTED_SHA" "$EXPECTED_REVISION" <<'PY'
+          import json
+          import sys
+
+          expected_sha, expected_revision = sys.argv[1:3]
+          data = json.load(sys.stdin)
+          assert data.get("ok") is True, data
+          assert data.get("sourceCommit") == expected_sha, (data.get("sourceCommit"), expected_sha)
+          assert data.get("revision") == expected_revision, (data.get("revision"), expected_revision)
+          print(json.dumps(data, indent=2))
+          PY
           printf '%s' "$response" > worker-health.json
 
       - name: Record deployment status
