@@ -1,0 +1,15 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --build-arg=NEXT_PUBLIC_SUPABASE_URL=$_NEXT_PUBLIC_SUPABASE_URL
+      - --build-arg=NEXT_PUBLIC_SUPABASE_ANON_KEY=$_NEXT_PUBLIC_SUPABASE_ANON_KEY
+      - --build-arg=CLOUVA_DEPLOYED_COMMIT=$COMMIT_SHA
+      - --build-arg=CLOUVA_DEPLOYED_REF=$_DEPLOY_REF
+      - --build-arg=CLOUVA_BUILD_DATE=$BUILD_ID
+      - -t=us-central1-docker.pkg.dev/$PROJECT_ID/clouva/clouva-web:$COMMIT_SHA
+      - .
+images:
+  - us-central1-docker.pkg.dev/$PROJECT_ID/clouva/clouva-web:$COMMIT_SHA
+options:
+  logging: CLOUD_LOGGING_ONLY
