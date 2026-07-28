@@ -1,8 +1,8 @@
 {
-  "jobId": "3c127ae5bad7447592f0c45de3f2ee03",
-  "label": "after-focus-context-fix",
+  "jobId": "28dae05ce8994502a7772d72f0cffdf8",
+  "label": "after-verified-focus-fast-fit",
   "workerUrl": "https://clouva-blender-worker-6i67fzm65q-uc.a.run.app",
   "expectedSourceSha256": "0a7ebb13b9eccc189104673a423c59bfb5ba9dcb46bde445c91b62b3c22234c4",
-  "expectedWorkerCommit": "0a931722725947a3ff7ca96fbb01b57faabb53b4",
-  "expectedRevision": "clouva-blender-worker-00017-kfb"
+  "expectedWorkerCommit": "4b8373a240cb5df00d601ff830cc433c5decd789",
+  "expectedRevision": "clouva-blender-worker-00020-6q9"
 }
