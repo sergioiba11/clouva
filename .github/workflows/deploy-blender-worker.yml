@@ -2,11 +2,19 @@ name: Deploy Avatar Analyzer Blender worker
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - codex/avatar-analyzer-v41-real-run-followup
     paths:
       - "worker/garment-rig/**"
       - ".github/workflows/deploy-blender-worker.yml"
   workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Branch or tag to deploy
+        required: true
+        default: main
+        type: string
 
 permissions:
   contents: write
@@ -18,12 +26,20 @@ concurrency:
 
 jobs:
   deploy:
+    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[skip ci]')
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    env:
+      SOURCE_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.source_ref || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ env.SOURCE_REF }}
+          fetch-depth: 0
+
+      - name: Resolve source commit
+        id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
       - id: auth
         uses: google-github-actions/auth@v2
@@ -60,17 +76,19 @@ jobs:
       - name: Verify Avatar Analyzer health
         env:
           SERVICE_URL: ${{ steps.deployed.outputs.service_url }}
+          EXPECTED_SHA: ${{ steps.source.outputs.sha }}
         run: |
           response="$(curl --fail --silent --show-error \
             --retry 8 --retry-all-errors --retry-delay 5 \
             "$SERVICE_URL/diagnostics/avatar-analyzer-v4")"
           printf '%s' "$response" | python -c 'import json,sys; data=json.load(sys.stdin); assert data; print(json.dumps(data, indent=2))'
+          printf '%s' "$response" > worker-health.json
 
       - name: Record deployment status
         env:
           SERVICE_URL: ${{ steps.deployed.outputs.service_url }}
           REVISION: ${{ steps.deployed.outputs.revision }}
-          DEPLOYED_COMMIT: ${{ github.sha }}
+          DEPLOYED_COMMIT: ${{ steps.source.outputs.sha }}
         run: |
           python - <<'PY'
           import json
@@ -98,4 +116,4 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add worker/garment-rig/deployment-status.json
           git diff --cached --quiet || git commit -m "chore: record Blender Worker deployment [skip ci]"
-          git push origin HEAD:main
+          git push origin HEAD:"$SOURCE_REF"
