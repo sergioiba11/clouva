@@ -49,6 +49,7 @@ jobs:
           analyzer_v4_contract.py
           analyzer_v4_bootstrap.py
           analyzer_v41_residuals.py
+          analyzer_v41_residuals_finalize.py
           anatomy_semantics.py
           hand_modes.py
           camera_projection_self_test_v4.py
