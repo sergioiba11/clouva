@@ -11,6 +11,7 @@ from analyzer_v42_incremental import (
     modules_for_profile,
     warning_fingerprint,
 )
+from test_avatar_analyzer_v43_profiles import ProfileAwareHandPlanTests  # noqa: F401
 
 
 class ProfileExecutionTests(unittest.TestCase):
