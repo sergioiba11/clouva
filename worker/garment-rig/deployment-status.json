@@ -3,9 +3,9 @@
   "project": "gen-lang-client-0737053175",
   "region": "us-central1",
   "url": "https://clouva-blender-worker-6i67fzm65q-uc.a.run.app",
-  "revision": "clouva-blender-worker-00008-w8t",
-  "sourceCommit": "24136a43c6e9abbd97dbcf3bdb3d998a9bad4ebd",
+  "revision": "clouva-blender-worker-00009-zt5",
+  "sourceCommit": "ab63d293e3776ef19600f618e193ffd731e9d3ae",
   "healthEndpoint": "/diagnostics/avatar-analyzer-v4",
   "healthVerified": true,
-  "deployedAt": "2026-07-27T19:00:43.840739+00:00"
+  "deployedAt": "2026-07-28T02:07:16.608992+00:00"
 }
