@@ -1,5 +1,6 @@
 name: Fix Avatar Analyzer V4.1 CI regression
 
+# Temporary branch-only workflow. It removes itself after applying the patch.
 on:
   push:
     branches:
