@@ -7,7 +7,6 @@ CLOUVA_ANALYZER_FULL_TECHNICAL_PASSES=true.
 from __future__ import annotations
 
 import json
-import math
 import os
 from pathlib import Path
 from typing import Dict, Iterable, Sequence
@@ -22,9 +21,11 @@ from multiview_renderer import (
     _configure_scene,
     _matrix,
     _new_camera,
-    _points if False else None,
+    _render_edges,
+    _render_mask,
+    _set_visible_meshes,
+    cleanup_render_proxies,
 )
-from multiview_renderer import _render_edges, _render_mask, _set_visible_meshes, cleanup_render_proxies
 from technical_passes import generate_technical_passes
 
 BODY_REGIONS = (
@@ -216,7 +217,7 @@ def render_multiview_v42(
 
     def wanted(name: str, module: str) -> bool:
         nonlocal skipped
-        default = name in MODULE_CAMERAS.get(module, ()) or name.endswith("_oblique")
+        default = name in MODULE_CAMERAS.get(module, ())
         selected = name in requested_cameras if requested_cameras else default
         if not selected:
             skipped += 1
@@ -274,10 +275,8 @@ def render_multiview_v42(
                 rendered += 1
                 if view["framingValid"]:
                     side_valid += 1
-                # Production early exit: two technically valid views are enough to
-                # run sparse projection. Oblique remains available when explicitly requested.
                 if not requested_cameras and side_valid >= 2:
-                    skipped += max(0, len(directions) - 2)
+                    skipped += max(0, len(directions) - rendered)
                     break
     finally:
         for obj in all_meshes:
