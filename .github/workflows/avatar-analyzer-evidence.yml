@@ -1,0 +1,104 @@
+name: Avatar Analyzer evidence bundle
+
+on:
+  pull_request:
+    paths:
+      - "docs/avatar-analyzer-evidence-request.json"
+      - ".github/workflows/avatar-analyzer-evidence.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read evidence request
+        id: request
+        run: |
+          run_id="$(jq -r '.runId' docs/avatar-analyzer-evidence-request.json)"
+          label="$(jq -r '.label' docs/avatar-analyzer-evidence-request.json)"
+          worker_url="$(jq -r '.workerUrl' docs/avatar-analyzer-evidence-request.json)"
+          [[ "$run_id" =~ ^[a-f0-9]{32}$ ]]
+          [[ "$worker_url" == https://* ]]
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "label=$label" >> "$GITHUB_OUTPUT"
+          echo "worker_url=$worker_url" >> "$GITHUB_OUTPUT"
+
+      - name: Download result and hand renders
+        env:
+          RUN_ID: ${{ steps.request.outputs.run_id }}
+          LABEL: ${{ steps.request.outputs.label }}
+          WORKER_URL: ${{ steps.request.outputs.worker_url }}
+        run: |
+          set -euo pipefail
+          output="avatar-analyzer-evidence/$LABEL-$RUN_ID"
+          mkdir -p "$output/renders_v4"
+          curl --fail --silent --show-error --retry 6 --retry-all-errors \
+            "$WORKER_URL/avatar/analyze-v4/result/$RUN_ID" \
+            -o "$output/result.json"
+          curl --fail --silent --show-error --retry 6 --retry-all-errors \
+            "$WORKER_URL/avatar/analyze-v4/result/$RUN_ID/asset/renders_v4/camera_manifest_v4.json" \
+            -o "$output/camera_manifest_v4.json"
+          for side in l r; do
+            for view in dorsal palmar radial ulnar distal three_quarter_dorsal three_quarter_palmar; do
+              name="hand_${side}_${view}.png"
+              curl --fail --silent --show-error --retry 6 --retry-all-errors \
+                "$WORKER_URL/avatar/analyze-v4/result/$RUN_ID/asset/renders_v4/$name" \
+                -o "$output/renders_v4/$name"
+              test -s "$output/renders_v4/$name"
+            done
+          done
+
+      - name: Validate bundle and create manifest
+        env:
+          RUN_ID: ${{ steps.request.outputs.run_id }}
+          LABEL: ${{ steps.request.outputs.label }}
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path("avatar-analyzer-evidence") / f"{os.environ['LABEL']}-{os.environ['RUN_ID']}"
+          result = json.loads((root / "result.json").read_text(encoding="utf-8"))
+          manifest = json.loads((root / "camera_manifest_v4.json").read_text(encoding="utf-8"))
+          pngs = sorted((root / "renders_v4").glob("hand_*.png"))
+          if len(pngs) != 14:
+              raise SystemExit(f"expected 14 hand PNGs, found {len(pngs)}")
+          files = []
+          for path in pngs:
+              data = path.read_bytes()
+              if len(data) < 1024:
+                  raise SystemExit(f"empty or invalid PNG: {path}")
+              if not data.startswith(b"\x89PNG\r\n\x1a\n"):
+                  raise SystemExit(f"invalid PNG signature: {path}")
+              files.append({
+                  "path": str(path.relative_to(root)),
+                  "bytes": len(data),
+                  "sha256": hashlib.sha256(data).hexdigest(),
+              })
+          summary = result.get("summary") or {}
+          analysis = result.get("analysis") or {}
+          evidence = {
+              "runId": os.environ["RUN_ID"],
+              "label": os.environ["LABEL"],
+              "sourceSha256": summary.get("sourceSha256") or (analysis.get("source") or {}).get("sha256"),
+              "pngCount": len(files),
+              "files": files,
+              "handDiagnostics": manifest.get("handDiagnostics") or {},
+          }
+          (root / "evidence_manifest.json").write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
+          PY
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: avatar-analyzer-evidence-${{ steps.request.outputs.label }}-${{ steps.request.outputs.run_id }}
+          path: avatar-analyzer-evidence
+          if-no-files-found: error
+          retention-days: 7
