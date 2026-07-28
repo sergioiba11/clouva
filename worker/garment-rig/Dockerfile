@@ -30,7 +30,8 @@ RUN wget -q "$BLENDER_URL" -O /tmp/blender.tar.xz \
 
 RUN pip install --no-cache-dir --break-system-packages \
     fastapi uvicorn pydantic python-multipart \
-    mediapipe==0.10.14 numpy==1.26.4
+    mediapipe==0.10.14 numpy==1.26.4 \
+    google-cloud-storage==2.18.2
 
 RUN mkdir -p /app/models \
     && wget -q https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/latest/face_landmarker.task -O /app/models/face_landmarker.task \

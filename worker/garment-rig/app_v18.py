@@ -24,7 +24,7 @@ from analyzer_v4_contract import (
     build_targeted_reanalysis_plan,
     upgrade_analysis_v4,
 )
-from fastapi import HTTPException
+from fastapi import Header, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import AnyHttpUrl, BaseModel, Field
 from starlette.background import BackgroundTask
@@ -911,6 +911,93 @@ def _classify_cache_file(path: Path, run_cache_root: Path) -> str:
     if name == "expires_at.json":
         return "expiry_marker"
     return "other"
+
+
+class MigrateToGcsRequest(BaseModel):
+    bucket: str = Field(min_length=1, max_length=222)
+    destination_prefix: str = Field(default="railway-volume-migration", max_length=200)
+
+
+def _gcs_client_from_env():
+    import json as _json
+
+    from google.cloud import storage as gcs_storage
+    from google.oauth2 import service_account
+
+    raw = os.environ.get("CLOUVA_GCS_MIGRATION_CREDENTIALS_JSON")
+    if not raw:
+        raise HTTPException(status_code=500, detail="Falta CLOUVA_GCS_MIGRATION_CREDENTIALS_JSON en el Worker")
+    info = _json.loads(raw)
+    credentials = service_account.Credentials.from_service_account_info(
+        info, scopes=["https://www.googleapis.com/auth/devstorage.read_write"],
+    )
+    return gcs_storage.Client(project=info.get("project_id"), credentials=credentials)
+
+
+@app.post("/diagnostics/avatar-analyzer-v4-migrate-to-gcs")
+def avatar_analyzer_v4_migrate_to_gcs(
+    request: MigrateToGcsRequest,
+    x_migration_token: str | None = Header(default=None, alias="X-Migration-Token"),
+):
+    import hashlib
+
+    expected_token = os.environ.get("CLOUVA_MIGRATION_TOKEN")
+    if not expected_token or x_migration_token != expected_token:
+        raise HTTPException(status_code=403, detail="Token de migración inválido o faltante")
+
+    client = _gcs_client_from_env()
+    bucket = client.bucket(request.bucket)
+    prefix = request.destination_prefix.strip("/")
+
+    run_cache_root = v32.RUN_CACHE_ROOT
+    sources: list[tuple[Path, Path]] = []
+    if run_cache_root.is_dir():
+        for file_path in run_cache_root.rglob("*"):
+            if file_path.is_file():
+                sources.append((file_path, run_cache_root))
+    if JOBS_ROOT.is_dir():
+        for file_path in JOBS_ROOT.glob("*.json"):
+            if file_path.is_file():
+                sources.append((file_path, JOBS_ROOT.parent))
+
+    uploaded = {"count": 0, "bytes": 0}
+    skipped_identical = {"count": 0, "bytes": 0}
+    failures: list[dict[str, str]] = []
+
+    for file_path, root in sources:
+        relative = file_path.relative_to(root)
+        blob_name = f"{prefix}/{relative.as_posix()}"
+        size = file_path.stat().st_size
+        local_sha256 = hashlib.sha256(file_path.read_bytes()).hexdigest()
+        blob = bucket.blob(blob_name)
+        try:
+            blob.reload()
+            existing_sha256 = (blob.metadata or {}).get("sha256")
+            if blob.size == size and existing_sha256 == local_sha256:
+                skipped_identical["count"] += 1
+                skipped_identical["bytes"] += size
+                continue
+        except Exception:
+            pass
+        try:
+            blob.metadata = {"sha256": local_sha256, "migratedFrom": "railway-clouva-volume"}
+            blob.upload_from_filename(str(file_path), checksum="crc32c")
+            blob.reload()
+            if (blob.metadata or {}).get("sha256") != local_sha256:
+                raise RuntimeError("sha256 mismatch after upload")
+            uploaded["count"] += 1
+            uploaded["bytes"] += size
+        except Exception as exc:
+            failures.append({"path": str(relative), "error": str(exc)[:500]})
+
+    return {
+        "bucket": request.bucket,
+        "destinationPrefix": prefix,
+        "filesConsidered": len(sources),
+        "uploaded": uploaded,
+        "skippedIdentical": skipped_identical,
+        "failures": failures,
+    }
 
 
 @app.get("/diagnostics/avatar-analyzer-v4-storage-inventory")

@@ -299,3 +299,15 @@ test("storage inventory diagnostics classify the run-cache disk without leaking 
   assert.match(api, /incompleteOrAbandonedRuns/);
   assert.match(api, /jobStatusCache/);
 });
+
+test("volume-to-GCS migration endpoint is token-gated and verifies checksums before counting a file as uploaded", () => {
+  const api = read("worker/garment-rig/app_v18.py");
+  const dockerfile = read("worker/garment-rig/Dockerfile");
+  assert.match(api, /@app\.post\("\/diagnostics\/avatar-analyzer-v4-migrate-to-gcs"\)/);
+  assert.match(api, /CLOUVA_MIGRATION_TOKEN/);
+  assert.match(api, /if not expected_token or x_migration_token != expected_token/);
+  assert.match(api, /checksum="crc32c"/);
+  assert.match(api, /sha256 mismatch after upload/);
+  assert.match(api, /CLOUVA_GCS_MIGRATION_CREDENTIALS_JSON/);
+  assert.match(dockerfile, /google-cloud-storage==/);
+});
