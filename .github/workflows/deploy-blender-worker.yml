@@ -87,12 +87,13 @@ jobs:
           response="$(curl --fail --silent --show-error \
             --retry 8 --retry-all-errors --retry-delay 5 \
             "$SERVICE_URL/diagnostics/avatar-analyzer-v4")"
-          printf '%s' "$response" | python - "$EXPECTED_SHA" "$EXPECTED_REVISION" <<'PY'
+          RESPONSE="$response" python - "$EXPECTED_SHA" "$EXPECTED_REVISION" <<'PY'
           import json
+          import os
           import sys
 
           expected_sha, expected_revision = sys.argv[1:3]
-          data = json.load(sys.stdin)
+          data = json.loads(os.environ["RESPONSE"])
           assert data.get("ok") is True, data
           assert data.get("sourceCommit") == expected_sha, (data.get("sourceCommit"), expected_sha)
           assert data.get("revision") == expected_revision, (data.get("revision"), expected_revision)
