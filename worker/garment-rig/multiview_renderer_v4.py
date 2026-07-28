@@ -28,9 +28,13 @@ BODY_REGIONS = (
     "torso", "pelvis", "neck", "head", "eyes", "upper_arm_l", "forearm_l", "hand_l",
     "upper_arm_r", "forearm_r", "hand_r", "thigh_l", "calf_l", "foot_l", "thigh_r", "calf_r", "foot_r",
 )
-HAND_TARGET_COVERAGE = 0.42
-HAND_MIN_COVERAGE = 0.15
-HAND_MAX_COVERAGE = 0.90
+DEFAULT_HAND_CAMERA_CONFIG = {
+    "distal_forearm_ratio": 0.35,
+    "target_coverage": 0.42,
+    "minimum_coverage": 0.15,
+    "maximum_coverage": 0.90,
+    "maximum_retries": 2,
+}
 
 
 def _vec(value: Vector):
@@ -94,22 +98,105 @@ def _bounds(meshes):
     return minimum, maximum, maximum - minimum
 
 
-def _hand_detection_proxy(anatomy_bvh, side, suffix, fallback):
+def _hand_camera_config(config: dict) -> dict:
+    provided = config.get("hand_camera") if isinstance(config.get("hand_camera"), dict) else {}
+    merged = {**DEFAULT_HAND_CAMERA_CONFIG, **provided}
+    return {
+        "distal_forearm_ratio": max(0.05, min(0.80, float(merged["distal_forearm_ratio"]))),
+        "target_coverage": max(0.15, min(0.75, float(merged["target_coverage"]))),
+        "minimum_coverage": max(0.15, min(0.50, float(merged["minimum_coverage"]))),
+        "maximum_coverage": max(0.55, min(0.90, float(merged["maximum_coverage"]))),
+        "maximum_retries": max(0, min(2, int(merged["maximum_retries"]))),
+    }
+
+
+def _filtered_axis_proxy(source: bpy.types.Object, name: str, wrist: Vector, hand_axis: Vector,
+                         distal_forearm_length: float, forward_limit: float):
+    selected = []
+    for polygon in source.data.polygons:
+        if not polygon.vertices:
+            continue
+        points = [source.matrix_world @ source.data.vertices[index].co for index in polygon.vertices]
+        centroid = sum(points, Vector((0.0, 0.0, 0.0))) / len(points)
+        signed = (centroid - wrist).dot(hand_axis)
+        if -distal_forearm_length <= signed <= forward_limit:
+            selected.append(polygon)
+    if not selected:
+        return None
+    indices = sorted({int(index) for polygon in selected for index in polygon.vertices})
+    remap = {old: new for new, old in enumerate(indices)}
+    vertices = [source.matrix_world @ source.data.vertices[index].co for index in indices]
+    faces = [[remap[int(index)] for index in polygon.vertices] for polygon in selected]
+    mesh = bpy.data.meshes.new(f"{name}_MESH")
+    mesh.from_pydata(vertices, [], faces)
+    mesh.update()
+    proxy = bpy.data.objects.new(name, mesh)
+    bpy.context.collection.objects.link(proxy)
+    proxy["clouva_render_proxy"] = True
+    proxy["source_proxy"] = source.name
+    proxy["distal_forearm_length"] = float(distal_forearm_length)
+    proxy["forward_limit"] = float(forward_limit)
+    return proxy
+
+
+def _hand_proxies(anatomy_bvh, side: str, suffix: str, wrist: Vector, distal: Vector,
+                  height: float, distal_forearm_ratio: float, fallback):
+    fallback = list(fallback)
+    focus_regions = [f"hand_{suffix}"]
+    if anatomy_bvh is not None:
+        focus_regions.extend(
+            f"{finger}_{suffix}"
+            for finger in ("thumb", "index", "middle", "ring", "pinky")
+            if anatomy_bvh.has_region(f"{finger}_{suffix}")
+        )
     if anatomy_bvh is None:
-        return list(fallback)
-    proxy = anatomy_bvh.proxy((f"forearm_{suffix}", f"hand_{suffix}"), f"CLOUVA_PROXY_{side}_HAND_CONTEXT_V41")
-    return [proxy] if proxy is not None else list(fallback)
+        return fallback, fallback, focus_regions, focus_regions, []
+
+    created = []
+    focus = anatomy_bvh.proxy(tuple(focus_regions), f"CLOUVA_PROXY_{side}_HAND_FOCUS_V41")
+    focus_visible = [focus] if focus is not None else fallback
+    if focus is not None:
+        created.append(focus)
+
+    full_regions = [f"forearm_{suffix}", *focus_regions]
+    context_regions = [f"forearm_{suffix}_distal", *focus_regions]
+    full_context = anatomy_bvh.proxy(tuple(full_regions), f"CLOUVA_PROXY_{side}_HAND_CONTEXT_FULL_V41")
+    if full_context is not None:
+        created.append(full_context)
+        full_context.hide_render = True
+
+    axis = distal - wrist
+    hand_length = max(float(axis.length), height * 0.04)
+    if axis.length <= 1e-8:
+        axis = Vector((1.0 if suffix == "l" else -1.0, 0.0, 0.0))
+    axis.normalize()
+    distal_length = hand_length * distal_forearm_ratio
+    context = _filtered_axis_proxy(
+        full_context,
+        f"CLOUVA_PROXY_{side}_HAND_CONTEXT_DISTAL_V41",
+        wrist,
+        axis,
+        distal_length,
+        hand_length * 2.75,
+    ) if full_context is not None else None
+    if context is not None:
+        created.append(context)
+        context_visible = [context]
+    else:
+        context_visible = focus_visible
+    return focus_visible, context_visible, focus_regions, context_regions, created
 
 
-def _coverage_adjusted_framing(coverage, framing):
+def _coverage_adjusted_framing(coverage, framing, target_coverage):
     if coverage <= 0.0:
-        return max(0.62, framing * 0.58)
-    return max(0.62, min(2.40, framing * math.sqrt(coverage / HAND_TARGET_COVERAGE)))
+        return max(0.48, framing * 0.55)
+    return max(0.48, min(2.40, framing * math.sqrt(coverage / target_coverage)))
 
 
 def render_multiview_v4(output_dir: Path, vectors: Dict[str, Vector], height: float, meshes: Iterable[bpy.types.Object] | None = None,
                         segmentation=None, classifications: dict | None = None, anatomy_bvh=None, attempt: str = "v4", config: dict | None = None):
     config = config or DEFAULT_CONFIG; output_dir = Path(output_dir); meshes = list(meshes or _scene_meshes()); classifications = classifications or {}
+    hand_config = _hand_camera_config(config)
     proxies = _build_proxies(meshes, segmentation, classifications, anatomy_bvh)
     all_meshes = [obj for obj in bpy.context.scene.objects if obj.type == "MESH"]
     original_hide = {obj.name: bool(obj.hide_render) for obj in all_meshes}; views: List[dict] = []; hand_diagnostics = {}
@@ -130,11 +217,19 @@ def render_multiview_v4(output_dir: Path, vectors: Dict[str, Vector], height: fl
         hand_scene = _configure_scene(output_dir, hand_resolution)
         for side, suffix in (("left", "l"), ("right", "r")):
             wrist = vectors[f"wrist_{suffix}"]; distal = vectors[f"hand_{suffix}"]; measurement = segmentation.hand_measurement(side) if segmentation else {}
-            detection_visible = _hand_detection_proxy(anatomy_bvh, side, suffix, proxies[side] or meshes)
-            for proxy in detection_visible:
+            focus_visible, context_visible, focus_regions, context_regions, created = _hand_proxies(
+                anatomy_bvh, side, suffix, wrist, distal, height,
+                hand_config["distal_forearm_ratio"], proxies[side] or meshes,
+            )
+            for proxy in created:
                 if proxy.name not in [item.name for item in proxies[side]]:
                     proxies[side].append(proxy)
-            detection_points = _points(detection_visible); target = _average(detection_points, wrist.lerp(distal, 0.56))
+                if proxy.name not in [item.name for item in all_meshes]:
+                    all_meshes.append(proxy)
+                    original_hide[proxy.name] = bool(proxy.hide_render)
+            focus_points = _points(focus_visible)
+            context_points = _points(context_visible)
+            target = _average(focus_points, wrist.lerp(distal, 0.56))
             hand_size = max(float(measurement.get("handScale") or 0.0), (distal - wrist).length * 1.35, height * 0.055)
             normal = Vector(tuple(measurement.get("normal") or (0.0, -1.0, 0.0))); lateral = Vector(tuple(measurement.get("lateral") or ((1.0, 0.0, 0.0) if suffix == "l" else (-1.0, 0.0, 0.0))))
             forward = Vector(tuple(measurement.get("forward") or (0.0, 0.0, -1.0)))
@@ -148,27 +243,57 @@ def render_multiview_v4(output_dir: Path, vectors: Dict[str, Vector], height: fl
                 f"hand_{suffix}_three_quarter_dorsal": (normal + lateral * 0.62 + forward * 0.12).normalized(),
                 f"hand_{suffix}_three_quarter_palmar": (-normal - lateral * 0.62 + forward * 0.12).normalized(),
             }
-            allowed = [f"forearm_{suffix}", f"hand_{suffix}"] + [f"{finger}_{suffix}" for finger in ("thumb", "index", "middle", "ring", "pinky") if anatomy_bvh is not None and anatomy_bvh.has_region(f"{finger}_{suffix}")]
+            projection_regions = [f"forearm_{suffix}", *focus_regions]
             side_views = []
             for name, direction in directions.items():
-                fitted_size, axes = _projected_extent(detection_points, direction, hand_size); initial_framing = 1.10
-                first = _enrich(_render_view(hand_scene, output_dir, name, "hand", side, target, direction, fitted_size, detection_visible, all_meshes,
-                                              anatomy_bvh, allowed, framing=initial_framing, technical_resolution=technical_resolution), detection_visible, attempt, f"hand_{suffix}")
-                before = float(first.get("silhouetteCoverage") or 0.0); retried = before < HAND_MIN_COVERAGE or before > HAND_MAX_COVERAGE
-                final_view = first; retry_framing = initial_framing
-                if retried:
-                    retry_framing = _coverage_adjusted_framing(before, initial_framing)
-                    final_view = _enrich(_render_view(hand_scene, output_dir, name, "hand", side, target, direction, fitted_size, detection_visible, all_meshes,
-                                                       anatomy_bvh, allowed, framing=retry_framing, technical_resolution=technical_resolution), detection_visible, f"{attempt}_autofit", f"hand_{suffix}")
+                fitted_size, axes = _projected_extent(focus_points, direction, hand_size); initial_framing = 1.10
+                current_framing = initial_framing
+                final_view = _enrich(_render_view(hand_scene, output_dir, name, "hand", side, target, direction, fitted_size, context_visible, all_meshes,
+                                                  anatomy_bvh, projection_regions, framing=current_framing, technical_resolution=technical_resolution), context_visible, attempt, f"hand_{suffix}")
+                before = float(final_view.get("silhouetteCoverage") or 0.0)
+                retry_count = 0
+                while retry_count < hand_config["maximum_retries"] and (
+                    float(final_view.get("silhouetteCoverage") or 0.0) < hand_config["minimum_coverage"]
+                    or float(final_view.get("silhouetteCoverage") or 0.0) > hand_config["maximum_coverage"]
+                    or bool(final_view.get("clippingDetected"))
+                ):
+                    current_coverage = float(final_view.get("silhouetteCoverage") or 0.0)
+                    current_framing = _coverage_adjusted_framing(
+                        current_coverage, current_framing, hand_config["target_coverage"],
+                    )
+                    retry_count += 1
+                    final_view = _enrich(_render_view(hand_scene, output_dir, name, "hand", side, target, direction, fitted_size, context_visible, all_meshes,
+                                                       anatomy_bvh, projection_regions, framing=current_framing, technical_resolution=technical_resolution), context_visible, f"{attempt}_autofit_{retry_count}", f"hand_{suffix}")
                 after = float(final_view.get("silhouetteCoverage") or 0.0)
                 final_view.update({
-                    "wristTarget": _vec(wrist), "distalTarget": _vec(distal), "handProxyBounds": _point_bounds(detection_points), "handCameraAxes": axes,
-                    "handCameraOrthoScale": float(final_view.get("orthoScale") or 0.0), "handViewCoverage": after, "beforeCoverage": before,
-                    "afterCoverage": after, "handRetryPerformed": retried, "initialFraming": initial_framing, "finalFraming": retry_framing,
-                    "detectionProxyRegions": [f"forearm_{suffix}", f"hand_{suffix}"], "projectionRegions": allowed,
+                    "wristTarget": _vec(wrist), "distalTarget": _vec(distal),
+                    "focusProxyRegions": focus_regions, "contextProxyRegions": context_regions,
+                    "distalForearmRatio": hand_config["distal_forearm_ratio"],
+                    "focusProxyBounds": _point_bounds(focus_points), "contextProxyBounds": _point_bounds(context_points),
+                    "focusProxyVertexCount": _proxy_vertex_count(focus_visible), "contextProxyVertexCount": _proxy_vertex_count(context_visible),
+                    "handCameraAxes": axes, "handCameraOrthoScale": float(final_view.get("orthoScale") or 0.0),
+                    "handViewCoverage": after, "beforeCoverage": before, "afterCoverage": after,
+                    "retryCount": retry_count, "handRetryPerformed": retry_count > 0,
+                    "initialFraming": initial_framing, "finalFraming": current_framing,
+                    "framingValid": bool(hand_config["minimum_coverage"] <= after <= hand_config["maximum_coverage"]),
+                    "clippingDetected": bool(final_view.get("clippingDetected") or after > hand_config["maximum_coverage"]),
+                    "projectionRegions": projection_regions,
                 })
-                views.append(final_view); side_views.append({"view": name, "beforeCoverage": before, "afterCoverage": after, "retryPerformed": retried, "orthoScale": final_view["handCameraOrthoScale"], "axes": axes})
-            hand_diagnostics[side] = {"handProxyBounds": _point_bounds(detection_points), "handViewCoverage": side_views, "handRetryPerformed": any(item["retryPerformed"] for item in side_views), "detectionProxyRegions": [f"forearm_{suffix}", f"hand_{suffix}"]}
+                views.append(final_view)
+                side_views.append({
+                    "view": name, "beforeCoverage": before, "afterCoverage": after,
+                    "retryCount": retry_count, "retryPerformed": retry_count > 0,
+                    "orthoScale": final_view["handCameraOrthoScale"], "axes": axes,
+                    "framingValid": final_view["framingValid"], "clippingDetected": final_view["clippingDetected"],
+                })
+            hand_diagnostics[side] = {
+                "focusProxyBounds": _point_bounds(focus_points), "contextProxyBounds": _point_bounds(context_points),
+                "focusProxyRegions": focus_regions, "contextProxyRegions": context_regions,
+                "focusProxyVertexCount": _proxy_vertex_count(focus_visible), "contextProxyVertexCount": _proxy_vertex_count(context_visible),
+                "distalForearmRatio": hand_config["distal_forearm_ratio"], "handViewCoverage": side_views,
+                "handRetryPerformed": any(item["retryPerformed"] for item in side_views),
+                "allViewsFramingValid": all(item["framingValid"] and not item["clippingDetected"] for item in side_views),
+            }
     finally:
         for obj in all_meshes:
             if obj.name in original_hide: obj.hide_render = original_hide[obj.name]
@@ -178,6 +303,7 @@ def render_multiview_v4(output_dir: Path, vectors: Dict[str, Vector], height: fl
         "version": "clouva-adaptive-multiview-camera-rig-v4.1", "renderer": "BLENDER_WORKBENCH_PLUS_TECHNICAL_PASSES",
         "frontConvention": "-Y", "upConvention": "+Z", "attempt": attempt, "bodyResolution": body_resolution,
         "faceCropResolution": face_resolution, "handCropResolution": hand_resolution, "technicalResolution": technical_resolution,
+        "handCameraConfig": hand_config,
         "views": views, "handMeasurements": {"left": segmentation.hand_measurement("left") if segmentation else {}, "right": segmentation.hand_measurement("right") if segmentation else {}},
         "handDiagnostics": hand_diagnostics, "regionBvh": anatomy_bvh.report() if anatomy_bvh is not None else None,
         "cleanupProxyNames": sorted({proxy.name for group in proxies.values() for proxy in group}),
