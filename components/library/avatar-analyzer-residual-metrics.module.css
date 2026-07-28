@@ -1,0 +1,161 @@
+.card {
+  width: min(1180px, calc(100% - 28px));
+  margin: 22px auto 0;
+  padding: 22px;
+  border: 1px solid rgba(167, 105, 255, .28);
+  border-radius: 24px;
+  background: linear-gradient(145deg, rgba(20, 13, 29, .96), rgba(9, 7, 14, .98));
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .34);
+  color: #f8f5ff;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.header small {
+  color: #b89aff;
+  font-size: .68rem;
+  letter-spacing: .18em;
+}
+
+.header h2 {
+  margin: 5px 0 4px;
+  font-size: clamp(1.35rem, 3vw, 2rem);
+}
+
+.header p {
+  margin: 0;
+  color: rgba(248, 245, 255, .68);
+}
+
+.header button {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 15px;
+  border: 1px solid rgba(184, 154, 255, .38);
+  border-radius: 999px;
+  background: rgba(137, 75, 255, .12);
+  color: inherit;
+  cursor: pointer;
+}
+
+.header button:disabled {
+  cursor: progress;
+  opacity: .62;
+}
+
+.header svg,
+.notice svg,
+.error svg,
+.run svg {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+}
+
+.metricGrid,
+.handGrid {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.metricGrid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.handGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.metricGrid article,
+.handGrid article {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, .09);
+  border-radius: 17px;
+  background: rgba(255, 255, 255, .035);
+}
+
+.metricGrid span,
+.handGrid span {
+  display: block;
+  color: rgba(248, 245, 255, .64);
+  font-size: .78rem;
+}
+
+.metricGrid strong,
+.handGrid strong {
+  display: block;
+  margin: 7px 0 4px;
+  font-size: 1.45rem;
+}
+
+.metricGrid small,
+.handGrid small {
+  color: rgba(248, 245, 255, .52);
+  line-height: 1.35;
+}
+
+.notice,
+.error,
+.run {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 16px 0 0;
+  padding: 12px 14px;
+  border-radius: 14px;
+}
+
+.notice {
+  background: rgba(135, 87, 255, .11);
+  color: #d8c8ff;
+}
+
+.error {
+  background: rgba(255, 78, 112, .1);
+  color: #ffb6c5;
+}
+
+.run {
+  background: rgba(77, 218, 157, .09);
+  color: #a9f2d0;
+  word-break: break-all;
+}
+
+.spin {
+  animation: spin .9s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 760px) {
+  .card {
+    width: min(100% - 18px, 1180px);
+    padding: 16px;
+    border-radius: 20px;
+  }
+
+  .header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .header button {
+    justify-content: center;
+  }
+
+  .metricGrid,
+  .handGrid {
+    grid-template-columns: 1fr;
+  }
+}
