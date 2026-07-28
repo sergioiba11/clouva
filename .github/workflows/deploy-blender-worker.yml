@@ -17,7 +17,7 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
   id-token: write
 
 concurrency:
@@ -101,7 +101,7 @@ jobs:
           PY
           printf '%s' "$response" > worker-health.json
 
-      - name: Record deployment status
+      - name: Build deployment evidence
         env:
           SERVICE_URL: ${{ steps.deployed.outputs.service_url }}
           REVISION: ${{ steps.deployed.outputs.revision }}
@@ -120,17 +120,22 @@ jobs:
               "url": os.environ["SERVICE_URL"],
               "revision": os.environ["REVISION"],
               "sourceCommit": os.environ["DEPLOYED_COMMIT"],
+              "sourceRef": os.environ.get("SOURCE_REF"),
               "healthEndpoint": "/diagnostics/avatar-analyzer-v4",
               "healthVerified": True,
               "deployedAt": datetime.now(timezone.utc).isoformat(),
           }
-          Path("worker/garment-rig/deployment-status.json").write_text(
+          Path("deployment-status.json").write_text(
               json.dumps(status, indent=2) + "\n",
               encoding="utf-8",
           )
           PY
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add worker/garment-rig/deployment-status.json
-          git diff --cached --quiet || git commit -m "chore: record Blender Worker deployment [skip ci]"
-          git push origin HEAD:"$SOURCE_REF"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: blender-worker-deployment-${{ steps.deployed.outputs.revision }}
+          path: |
+            deployment-status.json
+            worker-health.json
+          if-no-files-found: error
+          retention-days: 30
