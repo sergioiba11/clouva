@@ -54,7 +54,7 @@ export async function exchangeAuthorizationCode(code: string) {
 
 export async function exchangeLongLivedToken(shortLivedToken: string) {
   const config = getInstagramConfig();
-  const url = new URL(`${config.graphBaseUrl.replace(/\/$/, "")}/access_token`);
+  const url = new URL(config.longLivedTokenUrl);
   url.searchParams.set("grant_type", "ig_exchange_token");
   url.searchParams.set("client_secret", config.appSecret);
   url.searchParams.set("access_token", shortLivedToken);
