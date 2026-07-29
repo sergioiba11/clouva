@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { getRedirectByRole } from "@/lib/auth";
+import { readApiJson } from "@/lib/authenticated-fetch";
 
 function redirect(path: string) {
   window.location.replace(path);
@@ -15,6 +16,14 @@ async function raceTimeout<T>(promise: PromiseLike<T>, ms: number, message: stri
   ]);
 }
 
+async function claimPendingInstagram(accessToken: string) {
+  const response = await fetch("/api/integrations/instagram/claim", {
+    method: "POST",
+    headers: { authorization: `Bearer ${accessToken}` },
+  });
+  return readApiJson<{ importSessionId: string }>(response);
+}
+
 export default function AuthCallbackContent() {
   const searchParams = useSearchParams();
   const startedRef = useRef(false);
@@ -25,6 +34,7 @@ export default function AuthCallbackContent() {
     [searchParams],
   );
   const isAddAccountMode = useMemo(() => searchParams.get("addAccount") === "1", [searchParams]);
+  const continueMode = useMemo(() => searchParams.get("continue"), [searchParams]);
 
   useEffect(() => {
     if (startedRef.current) return;
@@ -34,7 +44,7 @@ export default function AuthCallbackContent() {
     const failSafe = window.setTimeout(() => {
       if (finished) return;
       redirect(`/login?error=${encodeURIComponent("Google no pudo confirmar la sesión. Volvé a intentarlo.")}`);
-    }, 18000);
+    }, 22000);
 
     const handleCallback = async () => {
       try {
@@ -72,7 +82,6 @@ export default function AuthCallbackContent() {
 
         const user = session.user;
         setMessage("Cargando tu perfil de CLOUVA...");
-
         const defaultName =
           (user.user_metadata?.full_name as string | undefined) ??
           (user.user_metadata?.name as string | undefined) ??
@@ -88,19 +97,13 @@ export default function AuthCallbackContent() {
           "El perfil tardó demasiado en cargar",
         );
         let profile = loadedProfile;
-
         if (profileError) throw profileError;
 
         if (!profile) {
           const created = await raceTimeout(
             supabase
               .from("profiles")
-              .insert({
-                id: user.id,
-                display_name: defaultName,
-                full_name: defaultName,
-                role: "cliente",
-              })
+              .insert({ id: user.id, display_name: defaultName, full_name: defaultName, role: "cliente" })
               .select("id, role, display_name, full_name")
               .single(),
             6000,
@@ -126,6 +129,19 @@ export default function AuthCallbackContent() {
           profile = updated.data;
         }
 
+        if (continueMode === "instagram") {
+          setMessage("Asociando Instagram con tu cuenta de CLOUVA...");
+          const claimed = await raceTimeout(
+            claimPendingInstagram(session.access_token),
+            12000,
+            "La conexión con Instagram tardó demasiado",
+          );
+          finished = true;
+          window.clearTimeout(failSafe);
+          redirect(`/onboarding/instagram/select?importSession=${encodeURIComponent(claimed.importSessionId)}`);
+          return;
+        }
+
         localStorage.removeItem("clouva.switch_target");
         const destination = getRedirectByRole(profile?.role ?? "cliente");
         const target = isAddAccountMode ? `${destination}?openAccountSwitcher=1` : destination;
@@ -139,13 +155,14 @@ export default function AuthCallbackContent() {
         window.clearTimeout(failSafe);
         const text = error instanceof Error ? error.message : "No se pudo iniciar sesión con Google";
         console.error("Google callback failed", error);
-        redirect(`/login?error=${encodeURIComponent(text)}`);
+        const continueParam = continueMode ? `&continue=${encodeURIComponent(continueMode)}` : "";
+        redirect(`/login?error=${encodeURIComponent(text)}${continueParam}`);
       }
     };
 
     void handleCallback();
     return () => window.clearTimeout(failSafe);
-  }, [code, isAddAccountMode, oauthError]);
+  }, [code, continueMode, isAddAccountMode, oauthError]);
 
   return (
     <main className="mx-auto flex min-h-[60vh] w-full max-w-3xl items-center justify-center px-4 py-12">
