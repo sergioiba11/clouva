@@ -1,3 +1,5 @@
+import { avatarStorage } from "@/lib/storage-service";
+
 const MAX_GLB_BYTES = 75 * 1024 * 1024;
 
 type ItemMetadata = Record<string, unknown>;
@@ -202,14 +204,14 @@ export async function finalizeClothingItem({
   const bytes = riggedBytes ?? (await fetchGlb(modelUrl, "Meshy GLB"));
   const storagePath = `${userId}/clothing/${itemId}/${riggedBytes ? "rigged-textured" : "garment-fallback"}.glb`;
 
-  const { error: uploadError } = await supabase.storage.from("avatars").upload(storagePath, bytes, {
+  const { error: uploadError } = await avatarStorage.upload(storagePath, bytes, {
     contentType: "model/gltf-binary",
     cacheControl: "3600",
     upsert: true,
   });
   if (uploadError) throw new Error(errorMessage(uploadError, "No se pudo guardar el GLB final"));
 
-  const { data: publicData } = supabase.storage.from("avatars").getPublicUrl(storagePath);
+  const { data: publicData } = avatarStorage.getPublicUrl(storagePath);
   const persistentMetadata = { ...metadata };
   delete persistentMetadata.unreal_snapshot;
   const nextMetadata = {

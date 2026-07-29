@@ -161,7 +161,7 @@ test("el GLB se valida, hashea y copia permanentemente de forma reintentable", (
   assert.match(generationServer, /source\/avatar-meshy\.glb/);
   assert.match(generationServer, /source\/avatar-pre-remeshed\.glb/);
   assert.match(generationServer, /upsert: false/);
-  assert.match(generationServer, /bucket\.download\(storagePath\)/);
+  assert.match(generationServer, /avatarStorage\.download\(storagePath\)/);
   assert.match(generationServer, /existingSha256 === glb\.sha256/);
   assert.match(generationServer, /glb_sha256/);
   assert.match(generationServer, /timestamp: now/);

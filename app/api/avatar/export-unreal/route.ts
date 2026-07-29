@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { avatarStorage } from "@/lib/storage-service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -138,14 +139,14 @@ export async function POST(request: NextRequest) {
       exportedAt,
     };
 
-    const { error: uploadError } = await supabase.storage.from("avatars").upload(storagePath, bytes, {
+    const { error: uploadError } = await avatarStorage.upload(storagePath, bytes, {
       contentType: "application/octet-stream",
       cacheControl: "0",
       upsert: false,
     });
     if (uploadError) throw new Error(errorMessage(uploadError, "No se pudo guardar el FBX validado"));
 
-    const { data: publicData } = supabase.storage.from("avatars").getPublicUrl(storagePath);
+    const { data: publicData } = avatarStorage.getPublicUrl(storagePath);
     const downloadUrl = `${publicData.publicUrl}?v=${encodeURIComponent(exportRevision)}`;
 
     const { data: importCommand, error: commandError } = await supabase
