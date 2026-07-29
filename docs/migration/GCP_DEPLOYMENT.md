@@ -1,39 +1,44 @@
-# GCP Deployment — clouva-web
+# Deployment Guide
 
-Status as of 2026-07-28: deployed and healthy, **not yet receiving production traffic** (`clouva.com.ar` still points at Railway; that cutover is a separate, explicitly-confirmed step — see [GCP_ROLLBACK.md](GCP_ROLLBACK.md) once written and Phase 12/15 in the migration plan).
+## Normal deploys (after this migration merges)
 
-## Current deployment
+All three application images deploy via GitHub Actions, WIF-authenticated, no stored keys:
 
-- Service: `clouva-web`, project `gen-lang-client-0737053175`, region `us-central1`.
-- URL: `https://clouva-web-37640598175.us-central1.run.app`
-- Image: `us-central1-docker.pkg.dev/gen-lang-client-0737053175/clouva/clouva-web@sha256:031e108b2bfcdfc2ce5456e213ddce4ccd622612e8370e13afdd722ff492b66b` (tag `f11eda8bfb864f5988b717886526755e7b522507`, i.e. that commit SHA)
-- Revision: `clouva-web-00001-xbx`, serving 100% of traffic **on this service** (irrelevant to production since nothing points at this URL yet)
-- Runtime SA: `clouva-web-runtime@gen-lang-client-0737053175.iam.gserviceaccount.com` (dedicated, not the default compute SA), granted `secretAccessor` on the 7 secrets it needs.
-- Config: 1 vCPU, 1 GiB, min 0 / max 10 instances, concurrency 40, timeout 60s, startup CPU boost on, public (`--allow-unauthenticated`, same as the current Railway-hosted app).
+| Workflow | Triggers on | Deploys |
+|---|---|---|
+| `.github/workflows/deploy-gcp-web.yml` | push to `main` touching `app/`, `components/`, `lib/`, `public/`, `Dockerfile`, etc., or manual dispatch | `clouva-web` -- builds, deploys `--no-traffic`, verifies `/api/health` reports the expected commit on the revision-tagged URL, then shifts 100% traffic |
+| `.github/workflows/deploy-blender-worker.yml` | push to `main` touching `worker/garment-rig/**`, or manual dispatch | `clouva-blender-worker` (by `--source` build) + syncs `clouva-avatar-analyzer` Job to the exact same image digest |
+| `.github/workflows/deploy-mediapipe.yml` | push to `main` touching `worker/mediapipe-service/**` or `worker/garment-rig/landmark_detector_2d.py`, or manual dispatch | `clouva-mediapipe-detector` (syncs the canonical detector file first) |
+| `.github/workflows/verify-production.yml` | daily cron + manual dispatch | health sweep across all four resources, uploads evidence artifact |
 
-## How it was built
+All manual-dispatch variants take a `source_ref` input to deploy a specific branch/tag instead of `main`.
 
-`cloudbuild-web.yaml` at repo root — `docker build` with `--build-arg` for the two public `NEXT_PUBLIC_*` values (baked into the client bundle at build time, as Next.js requires) plus commit/ref/build-date metadata, tagged by commit SHA, pushed to the `clouva` Artifact Registry repo. Run via:
+## Manual deploy (if CI is down)
 
-```
+```bash
+# clouva-web
 gcloud builds submit --project gen-lang-client-0737053175 \
   --config cloudbuild-web.yaml \
-  --substitutions="_NEXT_PUBLIC_SUPABASE_URL=...,_NEXT_PUBLIC_SUPABASE_ANON_KEY=...,_DEPLOY_REF=<branch>,COMMIT_SHA=<sha>" \
+  --substitutions="_NEXT_PUBLIC_SUPABASE_URL=...,_NEXT_PUBLIC_SUPABASE_ANON_KEY=...,_DEPLOY_REF=main,COMMIT_SHA=$(git rev-parse HEAD)" \
   .
+# then deploy the resulting digest with --no-traffic, verify, then update-traffic to 100 -- see deploy-gcp-web.yml for the exact steps.
+
+# clouva-blender-worker
+gcloud run deploy clouva-blender-worker --project gen-lang-client-0737053175 --region us-central1 \
+  --source worker/garment-rig --command python3 \
+  --args=-m,uvicorn,runtime_app:app,--host,0.0.0.0,--port,8000
+
+# clouva-avatar-analyzer Job -- sync to whatever image the worker deploy just produced
+gcloud run jobs update clouva-avatar-analyzer --project gen-lang-client-0737053175 --region us-central1 \
+  --image <the image digest just deployed to clouva-blender-worker>
 ```
 
-Deployed by immutable digest (not `:latest`) via `gcloud run deploy clouva-web --image <repo>@sha256:...`.
+Never deploy the Job from a `gcloud builds submit --tag` run separate from the Service -- build once, deploy the same digest to both (this migration hit real drift risk here before wiring the workflow step that keeps them in sync -- see [GCP_ANALYZER_JOB.md](GCP_ANALYZER_JOB.md)).
 
-## Verified so far (2026-07-28)
+## Environment / secrets
 
-- `npm ci`, `npm run typecheck`, `npm run build` (standalone output), `npm test` (90 + 29 tests) all green locally before the container build.
-- Cloud Build succeeded (real `docker build` inside Cloud Build, since no local Docker is available in the dev environment used for this migration).
-- Deployed service: `/` → 200, `/api/health` → `{"ok":true,"commit":"f11eda8...","ref":"claude/migrate-railway-google-cloud-71f115","revision":"clouva-web-00001-xbx",...}`, `/catalogo` → 200, `/login` → 200, `/biblioteca` → 200.
+See [ENVIRONMENT_VARIABLE_MAP.md](ENVIRONMENT_VARIABLE_MAP.md) for the full classification. In short: `NEXT_PUBLIC_*` are build-time and public, everything else sensitive lives in Secret Manager, referenced by name (`--set-secrets KEY=secret-name:latest`), never inlined.
 
-## Not yet verified (tracked separately — Phase 14)
+## A known Windows/Git-Bash gotcha (if deploying manually from a Windows dev machine)
 
-Full authenticated flows (Supabase login, avatar library, checkout), the Avatar Analyzer end-to-end through this new service, and mobile rendering. These need either a logged-in test session or a real avatar run, which is Phase 14 work, done right before cutover — not claimed as done here.
-
-## Known gap carried over from the audit
-
-`CLOUVA_AVATAR_URL` (Railway var) was **not** carried into `clouva-web`'s env: grep confirmed no TypeScript/Next.js code reads it (only `worker/garment-rig/app.py` does, and the deployed worker doesn't have it set either — it resolves the active avatar dynamically via Supabase instead). Its Railway value pointed at `https://rig.clouva.com.ar/health`, the **legacy** Railway-hosted worker — stale and already dead weight before this migration.
+Git Bash's MSYS layer rewrites shell arguments that look like POSIX absolute paths (e.g. `/data/...`) before they reach `gcloud.exe`, silently corrupting any other values packed into the same comma-joined flag (`https://` becomes `https;\`, etc.). Hit this for real building the Analyzer Job -- see [GCP_ANALYZER_JOB.md](GCP_ANALYZER_JOB.md) for the full story. **Fix: use a YAML spec file + `gcloud run jobs replace` / `gcloud run services replace` instead of inline flags whenever a value contains a `/`-prefixed path**, or run from WSL/Linux/CI instead. This only affects local Windows shells -- GitHub Actions runners are Linux and unaffected.
