@@ -20,9 +20,24 @@ The first two `gcloud run jobs create`/`update` attempts silently corrupted ever
 
 Execution `clouva-avatar-analyzer-n7kfv`: container started, GCSFuse mount succeeded, entrypoint queried Supabase, correctly found no such job, logged `[analyzer-job] job 00000000-0000-0000-0000-000000000000 not found in avatar_analyzer_jobs`, exited 1. `executions describe` confirms `failedCount: 1` (expected -- this was intentionally an unknown job id). This proves the image, entrypoint, Secret Manager wiring, GCSFuse volume, and Supabase connectivity all work together end to end. It does **not** prove a real Blender analysis run works yet -- that needs a real job row with a real `source_storage_path`, which only happens once the Next.js side creates one.
 
+## Real end-to-end verification (2026-07-28, after wiring Next.js in)
+
+Ran a full real analysis directly against the Cloud Run Job (bypassing the Next.js HTTP layer -- inserted a job row via the Supabase service role and triggered the execution the same way `runAnalyzerJob()` does), using the real official test avatar (`e542a626-8a7c-4014-9285-8058ea523fee` / avatar `86179a1f-d771-4264-8b20-08fc4beb3c6b`, a real Meshy-sourced GLB in Supabase Storage):
+
+- Execution `clouva-avatar-analyzer-msnfb`: `succeededCount: 1`. Job row: `status: completed`, real `run_id`.
+- GCS (`gs://clouva-avatar-analyzer-cache/avatar-analyzer-runs/<runId>/`) contains all four required files: `avatar_analysis.json`, `diagnostic_report.json`, `diagnostic_landmarks.glb`, `expires_at.json`.
+- **Bug found and fixed from this run**: the Job was still running the image built *before* the `summary` column was added to the entrypoint -- `summary` came back `null` in the DB despite a real completed analysis. Rebuilt (commit `11f4913`, digest `sha256:4cb065c...`) and redeployed the Job (`gcloud run jobs replace`, same YAML-file method, no shell path-mangling). All 30 image-build tests green.
+- **Cancellation, tested for real and a real bug found+fixed**: triggered a second execution, called the Cloud Run cancel API on it. The execution genuinely stopped (`cancelledCount: 1`, condition `"Cancelled by user."`) -- but it was cancelled during cold start (image pull / GCSFuse mount), before `analyzer_job_entrypoint.py` ever ran, so nothing was left to catch SIGTERM and finalize the job row. It stayed stuck at `status: queued` forever, which would have permanently blocked `findActiveAnalyzerJob`'s one-analysis-at-a-time guard for that avatar. Fixed with `finalizeAnalyzerJobCancellation()`, called from the cancel route right after the Cloud Run cancel call, unconditionally settling `cancel_requested -> cancelled`. Re-verified with a third execution: same cancel sequence now resolves to `cancelled`, and the concurrency-guard query returns empty right after -- a new analysis can start immediately.
+
+This proves the full mechanism end to end (image, entrypoint, GCSFuse, Secret Manager, Supabase read/write, real Blender + MediaPipe processing, real GCS persistence, real cancellation) with the caveat below.
+
+## Done
+
+1. ~~Rewire `app/api/avatar/analyze/*`~~ -- done (commit `11f4913`): creates a row, triggers via `lib/cloud-run-jobs.ts`, records the execution name. Public contract unchanged (verified via the `tests-avatar-analyzer-v4.mjs` source-contract suite).
+2. ~~Poll job status from `avatar_analyzer_jobs`~~ -- done, via `toWorkerJobStatus()` reproducing the exact old `{status, runId, summary, detail}` shape.
+3. ~~Cancellation~~ -- done, plus the cold-start-stuck-job bug found and fixed (see above).
+
 ## Not done yet
 
-1. Rewire `app/api/avatar/analyze/*` (and `_shared.ts`) to create a row in `avatar_analyzer_jobs` and trigger a Cloud Run Job execution (via the Cloud Run Admin API, using `clouva-web-runtime`'s own credentials -- no service-account key file) instead of calling the worker's `/avatar/analyze-v4-preview-async`. Public contract (request/response shapes of the existing routes) must not change.
-2. Poll job status from `avatar_analyzer_jobs` instead of the worker's `/avatar/analyze-v4/job/{id}`.
-3. Cancellation: call the Cloud Run Jobs execution-cancel API instead of the worker's `/cancel` endpoint.
-4. A real end-to-end run with an actual avatar GLB (Phase 14), through `clouva-web` (not production) before any of this touches Railway/production.
+1. A real end-to-end run **through `clouva-web`'s actual HTTP API** (not the direct Supabase-insert + gcloud-execute shortcut used above) -- needs a real authenticated browser session. This is real Phase 14 work: reload/other-device recovery, reanalysis (hand/face/region), AutoRig gating, and the full UI flow haven't been exercised yet, only the core Job mechanism has.
+2. Redeploy `clouva-web` itself with this code (it's still running the Phase 4 build, from before the Analyzer routes were rewired).
