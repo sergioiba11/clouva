@@ -36,4 +36,5 @@ export interface BillingProvider {
   getSubscription(id: string): Promise<Record<string, unknown>>;
   cancelSubscription(id: string): Promise<Record<string, unknown>>;
   getPayment(id: string): Promise<Record<string, unknown>>;
+  getAuthorizedPayment(id: string): Promise<Record<string, unknown>>;
 }
