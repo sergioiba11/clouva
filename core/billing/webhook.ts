@@ -138,7 +138,7 @@ export async function handleMercadoPagoWebhook(args: {
   const providerEventId = text(body.id) || null;
   let duplicateQuery = args.admin
     .from("billing_webhook_events")
-    .select("id,processing_status")
+    .select("id,processing_status,attempts")
     .eq("provider", "mercadopago")
     .eq("environment", args.environment);
   duplicateQuery = providerEventId
