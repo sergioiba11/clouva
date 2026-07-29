@@ -277,8 +277,10 @@ test("cancellation is wired end to end through the API layer and the mobile UI",
   const styles = read("./components/library/avatar-analyzer-preview.module.css");
   assert.match(cancelRoute, /cancelAnalyzerExecution/);
   assert.match(cancelRoute, /requestAnalyzerJobCancellation/);
+  assert.match(cancelRoute, /finalizeAnalyzerJobCancellation/);
   assert.match(cancelRoute, /persistCancelledAnalyzerJob/);
   assert.match(shared, /export async function persistCancelledAnalyzerJob/);
+  assert.match(shared, /export async function finalizeAnalyzerJobCancellation/);
   assert.match(preview, /CANCELAR ANÁLISIS/);
   assert.match(preview, /cancelRequestedRef/);
   assert.match(preview, /activeJobIdRef/);

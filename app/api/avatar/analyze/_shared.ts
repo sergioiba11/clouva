@@ -281,6 +281,32 @@ export async function requestAnalyzerJobCancellation(
   return data as AnalyzerJobRow;
 }
 
+/** Marks a job cancelled once a Cloud Run cancel call has been issued for it.
+ *
+ * Calling `executions:cancel` guarantees the execution stops -- but if it was
+ * cancelled before the container ever started running
+ * analyzer_job_entrypoint.py (still pulling the image / mounting GCSFuse),
+ * there is no running process left to catch SIGTERM and finalize the job row
+ * itself. Without this, the row would stay stuck at a non-terminal status
+ * forever, permanently blocking findActiveAnalyzerJob's "one analysis at a
+ * time" guard for that avatar. Idempotent: if the entrypoint's own SIGTERM
+ * handler also finalizes the row, this is just a harmless duplicate write of
+ * the same terminal state. Only transitions from cancel_requested -- a job
+ * that already completed/failed in the moment between the two calls is left
+ * alone. */
+export async function finalizeAnalyzerJobCancellation(
+  supabase: ReturnType<typeof getAdminClient>,
+  userId: string,
+  jobId: string,
+) {
+  await supabase
+    .from("avatar_analyzer_jobs")
+    .update({ status: "cancelled", cancelled_at: new Date().toISOString(), phase: "cancelled" })
+    .eq("id", jobId)
+    .eq("user_id", userId)
+    .eq("status", "cancel_requested");
+}
+
 async function mutateAvatarMetadata(
   supabase: ReturnType<typeof getAdminClient>,
   userId: string,

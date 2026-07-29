@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
   errorMessage,
+  finalizeAnalyzerJobCancellation,
   persistCancelledAnalyzerJob,
   requestAnalyzerJobCancellation,
   requireUser,
@@ -28,13 +29,20 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       return NextResponse.json({ error: "Job no encontrado", code: "ANALYZER_JOB_NOT_FOUND" }, { status: 404 });
     }
 
-    if (row.status === "cancel_requested" && row.cloud_run_execution) {
-      await cancelAnalyzerExecution(row.cloud_run_execution).catch((cause) => {
-        // The entrypoint's own SIGTERM handler and next poll will still settle
-        // this into a terminal state -- don't fail the request over a
-        // best-effort early cancel signal.
-        console.error("Avatar Analyzer Cloud Run execution cancel failed", { jobId, cause: errorMessage(cause) });
+    if (row.status === "cancel_requested") {
+      if (row.cloud_run_execution) {
+        await cancelAnalyzerExecution(row.cloud_run_execution).catch((cause) => {
+          console.error("Avatar Analyzer Cloud Run execution cancel failed", { jobId, cause: errorMessage(cause) });
+        });
+      }
+      // The cancel call above guarantees the execution stops, but if it was
+      // still cold-starting (no process running yet to catch SIGTERM and
+      // finalize the row itself), nothing else ever would -- finalize here
+      // so the job never gets stuck non-terminal and blocking new analyses.
+      await finalizeAnalyzerJobCancellation(supabase, user.id, jobId).catch((cause) => {
+        console.error("Avatar Analyzer cancel finalize failed", { jobId, cause: errorMessage(cause) });
       });
+      row.status = "cancelled";
     }
 
     if (row.avatar_id) {
