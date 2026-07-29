@@ -33,16 +33,16 @@ export class MercadoPagoProvider implements BillingProvider {
   }
 
   createPlan(input: CreatePlanInput) {
+    const frequency = input.interval === "year" ? input.intervalCount * 12 : input.intervalCount;
     return this.request("/preapproval_plan", {
       method: "POST",
       body: JSON.stringify({
         reason: input.reason,
         auto_recurring: {
-          frequency: input.intervalCount,
-          frequency_type: input.interval === "year" ? "months" : "months",
+          frequency,
+          frequency_type: "months",
           transaction_amount: input.amount,
           currency_id: input.currency,
-          ...(input.interval === "year" ? { frequency: input.intervalCount * 12 } : {}),
         },
         back_url: input.backUrl,
         external_reference: input.externalReference,
@@ -81,5 +81,9 @@ export class MercadoPagoProvider implements BillingProvider {
 
   getPayment(id: string) {
     return this.request(`/v1/payments/${encodeURIComponent(id)}`);
+  }
+
+  getAuthorizedPayment(id: string) {
+    return this.request(`/authorized_payments/${encodeURIComponent(id)}`);
   }
 }
