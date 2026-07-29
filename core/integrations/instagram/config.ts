@@ -5,6 +5,7 @@ export type InstagramConfig = {
   apiVersion: string;
   authorizationUrl: string;
   tokenUrl: string;
+  longLivedTokenUrl: string;
   graphBaseUrl: string;
   scopes: string[];
   tokenKeyVersion: string;
@@ -31,6 +32,9 @@ export function getInstagramConfig(): InstagramConfig {
     tokenUrl:
       process.env.INSTAGRAM_TOKEN_URL?.trim() ||
       "https://api.instagram.com/oauth/access_token",
+    longLivedTokenUrl:
+      process.env.INSTAGRAM_LONG_LIVED_TOKEN_URL?.trim() ||
+      "https://graph.instagram.com/access_token",
     graphBaseUrl:
       process.env.INSTAGRAM_GRAPH_BASE_URL?.trim() ||
       `https://graph.instagram.com/${apiVersion}`,
