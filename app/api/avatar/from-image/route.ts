@@ -8,6 +8,7 @@ import {
   MAX_AVATAR_REFERENCE_BYTES,
   type AvatarReferenceRole,
 } from "@/lib/avatar-triptych";
+import { avatarStorage } from "@/lib/storage-service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -75,14 +76,14 @@ export async function POST(request: NextRequest) {
       for (const role of AVATAR_REFERENCE_ORDER) {
         const file = files[role];
         const storagePath = `${userData.user.id}/${avatarId}/references/${executionId}/avatar-${role}.${extensionFor(file)}`;
-        const { error: uploadError } = await supabase.storage.from("avatars").upload(storagePath, await file.arrayBuffer(), {
+        const { error: uploadError } = await avatarStorage.upload(storagePath, await file.arrayBuffer(), {
           contentType: file.type,
           cacheControl: "31536000",
           upsert: false,
         });
         if (uploadError) throw uploadError;
         uploadedPaths.push(storagePath);
-        const { data } = supabase.storage.from("avatars").getPublicUrl(storagePath);
+        const { data } = avatarStorage.getPublicUrl(storagePath);
         if (!data.publicUrl) throw new Error("Reference URL generation failed");
         uploads.push({ role, storagePath, publicUrl: data.publicUrl });
       }
@@ -131,7 +132,7 @@ export async function POST(request: NextRequest) {
 
       return NextResponse.json({ taskId, avatar });
     } catch (error) {
-      if (uploadedPaths.length) await supabase.storage.from("avatars").remove(uploadedPaths);
+      if (uploadedPaths.length) await avatarStorage.remove(uploadedPaths);
       throw error;
     }
   } catch (error) {

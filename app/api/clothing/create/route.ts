@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { createMultiImageTask, createPreviewTask } from "@/lib/meshy";
 import { checkOfficialTemplate } from "@/lib/garment-templates";
+import { avatarStorage } from "@/lib/storage-service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -81,13 +82,13 @@ async function uploadOptionalArt(
   validateImage(art, "Arte o logo");
 
   const storagePath = `${userId}/clothing-art/${itemId}.${extensionFor(art)}`;
-  const { error } = await supabase.storage.from("avatars").upload(storagePath, await art.arrayBuffer(), {
+  const { error } = await avatarStorage.upload(storagePath, await art.arrayBuffer(), {
     contentType: art.type,
     cacheControl: "3600",
     upsert: true,
   });
   if (error) throw new Error(errorMessage(error, "No se pudo guardar el arte"));
-  const { data } = supabase.storage.from("avatars").getPublicUrl(storagePath);
+  const { data } = avatarStorage.getPublicUrl(storagePath);
   return { storagePath, publicUrl: data.publicUrl };
 }
 
@@ -225,13 +226,13 @@ export async function POST(request: NextRequest) {
     const uploads = await Promise.all(
       files.map(async ({ key, file }) => {
         const storagePath = `${userData.user.id}/clothing-references/${referenceId}-${key}.${extensionFor(file)}`;
-        const { error: uploadError } = await supabase.storage.from("avatars").upload(storagePath, await file.arrayBuffer(), {
+        const { error: uploadError } = await avatarStorage.upload(storagePath, await file.arrayBuffer(), {
           contentType: file.type,
           cacheControl: "3600",
           upsert: false,
         });
         if (uploadError) throw new Error(errorMessage(uploadError, `No se pudo guardar la referencia ${key}`));
-        const { data } = supabase.storage.from("avatars").getPublicUrl(storagePath);
+        const { data } = avatarStorage.getPublicUrl(storagePath);
         return { key, storagePath, publicUrl: data.publicUrl };
       }),
     );

@@ -8,6 +8,7 @@ import {
   isTriptychAvatarMetadata,
 } from "@/lib/avatar-generation-server";
 import { getMultiImageTask, type MeshyTask } from "@/lib/meshy";
+import { avatarStorage } from "@/lib/storage-service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -30,15 +31,14 @@ async function finalizeLegacyMultiImageAvatar(args: {
 
   const glb = await downloadGeneratedGlb(task.model_urls.glb, "GLB de Meshy");
   const storagePath = `${userId}/${avatar.id}/avatar.glb`;
-  const bucket = supabase.storage.from("avatars");
-  const { error: uploadError } = await bucket.upload(storagePath, glb.bytes, {
+  const { error: uploadError } = await avatarStorage.upload(storagePath, glb.bytes, {
     contentType: "model/gltf-binary",
     cacheControl: "3600",
     upsert: true,
   });
   if (uploadError) throw new AvatarGenerationError("No se pudo guardar el GLB generado", 500);
 
-  const { data: publicData } = bucket.getPublicUrl(storagePath);
+  const { data: publicData } = avatarStorage.getPublicUrl(storagePath);
   const now = new Date().toISOString();
   const { error: updateError } = await supabase
     .from("user_avatars")

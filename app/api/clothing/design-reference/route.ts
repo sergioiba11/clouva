@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { avatarStorage } from "@/lib/storage-service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -68,9 +69,9 @@ export async function POST(request: NextRequest) {
       const prompt = `Create one clean technical product reference image for 3D reconstruction. Subject: ${garment}, design name ${name}. ${viewInstruction}. Fit: ${fit}. Main color: ${color}. Artist request: ${description || "minimal premium CLOUVA streetwear"}. ${measurementText} The garment must be shaped for these proportions and preserve practical openings and volume for fitting over the avatar. Show ONLY the separate wearable object, centered, complete, symmetrical where appropriate, neutral light-gray background, even studio lighting, no person, no mannequin, no body parts, no hanger, no text, no labels, no floor, no perspective distortion. Keep design details consistent with the other orthographic views.`;
       const bytes = await generateImage(prompt);
       const path = `${auth.user.id}/clothing-ai-references/${designId}-${view}.png`;
-      const { error: uploadError } = await supabase.storage.from("avatars").upload(path, bytes, { contentType: "image/png", cacheControl: "3600", upsert: false });
+      const { error: uploadError } = await avatarStorage.upload(path, bytes, { contentType: "image/png", cacheControl: "3600", upsert: false });
       if (uploadError) throw uploadError;
-      const { data } = supabase.storage.from("avatars").getPublicUrl(path);
+      const { data } = avatarStorage.getPublicUrl(path);
       return { view, url: data.publicUrl, path };
     }));
 
