@@ -1,0 +1,76 @@
+name: Verify CLOUVA Google Cloud production stack
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    # Daily health sweep of all Cloud Run resources. Not a substitute for the
+    # per-deploy health checks in deploy-gcp-web.yml / deploy-blender-worker.yml
+    # / deploy-mediapipe.yml -- this catches drift between deploys.
+    - cron: "17 9 * * *"
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: gen-lang-client-0737053175
+  REGION: us-central1
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA_EMAIL }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: clouva-web health
+        run: |
+          url="$(gcloud run services describe clouva-web --project "$PROJECT_ID" --region "$REGION" --format='value(status.url)')"
+          curl --fail --silent --show-error --retry 5 --retry-delay 3 "$url/api/health" | tee clouva-web-health.json
+          echo
+
+      - name: clouva-blender-worker health
+        run: |
+          url="$(gcloud run services describe clouva-blender-worker --project "$PROJECT_ID" --region "$REGION" --format='value(status.url)')"
+          curl --fail --silent --show-error --retry 5 --retry-delay 3 "$url/diagnostics/avatar-analyzer-v4" | tee clouva-blender-worker-health.json
+          echo
+
+      - name: clouva-mediapipe-detector health
+        run: |
+          url="$(gcloud run services describe clouva-mediapipe-detector --project "$PROJECT_ID" --region "$REGION" --format='value(status.url)')"
+          curl --fail --silent --show-error --retry 5 --retry-delay 3 "$url/health" | tee clouva-mediapipe-detector-health.json
+          echo
+
+      - name: clouva-avatar-analyzer Job exists and is ready
+        run: |
+          gcloud run jobs describe clouva-avatar-analyzer \
+            --project "$PROJECT_ID" --region "$REGION" \
+            --format='value(status.conditions[0].type,status.conditions[0].status)' | tee clouva-avatar-analyzer-job-status.txt
+          gcloud run jobs describe clouva-avatar-analyzer \
+            --project "$PROJECT_ID" --region "$REGION" \
+            --format='value(status.conditions[0].status)' | grep -q True
+
+      - name: Recent Analyzer job executions (informational, not gating)
+        run: |
+          gcloud run jobs executions list \
+            --project "$PROJECT_ID" --region "$REGION" --job clouva-avatar-analyzer \
+            --limit 5 \
+            --format='table(metadata.name,status.succeededCount,status.failedCount,status.completionTime)' || true
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: production-verification-${{ github.run_id }}
+          path: |
+            clouva-web-health.json
+            clouva-blender-worker-health.json
+            clouva-mediapipe-detector-health.json
+            clouva-avatar-analyzer-job-status.txt
+          if-no-files-found: warn
+          retention-days: 14
