@@ -22,8 +22,16 @@ export default function NuevoEstudioPage() {
         return;
       }
       const { supabase } = await import("@/lib/supabase");
-      const { data } = await supabase.from("profiles").select("is_vip").eq("id", user.id).maybeSingle();
-      setIsVip(!!data?.is_vip);
+      const { data } = await supabase
+        .from("user_entitlements")
+        .select("tier,status,expires_at")
+        .eq("user_id", user.id)
+        .eq("status", "active")
+        .in("tier", ["player", "vip"]);
+      const hasActiveEntitlement = (data ?? []).some(
+        (row) => !row.expires_at || new Date(row.expires_at) > new Date(),
+      );
+      setIsVip(hasActiveEntitlement);
     })();
   }, [user]);
 
