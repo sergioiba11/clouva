@@ -52,6 +52,41 @@ No per-execution or per-request cost model was derived here (would need actual G
 
 Each Secret Manager secret (`clouva-*`) supports adding a new version (`gcloud secrets versions add <name> --data-file=-`) without any code change -- every consumer references `:latest`. No redeploy needed for most; Cloud Run picks up the latest secret version on the *next* new revision, not on already-running instances, so rotate a secret then trigger a redeploy (even a no-op one) if immediate propagation matters.
 
+## Fixing "Error de avatar: Failed to fetch" (missing bucket CORS)
+
+The `feat(storage): route avatar/garment writes through a GCS-backed storage
+service` change (commit `0f9326c`) switched avatar/garment reads to public
+GLB/PNG URLs on `https://storage.googleapis.com/clouva-avatars/...`, fetched
+directly by the browser (`GLTFLoader` in `AvatarModelViewer`). The bucket
+itself is public-read (`gcloud storage ls` / plain `GET` works fine), but it
+was never given a CORS policy -- confirmed via `OPTIONS` preflight against the
+bucket returning no `Access-Control-Allow-*` headers. Browsers require CORS
+for cross-origin `fetch()` (unlike `<img src>`), so every client-side avatar
+load fails with `TypeError: Failed to fetch`, which is exactly the
+`AvatarModelViewer` error banner ("Error de avatar: Failed to fetch") users
+started seeing right after this migration -- not a data-loss or broken-file
+issue, the GLBs in the bucket are intact.
+
+Fix (one-time, requires `gcloud` access to `gen-lang-client-0737053175`):
+
+```bash
+gcloud storage buckets update gs://clouva-avatars \
+  --cors-file=docs/migration/gcs-cors-clouva-avatars.json \
+  --project gen-lang-client-0737053175
+```
+
+Verify:
+
+```bash
+curl -s -D - -o /dev/null -X OPTIONS "https://storage.googleapis.com/clouva-avatars/" \
+  -H "Origin: https://clouva.com.ar" -H "Access-Control-Request-Method: GET" \
+  | grep -i access-control-allow-origin
+```
+
+Same class of gap likely applies to any other bucket that gets fetched
+client-side rather than just displayed via `<img>` -- check with the same
+`OPTIONS` probe before assuming a "public" bucket is browser-usable.
+
 ## Known follow-ups (not blockers, tracked here so they don't get lost)
 
 1. `clouva-blender-worker` / `clouva-mediapipe-detector` are still publicly invokable (`allUsers` on Cloud Run IAM) -- deliberately deferred until Railway is fully decommissioned (see [GCP_WORKER_MEDIAPIPE_VERIFICATION.md](GCP_WORKER_MEDIAPIPE_VERIFICATION.md)).
@@ -59,3 +94,4 @@ Each Secret Manager secret (`clouva-*`) supports adding a new version (`gcloud s
 3. Targeted reanalysis (hand/face/region) has no route in the app at all -- pre-existing gap, not introduced by this migration.
 4. Structured JSON logging across every log line (full field schema from the original migration brief) was not done -- Cloud Logging already captures structured metadata regardless of app-level log format; a full rewrite was judged disproportionate risk this late in the migration.
 5. `$50/mo` billing budget is a placeholder.
+6. `clouva-avatars` bucket had no CORS policy after the storage migration, breaking every client-side avatar load -- see "Fixing 'Error de avatar: Failed to fetch'" above. Fixed by applying `docs/migration/gcs-cors-clouva-avatars.json`; still needs someone with `gcloud` access to actually run the command against production if it hasn't been run yet.
