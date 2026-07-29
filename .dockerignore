@@ -1,0 +1,16 @@
+node_modules
+.next
+.git
+.github
+docs
+clouva-unreal-bridge
+examples
+tools
+tests
+*.md
+*.txt
+.env*
+!.env.example
+npm-debug.log*
+.DS_Store
+tsconfig.tsbuildinfo

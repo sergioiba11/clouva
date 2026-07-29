@@ -1,13 +1,15 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import {
+  createAnalyzerJob,
   errorMessage,
+  findActiveAnalyzerJob,
   persistPendingAnalyzerJob,
+  recordAnalyzerJobExecution,
   requireUser,
   resolveOriginalAvatar,
-  workerBaseUrlAndToken,
-  workerError,
 } from "./_shared";
+import { runAnalyzerJob } from "@/lib/cloud-run-jobs";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,50 +19,49 @@ export async function POST(request: NextRequest) {
   try {
     const { supabase, user } = await requireUser(request);
     const avatar = await resolveOriginalAvatar(supabase, user.id);
-    const { workerBaseUrl, workerToken } = workerBaseUrlAndToken();
 
-    const response = await fetch(`${workerBaseUrl}/avatar/analyze-v4-preview-async`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(workerToken ? { Authorization: `Bearer ${workerToken}` } : {}),
-      },
-      body: JSON.stringify({
-        source_url: avatar.sourceUrl,
-        include_renders: true,
-        requested_rig_profile: "BODY_BASIC",
-      }),
-      cache: "no-store",
-      signal: AbortSignal.timeout(30 * 1000),
-    });
-    if (!response.ok) {
-      const raw = await response.text().catch(() => "");
-      throw new Error(
-        `No se pudo iniciar el análisis (${response.status})${raw ? `: ${workerError(raw).slice(0, 1200)}` : ""}`,
-      );
+    const activeJobId = await findActiveAnalyzerJob(supabase, user.id, avatar.avatarId);
+    if (activeJobId) {
+      return NextResponse.json({ jobId: activeJobId, pendingPersisted: true, reused: true });
     }
 
-    const data = await response.json() as { jobId?: string };
-    if (!data.jobId) throw new Error("El worker no devolvió un jobId");
+    const jobId = await createAnalyzerJob({
+      supabase,
+      userId: user.id,
+      avatarId: avatar.avatarId,
+      sourceRef: avatar.sourceRef,
+      requestedRigProfile: "BODY_BASIC",
+    });
+
+    try {
+      const executionName = await runAnalyzerJob(jobId);
+      await recordAnalyzerJobExecution(supabase, jobId, executionName);
+    } catch (cause) {
+      await supabase
+        .from("avatar_analyzer_jobs")
+        .update({
+          status: "failed",
+          error_code: "CLOUD_RUN_TRIGGER_FAILED",
+          error_message: errorMessage(cause).slice(0, 2000),
+          finished_at: new Date().toISOString(),
+        })
+        .eq("id", jobId);
+      throw cause;
+    }
 
     let pendingPersisted = false;
     if (avatar.avatarId) {
       try {
-        await persistPendingAnalyzerJob({
-          supabase,
-          userId: user.id,
-          avatarId: avatar.avatarId,
-          jobId: data.jobId,
-        });
+        await persistPendingAnalyzerJob({ supabase, userId: user.id, avatarId: avatar.avatarId, jobId });
         pendingPersisted = true;
       } catch (cause) {
         console.error("Avatar Analyzer pending job persistence failed", {
-          jobId: data.jobId,
+          jobId,
           cause: errorMessage(cause),
         });
       }
     }
-    return NextResponse.json({ jobId: data.jobId, pendingPersisted });
+    return NextResponse.json({ jobId, pendingPersisted });
   } catch (cause) {
     console.error("Avatar Analyzer kickoff failed", cause);
     return NextResponse.json({ error: errorMessage(cause) }, { status: 422 });

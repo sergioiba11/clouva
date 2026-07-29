@@ -101,6 +101,22 @@ jobs:
           PY
           printf '%s' "$response" > worker-health.json
 
+      - name: Sync clouva-avatar-analyzer Job to the same image digest
+        env:
+          DEPLOYED_COMMIT: ${{ steps.source.outputs.sha }}
+        run: |
+          image="$(gcloud run services describe clouva-blender-worker \
+            --project gen-lang-client-0737053175 \
+            --region us-central1 \
+            --format='value(spec.template.spec.containers[0].image)')"
+          test -n "$image"
+          gcloud run jobs update clouva-avatar-analyzer \
+            --project gen-lang-client-0737053175 \
+            --region us-central1 \
+            --image "$image" \
+            --update-env-vars "CLOUVA_DEPLOYED_COMMIT=$DEPLOYED_COMMIT,CLOUVA_DEPLOYED_REF=$SOURCE_REF" \
+            --quiet
+
       - name: Build deployment evidence
         env:
           SERVICE_URL: ${{ steps.deployed.outputs.service_url }}
