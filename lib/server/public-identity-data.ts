@@ -45,19 +45,21 @@ export async function resolvePlayerAlias(alias: string) {
   if (playerError) throw new Error(playerError.message);
   if (!player) return null;
 
-  const [{ data: affiliations, error: affiliationError }, { data: media, error: mediaError }, { data: primaryAlias }] = await Promise.all([
+  const [affiliationResult, mediaResult, aliasResult, vipResult] = await Promise.all([
     supabase.from("player_studios").select(playerStudiosSelect).eq("player_id", player.id).eq("is_visible", true).order("display_order"),
     supabase.from("player_media").select("id,media_type,origin,source_url,public_url,thumbnail_url,caption,display_order").eq("player_id", player.id).eq("visibility", "public").order("display_order"),
     supabase.from("public_slug_aliases").select("alias").eq("entity_type", "player").eq("entity_id", player.id).eq("is_primary", true).maybeSingle(),
+    supabase.rpc("is_player_vip", { p_player_id: player.id }),
   ]);
-  if (affiliationError) throw new Error(affiliationError.message);
-  if (mediaError) throw new Error(mediaError.message);
+  if (affiliationResult.error) throw new Error(affiliationResult.error.message);
+  if (mediaResult.error) throw new Error(mediaResult.error.message);
 
   return {
     player: player as unknown as Player,
-    affiliations: (affiliations ?? []) as unknown as PlayerStudioAffiliation[],
-    media: (media ?? []) as unknown as PlayerMedia[],
-    canonicalAlias: primaryAlias?.alias || player.slug,
+    affiliations: (affiliationResult.data ?? []) as unknown as PlayerStudioAffiliation[],
+    media: (mediaResult.data ?? []) as unknown as PlayerMedia[],
+    canonicalAlias: aliasResult.data?.alias || player.slug,
+    isVip: vipResult.data === true,
   };
 }
 
@@ -94,21 +96,21 @@ export async function resolveStudioAlias(alias: string) {
   if (studioError) throw new Error(studioError.message);
   if (!studio) return null;
 
-  const [{ data: players, error: playersError }, { data: media, error: mediaError }, { data: projects, error: projectsError }, { data: primaryAlias }] = await Promise.all([
+  const [playersResult, mediaResult, projectsResult, aliasResult] = await Promise.all([
     supabase.from("player_studios").select(studioPlayersSelect).eq("studio_id", studio.id).eq("is_visible", true).order("display_order"),
     supabase.from("player_media").select("id,media_type,origin,source_url,public_url,thumbnail_url,caption,display_order").eq("studio_id", studio.id).eq("visibility", "public").order("display_order"),
     supabase.from("community_projects").select("id,title,cover_url,release_type,release_date,spotify_url,youtube_url,description").eq("studio_id", studio.id).eq("is_published", true).order("release_date", { ascending: false }),
     supabase.from("public_slug_aliases").select("alias").eq("entity_type", "studio").eq("entity_id", studio.id).eq("is_primary", true).maybeSingle(),
   ]);
-  if (playersError) throw new Error(playersError.message);
-  if (mediaError) throw new Error(mediaError.message);
-  if (projectsError) throw new Error(projectsError.message);
+  if (playersResult.error) throw new Error(playersResult.error.message);
+  if (mediaResult.error) throw new Error(mediaResult.error.message);
+  if (projectsResult.error) throw new Error(projectsResult.error.message);
 
   return {
     studio: studio as unknown as StudioRow,
-    players: (players ?? []) as unknown as StudioPlayer[],
-    media: (media ?? []) as unknown as PlayerMedia[],
-    projects: projects ?? [],
-    canonicalAlias: primaryAlias?.alias || studio.slug,
+    players: (playersResult.data ?? []) as unknown as StudioPlayer[],
+    media: (mediaResult.data ?? []) as unknown as PlayerMedia[],
+    projects: projectsResult.data ?? [],
+    canonicalAlias: aliasResult.data?.alias || studio.slug,
   };
 }
