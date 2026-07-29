@@ -61,7 +61,7 @@ export default function NuevoEstudioPage() {
       setError(err?.message ?? "No se pudo crear el estudio");
       return;
     }
-    router.push(`/comunidad/estudios/${data.slug}`);
+    router.push(`/studios/${data.slug}`);
   };
 
   if (authLoading || isVip === null) {
@@ -96,7 +96,7 @@ export default function NuevoEstudioPage() {
           <div className="panel rounded-3xl p-6">
             <h1 className="text-2xl font-semibold">Crear estudio</h1>
             <p className="mt-3 text-sm text-white/60">
-              Crear un estudio es una función exclusiva para usuarios VIP de CLOUVA por ahora.
+              Crear un estudio es una función exclusiva para usuarios con plan Player/VIP de CLOUVA por ahora.
             </p>
           </div>
         </section>

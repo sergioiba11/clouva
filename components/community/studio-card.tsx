@@ -10,7 +10,7 @@ type StudioCardProps = {
 export function StudioCard({ studio, memberCount, projectCount }: StudioCardProps) {
   return (
     <Link
-      href={`/comunidad/estudios/${studio.slug}`}
+      href={`/studios/${studio.slug}`}
       className="panel group block overflow-hidden rounded-[2rem] transition hover:-translate-y-1"
     >
       <div className="relative aspect-[16/9] bg-white/[0.04]">
