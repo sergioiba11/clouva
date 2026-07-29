@@ -1,5 +1,7 @@
 -- One-argument, caller-scoped studio administration check used by Identity V2.
 -- The existing two-argument helper remains intact for backwards compatibility.
+-- This migration intentionally uses the pre-existing starts_at/expires_at fields;
+-- valid_from/valid_until are added by the next migration.
 create or replace function public.can_manage_studio(p_studio_id uuid)
 returns boolean
 language sql
@@ -15,11 +17,8 @@ as $$
       where ue.user_id = auth.uid()
         and ue.tier = 'vip'
         and ue.status = 'active'
-        and coalesce(ue.valid_from, ue.starts_at) <= now()
-        and (
-          coalesce(ue.valid_until, ue.expires_at) is null
-          or coalesce(ue.valid_until, ue.expires_at) > now()
-        )
+        and ue.starts_at <= now()
+        and (ue.expires_at is null or ue.expires_at > now())
     )
     and (
       exists (
