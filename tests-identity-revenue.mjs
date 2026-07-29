@@ -55,7 +55,7 @@ test("Studio administration requires both active VIP and an authorized role", ()
 });
 
 test("Identity migrations are ordered before secure Studio claims", () => {
-  const files = fs.readdirSync(new URL("./supabase/migrations/", import.meta.url));
+  const files = fs.readdirSync(new URL("./supabase/migrations/", import.meta.url)).sort();
   const core = files.indexOf("20260729213000_identity_revenue_v2.sql");
   const repairs = files.indexOf("20260729213050_identity_revenue_v2_schema_repairs.sql");
   const claims = files.indexOf("20260729213500_claim_studio_access.sql");
