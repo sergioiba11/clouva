@@ -1,6 +1,8 @@
 # HTTPS Load Balancer for clouva.com.ar (Phase 12)
 
-Status 2026-07-28: **infrastructure created, DNS not touched.** `clouva.com.ar` still resolves to Railway. Nothing here affects production until the DNS record change below is explicitly confirmed and applied.
+Status 2026-07-29: **CUTOVER COMPLETE AND VERIFIED.** `clouva.com.ar` now resolves to `136.69.74.221` (Google Cloud) and serves real, trusted HTTPS (`curl` `ssl_verify_result=0` -- full chain validation, not bypassed). DNS was changed by the user in Cloudflare (A record, apex, "DNS only" i.e. unproxied -- required for the Google-managed cert to validate). Managed cert went from `PROVISIONING` to `ACTIVE` automatically once DNS was visible. Verified: `/`, `/api/health`, `/login`, `/catalogo`, `/biblioteca`, `/avatar-analyzer-v4` all `200` over HTTPS; HTTP still redirects (`301`) to HTTPS.
+
+**Railway is still running, untouched, as the rollback path** -- this doc originally also described the "not yet applied" DNS state; keeping that history below since it documents exactly what was configured.
 
 ## Resources created
 
