@@ -35,6 +35,9 @@ export type Player = {
   contact_email: string | null;
   booking_email: string | null;
   whatsapp_url: string | null;
+  theme_key: string | null;
+  accent_color: string | null;
+  font_style: string | null;
   privacy_status: "public" | "unlisted" | "private";
   claim_status: "unclaimed" | "invited" | "pending" | "claimed" | "rejected";
   is_verified: boolean;
@@ -105,7 +108,7 @@ export function parsePlayerSocialLinks(value: unknown): SocialLink[] {
 }
 
 export const playerPublicSelect =
-  "id,owner_user_id,slug,display_name,username,primary_role,short_bio,long_bio,tagline,secondary_tagline,origin,location,genres,disciplines,professional_categories,social_links,profile_image_url,hero_image_url,cover_url,spotify_profile_url,youtube_channel_url,contact_email,booking_email,whatsapp_url,privacy_status,claim_status,is_verified,is_published,publication_status,seo_title,seo_description,share_title,share_description,og_image_url";
+  "id,owner_user_id,slug,display_name,username,primary_role,short_bio,long_bio,tagline,secondary_tagline,origin,location,genres,disciplines,professional_categories,social_links,profile_image_url,hero_image_url,cover_url,spotify_profile_url,youtube_channel_url,contact_email,booking_email,whatsapp_url,theme_key,accent_color,font_style,privacy_status,claim_status,is_verified,is_published,publication_status,seo_title,seo_description,share_title,share_description,og_image_url";
 
 export const playerStudiosSelect = "role,is_primary,studio:studios(id,slug,name,logo_url)";
 
