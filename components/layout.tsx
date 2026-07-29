@@ -55,6 +55,7 @@ export function MainNav() {
                   <button aria-label="Cerrar menú" className="fixed inset-0 z-[55] cursor-default" onClick={() => setOpenMenu(false)} />
                   <div className="absolute right-0 top-full z-[60] mt-2 w-60 rounded-2xl border border-[var(--line)] p-2 text-sm shadow-[var(--shadow-glow)] max-sm:right-[-8px] max-sm:w-[min(92vw,18rem)]" style={{ background: "var(--bg)" }}>
                     <Link href="/perfil" className="block rounded-lg px-3 py-2 hover:bg-[var(--chip)]" onClick={() => setOpenMenu(false)}>Perfil</Link>
+                    <Link href="/comunidad" className="block rounded-lg px-3 py-2 hover:bg-[var(--chip)]" onClick={() => setOpenMenu(false)}>Comunidad</Link>
                     <Link href="/mi-flow" className="block rounded-lg px-3 py-2 hover:bg-[var(--chip)]" onClick={() => setOpenMenu(false)}>Mi Flow</Link>
                     <Link href="/creator-studio" className="block rounded-lg px-3 py-2 text-violet-200 hover:bg-violet-500/10" onClick={() => setOpenMenu(false)}>Creator Studio</Link>
                     {canAdmin ? <Link href="/admin" className="block rounded-lg px-3 py-2 text-amber-200 hover:bg-amber-500/10" onClick={() => setOpenMenu(false)}>Admin</Link> : null}
