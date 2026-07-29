@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { OnboardingShell } from "@/components/onboarding/OnboardingShell";
 import { useAuth } from "@/components/auth-provider";
@@ -8,7 +8,7 @@ import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
 
 const IMPORTS = ["Foto de perfil", "Nombre público", "Usuario", "Biografía disponible", "Imágenes y videos autorizados", "Link al Instagram original"];
 
-export default function InstagramOnboardingPage() {
+function InstagramOnboardingContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { user, loading } = useAuth();
@@ -61,5 +61,13 @@ export default function InstagramOnboardingPage() {
         <button onClick={() => router.push("/onboarding/profile-preview")} className="w-full px-5 py-2 text-sm text-white/40 transition hover:text-white">Ahora no</button>
       </div>
     </OnboardingShell>
+  );
+}
+
+export default function InstagramOnboardingPage() {
+  return (
+    <Suspense fallback={<div className="grid min-h-screen place-items-center bg-[#05040a] text-sm text-white/50">Preparando Instagram…</div>}>
+      <InstagramOnboardingContent />
+    </Suspense>
   );
 }
