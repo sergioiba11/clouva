@@ -16,6 +16,7 @@
     "test": "npm run test:legacy && npm run test:avatar-analyzer"
   },
   "dependencies": {
+    "@google-cloud/storage": "^7.21.0",
     "@supabase/supabase-js": "^2.49.8",
     "clsx": "^2.1.1",
     "framer-motion": "^11.11.7",
