@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { OnboardingShell } from "@/components/onboarding/OnboardingShell";
 import { useAuth } from "@/components/auth-provider";
@@ -22,7 +22,7 @@ type ImportSession = {
   status: string;
 };
 
-export default function InstagramContentSelectionPage() {
+function InstagramContentSelectionContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const sessionId = searchParams.get("importSession") || "";
@@ -164,5 +164,13 @@ export default function InstagramContentSelectionPage() {
         <button type="button" disabled={saving || !session} onClick={() => void createPresentation()} className="flex-1 rounded-xl bg-violet-600 px-5 py-3 font-semibold transition hover:bg-violet-500 disabled:opacity-60">{saving ? "Creando..." : "Crear mi presentación"}</button>
       </div>
     </OnboardingShell>
+  );
+}
+
+export default function InstagramContentSelectionPage() {
+  return (
+    <Suspense fallback={<div className="grid min-h-screen place-items-center bg-[#05040a] text-sm text-white/50">Preparando tu contenido…</div>}>
+      <InstagramContentSelectionContent />
+    </Suspense>
   );
 }
