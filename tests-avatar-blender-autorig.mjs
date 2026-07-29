@@ -82,7 +82,7 @@ test("un avatar terminado solo se reutiliza con prueba vigente del Analyzer", ()
 });
 
 test("Blender guarda únicamente el resultado aprobado y actualiza el avatar activo", () => {
-  assert.match(rigRoute, /storage\.from\("avatars"\)\.upload/);
+  assert.match(rigRoute, /avatarStorage\.upload/);
   assert.match(rigRoute, /COMPLETE_FILENAME/);
   assert.match(rigRoute, /profile\.analyzedInputSha256 !== profile\.rigInputSha256/);
   assert.match(rigRoute, /criticalLandmarksVerified/);

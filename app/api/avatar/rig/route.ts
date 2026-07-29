@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import { avatarStorage } from "@/lib/storage-service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -181,14 +182,12 @@ async function resolveStoredOriginalUrl(
   supabase: ReturnType<typeof getAdminClient>,
   storagePath: string,
 ) {
-  const { data: signed, error } = await supabase.storage
-    .from("avatars")
-    .createSignedUrl(storagePath, 60 * 60);
+  const { data: signed, error } = await avatarStorage.createSignedUrl(storagePath, 60 * 60);
 
   if (signed?.signedUrl) return signed.signedUrl;
   if (error) console.warn("Could not sign original avatar URL", errorMessage(error));
 
-  const { data: publicData } = supabase.storage.from("avatars").getPublicUrl(storagePath);
+  const { data: publicData } = avatarStorage.getPublicUrl(storagePath);
   return asHttpsUrl(publicData.publicUrl);
 }
 
@@ -558,16 +557,16 @@ async function persistRiggedAvatar(
   bytes: ArrayBuffer,
 ) {
   const storagePath = `${userId}/${avatarId || "official"}/${COMPLETE_FILENAME}`;
-  const { error: uploadError } = await supabase.storage.from("avatars").upload(storagePath, bytes, {
+  const { error: uploadError } = await avatarStorage.upload(storagePath, bytes, {
     contentType: "model/gltf-binary",
     cacheControl: "3600",
     upsert: true,
   });
   if (uploadError) throw asError(uploadError, "No se pudo guardar el GLB riggeado");
 
-  const { data: publicData } = supabase.storage.from("avatars").getPublicUrl(storagePath);
+  const { data: publicData } = avatarStorage.getPublicUrl(storagePath);
   const basePublicUrl = asHttpsUrl(publicData.publicUrl);
-  if (!basePublicUrl) throw new Error("Supabase no devolvió una URL válida para el avatar riggeado");
+  if (!basePublicUrl) throw new Error("No se obtuvo una URL válida para el avatar riggeado");
 
   const publicUrl = `${basePublicUrl}?v=${Date.now()}`;
   const now = new Date().toISOString();

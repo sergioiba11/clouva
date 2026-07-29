@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getMultiImageTask, type MeshyTask } from "@/lib/meshy";
 import { AVATAR_REFERENCE_ORDER } from "@/lib/avatar-triptych";
+import { avatarStorage } from "@/lib/storage-service";
 
 export const MAX_AVATAR_GLB_BYTES = 25 * 1024 * 1024;
 export const TRIPTYCH_AVATAR_GENERATION_KIND = "triptych-multi-image";
@@ -84,19 +85,17 @@ export async function downloadGeneratedGlb(remoteUrl: string, label: string): Pr
 }
 
 async function uploadImmutableGlb(
-  supabase: SupabaseClient,
   storagePath: string,
   glb: DownloadedGlb,
 ) {
-  const bucket = supabase.storage.from("avatars");
-  const { error: uploadError } = await bucket.upload(storagePath, glb.bytes, {
+  const { error: uploadError } = await avatarStorage.upload(storagePath, glb.bytes, {
     contentType: "model/gltf-binary",
     cacheControl: "31536000",
     upsert: false,
   });
   if (!uploadError) return true;
 
-  const { data: existing, error: downloadError } = await bucket.download(storagePath);
+  const { data: existing, error: downloadError } = await avatarStorage.download(storagePath);
   if (!downloadError && existing) {
     const existingBytes = Buffer.from(await existing.arrayBuffer());
     const existingSha256 = createHash("sha256").update(existingBytes).digest("hex");
@@ -155,22 +154,21 @@ export async function finalizePendingAvatarGeneration(
   const preRemeshedStoragePath = preRemeshedGlb
     ? `${userId}/${pendingAvatar.id}/source/avatar-pre-remeshed.glb`
     : null;
-  const bucket = supabase.storage.from("avatars");
   const uploadedPaths: string[] = [];
 
   try {
-    if (await uploadImmutableGlb(supabase, mainStoragePath, mainGlb)) uploadedPaths.push(mainStoragePath);
+    if (await uploadImmutableGlb(mainStoragePath, mainGlb)) uploadedPaths.push(mainStoragePath);
 
     if (preRemeshedGlb && preRemeshedStoragePath) {
-      if (await uploadImmutableGlb(supabase, preRemeshedStoragePath, preRemeshedGlb)) {
+      if (await uploadImmutableGlb(preRemeshedStoragePath, preRemeshedGlb)) {
         uploadedPaths.push(preRemeshedStoragePath);
       }
     }
 
-    const { data: mainPublicData } = bucket.getPublicUrl(mainStoragePath);
+    const { data: mainPublicData } = avatarStorage.getPublicUrl(mainStoragePath);
     const mainPublicUrl = mainPublicData.publicUrl;
     const preRemeshedPublicUrl = preRemeshedStoragePath
-      ? bucket.getPublicUrl(preRemeshedStoragePath).data.publicUrl
+      ? avatarStorage.getPublicUrl(preRemeshedStoragePath).data.publicUrl
       : null;
     if (!mainPublicUrl) throw new AvatarGenerationError("No se pudo resolver la URL permanente del avatar", 500);
 
@@ -224,7 +222,7 @@ export async function finalizePendingAvatarGeneration(
 
     return avatar;
   } catch (error) {
-    if (uploadedPaths.length) await bucket.remove(uploadedPaths);
+    if (uploadedPaths.length) await avatarStorage.remove(uploadedPaths);
     throw error;
   }
 }
