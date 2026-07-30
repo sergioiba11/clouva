@@ -123,6 +123,50 @@ export const assetManifest: ManifestEntry[] = [
     consumingComponent: "app/players/[slug]/page.tsx, app/[publicAlias]/page.tsx",
     priority: 4,
   },
+  {
+    assetKey: "studio-directory-hero-01",
+    page: "Estudios",
+    route: "/studios",
+    section: "Hero del directorio de Estudios",
+    purpose: "Fondo ambiental para el header de la grilla de Estudios -- distinto de Players: orientado a espacios/estudios físicos, no a personas.",
+    aspectRatio: "16:9",
+    resolution: "1K",
+    transparent: false,
+    model: "gemini-3.1-flash-lite-image",
+    prompt:
+      `${BASE_IDENTITY} A dark cinematic interior of a creative studio space seen from a wide angle: silhouettes of ` +
+      "recording equipment, mixing consoles and acoustic panels barely visible in violet ambient light, a sense of a real " +
+      "working creative headquarters (not a stage, not a concert), empty and quiet, foreground kept dark for card content overlay, wide 16:9 shot.",
+    references: [],
+    maxAttempts: 2,
+    maxCostUsd: 0.05,
+    classification: "C_generate_gemini",
+    outputPathPrefix: "visual-system/backgrounds/studios",
+    consumingComponent: "app/studios/page.tsx",
+    priority: 5,
+  },
+  {
+    assetKey: "studio-public-profile-cover-01",
+    page: "Perfil público de Estudio",
+    route: "/studios/[slug]",
+    section: "Portada hero del perfil público de Estudio",
+    purpose: "Cover artístico genérico para Estudios que todavía no subieron su propia portada -- placeholder de marca, distinto del cover de Player, no reemplaza contenido real.",
+    aspectRatio: "21:9",
+    resolution: "1K",
+    transparent: false,
+    model: "gemini-3.1-flash-lite-image",
+    prompt:
+      `${BASE_IDENTITY} An ultra-wide cinematic banner of a creative studio's interior headquarters: a dark room with ` +
+      "faint violet light catching the edges of equipment and architecture, a sense of a real physical creative home base " +
+      "(not a stage, not a concert crowd), calm and premium, ultra-wide 21:9 banner composition, safe empty space bottom-left for a logo circle overlap.",
+    references: [],
+    maxAttempts: 2,
+    maxCostUsd: 0.05,
+    classification: "C_generate_gemini",
+    outputPathPrefix: "visual-system/backgrounds/studio-profile",
+    consumingComponent: "app/studios/[slug]/page.tsx",
+    priority: 6,
+  },
 ];
 
 export function manifestEntry(assetKey: string) {

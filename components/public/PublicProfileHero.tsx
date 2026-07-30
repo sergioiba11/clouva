@@ -26,10 +26,13 @@ export function PublicProfileHero({
   secondaryAction?: { label: string; href: string } | null;
 }) {
   const initial = name.trim().charAt(0).toUpperCase() || "C";
-  // Real content always wins. Only Players (not yet Studios -- separate
-  // stage) fall back to the shared CLOUVA cover artwork when the owner
-  // hasn't uploaded their own, so the profile never ships with an empty box.
-  const placeholderCoverUrl = kind === "player" ? VISUAL_ASSETS["player-public-profile-cover-01"] : null;
+  // Real content always wins. A generic-but-on-brand cover only fills in
+  // when the owner hasn't uploaded their own -- distinct artwork per kind
+  // (stage spotlight for Players, studio interior for Estudios).
+  const placeholderCoverUrl =
+    kind === "player"
+      ? VISUAL_ASSETS["player-public-profile-cover-01"]
+      : VISUAL_ASSETS["studio-public-profile-cover-01"];
   const resolvedCoverUrl = coverUrl || placeholderCoverUrl;
   const isPlaceholderCover = !coverUrl && Boolean(placeholderCoverUrl);
   return (
