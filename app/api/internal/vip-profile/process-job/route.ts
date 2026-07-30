@@ -4,6 +4,7 @@ import { createAdminSupabase } from "@/lib/server/supabase";
 import { generateProfileCopy, type ProfileCopy } from "@/lib/server/vip-profile-gemini";
 import type { IdentityBrief } from "@/lib/server/vip-profile-brief";
 import { enqueueVipProfileJobStep } from "@/lib/server/cloud-tasks";
+import { generateCoverAsset, type GeneratedAsset } from "@/lib/server/vip-profile-assets";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -34,7 +35,7 @@ export async function POST(request: NextRequest) {
   const admin = createAdminSupabase();
   const { data: job, error: jobError } = await admin
     .from("vip_profile_generation_jobs")
-    .select("id,status,attempts,identity_brief,actual_cost_usd")
+    .select("id,player_id,status,attempts,identity_brief,generated_copy,generated_assets,actual_cost_usd")
     .eq("id", body.jobId)
     .maybeSingle();
   if (jobError) return NextResponse.json({ error: jobError.message }, { status: 500 });
@@ -70,7 +71,73 @@ export async function POST(request: NextRequest) {
           .eq("id", job.id)
           .eq("status", "preparing_identity");
         if (error) throw new Error(error.message);
+        await enqueueVipProfileJobStep(job.id as string);
         return NextResponse.json({ ok: true, status: "generating_copy", copy });
+      }
+      case "generating_copy": {
+        const copy = job.generated_copy as unknown as ProfileCopy;
+        const brief = job.identity_brief as unknown as IdentityBrief;
+        const asset: GeneratedAsset = await generateCoverAsset({
+          admin,
+          playerId: job.player_id as string,
+          copy,
+          professionalCategories: brief.professional_categories ?? [],
+        });
+        const { error } = await admin
+          .from("vip_profile_generation_jobs")
+          .update({
+            status: "assembling_profile",
+            generated_assets: [asset],
+            actual_cost_usd: Number((((job.actual_cost_usd as number | null) ?? 0) + asset.costUsd).toFixed(6)),
+          })
+          .eq("id", job.id)
+          .eq("status", "generating_copy");
+        if (error) throw new Error(error.message);
+        await enqueueVipProfileJobStep(job.id as string);
+        return NextResponse.json({ ok: true, status: "assembling_profile", asset });
+      }
+      case "assembling_profile": {
+        const copy = job.generated_copy as unknown as ProfileCopy;
+        const assets = (job.generated_assets as unknown as GeneratedAsset[] | null) ?? [];
+        const cover = assets.find((a) => a.kind === "cover");
+
+        const { data: lastVersion, error: lastVersionError } = await admin
+          .from("player_profile_versions")
+          .select("version_number")
+          .eq("player_id", job.player_id)
+          .order("version_number", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (lastVersionError) throw new Error(lastVersionError.message);
+        const nextVersion = ((lastVersion?.version_number as number | null) ?? 0) + 1;
+
+        const { data: version, error: versionError } = await admin
+          .from("player_profile_versions")
+          .insert({
+            player_id: job.player_id,
+            generation_job_id: job.id,
+            version_number: nextVersion,
+            status: "draft",
+            profile_level: "vip",
+            template_key: "vip_default",
+            copy_config: copy,
+            visual_config: { energy: copy.visual_energy, tone: copy.visual_tone },
+            asset_references: cover ? [{ kind: "cover", url: cover.url }] : [],
+            layout_config: {},
+            source_snapshot: job.identity_brief,
+          })
+          .select("id")
+          .single();
+        if (versionError) throw new Error(versionError.message);
+
+        const { error } = await admin
+          .from("vip_profile_generation_jobs")
+          .update({ status: "review_ready", completed_at: new Date().toISOString() })
+          .eq("id", job.id)
+          .eq("status", "assembling_profile");
+        if (error) throw new Error(error.message);
+
+        return NextResponse.json({ ok: true, status: "review_ready", versionId: version.id });
       }
       default:
         return NextResponse.json({ ok: true, status: job.status, note: "Sin paso siguiente implementado todavía." });
