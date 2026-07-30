@@ -146,8 +146,11 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    const finalOwnerUserId = player?.owner_user_id || user.id;
+    const isSelfClaim = finalOwnerUserId === user.id;
+
     const playerValues = {
-      owner_user_id: player?.owner_user_id || user.id,
+      owner_user_id: finalOwnerUserId,
       slug,
       display_name: requestedProfile.display_name,
       username: requestedProfile.username,
@@ -157,8 +160,12 @@ export async function POST(request: NextRequest) {
       profile_image_url: profileImageUrl || null,
       cover_url: coverUrl || null,
       social_links: requestedProfile.social_links,
-      claim_status: player?.claim_status || "claimed",
-      claimed_at: player?.claimed_at || new Date().toISOString(),
+      // Reaching this endpoint as the owner IS the claim action -- a fresh
+      // Player (or one still "unclaimed", e.g. an admin-seeded placeholder)
+      // must transition to "claimed" here. A non-owner member syncing an
+      // already-claimed Player's Instagram content leaves claim_status alone.
+      claim_status: isSelfClaim ? "claimed" : (player?.claim_status || "claimed"),
+      claimed_at: isSelfClaim ? (player?.claimed_at || new Date().toISOString()) : (player?.claimed_at || null),
       publication_status: body.publish ? "published" : "draft",
       is_published: Boolean(body.publish),
       instagram_last_import_at: new Date().toISOString(),
