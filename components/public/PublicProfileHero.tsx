@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { PublicShareButton } from "./PublicShareButton";
+import { VISUAL_ASSETS } from "@/lib/visual-assets";
 
 export function PublicProfileHero({
   kind,
@@ -25,12 +26,18 @@ export function PublicProfileHero({
   secondaryAction?: { label: string; href: string } | null;
 }) {
   const initial = name.trim().charAt(0).toUpperCase() || "C";
+  // Real content always wins. Only Players (not yet Studios -- separate
+  // stage) fall back to the shared CLOUVA cover artwork when the owner
+  // hasn't uploaded their own, so the profile never ships with an empty box.
+  const placeholderCoverUrl = kind === "player" ? VISUAL_ASSETS["player-public-profile-cover-01"] : null;
+  const resolvedCoverUrl = coverUrl || placeholderCoverUrl;
+  const isPlaceholderCover = !coverUrl && Boolean(placeholderCoverUrl);
   return (
     <section className="relative overflow-hidden border-b border-white/10">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_70%_20%,rgba(124,58,237,.28),transparent_42%),linear-gradient(180deg,#0d0a18_0%,#07060b_100%)]" />
       <div className="relative mx-auto max-w-6xl px-4 pb-10 pt-5 sm:px-6 sm:pb-14">
-        <div className="relative h-56 overflow-hidden rounded-[2rem] border border-white/10 bg-white/[0.03] sm:h-80">
-          {coverUrl ? <img src={coverUrl} alt="" className="h-full w-full object-cover" /> : null}
+        <div className="relative h-56 overflow-hidden rounded-[2rem] border border-white/10 bg-white/[0.03] sm:h-80" data-placeholder-cover={isPlaceholderCover || undefined}>
+          {resolvedCoverUrl ? <img src={resolvedCoverUrl} alt="" className="h-full w-full object-cover" /> : null}
           <div className="absolute inset-0 bg-gradient-to-t from-[#07060b] via-[#07060b]/30 to-transparent" />
         </div>
 
