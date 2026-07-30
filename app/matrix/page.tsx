@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { PublicShell } from "@/components/public/PublicShell";
+import { VISUAL_ASSETS } from "@/lib/visual-assets";
 
 export const metadata = {
   title: "La Matrix | CLOUVA",
@@ -9,7 +10,17 @@ export const metadata = {
 export default function MatrixPage() {
   return (
     <PublicShell brand="LA MATRIX" brandHref="/matrix">
-      <section className="mx-auto flex max-w-4xl flex-col items-center px-4 py-20 text-center sm:py-28">
+      <section
+        className="relative mx-auto flex min-h-[70vh] max-w-4xl flex-col items-center justify-center overflow-hidden px-4 py-20 text-center sm:py-28"
+        data-visual-asset="matrix-network-master-01"
+      >
+        <div
+          className="absolute inset-0 -z-10 bg-cover bg-center"
+          style={{ backgroundImage: `url(${VISUAL_ASSETS["matrix-network-master-01"]})` }}
+          aria-hidden="true"
+        />
+        {/* Only for text legibility right where the copy sits -- the artwork stays visible everywhere else, unlike the earlier near-opaque overlay. */}
+        <div className="absolute inset-x-0 bottom-0 -z-10 h-2/3 bg-gradient-to-t from-[#07060b] via-[#07060b]/55 to-transparent" aria-hidden="true" />
         <h1 className="text-4xl font-bold tracking-tight sm:text-6xl">LA MATRIX</h1>
         <p className="mt-5 max-w-xl text-white/60">
           Encontrá Players y estudios conectados por la música, la creación y los proyectos.

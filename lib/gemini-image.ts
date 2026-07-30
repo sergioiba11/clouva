@@ -1,6 +1,6 @@
 const ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models";
 
-export type GeminiImageModel = "gemini-3.1-flash-image" | "gemini-3-pro-image";
+export type GeminiImageModel = "gemini-3.1-flash-lite-image" | "gemini-3.1-flash-image" | "gemini-3-pro-image";
 // The generateContent REST endpoint's ImageConfig only supports aspect_ratio --
 // output resolution (1K/2K/4K) is not a field this API surface exposes today
 // (that only exists on the separate, not-yet-adopted-here Interactions API).
@@ -17,7 +17,19 @@ export type GenerateImageArgs = {
   aspectRatio?: GeminiAspectRatio;
 };
 
-export type GeneratedImage = { bytes: Buffer; mimeType: string; text: string | null };
+export type GeminiUsageMetadata = {
+  promptTokenCount?: number;
+  candidatesTokenCount?: number;
+  thoughtsTokenCount?: number;
+  totalTokenCount?: number;
+};
+
+export type GeneratedImage = {
+  bytes: Buffer;
+  mimeType: string;
+  text: string | null;
+  usageMetadata: GeminiUsageMetadata | null;
+};
 
 export class GeminiImageError extends Error {
   status: number;
@@ -59,6 +71,12 @@ export async function generateImage(args: GenerateImageArgs): Promise<GeneratedI
       content?: { parts?: Array<{ text?: string; inlineData?: { mimeType?: string; data?: string } }> };
       finishReason?: string;
     }>;
+    usageMetadata?: {
+      promptTokenCount?: number;
+      candidatesTokenCount?: number;
+      thoughtsTokenCount?: number;
+      totalTokenCount?: number;
+    };
     error?: { message?: string };
   } = {};
   try {
@@ -87,5 +105,6 @@ export async function generateImage(args: GenerateImageArgs): Promise<GeneratedI
     bytes: Buffer.from(imagePart.inlineData.data, "base64"),
     mimeType: imagePart.inlineData.mimeType ?? "image/png",
     text: textPart?.text?.trim() ?? null,
+    usageMetadata: data.usageMetadata ?? null,
   };
 }

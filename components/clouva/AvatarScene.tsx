@@ -8,6 +8,7 @@ import { CloverAIPanel } from "@/components/clouva/CloverAIPanel";
 import { MinimalNavigation } from "@/components/clouva/MinimalNavigation";
 import { useAuth } from "@/components/auth-provider";
 import { spotifyEmbedUrl } from "@/lib/spotify";
+import { VISUAL_ASSETS } from "@/lib/visual-assets";
 
 export function AvatarScene() {
   const { user, profile } = useAuth();
@@ -31,7 +32,17 @@ export function AvatarScene() {
 
   return (
     <main className="clouva-experience" aria-label="Universo CLOUVA" onPointerDown={(event) => { if (event.target === event.currentTarget) showInterfaceTemporarily(); }}>
-      <div className="clouva-atmosphere" aria-hidden="true" />
+      <div
+        className="clouva-atmosphere"
+        aria-hidden="true"
+        data-visual-asset="home-avatar-atmosphere-01"
+        style={{
+          backgroundImage: `radial-gradient(circle at 50% 28%, rgba(124,58,237,.35), transparent 45%), radial-gradient(ellipse at 50% 85%, rgba(139,92,246,.16), transparent 30%), url(${VISUAL_ASSETS["home-avatar-atmosphere-01"]})`,
+          backgroundSize: "auto, auto, cover",
+          backgroundPosition: "center, center, center 20%",
+          backgroundColor: "#050505",
+        }}
+      />
       <div className="clouva-fog clouva-fog-one" aria-hidden="true" />
       <div className="clouva-fog clouva-fog-two" aria-hidden="true" />
       <div className="clouva-particles" aria-hidden="true" />
