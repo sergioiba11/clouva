@@ -86,7 +86,7 @@ jobs:
           gcloud builds submit \
             --project "$PROJECT_ID" \
             --config cloudbuild-web.yaml \
-            --substitutions="_NEXT_PUBLIC_SUPABASE_URL=${{ vars.NEXT_PUBLIC_SUPABASE_URL }},_NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ vars.NEXT_PUBLIC_SUPABASE_ANON_KEY }},_DEPLOY_REF=$SOURCE_REF,COMMIT_SHA=$DEPLOYED_COMMIT" \
+            --substitutions="_NEXT_PUBLIC_SUPABASE_URL=${{ vars.NEXT_PUBLIC_SUPABASE_URL }},_NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ vars.NEXT_PUBLIC_SUPABASE_ANON_KEY }},_NEXT_PUBLIC_GOOGLE_CLIENT_ID=${{ vars.NEXT_PUBLIC_GOOGLE_CLIENT_ID }},_DEPLOY_REF=$SOURCE_REF,COMMIT_SHA=$DEPLOYED_COMMIT" \
             .
 
       - name: Resolve built image digest

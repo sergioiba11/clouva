@@ -1,11 +1,42 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import Script from "next/script";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getRedirectByRole, roleHome } from "@/lib/auth";
 import { useAuth } from "@/components/auth-provider";
 import { readApiJson } from "@/lib/authenticated-fetch";
+
+declare global {
+  interface Window {
+    google?: {
+      accounts: {
+        id: {
+          initialize: (config: {
+            client_id: string;
+            callback: (response: { credential?: string }) => void;
+          }) => void;
+          renderButton: (
+            parent: HTMLElement,
+            options: {
+              type?: "standard" | "icon";
+              theme?: "outline" | "filled_black" | "filled_blue";
+              size?: "large" | "medium" | "small";
+              shape?: "rectangular" | "pill" | "circle" | "square";
+              text?: "signin_with" | "signup_with" | "continue_with" | "signin";
+              logo_alignment?: "left" | "center";
+              locale?: string;
+              width?: number;
+            },
+          ) => void;
+        };
+      };
+    };
+  }
+}
+
+const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
 
 async function claimPendingInstagram(accessToken: string) {
   const response = await fetch("/api/integrations/instagram/claim", {
@@ -21,6 +52,9 @@ export default function LoginContent() {
   const [loading, setLoading] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [googleScriptReady, setGoogleScriptReady] = useState(false);
+  const googleButtonRef = useRef<HTMLDivElement>(null);
+  const handleGoogleCredentialRef = useRef<(response: { credential?: string }) => void>(() => {});
   const router = useRouter();
   const searchParams = useSearchParams();
   const isAddAccountMode = useMemo(() => searchParams.get("addAccount") === "1", [searchParams]);
@@ -133,23 +167,53 @@ export default function LoginContent() {
     }
   };
 
-  const onGoogle = async () => {
+  const handleGoogleCredential = async (response: { credential?: string }) => {
     setError(null);
+    if (!response.credential) {
+      setError("Google no devolvió una credencial válida.");
+      return;
+    }
     setLoading(true);
-    const { supabase } = await import("@/lib/supabase");
-    const callbackParams = new URLSearchParams();
-    if (isAddAccountMode) callbackParams.set("addAccount", "1");
-    if (continueMode) callbackParams.set("continue", continueMode);
-    const redirectTo = `${window.location.origin}/auth/callback${callbackParams.size ? `?${callbackParams}` : ""}`;
-    const { error: oauthError } = await supabase.auth.signInWithOAuth({
-      provider: "google",
-      options: { redirectTo, queryParams: { prompt: "select_account" } },
-    });
-    if (oauthError) {
-      setError(oauthError.message);
+    try {
+      const { supabase } = await import("@/lib/supabase");
+      const { data, error: signInError } = await supabase.auth.signInWithIdToken({
+        provider: "google",
+        token: response.credential,
+      });
+      if (signInError || !data.user || !data.session) throw signInError ?? new Error("No se pudo iniciar sesión con Google.");
+      localStorage.removeItem("clouva.switch_target");
+      await redirectByRole(data.user.id, data.session.access_token, isAddAccountMode);
+    } catch (googleError) {
+      setError(googleError instanceof Error ? googleError.message : "No se pudo iniciar sesión con Google.");
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    handleGoogleCredentialRef.current = handleGoogleCredential;
+  });
+
+  useEffect(() => {
+    if (!googleScriptReady || !GOOGLE_CLIENT_ID || checkingSession) return;
+    const container = googleButtonRef.current;
+    if (!container || !window.google) return;
+
+    window.google.accounts.id.initialize({
+      client_id: GOOGLE_CLIENT_ID,
+      callback: (response) => handleGoogleCredentialRef.current(response),
+    });
+
+    window.google.accounts.id.renderButton(container, {
+      type: "standard",
+      theme: "filled_black",
+      size: "large",
+      shape: "pill",
+      text: "continue_with",
+      logo_alignment: "left",
+      locale: "es",
+      width: Math.min(400, container.offsetWidth || 400),
+    });
+  }, [googleScriptReady, checkingSession]);
 
   const onInstagram = async () => {
     setError(null);
@@ -170,6 +234,13 @@ export default function LoginContent() {
 
   return (
     <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#05040a] px-4 py-10 text-white">
+      {GOOGLE_CLIENT_ID ? (
+        <Script
+          src="https://accounts.google.com/gsi/client"
+          strategy="afterInteractive"
+          onLoad={() => setGoogleScriptReady(true)}
+        />
+      ) : null}
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_5%,rgba(124,58,237,.32),transparent_38%),radial-gradient(circle_at_15%_80%,rgba(76,29,149,.22),transparent_35%)]" />
       <div className="absolute inset-0 opacity-30 [background-image:linear-gradient(rgba(255,255,255,.025)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,.025)_1px,transparent_1px)] [background-size:44px_44px]" />
 
@@ -188,7 +259,7 @@ export default function LoginContent() {
           </div>
         ) : (
           <div className="mt-8 space-y-3">
-            <button disabled={loading} type="button" onClick={() => void onGoogle()} className="w-full rounded-xl bg-white px-4 py-3.5 font-semibold text-black transition hover:bg-white/90 disabled:opacity-60">Continuar con Google</button>
+            <div ref={googleButtonRef} className="flex min-h-[44px] w-full justify-center overflow-hidden rounded-xl [&>div]:!w-full" />
             <button disabled={loading} type="button" onClick={() => void onInstagram()} className="w-full rounded-xl bg-gradient-to-r from-fuchsia-600 via-violet-600 to-indigo-600 px-4 py-3.5 font-semibold text-white transition hover:brightness-110 disabled:opacity-60">Crear mi perfil con Instagram</button>
             <p className="text-center text-xs leading-5 text-white/40">Disponible para cuentas Creator y Business.</p>
 
