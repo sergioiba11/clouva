@@ -11,4 +11,8 @@ export const VISUAL_ASSETS = {
     "https://storage.googleapis.com/clouva-generated-media/visual-system/backgrounds/players/players-directory-hero-01/d9033c38-4f23-4493-98e6-601c8512531a.jpg",
   "player-public-profile-cover-01":
     "https://storage.googleapis.com/clouva-generated-media/visual-system/backgrounds/player-profile/player-public-profile-cover-01/dd1a2ccb-121e-43e7-8cd4-43ef23182158.jpg",
+  "studio-directory-hero-01":
+    "https://storage.googleapis.com/clouva-generated-media/visual-system/backgrounds/studios/studio-directory-hero-01/f70d81c2-0d9e-45cb-bf17-0390b87b9107.jpg",
+  "studio-public-profile-cover-01":
+    "https://storage.googleapis.com/clouva-generated-media/visual-system/backgrounds/studio-profile/studio-public-profile-cover-01/e457fe38-6cf7-4e09-945b-bf73e897334f.jpg",
 } as const;

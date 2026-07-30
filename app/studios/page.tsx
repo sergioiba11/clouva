@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { PublicShell } from "@/components/public/PublicShell";
 import { listPublishedStudios } from "@/lib/server/public-identity-data";
+import { VISUAL_ASSETS } from "@/lib/visual-assets";
 
 export const dynamic = "force-dynamic";
 
@@ -8,8 +9,14 @@ export default async function StudiosDirectoryPage() {
   const studios = await listPublishedStudios();
 
   return (
-    <PublicShell brand="ESTUDIOS" navLinks={[{ label: "La Matrix", href: "/matrix" }, { label: "Players", href: "/players" }]}> 
-      <section className="relative overflow-hidden border-b border-white/10 px-4 py-16 sm:px-6">
+    <PublicShell brand="ESTUDIOS" navLinks={[{ label: "La Matrix", href: "/matrix" }, { label: "Players", href: "/players" }]}>
+      <section className="relative overflow-hidden border-b border-white/10 px-4 py-16 sm:px-6" data-visual-asset="studio-directory-hero-01">
+        <div
+          className="absolute inset-0 bg-cover bg-center opacity-70"
+          style={{ backgroundImage: `url(${VISUAL_ASSETS["studio-directory-hero-01"]})` }}
+          aria-hidden="true"
+        />
+        <div className="absolute inset-0 bg-gradient-to-t from-[#07060b] via-[#07060b]/55 to-[#07060b]/25" aria-hidden="true" />
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_70%_10%,rgba(124,58,237,.22),transparent_42%)]" />
         <div className="relative mx-auto max-w-6xl">
           <p className="text-xs font-semibold uppercase tracking-[0.3em] text-violet-300/70">La Matrix</p>
