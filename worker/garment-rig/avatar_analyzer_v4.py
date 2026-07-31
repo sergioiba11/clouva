@@ -30,6 +30,7 @@ from anatomy_segmenter_v3 import segment_anatomy_v3
 from analyzer_contract import build_detection_coverage, merge_phase_detection_coverage
 from camera_projection_self_test_v4 import filter_invalid_views, validate_manifest
 from diagnostic_builder import build_diagnostic_glb, build_surface_glb
+from diagnostic_redaction import redact_diagnostic_text
 from multiview_renderer_v4 import cleanup_render_proxies, render_multiview_v4
 from preflight_v4 import run_preflight
 
@@ -50,6 +51,18 @@ def _args():
 
 def _write(path: Path, payload):
     path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def _safe_traceback() -> str:
+    return redact_diagnostic_text(
+        traceback.format_exc(),
+        (
+            os.environ.get("CLOUVA_MEDIAPIPE_SERVICE_TOKEN"),
+            os.environ.get("SUPABASE_SERVICE_ROLE_KEY"),
+            os.environ.get("BLENDER_WORKER_TOKEN"),
+            os.environ.get("GARMENT_RIG_WORKER_TOKEN"),
+        ),
+    )
 
 
 def _body_vectors(analysis: dict):
@@ -176,7 +189,7 @@ def _refresh_optional_modules(analysis: dict, output_dir: Path, include: str | N
         analysis["regionBvh"] = final_bvh.report()
         return calibration, {"status": "completed", "manifest": manifest, "detector": detector}
     except Exception:
-        failure = traceback.format_exc()
+        failure = _safe_traceback()
         analysis.setdefault("warnings", []).append({
             "code": "V4_OPTIONAL_REANALYSIS_FAILED",
             "failureStage": "adaptive_multiview_optional_modules",
@@ -391,7 +404,7 @@ def main():
         _write(output_dir / "diagnostic_report.json", {
             "version": VERSION,
             "status": "technical_failure",
-            "error": traceback.format_exc(),
+            "error": _safe_traceback(),
         })
         raise
 
