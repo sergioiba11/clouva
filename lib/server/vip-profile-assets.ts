@@ -32,7 +32,7 @@ function buildCoverPrompt(copy: ProfileCopy, professionalCategories: string[]): 
 
 export async function generateCoverAsset(args: {
   admin: SupabaseClient;
-  playerId: string;
+  entityPathPrefix: string;
   copy: ProfileCopy;
   professionalCategories: string[];
 }): Promise<GeneratedAsset> {
@@ -78,7 +78,7 @@ export async function generateCoverAsset(args: {
   const url = await uploadGeneratedMedia({
     bytes: generated.bytes,
     mimeType: generated.mimeType,
-    pathPrefix: `public-identity/players/${args.playerId}/vip-cover`,
+    pathPrefix: `public-identity/${args.entityPathPrefix}/vip-cover`,
   });
 
   return { kind: "cover", url, costUsd: actualCostUsd };
@@ -105,7 +105,7 @@ function buildLogoPrompt(copy: ProfileCopy, professionalCategories: string[]): s
 
 export async function generateLogoAsset(args: {
   admin: SupabaseClient;
-  playerId: string;
+  entityPathPrefix: string;
   copy: ProfileCopy;
   professionalCategories: string[];
 }): Promise<GeneratedAsset> {
@@ -146,7 +146,7 @@ export async function generateLogoAsset(args: {
   const url = await uploadGeneratedMedia({
     bytes: generated.bytes,
     mimeType: generated.mimeType,
-    pathPrefix: `public-identity/players/${args.playerId}/vip-logo`,
+    pathPrefix: `public-identity/${args.entityPathPrefix}/vip-logo`,
   });
 
   return { kind: "logo", url, costUsd: actualCostUsd };

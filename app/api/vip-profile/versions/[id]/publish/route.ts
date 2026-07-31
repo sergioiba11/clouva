@@ -18,7 +18,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     const { data: version, error: versionError } = await admin
       .from("player_profile_versions")
-      .select("id,player_id,status")
+      .select("id,player_id,studio_id,status")
       .eq("id", id)
       .maybeSingle();
     if (versionError) throw new Error(versionError.message);
@@ -27,7 +27,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       return NextResponse.json({ error: "No se puede publicar una versión archivada." }, { status: 409 });
     }
 
-    await requireActiveVipEntitlement({ admin, userId: user.id, playerId: version.player_id as string });
+    await requireActiveVipEntitlement({
+      admin,
+      userId: user.id,
+      playerId: (version.player_id as string | null) ?? undefined,
+      studioId: (version.studio_id as string | null) ?? undefined,
+    });
 
     const { data: published, error: publishError } = await admin.rpc("publish_player_profile_version", {
       p_version_id: id,

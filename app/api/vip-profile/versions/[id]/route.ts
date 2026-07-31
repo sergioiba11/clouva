@@ -34,7 +34,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
     const { data: version, error: versionError } = await admin
       .from("player_profile_versions")
-      .select("id,player_id,status,copy_config")
+      .select("id,player_id,studio_id,status,copy_config")
       .eq("id", id)
       .maybeSingle();
     if (versionError) throw new Error(versionError.message);
@@ -43,7 +43,12 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       return NextResponse.json({ error: "Solo se puede editar una versión en borrador." }, { status: 409 });
     }
 
-    await requireActiveVipEntitlement({ admin, userId: user.id, playerId: version.player_id as string });
+    await requireActiveVipEntitlement({
+      admin,
+      userId: user.id,
+      playerId: (version.player_id as string | null) ?? undefined,
+      studioId: (version.studio_id as string | null) ?? undefined,
+    });
 
     const body = await request.json().catch(() => ({}));
     const patch = sanitizeCopyPatch(body);

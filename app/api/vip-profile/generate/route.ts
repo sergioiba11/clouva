@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
 import { requireActiveVipEntitlement } from "@/lib/server/vip-profile-permissions";
-import { buildIdentityBrief } from "@/lib/server/vip-profile-brief";
+import { buildIdentityBrief, buildStudioIdentityBrief } from "@/lib/server/vip-profile-brief";
 import { enqueueVipProfileJobStep } from "@/lib/server/cloud-tasks";
 
 export const runtime = "nodejs";
@@ -12,19 +12,22 @@ const ACTIVE_STATUSES = [
   "generating_assets", "assembling_profile", "needs_user_input",
 ];
 
+// Works for either subject -- playerId XOR studioId in the body, mirrors
+// requireActiveVipEntitlement's own shape.
 export async function POST(request: NextRequest) {
   try {
     const { user } = await requireUser(request);
-    const body = (await request.json().catch(() => ({}))) as { playerId?: string };
-    if (!body.playerId) return NextResponse.json({ error: "Falta playerId." }, { status: 400 });
+    const body = (await request.json().catch(() => ({}))) as { playerId?: string; studioId?: string };
+    if (!body.playerId && !body.studioId) return NextResponse.json({ error: "Falta playerId o studioId." }, { status: 400 });
+    if (body.playerId && body.studioId) return NextResponse.json({ error: "Elegí playerId o studioId, no ambos." }, { status: 400 });
 
     const admin = createAdminSupabase();
-    const { entitlement } = await requireActiveVipEntitlement({ admin, userId: user.id, playerId: body.playerId });
+    const { entitlement } = await requireActiveVipEntitlement({ admin, userId: user.id, playerId: body.playerId, studioId: body.studioId });
 
     const { data: existingJob, error: existingJobError } = await admin
       .from("vip_profile_generation_jobs")
       .select("id,status")
-      .eq("player_id", body.playerId)
+      .eq(body.playerId ? "player_id" : "studio_id", body.playerId || body.studioId)
       .in("status", ACTIVE_STATUSES)
       .maybeSingle();
     if (existingJobError) throw new Error(existingJobError.message);
@@ -32,13 +35,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ jobId: existingJob.id, status: existingJob.status, reused: true });
     }
 
-    const { brief, sourceSnapshot } = await buildIdentityBrief(admin, body.playerId);
+    const { brief, sourceSnapshot } = body.playerId
+      ? await buildIdentityBrief(admin, body.playerId)
+      : await buildStudioIdentityBrief(admin, body.studioId as string);
 
     const { data: job, error: jobError } = await admin
       .from("vip_profile_generation_jobs")
       .insert({
         user_id: user.id,
-        player_id: body.playerId,
+        player_id: body.playerId || null,
+        studio_id: body.studioId || null,
         entitlement_id: entitlement?.id ?? null,
         status: "queued",
         identity_brief: brief,

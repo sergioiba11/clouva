@@ -40,14 +40,16 @@ const FREE_BENEFITS: Array<[string, boolean]> = [
   ["URL compartible", true],
   ["Hasta 5 links", true],
   ["Vinculación con Estudios", true],
-  ["Badge VIP", false],
-  ["CLOUVA AI Profile", false],
+  ["Logo generado con IA", false],
+  ["Portada y paleta de marca con IA", false],
 ];
 
 const VIP_BENEFITS = [
   "Badge VIP en tu perfil",
   "Links ilimitados",
-  "CLOUVA AI Profile: portada generada con Gemini",
+  "Logo / símbolo generado con Gemini",
+  "Portada profesional generada con Gemini",
+  "Paleta de colores de marca sugerida por IA",
   "Biografía y copy optimizados con IA",
   "Administración de Estudios autorizados",
   "Soporte prioritario",

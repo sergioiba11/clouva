@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/auth-provider";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
+import { StudioAiProfilePanel } from "@/components/studio/StudioAiProfilePanel";
 
 type DashboardData = {
   permission: { role: string; vip: boolean };
@@ -16,8 +17,8 @@ type DashboardData = {
   events: Array<Record<string, unknown>>;
 };
 
-type Section = "Resumen" | "Perfil público" | "Players" | "Servicios" | "Solicitudes" | "Roles" | "Proyectos" | "Música" | "Eventos" | "Configuración";
-const SECTIONS: Section[] = ["Resumen", "Perfil público", "Players", "Servicios", "Solicitudes", "Roles", "Proyectos", "Música", "Eventos", "Configuración"];
+type Section = "Resumen" | "Perfil público" | "Identidad IA" | "Players" | "Servicios" | "Solicitudes" | "Roles" | "Proyectos" | "Música" | "Eventos" | "Configuración";
+const SECTIONS: Section[] = ["Resumen", "Perfil público", "Identidad IA", "Players", "Servicios", "Solicitudes", "Roles", "Proyectos", "Música", "Eventos", "Configuración"];
 
 type ServiceRow = {
   id: string;
@@ -207,6 +208,8 @@ export default function StudioDashboardPage({ params }: { params: Promise<{ stud
           </div> : null}
 
           {section === "Perfil público" ? <Panel title="Editar presentación pública"><div className="space-y-4"><Field label="Nombre" value={String(profileDraft.name || "")} onChange={(value) => setProfileDraft((current) => ({ ...current, name: value }))} /><Field label="Frase institucional" value={String(profileDraft.tagline || "")} onChange={(value) => setProfileDraft((current) => ({ ...current, tagline: value }))} /><TextArea label="Presentación" value={String(profileDraft.description || "")} onChange={(value) => setProfileDraft((current) => ({ ...current, description: value }))} rows={8} /><div className="grid gap-4 sm:grid-cols-2"><Field label="Logo URL" value={String(profileDraft.logo_url || "")} onChange={(value) => setProfileDraft((current) => ({ ...current, logo_url: value }))} /><Field label="Portada URL" value={String(profileDraft.cover_url || "")} onChange={(value) => setProfileDraft((current) => ({ ...current, cover_url: value }))} /></div><div className="grid gap-4 sm:grid-cols-2"><Field label="Ciudad" value={String(profileDraft.city || "")} onChange={(value) => setProfileDraft((current) => ({ ...current, city: value }))} /><Field label="País" value={String(profileDraft.country || "")} onChange={(value) => setProfileDraft((current) => ({ ...current, country: value }))} /></div><button disabled={workingId === "profile"} onClick={() => void saveStudio()} className="rounded-xl bg-violet-600 px-5 py-3 font-semibold">{workingId === "profile" ? "Guardando..." : "Guardar cambios"}</button></div></Panel> : null}
+
+          {section === "Identidad IA" ? <Panel title="Identidad del Estudio"><StudioAiProfilePanel studioId={studioId} /></Panel> : null}
 
           {section === "Players" ? <Panel title="Players vinculados"><div className="grid gap-3 sm:grid-cols-2">{data.players.map((entry) => { const player = entry.player as Record<string, unknown> | null; return player ? <Link key={String(entry.id)} href={`/${String(player.slug)}`} className="flex items-center gap-3 rounded-2xl border border-white/10 p-4 transition hover:border-violet-400/50">{player.profile_image_url ? <img src={String(player.profile_image_url)} alt="" className="h-12 w-12 rounded-xl object-cover" /> : <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-violet-500/15">{String(player.display_name).charAt(0)}</div>}<div><p className="font-semibold">{String(player.display_name)}</p><p className="text-xs text-white/40">{String(entry.role || player.primary_role || "Player")}</p></div></Link> : null; })}{data.players.length === 0 ? <p className="text-white/45">Todavía no hay Players vinculados.</p> : null}</div></Panel> : null}
 

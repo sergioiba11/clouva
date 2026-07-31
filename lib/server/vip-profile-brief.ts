@@ -123,3 +123,110 @@ export async function buildIdentityBrief(
 
   return { brief, sourceSnapshot: player as Record<string, unknown> };
 }
+
+// Extracted from what buildPrompt used to build inline in vip-profile-gemini.ts
+// -- kept here, next to the brief, now that generateProfileCopy takes a
+// generic facts bag shared with the Studio path.
+export function playerBriefToFacts(brief: IdentityBrief): Record<string, unknown> {
+  return {
+    display_name: brief.display_name,
+    username: brief.username,
+    professional_categories: brief.professional_categories,
+    primary_role: brief.primary_role,
+    existing_short_bio: brief.short_bio,
+    origin: brief.origin,
+    location: brief.location,
+    genres: brief.genres,
+    disciplines: brief.disciplines,
+    studios: brief.studios.map((s) => ({ name: s.name, role: s.role })),
+    has_spotify: Boolean(brief.spotify_url),
+    has_youtube: Boolean(brief.youtube_url),
+    has_gallery: brief.selected_gallery.length > 0,
+  };
+}
+
+export type StudioIdentityBrief = {
+  studio_id: string;
+  name: string;
+  description: string | null;
+  city: string | null;
+  country: string | null;
+  website_url: string | null;
+  founded_year: number | null;
+  members: Array<{ name: string; role: string | null }>;
+  services: Array<{ name: string; category: string | null }>;
+  social_links: unknown[];
+  confirmed_facts: string[];
+  missing_information: string[];
+};
+
+export async function buildStudioIdentityBrief(
+  admin: SupabaseClient,
+  studioId: string,
+): Promise<{ brief: StudioIdentityBrief; sourceSnapshot: Record<string, unknown> }> {
+  const [{ data: studio, error: studioError }, { data: memberLinks, error: memberError }, { data: services, error: servicesError }] = await Promise.all([
+    admin.from("studios").select("*").eq("id", studioId).single(),
+    admin.from("studio_members").select("role,status,profiles(full_name)").eq("studio_id", studioId).eq("status", "active"),
+    admin.from("studio_services").select("name,category").eq("studio_id", studioId).eq("is_active", true),
+  ]);
+
+  if (studioError) throw new Error(studioError.message);
+  if (!studio) throw new Error("El Estudio no existe.");
+  if (memberError) throw new Error(memberError.message);
+  if (servicesError) throw new Error(servicesError.message);
+
+  const members = (memberLinks ?? [])
+    .map((link) => {
+      const profile = link.profiles as unknown as { full_name: string | null } | null;
+      if (!profile?.full_name) return null;
+      return { name: profile.full_name, role: link.role as string | null };
+    })
+    .filter((m): m is { name: string; role: string | null } => Boolean(m));
+
+  const confirmedFacts: string[] = [];
+  const missingInformation: string[] = [];
+  const track = (label: string, value: unknown) => {
+    if (pushIfPresent(confirmedFacts, label, value)) return;
+    confirmedFacts.pop();
+    missingInformation.push(label);
+  };
+
+  track("nombre del Estudio", studio.name);
+  track("descripción", studio.description);
+  track("ciudad", studio.city);
+  track("país", studio.country);
+  track("sitio web", studio.website_url);
+  track("integrantes", members.length > 0 ? members : null);
+  track("servicios ofrecidos", (services ?? []).length > 0 ? services : null);
+  track("links sociales", studio.social_links);
+
+  const brief: StudioIdentityBrief = {
+    studio_id: studio.id as string,
+    name: studio.name as string,
+    description: (studio.description as string | null) ?? null,
+    city: (studio.city as string | null) ?? null,
+    country: (studio.country as string | null) ?? null,
+    website_url: (studio.website_url as string | null) ?? null,
+    founded_year: (studio.founded_year as number | null) ?? null,
+    members,
+    services: (services ?? []) as Array<{ name: string; category: string | null }>,
+    social_links: (studio.social_links as unknown[] | null) ?? [],
+    confirmed_facts: confirmedFacts,
+    missing_information: missingInformation,
+  };
+
+  return { brief, sourceSnapshot: studio as Record<string, unknown> };
+}
+
+export function studioBriefToFacts(brief: StudioIdentityBrief): Record<string, unknown> {
+  return {
+    name: brief.name,
+    existing_description: brief.description,
+    city: brief.city,
+    country: brief.country,
+    founded_year: brief.founded_year,
+    members: brief.members,
+    services: brief.services,
+    has_website: Boolean(brief.website_url),
+  };
+}
