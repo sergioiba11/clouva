@@ -13,6 +13,7 @@ type ProfileCopy = {
   share_description: string | null;
   visual_energy: string | null;
   visual_tone: string | null;
+  palette: string[] | null;
 };
 
 type GeneratedAsset = { kind: string; url: string };
@@ -173,7 +174,10 @@ export function VipAiProfilePanel({ playerId, vipActive }: { playerId: string; v
 
   const cover = draftVersion?.asset_references.find((a) => a.kind === "cover")
     ?? job?.generated_assets?.find((a) => a.kind === "cover");
+  const logo = draftVersion?.asset_references.find((a) => a.kind === "logo")
+    ?? job?.generated_assets?.find((a) => a.kind === "logo");
   const copy = draftVersion?.copy_config ?? job?.generated_copy;
+  const palette = copy?.palette ?? [];
 
   return (
     <div className="space-y-5">
@@ -204,6 +208,19 @@ export function VipAiProfilePanel({ playerId, vipActive }: { playerId: string; v
         <div className="space-y-4 rounded-2xl border border-white/10 bg-black/20 p-5">
           <p className="text-xs uppercase tracking-[0.2em] text-white/40">Revisá y editá tu versión profesional (v{draftVersion.version_number}, borrador)</p>
           {cover ? <img src={cover.url} alt="" className="h-40 w-full rounded-xl object-cover" /> : null}
+          {logo || palette.length > 0 ? (
+            <div className="flex items-center gap-4 rounded-xl border border-white/10 bg-black/20 p-4">
+              {logo ? <img src={logo.url} alt="" className="h-16 w-16 shrink-0 rounded-lg bg-black/30 object-contain" /> : null}
+              {palette.length > 0 ? (
+                <div>
+                  <p className="mb-1.5 text-xs uppercase tracking-[0.16em] text-white/40">Paleta sugerida</p>
+                  <div className="flex gap-2">
+                    {palette.map((hex) => <span key={hex} title={hex} className="h-7 w-7 rounded-full border border-white/20" style={{ backgroundColor: hex }} />)}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
           <div className="grid gap-3 sm:grid-cols-2">
             {EDITABLE_FIELDS.map(({ key, label, multiline }) => {
               const value = String((draftEdits[key] ?? copy[key]) ?? "");

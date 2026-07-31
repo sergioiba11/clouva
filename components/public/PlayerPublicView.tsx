@@ -126,6 +126,9 @@ export function PlayerPublicView({
                     <CheckCircle2 size={17} />
                   </span>
                 ) : null}
+                {player.logo_url ? (
+                  <img src={player.logo_url} alt="" className="absolute bottom-1 left-1 h-8 w-8 rounded-full border-2 border-[#07060b] bg-black/60 object-contain p-1" />
+                ) : null}
               </div>
 
               <div className="min-w-0">

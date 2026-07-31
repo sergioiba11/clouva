@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 const EDITABLE_FIELDS = new Set([
   "display_name", "username", "short_bio", "long_bio", "tagline", "secondary_tagline",
   "origin", "location", "genres", "disciplines", "professional_categories", "profile_image_url",
-  "hero_image_url", "cover_url", "spotify_profile_url", "youtube_channel_url", "contact_email",
+  "hero_image_url", "cover_url", "logo_url", "spotify_profile_url", "youtube_channel_url", "contact_email",
   "booking_email", "whatsapp_url", "social_links", "theme_key", "accent_color", "font_style",
   "privacy_status", "seo_title", "seo_description", "share_title", "share_description", "og_image_url",
 ]);
