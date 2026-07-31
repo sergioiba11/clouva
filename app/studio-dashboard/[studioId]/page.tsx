@@ -16,8 +16,20 @@ type DashboardData = {
   events: Array<Record<string, unknown>>;
 };
 
-type Section = "Resumen" | "Perfil público" | "Players" | "Solicitudes" | "Roles" | "Proyectos" | "Música" | "Eventos" | "Configuración";
-const SECTIONS: Section[] = ["Resumen", "Perfil público", "Players", "Solicitudes", "Roles", "Proyectos", "Música", "Eventos", "Configuración"];
+type Section = "Resumen" | "Perfil público" | "Players" | "Servicios" | "Solicitudes" | "Roles" | "Proyectos" | "Música" | "Eventos" | "Configuración";
+const SECTIONS: Section[] = ["Resumen", "Perfil público", "Players", "Servicios", "Solicitudes", "Roles", "Proyectos", "Música", "Eventos", "Configuración"];
+
+type ServiceRow = {
+  id: string;
+  name: string;
+  description: string | null;
+  category: string | null;
+  price_type: "fixed" | "consultar";
+  price: number | null;
+  currency: string;
+  cta_type: "contratar" | "reservar" | "presupuesto";
+  is_active: boolean;
+};
 
 export default function StudioDashboardPage({ params }: { params: Promise<{ studioId: string }> }) {
   const router = useRouter();
@@ -30,6 +42,8 @@ export default function StudioDashboardPage({ params }: { params: Promise<{ stud
   const [workingId, setWorkingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [services, setServices] = useState<ServiceRow[]>([]);
+  const [newService, setNewService] = useState({ name: "", description: "", category: "", priceType: "fixed" as "fixed" | "consultar", price: "", ctaType: "contratar" as ServiceRow["cta_type"] });
 
   useEffect(() => { void params.then(({ studioId: id }) => setStudioId(id)); }, [params]);
   useEffect(() => { if (!authLoading && !user) router.replace("/login"); }, [authLoading, router, user]);
@@ -39,10 +53,15 @@ export default function StudioDashboardPage({ params }: { params: Promise<{ stud
     setLoading(true);
     setError(null);
     try {
-      const response = await authenticatedFetch(`/api/studios/${encodeURIComponent(studioId)}/dashboard`);
-      const payload = await readApiJson<DashboardData>(response);
+      const [dashboardResponse, servicesResponse] = await Promise.all([
+        authenticatedFetch(`/api/studios/${encodeURIComponent(studioId)}/dashboard`),
+        authenticatedFetch(`/api/studios/${encodeURIComponent(studioId)}/services`),
+      ]);
+      const payload = await readApiJson<DashboardData>(dashboardResponse);
+      const servicesPayload = await readApiJson<{ services: ServiceRow[] }>(servicesResponse);
       setData(payload);
       setProfileDraft({ ...payload.studio });
+      setServices(servicesPayload.services);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "No se pudo abrir el panel.");
     } finally {
@@ -76,6 +95,67 @@ export default function StudioDashboardPage({ params }: { params: Promise<{ stud
       setMessage("Perfil del Estudio guardado.");
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "No se pudo guardar.");
+    } finally {
+      setWorkingId(null);
+    }
+  };
+
+  const addService = async () => {
+    if (!newService.name.trim()) {
+      setError("El nombre del servicio es obligatorio.");
+      return;
+    }
+    setWorkingId("new-service");
+    setError(null);
+    try {
+      const response = await authenticatedFetch(`/api/studios/${encodeURIComponent(studioId)}/services`, {
+        method: "POST",
+        body: JSON.stringify({
+          name: newService.name,
+          description: newService.description || null,
+          category: newService.category || null,
+          priceType: newService.priceType,
+          price: newService.priceType === "fixed" ? Number(newService.price) : null,
+          ctaType: newService.ctaType,
+        }),
+      });
+      const payload = await readApiJson<{ service: ServiceRow }>(response);
+      setServices((current) => [...current, payload.service]);
+      setNewService({ name: "", description: "", category: "", priceType: "fixed", price: "", ctaType: "contratar" });
+      setMessage("Servicio agregado.");
+    } catch (addError) {
+      setError(addError instanceof Error ? addError.message : "No se pudo agregar el servicio.");
+    } finally {
+      setWorkingId(null);
+    }
+  };
+
+  const toggleService = async (service: ServiceRow) => {
+    setWorkingId(service.id);
+    setError(null);
+    try {
+      const response = await authenticatedFetch(`/api/studios/${encodeURIComponent(studioId)}/services/${service.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ isActive: !service.is_active }),
+      });
+      const payload = await readApiJson<{ service: ServiceRow }>(response);
+      setServices((current) => current.map((item) => item.id === service.id ? payload.service : item));
+    } catch (toggleError) {
+      setError(toggleError instanceof Error ? toggleError.message : "No se pudo actualizar el servicio.");
+    } finally {
+      setWorkingId(null);
+    }
+  };
+
+  const deleteService = async (serviceId: string) => {
+    if (!window.confirm("¿Borrar este servicio?")) return;
+    setWorkingId(serviceId);
+    setError(null);
+    try {
+      await authenticatedFetch(`/api/studios/${encodeURIComponent(studioId)}/services/${serviceId}`, { method: "DELETE" });
+      setServices((current) => current.filter((item) => item.id !== serviceId));
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "No se pudo borrar el servicio.");
     } finally {
       setWorkingId(null);
     }
@@ -129,6 +209,45 @@ export default function StudioDashboardPage({ params }: { params: Promise<{ stud
           {section === "Perfil público" ? <Panel title="Editar presentación pública"><div className="space-y-4"><Field label="Nombre" value={String(profileDraft.name || "")} onChange={(value) => setProfileDraft((current) => ({ ...current, name: value }))} /><Field label="Frase institucional" value={String(profileDraft.tagline || "")} onChange={(value) => setProfileDraft((current) => ({ ...current, tagline: value }))} /><TextArea label="Presentación" value={String(profileDraft.description || "")} onChange={(value) => setProfileDraft((current) => ({ ...current, description: value }))} rows={8} /><div className="grid gap-4 sm:grid-cols-2"><Field label="Logo URL" value={String(profileDraft.logo_url || "")} onChange={(value) => setProfileDraft((current) => ({ ...current, logo_url: value }))} /><Field label="Portada URL" value={String(profileDraft.cover_url || "")} onChange={(value) => setProfileDraft((current) => ({ ...current, cover_url: value }))} /></div><div className="grid gap-4 sm:grid-cols-2"><Field label="Ciudad" value={String(profileDraft.city || "")} onChange={(value) => setProfileDraft((current) => ({ ...current, city: value }))} /><Field label="País" value={String(profileDraft.country || "")} onChange={(value) => setProfileDraft((current) => ({ ...current, country: value }))} /></div><button disabled={workingId === "profile"} onClick={() => void saveStudio()} className="rounded-xl bg-violet-600 px-5 py-3 font-semibold">{workingId === "profile" ? "Guardando..." : "Guardar cambios"}</button></div></Panel> : null}
 
           {section === "Players" ? <Panel title="Players vinculados"><div className="grid gap-3 sm:grid-cols-2">{data.players.map((entry) => { const player = entry.player as Record<string, unknown> | null; return player ? <Link key={String(entry.id)} href={`/${String(player.slug)}`} className="flex items-center gap-3 rounded-2xl border border-white/10 p-4 transition hover:border-violet-400/50">{player.profile_image_url ? <img src={String(player.profile_image_url)} alt="" className="h-12 w-12 rounded-xl object-cover" /> : <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-violet-500/15">{String(player.display_name).charAt(0)}</div>}<div><p className="font-semibold">{String(player.display_name)}</p><p className="text-xs text-white/40">{String(entry.role || player.primary_role || "Player")}</p></div></Link> : null; })}{data.players.length === 0 ? <p className="text-white/45">Todavía no hay Players vinculados.</p> : null}</div></Panel> : null}
+
+          {section === "Servicios" ? <Panel title="Catálogo de servicios">
+            <div className="space-y-3">
+              {services.map((service) => (
+                <div key={service.id} className="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-black/20 p-4">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="font-semibold">{service.name}</p>
+                      {!service.is_active ? <span className="rounded-full bg-white/8 px-2 py-0.5 text-[10px] uppercase text-white/40">Inactivo</span> : null}
+                    </div>
+                    <p className="mt-1 text-sm text-white/45">{service.category || "Sin categoría"} · {service.price_type === "consultar" ? "A consultar" : new Intl.NumberFormat("es-AR", { style: "currency", currency: service.currency, maximumFractionDigits: 0 }).format(Number(service.price))}</p>
+                  </div>
+                  <div className="flex shrink-0 gap-2">
+                    <button disabled={workingId === service.id} onClick={() => void toggleService(service)} className="rounded-xl border border-white/15 px-3 py-2 text-xs">{service.is_active ? "Desactivar" : "Activar"}</button>
+                    <button disabled={workingId === service.id} onClick={() => void deleteService(service.id)} className="rounded-xl border border-red-400/20 px-3 py-2 text-xs text-red-300">Borrar</button>
+                  </div>
+                </div>
+              ))}
+              {services.length === 0 ? <p className="text-white/45">Todavía no cargaste servicios.</p> : null}
+            </div>
+
+            <div className="mt-6 space-y-3 rounded-2xl border border-dashed border-white/15 p-5">
+              <p className="text-xs uppercase tracking-[0.18em] text-white/40">Agregar servicio</p>
+              <Field label="Nombre" value={newService.name} onChange={(value) => setNewService((current) => ({ ...current, name: value }))} />
+              <Field label="Categoría (ej. Grabación, Mezcla, Diseño)" value={newService.category} onChange={(value) => setNewService((current) => ({ ...current, category: value }))} />
+              <TextArea label="Descripción" value={newService.description} onChange={(value) => setNewService((current) => ({ ...current, description: value }))} rows={3} />
+              <div className="grid gap-4 sm:grid-cols-2">
+                <label className="block">
+                  <span className="mb-2 block text-xs uppercase tracking-[0.16em] text-white/40">Precio</span>
+                  <select value={newService.priceType} onChange={(event) => setNewService((current) => ({ ...current, priceType: event.target.value as "fixed" | "consultar" }))} className="w-full rounded-xl border border-white/10 bg-black/30 px-4 py-3">
+                    <option value="fixed">Precio fijo</option>
+                    <option value="consultar">A consultar</option>
+                  </select>
+                </label>
+                {newService.priceType === "fixed" ? <Field label="Monto (ARS)" value={newService.price} onChange={(value) => setNewService((current) => ({ ...current, price: value.replace(/[^0-9.]/g, "") }))} /> : null}
+              </div>
+              <button disabled={workingId === "new-service"} onClick={() => void addService()} className="rounded-xl bg-violet-600 px-5 py-3 font-semibold">{workingId === "new-service" ? "Agregando..." : "Agregar servicio"}</button>
+            </div>
+          </Panel> : null}
 
           {section === "Solicitudes" ? <Panel title="Solicitudes de ingreso"><div className="space-y-3">{data.applications.map((application) => <ApplicationRow key={String(application.id)} application={application} working={workingId === application.id} onReview={review} />)}{data.applications.length === 0 ? <p className="text-white/45">Todavía no hay solicitudes.</p> : null}</div></Panel> : null}
 

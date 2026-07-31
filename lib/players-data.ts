@@ -107,6 +107,25 @@ export function parsePlayerSocialLinks(value: unknown): SocialLink[] {
     .sort((a, b) => (a.display_order || 0) - (b.display_order || 0));
 }
 
+export type StudioService = {
+  id: string;
+  studio_id: string;
+  name: string;
+  description: string | null;
+  category: string | null;
+  price_type: "fixed" | "consultar";
+  price: number | null;
+  currency: string;
+  duration_minutes: number | null;
+  cta_type: "contratar" | "reservar" | "presupuesto";
+  image_url: string | null;
+  is_active: boolean;
+  display_order: number;
+};
+
+export const studioServicesSelect =
+  "id,studio_id,name,description,category,price_type,price,currency,duration_minutes,cta_type,image_url,is_active,display_order";
+
 export const playerPublicSelect =
   "id,owner_user_id,slug,display_name,username,primary_role,short_bio,long_bio,tagline,secondary_tagline,origin,location,genres,disciplines,professional_categories,social_links,profile_image_url,hero_image_url,cover_url,spotify_profile_url,youtube_channel_url,contact_email,booking_email,whatsapp_url,theme_key,accent_color,font_style,privacy_status,claim_status,is_verified,is_published,publication_status,seo_title,seo_description,share_title,share_description,og_image_url";
 

@@ -3,7 +3,8 @@ import { PublicMediaGallery } from "./PublicMediaGallery";
 import { PublicProfileHero } from "./PublicProfileHero";
 import { PublicSocialLinks } from "./PublicSocialLinks";
 import { PublicShell } from "./PublicShell";
-import type { PlayerMedia, SocialLink, StudioPlayer, StudioRow } from "@/lib/players-data";
+import { StudioServicesCart } from "./StudioServicesCart";
+import type { PlayerMedia, SocialLink, StudioPlayer, StudioRow, StudioService } from "@/lib/players-data";
 
 function studioSocialLinks(studio: StudioRow): SocialLink[] {
   const raw = Array.isArray(studio.social_links) ? studio.social_links : [];
@@ -31,11 +32,13 @@ export function StudioPublicView({
   players,
   media,
   projects,
+  services,
 }: {
   studio: StudioRow;
   players: StudioPlayer[];
   media: PlayerMedia[];
   projects: Array<Record<string, unknown>>;
+  services: StudioService[];
 }) {
   const links = studioSocialLinks(studio);
   return (
@@ -45,6 +48,7 @@ export function StudioPublicView({
       navLinks={[
         { label: "Sobre", href: "#sobre" },
         { label: "Players", href: "#players" },
+        ...(services.length ? [{ label: "Servicios", href: "#servicios" }] : []),
         ...(projects.length ? [{ label: "Proyectos", href: "#proyectos" }] : []),
         ...(media.length ? [{ label: "Galería", href: "#galeria" }] : []),
       ]}
@@ -94,6 +98,16 @@ export function StudioPublicView({
           </div>
         )}
       </section>
+
+      {services.length ? (
+        <section id="servicios" className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
+          <p className="text-xs uppercase tracking-[0.24em] text-violet-300/70">Contratar</p>
+          <h2 className="mt-1 text-2xl font-semibold">Servicios</h2>
+          <div className="mt-5">
+            <StudioServicesCart studioId={studio.id} studioSlug={studio.slug} services={services} />
+          </div>
+        </section>
+      ) : null}
 
       {projects.length ? (
         <section id="proyectos" className="mx-auto max-w-6xl px-4 py-10 sm:px-6">

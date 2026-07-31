@@ -1,6 +1,7 @@
 import type {
   BillingProvider,
   CreatePlanInput,
+  CreatePreferenceInput,
   CreateSubscriptionInput,
 } from "../../contracts";
 import { getMercadoPagoConfig, type MercadoPagoConfig } from "./config";
@@ -92,5 +93,27 @@ export class MercadoPagoProvider implements BillingProvider {
 
   getAuthorizedPayment(id: string) {
     return this.request(`/authorized_payments/${encodeURIComponent(id)}`);
+  }
+
+  // Checkout Pro: one-time payment for a cart (studio services), as opposed
+  // to /preapproval which is for recurring subscriptions. Same redirect
+  // model -- no card_token_id needed, the payer enters their card on
+  // Mercado Pago's hosted page and comes back via back_urls.
+  createPreference(input: CreatePreferenceInput) {
+    return this.request("/checkout/preferences", {
+      method: "POST",
+      body: JSON.stringify({
+        items: input.items.map((item) => ({
+          title: item.title,
+          quantity: item.quantity,
+          unit_price: item.unitPrice,
+          currency_id: item.currency,
+        })),
+        external_reference: input.externalReference,
+        back_urls: input.backUrls,
+        auto_return: "approved",
+        notification_url: input.notificationUrl,
+      }),
+    });
   }
 }
