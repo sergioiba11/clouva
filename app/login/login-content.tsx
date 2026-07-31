@@ -4,9 +4,10 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import Script from "next/script";
 import { useRouter, useSearchParams } from "next/navigation";
-import { getPostAuthDestination, roleHome } from "@/lib/auth";
+import { getRedirectByRole } from "@/lib/auth";
 import { useAuth } from "@/components/auth-provider";
 import { readApiJson } from "@/lib/authenticated-fetch";
+import type { User } from "@supabase/supabase-js";
 
 declare global {
   interface Window {
@@ -46,6 +47,65 @@ async function claimPendingInstagram(accessToken: string) {
   return readApiJson<{ importSessionId: string }>(response);
 }
 
+function clouvaIdForUser(userId: string) {
+  return `CLV-${userId.replaceAll("-", "").slice(0, 10)}`;
+}
+
+function userDisplayName(user: User) {
+  return (
+    (user.user_metadata?.full_name as string | undefined) ??
+    (user.user_metadata?.name as string | undefined) ??
+    user.email?.split("@")[0] ??
+    "Usuario"
+  );
+}
+
+async function resolvePostLoginDestination(user: User) {
+  const { supabase } = await import("@/lib/supabase");
+  const { data: loadedProfile, error: profileError } = await supabase
+    .from("profiles")
+    .select("role,onboarding_status")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (profileError) throw profileError;
+
+  let profile = loadedProfile;
+  if (!profile) {
+    const name = userDisplayName(user);
+    const { data: created, error: createError } = await supabase
+      .from("profiles")
+      .insert({
+        id: user.id,
+        role: "customer",
+        role_v2: "cliente",
+        display_name: name,
+        full_name: name,
+        email: user.email ?? null,
+        clouva_id: clouvaIdForUser(user.id),
+        onboarding_status: "pending",
+      })
+      .select("role,onboarding_status")
+      .single();
+    if (createError) throw createError;
+    profile = created;
+  }
+
+  if (profile?.onboarding_status === "pending") return "/onboarding/identity";
+  if (profile?.onboarding_status === "exploring") return "/matrix";
+  if (profile?.onboarding_status === "player_created") return "/onboarding/instagram";
+  if (profile?.onboarding_status === "published") return getRedirectByRole(profile.role);
+
+  const { data: player, error: playerError } = await supabase
+    .from("players")
+    .select("id,is_published")
+    .eq("owner_user_id", user.id)
+    .maybeSingle();
+  if (playerError) throw playerError;
+  if (!player) return "/onboarding/identity";
+  return player.is_published ? getRedirectByRole(profile?.role) : "/onboarding/instagram";
+}
+
 export default function LoginContent() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -59,7 +119,7 @@ export default function LoginContent() {
   const searchParams = useSearchParams();
   const isAddAccountMode = useMemo(() => searchParams.get("addAccount") === "1", [searchParams]);
   const continueMode = useMemo(() => searchParams.get("continue"), [searchParams]);
-  const { user, session, role, loading: authLoading, hydrationReady } = useAuth();
+  const { user, session, loading: authLoading, hydrationReady } = useAuth();
 
   useEffect(() => {
     setError(searchParams.get("error") || null);
@@ -107,9 +167,14 @@ export default function LoginContent() {
       }
 
       localStorage.removeItem("clouva.switch_target");
-      if (!cancelled) {
-        setCheckingSession(false);
-        router.replace(roleHome[role]);
+      try {
+        const destination = await resolvePostLoginDestination(user);
+        if (!cancelled) router.replace(destination);
+      } catch (destinationError) {
+        if (!cancelled) {
+          setError(destinationError instanceof Error ? destinationError.message : "No se pudo abrir tu cuenta.");
+          setCheckingSession(false);
+        }
       }
     };
 
@@ -118,41 +183,17 @@ export default function LoginContent() {
       cancelled = true;
       window.clearTimeout(releaseTimer);
     };
-  }, [authLoading, continueMode, hydrationReady, isAddAccountMode, role, router, session, user]);
+  }, [authLoading, continueMode, hydrationReady, isAddAccountMode, router, session, user]);
 
-  const redirectByRole = async (
-    userId: string,
-    accessToken: string,
-    authUser: { created_at?: string | null; last_sign_in_at?: string | null },
-    forceSwitcher = false,
-  ) => {
+  const redirectAfterLogin = async (authUser: User, accessToken: string, forceSwitcher = false) => {
     if (continueMode === "instagram") {
       const claimed = await claimPendingInstagram(accessToken);
       router.replace(`/onboarding/instagram/select?importSession=${encodeURIComponent(claimed.importSessionId)}`);
       return;
     }
 
-    const { supabase } = await import("@/lib/supabase");
-    const { data: loadedProfile, error: profileError } = await supabase
-      .from("profiles")
-      .select("role")
-      .eq("id", userId)
-      .maybeSingle();
-    let profile = loadedProfile;
-
-    if (profileError) throw profileError;
-    if (!profile) {
-      const { data: created, error: createError } = await supabase
-        .from("profiles")
-        .insert({ id: userId, role: "cliente" })
-        .select("role")
-        .maybeSingle();
-      if (createError) throw createError;
-      profile = created;
-    }
-
-    const redirectPath = getPostAuthDestination(profile?.role ?? "cliente", authUser);
-    const shouldOpenSwitcher = forceSwitcher && redirectPath !== "/matrix";
+    const redirectPath = await resolvePostLoginDestination(authUser);
+    const shouldOpenSwitcher = forceSwitcher && !redirectPath.startsWith("/onboarding") && redirectPath !== "/matrix";
     router.replace(shouldOpenSwitcher ? `${redirectPath}?openAccountSwitcher=1` : redirectPath);
   };
 
@@ -166,7 +207,7 @@ export default function LoginContent() {
       const { data, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
       if (signInError || !data.user || !data.session) throw signInError ?? new Error("No se pudo iniciar sesión.");
       localStorage.removeItem("clouva.switch_target");
-      await redirectByRole(data.user.id, data.session.access_token, data.user, isAddAccountMode);
+      await redirectAfterLogin(data.user, data.session.access_token, isAddAccountMode);
     } catch (signInError) {
       setError(signInError instanceof Error ? signInError.message : "No se pudo iniciar sesión.");
       setLoading(false);
@@ -188,7 +229,7 @@ export default function LoginContent() {
       });
       if (signInError || !data.user || !data.session) throw signInError ?? new Error("No se pudo iniciar sesión con Google.");
       localStorage.removeItem("clouva.switch_target");
-      await redirectByRole(data.user.id, data.session.access_token, data.user, isAddAccountMode);
+      await redirectAfterLogin(data.user, data.session.access_token, isAddAccountMode);
     } catch (googleError) {
       setError(googleError instanceof Error ? googleError.message : "No se pudo iniciar sesión con Google.");
       setLoading(false);
