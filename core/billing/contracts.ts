@@ -40,6 +40,13 @@ export type CreateSubscriptionInput = {
   backUrl: string;
 };
 
+export type CreatePreferenceInput = {
+  items: Array<{ title: string; quantity: number; unitPrice: number; currency: string }>;
+  externalReference: string;
+  backUrls: { success: string; failure: string; pending: string };
+  notificationUrl: string;
+};
+
 export interface BillingProvider {
   createPlan(input: CreatePlanInput): Promise<Record<string, unknown>>;
   getPlan(id: string): Promise<Record<string, unknown>>;
@@ -48,4 +55,5 @@ export interface BillingProvider {
   cancelSubscription(id: string): Promise<Record<string, unknown>>;
   getPayment(id: string): Promise<Record<string, unknown>>;
   getAuthorizedPayment(id: string): Promise<Record<string, unknown>>;
+  createPreference(input: CreatePreferenceInput): Promise<Record<string, unknown>>;
 }

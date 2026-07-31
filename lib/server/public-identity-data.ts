@@ -3,11 +3,13 @@ import {
   playerPublicSelect,
   playerStudiosSelect,
   studioPlayersSelect,
+  studioServicesSelect,
   type Player,
   type PlayerMedia,
   type PlayerStudioAffiliation,
   type StudioPlayer,
   type StudioRow,
+  type StudioService,
 } from "@/lib/players-data";
 
 export async function listPublishedPlayers() {
@@ -96,21 +98,24 @@ export async function resolveStudioAlias(alias: string) {
   if (studioError) throw new Error(studioError.message);
   if (!studio) return null;
 
-  const [playersResult, mediaResult, projectsResult, aliasResult] = await Promise.all([
+  const [playersResult, mediaResult, projectsResult, servicesResult, aliasResult] = await Promise.all([
     supabase.from("player_studios").select(studioPlayersSelect).eq("studio_id", studio.id).eq("is_visible", true).order("display_order"),
     supabase.from("player_media").select("id,media_type,origin,source_url,public_url,thumbnail_url,caption,display_order").eq("studio_id", studio.id).eq("visibility", "public").order("display_order"),
     supabase.from("community_projects").select("id,title,cover_url,release_type,release_date,spotify_url,youtube_url,description").eq("studio_id", studio.id).order("release_date", { ascending: false }),
+    supabase.from("studio_services").select(studioServicesSelect).eq("studio_id", studio.id).eq("is_active", true).order("display_order"),
     supabase.from("public_slug_aliases").select("alias").eq("entity_type", "studio").eq("entity_id", studio.id).eq("is_primary", true).maybeSingle(),
   ]);
   if (playersResult.error) throw new Error(playersResult.error.message);
   if (mediaResult.error) throw new Error(mediaResult.error.message);
   if (projectsResult.error) throw new Error(projectsResult.error.message);
+  if (servicesResult.error) throw new Error(servicesResult.error.message);
 
   return {
     studio: studio as unknown as StudioRow,
     players: (playersResult.data ?? []) as unknown as StudioPlayer[],
     media: (mediaResult.data ?? []) as unknown as PlayerMedia[],
     projects: projectsResult.data ?? [],
+    services: (servicesResult.data ?? []) as unknown as StudioService[],
     canonicalAlias: aliasResult.data?.alias || studio.slug,
   };
 }
