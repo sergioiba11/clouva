@@ -22,8 +22,19 @@ export type CreatePlanInput = {
   externalReference: string;
 };
 
+// Mercado Pago requires card_token_id (client-side tokenized card) whenever
+// a subscription references preapproval_plan_id -- there is no redirect/
+// init_point flow for "subscriptions with an associated plan". Since CLOUVA
+// has no card-tokenization UI, subscriptions are created via the "sin plan
+// asociado" (no associated plan) + status "pending" flow instead: the plan
+// details go inline here rather than referencing planId, which is what
+// actually gets an init_point back to redirect the payer to.
 export type CreateSubscriptionInput = {
-  planId: string;
+  reason: string;
+  amount: number;
+  currency: string;
+  interval: "month" | "year";
+  intervalCount: number;
   payerEmail: string;
   externalReference: string;
   backUrl: string;

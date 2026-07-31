@@ -56,14 +56,21 @@ export class MercadoPagoProvider implements BillingProvider {
   }
 
   createSubscription(input: CreateSubscriptionInput) {
+    const frequency = input.interval === "year" ? input.intervalCount * 12 : input.intervalCount;
     return this.request("/preapproval", {
       method: "POST",
       body: JSON.stringify({
-        preapproval_plan_id: input.planId,
+        reason: input.reason,
         payer_email: input.payerEmail,
         external_reference: input.externalReference,
         back_url: input.backUrl,
         status: "pending",
+        auto_recurring: {
+          frequency,
+          frequency_type: "months",
+          transaction_amount: input.amount,
+          currency_id: input.currency,
+        },
       }),
     });
   }
