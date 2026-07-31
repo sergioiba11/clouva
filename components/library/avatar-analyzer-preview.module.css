@@ -461,6 +461,27 @@
 .action:disabled { cursor: not-allowed; opacity: 0.68; }
 .action svg { width: 19px; height: 19px; flex: 0 0 auto; }
 
+.fallbackAction {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  width: 100%;
+  min-height: 48px;
+  margin: 10px 0 4px;
+  padding: 10px 14px;
+  border: 1px solid rgba(255, 186, 83, .42);
+  border-radius: 14px;
+  background: rgba(142, 87, 17, .2);
+  color: #ffe0a8;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: .04em;
+  cursor: pointer;
+}
+.fallbackAction:disabled { cursor: not-allowed; opacity: .6; }
+.fallbackAction svg { width: 18px; height: 18px; flex: 0 0 auto; }
+
 .cancelAction {
   position: relative;
   display: flex;

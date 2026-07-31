@@ -311,11 +311,21 @@ def build_detection_coverage(manifest: dict, detector_output: dict, face: dict, 
         group = _view_group(view)
         if not group:
             continue
-        detector_view = detector_lookup.get(str(view.get("name"))) or {}
+        view_name = str(view.get("name") or "")
+        detector_executed = view_name in detector_lookup
+        detector_view = detector_lookup.get(view_name) or {}
         candidates = detector_view.get("candidates") or []
         rendered = bool(view.get("rendered", view.get("path")))
+        framing_valid = bool(view.get("framingValid", True))
+        groups[group]["expectedViews"] += 1
         if rendered:
             groups[group]["renderedViews"] += 1
+        if framing_valid:
+            groups[group]["framingValidViews"] += 1
+        else:
+            groups[group]["framingInvalidViews"] += 1
+        if detector_executed:
+            groups[group]["detectorExecutedViews"] += 1
         if candidates:
             groups[group]["detectorSuccessfulViews"] += 1
         groups[group]["candidateCount"] += len(candidates)
@@ -325,8 +335,10 @@ def build_detection_coverage(manifest: dict, detector_output: dict, face: dict, 
             "proxyVertexCount": int(view.get("proxyVertexCount") or 0),
             "silhouetteCoverage": _float(view.get("silhouetteCoverage")),
             "detectorCandidates": len(candidates),
-            "framingValid": bool(view.get("framingValid", True)),
+            "detectorExecuted": detector_executed,
+            "framingValid": framing_valid,
             "clippingDetected": bool(view.get("clippingDetected", False)),
+            "contextClippingDetected": bool(view.get("contextClippingDetected", False)),
             "attempt": view.get("attempt", "final"),
         })
 
@@ -372,11 +384,53 @@ def build_detection_coverage(manifest: dict, detector_output: dict, face: dict, 
 
     output = {}
     for group, counters in groups.items():
+        expected = int(counters.get("expectedViews") or 0)
         rendered = int(counters.get("renderedViews") or 0)
+        framing_valid = int(counters.get("framingValidViews") or 0)
+        framing_invalid = int(counters.get("framingInvalidViews") or 0)
+        detector_executed = int(counters.get("detectorExecutedViews") or 0)
         detector = int(counters.get("detectorSuccessfulViews") or 0)
         projected = int(counters.get("projectedSuccessfulViews") or 0)
+        if expected == 0:
+            renderer_status = "not_run"
+        elif rendered < expected:
+            renderer_status = "missing_outputs"
+        else:
+            renderer_status = "completed"
+        if expected == 0:
+            framing_status = "not_run"
+        elif framing_valid == 0:
+            framing_status = "invalid"
+        elif framing_invalid:
+            framing_status = "partial"
+        else:
+            framing_status = "valid"
+        if detector_executed == 0:
+            detector_status = "not_run"
+        elif detector == 0:
+            detector_status = "no_candidates"
+        else:
+            detector_status = "candidates_found"
+        if renderer_status == "not_run":
+            evidence_status = "renderer_not_run"
+        elif renderer_status == "missing_outputs":
+            evidence_status = "render_missing"
+        elif framing_valid == 0:
+            evidence_status = "framing_invalid"
+        elif detector_status == "not_run":
+            evidence_status = "detector_not_run"
+        elif detector_status == "no_candidates":
+            evidence_status = "detector_no_candidates"
+        elif projected == 0:
+            evidence_status = "projection_rejected"
+        else:
+            evidence_status = "evidence_available"
         output[group] = {
+            "expectedViews": expected,
             "renderedViews": rendered,
+            "framingValidViews": framing_valid,
+            "framingInvalidViews": framing_invalid,
+            "detectorExecutedViews": detector_executed,
             "detectorSuccessfulViews": detector,
             "projectedSuccessfulViews": projected,
             "triangulatedViews": int(counters.get("triangulatedViews") or 0),
@@ -388,9 +442,43 @@ def build_detection_coverage(manifest: dict, detector_output: dict, face: dict, 
             "detectorFailureCount": int(counters.get("detectorFailureCount") or 0),
             "visualCoverage": detector / max(rendered, 1),
             "geometricCoverage": projected / max(detector, 1),
+            "rendererStatus": renderer_status,
+            "framingStatus": framing_status,
+            "detectorStatus": detector_status,
+            "evidenceStatus": evidence_status,
             "views": view_details[group],
         }
     output["landmarks"] = build_landmark_evidence(manifest, detector_output, face, hands)
+    if attempts:
+        output["attempts"] = attempts
+    return output
+
+
+def merge_phase_detection_coverage(current: dict | None, phase: str,
+                                   phase_coverage: dict,
+                                   attempt: dict | None = None):
+    """Merge one phased FACE/HANDS result without erasing earlier evidence."""
+    phase = str(phase or "").strip().lower()
+    selected_groups = {
+        "face": ("face",),
+        "hands": ("leftHand", "rightHand"),
+    }.get(phase, ("face", "leftHand", "rightHand"))
+    output = dict(current or {})
+    for group in selected_groups:
+        if isinstance(phase_coverage.get(group), dict):
+            output[group] = phase_coverage[group]
+
+    merged_landmarks = dict(output.get("landmarks") or {})
+    phase_landmarks = phase_coverage.get("landmarks") or {}
+    for name, evidence in phase_landmarks.items():
+        if _landmark_group(str(name)) in selected_groups:
+            merged_landmarks[name] = evidence
+    if merged_landmarks:
+        output["landmarks"] = merged_landmarks
+
+    attempts = list(output.get("attempts") or [])
+    if attempt:
+        attempts.append(dict(attempt))
     if attempts:
         output["attempts"] = attempts
     return output

@@ -45,6 +45,7 @@ class AvatarAnalyzerV4PersistenceTests(unittest.TestCase):
         }
         (output / "avatar_analysis.json").write_text(json.dumps(analysis), encoding="utf-8")
         (output / "diagnostic_report.json").write_text(json.dumps({"debug": {"stdout": "z" * debug_size}}), encoding="utf-8")
+        (output / "diagnostic_surface.glb").write_bytes(b"glTF" + b"s" * 4096)
         (output / "diagnostic_landmarks.glb").write_bytes(b"glTF" + b"0" * 4096)
         renders = output / "renders_v4"
         renders.mkdir()
@@ -71,6 +72,7 @@ class AvatarAnalyzerV4PersistenceTests(unittest.TestCase):
         self.assertNotIn("rejectedLandmarks", payload)
         self.assertNotIn("initialAttempt", payload["analysis"].get("diagnostics", {}))
         self.assertNotIn("finalAttempt", payload["analysis"].get("diagnostics", {}))
+        self.assertEqual(payload["assets"]["surfaceGlb"], "diagnostic_surface.glb")
         self.assertFalse(any(path.endswith(".npy") for path in payload["assets"]["renders"]))
 
     def test_cleanup_keeps_writing_run_during_grace_and_removes_abandoned(self):

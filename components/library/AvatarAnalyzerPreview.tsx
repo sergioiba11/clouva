@@ -27,7 +27,11 @@ import { useAuth } from "@/components/auth-provider";
 import styles from "./avatar-analyzer-preview.module.css";
 
 type CoverageRecord = {
+  expectedViews?: number;
   renderedViews?: number;
+  framingValidViews?: number;
+  framingInvalidViews?: number;
+  detectorExecutedViews?: number;
   detectorSuccessfulViews?: number;
   projectedSuccessfulViews?: number;
   triangulatedViews?: number;
@@ -39,6 +43,14 @@ type CoverageRecord = {
   detectorFailureCount?: number;
   visualCoverage?: number;
   geometricCoverage?: number;
+  rendererStatus?: string;
+  framingStatus?: string;
+  detectorStatus?: string;
+  evidenceStatus?: string;
+  geometryLimited?: boolean;
+  geometryLimitReason?: string;
+  maximumHonestProfile?: string;
+  handMode?: string;
 };
 
 type DetectionCoverage = {
@@ -172,6 +184,8 @@ type AnalysisDetail = {
   rejectedLandmarks?: Record<string, LandmarkRecord>;
   corrections?: unknown;
   assets?: {
+    surfaceGlb?: string;
+    sourceGlb?: string;
     diagnosticGlb?: string;
     renders?: string[];
   };
@@ -380,7 +394,8 @@ function renderToken(group: LandmarkGroup) {
 
 function compactCoverage(record?: CoverageRecord) {
   if (!record) return "Sin datos";
-  return `${record.detectorSuccessfulViews ?? 0}/${record.renderedViews ?? 0} vistas · ${record.projectedSuccessfulViews ?? 0} proyectadas`;
+  if (record.rendererStatus === "not_run") return "Fase no ejecutada";
+  return `${record.detectorSuccessfulViews ?? 0}/${record.renderedViews ?? 0} detectadas · ${record.framingValidViews ?? 0}/${record.renderedViews ?? 0} encuadradas`;
 }
 
 type JobStatus = {
@@ -587,6 +602,7 @@ export function AvatarAnalyzerPreview() {
   const [correctionMessage, setCorrectionMessage] = useState<string | null>(null);
   const [visualCorrectionMode, setVisualCorrectionMode] = useState(false);
   const [showAllTechnical, setShowAllTechnical] = useState(false);
+  const [showDiagnosticOverlay, setShowDiagnosticOverlay] = useState(false);
   const [openGroups, setOpenGroups] = useState<Record<LandmarkGroup, boolean>>({
     cuerpo: false,
     rostro: false,
@@ -695,6 +711,15 @@ export function AvatarAnalyzerPreview() {
 
   const resetCamera = () => applyPreset(CAMERA_PRESETS[0]);
 
+  const toggleDiagnosticOverlay = () => {
+    if (!effectiveSummary?.runId || !session?.access_token) return;
+    void loadAsset(
+      effectiveSummary.runId,
+      session.access_token,
+      !showDiagnosticOverlay,
+    );
+  };
+
   useEffect(() => () => {
     if (previewUrl) URL.revokeObjectURL(previewUrl);
   }, [previewUrl]);
@@ -721,12 +746,15 @@ export function AvatarAnalyzerPreview() {
     }
   };
 
-  const loadAsset = async (runId: string, accessToken: string) => {
+  const loadAsset = async (runId: string, accessToken: string, diagnostic = false) => {
     const seq = ++assetLoadSeqRef.current;
     setAssetState("loading");
     try {
+      const assetPath = diagnostic
+        ? "diagnostic_landmarks.glb"
+        : "diagnostic_surface.glb";
       const assetResponse = await fetch(
-        `/api/avatar/analyze/result/${runId}/asset/diagnostic_landmarks.glb`,
+        `/api/avatar/analyze/result/${runId}/asset/${assetPath}`,
         { headers: { Authorization: `Bearer ${accessToken}` }, cache: "no-store" },
       );
       if (assetLoadSeqRef.current !== seq) return false;
@@ -740,6 +768,7 @@ export function AvatarAnalyzerPreview() {
         return nextUrl;
       });
       setAssetState("ready");
+      setShowDiagnosticOverlay(diagnostic);
       return true;
     } catch (cause) {
       if (assetLoadSeqRef.current !== seq) return false;
@@ -896,7 +925,7 @@ export function AvatarAnalyzerPreview() {
     }
   };
 
-  const analyze = async () => {
+  const analyze = async (requestedRigProfile = "FULL_BODY_HANDS_FACE") => {
     if (!session?.access_token) return;
     cancelRequestedRef.current = false;
     setAnalysisProcessState("starting");
@@ -913,7 +942,11 @@ export function AvatarAnalyzerPreview() {
     try {
       const kickoff = await fetch("/api/avatar/analyze", {
         method: "POST",
-        headers: { Authorization: `Bearer ${session.access_token}` },
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ requested_rig_profile: requestedRigProfile }),
         cache: "no-store",
       });
       const kickoffData = await kickoff.json().catch(() => ({})) as {
@@ -1123,7 +1156,9 @@ export function AvatarAnalyzerPreview() {
               },
               className: styles.model,
               src: previewUrl,
-              alt: "Avatar CLOUVA con diagnóstico anatómico",
+              alt: showDiagnosticOverlay
+                ? "Avatar CLOUVA con capas de diagnóstico anatómico"
+                : "Avatar CLOUVA original sin capas técnicas",
               "camera-controls": true,
               "camera-orbit": cameraOrbit,
               "camera-target": cameraTargetValue,
@@ -1152,6 +1187,15 @@ export function AvatarAnalyzerPreview() {
               </button>
             ))}
             <button type="button" onClick={resetCamera}><RotateCcw /> Restablecer cámara</button>
+            <button
+              type="button"
+              onClick={toggleDiagnosticOverlay}
+              disabled={assetState === "loading"}
+              aria-pressed={showDiagnosticOverlay}
+            >
+              {showDiagnosticOverlay ? <Eye /> : <Crosshair />}
+              {showDiagnosticOverlay ? "Ver avatar limpio" : "Mostrar diagnóstico"}
+            </button>
           </div>
         </>
       ) : (
@@ -1210,27 +1254,45 @@ export function AvatarAnalyzerPreview() {
                 <span>{label}</span>
                 <strong>{compactCoverage(record)}</strong>
                 <small>
-                  Detectadas {record?.detectorSuccessfulViews ?? 0}/{record?.renderedViews ?? 0} · Proyectadas {record?.projectedSuccessfulViews ?? 0}
+                  Generadas {record?.renderedViews ?? 0}/{record?.expectedViews ?? record?.renderedViews ?? 0}
+                  {" · "}Encuadre válido {record?.framingValidViews ?? 0}
+                  {" · "}Proyectadas {record?.projectedSuccessfulViews ?? 0}
                 </small>
                 <small>Visual {percent(record?.visualCoverage)} · Geométrica {percent(record?.geometricCoverage)}</small>
+                {record?.geometryLimited ? (
+                  <small>Geometría limitada · máximo honesto {record.maximumHonestProfile || "BODY_HANDS_BASIC"}</small>
+                ) : null}
               </article>
             ))}
           </div>
 
           {!(effectiveSummary.requestedProfileReady ?? effectiveSummary.rigReadinessApproved) ? (
-            <p className={styles.error}>
-              <TriangleAlert />
-              <span>
-                El perfil solicitado está bloqueado hasta verificar sus requisitos anatómicos.
-                {pendingBreakdown ? ` Pendientes: ${pendingBreakdown}.` : ""}
-                {(effectiveSummary.rigReadinessGates || []).length
-                  ? ` Bloqueos: ${(effectiveSummary.rigReadinessGates || []).map(readableName).join(", ")}.`
-                  : ""}
-                {recommendedActionLabel(effectiveSummary.recommendedNextAction)
-                  ? ` Próxima acción: ${recommendedActionLabel(effectiveSummary.recommendedNextAction)}.`
-                  : ""}
-              </span>
-            </p>
+            <>
+              <p className={styles.error}>
+                <TriangleAlert />
+                <span>
+                  El análisis técnico terminó, pero el perfil completo no está disponible.
+                  {pendingBreakdown ? ` Pendientes: ${pendingBreakdown}.` : ""}
+                  {(effectiveSummary.rigReadinessGates || []).length
+                    ? ` Bloqueos: ${(effectiveSummary.rigReadinessGates || []).map(readableName).join(", ")}.`
+                    : ""}
+                  {recommendedActionLabel(effectiveSummary.recommendedNextAction)
+                    ? ` Próxima acción: ${recommendedActionLabel(effectiveSummary.recommendedNextAction)}.`
+                    : ""}
+                </span>
+              </p>
+              {(effectiveSummary.supportedRigProfiles || []).includes("BODY_HANDS_BASIC")
+                && effectiveSummary.requestedRigProfile !== "BODY_HANDS_BASIC" ? (
+                  <button
+                    type="button"
+                    className={styles.fallbackAction}
+                    onClick={() => void analyze("BODY_HANDS_BASIC")}
+                    disabled={analyzing || !session?.access_token}
+                  >
+                    <Hand /> CONTINUAR CON CUERPO + MANOS SIMPLIFICADAS
+                  </button>
+                ) : null}
+            </>
           ) : (
             <p className={styles.success}>
               <CheckCircle2 />

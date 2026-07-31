@@ -159,6 +159,68 @@ def _mediapipe_images(path: str | None):
     return images
 
 
+def _technical_hand_images(view: dict):
+    """Build detector inputs from exact geometry passes, never from guessed pixels."""
+    if cv2 is None:
+        return []
+    technical = view.get("technicalPasses") if isinstance(view.get("technicalPasses"), dict) else {}
+    paths = technical.get("paths") if isinstance(technical.get("paths"), dict) else {}
+    mask_path = Path(str(paths.get("validMaskNpy") or ""))
+    depth_path = Path(str(paths.get("depthNpy") or ""))
+    normal_path = Path(str(paths.get("normalNpy") or ""))
+    curvature_path = Path(str(paths.get("curvatureNpy") or ""))
+    if not mask_path.is_file():
+        return []
+    try:
+        valid = np.load(mask_path).astype(bool)
+        if valid.ndim != 2 or not np.any(valid):
+            return []
+        height, width = valid.shape
+        composite = np.full((height, width, 3), 8, dtype=np.uint8)
+        composite[valid] = (196, 210, 224)
+
+        if depth_path.is_file():
+            depth = np.load(depth_path)
+            usable = valid & np.isfinite(depth) & (depth > 0.0)
+            if np.any(usable):
+                values = depth[usable]
+                near, far = float(np.percentile(values, 2.0)), float(np.percentile(values, 98.0))
+                normalized = 1.0 - np.clip((depth - near) / max(far - near, 1e-8), 0.0, 1.0)
+                shade = np.clip(112.0 + normalized * 116.0, 0.0, 255.0).astype(np.uint8)
+                composite[..., 0][usable] = shade[usable]
+                shade_values = shade[usable].astype(np.int16)
+                composite[..., 1][usable] = np.clip(shade_values + 10, 0, 255).astype(np.uint8)
+                composite[..., 2][usable] = np.clip(shade_values + 20, 0, 255).astype(np.uint8)
+
+        if normal_path.is_file():
+            normals = np.load(normal_path)
+            if normals.shape == (height, width, 3):
+                light = np.clip(
+                    0.48 + normals[..., 0] * 0.20
+                    - normals[..., 1] * 0.12 + normals[..., 2] * 0.20,
+                    0.20, 0.95,
+                )
+                for channel in range(3):
+                    shaded = np.clip(composite[..., channel].astype(np.float32) * light, 0, 255).astype(np.uint8)
+                    composite[..., channel][valid] = shaded[valid]
+
+        mask_u8 = valid.astype(np.uint8) * 255
+        boundary = cv2.morphologyEx(mask_u8, cv2.MORPH_GRADIENT, np.ones((3, 3), np.uint8)) > 0
+        composite[boundary] = (255, 255, 255)
+        if curvature_path.is_file():
+            curvature = np.load(curvature_path)
+            if curvature.shape == valid.shape:
+                ridges = valid & (curvature >= max(0.12, float(np.percentile(curvature[valid], 82.0))))
+                composite[ridges] = (246, 246, 246)
+
+        images = []
+        _append_variant(images, composite)
+        _append_variant(images, 255 - composite)
+        return images
+    except Exception:
+        return []
+
+
 def _robust_fuse(points: list[dict]):
     if not points:
         return None
@@ -195,10 +257,11 @@ def _face_points(detector, path: str | None):
     }
 
 
-def _hand_points(detector, path: str | None):
+def _hand_points(detector, path: str | None, additional_images=None):
     detected = []
     handedness = []
-    for image in _mediapipe_images(path):
+    images = [*_mediapipe_images(path), *(additional_images or [])]
+    for image in images:
         result = detector.detect(image)
         if not result.hand_landmarks:
             continue
@@ -272,7 +335,10 @@ def _detect_face(detector, view: dict):
 
 
 def _detect_hand(detector, view: dict):
-    rgb, rgb_handedness, rgb_score = _hand_points(detector, view.get("path"))
+    technical_images = _technical_hand_images(view)
+    rgb, rgb_handedness, rgb_score = _hand_points(
+        detector, view.get("path"), additional_images=technical_images,
+    )
     edge, edge_handedness, edge_score = _hand_points(detector, view.get("edgePath"))
     silhouette, silhouette_handedness, silhouette_score = _hand_points(detector, view.get("silhouettePath"))
     if not rgb and not edge and silhouette:
@@ -300,6 +366,7 @@ def _detect_hand(detector, view: dict):
             "view": view["name"], "region": "hand", "side": view.get("side"),
             "detectorHandedness": detector_handedness,
             "handednessConfidence": handedness_score,
+            "technicalCompositeVariants": len(technical_images),
             "index": index, "canonicalIndex": index, "renderVariants": variants,
             "variantConsensus": {
                 "rgbOrSilhouette": {
@@ -370,7 +437,7 @@ def run(request_path: Path, output_path: Path):
     request = json.loads(request_path.read_text(encoding="utf-8"))
     views = request.get("views") or []
     output = {
-        "version": "clouva-mediapipe-tasks-v3.2-stylized-silhouette-retry",
+        "version": "clouva-mediapipe-tasks-v3.2-technical-composite-retry",
         "faceModel": str(FACE_MODEL), "handModel": str(HAND_MODEL),
         "handLandmarkCount": len(HAND_MAP), "views": [], "errors": [],
     }

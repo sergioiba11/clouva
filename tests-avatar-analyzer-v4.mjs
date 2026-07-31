@@ -250,6 +250,23 @@ test("hand renderer includes wrist context and coverage auto-fit", () => {
   assert.match(renderer, /hand_\{suffix\}_distal/);
 });
 
+test("phased results expose real face/hand evidence and the clean source GLB", () => {
+  const api = read("worker/garment-rig/app_v18.py");
+  const analyzer = read("worker/garment-rig/avatar_analyzer_v4.py");
+  const contract = read("worker/garment-rig/analyzer_contract.py");
+  const preview = read("components/library/AvatarAnalyzerPreview.tsx");
+  assert.match(api, /renders_v4_face/);
+  assert.match(api, /renders_v4_hands/);
+  assert.match(api, /source\/avatar-original-clean\.glb/);
+  assert.match(api, /diagnostic_surface\.glb/);
+  assert.match(analyzer, /merge_phase_detection_coverage/);
+  assert.match(analyzer, /build_surface_glb/);
+  assert.match(contract, /"framingInvalidViews"/);
+  assert.match(contract, /"detectorExecutedViews"/);
+  assert.match(preview, /Mostrar diagnóstico/);
+  assert.match(preview, /CONTINUAR CON CUERPO \+ MANOS SIMPLIFICADAS/);
+});
+
 test("mobile analyzer prioritizes requested profile and hides internal correction noise", () => {
   const component = read("components/library/AvatarAnalyzerPreview.tsx");
   assert.match(component, /Perfil solicitado/);

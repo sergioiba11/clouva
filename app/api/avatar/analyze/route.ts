@@ -15,8 +15,23 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
+const REQUESTED_PROFILES = new Set([
+  "BODY_BASIC",
+  "BODY_FACE",
+  "BODY_HANDS_BASIC",
+  "FULL_HUMANOID",
+  "FULL_BODY_HANDS_FACE",
+]);
+
 export async function POST(request: NextRequest) {
   try {
+    const payload = await request.json().catch(() => ({})) as { requested_rig_profile?: unknown };
+    const requestedRigProfile = typeof payload.requested_rig_profile === "string"
+      ? payload.requested_rig_profile.trim().toUpperCase()
+      : "FULL_BODY_HANDS_FACE";
+    if (!REQUESTED_PROFILES.has(requestedRigProfile)) {
+      return NextResponse.json({ error: "Perfil de análisis inválido" }, { status: 400 });
+    }
     const { supabase, user } = await requireUser(request);
     const avatar = await resolveOriginalAvatar(supabase, user.id);
 
@@ -33,7 +48,7 @@ export async function POST(request: NextRequest) {
       userId: user.id,
       avatarId: avatar.avatarId,
       sourceRef: avatar.sourceRef,
-      requestedRigProfile: "FULL_BODY_HANDS_FACE",
+      requestedRigProfile,
     });
 
     try {

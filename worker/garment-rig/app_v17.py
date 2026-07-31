@@ -85,10 +85,13 @@ class AvatarAnalysisCorrectionsRequest(BaseModel):
 
 
 COVERAGE_FIELDS = (
-    "renderedViews", "detectorSuccessfulViews", "projectedSuccessfulViews",
+    "expectedViews", "renderedViews", "framingValidViews", "framingInvalidViews",
+    "detectorExecutedViews", "detectorSuccessfulViews", "projectedSuccessfulViews",
     "triangulatedViews", "candidateCount", "projectedCandidates",
     "triangulatedLandmarks", "projectionFailureCount", "technicalMismatchCount",
     "detectorFailureCount", "visualCoverage", "geometricCoverage",
+    "rendererStatus", "framingStatus", "detectorStatus", "evidenceStatus",
+    "geometryLimited", "geometryLimitReason", "maximumHonestProfile", "handMode",
 )
 
 

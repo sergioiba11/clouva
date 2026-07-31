@@ -71,6 +71,13 @@ class HandFramingSourceContractTests(unittest.TestCase):
         retry_fragment = self.base.split("while retry_count", 1)[1]
         self.assertNotIn("target =", retry_fragment.split("after =", 1)[0])
 
+    def test_focus_not_context_controls_camera_zoom_and_clipping_gate(self):
+        self.assertIn("focus_minimum_framing = _required_framing", self.base)
+        self.assertIn("current_framing = max(desired_framing, focus_minimum_framing)", self.base)
+        self.assertNotIn("current_framing = max(desired_framing, context_minimum_framing)", self.base)
+        self.assertIn('"contextClippingDetected"', self.base)
+        self.assertIn('"focusProjectionBounds"', self.base)
+
     def test_context_and_focus_diagnostics_are_retained(self):
         for field in (
             '"focusProxyRegions"', '"contextProxyRegions"', '"distalForearmRatio"',

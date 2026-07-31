@@ -52,7 +52,10 @@ REQUESTED_PROFILE_ENV = "CLOUVA_REQUESTED_RIG_PROFILE"
 REANALYSIS_ENV = "CLOUVA_REANALYSIS_OPERATION"
 V4_PHASE_ENV = "CLOUVA_AVATAR_ANALYZER_V4_PHASE"
 V4_DURABLE_SUFFIXES = {".glb", ".json", ".png"}
-V4_REQUIRED_FILES = ("avatar_analysis.json", "diagnostic_report.json", "diagnostic_landmarks.glb")
+V4_REQUIRED_FILES = (
+    "avatar_analysis.json", "diagnostic_report.json",
+    "diagnostic_surface.glb", "diagnostic_landmarks.glb",
+)
 PUBLIC_RESULT_BUDGET_BYTES = 24 * 1024 * 1024
 RESULT_RETRY_AFTER_SECONDS = 3
 MAX_ANALYSIS_INPUT_VERTICES = max(
@@ -631,7 +634,10 @@ def _public_result(run_dir: Path):
     public_analysis = _strip_public_debug(analysis)
     public_report = _strip_public_debug(report)
     renders = []
-    for directory_name in ("renders_v4", "renders_temporales", "renders_initial"):
+    for directory_name in (
+        "renders_v4", "renders_v4_face", "renders_v4_hands",
+        "renders_temporales", "renders_initial",
+    ):
         directory = run_dir / directory_name
         if directory.is_dir():
             renders.extend(
@@ -647,7 +653,12 @@ def _public_result(run_dir: Path):
         "summary": _summary(analysis),
         "analysis": public_analysis,
         "report": public_report,
-        "assets": {"diagnosticGlb": "diagnostic_landmarks.glb", "renders": renders},
+        "assets": {
+            "surfaceGlb": "diagnostic_surface.glb",
+            "sourceGlb": "source/avatar-original-clean.glb",
+            "diagnosticGlb": "diagnostic_landmarks.glb",
+            "renders": renders,
+        },
     }
     encoded = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
     if len(encoded) > PUBLIC_RESULT_BUDGET_BYTES:
@@ -824,7 +835,10 @@ def analyze_avatar_v4(request: AvatarAnalyzeV4Request):
     archive_path = archive_base.with_suffix(".zip")
     try:
         if not request.include_renders:
-            for name in ("renders_v4", "renders_temporales", "renders_initial"):
+            for name in (
+                "renders_v4", "renders_v4_face", "renders_v4_hands",
+                "renders_temporales", "renders_initial",
+            ):
                 shutil.rmtree(output_dir / name, ignore_errors=True)
         shutil.make_archive(str(archive_base), "zip", root_dir=str(output_dir))
         return FileResponse(
