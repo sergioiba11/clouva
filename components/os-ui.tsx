@@ -32,15 +32,28 @@ const MODULE_ICONS: Record<string, React.ComponentType<{ size?: number; classNam
   Music: Music,
 };
 
-export function ModuleCard({ title, href }: { title: string; href: string }) {
+export function ModuleCard({ title, href, available = true }: { title: string; href: string; available?: boolean }) {
   const Icon = MODULE_ICONS[title] ?? User;
+  const content = (
+    <>
+      <span className="inline-grid h-9 w-9 place-items-center rounded-xl bg-[#8f7cff]/15 text-[#8f7cff]">
+        <Icon size={18} />
+      </span>
+      <p className="font-medium">{title}</p>
+      {available ? null : <span className="text-[10px] uppercase tracking-[0.08em] text-white/35">Próximamente</span>}
+    </>
+  );
+  if (!available) {
+    return (
+      <div className="os-card flex min-w-[9.5rem] cursor-not-allowed flex-col gap-3 border-l-2 border-l-white/15 p-4 opacity-55" aria-disabled="true">
+        {content}
+      </div>
+    );
+  }
   return (
     <motion.div whileHover={{ y: -3 }} transition={{ duration: 0.2 }}>
       <Link href={href} className="os-card flex min-w-[9.5rem] flex-col gap-3 border-l-2 border-l-[#8f7cff]/50 p-4">
-        <span className="inline-grid h-9 w-9 place-items-center rounded-xl bg-[#8f7cff]/15 text-[#8f7cff]">
-          <Icon size={18} />
-        </span>
-        <p className="font-medium">{title}</p>
+        {content}
       </Link>
     </motion.div>
   );

@@ -5,7 +5,7 @@ import { ModuleCard } from "@/components/os-ui";
 import { CloverIcon } from "@/components/clover-icon";
 
 const sections = [
-  { title: "Avatar", href: "/mi-flow/avatar" },
+  { title: "Avatar", href: "/mi-flow/avatar", available: false },
   { title: "Flows", href: "/mi-flow/flows" },
   { title: "Studio", href: "/mi-flow/studio" },
   { title: "Vault", href: "/mi-flow/vault" },
@@ -31,7 +31,7 @@ export default function MenuPage() {
 
       <div className="mx-auto mt-8 grid max-w-3xl grid-cols-2 gap-3 sm:grid-cols-3">
         {sections.map((s) => (
-          <ModuleCard key={s.href} title={s.title} href={s.href} />
+          <ModuleCard key={s.href} title={s.title} href={s.href} available={s.available} />
         ))}
         <Link href="/tienda" className="os-card flex min-w-[9.5rem] flex-col gap-3 border-l-2 border-l-[#8f7cff]/50 p-4">
           <p className="font-medium">Tienda</p>
