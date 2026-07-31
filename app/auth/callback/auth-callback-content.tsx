@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { getPostAuthDestination } from "@/lib/auth";
+import { getRedirectByRole } from "@/lib/auth";
 import { readApiJson } from "@/lib/authenticated-fetch";
 
 function redirect(path: string) {
@@ -22,6 +22,10 @@ async function claimPendingInstagram(accessToken: string) {
     headers: { authorization: `Bearer ${accessToken}` },
   });
   return readApiJson<{ importSessionId: string }>(response);
+}
+
+function clouvaIdForUser(userId: string) {
+  return `CLV-${userId.replaceAll("-", "").slice(0, 10)}`;
 }
 
 export default function AuthCallbackContent() {
@@ -90,7 +94,7 @@ export default function AuthCallbackContent() {
         const { data: loadedProfile, error: profileError } = await raceTimeout(
           supabase
             .from("profiles")
-            .select("id, role, display_name, full_name")
+            .select("id, role, display_name, full_name, onboarding_status")
             .eq("id", user.id)
             .maybeSingle(),
           6000,
@@ -103,8 +107,17 @@ export default function AuthCallbackContent() {
           const created = await raceTimeout(
             supabase
               .from("profiles")
-              .insert({ id: user.id, display_name: defaultName, full_name: defaultName, role: "cliente" })
-              .select("id, role, display_name, full_name")
+              .insert({
+                id: user.id,
+                display_name: defaultName,
+                full_name: defaultName,
+                email: user.email ?? null,
+                role: "customer",
+                role_v2: "cliente",
+                clouva_id: clouvaIdForUser(user.id),
+                onboarding_status: "pending",
+              })
+              .select("id, role, display_name, full_name, onboarding_status")
               .single(),
             6000,
             "No se pudo crear el perfil",
@@ -118,9 +131,10 @@ export default function AuthCallbackContent() {
               .update({
                 display_name: profile.display_name || defaultName,
                 full_name: profile.full_name || defaultName,
+                email: user.email ?? null,
               })
               .eq("id", user.id)
-              .select("id, role, display_name, full_name")
+              .select("id, role, display_name, full_name, onboarding_status")
               .single(),
             6000,
             "No se pudo completar el perfil",
@@ -143,8 +157,14 @@ export default function AuthCallbackContent() {
         }
 
         localStorage.removeItem("clouva.switch_target");
-        const destination = getPostAuthDestination(profile?.role ?? "cliente", user);
-        const target = isAddAccountMode && destination !== "/matrix"
+        const destination = profile?.onboarding_status === "pending"
+          ? "/onboarding/identity"
+          : profile?.onboarding_status === "exploring"
+            ? "/matrix"
+            : profile?.onboarding_status === "player_created"
+              ? "/onboarding/instagram"
+              : getRedirectByRole(profile?.role ?? "customer");
+        const target = isAddAccountMode && !destination.startsWith("/onboarding") && destination !== "/matrix"
           ? `${destination}?openAccountSwitcher=1`
           : destination;
 

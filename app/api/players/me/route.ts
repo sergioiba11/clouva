@@ -81,7 +81,10 @@ export async function POST(request: NextRequest) {
     const { user } = await requireUser(request);
     const admin = createAdminSupabase();
     const existing = await findEditablePlayer(admin, user.id);
-    if (existing) return NextResponse.json({ player: existing, created: false });
+    if (existing) {
+      await admin.from("profiles").update({ onboarding_status: existing.is_published ? "published" : "player_created" }).eq("id", user.id);
+      return NextResponse.json({ player: existing, created: false });
+    }
 
     const body = (await request.json().catch(() => ({}))) as {
       professional_categories?: string[];
@@ -129,6 +132,16 @@ export async function POST(request: NextRequest) {
       throw new Error(memberError.message);
     }
 
+    const { error: onboardingError } = await admin
+      .from("profiles")
+      .update({ onboarding_status: "player_created", onboarding_completed_at: null })
+      .eq("id", user.id);
+    if (onboardingError) {
+      await admin.from("player_members").delete().eq("player_id", player.id).eq("user_id", user.id);
+      await admin.from("players").delete().eq("id", player.id);
+      throw new Error(onboardingError.message);
+    }
+
     return NextResponse.json({ player, created: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : "No se pudo crear tu Player.";
@@ -171,6 +184,14 @@ export async function PATCH(request: NextRequest) {
       is_primary: true,
       redirect_to_primary: true,
     }, { onConflict: "normalized_alias" });
+
+    if (body.publication_action === "publish") {
+      const { error: onboardingError } = await admin
+        .from("profiles")
+        .update({ onboarding_status: "published", onboarding_completed_at: new Date().toISOString() })
+        .eq("id", user.id);
+      if (onboardingError) throw new Error(onboardingError.message);
+    }
 
     return NextResponse.json({ player: data });
   } catch (error) {

@@ -14,6 +14,7 @@ type Profile = {
   avatar_3d_url?: string | null;
   spotify_url?: string | null;
   username?: string | null;
+  onboarding_status?: string | null;
 };
 
 type AuthContextType = {
@@ -29,7 +30,7 @@ type AuthContextType = {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 const AUTH_TIMEOUT_MS = 10000;
-const PROFILE_COLUMNS = "id, role, display_name, full_name, avatar_url, avatar_3d_url, spotify_url, username";
+const PROFILE_COLUMNS = "id, role, display_name, full_name, avatar_url, avatar_3d_url, spotify_url, username, onboarding_status";
 
 function withTimeout<T>(promise: PromiseLike<T>, label: string, timeoutMs = AUTH_TIMEOUT_MS): Promise<T> {
   return Promise.race([
@@ -46,6 +47,10 @@ function defaultDisplayName(user: User) {
     (user.user_metadata?.name as string | undefined) ??
     (user.email ? user.email.split("@")[0] : "Usuario")
   );
+}
+
+function clouvaIdForUser(userId: string) {
+  return `CLV-${userId.replaceAll("-", "").slice(0, 10)}`;
 }
 
 async function loadOrCreateProfile(user: User): Promise<Profile> {
@@ -65,9 +70,13 @@ async function loadOrCreateProfile(user: User): Promise<Profile> {
       .from("profiles")
       .insert({
         id: user.id,
-        role: "cliente",
+        role: "customer",
+        role_v2: "cliente",
         display_name: name,
         full_name: name,
+        email: user.email ?? null,
+        clouva_id: clouvaIdForUser(user.id),
+        onboarding_status: "pending",
       })
       .select(PROFILE_COLUMNS)
       .single();
@@ -81,6 +90,7 @@ async function loadOrCreateProfile(user: User): Promise<Profile> {
       .update({
         display_name: existing.data.display_name || name,
         full_name: existing.data.full_name || name,
+        email: user.email ?? null,
       })
       .eq("id", user.id)
       .select(PROFILE_COLUMNS)
@@ -139,7 +149,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       const userId = nextUser.id;
 
-      // Renovar el token no debe volver a borrar ni recargar un perfil que ya está listo.
       if (resolvedUserIdRef.current === userId && profileRef.current?.id === userId) {
         setProfile(profileRef.current);
         setRole(normalizeRole(profileRef.current.role));
@@ -148,8 +157,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      // Supabase puede emitir SIGNED_IN y TOKEN_REFRESHED casi juntos. Si el mismo
-      // usuario ya se está cargando, conservamos esa tarea en vez de cancelarla.
       if (pendingUserIdRef.current === userId) return;
 
       const runId = ++runRef.current;
