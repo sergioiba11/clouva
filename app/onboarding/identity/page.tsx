@@ -37,14 +37,23 @@ export default function IdentityOnboardingPage() {
       setError("Elegí al menos una opción.");
       return;
     }
-    if (selected.length === 1 && selected[0] === "Solo explorar") {
-      router.push("/matrix");
-      return;
-    }
 
     setSaving(true);
     setError(null);
+
     try {
+      if (selected.length === 1 && selected[0] === "Solo explorar") {
+        if (!user) throw new Error("Sesión requerida.");
+        const { supabase } = await import("@/lib/supabase");
+        const { error: updateError } = await supabase
+          .from("profiles")
+          .update({ onboarding_status: "exploring", onboarding_completed_at: new Date().toISOString() })
+          .eq("id", user.id);
+        if (updateError) throw updateError;
+        router.push("/matrix");
+        return;
+      }
+
       const response = await authenticatedFetch("/api/players/me", {
         method: "POST",
         body: JSON.stringify({ professional_categories: selected }),
