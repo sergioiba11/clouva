@@ -4,7 +4,7 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import Script from "next/script";
 import { useRouter, useSearchParams } from "next/navigation";
-import { getRedirectByRole, roleHome } from "@/lib/auth";
+import { getPostAuthDestination, roleHome } from "@/lib/auth";
 import { useAuth } from "@/components/auth-provider";
 import { readApiJson } from "@/lib/authenticated-fetch";
 
@@ -120,7 +120,12 @@ export default function LoginContent() {
     };
   }, [authLoading, continueMode, hydrationReady, isAddAccountMode, role, router, session, user]);
 
-  const redirectByRole = async (userId: string, accessToken: string, forceSwitcher = false) => {
+  const redirectByRole = async (
+    userId: string,
+    accessToken: string,
+    authUser: { created_at?: string | null; last_sign_in_at?: string | null },
+    forceSwitcher = false,
+  ) => {
     if (continueMode === "instagram") {
       const claimed = await claimPendingInstagram(accessToken);
       router.replace(`/onboarding/instagram/select?importSession=${encodeURIComponent(claimed.importSessionId)}`);
@@ -146,8 +151,9 @@ export default function LoginContent() {
       profile = created;
     }
 
-    const redirectPath = getRedirectByRole(profile?.role ?? "cliente");
-    router.replace(forceSwitcher ? `${redirectPath}?openAccountSwitcher=1` : redirectPath);
+    const redirectPath = getPostAuthDestination(profile?.role ?? "cliente", authUser);
+    const shouldOpenSwitcher = forceSwitcher && redirectPath !== "/matrix";
+    router.replace(shouldOpenSwitcher ? `${redirectPath}?openAccountSwitcher=1` : redirectPath);
   };
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -160,7 +166,7 @@ export default function LoginContent() {
       const { data, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
       if (signInError || !data.user || !data.session) throw signInError ?? new Error("No se pudo iniciar sesión.");
       localStorage.removeItem("clouva.switch_target");
-      await redirectByRole(data.user.id, data.session.access_token, isAddAccountMode);
+      await redirectByRole(data.user.id, data.session.access_token, data.user, isAddAccountMode);
     } catch (signInError) {
       setError(signInError instanceof Error ? signInError.message : "No se pudo iniciar sesión.");
       setLoading(false);
@@ -182,7 +188,7 @@ export default function LoginContent() {
       });
       if (signInError || !data.user || !data.session) throw signInError ?? new Error("No se pudo iniciar sesión con Google.");
       localStorage.removeItem("clouva.switch_target");
-      await redirectByRole(data.user.id, data.session.access_token, isAddAccountMode);
+      await redirectByRole(data.user.id, data.session.access_token, data.user, isAddAccountMode);
     } catch (googleError) {
       setError(googleError instanceof Error ? googleError.message : "No se pudo iniciar sesión con Google.");
       setLoading(false);

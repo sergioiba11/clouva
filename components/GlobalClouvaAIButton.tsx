@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Sparkles } from "lucide-react";
 
@@ -10,13 +9,18 @@ export function GlobalClouvaAIButton() {
   if (pathname === "/clouva-ai") return null;
 
   return (
-    <Link
-      href="/clouva-ai"
-      aria-label="Abrir CLOUVA AI"
-      title="Abrir CLOUVA AI"
-      className="fixed bottom-4 left-4 z-[101] flex h-12 w-12 items-center justify-center rounded-full border border-violet-400/30 bg-violet-600 text-white shadow-[0_12px_40px_rgba(109,40,217,0.45)] transition hover:scale-105 hover:bg-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-300/70"
+    <div
+      aria-label="CLOUVA AI próximamente"
+      title="CLOUVA AI · Próximamente"
+      className="fixed bottom-4 left-4 z-[101] hidden items-center gap-2 rounded-full border border-white/10 bg-zinc-900/90 p-1.5 pr-3 text-white/35 shadow-2xl backdrop-blur-xl grayscale sm:flex"
     >
-      <Sparkles className="h-6 w-6" />
-    </Link>
+      <span className="grid h-9 w-9 place-items-center rounded-full bg-white/[0.05]">
+        <Sparkles className="h-5 w-5" />
+      </span>
+      <span className="hidden leading-tight sm:block">
+        <b className="block text-[10px] font-semibold">CLOUVA AI</b>
+        <small className="block text-[9px]">Próximamente</small>
+      </span>
+    </div>
   );
 }

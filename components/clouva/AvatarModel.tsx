@@ -22,13 +22,28 @@ function getInitialModelUrl() {
   return OFFICIAL_CLOUVA_MODEL_URL;
 }
 
-export function AvatarModel({ className = "" }: { className?: string }) {
+export function AvatarModel({
+  className = "",
+  embedded = false,
+  showMotionControl = true,
+  modelUrlOverride = null,
+}: {
+  className?: string;
+  embedded?: boolean;
+  showMotionControl?: boolean;
+  modelUrlOverride?: string | null;
+}) {
   // Start with the last real CLOUVA GLB (or the official GLB on first visit), so the
   // shared viewer never enters its procedural fallback while /api/avatar/clouva refreshes.
   const [modelUrl, setModelUrl] = useState<string>(getInitialModelUrl);
   const [motionTest, setMotionTest] = useState(false);
 
   useEffect(() => {
+    if (modelUrlOverride) {
+      setModelUrl(modelUrlOverride);
+      return;
+    }
+
     let alive = true;
 
     void fetch("/api/avatar/clouva", { cache: "no-store" })
@@ -49,10 +64,10 @@ export function AvatarModel({ className = "" }: { className?: string }) {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [modelUrlOverride]);
 
   return (
-    <div className={`relative h-full min-h-[100dvh] w-full ${className}`}>
+    <div className={`relative h-full w-full ${embedded ? "min-h-0" : "min-h-[100dvh]"} ${className}`}>
       <AvatarModelViewer
         modelUrl={modelUrl}
         fallbackModelUrl={OFFICIAL_CLOUVA_MODEL_URL}
@@ -60,9 +75,10 @@ export function AvatarModel({ className = "" }: { className?: string }) {
         alt="CLOUVA oficial"
         playAnimations={false}
         motionTest={motionTest}
+        embedded={embedded}
       />
 
-      <div className="fixed bottom-20 left-1/2 z-[9999] flex -translate-x-1/2 flex-col items-center gap-2">
+      {showMotionControl ? <div className="fixed bottom-20 left-1/2 z-[9999] flex -translate-x-1/2 flex-col items-center gap-2">
         <button
           type="button"
           aria-pressed={motionTest}
@@ -84,7 +100,7 @@ export function AvatarModel({ className = "" }: { className?: string }) {
         <span className="rounded-full border border-white/10 bg-black/65 px-3 py-1 text-[10px] uppercase tracking-[0.12em] text-white/65 backdrop-blur">
           {motionTest ? "Prueba del rig activa" : "Respiración activa"}
         </span>
-      </div>
+      </div> : null}
     </div>
   );
 }
