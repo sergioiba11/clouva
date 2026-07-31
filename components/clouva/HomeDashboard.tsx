@@ -1,6 +1,5 @@
 "use client";
 
-import dynamic from "next/dynamic";
 import Link from "next/link";
 import {
   ArrowRight,
@@ -26,11 +25,6 @@ import { CloverIcon } from "@/components/clover-icon";
 import { useAuth } from "@/components/auth-provider";
 import { VISUAL_ASSETS } from "@/lib/visual-assets";
 import styles from "./home-dashboard.module.css";
-
-const AvatarModel = dynamic(() => import("./AvatarModel").then((module) => module.AvatarModel), {
-  ssr: false,
-  loading: () => <div className={styles.avatarLoading}>Preparando tu avatar…</div>,
-});
 
 const primaryNav = [
   { label: "Inicio", href: "/", icon: Home, available: true },
@@ -198,13 +192,13 @@ export function HomeDashboard() {
             </div>
           </div>
 
-          <div className={styles.avatarStage} aria-label="Avatar CLOUVA interactivo">
+          <div className={styles.avatarStage} aria-label="Avatar CLOUVA">
             <div className={styles.avatarHalo} aria-hidden="true" />
-            <AvatarModel
-              embedded
-              showMotionControl={false}
-              modelUrlOverride={profile?.avatar_3d_url}
-            />
+            <div className={styles.avatarComingSoon}>
+              <CircleUserRound size={40} />
+              <span>Tu avatar 3D</span>
+              <small>Próximamente</small>
+            </div>
           </div>
 
           <div className={styles.aiPrompt}>
