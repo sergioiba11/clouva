@@ -5,6 +5,7 @@ import { generateProfileCopy, type ProfileCopy } from "@/lib/server/vip-profile-
 import type { IdentityBrief } from "@/lib/server/vip-profile-brief";
 import { enqueueVipProfileJobStep } from "@/lib/server/cloud-tasks";
 import { generateCoverAsset, type GeneratedAsset } from "@/lib/server/vip-profile-assets";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,16 +13,34 @@ export const maxDuration = 60;
 
 // Called only by the Cloud Tasks queue (vip-profile-generation), never by a
 // browser -- authenticated with a shared secret instead of a user session,
-// same pattern as /api/internal/billing/reconcile. Each call advances the
-// job exactly one status forward, self-enqueues the next step when there is
-// one implemented, and returns. Implemented so far: queued -> preparing_identity
-// -> generating_copy (Gemini text). generating_assets (Gemini images through
-// the shared USD 40 ledger) is not implemented yet -- the job stops there.
+// same pattern as /api/internal/billing/reconcile. Cloud Tasks guarantees
+// at-least-once delivery (and this project's own auto-enqueue can also
+// legitimately overlap with a manual retry), so every step that costs real
+// Gemini money claims its work via a compare-and-swap status update FIRST
+// (checked with .select().maybeSingle() -- not just .eq() on write) and
+// bails out with no side effects if another invocation already claimed it.
+// Implemented so far: queued -> preparing_identity -> analyzing_identity
+// (Gemini text) -> generating_copy -> generating_assets (Gemini image) ->
+// assembling_profile -> review_ready.
 function isAuthorized(request: NextRequest) {
   const provided = request.headers.get("x-clouva-vip-task-secret")?.trim() ?? "";
   const expected = process.env.VIP_PROFILE_TASK_SECRET?.trim() ?? "";
   if (!expected) return false;
   return safeEqualHex(provided, expected);
+}
+
+// Returns the claimed row, or null if another invocation already claimed it
+// (status no longer matched `from` by the time this update ran).
+async function claim(admin: SupabaseClient, jobId: string, from: string, to: string, extra: Record<string, unknown> = {}) {
+  const { data, error } = await admin
+    .from("vip_profile_generation_jobs")
+    .update({ status: to, ...extra })
+    .eq("id", jobId)
+    .eq("status", from)
+    .select("id")
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return Boolean(data);
 }
 
 export async function POST(request: NextRequest) {
@@ -44,21 +63,25 @@ export async function POST(request: NextRequest) {
   try {
     switch (job.status) {
       case "queued": {
-        const { error } = await admin
-          .from("vip_profile_generation_jobs")
-          .update({ status: "preparing_identity", started_at: new Date().toISOString(), attempts: (job.attempts as number) + 1 })
-          .eq("id", job.id)
-          .eq("status", "queued");
-        if (error) throw new Error(error.message);
+        const claimed = await claim(admin, job.id as string, "queued", "preparing_identity", {
+          started_at: new Date().toISOString(),
+          attempts: (job.attempts as number) + 1,
+        });
+        if (!claimed) return NextResponse.json({ ok: true, status: job.status, note: "Ya reclamado por otra ejecución." });
         await enqueueVipProfileJobStep(job.id as string);
         return NextResponse.json({ ok: true, status: "preparing_identity" });
       }
       case "preparing_identity": {
-        // Combines analyzing_identity + generating_copy into one Gemini text
-        // call (cheap, not gated by the image budget ledger -- see
-        // lib/server/vip-profile-gemini.ts). Next step (generating_assets:
-        // Gemini image generation through the shared USD 40 ledger) is not
-        // implemented yet -- the job stays at generating_copy on purpose.
+        // No Gemini call here -- the brief is already built and stored by
+        // /api/vip-profile/generate. This step just claims the next stage.
+        const claimed = await claim(admin, job.id as string, "preparing_identity", "analyzing_identity");
+        if (!claimed) return NextResponse.json({ ok: true, status: job.status, note: "Ya reclamado por otra ejecución." });
+        await enqueueVipProfileJobStep(job.id as string);
+        return NextResponse.json({ ok: true, status: "analyzing_identity" });
+      }
+      case "analyzing_identity": {
+        // Combines analysis + copy into one Gemini text call (cheap, not
+        // gated by the image budget ledger -- see vip-profile-gemini.ts).
         const brief = job.identity_brief as unknown as IdentityBrief;
         const { copy, costUsd }: { copy: ProfileCopy; costUsd: number } = await generateProfileCopy(brief);
         const { error } = await admin
@@ -69,12 +92,19 @@ export async function POST(request: NextRequest) {
             actual_cost_usd: Number((((job.actual_cost_usd as number | null) ?? 0) + costUsd).toFixed(6)),
           })
           .eq("id", job.id)
-          .eq("status", "preparing_identity");
+          .eq("status", "analyzing_identity");
         if (error) throw new Error(error.message);
         await enqueueVipProfileJobStep(job.id as string);
         return NextResponse.json({ ok: true, status: "generating_copy", copy });
       }
       case "generating_copy": {
+        // No Gemini call here -- just claims the image-generation stage.
+        const claimed = await claim(admin, job.id as string, "generating_copy", "generating_assets");
+        if (!claimed) return NextResponse.json({ ok: true, status: job.status, note: "Ya reclamado por otra ejecución." });
+        await enqueueVipProfileJobStep(job.id as string);
+        return NextResponse.json({ ok: true, status: "generating_assets" });
+      }
+      case "generating_assets": {
         const copy = job.generated_copy as unknown as ProfileCopy;
         const brief = job.identity_brief as unknown as IdentityBrief;
         const asset: GeneratedAsset = await generateCoverAsset({
@@ -91,7 +121,7 @@ export async function POST(request: NextRequest) {
             actual_cost_usd: Number((((job.actual_cost_usd as number | null) ?? 0) + asset.costUsd).toFixed(6)),
           })
           .eq("id", job.id)
-          .eq("status", "generating_copy");
+          .eq("status", "generating_assets");
         if (error) throw new Error(error.message);
         await enqueueVipProfileJobStep(job.id as string);
         return NextResponse.json({ ok: true, status: "assembling_profile", asset });
