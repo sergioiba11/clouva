@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/components/auth-provider";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
 import type { Player, SocialLink } from "@/lib/players-data";
@@ -9,6 +9,18 @@ import { VipAiProfilePanel } from "@/components/profile/VipAiProfilePanel";
 
 const SECTIONS = ["Identidad", "Presentación", "Imagen", "Links", "Instagram", "CLOUVA AI Profile", "Privacidad y SEO"] as const;
 type Section = (typeof SECTIONS)[number];
+
+// Deep-linkable section slugs, e.g. /profile/edit?section=ai-profile
+// so the post-pago flow can land the user directly on the right tab.
+const SECTION_SLUGS: Record<string, Section> = {
+  "ai-profile": "CLOUVA AI Profile",
+  identidad: "Identidad",
+  presentacion: "Presentación",
+  imagen: "Imagen",
+  links: "Links",
+  instagram: "Instagram",
+  seo: "Privacidad y SEO",
+};
 
 type InstagramConnection = {
   id: string;
@@ -25,13 +37,16 @@ function parseLinks(value: unknown): SocialLink[] {
   return Array.isArray(value) ? value.filter((item): item is SocialLink => Boolean(item && typeof item === "object" && typeof (item as SocialLink).url === "string")) : [];
 }
 
-export default function PlayerEditorPage() {
+function PlayerEditorContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { user, loading: authLoading } = useAuth();
   const [player, setPlayer] = useState<Player | null>(null);
   const [connection, setConnection] = useState<InstagramConnection | null>(null);
   const [vipActive, setVipActive] = useState(false);
-  const [activeSection, setActiveSection] = useState<Section>("Identidad");
+  const [activeSection, setActiveSection] = useState<Section>(
+    () => SECTION_SLUGS[searchParams.get("section") || ""] || "Identidad",
+  );
   const [draft, setDraft] = useState<Record<string, unknown>>({});
   const [links, setLinks] = useState<SocialLink[]>([]);
   const [loading, setLoading] = useState(true);
@@ -176,7 +191,7 @@ export default function PlayerEditorPage() {
 
       <div className="mx-auto grid max-w-7xl gap-6 px-4 py-6 sm:px-6 lg:grid-cols-[220px_minmax(0,1fr)_340px]">
         <nav className="flex gap-2 overflow-x-auto lg:flex-col">
-          {SECTIONS.map((section) => <button key={section} onClick={() => setActiveSection(section)} className={`shrink-0 rounded-xl px-4 py-3 text-left text-sm transition ${activeSection === section ? "bg-violet-600 text-white" : "border border-white/10 bg-white/[0.025] text-white/55 hover:text-white"}`}>{section}</button>)}
+          {SECTIONS.map((section) => <button key={section} onClick={() => setActiveSection(section)} className={`relative shrink-0 rounded-xl px-4 py-3 text-left text-sm transition ${activeSection === section ? "bg-violet-600 text-white" : "border border-white/10 bg-white/[0.025] text-white/55 hover:text-white"}`}>{section}{section === "CLOUVA AI Profile" && vipActive && activeSection !== section ? <span className="ml-2 inline-block h-1.5 w-1.5 rounded-full bg-violet-400 align-middle" /> : null}</button>)}
         </nav>
 
         <section className="rounded-[2rem] border border-white/10 bg-[#0b0913] p-5 sm:p-7">
@@ -238,6 +253,14 @@ export default function PlayerEditorPage() {
         </aside>
       </div>
     </main>
+  );
+}
+
+export default function PlayerEditorPage() {
+  return (
+    <Suspense fallback={<main className="min-h-screen bg-[#05040a] px-4 py-10 text-white"><div className="mx-auto h-[70vh] max-w-6xl animate-pulse rounded-[2rem] bg-white/[0.04]" /></main>}>
+      <PlayerEditorContent />
+    </Suspense>
   );
 }
 

@@ -116,7 +116,7 @@ export default function VipPage() {
   };
 
   const goToProfile = () => {
-    router.push("/profile/edit");
+    router.push("/profile/edit?section=ai-profile");
   };
 
   const cancel = async () => {

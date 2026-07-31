@@ -21,7 +21,10 @@ export function CheckoutStatus({
         <div className={`mx-auto flex h-14 w-14 items-center justify-center rounded-full border text-2xl ${styles}`}>{icon}</div>
         <h1 className="mt-5 text-2xl font-semibold">{title}</h1>
         <p className="mt-3 leading-7 text-white/55">{message}</p>
-        <div className="mt-6 grid grid-cols-2 gap-3"><Link href="/vip" className="rounded-xl bg-violet-600 px-4 py-3 text-sm font-semibold">Ver membresía</Link><Link href="/matrix" className="rounded-xl border border-white/15 px-4 py-3 text-sm">Ir a La Matrix</Link></div>
+        {tone === "success" ? (
+          <Link href="/profile/edit?section=ai-profile" className="mt-6 block rounded-xl bg-violet-600 px-4 py-3.5 text-sm font-semibold">Crear mi versión profesional con CLOUVA AI</Link>
+        ) : null}
+        <div className={`grid grid-cols-2 gap-3 ${tone === "success" ? "mt-3" : "mt-6"}`}><Link href="/vip" className={`rounded-xl px-4 py-3 text-sm ${tone === "success" ? "border border-white/15" : "bg-violet-600 font-semibold"}`}>Ver membresía</Link><Link href="/matrix" className="rounded-xl border border-white/15 px-4 py-3 text-sm">Ir a La Matrix</Link></div>
       </section>
     </main>
   );
