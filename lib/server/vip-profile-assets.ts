@@ -9,7 +9,7 @@ import type { ProfileCopy } from "@/lib/server/vip-profile-gemini";
 const MODEL = "gemini-3.1-flash-image";
 const RESOLUTION = "1K" as const;
 
-export type GeneratedAsset = { kind: "cover"; url: string; costUsd: number };
+export type GeneratedAsset = { kind: "cover" | "logo"; url: string; costUsd: number };
 
 // Gemini generates an abstract background texture only -- never the artist's
 // likeness, never invented scenery, never baked-in text/logos. The real
@@ -82,4 +82,72 @@ export async function generateCoverAsset(args: {
   });
 
   return { kind: "cover", url, costUsd: actualCostUsd };
+}
+
+// Same "no literal text/logos/faces" constraint as the cover -- Gemini image
+// models render wordmarks unreliably, so this asks for an abstract symbol/mark
+// only (spec: "logo; símbolo"), never a finished logo with the artist's name
+// baked in. The owner can pair it with their real name in the template.
+function buildLogoPrompt(copy: ProfileCopy, professionalCategories: string[]): string {
+  const energy = copy.visual_energy ?? "neutro, minimalista";
+  const tone = copy.visual_tone ?? "oscuro, violeta";
+  const paletteHint = copy.palette && copy.palette.length > 0 ? copy.palette.join(", ") : tone;
+  const categoryHint = professionalCategories.length > 0 ? professionalCategories.join(", ") : "identidad creativa";
+
+  return [
+    "Símbolo/marca abstracta minimalista para un perfil de artista/creador en CLOUVA, una plataforma premium underground.",
+    `Energía visual: ${energy}. Colores: ${paletteHint}. Contexto profesional (solo como referencia de mood, no representar literalmente): ${categoryHint}.`,
+    "Estilo: ícono geométrico simple, tipo isotipo, una o dos formas, alto contraste, fondo transparente o sólido oscuro, funciona en tamaño chico (avatar/favicon).",
+    "PROHIBIDO ABSOLUTAMENTE: texto, letras, números, tipografía, nombres, personas, rostros, siluetas humanas reconocibles, fotografías, escenas concretas.",
+    "Formato cuadrado, centrado, con margen alrededor del símbolo.",
+  ].join(" ");
+}
+
+export async function generateLogoAsset(args: {
+  admin: SupabaseClient;
+  playerId: string;
+  copy: ProfileCopy;
+  professionalCategories: string[];
+}): Promise<GeneratedAsset> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error("GEMINI_API_KEY no está configurada.");
+
+  const estimatedCostUsd = estimateImageCostUsd(MODEL, RESOLUTION);
+  const reservation = await reserveBudget(args.admin, { estimatedCostUsd });
+  if (!reservation.allowed) {
+    const error = new Error(`Presupuesto no disponible (${reservation.reason}).`);
+    (error as Error & { code?: string }).code = "blocked_budget";
+    throw error;
+  }
+
+  let generated: Awaited<ReturnType<typeof generateImage>>;
+  try {
+    generated = await generateImage({
+      apiKey,
+      prompt: buildLogoPrompt(args.copy, args.professionalCategories),
+      model: MODEL,
+      aspectRatio: "1:1",
+    });
+  } catch (generationError) {
+    await releaseBudget(args.admin, { estimatedCostUsd });
+    if (generationError instanceof GeminiImageError) throw generationError;
+    throw generationError instanceof Error ? generationError : new Error("Fallo desconocido generando el símbolo.");
+  }
+
+  const actualCostUsd = estimateFinalCostUsd({
+    model: MODEL,
+    resolution: RESOLUTION,
+    promptTokenCount: generated.usageMetadata?.promptTokenCount,
+    candidatesTokenCount: generated.usageMetadata?.candidatesTokenCount,
+    thoughtsTokenCount: generated.usageMetadata?.thoughtsTokenCount,
+  });
+  await finalizeBudget(args.admin, { estimatedCostUsd, actualCostUsd });
+
+  const url = await uploadGeneratedMedia({
+    bytes: generated.bytes,
+    mimeType: generated.mimeType,
+    pathPrefix: `public-identity/players/${args.playerId}/vip-logo`,
+  });
+
+  return { kind: "logo", url, costUsd: actualCostUsd };
 }

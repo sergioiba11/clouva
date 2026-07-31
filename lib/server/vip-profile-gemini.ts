@@ -19,6 +19,10 @@ export type ProfileCopy = {
   share_description: string | null;
   visual_energy: string | null;
   visual_tone: string | null;
+  // Proposed brand palette (2-4 hex colors) -- creative direction only, per
+  // spec section "Gemini puede: proponer colores". Never used to invent
+  // facts, just a styling suggestion the owner can ignore before publishing.
+  palette: string[] | null;
 };
 
 export class VipProfileGeminiError extends Error {
@@ -67,7 +71,8 @@ function buildPrompt(brief: IdentityBrief): string {
     '  "share_title": string | null,',
     '  "share_description": string | null,',
     '  "visual_energy": string | null,     // 2-4 palabras describiendo la energía visual sugerida por facts (ej. "explosivo, urbano")',
-    '  "visual_tone": string | null        // 2-4 palabras de paleta/tono sugerido (ej. "oscuro, violeta, contraste alto")',
+    '  "visual_tone": string | null,       // 2-4 palabras de paleta/tono sugerido (ej. "oscuro, violeta, contraste alto")',
+    '  "palette": string[] | null          // 3-4 colores hex (formato "#RRGGBB") coherentes con visual_tone, de oscuro a claro',
     "}",
   ].join("\n");
 }
@@ -118,6 +123,12 @@ export async function generateProfileCopy(brief: IdentityBrief): Promise<{ copy:
 
   const raw2 = parsed as Record<string, unknown>;
   const asStringOrNull = (v: unknown) => (typeof v === "string" && v.trim() ? v.trim() : null);
+  const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
+  const asPaletteOrNull = (v: unknown) => {
+    if (!Array.isArray(v)) return null;
+    const colors = v.filter((item): item is string => typeof item === "string" && HEX_COLOR.test(item.trim())).map((item) => item.trim().toLowerCase()).slice(0, 4);
+    return colors.length > 0 ? colors : null;
+  };
   const copy: ProfileCopy = {
     tagline: asStringOrNull(raw2.tagline),
     short_bio: asStringOrNull(raw2.short_bio),
@@ -127,6 +138,7 @@ export async function generateProfileCopy(brief: IdentityBrief): Promise<{ copy:
     share_description: asStringOrNull(raw2.share_description),
     visual_energy: asStringOrNull(raw2.visual_energy),
     visual_tone: asStringOrNull(raw2.visual_tone),
+    palette: asPaletteOrNull(raw2.palette),
   };
 
   const promptTokens = data.usageMetadata?.promptTokenCount ?? 0;

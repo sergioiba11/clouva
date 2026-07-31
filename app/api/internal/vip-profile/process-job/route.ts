@@ -4,7 +4,7 @@ import { createAdminSupabase } from "@/lib/server/supabase";
 import { generateProfileCopy, type ProfileCopy } from "@/lib/server/vip-profile-gemini";
 import type { IdentityBrief } from "@/lib/server/vip-profile-brief";
 import { enqueueVipProfileJobStep } from "@/lib/server/cloud-tasks";
-import { generateCoverAsset, type GeneratedAsset } from "@/lib/server/vip-profile-assets";
+import { generateCoverAsset, generateLogoAsset, type GeneratedAsset } from "@/lib/server/vip-profile-assets";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
@@ -105,31 +105,42 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ ok: true, status: "generating_assets" });
       }
       case "generating_assets": {
+        // Cover + logo are independent Gemini image calls, each with its own
+        // budget reservation -- run them together and keep whatever succeeds
+        // even if the other fails, so a transient failure on one doesn't
+        // throw away money already spent (and billed by Google) on the other.
         const copy = job.generated_copy as unknown as ProfileCopy;
         const brief = job.identity_brief as unknown as IdentityBrief;
-        const asset: GeneratedAsset = await generateCoverAsset({
-          admin,
-          playerId: job.player_id as string,
-          copy,
-          professionalCategories: brief.professional_categories ?? [],
-        });
-        const { error } = await admin
+        const results = await Promise.allSettled([
+          generateCoverAsset({ admin, playerId: job.player_id as string, copy, professionalCategories: brief.professional_categories ?? [] }),
+          generateLogoAsset({ admin, playerId: job.player_id as string, copy, professionalCategories: brief.professional_categories ?? [] }),
+        ]);
+        const assets = results
+          .filter((result): result is PromiseFulfilledResult<GeneratedAsset> => result.status === "fulfilled")
+          .map((result) => result.value);
+        const costUsd = assets.reduce((sum, asset) => sum + asset.costUsd, 0);
+        const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+
+        const { error: saveError } = await admin
           .from("vip_profile_generation_jobs")
           .update({
-            status: "assembling_profile",
-            generated_assets: [asset],
-            actual_cost_usd: Number((((job.actual_cost_usd as number | null) ?? 0) + asset.costUsd).toFixed(6)),
+            ...(failure ? {} : { status: "assembling_profile" }),
+            generated_assets: assets,
+            actual_cost_usd: Number((((job.actual_cost_usd as number | null) ?? 0) + costUsd).toFixed(6)),
           })
           .eq("id", job.id)
           .eq("status", "generating_assets");
-        if (error) throw new Error(error.message);
+        if (saveError) throw new Error(saveError.message);
+        if (failure) throw failure.reason instanceof Error ? failure.reason : new Error("No se pudo generar uno de los assets visuales.");
+
         await enqueueVipProfileJobStep(job.id as string);
-        return NextResponse.json({ ok: true, status: "assembling_profile", asset });
+        return NextResponse.json({ ok: true, status: "assembling_profile", assets });
       }
       case "assembling_profile": {
         const copy = job.generated_copy as unknown as ProfileCopy;
         const assets = (job.generated_assets as unknown as GeneratedAsset[] | null) ?? [];
         const cover = assets.find((a) => a.kind === "cover");
+        const logo = assets.find((a) => a.kind === "logo");
 
         const { data: lastVersion, error: lastVersionError } = await admin
           .from("player_profile_versions")
@@ -151,8 +162,11 @@ export async function POST(request: NextRequest) {
             profile_level: "vip",
             template_key: "vip_default",
             copy_config: copy,
-            visual_config: { energy: copy.visual_energy, tone: copy.visual_tone },
-            asset_references: cover ? [{ kind: "cover", url: cover.url }] : [],
+            visual_config: { energy: copy.visual_energy, tone: copy.visual_tone, palette: copy.palette },
+            asset_references: [
+              ...(cover ? [{ kind: "cover", url: cover.url }] : []),
+              ...(logo ? [{ kind: "logo", url: logo.url }] : []),
+            ],
             layout_config: {},
             source_snapshot: job.identity_brief,
           })
