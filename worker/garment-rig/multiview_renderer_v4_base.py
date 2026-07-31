@@ -242,8 +242,15 @@ def _coverage_adjusted_framing(coverage, framing, target_coverage):
 
 
 def render_multiview_v4(output_dir: Path, vectors: Dict[str, Vector], height: float, meshes: Iterable[bpy.types.Object] | None = None,
-                        segmentation=None, classifications: dict | None = None, anatomy_bvh=None, attempt: str = "v4", config: dict | None = None):
+                        segmentation=None, classifications: dict | None = None, anatomy_bvh=None, attempt: str = "v4", config: dict | None = None,
+                        include_groups: Iterable[str] | None = None):
     config = config or DEFAULT_CONFIG; output_dir = Path(output_dir); meshes = list(meshes or _scene_meshes()); classifications = classifications or {}
+    # include_groups=None renders every camera group (historic behavior); a set
+    # like {"face"} or {"hand"} restricts the pass to that anatomical region so
+    # the phased analyzer can pay only for the region it is refreshing.
+    wanted_groups = set(include_groups) if include_groups is not None else None
+    def _wanted(group: str) -> bool:
+        return wanted_groups is None or group in wanted_groups
     hand_config = _hand_camera_config(config)
     proxies = _build_proxies(meshes, segmentation, classifications, anatomy_bvh)
     all_meshes = [obj for obj in bpy.context.scene.objects if obj.type == "MESH"]
@@ -253,17 +260,17 @@ def render_multiview_v4(output_dir: Path, vectors: Dict[str, Vector], height: fl
     try:
         minimum, maximum, size = _bounds(meshes); body_target = (minimum + maximum) * 0.5; body_size = max(float(size.z), height, 0.02)
         body_scene = _configure_scene(output_dir, body_resolution)
-        for name, direction in BODY_DIRECTIONS.items():
+        for name, direction in (BODY_DIRECTIONS.items() if _wanted("body") else ()):
             views.append(_enrich(_render_view(body_scene, output_dir, name, "body", None, body_target, direction, body_size, meshes, all_meshes,
                                                anatomy_bvh, BODY_REGIONS, framing=1.14, technical_resolution=technical_resolution), meshes, attempt, "body"))
         face_scene = _configure_scene(output_dir, face_resolution); skull_base = vectors["skull_base"]; head_top = vectors["head_top"]
         head_points = segmentation.region_points(("head", "neck")) if segmentation else []; face_target = _average(head_points, skull_base.lerp(head_top, 0.54))
         face_size = max((head_top - skull_base).length * 1.18, height * 0.12); face_visible = proxies["face"] or meshes
-        for name, direction in FACE_DIRECTIONS.items():
+        for name, direction in (FACE_DIRECTIONS.items() if _wanted("face") else ()):
             views.append(_enrich(_render_view(face_scene, output_dir, name, "face", None, face_target, direction, face_size, face_visible, all_meshes,
                                                anatomy_bvh, ("head", "eyes"), framing=1.78, technical_resolution=technical_resolution), face_visible, attempt, "face"))
         hand_scene = _configure_scene(output_dir, hand_resolution)
-        for side, suffix in (("left", "l"), ("right", "r")):
+        for side, suffix in ((("left", "l"), ("right", "r")) if _wanted("hand") else ()):
             wrist = vectors[f"wrist_{suffix}"]; distal = vectors[f"hand_{suffix}"]; measurement = segmentation.hand_measurement(side) if segmentation else {}
             focus_visible, context_visible, focus_regions, context_regions, created = _hand_proxies(
                 anatomy_bvh, side, suffix, wrist, distal, height,

@@ -388,6 +388,8 @@ type JobStatus = {
   runId?: string;
   summary?: AnalysisSummary;
   detail?: string;
+  phase?: string;
+  progress?: number;
 };
 
 type AnalysisProcessState = "idle" | "starting" | "running" | "summary_ready" | "ready" | "failed";
@@ -433,6 +435,33 @@ function processStateLabel(state: AnalysisProcessState) {
   }[state];
 }
 
+/** Estado honesto del pipeline de 3 fases: refleja lo que realmente está
+ * pasando (incluido el arranque del contenedor de Cloud Run, ~1 min) en vez
+ * de una barra genérica. Las fases vienen de avatar_analyzer_jobs.phase. */
+function jobPhaseLabel(phase: string | null): string | null {
+  switch (phase) {
+    case "provisioning":
+    case "queued":
+    case "starting":
+      return "Preparando el motor de análisis (~1 min)…";
+    case "blender":
+    case "body":
+      return "Fase 1/3 · Analizando el cuerpo completo";
+    case "body_completed":
+      return "Cuerpo listo · preparando el análisis de la cara";
+    case "face":
+      return "Fase 2/3 · Analizando la cara";
+    case "face_completed":
+      return "Cara lista · preparando el análisis de las manos";
+    case "hands":
+      return "Fase 3/3 · Analizando las manos";
+    case "persisting":
+      return "Guardando el resultado final…";
+    default:
+      return null;
+  }
+}
+
 function detailStateLabel(state: DetailState) {
   return {
     idle: "Sin solicitar",
@@ -473,7 +502,12 @@ function loadActiveJob(): PersistedJob | null {
   }
 }
 
-async function pollAnalysisJob(jobId: string, accessToken: string, shouldStop: () => boolean): Promise<JobStatus> {
+async function pollAnalysisJob(
+  jobId: string,
+  accessToken: string,
+  shouldStop: () => boolean,
+  onUpdate?: (job: JobStatus) => void,
+): Promise<JobStatus> {
   const deadline = Date.now() + JOB_POLL_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (shouldStop()) return { status: "cancelled" };
@@ -497,6 +531,7 @@ async function pollAnalysisJob(jobId: string, accessToken: string, shouldStop: (
     }
     if (!response.ok) throw new Error(data.error || `No se pudo consultar el estado del análisis (${response.status}).`);
     if (data.status === "done" || data.status === "error" || data.status === "cancelled") return data;
+    onUpdate?.(data);
     if (shouldStop()) return { status: "cancelled" };
     await new Promise((resolve) => window.setTimeout(resolve, JOB_POLL_INTERVAL_MS));
   }
@@ -528,6 +563,14 @@ export function AvatarAnalyzerPreview() {
   const [cancelling, setCancelling] = useState(false);
   const activeJobIdRef = useRef<string | null>(null);
   const cancelRequestedRef = useRef(false);
+  const [jobPhase, setJobPhase] = useState<string | null>(null);
+  // Última fase cuyo resultado parcial ya se cargó, para no re-descargar el
+  // mismo parcial en cada tick del polling.
+  const loadedPartialPhaseRef = useRef<string | null>(null);
+  // Números de secuencia: un fetch parcial lento nunca debe pisar al resultado
+  // final que llegó después.
+  const assetLoadSeqRef = useRef(0);
+  const detailLoadSeqRef = useRef(0);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [summary, setSummary] = useState<AnalysisSummary | null>(null);
   const [detail, setDetail] = useState<AnalysisDetail | null>(null);
@@ -679,14 +722,17 @@ export function AvatarAnalyzerPreview() {
   };
 
   const loadAsset = async (runId: string, accessToken: string) => {
+    const seq = ++assetLoadSeqRef.current;
     setAssetState("loading");
     try {
       const assetResponse = await fetch(
         `/api/avatar/analyze/result/${runId}/asset/diagnostic_landmarks.glb`,
         { headers: { Authorization: `Bearer ${accessToken}` }, cache: "no-store" },
       );
+      if (assetLoadSeqRef.current !== seq) return false;
       if (!assetResponse.ok) throw new Error("El análisis terminó, pero no se pudo abrir su GLB diagnóstico.");
       const blob = await assetResponse.blob();
+      if (assetLoadSeqRef.current !== seq) return false;
       if (blob.size < 1024) throw new Error("El diagnóstico llegó vacío.");
       const nextUrl = URL.createObjectURL(blob);
       setPreviewUrl((current) => {
@@ -696,6 +742,7 @@ export function AvatarAnalyzerPreview() {
       setAssetState("ready");
       return true;
     } catch (cause) {
+      if (assetLoadSeqRef.current !== seq) return false;
       setAssetState("failed");
       setTransportError(cause instanceof Error ? cause.message : "No se pudo recuperar el GLB diagnóstico.");
       return false;
@@ -703,6 +750,7 @@ export function AvatarAnalyzerPreview() {
   };
 
   const loadDetail = async (runId: string, accessToken: string, manualRetry = false) => {
+    const seq = ++detailLoadSeqRef.current;
     setDetailState(manualRetry ? "retrying" : "loading");
     setPersistenceNotice(null);
     setDetailRetryCount(0);
@@ -712,8 +760,10 @@ export function AvatarAnalyzerPreview() {
           headers: { Authorization: `Bearer ${accessToken}` },
           cache: "no-store",
         });
+        if (detailLoadSeqRef.current !== seq) return false;
         if (response.ok) {
           const data = await response.json().catch(() => null) as AnalysisDetail | null;
+          if (detailLoadSeqRef.current !== seq) return false;
           if (!data?.analysis || !data.summary) throw new Error("El diagnóstico llegó incompleto.");
           setDetail(data);
           setSummary(data.summary);
@@ -726,6 +776,7 @@ export function AvatarAnalyzerPreview() {
         }
         const apiError = await readApiError(response);
         const retryable = apiError.retryable || DETAIL_RETRYABLE_STATUSES.has(response.status);
+        if (detailLoadSeqRef.current !== seq) return false;
         if (!retryable) {
           setDetailState("failed");
           setTransportError(apiError.error || "No se pudo leer el reporte anatómico.");
@@ -740,6 +791,7 @@ export function AvatarAnalyzerPreview() {
           : Math.min(8000, 700 * (2 ** attempt));
         await wait(baseDelay + Math.round(Math.random() * 350));
       } catch (cause) {
+        if (detailLoadSeqRef.current !== seq) return false;
         if (attempt === DETAIL_MAX_ATTEMPTS - 1) {
           setDetailState("temporarily_unavailable");
           setTransportError(cause instanceof Error ? cause.message : "No se pudo recuperar el detalle.");
@@ -750,6 +802,7 @@ export function AvatarAnalyzerPreview() {
         await wait(Math.min(8000, 700 * (2 ** attempt)) + Math.round(Math.random() * 350));
       }
     }
+    if (detailLoadSeqRef.current !== seq) return false;
     setDetailState("temporarily_unavailable");
     setPersistenceNotice("El análisis está completo, pero el detalle continúa temporalmente inaccesible.");
     return false;
@@ -757,20 +810,41 @@ export function AvatarAnalyzerPreview() {
 
   const runJob = async (jobId: string, startedAt: number = Date.now()) => {
     if (!session?.access_token) return;
+    const accessToken = session.access_token;
     activeJobIdRef.current = jobId;
     saveActiveJob({ jobId, startedAt });
     setAnalysisProcessState("running");
     setWorkerErrorMessage(null);
+    setJobPhase(null);
+    loadedPartialPhaseRef.current = null;
     let terminal = false;
     try {
       if (cancelRequestedRef.current) {
         terminal = true;
         setAnalysisProcessState("idle");
-        void requestJobCancellation(jobId, session.access_token);
+        void requestJobCancellation(jobId, accessToken);
         return;
       }
-      const job = await pollAnalysisJob(jobId, session.access_token, () => cancelRequestedRef.current);
+      const job = await pollAnalysisJob(jobId, accessToken, () => cancelRequestedRef.current, (update) => {
+        if (activeJobIdRef.current !== jobId) return;
+        setJobPhase(update.phase ?? null);
+        // Al cerrarse cada fase el worker publica el run parcial (mismo runId):
+        // lo cargamos una sola vez por fase para mostrar el cuerpo apenas está,
+        // y refrescarlo cuando la cara suma sus landmarks.
+        const partialPhase = update.phase === "body_completed" || update.phase === "face"
+          ? "body"
+          : update.phase === "face_completed" || update.phase === "hands"
+            ? "face"
+            : null;
+        if (partialPhase && update.runId && loadedPartialPhaseRef.current !== partialPhase) {
+          loadedPartialPhaseRef.current = partialPhase;
+          if (update.summary) setSummary(update.summary);
+          void loadAsset(update.runId, accessToken);
+          void loadDetail(update.runId, accessToken);
+        }
+      });
       if (activeJobIdRef.current !== jobId) return;
+      setJobPhase(null);
       if (job.status === "cancelled") {
         terminal = true;
         setAnalysisProcessState("idle");
@@ -811,6 +885,7 @@ export function AvatarAnalyzerPreview() {
     setAnalysisProcessState("idle");
     setWorkerErrorMessage(null);
     setPersistenceNotice(null);
+    setJobPhase(null);
     saveActiveJob(null);
     const jobId = activeJobIdRef.current;
     const accessToken = session?.access_token;
@@ -1182,6 +1257,9 @@ export function AvatarAnalyzerPreview() {
         <section className={styles.systemHealth} aria-label="Salud del sistema del Analyzer">
           <div><span>Worker</span><strong>{workerStateLabel(analysisProcessState)}</strong></div>
           <div><span>Proceso</span><strong>{processStateLabel(analysisProcessState)}</strong></div>
+          {analyzing && jobPhaseLabel(jobPhase) ? (
+            <div><span>Fase</span><strong>{jobPhaseLabel(jobPhase)}</strong></div>
+          ) : null}
           <div><span>Resultado persistido</span><strong>{effectiveSummary ? "Sí" : analysisProcessState === "running" ? "En proceso" : "No"}</strong></div>
           <div><span>Detalle</span><strong>{detailStateLabel(detailState)}</strong></div>
           <div><span>GLB diagnóstico</span><strong>{assetStateLabel(assetState)}</strong></div>
@@ -1386,7 +1464,9 @@ export function AvatarAnalyzerPreview() {
         disabled={analyzing || !session?.access_token}
       >
         {analyzing ? <Loader2 className={styles.spin} /> : previewUrl ? <RotateCcw /> : <BrainCircuit />}
-        {analyzing ? "ANALIZANDO ORIENTACIÓN, BVH, TOPOLOGÍA Y COBERTURA…" : previewUrl ? "VOLVER A ANALIZAR" : "ANALIZAR AVATAR"}
+        {analyzing
+          ? (jobPhaseLabel(jobPhase) ?? "ANALIZANDO ORIENTACIÓN, BVH, TOPOLOGÍA Y COBERTURA…").toUpperCase()
+          : previewUrl ? "VOLVER A ANALIZAR" : "ANALIZAR AVATAR"}
       </button>
 
       {analyzing ? (

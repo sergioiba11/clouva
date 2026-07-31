@@ -10,6 +10,7 @@ import gc
 import json
 import os
 from pathlib import Path
+import shutil
 import sys
 import time
 import traceback
@@ -71,8 +72,15 @@ def _real_meshes():
     ]
 
 
-def _refresh_optional_modules(analysis: dict, output_dir: Path):
-    """Run V4 cameras and detectors; return diagnostics without blocking body fallback."""
+def _refresh_optional_modules(analysis: dict, output_dir: Path, include: str | None = None):
+    """Run V4 cameras and detectors; return diagnostics without blocking body fallback.
+
+    include=None keeps the historic behavior (face + hands in one pass).
+    include="face" or "hands" restricts rendering, detection and analysis to
+    that region so the phased pipeline can publish partial results per region.
+    Region diagnostics are merged into diagnostics.v4Attempt (never replaced),
+    keeping the V4.1 residual-repair contract intact across phases.
+    """
     manifests = []
     try:
         meshes = _real_meshes()
@@ -84,7 +92,12 @@ def _refresh_optional_modules(analysis: dict, output_dir: Path):
         limb = analysis.get("limbCenterlines") or {}
         segmentation = segment_anatomy_v3(meshes, classifications, vectors, dimensions, limb)
         anatomy_bvh = build_anatomy_bvh(meshes, segmentation, classifications)
-        render_dir = output_dir / "renders_v4"
+        if include == "face":
+            render_dir, attempt_name, include_groups = output_dir / "renders_v4_face", "v4-face", {"face"}
+        elif include == "hands":
+            render_dir, attempt_name, include_groups = output_dir / "renders_v4_hands", "v4-hands", {"hand"}
+        else:
+            render_dir, attempt_name, include_groups = output_dir / "renders_v4", "v4", None
         manifest = render_multiview_v4(
             render_dir,
             vectors,
@@ -93,37 +106,48 @@ def _refresh_optional_modules(analysis: dict, output_dir: Path):
             segmentation=segmentation,
             classifications=classifications,
             anatomy_bvh=anatomy_bvh,
-            attempt="v4",
+            attempt=attempt_name,
             config=DEFAULT_CONFIG,
+            include_groups=include_groups,
         )
         manifests.append(manifest)
         calibration = validate_manifest(manifest, DEFAULT_CONFIG)
         valid_manifest = filter_invalid_views(manifest, calibration)
-        detector, detector_process = analyzer_v32._run_detector(valid_manifest, output_dir, "v4")
-        face = analyzer_v32.analyze_face(
-            detector, valid_manifest, meshes, classifications, vectors,
-            float(dimensions.get("width") or 0.0), segmentation, anatomy_bvh,
-        )
-        hands = analyzer_v32.analyze_hands(
-            detector, valid_manifest, classifications, segmentation, meshes, anatomy_bvh,
-        )
-        final_bvh = hands.pop("_anatomy_bvh", anatomy_bvh)
+        detector, detector_process = analyzer_v32._run_detector(valid_manifest, output_dir, attempt_name)
+        attempt_diag = analysis.setdefault("diagnostics", {}).setdefault("v4Attempt", {})
         landmarks = analysis.setdefault("landmarks", {})
-        landmarks.update(face.get("landmarks") or {})
-        landmarks.update((hands.get("left") or {}).get("landmarks") or {})
-        landmarks.update((hands.get("right") or {}).get("landmarks") or {})
-        analysis["faceAnalysis"] = face.get("status")
-        analysis["leftHandAnalysis"] = (hands.get("left") or {}).get("status")
-        analysis["rightHandAnalysis"] = (hands.get("right") or {}).get("status")
-        analysis.setdefault("diagnostics", {})["v4Attempt"] = {
-            "cameraManifest": manifest,
-            "cameraCalibration": calibration,
-            "detector": detector,
-            "detectorProcess": detector_process,
-            "face": face,
-            "hands": hands,
-            "regionBvh": final_bvh.report(),
-        }
+        final_bvh = anatomy_bvh
+        if include in (None, "face"):
+            face = analyzer_v32.analyze_face(
+                detector, valid_manifest, meshes, classifications, vectors,
+                float(dimensions.get("width") or 0.0), segmentation, anatomy_bvh,
+            )
+            landmarks.update(face.get("landmarks") or {})
+            analysis["faceAnalysis"] = face.get("status")
+            attempt_diag["face"] = face
+        if include in (None, "hands"):
+            hands = analyzer_v32.analyze_hands(
+                detector, valid_manifest, classifications, segmentation, meshes, anatomy_bvh,
+            )
+            final_bvh = hands.pop("_anatomy_bvh", anatomy_bvh)
+            landmarks.update((hands.get("left") or {}).get("landmarks") or {})
+            landmarks.update((hands.get("right") or {}).get("landmarks") or {})
+            analysis["leftHandAnalysis"] = (hands.get("left") or {}).get("status")
+            analysis["rightHandAnalysis"] = (hands.get("right") or {}).get("status")
+            attempt_diag["hands"] = hands
+        if include is None:
+            attempt_diag.update({
+                "cameraManifest": manifest,
+                "cameraCalibration": calibration,
+                "detector": detector,
+                "detectorProcess": detector_process,
+            })
+        else:
+            attempt_diag[f"{include}CameraManifest"] = manifest
+            attempt_diag[f"{include}CameraCalibration"] = calibration
+            attempt_diag[f"{include}Detector"] = detector
+            attempt_diag[f"{include}DetectorProcess"] = detector_process
+        attempt_diag["regionBvh"] = final_bvh.report()
         analysis["segmentation"] = segmentation.as_report()
         analysis["regionBvh"] = final_bvh.report()
         return calibration, {"status": "completed", "manifest": manifest, "detector": detector}
@@ -176,6 +200,23 @@ def _upgrade_from_v32(
         v4_attempt = {"status": "skipped_body_basic"}
     else:
         calibration, v4_attempt = _refresh_optional_modules(legacy_analysis, output_dir)
+    return _finalize_upgrade(
+        legacy_analysis, legacy_report, calibration, v4_attempt,
+        requested_profile, requested_operation, output_dir, started,
+    )
+
+
+def _finalize_upgrade(
+    legacy_analysis: dict,
+    legacy_report: dict,
+    calibration: dict,
+    v4_attempt: dict,
+    requested_profile: str,
+    requested_operation: str | None,
+    output_dir: Path,
+    started: float,
+    executed_phase: str | None = None,
+):
     analysis = upgrade_analysis_v4(
         legacy_analysis,
         requested_rig_profile=requested_profile,
@@ -196,6 +237,7 @@ def _upgrade_from_v32(
         "optionalReanalysis": v4_attempt,
         "requestedReanalysisOperation": requested_operation,
         "executedAsCleanPipeline": True,
+        "executedPhase": executed_phase or "upgrade",
         "durationMs": max(1, int((time.perf_counter() - started) * 1000)),
     }
     analysis_path = output_dir / "avatar_analysis.json"
@@ -243,7 +285,31 @@ def run(input_path: Path, output_dir: Path):
     skip_face_hands = requested_profile == "BODY_BASIC" and requested_operation is None
     if phase == "base":
         result = analyzer_v32.run(input_path, output_dir, skip_face_hands=skip_face_hands)
+        # Snapshot the raw V3.2 analysis before the upgrade phase overwrites
+        # avatar_analysis.json -- the phased face/hands passes need the legacy
+        # dict as their merge base (upgrade_analysis_v4 is not idempotent over
+        # its own output).
+        shutil.copy2(output_dir / "avatar_analysis.json", output_dir / "avatar_analysis_v32.json")
         print("[clouva-avatar-analyzer-v4] base phase completed", flush=True)
+        return result
+    if phase in ("face", "hands"):
+        v32_path = output_dir / "avatar_analysis_v32.json"
+        if not v32_path.is_file():
+            raise RuntimeError(f"V4 {phase} phase requires the V3.2 base snapshot (avatar_analysis_v32.json)")
+        legacy_analysis = json.loads(v32_path.read_text(encoding="utf-8"))
+        report_path = output_dir / "diagnostic_report.json"
+        legacy_report = json.loads(report_path.read_text(encoding="utf-8")) if report_path.is_file() else {}
+        _restore_clean_analysis_scene(input_path)
+        calibration, v4_attempt = _refresh_optional_modules(legacy_analysis, output_dir, include=phase)
+        # Persist the merged legacy dict so the next phase accumulates on top
+        # of this one (face landmarks survive into the hands phase).
+        _write(v32_path, legacy_analysis)
+        result = _finalize_upgrade(
+            legacy_analysis, legacy_report, calibration, v4_attempt,
+            requested_profile, requested_operation, output_dir, started,
+            executed_phase=phase,
+        )
+        print(f"[clouva-avatar-analyzer-v4] {phase} phase completed", flush=True)
         return result
     if phase == "upgrade":
         analysis_path = output_dir / "avatar_analysis.json"

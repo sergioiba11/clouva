@@ -18,7 +18,7 @@ type MetadataRecord = Record<string, unknown>;
 export type AnalyzerPendingJob = {
   jobId: string;
   avatarId: string;
-  requestedRigProfile: "BODY_BASIC";
+  requestedRigProfile: string;
   startedAt: string;
   sourceKind: "active_avatar_original";
   status: "pending" | "error";
@@ -166,18 +166,36 @@ export type WorkerJobStatus = {
   runId?: string;
   summary?: Record<string, unknown>;
   detail?: string;
+  /** Fase real del pipeline (provisioning, starting, body, body_completed,
+   * face, face_completed, hands, persisting, completed, cancelled). */
+  phase?: string;
+  progress?: number;
 };
 
 export function toWorkerJobStatus(row: AnalyzerJobRow): WorkerJobStatus {
   switch (row.status) {
     case "completed":
-      return { status: "done", runId: row.run_id ?? undefined, summary: row.summary ?? undefined };
+      return {
+        status: "done",
+        runId: row.run_id ?? undefined,
+        summary: row.summary ?? undefined,
+        phase: "completed",
+        progress: 100,
+      };
     case "failed":
-      return { status: "error", detail: row.error_message ?? "El análisis falló" };
+      return { status: "error", detail: row.error_message ?? "El análisis falló", phase: row.phase ?? undefined };
     case "cancelled":
-      return { status: "cancelled" };
+      // Un run parcial ya publicado (cuerpo listo, p. ej.) sigue siendo usable:
+      // el runId queda expuesto para que el frontend pueda ofrecerlo.
+      return { status: "cancelled", runId: row.run_id ?? undefined, summary: row.summary ?? undefined };
     default: // queued, starting, running, persisting, cancel_requested
-      return { status: "pending" };
+      return {
+        status: "pending",
+        phase: row.phase ?? undefined,
+        progress: row.progress ?? undefined,
+        runId: row.run_id ?? undefined,
+        summary: row.summary ?? undefined,
+      };
   }
 }
 
@@ -224,6 +242,9 @@ export async function createAnalyzerJob(args: {
       requested_rig_profile: args.requestedRigProfile,
       source_storage_path: args.sourceRef,
       status: "queued",
+      // Estado honesto para la UI: entre crear el job y que el contenedor de
+      // Cloud Run arranque pasan ~30-120s (scheduling + pull de la imagen).
+      phase: "provisioning",
     })
     .select("id")
     .single();
@@ -353,7 +374,7 @@ export async function persistPendingAnalyzerJob(args: {
     avatar_analyzer_v4_pending: {
       jobId: args.jobId,
       avatarId: args.avatarId,
-      requestedRigProfile: "BODY_BASIC",
+      requestedRigProfile: "FULL_BODY_HANDS_FACE",
       startedAt,
       sourceKind: "active_avatar_original",
       status: "pending",

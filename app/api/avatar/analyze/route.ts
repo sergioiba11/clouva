@@ -25,12 +25,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ jobId: activeJobId, pendingPersisted: true, reused: true });
     }
 
+    // FULL_BODY_HANDS_FACE dispara el pipeline de 3 fases (cuerpo -> cara ->
+    // manos) con resultado parcial visible tras cada fase. BODY_BASIC queda
+    // como opción explícita solo-cuerpo, ya no como default silencioso.
     const jobId = await createAnalyzerJob({
       supabase,
       userId: user.id,
       avatarId: avatar.avatarId,
       sourceRef: avatar.sourceRef,
-      requestedRigProfile: "BODY_BASIC",
+      requestedRigProfile: "FULL_BODY_HANDS_FACE",
     });
 
     try {
