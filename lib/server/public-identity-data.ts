@@ -68,7 +68,7 @@ export async function resolvePlayerAlias(alias: string) {
 export async function listPublishedStudios() {
   const { data, error } = await createPublicSupabase()
     .from("studios")
-    .select("id,slug,name,logo_url,cover_url,description,tagline,categories,city,country,website_url,social_links,contact_email,is_published,publication_status")
+    .select("id,slug,name,logo_url,cover_url,description,short_bio,tagline,categories,city,country,website_url,social_links,contact_email,is_published,publication_status,seo_title,seo_description,share_title,share_description,og_image_url,accent_color,palette")
     .eq("is_published", true)
     .eq("publication_status", "published")
     .order("name");
@@ -89,7 +89,7 @@ export async function resolveStudioAlias(alias: string) {
 
   let query = supabase
     .from("studios")
-    .select("id,slug,name,logo_url,cover_url,description,tagline,categories,city,country,website_url,social_links,contact_email,is_published,publication_status");
+    .select("id,slug,name,logo_url,cover_url,description,short_bio,tagline,categories,city,country,website_url,social_links,contact_email,is_published,publication_status,seo_title,seo_description,share_title,share_description,og_image_url,accent_color,palette");
   query = aliasRow ? query.eq("id", aliasRow.entity_id) : query.eq("slug", normalized);
   const { data: studio, error: studioError } = await query
     .eq("is_published", true)

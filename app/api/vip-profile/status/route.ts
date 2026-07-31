@@ -4,41 +4,58 @@ import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supa
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Read-only, ownership-gated but NOT VIP-gated -- a Player whose VIP lapsed
+// Read-only, ownership-gated but NOT VIP-gated -- a subject whose VIP lapsed
 // must still be able to see their last published version (spec section 15:
 // "la última versión VIP publicada continúa visible"). Starting a new
 // generation is what actually requires active VIP (enforced in
-// /api/vip-profile/generate via requireActiveVipEntitlement).
+// /api/vip-profile/generate via requireActiveVipEntitlement). Works for
+// either a Player or an Estudio, playerId XOR studioId in the query.
 export async function GET(request: NextRequest) {
   try {
     const { user } = await requireUser(request);
-    const playerId = request.nextUrl.searchParams.get("playerId")?.trim();
-    if (!playerId) return NextResponse.json({ error: "Falta playerId." }, { status: 400 });
+    const playerId = request.nextUrl.searchParams.get("playerId")?.trim() || null;
+    const studioId = request.nextUrl.searchParams.get("studioId")?.trim() || null;
+    if (!playerId && !studioId) return NextResponse.json({ error: "Falta playerId o studioId." }, { status: 400 });
 
     const admin = createAdminSupabase();
-    const [{ data: player, error: playerError }, { data: membership, error: membershipError }] = await Promise.all([
-      admin.from("players").select("id,owner_user_id").eq("id", playerId).maybeSingle(),
-      admin.from("player_members").select("role").eq("player_id", playerId).eq("user_id", user.id).eq("status", "active").maybeSingle(),
-    ]);
-    if (playerError) throw new Error(playerError.message);
-    if (membershipError) throw new Error(membershipError.message);
-    if (!player) return NextResponse.json({ error: "El Player no existe." }, { status: 404 });
-    if (player.owner_user_id !== user.id && !membership) {
-      return NextResponse.json({ error: "No tenés permiso para ver este Player." }, { status: 403 });
+    if (playerId) {
+      const [{ data: player, error: playerError }, { data: membership, error: membershipError }] = await Promise.all([
+        admin.from("players").select("id,owner_user_id").eq("id", playerId).maybeSingle(),
+        admin.from("player_members").select("role").eq("player_id", playerId).eq("user_id", user.id).eq("status", "active").maybeSingle(),
+      ]);
+      if (playerError) throw new Error(playerError.message);
+      if (membershipError) throw new Error(membershipError.message);
+      if (!player) return NextResponse.json({ error: "El Player no existe." }, { status: 404 });
+      if (player.owner_user_id !== user.id && !membership) {
+        return NextResponse.json({ error: "No tenés permiso para ver este Player." }, { status: 403 });
+      }
+    } else {
+      const [{ data: studio, error: studioError }, { data: membership, error: membershipError }] = await Promise.all([
+        admin.from("studios").select("id,owner_id").eq("id", studioId).maybeSingle(),
+        admin.from("studio_members").select("role").eq("studio_id", studioId).eq("profile_id", user.id).eq("status", "active").maybeSingle(),
+      ]);
+      if (studioError) throw new Error(studioError.message);
+      if (membershipError) throw new Error(membershipError.message);
+      if (!studio) return NextResponse.json({ error: "El Estudio no existe." }, { status: 404 });
+      if (studio.owner_id !== user.id && !membership) {
+        return NextResponse.json({ error: "No tenés permiso para ver este Estudio." }, { status: 403 });
+      }
     }
 
+    const subjectColumn = playerId ? "player_id" : "studio_id";
+    const subjectId = playerId || studioId;
     const [{ data: job, error: jobError }, { data: versions, error: versionsError }] = await Promise.all([
       admin
         .from("vip_profile_generation_jobs")
         .select("id,status,generated_copy,generated_assets,error_message,actual_cost_usd,created_at,completed_at")
-        .eq("player_id", playerId)
+        .eq(subjectColumn, subjectId)
         .order("created_at", { ascending: false })
         .limit(1)
         .maybeSingle(),
       admin
         .from("player_profile_versions")
         .select("id,version_number,status,profile_level,copy_config,asset_references,created_at,published_at")
-        .eq("player_id", playerId)
+        .eq(subjectColumn, subjectId)
         .order("version_number", { ascending: false }),
     ]);
     if (jobError) throw new Error(jobError.message);

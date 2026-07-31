@@ -385,6 +385,24 @@ export async function processApprovedPayment(args: {
     paymentId: args.paymentId,
   });
 
+  // 800 Flows per approved CLOUVA VIP payment (one per billing period -- the
+  // only seeded price is monthly). reference_id = this payment's id, so a
+  // retried webhook delivery can never double-grant: by the time we get
+  // here processApprovedPayment already returned early on the
+  // duplicate_payment check above for a repeat of the same paymentId.
+  if (text(product.code) === "clouva_vip") {
+    const { error: flowsError } = await args.admin.rpc("adjust_flows_balance", {
+      p_user_id: subscription.user_id,
+      p_amount: 800,
+      p_transaction_type: "purchase",
+      p_source: "clouva_vip_subscription",
+      p_reference_id: args.paymentId,
+      p_metadata: { subscription_id: subscription.id, period_end: periodEnd },
+      p_created_by: null,
+    });
+    if (flowsError) throw new Error(flowsError.message);
+  }
+
   return { processed: true, subscriptionId: subscription.id, periodEnd };
 }
 

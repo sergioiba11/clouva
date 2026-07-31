@@ -1,5 +1,4 @@
 import "server-only";
-import type { IdentityBrief } from "@/lib/server/vip-profile-brief";
 
 // gemini-3.1-flash-lite text pricing (per ai.google.dev/gemini-api/docs/pricing,
 // same effectiveFrom date as the image pricing table in lib/ai-budget/gemini-pricing.ts).
@@ -33,29 +32,14 @@ export class VipProfileGeminiError extends Error {
   }
 }
 
-function buildPrompt(brief: IdentityBrief): string {
-  // Only public.players columns for this exact Player go into `facts` --
-  // never anything Gemini itself said in a previous call. This is what
-  // enforces "no inventar" structurally, not just via prompt wording.
-  const facts = {
-    display_name: brief.display_name,
-    username: brief.username,
-    professional_categories: brief.professional_categories,
-    primary_role: brief.primary_role,
-    existing_short_bio: brief.short_bio,
-    origin: brief.origin,
-    location: brief.location,
-    genres: brief.genres,
-    disciplines: brief.disciplines,
-    studios: brief.studios.map((s) => ({ name: s.name, role: s.role })),
-    has_spotify: Boolean(brief.spotify_url),
-    has_youtube: Boolean(brief.youtube_url),
-    has_gallery: brief.selected_gallery.length > 0,
-  };
-
+function buildPrompt(facts: Record<string, unknown>, subjectLabel: "Player" | "Estudio"): string {
+  // `facts` only ever contains columns the caller read straight from
+  // players/studios for this exact subject -- never anything Gemini itself
+  // said in a previous call. This is what enforces "no inventar"
+  // structurally, not just via prompt wording.
   return [
     "Sos el redactor de CLOUVA, una plataforma para artistas, creadores y productores.",
-    "Tu tarea: proponer copy para la carta de presentación profesional de un Player, EXCLUSIVAMENTE a partir de los hechos confirmados abajo.",
+    `Tu tarea: proponer copy para la carta de presentación profesional de un ${subjectLabel}, EXCLUSIVAMENTE a partir de los hechos confirmados abajo.`,
     "",
     "REGLA ABSOLUTA: no inventes ni asumas premios, colaboraciones, canciones, discos, estudios, ciudades, géneros, sellos, fechas, estadísticas, cantidad de seguidores, experiencia ni ningún dato personal que no esté en 'facts'. Si un campo no tiene información suficiente para escribirlo con honestidad, devolvé null en ese campo -- nunca lo completes inventando.",
     "Tono: directo, seguro, urbano, frases cortas. Nada de clichés genéricos de marketing.",
@@ -77,7 +61,10 @@ function buildPrompt(brief: IdentityBrief): string {
   ].join("\n");
 }
 
-export async function generateProfileCopy(brief: IdentityBrief): Promise<{ copy: ProfileCopy; costUsd: number }> {
+export async function generateProfileCopy(args: {
+  facts: Record<string, unknown>;
+  subjectLabel: "Player" | "Estudio";
+}): Promise<{ copy: ProfileCopy; costUsd: number }> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new VipProfileGeminiError("GEMINI_API_KEY no está configurada.", 500);
 
@@ -87,7 +74,7 @@ export async function generateProfileCopy(brief: IdentityBrief): Promise<{ copy:
       method: "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: buildPrompt(brief) }] }],
+        contents: [{ parts: [{ text: buildPrompt(args.facts, args.subjectLabel) }] }],
         generationConfig: { responseMimeType: "application/json", temperature: 0.6 },
       }),
       cache: "no-store",

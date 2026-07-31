@@ -42,7 +42,7 @@ export default function ProfilePreviewPage() {
         body: JSON.stringify({ publication_action: "publish" }),
       });
       const payload = await readApiJson<{ player: Player }>(response);
-      router.push(`/${payload.player.slug}?published=1`);
+      router.push(`/onboarding/vip-offer?slug=${encodeURIComponent(payload.player.slug)}`);
     } catch (publishError) {
       setError(publishError instanceof Error ? publishError.message : "No se pudo publicar.");
       setPublishing(false);

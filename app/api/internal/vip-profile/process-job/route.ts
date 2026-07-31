@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { safeEqualHex } from "@/core/integrations/instagram/crypto";
 import { createAdminSupabase } from "@/lib/server/supabase";
 import { generateProfileCopy, type ProfileCopy } from "@/lib/server/vip-profile-gemini";
-import type { IdentityBrief } from "@/lib/server/vip-profile-brief";
+import { playerBriefToFacts, studioBriefToFacts, type IdentityBrief, type StudioIdentityBrief } from "@/lib/server/vip-profile-brief";
 import { enqueueVipProfileJobStep } from "@/lib/server/cloud-tasks";
 import { generateCoverAsset, generateLogoAsset, type GeneratedAsset } from "@/lib/server/vip-profile-assets";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -19,7 +19,8 @@ export const maxDuration = 60;
 // Gemini money claims its work via a compare-and-swap status update FIRST
 // (checked with .select().maybeSingle() -- not just .eq() on write) and
 // bails out with no side effects if another invocation already claimed it.
-// Implemented so far: queued -> preparing_identity -> analyzing_identity
+// Works for either subject -- job.player_id XOR job.studio_id, same state
+// machine either way: queued -> preparing_identity -> analyzing_identity
 // (Gemini text) -> generating_copy -> generating_assets (Gemini image) ->
 // assembling_profile -> review_ready.
 function isAuthorized(request: NextRequest) {
@@ -54,11 +55,16 @@ export async function POST(request: NextRequest) {
   const admin = createAdminSupabase();
   const { data: job, error: jobError } = await admin
     .from("vip_profile_generation_jobs")
-    .select("id,player_id,status,attempts,identity_brief,generated_copy,generated_assets,actual_cost_usd")
+    .select("id,player_id,studio_id,status,attempts,identity_brief,generated_copy,generated_assets,actual_cost_usd")
     .eq("id", body.jobId)
     .maybeSingle();
   if (jobError) return NextResponse.json({ error: jobError.message }, { status: 500 });
   if (!job) return NextResponse.json({ error: "El job no existe." }, { status: 404 });
+
+  const isPlayer = Boolean(job.player_id);
+  const subjectColumn = isPlayer ? "player_id" : "studio_id";
+  const subjectId = (job.player_id || job.studio_id) as string;
+  const entityPathPrefix = isPlayer ? `players/${subjectId}` : `studios/${subjectId}`;
 
   try {
     switch (job.status) {
@@ -82,8 +88,13 @@ export async function POST(request: NextRequest) {
       case "analyzing_identity": {
         // Combines analysis + copy into one Gemini text call (cheap, not
         // gated by the image budget ledger -- see vip-profile-gemini.ts).
-        const brief = job.identity_brief as unknown as IdentityBrief;
-        const { copy, costUsd }: { copy: ProfileCopy; costUsd: number } = await generateProfileCopy(brief);
+        const facts = isPlayer
+          ? playerBriefToFacts(job.identity_brief as unknown as IdentityBrief)
+          : studioBriefToFacts(job.identity_brief as unknown as StudioIdentityBrief);
+        const { copy, costUsd }: { copy: ProfileCopy; costUsd: number } = await generateProfileCopy({
+          facts,
+          subjectLabel: isPlayer ? "Player" : "Estudio",
+        });
         const { error } = await admin
           .from("vip_profile_generation_jobs")
           .update({
@@ -110,10 +121,12 @@ export async function POST(request: NextRequest) {
         // even if the other fails, so a transient failure on one doesn't
         // throw away money already spent (and billed by Google) on the other.
         const copy = job.generated_copy as unknown as ProfileCopy;
-        const brief = job.identity_brief as unknown as IdentityBrief;
+        const professionalCategories = isPlayer
+          ? (job.identity_brief as unknown as IdentityBrief).professional_categories ?? []
+          : (job.identity_brief as unknown as StudioIdentityBrief).services.map((s) => s.name);
         const results = await Promise.allSettled([
-          generateCoverAsset({ admin, playerId: job.player_id as string, copy, professionalCategories: brief.professional_categories ?? [] }),
-          generateLogoAsset({ admin, playerId: job.player_id as string, copy, professionalCategories: brief.professional_categories ?? [] }),
+          generateCoverAsset({ admin, entityPathPrefix, copy, professionalCategories }),
+          generateLogoAsset({ admin, entityPathPrefix, copy, professionalCategories }),
         ]);
         const assets = results
           .filter((result): result is PromiseFulfilledResult<GeneratedAsset> => result.status === "fulfilled")
@@ -145,7 +158,7 @@ export async function POST(request: NextRequest) {
         const { data: lastVersion, error: lastVersionError } = await admin
           .from("player_profile_versions")
           .select("version_number")
-          .eq("player_id", job.player_id)
+          .eq(subjectColumn, subjectId)
           .order("version_number", { ascending: false })
           .limit(1)
           .maybeSingle();
@@ -156,6 +169,7 @@ export async function POST(request: NextRequest) {
           .from("player_profile_versions")
           .insert({
             player_id: job.player_id,
+            studio_id: job.studio_id,
             generation_job_id: job.id,
             version_number: nextVersion,
             status: "draft",

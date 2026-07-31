@@ -76,6 +76,7 @@ export type StudioRow = {
   logo_url: string | null;
   cover_url: string | null;
   description: string | null;
+  short_bio: string | null;
   tagline: string | null;
   categories: string[];
   city: string | null;
@@ -85,6 +86,13 @@ export type StudioRow = {
   contact_email: string | null;
   is_published: boolean;
   publication_status: "draft" | "published" | "unpublished" | "suspended";
+  seo_title: string | null;
+  seo_description: string | null;
+  share_title: string | null;
+  share_description: string | null;
+  og_image_url: string | null;
+  accent_color: string | null;
+  palette: string[] | null;
 };
 
 export type StudioPlayer = {
