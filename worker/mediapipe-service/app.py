@@ -28,7 +28,7 @@ from landmark_detector_2d import (
     _prune_redundant_errors,
 )
 
-SERVICE_TOKEN = os.environ.get("CLOUVA_MEDIAPIPE_SERVICE_TOKEN")
+SERVICE_TOKEN = (os.environ.get("CLOUVA_MEDIAPIPE_SERVICE_TOKEN") or "").strip()
 
 app = FastAPI()
 _face = _face_detector()

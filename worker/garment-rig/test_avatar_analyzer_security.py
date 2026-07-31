@@ -23,6 +23,15 @@ class AvatarAnalyzerSecurityTests(unittest.TestCase):
         self.assertIn('except ValueError:', source)
         self.assertIn('"MEDIAPIPE_AUTH_HEADER_INVALID"', source)
 
+    def test_mediapipe_service_token_is_trimmed(self):
+        source = (Path(__file__).parent.parent / "mediapipe-service" / "app.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            'SERVICE_TOKEN = (os.environ.get("CLOUVA_MEDIAPIPE_SERVICE_TOKEN") or "").strip()',
+            source,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
