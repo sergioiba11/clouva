@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
 
 type ProfileCopy = {
@@ -165,7 +166,7 @@ export function VipAiProfilePanel({ playerId, vipActive }: { playerId: string; v
       <div className="rounded-2xl border border-dashed border-violet-400/25 bg-violet-500/[0.04] p-6 text-center">
         <p className="text-lg font-semibold">CLOUVA AI Profile</p>
         <p className="mt-2 text-sm text-white/55">Activá CLOUVA VIP para transformar tu carta gratuita en una versión profesional con Gemini: portada generada, biografía pulida y copy optimizado.</p>
-        <a href="/vip" className="mt-4 inline-block rounded-xl bg-gradient-to-r from-fuchsia-600 to-violet-600 px-5 py-3 font-semibold">Ver CLOUVA VIP</a>
+        <Link href="/vip" className="mt-4 inline-block rounded-xl bg-gradient-to-r from-fuchsia-600 to-violet-600 px-5 py-3 font-semibold">Ver CLOUVA VIP</Link>
       </div>
     );
   }
