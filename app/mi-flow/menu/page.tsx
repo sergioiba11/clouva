@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { ModuleCard } from "@/components/os-ui";
 import { CloverIcon } from "@/components/clover-icon";
+import { useAuth } from "@/components/auth-provider";
 
 const sections = [
   { title: "Avatar", href: "/mi-flow/avatar", available: false },
@@ -19,6 +20,8 @@ const sections = [
 ];
 
 export default function MenuPage() {
+  const { role } = useAuth();
+  const isAdmin = role === "admin";
   return (
     <main className="min-h-screen bg-[#050505] px-4 pb-28 pt-8 text-white sm:px-8">
       <div className="mx-auto flex max-w-3xl items-center gap-3">
@@ -31,7 +34,7 @@ export default function MenuPage() {
 
       <div className="mx-auto mt-8 grid max-w-3xl grid-cols-2 gap-3 sm:grid-cols-3">
         {sections.map((s) => (
-          <ModuleCard key={s.href} title={s.title} href={s.href} available={s.available} />
+          <ModuleCard key={s.href} title={s.title} href={s.href} available={s.available === false ? isAdmin : s.available} />
         ))}
         <Link href="/tienda" className="os-card flex min-w-[9.5rem] flex-col gap-3 border-l-2 border-l-[#8f7cff]/50 p-4">
           <p className="font-medium">Tienda</p>
