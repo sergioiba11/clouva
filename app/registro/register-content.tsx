@@ -40,7 +40,7 @@ export default function RegisterContent() {
       display_name: fullName || email.split("@")[0],
     });
 
-    router.push("/cuenta");
+    router.replace("/matrix");
     setLoading(false);
   };
 

@@ -2,11 +2,11 @@
 
 import dynamic from "next/dynamic";
 
-const AvatarScene = dynamic(() => import("@/components/clouva/AvatarScene").then((mod) => mod.AvatarScene), {
+const HomeDashboard = dynamic(() => import("@/components/clouva/HomeDashboard").then((mod) => mod.HomeDashboard), {
   ssr: false,
-  loading: () => <main className="clouva-experience" aria-hidden="true" />,
+  loading: () => <main className="min-h-screen bg-[#060612]" aria-hidden="true" />,
 });
 
 export function HomeExperience() {
-  return <AvatarScene />;
+  return <HomeDashboard />;
 }

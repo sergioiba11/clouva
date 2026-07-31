@@ -9,7 +9,14 @@ export default async function PlayersDirectoryPage() {
   const players = await listPublishedPlayers();
 
   return (
-    <PublicShell brand="PLAYERS" navLinks={[{ label: "La Matrix", href: "/matrix" }, { label: "Estudios", href: "/studios" }]}>
+    <PublicShell brand="LA MATRIX" brandHref="/matrix" navLinks={[
+      { label: "Inicio", href: "/" },
+      { label: "Players", href: "/players" },
+      { label: "Estudios", href: "/studios" },
+      { label: "Sellos", href: "#sellos", disabled: true },
+      { label: "Colectivos", href: "#colectivos", disabled: true },
+      { label: "Mundos", href: "#mundos", disabled: true },
+    ]}>
       <section className="relative overflow-hidden border-b border-white/10 px-4 py-16 sm:px-6" data-visual-asset="players-directory-hero-01">
         <div
           className="absolute inset-0 bg-cover bg-center opacity-70"
