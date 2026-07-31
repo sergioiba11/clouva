@@ -17,4 +17,10 @@ export const VISUAL_ASSETS = {
     "https://storage.googleapis.com/clouva-generated-media/visual-system/backgrounds/studio-profile/studio-public-profile-cover-01/e457fe38-6cf7-4e09-945b-bf73e897334f.jpg",
   "public-landing-hero-01":
     "https://storage.googleapis.com/clouva-generated-media/visual-system/backgrounds/landing/public-landing-hero-01/f147a0ed-9efc-4c46-b728-9e9619c413e7.jpg",
+  "landing-card-matrix-01":
+    "https://storage.googleapis.com/clouva-generated-media/visual-system/cards/landing/landing-card-matrix-01/cba109bb-d561-4616-851a-b245761b42c6.jpg",
+  "landing-card-profile-01":
+    "https://storage.googleapis.com/clouva-generated-media/visual-system/cards/landing/landing-card-profile-01/cc94d71d-5c44-4779-853f-1656d7184a75.jpg",
+  "landing-card-store-01":
+    "https://storage.googleapis.com/clouva-generated-media/visual-system/cards/landing/landing-card-store-01/24ae7862-9bda-4d43-8572-fee8fb3947b9.jpg",
 } as const;

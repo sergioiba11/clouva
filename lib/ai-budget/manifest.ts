@@ -191,6 +191,70 @@ export const assetManifest: ManifestEntry[] = [
     consumingComponent: "components/clouva/PublicLanding.tsx",
     priority: 7,
   },
+  {
+    assetKey: "landing-card-matrix-01",
+    page: "Landing pública",
+    route: "/",
+    section: "Tarjeta \"La Matrix\" del bloque de accesos",
+    purpose: "Miniatura cuadrada para la tarjeta de La Matrix en la landing pública -- red de identidades conectadas, en formato compacto de tarjeta.",
+    aspectRatio: "1:1",
+    resolution: "1K",
+    transparent: false,
+    model: "gemini-3.1-flash-lite-image",
+    prompt:
+      `${BASE_IDENTITY} A tight square composition of a few glowing violet nodes connected by thin luminous threads against ` +
+      "a deep black void, suggesting a small living network of connected creative identities, compact and centered, square 1:1 crop.",
+    references: [],
+    maxAttempts: 2,
+    maxCostUsd: 0.05,
+    classification: "C_generate_gemini",
+    outputPathPrefix: "visual-system/cards/landing",
+    consumingComponent: "components/clouva/PublicLanding.tsx",
+    priority: 8,
+  },
+  {
+    assetKey: "landing-card-profile-01",
+    page: "Landing pública",
+    route: "/",
+    section: "Tarjeta \"Perfil profesional con CLOUVA AI\" del bloque de accesos",
+    purpose: "Miniatura cuadrada para la tarjeta de creación de perfil profesional con IA en la landing pública.",
+    aspectRatio: "1:1",
+    resolution: "1K",
+    transparent: false,
+    model: "gemini-3.1-flash-lite-image",
+    prompt:
+      `${BASE_IDENTITY} A square composition of a single glowing violet identity card or ID-badge silhouette floating in a ` +
+      "dark void, soft particles of light suggesting AI assistance around its edges, sense of a professional digital identity " +
+      "being crafted, compact and centered, square 1:1 crop.",
+    references: [],
+    maxAttempts: 2,
+    maxCostUsd: 0.05,
+    classification: "C_generate_gemini",
+    outputPathPrefix: "visual-system/cards/landing",
+    consumingComponent: "components/clouva/PublicLanding.tsx",
+    priority: 9,
+  },
+  {
+    assetKey: "landing-card-store-01",
+    page: "Landing pública",
+    route: "/",
+    section: "Tarjeta \"Tienda\" del bloque de accesos",
+    purpose: "Miniatura cuadrada para la tarjeta de la tienda en la landing pública -- merch/prendas, en formato compacto de tarjeta.",
+    aspectRatio: "1:1",
+    resolution: "1K",
+    transparent: false,
+    model: "gemini-3.1-flash-lite-image",
+    prompt:
+      `${BASE_IDENTITY} A square still-life composition of a single dark hoodie or garment floating/suspended in a violet-lit ` +
+      "void, fabric catching soft rim light, premium streetwear-editorial quality, no visible brand logo, compact and centered, square 1:1 crop.",
+    references: [],
+    maxAttempts: 2,
+    maxCostUsd: 0.05,
+    classification: "C_generate_gemini",
+    outputPathPrefix: "visual-system/cards/landing",
+    consumingComponent: "components/clouva/PublicLanding.tsx",
+    priority: 10,
+  },
 ];
 
 export function manifestEntry(assetKey: string) {
