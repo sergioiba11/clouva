@@ -53,7 +53,7 @@ DETECTOR_SCRIPT = Path(os.environ.get(
 ))
 DETECTOR_TIMEOUT_SECONDS = int(os.environ.get("CLOUVA_LANDMARK_DETECTOR_TIMEOUT_SECONDS", "180"))
 DETECTOR_SERVICE_URL = os.environ.get("CLOUVA_MEDIAPIPE_SERVICE_URL", "").strip().rstrip("/")
-DETECTOR_SERVICE_TOKEN = os.environ.get("CLOUVA_MEDIAPIPE_SERVICE_TOKEN")
+DETECTOR_SERVICE_TOKEN = (os.environ.get("CLOUVA_MEDIAPIPE_SERVICE_TOKEN") or "").strip()
 
 
 def _args():
@@ -144,6 +144,15 @@ def _run_detector_remote(manifest: dict, attempt: str):
     try:
         with urllib.request.urlopen(request, timeout=DETECTOR_TIMEOUT_SECONDS) as response:
             output = json.loads(response.read().decode("utf-8"))
+    except ValueError:
+        return {
+            "version": "failed", "views": [], "attempt": attempt,
+            "errors": [{
+                "code": "MEDIAPIPE_AUTH_HEADER_INVALID",
+                "message": "La credencial del detector contiene caracteres inválidos.",
+                "attempt": attempt,
+            }],
+        }, {"returnCode": None, "stdout": "", "stderr": "invalid detector authorization header"}
     except (urllib.error.URLError, TimeoutError) as exc:
         return {
             "version": "failed", "views": [], "attempt": attempt,

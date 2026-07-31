@@ -40,6 +40,7 @@ jobs:
           test_avatar_analyzer_v41_profile_projection.py
           test_avatar_analyzer_v41_residuals.py
           test_avatar_analyzer_v41_hand_framing.py
+          test_avatar_analyzer_security.py
       - name: Frontend/API source contract
         run: node --test tests-avatar-analyzer-v4.mjs tests-avatar-analyzer-v41-residuals.mjs
       - name: Compile pure Python modules
@@ -54,6 +55,7 @@ jobs:
           hand_modes.py
           camera_projection_self_test_v4.py
           projection_contract_v41.py
+          diagnostic_redaction.py
           avatar_analyzer_v4.py
           multiview_renderer_v4.py
 
