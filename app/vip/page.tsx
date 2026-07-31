@@ -67,6 +67,7 @@ export default function VipPage() {
   const [state, setState] = useState<VipState | null>(null);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<"free" | "vip">("vip");
 
   const load = async () => {
     setError(null);
@@ -114,6 +115,10 @@ export default function VipPage() {
     }
   };
 
+  const goToProfile = () => {
+    router.push("/profile/edit");
+  };
+
   const cancel = async () => {
     if (!state?.subscription?.id) return;
     if (!window.confirm("¿Cancelar la renovación de CLOUVA VIP?")) return;
@@ -139,36 +144,66 @@ export default function VipPage() {
           <p className="mt-6 text-xs font-semibold uppercase tracking-[0.3em] text-amber-300/80">Membresía</p>
           <h1 className="mt-2 text-4xl font-bold tracking-tight sm:text-6xl"><span className="text-amber-300">CLOUVA</span> VIP</h1>
           <p className="mx-auto mt-4 max-w-2xl text-white/55">Potenciá tu perfil. Destacá tu identidad.</p>
+          <p className="mt-3 text-xs uppercase tracking-[0.2em] text-white/30">Elegí un plan para continuar</p>
         </header>
 
         <section className="mt-10 grid gap-5 lg:grid-cols-[minmax(0,1fr)_380px]">
           <div className="grid gap-5 sm:grid-cols-2">
-            <article className="rounded-[2rem] border border-white/10 bg-white/[0.025] p-6">
-              <p className="text-sm font-semibold text-white/50">FREE</p>
+            <button
+              type="button"
+              aria-pressed={selected === "free"}
+              onClick={() => setSelected("free")}
+              className={`rounded-[2rem] border p-6 text-left transition ${selected === "free" ? "border-white/40 bg-white/[0.05]" : "border-white/10 bg-white/[0.025] hover:border-white/20"}`}
+            >
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-semibold text-white/50">FREE</p>
+                <span className={`flex h-5 w-5 items-center justify-center rounded-full border text-[10px] ${selected === "free" ? "border-white/60 bg-white/20" : "border-white/20"}`}>{selected === "free" ? "✓" : ""}</span>
+              </div>
               <h2 className="mt-3 text-2xl font-semibold">Perfil público</h2>
               <ul className="mt-6 space-y-3.5 text-sm text-white/55">{FREE_BENEFITS.map(([label, included]) => <li key={label} className="flex items-center gap-3"><BenefitBadge included={included} />{label}</li>)}</ul>
-            </article>
-            <article className="rounded-[2rem] border border-amber-400/35 bg-gradient-to-b from-amber-400/10 to-violet-500/5 p-6 shadow-xl shadow-amber-950/10">
-              <p className="flex items-center gap-1.5 text-sm font-semibold text-amber-300"><Sparkles className="h-4 w-4" /> VIP</p>
+            </button>
+            <button
+              type="button"
+              aria-pressed={selected === "vip"}
+              onClick={() => setSelected("vip")}
+              className={`rounded-[2rem] border bg-gradient-to-b from-amber-400/10 to-violet-500/5 p-6 text-left shadow-xl shadow-amber-950/10 transition ${selected === "vip" ? "border-amber-400/70" : "border-amber-400/25 hover:border-amber-400/45"}`}
+            >
+              <div className="flex items-center justify-between">
+                <p className="flex items-center gap-1.5 text-sm font-semibold text-amber-300"><Sparkles className="h-4 w-4" /> VIP</p>
+                <span className={`flex h-5 w-5 items-center justify-center rounded-full border text-[10px] ${selected === "vip" ? "border-amber-300 bg-amber-400 text-black" : "border-amber-400/40"}`}>{selected === "vip" ? "✓" : ""}</span>
+              </div>
               <h2 className="mt-3 text-2xl font-semibold">Identidad avanzada</h2>
               <ul className="mt-6 space-y-3.5 text-sm text-white/75">{VIP_BENEFITS.map((benefit) => <li key={benefit} className="flex items-center gap-3"><BenefitBadge included /> {benefit}</li>)}</ul>
-            </article>
+            </button>
           </div>
 
           <aside className="rounded-[2rem] border border-amber-400/25 bg-[#0b0913] p-6 sm:p-8">
-            <p className="text-xs uppercase tracking-[0.2em] text-white/35">Plan recurrente</p>
-            {state?.price ? <><div className="mt-4 flex items-end justify-between gap-3"><span className="text-4xl font-bold">{priceLabel}</span><span className="pb-1 text-sm text-white/45">/{state.price.billing_interval === "month" ? "mes" : "año"}</span></div><p className="mt-2 text-sm text-white/45">Renovación automática. Cancelá cuando quieras.</p><div className="mt-4 flex items-center gap-2 text-xs text-white/40"><span>Suscripción segura con</span><span className="rounded-md bg-[#009EE3]/15 px-2 py-1 font-semibold text-[#00A3E0]">mercado pago</span></div></> : <p className="mt-4 rounded-xl border border-white/10 p-4 text-sm text-white/45">El precio todavía no fue activado por CLOUVA.</p>}
+            {selected === "free" ? (
+              <>
+                <p className="text-xs uppercase tracking-[0.2em] text-white/35">Tu elección</p>
+                <p className="mt-4 text-2xl font-bold">Perfil Free</p>
+                <p className="mt-2 text-sm text-white/45">Sin costo. Tu perfil público sigue funcionando igual, sin badge VIP ni CLOUVA AI Profile. Podés activar VIP cuando quieras.</p>
+                {error ? <p className="mt-4 rounded-xl border border-red-400/20 bg-red-400/10 p-3 text-sm text-red-200">{error}</p> : null}
+                <button onClick={goToProfile} className="mt-6 w-full rounded-xl border border-white/20 px-5 py-3.5 font-semibold transition hover:border-white/40">Continuar con Free</button>
+              </>
+            ) : (
+              <>
+                <p className="text-xs uppercase tracking-[0.2em] text-white/35">Plan recurrente</p>
+                {state?.price ? <><div className="mt-4 flex items-end justify-between gap-3"><span className="text-4xl font-bold">{priceLabel}</span><span className="pb-1 text-sm text-white/45">/{state.price.billing_interval === "month" ? "mes" : "año"}</span></div><p className="mt-2 text-sm text-white/45">Renovación automática. Cancelá cuando quieras.</p><div className="mt-4 flex items-center gap-2 text-xs text-white/40"><span>Suscripción segura con</span><span className="rounded-md bg-[#009EE3]/15 px-2 py-1 font-semibold text-[#00A3E0]">mercado pago</span></div></> : <p className="mt-4 rounded-xl border border-white/10 p-4 text-sm text-white/45">El precio todavía no fue activado por CLOUVA.</p>}
 
-            {state?.environment === "test" ? <p className="mt-4 rounded-xl border border-violet-400/20 bg-violet-500/10 px-3 py-2 text-xs text-violet-200">Modo de prueba: no utiliza dinero real.</p> : null}
-            {vipActive ? <div className="mt-5 rounded-xl border border-emerald-400/20 bg-emerald-400/10 p-4"><p className="font-semibold text-emerald-200">CLOUVA VIP activo</p><p className="mt-1 text-xs text-white/45">Vigente hasta {new Date(state?.entitlement?.valid_until || state?.entitlement?.expires_at || "").toLocaleDateString("es-AR")}</p></div> : null}
-            {state?.subscription && !vipActive ? <div className="mt-5 rounded-xl border border-white/10 bg-white/[0.025] p-4"><p className="font-semibold">Estado: {state.subscription.status}</p><p className="mt-1 text-xs text-white/45">La pantalla de retorno no activa VIP. Esperamos la verificación del Webhook.</p></div> : null}
+                {state?.environment === "test" ? <p className="mt-4 rounded-xl border border-violet-400/20 bg-violet-500/10 px-3 py-2 text-xs text-violet-200">Modo de prueba: no utiliza dinero real.</p> : null}
+                {vipActive ? <div className="mt-5 rounded-xl border border-emerald-400/20 bg-emerald-400/10 p-4"><p className="font-semibold text-emerald-200">CLOUVA VIP activo</p><p className="mt-1 text-xs text-white/45">Vigente hasta {new Date(state?.entitlement?.valid_until || state?.entitlement?.expires_at || "").toLocaleDateString("es-AR")}</p></div> : null}
+                {state?.subscription && !vipActive ? <div className="mt-5 rounded-xl border border-white/10 bg-white/[0.025] p-4"><p className="font-semibold">Estado: {state.subscription.status}</p><p className="mt-1 text-xs text-white/45">La pantalla de retorno no activa VIP. Esperamos la verificación del Webhook.</p></div> : null}
 
-            {error ? <p className="mt-4 rounded-xl border border-red-400/20 bg-red-400/10 p-3 text-sm text-red-200">{error}</p> : null}
+                {error ? <p className="mt-4 rounded-xl border border-red-400/20 bg-red-400/10 p-3 text-sm text-red-200">{error}</p> : null}
 
-            {!subscriptionActive ? <button disabled={working || !state?.enabled || !state?.price} onClick={() => void subscribe()} className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-amber-400 to-yellow-300 px-5 py-3.5 font-bold text-black transition hover:brightness-105 disabled:opacity-50">{working ? "Procesando..." : <><Crown className="h-4 w-4" strokeWidth={2.5} /> Activar CLOUVA VIP</>}</button> : null}
-            {state?.subscription?.init_point && !vipActive && ["created", "pending"].includes(state.subscription.status) ? <button disabled={working} onClick={() => void subscribe()} className="mt-3 w-full rounded-xl bg-violet-600 px-5 py-3 font-semibold">Continuar en Mercado Pago</button> : null}
-            {subscriptionActive ? <button disabled={working} onClick={() => void cancel()} className="mt-3 w-full rounded-xl border border-red-400/20 px-5 py-3 text-sm text-red-300">Cancelar renovación</button> : null}
-            <p className="mt-4 text-center text-xs text-white/30">El frontend nunca concede VIP. Los beneficios se activan después de verificar el pago en el servidor.</p>
+                {vipActive ? <button onClick={goToProfile} className="mt-6 w-full rounded-xl bg-gradient-to-r from-amber-400 to-yellow-300 px-5 py-3.5 font-bold text-black transition hover:brightness-105">Continuar</button> : null}
+                {!vipActive && !subscriptionActive ? <button disabled={working || !state?.enabled || !state?.price} onClick={() => void subscribe()} className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-amber-400 to-yellow-300 px-5 py-3.5 font-bold text-black transition hover:brightness-105 disabled:opacity-50">{working ? "Procesando..." : <><Crown className="h-4 w-4" strokeWidth={2.5} /> Activar CLOUVA VIP</>}</button> : null}
+                {state?.subscription?.init_point && !vipActive && ["created", "pending"].includes(state.subscription.status) ? <button disabled={working} onClick={() => void subscribe()} className="mt-3 w-full rounded-xl bg-violet-600 px-5 py-3 font-semibold">Continuar en Mercado Pago</button> : null}
+                {subscriptionActive ? <button disabled={working} onClick={() => void cancel()} className="mt-3 w-full rounded-xl border border-red-400/20 px-5 py-3 text-sm text-red-300">Cancelar renovación</button> : null}
+                <p className="mt-4 text-center text-xs text-white/30">El frontend nunca concede VIP. Los beneficios se activan después de verificar el pago en el servidor.</p>
+              </>
+            )}
           </aside>
         </section>
 
