@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ActivityFeed, PremiumCard, StatCard } from "@/components/os-ui";
-import { OfficialAvatarRigCard } from "@/components/admin/OfficialAvatarRigCard";
 import { useAuth } from "@/components/auth-provider";
 
 const OWNER_EMAIL = "esian0116@gmail.com";
@@ -15,6 +14,8 @@ type Stats = {
   ingresos: number;
   ingresosVip: number;
   ingresosServicios: number;
+  ingresosMarketplace: number;
+  ingresosReservas: number;
   suscripcionesActivas: number;
   usuariosVip: number;
   usuariosTotales: number;
@@ -24,7 +25,7 @@ type Stats = {
 
 export default function AdminPage() {
   const { role, user, loading, profileReady } = useAuth();
-  const [stats, setStats] = useState<Stats>({ ingresos: 0, ingresosVip: 0, ingresosServicios: 0, suscripcionesActivas: 0, usuariosVip: 0, usuariosTotales: 0, players: "0/0", estudios: "0/0" });
+  const [stats, setStats] = useState<Stats>({ ingresos: 0, ingresosVip: 0, ingresosServicios: 0, ingresosMarketplace: 0, ingresosReservas: 0, suscripcionesActivas: 0, usuariosVip: 0, usuariosTotales: 0, players: "0/0", estudios: "0/0" });
   const [activity, setActivity] = useState<string[]>([]);
   const [loadingStats, setLoadingStats] = useState(true);
 
@@ -47,6 +48,8 @@ export default function AdminPage() {
         vipEntitlements,
         payments,
         serviceOrders,
+        commerceOrders,
+        bookings,
       ] = await Promise.all([
         supabase.from("profiles").select("id", { count: "exact", head: true }),
         supabase.from("players").select("id", { count: "exact", head: true }),
@@ -61,6 +64,8 @@ export default function AdminPage() {
         // volume could plausibly exceed this.
         supabase.from("billing_payments").select("amount,currency,paid_at,user_id").order("paid_at", { ascending: false }).limit(1000),
         supabase.from("service_orders").select("total_amount,currency,updated_at,user_id,studio_id").eq("payment_status", "paid").order("updated_at", { ascending: false }).limit(1000),
+        supabase.from("commerce_orders").select("total,currency,paid_at,buyer_id").eq("payment_status", "paid").order("paid_at", { ascending: false }).limit(1000),
+        supabase.from("bookings").select("price,currency,updated_at,buyer_id").eq("payment_status", "paid").order("updated_at", { ascending: false }).limit(1000),
       ]);
 
       const now = Date.now();
@@ -72,10 +77,19 @@ export default function AdminPage() {
 
       const paymentRows = payments.data ?? [];
       const serviceOrderRows = serviceOrders.data ?? [];
+      const commerceOrderRows = commerceOrders.data ?? [];
+      const bookingRows = bookings.data ?? [];
       const ingresosVip = paymentRows.reduce((sum, row) => sum + Number(row.amount || 0), 0);
       const ingresosServicios = serviceOrderRows.reduce((sum, row) => sum + Number(row.total_amount || 0), 0);
+      const ingresosMarketplace = commerceOrderRows.reduce((sum, row) => sum + Number(row.total || 0), 0);
+      const ingresosReservas = bookingRows.reduce((sum, row) => sum + Number(row.price || 0), 0);
 
-      const userIds = Array.from(new Set([...paymentRows.map((r) => r.user_id), ...serviceOrderRows.map((r) => r.user_id)])) as string[];
+      const userIds = Array.from(new Set([
+        ...paymentRows.map((r) => r.user_id),
+        ...serviceOrderRows.map((r) => r.user_id),
+        ...commerceOrderRows.map((r) => r.buyer_id),
+        ...bookingRows.map((r) => r.buyer_id),
+      ])) as string[];
       const { data: buyers } = userIds.length > 0
         ? await supabase.from("profiles").select("id,full_name,username").in("id", userIds)
         : { data: [] as Array<{ id: string; full_name: string | null; username: string | null }> };
@@ -87,6 +101,8 @@ export default function AdminPage() {
       const feed = [
         ...paymentRows.map((row) => ({ at: row.paid_at as string, text: `${nameOf(row.user_id as string)} pagó ${money(Number(row.amount || 0))} · CLOUVA VIP` })),
         ...serviceOrderRows.map((row) => ({ at: row.updated_at as string, text: `${nameOf(row.user_id as string)} pagó ${money(Number(row.total_amount || 0))} · Servicio de Estudio` })),
+        ...commerceOrderRows.map((row) => ({ at: row.paid_at as string, text: `${nameOf(row.buyer_id as string)} pagó ${money(Number(row.total || 0))} · Marketplace` })),
+        ...bookingRows.map((row) => ({ at: row.updated_at as string, text: `${nameOf(row.buyer_id as string)} pagó ${money(Number(row.price || 0))} · Reserva` })),
       ]
         .filter((item) => item.at)
         .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
@@ -94,9 +110,11 @@ export default function AdminPage() {
         .map((item) => `${item.text} · ${when(item.at)}`);
 
       setStats({
-        ingresos: ingresosVip + ingresosServicios,
+        ingresos: ingresosVip + ingresosServicios + ingresosMarketplace + ingresosReservas,
         ingresosVip,
         ingresosServicios,
+        ingresosMarketplace,
+        ingresosReservas,
         suscripcionesActivas: activeSubs.count ?? 0,
         usuariosVip: realVipUserIds.size,
         usuariosTotales: profilesCount.count ?? 0,
@@ -123,13 +141,11 @@ export default function AdminPage() {
   }
 
   return (
-    <div className="space-y-4" data-admin-version="2026-07-14-rig">
+    <div className="space-y-4">
       <PremiumCard className="p-6">
         <h1 className="text-3xl font-semibold">Centro de Control CLOUVA</h1>
         <p className="text-[var(--muted)]">Business OS · Analytics · Operación</p>
       </PremiumCard>
-
-      <OfficialAvatarRigCard />
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
         <StatCard label="Ingresos totales" value={loadingStats ? "…" : money(stats.ingresos)} />
@@ -150,8 +166,14 @@ export default function AdminPage() {
             <div className="flex items-center justify-between rounded-xl border border-[var(--line)] bg-[var(--chip)] px-4 py-3 text-sm">
               <span>Servicios de Estudio</span><span className="font-semibold">{loadingStats ? "…" : money(stats.ingresosServicios)}</span>
             </div>
+            <div className="flex items-center justify-between rounded-xl border border-[var(--line)] bg-[var(--chip)] px-4 py-3 text-sm">
+              <Link href="/admin/marketplace" className="hover:underline">Marketplace</Link><span className="font-semibold">{loadingStats ? "…" : money(stats.ingresosMarketplace)}</span>
+            </div>
+            <div className="flex items-center justify-between rounded-xl border border-[var(--line)] bg-[var(--chip)] px-4 py-3 text-sm">
+              <Link href="/admin/reservas" className="hover:underline">Reservas de Estudio</Link><span className="font-semibold">{loadingStats ? "…" : money(stats.ingresosReservas)}</span>
+            </div>
           </div>
-          <p className="mt-3 text-xs text-[var(--muted)]">Suma directa de pagos confirmados por Mercado Pago (webhook verificado). No incluye Marketplace ni productos/servicios todavía, porque esos módulos no cobran dinero real hoy.</p>
+          <p className="mt-3 text-xs text-[var(--muted)]">Suma directa de pagos confirmados por Mercado Pago (webhook verificado), incluyendo Marketplace y Reservas.</p>
         </PremiumCard>
         <ActivityFeed items={loadingStats ? ["Cargando actividad..."] : activity} />
       </div>
