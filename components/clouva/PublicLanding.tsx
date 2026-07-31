@@ -31,7 +31,7 @@ export function PublicLanding() {
   return (
     <PublicShell brand="CLOUVA" brandHref="/">
       <section
-        className="relative overflow-hidden px-4 py-20 sm:py-28"
+        className="relative flex min-h-[80vh] flex-col items-center justify-center overflow-hidden px-4 py-20 sm:py-28"
         data-visual-asset="public-landing-hero-01"
       >
         <div
@@ -40,7 +40,7 @@ export function PublicLanding() {
           aria-hidden="true"
         />
         <div
-          className="absolute inset-x-0 bottom-0 -z-10 h-2/3 bg-gradient-to-t from-[#07060b] via-[#07060b]/60 to-transparent"
+          className="absolute inset-x-0 bottom-0 -z-10 h-1/3 bg-gradient-to-t from-[#07060b] to-transparent"
           aria-hidden="true"
         />
         <div className="mx-auto max-w-3xl text-center">
