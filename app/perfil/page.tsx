@@ -138,9 +138,10 @@ export default function PerfilPage() {
             </div>
             <div className="flex-1">
               <p className="text-sm text-white/70">Tu avatar 3D y tu foto de perfil se administran desde Mi Flow.</p>
-              <Link href="/mi-flow/avatar" className="mt-2 inline-block rounded-full border border-[#8f7cff]/40 px-4 py-2 text-sm">
+              <span className="mt-2 inline-flex cursor-not-allowed items-center gap-1.5 rounded-full border border-white/10 px-4 py-2 text-sm text-white/35" aria-disabled="true">
                 {avatarUrl ? "Editar avatar 3D" : "Crear avatar 3D"}
-              </Link>
+                <span className="text-[10px] uppercase tracking-[0.08em]">Próximamente</span>
+              </span>
             </div>
           </div>
 
