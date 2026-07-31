@@ -10,6 +10,7 @@ const FEATURES = [
     href: "/matrix",
     cta: "Explorar La Matrix",
     Icon: Compass,
+    imageKey: "landing-card-matrix-01",
   },
   {
     title: "Perfil profesional con CLOUVA AI",
@@ -17,6 +18,7 @@ const FEATURES = [
     href: "/login",
     cta: "Crear mi perfil",
     Icon: Sparkles,
+    imageKey: "landing-card-profile-01",
   },
   {
     title: "Tienda",
@@ -24,8 +26,9 @@ const FEATURES = [
     href: "/tienda",
     cta: "Ir a la tienda",
     Icon: ShoppingBag,
+    imageKey: "landing-card-store-01",
   },
-];
+] as const;
 
 export function PublicLanding() {
   return (
@@ -71,21 +74,29 @@ export function PublicLanding() {
       </section>
 
       <section className="mx-auto grid max-w-5xl gap-4 px-4 pb-20 sm:grid-cols-3 sm:px-6">
-        {FEATURES.map(({ title, description, href, cta, Icon }) => (
+        {FEATURES.map(({ title, description, href, cta, Icon, imageKey }) => (
           <Link
             key={title}
             href={href}
-            className="group rounded-3xl border border-white/10 bg-white/[0.03] p-6 transition hover:-translate-y-1 hover:border-violet-400/40"
+            className="group overflow-hidden rounded-3xl border border-white/10 bg-white/[0.03] transition hover:-translate-y-1 hover:border-violet-400/40"
           >
-            <span className="inline-grid h-11 w-11 place-items-center rounded-2xl bg-violet-500/15 text-violet-300">
-              <Icon size={20} />
-            </span>
-            <h2 className="mt-4 text-lg font-semibold">{title}</h2>
-            <p className="mt-2 text-sm text-white/55">{description}</p>
-            <span className="mt-5 inline-flex items-center gap-1 text-sm font-medium text-violet-300 group-hover:text-violet-200">
-              {cta}
-              <ArrowRight size={14} />
-            </span>
+            <div
+              className="relative h-32 w-full bg-cover bg-center"
+              style={{ backgroundImage: `url(${VISUAL_ASSETS[imageKey]})` }}
+              aria-hidden="true"
+            >
+              <span className="absolute bottom-3 left-3 inline-grid h-9 w-9 place-items-center rounded-xl bg-black/50 text-violet-200 backdrop-blur">
+                <Icon size={17} />
+              </span>
+            </div>
+            <div className="p-6">
+              <h2 className="text-lg font-semibold">{title}</h2>
+              <p className="mt-2 text-sm text-white/55">{description}</p>
+              <span className="mt-5 inline-flex items-center gap-1 text-sm font-medium text-violet-300 group-hover:text-violet-200">
+                {cta}
+                <ArrowRight size={14} />
+              </span>
+            </div>
           </Link>
         ))}
       </section>
