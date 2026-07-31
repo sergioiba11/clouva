@@ -27,8 +27,9 @@ from analyzer_v4_bootstrap import resolve_camera_vector_values
 from analyzer_v41_residuals_finalize import apply_residual_repairs_v41
 from anatomy_bvh import build_anatomy_bvh
 from anatomy_segmenter_v3 import segment_anatomy_v3
+from analyzer_contract import build_detection_coverage, merge_phase_detection_coverage
 from camera_projection_self_test_v4 import filter_invalid_views, validate_manifest
-from diagnostic_builder import build_diagnostic_glb
+from diagnostic_builder import build_diagnostic_glb, build_surface_glb
 from multiview_renderer_v4 import cleanup_render_proxies, render_multiview_v4
 from preflight_v4 import run_preflight
 
@@ -117,6 +118,8 @@ def _refresh_optional_modules(analysis: dict, output_dir: Path, include: str | N
         attempt_diag = analysis.setdefault("diagnostics", {}).setdefault("v4Attempt", {})
         landmarks = analysis.setdefault("landmarks", {})
         final_bvh = anatomy_bvh
+        face = {}
+        hands = {}
         if include in (None, "face"):
             face = analyzer_v32.analyze_face(
                 detector, valid_manifest, meshes, classifications, vectors,
@@ -135,6 +138,27 @@ def _refresh_optional_modules(analysis: dict, output_dir: Path, include: str | N
             analysis["leftHandAnalysis"] = (hands.get("left") or {}).get("status")
             analysis["rightHandAnalysis"] = (hands.get("right") or {}).get("status")
             attempt_diag["hands"] = hands
+        phase_coverage = build_detection_coverage(
+            manifest,
+            detector,
+            face,
+            hands,
+        )
+        if include is None:
+            analysis["detectionCoverage"] = phase_coverage
+        else:
+            analysis["detectionCoverage"] = merge_phase_detection_coverage(
+                analysis.get("detectionCoverage"),
+                include,
+                phase_coverage,
+                {
+                    "phase": include,
+                    "attempt": attempt_name,
+                    "manifestViewCount": len(manifest.get("views") or []),
+                    "validCalibrationViewCount": len(calibration.get("valid_views") or []),
+                    "invalidCalibrationViewCount": len(calibration.get("invalid_views") or []),
+                },
+            )
         if include is None:
             attempt_diag.update({
                 "cameraManifest": manifest,
@@ -224,6 +248,22 @@ def _finalize_upgrade(
         config=DEFAULT_CONFIG,
     )
     analysis = apply_residual_repairs_v41(analysis)
+    capabilities = analysis.get("topology_capabilities") or {}
+    coverage = analysis.setdefault("detectionCoverage", {})
+    for side, group in (("left", "leftHand"), ("right", "rightHand")):
+        record = coverage.get(group)
+        if not isinstance(record, dict):
+            continue
+        five_fingers_supported = bool(capabilities.get(f"{side}_five_fingers_supported"))
+        record["geometryLimited"] = not five_fingers_supported
+        if not five_fingers_supported:
+            record["geometryLimitReason"] = "FIVE_SEPARATED_FINGER_BRANCHES_NOT_VERIFIED"
+            record["maximumHonestProfile"] = "BODY_HANDS_BASIC"
+        record["handMode"] = capabilities.get(f"{side}_hand_mode")
+    surface_build = build_surface_glb(
+        output_dir / "diagnostic_surface.glb",
+        _real_meshes(),
+    )
     diagnostic_build = build_diagnostic_glb(
         output_dir / "diagnostic_landmarks.glb",
         _real_meshes(),
@@ -250,6 +290,7 @@ def _finalize_upgrade(
         "requestedRigProfile": requested_profile,
         "supportedRigProfiles": analysis.get("supported_rig_profiles") or [],
         "cameraCalibration": calibration,
+        "detectionCoverage": analysis.get("detectionCoverage") or {},
         "topologyCapabilities": analysis.get("topology_capabilities") or {},
         "rootCauses": analysis.get("root_causes") or [],
         "fallbacksUsed": analysis.get("fallbacks_used") or [],
@@ -257,6 +298,7 @@ def _finalize_upgrade(
         "recommendedNextAction": analysis.get("recommended_next_action"),
         "diagnosticFingerprint": analysis.get("diagnostic_fingerprint"),
         "diagnosticBuild": diagnostic_build,
+        "surfaceBuild": surface_build,
         "legacyV32Preserved": True,
         "durationMs": max(1, int((time.perf_counter() - started) * 1000)),
     })

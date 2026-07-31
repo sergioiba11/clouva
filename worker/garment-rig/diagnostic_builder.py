@@ -276,3 +276,30 @@ def build_diagnostic_glb(output_path: Path, avatar_meshes: Iterable[bpy.types.Ob
         "internalSkeletonExported": include_all_states,
         "rejectedEvidenceExported": include_all_states,
     }
+
+
+def build_surface_glb(output_path: Path, avatar_meshes: Iterable[bpy.types.Object]):
+    """Export the canonical analysis surface without diagnostic markers."""
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    meshes = [
+        obj for obj in avatar_meshes
+        if obj is not None and obj.name in bpy.context.scene.objects and obj.type == "MESH"
+    ]
+    if not meshes:
+        raise RuntimeError("Diagnostic surface GLB has no avatar meshes")
+    bpy.ops.object.select_all(action="DESELECT")
+    for obj in meshes:
+        obj.select_set(True)
+    bpy.context.view_layer.objects.active = meshes[0]
+    bpy.ops.export_scene.gltf(
+        filepath=str(output_path),
+        export_format="GLB",
+        use_selection=True,
+        export_animations=False,
+        export_apply=False,
+        export_extras=True,
+    )
+    if not output_path.is_file() or output_path.stat().st_size < 1024:
+        raise RuntimeError("Blender did not generate diagnostic_surface.glb")
+    return {"path": str(output_path), "meshCount": len(meshes), "containsLandmarks": False}
