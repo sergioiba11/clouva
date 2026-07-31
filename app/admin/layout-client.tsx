@@ -8,7 +8,12 @@ import { useRouter } from "next/navigation";
 import { usePathname } from "next/navigation";
 import { useEffect } from "react";
 
-const links = ["/admin", "/admin/productos", "/admin/categorias", "/admin/banners", "/admin/ventas", "/admin/stock", "/admin/clientes", "/admin/empleados", "/admin/pedidos", "/admin/configuracion"];
+const links = [
+  { title: "Panel", links: ["/admin", "/admin/clientes"] },
+  { title: "Monetización", links: ["/admin/suscripciones", "/admin/marketplace", "/admin/reservas", "/admin/flows"] },
+  { title: "Tienda clásica", links: ["/admin/productos", "/admin/categorias", "/admin/banners", "/admin/ventas", "/admin/stock", "/admin/pedidos"] },
+  { title: "Cuenta", links: ["/admin/empleados", "/admin/configuracion"] },
+];
 
 export default function AdminLayoutClient({ children }: { children: React.ReactNode }) {
   const { user, session, role, loading, profile, hydrationReady, profileReady } = useAuth();

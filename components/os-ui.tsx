@@ -59,9 +59,25 @@ export function ModuleCard({ title, href, available = true }: { title: string; h
   );
 }
 
-export function Sidebar({ links }: { links: string[] }) {
+type SidebarGroup = { title?: string; links: string[] };
+
+export function Sidebar({ links }: { links: string[] | SidebarGroup[] }) {
   const pathname = usePathname();
-  return <aside className="os-card hidden p-3 md:block">{links.map((l) => <Link key={l} href={l} className={clsx("block rounded-xl px-3 py-2 text-sm transition", pathname===l?"bg-[var(--chip)]":"hover:bg-[var(--chip)]/60")}>{(l.split('/').pop()||'home').toUpperCase()}</Link>)}</aside>;
+  const groups: SidebarGroup[] = typeof links[0] === "string" ? [{ links: links as string[] }] : (links as SidebarGroup[]);
+  return (
+    <aside className="os-card hidden p-3 md:block">
+      {groups.map((group, i) => (
+        <div key={group.title ?? i} className={i > 0 ? "mt-4" : undefined}>
+          {group.title ? <p className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--muted)]/70">{group.title}</p> : null}
+          {group.links.map((l) => (
+            <Link key={l} href={l} className={clsx("block rounded-xl px-3 py-2 text-sm transition", pathname === l ? "bg-[var(--chip)]" : "hover:bg-[var(--chip)]/60")}>
+              {(l.split("/").pop() || "home").toUpperCase()}
+            </Link>
+          ))}
+        </div>
+      ))}
+    </aside>
+  );
 }
 
 export function ActivityFeed({ items }: { items: string[] }) {
