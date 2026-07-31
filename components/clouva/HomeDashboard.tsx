@@ -88,7 +88,7 @@ function initials(value: string) {
 }
 
 export function HomeDashboard() {
-  const { user, profile, loading } = useAuth();
+  const { user, profile, role, loading } = useAuth();
   const displayName = profile?.display_name || profile?.full_name || user?.email?.split("@")[0] || "CLOUVA";
   const username = profile?.username ? `@${profile.username.replace(/^@/, "")}` : user ? "Tu identidad CLOUVA" : "Explorá tu propio mundo";
   const avatarImage = profile?.avatar_url || user?.user_metadata?.avatar_url;
@@ -96,6 +96,11 @@ export function HomeDashboard() {
   const hasAvatar = Boolean(profile?.avatar_3d_url);
   const completedSteps = [isSignedIn, Boolean(profile?.username), hasAvatar].filter(Boolean).length;
   const progress = Math.round((completedSteps / 3) * 100);
+  // El admin necesita poder entrar a las pantallas "Próximamente" para
+  // probarlas/gestionarlas -- el resto de los usuarios sigue viendo el gate.
+  const isAdmin = role === "admin";
+  const effectivePrimaryNav = primaryNav.map((item) => ({ ...item, available: item.available || isAdmin }));
+  const effectiveModules = modules.map((item) => ({ ...item, available: item.available || isAdmin }));
 
   return (
     <main className={styles.page}>
@@ -108,7 +113,7 @@ export function HomeDashboard() {
         </Link>
 
         <nav className={styles.topnav} aria-label="Navegación principal">
-          {primaryNav.slice(0, 5).map((item) => item.available ? (
+          {effectivePrimaryNav.slice(0, 5).map((item) => item.available ? (
             <Link key={item.href} href={item.href} className={item.href === "/" ? styles.topnavActive : undefined}>{item.label}</Link>
           ) : (
             <span key={item.href} className={styles.comingNav} title="Próximamente">{item.label}<small>Próximamente</small></span>
@@ -142,7 +147,7 @@ export function HomeDashboard() {
         </section>
 
         <nav className={styles.sideNav} aria-label="Secciones de CLOUVA">
-          {primaryNav.map((item) => {
+          {effectivePrimaryNav.map((item) => {
             const Icon = item.icon;
             return item.available ? (
               <Link key={item.href} href={item.href} className={item.href === "/" ? styles.sideNavActive : undefined}>
@@ -159,14 +164,24 @@ export function HomeDashboard() {
           })}
         </nav>
 
-        <section className={styles.aiStatus}>
-          <span><Bot size={17} /></span>
-          <div>
-            <b>CLOUVA AI</b>
-            <small>Próximamente</small>
-          </div>
-          <i className={styles.comingDot} />
-        </section>
+        {isAdmin ? (
+          <Link href="/clouva-ai" className={styles.aiStatus}>
+            <span><Bot size={17} /></span>
+            <div>
+              <b>CLOUVA AI</b>
+              <small>Abrir</small>
+            </div>
+          </Link>
+        ) : (
+          <section className={styles.aiStatus}>
+            <span><Bot size={17} /></span>
+            <div>
+              <b>CLOUVA AI</b>
+              <small>Próximamente</small>
+            </div>
+            <i className={styles.comingDot} />
+          </section>
+        )}
       </aside>
 
       <section className={styles.content}>
@@ -181,10 +196,17 @@ export function HomeDashboard() {
             <h1>{displayName}</h1>
             <p>Crea. Personaliza. Conecta.<br />Viví tu propio mundo.</p>
             <div className={styles.heroActions}>
-              <span className={styles.disabledHeroAction} aria-disabled="true">
-                <CircleUserRound size={17} />
-                Avatar · Próximamente
-              </span>
+              {isAdmin ? (
+                <Link href="/mi-flow/avatar">
+                  <CircleUserRound size={17} />
+                  Avatar
+                </Link>
+              ) : (
+                <span className={styles.disabledHeroAction} aria-disabled="true">
+                  <CircleUserRound size={17} />
+                  Avatar · Próximamente
+                </span>
+              )}
               <Link href="/matrix" className={styles.secondaryAction}>
                 <Compass size={17} />
                 Explorar La Matrix
@@ -201,10 +223,17 @@ export function HomeDashboard() {
             </div>
           </div>
 
-          <div className={styles.aiPrompt}>
-            <Sparkles size={17} />
-            <span>CLOUVA AI · Próximamente</span>
-          </div>
+          {isAdmin ? (
+            <Link href="/clouva-ai" className={styles.aiPrompt}>
+              <Sparkles size={17} />
+              <span>CLOUVA AI</span>
+            </Link>
+          ) : (
+            <div className={styles.aiPrompt}>
+              <Sparkles size={17} />
+              <span>CLOUVA AI · Próximamente</span>
+            </div>
+          )}
 
           <div className={styles.nowPlaying}>
             <div className={styles.cover}><Music2 size={20} /></div>
@@ -218,7 +247,7 @@ export function HomeDashboard() {
         </section>
 
         <section className={styles.moduleGrid} aria-label="Explorar CLOUVA">
-          {modules.map((module) => {
+          {effectiveModules.map((module) => {
             const Icon = module.icon;
             const cardContent = (
               <>
@@ -293,7 +322,7 @@ export function HomeDashboard() {
       </aside>
 
       <nav className={styles.mobileNav} aria-label="Navegación móvil">
-        {primaryNav.slice(0, 5).map((item) => {
+        {effectivePrimaryNav.slice(0, 5).map((item) => {
           const Icon = item.icon;
           return item.available
             ? <Link key={item.href} href={item.href} className={item.href === "/" ? styles.mobileActive : undefined}><Icon size={18} /><span>{item.label}</span></Link>

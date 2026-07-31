@@ -15,4 +15,6 @@ export const VISUAL_ASSETS = {
     "https://storage.googleapis.com/clouva-generated-media/visual-system/backgrounds/studios/studio-directory-hero-01/f70d81c2-0d9e-45cb-bf17-0390b87b9107.jpg",
   "studio-public-profile-cover-01":
     "https://storage.googleapis.com/clouva-generated-media/visual-system/backgrounds/studio-profile/studio-public-profile-cover-01/e457fe38-6cf7-4e09-945b-bf73e897334f.jpg",
+  "public-landing-hero-01":
+    "https://storage.googleapis.com/clouva-generated-media/visual-system/backgrounds/landing/public-landing-hero-01/f147a0ed-9efc-4c46-b728-9e9619c413e7.jpg",
 } as const;

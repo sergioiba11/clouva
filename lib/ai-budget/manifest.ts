@@ -167,6 +167,30 @@ export const assetManifest: ManifestEntry[] = [
     consumingComponent: "app/studios/[slug]/page.tsx",
     priority: 6,
   },
+  {
+    assetKey: "public-landing-hero-01",
+    page: "Landing pública (visitantes sin sesión)",
+    route: "/",
+    section: "Hero de la landing pública -- distinta del HomeDashboard logueado",
+    purpose:
+      "Fondo del hero para quien entra a clouva.com.ar sin sesión. Debe transmitir identidad/comunidad (no Avatar, que está en Próximamente), invitando a crear cuenta y explorar La Matrix.",
+    aspectRatio: "16:9",
+    resolution: "1K",
+    transparent: false,
+    model: "gemini-3.1-flash-lite-image",
+    prompt:
+      `${BASE_IDENTITY} A wide cinematic composition suggesting many distinct creative identities (musicians, producers, ` +
+      "designers) as soft glowing silhouettes gathered in a shared dark violet space, connected by faint luminous threads " +
+      "like a living community forming, sense of belonging and momentum rather than a single hero character, foreground kept " +
+      "dark and empty for headline text overlay, wide 16:9 shot.",
+    references: [],
+    maxAttempts: 2,
+    maxCostUsd: 0.05,
+    classification: "C_generate_gemini",
+    outputPathPrefix: "visual-system/backgrounds/landing",
+    consumingComponent: "components/clouva/PublicLanding.tsx",
+    priority: 7,
+  },
 ];
 
 export function manifestEntry(assetKey: string) {
