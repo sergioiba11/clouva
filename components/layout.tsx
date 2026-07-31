@@ -57,6 +57,7 @@ export function MainNav() {
                     <Link href="/perfil" className="block rounded-lg px-3 py-2 hover:bg-[var(--chip)]" onClick={() => setOpenMenu(false)}>Perfil</Link>
                     <Link href="/matrix" className="block rounded-lg px-3 py-2 hover:bg-[var(--chip)]" onClick={() => setOpenMenu(false)}>La Matrix</Link>
                     <Link href="/mi-flow" className="block rounded-lg px-3 py-2 hover:bg-[var(--chip)]" onClick={() => setOpenMenu(false)}>Mi Flow</Link>
+                    <Link href="/truco" className="block rounded-lg px-3 py-2 hover:bg-[var(--chip)]" onClick={() => setOpenMenu(false)}>Anotador de Truco</Link>
                     <Link href="/creator-studio" className="block rounded-lg px-3 py-2 text-violet-200 hover:bg-violet-500/10" onClick={() => setOpenMenu(false)}>Creator Studio</Link>
                     {canAdmin ? <Link href="/admin" className="block rounded-lg px-3 py-2 text-amber-200 hover:bg-amber-500/10" onClick={() => setOpenMenu(false)}>Admin</Link> : null}
                     <Link href="/login?addAccount=1" className="block rounded-lg px-3 py-2 hover:bg-[var(--chip)]" onClick={() => setOpenMenu(false)}>Agregar cuenta</Link>

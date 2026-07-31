@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { BrainCircuit, Compass, Home, LibraryBig, ShoppingBag, User, Users, VenetianMask } from "lucide-react";
+import { BrainCircuit, Compass, Home, LibraryBig, ShoppingBag, Spade, User, Users, VenetianMask } from "lucide-react";
 
 type MinimalNavigationProps = { visible: boolean };
 
@@ -12,6 +12,7 @@ const items = [
   { href: "/mi-flow/avatar", label: "Avatar", Icon: VenetianMask },
   { href: "/avatar-analyzer-v4", label: "Analyzer", Icon: BrainCircuit },
   { href: "/biblioteca", label: "Biblioteca", Icon: LibraryBig },
+  { href: "/truco", label: "Truco", Icon: Spade },
   { href: "/tienda", label: "Tienda", Icon: ShoppingBag },
   { href: "/perfil", label: "Perfil", Icon: User },
 ];
