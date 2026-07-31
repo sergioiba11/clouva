@@ -159,9 +159,30 @@ def main() -> int:
             if _CANCEL_REQUESTED or app._job_cancel_requested(job_id):
                 raise app.AnalysisCancelled()
             _update_job(job_id, {"status": "running", "phase": "blender"})
-            job_dir, _output_dir, _cached, analysis = app._run_analysis_v4(
-                source_url, requested_profile, operation=operation, job_id=job_id,
-            )
+            # Default user path: the three-phase pipeline (body -> face -> hands)
+            # publishing a readable partial result after each phase. An explicit
+            # BODY_BASIC request or a targeted reanalysis keeps the single-pass path.
+            if operation is None and requested_profile != "BODY_BASIC":
+                def _on_phase(phase: str, progress: int, analysis: dict | None = None) -> None:
+                    fields: dict = {"status": "running", "phase": phase, "progress": progress}
+                    if analysis is not None:
+                        run_id = analysis.get("runId")
+                        if run_id:
+                            fields["run_id"] = run_id
+                            fields["result_prefix"] = run_id
+                        try:
+                            fields["summary"] = app._summary(analysis)
+                        except Exception:
+                            pass
+                    _update_job(job_id, fields)
+
+                job_dir, _output_dir, _cached, analysis = app._run_analysis_v4_phased(
+                    source_url, requested_profile, job_id=job_id, on_phase=_on_phase,
+                )
+            else:
+                job_dir, _output_dir, _cached, analysis = app._run_analysis_v4(
+                    source_url, requested_profile, operation=operation, job_id=job_id,
+                )
         _update_job(job_id, {"status": "persisting", "phase": "persisting"})
         summary = app._summary(analysis)
         _update_job(job_id, {

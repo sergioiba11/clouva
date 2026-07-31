@@ -16,6 +16,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import traceback
 from typing import Any, Literal
 import uuid
 
@@ -248,6 +249,52 @@ def _kill_process_group(proc: subprocess.Popen) -> None:
         pass
 
 
+def _run_v4_blender_phase(
+    phase: str,
+    input_path: Path,
+    output_dir: Path,
+    environment: dict[str, str],
+    job_dir: Path,
+    job_id: str | None = None,
+) -> str:
+    if _job_cancel_requested(job_id):
+        raise AnalysisCancelled()
+    proc = subprocess.Popen(
+        [
+            legacy.BLENDER_BIN, "--background", "--factory-startup",
+            "--python-exit-code", "1", "--python", str(AVATAR_ANALYZER_V4_SCRIPT),
+            "--", str(input_path), str(output_dir),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        cwd=str(job_dir),
+        env={**environment, V4_PHASE_ENV: phase},
+        start_new_session=True,
+    )
+    if not _register_job_process(job_id, proc):
+        _kill_process_group(proc)
+        raise AnalysisCancelled()
+    try:
+        stdout, stderr = proc.communicate(timeout=max(legacy.BLENDER_TIMEOUT_SECONDS, 900))
+    except subprocess.TimeoutExpired:
+        _kill_process_group(proc)
+        raise
+    finally:
+        _register_job_process(job_id, None)
+    if _job_cancel_requested(job_id):
+        raise AnalysisCancelled()
+    if proc.returncode != 0:
+        technical = (
+            stderr
+            or stdout
+            or f"Blender Avatar Analyzer V4 {phase} phase failed"
+        )[-12000:]
+        raise RuntimeError(technical)
+    gc.collect()
+    return stderr or stdout or ""
+
+
 def _run_v4_blender_phases(
     input_path: Path,
     output_dir: Path,
@@ -255,45 +302,10 @@ def _run_v4_blender_phases(
     job_dir: Path,
     job_id: str | None = None,
 ):
-    phase_logs = []
-    for phase in ("base", "upgrade"):
-        if _job_cancel_requested(job_id):
-            raise AnalysisCancelled()
-        proc = subprocess.Popen(
-            [
-                legacy.BLENDER_BIN, "--background", "--factory-startup",
-                "--python-exit-code", "1", "--python", str(AVATAR_ANALYZER_V4_SCRIPT),
-                "--", str(input_path), str(output_dir),
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            cwd=str(job_dir),
-            env={**environment, V4_PHASE_ENV: phase},
-            start_new_session=True,
-        )
-        if not _register_job_process(job_id, proc):
-            _kill_process_group(proc)
-            raise AnalysisCancelled()
-        try:
-            stdout, stderr = proc.communicate(timeout=max(legacy.BLENDER_TIMEOUT_SECONDS, 900))
-        except subprocess.TimeoutExpired:
-            _kill_process_group(proc)
-            raise
-        finally:
-            _register_job_process(job_id, None)
-        if _job_cancel_requested(job_id):
-            raise AnalysisCancelled()
-        phase_logs.append(stderr or stdout or "")
-        if proc.returncode != 0:
-            technical = (
-                stderr
-                or stdout
-                or f"Blender Avatar Analyzer V4 {phase} phase failed"
-            )[-12000:]
-            raise RuntimeError(technical)
-        gc.collect()
-    return phase_logs
+    return [
+        _run_v4_blender_phase(phase, input_path, output_dir, environment, job_dir, job_id=job_id)
+        for phase in ("base", "upgrade")
+    ]
 
 
 def _run_analysis_v4(
@@ -344,6 +356,128 @@ def _run_analysis_v4(
         cached = _persist_run_v4(output_dir, analysis, input_path)
         return job_dir, output_dir, cached, analysis
     except AnalysisCancelled:
+        shutil.rmtree(job_dir, ignore_errors=True)
+        raise
+    except subprocess.TimeoutExpired as exc:
+        shutil.rmtree(job_dir, ignore_errors=True)
+        raise HTTPException(status_code=504, detail="Avatar Analyzer V4 agotó el tiempo de procesamiento") from exc
+    except HTTPException:
+        shutil.rmtree(job_dir, ignore_errors=True)
+        raise
+    except Exception as exc:
+        shutil.rmtree(job_dir, ignore_errors=True)
+        raise HTTPException(status_code=422, detail=f"No se pudo analizar el avatar con V4: {exc}") from exc
+
+
+def _read_v4_outputs(output_dir: Path) -> dict[str, Any]:
+    required = (
+        output_dir / "diagnostic_report.json",
+        output_dir / "avatar_analysis.json",
+        output_dir / "diagnostic_landmarks.glb",
+    )
+    missing = [path.name for path in required if not path.is_file()]
+    if missing:
+        raise RuntimeError(f"Avatar Analyzer V4 no generó: {', '.join(missing)}")
+    return json.loads((output_dir / "avatar_analysis.json").read_text(encoding="utf-8"))
+
+
+def _inject_phases_state(output_dir: Path, analysis: dict[str, Any], phases_state: dict[str, str]) -> None:
+    """Stamp the per-phase completion state into the durable analysis/report
+    before publishing, so readers can tell a partial body-only result from a
+    finished full run without guessing from missing fields."""
+    analysis["phases"] = phases_state
+    (output_dir / "avatar_analysis.json").write_text(
+        json.dumps(analysis, indent=2, ensure_ascii=False), encoding="utf-8",
+    )
+    report_path = output_dir / "diagnostic_report.json"
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        report["phases"] = phases_state
+        report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _run_analysis_v4_phased(
+    source_url: str,
+    requested_profile: str,
+    job_id: str | None = None,
+    on_phase=None,
+):
+    """Full analysis as three user-visible phases: body, face, hands.
+
+    Publishes the durable run after each phase (same runId throughout) so the
+    frontend can load the body result in ~2 minutes while face and hands are
+    still processing. The body pass reuses the fast BODY_BASIC path; face and
+    hands run as region-scoped V4 refreshes merged over the V3.2 snapshot.
+    Cancellation between/at any phase keeps the phases already published.
+    """
+    if not AVATAR_ANALYZER_V4_SCRIPT.is_file():
+        raise HTTPException(status_code=500, detail="Falta avatar_analyzer_v4.py en el Blender Worker")
+
+    def notify(phase: str, progress: int, analysis: dict[str, Any] | None = None) -> None:
+        if on_phase is None:
+            return
+        try:
+            on_phase(phase, progress, analysis)
+        except Exception:
+            # Progress reporting must never kill a run that is otherwise fine.
+            traceback.print_exc()
+
+    job_dir = Path(tempfile.mkdtemp(prefix="clouva-avatar-analyzer-v4-"))
+    input_path = job_dir / "avatar-original-clean.glb"
+    analysis_input_path = job_dir / "avatar-analysis-sanitized.glb"
+    output_dir = job_dir / "analysis"
+    try:
+        if _job_cancel_requested(job_id):
+            raise AnalysisCancelled()
+        legacy.download(source_url, input_path)
+        sanitization = sanitize_glb_for_analysis(input_path, analysis_input_path)
+        print(
+            "[clouva-avatar-analyzer] pre-Blender GLB sanitizer "
+            f"bytes={sanitization['sourceBytes']}->{sanitization['analysisBytes']} "
+            f"attributesRemoved={sanitization['attributesRemoved']} "
+            f"imagesRemoved={sanitization['imagesRemoved']} "
+            f"morphTargetsRemoved={sanitization['morphTargetsRemoved']} "
+            f"totalVertices={sanitization['totalVertices']}",
+            flush=True,
+        )
+        _reject_if_too_heavy(sanitization)
+        gc.collect()
+        # Body pass runs as BODY_BASIC on purpose: that profile's skip of the
+        # face/hand cameras is exactly what makes the first result fast. The
+        # final readiness evaluation happens in the face/hands phases against
+        # the real requested profile.
+        body_env = {**os.environ, REQUESTED_PROFILE_ENV: "BODY_BASIC"}
+        full_env = {**os.environ, REQUESTED_PROFILE_ENV: requested_profile}
+
+        notify("body", 15)
+        _run_v4_blender_phase("base", analysis_input_path, output_dir, body_env, job_dir, job_id=job_id)
+        _run_v4_blender_phase("upgrade", analysis_input_path, output_dir, body_env, job_dir, job_id=job_id)
+        analysis = _read_v4_outputs(output_dir)
+        _inject_phases_state(output_dir, analysis, {"body": "completed", "face": "pending", "hands": "pending"})
+        _persist_run_v4(output_dir, analysis, input_path)
+        notify("body_completed", 45, analysis)
+
+        if _job_cancel_requested(job_id):
+            raise AnalysisCancelled()
+        notify("face", 55, analysis)
+        _run_v4_blender_phase("face", analysis_input_path, output_dir, full_env, job_dir, job_id=job_id)
+        analysis = _read_v4_outputs(output_dir)
+        _inject_phases_state(output_dir, analysis, {"body": "completed", "face": "completed", "hands": "pending"})
+        _persist_run_v4(output_dir, analysis, input_path)
+        notify("face_completed", 75, analysis)
+
+        if _job_cancel_requested(job_id):
+            raise AnalysisCancelled()
+        notify("hands", 85, analysis)
+        _run_v4_blender_phase("hands", analysis_input_path, output_dir, full_env, job_dir, job_id=job_id)
+        analysis = _read_v4_outputs(output_dir)
+        _inject_phases_state(output_dir, analysis, {"body": "completed", "face": "completed", "hands": "completed"})
+        cached = _persist_run_v4(output_dir, analysis, input_path)
+        return job_dir, output_dir, cached, analysis
+    except AnalysisCancelled:
+        # Phases already published stay readable; only the temp workspace goes.
         shutil.rmtree(job_dir, ignore_errors=True)
         raise
     except subprocess.TimeoutExpired as exc:
