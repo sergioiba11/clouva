@@ -51,10 +51,23 @@ export async function requireUser(request: NextRequest): Promise<{
   const { data, error } = await supabase.auth.getUser(accessToken);
   if (error || !data.user) throw new Error("Sesión inválida.");
 
+  // profiles.is_blocked existed since control_total.sql (2026-05-22) but
+  // nothing ever actually enforced it -- checked here, the single choke
+  // point nearly every authenticated API route already goes through, so a
+  // block set from /admin/clientes actually takes effect everywhere.
+  // Uses the service-role client, not the caller's own session, so this
+  // can't be bypassed by a `profiles` RLS gap for the blocked user.
+  const { data: profile } = await createAdminSupabase()
+    .from("profiles")
+    .select("is_blocked")
+    .eq("id", data.user.id)
+    .maybeSingle();
+  if (profile?.is_blocked) throw new Error("Esta cuenta fue bloqueada.");
+
   return { accessToken, user: data.user, supabase };
 }
 
 export function isAuthError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
-  return /sesión requerida|sesión inválida|no autorizado/i.test(message);
+  return /sesión requerida|sesión inválida|no autorizado|cuenta fue bloqueada/i.test(message);
 }
