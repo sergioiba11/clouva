@@ -5,8 +5,9 @@ import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/auth-provider";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
 import type { Player, SocialLink } from "@/lib/players-data";
+import { VipAiProfilePanel } from "@/components/profile/VipAiProfilePanel";
 
-const SECTIONS = ["Identidad", "Presentación", "Imagen", "Links", "Instagram", "Privacidad y SEO"] as const;
+const SECTIONS = ["Identidad", "Presentación", "Imagen", "Links", "Instagram", "CLOUVA AI Profile", "Privacidad y SEO"] as const;
 type Section = (typeof SECTIONS)[number];
 
 type InstagramConnection = {
@@ -29,6 +30,7 @@ export default function PlayerEditorPage() {
   const { user, loading: authLoading } = useAuth();
   const [player, setPlayer] = useState<Player | null>(null);
   const [connection, setConnection] = useState<InstagramConnection | null>(null);
+  const [vipActive, setVipActive] = useState(false);
   const [activeSection, setActiveSection] = useState<Section>("Identidad");
   const [draft, setDraft] = useState<Record<string, unknown>>({});
   const [links, setLinks] = useState<SocialLink[]>([]);
@@ -45,9 +47,10 @@ export default function PlayerEditorPage() {
     if (!user) return;
     setLoading(true);
     try {
-      const [playerResponse, statusResponse] = await Promise.all([
+      const [playerResponse, statusResponse, vipResponse] = await Promise.all([
         authenticatedFetch("/api/players/me"),
         authenticatedFetch("/api/integrations/instagram/status"),
+        authenticatedFetch("/api/billing/vip"),
       ]);
       const playerPayload = await readApiJson<{ player: Player | null }>(playerResponse);
       const statusPayload = await readApiJson<{ connection: InstagramConnection | null }>(statusResponse);
@@ -59,6 +62,16 @@ export default function PlayerEditorPage() {
       setDraft({ ...playerPayload.player });
       setLinks(parseLinks(playerPayload.player.social_links));
       setConnection(statusPayload.connection);
+      try {
+        const vipPayload = await readApiJson<{ entitlement: { tier: string; status: string; valid_from: string | null; valid_until: string | null; starts_at: string | null; expires_at: string | null } | null }>(vipResponse);
+        const entitlement = vipPayload.entitlement;
+        const now = new Date().toISOString();
+        const starts = entitlement?.valid_from || entitlement?.starts_at;
+        const expires = entitlement?.valid_until || entitlement?.expires_at;
+        setVipActive(Boolean(entitlement && entitlement.tier === "vip" && entitlement.status === "active" && (!starts || starts <= now) && (!expires || expires > now)));
+      } catch {
+        setVipActive(false);
+      }
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "No se pudo cargar el editor.");
     } finally {
@@ -201,6 +214,8 @@ export default function PlayerEditorPage() {
           {activeSection === "Instagram" ? <div className="space-y-4">
             {connection ? <div className="rounded-2xl border border-violet-400/25 bg-violet-500/10 p-5"><p className="text-xs uppercase tracking-[0.2em] text-violet-300/70">Instagram conectado</p><p className="mt-2 text-xl font-semibold">@{connection.external_username || connection.display_name || "instagram"}</p><p className="mt-1 text-sm text-white/45">{connection.account_type || "Cuenta profesional"} · Estado: {connection.status}</p><div className="mt-5 flex flex-wrap gap-2"><button onClick={() => void syncInstagram()} disabled={saving} className="rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold">Importar nuevas publicaciones</button><button onClick={() => void connectInstagram()} disabled={saving} className="rounded-xl border border-white/15 px-4 py-2 text-sm">Reconectar</button><button onClick={() => void disconnectInstagram()} disabled={saving} className="rounded-xl border border-red-400/20 px-4 py-2 text-sm text-red-300">Desconectar</button></div></div> : <div className="rounded-2xl border border-dashed border-white/15 p-6 text-center"><p className="text-white/55">Instagram todavía no está conectado.</p><button onClick={() => void connectInstagram()} disabled={saving} className="mt-4 rounded-xl bg-gradient-to-r from-fuchsia-600 to-violet-600 px-5 py-3 font-semibold">Conectar Instagram</button></div>}
           </div> : null}
+
+          {activeSection === "CLOUVA AI Profile" ? <VipAiProfilePanel playerId={player.id} vipActive={vipActive} /> : null}
 
           {activeSection === "Privacidad y SEO" ? <div className="space-y-4">
             <div><Label>Visibilidad</Label><select value={String(draft.privacy_status || "public")} onChange={(event) => update("privacy_status", event.target.value)} className="w-full rounded-xl border border-white/10 bg-black/30 px-4 py-3"><option value="public">Público e indexable</option><option value="unlisted">Público sin indexar</option><option value="private">Privado</option></select></div>
