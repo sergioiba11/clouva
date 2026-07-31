@@ -162,7 +162,11 @@ export async function createVipSubscription(args: {
   const appBase = process.env.APP_BASE_URL?.trim() || "https://clouva.com.ar";
   try {
     const providerSubscription = await new MercadoPagoProvider().createSubscription({
-      planId: price.provider_plan_id!,
+      reason: price.product.name,
+      amount: Number(price.amount),
+      currency: price.currency,
+      interval: price.billing_interval,
+      intervalCount: price.interval_count,
       payerEmail: args.payerEmail,
       externalReference,
       backUrl: `${appBase}/checkout/vip/return`,
