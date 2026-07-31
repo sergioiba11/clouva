@@ -43,6 +43,26 @@ export function getRedirectByRole(role: string | null | undefined) {
   return roleHome[normalizedRole];
 }
 
+type AuthUserTiming = {
+  created_at?: string | null;
+  last_sign_in_at?: string | null;
+};
+
+export function isNewlyCreatedAuthUser(user: AuthUserTiming | null | undefined) {
+  if (!user?.created_at || !user.last_sign_in_at) return false;
+  const createdAt = Date.parse(user.created_at);
+  const signedInAt = Date.parse(user.last_sign_in_at);
+  if (!Number.isFinite(createdAt) || !Number.isFinite(signedInAt)) return false;
+
+  // Supabase assigns both timestamps during the first successful authentication.
+  // Later logins update last_sign_in_at while created_at remains unchanged.
+  return Math.abs(signedInAt - createdAt) <= 30_000;
+}
+
+export function getPostAuthDestination(role: string | null | undefined, user: AuthUserTiming | null | undefined) {
+  return isNewlyCreatedAuthUser(user) ? "/matrix" : getRedirectByRole(role);
+}
+
 export function canAccessAdmin(role: Role) {
   const normalized = normalizeRole(role);
   return normalized === "admin";

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { getRedirectByRole } from "@/lib/auth";
+import { getPostAuthDestination } from "@/lib/auth";
 import { readApiJson } from "@/lib/authenticated-fetch";
 
 function redirect(path: string) {
@@ -143,8 +143,10 @@ export default function AuthCallbackContent() {
         }
 
         localStorage.removeItem("clouva.switch_target");
-        const destination = getRedirectByRole(profile?.role ?? "cliente");
-        const target = isAddAccountMode ? `${destination}?openAccountSwitcher=1` : destination;
+        const destination = getPostAuthDestination(profile?.role ?? "cliente", user);
+        const target = isAddAccountMode && destination !== "/matrix"
+          ? `${destination}?openAccountSwitcher=1`
+          : destination;
 
         finished = true;
         window.clearTimeout(failSafe);

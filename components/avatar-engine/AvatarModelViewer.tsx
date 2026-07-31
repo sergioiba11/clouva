@@ -41,6 +41,7 @@ type Props = {
   playAnimations?: boolean;
   motionTest?: boolean;
   poseMode?: AvatarPoseMode;
+  embedded?: boolean;
   onReady?: (object: Object3D) => void;
 };
 
@@ -135,7 +136,7 @@ function clipFor(clips: AnimationClip[], mode: AvatarPoseMode) {
   return clips.find((clip) => keywords.some((keyword) => clean(clip.name).includes(keyword))) ?? null;
 }
 
-export function AvatarModelViewer({ modelUrl, fallbackModelUrl = null, modelData, frontRotationY = 0, config, alt, className = "", playAnimations = true, motionTest = false, poseMode = "idle", onReady }: Props) {
+export function AvatarModelViewer({ modelUrl, fallbackModelUrl = null, modelData, frontRotationY = 0, config, alt, className = "", playAnimations = true, motionTest = false, poseMode = "idle", embedded = false, onReady }: Props) {
   const mount = useRef<HTMLDivElement>(null);
   const poseRef = useRef<AvatarPoseMode>(poseMode);
   const motionRef = useRef(motionTest);
@@ -304,10 +305,10 @@ export function AvatarModelViewer({ modelUrl, fallbackModelUrl = null, modelData
   }, [modelUrl, fallbackModelUrl, modelData, frontRotationY, playAnimations, config]);
 
   return (
-    <div className={`avatar-render-shell ${className}`} data-state={state} data-avatar-source={state === "ready" ? "glb" : "fallback"} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", minHeight: "100dvh" }} aria-label={alt}>
+    <div className={`avatar-render-shell ${className}`} data-state={state} data-avatar-source={state === "ready" ? "glb" : "fallback"} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", minHeight: embedded ? 0 : "100dvh" }} aria-label={alt}>
       {state === "loading" ? <div className="avatar-loader">Cargando CLOUVA…</div> : null}
-      {state === "error" ? <div className="avatar-loader" style={{ maxWidth: "88vw", textAlign: "center", zIndex: 30 }}>Error de avatar: {errorMessage}</div> : null}
-      <div ref={mount} className="avatar-model-viewer" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", minHeight: "100dvh", touchAction: "none" }} />
+      {state === "error" && !embedded ? <div className="avatar-loader" style={{ maxWidth: "88vw", textAlign: "center", zIndex: 30 }}>Error de avatar: {errorMessage}</div> : null}
+      <div ref={mount} className="avatar-model-viewer" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", minHeight: embedded ? 0 : "100dvh", touchAction: "none" }} />
     </div>
   );
 }
