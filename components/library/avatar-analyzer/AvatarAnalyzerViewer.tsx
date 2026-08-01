@@ -1,7 +1,7 @@
 "use client";
 
 import { Canvas, useFrame, useThree, type ThreeEvent } from "@react-three/fiber";
-import { Html, useGLTF } from "@react-three/drei";
+import { Html, OrbitControls, useGLTF } from "@react-three/drei";
 import {
   Suspense,
   useEffect,
@@ -215,6 +215,7 @@ function ViewerContent(props: AvatarAnalyzerViewerProps) {
     [landmarks, stage, dimensions],
   );
   const bbox = focusOverride ?? stageBbox;
+  const orbitTarget = bbox ? boundingBoxCenter(bbox) : [0, 0, 0];
 
   const visibleEntries = useMemo(
     () => Object.entries(landmarks).filter(([name]) => stage === "todos" || landmarkGroup(name) === stage),
@@ -237,6 +238,11 @@ function ViewerContent(props: AvatarAnalyzerViewerProps) {
     <>
       <ambientLight intensity={0.4} />
       <CameraRig bbox={bbox} focusToken={focusToken} fillRatio={fillRatio} />
+      {/* Drag to orbit, scroll/pinch to zoom -- the camera was previously
+          only ever auto-framed by CameraRig with no way for the user to move
+          it themselves. enableDamping is purely a feel improvement; target
+          re-centers on the current stage/focus bbox on every reframe. */}
+      <OrbitControls target={orbitTarget as [number, number, number]} enableDamping dampingFactor={0.12} makeDefault />
       <SurfacePicker enabled={pickMode} />
       <group onPointerDown={handlePointerDown}>
         {glbUrl ? (
