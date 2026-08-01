@@ -13,7 +13,7 @@ export function StudioMembershipCheckoutAction({
   plan: { id: string; slug: string; isFree: boolean };
 }) {
   const router = useRouter();
-  const { user, loading } = useAuth();
+  const { user, role, loading } = useAuth();
   const [working, setWorking] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -59,6 +59,22 @@ export function StudioMembershipCheckoutAction({
     }
   };
 
+  const adminJoin = async () => {
+    setWorking(true);
+    setError(null);
+    try {
+      const response = await authenticatedFetch(`/api/studios/${encodeURIComponent(studioSlug)}/membership/admin-join`, {
+        method: "POST",
+        body: JSON.stringify({ planId: plan.id }),
+      });
+      await readApiJson(response);
+      router.push(`/studios/${studioSlug}?joined=1`);
+    } catch (adminJoinError) {
+      setError(adminJoinError instanceof Error ? adminJoinError.message : "No se pudo omitir la suscripción.");
+      setWorking(false);
+    }
+  };
+
   return (
     <div>
       <button
@@ -69,6 +85,16 @@ export function StudioMembershipCheckoutAction({
       >
         {working ? "Procesando..." : plan.isFree ? "Unirme gratis" : "Confirmar y pagar"}
       </button>
+      {!plan.isFree && role === "admin" ? (
+        <button
+          type="button"
+          disabled={working}
+          onClick={() => void adminJoin()}
+          className="mt-2 w-full rounded-xl border border-amber-400/30 px-5 py-2.5 text-xs font-semibold text-amber-200 transition hover:bg-amber-400/10 disabled:opacity-60"
+        >
+          Omitir suscripción y unirme (admin)
+        </button>
+      ) : null}
       {error ? <p className="mt-3 text-sm text-red-300">{error}</p> : null}
     </div>
   );
