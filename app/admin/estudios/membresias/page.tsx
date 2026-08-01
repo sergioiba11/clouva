@@ -5,6 +5,7 @@ import { PremiumCard, StatCard } from "@/components/os-ui";
 
 type FanMembershipRow = {
   id: string;
+  user_id: string;
   status: string;
   joined_at: string;
   studios: { name: string; slug: string } | null;
@@ -43,7 +44,7 @@ export default function EstudiosMembresiasAdminPage() {
     const [membersResult, plansResult] = await Promise.all([
       supabase
         .from("studio_fan_memberships")
-        .select("id,status,joined_at,studios(name,slug),profiles(full_name,username,email),studio_membership_plans(name,is_free,price,currency)")
+        .select("id,user_id,status,joined_at,studios(name,slug),studio_membership_plans(name,is_free,price,currency)")
         .order("joined_at", { ascending: false })
         .limit(500),
       supabase
@@ -55,7 +56,19 @@ export default function EstudiosMembresiasAdminPage() {
     if (membersResult.error) { setError(membersResult.error.message); setLoading(false); return; }
     if (plansResult.error) { setError(plansResult.error.message); setLoading(false); return; }
 
-    setMembers((membersResult.data ?? []) as unknown as FanMembershipRow[]);
+    // profiles.id = auth.users.id by convention, but there's no FK between
+    // them for PostgREST to auto-embed a profiles(...) join on
+    // studio_fan_memberships -- fetch separately and merge, same pattern as
+    // the members API route (app/api/studios/[slug]/membership/members).
+    const memberRows = (membersResult.data ?? []) as unknown as Omit<FanMembershipRow, "profiles">[];
+    const userIds = [...new Set(memberRows.map((row) => row.user_id))];
+    const { data: profileRows, error: profilesError } = userIds.length
+      ? await supabase.from("profiles").select("id,full_name,username,email").in("id", userIds)
+      : { data: [] as { id: string; full_name: string | null; username: string | null; email: string | null }[], error: null };
+    if (profilesError) { setError(profilesError.message); setLoading(false); return; }
+    const profileById = new Map((profileRows ?? []).map((profile) => [profile.id, profile]));
+
+    setMembers(memberRows.map((row) => ({ ...row, profiles: profileById.get(row.user_id) ?? null })));
     const planRows = (plansResult.data ?? []) as unknown as PlanRow[];
     setPlans(planRows);
     setDrafts(Object.fromEntries(planRows.filter((p) => !p.is_free).map((p) => [p.id, { price: String(p.price ?? ""), currency: p.currency, billingInterval: (p.billing_interval ?? "month") as "month" | "year" }])));
