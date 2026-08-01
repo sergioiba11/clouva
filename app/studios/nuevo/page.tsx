@@ -22,6 +22,13 @@ export default function NuevoEstudioPage() {
         return;
       }
       const { supabase } = await import("@/lib/supabase");
+      // Ya tiene un Estudio propio: lo mandamos directo a administrarlo en
+      // vez de mostrarle el formulario de creación de nuevo.
+      const { data: owned } = await supabase.from("studios").select("id").eq("owner_id", user.id).limit(1).maybeSingle();
+      if (owned) {
+        router.replace(`/studio-dashboard/${owned.id}`);
+        return;
+      }
       const { data } = await supabase
         .from("user_entitlements")
         .select("tier,status,expires_at")
@@ -33,7 +40,7 @@ export default function NuevoEstudioPage() {
       );
       setIsVip(hasActiveEntitlement);
     })();
-  }, [user]);
+  }, [router, user]);
 
   const create = async () => {
     if (!user || !name.trim()) return;

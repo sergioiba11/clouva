@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
+import { createNotification } from "@/lib/server/notifications";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -60,6 +61,16 @@ export async function POST(request: NextRequest) {
         : await admin.from("user_entitlements").insert({ user_id: body.userId, product_code: "clouva_vip", tier: "vip", ...values }).select("*").single();
       if (result.error) throw new Error(result.error.message);
       entitlement = result.data;
+      await createNotification(admin, {
+        userId: body.userId,
+        type: "vip_granted",
+        title: "¡Ganaste VIP en CLOUVA!",
+        body: "Ya podés crear tu Estudio y desbloquear las funciones VIP.",
+        link: "/profile/memberships",
+      }).catch((cause) => {
+        // La notificación es best-effort: un fallo acá no debe revertir el VIP ya otorgado.
+        console.error("No se pudo crear la notificación de VIP", cause);
+      });
     } else {
       if (!existing || existing.status !== "active") {
         return NextResponse.json({ error: "Este usuario no tiene VIP activo para revocar." }, { status: 409 });

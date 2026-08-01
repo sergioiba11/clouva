@@ -16,8 +16,13 @@
     "test:identity-revenue": "node --test tests-identity-revenue.mjs",
     "test": "npm run test:legacy && npm run test:avatar-analyzer && npm run test:identity-revenue"
   },
+  "overrides": {
+    "three": "$three"
+  },
   "dependencies": {
     "@google-cloud/storage": "^7.21.0",
+    "@react-three/drei": "^10.7.7",
+    "@react-three/fiber": "^9.7.0",
     "@supabase/supabase-js": "^2.49.8",
     "clsx": "^2.1.1",
     "framer-motion": "^11.11.7",

@@ -8,6 +8,7 @@ import { useAuth } from "@/components/auth-provider";
 import { getAccounts, switchAccount, type StoredAccount } from "@/lib/account-switcher";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { CloverIcon } from "@/components/clover-icon";
+import { NotificationBell } from "@/components/notifications/NotificationBell";
 
 export function MainNav() {
   const { user, profile, role, loading } = useAuth();
@@ -38,6 +39,7 @@ export function MainNav() {
         </Link>
         <div className="flex items-center gap-2">
           <ThemeToggle />
+          {!loading && user ? <NotificationBell /> : null}
           {loading ? (
             <div className="h-9 w-28 animate-pulse rounded-full border border-[var(--line)] bg-white/[0.03]" />
           ) : user ? (
@@ -55,6 +57,8 @@ export function MainNav() {
                   <button aria-label="Cerrar menú" className="fixed inset-0 z-[55] cursor-default" onClick={() => setOpenMenu(false)} />
                   <div className="absolute right-0 top-full z-[60] mt-2 w-60 rounded-2xl border border-[var(--line)] p-2 text-sm shadow-[var(--shadow-glow)] max-sm:right-[-8px] max-sm:w-[min(92vw,18rem)]" style={{ background: "var(--bg)" }}>
                     <Link href="/perfil" className="block rounded-lg px-3 py-2 hover:bg-[var(--chip)]" onClick={() => setOpenMenu(false)}>Perfil</Link>
+                    <Link href="/profile/edit" className="block rounded-lg px-3 py-2 hover:bg-[var(--chip)]" onClick={() => setOpenMenu(false)}>Editar mi perfil</Link>
+                    <Link href="/profile/memberships" className="block rounded-lg px-3 py-2 hover:bg-[var(--chip)]" onClick={() => setOpenMenu(false)}>Mis Estudios</Link>
                     <Link href="/matrix" className="block rounded-lg px-3 py-2 hover:bg-[var(--chip)]" onClick={() => setOpenMenu(false)}>La Matrix</Link>
                     <Link href="/mi-flow" className="block rounded-lg px-3 py-2 hover:bg-[var(--chip)]" onClick={() => setOpenMenu(false)}>Mi Flow</Link>
                     <Link href="/truco" className="block rounded-lg px-3 py-2 hover:bg-[var(--chip)]" onClick={() => setOpenMenu(false)}>Anotador de Truco</Link>

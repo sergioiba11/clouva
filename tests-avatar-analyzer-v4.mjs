@@ -4,25 +4,81 @@ import test from "node:test";
 
 const read = (path) => fs.readFileSync(new URL(path, import.meta.url), "utf8");
 
-test("V4.1 visualizer exposes the real GLB, evidence and professional controls", () => {
-  const source = read("./components/library/AvatarAnalyzerV4Diagnostics.tsx");
+test("the holographic wizard replaces the decorative /[runId] visualizer with a single real route", () => {
+  assert.ok(!fs.existsSync(new URL("./app/avatar-analyzer-v4/[runId]/page.tsx", import.meta.url)));
+  assert.ok(!fs.existsSync(new URL("./components/library/AvatarAnalyzerV4Diagnostics.tsx", import.meta.url)));
+  const container = read("./components/library/AvatarAnalyzerPreview.tsx");
+  assert.ok(!container.includes("avatar-analyzer-v4/${"), "dead link to the removed professional visualizer route");
+});
+
+test("the R3F viewer renders the real GLB with real landmarks and a real skeleton, not a decorative overlay", () => {
+  const source = read("./components/library/avatar-analyzer/AvatarAnalyzerViewer.tsx");
   for (const token of [
-    'createElement("model-viewer"',
-    "versionContract",
-    "Cuerpo",
-    "Cara",
-    "Mano izquierda",
-    "Mano derecha",
-    "Articulaciones internas",
-    "Triángulos de frontera",
-    "Siguiente error",
-    "Pantalla completa",
-    "Comparar automático / manual",
-    "Body rig",
-    "Export Unreal",
-    "Corregir análisis",
-    "Analizar y riggear",
+    "useGLTF",
+    "SkeletonHelper",
+    "getLandmarkPosition",
+    "getLandmarkVisualState",
+    "hologramMaterial",
   ]) assert.ok(source.includes(token), `missing ${token}`);
+});
+
+test("view-model helpers never mix surface and internal-joint positions and count full regions", () => {
+  const source = read("./components/library/avatar-analyzer/view-model.ts");
+  assert.ok(source.includes("export function getSurfacePosition"));
+  assert.ok(source.includes("export function getInternalPosition"));
+  assert.ok(source.includes("export function getLandmarkType"));
+  assert.ok(source.includes("export function getRegionStats"));
+  assert.ok(source.includes("export function computeStageBoundingBox"));
+  // getSurfacePosition() itself must never fall back to internalJointPosition --
+  // only getLandmarkPosition() is allowed to combine them, and only per landmark type.
+  const surfaceFnBody = source.match(/export function getSurfacePosition\([^{]*\{[^}]*\}/)?.[0] ?? "";
+  assert.ok(surfaceFnBody.length > 0, "could not isolate getSurfacePosition body");
+  assert.ok(!surfaceFnBody.includes("internalJointPosition"));
+});
+
+test("the wizard exposes the required stages, filters and human-readable technical actions", () => {
+  const source = read("./components/library/avatar-analyzer/WizardStepper.tsx");
+  for (const token of [
+    "Avatar asignado",
+    "Cuerpo",
+    "Manos",
+    "Cara",
+    "Big Data",
+    "Revisión 360°",
+    "Confirmación",
+    "Superficie",
+    "Articulaciones",
+    "Bloqueantes",
+    "AVANZAR AL SIGUIENTE PASO",
+    "getHumanRecommendedAction",
+  ]) assert.ok(source.includes(token), `missing ${token}`);
+});
+
+test("the landmark inspector exposes the professional inspection controls", () => {
+  const source = read("./components/library/avatar-analyzer/LandmarkInspector.tsx");
+  for (const token of [
+    "Anterior",
+    "Siguiente",
+    "Centrar punto",
+    "Corregir",
+    "Ver evidencia",
+    "Posición superficial",
+    "Posición interna",
+  ]) assert.ok(source.includes(token), `missing ${token}`);
+});
+
+test("manual corrections never send surface_click and proposed_internal_position for the same surface landmark", () => {
+  const source = read("./components/library/avatar-analyzer/useAvatarAnalyzer.ts");
+  assert.ok(source.includes("export function buildCorrectionPayload"));
+  assert.ok(source.includes('isInternalJoint ? { proposed_internal_position: point } : {}'));
+});
+
+test("manual confirmation persists into the existing avatar_analyzer_jobs.summary column, no new table", () => {
+  const source = read("./app/api/avatar/analyze/_shared.ts");
+  assert.ok(source.includes("export async function approveAnalyzerRun"));
+  assert.ok(source.includes('.update({ summary: nextSummary })'));
+  const route = read("./app/api/avatar/analyze/result/[runId]/approve/route.ts");
+  assert.ok(route.includes("approveAnalyzerRun"));
 });
 
 test("V4 API remains side-by-side with V3.2 and reanalysis uses a clean source", () => {
@@ -109,7 +165,10 @@ test("V4.1 has a permanent in-app entry and the Biblioteca flow calls V4", () =>
   assert.match(navigation, /href: "\/avatar-analyzer-v4"/);
   assert.match(preview, /AVATAR ANALYZER V4\.1/);
   assert.match(preview, /ABRIR ÚLTIMO ANÁLISIS/);
-  assert.match(preview, /ABRIR VISUALIZER PROFESIONAL/);
+  // The old "ABRIR VISUALIZER PROFESIONAL" link pointed at the now-removed
+  // /avatar-analyzer-v4/[runId] duplicate route -- the holographic wizard is
+  // inline here now, not a separate page.
+  assert.match(preview, /WizardStepper/);
   assert.match(analyzeRoute, /runAnalyzerJob/);
   assert.match(resultRoute, /\/avatar\/analyze-v4\/result/);
   assert.match(assetRoute, /\/avatar\/analyze-v4\/result/);
@@ -199,32 +258,37 @@ test("Avatar Analyzer preserves retryable HTTP states and pending jobs across de
 
 
 test("Avatar Analyzer frontend separates process, detail and asset failures", () => {
+  // The state machine and retry plumbing now live in the useAvatarAnalyzer
+  // hook; the container (AvatarAnalyzerPreview) and the wizard consume it.
+  const hook = read("./components/library/avatar-analyzer/useAvatarAnalyzer.ts");
   const preview = read("./components/library/AvatarAnalyzerPreview.tsx");
-  const styles = read("./components/library/avatar-analyzer-preview.module.css");
-  assert.match(preview, /type AnalysisProcessState/);
-  assert.match(preview, /type DetailState/);
-  assert.match(preview, /type AssetState/);
-  assert.match(preview, /Promise\.all\(\[/);
-  assert.match(preview, /DETAIL_MAX_ATTEMPTS/);
+  const wizard = read("./components/library/avatar-analyzer/WizardStepper.tsx");
+  const wizardStyles = read("./components/library/avatar-analyzer/avatar-analyzer-wizard.module.css");
+  assert.match(hook, /export type AnalysisProcessState/);
+  assert.match(hook, /export type DetailState/);
+  assert.match(hook, /export type AssetState/);
+  assert.match(hook, /Promise\.all\(\[/);
+  assert.match(hook, /DETAIL_MAX_ATTEMPTS/);
   assert.match(preview, /REINTENTAR CARGA DEL DETALLE/);
-  assert.match(preview, /Incompatibilidades visuales\/técnicas/);
+  assert.match(wizard, /Incompatibilidades visuales\/técnicas/);
   assert.match(preview, /Resultado persistido/);
-  assert.doesNotMatch(preview, /if \(error\) return \{ label: "ERROR TÉCNICO"/);
-  assert.match(styles, /scroll-snap-type/);
-  assert.match(styles, /cameraActive/);
-  assert.match(styles, /safe-area-inset-bottom/);
+  assert.doesNotMatch(hook, /if \(error\) return \{ label: "ERROR TÉCNICO"/);
+  // Horizontal scroll + safe-area now belong to the wizard's stepper/filters/footer, not a camera-preset bar.
+  assert.match(wizardStyles, /overflow-x: auto/);
+  assert.match(wizardStyles, /safe-area-inset-bottom/);
 });
 
 
 test("restored Analyzer results retain their compact summary and next action", () => {
   const shared = read("./app/api/avatar/analyze/_shared.ts");
   const latest = read("./app/api/avatar/analyze/latest/route.ts");
-  const preview = read("./components/library/AvatarAnalyzerPreview.tsx");
+  const hook = read("./components/library/avatar-analyzer/useAvatarAnalyzer.ts");
+  const wizard = read("./components/library/avatar-analyzer/WizardStepper.tsx");
   assert.match(shared, /summary: args\.summary/);
   assert.match(latest, /summary: asRecord\(stored\.summary\)/);
-  assert.match(preview, /setSummary\(latest\.summary/);
-  assert.match(preview, /Próxima acción/);
-  assert.match(preview, /0\/7 vistas significa/);
+  assert.match(hook, /setSummary\(latest\.summary/);
+  assert.match(wizard, /Próxima acción/);
+  assert.match(wizard, /0\/7 vistas significa/);
 });
 
 
@@ -255,6 +319,7 @@ test("phased results expose real face/hand evidence and the clean source GLB", (
   const analyzer = read("worker/garment-rig/avatar_analyzer_v4.py");
   const contract = read("worker/garment-rig/analyzer_contract.py");
   const preview = read("components/library/AvatarAnalyzerPreview.tsx");
+  const wizard = read("components/library/avatar-analyzer/WizardStepper.tsx");
   assert.match(api, /renders_v4_face/);
   assert.match(api, /renders_v4_hands/);
   assert.match(api, /source\/avatar-original-clean\.glb/);
@@ -263,16 +328,21 @@ test("phased results expose real face/hand evidence and the clean source GLB", (
   assert.match(analyzer, /build_surface_glb/);
   assert.match(contract, /"framingInvalidViews"/);
   assert.match(contract, /"detectorExecutedViews"/);
-  assert.match(preview, /Mostrar diagnóstico/);
+  // "Mostrar diagnóstico" swapped a whole GLB; the wizard now draws markers
+  // itself over the same diagnostic_surface.glb, so the toggle is "Mostrar puntos".
+  assert.match(wizard, /Mostrar puntos/);
   assert.match(preview, /CONTINUAR CON CUERPO \+ MANOS SIMPLIFICADAS/);
 });
 
 test("mobile analyzer prioritizes requested profile and hides internal correction noise", () => {
-  const component = read("components/library/AvatarAnalyzerPreview.tsx");
-  assert.match(component, /Perfil solicitado/);
-  assert.match(component, /Listo para rig corporal/);
-  assert.match(component, /MOSTRAR TODOS LOS PUNTOS TÉCNICOS/);
-  assert.match(component, /record\.requiresVisualViews === false \? "No requiere"/);
+  const wizard = read("components/library/avatar-analyzer/WizardStepper.tsx");
+  const inspector = read("components/library/avatar-analyzer/LandmarkInspector.tsx");
+  assert.match(wizard, /Perfil solicitado/);
+  assert.match(wizard, /Listo para rig corporal/);
+  // The old single "show everything" toggle became real filter chips.
+  assert.match(wizard, /Verificados/);
+  assert.match(wizard, /Pendientes/);
+  assert.match(inspector, /record\.requiresVisualViews === false \? "No requiere"/);
 });
 
 test("cancellation terminates the Blender subprocess and frees the worker lock", () => {
@@ -291,6 +361,7 @@ test("cancellation is wired end to end through the API layer and the mobile UI",
   const cancelRoute = read("./app/api/avatar/analyze/job/[jobId]/cancel/route.ts");
   const shared = read("./app/api/avatar/analyze/_shared.ts");
   const preview = read("./components/library/AvatarAnalyzerPreview.tsx");
+  const hook = read("./components/library/avatar-analyzer/useAvatarAnalyzer.ts");
   const styles = read("./components/library/avatar-analyzer-preview.module.css");
   assert.match(cancelRoute, /cancelAnalyzerExecution/);
   assert.match(cancelRoute, /requestAnalyzerJobCancellation/);
@@ -299,12 +370,12 @@ test("cancellation is wired end to end through the API layer and the mobile UI",
   assert.match(shared, /export async function persistCancelledAnalyzerJob/);
   assert.match(shared, /export async function finalizeAnalyzerJobCancellation/);
   assert.match(preview, /CANCELAR ANÁLISIS/);
-  assert.match(preview, /cancelRequestedRef/);
-  assert.match(preview, /activeJobIdRef/);
-  assert.match(preview, /shouldStop: \(\) => boolean/);
-  assert.match(preview, /data\.status === "cancelled"/);
-  assert.match(preview, /function workerStateLabel/);
-  assert.doesNotMatch(preview, /analysisProcessState === "failed" \? "Error" : "Disponible"/);
+  assert.match(hook, /cancelRequestedRef/);
+  assert.match(hook, /activeJobIdRef/);
+  assert.match(hook, /shouldStop: \(\) => boolean/);
+  assert.match(hook, /data\.status === "cancelled"/);
+  assert.match(hook, /function workerStateLabel/);
+  assert.doesNotMatch(hook, /analysisProcessState === "failed" \? "Error" : "Disponible"/);
   assert.match(styles, /\.cancelAction/);
 });
 

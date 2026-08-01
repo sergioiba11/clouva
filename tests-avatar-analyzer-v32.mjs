@@ -59,19 +59,23 @@ test("Biblioteca blocks filename-only rigs", async () => {
   assert.doesNotMatch(component, /if \(!avatar \|\| !avatar\.isRigged\) return/);
 });
 
-test("Analyzer UI uses dynamic requested-profile status and mobile cards", async () => {
+test("Analyzer UI uses dynamic requested-profile status and a responsive landmark list", async () => {
+  // The requested-profile status now lives in the wizard's Big Data stage;
+  // the old desktop-table/mobile-cards split became a single responsive
+  // landmark list shared by the 3D viewer and the inspector.
   const component = await read("./components/library/AvatarAnalyzerPreview.tsx");
+  const wizard = await read("./components/library/avatar-analyzer/WizardStepper.tsx");
   const css = await read("./components/library/avatar-analyzer-preview.module.css");
-  assert.match(component, /Confianza del cuerpo base/);
-  assert.match(component, /Preparación para el perfil/);
-  assert.match(component, /Perfil solicitado/);
-  assert.match(component, /Estado del perfil/);
-  assert.match(component, /Listo para rig corporal/);
-  assert.match(component, /Rig corporal disponible · análisis avanzado pendiente/);
+  const wizardCss = await read("./components/library/avatar-analyzer/avatar-analyzer-wizard.module.css");
+  assert.match(wizard, /Confianza del cuerpo base/);
+  assert.match(wizard, /Preparación para el perfil/);
+  assert.match(wizard, /Perfil solicitado/);
+  assert.match(wizard, /Estado del perfil/);
+  assert.match(wizard, /Listo para rig corporal/);
+  assert.match(wizard, /Rig corporal disponible · análisis avanzado pendiente/);
   assert.doesNotMatch(component, /SUPERFICIE ANATÓMICA VERIFICADA/);
   assert.doesNotMatch(component, /Compatibilidad corporal/);
-  assert.match(css, /@media \(max-width: 720px\)[\s\S]*\.desktopTable \{ display: none; \}/);
-  assert.match(css, /\.mobileLandmarks \{ display: grid/);
+  assert.match(wizardCss, /\.landmarkList \{[\s\S]*overflow-y: auto/);
   assert.match(css, /env\(safe-area-inset-bottom\)/);
 });
 
