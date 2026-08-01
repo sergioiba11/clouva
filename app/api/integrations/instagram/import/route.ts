@@ -130,9 +130,11 @@ export async function POST(request: NextRequest) {
       player = data;
     }
 
-    // Instagram is the stable identity source for this flow. If an admin-seeded
-    // Player already exists with that username (0800Bless, Clouva, etc.), reuse
-    // and claim that exact row instead of trying to INSERT a duplicate.
+    // Instagram is the stable identity source for this flow. An unclaimed
+    // admin-seeded Player (0800Bless, Clouva, etc.) is the canonical row and
+    // must be reused. If onboarding already created an empty draft, the RPC
+    // atomically replaces that draft without changing the canonical id, slug
+    // or username.
     if (requestedProfile.username) {
       const { data: usernamePlayer, error: usernamePlayerError } = await admin
         .from("players")
@@ -145,8 +147,32 @@ export async function POST(request: NextRequest) {
         const belongsToAnotherUser = Boolean(
           usernamePlayer.owner_user_id && usernamePlayer.owner_user_id !== user.id,
         );
-        if (player || belongsToAnotherUser) throw registeredUsernameError();
-        player = usernamePlayer;
+        if (belongsToAnotherUser) throw registeredUsernameError();
+
+        if (ownedPlayer) {
+          const { data: claimedPlayerId, error: claimError } = await admin.rpc(
+            "claim_existing_instagram_player",
+            {
+              p_user_id: user.id,
+              p_player_id: usernamePlayer.id,
+            },
+          );
+          if (claimError) throw new Error(claimError.message);
+
+          const { data: claimedPlayer, error: claimedPlayerError } = await admin
+            .from("players")
+            .select("*")
+            .eq("id", claimedPlayerId as string)
+            .single();
+          if (claimedPlayerError) throw new Error(claimedPlayerError.message);
+          player = claimedPlayer;
+        } else if (player) {
+          // The account only manages a different Player. Never silently move
+          // this Instagram identity onto that unrelated record.
+          throw registeredUsernameError();
+        } else {
+          player = usernamePlayer;
+        }
       }
     }
 
@@ -157,6 +183,7 @@ export async function POST(request: NextRequest) {
         player?.id as string | undefined,
       );
     const username = (player?.username as string | null | undefined) || requestedProfile.username;
+    const shouldPublish = typeof body.publish === "boolean" ? body.publish : Boolean(player?.is_published);
 
     let profileImageUrl = player?.profile_image_url as string | null | undefined;
     if (requestedProfile.profile_image_url && requestedProfile.profile_image_url !== profileImageUrl) {
@@ -200,8 +227,8 @@ export async function POST(request: NextRequest) {
       social_links: requestedProfile.social_links,
       claim_status: isSelfClaim ? "claimed" : (player?.claim_status || "claimed"),
       claimed_at: isSelfClaim ? (player?.claimed_at || new Date().toISOString()) : (player?.claimed_at || null),
-      publication_status: body.publish ? "published" : "draft",
-      is_published: Boolean(body.publish),
+      publication_status: shouldPublish ? "published" : "draft",
+      is_published: shouldPublish,
       instagram_last_import_at: new Date().toISOString(),
     };
 
@@ -252,7 +279,7 @@ export async function POST(request: NextRequest) {
         thumbnail_url: stored?.publicUrl || media.thumbnail_url || null,
         caption: media.caption || null,
         display_order: index,
-        visibility: body.publish ? "public" : "draft",
+        visibility: shouldPublish ? "public" : "draft",
         imported_at: new Date().toISOString(),
       });
     }
@@ -295,7 +322,9 @@ export async function POST(request: NextRequest) {
       message: error instanceof Error ? error.message : "unknown",
     });
     const rawMessage = error instanceof Error ? error.message : "No se pudo crear la presentación.";
-    const isUsernameConflict = rawMessage.includes("players_username_key") || rawMessage === REGISTERED_USERNAME_ERROR;
+    const isUsernameConflict = rawMessage.includes("players_username_key")
+      || rawMessage.includes("Ese Player ya pertenece a otra cuenta.")
+      || rawMessage === REGISTERED_USERNAME_ERROR;
     const message = isUsernameConflict ? REGISTERED_USERNAME_ERROR : rawMessage;
     const explicitStatus = (error as Error & { status?: number })?.status;
     const status = explicitStatus ?? (isAuthError(error) ? 401 : isUsernameConflict ? 409 : 500);
