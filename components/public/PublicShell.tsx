@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { Search, Sparkles } from "lucide-react";
 import { CloverIcon } from "@/components/clover-icon";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
+import { AccountMenu } from "@/components/account-menu";
 
 export type PublicNavLink = { label: string; href: string; disabled?: boolean };
 
@@ -56,6 +57,7 @@ export function PublicShell({
               <Sparkles size={14} />
               Explorar La Matrix
             </Link>
+            <AccountMenu />
           </div>
         </div>
 
