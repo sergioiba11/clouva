@@ -6,12 +6,11 @@ import {
   Suspense,
   useEffect,
   useMemo,
-  useRef,
   useState,
 } from "react";
 import * as THREE from "three";
 import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
-import "./hologram-material";
+import { HologramMaterial } from "./hologram-material";
 import {
   computeStageBoundingBox,
   frameCameraDistance,
@@ -49,48 +48,71 @@ export type AvatarAnalyzerViewerProps = {
   emptyLabel?: string;
 };
 
-function HologramMesh({ mesh, showWireframe }: { mesh: THREE.Mesh; showWireframe: boolean }) {
-  const materialRef = useRef<THREE.ShaderMaterial>(null);
-  useFrame((state) => {
-    if (materialRef.current) materialRef.current.uniforms.uTime.value = state.clock.elapsedTime;
-  });
-  return (
-    <group>
-      <mesh geometry={mesh.geometry} position={mesh.position} rotation={mesh.rotation} scale={mesh.scale}>
-        <hologramMaterial
-          ref={materialRef}
-          transparent
-          side={THREE.DoubleSide}
-          depthWrite={false}
-        />
-      </mesh>
-      {showWireframe ? (
-        <mesh geometry={mesh.geometry} position={mesh.position} rotation={mesh.rotation} scale={mesh.scale}>
-          <meshBasicMaterial color="#8fd6ff" wireframe transparent opacity={0.28} depthWrite={false} />
-        </mesh>
-      ) : null}
-    </group>
-  );
+/**
+ * Clona la escena completa preservando TODA la jerarquía de nodos (armature,
+ * empties de reorientación, etc.) -- Blender casi siempre exporta con algún
+ * nodo padre con su propia rotación/escala. Extraer cada mesh y recrearlo
+ * como hijo directo de un grupo plano (como hacía la versión anterior)
+ * descarta esas transformaciones y desalinea la malla con las posiciones
+ * reales de los landmarks. `<primitive object={...}>` renderiza el árbol
+ * real, así que los materiales se mutan in-place sobre esa misma jerarquía.
+ */
+function useMaterialClones(source: THREE.Object3D, factory: () => THREE.Material) {
+  return useMemo(() => {
+    const clone = cloneSkeleton(source) as THREE.Object3D;
+    const materials: THREE.Material[] = [];
+    clone.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh) {
+        const material = factory();
+        (child as THREE.Mesh).material = material;
+        materials.push(material);
+      }
+    });
+    return { object: clone, materials };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [source]);
 }
 
 function AvatarScene({ url, showWireframe, showSkeleton }: { url: string; showWireframe: boolean; showSkeleton: boolean }) {
   const gltf = useGLTF(url);
-  const scene = useMemo(() => cloneSkeleton(gltf.scene) as THREE.Object3D, [gltf.scene]);
 
-  const meshes: THREE.Mesh[] = [];
-  let skinnedRoot: THREE.SkinnedMesh | null = null;
-  scene.traverse((child) => {
-    if ((child as THREE.Mesh).isMesh) {
-      meshes.push(child as THREE.Mesh);
-      if ((child as THREE.SkinnedMesh).isSkinnedMesh && !skinnedRoot) skinnedRoot = child as THREE.SkinnedMesh;
+  const hologram = useMaterialClones(gltf.scene, () => {
+    const material = new HologramMaterial();
+    material.transparent = true;
+    material.side = THREE.DoubleSide;
+    material.depthWrite = false;
+    return material;
+  });
+  const wireframe = useMaterialClones(gltf.scene, () => new THREE.MeshBasicMaterial({
+    color: "#8fd6ff",
+    wireframe: true,
+    transparent: true,
+    opacity: 0.28,
+    depthWrite: false,
+  }));
+
+  useEffect(() => () => {
+    for (const material of hologram.materials) material.dispose();
+  }, [hologram.materials]);
+  useEffect(() => () => {
+    for (const material of wireframe.materials) material.dispose();
+  }, [wireframe.materials]);
+
+  useFrame((state) => {
+    for (const material of hologram.materials) {
+      (material as InstanceType<typeof HologramMaterial>).uniforms.uTime.value = state.clock.elapsedTime;
     }
+  });
+
+  let skinnedRoot: THREE.SkinnedMesh | null = null;
+  hologram.object.traverse((child) => {
+    if (!skinnedRoot && (child as THREE.SkinnedMesh).isSkinnedMesh) skinnedRoot = child as THREE.SkinnedMesh;
   });
 
   return (
     <group>
-      {meshes.map((mesh, index) => (
-        <HologramMesh key={mesh.uuid ?? index} mesh={mesh} showWireframe={showWireframe} />
-      ))}
+      <primitive object={hologram.object} />
+      {showWireframe ? <primitive object={wireframe.object} /> : null}
       {showSkeleton && skinnedRoot ? <SkeletonOverlay root={skinnedRoot} /> : null}
     </group>
   );
