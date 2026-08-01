@@ -205,6 +205,170 @@ export async function createVipSubscription(args: {
   }
 }
 
+// Generic siblings of getActiveVipPrice/provisionVipPlan/createVipSubscription,
+// parameterized by productId instead of hardcoded to product.code ===
+// "clouva_vip" -- used by studio membership plans. The VIP functions above
+// are left untouched (not rewritten as wrappers) so the existing VIP flow
+// can't regress from this refactor.
+
+export async function getActivePriceForProduct(admin: SupabaseClient, productId: string, requireProviderPlan = true) {
+  const environment = getBillingEnvironment();
+  const { data, error } = await admin
+    .from("billing_prices")
+    .select("id,product_id,provider,provider_plan_id,currency,amount,billing_interval,interval_count,environment,is_active,product:billing_products!inner(id,code,name,description,entitlement_tier,is_active,studio_id)")
+    .eq("provider", "mercadopago")
+    .eq("environment", environment)
+    .eq("is_active", true)
+    .eq("product_id", productId)
+    .eq("product.is_active", true)
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error("Este plan todavía no tiene un precio activo para este entorno.");
+
+  const row = data as unknown as BillingPriceRow & { product: BillingPriceRow["product"] & { studio_id: string | null } };
+  if (requireProviderPlan && !row.provider_plan_id) {
+    throw new Error("El plan de Mercado Pago todavía no fue aprovisionado.");
+  }
+  return row;
+}
+
+export async function provisionProductPlan(admin: SupabaseClient, priceId: string) {
+  const environment = getBillingEnvironment();
+  const { data, error } = await admin
+    .from("billing_prices")
+    .select("id,product_id,provider,provider_plan_id,currency,amount,billing_interval,interval_count,environment,is_active,product:billing_products!inner(id,code,name,description,entitlement_tier,is_active,studio_id)")
+    .eq("id", priceId)
+    .eq("provider", "mercadopago")
+    .eq("environment", environment)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) throw new Error("No encontramos ese precio.");
+
+  const price = data as unknown as BillingPriceRow;
+  const provider = new MercadoPagoProvider();
+  if (price.provider_plan_id) {
+    const existing = await provider.getPlan(price.provider_plan_id);
+    return { price, providerPlan: existing, created: false };
+  }
+
+  const appBase = process.env.APP_BASE_URL?.trim() || "https://clouva.com.ar";
+  const providerPlan = await provider.createPlan({
+    reason: price.product.name,
+    amount: Number(price.amount),
+    currency: price.currency,
+    interval: price.billing_interval,
+    intervalCount: price.interval_count,
+    backUrl: `${appBase}/checkout/vip/return`,
+    externalReference: `studio_plan_price_${price.id}`,
+  });
+  const providerPlanId = text(providerPlan.id);
+  if (!providerPlanId) throw new Error("Mercado Pago no devolvió el ID del plan.");
+
+  const { error: updateError } = await admin
+    .from("billing_prices")
+    .update({ provider_plan_id: providerPlanId, is_active: true })
+    .eq("id", price.id)
+    .is("provider_plan_id", null);
+  if (updateError) throw new Error(updateError.message);
+
+  await admin.from("billing_products").update({ is_active: true }).eq("id", price.product.id);
+  return { price: { ...price, provider_plan_id: providerPlanId, is_active: true }, providerPlan, created: true };
+}
+
+export async function createSubscriptionForProduct(args: {
+  admin: SupabaseClient;
+  userId: string;
+  payerEmail: string;
+  productId: string;
+  reason: string;
+  backUrl: string;
+  idempotencyKey: string;
+}) {
+  const environment = getBillingEnvironment();
+  const price = await getActivePriceForProduct(args.admin, args.productId, true);
+  const { data: existing, error: existingError } = await args.admin
+    .from("billing_subscriptions")
+    .select("id,status,external_subscription_id,metadata")
+    .eq("user_id", args.userId)
+    .eq("product_id", args.productId)
+    .eq("environment", environment)
+    .in("status", ["created", "pending", "authorized", "active", "past_due", "paused"])
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (existingError) throw new Error(existingError.message);
+  if (existing) {
+    return {
+      subscriptionId: existing.id as string,
+      status: existing.status as string,
+      initPoint: (existing.metadata as Record<string, unknown> | null)?.init_point || null,
+      reused: true,
+    };
+  }
+
+  const externalReference = randomUUID();
+  const { data: internal, error: insertError } = await args.admin
+    .from("billing_subscriptions")
+    .insert({
+      user_id: args.userId,
+      product_id: args.productId,
+      price_id: price.id,
+      provider: "mercadopago",
+      environment,
+      external_reference: externalReference,
+      status: "created",
+      metadata: { idempotency_key: args.idempotencyKey },
+    })
+    .select("id")
+    .single();
+  if (insertError) throw new Error(insertError.message);
+
+  try {
+    const providerSubscription = await new MercadoPagoProvider().createSubscription({
+      reason: args.reason,
+      amount: Number(price.amount),
+      currency: price.currency,
+      interval: price.billing_interval,
+      intervalCount: price.interval_count,
+      payerEmail: args.payerEmail,
+      externalReference,
+      backUrl: args.backUrl,
+    });
+    const externalId = text(providerSubscription.id);
+    const initPoint = text(providerSubscription.init_point);
+    if (!externalId || !initPoint) throw new Error("Mercado Pago no devolvió la suscripción o el checkout.");
+
+    const providerStatus = text(providerSubscription.status) || "pending";
+    const status = mapMercadoPagoSubscriptionStatus(providerStatus);
+    const { error: updateError } = await args.admin
+      .from("billing_subscriptions")
+      .update({
+        external_subscription_id: externalId,
+        payer_reference: text(providerSubscription.payer_id) || null,
+        status,
+        provider_status: providerStatus,
+        next_payment_at: iso(providerSubscription.next_payment_date),
+        last_verified_at: new Date().toISOString(),
+        metadata: {
+          idempotency_key: args.idempotencyKey,
+          init_point: initPoint,
+          provider_created_at: providerSubscription.date_created || null,
+        },
+      })
+      .eq("id", internal.id);
+    if (updateError) throw new Error(updateError.message);
+
+    return { subscriptionId: internal.id as string, status, initPoint, reused: false };
+  } catch (error) {
+    await args.admin.from("billing_subscriptions").update({
+      status: "error",
+      metadata: { idempotency_key: args.idempotencyKey, error: error instanceof Error ? error.message : "unknown" },
+    }).eq("id", internal.id);
+    throw error;
+  }
+}
+
 export async function syncProviderSubscription(admin: SupabaseClient, internalId: string) {
   const { data, error } = await admin
     .from("billing_subscriptions")
@@ -329,9 +493,8 @@ export async function processApprovedPayment(args: {
   const price = subscription.price as Record<string, unknown>;
   const product = subscription.product as Record<string, unknown>;
   const amount = numberValue(payment.transaction_amount);
-  if (!Number.isFinite(amount) || amount !== Number(price.amount)) throw new Error("El importe del pago no coincide con CLOUVA VIP.");
-  if (text(payment.currency_id) !== text(price.currency)) throw new Error("La moneda del pago no coincide con CLOUVA VIP.");
-  if (text(product.code) !== "clouva_vip") throw new Error("El pago no corresponde a CLOUVA VIP.");
+  if (!Number.isFinite(amount) || amount !== Number(price.amount)) throw new Error("El importe del pago no coincide con el plan.");
+  if (text(payment.currency_id) !== text(price.currency)) throw new Error("La moneda del pago no coincide con el plan.");
 
   const { data: existingPayment, error: paymentLookupError } = await args.admin
     .from("billing_payments")
@@ -376,14 +539,39 @@ export async function processApprovedPayment(args: {
   }).eq("id", subscription.id);
   if (updateSubscriptionError) throw new Error(updateSubscriptionError.message);
 
-  await activateEntitlement({
-    admin: args.admin,
-    subscription,
-    product,
-    periodStart: approvedAt,
-    periodEnd,
-    paymentId: args.paymentId,
-  });
+  if (product.studio_id) {
+    // Studio-owned product: no global entitlement/Flows, just the studio's
+    // own membership record. Upsert (not insert) so re-processing the same
+    // subscription's later renewal payments updates the existing row
+    // in place instead of ever duplicating (studio_id, user_id) is unique.
+    const { data: plan } = await args.admin
+      .from("studio_membership_plans")
+      .select("id")
+      .eq("billing_product_id", product.id)
+      .maybeSingle();
+    const { error: membershipError } = await args.admin
+      .from("studio_fan_memberships")
+      .upsert(
+        {
+          studio_id: product.studio_id,
+          user_id: subscription.user_id,
+          plan_id: plan?.id || null,
+          status: "active",
+          subscription_id: subscription.id,
+        },
+        { onConflict: "studio_id,user_id" },
+      );
+    if (membershipError) throw new Error(membershipError.message);
+  } else {
+    await activateEntitlement({
+      admin: args.admin,
+      subscription,
+      product,
+      periodStart: approvedAt,
+      periodEnd,
+      paymentId: args.paymentId,
+    });
+  }
 
   // 800 Flows per approved CLOUVA VIP payment (one per billing period -- the
   // only seeded price is monthly). reference_id = this payment's id, so a

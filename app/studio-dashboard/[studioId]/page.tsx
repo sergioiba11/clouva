@@ -17,8 +17,31 @@ type DashboardData = {
   events: Array<Record<string, unknown>>;
 };
 
-type Section = "Resumen" | "Perfil público" | "Identidad IA" | "Players" | "Servicios" | "Solicitudes" | "Roles" | "Proyectos" | "Música" | "Eventos" | "Configuración";
-const SECTIONS: Section[] = ["Resumen", "Perfil público", "Identidad IA", "Players", "Servicios", "Solicitudes", "Roles", "Proyectos", "Música", "Eventos", "Configuración"];
+type Section = "Resumen" | "Perfil público" | "Identidad IA" | "Players" | "Membresías" | "Servicios" | "Solicitudes" | "Roles" | "Proyectos" | "Música" | "Eventos" | "Configuración";
+const SECTIONS: Section[] = ["Resumen", "Perfil público", "Identidad IA", "Players", "Membresías", "Servicios", "Solicitudes", "Roles", "Proyectos", "Música", "Eventos", "Configuración"];
+
+type PlanRow = {
+  id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  price: number | null;
+  currency: string;
+  billing_interval: "month" | "year" | null;
+  is_free: boolean;
+  is_active: boolean;
+  is_public: boolean;
+  benefits: string[];
+};
+
+type FanMemberRow = {
+  id: string;
+  status: string;
+  source: string;
+  joined_at: string;
+  plan: { name: string; is_free: boolean; price: number | null; currency: string } | null;
+  profile: { full_name: string | null; username: string | null; email: string | null } | null;
+};
 
 type ServiceRow = {
   id: string;
@@ -45,6 +68,9 @@ export default function StudioDashboardPage({ params }: { params: Promise<{ stud
   const [message, setMessage] = useState<string | null>(null);
   const [services, setServices] = useState<ServiceRow[]>([]);
   const [newService, setNewService] = useState({ name: "", description: "", category: "", priceType: "fixed" as "fixed" | "consultar", price: "", ctaType: "contratar" as ServiceRow["cta_type"] });
+  const [plans, setPlans] = useState<PlanRow[]>([]);
+  const [fanMembers, setFanMembers] = useState<FanMemberRow[]>([]);
+  const [newPlan, setNewPlan] = useState({ name: "", description: "", isFree: false, price: "", billingInterval: "month" as "month" | "year", benefits: "" });
 
   useEffect(() => { void params.then(({ studioId: id }) => setStudioId(id)); }, [params]);
   useEffect(() => { if (!authLoading && !user) router.replace("/login"); }, [authLoading, router, user]);
@@ -54,15 +80,21 @@ export default function StudioDashboardPage({ params }: { params: Promise<{ stud
     setLoading(true);
     setError(null);
     try {
-      const [dashboardResponse, servicesResponse] = await Promise.all([
+      const [dashboardResponse, servicesResponse, plansResponse, fanMembersResponse] = await Promise.all([
         authenticatedFetch(`/api/studios/${encodeURIComponent(studioId)}/dashboard`),
         authenticatedFetch(`/api/studios/${encodeURIComponent(studioId)}/services`),
+        authenticatedFetch(`/api/studios/${encodeURIComponent(studioId)}/membership-plans`),
+        authenticatedFetch(`/api/studios/${encodeURIComponent(studioId)}/membership/members`),
       ]);
       const payload = await readApiJson<DashboardData>(dashboardResponse);
       const servicesPayload = await readApiJson<{ services: ServiceRow[] }>(servicesResponse);
+      const plansPayload = await readApiJson<{ plans: PlanRow[] }>(plansResponse);
+      const fanMembersPayload = await readApiJson<{ members: FanMemberRow[] }>(fanMembersResponse);
       setData(payload);
       setProfileDraft({ ...payload.studio });
       setServices(servicesPayload.services);
+      setPlans(plansPayload.plans);
+      setFanMembers(fanMembersPayload.members);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "No se pudo abrir el panel.");
     } finally {
@@ -162,6 +194,67 @@ export default function StudioDashboardPage({ params }: { params: Promise<{ stud
     }
   };
 
+  const addPlan = async () => {
+    if (!newPlan.name.trim()) {
+      setError("El nombre del plan es obligatorio.");
+      return;
+    }
+    setWorkingId("new-plan");
+    setError(null);
+    try {
+      const response = await authenticatedFetch(`/api/studios/${encodeURIComponent(studioId)}/membership-plans`, {
+        method: "POST",
+        body: JSON.stringify({
+          name: newPlan.name,
+          description: newPlan.description || null,
+          isFree: newPlan.isFree,
+          price: newPlan.isFree ? null : Number(newPlan.price),
+          billingInterval: newPlan.isFree ? null : newPlan.billingInterval,
+          benefits: newPlan.benefits.split("\n").map((line) => line.trim()).filter(Boolean),
+        }),
+      });
+      const payload = await readApiJson<{ plan: PlanRow }>(response);
+      setPlans((current) => [...current, payload.plan]);
+      setNewPlan({ name: "", description: "", isFree: false, price: "", billingInterval: "month", benefits: "" });
+      setMessage("Plan de membresía creado.");
+    } catch (addError) {
+      setError(addError instanceof Error ? addError.message : "No se pudo crear el plan.");
+    } finally {
+      setWorkingId(null);
+    }
+  };
+
+  const togglePlan = async (plan: PlanRow) => {
+    setWorkingId(plan.id);
+    setError(null);
+    try {
+      const response = await authenticatedFetch(`/api/studios/${encodeURIComponent(studioId)}/membership-plans/${plan.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ isActive: !plan.is_active }),
+      });
+      const payload = await readApiJson<{ plan: PlanRow }>(response);
+      setPlans((current) => current.map((item) => item.id === plan.id ? payload.plan : item));
+    } catch (toggleError) {
+      setError(toggleError instanceof Error ? toggleError.message : "No se pudo actualizar el plan.");
+    } finally {
+      setWorkingId(null);
+    }
+  };
+
+  const deletePlan = async (planId: string) => {
+    if (!window.confirm("¿Borrar este plan?")) return;
+    setWorkingId(planId);
+    setError(null);
+    try {
+      await authenticatedFetch(`/api/studios/${encodeURIComponent(studioId)}/membership-plans/${planId}`, { method: "DELETE" });
+      setPlans((current) => current.filter((item) => item.id !== planId));
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "No se pudo borrar el plan.");
+    } finally {
+      setWorkingId(null);
+    }
+  };
+
   const review = async (applicationId: string, status: "in_review" | "accepted" | "rejected") => {
     setWorkingId(applicationId);
     setError(null);
@@ -212,6 +305,66 @@ export default function StudioDashboardPage({ params }: { params: Promise<{ stud
           {section === "Identidad IA" ? <Panel title="Identidad del Estudio"><StudioAiProfilePanel studioId={studioId} /></Panel> : null}
 
           {section === "Players" ? <Panel title="Players vinculados"><div className="grid gap-3 sm:grid-cols-2">{data.players.map((entry) => { const player = entry.player as Record<string, unknown> | null; return player ? <Link key={String(entry.id)} href={`/${String(player.slug)}`} className="flex items-center gap-3 rounded-2xl border border-white/10 p-4 transition hover:border-violet-400/50">{player.profile_image_url ? <img src={String(player.profile_image_url)} alt="" className="h-12 w-12 rounded-xl object-cover" /> : <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-violet-500/15">{String(player.display_name).charAt(0)}</div>}<div><p className="font-semibold">{String(player.display_name)}</p><p className="text-xs text-white/40">{String(entry.role || player.primary_role || "Player")}</p></div></Link> : null; })}{data.players.length === 0 ? <p className="text-white/45">Todavía no hay Players vinculados.</p> : null}</div></Panel> : null}
+
+          {section === "Membresías" ? <div className="space-y-5">
+            <Panel title="Planes de membresía">
+              <div className="space-y-3">
+                {plans.map((plan) => (
+                  <div key={plan.id} className="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-black/20 p-4">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <p className="font-semibold">{plan.name}</p>
+                        {!plan.is_active ? <span className="rounded-full bg-white/8 px-2 py-0.5 text-[10px] uppercase text-white/40">Inactivo</span> : null}
+                      </div>
+                      <p className="mt-1 text-sm text-white/45">{plan.is_free ? "Gratis" : `${new Intl.NumberFormat("es-AR", { style: "currency", currency: plan.currency, maximumFractionDigits: 0 }).format(Number(plan.price))} / ${plan.billing_interval === "year" ? "año" : "mes"}`}</p>
+                    </div>
+                    <div className="flex shrink-0 gap-2">
+                      <button disabled={workingId === plan.id} onClick={() => void togglePlan(plan)} className="rounded-xl border border-white/15 px-3 py-2 text-xs">{plan.is_active ? "Desactivar" : "Activar"}</button>
+                      <button disabled={workingId === plan.id} onClick={() => void deletePlan(plan.id)} className="rounded-xl border border-red-400/20 px-3 py-2 text-xs text-red-300">Borrar</button>
+                    </div>
+                  </div>
+                ))}
+                {plans.length === 0 ? <p className="text-white/45">Todavía no creaste planes de membresía.</p> : null}
+              </div>
+
+              <div className="mt-6 space-y-3 rounded-2xl border border-dashed border-white/15 p-5">
+                <p className="text-xs uppercase tracking-[0.18em] text-white/40">Agregar plan</p>
+                <Field label="Nombre (ej. Socio Premium)" value={newPlan.name} onChange={(value) => setNewPlan((current) => ({ ...current, name: value }))} />
+                <TextArea label="Beneficios (uno por línea)" value={newPlan.benefits} onChange={(value) => setNewPlan((current) => ({ ...current, benefits: value }))} rows={3} />
+                <label className="flex items-center gap-2 text-sm text-white/60">
+                  <input type="checkbox" checked={newPlan.isFree} onChange={(event) => setNewPlan((current) => ({ ...current, isFree: event.target.checked }))} />
+                  Es un plan gratuito
+                </label>
+                {!newPlan.isFree ? (
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <Field label="Precio (ARS)" value={newPlan.price} onChange={(value) => setNewPlan((current) => ({ ...current, price: value.replace(/[^0-9.]/g, "") }))} />
+                    <label className="block">
+                      <span className="mb-2 block text-xs uppercase tracking-[0.16em] text-white/40">Frecuencia</span>
+                      <select value={newPlan.billingInterval} onChange={(event) => setNewPlan((current) => ({ ...current, billingInterval: event.target.value as "month" | "year" }))} className="w-full rounded-xl border border-white/10 bg-black/30 px-4 py-3">
+                        <option value="month">Mensual</option>
+                        <option value="year">Anual</option>
+                      </select>
+                    </label>
+                  </div>
+                ) : null}
+                <button disabled={workingId === "new-plan"} onClick={() => void addPlan()} className="rounded-xl bg-violet-600 px-5 py-3 font-semibold">{workingId === "new-plan" ? "Creando..." : "Crear plan"}</button>
+              </div>
+            </Panel>
+
+            <Panel title="Socios">
+              <div className="space-y-2">
+                {fanMembers.map((member) => (
+                  <div key={member.id} className="flex items-center justify-between gap-4 rounded-xl border border-white/10 bg-black/20 p-3 text-sm">
+                    <span>{member.profile?.full_name || member.profile?.username || member.profile?.email || "Socio"}</span>
+                    <span className="text-white/60">{member.plan?.is_free || !member.plan ? "Gratis" : `${new Intl.NumberFormat("es-AR", { style: "currency", currency: member.plan.currency, maximumFractionDigits: 0 }).format(Number(member.plan.price))}`}</span>
+                    <span className={member.status === "active" ? "text-emerald-300" : "text-white/40"}>{member.status}</span>
+                    <span className="text-xs text-white/40">Desde {new Date(member.joined_at).toLocaleDateString("es-AR", { day: "2-digit", month: "short", year: "numeric" })}</span>
+                  </div>
+                ))}
+                {fanMembers.length === 0 ? <p className="text-white/45">Todavía no tenés socios.</p> : null}
+              </div>
+            </Panel>
+          </div> : null}
 
           {section === "Servicios" ? <Panel title="Catálogo de servicios">
             <div className="space-y-3">

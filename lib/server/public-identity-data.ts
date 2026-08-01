@@ -2,11 +2,13 @@ import { createPublicSupabase } from "./public-supabase";
 import {
   playerPublicSelect,
   playerStudiosSelect,
+  studioMembershipPlansSelect,
   studioPlayersSelect,
   studioServicesSelect,
   type Player,
   type PlayerMedia,
   type PlayerStudioAffiliation,
+  type StudioMembershipPlan,
   type StudioPlayer,
   type StudioRow,
   type StudioService,
@@ -98,17 +100,19 @@ export async function resolveStudioAlias(alias: string) {
   if (studioError) throw new Error(studioError.message);
   if (!studio) return null;
 
-  const [playersResult, mediaResult, projectsResult, servicesResult, aliasResult] = await Promise.all([
+  const [playersResult, mediaResult, projectsResult, servicesResult, membershipPlansResult, aliasResult] = await Promise.all([
     supabase.from("player_studios").select(studioPlayersSelect).eq("studio_id", studio.id).eq("is_visible", true).order("display_order"),
     supabase.from("player_media").select("id,media_type,origin,source_url,public_url,thumbnail_url,caption,display_order").eq("studio_id", studio.id).eq("visibility", "public").order("display_order"),
     supabase.from("community_projects").select("id,title,cover_url,release_type,release_date,spotify_url,youtube_url,description").eq("studio_id", studio.id).order("release_date", { ascending: false }),
     supabase.from("studio_services").select(studioServicesSelect).eq("studio_id", studio.id).eq("is_active", true).order("display_order"),
+    supabase.from("studio_membership_plans").select(studioMembershipPlansSelect).eq("studio_id", studio.id).eq("is_active", true).eq("is_public", true).order("display_order"),
     supabase.from("public_slug_aliases").select("alias").eq("entity_type", "studio").eq("entity_id", studio.id).eq("is_primary", true).maybeSingle(),
   ]);
   if (playersResult.error) throw new Error(playersResult.error.message);
   if (mediaResult.error) throw new Error(mediaResult.error.message);
   if (projectsResult.error) throw new Error(projectsResult.error.message);
   if (servicesResult.error) throw new Error(servicesResult.error.message);
+  if (membershipPlansResult.error) throw new Error(membershipPlansResult.error.message);
 
   return {
     studio: studio as unknown as StudioRow,
@@ -116,6 +120,7 @@ export async function resolveStudioAlias(alias: string) {
     media: (mediaResult.data ?? []) as unknown as PlayerMedia[],
     projects: projectsResult.data ?? [],
     services: (servicesResult.data ?? []) as unknown as StudioService[],
+    membershipPlans: (membershipPlansResult.data ?? []) as unknown as StudioMembershipPlan[],
     canonicalAlias: aliasResult.data?.alias || studio.slug,
   };
 }

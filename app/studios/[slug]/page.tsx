@@ -41,6 +41,7 @@ export default async function StudioProfilePage({ params }: { params: Promise<{ 
       media={result.media}
       projects={result.projects as Array<Record<string, unknown>>}
       services={result.services}
+      membershipPlans={result.membershipPlans}
     />
   );
 }

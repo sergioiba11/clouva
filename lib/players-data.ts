@@ -136,6 +136,25 @@ export type StudioService = {
 export const studioServicesSelect =
   "id,studio_id,name,description,category,price_type,price,currency,duration_minutes,cta_type,image_url,is_active,display_order";
 
+export type StudioMembershipPlan = {
+  id: string;
+  studio_id: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  price: number | null;
+  currency: string;
+  billing_interval: "month" | "year" | null;
+  is_free: boolean;
+  is_active: boolean;
+  is_public: boolean;
+  benefits: string[];
+  display_order: number;
+};
+
+export const studioMembershipPlansSelect =
+  "id,studio_id,name,slug,description,price,currency,billing_interval,is_free,is_active,is_public,benefits,display_order";
+
 export const playerPublicSelect =
   "id,owner_user_id,slug,display_name,username,primary_role,short_bio,long_bio,tagline,secondary_tagline,origin,location,genres,disciplines,professional_categories,social_links,profile_image_url,hero_image_url,cover_url,spotify_profile_url,youtube_channel_url,contact_email,booking_email,whatsapp_url,theme_key,accent_color,font_style,logo_url,palette,privacy_status,claim_status,is_verified,is_published,publication_status,seo_title,seo_description,share_title,share_description,og_image_url";
 

@@ -4,7 +4,12 @@ import { PublicProfileHero } from "./PublicProfileHero";
 import { PublicSocialLinks } from "./PublicSocialLinks";
 import { PublicShell } from "./PublicShell";
 import { StudioServicesCart } from "./StudioServicesCart";
-import type { PlayerMedia, SocialLink, StudioPlayer, StudioRow, StudioService } from "@/lib/players-data";
+import type { PlayerMedia, SocialLink, StudioMembershipPlan, StudioPlayer, StudioRow, StudioService } from "@/lib/players-data";
+
+function formatPlanPrice(plan: StudioMembershipPlan) {
+  if (plan.is_free) return "Gratis";
+  return new Intl.NumberFormat("es-AR", { style: "currency", currency: plan.currency, maximumFractionDigits: 0 }).format(Number(plan.price));
+}
 
 function studioSocialLinks(studio: StudioRow): SocialLink[] {
   const raw = Array.isArray(studio.social_links) ? studio.social_links : [];
@@ -33,12 +38,14 @@ export function StudioPublicView({
   media,
   projects,
   services,
+  membershipPlans = [],
 }: {
   studio: StudioRow;
   players: StudioPlayer[];
   media: PlayerMedia[];
   projects: Array<Record<string, unknown>>;
   services: StudioService[];
+  membershipPlans?: StudioMembershipPlan[];
 }) {
   const links = studioSocialLinks(studio);
   return (
@@ -48,6 +55,7 @@ export function StudioPublicView({
       navLinks={[
         { label: "Sobre", href: "#sobre" },
         { label: "Players", href: "#players" },
+        ...(membershipPlans.length ? [{ label: "Membresías", href: "#membresias" }] : []),
         ...(services.length ? [{ label: "Servicios", href: "#servicios" }] : []),
         ...(projects.length ? [{ label: "Proyectos", href: "#proyectos" }] : []),
         ...(media.length ? [{ label: "Galería", href: "#galeria" }] : []),
@@ -98,6 +106,41 @@ export function StudioPublicView({
           </div>
         )}
       </section>
+
+      {membershipPlans.length ? (
+        <section id="membresias" className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
+          <p className="text-xs uppercase tracking-[0.24em] text-violet-300/70">Comunidad</p>
+          <h2 className="mt-1 text-2xl font-semibold">Membresías</h2>
+          <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {membershipPlans.map((plan) => (
+              <article key={plan.id} className="flex flex-col rounded-2xl border border-white/10 bg-white/[0.025] p-6">
+                <h3 className="font-semibold">{plan.name}</h3>
+                {plan.description ? <p className="mt-2 line-clamp-3 text-sm leading-6 text-white/55">{plan.description}</p> : null}
+                <p className="mt-4 text-2xl font-bold">
+                  {formatPlanPrice(plan)}
+                  {!plan.is_free ? <span className="ml-1 text-sm font-normal text-white/45">/ {plan.billing_interval === "year" ? "año" : "mes"}</span> : null}
+                </p>
+                {plan.benefits.length ? (
+                  <ul className="mt-4 space-y-1.5 text-sm text-white/60">
+                    {plan.benefits.slice(0, 4).map((benefit, index) => (
+                      <li key={index} className="flex gap-2">
+                        <span className="text-violet-300">✓</span>
+                        {benefit}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+                <Link
+                  href={`/studios/${studio.slug}/checkout${plan.is_free ? "" : `?plan=${plan.slug}`}`}
+                  className="mt-6 rounded-xl bg-violet-600 px-5 py-3 text-center text-sm font-semibold transition hover:bg-violet-500"
+                >
+                  {plan.is_free ? "Unirme gratis" : "Ser socio"}
+                </Link>
+              </article>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       {services.length ? (
         <section id="servicios" className="mx-auto max-w-6xl px-4 py-10 sm:px-6">

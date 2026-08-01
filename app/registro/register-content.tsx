@@ -1,9 +1,23 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { MainFooter, MainNav } from "@/components/layout";
+
+const SLUG_PARAM_RE = /^[a-z0-9-]{1,80}$/i;
+
+// Mirrors studioRedirectOverride() in app/login/login-content.tsx -- a
+// visitor who signs up (rather than logs in) from a studio's public page
+// must land back on that studio's checkout too, not the default onboarding.
+function studioRedirectOverride(searchParams: ReturnType<typeof useSearchParams>) {
+  const studio = searchParams.get("studio");
+  const intent = searchParams.get("intent");
+  if (!studio || !SLUG_PARAM_RE.test(studio) || (intent !== "join" && intent !== "subscribe")) return null;
+  const plan = searchParams.get("plan");
+  const query = intent === "subscribe" && plan && SLUG_PARAM_RE.test(plan) ? `?plan=${encodeURIComponent(plan)}` : "";
+  return `/studios/${encodeURIComponent(studio)}/checkout${query}`;
+}
 
 export default function RegisterContent() {
   const [fullName, setFullName] = useState("");
@@ -13,6 +27,7 @@ export default function RegisterContent() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -48,9 +63,10 @@ export default function RegisterContent() {
           onboarding_status: "pending",
         })
         .eq("id", data.user.id);
-      router.replace("/onboarding/identity");
+      router.replace(studioRedirectOverride(searchParams) ?? "/onboarding/identity");
     } else {
-      router.replace("/login?message=confirm-email");
+      const query = searchParams.toString();
+      router.replace(`/login?message=confirm-email${query ? `&${query}` : ""}`);
     }
     setLoading(false);
   };
