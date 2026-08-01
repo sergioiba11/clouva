@@ -48,6 +48,7 @@ const diagnosticBuilder = readFileSync("worker/garment-rig/diagnostic_builder.py
 const multiview = readFileSync("worker/garment-rig/multiview_renderer.py", "utf8");
 const multiviewV32 = readFileSync("worker/garment-rig/multiview_renderer_v32.py", "utf8");
 const analyzerPanel = readFileSync("components/library/AvatarAnalyzerPreview.tsx", "utf8");
+const analyzerWizard = readFileSync("components/library/avatar-analyzer/WizardStepper.tsx", "utf8");
 
 
 test("el autorig de avatar no puede volver a llamar la ruta de rigging de Meshy", () => {
@@ -280,11 +281,12 @@ test("el diagnóstico sigue separado de Armature, pesos y avatar oficial", () =>
   assert.match(diagnosticBuilder, /surface_display_position/);
   assert.match(diagnosticBuilder, /duplicateLandmarksHidden/);
   assert.doesNotMatch(diagnosticBuilder, /BODY_EDGES\s*=/);
-  assert.match(analyzerPanel, /Confianza del cuerpo base/);
-  assert.match(analyzerPanel, /Perfil solicitado/);
-  assert.match(analyzerPanel, /Estado del perfil/);
-  assert.match(analyzerPanel, /Preparación para el perfil/);
-  assert.match(analyzerPanel, /Sin evidencia visual/);
+  const viewModel = readFileSync("components/library/avatar-analyzer/view-model.ts", "utf8");
+  assert.match(analyzerWizard, /Confianza del cuerpo base/);
+  assert.match(analyzerWizard, /Perfil solicitado/);
+  assert.match(analyzerWizard, /Estado del perfil/);
+  assert.match(analyzerWizard, /Preparación para el perfil/);
+  assert.match(viewModel, /Sin evidencia visual/);
   assert.doesNotMatch(analyzerPanel, /Compatibilidad corporal/);
   assert.doesNotMatch(analyzerPanel, /SUPERFICIE ANATÓMICA VERIFICADA/);
 });

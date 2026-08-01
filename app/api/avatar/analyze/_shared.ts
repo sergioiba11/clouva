@@ -267,6 +267,52 @@ export async function getAnalyzerJobForUser(
   return data as AnalyzerJobRow | null;
 }
 
+/** Busca el job por run_id (no por id de job) -- lo que tiene el frontend
+ * una vez que el análisis terminó y solo conoce el runId persistido. */
+export async function getAnalyzerJobByRunIdForUser(
+  supabase: ReturnType<typeof getAdminClient>,
+  userId: string,
+  runId: string,
+) {
+  const { data, error } = await supabase
+    .from("avatar_analyzer_jobs")
+    .select("*")
+    .eq("run_id", runId)
+    .eq("user_id", userId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(`No se pudo consultar el trabajo de análisis: ${errorMessage(error)}`);
+  return data as AnalyzerJobRow | null;
+}
+
+/** Confirmación manual del laboratorio holográfico: se guarda dentro de la
+ * columna `summary` (jsonb) que ya existe en avatar_analyzer_jobs -- no crea
+ * tablas ni columnas nuevas, es la misma fuente de verdad que ya expone
+ * toWorkerJobStatus() al frontend. */
+export async function approveAnalyzerRun(
+  supabase: ReturnType<typeof getAdminClient>,
+  userId: string,
+  runId: string,
+) {
+  const row = await getAnalyzerJobByRunIdForUser(supabase, userId, runId);
+  if (!row) throw new Error("No se encontró el análisis a confirmar");
+  const nextSummary = {
+    ...(row.summary ?? {}),
+    manuallyApproved: true,
+    manuallyApprovedAt: new Date().toISOString(),
+  };
+  const { data, error } = await supabase
+    .from("avatar_analyzer_jobs")
+    .update({ summary: nextSummary })
+    .eq("id", row.id)
+    .eq("user_id", userId)
+    .select("summary")
+    .single();
+  if (error || !data) throw new Error(`No se pudo registrar la confirmación: ${errorMessage(error)}`);
+  return data.summary as Record<string, unknown>;
+}
+
 export async function recordAnalyzerJobExecution(
   supabase: ReturnType<typeof getAdminClient>,
   jobId: string,

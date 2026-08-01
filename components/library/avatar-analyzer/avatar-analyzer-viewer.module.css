@@ -1,0 +1,124 @@
+.viewer {
+  position: relative;
+  width: 100%;
+  height: clamp(420px, 62vh, 620px);
+  border: 1px solid rgba(181, 126, 255, 0.2);
+  border-radius: 20px;
+  overflow: hidden;
+  background: radial-gradient(circle at 50% 35%, rgba(104, 48, 175, 0.28), rgba(5, 4, 8, 0.96) 62%);
+  touch-action: none;
+}
+
+@media (max-width: 640px) {
+  .viewer { height: clamp(420px, 58vh, 520px); }
+}
+
+.empty {
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  text-align: center;
+  color: #bcb4c9;
+  font-size: 13px;
+}
+
+/* --- Marcadores --- */
+.marker {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  transform: translate(-50%, -50%);
+  -webkit-tap-highlight-color: transparent;
+}
+
+.markerDot {
+  --size: 12px;
+  display: block;
+  width: var(--size);
+  height: var(--size);
+  background: var(--marker-color, #9aa0ac);
+  box-shadow: 0 0 8px 1px var(--marker-color, transparent);
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.marker:hover .markerDot,
+.marker[aria-pressed="true"] .markerDot {
+  transform: scale(1.35);
+  box-shadow: 0 0 14px 3px var(--marker-color, transparent);
+}
+
+.marker[aria-pressed="true"] .markerDot { outline: 2px solid #fff; outline-offset: 2px; }
+
+.shape_circle .markerDot,
+.shape_dot .markerDot,
+.shape_ring .markerDot { border-radius: 50%; }
+.shape_ring .markerDot { background: transparent; border: 2px solid var(--marker-color, #9aa0ac); box-shadow: 0 0 10px 2px var(--marker-color, transparent); }
+.shape_diamond .markerDot { border-radius: 3px; transform: rotate(45deg); }
+.shape_triangle .markerDot {
+  background: transparent;
+  width: 0; height: 0;
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-bottom: 12px solid var(--marker-color, #9aa0ac);
+  box-shadow: none;
+  filter: drop-shadow(0 0 6px var(--marker-color, transparent));
+}
+.shape_square .markerDot { border-radius: 2px; }
+.shape_dot .markerDot { --size: 10px; }
+
+.markerLabel {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 2px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: rgba(8, 6, 14, 0.82);
+  color: #ece5f7;
+  font-size: 9px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* --- Leyenda --- */
+.legend {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  z-index: 3;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  max-width: calc(100% - 24px);
+  padding: 8px 12px;
+  border: 1px solid rgba(198, 157, 255, 0.25);
+  border-radius: 14px;
+  background: rgba(10, 7, 16, 0.72);
+  backdrop-filter: blur(8px);
+  font-size: 10px;
+  color: #d8cdea;
+}
+
+.legendItem { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+
+.legendSwatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  background: var(--marker-color, #9aa0ac);
+  border-radius: 50%;
+}
+.legendSwatch.shape_diamond { border-radius: 2px; transform: rotate(45deg); }
+.legendSwatch.shape_ring { background: transparent; border: 2px solid var(--marker-color, #9aa0ac); }
+.legendSwatch.shape_triangle {
+  background: transparent; width: 0; height: 0;
+  border-left: 5px solid transparent; border-right: 5px solid transparent;
+  border-bottom: 9px solid var(--marker-color, #9aa0ac);
+}
+.legendSwatch.shape_square { border-radius: 1px; }
