@@ -26,6 +26,27 @@ test("Instagram OAuth state is hashed, expiring and single-use", () => {
   assert.match(source, /status:\s*"consumed"/);
 });
 
+test("Instagram import reuses the canonical Player instead of inserting a duplicate", () => {
+  const source = read("./app/api/integrations/instagram/import/route.ts");
+  const migration = read("./supabase/migrations/20260801002500_claim_existing_instagram_player.sql");
+
+  assert.match(source, /from\("social_connections"\)/);
+  assert.match(source, /connection\.external_username/);
+  assert.match(source, /\.eq\("owner_user_id", userId\)/);
+  assert.match(source, /\.ilike\("username", verifiedUsername\)/);
+  assert.match(source, /\.rpc\("claim_existing_instagram_player"/);
+  assert.match(source, /const slug = \(player\?\.slug/);
+  assert.match(source, /const username = \(player\?\.username/);
+  assert.match(source, /from\("players"\)\.update\(playerValues\)\.eq\("id", player\.id\)/);
+  assert.match(source, /body\.publish === true \|\| Boolean\(player\?\.is_published\)/);
+  assert.match(source, /Este usuario ya está registrado\./);
+
+  assert.match(migration, /auth\.role\(\) is distinct from 'service_role'/);
+  assert.match(migration, /for update/);
+  assert.match(migration, /delete from public\.players/);
+  assert.match(migration, /grant execute on function public\.claim_existing_instagram_player\(uuid, uuid\) to service_role/);
+});
+
 test("Mercado Pago activates VIP only after verified server-side payment", () => {
   const webhook = read("./core/billing/webhook.ts");
   const service = read("./core/billing/service.ts");
