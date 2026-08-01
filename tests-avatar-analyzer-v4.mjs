@@ -18,8 +18,14 @@ test("the R3F viewer renders the real GLB with real landmarks and a real skeleto
     "SkeletonHelper",
     "getLandmarkPosition",
     "getLandmarkVisualState",
-    "hologramMaterial",
+    "new HologramMaterial",
   ]) assert.ok(source.includes(token), `missing ${token}`);
+  // The mesh hierarchy must be rendered via <primitive>, preserving every
+  // parent transform (armature offsets, up-axis fixes) that Blender/glTF
+  // export nearly always adds -- flattening meshes into a bare <group> with
+  // only their own local transform desyncs the hologram from the real
+  // landmark coordinates (regression fixed 2026-08-01).
+  assert.ok(source.includes("<primitive object={hologram.object}"), "must render the full node hierarchy via <primitive>, not flattened meshes");
 });
 
 test("view-model helpers never mix surface and internal-joint positions and count full regions", () => {
