@@ -9,6 +9,7 @@ import { getAccounts, switchAccount, type StoredAccount } from "@/lib/account-sw
 import { ThemeToggle } from "@/components/theme-toggle";
 import { CloverIcon } from "@/components/clover-icon";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
+import { WalletBalanceChip } from "@/components/wallet/WalletBalanceChip";
 
 export function MainNav() {
   const { user, profile, role, loading } = useAuth();
@@ -39,6 +40,7 @@ export function MainNav() {
         </Link>
         <div className="flex items-center gap-2">
           <ThemeToggle />
+          {!loading && user ? <WalletBalanceChip /> : null}
           {!loading && user ? <NotificationBell /> : null}
           {loading ? (
             <div className="h-9 w-28 animate-pulse rounded-full border border-[var(--line)] bg-white/[0.03]" />
