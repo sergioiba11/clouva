@@ -51,6 +51,23 @@ function clouvaIdForUser(userId: string) {
   return `CLV-${userId.replaceAll("-", "").slice(0, 10)}`;
 }
 
+const SLUG_PARAM_RE = /^[a-z0-9-]{1,80}$/i;
+
+// A visitor who clicked "Unirme gratis"/"Ser socio" on a studio's public page
+// (StudioMembershipCheckoutAction) while logged out lands here with
+// ?studio=&intent=&plan= -- this sends them straight back to that studio's
+// checkout instead of the normal role-home/onboarding destination, without
+// skipping resolvePostLoginDestination()'s profile-bootstrap side effect.
+// Only ever builds an internal /studios/... path, never an arbitrary URL.
+function studioRedirectOverride(searchParams: ReturnType<typeof useSearchParams>) {
+  const studio = searchParams.get("studio");
+  const intent = searchParams.get("intent");
+  if (!studio || !SLUG_PARAM_RE.test(studio) || (intent !== "join" && intent !== "subscribe")) return null;
+  const plan = searchParams.get("plan");
+  const query = intent === "subscribe" && plan && SLUG_PARAM_RE.test(plan) ? `?plan=${encodeURIComponent(plan)}` : "";
+  return `/studios/${encodeURIComponent(studio)}/checkout${query}`;
+}
+
 function userDisplayName(user: User) {
   return (
     (user.user_metadata?.full_name as string | undefined) ??
@@ -168,7 +185,11 @@ export default function LoginContent() {
 
       localStorage.removeItem("clouva.switch_target");
       try {
-        const destination = await resolvePostLoginDestination(user);
+        // Always await resolvePostLoginDestination() for its profile-bootstrap
+        // side effect, even when a studio override below wins -- a brand-new
+        // account still needs its profiles row created.
+        const defaultDestination = await resolvePostLoginDestination(user);
+        const destination = studioRedirectOverride(searchParams) ?? defaultDestination;
         if (!cancelled) router.replace(destination);
       } catch (destinationError) {
         if (!cancelled) {
@@ -192,7 +213,13 @@ export default function LoginContent() {
       return;
     }
 
-    const redirectPath = await resolvePostLoginDestination(authUser);
+    const defaultRedirectPath = await resolvePostLoginDestination(authUser);
+    const studioOverride = studioRedirectOverride(searchParams);
+    if (studioOverride) {
+      router.replace(studioOverride);
+      return;
+    }
+    const redirectPath = defaultRedirectPath;
     const shouldOpenSwitcher = forceSwitcher && !redirectPath.startsWith("/onboarding") && redirectPath !== "/matrix";
     router.replace(shouldOpenSwitcher ? `${redirectPath}?openAccountSwitcher=1` : redirectPath);
   };
@@ -319,7 +346,7 @@ export default function LoginContent() {
 
             {error ? <p className="rounded-xl border border-red-400/20 bg-red-400/10 p-3 text-sm text-red-200">{error}</p> : null}
             <div className="flex justify-center gap-4 pt-2 text-xs text-white/40">
-              <Link href="/registro" className="hover:text-white">Crear cuenta</Link>
+              <Link href={searchParams.toString() ? `/registro?${searchParams.toString()}` : "/registro"} className="hover:text-white">Crear cuenta</Link>
               <Link href="/legal/privacy" className="hover:text-white">Privacidad</Link>
               <Link href="/legal/terms" className="hover:text-white">Términos</Link>
             </div>
