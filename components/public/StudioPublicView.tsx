@@ -48,6 +48,16 @@ export function StudioPublicView({
   membershipPlans?: StudioMembershipPlan[];
 }) {
   const links = studioSocialLinks(studio);
+  // "Quiero unirme" now leads to membership checkout (free plan preferred,
+  // else the first public paid plan) instead of the staff/artist
+  // application form -- that form is still reachable, just demoted to a
+  // secondary link, since it's a different action (joining the roster,
+  // reviewed manually) from becoming a socio/fan. Falls back to the old
+  // form only if the studio hasn't configured any membership plan yet.
+  const defaultMembershipPlan = membershipPlans.find((plan) => plan.is_free) ?? membershipPlans[0] ?? null;
+  const joinHref = defaultMembershipPlan
+    ? `/studios/${studio.slug}/checkout${defaultMembershipPlan.is_free ? "" : `?plan=${defaultMembershipPlan.slug}`}`
+    : `/studios/${studio.slug}/join`;
   return (
     <PublicShell
       brand={studio.name}
@@ -69,7 +79,7 @@ export function StudioPublicView({
         profileImageUrl={studio.logo_url}
         coverUrl={studio.cover_url}
         badges={studio.categories || []}
-        primaryAction={{ label: "Quiero unirme", href: `/studios/${studio.slug}/join` }}
+        primaryAction={{ label: "Quiero unirme", href: joinHref }}
         secondaryAction={players.length ? { label: "Conocer Players", href: "#players" } : null}
       />
 
@@ -78,6 +88,9 @@ export function StudioPublicView({
           <p className="text-xs uppercase tracking-[0.24em] text-violet-300/70">Sobre el Estudio</p>
           <h2 className="mt-2 text-2xl font-semibold">{studio.name}</h2>
           {studio.description ? <p className="mt-5 whitespace-pre-line leading-8 text-white/70">{studio.description}</p> : <p className="mt-5 text-white/45">Este Estudio todavía está completando su presentación.</p>}
+          <Link href={`/studios/${studio.slug}/join`} className="mt-5 inline-block text-sm text-violet-300 underline-offset-4 hover:underline">
+            ¿Sos artista o representás un proyecto? Aplicá para sumarte al equipo →
+          </Link>
         </article>
         {links.length ? (
           <aside className="rounded-[2rem] border border-white/10 bg-white/[0.025] p-6">
