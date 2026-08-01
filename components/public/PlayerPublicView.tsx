@@ -11,6 +11,7 @@ import {
   Play,
   Video,
 } from "lucide-react";
+import { PlayerOwnerActions } from "./PlayerOwnerActions";
 import { PublicMediaGallery } from "./PublicMediaGallery";
 import { PublicSocialLinks } from "./PublicSocialLinks";
 import { PublicShell } from "./PublicShell";
@@ -156,6 +157,8 @@ export function PlayerPublicView({
                 <ArrowRight size={15} className="ml-2 text-violet-300" />
               </Link>
             ) : null}
+
+            <PlayerOwnerActions ownerUserId={player.owner_user_id} />
 
             <div className="mt-6 flex flex-wrap gap-2">
               {player.spotify_profile_url ? (

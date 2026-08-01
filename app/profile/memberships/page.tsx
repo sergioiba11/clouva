@@ -43,7 +43,12 @@ export default function MembershipsPage() {
       <div className="mx-auto max-w-5xl">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div><p className="text-xs uppercase tracking-[0.24em] text-violet-300/70">Perfil</p><h1 className="mt-2 text-4xl font-bold">Mis Estudios</h1><p className="mt-3 text-white/50">Estudios y colectivos de los que formás parte.</p></div>
-          <div className="flex gap-2"><Link href="/studios" className="rounded-xl border border-white/15 px-4 py-2 text-sm">Explorar Estudios</Link>{!vipActive ? <Link href="/vip" className="rounded-xl bg-amber-400 px-4 py-2 text-sm font-semibold text-black">Activar VIP</Link> : null}</div>
+          <div className="flex gap-2">
+            <Link href="/studios" className="rounded-xl border border-white/15 px-4 py-2 text-sm">Explorar Estudios</Link>
+            {vipActive
+              ? <Link href="/studios/nuevo" className="rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold text-white">+ Crear estudio</Link>
+              : <Link href="/vip" className="rounded-xl bg-amber-400 px-4 py-2 text-sm font-semibold text-black">Activar VIP</Link>}
+          </div>
         </div>
 
         {error ? <p className="mt-6 rounded-xl border border-red-400/20 bg-red-400/10 p-4 text-red-200">{error}</p> : null}

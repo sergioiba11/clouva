@@ -1,7 +1,8 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { Bell, Search, Sparkles } from "lucide-react";
+import { Search, Sparkles } from "lucide-react";
 import { CloverIcon } from "@/components/clover-icon";
+import { NotificationBell } from "@/components/notifications/NotificationBell";
 
 export type PublicNavLink = { label: string; href: string; disabled?: boolean };
 
@@ -50,9 +51,7 @@ export function PublicShell({
             <button type="button" aria-label="Buscar" className="grid h-9 w-9 place-items-center rounded-full text-white/55 transition hover:bg-white/5 hover:text-white">
               <Search size={17} />
             </button>
-            <button type="button" aria-label="Notificaciones" className="hidden h-9 w-9 place-items-center rounded-full text-white/55 transition hover:bg-white/5 hover:text-white sm:grid">
-              <Bell size={17} />
-            </button>
+            <NotificationBell className="hidden sm:block" />
             <Link href="/matrix" className="hidden items-center gap-2 rounded-full border border-violet-400/30 bg-violet-500/10 px-4 py-2 text-xs font-semibold text-violet-200 transition hover:bg-violet-500/20 sm:flex">
               <Sparkles size={14} />
               Explorar La Matrix
