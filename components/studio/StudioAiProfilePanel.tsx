@@ -61,6 +61,8 @@ const STATUS_LABEL: Record<string, string> = {
   cancelled: "Generación cancelada.",
 };
 
+const MAX_REFERENCE_IMAGES = 3;
+
 const EDITABLE_FIELDS: Array<{ key: keyof ProfileCopy; label: string; multiline?: boolean }> = [
   { key: "tagline", label: "Frase institucional" },
   { key: "short_bio", label: "Presentación", multiline: true },
@@ -78,6 +80,8 @@ export function StudioAiProfilePanel({ studioId }: { studioId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [draftEdits, setDraftEdits] = useState<Partial<ProfileCopy>>({});
+  const [referenceImageUrls, setReferenceImageUrls] = useState<string[]>([]);
+  const [uploadingReference, setUploadingReference] = useState(false);
   const pollRef = useRef<number | null>(null);
 
   const load = async () => {
@@ -117,14 +121,35 @@ export function StudioAiProfilePanel({ studioId }: { studioId: string }) {
     try {
       const response = await authenticatedFetch("/api/vip-profile/generate", {
         method: "POST",
-        body: JSON.stringify({ studioId }),
+        body: JSON.stringify({ studioId, referenceImageUrls }),
       });
       await readApiJson(response);
+      setReferenceImageUrls([]);
       await load();
     } catch (startError) {
       setError(startError instanceof Error ? startError.message : "No se pudo iniciar la generación.");
     } finally {
       setStarting(false);
+    }
+  };
+
+  const uploadReferenceImages = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const remaining = MAX_REFERENCE_IMAGES - referenceImageUrls.length;
+    if (remaining <= 0) return;
+    setUploadingReference(true);
+    setError(null);
+    try {
+      const form = new FormData();
+      form.append("studioId", studioId);
+      Array.from(files).slice(0, remaining).forEach((file) => form.append("images", file));
+      const response = await authenticatedFetch("/api/vip-profile/reference-images", { method: "POST", body: form });
+      const payload = await readApiJson<{ urls: string[] }>(response);
+      setReferenceImageUrls((current) => [...current, ...payload.urls].slice(0, MAX_REFERENCE_IMAGES));
+    } catch (uploadError) {
+      setError(uploadError instanceof Error ? uploadError.message : "No se pudo subir la imagen.");
+    } finally {
+      setUploadingReference(false);
     }
   };
 
@@ -187,6 +212,33 @@ export function StudioAiProfilePanel({ studioId }: { studioId: string }) {
           </button>
         ) : null}
       </div>
+
+      {!job || !IN_PROGRESS_STATUSES.has(job.status) ? (
+        <div className="rounded-2xl border border-dashed border-white/15 p-4">
+          <p className="text-xs uppercase tracking-[0.16em] text-white/40">Imagen de inspiración (opcional)</p>
+          <p className="mt-1 text-xs text-white/45">Además de los datos del Estudio, la IA puede usar una referencia visual para el logo y la portada.</p>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            {referenceImageUrls.map((url) => (
+              <div key={url} className="relative h-16 w-16 shrink-0 overflow-hidden rounded-xl border border-white/10">
+                <img src={url} alt="" className="h-full w-full object-cover" />
+                <button
+                  type="button"
+                  onClick={() => setReferenceImageUrls((current) => current.filter((item) => item !== url))}
+                  className="absolute right-0.5 top-0.5 grid h-4 w-4 place-items-center rounded-full bg-black/70 text-[10px] leading-none text-white"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+            {referenceImageUrls.length < MAX_REFERENCE_IMAGES ? (
+              <label className="grid h-16 w-16 shrink-0 cursor-pointer place-items-center rounded-xl border border-white/15 text-xs text-white/45 hover:border-violet-400/50">
+                {uploadingReference ? "..." : "+ Subir"}
+                <input type="file" accept="image/png,image/jpeg,image/webp" multiple className="hidden" disabled={uploadingReference} onChange={(event) => void uploadReferenceImages(event.target.files)} />
+              </label>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
 
       {job && IN_PROGRESS_STATUSES.has(job.status) ? (
         <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-black/25 p-5">

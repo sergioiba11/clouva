@@ -1,6 +1,6 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { GeminiImageError, generateImage } from "@/lib/gemini-image";
+import { GeminiImageError, generateImage, type GeminiReferenceImage } from "@/lib/gemini-image";
 import { uploadGeneratedMedia } from "@/lib/gcs-media";
 import { finalizeBudget, releaseBudget, reserveBudget } from "@/lib/ai-budget/budget-service";
 import { estimateFinalCostUsd, estimateImageCostUsd } from "@/lib/ai-budget/gemini-pricing";
@@ -10,6 +10,29 @@ const MODEL = "gemini-3.1-flash-image";
 const RESOLUTION = "1K" as const;
 
 export type GeneratedAsset = { kind: "cover" | "logo"; url: string; costUsd: number };
+
+const REFERENCE_MIME_BY_EXTENSION: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp" };
+
+// Reference image URLs were already validated (server-controlled shape,
+// belt-and-suspenders against SSRF) before being stored on the job by
+// /api/vip-profile/generate -- fetching them here is safe. Failures are
+// swallowed per-image (a bad/expired reference shouldn't block generation
+// entirely) rather than thrown.
+export async function fetchReferenceImages(urls: string[]): Promise<GeminiReferenceImage[]> {
+  const results = await Promise.allSettled(
+    urls.map(async (url) => {
+      const response = await fetch(url, { cache: "no-store" });
+      if (!response.ok) throw new Error(`No se pudo leer la imagen de referencia (HTTP ${response.status}).`);
+      const extension = url.split(".").pop()?.toLowerCase() ?? "";
+      const mimeType = REFERENCE_MIME_BY_EXTENSION[extension] ?? "image/png";
+      const bytes = Buffer.from(await response.arrayBuffer());
+      return { mimeType, data: bytes.toString("base64") };
+    }),
+  );
+  return results
+    .filter((result): result is PromiseFulfilledResult<GeminiReferenceImage> => result.status === "fulfilled")
+    .map((result) => result.value);
+}
 
 // Gemini generates an abstract background texture only -- never the artist's
 // likeness, never invented scenery, never baked-in text/logos. The real
@@ -35,6 +58,7 @@ export async function generateCoverAsset(args: {
   entityPathPrefix: string;
   copy: ProfileCopy;
   professionalCategories: string[];
+  referenceImages?: GeminiReferenceImage[];
 }): Promise<GeneratedAsset> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY no está configurada.");
@@ -54,6 +78,7 @@ export async function generateCoverAsset(args: {
       prompt: buildCoverPrompt(args.copy, args.professionalCategories),
       model: MODEL,
       aspectRatio: "16:9",
+      referenceImages: args.referenceImages,
     });
   } catch (generationError) {
     // Gemini never billed us if generateImage() itself threw -- safe to
@@ -108,6 +133,7 @@ export async function generateLogoAsset(args: {
   entityPathPrefix: string;
   copy: ProfileCopy;
   professionalCategories: string[];
+  referenceImages?: GeminiReferenceImage[];
 }): Promise<GeneratedAsset> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY no está configurada.");
@@ -127,6 +153,7 @@ export async function generateLogoAsset(args: {
       prompt: buildLogoPrompt(args.copy, args.professionalCategories),
       model: MODEL,
       aspectRatio: "1:1",
+      referenceImages: args.referenceImages,
     });
   } catch (generationError) {
     await releaseBudget(args.admin, { estimatedCostUsd });

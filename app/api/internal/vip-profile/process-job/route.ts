@@ -4,7 +4,7 @@ import { createAdminSupabase } from "@/lib/server/supabase";
 import { generateProfileCopy, type ProfileCopy } from "@/lib/server/vip-profile-gemini";
 import { playerBriefToFacts, studioBriefToFacts, type IdentityBrief, type StudioIdentityBrief } from "@/lib/server/vip-profile-brief";
 import { enqueueVipProfileJobStep } from "@/lib/server/cloud-tasks";
-import { generateCoverAsset, generateLogoAsset, type GeneratedAsset } from "@/lib/server/vip-profile-assets";
+import { fetchReferenceImages, generateCoverAsset, generateLogoAsset, type GeneratedAsset } from "@/lib/server/vip-profile-assets";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
@@ -55,7 +55,7 @@ export async function POST(request: NextRequest) {
   const admin = createAdminSupabase();
   const { data: job, error: jobError } = await admin
     .from("vip_profile_generation_jobs")
-    .select("id,player_id,studio_id,status,attempts,identity_brief,generated_copy,generated_assets,actual_cost_usd")
+    .select("id,player_id,studio_id,status,attempts,identity_brief,generated_copy,generated_assets,actual_cost_usd,reference_image_urls")
     .eq("id", body.jobId)
     .maybeSingle();
   if (jobError) return NextResponse.json({ error: jobError.message }, { status: 500 });
@@ -124,9 +124,11 @@ export async function POST(request: NextRequest) {
         const professionalCategories = isPlayer
           ? (job.identity_brief as unknown as IdentityBrief).professional_categories ?? []
           : (job.identity_brief as unknown as StudioIdentityBrief).services.map((s) => s.name);
+        const referenceImageUrls = (job.reference_image_urls as string[] | null) ?? [];
+        const referenceImages = referenceImageUrls.length ? await fetchReferenceImages(referenceImageUrls) : undefined;
         const results = await Promise.allSettled([
-          generateCoverAsset({ admin, entityPathPrefix, copy, professionalCategories }),
-          generateLogoAsset({ admin, entityPathPrefix, copy, professionalCategories }),
+          generateCoverAsset({ admin, entityPathPrefix, copy, professionalCategories, referenceImages }),
+          generateLogoAsset({ admin, entityPathPrefix, copy, professionalCategories, referenceImages }),
         ]);
         const assets = results
           .filter((result): result is PromiseFulfilledResult<GeneratedAsset> => result.status === "fulfilled")
