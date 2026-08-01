@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { MainFooter, MainNav } from "@/components/layout";
 import { useAuth } from "@/components/auth-provider";
 import { slugify } from "@/lib/store-utils";
+import { authenticatedFetch } from "@/lib/authenticated-fetch";
 
 export default function NuevoEstudioPage() {
   const { user, loading: authLoading } = useAuth();
@@ -61,13 +62,34 @@ export default function NuevoEstudioPage() {
     const { data, error: err } = await supabase
       .from("studios")
       .insert({ name: name.trim(), slug, owner_id: user.id, city: city.trim() || null, description: description.trim() || null })
-      .select("slug")
+      .select("id,slug")
       .single();
-    setSaving(false);
     if (err || !data) {
+      setSaving(false);
       setError(err?.message ?? "No se pudo crear el estudio");
       return;
     }
+
+    // Every studio gets a free "Miembro" plan by default so "Quiero unirme"
+    // works right away -- the owner can edit/replace it or add paid plans
+    // later from el panel, pero no debería depender de que lo configure a
+    // mano antes de que alguien pueda sumarse.
+    try {
+      await authenticatedFetch(`/api/studios/${data.id}/membership-plans`, {
+        method: "POST",
+        body: JSON.stringify({
+          name: "Miembro",
+          isFree: true,
+          description: "Sumate gratis a la comunidad del Estudio.",
+          benefits: ["Acceso a la comunidad del Estudio", "Novedades y contenido para miembros"],
+        }),
+      });
+    } catch {
+      // No bloquear la creación del Estudio si el plan por defecto falla --
+      // el dueño puede cargarlo a mano desde el panel.
+    }
+
+    setSaving(false);
     router.push(`/studios/${data.slug}`);
   };
 

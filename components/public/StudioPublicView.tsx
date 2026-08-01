@@ -4,6 +4,7 @@ import { PublicProfileHero } from "./PublicProfileHero";
 import { PublicSocialLinks } from "./PublicSocialLinks";
 import { PublicShell } from "./PublicShell";
 import { StudioServicesCart } from "./StudioServicesCart";
+import { StudioManageButton } from "./StudioManageButton";
 import type { PlayerMedia, SocialLink, StudioMembershipPlan, StudioPlayer, StudioRow, StudioService } from "@/lib/players-data";
 
 function formatPlanPrice(plan: StudioMembershipPlan) {
@@ -82,6 +83,10 @@ export function StudioPublicView({
         primaryAction={{ label: "Quiero unirme", href: joinHref }}
         secondaryAction={players.length ? { label: "Conocer Players", href: "#players" } : null}
       />
+
+      <div className="mx-auto -mt-6 max-w-6xl px-4 sm:px-6">
+        <StudioManageButton studioId={studio.id} />
+      </div>
 
       <section id="sobre" className="mx-auto grid max-w-6xl gap-6 px-4 py-10 sm:px-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         <article className="rounded-[2rem] border border-white/10 bg-white/[0.025] p-6 sm:p-8">

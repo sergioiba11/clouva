@@ -48,6 +48,7 @@ export function AccountMenu() {
             <Link href="/profile/memberships" className="block rounded-lg px-3 py-2 hover:bg-white/5" onClick={() => setOpenMenu(false)}>Mis Estudios</Link>
             <Link href="/matrix" className="block rounded-lg px-3 py-2 hover:bg-white/5" onClick={() => setOpenMenu(false)}>La Matrix</Link>
             <Link href="/mi-flow" className="block rounded-lg px-3 py-2 hover:bg-white/5" onClick={() => setOpenMenu(false)}>Mi Flow</Link>
+            {canAdmin ? <Link href="/admin/estudios" className="block rounded-lg px-3 py-2 text-amber-200 hover:bg-amber-500/10" onClick={() => setOpenMenu(false)}>Panel de Estudios</Link> : null}
             {canAdmin ? <Link href="/admin" className="block rounded-lg px-3 py-2 text-amber-200 hover:bg-amber-500/10" onClick={() => setOpenMenu(false)}>Admin</Link> : null}
             <Link href="/login?addAccount=1" className="block rounded-lg px-3 py-2 hover:bg-white/5" onClick={() => setOpenMenu(false)}>Agregar cuenta</Link>
             <button className="block w-full rounded-lg px-3 py-2 text-left hover:bg-white/5" onClick={() => { setOpenMenu(false); setOpenSwitch(true); }}>Cambiar cuenta</button>
