@@ -8,11 +8,19 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
+const REGISTERED_USERNAME_ERROR = "Este usuario ya está registrado.";
+
 const RESERVED_SLUGS = new Set([
   "login", "registro", "auth", "admin", "api", "matrix", "players", "studios",
   "profile", "onboarding", "creator-studio", "avatar", "catalogo", "biblioteca",
   "tienda", "mundos", "settings", "vip", "checkout", "legal", "support", "webhooks",
 ]);
+
+function registeredUsernameError() {
+  const error = new Error(REGISTERED_USERNAME_ERROR);
+  (error as Error & { status?: number }).status = 409;
+  return error;
+}
 
 async function loadSession(admin: ReturnType<typeof createAdminSupabase>, userId: string, sessionId: string) {
   const { data, error } = await admin
@@ -87,7 +95,7 @@ export async function POST(request: NextRequest) {
 
     const admin = createAdminSupabase();
     const session = await loadSession(admin, user.id, body.sessionId);
-    if (!['ready', 'created'].includes(session.status as string)) {
+    if (!["ready", "created"].includes(session.status as string)) {
       return NextResponse.json({ error: "La importación ya fue procesada o cancelada." }, { status: 409 });
     }
 
@@ -108,18 +116,48 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Elegí al menos 3 contenidos o continuá sin galería." }, { status: 400 });
     }
 
-    const [{ data: ownedPlayer }, { data: membership }] = await Promise.all([
+    const [{ data: ownedPlayer, error: ownedPlayerError }, { data: membership, error: membershipError }] = await Promise.all([
       admin.from("players").select("*").eq("owner_user_id", user.id).maybeSingle(),
       admin.from("player_members").select("player_id,role").eq("user_id", user.id).eq("status", "active").in("role", ["owner", "manager", "editor"]).limit(1).maybeSingle(),
     ]);
+    if (ownedPlayerError) throw new Error(ownedPlayerError.message);
+    if (membershipError) throw new Error(membershipError.message);
 
     let player = ownedPlayer;
     if (!player && membership?.player_id) {
-      const { data } = await admin.from("players").select("*").eq("id", membership.player_id).maybeSingle();
+      const { data, error } = await admin.from("players").select("*").eq("id", membership.player_id).maybeSingle();
+      if (error) throw new Error(error.message);
       player = data;
     }
 
-    const slug = await availableSlug(admin, requestedProfile.slug || requestedProfile.username || requestedProfile.display_name, player?.id as string | undefined);
+    // Instagram is the stable identity source for this flow. If an admin-seeded
+    // Player already exists with that username (0800Bless, Clouva, etc.), reuse
+    // and claim that exact row instead of trying to INSERT a duplicate.
+    if (requestedProfile.username) {
+      const { data: usernamePlayer, error: usernamePlayerError } = await admin
+        .from("players")
+        .select("*")
+        .ilike("username", requestedProfile.username)
+        .maybeSingle();
+      if (usernamePlayerError) throw new Error(usernamePlayerError.message);
+
+      if (usernamePlayer && usernamePlayer.id !== player?.id) {
+        const belongsToAnotherUser = Boolean(
+          usernamePlayer.owner_user_id && usernamePlayer.owner_user_id !== user.id,
+        );
+        if (player || belongsToAnotherUser) throw registeredUsernameError();
+        player = usernamePlayer;
+      }
+    }
+
+    const slug = (player?.slug as string | undefined)
+      || await availableSlug(
+        admin,
+        requestedProfile.slug || requestedProfile.username || requestedProfile.display_name,
+        player?.id as string | undefined,
+      );
+    const username = (player?.username as string | null | undefined) || requestedProfile.username;
+
     let profileImageUrl = player?.profile_image_url as string | null | undefined;
     if (requestedProfile.profile_image_url && requestedProfile.profile_image_url !== profileImageUrl) {
       const imported = await importInstagramImage({
@@ -153,17 +191,13 @@ export async function POST(request: NextRequest) {
       owner_user_id: finalOwnerUserId,
       slug,
       display_name: requestedProfile.display_name,
-      username: requestedProfile.username,
+      username,
       short_bio: requestedProfile.short_bio,
       professional_categories: requestedProfile.professional_categories,
       disciplines: requestedProfile.professional_categories,
       profile_image_url: profileImageUrl || null,
       cover_url: coverUrl || null,
       social_links: requestedProfile.social_links,
-      // Reaching this endpoint as the owner IS the claim action -- a fresh
-      // Player (or one still "unclaimed", e.g. an admin-seeded placeholder)
-      // must transition to "claimed" here. A non-owner member syncing an
-      // already-claimed Player's Instagram content leaves claim_status alone.
       claim_status: isSelfClaim ? "claimed" : (player?.claim_status || "claimed"),
       claimed_at: isSelfClaim ? (player?.claimed_at || new Date().toISOString()) : (player?.claimed_at || null),
       publication_status: body.publish ? "published" : "draft",
@@ -179,13 +213,18 @@ export async function POST(request: NextRequest) {
       const { data, error } = await admin.from("players").insert(playerValues).select("*").single();
       if (error) throw new Error(error.message);
       player = data;
-      const { error: memberError } = await admin.from("player_members").insert({
+    }
+
+    // A reused placeholder also needs the canonical owner membership. Upsert
+    // makes retries idempotent and never creates a second Player.
+    if (isSelfClaim) {
+      const { error: memberError } = await admin.from("player_members").upsert({
         player_id: player.id,
         user_id: user.id,
         role: "owner",
         status: "active",
         joined_at: new Date().toISOString(),
-      });
+      }, { onConflict: "player_id,user_id" });
       if (memberError) throw new Error(memberError.message);
     }
 
@@ -255,7 +294,11 @@ export async function POST(request: NextRequest) {
     console.error("instagram_import_failed", {
       message: error instanceof Error ? error.message : "unknown",
     });
-    const message = error instanceof Error ? error.message : "No se pudo crear la presentación.";
-    return NextResponse.json({ error: message }, { status: isAuthError(error) ? 401 : 500 });
+    const rawMessage = error instanceof Error ? error.message : "No se pudo crear la presentación.";
+    const isUsernameConflict = rawMessage.includes("players_username_key") || rawMessage === REGISTERED_USERNAME_ERROR;
+    const message = isUsernameConflict ? REGISTERED_USERNAME_ERROR : rawMessage;
+    const explicitStatus = (error as Error & { status?: number })?.status;
+    const status = explicitStatus ?? (isAuthError(error) ? 401 : isUsernameConflict ? 409 : 500);
+    return NextResponse.json({ error: message }, { status });
   }
 }
