@@ -126,9 +126,18 @@ export async function POST(request: NextRequest) {
           : (job.identity_brief as unknown as StudioIdentityBrief).services.map((s) => s.name);
         const referenceImageUrls = (job.reference_image_urls as string[] | null) ?? [];
         const referenceImages = referenceImageUrls.length ? await fetchReferenceImages(referenceImageUrls) : undefined;
+        // Logo is optional: if the Player/Estudio already has one (set
+        // manually in "Perfil público"/"Editar mi perfil" before running
+        // generation), reuse it as-is instead of asking Gemini for an
+        // abstract symbol nobody asked for.
+        const existingLogoUrl = isPlayer
+          ? (job.identity_brief as unknown as IdentityBrief).logo_url
+          : (job.identity_brief as unknown as StudioIdentityBrief).logo_url;
         const results = await Promise.allSettled([
           generateCoverAsset({ admin, entityPathPrefix, copy, professionalCategories, referenceImages }),
-          generateLogoAsset({ admin, entityPathPrefix, copy, professionalCategories, referenceImages }),
+          existingLogoUrl
+            ? Promise.resolve<GeneratedAsset>({ kind: "logo", url: existingLogoUrl, costUsd: 0 })
+            : generateLogoAsset({ admin, entityPathPrefix, copy, professionalCategories, referenceImages }),
         ]);
         const assets = results
           .filter((result): result is PromiseFulfilledResult<GeneratedAsset> => result.status === "fulfilled")

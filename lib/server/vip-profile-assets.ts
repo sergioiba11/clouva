@@ -39,17 +39,26 @@ export async function fetchReferenceImages(urls: string[]): Promise<GeminiRefere
 // photo, name and copy are rendered on top by the Next.js template
 // (spec section 10: "Gemini no debe producir HTML arbitrario ni código
 // ejecutable" -- it supplies one visual layer, not the finished page).
-function buildCoverPrompt(copy: ProfileCopy, professionalCategories: string[]): string {
+// Cover portadas were originally abstract-only (no scenes/objects) to stay
+// safely inside what Gemini renders reliably. The user explicitly asked for
+// a themed, scene-like hero (e.g. a recording studio interior matching an
+// uploaded reference image's aesthetic) instead -- still no people/faces
+// (recognizable-human-likeness risk) and no text/logos (Gemini renders text
+// unreliably), but environments/objects are now allowed and encouraged.
+function buildCoverPrompt(copy: ProfileCopy, professionalCategories: string[], hasReferenceImage: boolean): string {
   const energy = copy.visual_energy ?? "neutro, minimalista";
   const tone = copy.visual_tone ?? "oscuro, violeta";
   const categoryHint = professionalCategories.length > 0 ? professionalCategories.join(", ") : "identidad creativa";
 
   return [
-    "Textura de fondo abstracta para la portada de un perfil de artista/creador en CLOUVA, una plataforma premium underground.",
-    `Energía visual: ${energy}. Paleta y tono: ${tone}. Contexto profesional (solo como referencia de mood, no representar literalmente): ${categoryHint}.`,
-    "Estilo: abstracto, atmosférico, granulado, con profundidad -- piensen en una textura de fondo para una portada de disco o poster de show, no una fotografía realista.",
-    "PROHIBIDO ABSOLUTAMENTE: personas, rostros, siluetas humanas reconocibles, texto, letras, números, logos, marcas, watermarks, escenas concretas (ciudades específicas, edificios, objetos reconocibles) que no fueron mencionados explícitamente arriba.",
-    "Formato horizontal, apto como fondo de portada con espacio para superponer texto encima.",
+    "Portada/hero para el perfil de un artista, creador o estudio en CLOUVA, una plataforma premium underground.",
+    `Energía visual: ${energy}. Paleta y tono: ${tone}. Contexto profesional: ${categoryHint}.`,
+    hasReferenceImage
+      ? "Usá la imagen de referencia adjunta como guía de estética, materiales, iluminación y composición para generar un ambiente/escena temática coherente con esa referencia (por ejemplo un espacio de trabajo, estudio, escenario o entorno que represente la identidad) -- no una réplica literal de la imagen, sino algo inspirado en su estilo."
+      : "Generá un ambiente o escena temática que represente la identidad (por ejemplo un espacio de trabajo, estudio, escenario o entorno atmosférico), coherente con la energía y la paleta indicadas.",
+    "Estilo: fotográfico o ilustrado con atmósfera cinematográfica, buena composición y profundidad -- apto como fondo de portada con espacio para superponer texto encima.",
+    "PROHIBIDO ABSOLUTAMENTE: personas, rostros o siluetas humanas reconocibles, texto, letras, números, logos, marcas, watermarks.",
+    "Formato horizontal.",
   ].join(" ");
 }
 
@@ -75,7 +84,7 @@ export async function generateCoverAsset(args: {
   try {
     generated = await generateImage({
       apiKey,
-      prompt: buildCoverPrompt(args.copy, args.professionalCategories),
+      prompt: buildCoverPrompt(args.copy, args.professionalCategories, Boolean(args.referenceImages?.length)),
       model: MODEL,
       aspectRatio: "16:9",
       referenceImages: args.referenceImages,

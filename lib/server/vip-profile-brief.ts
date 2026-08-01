@@ -20,6 +20,7 @@ export type IdentityBrief = {
   disciplines: string[];
   profile_image: string | null;
   selected_cover: string | null;
+  logo_url: string | null;
   selected_gallery: string[];
   social_links: unknown[];
   spotify_url: string | null;
@@ -91,6 +92,7 @@ export async function buildIdentityBrief(
   track("disciplinas", player.disciplines);
   track("foto de perfil", player.profile_image_url);
   track("portada", player.cover_url);
+  track("logo", player.logo_url);
   track("galería", gallery.length > 0 ? gallery : null);
   track("links sociales", player.social_links);
   track("Spotify", player.spotify_profile_url);
@@ -112,6 +114,7 @@ export async function buildIdentityBrief(
     disciplines: (player.disciplines as string[] | null) ?? [],
     profile_image: (player.profile_image_url as string | null) ?? null,
     selected_cover: (player.cover_url as string | null) ?? null,
+    logo_url: (player.logo_url as string | null) ?? null,
     selected_gallery: gallery,
     social_links: (player.social_links as unknown[] | null) ?? [],
     spotify_url: (player.spotify_profile_url as string | null) ?? null,
@@ -153,6 +156,7 @@ export type StudioIdentityBrief = {
   country: string | null;
   website_url: string | null;
   founded_year: number | null;
+  logo_url: string | null;
   members: Array<{ name: string; role: string | null }>;
   services: Array<{ name: string; category: string | null }>;
   social_links: unknown[];
@@ -196,6 +200,7 @@ export async function buildStudioIdentityBrief(
   track("ciudad", studio.city);
   track("país", studio.country);
   track("sitio web", studio.website_url);
+  track("logo", studio.logo_url);
   track("integrantes", members.length > 0 ? members : null);
   track("servicios ofrecidos", (services ?? []).length > 0 ? services : null);
   track("links sociales", studio.social_links);
@@ -208,6 +213,7 @@ export async function buildStudioIdentityBrief(
     country: (studio.country as string | null) ?? null,
     website_url: (studio.website_url as string | null) ?? null,
     founded_year: (studio.founded_year as number | null) ?? null,
+    logo_url: (studio.logo_url as string | null) ?? null,
     members,
     services: (services ?? []) as Array<{ name: string; category: string | null }>,
     social_links: (studio.social_links as unknown[] | null) ?? [],
