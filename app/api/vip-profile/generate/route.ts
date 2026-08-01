@@ -12,14 +12,29 @@ const ACTIVE_STATUSES = [
   "generating_assets", "assembling_profile", "needs_user_input",
 ];
 
+// Only ever a URL our own /api/vip-profile/reference-images upload produced
+// (uploadGeneratedMedia's fixed host + our own path shape) is accepted here
+// -- the process-job worker later fetch()es these server-side, so accepting
+// arbitrary client-supplied URLs would be an SSRF vector.
+const REFERENCE_IMAGE_URL_RE = /^https:\/\/storage\.googleapis\.com\/[a-z0-9._-]+\/reference-images\/(players|studios)\/[0-9a-f-]{36}\/[0-9a-f-]{36}\.(png|jpe?g|webp)$/;
+const MAX_REFERENCE_IMAGES = 3;
+
+function sanitizeReferenceImageUrls(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((url): url is string => typeof url === "string" && REFERENCE_IMAGE_URL_RE.test(url))
+    .slice(0, MAX_REFERENCE_IMAGES);
+}
+
 // Works for either subject -- playerId XOR studioId in the body, mirrors
 // requireActiveVipEntitlement's own shape.
 export async function POST(request: NextRequest) {
   try {
     const { user } = await requireUser(request);
-    const body = (await request.json().catch(() => ({}))) as { playerId?: string; studioId?: string };
+    const body = (await request.json().catch(() => ({}))) as { playerId?: string; studioId?: string; referenceImageUrls?: unknown };
     if (!body.playerId && !body.studioId) return NextResponse.json({ error: "Falta playerId o studioId." }, { status: 400 });
     if (body.playerId && body.studioId) return NextResponse.json({ error: "Elegí playerId o studioId, no ambos." }, { status: 400 });
+    const referenceImageUrls = sanitizeReferenceImageUrls(body.referenceImageUrls);
 
     const admin = createAdminSupabase();
     const { entitlement } = await requireActiveVipEntitlement({ admin, userId: user.id, playerId: body.playerId, studioId: body.studioId });
@@ -49,6 +64,7 @@ export async function POST(request: NextRequest) {
         status: "queued",
         identity_brief: brief,
         source_snapshot: sourceSnapshot,
+        reference_image_urls: referenceImageUrls,
       })
       .select("id,status")
       .single();

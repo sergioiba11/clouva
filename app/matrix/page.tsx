@@ -9,6 +9,7 @@ import {
   UsersRound,
 } from "lucide-react";
 import { PublicShell } from "@/components/public/PublicShell";
+import { MatrixAdminOverview } from "@/components/matrix/MatrixAdminOverview";
 import { listPublishedPlayers, listPublishedStudios } from "@/lib/server/public-identity-data";
 import { VISUAL_ASSETS } from "@/lib/visual-assets";
 
@@ -62,6 +63,8 @@ export default async function MatrixPage() {
               Cada identidad mantiene su propia voz y se conecta con una red real.
             </p>
           </div>
+
+          <MatrixAdminOverview />
 
           <div className="mx-auto mt-12 grid max-w-4xl gap-5 md:grid-cols-2">
             <Link
