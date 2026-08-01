@@ -26,6 +26,16 @@ test("Instagram OAuth state is hashed, expiring and single-use", () => {
   assert.match(source, /status:\s*"consumed"/);
 });
 
+test("Instagram import reuses the existing Player and reports registered usernames clearly", () => {
+  const source = read("./app/api/integrations/instagram/import/route.ts");
+
+  assert.match(source, /\.eq\("owner_user_id", user\.id\)/);
+  assert.match(source, /\.ilike\("username", requestedProfile\.username\)/);
+  assert.match(source, /from\("players"\)\.update\(playerValues\)\.eq\("id", player\.id\)/);
+  assert.match(source, /onConflict: "player_id,user_id"/);
+  assert.match(source, /Este usuario ya está registrado\./);
+});
+
 test("Mercado Pago activates VIP only after verified server-side payment", () => {
   const webhook = read("./core/billing/webhook.ts");
   const service = read("./core/billing/service.ts");
