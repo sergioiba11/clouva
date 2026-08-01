@@ -28,12 +28,17 @@ test("Instagram OAuth state is hashed, expiring and single-use", () => {
 
 test("Instagram import reuses the existing Player and reports registered usernames clearly", () => {
   const source = read("./app/api/integrations/instagram/import/route.ts");
+  const migration = read("./supabase/migrations/20260801002500_claim_existing_instagram_player.sql");
 
   assert.match(source, /\.eq\("owner_user_id", user\.id\)/);
   assert.match(source, /\.ilike\("username", requestedProfile\.username\)/);
+  assert.match(source, /\.rpc\(\s*"claim_existing_instagram_player"/);
   assert.match(source, /from\("players"\)\.update\(playerValues\)\.eq\("id", player\.id\)/);
   assert.match(source, /onConflict: "player_id,user_id"/);
   assert.match(source, /Este usuario ya está registrado\./);
+  assert.match(migration, /for update/);
+  assert.match(migration, /delete from public\.players/);
+  assert.match(migration, /grant execute on function public\.claim_existing_instagram_player\(uuid, uuid\) to service_role/);
 });
 
 test("Mercado Pago activates VIP only after verified server-side payment", () => {
