@@ -30,6 +30,7 @@ on:
 permissions:
   contents: read
   id-token: write
+  statuses: write
 
 concurrency:
   group: deploy-gcp-web
@@ -56,6 +57,17 @@ jobs:
       - name: Resolve source commit
         id: source
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Mark Cloud Run deployment pending
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOYED_COMMIT: ${{ steps.source.outputs.sha }}
+        run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$DEPLOYED_COMMIT" \
+            -f state=pending \
+            -f context='gcloud/clouva-web' \
+            -f description='Cloud Run deployment in progress' \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
 
       - uses: actions/setup-node@v4
         with:
@@ -192,3 +204,23 @@ jobs:
           path: deployment-status.json
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish Cloud Run deployment status
+        if: always() && steps.source.outputs.sha != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOYED_COMMIT: ${{ steps.source.outputs.sha }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          if [ "$JOB_STATUS" = "success" ]; then
+            state=success
+            description='Cloud Run deployment verified'
+          else
+            state=failure
+            description='Cloud Run deployment failed'
+          fi
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$DEPLOYED_COMMIT" \
+            -f state="$state" \
+            -f context='gcloud/clouva-web' \
+            -f description="$description" \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
