@@ -13,7 +13,7 @@ export async function GET(request: NextRequest) {
     const admin = createAdminSupabase();
     const { data, error } = await admin
       .from("studio_access_claims")
-      .select("id,role,requires_vip,status,expires_at,studio:studios(id,slug,name,logo_url,cover_url)")
+      .select("id,role,status,expires_at,studio:studios(id,slug,name,logo_url,cover_url,studio_os_status)")
       .eq("token_hash", sha256(token))
       .maybeSingle();
     if (error) throw new Error(error.message);
@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       claim: {
         role: data.role,
-        requiresVip: data.requires_vip,
+        requiresVip: false,
         expiresAt: data.expires_at,
         studio: data.studio,
       },
@@ -45,7 +45,7 @@ export async function POST(request: NextRequest) {
     const client = createUserSupabase(accessToken);
     const { data, error } = await client.rpc("claim_studio_access", { p_token_hash: sha256(token) });
     if (error) {
-      const status = /VIP activo/i.test(error.message) ? 403 : /otro usuario|correo autorizado/i.test(error.message) ? 403 : 409;
+      const status = /otro usuario|correo autorizado/i.test(error.message) ? 403 : 409;
       return NextResponse.json({ error: error.message }, { status });
     }
     const result = Array.isArray(data) ? data[0] : data;
