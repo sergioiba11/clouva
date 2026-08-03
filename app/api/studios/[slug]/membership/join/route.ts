@@ -15,20 +15,25 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const { slug } = await params;
     const admin = createAdminSupabase();
     const studio = await resolveStudioForMembership(admin, slug);
+    const body = (await request.json().catch(() => ({}))) as { planId?: unknown };
+    const requestedPlanId = typeof body.planId === "string" ? body.planId : null;
 
-    const { data: freePlan, error: planError } = await admin
+    let planQuery = admin
       .from("studio_membership_plans")
       .select("id")
       .eq("studio_id", studio.id)
       .eq("is_free", true)
       .eq("is_active", true)
-      .eq("is_public", true)
+      .eq("is_public", true);
+    if (requestedPlanId) planQuery = planQuery.eq("id", requestedPlanId);
+
+    const { data: freePlan, error: planError } = await planQuery
       .order("display_order", { ascending: true })
       .limit(1)
       .maybeSingle();
     if (planError) throw new Error(planError.message);
     if (!freePlan) {
-      const error = new Error("Este Estudio todavía no tiene una membresía gratuita.");
+      const error = new Error("Ese plan gratuito no está disponible.");
       (error as Error & { status?: number }).status = 404;
       throw error;
     }
