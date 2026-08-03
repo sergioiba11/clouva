@@ -1,15 +1,15 @@
 "use client";
+
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { Building2, CheckCircle2 } from "lucide-react";
 import { MainFooter, MainNav } from "@/components/layout";
 import { useAuth } from "@/components/auth-provider";
-import { slugify } from "@/lib/store-utils";
-import { authenticatedFetch } from "@/lib/authenticated-fetch";
+import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
 
 export default function NuevoEstudioPage() {
   const { user, loading: authLoading } = useAuth();
   const router = useRouter();
-  const [isVip, setIsVip] = useState<boolean | null>(null);
   const [name, setName] = useState("");
   const [city, setCity] = useState("");
   const [description, setDescription] = useState("");
@@ -17,156 +17,61 @@ export default function NuevoEstudioPage() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    void (async () => {
-      if (!user) {
-        setIsVip(false);
-        return;
-      }
-      const { supabase } = await import("@/lib/supabase");
-      // Ya tiene un Estudio propio: lo mandamos directo a administrarlo en
-      // vez de mostrarle el formulario de creación de nuevo.
-      const { data: owned } = await supabase.from("studios").select("id").eq("owner_id", user.id).limit(1).maybeSingle();
-      if (owned) {
-        router.replace(`/studio-dashboard/${owned.id}`);
-        return;
-      }
-      const { data } = await supabase
-        .from("user_entitlements")
-        .select("tier,status,expires_at")
-        .eq("user_id", user.id)
-        .eq("status", "active")
-        .in("tier", ["player", "vip"]);
-      const hasActiveEntitlement = (data ?? []).some(
-        (row) => !row.expires_at || new Date(row.expires_at) > new Date(),
-      );
-      setIsVip(hasActiveEntitlement);
-    })();
-  }, [router, user]);
+    if (!authLoading && !user) router.replace("/login");
+  }, [authLoading, router, user]);
 
   const create = async () => {
     if (!user || !name.trim()) return;
     setSaving(true);
     setError("");
-    const { supabase } = await import("@/lib/supabase");
-
-    let slug = slugify(name);
-    let attempt = 0;
-    // Uniqueness check/suffix before insert -- no DB trigger for this, computed client-side.
-    while (attempt < 5) {
-      const { data: existing } = await supabase.from("studios").select("id").eq("slug", slug).maybeSingle();
-      if (!existing) break;
-      attempt += 1;
-      slug = `${slugify(name)}-${attempt + 1}`;
-    }
-
-    const { data, error: err } = await supabase
-      .from("studios")
-      .insert({ name: name.trim(), slug, owner_id: user.id, city: city.trim() || null, description: description.trim() || null })
-      .select("id,slug")
-      .single();
-    if (err || !data) {
-      setSaving(false);
-      setError(err?.message ?? "No se pudo crear el estudio");
-      return;
-    }
-
-    // Every studio gets a free "Miembro" plan by default so "Quiero unirme"
-    // works right away -- the owner can edit/replace it or add paid plans
-    // later from el panel, pero no debería depender de que lo configure a
-    // mano antes de que alguien pueda sumarse.
     try {
-      await authenticatedFetch(`/api/studios/${data.id}/membership-plans`, {
+      const response = await authenticatedFetch("/api/studios/create", {
         method: "POST",
-        body: JSON.stringify({
-          name: "Miembro",
-          isFree: true,
-          description: "Sumate gratis a la comunidad del Estudio.",
-          benefits: ["Acceso a la comunidad del Estudio", "Novedades y contenido para miembros"],
-        }),
+        body: JSON.stringify({ name, city, description }),
       });
-    } catch {
-      // No bloquear la creación del Estudio si el plan por defecto falla --
-      // el dueño puede cargarlo a mano desde el panel.
+      const payload = await readApiJson<{ studio: { id: string; slug: string }; next: string }>(response);
+      router.push(payload.next || `/studios/${payload.studio.slug}/studio-os`);
+    } catch (createError) {
+      setError(createError instanceof Error ? createError.message : "No se pudo crear el Estudio.");
+      setSaving(false);
     }
-
-    setSaving(false);
-    router.push(`/studios/${data.slug}`);
   };
 
-  if (authLoading || isVip === null) {
-    return (
-      <main>
-        <MainNav />
-        <section className="mx-auto max-w-2xl px-4 py-16">
-          <p className="text-white/60">Cargando...</p>
-        </section>
-        <MainFooter />
-      </main>
-    );
+  if (authLoading) {
+    return <main><MainNav /><section className="mx-auto max-w-2xl px-4 py-16"><p className="text-white/60">Cargando...</p></section><MainFooter /></main>;
   }
 
   if (!user) {
-    return (
-      <main>
-        <MainNav />
-        <section className="mx-auto max-w-2xl px-4 py-16">
-          <p className="text-white/60">Necesitás iniciar sesión para crear un estudio.</p>
-        </section>
-        <MainFooter />
-      </main>
-    );
-  }
-
-  if (!isVip) {
-    return (
-      <main>
-        <MainNav />
-        <section className="mx-auto max-w-2xl px-4 py-16">
-          <div className="panel rounded-3xl p-6">
-            <h1 className="text-2xl font-semibold">Crear estudio</h1>
-            <p className="mt-3 text-sm text-white/60">
-              Crear un estudio es una función exclusiva para usuarios con plan Player/VIP de CLOUVA por ahora.
-            </p>
-          </div>
-        </section>
-        <MainFooter />
-      </main>
-    );
+    return <main><MainNav /><section className="mx-auto max-w-2xl px-4 py-16"><p className="text-white/60">Necesitás iniciar sesión para crear un Estudio.</p></section><MainFooter /></main>;
   }
 
   return (
     <main>
       <MainNav />
-      <section className="mx-auto max-w-2xl px-4 py-16">
-        <div className="panel rounded-3xl p-6">
-          <h1 className="text-2xl font-semibold">Crear estudio</h1>
-          {error ? <p className="mt-3 rounded-xl bg-red-500/10 p-3 text-sm text-red-300">{error}</p> : null}
-          <div className="mt-4 space-y-3">
-            <input
-              placeholder="Nombre del estudio"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="w-full rounded-xl bg-white/10 px-4 py-3 text-sm"
-            />
-            <input
-              placeholder="Ciudad"
-              value={city}
-              onChange={(e) => setCity(e.target.value)}
-              className="w-full rounded-xl bg-white/10 px-4 py-3 text-sm"
-            />
-            <textarea
-              placeholder="Descripción"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              className="w-full rounded-xl bg-white/10 px-4 py-3 text-sm"
-              rows={4}
-            />
-            <button
-              onClick={create}
-              disabled={saving || !name.trim()}
-              className="rounded-full bg-[#8f7cff] px-5 py-2.5 text-sm font-medium text-black disabled:opacity-50"
-            >
-              {saving ? "Creando..." : "Crear estudio"}
+      <section className="mx-auto max-w-3xl px-4 py-12 sm:py-16">
+        <div className="panel rounded-[2rem] p-6 sm:p-8">
+          <div className="flex items-start gap-4">
+            <span className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl border border-violet-400/25 bg-violet-500/10 text-violet-200"><Building2 size={25} /></span>
+            <div>
+              <p className="text-xs uppercase tracking-[0.22em] text-violet-300">CLOUVA Studio OS</p>
+              <h1 className="mt-1 text-3xl font-semibold">Crear mi Estudio</h1>
+              <p className="mt-3 text-sm leading-6 text-white/55">Primero preparamos el Estudio como borrador. Después activás su propio plan Studio OS; no depende de tu VIP personal.</p>
+            </div>
+          </div>
+
+          <div className="mt-7 grid gap-2 sm:grid-cols-2">
+            {["Página pública automática", "Identidad visual", "Membresías propias", "Servicios y reservas", "Equipo y permisos", "Ventas y administración"].map((item) => (
+              <p key={item} className="flex items-center gap-2 rounded-xl border border-white/8 bg-black/20 px-3 py-2.5 text-xs text-white/55"><CheckCircle2 size={14} className="text-violet-300" />{item}</p>
+            ))}
+          </div>
+
+          {error ? <p className="mt-5 rounded-xl border border-red-400/20 bg-red-500/10 p-3 text-sm text-red-300">{error}</p> : null}
+          <div className="mt-6 space-y-3">
+            <input placeholder="Nombre del Estudio" value={name} onChange={(event) => setName(event.target.value)} className="w-full rounded-xl border border-white/10 bg-white/[0.05] px-4 py-3 text-sm outline-none focus:border-violet-400/50" />
+            <input placeholder="Ciudad" value={city} onChange={(event) => setCity(event.target.value)} className="w-full rounded-xl border border-white/10 bg-white/[0.05] px-4 py-3 text-sm outline-none focus:border-violet-400/50" />
+            <textarea placeholder="Contanos qué es, qué ofrece y para quién existe" value={description} onChange={(event) => setDescription(event.target.value)} className="w-full rounded-xl border border-white/10 bg-white/[0.05] px-4 py-3 text-sm outline-none focus:border-violet-400/50" rows={5} />
+            <button onClick={() => void create()} disabled={saving || !name.trim()} className="w-full rounded-xl bg-violet-600 px-5 py-3.5 font-semibold text-white transition hover:bg-violet-500 disabled:opacity-50">
+              {saving ? "Preparando Studio OS…" : "Crear borrador y continuar"}
             </button>
           </div>
         </div>
