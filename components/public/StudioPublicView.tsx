@@ -7,12 +7,12 @@ import { StudioServicesCart } from "./StudioServicesCart";
 import { StudioManageButton } from "./StudioManageButton";
 import type { PlayerMedia, SocialLink, StudioMembershipPlan, StudioPlayer, StudioRow, StudioService } from "@/lib/players-data";
 
-function formatPlanPrice(plan: StudioMembershipPlan) {
+export function formatPlanPrice(plan: StudioMembershipPlan) {
   if (plan.is_free) return "Gratis";
   return new Intl.NumberFormat("es-AR", { style: "currency", currency: plan.currency, maximumFractionDigits: 0 }).format(Number(plan.price));
 }
 
-function studioSocialLinks(studio: StudioRow): SocialLink[] {
+export function studioSocialLinks(studio: StudioRow): SocialLink[] {
   const raw = Array.isArray(studio.social_links) ? studio.social_links : [];
   const links = raw
     .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"))

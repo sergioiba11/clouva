@@ -5,6 +5,8 @@ import { generateProfileCopy, type ProfileCopy } from "@/lib/server/vip-profile-
 import { playerBriefToFacts, studioBriefToFacts, type IdentityBrief, type StudioIdentityBrief } from "@/lib/server/vip-profile-brief";
 import { enqueueVipProfileJobStep } from "@/lib/server/cloud-tasks";
 import { fetchReferenceImages, generateCoverAsset, generateLogoAsset, type GeneratedAsset } from "@/lib/server/vip-profile-assets";
+import { analyzeReferenceImages, generateLayoutConfig, type ReferenceAnalysis } from "@/lib/server/vip-profile-layout-gemini";
+import { sanitizeLayoutConfig, type LayoutConfig } from "@/lib/server/layout-config";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
@@ -55,7 +57,7 @@ export async function POST(request: NextRequest) {
   const admin = createAdminSupabase();
   const { data: job, error: jobError } = await admin
     .from("vip_profile_generation_jobs")
-    .select("id,player_id,studio_id,status,attempts,identity_brief,generated_copy,generated_assets,actual_cost_usd,reference_image_urls")
+    .select("id,player_id,studio_id,status,attempts,identity_brief,generated_copy,generated_assets,generated_layout,actual_cost_usd,reference_image_urls")
     .eq("id", body.jobId)
     .maybeSingle();
   if (jobError) return NextResponse.json({ error: jobError.message }, { status: 500 });
@@ -133,6 +135,44 @@ export async function POST(request: NextRequest) {
         const existingLogoUrl = isPlayer
           ? (job.identity_brief as unknown as IdentityBrief).logo_url
           : (job.identity_brief as unknown as StudioIdentityBrief).logo_url;
+        // Layout analysis+generation es "best effort": si falla, el perfil se
+        // arma igual con layout_config vacío (cae a la plantilla fija de
+        // siempre) -- a diferencia de portada/logo, esto es una capa nueva,
+        // no algo de lo que ya dependía el pipeline antes de esta feature.
+        // No se gatea contra el ledger de presupuesto de imagen (esas llamadas
+        // son texto/JSON, no generan imágenes) -- mismo criterio que
+        // generateProfileCopy en analyzing_identity.
+        const layoutResult = await (async (): Promise<{ analysis: ReferenceAnalysis; layout: LayoutConfig | null; costUsd: number } | null> => {
+          const apiKey = process.env.GEMINI_API_KEY;
+          if (!apiKey) return null;
+          try {
+            const facts = isPlayer
+              ? playerBriefToFacts(job.identity_brief as unknown as IdentityBrief)
+              : studioBriefToFacts(job.identity_brief as unknown as StudioIdentityBrief);
+            const { analysis, costUsd: analysisCost } = await analyzeReferenceImages({
+              apiKey,
+              images: referenceImages ?? [],
+              facts,
+              subjectLabel: isPlayer ? "Player" : "Estudio",
+            });
+            const { layout, costUsd: layoutCost } = await generateLayoutConfig({
+              apiKey,
+              images: referenceImages ?? [],
+              analysis,
+              facts,
+              copy: { tagline: copy.tagline, short_bio: copy.short_bio },
+              subjectLabel: isPlayer ? "Player" : "Estudio",
+            });
+            return { analysis, layout, costUsd: analysisCost + layoutCost };
+          } catch (layoutError) {
+            console.warn("vip_profile_layout_generation_failed", {
+              jobId: job.id,
+              message: layoutError instanceof Error ? layoutError.message : "unknown",
+            });
+            return null;
+          }
+        })();
+
         const results = await Promise.allSettled([
           generateCoverAsset({ admin, entityPathPrefix, copy, professionalCategories, referenceImages }),
           existingLogoUrl
@@ -142,7 +182,7 @@ export async function POST(request: NextRequest) {
         const assets = results
           .filter((result): result is PromiseFulfilledResult<GeneratedAsset> => result.status === "fulfilled")
           .map((result) => result.value);
-        const costUsd = assets.reduce((sum, asset) => sum + asset.costUsd, 0);
+        const costUsd = assets.reduce((sum, asset) => sum + asset.costUsd, 0) + (layoutResult?.costUsd ?? 0);
         const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
 
         const { error: saveError } = await admin
@@ -150,6 +190,8 @@ export async function POST(request: NextRequest) {
           .update({
             ...(failure ? {} : { status: "assembling_profile" }),
             generated_assets: assets,
+            layout_analysis: layoutResult?.analysis ?? null,
+            generated_layout: layoutResult?.layout ?? null,
             actual_cost_usd: Number((((job.actual_cost_usd as number | null) ?? 0) + costUsd).toFixed(6)),
           })
           .eq("id", job.id)
@@ -165,6 +207,10 @@ export async function POST(request: NextRequest) {
         const assets = (job.generated_assets as unknown as GeneratedAsset[] | null) ?? [];
         const cover = assets.find((a) => a.kind === "cover");
         const logo = assets.find((a) => a.kind === "logo");
+        // Se vuelve a sanitizar acá (no solo confiar en lo que guardó el paso
+        // anterior) -- defensa en profundidad antes de persistir en la
+        // versión pública real.
+        const layoutConfig = sanitizeLayoutConfig(job.generated_layout) ?? {};
 
         const { data: lastVersion, error: lastVersionError } = await admin
           .from("player_profile_versions")
@@ -192,7 +238,7 @@ export async function POST(request: NextRequest) {
               ...(cover ? [{ kind: "cover", url: cover.url }] : []),
               ...(logo ? [{ kind: "logo", url: logo.url }] : []),
             ],
-            layout_config: {},
+            layout_config: layoutConfig,
             source_snapshot: job.identity_brief,
           })
           .select("id")

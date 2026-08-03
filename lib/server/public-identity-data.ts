@@ -1,4 +1,5 @@
 import { createPublicSupabase } from "./public-supabase";
+import { sanitizeLayoutConfig, type LayoutConfig } from "./layout-config";
 import {
   playerPublicSelect,
   playerStudiosSelect,
@@ -101,19 +102,25 @@ export async function resolveStudioAlias(alias: string) {
   if (studioError) throw new Error(studioError.message);
   if (!studio) return null;
 
-  const [playersResult, mediaResult, projectsResult, servicesResult, membershipPlansResult, aliasResult] = await Promise.all([
+  const [playersResult, mediaResult, projectsResult, servicesResult, membershipPlansResult, aliasResult, versionResult] = await Promise.all([
     supabase.from("player_studios").select(studioPlayersSelect).eq("studio_id", studio.id).eq("is_visible", true).eq("status", "active").order("display_order"),
     supabase.from("player_media").select("id,media_type,origin,source_url,public_url,thumbnail_url,caption,display_order").eq("studio_id", studio.id).eq("visibility", "public").order("display_order"),
     supabase.from("community_projects").select("id,title,cover_url,release_type,release_date,spotify_url,youtube_url,description").eq("studio_id", studio.id).order("release_date", { ascending: false }),
     supabase.from("studio_services").select(studioServicesSelect).eq("studio_id", studio.id).eq("is_active", true).order("display_order"),
     supabase.from("studio_membership_plans").select(studioMembershipPlansSelect).eq("studio_id", studio.id).eq("is_active", true).eq("is_public", true).order("display_order"),
     supabase.from("public_slug_aliases").select("alias").eq("entity_type", "studio").eq("entity_id", studio.id).eq("is_primary", true).maybeSingle(),
+    supabase.from("player_profile_versions").select("layout_config").eq("studio_id", studio.id).eq("status", "published").maybeSingle(),
   ]);
   if (playersResult.error) throw new Error(playersResult.error.message);
   if (mediaResult.error) throw new Error(mediaResult.error.message);
   if (projectsResult.error) throw new Error(projectsResult.error.message);
   if (servicesResult.error) throw new Error(servicesResult.error.message);
   if (membershipPlansResult.error) throw new Error(membershipPlansResult.error.message);
+  // No lanza si falla -- una versión publicada rara sin layout_config legible
+  // no debe tumbar la página pública, solo hace que caiga al template fijo.
+  const layoutConfig: LayoutConfig | null = versionResult.error
+    ? null
+    : sanitizeLayoutConfig(versionResult.data?.layout_config);
 
   return {
     studio: studio as unknown as StudioRow,
@@ -123,5 +130,6 @@ export async function resolveStudioAlias(alias: string) {
     services: (servicesResult.data ?? []) as unknown as StudioService[],
     membershipPlans: (membershipPlansResult.data ?? []) as unknown as StudioMembershipPlan[],
     canonicalAlias: aliasResult.data?.alias || studio.slug,
+    layoutConfig,
   };
 }
