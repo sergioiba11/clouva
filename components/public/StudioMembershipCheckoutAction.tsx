@@ -13,6 +13,12 @@ type JoinResult = {
   redirectTo?: string;
 };
 
+type SubscribeResult = {
+  initPoint: string | null;
+  requiresPlayer?: boolean;
+  redirectTo?: string;
+};
+
 export function StudioMembershipCheckoutAction({
   studioSlug,
   plan,
@@ -57,12 +63,18 @@ export function StudioMembershipCheckoutAction({
         finishJoin(await readApiJson<JoinResult>(response));
         return;
       }
+
       const response = await authenticatedFetch(`/api/studios/${encodeURIComponent(studioSlug)}/membership/subscribe`, {
         method: "POST",
         headers: { "x-idempotency-key": crypto.randomUUID() },
         body: JSON.stringify({ planId: plan.id }),
       });
-      const payload = await readApiJson<{ initPoint: string | null }>(response);
+      const payload = await readApiJson<SubscribeResult>(response);
+      if (payload.requiresPlayer && payload.redirectTo) {
+        router.push(payload.redirectTo);
+        router.refresh();
+        return;
+      }
       if (!payload.initPoint) throw new Error("Mercado Pago no devolvió el checkout.");
       window.location.assign(payload.initPoint);
     } catch (confirmError) {
