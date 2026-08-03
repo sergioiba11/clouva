@@ -72,6 +72,21 @@ test("Studio memberships project the plan role into player_studios atomically", 
   assert.doesNotMatch(publicView, /entry\.player\.primary_role/);
 });
 
+test("paid Studio intent waits for a published Player and resumes the same checkout", async () => {
+  const [subscribeRoute, checkoutAction, playersRoute, previewPage] = await Promise.all([
+    read("./app/api/studios/[slug]/membership/subscribe/route.ts"),
+    read("./components/public/StudioMembershipCheckoutAction.tsx"),
+    read("./app/api/players/me/route.ts"),
+    read("./app/onboarding/profile-preview/page.tsx"),
+  ]);
+  assert.match(subscribeRoute, /pending_studio_joins/);
+  assert.match(subscribeRoute, /requiresPlayer: true/);
+  assert.match(subscribeRoute, /returnPath/);
+  assert.match(checkoutAction, /payload\.requiresPlayer && payload\.redirectTo/);
+  assert.match(playersRoute, /pendingStudioReturnPath/);
+  assert.match(previewPage, /router\.replace\(payload\.pendingStudioReturnPath\)/);
+});
+
 test("cancelled or expired memberships leave the public Studio roster", async () => {
   const trigger = await read("./supabase/migrations/20260802220400_studio_membership_projection_trigger.sql");
   assert.match(trigger, /after insert or update of status/);
