@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { normalizePublicSlug } from "@/core/integrations/instagram/mapper";
 import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
+import { completePendingStudioJoins } from "@/lib/server/studio-memberships";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,6 +34,14 @@ async function findEditablePlayer(admin: ReturnType<typeof createAdminSupabase>,
   const { data, error } = await admin.from("players").select("*").eq("id", member.player_id).maybeSingle();
   if (error) throw new Error(error.message);
   return data;
+}
+
+async function activatePlayerMode(admin: ReturnType<typeof createAdminSupabase>, userId: string) {
+  const { error } = await admin.from("profile_modes").upsert(
+    { user_id: userId, mode: "player", status: "active", activated_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+    { onConflict: "user_id,mode" },
+  );
+  if (error) throw new Error(error.message);
 }
 
 async function availableSlug(admin: ReturnType<typeof createAdminSupabase>, requested: string, currentId?: string) {
@@ -82,6 +91,10 @@ export async function POST(request: NextRequest) {
     const admin = createAdminSupabase();
     const existing = await findEditablePlayer(admin, user.id);
     if (existing) {
+      await activatePlayerMode(admin, user.id);
+      if (existing.owner_user_id === user.id) {
+        await completePendingStudioJoins({ admin, userId: user.id, playerId: existing.id as string });
+      }
       await admin.from("profiles").update({ onboarding_status: existing.is_published ? "published" : "player_created" }).eq("id", user.id);
       return NextResponse.json({ player: existing, created: false });
     }
@@ -142,7 +155,9 @@ export async function POST(request: NextRequest) {
       throw new Error(onboardingError.message);
     }
 
-    return NextResponse.json({ player, created: true });
+    await activatePlayerMode(admin, user.id);
+    const completedStudioJoins = await completePendingStudioJoins({ admin, userId: user.id, playerId: player.id });
+    return NextResponse.json({ player, created: true, completedStudioJoins });
   } catch (error) {
     const message = error instanceof Error ? error.message : "No se pudo crear tu Player.";
     return NextResponse.json({ error: message }, { status: isAuthError(error) ? 401 : 500 });
@@ -185,15 +200,19 @@ export async function PATCH(request: NextRequest) {
       redirect_to_primary: true,
     }, { onConflict: "normalized_alias" });
 
+    let completedStudioJoins = 0;
     if (body.publication_action === "publish") {
       const { error: onboardingError } = await admin
         .from("profiles")
         .update({ onboarding_status: "published", onboarding_completed_at: new Date().toISOString() })
         .eq("id", user.id);
       if (onboardingError) throw new Error(onboardingError.message);
+      if (data.owner_user_id === user.id) {
+        completedStudioJoins = await completePendingStudioJoins({ admin, userId: user.id, playerId: data.id });
+      }
     }
 
-    return NextResponse.json({ player: data });
+    return NextResponse.json({ player: data, completedStudioJoins });
   } catch (error) {
     const message = error instanceof Error ? error.message : "No se pudo guardar tu Player.";
     return NextResponse.json({ error: message }, { status: isAuthError(error) ? 401 : 500 });
