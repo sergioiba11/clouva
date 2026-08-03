@@ -12,12 +12,23 @@ export function PublicShell({
   brandHref = "/matrix",
   navLinks = [],
   accent = "#8f7cff",
+  navStyle = "pill",
+  footer,
   children,
 }: {
   brand: string;
   brandHref?: string;
   navLinks?: PublicNavLink[];
   accent?: string;
+  // "pill" = nav flotante en una cápsula (default, look de siempre). "bar" =
+  // barra sólida de ancho completo debajo del header -- variante real para
+  // layout_config-driven pages, no solo cosmética vía className.
+  navStyle?: "pill" | "bar";
+  // Reemplaza la línea de footer genérica "{brand} · CLOUVA" cuando se pasa.
+  // AccountMenu/NotificationBell/Search/link a marca del header NUNCA se
+  // condicionan a esto -- son acceso funcional a la cuenta, no estética, y
+  // layout_config no tiene forma de quitarlos.
+  footer?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -34,7 +45,7 @@ export function PublicShell({
             <span>{brand}</span>
           </Link>
 
-          {navLinks.length > 0 ? (
+          {navLinks.length > 0 && navStyle === "pill" ? (
             <nav className="mx-auto hidden items-center gap-2 rounded-full border border-white/10 bg-white/[0.025] p-1 text-xs text-white/65 md:flex">
               {navLinks.map((link) => link.disabled ? (
                 <span key={link.href} className="cursor-not-allowed rounded-full px-4 py-2 text-white/25" title="Próximamente">
@@ -61,6 +72,16 @@ export function PublicShell({
           </div>
         </div>
 
+        {navLinks.length > 0 && navStyle === "bar" ? (
+          <nav className="hidden justify-center gap-8 border-t border-white/[0.06] bg-black/40 px-4 py-3 text-xs font-medium uppercase tracking-[0.18em] text-white/60 md:flex">
+            {navLinks.map((link) => link.disabled ? (
+              <span key={link.href} className="cursor-not-allowed text-white/25">{link.label}</span>
+            ) : (
+              <Link key={link.href} href={link.href} className="transition hover:text-[color:var(--public-accent)]">{link.label}</Link>
+            ))}
+          </nav>
+        ) : null}
+
         {navLinks.length > 0 ? (
           <nav className="flex gap-1 overflow-x-auto border-t border-white/[0.06] px-3 py-2 text-[11px] text-white/60 md:hidden">
             {navLinks.map((link) => link.disabled ? (
@@ -74,7 +95,7 @@ export function PublicShell({
 
       <main>{children}</main>
       <footer className="border-t border-white/10 px-4 py-8 text-center text-xs text-white/40 sm:px-6">
-        {brand} · CLOUVA
+        {footer ?? `${brand} · CLOUVA`}
       </footer>
     </div>
   );
