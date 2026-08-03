@@ -66,7 +66,7 @@ test("Mercado Pago activates VIP only after verified server-side payment", () =>
 
 test("Studio administration requires active Studio OS and an authorized internal role", () => {
   const schema = read("./supabase/migrations/20260802220000_multirol_studio_os_schema.sql");
-  const functions = read("./supabase/migrations/20260802220100_multirol_studio_os_functions.sql");
+  const functions = read("./supabase/migrations/20260802220100_studio_os_permissions_and_creation.sql");
   const permissions = read("./lib/server/studio-permissions.ts");
 
   assert.match(schema, /studio_os_status/);
