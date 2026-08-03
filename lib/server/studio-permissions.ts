@@ -1,43 +1,35 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-const MANAGER_ROLES = new Set(["owner", "admin", "manager", "editor"]);
+const MANAGER_ROLES = new Set(["owner", "admin", "manager", "editor", "finance", "bookings", "support"]);
+const ACTIVE_STUDIO_OS = new Set(["active", "grace", "legacy_active"]);
 
 export async function requireStudioManager(args: {
   admin: SupabaseClient;
   userId: string;
   studioId: string;
 }) {
-  const now = new Date().toISOString();
-  const [{ data: entitlement, error: entitlementError }, { data: studio, error: studioError }, { data: membership, error: membershipError }, { data: profile, error: profileError }] = await Promise.all([
+  const [{ data: studio, error: studioError }, { data: membership, error: membershipError }, { data: profile, error: profileError }] = await Promise.all([
     args.admin
-      .from("user_entitlements")
-      .select("id,tier,status,valid_from,valid_until,starts_at,expires_at")
-      .eq("user_id", args.userId)
-      .eq("tier", "vip")
-      .eq("status", "active")
-      .order("created_at", { ascending: false })
-      .limit(1)
+      .from("studios")
+      .select("id,owner_id,name,slug,studio_os_status,studio_os_expires_at,studio_os_subscription_id")
+      .eq("id", args.studioId)
       .maybeSingle(),
-    args.admin.from("studios").select("id,owner_id,name,slug").eq("id", args.studioId).maybeSingle(),
-    args.admin.from("studio_members").select("id,role,status").eq("studio_id", args.studioId).eq("profile_id", args.userId).eq("status", "active").maybeSingle(),
+    args.admin
+      .from("studio_members")
+      .select("id,role,status")
+      .eq("studio_id", args.studioId)
+      .eq("profile_id", args.userId)
+      .eq("status", "active")
+      .maybeSingle(),
     args.admin.from("profiles").select("role").eq("id", args.userId).maybeSingle(),
   ]);
 
-  for (const error of [entitlementError, studioError, membershipError, profileError]) {
+  for (const error of [studioError, membershipError, profileError]) {
     if (error) throw new Error(error.message);
   }
-  if (!studio) throw new Error("El Estudio no existe.");
-
-  const starts = entitlement?.valid_from || entitlement?.starts_at;
-  const expires = entitlement?.valid_until || entitlement?.expires_at;
-  const vipActive = Boolean(
-    entitlement &&
-    (!starts || starts <= now) &&
-    (!expires || expires > now),
-  );
-  if (!vipActive) {
-    const error = new Error("Necesitás CLOUVA VIP activo para administrar Estudios.");
-    (error as Error & { status?: number }).status = 403;
+  if (!studio) {
+    const error = new Error("El Estudio no existe.");
+    (error as Error & { status?: number }).status = 404;
     throw error;
   }
 
@@ -50,5 +42,15 @@ export async function requireStudioManager(args: {
     throw error;
   }
 
-  return { studio, role, entitlement };
+  const expiresAt = studio.studio_os_expires_at ? new Date(studio.studio_os_expires_at) : null;
+  const studioOsActive = ACTIVE_STUDIO_OS.has(studio.studio_os_status)
+    && (!expiresAt || expiresAt > new Date());
+  if (!studioOsActive) {
+    const error = new Error("Studio OS no está activo para este Estudio.");
+    (error as Error & { status?: number; code?: string }).status = 402;
+    (error as Error & { status?: number; code?: string }).code = "STUDIO_OS_REQUIRED";
+    throw error;
+  }
+
+  return { studio, role, studioOsActive: true as const };
 }
