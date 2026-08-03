@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/components/auth-provider";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
 import { StudioAiProfilePanel } from "@/components/studio/StudioAiProfilePanel";
@@ -57,10 +57,19 @@ type ServiceRow = {
 
 export default function StudioDashboardPage({ params }: { params: Promise<{ studioId: string }> }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { user, loading: authLoading } = useAuth();
   const [studioId, setStudioId] = useState("");
   const [data, setData] = useState<DashboardData | null>(null);
   const [section, setSection] = useState<Section>("Resumen");
+
+  // Vuelta del OAuth de Instagram del Estudio (?tab=ai-profile, seteado
+  // server-side por /api/integrations/instagram/connect) -- lleva directo a
+  // la pestaña donde se ve el resultado, en vez de dejar al usuario en
+  // "Resumen" preguntándose si se conectó o no.
+  useEffect(() => {
+    if (searchParams.get("tab") === "ai-profile") setSection("Identidad IA");
+  }, [searchParams]);
   const [profileDraft, setProfileDraft] = useState<Record<string, unknown>>({});
   const [loading, setLoading] = useState(true);
   const [workingId, setWorkingId] = useState<string | null>(null);
