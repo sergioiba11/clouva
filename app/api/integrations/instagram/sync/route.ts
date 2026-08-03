@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { fetchInstagramSnapshot } from "@/core/integrations/instagram/client";
 import { decryptSecret } from "@/core/integrations/instagram/crypto";
 import { mapInstagramProfileToDraft } from "@/core/integrations/instagram/mapper";
+import { requireStudioManager } from "@/lib/server/studio-permissions";
 import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
 
 export const runtime = "nodejs";
@@ -10,16 +11,26 @@ export const dynamic = "force-dynamic";
 export async function POST(request: NextRequest) {
   try {
     const { user } = await requireUser(request);
+    const body = (await request.json().catch(() => ({}))) as { studioId?: string };
+    const studioId = typeof body.studioId === "string" && body.studioId ? body.studioId : undefined;
     const admin = createAdminSupabase();
-    const { data: connection, error } = await admin
+
+    let query = admin
       .from("social_connections")
       .select("id,external_account_id,access_token_ciphertext,token_iv,token_auth_tag,status,expires_at")
-      .eq("user_id", user.id)
       .eq("provider", "instagram")
       .in("status", ["active", "expired"])
       .order("updated_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .limit(1);
+
+    if (studioId) {
+      await requireStudioManager({ admin, userId: user.id, studioId });
+      query = query.eq("studio_id", studioId);
+    } else {
+      query = query.eq("user_id", user.id).is("studio_id", null);
+    }
+
+    const { data: connection, error } = await query.maybeSingle();
     if (error) throw new Error(error.message);
     if (!connection) return NextResponse.json({ error: "Instagram no está conectado." }, { status: 404 });
     if (connection.expires_at && new Date(connection.expires_at as string) <= new Date()) {
@@ -47,6 +58,7 @@ export async function POST(request: NextRequest) {
       .from("social_import_sessions")
       .insert({
         user_id: user.id,
+        studio_id: studioId ?? null,
         connection_id: connection.id,
         provider: "instagram",
         status: "ready",
@@ -64,6 +76,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ importSessionId: session.id });
   } catch (error) {
     const message = error instanceof Error ? error.message : "No se pudo actualizar Instagram.";
-    return NextResponse.json({ error: message }, { status: isAuthError(error) ? 401 : 500 });
+    const status = (error as Error & { status?: number })?.status ?? (isAuthError(error) ? 401 : 500);
+    return NextResponse.json({ error: message }, { status });
   }
 }

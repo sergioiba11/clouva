@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireStudioManager } from "@/lib/server/studio-permissions";
 import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
 
 export const runtime = "nodejs";
@@ -7,16 +8,25 @@ export const dynamic = "force-dynamic";
 export async function DELETE(request: NextRequest) {
   try {
     const { user } = await requireUser(request);
+    const studioId = request.nextUrl.searchParams.get("studioId")?.trim() || undefined;
     const admin = createAdminSupabase();
-    const { data: connection, error } = await admin
+
+    let query = admin
       .from("social_connections")
       .select("id")
-      .eq("user_id", user.id)
       .eq("provider", "instagram")
       .neq("status", "disconnected")
       .order("updated_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .limit(1);
+
+    if (studioId) {
+      await requireStudioManager({ admin, userId: user.id, studioId });
+      query = query.eq("studio_id", studioId);
+    } else {
+      query = query.eq("user_id", user.id).is("studio_id", null);
+    }
+
+    const { data: connection, error } = await query.maybeSingle();
     if (error) throw new Error(error.message);
     if (!connection) return NextResponse.json({ disconnected: true });
 
@@ -47,6 +57,7 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ disconnected: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : "No se pudo desconectar Instagram.";
-    return NextResponse.json({ error: message }, { status: isAuthError(error) ? 401 : 500 });
+    const status = (error as Error & { status?: number })?.status ?? (isAuthError(error) ? 401 : 500);
+    return NextResponse.json({ error: message }, { status });
   }
 }

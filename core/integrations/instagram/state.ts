@@ -13,6 +13,7 @@ export type CreatedInstagramState = {
 export async function createInstagramState(options: {
   admin: SupabaseClient;
   userId?: string;
+  studioId?: string;
   returnPath?: string;
   useContinuation?: boolean;
 }): Promise<CreatedInstagramState> {
@@ -26,6 +27,7 @@ export async function createInstagramState(options: {
     provider: "instagram",
     state_hash: sha256(rawState),
     user_id: options.userId ?? null,
+    studio_id: options.studioId ?? null,
     continuation_hash: rawContinuation ? sha256(rawContinuation) : null,
     return_path: options.returnPath || "/onboarding/instagram/select",
     status: "pending",
@@ -45,7 +47,7 @@ export async function consumeInstagramState(admin: SupabaseClient, rawState: str
     .eq("state_hash", sha256(rawState))
     .eq("status", "pending")
     .gt("expires_at", now)
-    .select("id,user_id,continuation_hash,return_path,expires_at,metadata")
+    .select("id,user_id,studio_id,continuation_hash,return_path,expires_at,metadata")
     .maybeSingle();
 
   if (error) throw new Error(`No se pudo validar el estado OAuth: ${error.message}`);
@@ -53,6 +55,7 @@ export async function consumeInstagramState(admin: SupabaseClient, rawState: str
   return data as {
     id: string;
     user_id: string | null;
+    studio_id: string | null;
     continuation_hash: string | null;
     return_path: string;
     expires_at: string;

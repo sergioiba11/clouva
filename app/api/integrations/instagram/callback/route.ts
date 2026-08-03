@@ -61,17 +61,26 @@ export async function GET(request: NextRequest) {
 
     const { data: existing, error: existingError } = await admin
       .from("social_connections")
-      .select("id,user_id,status")
+      .select("id,user_id,studio_id,status")
       .eq("provider", "instagram")
       .eq("external_account_id", externalAccountId)
       .maybeSingle();
     if (existingError) throw new Error(existingError.message);
-    if (existing?.user_id && oauthState.user_id && existing.user_id !== oauthState.user_id) {
+    // La misma cuenta de Instagram no puede quedar linkeada a más de un
+    // dueño -- ni a otro usuario personal, ni a otro Estudio, ni cruzarse
+    // entre uno y otro (una cuenta ya conectada a un Estudio no puede
+    // "colarse" como la personal de otro usuario, y viceversa).
+    if (existing && (existing.studio_id || oauthState.studio_id)) {
+      if (existing.studio_id !== (oauthState.studio_id ?? null)) {
+        throw new Error("Esa cuenta de Instagram ya está conectada a otro Estudio o usuario de CLOUVA.");
+      }
+    } else if (existing?.user_id && oauthState.user_id && existing.user_id !== oauthState.user_id) {
       throw new Error("Esa cuenta de Instagram ya está conectada a otro usuario de CLOUVA.");
     }
 
     const connectionValues = {
       user_id: oauthState.user_id,
+      studio_id: oauthState.studio_id,
       provider: "instagram",
       external_account_id: externalAccountId,
       external_username: snapshot.profile.username ?? null,
@@ -118,6 +127,7 @@ export async function GET(request: NextRequest) {
       .from("social_import_sessions")
       .insert({
         user_id: oauthState.user_id,
+        studio_id: oauthState.studio_id,
         connection_id: connectionId,
         provider: "instagram",
         status: "ready",
