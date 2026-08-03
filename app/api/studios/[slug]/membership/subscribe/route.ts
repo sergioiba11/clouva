@@ -8,13 +8,11 @@ import { resolveStudioForMembership } from "@/lib/server/studio-membership";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Lazily provisions a billing_products/billing_prices pair the first time a
-// paid plan is actually subscribed to, reusing the exact same Mercado Pago
-// "preapproval" (recurring, no card tokenization) flow already proven for
-// CLOUVA VIP -- see provisionProductPlan/createSubscriptionForProduct in
-// core/billing/service.ts. Money still goes to CLOUVA's own MP account
-// (single collector, no split-payments yet).
-async function ensureBillingProduct(admin: ReturnType<typeof createAdminSupabase>, studio: { id: string; name: string }, plan: { id: string; name: string; billing_product_id: string | null; price: number; currency: string; billing_interval: "month" | "year" }) {
+async function ensureBillingProduct(
+  admin: ReturnType<typeof createAdminSupabase>,
+  studio: { id: string; name: string },
+  plan: { id: string; name: string; billing_product_id: string | null; price: number; currency: string; billing_interval: "month" | "year" },
+) {
   if (plan.billing_product_id) return plan.billing_product_id;
 
   const { data: product, error: productError } = await admin
@@ -25,6 +23,7 @@ async function ensureBillingProduct(admin: ReturnType<typeof createAdminSupabase
       entitlement_tier: "studio_member",
       is_active: true,
       studio_id: studio.id,
+      metadata: { product_scope: "studio_membership", membership_plan_id: plan.id },
     })
     .select("id")
     .single();
@@ -65,23 +64,41 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const { slug } = await params;
     const admin = createAdminSupabase();
     const studio = await resolveStudioForMembership(admin, slug);
-
     const body = (await request.json().catch(() => ({}))) as { planId?: unknown };
     const planId = typeof body.planId === "string" ? body.planId : "";
     if (!planId) return NextResponse.json({ error: "Falta elegir un plan." }, { status: 400 });
 
     const { data: plan, error: planError } = await admin
       .from("studio_membership_plans")
-      .select("id,studio_id,slug,name,is_free,is_active,billing_product_id,price,currency,billing_interval")
+      .select("id,studio_id,slug,name,is_free,is_active,is_public,join_policy,requires_approval,billing_product_id,price,currency,billing_interval")
       .eq("id", planId)
       .eq("studio_id", studio.id)
       .maybeSingle();
     if (planError) throw new Error(planError.message);
-    if (!plan || !plan.is_active || plan.is_free) {
+    if (!plan || !plan.is_active || !plan.is_public || plan.is_free) {
       return NextResponse.json({ error: "Ese plan no está disponible." }, { status: 404 });
     }
+    if (plan.join_policy === "invitation_only") {
+      return NextResponse.json({ error: "Este plan solo está disponible mediante invitación." }, { status: 403 });
+    }
+    if (plan.requires_approval || plan.join_policy === "approval") {
+      return NextResponse.json({
+        error: "Este plan requiere aprobación del Estudio antes del pago. La solicitud debe aprobarse primero para no cobrar sin acceso confirmado.",
+        requiresApproval: true,
+      }, { status: 409 });
+    }
+    if (plan.price == null || !plan.billing_interval) {
+      return NextResponse.json({ error: "El plan pago no tiene precio o frecuencia configurados." }, { status: 409 });
+    }
 
-    const billingProductId = await ensureBillingProduct(admin, studio, plan as { id: string; name: string; billing_product_id: string | null; price: number; currency: string; billing_interval: "month" | "year" });
+    const billingProductId = await ensureBillingProduct(admin, studio, plan as {
+      id: string;
+      name: string;
+      billing_product_id: string | null;
+      price: number;
+      currency: string;
+      billing_interval: "month" | "year";
+    });
 
     const idempotencyKey = request.headers.get("x-idempotency-key")?.trim() || randomUUID();
     const appBase = process.env.APP_BASE_URL?.trim() || "https://clouva.com.ar";
@@ -90,11 +107,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       userId: user.id,
       payerEmail: user.email,
       productId: billingProductId,
+      studioId: studio.id,
       reason: `${studio.name} — ${plan.name}`,
-      // Mercado Pago's preapproval flow doesn't reliably confirm the charge
-      // synchronously on redirect back -- the real activation always comes
-      // from the webhook (processApprovedPayment). status=pending here is
-      // honest about that, not a guess at the outcome.
       backUrl: `${appBase}/studios/${studio.slug}/checkout?plan=${encodeURIComponent(plan.slug)}&status=pending`,
       idempotencyKey,
     });
