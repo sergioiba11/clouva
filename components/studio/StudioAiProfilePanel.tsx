@@ -43,6 +43,13 @@ type Version = {
   published_at: string | null;
 };
 
+type InstagramConnection = {
+  id: string;
+  external_username: string | null;
+  display_name: string | null;
+  status: string;
+} | null;
+
 const IN_PROGRESS_STATUSES = new Set([
   "queued", "preparing_identity", "analyzing_identity", "generating_copy", "generating_assets", "assembling_profile",
 ]);
@@ -82,6 +89,10 @@ export function StudioAiProfilePanel({ studioId }: { studioId: string }) {
   const [draftEdits, setDraftEdits] = useState<Partial<ProfileCopy>>({});
   const [referenceImageUrls, setReferenceImageUrls] = useState<string[]>([]);
   const [uploadingReference, setUploadingReference] = useState(false);
+  const [instagramConnection, setInstagramConnection] = useState<InstagramConnection>(null);
+  const [instagramLoaded, setInstagramLoaded] = useState(false);
+  const [connectingInstagram, setConnectingInstagram] = useState(false);
+  const [wantsRealPhotos, setWantsRealPhotos] = useState(false);
   const pollRef = useRef<number | null>(null);
 
   const load = async () => {
@@ -98,8 +109,53 @@ export function StudioAiProfilePanel({ studioId }: { studioId: string }) {
     }
   };
 
+  const loadInstagram = async () => {
+    try {
+      const response = await authenticatedFetch(`/api/integrations/instagram/status?studioId=${encodeURIComponent(studioId)}`);
+      const payload = await readApiJson<{ connection: InstagramConnection }>(response);
+      setInstagramConnection(payload.connection);
+    } catch {
+      // Silencioso -- si falla, se trata como "no conectado" y el estudio
+      // igual puede usar el fallback de fotos reales.
+      setInstagramConnection(null);
+    } finally {
+      setInstagramLoaded(true);
+    }
+  };
+
+  const connectInstagram = async () => {
+    setConnectingInstagram(true);
+    setError(null);
+    try {
+      const response = await authenticatedFetch("/api/integrations/instagram/connect", {
+        method: "POST",
+        body: JSON.stringify({ studioId }),
+      });
+      const payload = await readApiJson<{ authorizeUrl: string }>(response);
+      window.location.assign(payload.authorizeUrl);
+    } catch (connectError) {
+      setError(connectError instanceof Error ? connectError.message : "No se pudo abrir Instagram.");
+      setConnectingInstagram(false);
+    }
+  };
+
+  const disconnectInstagram = async () => {
+    setConnectingInstagram(true);
+    setError(null);
+    try {
+      const response = await authenticatedFetch(`/api/integrations/instagram/disconnect?studioId=${encodeURIComponent(studioId)}`, { method: "DELETE" });
+      await readApiJson(response);
+      await loadInstagram();
+    } catch (disconnectError) {
+      setError(disconnectError instanceof Error ? disconnectError.message : "No se pudo desconectar Instagram.");
+    } finally {
+      setConnectingInstagram(false);
+    }
+  };
+
   useEffect(() => {
     void load();
+    void loadInstagram();
     return () => { if (pollRef.current) window.clearInterval(pollRef.current); };
   }, [studioId]);
 
@@ -198,6 +254,8 @@ export function StudioAiProfilePanel({ studioId }: { studioId: string }) {
     ?? job?.generated_assets?.find((a) => a.kind === "logo");
   const copy = draftVersion?.copy_config ?? job?.generated_copy;
   const palette = copy?.palette ?? [];
+  const instagramConnected = Boolean(instagramConnection);
+  const showReferenceUpload = instagramLoaded && (instagramConnected || wantsRealPhotos);
 
   return (
     <div className="space-y-5">
@@ -214,9 +272,33 @@ export function StudioAiProfilePanel({ studioId }: { studioId: string }) {
       </div>
 
       {!job || !IN_PROGRESS_STATUSES.has(job.status) ? (
+        <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+          <p className="text-xs uppercase tracking-[0.16em] text-white/40">Instagram del Estudio</p>
+          {!instagramLoaded ? (
+            <p className="mt-1 text-xs text-white/45">Cargando...</p>
+          ) : instagramConnected ? (
+            <div className="mt-2 flex items-center justify-between gap-3">
+              <p className="text-sm text-white/70">Conectado como <span className="font-semibold">@{instagramConnection?.external_username || instagramConnection?.display_name}</span></p>
+              <button disabled={connectingInstagram} onClick={() => void disconnectInstagram()} className="shrink-0 rounded-xl border border-white/15 px-3 py-1.5 text-xs disabled:opacity-40">Desconectar</button>
+            </div>
+          ) : (
+            <div className="mt-2 space-y-2">
+              <p className="text-xs text-white/45">Conectá el Instagram propio del Estudio (no el personal del dueño) para que la IA use su bio y fotos al generar las variantes de diseño.</p>
+              <button disabled={connectingInstagram} onClick={() => void connectInstagram()} className="rounded-xl border border-violet-400/30 bg-violet-500/10 px-4 py-2 text-xs font-semibold text-violet-200 disabled:opacity-40">Conectar Instagram del Estudio</button>
+              <label className="flex items-center gap-2 pt-1 text-xs text-white/55">
+                <input type="checkbox" checked={wantsRealPhotos} onChange={(event) => setWantsRealPhotos(event.target.checked)} className="h-3.5 w-3.5 rounded border-white/20 bg-black/30" />
+                No tengo Instagram del Estudio, pero tengo fotos reales para subir
+              </label>
+            </div>
+          )}
+        </div>
+      ) : null}
+
+      {!job || !IN_PROGRESS_STATUSES.has(job.status) ? (
+        showReferenceUpload ? (
         <div className="rounded-2xl border border-dashed border-white/15 p-4">
-          <p className="text-xs uppercase tracking-[0.16em] text-white/40">Imagen de inspiración (opcional)</p>
-          <p className="mt-1 text-xs text-white/45">Además de los datos del Estudio, la IA puede usar una referencia visual para el logo y la portada.</p>
+          <p className="text-xs uppercase tracking-[0.16em] text-white/40">{instagramConnected ? "Imagen de inspiración (opcional)" : "Fotos reales de tu estudio"}</p>
+          <p className="mt-1 text-xs text-white/45">{instagramConnected ? "Además de los datos del Estudio, la IA puede usar una referencia visual para el logo y la portada." : "Subí fotos reales de tu estudio (o un mockup de web si ya tenés un diseño en mente) para que la IA las use como base."}</p>
           <div className="mt-3 flex flex-wrap items-center gap-3">
             {referenceImageUrls.map((url) => (
               <div key={url} className="relative h-16 w-16 shrink-0 overflow-hidden rounded-xl border border-white/10">
@@ -238,6 +320,7 @@ export function StudioAiProfilePanel({ studioId }: { studioId: string }) {
             ) : null}
           </div>
         </div>
+        ) : null
       ) : null}
 
       {job && IN_PROGRESS_STATUSES.has(job.status) ? (
