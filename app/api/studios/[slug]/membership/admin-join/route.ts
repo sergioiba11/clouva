@@ -54,7 +54,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       publicRole: activation.publicRole,
       needsPlayer: activation.needsPlayer,
       redirectTo: activation.needsPlayer
-        ? `/onboarding/identity?intent=studio_join&studio=${encodeURIComponent(studio.slug)}`
+        ? `/onboarding/player-identity?intent=studio_join&studio=${encodeURIComponent(studio.slug)}`
         : `/studios/${studio.slug}?joined=1`,
     });
   } catch (error) {
