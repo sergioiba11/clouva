@@ -44,6 +44,20 @@ async function activatePlayerMode(admin: ReturnType<typeof createAdminSupabase>,
   if (error) throw new Error(error.message);
 }
 
+async function pendingStudioReturnPath(admin: ReturnType<typeof createAdminSupabase>, userId: string) {
+  const { data, error } = await admin
+    .from("pending_studio_joins")
+    .select("return_path")
+    .eq("user_id", userId)
+    .eq("status", "pending")
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  const path = typeof data?.return_path === "string" ? data.return_path : null;
+  return path?.startsWith("/studios/") ? path : null;
+}
+
 async function availableSlug(admin: ReturnType<typeof createAdminSupabase>, requested: string, currentId?: string) {
   const base = normalizePublicSlug(requested) || "player";
   for (let index = 0; index < 100; index += 1) {
@@ -92,11 +106,19 @@ export async function POST(request: NextRequest) {
     const existing = await findEditablePlayer(admin, user.id);
     if (existing) {
       await activatePlayerMode(admin, user.id);
-      if (existing.owner_user_id === user.id) {
-        await completePendingStudioJoins({ admin, userId: user.id, playerId: existing.id as string });
+      let completedStudioJoins = 0;
+      let pendingStudioReturnPathValue: string | null = null;
+      if (existing.owner_user_id === user.id && existing.is_published) {
+        pendingStudioReturnPathValue = await pendingStudioReturnPath(admin, user.id);
+        completedStudioJoins = await completePendingStudioJoins({ admin, userId: user.id, playerId: existing.id as string });
       }
       await admin.from("profiles").update({ onboarding_status: existing.is_published ? "published" : "player_created" }).eq("id", user.id);
-      return NextResponse.json({ player: existing, created: false });
+      return NextResponse.json({
+        player: existing,
+        created: false,
+        completedStudioJoins,
+        pendingStudioReturnPath: pendingStudioReturnPathValue,
+      });
     }
 
     const body = (await request.json().catch(() => ({}))) as {
@@ -156,8 +178,9 @@ export async function POST(request: NextRequest) {
     }
 
     await activatePlayerMode(admin, user.id);
-    const completedStudioJoins = await completePendingStudioJoins({ admin, userId: user.id, playerId: player.id });
-    return NextResponse.json({ player, created: true, completedStudioJoins });
+    // Studio membership projection waits until the Player is published. This
+    // prevents a draft identity from appearing in a public Studio roster.
+    return NextResponse.json({ player, created: true, completedStudioJoins: 0, pendingStudioReturnPath: null });
   } catch (error) {
     const message = error instanceof Error ? error.message : "No se pudo crear tu Player.";
     return NextResponse.json({ error: message }, { status: isAuthError(error) ? 401 : 500 });
@@ -201,6 +224,7 @@ export async function PATCH(request: NextRequest) {
     }, { onConflict: "normalized_alias" });
 
     let completedStudioJoins = 0;
+    let pendingStudioReturnPathValue: string | null = null;
     if (body.publication_action === "publish") {
       const { error: onboardingError } = await admin
         .from("profiles")
@@ -208,11 +232,16 @@ export async function PATCH(request: NextRequest) {
         .eq("id", user.id);
       if (onboardingError) throw new Error(onboardingError.message);
       if (data.owner_user_id === user.id) {
+        pendingStudioReturnPathValue = await pendingStudioReturnPath(admin, user.id);
         completedStudioJoins = await completePendingStudioJoins({ admin, userId: user.id, playerId: data.id });
       }
     }
 
-    return NextResponse.json({ player: data, completedStudioJoins });
+    return NextResponse.json({
+      player: data,
+      completedStudioJoins,
+      pendingStudioReturnPath: pendingStudioReturnPathValue,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : "No se pudo guardar tu Player.";
     return NextResponse.json({ error: message }, { status: isAuthError(error) ? 401 : 500 });
