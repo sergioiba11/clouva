@@ -91,6 +91,34 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       return NextResponse.json({ error: "El plan pago no tiene precio o frecuencia configurados." }, { status: 409 });
     }
 
+    // A paid membership must never charge a user before the public Player that
+    // will receive the role exists. Preserve the exact checkout and resume it
+    // immediately after the Player is published.
+    const { data: player, error: playerError } = await admin
+      .from("players")
+      .select("id,is_published")
+      .eq("owner_user_id", user.id)
+      .maybeSingle();
+    if (playerError) throw new Error(playerError.message);
+    if (!player || !player.is_published) {
+      const returnPath = `/studios/${studio.slug}/checkout?plan=${encodeURIComponent(plan.slug)}`;
+      const { error: pendingError } = await admin.from("pending_studio_joins").upsert({
+        user_id: user.id,
+        studio_id: studio.id,
+        plan_id: plan.id,
+        membership_id: null,
+        return_path: returnPath,
+        status: "pending",
+        completed_at: null,
+      }, { onConflict: "user_id,studio_id" });
+      if (pendingError) throw new Error(pendingError.message);
+
+      return NextResponse.json({
+        requiresPlayer: true,
+        redirectTo: `/onboarding/player-identity?intent=studio_subscription&studio=${encodeURIComponent(studio.slug)}&plan=${encodeURIComponent(plan.slug)}`,
+      });
+    }
+
     const billingProductId = await ensureBillingProduct(admin, studio, plan as {
       id: string;
       name: string;
