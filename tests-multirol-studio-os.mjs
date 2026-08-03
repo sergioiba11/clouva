@@ -40,17 +40,17 @@ test("Studio OS is owned by the Studio and management has no personal VIP gate",
 });
 
 test("Studio memberships project the plan role into player_studios atomically", async () => {
-  const [joinRoute, helper, publicView, functionsMigration] = await Promise.all([
+  const [joinRoute, helper, publicView, activationMigration] = await Promise.all([
     read("./app/api/studios/[slug]/membership/join/route.ts"),
     read("./lib/server/studio-memberships.ts"),
     read("./components/public/StudioPublicView.tsx"),
-    read("./supabase/migrations/20260802220100_multirol_studio_os_functions.sql"),
+    read("./supabase/migrations/20260802220300_multirol_membership_activation_fix.sql"),
   ]);
   assert.match(joinRoute, /activateStudioMembership/);
   assert.match(helper, /activate_studio_membership/);
-  assert.match(functionsMigration, /insert into public\.studio_memberships/);
-  assert.match(functionsMigration, /insert into public\.player_studios/);
-  assert.match(functionsMigration, /unique|on conflict \(player_id, studio_id\)/i);
+  assert.match(activationMigration, /insert into public\.studio_memberships/);
+  assert.match(activationMigration, /insert into public\.player_studios/);
+  assert.match(activationMigration, /on conflict \(player_id, studio_id\)/i);
   assert.match(publicView, /entry\.role \|\| "Miembro"/);
   assert.doesNotMatch(publicView, /entry\.player\.primary_role/);
 });
@@ -67,7 +67,7 @@ test("cancelled or expired memberships leave the public Studio roster", async ()
 test("public membership and private permission stay separate", async () => {
   const [schema, claimFunction, membersRoute] = await Promise.all([
     read("./supabase/migrations/20260802220000_multirol_studio_os_schema.sql"),
-    read("./supabase/migrations/20260802220100_multirol_studio_os_functions.sql"),
+    read("./supabase/migrations/20260802220110_studio_os_completion_and_claims.sql"),
     read("./app/api/studios/[slug]/membership/members/route.ts"),
   ]);
   assert.match(schema, /studio_memberships/);
