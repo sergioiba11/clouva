@@ -39,6 +39,23 @@ test("Studio OS is owned by the Studio and management has no personal VIP gate",
   assert.match(billing, /activate_studio_os/);
 });
 
+test("Studio OS price is explicitly configured and versioned instead of invented", async () => {
+  const [schema, priceApi, adminPage, versionMigration] = await Promise.all([
+    read("./supabase/migrations/20260802220000_multirol_studio_os_schema.sql"),
+    read("./app/api/admin/studio-os-price/route.ts"),
+    read("./app/admin/estudios/studio-os/page.tsx"),
+    read("./supabase/migrations/20260802220500_billing_price_versions.sql"),
+  ]);
+  assert.match(schema, /'clouva_studio_os'/);
+  assert.match(schema, /false,/);
+  assert.match(priceApi, /Ingresá un precio mayor que cero/);
+  assert.match(priceApi, /provisionProductPlan/);
+  assert.match(priceApi, /version_number/);
+  assert.match(adminPage, /No se publica ningún precio inventado/);
+  assert.match(versionMigration, /version_number/);
+  assert.match(versionMigration, /drop constraint if exists billing_prices_product_id_provider_currency_billing_interva_key/);
+});
+
 test("Studio memberships project the plan role into player_studios atomically", async () => {
   const [joinRoute, helper, publicView, activationMigration] = await Promise.all([
     read("./app/api/studios/[slug]/membership/join/route.ts"),
