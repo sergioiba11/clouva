@@ -71,12 +71,13 @@ export async function POST(request: NextRequest) {
     const billingInterval = body.billingInterval === "year" ? "year" : "month";
     const environment = getBillingEnvironment();
 
-    let { data: product, error: productError } = await admin
+    const productLookup = await admin
       .from("billing_products")
       .select("id")
       .eq("code", "clouva_studio_os")
       .maybeSingle();
-    if (productError) throw new Error(productError.message);
+    if (productLookup.error) throw new Error(productLookup.error.message);
+    let product = productLookup.data;
     if (!product) {
       const created = await admin
         .from("billing_products")
