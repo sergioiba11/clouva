@@ -51,6 +51,15 @@ test("Studio memberships project the plan role into player_studios atomically", 
   assert.doesNotMatch(publicView, /entry\.player\.primary_role/);
 });
 
+test("cancelled or expired memberships leave the public Studio roster", async () => {
+  const trigger = await read("./supabase/migrations/20260802220400_studio_membership_projection_trigger.sql");
+  assert.match(trigger, /after insert or update of status/);
+  assert.match(trigger, /new\.status = 'active'/);
+  assert.match(trigger, /is_visible = false/);
+  assert.match(trigger, /status = 'inactive'/);
+  assert.match(trigger, /source_membership_id = new\.id/);
+});
+
 test("public membership and private permission stay separate", async () => {
   const [schema, claimFunction, membersRoute] = await Promise.all([
     read("./supabase/migrations/20260802220000_multirol_studio_os_schema.sql"),
