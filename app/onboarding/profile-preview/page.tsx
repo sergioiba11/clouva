@@ -41,7 +41,16 @@ export default function ProfilePreviewPage() {
         method: "PATCH",
         body: JSON.stringify({ publication_action: "publish" }),
       });
-      const payload = await readApiJson<{ player: Player }>(response);
+      const payload = await readApiJson<{
+        player: Player;
+        completedStudioJoins: number;
+        pendingStudioReturnPath: string | null;
+      }>(response);
+
+      if (payload.completedStudioJoins > 0 && payload.pendingStudioReturnPath) {
+        router.replace(payload.pendingStudioReturnPath);
+        return;
+      }
       router.push(`/onboarding/vip-offer?slug=${encodeURIComponent(payload.player.slug)}`);
     } catch (publishError) {
       setError(publishError instanceof Error ? publishError.message : "No se pudo publicar.");
