@@ -26,12 +26,18 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
   };
 }
 
-export default async function StudioProfilePage({ params }: { params: Promise<{ slug: string }> }) {
-  const { slug } = await params;
+export default async function StudioProfilePage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ slug: string }>;
+  searchParams: Promise<{ joined?: string }>;
+}) {
+  const [{ slug }, query] = await Promise.all([params, searchParams]);
   const result = await resolveStudioAlias(slug);
   if (!result) notFound();
   if (slug.toLowerCase() !== result.canonicalAlias.toLowerCase()) {
-    redirect(`/studios/${result.canonicalAlias}`);
+    redirect(`/studios/${result.canonicalAlias}${query.joined === "1" ? "?joined=1" : ""}`);
   }
 
   return (
@@ -42,6 +48,7 @@ export default async function StudioProfilePage({ params }: { params: Promise<{ 
       projects={result.projects as Array<Record<string, unknown>>}
       services={result.services}
       membershipPlans={result.membershipPlans}
+      joined={query.joined === "1"}
     />
   );
 }
