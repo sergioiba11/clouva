@@ -6,21 +6,25 @@ import { studioMembershipPlansSelect } from "@/lib/players-data";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const JOIN_POLICIES = new Set(["automatic", "approval", "invitation_only"]);
+
+function cleanKey(value: unknown, fallback: string) {
+  if (typeof value !== "string" || !value.trim()) return fallback;
+  const key = value.trim().toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 60);
+  return key || fallback;
+}
+
+function cleanLabel(value: unknown, fallback: string) {
+  return typeof value === "string" && value.trim() ? value.trim().slice(0, 80) : fallback;
+}
+
 function sanitizePlanInput(body: unknown) {
   const raw = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
   const name = typeof raw.name === "string" ? raw.name.trim().slice(0, 100) : "";
   if (!name) throw new Error("El nombre del plan es obligatorio.");
 
   const slugSource = typeof raw.slug === "string" && raw.slug.trim() ? raw.slug : name;
-  const slug = slugSource
-    .toString()
-    .trim()
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 80);
+  const slug = slugSource.toString().trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80);
   if (!slug) throw new Error("No se pudo generar un slug para el plan.");
 
   const isFree = Boolean(raw.isFree);
@@ -35,6 +39,9 @@ function sanitizePlanInput(body: unknown) {
   const benefits = Array.isArray(raw.benefits)
     ? raw.benefits.filter((item): item is string => typeof item === "string" && item.trim().length > 0).map((item) => item.trim().slice(0, 200)).slice(0, 20)
     : [];
+  const publicRoleLabel = cleanLabel(raw.publicRoleLabel, isFree ? "Artista" : name);
+  const areaLabel = cleanLabel(raw.areaLabel, isFree ? "Artística" : "Creativa");
+  const joinPolicy = typeof raw.joinPolicy === "string" && JOIN_POLICIES.has(raw.joinPolicy) ? raw.joinPolicy : "automatic";
 
   return {
     name,
@@ -47,6 +54,13 @@ function sanitizePlanInput(body: unknown) {
     is_active: raw.isActive === undefined ? true : Boolean(raw.isActive),
     is_public: raw.isPublic === undefined ? true : Boolean(raw.isPublic),
     benefits,
+    public_role_key: cleanKey(raw.publicRoleKey, isFree ? "artist" : cleanKey(publicRoleLabel, "member")),
+    public_role_label: publicRoleLabel,
+    area_key: cleanKey(raw.areaKey, isFree ? "artistic" : cleanKey(areaLabel, "creative")),
+    area_label: areaLabel,
+    join_policy: joinPolicy,
+    requires_approval: joinPolicy === "approval" || Boolean(raw.requiresApproval),
+    display_badge: cleanLabel(raw.displayBadge, publicRoleLabel.toUpperCase()),
   };
 }
 
@@ -57,18 +71,12 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     const admin = createAdminSupabase();
     await requireStudioManager({ admin, userId: user.id, studioId });
 
-    const { data, error } = await admin
-      .from("studio_membership_plans")
-      .select(studioMembershipPlansSelect)
-      .eq("studio_id", studioId)
-      .order("display_order", { ascending: true });
+    const { data, error } = await admin.from("studio_membership_plans").select(studioMembershipPlansSelect).eq("studio_id", studioId).order("display_order");
     if (error) throw new Error(error.message);
-
     return NextResponse.json({ plans: data ?? [] });
   } catch (error) {
     const status = (error as Error & { status?: number })?.status ?? (isAuthError(error) ? 401 : 500);
-    const message = error instanceof Error ? error.message : "No se pudieron cargar los planes.";
-    return NextResponse.json({ error: message }, { status });
+    return NextResponse.json({ error: error instanceof Error ? error.message : "No se pudieron cargar los planes." }, { status });
   }
 }
 
@@ -78,18 +86,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const { slug: studioId } = await params;
     const admin = createAdminSupabase();
     await requireStudioManager({ admin, userId: user.id, studioId });
+    const values = sanitizePlanInput(await request.json().catch(() => ({})));
 
-    const body = await request.json().catch(() => ({}));
-    const values = sanitizePlanInput(body);
-
-    const { data: last } = await admin
-      .from("studio_membership_plans")
-      .select("display_order")
-      .eq("studio_id", studioId)
-      .order("display_order", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
+    const { data: last } = await admin.from("studio_membership_plans").select("display_order").eq("studio_id", studioId).order("display_order", { ascending: false }).limit(1).maybeSingle();
     const { data, error } = await admin
       .from("studio_membership_plans")
       .insert({ ...values, studio_id: studioId, created_by: user.id, display_order: ((last?.display_order as number | null) ?? -1) + 1 })
@@ -99,7 +98,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       if (error.code === "23505") throw new Error("Ya existe un plan con ese nombre en este Estudio.");
       throw new Error(error.message);
     }
-
     return NextResponse.json({ plan: data });
   } catch (error) {
     const status = (error as Error & { status?: number })?.status ?? (isAuthError(error) ? 401 : 500);
