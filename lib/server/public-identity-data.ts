@@ -14,6 +14,9 @@ import {
   type StudioService,
 } from "@/lib/players-data";
 
+const studioPublicSelect =
+  "id,slug,name,logo_url,cover_url,description,short_bio,tagline,categories,city,country,website_url,social_links,contact_email,is_published,publication_status,studio_os_status,seo_title,seo_description,share_title,share_description,og_image_url,accent_color,palette";
+
 export async function listPublishedPlayers() {
   const { data, error } = await createPublicSupabase()
     .from("players")
@@ -38,9 +41,7 @@ export async function resolvePlayerAlias(alias: string) {
   if (aliasError) throw new Error(aliasError.message);
 
   let playerQuery = supabase.from("players").select(playerPublicSelect);
-  playerQuery = aliasRow
-    ? playerQuery.eq("id", aliasRow.entity_id)
-    : playerQuery.eq("slug", normalized);
+  playerQuery = aliasRow ? playerQuery.eq("id", aliasRow.entity_id) : playerQuery.eq("slug", normalized);
   const { data: player, error: playerError } = await playerQuery
     .eq("is_published", true)
     .eq("publication_status", "published")
@@ -50,7 +51,7 @@ export async function resolvePlayerAlias(alias: string) {
   if (!player) return null;
 
   const [affiliationResult, mediaResult, aliasResult, vipResult] = await Promise.all([
-    supabase.from("player_studios").select(playerStudiosSelect).eq("player_id", player.id).eq("is_visible", true).order("display_order"),
+    supabase.from("player_studios").select(playerStudiosSelect).eq("player_id", player.id).eq("is_visible", true).eq("status", "active").order("display_order"),
     supabase.from("player_media").select("id,media_type,origin,source_url,public_url,thumbnail_url,caption,display_order").eq("player_id", player.id).eq("visibility", "public").order("display_order"),
     supabase.from("public_slug_aliases").select("alias").eq("entity_type", "player").eq("entity_id", player.id).eq("is_primary", true).maybeSingle(),
     supabase.rpc("is_player_vip", { p_player_id: player.id }),
@@ -70,9 +71,10 @@ export async function resolvePlayerAlias(alias: string) {
 export async function listPublishedStudios() {
   const { data, error } = await createPublicSupabase()
     .from("studios")
-    .select("id,slug,name,logo_url,cover_url,description,short_bio,tagline,categories,city,country,website_url,social_links,contact_email,is_published,publication_status,seo_title,seo_description,share_title,share_description,og_image_url,accent_color,palette")
+    .select(studioPublicSelect)
     .eq("is_published", true)
     .eq("publication_status", "published")
+    .in("studio_os_status", ["active", "grace", "legacy_active"])
     .order("name");
   if (error) throw new Error(error.message);
   return (data ?? []) as unknown as StudioRow[];
@@ -89,19 +91,18 @@ export async function resolveStudioAlias(alias: string) {
     .maybeSingle();
   if (aliasError) throw new Error(aliasError.message);
 
-  let query = supabase
-    .from("studios")
-    .select("id,slug,name,logo_url,cover_url,description,short_bio,tagline,categories,city,country,website_url,social_links,contact_email,is_published,publication_status,seo_title,seo_description,share_title,share_description,og_image_url,accent_color,palette");
+  let query = supabase.from("studios").select(studioPublicSelect);
   query = aliasRow ? query.eq("id", aliasRow.entity_id) : query.eq("slug", normalized);
   const { data: studio, error: studioError } = await query
     .eq("is_published", true)
     .eq("publication_status", "published")
+    .in("studio_os_status", ["active", "grace", "legacy_active"])
     .maybeSingle();
   if (studioError) throw new Error(studioError.message);
   if (!studio) return null;
 
   const [playersResult, mediaResult, projectsResult, servicesResult, membershipPlansResult, aliasResult] = await Promise.all([
-    supabase.from("player_studios").select(studioPlayersSelect).eq("studio_id", studio.id).eq("is_visible", true).order("display_order"),
+    supabase.from("player_studios").select(studioPlayersSelect).eq("studio_id", studio.id).eq("is_visible", true).eq("status", "active").order("display_order"),
     supabase.from("player_media").select("id,media_type,origin,source_url,public_url,thumbnail_url,caption,display_order").eq("studio_id", studio.id).eq("visibility", "public").order("display_order"),
     supabase.from("community_projects").select("id,title,cover_url,release_type,release_date,spotify_url,youtube_url,description").eq("studio_id", studio.id).order("release_date", { ascending: false }),
     supabase.from("studio_services").select(studioServicesSelect).eq("studio_id", studio.id).eq("is_active", true).order("display_order"),
