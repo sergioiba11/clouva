@@ -28,7 +28,10 @@ export function StudioMembershipCheckoutAction({
   if (loading) return null;
 
   if (!user) {
-    const query = new URLSearchParams({ studio: studioSlug, intent: plan.isFree ? "join" : "subscribe", plan: plan.slug });
+    // The existing login redirect preserves `plan` for subscribe intent. The
+    // checkout itself decides whether the selected plan is free or paid, so no
+    // payment starts before the user confirms it there.
+    const query = new URLSearchParams({ studio: studioSlug, intent: "subscribe", plan: plan.slug });
     return (
       <a href={`/login?${query.toString()}`} className="block w-full rounded-xl bg-violet-600 px-5 py-3 text-center font-semibold transition hover:bg-violet-500">
         {plan.isFree ? "Iniciar sesión para unirme" : "Iniciar sesión para continuar"}
