@@ -64,15 +64,18 @@ test("Mercado Pago activates VIP only after verified server-side payment", () =>
   assert.match(signature, /timingSafeEqual/);
 });
 
-test("Studio administration requires both active VIP and an authorized role", () => {
-  const migration = read("./supabase/migrations/20260729212900_can_manage_studio_vip.sql");
+test("Studio administration requires active Studio OS and an authorized internal role", () => {
+  const schema = read("./supabase/migrations/20260802220000_multirol_studio_os_schema.sql");
+  const functions = read("./supabase/migrations/20260802220100_studio_os_permissions_and_creation.sql");
   const permissions = read("./lib/server/studio-permissions.ts");
 
-  assert.match(migration, /ue\.tier = 'vip'/);
-  assert.match(migration, /ue\.status = 'active'/);
-  assert.match(migration, /sm\.role in \('owner', 'admin', 'manager', 'editor'\)/);
-  assert.match(permissions, /user_entitlements/);
+  assert.match(schema, /studio_os_status/);
+  assert.match(functions, /is_studio_os_active/);
+  assert.match(functions, /sm\.role in \('owner', 'admin', 'manager', 'editor', 'finance', 'bookings', 'support'\)/);
+  assert.match(permissions, /studio_os_status/);
   assert.match(permissions, /studio_members/);
+  assert.doesNotMatch(permissions, /user_entitlements/);
+  assert.doesNotMatch(permissions, /\.eq\("tier",\s*"vip"\)/);
 });
 
 test("Identity migrations are ordered before secure Studio claims", () => {

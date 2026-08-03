@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
 import { resolveStudioForMembership } from "@/lib/server/studio-membership";
+import { activateStudioMembership } from "@/lib/server/studio-memberships";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Platform-admin-only shortcut: join any plan (free or paid) without going
-// through Mercado Pago. No billing_products/prices/subscriptions touched --
-// this is a manual grant (source "admin_bypass"), not a real payment.
+// Platform-admin-only manual grant. It does not fabricate a payment, but it
+// still uses the same canonical transaction as free and paid memberships so
+// the public Player role can never drift from the membership record.
 export async function POST(request: NextRequest, { params }: { params: Promise<{ slug: string }> }) {
   try {
     const { user } = await requireUser(request);
@@ -23,7 +24,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     const { slug } = await params;
     const studio = await resolveStudioForMembership(admin, slug);
-
     const body = (await request.json().catch(() => ({}))) as { planId?: unknown };
     const planId = typeof body.planId === "string" ? body.planId : "";
     if (!planId) return NextResponse.json({ error: "Falta elegir un plan." }, { status: 400 });
@@ -38,15 +38,25 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (planError) throw new Error(planError.message);
     if (!plan) return NextResponse.json({ error: "Ese plan no está disponible." }, { status: 404 });
 
-    const { error: upsertError } = await admin
-      .from("studio_fan_memberships")
-      .upsert(
-        { studio_id: studio.id, user_id: user.id, plan_id: plan.id, status: "active", source: "admin_bypass" },
-        { onConflict: "studio_id,user_id" },
-      );
-    if (upsertError) throw new Error(upsertError.message);
+    const activation = await activateStudioMembership({
+      admin,
+      userId: user.id,
+      studioId: studio.id,
+      planId: plan.id,
+      source: "admin_bypass",
+      forceActive: true,
+      returnPath: `/studios/${studio.slug}?joined=1`,
+    });
 
-    return NextResponse.json({ joined: true, studioSlug: studio.slug });
+    return NextResponse.json({
+      joined: true,
+      studioSlug: studio.slug,
+      publicRole: activation.publicRole,
+      needsPlayer: activation.needsPlayer,
+      redirectTo: activation.needsPlayer
+        ? `/onboarding/player-identity?intent=studio_join&studio=${encodeURIComponent(studio.slug)}`
+        : `/studios/${studio.slug}?joined=1`,
+    });
   } catch (error) {
     const status = (error as Error & { status?: number })?.status ?? (isAuthError(error) ? 401 : 500);
     const message = error instanceof Error ? error.message : "No se pudo completar la membresía.";

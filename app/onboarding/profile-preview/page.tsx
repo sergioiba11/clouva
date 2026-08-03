@@ -41,7 +41,18 @@ export default function ProfilePreviewPage() {
         method: "PATCH",
         body: JSON.stringify({ publication_action: "publish" }),
       });
-      const payload = await readApiJson<{ player: Player }>(response);
+      const payload = await readApiJson<{
+        player: Player;
+        completedStudioJoins: number;
+        pendingStudioReturnPath: string | null;
+      }>(response);
+
+      // Free memberships are completed here; paid intents return to checkout
+      // first and only become memberships after Mercado Pago confirms payment.
+      if (payload.pendingStudioReturnPath) {
+        router.replace(payload.pendingStudioReturnPath);
+        return;
+      }
       router.push(`/onboarding/vip-offer?slug=${encodeURIComponent(payload.player.slug)}`);
     } catch (publishError) {
       setError(publishError instanceof Error ? publishError.message : "No se pudo publicar.");

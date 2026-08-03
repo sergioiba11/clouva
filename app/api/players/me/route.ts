@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { normalizePublicSlug } from "@/core/integrations/instagram/mapper";
 import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
+import { completePendingStudioJoins } from "@/lib/server/studio-memberships";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -33,6 +34,28 @@ async function findEditablePlayer(admin: ReturnType<typeof createAdminSupabase>,
   const { data, error } = await admin.from("players").select("*").eq("id", member.player_id).maybeSingle();
   if (error) throw new Error(error.message);
   return data;
+}
+
+async function activatePlayerMode(admin: ReturnType<typeof createAdminSupabase>, userId: string) {
+  const { error } = await admin.from("profile_modes").upsert(
+    { user_id: userId, mode: "player", status: "active", activated_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+    { onConflict: "user_id,mode" },
+  );
+  if (error) throw new Error(error.message);
+}
+
+async function pendingStudioReturnPath(admin: ReturnType<typeof createAdminSupabase>, userId: string) {
+  const { data, error } = await admin
+    .from("pending_studio_joins")
+    .select("return_path")
+    .eq("user_id", userId)
+    .eq("status", "pending")
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  const path = typeof data?.return_path === "string" ? data.return_path : null;
+  return path?.startsWith("/studios/") ? path : null;
 }
 
 async function availableSlug(admin: ReturnType<typeof createAdminSupabase>, requested: string, currentId?: string) {
@@ -82,8 +105,20 @@ export async function POST(request: NextRequest) {
     const admin = createAdminSupabase();
     const existing = await findEditablePlayer(admin, user.id);
     if (existing) {
+      await activatePlayerMode(admin, user.id);
+      let completedStudioJoins = 0;
+      let pendingStudioReturnPathValue: string | null = null;
+      if (existing.owner_user_id === user.id && existing.is_published) {
+        pendingStudioReturnPathValue = await pendingStudioReturnPath(admin, user.id);
+        completedStudioJoins = await completePendingStudioJoins({ admin, userId: user.id, playerId: existing.id as string });
+      }
       await admin.from("profiles").update({ onboarding_status: existing.is_published ? "published" : "player_created" }).eq("id", user.id);
-      return NextResponse.json({ player: existing, created: false });
+      return NextResponse.json({
+        player: existing,
+        created: false,
+        completedStudioJoins,
+        pendingStudioReturnPath: pendingStudioReturnPathValue,
+      });
     }
 
     const body = (await request.json().catch(() => ({}))) as {
@@ -142,7 +177,10 @@ export async function POST(request: NextRequest) {
       throw new Error(onboardingError.message);
     }
 
-    return NextResponse.json({ player, created: true });
+    await activatePlayerMode(admin, user.id);
+    // Studio membership projection waits until the Player is published. This
+    // prevents a draft identity from appearing in a public Studio roster.
+    return NextResponse.json({ player, created: true, completedStudioJoins: 0, pendingStudioReturnPath: null });
   } catch (error) {
     const message = error instanceof Error ? error.message : "No se pudo crear tu Player.";
     return NextResponse.json({ error: message }, { status: isAuthError(error) ? 401 : 500 });
@@ -185,15 +223,25 @@ export async function PATCH(request: NextRequest) {
       redirect_to_primary: true,
     }, { onConflict: "normalized_alias" });
 
+    let completedStudioJoins = 0;
+    let pendingStudioReturnPathValue: string | null = null;
     if (body.publication_action === "publish") {
       const { error: onboardingError } = await admin
         .from("profiles")
         .update({ onboarding_status: "published", onboarding_completed_at: new Date().toISOString() })
         .eq("id", user.id);
       if (onboardingError) throw new Error(onboardingError.message);
+      if (data.owner_user_id === user.id) {
+        pendingStudioReturnPathValue = await pendingStudioReturnPath(admin, user.id);
+        completedStudioJoins = await completePendingStudioJoins({ admin, userId: user.id, playerId: data.id });
+      }
     }
 
-    return NextResponse.json({ player: data });
+    return NextResponse.json({
+      player: data,
+      completedStudioJoins,
+      pendingStudioReturnPath: pendingStudioReturnPathValue,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : "No se pudo guardar tu Player.";
     return NextResponse.json({ error: message }, { status: isAuthError(error) ? 401 : 500 });

@@ -24,10 +24,7 @@ function sanitizeStudioChanges(input: unknown) {
   return output;
 }
 
-export async function GET(
-  request: NextRequest,
-  context: { params: Promise<{ slug: string }> },
-) {
+export async function GET(request: NextRequest, context: { params: Promise<{ slug: string }> }) {
   try {
     const { user } = await requireUser(request);
     const { slug: studioId } = await context.params;
@@ -38,7 +35,7 @@ export async function GET(
       admin.from("studios").select("*").eq("id", studioId).single(),
       admin.from("studio_applications").select("id,artist_name,category,instagram_url,clouva_profile_url,contact_email,presentation,activity,reason,material_links,availability,message,status,created_at,player:players(id,slug,display_name,profile_image_url)").eq("studio_id", studioId).order("created_at", { ascending: false }).limit(100),
       admin.from("studio_members").select("id,profile_id,role,status,joined_at,profile:profiles(id,username,display_name,full_name,avatar_url)").eq("studio_id", studioId).order("joined_at"),
-      admin.from("player_studios").select("id,role,is_primary,is_visible,display_order,player:players(id,slug,display_name,primary_role,profile_image_url)").eq("studio_id", studioId).order("display_order"),
+      admin.from("player_studios").select("id,role,area_label,status,is_primary,is_visible,display_order,player:players(id,slug,display_name,primary_role,profile_image_url)").eq("studio_id", studioId).order("display_order"),
       admin.from("community_projects").select("*").eq("studio_id", studioId).order("created_at", { ascending: false }).limit(50),
       admin.from("community_events").select("*").eq("studio_id", studioId).order("starts_at", { ascending: false }).limit(50),
     ]);
@@ -47,7 +44,7 @@ export async function GET(
     }
 
     return NextResponse.json({
-      permission: { role: permission.role, vip: true },
+      permission: { role: permission.role, studio_os_active: permission.studioOsActive },
       studio: studioResult.data,
       applications: applicationsResult.data ?? [],
       members: membersResult.data ?? [],
@@ -62,10 +59,7 @@ export async function GET(
   }
 }
 
-export async function PATCH(
-  request: NextRequest,
-  context: { params: Promise<{ slug: string }> },
-) {
+export async function PATCH(request: NextRequest, context: { params: Promise<{ slug: string }> }) {
   try {
     const { user } = await requireUser(request);
     const { slug: studioId } = await context.params;
@@ -123,6 +117,7 @@ export async function PATCH(
           role: typeof body.publicRole === "string" ? body.publicRole.trim().slice(0, 100) : "Miembro",
           is_primary: false,
           is_visible: true,
+          status: "active",
           display_order: 999,
           approved_by: user.id,
           approved_at: reviewedAt,

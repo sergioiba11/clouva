@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { PremiumCard } from "@/components/os-ui";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
 
@@ -14,10 +15,6 @@ type StudioSummary = {
   activePlans: number;
 };
 
-// Moved out of /matrix (was a "SOLO ADMIN" card embedded in the public
-// homepage body) into its own page under /admin, reachable from the account
-// menu -- admin-only content belongs in the admin section, not mixed into
-// the public-facing La Matrix feed.
 export default function EstudiosOverviewAdminPage() {
   const [studios, setStudios] = useState<StudioSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -37,8 +34,16 @@ export default function EstudiosOverviewAdminPage() {
   return (
     <div className="space-y-4">
       <PremiumCard className="p-6">
-        <h1 className="text-2xl font-bold">Estudios — resumen</h1>
-        <p className="mt-1 text-sm text-white/50">Socios, pagos y planes activos de cada Estudio.</p>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h1 className="text-2xl font-bold">Estudios — resumen</h1>
+            <p className="mt-1 text-sm text-white/50">Miembros, pagos, planes propios y estado operativo de cada Estudio.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Link href="/admin/estudios/studio-os" className="rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold">Configurar Studio OS</Link>
+            <Link href="/admin/estudios/membresias" className="rounded-xl border border-white/15 px-4 py-2 text-sm">Membresías</Link>
+          </div>
+        </div>
       </PremiumCard>
 
       {error ? <p className="rounded-xl border border-red-400/20 bg-red-400/10 p-3 text-sm text-red-200">{error}</p> : null}
@@ -53,7 +58,7 @@ export default function EstudiosOverviewAdminPage() {
               {!studio.isPublished ? <span className="rounded-full bg-white/8 px-2 py-0.5 text-[10px] uppercase text-white/40">Sin publicar</span> : null}
             </div>
             <p className="mt-2 text-sm text-white/55">
-              {studio.membersActive} socios ({studio.membersPaying} pagos) · {studio.activePlans} planes activos
+              {studio.membersActive} miembros ({studio.membersPaying} pagos) · {studio.activePlans} planes activos
             </p>
             <div className="mt-3 flex gap-2">
               <a href={`/studio-dashboard/${studio.id}`} className="rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-semibold">Administrar</a>

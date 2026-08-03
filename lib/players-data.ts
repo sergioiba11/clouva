@@ -54,6 +54,7 @@ export type Player = {
 
 export type PlayerStudioAffiliation = {
   role: string | null;
+  area_label: string | null;
   is_primary: boolean;
   studio: { id: string; slug: string; name: string; logo_url: string | null } | null;
 };
@@ -86,6 +87,7 @@ export type StudioRow = {
   contact_email: string | null;
   is_published: boolean;
   publication_status: "draft" | "published" | "unpublished" | "suspended";
+  studio_os_status: "pending" | "active" | "grace" | "suspended" | "cancelled" | "legacy_active";
   seo_title: string | null;
   seo_description: string | null;
   share_title: string | null;
@@ -97,6 +99,7 @@ export type StudioRow = {
 
 export type StudioPlayer = {
   role: string | null;
+  area_label: string | null;
   is_primary: boolean;
   player: Pick<Player, "id" | "slug" | "display_name" | "primary_role" | "profile_image_url"> | null;
 };
@@ -150,14 +153,21 @@ export type StudioMembershipPlan = {
   is_public: boolean;
   benefits: string[];
   display_order: number;
+  public_role_key: string;
+  public_role_label: string;
+  area_key: string;
+  area_label: string;
+  join_policy: "automatic" | "approval" | "invitation_only";
+  requires_approval: boolean;
+  display_badge: string | null;
 };
 
 export const studioMembershipPlansSelect =
-  "id,studio_id,name,slug,description,price,currency,billing_interval,is_free,is_active,is_public,benefits,display_order";
+  "id,studio_id,name,slug,description,price,currency,billing_interval,is_free,is_active,is_public,benefits,display_order,public_role_key,public_role_label,area_key,area_label,join_policy,requires_approval,display_badge";
 
 export const playerPublicSelect =
   "id,owner_user_id,slug,display_name,username,primary_role,short_bio,long_bio,tagline,secondary_tagline,origin,location,genres,disciplines,professional_categories,social_links,profile_image_url,hero_image_url,cover_url,spotify_profile_url,youtube_channel_url,contact_email,booking_email,whatsapp_url,theme_key,accent_color,font_style,logo_url,palette,privacy_status,claim_status,is_verified,is_published,publication_status,seo_title,seo_description,share_title,share_description,og_image_url";
 
-export const playerStudiosSelect = "role,is_primary,studio:studios(id,slug,name,logo_url)";
+export const playerStudiosSelect = "role,area_label,is_primary,studio:studios(id,slug,name,logo_url)";
 
-export const studioPlayersSelect = "role,is_primary,player:players(id,slug,display_name,primary_role,profile_image_url)";
+export const studioPlayersSelect = "role,area_label,is_primary,player:players(id,slug,display_name,primary_role,profile_image_url)";

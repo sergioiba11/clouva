@@ -6,7 +6,7 @@ import { createAdminSupabase } from "@/lib/server/supabase";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const ALLOWED_ROLES = new Set(["owner", "admin", "manager", "editor"]);
+const ALLOWED_ROLES = new Set(["owner", "admin", "manager", "editor", "finance", "bookings", "support"]);
 
 function authorized(request: NextRequest) {
   const expected = process.env.INTERNAL_RECONCILIATION_SECRET?.trim();
@@ -22,7 +22,6 @@ export async function POST(request: NextRequest) {
       invitedEmail?: string;
       invitedUserId?: string;
       role?: string;
-      requiresVip?: boolean;
       expiresInHours?: number;
       createdBy?: string;
     };
@@ -37,7 +36,7 @@ export async function POST(request: NextRequest) {
     const admin = createAdminSupabase();
     const { data: studio, error: studioError } = await admin
       .from("studios")
-      .select("id,slug,name")
+      .select("id,slug,name,studio_os_status")
       .eq("slug", studioSlug)
       .maybeSingle();
     if (studioError) throw new Error(studioError.message);
@@ -64,7 +63,7 @@ export async function POST(request: NextRequest) {
         invited_user_id: invitedUserId,
         role,
         token_hash: sha256(rawToken),
-        requires_vip: body.requiresVip !== false,
+        requires_vip: false,
         status: "pending",
         expires_at: expiresAt,
         created_by: body.createdBy || null,
