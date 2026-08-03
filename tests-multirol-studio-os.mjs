@@ -19,8 +19,9 @@ test("onboarding asks for an action and keeps professional identity separate", a
 });
 
 test("Studio OS is owned by the Studio and management has no personal VIP gate", async () => {
-  const [permissions, createPage, createApi, studioOsApi, billing] = await Promise.all([
+  const [permissions, aiPermissions, createPage, createApi, studioOsApi, billing] = await Promise.all([
     read("./lib/server/studio-permissions.ts"),
+    read("./lib/server/vip-profile-permissions.ts"),
     read("./app/studios/nuevo/page.tsx"),
     read("./app/api/studios/create/route.ts"),
     read("./app/api/studios/[slug]/studio-os/route.ts"),
@@ -28,6 +29,9 @@ test("Studio OS is owned by the Studio and management has no personal VIP gate",
   ]);
   assert.doesNotMatch(permissions, /user_entitlements|tier.*vip/i);
   assert.match(permissions, /studio_os_status/);
+  assert.match(aiPermissions, /if \(args\.studioId\)/);
+  assert.match(aiPermissions, /requireStudioManager/);
+  assert.match(aiPermissions, /productGate: "studio_os"/);
   assert.match(createPage, /\/api\/studios\/create/);
   assert.doesNotMatch(createPage, /\.from\("studios"\)\.insert/);
   assert.match(createApi, /create_studio_os_draft/);
