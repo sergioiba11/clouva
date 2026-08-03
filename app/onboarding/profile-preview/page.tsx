@@ -47,7 +47,9 @@ export default function ProfilePreviewPage() {
         pendingStudioReturnPath: string | null;
       }>(response);
 
-      if (payload.completedStudioJoins > 0 && payload.pendingStudioReturnPath) {
+      // Free memberships are completed here; paid intents return to checkout
+      // first and only become memberships after Mercado Pago confirms payment.
+      if (payload.pendingStudioReturnPath) {
         router.replace(payload.pendingStudioReturnPath);
         return;
       }
