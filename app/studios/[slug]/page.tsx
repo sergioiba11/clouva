@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import { StudioPublicView } from "@/components/public/StudioPublicView";
+import { StudioLayoutRenderer } from "@/components/public/StudioLayoutRenderer";
 import { resolveStudioAlias } from "@/lib/server/public-identity-data";
 
 export const dynamic = "force-dynamic";
@@ -38,6 +39,24 @@ export default async function StudioProfilePage({
   if (!result) notFound();
   if (slug.toLowerCase() !== result.canonicalAlias.toLowerCase()) {
     redirect(`/studios/${result.canonicalAlias}${query.joined === "1" ? "?joined=1" : ""}`);
+  }
+
+  // layout_config solo existe (no vacío) cuando el Estudio corrió CLOUVA AI
+  // Profile con un mockup replicado o eligió una variante de diseño -- todos
+  // los demás siguen con la plantilla fija de siempre, sin ningún cambio.
+  if (result.layoutConfig) {
+    return (
+      <StudioLayoutRenderer
+        studio={result.studio}
+        players={result.players}
+        media={result.media}
+        projects={result.projects as Array<Record<string, unknown>>}
+        services={result.services}
+        membershipPlans={result.membershipPlans}
+        joined={query.joined === "1"}
+        layout={result.layoutConfig}
+      />
+    );
   }
 
   return (
