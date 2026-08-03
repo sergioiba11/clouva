@@ -31,7 +31,7 @@ async function loadState(admin: ReturnType<typeof createAdminSupabase>) {
 
   const { data: price, error: priceError } = await admin
     .from("billing_prices")
-    .select("id,amount,currency,billing_interval,interval_count,provider_plan_id,is_active,created_at")
+    .select("id,amount,currency,billing_interval,interval_count,version_number,provider_plan_id,is_active,created_at")
     .eq("product_id", product.id)
     .eq("provider", "mercadopago")
     .eq("environment", environment)
@@ -94,6 +94,27 @@ export async function POST(request: NextRequest) {
       product = created.data;
     }
 
+    const { data: latest, error: latestError } = await admin
+      .from("billing_prices")
+      .select("version_number")
+      .eq("product_id", product.id)
+      .eq("provider", "mercadopago")
+      .eq("environment", environment)
+      .order("version_number", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (latestError) throw new Error(latestError.message);
+    const nextVersion = Number(latest?.version_number || 0) + 1;
+
+    const { data: previousActive, error: previousError } = await admin
+      .from("billing_prices")
+      .select("id")
+      .eq("product_id", product.id)
+      .eq("provider", "mercadopago")
+      .eq("environment", environment)
+      .eq("is_active", true);
+    if (previousError) throw new Error(previousError.message);
+
     const { data: newPrice, error: insertError } = await admin
       .from("billing_prices")
       .insert({
@@ -104,6 +125,7 @@ export async function POST(request: NextRequest) {
         amount,
         billing_interval: billingInterval,
         interval_count: 1,
+        version_number: nextVersion,
         environment,
         is_active: false,
       })
@@ -111,20 +133,25 @@ export async function POST(request: NextRequest) {
       .single();
     if (insertError) throw new Error(insertError.message);
 
+    const previousIds = (previousActive ?? []).map((row) => row.id);
+    if (previousIds.length) {
+      const { error: deactivateError } = await admin
+        .from("billing_prices")
+        .update({ is_active: false })
+        .in("id", previousIds);
+      if (deactivateError) {
+        await admin.from("billing_prices").delete().eq("id", newPrice.id);
+        throw new Error(deactivateError.message);
+      }
+    }
+
     try {
       await provisionProductPlan(admin, newPrice.id);
     } catch (provisionError) {
       await admin.from("billing_prices").delete().eq("id", newPrice.id).is("provider_plan_id", null);
+      if (previousIds.length) await admin.from("billing_prices").update({ is_active: true }).in("id", previousIds);
       throw provisionError;
     }
-
-    const { error: deactivateError } = await admin
-      .from("billing_prices")
-      .update({ is_active: false })
-      .eq("product_id", product.id)
-      .eq("environment", environment)
-      .neq("id", newPrice.id);
-    if (deactivateError) throw new Error(deactivateError.message);
 
     await admin.from("admin_audit_log").insert({
       admin_user_id: user.id,
@@ -132,7 +159,15 @@ export async function POST(request: NextRequest) {
       entity_type: "billing_product",
       entity_id: product.id,
       reason: "Precio de Studio OS configurado desde el panel admin",
-      metadata: { amount, currency, billing_interval: billingInterval, environment, price_id: newPrice.id },
+      metadata: {
+        amount,
+        currency,
+        billing_interval: billingInterval,
+        environment,
+        price_id: newPrice.id,
+        version_number: nextVersion,
+        replaced_price_ids: previousIds,
+      },
     });
 
     return NextResponse.json(await loadState(admin));
