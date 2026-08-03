@@ -5,9 +5,8 @@ import { requireStudioManager } from "@/lib/server/studio-permissions";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Read-only roster for the studio's own panel: who joined, free or paid,
-// and since when. Separate from studio_members (staff) on purpose -- this
-// is studio_fan_memberships, the socios/fans this feature is about.
+// Public/commercial memberships are intentionally separate from studio_members,
+// which remains the private staff/permission roster.
 export async function GET(request: NextRequest, { params }: { params: Promise<{ slug: string }> }) {
   try {
     const { user } = await requireUser(request);
@@ -16,17 +15,13 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     await requireStudioManager({ admin, userId: user.id, studioId });
 
     const { data, error } = await admin
-      .from("studio_fan_memberships")
-      .select("id,user_id,status,source,joined_at,plan:studio_membership_plans(name,is_free,price,currency)")
+      .from("studio_memberships")
+      .select("id,user_id,player_id,status,source,public_role_label,area_label,joined_at,plan:studio_membership_plans(name,is_free,price,currency)")
       .eq("studio_id", studioId)
       .order("joined_at", { ascending: false })
       .limit(500);
     if (error) throw new Error(error.message);
 
-    // profiles.id = auth.users.id by convention, but there's no FK between
-    // them for PostgREST to auto-embed a profile:profiles(...) join here --
-    // same reason app/admin/suscripciones/page.tsx fetches profiles
-    // separately and merges in JS instead of nesting the select.
     const userIds = [...new Set((data ?? []).map((row) => row.user_id))];
     const { data: profiles, error: profilesError } = userIds.length
       ? await admin.from("profiles").select("id,full_name,username,email").in("id", userIds)
@@ -38,7 +33,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     return NextResponse.json({ members });
   } catch (error) {
     const status = (error as Error & { status?: number })?.status ?? (isAuthError(error) ? 401 : 500);
-    const message = error instanceof Error ? error.message : "No se pudieron cargar los socios.";
+    const message = error instanceof Error ? error.message : "No se pudieron cargar los miembros.";
     return NextResponse.json({ error: message }, { status });
   }
 }
