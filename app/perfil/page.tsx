@@ -12,6 +12,7 @@ const EMPTY_FORM = {
   username: "",
   bio: "",
   accent_color: "#8f7cff",
+  display_name: "",
   full_name: "",
   phone: "",
   spotify_url: "",
@@ -45,7 +46,7 @@ export default function PerfilPage() {
         const { supabase } = await import("@/lib/supabase");
         const { data, error } = await supabase
           .from("profiles")
-          .select("clouva_id,username,bio,accent_color,full_name,phone,spotify_url")
+          .select("clouva_id,username,bio,accent_color,display_name,full_name,phone,spotify_url")
           .eq("id", user.id)
           .maybeSingle();
 
@@ -57,7 +58,8 @@ export default function PerfilPage() {
           username: data?.username ?? "",
           bio: data?.bio ?? "",
           accent_color: data?.accent_color ?? "#8f7cff",
-          full_name: data?.full_name ?? profile?.full_name ?? profile?.display_name ?? "",
+          display_name: data?.display_name ?? profile?.display_name ?? "",
+          full_name: data?.full_name ?? profile?.full_name ?? "",
           phone: data?.phone ?? "",
           spotify_url: data?.spotify_url ?? "",
         });
@@ -156,18 +158,22 @@ export default function PerfilPage() {
           ) : (
             <div className="mt-6 grid gap-3 sm:grid-cols-2">
               <label className="text-sm">
-                Nombre
-                <input className="mt-1 w-full rounded-xl border border-white/20 bg-transparent px-3 py-2" value={form.full_name} onChange={(event) => setForm((value) => ({ ...value, full_name: event.target.value }))} />
-              </label>
-              <label className="text-sm">
-                Teléfono
-                <input className="mt-1 w-full rounded-xl border border-white/20 bg-transparent px-3 py-2" value={form.phone} onChange={(event) => setForm((value) => ({ ...value, phone: event.target.value }))} />
+                Nombre visible en CLOUVA
+                <input className="mt-1 w-full rounded-xl border border-white/20 bg-transparent px-3 py-2" value={form.display_name} onChange={(event) => setForm((value) => ({ ...value, display_name: event.target.value }))} />
               </label>
               <label className="text-sm">
                 Username público
                 <input className="mt-1 w-full rounded-xl border border-white/20 bg-transparent px-3 py-2" value={form.username} onChange={(event) => setForm((value) => ({ ...value, username: event.target.value.toLowerCase() }))} />
               </label>
               <label className="text-sm">
+                Nombre completo (opcional)
+                <input className="mt-1 w-full rounded-xl border border-white/20 bg-transparent px-3 py-2" value={form.full_name} onChange={(event) => setForm((value) => ({ ...value, full_name: event.target.value }))} />
+              </label>
+              <label className="text-sm">
+                Teléfono
+                <input className="mt-1 w-full rounded-xl border border-white/20 bg-transparent px-3 py-2" value={form.phone} onChange={(event) => setForm((value) => ({ ...value, phone: event.target.value }))} />
+              </label>
+              <label className="text-sm sm:col-span-2">
                 Bio corta
                 <input className="mt-1 w-full rounded-xl border border-white/20 bg-transparent px-3 py-2" value={form.bio} onChange={(event) => setForm((value) => ({ ...value, bio: event.target.value }))} />
               </label>
