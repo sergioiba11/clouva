@@ -205,3 +205,63 @@ export async function generateLayoutConfig(args: {
   const { parsed, costUsd } = await callGeminiJson({ apiKey: args.apiKey, promptText, images: args.images });
   return { layout: sanitizeLayoutConfig(parsed), costUsd };
 }
+
+// Solo para modo adaptive_layout (sin mockup web detectado): en vez de un
+// único resultado, 3 composiciones distintas entre sí -- cada una recibe
+// después su propia portada+logo (decisión del usuario: más variedad real
+// en vez de compartir una sola imagen entre las 3). Un solo call de texto
+// barato, no tres -- las imágenes recién se generan una vez elegido el
+// layout de cada variante.
+export async function generateLayoutVariants(args: {
+  apiKey: string;
+  images: GeminiReferenceImage[];
+  analysis: ReferenceAnalysis;
+  facts: Record<string, unknown>;
+  copy: { tagline: string | null; short_bio: string | null };
+  subjectLabel: "Player" | "Estudio";
+}): Promise<{ layouts: LayoutConfig[]; costUsd: number }> {
+  const promptText = [
+    "Sos un generador de layout estructurado para CLOUVA.",
+    "Tu tarea es proponer 3 composiciones de página DISTINTAS entre sí (layout_config), a partir de los datos del " + args.subjectLabel + " y, si hay, imágenes de referencia (fotos/branding/moodboards -- no son mockups de web, son solo inspiración estética). Nunca generás HTML, CSS ni JSX, solo datos.",
+    "",
+    `Resumen del análisis previo: ${args.analysis.summary ?? "(sin resumen)"}`,
+    `Datos confirmados del ${args.subjectLabel}: ${JSON.stringify(args.facts)}`,
+    `Copy ya aprobado (usalo tal cual para hero/about en las 3, no lo reescribas distinto por variante): tagline=${JSON.stringify(args.copy.tagline)}, bio=${JSON.stringify(args.copy.short_bio)}`,
+    "",
+    "Las 3 variantes tienen que diferir de verdad entre sí -- no repitas la misma variante de hero en las 3, no repitas la misma paleta, no repitas el mismo orden/selección de secciones. Pensalas como 3 propuestas de diseño reales entre las que alguien tiene que poder elegir con criterio (ej. una más minimalista, una más editorial/inmersiva, una más audaz/experimental) -- pero las tres tienen que quedar bien, ninguna es un relleno.",
+    "",
+    "SECCIONES PERMITIDAS (\"type\"): hero, about, pillars, gallery, roster, services, membership, music, contact.",
+    "VARIANTES POR SECCIÓN:",
+    "- hero: centered | split | editorial | full-bleed | overlay",
+    "- about: simple | editorial | image-left | image-right",
+    "- pillars: 3-cards | 4-cards | icon-grid",
+    "- gallery: grid | masonry | strip | collage-clean",
+    "- roster: cards | spotlight | list | grid",
+    "- services: cards | pricing-grid | editorial-list | compact-grid",
+    "- membership: cards | comparison-table | stacked",
+    "- music: releases-grid | featured-release | list (alimentada por lanzamientos reales del Estudio, nunca inventes URLs)",
+    "- contact: cta | two-column | contact-cards",
+    "",
+    "Mismas reglas que siempre: incluí \"hero\" primero en cada variante; \"pillars\" con 2-4 items reales (nunca inventados); no más de 9 secciones por variante; colores hex de 6 dígitos coherentes entre sí; \"nav_style\" (bar|pill) y \"radius\" (none|small|medium|large) también pueden variar entre las 3.",
+    "",
+    "Devolvé exactamente este JSON, sin texto alrededor:",
+    "{",
+    '  "variants": [',
+    '    { "sections": [ { "type": string, "variant": string, "headline": string, "subheadline": string, "heading": string, "body": string, "items": [{"title": string, "description": string}] } ], "page_style": { "theme": "dark" | "light" | "mixed", "radius": string, "nav_style": "bar" | "pill", "palette": { "background": string, "surface": string, "text": string, "muted_text": string, "accent": string, "border": string } }, "nav_items": [ { "label": string, "section": string } ] },',
+    '    { "...segunda variante, misma forma..." },',
+    '    { "...tercera variante, misma forma..." }',
+    "  ]",
+    "}",
+  ].join("\n");
+
+  const { parsed, costUsd } = await callGeminiJson({ apiKey: args.apiKey, promptText, images: args.images });
+  const rawVariants = parsed && typeof parsed === "object" && Array.isArray((parsed as Record<string, unknown>).variants)
+    ? (parsed as Record<string, unknown>).variants as unknown[]
+    : [];
+  const layouts = rawVariants
+    .map((variant) => sanitizeLayoutConfig({ ...(variant as Record<string, unknown>), mode: "adaptive_layout" }))
+    .filter((layout): layout is LayoutConfig => layout !== null)
+    .slice(0, 3);
+
+  return { layouts, costUsd };
+}

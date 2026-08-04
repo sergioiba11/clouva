@@ -9,7 +9,8 @@ export const dynamic = "force-dynamic";
 
 const ACTIVE_STATUSES = [
   "queued", "preparing_identity", "analyzing_identity", "generating_copy",
-  "generating_assets", "assembling_profile", "needs_user_input",
+  "classifying_reference", "generating_assets", "generating_variants", "generating_variant_assets",
+  "assembling_profile", "awaiting_variant_selection", "needs_user_input",
 ];
 
 // Only ever a URL our own /api/vip-profile/reference-images upload produced

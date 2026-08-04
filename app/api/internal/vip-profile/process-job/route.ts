@@ -5,7 +5,7 @@ import { generateProfileCopy, type ProfileCopy } from "@/lib/server/vip-profile-
 import { playerBriefToFacts, studioBriefToFacts, type IdentityBrief, type StudioIdentityBrief } from "@/lib/server/vip-profile-brief";
 import { enqueueVipProfileJobStep } from "@/lib/server/cloud-tasks";
 import { fetchReferenceImages, generateCoverAsset, generateLogoAsset, type GeneratedAsset } from "@/lib/server/vip-profile-assets";
-import { analyzeReferenceImages, generateLayoutConfig, type ReferenceAnalysis } from "@/lib/server/vip-profile-layout-gemini";
+import { analyzeReferenceImages, generateLayoutConfig, generateLayoutVariants, type ReferenceAnalysis } from "@/lib/server/vip-profile-layout-gemini";
 import { sanitizeLayoutConfig, type LayoutConfig } from "@/lib/server/layout-config";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -23,8 +23,17 @@ export const maxDuration = 60;
 // bails out with no side effects if another invocation already claimed it.
 // Works for either subject -- job.player_id XOR job.studio_id, same state
 // machine either way: queued -> preparing_identity -> analyzing_identity
-// (Gemini text) -> generating_copy -> generating_assets (Gemini image) ->
-// assembling_profile -> review_ready.
+// (Gemini text) -> generating_copy -> classifying_reference (clasifica las
+// imágenes de referencia y decide reference_layout vs adaptive_layout) ->
+// bifurca:
+//   reference_layout (mockup real detectado): generating_assets (portada +
+//     logo + layout_config único fiel al mockup) -> assembling_profile ->
+//     review_ready.
+//   adaptive_layout (sin mockup claro): generating_variants (3 layout_config
+//     distintos, un solo call de texto) -> generating_variant_assets (cada
+//     variante con su propia portada + logo, 3x) -> awaiting_variant_selection
+//     (esperando que el usuario elija una vía /api/vip-profile/jobs/:id/select-variant,
+//     que recién ahí crea la versión y deja el job en review_ready).
 function isAuthorized(request: NextRequest) {
   const provided = request.headers.get("x-clouva-vip-task-secret")?.trim() ?? "";
   const expected = process.env.VIP_PROFILE_TASK_SECRET?.trim() ?? "";
@@ -57,7 +66,7 @@ export async function POST(request: NextRequest) {
   const admin = createAdminSupabase();
   const { data: job, error: jobError } = await admin
     .from("vip_profile_generation_jobs")
-    .select("id,player_id,studio_id,status,attempts,identity_brief,generated_copy,generated_assets,generated_layout,actual_cost_usd,reference_image_urls")
+    .select("id,player_id,studio_id,status,attempts,identity_brief,generated_copy,generated_assets,generated_layout,layout_analysis,layout_variants,actual_cost_usd,reference_image_urls")
     .eq("id", body.jobId)
     .maybeSingle();
   if (jobError) return NextResponse.json({ error: jobError.message }, { status: 500 });
@@ -111,51 +120,78 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ ok: true, status: "generating_copy", copy });
       }
       case "generating_copy": {
-        // No Gemini call here -- just claims the image-generation stage.
-        const claimed = await claim(admin, job.id as string, "generating_copy", "generating_assets");
+        // No Gemini call here -- just claims the reference-classification stage.
+        const claimed = await claim(admin, job.id as string, "generating_copy", "classifying_reference");
         if (!claimed) return NextResponse.json({ ok: true, status: job.status, note: "Ya reclamado por otra ejecución." });
         await enqueueVipProfileJobStep(job.id as string);
-        return NextResponse.json({ ok: true, status: "generating_assets" });
+        return NextResponse.json({ ok: true, status: "classifying_reference" });
+      }
+      case "classifying_reference": {
+        // Clasifica las imágenes de referencia (si las hay) y decide el modo
+        // -- "best effort": si Gemini o la API key fallan, el perfil se arma
+        // igual sin layout custom (cae a la plantilla fija de siempre), no
+        // bloquea el resto del pipeline que ya funcionaba antes de esto.
+        const referenceImageUrls = (job.reference_image_urls as string[] | null) ?? [];
+        const referenceImages = referenceImageUrls.length ? await fetchReferenceImages(referenceImageUrls) : [];
+        const apiKey = process.env.GEMINI_API_KEY;
+        let analysis: ReferenceAnalysis | null = null;
+        let analysisCost = 0;
+        if (apiKey) {
+          try {
+            const facts = isPlayer
+              ? playerBriefToFacts(job.identity_brief as unknown as IdentityBrief)
+              : studioBriefToFacts(job.identity_brief as unknown as StudioIdentityBrief);
+            const result = await analyzeReferenceImages({ apiKey, images: referenceImages, facts, subjectLabel: isPlayer ? "Player" : "Estudio" });
+            analysis = result.analysis;
+            analysisCost = result.costUsd;
+          } catch (analysisError) {
+            console.warn("vip_profile_layout_classification_failed", {
+              jobId: job.id,
+              message: analysisError instanceof Error ? analysisError.message : "unknown",
+            });
+          }
+        }
+        const nextStatus = analysis?.mode === "adaptive_layout" ? "generating_variants" : "generating_assets";
+
+        const { error: saveError } = await admin
+          .from("vip_profile_generation_jobs")
+          .update({
+            status: nextStatus,
+            layout_analysis: analysis,
+            actual_cost_usd: Number((((job.actual_cost_usd as number | null) ?? 0) + analysisCost).toFixed(6)),
+          })
+          .eq("id", job.id)
+          .eq("status", "classifying_reference");
+        if (saveError) throw new Error(saveError.message);
+
+        await enqueueVipProfileJobStep(job.id as string);
+        return NextResponse.json({ ok: true, status: nextStatus });
       }
       case "generating_assets": {
-        // Cover + logo are independent Gemini image calls, each with its own
-        // budget reservation -- run them together and keep whatever succeeds
-        // even if the other fails, so a transient failure on one doesn't
-        // throw away money already spent (and billed by Google) on the other.
+        // Flujo reference_layout (o sin análisis disponible): un único
+        // resultado, fiel al mockup si lo hay. Cover + logo son llamadas
+        // Gemini independientes, cada una con su propia reserva de
+        // presupuesto -- se corren juntas y se guarda lo que haya salido bien
+        // aunque la otra falle.
         const copy = job.generated_copy as unknown as ProfileCopy;
         const professionalCategories = isPlayer
           ? (job.identity_brief as unknown as IdentityBrief).professional_categories ?? []
           : (job.identity_brief as unknown as StudioIdentityBrief).services.map((s) => s.name);
         const referenceImageUrls = (job.reference_image_urls as string[] | null) ?? [];
         const referenceImages = referenceImageUrls.length ? await fetchReferenceImages(referenceImageUrls) : undefined;
-        // Logo is optional: if the Player/Estudio already has one (set
-        // manually in "Perfil público"/"Editar mi perfil" before running
-        // generation), reuse it as-is instead of asking Gemini for an
-        // abstract symbol nobody asked for.
         const existingLogoUrl = isPlayer
           ? (job.identity_brief as unknown as IdentityBrief).logo_url
           : (job.identity_brief as unknown as StudioIdentityBrief).logo_url;
-        // Layout analysis+generation es "best effort": si falla, el perfil se
-        // arma igual con layout_config vacío (cae a la plantilla fija de
-        // siempre) -- a diferencia de portada/logo, esto es una capa nueva,
-        // no algo de lo que ya dependía el pipeline antes de esta feature.
-        // No se gatea contra el ledger de presupuesto de imagen (esas llamadas
-        // son texto/JSON, no generan imágenes) -- mismo criterio que
-        // generateProfileCopy en analyzing_identity.
-        const layoutResult = await (async (): Promise<{ analysis: ReferenceAnalysis; layout: LayoutConfig | null; costUsd: number } | null> => {
+
+        const analysis = job.layout_analysis as unknown as ReferenceAnalysis | null;
+        const layoutResult = await (async (): Promise<{ layout: LayoutConfig | null; costUsd: number } | null> => {
           const apiKey = process.env.GEMINI_API_KEY;
-          if (!apiKey) return null;
+          if (!apiKey || !analysis) return null;
           try {
             const facts = isPlayer
               ? playerBriefToFacts(job.identity_brief as unknown as IdentityBrief)
               : studioBriefToFacts(job.identity_brief as unknown as StudioIdentityBrief);
-            const { analysis, costUsd: analysisCost } = await analyzeReferenceImages({
-              apiKey,
-              images: referenceImages ?? [],
-              facts,
-              subjectLabel: isPlayer ? "Player" : "Estudio",
-            });
-            const { layout, costUsd: layoutCost } = await generateLayoutConfig({
+            const { layout, costUsd } = await generateLayoutConfig({
               apiKey,
               images: referenceImages ?? [],
               analysis,
@@ -163,7 +199,7 @@ export async function POST(request: NextRequest) {
               copy: { tagline: copy.tagline, short_bio: copy.short_bio },
               subjectLabel: isPlayer ? "Player" : "Estudio",
             });
-            return { analysis, layout, costUsd: analysisCost + layoutCost };
+            return { layout, costUsd };
           } catch (layoutError) {
             console.warn("vip_profile_layout_generation_failed", {
               jobId: job.id,
@@ -190,7 +226,6 @@ export async function POST(request: NextRequest) {
           .update({
             ...(failure ? {} : { status: "assembling_profile" }),
             generated_assets: assets,
-            layout_analysis: layoutResult?.analysis ?? null,
             generated_layout: layoutResult?.layout ?? null,
             actual_cost_usd: Number((((job.actual_cost_usd as number | null) ?? 0) + costUsd).toFixed(6)),
           })
@@ -201,6 +236,91 @@ export async function POST(request: NextRequest) {
 
         await enqueueVipProfileJobStep(job.id as string);
         return NextResponse.json({ ok: true, status: "assembling_profile", assets });
+      }
+      case "generating_variants": {
+        // Flujo adaptive_layout: 3 layout_config distintos, un solo call de
+        // texto (barato) -- las portadas/logos recién se generan en el paso
+        // siguiente, una vez que hay 3 layouts reales sobre los que armarlas.
+        const copy = job.generated_copy as unknown as ProfileCopy;
+        const analysis = job.layout_analysis as unknown as ReferenceAnalysis;
+        const referenceImageUrls = (job.reference_image_urls as string[] | null) ?? [];
+        const referenceImages = referenceImageUrls.length ? await fetchReferenceImages(referenceImageUrls) : [];
+        const apiKey = process.env.GEMINI_API_KEY;
+        if (!apiKey) throw new Error("GEMINI_API_KEY no está configurada.");
+
+        const facts = isPlayer
+          ? playerBriefToFacts(job.identity_brief as unknown as IdentityBrief)
+          : studioBriefToFacts(job.identity_brief as unknown as StudioIdentityBrief);
+        const { layouts, costUsd } = await generateLayoutVariants({
+          apiKey,
+          images: referenceImages,
+          analysis,
+          facts,
+          copy: { tagline: copy.tagline, short_bio: copy.short_bio },
+          subjectLabel: isPlayer ? "Player" : "Estudio",
+        });
+        if (layouts.length === 0) throw new Error("Gemini no devolvió ninguna variante de diseño válida.");
+
+        const { error: saveError } = await admin
+          .from("vip_profile_generation_jobs")
+          .update({
+            status: "generating_variant_assets",
+            layout_variants: layouts.map((layout) => ({ layout, assets: [] })),
+            actual_cost_usd: Number((((job.actual_cost_usd as number | null) ?? 0) + costUsd).toFixed(6)),
+          })
+          .eq("id", job.id)
+          .eq("status", "generating_variants");
+        if (saveError) throw new Error(saveError.message);
+
+        await enqueueVipProfileJobStep(job.id as string);
+        return NextResponse.json({ ok: true, status: "generating_variant_assets", variantCount: layouts.length });
+      }
+      case "generating_variant_assets": {
+        // Cada variante tiene su propia portada + logo (decisión del usuario:
+        // más variedad real en vez de compartir una sola imagen entre las 3)
+        // -- 3x el costo de imagen de un perfil normal, todas las llamadas en
+        // paralelo para entrar en el timeout de la función.
+        const copy = job.generated_copy as unknown as ProfileCopy;
+        const professionalCategories = isPlayer
+          ? (job.identity_brief as unknown as IdentityBrief).professional_categories ?? []
+          : (job.identity_brief as unknown as StudioIdentityBrief).services.map((s) => s.name);
+        const referenceImageUrls = (job.reference_image_urls as string[] | null) ?? [];
+        const referenceImages = referenceImageUrls.length ? await fetchReferenceImages(referenceImageUrls) : undefined;
+        const pendingVariants = (job.layout_variants as unknown as Array<{ layout: LayoutConfig; assets: GeneratedAsset[] }> | null) ?? [];
+        if (pendingVariants.length === 0) throw new Error("No hay variantes pendientes de generar.");
+
+        const variantResults = await Promise.allSettled(
+          pendingVariants.map(async (variant) => {
+            const [coverResult, logoResult] = await Promise.allSettled([
+              generateCoverAsset({ admin, entityPathPrefix, copy, professionalCategories, referenceImages }),
+              generateLogoAsset({ admin, entityPathPrefix, copy, professionalCategories, referenceImages }),
+            ]);
+            if (coverResult.status !== "fulfilled") throw coverResult.reason;
+            const assets: GeneratedAsset[] = [coverResult.value];
+            if (logoResult.status === "fulfilled") assets.push(logoResult.value);
+            return { layout: variant.layout, assets };
+          }),
+        );
+
+        const layoutVariants = variantResults
+          .filter((result): result is PromiseFulfilledResult<{ layout: LayoutConfig; assets: GeneratedAsset[] }> => result.status === "fulfilled")
+          .map((result) => result.value);
+        const costUsd = layoutVariants.reduce((sum, variant) => sum + variant.assets.reduce((s, a) => s + a.costUsd, 0), 0);
+        if (layoutVariants.length === 0) throw new Error("No se pudo generar ninguna variante de diseño.");
+
+        const { error: saveError } = await admin
+          .from("vip_profile_generation_jobs")
+          .update({
+            status: "awaiting_variant_selection",
+            layout_variants: layoutVariants,
+            completed_at: new Date().toISOString(),
+            actual_cost_usd: Number((((job.actual_cost_usd as number | null) ?? 0) + costUsd).toFixed(6)),
+          })
+          .eq("id", job.id)
+          .eq("status", "generating_variant_assets");
+        if (saveError) throw new Error(saveError.message);
+
+        return NextResponse.json({ ok: true, status: "awaiting_variant_selection", variantCount: layoutVariants.length });
       }
       case "assembling_profile": {
         const copy = job.generated_copy as unknown as ProfileCopy;
