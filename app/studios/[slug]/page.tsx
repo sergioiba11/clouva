@@ -51,6 +51,7 @@ export default async function StudioProfilePage({
         players={result.players}
         media={result.media}
         projects={result.projects as Array<Record<string, unknown>>}
+        matrixDiscoveryProjects={result.matrixDiscoveryProjects as Array<Record<string, unknown>>}
         services={result.services}
         membershipPlans={result.membershipPlans}
         joined={query.joined === "1"}

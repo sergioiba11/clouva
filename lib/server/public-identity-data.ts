@@ -122,11 +122,32 @@ export async function resolveStudioAlias(alias: string) {
     ? null
     : sanitizeLayoutConfig(versionResult.data?.layout_config);
 
+  const projects = projectsResult.data ?? [];
+  // Cuando el Estudio no tiene ningún lanzamiento propio cargado, la sección
+  // de música del layout custom cae a mostrar lanzamientos de otros artistas
+  // de La Matrix en vez de desaparecer -- pedido explícito del usuario. Solo
+  // se ejecuta cuando hace falta, no pesa en el camino normal donde el
+  // Estudio ya tiene música propia.
+  const matrixDiscoveryProjects = projects.length === 0
+    ? await (async () => {
+        const { data, error } = await supabase
+          .from("community_projects")
+          .select("id,title,cover_url,spotify_url,youtube_url,studio:studios(name,slug)")
+          .neq("studio_id", studio.id)
+          .or("spotify_url.not.is.null,youtube_url.not.is.null")
+          .order("release_date", { ascending: false })
+          .limit(6);
+        if (error) return [];
+        return data ?? [];
+      })()
+    : [];
+
   return {
     studio: studio as unknown as StudioRow,
     players: (playersResult.data ?? []) as unknown as StudioPlayer[],
     media: (mediaResult.data ?? []) as unknown as PlayerMedia[],
-    projects: projectsResult.data ?? [],
+    projects,
+    matrixDiscoveryProjects,
     services: (servicesResult.data ?? []) as unknown as StudioService[],
     membershipPlans: (membershipPlansResult.data ?? []) as unknown as StudioMembershipPlan[],
     canonicalAlias: aliasResult.data?.alias || studio.slug,

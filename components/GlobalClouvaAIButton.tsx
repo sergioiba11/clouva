@@ -6,7 +6,7 @@ import { Sparkles } from "lucide-react";
 export function GlobalClouvaAIButton() {
   const pathname = usePathname();
 
-  if (pathname === "/clouva-ai") return null;
+  if (pathname === "/clouva-ai" || /^\/studios\/[^/]+\/?$/.test(pathname)) return null;
 
   return (
     <div
