@@ -23,6 +23,8 @@ import {
 } from "lucide-react";
 import { CloverIcon } from "@/components/clover-icon";
 import { useAuth } from "@/components/auth-provider";
+import { useCurrentPlayer } from "@/components/current-player-provider";
+import { resolveAccountDisplayName, resolveHomeDisplayName } from "@/lib/identity-names";
 import { VISUAL_ASSETS } from "@/lib/visual-assets";
 import styles from "./home-dashboard.module.css";
 
@@ -89,9 +91,24 @@ function initials(value: string) {
 
 export function HomeDashboard() {
   const { user, profile, role, loading } = useAuth();
-  const displayName = profile?.display_name || profile?.full_name || user?.email?.split("@")[0] || "CLOUVA";
-  const username = profile?.username ? `@${profile.username.replace(/^@/, "")}` : user ? "Tu identidad CLOUVA" : "Explorá tu propio mundo";
-  const avatarImage = profile?.avatar_url || user?.user_metadata?.avatar_url;
+  const { currentPlayer, playerLoading, playerReady } = useCurrentPlayer();
+
+  if (user && !playerReady) {
+    return <main className="min-h-screen bg-[#060612]" aria-busy={playerLoading} aria-label="Cargando tu identidad CLOUVA" />;
+  }
+
+  const displayName = resolveHomeDisplayName({ currentPlayer, profile, user });
+  const accountDisplayName = resolveAccountDisplayName({ profile, user });
+  const username = currentPlayer?.username
+    ? `@${currentPlayer.username.replace(/^@/, "")}`
+    : profile?.username
+      ? `@${profile.username.replace(/^@/, "")}`
+      : user
+        ? "Tu identidad CLOUVA"
+        : "Explorá tu propio mundo";
+  const accountUsername = profile?.username ? `@${profile.username.replace(/^@/, "")}` : "Tu cuenta CLOUVA";
+  const accountAvatarImage = profile?.avatar_url || user?.user_metadata?.avatar_url;
+  const identityAvatarImage = currentPlayer?.profile_image_url || currentPlayer?.logo_url || accountAvatarImage;
   const isSignedIn = Boolean(user);
   const hasAvatar = Boolean(profile?.avatar_3d_url);
   const completedSteps = [isSignedIn, Boolean(profile?.username), hasAvatar].filter(Boolean).length;
@@ -124,10 +141,10 @@ export function HomeDashboard() {
           <button type="button" aria-label="Buscar"><Search size={18} /></button>
           <button type="button" aria-label="Notificaciones"><Bell size={18} /></button>
           <Link href={isSignedIn ? "/perfil" : "/login"} className={styles.accountPill}>
-            {avatarImage ? <img src={String(avatarImage)} alt="" /> : <span>{initials(displayName) || "C"}</span>}
+            {accountAvatarImage ? <img src={String(accountAvatarImage)} alt="" /> : <span>{initials(accountDisplayName) || "C"}</span>}
             <span className={styles.accountCopy}>
-              <b>{loading ? "Cargando…" : displayName}</b>
-              <small>{isSignedIn ? username : "Ingresar"}</small>
+              <b>{loading ? "Cargando…" : accountDisplayName}</b>
+              <small>{isSignedIn ? accountUsername : "Ingresar"}</small>
             </span>
           </Link>
           <button type="button" className={styles.mobileMenu} aria-label="Abrir menú"><Menu size={20} /></button>
@@ -137,7 +154,7 @@ export function HomeDashboard() {
       <aside className={styles.sidebar}>
         <section className={styles.identityCard}>
           <div className={styles.identityAvatar}>
-            {avatarImage ? <img src={String(avatarImage)} alt={displayName} /> : <span>{initials(displayName) || "C"}</span>}
+            {identityAvatarImage ? <img src={String(identityAvatarImage)} alt={displayName} /> : <span>{initials(displayName) || "C"}</span>}
           </div>
           <div>
             <strong>{displayName}</strong>
