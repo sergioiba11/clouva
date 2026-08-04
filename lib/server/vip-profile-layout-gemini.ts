@@ -227,6 +227,56 @@ export async function generateLayoutConfig(args: {
 // SOLO cuando el modo es reference_layout (hay un mockup real del cual
 // copiar) -- adaptive_layout sigue con generateLayoutVariants() de arriba,
 // sin mockup no hay nada que replicar pixel por pixel.
+// Gemini está entrenado para detección espacial en formato "box_2d":
+// [ymin, xmin, ymax, xmax] normalizado 0-1000 RELATIVO A LA IMAGEN COMPLETA
+// -- pedirle eso (en vez de pedirle que calcule porcentajes relativos a una
+// sub-región que él mismo tiene que imaginar) es mucho más confiable. La
+// conversión a "x/y/w relativos a la sección" (lo que espera el esquema)
+// la hacemos acá con matemática simple, nunca se la pedimos al modelo.
+type RawBox = [number, number, number, number];
+
+function isRawBox(value: unknown): value is RawBox {
+  return Array.isArray(value) && value.length === 4 && value.every((n) => typeof n === "number" && Number.isFinite(n));
+}
+
+// Convierte los "box" (0-1000, relativos a toda la imagen) que devolvió
+// Gemini en los x/y/w (0-100, relativos a su propia sección) que espera
+// sanitizeLayoutConfig -- si una sección o un elemento no trae un box válido,
+// se descarta acá en vez de dejar pasar coordenadas basura.
+function resolvePreciseSectionBoxes(rawSections: unknown): unknown[] {
+  if (!Array.isArray(rawSections)) return [];
+  return rawSections
+    .map((rawSection) => {
+      if (!rawSection || typeof rawSection !== "object") return null;
+      const section = { ...(rawSection as Record<string, unknown>) };
+      const sectionBox = section.box;
+      if (!isRawBox(sectionBox)) return null;
+      const [sy0, sx0, sy1, sx1] = sectionBox;
+      const sectionHeight = Math.max(sy1 - sy0, 1);
+      section.heightVh = Math.round((sectionHeight / 1000) * 100);
+
+      const rawElements = Array.isArray(section.elements) ? section.elements : [];
+      const sectionWidth = Math.max(sx1 - sx0, 1);
+      section.elements = rawElements
+        .map((rawElement) => {
+          if (!rawElement || typeof rawElement !== "object") return null;
+          const element = { ...(rawElement as Record<string, unknown>) };
+          const elementBox = element.box;
+          if (!isRawBox(elementBox)) return null;
+          const [ey0, ex0, ey1, ex1] = elementBox;
+          element.x = Math.round(((ex0 - sx0) / sectionWidth) * 100);
+          element.y = Math.round(((ey0 - sy0) / sectionHeight) * 100);
+          element.w = Math.round(((ex1 - ex0) / sectionWidth) * 100);
+          delete element.box;
+          return element;
+        })
+        .filter((element) => element !== null);
+      delete section.box;
+      return section;
+    })
+    .filter((section) => section !== null);
+}
+
 export async function generatePreciseLayoutConfig(args: {
   apiKey: string;
   images: GeminiReferenceImage[];
@@ -238,25 +288,26 @@ export async function generatePreciseLayoutConfig(args: {
   const relevantIndexes = args.analysis.images.filter((image) => image.is_layout_relevant).map((image) => image.index);
 
   const promptText = [
-    "Sos un extractor de geometría visual para CLOUVA.",
-    "Tu tarea es analizar un mockup/screenshot real de una web y devolver la posición, tamaño y estilo EXACTOS de cada elemento visible, para que un renderer pueda reconstruir esa página lo más fiel posible al mockup -- no una aproximación con plantillas, una réplica.",
-    "Vos NUNCA generás HTML, CSS ni JSX -- solo números y valores de un vocabulario cerrado, como en el esquema del renderer.",
+    "Sos un extractor de geometría visual para CLOUVA, especializado en detección espacial de elementos de UI en una imagen.",
+    "Tu tarea es analizar un mockup/screenshot real de una web y devolver el cuadro delimitador EXACTO de cada bloque y cada elemento visible dentro de él, para que un renderer pueda reconstruir esa página lo más fiel posible al mockup -- no una aproximación con plantillas, una réplica.",
+    "Vos NUNCA generás HTML, CSS ni JSX -- solo números y valores de un vocabulario cerrado.",
     "",
     `Las imágenes en los índices ${JSON.stringify(relevantIndexes)} son el mockup real a replicar.`,
     `Datos confirmados del ${args.subjectLabel} (único material permitido para el copy -- nunca inventes texto que no esté acá ni copies nombres/marcas ajenas que aparezcan en el mockup): ${JSON.stringify(args.facts)}`,
     `Copy ya aprobado (usalo tal cual donde corresponda, no lo reescribas): tagline=${JSON.stringify(args.copy.tagline)}, bio=${JSON.stringify(args.copy.short_bio)}`,
     "",
-    `SECCIONES PERMITIDAS ("type"): ${LAYOUT_SECTION_TYPES.join(", ")}. Identificá cada bloque visual grande del mockup (hero, sobre, pilares, galería, roster, servicios, membresía, música, contacto) de arriba hacia abajo, en el orden real en que aparecen.`,
+    "FORMATO DE CAJA (\"box\"): SIEMPRE un array de 4 números [ymin, xmin, ymax, xmax], normalizados de 0 a 1000 sobre la imagen COMPLETA (0,0 es la esquina superior izquierda de la imagen entera; 1000,1000 la esquina inferior derecha) -- el mismo formato que usás para detección de objetos. CADA elemento tiene que tener su propia caja realista y distinta -- dos elementos distintos (un título y un botón, por ejemplo) NUNCA pueden compartir la misma caja ni tener valores idénticos entre sí.",
+    "",
+    `SECCIONES PERMITIDAS ("type"): ${LAYOUT_SECTION_TYPES.join(", ")}. Identificá cada bloque visual grande del mockup (hero, sobre, pilares, galería, roster, servicios, membresía, música, contacto) de arriba hacia abajo, en el orden real en que aparecen, y dale a cada uno su "box" (la región completa que ocupa ese bloque en la imagen).`,
     "",
     "Por cada sección devolvé:",
-    '- "heightVh": alto relativo de esa sección en el mockup, como si fuera un porcentaje de la altura de pantalla completa (20-150, el hero suele ser 60-100).',
+    '- "box": la caja de toda la sección, como se explicó arriba.',
     `- "background": opcional -- { "color": hex de 6 dígitos si el fondo es un color sólido, "imageSlot": uno de ${IMAGE_SLOTS.join(", ")} si el fondo es una FOTO (nunca una URL). "cover" es la foto principal del hero, "logo" es el ícono/marca chica, "pillar-0"/"pillar-1"/"pillar-2"/"pillar-3" son las fotos de fondo de cada tarjeta de pilares en el orden en que aparecen. Si la sección no tiene foto de fondo, omitilo.`,
     "",
-    `Para secciones "estáticas" (hero, about, pillars, contact -- las que muestran texto/botones fijos, no una lista de datos reales) incluí "elements": un array con cada texto/botón/ícono visible, cada uno con:`,
+    `Para secciones "estáticas" (hero, about, pillars, contact -- las que muestran texto/botones fijos, no una lista de datos reales) incluí "elements": un array con cada texto/botón/ícono visible DENTRO de esa sección, cada uno con:`,
     `  - "type": uno de ${POSITIONED_ELEMENT_TYPES.join(", ")}.`,
     '  - "text": el contenido real (para pillars, generá 2-4 elementos "heading"+"paragraph" por tarjeta, basados en servicios/valores reales del Estudio -- nunca inventados de la nada). Omitilo para type "image".',
-    '  - "x", "y": posición del borde superior-izquierdo del elemento, como porcentaje (0-100) del ANCHO y ALTO de esa sección (no de la página entera).',
-    '  - "w": ancho del elemento, como porcentaje (0-100) del ancho de la sección.',
+    '  - "box": la caja de ESE elemento puntual (no de toda la sección), mismo formato [ymin,xmin,ymax,xmax] 0-1000 sobre la imagen completa -- tiene que caer DENTRO de la caja de su sección.',
     '  - "fontSizePx": tamaño de fuente estimado en píxeles (10-96) -- solo para heading/subheading/paragraph/badge/button.',
     `  - "fontWeight": el más parecido de ${FONT_WEIGHTS.join(", ")}.`,
     '  - "color": color de texto estimado, hex de 6 dígitos.',
@@ -272,7 +323,7 @@ export async function generatePreciseLayoutConfig(args: {
     "{",
     '  "mode": "reference_layout",',
     '  "layout_kind": "precise",',
-    '  "precise_sections": [ { "type": string, "heightVh": number, "background": {"color": string, "imageSlot": string}, "elements": [ { "type": string, "text": string, "x": number, "y": number, "w": number, "fontSizePx": number, "fontWeight": number, "color": string, "align": string, "action": string, "imageSlot": string } ], "styleHint": { "heading": string, "cardStyle": string } } ],',
+    '  "precise_sections": [ { "type": string, "box": [number, number, number, number], "background": {"color": string, "imageSlot": string}, "elements": [ { "type": string, "text": string, "box": [number, number, number, number], "fontSizePx": number, "fontWeight": number, "color": string, "align": string, "action": string, "imageSlot": string } ], "styleHint": { "heading": string, "cardStyle": string } } ],',
     '  "page_style": { "theme": "dark" | "light" | "mixed", "radius": string, "nav_style": "bar" | "pill", "palette": { "background": string, "surface": string, "text": string, "muted_text": string, "accent": string, "border": string } },',
     '  "nav_items": [ { "label": string, "section": string } ],',
     '  "footer": { "heading": string, "cta_label": string, "cta_section": string } | null',
@@ -281,7 +332,10 @@ export async function generatePreciseLayoutConfig(args: {
   ].join("\n");
 
   const { parsed, costUsd } = await callGeminiJson({ apiKey: args.apiKey, promptText, images: args.images });
-  return { layout: sanitizeLayoutConfig(parsed), costUsd };
+  const resolved = parsed && typeof parsed === "object"
+    ? { ...(parsed as Record<string, unknown>), precise_sections: resolvePreciseSectionBoxes((parsed as Record<string, unknown>).precise_sections) }
+    : parsed;
+  return { layout: sanitizeLayoutConfig(resolved), costUsd };
 }
 
 // Solo para modo adaptive_layout (sin mockup web detectado): en vez de un

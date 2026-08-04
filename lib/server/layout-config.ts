@@ -371,10 +371,15 @@ function sanitizePositionedElement(raw: unknown): PositionedElement | null {
     ? (value.type as PositionedElementType)
     : null;
   if (!type) return null;
-  const x = optionalClampNumber(value.x, 0, 100);
-  const y = optionalClampNumber(value.y, 0, 100);
+  const rawX = optionalClampNumber(value.x, 0, 100);
+  const rawY = optionalClampNumber(value.y, 0, 100);
   const w = optionalClampNumber(value.w, 1, 100);
-  if (x === null || y === null || w === null) return null;
+  if (rawX === null || rawY === null || w === null) return null;
+  // Defensivo, más allá de qué tan bien Gemini haya estimado las cajas: un
+  // elemento nunca puede quedar posicionado de forma que se salga de su
+  // sección -- se corrige la esquina en vez de dejarlo desbordar la pantalla.
+  const x = Math.min(rawX, 100 - w);
+  const y = Math.min(rawY, 92);
   return {
     type,
     text: optionalText(value.text, type === "paragraph" ? 600 : 120),
