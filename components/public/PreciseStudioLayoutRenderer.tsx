@@ -119,8 +119,11 @@ export function PreciseStudioLayoutRenderer({
   // una pantalla angosta, así que ahí se prioriza que se lea bien por sobre
   // la posición exacta.
   function renderElement(element: PositionedElement, elIndex: number, absolute: boolean): ReactNode {
+    // overflowWrap protege contra texto real más largo que la caja que Gemini
+    // estimó -- nunca debería desbordar la sección ni pisar el elemento de al
+    // lado, aunque la estimación de ancho no haya sido perfecta.
     const style: CSSProperties = absolute
-      ? { position: "absolute", left: `${element.x}%`, top: `${element.y}%`, width: `${element.w}%` }
+      ? { position: "absolute", left: `${element.x}%`, top: `${element.y}%`, width: `${element.w}%`, overflowWrap: "break-word" }
       : {};
     if (element.fontSizePx) style.fontSize = `${element.fontSizePx}px`;
     if (element.fontWeight) style.fontWeight = element.fontWeight;
