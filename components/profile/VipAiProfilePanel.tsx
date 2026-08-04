@@ -18,11 +18,15 @@ type ProfileCopy = {
 
 type GeneratedAsset = { kind: string; url: string };
 
+type LayoutSectionSummary = { type: string };
+type LayoutVariant = { layout: { sections?: LayoutSectionSummary[] } | null; assets: GeneratedAsset[] };
+
 type Job = {
   id: string;
   status: string;
   generated_copy: ProfileCopy | null;
   generated_assets: GeneratedAsset[] | null;
+  layout_variants: LayoutVariant[] | null;
   error_message: string | null;
   actual_cost_usd: number | null;
 } | null;
@@ -38,7 +42,8 @@ type Version = {
 };
 
 const IN_PROGRESS_STATUSES = new Set([
-  "queued", "preparing_identity", "analyzing_identity", "generating_copy", "generating_assets", "assembling_profile",
+  "queued", "preparing_identity", "analyzing_identity", "generating_copy", "classifying_reference",
+  "generating_assets", "generating_variants", "generating_variant_assets", "assembling_profile",
 ]);
 
 // Real states only -- no invented percentages (spec section 18).
@@ -47,13 +52,21 @@ const STATUS_LABEL: Record<string, string> = {
   preparing_identity: "Preparando tu identidad...",
   analyzing_identity: "Analizando tu estilo...",
   generating_copy: "Escribiendo tu presentación...",
+  classifying_reference: "Analizando tus imágenes de referencia...",
   generating_assets: "Creando tu portada...",
+  generating_variants: "Armando 3 propuestas de diseño...",
+  generating_variant_assets: "Creando portada y logo para cada propuesta...",
   assembling_profile: "Armando tu perfil...",
   review_ready: "Listo para revisar.",
   failed: "Algo falló en la generación.",
   blocked_budget: "El presupuesto compartido de Gemini no está disponible ahora mismo.",
   needs_user_input: "Necesitamos más información tuya para continuar.",
   cancelled: "Generación cancelada.",
+};
+
+const SECTION_LABEL: Record<string, string> = {
+  hero: "Portada", about: "Sobre", pillars: "Pilares", gallery: "Galería", roster: "Players",
+  services: "Servicios", membership: "Membresías", music: "Música", contact: "Contacto",
 };
 
 const MAX_REFERENCE_IMAGES = 3;
@@ -77,6 +90,7 @@ export function VipAiProfilePanel({ playerId, vipActive }: { playerId: string; v
   const [draftEdits, setDraftEdits] = useState<Partial<ProfileCopy>>({});
   const [referenceImageUrls, setReferenceImageUrls] = useState<string[]>([]);
   const [uploadingReference, setUploadingReference] = useState(false);
+  const [selectingVariant, setSelectingVariant] = useState<number | null>(null);
   const pollRef = useRef<number | null>(null);
 
   const load = async () => {
@@ -145,6 +159,25 @@ export function VipAiProfilePanel({ playerId, vipActive }: { playerId: string; v
       setError(uploadError instanceof Error ? uploadError.message : "No se pudo subir la imagen.");
     } finally {
       setUploadingReference(false);
+    }
+  };
+
+  const selectVariant = async (index: number) => {
+    if (!job) return;
+    setSelectingVariant(index);
+    setError(null);
+    try {
+      const response = await authenticatedFetch(`/api/vip-profile/jobs/${job.id}/select-variant`, {
+        method: "POST",
+        body: JSON.stringify({ variantIndex: index }),
+      });
+      await readApiJson(response);
+      setMessage("Diseño elegido. Revisalo abajo antes de publicar.");
+      await load();
+    } catch (selectError) {
+      setError(selectError instanceof Error ? selectError.message : "No se pudo elegir esa propuesta.");
+    } finally {
+      setSelectingVariant(null);
     }
   };
 
@@ -249,6 +282,33 @@ export function VipAiProfilePanel({ playerId, vipActive }: { playerId: string; v
         <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-black/25 p-5">
           <div className="h-5 w-5 shrink-0 animate-spin rounded-full border-2 border-white/20 border-t-violet-400" />
           <p className="text-sm text-white/70">{STATUS_LABEL[job.status] ?? job.status}</p>
+        </div>
+      ) : null}
+
+      {job && job.status === "awaiting_variant_selection" && job.layout_variants?.length ? (
+        <div className="space-y-3">
+          <p className="text-xs uppercase tracking-[0.2em] text-white/40">Elegí una propuesta de diseño</p>
+          <div className="grid gap-4 sm:grid-cols-3">
+            {job.layout_variants.map((variant, index) => {
+              const variantCover = variant.assets.find((a) => a.kind === "cover");
+              const sections = variant.layout?.sections ?? [];
+              return (
+                <div key={index} className="flex flex-col overflow-hidden rounded-2xl border border-white/10 bg-black/20">
+                  {variantCover ? <img src={variantCover.url} alt="" className="h-32 w-full object-cover" /> : <div className="h-32 w-full bg-white/5" />}
+                  <div className="flex flex-1 flex-col gap-2 p-4">
+                    <p className="text-xs text-white/50">{sections.map((s) => SECTION_LABEL[s.type] ?? s.type).join(" · ")}</p>
+                    <button
+                      disabled={selectingVariant !== null}
+                      onClick={() => void selectVariant(index)}
+                      className="mt-auto rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold disabled:opacity-60"
+                    >
+                      {selectingVariant === index ? "Eligiendo..." : "Usar esta"}
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       ) : null}
 

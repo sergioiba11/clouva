@@ -47,7 +47,7 @@ export async function GET(request: NextRequest) {
     const [{ data: job, error: jobError }, { data: versions, error: versionsError }] = await Promise.all([
       admin
         .from("vip_profile_generation_jobs")
-        .select("id,status,generated_copy,generated_assets,error_message,actual_cost_usd,created_at,completed_at")
+        .select("id,status,generated_copy,generated_assets,layout_variants,error_message,actual_cost_usd,created_at,completed_at")
         .eq(subjectColumn, subjectId)
         .order("created_at", { ascending: false })
         .limit(1)
