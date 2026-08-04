@@ -1,9 +1,14 @@
 import "server-only";
 import type { GeminiReferenceImage } from "@/lib/gemini-image";
 import {
+  BUTTON_STYLES,
   CARD_STYLES,
+  DECORATION_TYPES,
   FONT_WEIGHTS,
+  IMAGE_FITS,
+  IMAGE_POSITIONS,
   IMAGE_SLOTS,
+  LAYOUT_ICONS,
   LAYOUT_SECTION_TYPES,
   POSITIONED_ELEMENT_TYPES,
   TEXT_ALIGNS,
@@ -245,39 +250,78 @@ function isRawBox(value: unknown): value is RawBox {
 }
 
 // Convierte los "box" (0-1000, relativos a toda la imagen) que devolvió
-// Gemini en los x/y/w (0-100, relativos a su propia sección) que espera
-// sanitizeLayoutConfig -- si una sección o un elemento no trae un box válido,
-// se descarta acá en vez de dejar pasar coordenadas basura.
+// Gemini en los x/y/w (0-100, relativos a su propio contenedor) que espera
+// sanitizeLayoutConfig -- si algo no trae un box válido, se descarta acá en
+// vez de dejar pasar coordenadas basura. Recursivo: una "columns" tiene sus
+// propias sub-secciones, cada una con sus elementos/decoraciones resueltos
+// contra SU PROPIO box, no el de la sección padre.
+function resolveElementsAgainstBox(rawElements: unknown, containerBox: RawBox): unknown[] {
+  if (!Array.isArray(rawElements)) return [];
+  const containerWidth = Math.max(containerBox.right - containerBox.left, 1);
+  const containerHeight = Math.max(containerBox.bottom - containerBox.top, 1);
+  return rawElements
+    .map((rawElement) => {
+      if (!rawElement || typeof rawElement !== "object") return null;
+      const element = { ...(rawElement as Record<string, unknown>) };
+      const elementBox = element.box;
+      if (!isRawBox(elementBox)) return null;
+      element.x = Math.round(((elementBox.left - containerBox.left) / containerWidth) * 100);
+      element.y = Math.round(((elementBox.top - containerBox.top) / containerHeight) * 100);
+      element.w = Math.round(((elementBox.right - elementBox.left) / containerWidth) * 100);
+      delete element.box;
+      return element;
+    })
+    .filter((element) => element !== null);
+}
+
+function resolveDecorationsAgainstBox(rawDecorations: unknown, containerBox: RawBox): unknown[] {
+  if (!Array.isArray(rawDecorations)) return [];
+  const containerWidth = Math.max(containerBox.right - containerBox.left, 1);
+  const containerHeight = Math.max(containerBox.bottom - containerBox.top, 1);
+  return rawDecorations
+    .map((rawDecoration) => {
+      if (!rawDecoration || typeof rawDecoration !== "object") return null;
+      const decoration = { ...(rawDecoration as Record<string, unknown>) };
+      const decorationBox = decoration.box;
+      if (!isRawBox(decorationBox)) return null;
+      decoration.x = Math.round(((decorationBox.left - containerBox.left) / containerWidth) * 100);
+      decoration.y = Math.round(((decorationBox.top - containerBox.top) / containerHeight) * 100);
+      decoration.w = Math.round(((decorationBox.right - decorationBox.left) / containerWidth) * 100);
+      delete decoration.box;
+      return decoration;
+    })
+    .filter((decoration) => decoration !== null);
+}
+
+function resolvePreciseSection(rawSection: unknown, parentBox: RawBox | null): unknown {
+  if (!rawSection || typeof rawSection !== "object") return null;
+  const section = { ...(rawSection as Record<string, unknown>) };
+  const sectionBox = section.box;
+  if (!isRawBox(sectionBox)) return null;
+
+  if (parentBox) {
+    const parentWidth = Math.max(parentBox.right - parentBox.left, 1);
+    section.widthPct = Math.round(((sectionBox.right - sectionBox.left) / parentWidth) * 100);
+  }
+
+  const sectionHeight = Math.max(sectionBox.bottom - sectionBox.top, 1);
+  section.heightVh = Math.round((sectionHeight / 1000) * 100);
+  section.elements = resolveElementsAgainstBox(section.elements, sectionBox);
+  section.decorations = resolveDecorationsAgainstBox(section.decorations, sectionBox);
+
+  if (Array.isArray(section.columns)) {
+    section.columns = section.columns
+      .map((column) => resolvePreciseSection(column, sectionBox))
+      .filter((column) => column !== null);
+  }
+
+  delete section.box;
+  return section;
+}
+
 function resolvePreciseSectionBoxes(rawSections: unknown): unknown[] {
   if (!Array.isArray(rawSections)) return [];
-  return rawSections
-    .map((rawSection) => {
-      if (!rawSection || typeof rawSection !== "object") return null;
-      const section = { ...(rawSection as Record<string, unknown>) };
-      const sectionBox = section.box;
-      if (!isRawBox(sectionBox)) return null;
-      const sectionHeight = Math.max(sectionBox.bottom - sectionBox.top, 1);
-      section.heightVh = Math.round((sectionHeight / 1000) * 100);
-
-      const rawElements = Array.isArray(section.elements) ? section.elements : [];
-      const sectionWidth = Math.max(sectionBox.right - sectionBox.left, 1);
-      section.elements = rawElements
-        .map((rawElement) => {
-          if (!rawElement || typeof rawElement !== "object") return null;
-          const element = { ...(rawElement as Record<string, unknown>) };
-          const elementBox = element.box;
-          if (!isRawBox(elementBox)) return null;
-          element.x = Math.round(((elementBox.left - sectionBox.left) / sectionWidth) * 100);
-          element.y = Math.round(((elementBox.top - sectionBox.top) / sectionHeight) * 100);
-          element.w = Math.round(((elementBox.right - elementBox.left) / sectionWidth) * 100);
-          delete element.box;
-          return element;
-        })
-        .filter((element) => element !== null);
-      delete section.box;
-      return section;
-    })
-    .filter((section) => section !== null);
+  return rawSections.map((section) => resolvePreciseSection(section, null)).filter((section) => section !== null);
 }
 
 export async function generatePreciseLayoutConfig(args: {
@@ -292,46 +336,50 @@ export async function generatePreciseLayoutConfig(args: {
 
   const promptText = [
     "Sos un extractor de geometría visual para CLOUVA, especializado en detección espacial de elementos de UI en una imagen.",
-    "Tu tarea es analizar un mockup/screenshot real de una web y devolver el cuadro delimitador EXACTO de cada bloque y cada elemento visible dentro de él, para que un renderer pueda reconstruir esa página lo más fiel posible al mockup -- no una aproximación con plantillas, una réplica.",
+    "Tu tarea es analizar un mockup/screenshot real de una web y devolver el cuadro delimitador EXACTO de cada bloque, elemento y decoración visible, para que un renderer pueda reconstruir esa página lo más fiel posible al mockup -- no una aproximación con plantillas, una réplica real de la composición completa (header, logo, botones con su estilo real, decoraciones, secciones combinadas).",
     "Vos NUNCA generás HTML, CSS ni JSX -- solo números y valores de un vocabulario cerrado.",
     "",
     `Las imágenes en los índices ${JSON.stringify(relevantIndexes)} son el mockup real a replicar.`,
     `Datos confirmados del ${args.subjectLabel} (único material permitido para el copy -- nunca inventes texto que no esté acá ni copies nombres/marcas ajenas que aparezcan en el mockup): ${JSON.stringify(args.facts)}`,
     `Copy ya aprobado (usalo tal cual donde corresponda, no lo reescribas): tagline=${JSON.stringify(args.copy.tagline)}, bio=${JSON.stringify(args.copy.short_bio)}`,
     "",
-    "FORMATO DE CAJA (\"box\"): SIEMPRE un objeto { \"top\": number, \"left\": number, \"bottom\": number, \"right\": number }, normalizados de 0 a 1000 sobre la imagen COMPLETA (0,0 es la esquina superior izquierda de la imagen entera; 1000,1000 la esquina inferior derecha). CADA elemento tiene que tener su propia caja realista y distinta, coherente con dónde aparece VISUALMENTE en el mockup -- dos elementos distintos (un título y un botón, por ejemplo) NUNCA pueden compartir la misma caja ni tener valores idénticos entre sí, y el orden vertical de las cajas (\"top\") tiene que respetar el orden real en que los elementos aparecen de arriba hacia abajo en la imagen -- revisá cada caja contra la imagen antes de responder.",
+    "FORMATO DE CAJA (\"box\"): SIEMPRE un objeto { \"top\": number, \"left\": number, \"bottom\": number, \"right\": number }, normalizados de 0 a 1000 sobre la imagen COMPLETA (0,0 es la esquina superior izquierda de la imagen entera; 1000,1000 la esquina inferior derecha) -- SIEMPRE relativo a la imagen completa, nunca a una sub-región, incluso para elementos dentro de columnas. CADA elemento tiene que tener su propia caja realista y distinta, coherente con dónde aparece VISUALMENTE en el mockup -- dos elementos distintos NUNCA pueden compartir la misma caja ni tener valores idénticos entre sí, y el orden vertical de las cajas (\"top\") tiene que respetar el orden real en que los elementos aparecen de arriba hacia abajo en la imagen -- revisá cada caja contra la imagen antes de responder.",
     "",
-    `SECCIONES PERMITIDAS ("type"): ${LAYOUT_SECTION_TYPES.join(", ")}. Identificá cada bloque visual grande del mockup (hero, sobre, pilares, galería, roster, servicios, membresía, música, contacto) de arriba hacia abajo, en el orden real en que aparecen, y dale a cada uno su "box" (la región completa que ocupa ese bloque en la imagen).`,
+    `SECCIONES PERMITIDAS ("type"): ${LAYOUT_SECTION_TYPES.join(", ")}. Identificá cada bloque visual grande del mockup de arriba hacia abajo, en el orden real en que aparecen, y dale a cada uno su "box" (la región completa que ocupa ese bloque en la imagen).`,
     "",
     "Por cada sección devolvé:",
     '- "box": la caja de toda la sección, como se explicó arriba.',
-    `- "background": opcional -- { "color": hex de 6 dígitos si el fondo es un color sólido, "imageSlot": uno de ${IMAGE_SLOTS.join(", ")} si el fondo es una FOTO (nunca una URL). "cover" es la foto principal del hero, "logo" es el ícono/marca chica, "pillar-0"/"pillar-1"/"pillar-2"/"pillar-3" son las fotos de fondo de cada tarjeta de pilares en el orden en que aparecen. Si la sección no tiene foto de fondo, omitilo.`,
+    `- "background": opcional -- { "color": hex de 6 dígitos si el fondo es un color sólido, "imageSlot": uno de ${IMAGE_SLOTS.join(", ")} si el fondo es una FOTO (nunca una URL), "fit": uno de ${IMAGE_FITS.join(" | ")} ("contain" si en el mockup la foto se ve completa sin recortar, "cover" si llena todo el espacio recortándose), "position": uno de ${IMAGE_POSITIONS.join(" | ")} según qué parte de la foto queda más visible/enfocada }.`,
     "",
-    `Para secciones "estáticas" (hero, about, pillars, contact -- las que muestran texto/botones fijos, no una lista de datos reales) incluí "elements": un array con cada texto/botón/ícono visible DENTRO de esa sección, cada uno con:`,
-    `  - "type": uno de ${POSITIONED_ELEMENT_TYPES.join(", ")}.`,
+    `Para secciones "estáticas" (hero, about, pillars, contact -- las que muestran texto/botones fijos, no una lista de datos reales) incluí "elements": un array con cada texto/botón/ícono/logo visible DENTRO de esa sección, cada uno con:`,
+    `  - "type": uno de ${POSITIONED_ELEMENT_TYPES.join(", ")} ("eyebrow" es un label chico en mayúsculas arriba de un título, ej. "BIENVENIDO A").`,
     '  - "text": el contenido real (para pillars, generá 2-4 elementos "heading"+"paragraph" por tarjeta, basados en servicios/valores reales del Estudio -- nunca inventados de la nada). Omitilo para type "image".',
     '  - "box": la caja de ESE elemento puntual (no de toda la sección), mismo formato {top,left,bottom,right} 0-1000 sobre la imagen completa -- tiene que caer DENTRO de la caja de su sección, y su "top" tiene que reflejar su posición vertical real respecto a los demás elementos de la misma sección (si el botón está debajo del título en el mockup, su "top" tiene que ser mayor que el "top" del título, nunca menor).',
-    '  - "fontSizePx": tamaño de fuente estimado en píxeles (10-96) -- solo para heading/subheading/paragraph/badge/button.',
+    '  - "fontSizePx": tamaño de fuente estimado en píxeles (10-96) -- solo para eyebrow/heading/subheading/paragraph/badge/button.',
     `  - "fontWeight": el más parecido de ${FONT_WEIGHTS.join(", ")}.`,
     '  - "color": color de texto estimado, hex de 6 dígitos.',
     `  - "align": uno de ${TEXT_ALIGNS.join(", ")}.`,
-    `  - Para type "button": "action", clasificando qué hace ese botón según el mockup -- SOLO uno de: "join" (unirse/inscribirse), "share" (compartir), o "scroll:<tipo de sección>" con <tipo de sección> siendo una de ${LAYOUT_SECTION_TYPES.join(", ")} (ej. "scroll:music" si el botón lleva a la música). NUNCA un link/URL -- el destino real siempre lo resuelve el renderer, no vos.`,
-    '  - Para type "image": "imageSlot" (mismo vocabulario que el background de arriba) -- nunca text.',
+    `  - Para type "button": "action" (SOLO uno de: "join" (unirse/inscribirse), "share" (compartir), o "scroll:<tipo de sección>" con <tipo de sección> siendo una de ${LAYOUT_SECTION_TYPES.join(", ")} -- NUNCA un link/URL, el destino real siempre lo resuelve el renderer, no vos), "icon" opcional (uno de ${LAYOUT_ICONS.join(", ")}, solo si el botón del mockup realmente muestra un ícono), "buttonStyle" opcional (uno de ${BUTTON_STYLES.join(", ")} según cómo se ve el botón: "solid" relleno liso, "outline" solo borde, "gradient" degradado, "glow" con resplandor/sombra de color).`,
+    '  - Para type "image": "imageSlot" (mismo vocabulario que el background de arriba) -- nunca text. Si el mockup muestra un LOGO grande dentro del hero (no solo en la barra de navegación), agregá un elemento "image" con imageSlot "logo" posicionado donde aparece ese logo.',
     "",
     `Para secciones "dinámicas" (roster, services, membership, gallery, music -- las que en el sitio real muestran datos reales cuya cantidad no podés saber de antemano) NO incluyas "elements" -- incluí en cambio "styleHint": { "heading": el título de esa sección tal como aparece en el mockup, "cardStyle": uno de ${CARD_STYLES.join(", ")} según cómo se ven las tarjetas en el mockup }.`,
     "",
-    "Mismas reglas de siempre para el resto del esquema: \"nav_style\" (bar|pill), \"radius\" (none|small|medium|large), \"page_style.palette\" con hex de 6 dígitos coherentes entre sí, \"nav_items\" y \"footer\" opcionales apuntando a secciones incluidas.",
+    `"decorations" (opcional en cualquier sección): elementos puramente visuales que NO son texto de datos reales -- array de { "type": uno de ${DECORATION_TYPES.join(", ")}, "box": mismo formato de caja, "text": string (SOLO para "vertical-label", ej. el nombre del Estudio) }. Usalos si el mockup los muestra: "waveform" (barras de ecualizador decorativas), "scroll-indicator" (ícono de scroll abajo del hero), "vertical-label" (texto rotado al costado, tipo marca de agua), "divider-line" (línea fina divisoria).`,
+    "",
+    `"columns" (opcional en cualquier sección, en vez de "elements"/"styleHint"): usalo cuando el mockup combina varios bloques distintos en una sola composición horizontal (ej. una franja que tiene texto "about" a la izquierda, pilares en el medio y un reproductor de música a la derecha, todo en la misma sección visual) -- en vez de tratarlos como secciones separadas apiladas, devolvé UNA sección con "columns": un array de hasta 4 mini-secciones (cada una con su propio "type", "box", y "elements" O "styleHint" como cualquier sección normal). Si el mockup tiene sus bloques claramente apilados uno debajo del otro (lo más común), NO uses columns -- son secciones normales separadas.`,
+    "",
+    `Mismas reglas de siempre para el resto del esquema: "nav_style" (bar|pill), "radius" (none|small|medium|large), "page_style.palette" con hex de 6 dígitos coherentes entre sí, "nav_items" y "footer" opcionales apuntando a secciones incluidas. Agregá "page_style.header_overlay": true si en el mockup la barra de navegación está superpuesta/flotando sobre la imagen del hero (transparente o semi-transparente, sin fondo sólido propio) en vez de ser una barra separada arriba -- si no estás seguro, dejalo en false.`,
     "",
     "Devolvé exactamente este JSON, sin texto alrededor:",
     "{",
     '  "mode": "reference_layout",',
     '  "layout_kind": "precise",',
-    '  "precise_sections": [ { "type": string, "box": {"top": number, "left": number, "bottom": number, "right": number}, "background": {"color": string, "imageSlot": string}, "elements": [ { "type": string, "text": string, "box": {"top": number, "left": number, "bottom": number, "right": number}, "fontSizePx": number, "fontWeight": number, "color": string, "align": string, "action": string, "imageSlot": string } ], "styleHint": { "heading": string, "cardStyle": string } } ],',
-    '  "page_style": { "theme": "dark" | "light" | "mixed", "radius": string, "nav_style": "bar" | "pill", "palette": { "background": string, "surface": string, "text": string, "muted_text": string, "accent": string, "border": string } },',
+    '  "precise_sections": [ { "type": string, "box": {"top": number, "left": number, "bottom": number, "right": number}, "background": {"color": string, "imageSlot": string, "fit": string, "position": string}, "elements": [ { "type": string, "text": string, "box": {"top": number, "left": number, "bottom": number, "right": number}, "fontSizePx": number, "fontWeight": number, "color": string, "align": string, "action": string, "imageSlot": string, "icon": string, "buttonStyle": string } ], "styleHint": { "heading": string, "cardStyle": string }, "decorations": [ { "type": string, "box": {"top": number, "left": number, "bottom": number, "right": number}, "text": string } ], "columns": [ "...misma forma que una sección, sin su propio columns..." ] } ],',
+    '  "page_style": { "theme": "dark" | "light" | "mixed", "radius": string, "nav_style": "bar" | "pill", "header_overlay": boolean, "palette": { "background": string, "surface": string, "text": string, "muted_text": string, "accent": string, "border": string } },',
     '  "nav_items": [ { "label": string, "section": string } ],',
     '  "footer": { "heading": string, "cta_label": string, "cta_section": string } | null',
     "}",
-    "(Cada sección solo lleva \"elements\" O \"styleHint\", nunca ambos ni ninguno.)",
+    "(Cada sección lleva UNA de \"elements\" / \"styleHint\" / \"columns\", nunca combinadas. \"decorations\" es independiente y puede ir en cualquier sección además de eso.)",
   ].join("\n");
 
   const { parsed, costUsd } = await callGeminiJson({ apiKey: args.apiKey, promptText, images: args.images });

@@ -136,7 +136,7 @@ export type ImageSlot = (typeof IMAGE_SLOTS)[number];
 // hoy con primaryAction/secondaryAction del hero clásico.
 export type RealAction = "join" | "share" | `scroll:${LayoutSectionType}`;
 
-export const POSITIONED_ELEMENT_TYPES = ["heading", "subheading", "paragraph", "button", "badge", "image"] as const;
+export const POSITIONED_ELEMENT_TYPES = ["eyebrow", "heading", "subheading", "paragraph", "button", "badge", "image"] as const;
 export type PositionedElementType = (typeof POSITIONED_ELEMENT_TYPES)[number];
 
 export const FONT_WEIGHTS = [400, 500, 600, 700, 800, 900] as const;
@@ -147,6 +147,33 @@ export type TextAlign = (typeof TEXT_ALIGNS)[number];
 
 export const CARD_STYLES = ["bordered", "flat", "image-bg"] as const;
 export type CardStyle = (typeof CARD_STYLES)[number];
+
+// Cada variante es una combinación de clases YA diseñada por nosotros
+// (gradient/glow usan page_style.palette.accent, que ya es un hex validado)
+// -- Gemini solo elige cuál se parece más al botón del mockup, nunca describe
+// el estilo libremente.
+export const BUTTON_STYLES = ["solid", "outline", "gradient", "glow"] as const;
+export type ButtonStyle = (typeof BUTTON_STYLES)[number];
+
+export const IMAGE_FITS = ["cover", "contain"] as const;
+export type ImageFit = (typeof IMAGE_FITS)[number];
+
+export const IMAGE_POSITIONS = ["center", "top", "bottom", "left", "right"] as const;
+export type ImagePosition = (typeof IMAGE_POSITIONS)[number];
+
+// Elementos decorativos puramente visuales -- cada tipo lo dibujamos nosotros
+// (SVG/CSS fijo en el renderer), Gemini solo elige cuáles usar y dónde
+// posicionarlos. Nunca un SVG o markup libre generado por la IA.
+export const DECORATION_TYPES = ["waveform", "scroll-indicator", "vertical-label", "divider-line"] as const;
+export type DecorationType = (typeof DECORATION_TYPES)[number];
+
+export type Decoration = {
+  type: DecorationType;
+  x: number;
+  y: number;
+  w?: number | null;
+  text?: string | null;
+};
 
 // x/y/w son porcentajes (0-100) relativos a la sección que los contiene, no
 // a la página entera -- así el renderer puede posicionar con `style={{ left,
@@ -163,6 +190,8 @@ export type PositionedElement = {
   align?: TextAlign | null;
   action?: RealAction | null;
   imageSlot?: ImageSlot | null;
+  icon?: LayoutIconName | null;
+  buttonStyle?: ButtonStyle | null;
 };
 
 export type PreciseSectionStyleHint = {
@@ -176,12 +205,21 @@ export type PreciseSectionStyleHint = {
 // `styleHint` en cambio, y el renderer sigue usando el componente real de
 // siempre (grid de Players, StudioServicesCart, etc.) pero con el
 // accent/heading/estilo de tarjeta extraídos del mockup.
+//
+// `columns`: cuando el mockup combina varios bloques en una sola composición
+// horizontal (ej. "about" + pilares + reproductor lado a lado), la sección
+// se pinta como fila en vez de bloque único -- cada columna es una
+// mini-sección normal (mismo tipo, un solo nivel de anidamiento: una columna
+// nunca puede tener sus propias `columns`, se ignora si Gemini lo intenta).
 export type PreciseSection = {
   type: LayoutSectionType;
   heightVh: number;
-  background?: { color?: string | null; imageSlot?: ImageSlot | null } | null;
+  widthPct?: number | null;
+  background?: { color?: string | null; imageSlot?: ImageSlot | null; fit?: ImageFit | null; position?: ImagePosition | null } | null;
   elements?: PositionedElement[];
   styleHint?: PreciseSectionStyleHint | null;
+  decorations?: Decoration[];
+  columns?: PreciseSection[];
 };
 
 export type PagePalette = {
@@ -204,6 +242,9 @@ export type PageStyle = {
   palette?: PagePalette | null;
   radius?: RadiusValue;
   nav_style?: NavStyle;
+  // Solo tiene efecto en layout_kind "precise" -- el modo "template" nunca lo
+  // lee, así que no cambia nada de lo ya publicado.
+  header_overlay?: boolean;
 };
 
 export type LayoutNavItem = { label: string; section: LayoutSectionType };
@@ -364,6 +405,39 @@ function sanitizeCardStyle(raw: unknown): CardStyle | null {
   return typeof raw === "string" && (CARD_STYLES as readonly string[]).includes(raw) ? (raw as CardStyle) : null;
 }
 
+function sanitizeButtonStyle(raw: unknown): ButtonStyle | null {
+  return typeof raw === "string" && (BUTTON_STYLES as readonly string[]).includes(raw) ? (raw as ButtonStyle) : null;
+}
+
+function sanitizeImageFit(raw: unknown): ImageFit | null {
+  return typeof raw === "string" && (IMAGE_FITS as readonly string[]).includes(raw) ? (raw as ImageFit) : null;
+}
+
+function sanitizeImagePosition(raw: unknown): ImagePosition | null {
+  return typeof raw === "string" && (IMAGE_POSITIONS as readonly string[]).includes(raw) ? (raw as ImagePosition) : null;
+}
+
+function sanitizeDecorationType(raw: unknown): DecorationType | null {
+  return typeof raw === "string" && (DECORATION_TYPES as readonly string[]).includes(raw) ? (raw as DecorationType) : null;
+}
+
+function sanitizeDecoration(raw: unknown): Decoration | null {
+  if (!raw || typeof raw !== "object") return null;
+  const value = raw as Record<string, unknown>;
+  const type = sanitizeDecorationType(value.type);
+  if (!type) return null;
+  const x = optionalClampNumber(value.x, 0, 100);
+  const y = optionalClampNumber(value.y, 0, 100);
+  if (x === null || y === null) return null;
+  return {
+    type,
+    x,
+    y,
+    w: optionalClampNumber(value.w, 1, 100),
+    text: type === "vertical-label" ? optionalText(value.text, 60) : null,
+  };
+}
+
 function sanitizePositionedElement(raw: unknown): PositionedElement | null {
   if (!raw || typeof raw !== "object") return null;
   const value = raw as Record<string, unknown>;
@@ -392,10 +466,17 @@ function sanitizePositionedElement(raw: unknown): PositionedElement | null {
     align: sanitizeTextAlign(value.align),
     action: type === "button" ? sanitizeRealAction(value.action) : null,
     imageSlot: type === "image" ? sanitizeImageSlot(value.imageSlot) : null,
+    icon: type === "button" ? sanitizeLayoutIcon(value.icon) : null,
+    buttonStyle: type === "button" ? sanitizeButtonStyle(value.buttonStyle) : null,
   };
 }
 
-function sanitizePreciseSection(raw: unknown): PreciseSection | null {
+const MAX_COLUMNS = 4;
+
+// `allowColumns` evita más de un nivel de anidamiento -- una columna nunca
+// puede tener sus propias columnas, se ignora silenciosamente si Gemini lo
+// intenta (en vez de fallar toda la sección).
+function sanitizePreciseSection(raw: unknown, allowColumns = true): PreciseSection | null {
   if (!raw || typeof raw !== "object") return null;
   const value = raw as Record<string, unknown>;
   const type = typeof value.type === "string" && (LAYOUT_SECTION_TYPES as readonly string[]).includes(value.type)
@@ -403,10 +484,16 @@ function sanitizePreciseSection(raw: unknown): PreciseSection | null {
     : null;
   if (!type) return null;
   const heightVh = clampNumber(value.heightVh, 20, 150, 60);
+  const widthPct = optionalClampNumber(value.widthPct, 5, 100);
 
   const rawBackground = value.background && typeof value.background === "object" ? (value.background as Record<string, unknown>) : null;
   const background = rawBackground
-    ? { color: hexColorOrNull(rawBackground.color), imageSlot: sanitizeImageSlot(rawBackground.imageSlot) }
+    ? {
+        color: hexColorOrNull(rawBackground.color),
+        imageSlot: sanitizeImageSlot(rawBackground.imageSlot),
+        fit: sanitizeImageFit(rawBackground.fit),
+        position: sanitizeImagePosition(rawBackground.position),
+      }
     : null;
 
   const elements = Array.isArray(value.elements)
@@ -418,11 +505,23 @@ function sanitizePreciseSection(raw: unknown): PreciseSection | null {
     ? { heading: optionalText(rawStyleHint.heading, 60), cardStyle: sanitizeCardStyle(rawStyleHint.cardStyle) }
     : null;
 
-  // Una sección sin ningún elemento posicionado y sin styleHint no aporta
-  // nada -- se descarta en vez de dejar un bloque vacío en la página.
-  if (elements.length === 0 && !styleHint) return null;
+  const decorations = Array.isArray(value.decorations)
+    ? value.decorations.map(sanitizeDecoration).filter((decoration): decoration is Decoration => decoration !== null).slice(0, MAX_ELEMENTS_PER_SECTION)
+    : [];
 
-  return { type, heightVh, background, elements, styleHint };
+  const columns = allowColumns && Array.isArray(value.columns)
+    ? value.columns
+        .map((column) => sanitizePreciseSection(column, false))
+        .filter((column): column is PreciseSection => column !== null)
+        .slice(0, MAX_COLUMNS)
+    : [];
+
+  // Una sección sin ningún elemento posicionado, sin styleHint y sin columnas
+  // no aporta nada -- se descarta en vez de dejar un bloque vacío en la
+  // página.
+  if (elements.length === 0 && !styleHint && columns.length === 0) return null;
+
+  return { type, heightVh, widthPct, background, elements, styleHint, decorations, columns };
 }
 
 function sanitizeImageSlotMap(raw: unknown): ImageSlotMap {
@@ -454,8 +553,9 @@ function sanitizePageStyle(raw: unknown): PageStyle | null {
   const palette = sanitizePalette(value.palette);
   const radius = typeof value.radius === "string" && RADIUS_VALUES.includes(value.radius as RadiusValue) ? (value.radius as RadiusValue) : undefined;
   const navStyle = typeof value.nav_style === "string" && NAV_STYLES.includes(value.nav_style as NavStyle) ? (value.nav_style as NavStyle) : undefined;
-  if (!theme && !palette && !radius && !navStyle) return null;
-  return { theme, palette, radius, nav_style: navStyle };
+  const headerOverlay = value.header_overlay === true;
+  if (!theme && !palette && !radius && !navStyle && !headerOverlay) return null;
+  return { theme, palette, radius, nav_style: navStyle, header_overlay: headerOverlay };
 }
 
 function sanitizeFooter(raw: unknown, validSections: Set<LayoutSectionType>): LayoutFooter | null {
@@ -497,7 +597,7 @@ export function sanitizeLayoutConfig(raw: unknown): LayoutConfig | null {
     ? value.sections.map(sanitizeSection).filter((section): section is LayoutSection => section !== null).slice(0, MAX_SECTIONS)
     : [];
   const preciseSections = Array.isArray(value.precise_sections)
-    ? value.precise_sections.map(sanitizePreciseSection).filter((section): section is PreciseSection => section !== null).slice(0, MAX_SECTIONS)
+    ? value.precise_sections.map((section) => sanitizePreciseSection(section)).filter((section): section is PreciseSection => section !== null).slice(0, MAX_SECTIONS)
     : [];
 
   // "precise" y "template" son mutuamente excluyentes -- cada uno valida y

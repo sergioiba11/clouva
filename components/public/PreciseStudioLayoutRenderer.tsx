@@ -5,11 +5,30 @@ import { PublicShareButton } from "./PublicShareButton";
 import { StudioServicesCart } from "./StudioServicesCart";
 import { StudioManageButton } from "./StudioManageButton";
 import { formatPlanPrice, studioSocialLinks } from "./StudioPublicView";
-import { CustomShell, RADIUS_CLASS, SECTION_ANCHOR, SECTION_NAV_LABEL, renderMusicSection } from "./StudioLayoutRenderer";
-import type { LayoutConfig, LayoutSectionType, PositionedElement, PreciseSection, RealAction } from "@/lib/server/layout-config";
+import { CustomShell, LAYOUT_ICON_MAP, RADIUS_CLASS, SECTION_ANCHOR, SECTION_NAV_LABEL, renderMusicSection } from "./StudioLayoutRenderer";
+import type { ButtonStyle, Decoration, ImageFit, ImagePosition, LayoutConfig, LayoutSectionType, PositionedElement, PreciseSection, RealAction } from "@/lib/server/layout-config";
 import type { PlayerMedia, StudioMembershipPlan, StudioPlayer, StudioRow, StudioService } from "@/lib/players-data";
 
 type CustomNavLink = { label: string; href: string };
+
+// Cada buttonStyle es una combinación de clases que YA diseñamos nosotros --
+// Gemini solo elige cuál se parece más al botón del mockup, nunca describe
+// el estilo libremente. gradient/glow usan el accent real (hex ya validado).
+const BUTTON_STYLE_CLASS: Record<ButtonStyle, string> = {
+  solid: "bg-[color:var(--public-accent)] text-white hover:opacity-90",
+  outline: "border border-white/20 bg-black/30 text-white hover:border-[color:var(--public-accent)]/60",
+  gradient: "bg-gradient-to-r from-[color:var(--public-accent)] to-black text-white hover:opacity-90",
+  glow: "border border-[color:var(--public-accent)]/60 bg-black/40 text-white shadow-[0_0_24px_-4px_var(--public-accent)] hover:shadow-[0_0_32px_-2px_var(--public-accent)]",
+};
+
+const IMAGE_FIT_CLASS: Record<ImageFit, string> = { cover: "object-cover", contain: "object-contain" };
+const IMAGE_POSITION_CLASS: Record<ImagePosition, string> = {
+  center: "object-center",
+  top: "object-top",
+  bottom: "object-bottom",
+  left: "object-left",
+  right: "object-right",
+};
 
 // Contraparte "pixel por pixel" de StudioLayoutRenderer.tsx -- en vez de
 // elegir entre un puñado de variantes fijas por sección, cada elemento trae
@@ -84,12 +103,16 @@ export function PreciseStudioLayoutRenderer({
   function renderActionButton(element: PositionedElement): ReactNode {
     const label = element.text || "Unirme";
     const action = element.action as RealAction | null | undefined;
+    const Icon = element.icon ? LAYOUT_ICON_MAP[element.icon] : null;
+    const iconNode = Icon ? <Icon className="h-4 w-4" /> : null;
 
     if (action === "share") return <PublicShareButton title={studio.name} />;
 
     if (action === "join") {
+      const styleClass = BUTTON_STYLE_CLASS[element.buttonStyle ?? "solid"];
       return (
-        <Link href={joinTargetHref} className="inline-block rounded-full bg-[color:var(--public-accent)] px-5 py-2.5 text-sm font-semibold text-white transition hover:opacity-90">
+        <Link href={joinTargetHref} className={`inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold transition ${styleClass}`}>
+          {iconNode}
           {joined ? "Ya sos miembro" : label}
         </Link>
       );
@@ -99,8 +122,10 @@ export function PreciseStudioLayoutRenderer({
       const target = action.slice("scroll:".length) as LayoutSectionType;
       const href = resolveScrollHref(target);
       if (href) {
+        const styleClass = BUTTON_STYLE_CLASS[element.buttonStyle ?? "outline"];
         return (
-          <Link href={href} className="inline-block rounded-full border border-white/20 bg-black/30 px-5 py-2.5 text-sm font-semibold text-white transition hover:border-[color:var(--public-accent)]/60">
+          <Link href={href} className={`inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold transition ${styleClass}`}>
+            {iconNode}
             {label}
           </Link>
         );
@@ -110,7 +135,51 @@ export function PreciseStudioLayoutRenderer({
     // Sin acción resuelta (o el destino no está incluido en esta página) --
     // se muestra el texto igual, por fidelidad visual, pero nunca como link
     // roto (`href="#"`).
-    return <span className="inline-block rounded-full border border-white/20 bg-black/30 px-5 py-2.5 text-sm font-semibold text-white/80">{label}</span>;
+    const fallbackClass = BUTTON_STYLE_CLASS[element.buttonStyle ?? "outline"];
+    return (
+      <span className={`inline-flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-semibold opacity-80 ${fallbackClass}`}>
+        {iconNode}
+        {label}
+      </span>
+    );
+  }
+
+  // Elementos puramente decorativos (ver DECORATION_TYPES en layout-config.ts)
+  // -- cada tipo lo dibujamos nosotros con SVG/CSS fijo, Gemini solo elige
+  // cuáles usar y dónde. Nunca markup libre generado por la IA.
+  function renderDecoration(decoration: Decoration, decIndex: number): ReactNode {
+    const style: CSSProperties = { position: "absolute", left: `${decoration.x}%`, top: `${decoration.y}%` };
+    if (decoration.w) style.width = `${decoration.w}%`;
+
+    switch (decoration.type) {
+      case "waveform":
+        return (
+          <div key={decIndex} style={style} className="flex items-end gap-[3px] opacity-70">
+            {Array.from({ length: 24 }).map((_, barIndex) => (
+              <span key={barIndex} className="w-[3px] rounded-full bg-white/60" style={{ height: `${8 + ((barIndex * 37) % 20)}px` }} />
+            ))}
+          </div>
+        );
+      case "scroll-indicator":
+        return (
+          <div key={decIndex} style={style} className="flex flex-col items-center gap-2 text-[10px] font-medium uppercase tracking-[0.2em] text-white/60">
+            <span className="flex h-8 w-5 items-start justify-center rounded-full border border-white/40 p-1">
+              <span className="h-1.5 w-1.5 rounded-full bg-white/70" />
+            </span>
+            Scroll
+          </div>
+        );
+      case "vertical-label":
+        return decoration.text ? (
+          <div key={decIndex} style={{ ...style, writingMode: "vertical-rl" }} className="text-[10px] uppercase tracking-[0.3em] text-white/40">
+            {decoration.text}
+          </div>
+        ) : null;
+      case "divider-line":
+        return <div key={decIndex} style={{ ...style, width: decoration.w ? `${decoration.w}%` : "1px", height: "60px" }} className="bg-white/15" />;
+      default:
+        return null;
+    }
   }
 
   // `absolute`: true posiciona con las coordenadas exactas del mockup
@@ -139,6 +208,8 @@ export function PreciseStudioLayoutRenderer({
         return <div key={elIndex} style={style}>{renderActionButton(element)}</div>;
       case "badge":
         return element.text ? <span key={elIndex} style={style} className="inline-block rounded-full border border-white/20 bg-black/30 px-3 py-1 text-xs text-white/80">{element.text}</span> : null;
+      case "eyebrow":
+        return element.text ? <p key={elIndex} style={style} className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.28em] text-[color:var(--public-accent)]">{element.text}</p> : null;
       case "heading":
         return element.text ? <h1 key={elIndex} style={style} className="font-bold leading-tight text-white">{element.text}</h1> : null;
       case "subheading":
@@ -152,7 +223,10 @@ export function PreciseStudioLayoutRenderer({
   function renderStaticSection(section: PreciseSection, index: number): ReactNode {
     const bgColor = section.background?.color ?? undefined;
     const bgImage = section.background?.imageSlot ? layout.image_slots[section.background.imageSlot] : undefined;
+    const fitClass = IMAGE_FIT_CLASS[section.background?.fit ?? "cover"];
+    const positionClass = IMAGE_POSITION_CLASS[section.background?.position ?? "center"];
     const elements = section.elements ?? [];
+    const decorations = section.decorations ?? [];
 
     return (
       <section
@@ -163,7 +237,7 @@ export function PreciseStudioLayoutRenderer({
       >
         {bgImage ? (
           <>
-            <img src={bgImage} alt="" className="absolute inset-0 h-full w-full object-cover" />
+            <img src={bgImage} alt="" className={`absolute inset-0 h-full w-full ${fitClass} ${positionClass}`} />
             <div className="absolute inset-0 bg-black/35" />
           </>
         ) : null}
@@ -175,12 +249,61 @@ export function PreciseStudioLayoutRenderer({
             derivar esos porcentajes de forma confiable. */}
         <div className="relative hidden h-full md:block">
           {elements.map((element, elIndex) => renderElement(element, elIndex, true))}
+          {/* Decoraciones solo en desktop/tablet -- son florituras del
+              mockup (waveform, indicador de scroll, etc), no aportan nada
+              en la versión apilada de mobile. */}
+          {decorations.map((decoration, decIndex) => renderDecoration(decoration, decIndex))}
         </div>
         {/* Mobile: mismos elementos, apilados en flujo normal (acá sí puede
             crecer más allá de heightVh si hace falta -- por eso el
             overflow-hidden de arriba solo aplica desde md hacia arriba). */}
         <div className="relative flex flex-col gap-3 px-5 py-8 md:hidden">
           {elements.map((element, elIndex) => renderElement(element, elIndex, false))}
+        </div>
+      </section>
+    );
+  }
+
+  // Columna dentro de una sección "columns" -- reusa exactamente la misma
+  // lógica de posicionamiento absoluto que una sección estática normal
+  // (elements) o el contenido dinámico real (styleHint), solo que dentro de
+  // una fila flex en vez de un bloque a ancho completo.
+  function renderColumn(column: PreciseSection, colIndex: number, columnCount: number): ReactNode {
+    const widthStyle: CSSProperties = column.widthPct
+      ? { flex: `0 0 ${column.widthPct}%` }
+      : { flex: `1 1 ${100 / columnCount}%` };
+
+    if (column.styleHint) {
+      return (
+        <div key={colIndex} className="relative min-w-0" style={widthStyle}>
+          {renderDynamicSection(column, colIndex)}
+        </div>
+      );
+    }
+
+    const elements = column.elements ?? [];
+    return (
+      <div key={colIndex} className="relative h-full min-w-0" style={widthStyle}>
+        {elements.map((element, elIndex) => renderElement(element, elIndex, true))}
+      </div>
+    );
+  }
+
+  // Cuando el mockup combina varios bloques en una sola composición
+  // horizontal (ej. "about" + pilares + reproductor lado a lado), la sección
+  // se pinta como fila en vez de bloque único.
+  function renderColumnsSection(section: PreciseSection, index: number): ReactNode {
+    const bgColor = section.background?.color ?? undefined;
+    const columns = section.columns ?? [];
+    return (
+      <section
+        key={index}
+        id={SECTION_ANCHOR[section.type]}
+        className="relative w-full border-b border-white/10"
+        style={{ height: `${section.heightVh}vh`, minHeight: `${section.heightVh}vh`, backgroundColor: bgColor || "#07060b" }}
+      >
+        <div className="relative mx-auto flex h-full max-w-7xl flex-col gap-8 px-4 py-10 sm:px-6 md:flex-row md:items-stretch">
+          {columns.map((column, colIndex) => renderColumn(column, colIndex, columns.length))}
         </div>
       </section>
     );
@@ -273,6 +396,7 @@ export function PreciseStudioLayoutRenderer({
   }
 
   function renderSection(section: PreciseSection, index: number): ReactNode {
+    if (section.columns?.length) return renderColumnsSection(section, index);
     if (section.styleHint) return renderDynamicSection(section, index);
     if (section.type === "hero") {
       return (
@@ -304,6 +428,7 @@ export function PreciseStudioLayoutRenderer({
       joinAction={headerJoinAction}
       links={links}
       footer={footer}
+      headerOverlay={layout.page_style?.header_overlay ?? false}
     >
       {sections.map((section, index) => renderSection(section, index))}
     </CustomShell>
