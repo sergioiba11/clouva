@@ -44,7 +44,7 @@ export const SECTION_VARIANTS = {
   roster: ["cards", "spotlight", "list", "grid"],
   services: ["cards", "pricing-grid", "editorial-list", "compact-grid"],
   membership: ["cards", "comparison-table", "stacked"],
-  music: ["embeds", "releases-grid", "featured-release"],
+  music: ["releases-grid", "featured-release", "list"],
   contact: ["cta", "two-column", "contact-cards"],
 } as const satisfies Record<LayoutSectionType, readonly string[]>;
 
@@ -79,12 +79,15 @@ export type ServicesSection = { type: "services"; variant: SectionVariant<"servi
 export type MembershipSection = { type: "membership"; variant: SectionVariant<"membership">; heading?: string | null };
 export type ContactSection = { type: "contact"; variant: SectionVariant<"contact">; heading?: string | null };
 
-export type MusicEmbed = { provider: "spotify" | "youtube"; url: string };
+// "Música y lanzamientos" -- deliberadamente sin URLs propias en el JSON.
+// El renderer alimenta esta sección con community_projects (datos reales ya
+// cargados por el Estudio, con sus propios spotify_url/youtube_url), nunca
+// con un embed que la IA haya inventado -- más simple y sin superficie para
+// que Gemini proponga una URL arbitraria.
 export type MusicSection = {
   type: "music";
   variant: SectionVariant<"music">;
   heading?: string | null;
-  embeds: MusicEmbed[];
 };
 
 export type LayoutSection =
@@ -107,28 +110,36 @@ export type PagePalette = {
   border?: string;
 };
 
+export const RADIUS_VALUES = ["none", "small", "medium", "large"] as const;
+export type RadiusValue = (typeof RADIUS_VALUES)[number];
+
+export const NAV_STYLES = ["pill", "bar"] as const;
+export type NavStyle = (typeof NAV_STYLES)[number];
+
 export type PageStyle = {
   theme?: "dark" | "light" | "mixed";
   palette?: PagePalette | null;
+  radius?: RadiusValue;
+  nav_style?: NavStyle;
 };
 
 export type LayoutNavItem = { label: string; section: LayoutSectionType };
+
+export type LayoutFooter = { heading: string; cta_label: string; cta_section: LayoutSectionType };
 
 export type LayoutConfig = {
   mode: LayoutMode;
   sections: LayoutSection[];
   page_style?: PageStyle | null;
   nav_items?: LayoutNavItem[] | null;
+  footer?: LayoutFooter | null;
 };
 
 const MAX_SECTIONS = 9;
 const MAX_PILLAR_ITEMS = 4;
-const MAX_MUSIC_EMBEDS = 3;
 const MAX_NAV_ITEMS = 6;
 
 const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
-const SPOTIFY_URL_RE = /^https:\/\/open\.spotify\.com\/(track|album|playlist|artist|embed)\//;
-const YOUTUBE_URL_RE = /^https:\/\/(www\.)?youtube\.com\/(watch\?v=|embed\/)|^https:\/\/youtu\.be\//;
 
 function text(value: unknown, maxLength: number): string {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
@@ -142,14 +153,6 @@ function optionalText(value: unknown, maxLength: number): string | null {
 function sanitizeVariant<T extends LayoutSectionType>(type: T, raw: unknown): SectionVariant<T> {
   const allowed = SECTION_VARIANTS[type] as readonly string[];
   return (typeof raw === "string" && allowed.includes(raw) ? raw : allowed[0]) as SectionVariant<T>;
-}
-
-function sanitizeMusicEmbed(value: unknown): MusicEmbed | null {
-  const url = typeof value === "object" && value ? (value as Record<string, unknown>).url : null;
-  if (typeof url !== "string") return null;
-  if (SPOTIFY_URL_RE.test(url)) return { provider: "spotify", url };
-  if (YOUTUBE_URL_RE.test(url)) return { provider: "youtube", url };
-  return null;
 }
 
 function sanitizeSection(raw: unknown): LayoutSection | null {
@@ -195,13 +198,8 @@ function sanitizeSection(raw: unknown): LayoutSection | null {
       return { type: "membership", variant: sanitizeVariant("membership", value.variant), heading: optionalText(value.heading, 60) };
     case "contact":
       return { type: "contact", variant: sanitizeVariant("contact", value.variant), heading: optionalText(value.heading, 60) };
-    case "music": {
-      const embeds = Array.isArray(value.embeds)
-        ? value.embeds.map(sanitizeMusicEmbed).filter((embed): embed is MusicEmbed => embed !== null).slice(0, MAX_MUSIC_EMBEDS)
-        : [];
-      if (embeds.length === 0) return null;
-      return { type: "music", variant: sanitizeVariant("music", value.variant), heading: optionalText(value.heading, 60), embeds };
-    }
+    case "music":
+      return { type: "music", variant: sanitizeVariant("music", value.variant), heading: optionalText(value.heading, 60) };
     default:
       return null;
   }
@@ -223,8 +221,20 @@ function sanitizePageStyle(raw: unknown): PageStyle | null {
   const value = raw as Record<string, unknown>;
   const theme = value.theme === "dark" || value.theme === "light" || value.theme === "mixed" ? value.theme : undefined;
   const palette = sanitizePalette(value.palette);
-  if (!theme && !palette) return null;
-  return { theme, palette };
+  const radius = typeof value.radius === "string" && RADIUS_VALUES.includes(value.radius as RadiusValue) ? (value.radius as RadiusValue) : undefined;
+  const navStyle = typeof value.nav_style === "string" && NAV_STYLES.includes(value.nav_style as NavStyle) ? (value.nav_style as NavStyle) : undefined;
+  if (!theme && !palette && !radius && !navStyle) return null;
+  return { theme, palette, radius, nav_style: navStyle };
+}
+
+function sanitizeFooter(raw: unknown, validSections: Set<LayoutSectionType>): LayoutFooter | null {
+  if (!raw || typeof raw !== "object") return null;
+  const value = raw as Record<string, unknown>;
+  const heading = text(value.heading, 80);
+  const ctaLabel = text(value.cta_label, 40);
+  const ctaSection = value.cta_section;
+  if (!heading || !ctaLabel || typeof ctaSection !== "string" || !validSections.has(ctaSection as LayoutSectionType)) return null;
+  return { heading, cta_label: ctaLabel, cta_section: ctaSection as LayoutSectionType };
 }
 
 function sanitizeNavItems(raw: unknown, validSections: Set<LayoutSectionType>): LayoutNavItem[] | null {
@@ -262,5 +272,6 @@ export function sanitizeLayoutConfig(raw: unknown): LayoutConfig | null {
     sections,
     page_style: sanitizePageStyle(value.page_style),
     nav_items: sanitizeNavItems(value.nav_items, sectionTypes),
+    footer: sanitizeFooter(value.footer, sectionTypes),
   };
 }
