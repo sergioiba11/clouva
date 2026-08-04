@@ -55,11 +55,11 @@ export const SECTION_VARIANTS = {
 
 export type SectionVariant<T extends LayoutSectionType> = (typeof SECTION_VARIANTS)[T][number];
 
-// Catálogo cerrado de íconos para los botones del hero -- nunca un nombre
-// arbitrario de ícono, siempre uno de estos (mapeados a lucide-react en el
-// renderer).
-export const HERO_ICONS = ["sparkles", "play", "users", "music", "heart", "arrow-right", "mic", "calendar", "headphones", "star"] as const;
-export type HeroIconName = (typeof HERO_ICONS)[number];
+// Catálogo cerrado de íconos para los botones del hero y los pillars -- nunca
+// un nombre arbitrario de ícono, siempre uno de estos (mapeados a
+// lucide-react en el renderer).
+export const LAYOUT_ICONS = ["sparkles", "play", "users", "music", "heart", "arrow-right", "mic", "calendar", "headphones", "star"] as const;
+export type LayoutIconName = (typeof LAYOUT_ICONS)[number];
 
 export type HeroSection = {
   type: "hero";
@@ -67,9 +67,9 @@ export type HeroSection = {
   headline: string;
   subheadline?: string | null;
   primaryLabel?: string | null;
-  primaryIcon?: HeroIconName | null;
+  primaryIcon?: LayoutIconName | null;
   secondaryLabel?: string | null;
-  secondaryIcon?: HeroIconName | null;
+  secondaryIcon?: LayoutIconName | null;
 };
 
 export type AboutSection = {
@@ -79,7 +79,7 @@ export type AboutSection = {
   body: string;
 };
 
-export type PillarItem = { title: string; description: string; image?: string | null };
+export type PillarItem = { title: string; description: string; image?: string | null; icon?: LayoutIconName | null };
 
 export type PillarsSection = {
   type: "pillars";
@@ -170,8 +170,8 @@ function sanitizeVariant<T extends LayoutSectionType>(type: T, raw: unknown): Se
   return (typeof raw === "string" && allowed.includes(raw) ? raw : allowed[0]) as SectionVariant<T>;
 }
 
-function sanitizeHeroIcon(raw: unknown): HeroIconName | null {
-  return typeof raw === "string" && (HERO_ICONS as readonly string[]).includes(raw) ? (raw as HeroIconName) : null;
+function sanitizeLayoutIcon(raw: unknown): LayoutIconName | null {
+  return typeof raw === "string" && (LAYOUT_ICONS as readonly string[]).includes(raw) ? (raw as LayoutIconName) : null;
 }
 
 // Solo para PillarItem.image -- ese campo lo escribe nuestro propio server
@@ -203,9 +203,9 @@ function sanitizeSection(raw: unknown): LayoutSection | null {
         headline,
         subheadline: optionalText(value.subheadline, 200),
         primaryLabel: optionalText(value.primaryLabel, 40),
-        primaryIcon: sanitizeHeroIcon(value.primaryIcon),
+        primaryIcon: sanitizeLayoutIcon(value.primaryIcon),
         secondaryLabel: optionalText(value.secondaryLabel, 40),
-        secondaryIcon: sanitizeHeroIcon(value.secondaryIcon),
+        secondaryIcon: sanitizeLayoutIcon(value.secondaryIcon),
       };
     }
     case "about": {
@@ -223,7 +223,8 @@ function sanitizeSection(raw: unknown): LayoutSection | null {
               const title = text((item as Record<string, unknown>).title, 60);
               const description = text((item as Record<string, unknown>).description, 240);
               const image = httpsUrlOrNull((item as Record<string, unknown>).image, 500);
-              return title && description ? { title, description, image } : null;
+              const icon = sanitizeLayoutIcon((item as Record<string, unknown>).icon);
+              return title && description ? { title, description, image, icon } : null;
             })
             .filter((item): item is PillarItem => item !== null)
             .slice(0, MAX_PILLAR_ITEMS)
