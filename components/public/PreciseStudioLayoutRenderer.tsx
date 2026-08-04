@@ -158,8 +158,8 @@ export function PreciseStudioLayoutRenderer({
       <section
         key={index}
         id={SECTION_ANCHOR[section.type]}
-        className="relative w-full overflow-hidden border-b border-white/10"
-        style={{ minHeight: `${section.heightVh}vh`, backgroundColor: bgColor || "#07060b" }}
+        className="relative w-full border-b border-white/10 md:overflow-hidden"
+        style={{ height: `${section.heightVh}vh`, minHeight: `${section.heightVh}vh`, backgroundColor: bgColor || "#07060b" }}
       >
         {bgImage ? (
           <>
@@ -167,11 +167,18 @@ export function PreciseStudioLayoutRenderer({
             <div className="absolute inset-0 bg-black/35" />
           </>
         ) : null}
-        {/* Desktop/tablet: coordenadas exactas del mockup */}
+        {/* Desktop/tablet: coordenadas exactas del mockup -- la sección
+            necesita una altura EXPLÍCITA (no solo min-height) para que los
+            porcentajes "top"/"left" de los elementos absolutos tengan una
+            base real contra la cual calcularse; con solo min-height y todo
+            el contenido en position:absolute, el navegador no tiene de dónde
+            derivar esos porcentajes de forma confiable. */}
         <div className="relative hidden h-full md:block">
           {elements.map((element, elIndex) => renderElement(element, elIndex, true))}
         </div>
-        {/* Mobile: mismos elementos, apilados en flujo normal */}
+        {/* Mobile: mismos elementos, apilados en flujo normal (acá sí puede
+            crecer más allá de heightVh si hace falta -- por eso el
+            overflow-hidden de arriba solo aplica desde md hacia arriba). */}
         <div className="relative flex flex-col gap-3 px-5 py-8 md:hidden">
           {elements.map((element, elIndex) => renderElement(element, elIndex, false))}
         </div>
