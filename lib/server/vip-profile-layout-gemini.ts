@@ -227,16 +227,21 @@ export async function generateLayoutConfig(args: {
 // SOLO cuando el modo es reference_layout (hay un mockup real del cual
 // copiar) -- adaptive_layout sigue con generateLayoutVariants() de arriba,
 // sin mockup no hay nada que replicar pixel por pixel.
-// Gemini está entrenado para detección espacial en formato "box_2d":
-// [ymin, xmin, ymax, xmax] normalizado 0-1000 RELATIVO A LA IMAGEN COMPLETA
-// -- pedirle eso (en vez de pedirle que calcule porcentajes relativos a una
-// sub-región que él mismo tiene que imaginar) es mucho más confiable. La
-// conversión a "x/y/w relativos a la sección" (lo que espera el esquema)
-// la hacemos acá con matemática simple, nunca se la pedimos al modelo.
-type RawBox = [number, number, number, number];
+// Gemini está entrenado para detección espacial normalizada 0-1000 relativa
+// a la imagen completa (mucho más confiable que pedirle que calcule
+// porcentajes relativos a una sub-región que él mismo tiene que imaginar).
+// Primera versión de esto pedía un array posicional [ymin,xmin,ymax,xmax]
+// (la convención "box_2d" de Gemini) -- en la práctica, con varios elementos
+// por sección, el modelo mezcló el orden de los números entre elementos
+// (títulos/botones terminaron con las coordenadas de otro elemento, todo
+// amontonado o en el orden vertical incorrecto). Un objeto con nombres de
+// campo elimina esa ambigüedad -- no hay "orden" que confundir.
+type RawBox = { top: number; left: number; bottom: number; right: number };
 
 function isRawBox(value: unknown): value is RawBox {
-  return Array.isArray(value) && value.length === 4 && value.every((n) => typeof n === "number" && Number.isFinite(n));
+  if (!value || typeof value !== "object") return false;
+  const box = value as Record<string, unknown>;
+  return (["top", "left", "bottom", "right"] as const).every((key) => typeof box[key] === "number" && Number.isFinite(box[key]));
 }
 
 // Convierte los "box" (0-1000, relativos a toda la imagen) que devolvió
@@ -251,22 +256,20 @@ function resolvePreciseSectionBoxes(rawSections: unknown): unknown[] {
       const section = { ...(rawSection as Record<string, unknown>) };
       const sectionBox = section.box;
       if (!isRawBox(sectionBox)) return null;
-      const [sy0, sx0, sy1, sx1] = sectionBox;
-      const sectionHeight = Math.max(sy1 - sy0, 1);
+      const sectionHeight = Math.max(sectionBox.bottom - sectionBox.top, 1);
       section.heightVh = Math.round((sectionHeight / 1000) * 100);
 
       const rawElements = Array.isArray(section.elements) ? section.elements : [];
-      const sectionWidth = Math.max(sx1 - sx0, 1);
+      const sectionWidth = Math.max(sectionBox.right - sectionBox.left, 1);
       section.elements = rawElements
         .map((rawElement) => {
           if (!rawElement || typeof rawElement !== "object") return null;
           const element = { ...(rawElement as Record<string, unknown>) };
           const elementBox = element.box;
           if (!isRawBox(elementBox)) return null;
-          const [ey0, ex0, ey1, ex1] = elementBox;
-          element.x = Math.round(((ex0 - sx0) / sectionWidth) * 100);
-          element.y = Math.round(((ey0 - sy0) / sectionHeight) * 100);
-          element.w = Math.round(((ex1 - ex0) / sectionWidth) * 100);
+          element.x = Math.round(((elementBox.left - sectionBox.left) / sectionWidth) * 100);
+          element.y = Math.round(((elementBox.top - sectionBox.top) / sectionHeight) * 100);
+          element.w = Math.round(((elementBox.right - elementBox.left) / sectionWidth) * 100);
           delete element.box;
           return element;
         })
@@ -296,7 +299,7 @@ export async function generatePreciseLayoutConfig(args: {
     `Datos confirmados del ${args.subjectLabel} (único material permitido para el copy -- nunca inventes texto que no esté acá ni copies nombres/marcas ajenas que aparezcan en el mockup): ${JSON.stringify(args.facts)}`,
     `Copy ya aprobado (usalo tal cual donde corresponda, no lo reescribas): tagline=${JSON.stringify(args.copy.tagline)}, bio=${JSON.stringify(args.copy.short_bio)}`,
     "",
-    "FORMATO DE CAJA (\"box\"): SIEMPRE un array de 4 números [ymin, xmin, ymax, xmax], normalizados de 0 a 1000 sobre la imagen COMPLETA (0,0 es la esquina superior izquierda de la imagen entera; 1000,1000 la esquina inferior derecha) -- el mismo formato que usás para detección de objetos. CADA elemento tiene que tener su propia caja realista y distinta -- dos elementos distintos (un título y un botón, por ejemplo) NUNCA pueden compartir la misma caja ni tener valores idénticos entre sí.",
+    "FORMATO DE CAJA (\"box\"): SIEMPRE un objeto { \"top\": number, \"left\": number, \"bottom\": number, \"right\": number }, normalizados de 0 a 1000 sobre la imagen COMPLETA (0,0 es la esquina superior izquierda de la imagen entera; 1000,1000 la esquina inferior derecha). CADA elemento tiene que tener su propia caja realista y distinta, coherente con dónde aparece VISUALMENTE en el mockup -- dos elementos distintos (un título y un botón, por ejemplo) NUNCA pueden compartir la misma caja ni tener valores idénticos entre sí, y el orden vertical de las cajas (\"top\") tiene que respetar el orden real en que los elementos aparecen de arriba hacia abajo en la imagen -- revisá cada caja contra la imagen antes de responder.",
     "",
     `SECCIONES PERMITIDAS ("type"): ${LAYOUT_SECTION_TYPES.join(", ")}. Identificá cada bloque visual grande del mockup (hero, sobre, pilares, galería, roster, servicios, membresía, música, contacto) de arriba hacia abajo, en el orden real en que aparecen, y dale a cada uno su "box" (la región completa que ocupa ese bloque en la imagen).`,
     "",
@@ -307,7 +310,7 @@ export async function generatePreciseLayoutConfig(args: {
     `Para secciones "estáticas" (hero, about, pillars, contact -- las que muestran texto/botones fijos, no una lista de datos reales) incluí "elements": un array con cada texto/botón/ícono visible DENTRO de esa sección, cada uno con:`,
     `  - "type": uno de ${POSITIONED_ELEMENT_TYPES.join(", ")}.`,
     '  - "text": el contenido real (para pillars, generá 2-4 elementos "heading"+"paragraph" por tarjeta, basados en servicios/valores reales del Estudio -- nunca inventados de la nada). Omitilo para type "image".',
-    '  - "box": la caja de ESE elemento puntual (no de toda la sección), mismo formato [ymin,xmin,ymax,xmax] 0-1000 sobre la imagen completa -- tiene que caer DENTRO de la caja de su sección.',
+    '  - "box": la caja de ESE elemento puntual (no de toda la sección), mismo formato {top,left,bottom,right} 0-1000 sobre la imagen completa -- tiene que caer DENTRO de la caja de su sección, y su "top" tiene que reflejar su posición vertical real respecto a los demás elementos de la misma sección (si el botón está debajo del título en el mockup, su "top" tiene que ser mayor que el "top" del título, nunca menor).',
     '  - "fontSizePx": tamaño de fuente estimado en píxeles (10-96) -- solo para heading/subheading/paragraph/badge/button.',
     `  - "fontWeight": el más parecido de ${FONT_WEIGHTS.join(", ")}.`,
     '  - "color": color de texto estimado, hex de 6 dígitos.',
@@ -323,7 +326,7 @@ export async function generatePreciseLayoutConfig(args: {
     "{",
     '  "mode": "reference_layout",',
     '  "layout_kind": "precise",',
-    '  "precise_sections": [ { "type": string, "box": [number, number, number, number], "background": {"color": string, "imageSlot": string}, "elements": [ { "type": string, "text": string, "box": [number, number, number, number], "fontSizePx": number, "fontWeight": number, "color": string, "align": string, "action": string, "imageSlot": string } ], "styleHint": { "heading": string, "cardStyle": string } } ],',
+    '  "precise_sections": [ { "type": string, "box": {"top": number, "left": number, "bottom": number, "right": number}, "background": {"color": string, "imageSlot": string}, "elements": [ { "type": string, "text": string, "box": {"top": number, "left": number, "bottom": number, "right": number}, "fontSizePx": number, "fontWeight": number, "color": string, "align": string, "action": string, "imageSlot": string } ], "styleHint": { "heading": string, "cardStyle": string } } ],',
     '  "page_style": { "theme": "dark" | "light" | "mixed", "radius": string, "nav_style": "bar" | "pill", "palette": { "background": string, "surface": string, "text": string, "muted_text": string, "accent": string, "border": string } },',
     '  "nav_items": [ { "label": string, "section": string } ],',
     '  "footer": { "heading": string, "cta_label": string, "cta_section": string } | null',
