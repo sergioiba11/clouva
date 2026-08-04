@@ -8,12 +8,13 @@ import { StudioServicesCart } from "./StudioServicesCart";
 import { StudioManageButton } from "./StudioManageButton";
 import { formatPlanPrice, studioSocialLinks } from "./StudioPublicView";
 import { parseMusicEmbed } from "@/lib/music-embed";
-import type { HeroIconName, HeroSection, LayoutConfig, LayoutSection, LayoutSectionType, RadiusValue } from "@/lib/server/layout-config";
-import type { PlayerMedia, StudioMembershipPlan, StudioPlayer, StudioRow, StudioService } from "@/lib/players-data";
+import type { HeroSection, LayoutConfig, LayoutIconName, LayoutSection, LayoutSectionType, RadiusValue } from "@/lib/server/layout-config";
+import type { PlayerMedia, SocialLink, StudioMembershipPlan, StudioPlayer, StudioRow, StudioService } from "@/lib/players-data";
 
-// Catálogo cerrado de íconos del hero (ver HERO_ICONS en layout-config.ts) --
-// solo estos 10, nunca uno arbitrario que Gemini haya propuesto.
-const HERO_ICON_MAP: Record<HeroIconName, typeof Sparkles> = {
+// Catálogo cerrado de íconos del hero y los pillars (ver LAYOUT_ICONS en
+// layout-config.ts) -- solo estos 10, nunca uno arbitrario que Gemini haya
+// propuesto.
+const LAYOUT_ICON_MAP: Record<LayoutIconName, typeof Sparkles> = {
   sparkles: Sparkles,
   play: Play,
   users: UsersIcon,
@@ -41,6 +42,8 @@ function CustomShell({
   navLinks,
   navStyle,
   accent,
+  joinAction,
+  links,
   footer,
   children,
 }: {
@@ -49,6 +52,8 @@ function CustomShell({
   navLinks: CustomNavLink[];
   navStyle: "pill" | "bar";
   accent: string;
+  joinAction: { label: string; href: string };
+  links: SocialLink[];
   footer?: ReactNode;
   children: ReactNode;
 }) {
@@ -72,6 +77,12 @@ function CustomShell({
               ))}
             </nav>
           ) : null}
+          {/* CTA de unirse siempre visible en el header, sin necesidad de
+              scrollear hasta el hero -- gap real encontrado comparando contra
+              el mockup de referencia (tenía un botón "INGLÚATE" fijo arriba). */}
+          <Link href={joinAction.href} className="ml-auto shrink-0 rounded-full bg-[color:var(--public-accent)] px-4 py-2 text-xs font-semibold transition hover:opacity-90">
+            {joinAction.label}
+          </Link>
         </div>
         {navLinks.length && navStyle === "bar" ? (
           <nav className="hidden justify-center gap-8 border-t border-white/[0.06] bg-black/40 px-4 py-3 text-xs font-medium uppercase tracking-[0.18em] text-white/60 md:flex">
@@ -86,6 +97,11 @@ function CustomShell({
       </header>
       <main>{children}</main>
       <footer className="border-t border-white/10 px-4 py-8 text-center text-xs text-white/40 sm:px-6">
+        {links.length ? (
+          <div className="mb-5 flex justify-center">
+            <PublicSocialLinks links={links} />
+          </div>
+        ) : null}
         {footer ?? `${brand} · CLOUVA`}
       </footer>
     </div>
@@ -168,6 +184,10 @@ export function StudioLayoutRenderer({
     ? [...layout.sections, { type: "roster", variant: "cards", heading: null }]
     : layout.sections;
   const includedTypes = new Set(sections.map((section) => section.type));
+  // CTA de unirse del header -- siempre la lógica real de membresía, nunca un
+  // label propuesto por Gemini (a diferencia de los botones del hero, este
+  // vive fuera de cualquier sección y tiene que funcionar solo).
+  const headerJoinAction = { label: joined ? "Ya sos miembro" : "Unirme", href: joined && includedTypes.has("roster") ? `#${SECTION_ANCHOR.roster}` : joinHref };
   const radiusClass = RADIUS_CLASS[layout.page_style?.radius ?? "medium"];
   const location = [studio.city, studio.country].filter(Boolean).join(", ");
 
@@ -220,8 +240,8 @@ export function StudioLayoutRenderer({
     const secondaryAction = secondaryTargetType
       ? { label: section.secondaryLabel || "Conocer Players", href: `#${SECTION_ANCHOR[secondaryTargetType]}` }
       : null;
-    const PrimaryIcon = section.primaryIcon ? HERO_ICON_MAP[section.primaryIcon] : null;
-    const SecondaryIcon = section.secondaryIcon ? HERO_ICON_MAP[section.secondaryIcon] : null;
+    const PrimaryIcon = section.primaryIcon ? LAYOUT_ICON_MAP[section.primaryIcon] : null;
+    const SecondaryIcon = section.secondaryIcon ? LAYOUT_ICON_MAP[section.secondaryIcon] : null;
     const actions = (
       <div className="flex flex-wrap gap-2">
         <Link href={primaryAction.href} className="inline-flex items-center gap-2 rounded-full bg-[color:var(--public-accent)] px-5 py-2.5 text-sm font-semibold transition hover:opacity-90">
@@ -408,23 +428,26 @@ export function StudioLayoutRenderer({
             <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--public-accent)]/80">Identidad</p>
             <h2 className="mt-1 text-2xl font-semibold">{section.heading}</h2>
             <div className={`mt-5 grid gap-4 ${columns}`}>
-              {section.items.map((item, itemIndex) =>
-                item.image ? (
+              {section.items.map((item, itemIndex) => {
+                const PillarIcon = item.icon ? LAYOUT_ICON_MAP[item.icon] : null;
+                return item.image ? (
                   <article key={itemIndex} className={`relative min-h-56 overflow-hidden ${radiusClass}`}>
                     <img src={item.image} alt="" className="absolute inset-0 h-full w-full object-cover" />
                     <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/30 to-transparent" />
                     <div className="relative flex h-full min-h-56 flex-col justify-end p-6">
+                      {PillarIcon ? <PillarIcon className="mb-2 h-5 w-5 text-[color:var(--public-accent)]" /> : null}
                       <h3 className="font-semibold">{item.title}</h3>
                       <p className="mt-2 text-sm leading-6 text-white/75">{item.description}</p>
                     </div>
                   </article>
                 ) : (
                   <article key={itemIndex} className={`border border-white/10 bg-white/[0.025] p-6 ${radiusClass}`}>
+                    {PillarIcon ? <PillarIcon className="mb-2 h-5 w-5 text-[color:var(--public-accent)]" /> : null}
                     <h3 className="font-semibold">{item.title}</h3>
                     <p className="mt-2 text-sm leading-6 text-white/60">{item.description}</p>
                   </article>
-                ),
-              )}
+                );
+              })}
             </div>
           </section>
         );
@@ -590,6 +613,8 @@ export function StudioLayoutRenderer({
       navLinks={navLinks}
       accent={layout.page_style?.palette?.accent || "#8f7cff"}
       navStyle={layout.page_style?.nav_style ?? "pill"}
+      joinAction={headerJoinAction}
+      links={links}
       footer={footer}
     >
       {sections.map((section, index) => renderSection(section, index))}
