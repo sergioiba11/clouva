@@ -116,6 +116,74 @@ export type LayoutSection =
   | MusicSection
   | ContactSection;
 
+// "precise": modo paralelo al de sections/variant de arriba, usado solo para
+// reference_layout, cuando Gemini extrae geometría real (posición/tamaño/
+// estilo por elemento) de la imagen subida en vez de elegir una variante fija
+// -- el objetivo es replicar el mockup lo más fiel posible, no aproximarlo.
+// Sigue siendo 100% datos estructurados y sanitizados acá abajo (números
+// clamped, enums cerrados) -- Gemini nunca produce HTML/CSS/JSX, ni acá ni en
+// el modo viejo.
+export const LAYOUT_KINDS = ["template", "precise"] as const;
+export type LayoutKind = (typeof LAYOUT_KINDS)[number];
+
+export const IMAGE_SLOTS = ["cover", "logo", "pillar-0", "pillar-1", "pillar-2", "pillar-3"] as const;
+export type ImageSlot = (typeof IMAGE_SLOTS)[number];
+
+// El destino real de un botón nunca lo decide Gemini (sería una superficie
+// para href arbitrarios) -- solo clasifica CUÁL de estas acciones reales es
+// la más probable dado lo que muestra el mockup; el renderer resuelve cada
+// una a la lógica real de siempre (join/roster/anchors), igual que ya hace
+// hoy con primaryAction/secondaryAction del hero clásico.
+export type RealAction = "join" | "share" | `scroll:${LayoutSectionType}`;
+
+export const POSITIONED_ELEMENT_TYPES = ["heading", "subheading", "paragraph", "button", "badge", "image"] as const;
+export type PositionedElementType = (typeof POSITIONED_ELEMENT_TYPES)[number];
+
+export const FONT_WEIGHTS = [400, 500, 600, 700, 800, 900] as const;
+export type FontWeight = (typeof FONT_WEIGHTS)[number];
+
+export const TEXT_ALIGNS = ["left", "center", "right"] as const;
+export type TextAlign = (typeof TEXT_ALIGNS)[number];
+
+export const CARD_STYLES = ["bordered", "flat", "image-bg"] as const;
+export type CardStyle = (typeof CARD_STYLES)[number];
+
+// x/y/w son porcentajes (0-100) relativos a la sección que los contiene, no
+// a la página entera -- así el renderer puede posicionar con `style={{ left,
+// top, width }}` sin depender de un ancho de pantalla fijo.
+export type PositionedElement = {
+  type: PositionedElementType;
+  text?: string | null;
+  x: number;
+  y: number;
+  w: number;
+  fontSizePx?: number | null;
+  fontWeight?: FontWeight | null;
+  color?: string | null;
+  align?: TextAlign | null;
+  action?: RealAction | null;
+  imageSlot?: ImageSlot | null;
+};
+
+export type PreciseSectionStyleHint = {
+  heading?: string | null;
+  cardStyle?: CardStyle | null;
+};
+
+// Las secciones con datos reales de longitud variable (roster/services/
+// membership/gallery/music) no llevan `elements` posicionados uno por uno --
+// Gemini no puede saber cuántos Players/servicios reales hay -- llevan
+// `styleHint` en cambio, y el renderer sigue usando el componente real de
+// siempre (grid de Players, StudioServicesCart, etc.) pero con el
+// accent/heading/estilo de tarjeta extraídos del mockup.
+export type PreciseSection = {
+  type: LayoutSectionType;
+  heightVh: number;
+  background?: { color?: string | null; imageSlot?: ImageSlot | null } | null;
+  elements?: PositionedElement[];
+  styleHint?: PreciseSectionStyleHint | null;
+};
+
 export type PagePalette = {
   background?: string;
   surface?: string;
@@ -142,9 +210,19 @@ export type LayoutNavItem = { label: string; section: LayoutSectionType };
 
 export type LayoutFooter = { heading: string; cta_label: string; cta_section: LayoutSectionType };
 
+// Resuelve cada ImageSlot a su URL real -- lo escribe nuestro propio server
+// después de generar/ubicar cada asset (cover_url/logo_url del Estudio,
+// fotos de pillar generadas), nunca Gemini. Mismo principio que
+// PillarItem.image en el esquema viejo: se re-sanitiza como URL https en
+// cada lectura, nunca se confía en el string a ciegas.
+export type ImageSlotMap = Partial<Record<ImageSlot, string>>;
+
 export type LayoutConfig = {
   mode: LayoutMode;
+  layout_kind: LayoutKind;
   sections: LayoutSection[];
+  precise_sections: PreciseSection[];
+  image_slots: ImageSlotMap;
   page_style?: PageStyle | null;
   nav_items?: LayoutNavItem[] | null;
   footer?: LayoutFooter | null;
@@ -153,6 +231,7 @@ export type LayoutConfig = {
 const MAX_SECTIONS = 9;
 const MAX_PILLAR_ITEMS = 4;
 const MAX_NAV_ITEMS = 6;
+const MAX_ELEMENTS_PER_SECTION = 12;
 
 const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
 
@@ -249,6 +328,109 @@ function sanitizeSection(raw: unknown): LayoutSection | null {
   }
 }
 
+function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
+  const num = typeof value === "number" && Number.isFinite(value) ? value : fallback;
+  return Math.min(max, Math.max(min, num));
+}
+
+function optionalClampNumber(value: unknown, min: number, max: number): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : null;
+}
+
+function hexColorOrNull(value: unknown): string | null {
+  return typeof value === "string" && HEX_COLOR_RE.test(value) ? value : null;
+}
+
+function sanitizeImageSlot(raw: unknown): ImageSlot | null {
+  return typeof raw === "string" && (IMAGE_SLOTS as readonly string[]).includes(raw) ? (raw as ImageSlot) : null;
+}
+
+const SCROLL_ACTIONS = new Set<string>(LAYOUT_SECTION_TYPES.map((type) => `scroll:${type}`));
+
+function sanitizeRealAction(raw: unknown): RealAction | null {
+  if (raw === "join" || raw === "share") return raw;
+  return typeof raw === "string" && SCROLL_ACTIONS.has(raw) ? (raw as RealAction) : null;
+}
+
+function sanitizeFontWeight(raw: unknown): FontWeight | null {
+  return typeof raw === "number" && (FONT_WEIGHTS as readonly number[]).includes(raw) ? (raw as FontWeight) : null;
+}
+
+function sanitizeTextAlign(raw: unknown): TextAlign | null {
+  return typeof raw === "string" && (TEXT_ALIGNS as readonly string[]).includes(raw) ? (raw as TextAlign) : null;
+}
+
+function sanitizeCardStyle(raw: unknown): CardStyle | null {
+  return typeof raw === "string" && (CARD_STYLES as readonly string[]).includes(raw) ? (raw as CardStyle) : null;
+}
+
+function sanitizePositionedElement(raw: unknown): PositionedElement | null {
+  if (!raw || typeof raw !== "object") return null;
+  const value = raw as Record<string, unknown>;
+  const type = typeof value.type === "string" && (POSITIONED_ELEMENT_TYPES as readonly string[]).includes(value.type)
+    ? (value.type as PositionedElementType)
+    : null;
+  if (!type) return null;
+  const x = optionalClampNumber(value.x, 0, 100);
+  const y = optionalClampNumber(value.y, 0, 100);
+  const w = optionalClampNumber(value.w, 1, 100);
+  if (x === null || y === null || w === null) return null;
+  return {
+    type,
+    text: optionalText(value.text, type === "paragraph" ? 600 : 120),
+    x,
+    y,
+    w,
+    fontSizePx: optionalClampNumber(value.fontSizePx, 10, 96),
+    fontWeight: sanitizeFontWeight(value.fontWeight),
+    color: hexColorOrNull(value.color),
+    align: sanitizeTextAlign(value.align),
+    action: type === "button" ? sanitizeRealAction(value.action) : null,
+    imageSlot: type === "image" ? sanitizeImageSlot(value.imageSlot) : null,
+  };
+}
+
+function sanitizePreciseSection(raw: unknown): PreciseSection | null {
+  if (!raw || typeof raw !== "object") return null;
+  const value = raw as Record<string, unknown>;
+  const type = typeof value.type === "string" && (LAYOUT_SECTION_TYPES as readonly string[]).includes(value.type)
+    ? (value.type as LayoutSectionType)
+    : null;
+  if (!type) return null;
+  const heightVh = clampNumber(value.heightVh, 20, 150, 60);
+
+  const rawBackground = value.background && typeof value.background === "object" ? (value.background as Record<string, unknown>) : null;
+  const background = rawBackground
+    ? { color: hexColorOrNull(rawBackground.color), imageSlot: sanitizeImageSlot(rawBackground.imageSlot) }
+    : null;
+
+  const elements = Array.isArray(value.elements)
+    ? value.elements.map(sanitizePositionedElement).filter((element): element is PositionedElement => element !== null).slice(0, MAX_ELEMENTS_PER_SECTION)
+    : [];
+
+  const rawStyleHint = value.styleHint && typeof value.styleHint === "object" ? (value.styleHint as Record<string, unknown>) : null;
+  const styleHint = rawStyleHint
+    ? { heading: optionalText(rawStyleHint.heading, 60), cardStyle: sanitizeCardStyle(rawStyleHint.cardStyle) }
+    : null;
+
+  // Una sección sin ningún elemento posicionado y sin styleHint no aporta
+  // nada -- se descarta en vez de dejar un bloque vacío en la página.
+  if (elements.length === 0 && !styleHint) return null;
+
+  return { type, heightVh, background, elements, styleHint };
+}
+
+function sanitizeImageSlotMap(raw: unknown): ImageSlotMap {
+  if (!raw || typeof raw !== "object") return {};
+  const value = raw as Record<string, unknown>;
+  const map: ImageSlotMap = {};
+  for (const slot of IMAGE_SLOTS) {
+    const url = httpsUrlOrNull(value[slot], 500);
+    if (url) map[slot] = url;
+  }
+  return map;
+}
+
 function sanitizePalette(raw: unknown): PagePalette | null {
   if (!raw || typeof raw !== "object") return null;
   const value = raw as Record<string, unknown>;
@@ -303,17 +485,32 @@ function sanitizeNavItems(raw: unknown, validSections: Set<LayoutSectionType>): 
 export function sanitizeLayoutConfig(raw: unknown): LayoutConfig | null {
   if (!raw || typeof raw !== "object") return null;
   const value = raw as Record<string, unknown>;
+  const mode: LayoutMode = value.mode === "reference_layout" ? "reference_layout" : "adaptive_layout";
+  const layoutKind: LayoutKind = value.layout_kind === "precise" ? "precise" : "template";
+
   const sections = Array.isArray(value.sections)
     ? value.sections.map(sanitizeSection).filter((section): section is LayoutSection => section !== null).slice(0, MAX_SECTIONS)
     : [];
-  if (sections.length === 0) return null;
+  const preciseSections = Array.isArray(value.precise_sections)
+    ? value.precise_sections.map(sanitizePreciseSection).filter((section): section is PreciseSection => section !== null).slice(0, MAX_SECTIONS)
+    : [];
 
-  const sectionTypes = new Set(sections.map((section) => section.type));
-  const mode: LayoutMode = value.mode === "reference_layout" ? "reference_layout" : "adaptive_layout";
+  // "precise" y "template" son mutuamente excluyentes -- cada uno valida y
+  // requiere solo su propio array de secciones, nunca mezcla ambos esquemas.
+  if (layoutKind === "precise") {
+    if (preciseSections.length === 0) return null;
+  } else if (sections.length === 0) {
+    return null;
+  }
+
+  const sectionTypes = new Set((layoutKind === "precise" ? preciseSections : sections).map((section) => section.type));
 
   return {
     mode,
+    layout_kind: layoutKind,
     sections,
+    precise_sections: preciseSections,
+    image_slots: sanitizeImageSlotMap(value.image_slots),
     page_style: sanitizePageStyle(value.page_style),
     nav_items: sanitizeNavItems(value.nav_items, sectionTypes),
     footer: sanitizeFooter(value.footer, sectionTypes),

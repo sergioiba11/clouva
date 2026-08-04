@@ -36,7 +36,7 @@ type CustomNavLink = { label: string; href: string };
 // encima. El logo/nombre siguen enlazando a /matrix como única salida hacia
 // el resto de la plataforma (decisión confirmada con el usuario: prioridad
 // a la fidelidad visual sobre mantener ese acceso siempre a la vista).
-function CustomShell({
+export function CustomShell({
   brand,
   logoUrl,
   navLinks,
@@ -108,7 +108,7 @@ function CustomShell({
   );
 }
 
-const SECTION_ANCHOR: Record<LayoutSectionType, string> = {
+export const SECTION_ANCHOR: Record<LayoutSectionType, string> = {
   hero: "inicio",
   about: "sobre",
   pillars: "pilares",
@@ -120,7 +120,7 @@ const SECTION_ANCHOR: Record<LayoutSectionType, string> = {
   contact: "contacto",
 };
 
-const SECTION_NAV_LABEL: Record<LayoutSectionType, string> = {
+export const SECTION_NAV_LABEL: Record<LayoutSectionType, string> = {
   hero: "Inicio",
   about: "Sobre",
   pillars: "Pilares",
@@ -132,12 +132,108 @@ const SECTION_NAV_LABEL: Record<LayoutSectionType, string> = {
   contact: "Contacto",
 };
 
-const RADIUS_CLASS: Record<RadiusValue, string> = {
+export const RADIUS_CLASS: Record<RadiusValue, string> = {
   none: "rounded-none",
   small: "rounded-lg",
   medium: "rounded-2xl",
   large: "rounded-[2.5rem]",
 };
+
+// Compartida entre StudioLayoutRenderer (esquema viejo sections/variant) y
+// PreciseStudioLayoutRenderer (esquema nuevo precise_sections) -- la lógica
+// de prioridad (canal propio > lanzamientos propios > descubrimiento de La
+// Matrix > estado vacío) es real lógica de negocio, no solo markup, así que
+// vive en un solo lugar en vez de duplicarse entre los dos renderers.
+export function renderMusicSection({
+  sectionKey,
+  heading: headingOverride,
+  isList,
+  maxReleases,
+  musicLinks,
+  projects,
+  matrixDiscoveryProjects,
+  studioName,
+  radiusClass,
+}: {
+  sectionKey: string | number;
+  heading?: string | null;
+  isList: boolean;
+  maxReleases: number;
+  musicLinks: SocialLink[];
+  projects: Array<Record<string, unknown>>;
+  matrixDiscoveryProjects: Array<Record<string, unknown>>;
+  studioName: string;
+  radiusClass: string;
+}): ReactNode {
+  const channelEmbed = musicLinks.map((link) => parseMusicEmbed(link.url)).find((embed): embed is NonNullable<typeof embed> => embed !== null) ?? null;
+  const isDiscovery = projects.length === 0 && matrixDiscoveryProjects.length > 0;
+  const sourceProjects = projects.length ? projects : matrixDiscoveryProjects;
+  const releases = sourceProjects.slice(0, maxReleases);
+  const heading = headingOverride || (isDiscovery ? "Descubrí en La Matrix" : "Música y lanzamientos");
+
+  if (!channelEmbed && releases.length === 0) {
+    return (
+      <section key={sectionKey} id={SECTION_ANCHOR.music} className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
+        <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--public-accent)]/80">{heading}</p>
+        <p className={`mt-5 border border-white/10 bg-white/[0.025] p-6 text-sm text-white/50 ${radiusClass}`}>Todavía no hay música cargada.</p>
+      </section>
+    );
+  }
+
+  return (
+    <section key={sectionKey} id={SECTION_ANCHOR.music} className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
+      <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--public-accent)]/80">{heading}</p>
+      {channelEmbed ? (
+        <div className={`mt-5 overflow-hidden border border-white/10 ${radiusClass}`}>
+          <iframe
+            title={`${studioName} en ${channelEmbed.platform === "spotify" ? "Spotify" : "YouTube"}`}
+            src={channelEmbed.src}
+            width="100%"
+            height={channelEmbed.platform === "spotify" ? 352 : 315}
+            allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+            loading="lazy"
+            className="block border-0"
+          />
+        </div>
+      ) : null}
+      {releases.length ? (
+        <div className={isList ? "mt-5 space-y-3" : "mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3"}>
+          {releases.map((project) => {
+            const embed = parseMusicEmbed(project.spotify_url ? String(project.spotify_url) : null) ?? parseMusicEmbed(project.youtube_url ? String(project.youtube_url) : null);
+            const originStudio = project.studio && typeof project.studio === "object" ? String((project.studio as Record<string, unknown>).name ?? "") : "";
+            return (
+              <article key={String(project.id)} className={`overflow-hidden border border-white/10 bg-white/[0.025] ${radiusClass} ${isList && !embed ? "flex items-center gap-4 p-3" : ""}`}>
+                {embed ? (
+                  <iframe
+                    title={String(project.title || "Lanzamiento")}
+                    src={embed.src}
+                    width="100%"
+                    height={embed.platform === "spotify" ? 152 : 200}
+                    allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+                    loading="lazy"
+                    className="block border-0"
+                  />
+                ) : project.cover_url ? (
+                  <img src={String(project.cover_url)} alt="" className={isList ? "h-14 w-14 shrink-0 rounded-lg object-cover" : "aspect-square w-full object-cover"} />
+                ) : null}
+                <div className={isList && !embed ? "min-w-0" : "p-4"}>
+                  <p className="truncate font-semibold">{String(project.title || "Lanzamiento")}</p>
+                  {originStudio ? <p className="truncate text-xs text-white/40">{originStudio}</p> : null}
+                  {!embed ? (
+                    <div className="mt-1 flex gap-3 text-xs text-[color:var(--public-accent)]">
+                      {project.spotify_url ? <a href={String(project.spotify_url)} target="_blank" rel="noreferrer">Spotify</a> : null}
+                      {project.youtube_url ? <a href={String(project.youtube_url)} target="_blank" rel="noreferrer">YouTube</a> : null}
+                    </div>
+                  ) : null}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      ) : null}
+    </section>
+  );
+}
 
 // Contraparte de StudioPublicView.tsx cuando el Estudio tiene un
 // layout_config real (mockup replicado o variante elegida): mismo shell
@@ -515,81 +611,18 @@ export function StudioLayoutRenderer({
           </section>
         ) : null;
 
-      case "music": {
-        const isList = section.variant === "list";
-        // Prioridad: (1) canal propio del Estudio si hay uno parseable, (2)
-        // lanzamientos propios, (3) si no hay ninguno de los dos, música de
-        // otros artistas de La Matrix como descubrimiento, (4) estado vacío
-        // -- la sección ya no desaparece de golpe cuando no hay nada propio.
-        const channelEmbed = musicLinks.map((link) => parseMusicEmbed(link.url)).find((embed): embed is NonNullable<typeof embed> => embed !== null) ?? null;
-        const isDiscovery = projects.length === 0 && matrixDiscoveryProjects.length > 0;
-        const sourceProjects = projects.length ? projects : matrixDiscoveryProjects;
-        const releases = sourceProjects.slice(0, section.variant === "featured-release" ? 1 : 6);
-        const heading = section.heading || (isDiscovery ? "Descubrí en La Matrix" : "Música y lanzamientos");
-
-        if (!channelEmbed && releases.length === 0) {
-          return (
-            <section key={index} id={SECTION_ANCHOR.music} className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
-              <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--public-accent)]/80">{heading}</p>
-              <p className={`mt-5 border border-white/10 bg-white/[0.025] p-6 text-sm text-white/50 ${radiusClass}`}>Todavía no hay música cargada.</p>
-            </section>
-          );
-        }
-
-        return (
-          <section key={index} id={SECTION_ANCHOR.music} className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
-            <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--public-accent)]/80">{heading}</p>
-            {channelEmbed ? (
-              <div className={`mt-5 overflow-hidden border border-white/10 ${radiusClass}`}>
-                <iframe
-                  title={`${studio.name} en ${channelEmbed.platform === "spotify" ? "Spotify" : "YouTube"}`}
-                  src={channelEmbed.src}
-                  width="100%"
-                  height={channelEmbed.platform === "spotify" ? 352 : 315}
-                  allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
-                  loading="lazy"
-                  className="block border-0"
-                />
-              </div>
-            ) : null}
-            {releases.length ? (
-              <div className={isList ? "mt-5 space-y-3" : "mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3"}>
-                {releases.map((project) => {
-                  const embed = parseMusicEmbed(project.spotify_url ? String(project.spotify_url) : null) ?? parseMusicEmbed(project.youtube_url ? String(project.youtube_url) : null);
-                  const originStudio = project.studio && typeof project.studio === "object" ? String((project.studio as Record<string, unknown>).name ?? "") : "";
-                  return (
-                    <article key={String(project.id)} className={`overflow-hidden border border-white/10 bg-white/[0.025] ${radiusClass} ${isList && !embed ? "flex items-center gap-4 p-3" : ""}`}>
-                      {embed ? (
-                        <iframe
-                          title={String(project.title || "Lanzamiento")}
-                          src={embed.src}
-                          width="100%"
-                          height={embed.platform === "spotify" ? 152 : 200}
-                          allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
-                          loading="lazy"
-                          className="block border-0"
-                        />
-                      ) : project.cover_url ? (
-                        <img src={String(project.cover_url)} alt="" className={isList ? "h-14 w-14 shrink-0 rounded-lg object-cover" : "aspect-square w-full object-cover"} />
-                      ) : null}
-                      <div className={isList && !embed ? "min-w-0" : "p-4"}>
-                        <p className="truncate font-semibold">{String(project.title || "Lanzamiento")}</p>
-                        {originStudio ? <p className="truncate text-xs text-white/40">{originStudio}</p> : null}
-                        {!embed ? (
-                          <div className="mt-1 flex gap-3 text-xs text-[color:var(--public-accent)]">
-                            {project.spotify_url ? <a href={String(project.spotify_url)} target="_blank" rel="noreferrer">Spotify</a> : null}
-                            {project.youtube_url ? <a href={String(project.youtube_url)} target="_blank" rel="noreferrer">YouTube</a> : null}
-                          </div>
-                        ) : null}
-                      </div>
-                    </article>
-                  );
-                })}
-              </div>
-            ) : null}
-          </section>
-        );
-      }
+      case "music":
+        return renderMusicSection({
+          sectionKey: index,
+          heading: section.heading,
+          isList: section.variant === "list",
+          maxReleases: section.variant === "featured-release" ? 1 : 6,
+          musicLinks,
+          projects,
+          matrixDiscoveryProjects,
+          studioName: studio.name,
+          radiusClass,
+        });
 
       case "contact":
         return links.length ? (
