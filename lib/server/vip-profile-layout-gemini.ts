@@ -1,6 +1,15 @@
 import "server-only";
 import type { GeminiReferenceImage } from "@/lib/gemini-image";
-import { sanitizeLayoutConfig, type LayoutConfig } from "./layout-config";
+import {
+  CARD_STYLES,
+  FONT_WEIGHTS,
+  IMAGE_SLOTS,
+  LAYOUT_SECTION_TYPES,
+  POSITIONED_ELEMENT_TYPES,
+  TEXT_ALIGNS,
+  sanitizeLayoutConfig,
+  type LayoutConfig,
+} from "./layout-config";
 
 // Mismo patrón REST+JSON-mode que vip-profile-gemini.ts (generateProfileCopy)
 // combinado con el patrón inlineData de referencia de gemini-image.ts -- acá
@@ -202,6 +211,73 @@ export async function generateLayoutConfig(args: {
     '  "footer": { "heading": string, "cta_label": string, "cta_section": string } | null',
     "}",
     "(Cada sección solo lleva los campos que le correspondan a su \"type\", como en el esquema del renderer -- no incluyas campos que no apliquen. primaryLabel/primaryIcon/secondaryLabel/secondaryIcon solo aplican a \"hero\", y son opcionales.)",
+  ].join("\n");
+
+  const { parsed, costUsd } = await callGeminiJson({ apiKey: args.apiKey, promptText, images: args.images });
+  return { layout: sanitizeLayoutConfig(parsed), costUsd };
+}
+
+// Pedido explícito del usuario: para reference_layout, "que cope el layout
+// pixel por pixel" -- el esquema de arriba (sections/variant) por diseño
+// aproxima (elige entre un puñado de variantes fijas), nunca replica exacto.
+// Esta función pide en cambio geometría real por elemento (posición/tamaño/
+// tipografía/color, normalizados como porcentaje) en vez de una categoría --
+// sigue siendo 100% datos estructurados (números + enums cerrados) que
+// sanitizeLayoutConfig() revalida entero, nunca HTML/CSS/JSX libre. Se usa
+// SOLO cuando el modo es reference_layout (hay un mockup real del cual
+// copiar) -- adaptive_layout sigue con generateLayoutVariants() de arriba,
+// sin mockup no hay nada que replicar pixel por pixel.
+export async function generatePreciseLayoutConfig(args: {
+  apiKey: string;
+  images: GeminiReferenceImage[];
+  analysis: ReferenceAnalysis;
+  facts: Record<string, unknown>;
+  copy: { tagline: string | null; short_bio: string | null };
+  subjectLabel: "Player" | "Estudio";
+}): Promise<{ layout: LayoutConfig | null; costUsd: number }> {
+  const relevantIndexes = args.analysis.images.filter((image) => image.is_layout_relevant).map((image) => image.index);
+
+  const promptText = [
+    "Sos un extractor de geometría visual para CLOUVA.",
+    "Tu tarea es analizar un mockup/screenshot real de una web y devolver la posición, tamaño y estilo EXACTOS de cada elemento visible, para que un renderer pueda reconstruir esa página lo más fiel posible al mockup -- no una aproximación con plantillas, una réplica.",
+    "Vos NUNCA generás HTML, CSS ni JSX -- solo números y valores de un vocabulario cerrado, como en el esquema del renderer.",
+    "",
+    `Las imágenes en los índices ${JSON.stringify(relevantIndexes)} son el mockup real a replicar.`,
+    `Datos confirmados del ${args.subjectLabel} (único material permitido para el copy -- nunca inventes texto que no esté acá ni copies nombres/marcas ajenas que aparezcan en el mockup): ${JSON.stringify(args.facts)}`,
+    `Copy ya aprobado (usalo tal cual donde corresponda, no lo reescribas): tagline=${JSON.stringify(args.copy.tagline)}, bio=${JSON.stringify(args.copy.short_bio)}`,
+    "",
+    `SECCIONES PERMITIDAS ("type"): ${LAYOUT_SECTION_TYPES.join(", ")}. Identificá cada bloque visual grande del mockup (hero, sobre, pilares, galería, roster, servicios, membresía, música, contacto) de arriba hacia abajo, en el orden real en que aparecen.`,
+    "",
+    "Por cada sección devolvé:",
+    '- "heightVh": alto relativo de esa sección en el mockup, como si fuera un porcentaje de la altura de pantalla completa (20-150, el hero suele ser 60-100).',
+    `- "background": opcional -- { "color": hex de 6 dígitos si el fondo es un color sólido, "imageSlot": uno de ${IMAGE_SLOTS.join(", ")} si el fondo es una FOTO (nunca una URL). "cover" es la foto principal del hero, "logo" es el ícono/marca chica, "pillar-0"/"pillar-1"/"pillar-2"/"pillar-3" son las fotos de fondo de cada tarjeta de pilares en el orden en que aparecen. Si la sección no tiene foto de fondo, omitilo.`,
+    "",
+    `Para secciones "estáticas" (hero, about, pillars, contact -- las que muestran texto/botones fijos, no una lista de datos reales) incluí "elements": un array con cada texto/botón/ícono visible, cada uno con:`,
+    `  - "type": uno de ${POSITIONED_ELEMENT_TYPES.join(", ")}.`,
+    '  - "text": el contenido real (para pillars, generá 2-4 elementos "heading"+"paragraph" por tarjeta, basados en servicios/valores reales del Estudio -- nunca inventados de la nada). Omitilo para type "image".',
+    '  - "x", "y": posición del borde superior-izquierdo del elemento, como porcentaje (0-100) del ANCHO y ALTO de esa sección (no de la página entera).',
+    '  - "w": ancho del elemento, como porcentaje (0-100) del ancho de la sección.',
+    '  - "fontSizePx": tamaño de fuente estimado en píxeles (10-96) -- solo para heading/subheading/paragraph/badge/button.',
+    `  - "fontWeight": el más parecido de ${FONT_WEIGHTS.join(", ")}.`,
+    '  - "color": color de texto estimado, hex de 6 dígitos.',
+    `  - "align": uno de ${TEXT_ALIGNS.join(", ")}.`,
+    `  - Para type "button": "action", clasificando qué hace ese botón según el mockup -- SOLO uno de: "join" (unirse/inscribirse), "share" (compartir), o "scroll:<tipo de sección>" con <tipo de sección> siendo una de ${LAYOUT_SECTION_TYPES.join(", ")} (ej. "scroll:music" si el botón lleva a la música). NUNCA un link/URL -- el destino real siempre lo resuelve el renderer, no vos.`,
+    '  - Para type "image": "imageSlot" (mismo vocabulario que el background de arriba) -- nunca text.',
+    "",
+    `Para secciones "dinámicas" (roster, services, membership, gallery, music -- las que en el sitio real muestran datos reales cuya cantidad no podés saber de antemano) NO incluyas "elements" -- incluí en cambio "styleHint": { "heading": el título de esa sección tal como aparece en el mockup, "cardStyle": uno de ${CARD_STYLES.join(", ")} según cómo se ven las tarjetas en el mockup }.`,
+    "",
+    "Mismas reglas de siempre para el resto del esquema: \"nav_style\" (bar|pill), \"radius\" (none|small|medium|large), \"page_style.palette\" con hex de 6 dígitos coherentes entre sí, \"nav_items\" y \"footer\" opcionales apuntando a secciones incluidas.",
+    "",
+    "Devolvé exactamente este JSON, sin texto alrededor:",
+    "{",
+    '  "mode": "reference_layout",',
+    '  "layout_kind": "precise",',
+    '  "precise_sections": [ { "type": string, "heightVh": number, "background": {"color": string, "imageSlot": string}, "elements": [ { "type": string, "text": string, "x": number, "y": number, "w": number, "fontSizePx": number, "fontWeight": number, "color": string, "align": string, "action": string, "imageSlot": string } ], "styleHint": { "heading": string, "cardStyle": string } } ],',
+    '  "page_style": { "theme": "dark" | "light" | "mixed", "radius": string, "nav_style": "bar" | "pill", "palette": { "background": string, "surface": string, "text": string, "muted_text": string, "accent": string, "border": string } },',
+    '  "nav_items": [ { "label": string, "section": string } ],',
+    '  "footer": { "heading": string, "cta_label": string, "cta_section": string } | null',
+    "}",
+    "(Cada sección solo lleva \"elements\" O \"styleHint\", nunca ambos ni ninguno.)",
   ].join("\n");
 
   const { parsed, costUsd } = await callGeminiJson({ apiKey: args.apiKey, promptText, images: args.images });

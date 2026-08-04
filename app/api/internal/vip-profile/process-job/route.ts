@@ -5,8 +5,8 @@ import { generateProfileCopy, type ProfileCopy } from "@/lib/server/vip-profile-
 import { playerBriefToFacts, studioBriefToFacts, type IdentityBrief, type StudioIdentityBrief } from "@/lib/server/vip-profile-brief";
 import { enqueueVipProfileJobStep } from "@/lib/server/cloud-tasks";
 import { fetchReferenceImages, generateCoverAsset, generateLogoAsset, generatePillarAsset, type GeneratedAsset } from "@/lib/server/vip-profile-assets";
-import { analyzeReferenceImages, generateLayoutConfig, generateLayoutVariants, type ReferenceAnalysis } from "@/lib/server/vip-profile-layout-gemini";
-import { sanitizeLayoutConfig, type LayoutConfig, type LayoutSection } from "@/lib/server/layout-config";
+import { analyzeReferenceImages, generateLayoutConfig, generateLayoutVariants, generatePreciseLayoutConfig, type ReferenceAnalysis } from "@/lib/server/vip-profile-layout-gemini";
+import { sanitizeLayoutConfig, type ImageSlot, type LayoutConfig, type LayoutSection } from "@/lib/server/layout-config";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
@@ -191,7 +191,14 @@ export async function POST(request: NextRequest) {
             const facts = isPlayer
               ? playerBriefToFacts(job.identity_brief as unknown as IdentityBrief)
               : studioBriefToFacts(job.identity_brief as unknown as StudioIdentityBrief);
-            const { layout, costUsd } = await generateLayoutConfig({
+            // Pedido explícito del usuario: para reference_layout, réplica
+            // pixel por pixel del mockup en vez de aproximar con variantes
+            // fijas -- generatePreciseLayoutConfig extrae geometría real por
+            // elemento. Sin mockup claro (adaptive_layout nunca llega acá,
+            // pero por las dudas si analysis existe sin ser reference_layout)
+            // cae al esquema viejo de siempre.
+            const generator = analysis.mode === "reference_layout" ? generatePreciseLayoutConfig : generateLayoutConfig;
+            const { layout, costUsd } = await generator({
               apiKey,
               images: referenceImages ?? [],
               analysis,
@@ -225,9 +232,11 @@ export async function POST(request: NextRequest) {
         // layout generado tiene una sección "pillars" real. Best-effort: una
         // foto que falla no tumba el job entero, esa tarjeta simplemente
         // queda sin foto (cae al diseño de texto plano de siempre).
-        const pillarsSection = layoutResult?.layout?.sections.find(
-          (section): section is Extract<LayoutSection, { type: "pillars" }> => section.type === "pillars",
-        );
+        const isPrecise = layoutResult?.layout?.layout_kind === "precise";
+
+        const pillarsSection = !isPrecise
+          ? layoutResult?.layout?.sections.find((section): section is Extract<LayoutSection, { type: "pillars" }> => section.type === "pillars")
+          : undefined;
         const pillarResults = analysis?.mode === "reference_layout" && pillarsSection && pillarsSection.items.length >= 2
           ? await Promise.allSettled(
               pillarsSection.items.slice(0, 4).map((item, pillarIndex) =>
@@ -241,7 +250,57 @@ export async function POST(request: NextRequest) {
             return result && result.status === "fulfilled" ? { ...item, image: result.value.url } : item;
           });
         }
-        const pillarCostUsd = pillarResults.reduce((sum, result) => sum + (result.status === "fulfilled" ? result.value.costUsd : 0), 0);
+
+        // Mismo concepto para el esquema "precise": los "pillar-N" que
+        // Gemini haya referenciado como imageSlot en la sección pillars se
+        // resuelven acá a una foto real, nunca a una URL que la IA haya
+        // inventado. Emparejar cada foto con el heading/paragraph del mismo
+        // índice es best-effort (no hay una asociación exacta elemento-por-
+        // elemento en el esquema) -- alcanza para un prompt de imagen
+        // representativo, no necesita ser perfecto.
+        const precisePillarsSection = isPrecise
+          ? layoutResult?.layout?.precise_sections.find((section) => section.type === "pillars")
+          : undefined;
+        const referencedPillarSlots = precisePillarsSection
+          ? Array.from(new Set(
+              (precisePillarsSection.elements ?? [])
+                .filter((element) => element.type === "image" && element.imageSlot?.startsWith("pillar-"))
+                .map((element) => element.imageSlot as ImageSlot),
+            )).slice(0, 4)
+          : [];
+        const preciseHeadings = (precisePillarsSection?.elements ?? []).filter((el) => el.type === "heading" || el.type === "subheading").map((el) => el.text || "");
+        const preciseParagraphs = (precisePillarsSection?.elements ?? []).filter((el) => el.type === "paragraph").map((el) => el.text || "");
+        const precisePillarResults = referencedPillarSlots.length
+          ? await Promise.allSettled(
+              referencedPillarSlots.map((slot, i) =>
+                generatePillarAsset({
+                  admin,
+                  entityPathPrefix,
+                  title: preciseHeadings[i] || precisePillarsSection?.styleHint?.heading || "Identidad",
+                  description: preciseParagraphs[i] || "Foto de ambiente representativa del Estudio.",
+                  professionalCategories,
+                  index: Number(slot.split("-")[1]),
+                }),
+              ),
+            )
+          : [];
+        if (layoutResult?.layout && isPrecise) {
+          const coverAsset = assets.find((asset) => asset.kind === "cover");
+          const logoAsset = assets.find((asset) => asset.kind === "logo");
+          const preciseImageSlots: Partial<Record<ImageSlot, string>> = {};
+          referencedPillarSlots.forEach((slot, i) => {
+            const result = precisePillarResults[i];
+            if (result && result.status === "fulfilled") preciseImageSlots[slot] = result.value.url;
+          });
+          layoutResult.layout.image_slots = {
+            ...layoutResult.layout.image_slots,
+            ...(coverAsset ? { cover: coverAsset.url } : {}),
+            ...(logoAsset ? { logo: logoAsset.url } : {}),
+            ...preciseImageSlots,
+          };
+        }
+
+        const pillarCostUsd = [...pillarResults, ...precisePillarResults].reduce((sum, result) => sum + (result.status === "fulfilled" ? result.value.costUsd : 0), 0);
 
         const costUsd = assets.reduce((sum, asset) => sum + asset.costUsd, 0) + (layoutResult?.costUsd ?? 0) + pillarCostUsd;
 
