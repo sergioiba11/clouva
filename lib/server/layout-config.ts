@@ -2,10 +2,15 @@
 // nunca produce HTML/JSX, solo esta estructura JSON (guardada en
 // player_profile_versions.layout_config), interpretada por un renderer React
 // fijo (components/public/StudioLayoutRenderer.tsx). Deliberadamente NO
-// incluye URLs de imagen: las imágenes reales (portada/logo/galería) siguen
-// viniendo de asset_references/los datos del Estudio ya existentes, nunca de
-// este JSON -- así layout_config solo puede describir texto, modo, variante
-// de sección y color, nunca inyectar una URL arbitraria.
+// incluye URLs de imagen que Gemini pueda inventar: las imágenes reales
+// (portada/logo/galería) siguen viniendo de asset_references/los datos del
+// Estudio ya existentes, nunca del JSON que Gemini devuelve -- así
+// layout_config solo puede describir texto, modo, variante de sección y
+// color de ese lado. La única excepción es `PillarItem.image`: esa URL nunca
+// la propone Gemini (no forma parte de lo que se le pide en el prompt), la
+// escribe nuestro propio servidor después de generar una foto real por
+// pillar -- igual se valida como URL https bien formada al sanitizar, nunca
+// se confía en el string a ciegas.
 //
 // `mode` distingue las dos formas en que se llega a este layout:
 // - "reference_layout": el usuario subió una o más imágenes que son mockups/
@@ -50,11 +55,21 @@ export const SECTION_VARIANTS = {
 
 export type SectionVariant<T extends LayoutSectionType> = (typeof SECTION_VARIANTS)[T][number];
 
+// Catálogo cerrado de íconos para los botones del hero -- nunca un nombre
+// arbitrario de ícono, siempre uno de estos (mapeados a lucide-react en el
+// renderer).
+export const HERO_ICONS = ["sparkles", "play", "users", "music", "heart", "arrow-right", "mic", "calendar", "headphones", "star"] as const;
+export type HeroIconName = (typeof HERO_ICONS)[number];
+
 export type HeroSection = {
   type: "hero";
   variant: SectionVariant<"hero">;
   headline: string;
   subheadline?: string | null;
+  primaryLabel?: string | null;
+  primaryIcon?: HeroIconName | null;
+  secondaryLabel?: string | null;
+  secondaryIcon?: HeroIconName | null;
 };
 
 export type AboutSection = {
@@ -64,7 +79,7 @@ export type AboutSection = {
   body: string;
 };
 
-export type PillarItem = { title: string; description: string };
+export type PillarItem = { title: string; description: string; image?: string | null };
 
 export type PillarsSection = {
   type: "pillars";
@@ -155,6 +170,24 @@ function sanitizeVariant<T extends LayoutSectionType>(type: T, raw: unknown): Se
   return (typeof raw === "string" && allowed.includes(raw) ? raw : allowed[0]) as SectionVariant<T>;
 }
 
+function sanitizeHeroIcon(raw: unknown): HeroIconName | null {
+  return typeof raw === "string" && (HERO_ICONS as readonly string[]).includes(raw) ? (raw as HeroIconName) : null;
+}
+
+// Solo para PillarItem.image -- ese campo lo escribe nuestro propio server
+// (nunca Gemini), pero igual se re-sanitiza en cada request (ver
+// sanitizeLayoutConfig), así que valida que sea una URL https bien formada
+// antes de dejarla pasar, nunca confía en el string a ciegas.
+function httpsUrlOrNull(value: unknown, maxLength: number): string | null {
+  const cleaned = text(value, maxLength);
+  if (!cleaned) return null;
+  try {
+    return new URL(cleaned).protocol === "https:" ? cleaned : null;
+  } catch {
+    return null;
+  }
+}
+
 function sanitizeSection(raw: unknown): LayoutSection | null {
   if (!raw || typeof raw !== "object") return null;
   const value = raw as Record<string, unknown>;
@@ -164,7 +197,16 @@ function sanitizeSection(raw: unknown): LayoutSection | null {
     case "hero": {
       const headline = text(value.headline, 120);
       if (!headline) return null;
-      return { type: "hero", variant: sanitizeVariant("hero", value.variant), headline, subheadline: optionalText(value.subheadline, 200) };
+      return {
+        type: "hero",
+        variant: sanitizeVariant("hero", value.variant),
+        headline,
+        subheadline: optionalText(value.subheadline, 200),
+        primaryLabel: optionalText(value.primaryLabel, 40),
+        primaryIcon: sanitizeHeroIcon(value.primaryIcon),
+        secondaryLabel: optionalText(value.secondaryLabel, 40),
+        secondaryIcon: sanitizeHeroIcon(value.secondaryIcon),
+      };
     }
     case "about": {
       const heading = text(value.heading, 60) || "Sobre nosotros";
@@ -180,7 +222,8 @@ function sanitizeSection(raw: unknown): LayoutSection | null {
               if (!item || typeof item !== "object") return null;
               const title = text((item as Record<string, unknown>).title, 60);
               const description = text((item as Record<string, unknown>).description, 240);
-              return title && description ? { title, description } : null;
+              const image = httpsUrlOrNull((item as Record<string, unknown>).image, 500);
+              return title && description ? { title, description, image } : null;
             })
             .filter((item): item is PillarItem => item !== null)
             .slice(0, MAX_PILLAR_ITEMS)

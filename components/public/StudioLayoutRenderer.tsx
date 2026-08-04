@@ -1,13 +1,30 @@
 import type { ReactNode } from "react";
 import Link from "next/link";
+import { ArrowRight, Calendar, Headphones, Heart, Mic, Music, Play, Sparkles, Star, Users as UsersIcon } from "lucide-react";
 import { PublicMediaGallery } from "./PublicMediaGallery";
 import { PublicShareButton } from "./PublicShareButton";
 import { PublicSocialLinks } from "./PublicSocialLinks";
 import { StudioServicesCart } from "./StudioServicesCart";
 import { StudioManageButton } from "./StudioManageButton";
 import { formatPlanPrice, studioSocialLinks } from "./StudioPublicView";
-import type { HeroSection, LayoutConfig, LayoutSection, LayoutSectionType, RadiusValue } from "@/lib/server/layout-config";
+import { parseMusicEmbed } from "@/lib/music-embed";
+import type { HeroIconName, HeroSection, LayoutConfig, LayoutSection, LayoutSectionType, RadiusValue } from "@/lib/server/layout-config";
 import type { PlayerMedia, StudioMembershipPlan, StudioPlayer, StudioRow, StudioService } from "@/lib/players-data";
+
+// Catálogo cerrado de íconos del hero (ver HERO_ICONS en layout-config.ts) --
+// solo estos 10, nunca uno arbitrario que Gemini haya propuesto.
+const HERO_ICON_MAP: Record<HeroIconName, typeof Sparkles> = {
+  sparkles: Sparkles,
+  play: Play,
+  users: UsersIcon,
+  music: Music,
+  heart: Heart,
+  "arrow-right": ArrowRight,
+  mic: Mic,
+  calendar: Calendar,
+  headphones: Headphones,
+  star: Star,
+};
 
 type CustomNavLink = { label: string; href: string };
 
@@ -119,6 +136,7 @@ export function StudioLayoutRenderer({
   players,
   media,
   projects,
+  matrixDiscoveryProjects = [],
   services,
   membershipPlans = [],
   joined = false,
@@ -128,12 +146,17 @@ export function StudioLayoutRenderer({
   players: StudioPlayer[];
   media: PlayerMedia[];
   projects: Array<Record<string, unknown>>;
+  matrixDiscoveryProjects?: Array<Record<string, unknown>>;
   services: StudioService[];
   membershipPlans?: StudioMembershipPlan[];
   joined?: boolean;
   layout: LayoutConfig;
 }) {
   const links = studioSocialLinks(studio);
+  // Canal propio de Spotify/YouTube del Estudio (no un lanzamiento suelto) --
+  // si existe, el reproductor de la sección "música" lo muestra como pieza
+  // destacada antes que la grilla de lanzamientos individuales.
+  const musicLinks = links.filter((link) => link.platform === "spotify" || link.platform === "youtube");
   const defaultMembershipPlan = membershipPlans.find((plan) => plan.is_free) ?? membershipPlans[0] ?? null;
   const joinHref = defaultMembershipPlan
     ? `/studios/${studio.slug}/checkout${defaultMembershipPlan.is_free ? "" : `?plan=${defaultMembershipPlan.slug}`}`
@@ -147,8 +170,6 @@ export function StudioLayoutRenderer({
   const includedTypes = new Set(sections.map((section) => section.type));
   const radiusClass = RADIUS_CLASS[layout.page_style?.radius ?? "medium"];
   const location = [studio.city, studio.country].filter(Boolean).join(", ");
-  const primaryAction = { label: joined ? "Ya sos miembro" : "Quiero unirme", href: joined && includedTypes.has("roster") ? `#${SECTION_ANCHOR.roster}` : joinHref };
-  const secondaryAction = players.length && includedTypes.has("roster") ? { label: "Conocer Players", href: `#${SECTION_ANCHOR.roster}` } : null;
 
   const navLinks: CustomNavLink[] = layout.nav_items?.length
     ? layout.nav_items.map((item) => ({ label: item.label, href: `#${SECTION_ANCHOR[item.section]}` }))
@@ -171,11 +192,48 @@ export function StudioLayoutRenderer({
   function renderHero(section: HeroSection, index: number) {
     const badges = studio.categories || [];
     const initial = studio.name.trim().charAt(0).toUpperCase() || "C";
-    const logo = studio.logo_url ? <img src={studio.logo_url} alt={studio.name} className={`h-16 w-16 shrink-0 border-4 border-[#07060b] object-cover shadow-xl ${radiusClass}`} /> : null;
+    // Wordmark tipográfico CSS -- Gemini tiene prohibido renderizar texto en
+    // imágenes (lo hace mal), así que el nombre real del Estudio siempre va
+    // en texto HTML real y grande, con el ícono abstracto de Gemini (si hay)
+    // como acompañante chico al lado, nunca reemplazándolo.
+    const wordmark = (
+      <div className="flex items-center gap-3">
+        {studio.logo_url ? <img src={studio.logo_url} alt="" className="h-10 w-10 shrink-0 rounded-xl object-cover" /> : null}
+        <span className="text-2xl font-black uppercase tracking-[0.08em] text-white sm:text-3xl">{studio.name}</span>
+      </div>
+    );
+    // primaryLabel/secondaryLabel (si Gemini los propuso) reemplazan el texto
+    // del botón -- el destino (href) sigue siendo siempre el real, calculado
+    // acá, nunca algo que la IA pueda inventar.
+    const primaryAction = { label: section.primaryLabel || (joined ? "Ya sos miembro" : "Quiero unirme"), href: joined && includedTypes.has("roster") ? `#${SECTION_ANCHOR.roster}` : joinHref };
+    // Mismo comportamiento de siempre cuando no hay secondaryLabel propio: el
+    // botón solo existe si hay roster real. Si Gemini SÍ propuso un label
+    // propio pero no hay roster, cae a la primera otra sección real en vez de
+    // desaparecer -- nunca un link muerto, nunca un botón fabricado de la nada
+    // cuando antes no había ninguno.
+    const rosterAvailable = players.length > 0 && includedTypes.has("roster");
+    const secondaryTargetType: LayoutSectionType | null = rosterAvailable
+      ? "roster"
+      : section.secondaryLabel
+        ? sections.find((s) => s.type !== "hero")?.type ?? null
+        : null;
+    const secondaryAction = secondaryTargetType
+      ? { label: section.secondaryLabel || "Conocer Players", href: `#${SECTION_ANCHOR[secondaryTargetType]}` }
+      : null;
+    const PrimaryIcon = section.primaryIcon ? HERO_ICON_MAP[section.primaryIcon] : null;
+    const SecondaryIcon = section.secondaryIcon ? HERO_ICON_MAP[section.secondaryIcon] : null;
     const actions = (
       <div className="flex flex-wrap gap-2">
-        <Link href={primaryAction.href} className="rounded-full bg-[color:var(--public-accent)] px-5 py-2.5 text-sm font-semibold transition hover:opacity-90">{primaryAction.label}</Link>
-        {secondaryAction ? <Link href={secondaryAction.href} className="rounded-full border border-white/15 bg-black/30 px-5 py-2.5 text-sm font-semibold transition hover:border-[color:var(--public-accent)]/60">{secondaryAction.label}</Link> : null}
+        <Link href={primaryAction.href} className="inline-flex items-center gap-2 rounded-full bg-[color:var(--public-accent)] px-5 py-2.5 text-sm font-semibold transition hover:opacity-90">
+          {PrimaryIcon ? <PrimaryIcon className="h-4 w-4" /> : null}
+          {primaryAction.label}
+        </Link>
+        {secondaryAction ? (
+          <Link href={secondaryAction.href} className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-black/30 px-5 py-2.5 text-sm font-semibold transition hover:border-[color:var(--public-accent)]/60">
+            {SecondaryIcon ? <SecondaryIcon className="h-4 w-4" /> : null}
+            {secondaryAction.label}
+          </Link>
+        ) : null}
         <PublicShareButton title={studio.name} />
       </div>
     );
@@ -193,7 +251,7 @@ export function StudioLayoutRenderer({
           <section key={index} id={SECTION_ANCHOR.hero} className="border-b border-white/10">
             <div className="mx-auto grid max-w-6xl gap-8 px-4 py-14 sm:px-6 lg:grid-cols-2 lg:items-center">
               <div className="order-2 lg:order-1">
-                {logo}
+                {wordmark}
                 <p className="mt-5 text-[10px] font-semibold uppercase tracking-[0.28em] text-[color:var(--public-accent)]/80">Estudio</p>
                 <h1 className="mt-2 text-4xl font-bold tracking-tight sm:text-5xl">{section.headline}</h1>
                 {section.subheadline ? <p className="mt-4 text-lg leading-relaxed text-white/70">{section.subheadline}</p> : null}
@@ -255,7 +313,7 @@ export function StudioLayoutRenderer({
             {studio.cover_url ? <img src={studio.cover_url} alt="" className="absolute inset-0 h-full w-full object-cover" /> : <div className="absolute inset-0 bg-gradient-to-br from-[color:var(--public-accent)]/25 to-black" />}
             <div className="absolute inset-0 bg-black/55" />
             <div className="relative flex flex-col items-center px-4">
-              {logo}
+              {wordmark}
               <h1 className="mt-6 text-4xl font-semibold uppercase tracking-[0.15em] sm:text-6xl">{section.headline}</h1>
               {section.subheadline ? <p className="mt-4 max-w-lg text-white/80">{section.subheadline}</p> : null}
               <div className="mt-8">{actions}</div>
@@ -350,12 +408,23 @@ export function StudioLayoutRenderer({
             <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--public-accent)]/80">Identidad</p>
             <h2 className="mt-1 text-2xl font-semibold">{section.heading}</h2>
             <div className={`mt-5 grid gap-4 ${columns}`}>
-              {section.items.map((item, itemIndex) => (
-                <article key={itemIndex} className={`border border-white/10 bg-white/[0.025] p-6 ${radiusClass}`}>
-                  <h3 className="font-semibold">{item.title}</h3>
-                  <p className="mt-2 text-sm leading-6 text-white/60">{item.description}</p>
-                </article>
-              ))}
+              {section.items.map((item, itemIndex) =>
+                item.image ? (
+                  <article key={itemIndex} className={`relative min-h-56 overflow-hidden ${radiusClass}`}>
+                    <img src={item.image} alt="" className="absolute inset-0 h-full w-full object-cover" />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/30 to-transparent" />
+                    <div className="relative flex h-full min-h-56 flex-col justify-end p-6">
+                      <h3 className="font-semibold">{item.title}</h3>
+                      <p className="mt-2 text-sm leading-6 text-white/75">{item.description}</p>
+                    </div>
+                  </article>
+                ) : (
+                  <article key={itemIndex} className={`border border-white/10 bg-white/[0.025] p-6 ${radiusClass}`}>
+                    <h3 className="font-semibold">{item.title}</h3>
+                    <p className="mt-2 text-sm leading-6 text-white/60">{item.description}</p>
+                  </article>
+                ),
+              )}
             </div>
           </section>
         );
@@ -424,28 +493,77 @@ export function StudioLayoutRenderer({
         ) : null;
 
       case "music": {
-        if (projects.length === 0) return null;
         const isList = section.variant === "list";
-        const releases = projects.slice(0, section.variant === "featured-release" ? 1 : 6);
+        // Prioridad: (1) canal propio del Estudio si hay uno parseable, (2)
+        // lanzamientos propios, (3) si no hay ninguno de los dos, música de
+        // otros artistas de La Matrix como descubrimiento, (4) estado vacío
+        // -- la sección ya no desaparece de golpe cuando no hay nada propio.
+        const channelEmbed = musicLinks.map((link) => parseMusicEmbed(link.url)).find((embed): embed is NonNullable<typeof embed> => embed !== null) ?? null;
+        const isDiscovery = projects.length === 0 && matrixDiscoveryProjects.length > 0;
+        const sourceProjects = projects.length ? projects : matrixDiscoveryProjects;
+        const releases = sourceProjects.slice(0, section.variant === "featured-release" ? 1 : 6);
+        const heading = section.heading || (isDiscovery ? "Descubrí en La Matrix" : "Música y lanzamientos");
+
+        if (!channelEmbed && releases.length === 0) {
+          return (
+            <section key={index} id={SECTION_ANCHOR.music} className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
+              <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--public-accent)]/80">{heading}</p>
+              <p className={`mt-5 border border-white/10 bg-white/[0.025] p-6 text-sm text-white/50 ${radiusClass}`}>Todavía no hay música cargada.</p>
+            </section>
+          );
+        }
+
         return (
           <section key={index} id={SECTION_ANCHOR.music} className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
-            <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--public-accent)]/80">{section.heading || "Música y lanzamientos"}</p>
-            <div className={isList ? "mt-5 space-y-3" : "mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3"}>
-              {releases.map((project) => (
-                <article key={String(project.id)} className={`overflow-hidden border border-white/10 bg-white/[0.025] ${radiusClass} ${isList ? "flex items-center gap-4 p-3" : ""}`}>
-                  {project.cover_url ? (
-                    <img src={String(project.cover_url)} alt="" className={isList ? "h-14 w-14 shrink-0 rounded-lg object-cover" : "aspect-square w-full object-cover"} />
-                  ) : null}
-                  <div className={isList ? "min-w-0" : "p-4"}>
-                    <p className="truncate font-semibold">{String(project.title || "Lanzamiento")}</p>
-                    <div className="mt-1 flex gap-3 text-xs text-[color:var(--public-accent)]">
-                      {project.spotify_url ? <a href={String(project.spotify_url)} target="_blank" rel="noreferrer">Spotify</a> : null}
-                      {project.youtube_url ? <a href={String(project.youtube_url)} target="_blank" rel="noreferrer">YouTube</a> : null}
-                    </div>
-                  </div>
-                </article>
-              ))}
-            </div>
+            <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--public-accent)]/80">{heading}</p>
+            {channelEmbed ? (
+              <div className={`mt-5 overflow-hidden border border-white/10 ${radiusClass}`}>
+                <iframe
+                  title={`${studio.name} en ${channelEmbed.platform === "spotify" ? "Spotify" : "YouTube"}`}
+                  src={channelEmbed.src}
+                  width="100%"
+                  height={channelEmbed.platform === "spotify" ? 352 : 315}
+                  allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+                  loading="lazy"
+                  className="block border-0"
+                />
+              </div>
+            ) : null}
+            {releases.length ? (
+              <div className={isList ? "mt-5 space-y-3" : "mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3"}>
+                {releases.map((project) => {
+                  const embed = parseMusicEmbed(project.spotify_url ? String(project.spotify_url) : null) ?? parseMusicEmbed(project.youtube_url ? String(project.youtube_url) : null);
+                  const originStudio = project.studio && typeof project.studio === "object" ? String((project.studio as Record<string, unknown>).name ?? "") : "";
+                  return (
+                    <article key={String(project.id)} className={`overflow-hidden border border-white/10 bg-white/[0.025] ${radiusClass} ${isList && !embed ? "flex items-center gap-4 p-3" : ""}`}>
+                      {embed ? (
+                        <iframe
+                          title={String(project.title || "Lanzamiento")}
+                          src={embed.src}
+                          width="100%"
+                          height={embed.platform === "spotify" ? 152 : 200}
+                          allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+                          loading="lazy"
+                          className="block border-0"
+                        />
+                      ) : project.cover_url ? (
+                        <img src={String(project.cover_url)} alt="" className={isList ? "h-14 w-14 shrink-0 rounded-lg object-cover" : "aspect-square w-full object-cover"} />
+                      ) : null}
+                      <div className={isList && !embed ? "min-w-0" : "p-4"}>
+                        <p className="truncate font-semibold">{String(project.title || "Lanzamiento")}</p>
+                        {originStudio ? <p className="truncate text-xs text-white/40">{originStudio}</p> : null}
+                        {!embed ? (
+                          <div className="mt-1 flex gap-3 text-xs text-[color:var(--public-accent)]">
+                            {project.spotify_url ? <a href={String(project.spotify_url)} target="_blank" rel="noreferrer">Spotify</a> : null}
+                            {project.youtube_url ? <a href={String(project.youtube_url)} target="_blank" rel="noreferrer">YouTube</a> : null}
+                          </div>
+                        ) : null}
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            ) : null}
           </section>
         );
       }

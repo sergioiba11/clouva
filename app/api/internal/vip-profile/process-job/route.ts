@@ -4,9 +4,9 @@ import { createAdminSupabase } from "@/lib/server/supabase";
 import { generateProfileCopy, type ProfileCopy } from "@/lib/server/vip-profile-gemini";
 import { playerBriefToFacts, studioBriefToFacts, type IdentityBrief, type StudioIdentityBrief } from "@/lib/server/vip-profile-brief";
 import { enqueueVipProfileJobStep } from "@/lib/server/cloud-tasks";
-import { fetchReferenceImages, generateCoverAsset, generateLogoAsset, type GeneratedAsset } from "@/lib/server/vip-profile-assets";
+import { fetchReferenceImages, generateCoverAsset, generateLogoAsset, generatePillarAsset, type GeneratedAsset } from "@/lib/server/vip-profile-assets";
 import { analyzeReferenceImages, generateLayoutConfig, generateLayoutVariants, type ReferenceAnalysis } from "@/lib/server/vip-profile-layout-gemini";
-import { sanitizeLayoutConfig, type LayoutConfig } from "@/lib/server/layout-config";
+import { sanitizeLayoutConfig, type LayoutConfig, type LayoutSection } from "@/lib/server/layout-config";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
@@ -218,8 +218,32 @@ export async function POST(request: NextRequest) {
         const assets = results
           .filter((result): result is PromiseFulfilledResult<GeneratedAsset> => result.status === "fulfilled")
           .map((result) => result.value);
-        const costUsd = assets.reduce((sum, asset) => sum + asset.costUsd, 0) + (layoutResult?.costUsd ?? 0);
         const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+
+        // Fotos de fondo por pillar -- solo en reference_layout (nunca en las
+        // 3 variantes de adaptive_layout, por costo/timeout), y solo si el
+        // layout generado tiene una sección "pillars" real. Best-effort: una
+        // foto que falla no tumba el job entero, esa tarjeta simplemente
+        // queda sin foto (cae al diseño de texto plano de siempre).
+        const pillarsSection = layoutResult?.layout?.sections.find(
+          (section): section is Extract<LayoutSection, { type: "pillars" }> => section.type === "pillars",
+        );
+        const pillarResults = analysis?.mode === "reference_layout" && pillarsSection && pillarsSection.items.length >= 2
+          ? await Promise.allSettled(
+              pillarsSection.items.slice(0, 4).map((item, pillarIndex) =>
+                generatePillarAsset({ admin, entityPathPrefix, title: item.title, description: item.description, professionalCategories, index: pillarIndex }),
+              ),
+            )
+          : [];
+        if (pillarsSection) {
+          pillarsSection.items = pillarsSection.items.map((item, itemIndex) => {
+            const result = pillarResults[itemIndex];
+            return result && result.status === "fulfilled" ? { ...item, image: result.value.url } : item;
+          });
+        }
+        const pillarCostUsd = pillarResults.reduce((sum, result) => sum + (result.status === "fulfilled" ? result.value.costUsd : 0), 0);
+
+        const costUsd = assets.reduce((sum, asset) => sum + asset.costUsd, 0) + (layoutResult?.costUsd ?? 0) + pillarCostUsd;
 
         const { error: saveError } = await admin
           .from("vip_profile_generation_jobs")
