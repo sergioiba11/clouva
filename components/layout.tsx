@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
 import { getAccounts, switchAccount, type StoredAccount } from "@/lib/account-switcher";
+import { resolveAccountDisplayName } from "@/lib/identity-names";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { CloverIcon } from "@/components/clover-icon";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
@@ -27,7 +28,7 @@ export function MainNav() {
     if (params.get("openAccountSwitcher") === "1") setOpenSwitch(true);
   }, [user]);
 
-  const displayName = profile?.full_name ?? profile?.display_name ?? user?.email?.split("@")[0] ?? "Flow";
+  const displayName = resolveAccountDisplayName({ profile, user });
   const avatar = profile?.avatar_url ?? user?.user_metadata?.avatar_url;
   const canAdmin = role === "admin";
 
