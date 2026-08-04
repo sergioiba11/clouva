@@ -14,7 +14,7 @@ import type { PlayerMedia, SocialLink, StudioMembershipPlan, StudioPlayer, Studi
 // Catálogo cerrado de íconos del hero y los pillars (ver LAYOUT_ICONS en
 // layout-config.ts) -- solo estos 10, nunca uno arbitrario que Gemini haya
 // propuesto.
-const LAYOUT_ICON_MAP: Record<LayoutIconName, typeof Sparkles> = {
+export const LAYOUT_ICON_MAP: Record<LayoutIconName, typeof Sparkles> = {
   sparkles: Sparkles,
   play: Play,
   users: UsersIcon,
@@ -45,6 +45,7 @@ export function CustomShell({
   joinAction,
   links,
   footer,
+  headerOverlay = false,
   children,
 }: {
   brand: string;
@@ -55,12 +56,23 @@ export function CustomShell({
   joinAction: { label: string; href: string };
   links: SocialLink[];
   footer?: ReactNode;
+  // Solo lo usa layout_kind "precise" cuando el mockup muestra el nav
+  // integrado sobre la imagen del hero en vez de una barra sólida aparte --
+  // el modo "template" nunca lo pasa, así que su header queda exactamente
+  // igual que siempre.
+  headerOverlay?: boolean;
   children: ReactNode;
 }) {
   const initial = brand.trim().charAt(0).toUpperCase() || "C";
   return (
-    <div className="min-h-screen bg-[#07060b] text-white" style={{ ["--public-accent" as string]: accent }}>
-      <header className="sticky top-0 z-20 border-b border-white/10 bg-[#07060b]/90 backdrop-blur-xl">
+    <div className="relative min-h-screen bg-[#07060b] text-white" style={{ ["--public-accent" as string]: accent }}>
+      <header
+        className={
+          headerOverlay
+            ? "absolute inset-x-0 top-0 z-20 bg-gradient-to-b from-black/60 via-black/20 to-transparent"
+            : "sticky top-0 z-20 border-b border-white/10 bg-[#07060b]/90 backdrop-blur-xl"
+        }
+      >
         <div className="mx-auto flex min-h-16 max-w-7xl items-center gap-5 px-4 py-3 sm:px-6">
           <Link href="/matrix" className="flex shrink-0 items-center gap-2 text-base font-semibold tracking-wide">
             {logoUrl ? (
