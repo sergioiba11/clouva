@@ -210,7 +210,7 @@ export async function POST(request: NextRequest) {
         })();
 
         const results = await Promise.allSettled([
-          generateCoverAsset({ admin, entityPathPrefix, copy, professionalCategories, referenceImages }),
+          generateCoverAsset({ admin, entityPathPrefix, copy, professionalCategories, referenceImages, literalReference: analysis?.mode === "reference_layout" }),
           existingLogoUrl
             ? Promise.resolve<GeneratedAsset>({ kind: "logo", url: existingLogoUrl, costUsd: 0 })
             : generateLogoAsset({ admin, entityPathPrefix, copy, professionalCategories, referenceImages }),

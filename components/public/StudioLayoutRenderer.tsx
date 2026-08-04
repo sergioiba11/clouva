@@ -1,13 +1,79 @@
+import type { ReactNode } from "react";
 import Link from "next/link";
 import { PublicMediaGallery } from "./PublicMediaGallery";
 import { PublicShareButton } from "./PublicShareButton";
 import { PublicSocialLinks } from "./PublicSocialLinks";
-import { PublicShell, type PublicNavLink } from "./PublicShell";
 import { StudioServicesCart } from "./StudioServicesCart";
 import { StudioManageButton } from "./StudioManageButton";
 import { formatPlanPrice, studioSocialLinks } from "./StudioPublicView";
 import type { HeroSection, LayoutConfig, LayoutSection, LayoutSectionType, RadiusValue } from "@/lib/server/layout-config";
 import type { PlayerMedia, StudioMembershipPlan, StudioPlayer, StudioRow, StudioService } from "@/lib/players-data";
+
+type CustomNavLink = { label: string; href: string };
+
+// Contraparte de PublicShell, deliberadamente sin AccountMenu/
+// NotificationBell/buscador/"Explorar La Matrix" -- cuando un Estudio tiene
+// un diseño propio (mockup fiel o variante elegida), el header tiene que
+// poder verse tal cual esa referencia, no con el chrome fijo de CLOUVA
+// encima. El logo/nombre siguen enlazando a /matrix como única salida hacia
+// el resto de la plataforma (decisión confirmada con el usuario: prioridad
+// a la fidelidad visual sobre mantener ese acceso siempre a la vista).
+function CustomShell({
+  brand,
+  logoUrl,
+  navLinks,
+  navStyle,
+  accent,
+  footer,
+  children,
+}: {
+  brand: string;
+  logoUrl?: string | null;
+  navLinks: CustomNavLink[];
+  navStyle: "pill" | "bar";
+  accent: string;
+  footer?: ReactNode;
+  children: ReactNode;
+}) {
+  const initial = brand.trim().charAt(0).toUpperCase() || "C";
+  return (
+    <div className="min-h-screen bg-[#07060b] text-white" style={{ ["--public-accent" as string]: accent }}>
+      <header className="sticky top-0 z-20 border-b border-white/10 bg-[#07060b]/90 backdrop-blur-xl">
+        <div className="mx-auto flex min-h-16 max-w-7xl items-center gap-5 px-4 py-3 sm:px-6">
+          <Link href="/matrix" className="flex shrink-0 items-center gap-2 text-base font-semibold tracking-wide">
+            {logoUrl ? (
+              <img src={logoUrl} alt={brand} className="h-8 w-8 rounded-lg object-cover" />
+            ) : (
+              <span className="grid h-8 w-8 place-items-center rounded-xl border border-[color:var(--public-accent)]/40 bg-[color:var(--public-accent)]/10 text-xs font-bold text-[color:var(--public-accent)]">{initial}</span>
+            )}
+            <span>{brand}</span>
+          </Link>
+          {navLinks.length && navStyle === "pill" ? (
+            <nav className="mx-auto hidden items-center gap-2 rounded-full border border-white/10 bg-white/[0.025] p-1 text-xs text-white/65 md:flex">
+              {navLinks.map((link) => (
+                <Link key={link.href} href={link.href} className="rounded-full px-4 py-2 transition hover:bg-[color:var(--public-accent)]/10 hover:text-white">{link.label}</Link>
+              ))}
+            </nav>
+          ) : null}
+        </div>
+        {navLinks.length && navStyle === "bar" ? (
+          <nav className="hidden justify-center gap-8 border-t border-white/[0.06] bg-black/40 px-4 py-3 text-xs font-medium uppercase tracking-[0.18em] text-white/60 md:flex">
+            {navLinks.map((link) => <Link key={link.href} href={link.href} className="transition hover:text-[color:var(--public-accent)]">{link.label}</Link>)}
+          </nav>
+        ) : null}
+        {navLinks.length ? (
+          <nav className="flex gap-1 overflow-x-auto border-t border-white/[0.06] px-3 py-2 text-[11px] text-white/60 md:hidden">
+            {navLinks.map((link) => <Link key={link.href} href={link.href} className="shrink-0 rounded-full px-3 py-1.5 hover:bg-white/5 hover:text-white">{link.label}</Link>)}
+          </nav>
+        ) : null}
+      </header>
+      <main>{children}</main>
+      <footer className="border-t border-white/10 px-4 py-8 text-center text-xs text-white/40 sm:px-6">
+        {footer ?? `${brand} · CLOUVA`}
+      </footer>
+    </div>
+  );
+}
 
 const SECTION_ANCHOR: Record<LayoutSectionType, string> = {
   hero: "inicio",
@@ -72,17 +138,26 @@ export function StudioLayoutRenderer({
   const joinHref = defaultMembershipPlan
     ? `/studios/${studio.slug}/checkout${defaultMembershipPlan.is_free ? "" : `?plan=${defaultMembershipPlan.slug}`}`
     : `/studios/${studio.slug}/join`;
-  const includedTypes = new Set(layout.sections.map((section) => section.type));
+  // Si el Estudio tiene Players reales, la sección roster siempre entra --
+  // no queda a discreción de Gemini, para que "ver Players" nunca sea un
+  // link muerto cuando hay gente real para mostrar.
+  const sections: LayoutSection[] = players.length && !layout.sections.some((s) => s.type === "roster")
+    ? [...layout.sections, { type: "roster", variant: "cards", heading: null }]
+    : layout.sections;
+  const includedTypes = new Set(sections.map((section) => section.type));
   const radiusClass = RADIUS_CLASS[layout.page_style?.radius ?? "medium"];
   const location = [studio.city, studio.country].filter(Boolean).join(", ");
   const primaryAction = { label: joined ? "Ya sos miembro" : "Quiero unirme", href: joined && includedTypes.has("roster") ? `#${SECTION_ANCHOR.roster}` : joinHref };
   const secondaryAction = players.length && includedTypes.has("roster") ? { label: "Conocer Players", href: `#${SECTION_ANCHOR.roster}` } : null;
 
-  const navLinks: PublicNavLink[] = layout.nav_items?.length
+  const navLinks: CustomNavLink[] = layout.nav_items?.length
     ? layout.nav_items.map((item) => ({ label: item.label, href: `#${SECTION_ANCHOR[item.section]}` }))
-    : layout.sections
+    : sections
         .filter((section) => section.type !== "hero")
         .map((section) => ({ label: SECTION_NAV_LABEL[section.type], href: `#${SECTION_ANCHOR[section.type]}` }));
+  if (players.length && includedTypes.has("roster") && !navLinks.some((link) => link.href === `#${SECTION_ANCHOR.roster}`)) {
+    navLinks.push({ label: "Players", href: `#${SECTION_ANCHOR.roster}` });
+  }
 
   const footer = layout.footer && includedTypes.has(layout.footer.cta_section) ? (
     <div className="mx-auto flex max-w-6xl flex-col items-center gap-3 sm:flex-row sm:justify-between">
@@ -391,15 +466,15 @@ export function StudioLayoutRenderer({
   }
 
   return (
-    <PublicShell
+    <CustomShell
       brand={studio.name}
-      brandHref={`/studios/${studio.slug}`}
+      logoUrl={studio.logo_url}
       navLinks={navLinks}
       accent={layout.page_style?.palette?.accent || "#8f7cff"}
       navStyle={layout.page_style?.nav_style ?? "pill"}
       footer={footer}
     >
-      {layout.sections.map((section, index) => renderSection(section, index))}
-    </PublicShell>
+      {sections.map((section, index) => renderSection(section, index))}
+    </CustomShell>
   );
 }

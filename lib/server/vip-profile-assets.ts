@@ -45,7 +45,7 @@ export async function fetchReferenceImages(urls: string[]): Promise<GeminiRefere
 // uploaded reference image's aesthetic) instead -- still no people/faces
 // (recognizable-human-likeness risk) and no text/logos (Gemini renders text
 // unreliably), but environments/objects are now allowed and encouraged.
-function buildCoverPrompt(copy: ProfileCopy, professionalCategories: string[], hasReferenceImage: boolean): string {
+function buildCoverPrompt(copy: ProfileCopy, professionalCategories: string[], hasReferenceImage: boolean, literalReference: boolean): string {
   const energy = copy.visual_energy ?? "neutro, minimalista";
   const tone = copy.visual_tone ?? "oscuro, violeta";
   const categoryHint = professionalCategories.length > 0 ? professionalCategories.join(", ") : "identidad creativa";
@@ -54,7 +54,14 @@ function buildCoverPrompt(copy: ProfileCopy, professionalCategories: string[], h
     "Portada/hero para el perfil de un artista, creador o estudio en CLOUVA, una plataforma premium underground.",
     `Energía visual: ${energy}. Paleta y tono: ${tone}. Contexto profesional: ${categoryHint}.`,
     hasReferenceImage
-      ? "Usá la imagen de referencia adjunta como guía de estética, materiales, iluminación y composición para generar un ambiente/escena temática coherente con esa referencia (por ejemplo un espacio de trabajo, estudio, escenario o entorno que represente la identidad) -- no una réplica literal de la imagen, sino algo inspirado en su estilo."
+      ? (literalReference
+        // reference_layout: el usuario subió un mockup de web real y espera
+        // que la portada final se vea IGUAL a la escena de esa referencia
+        // (mismo ambiente, materiales, iluminación, encuadre) -- ya no
+        // "inspirado en el estilo", sino una recreación lo más fiel posible
+        // de esa escena específica.
+        ? "Usá la imagen de referencia adjunta como la escena EXACTA a recrear: mismo ambiente, mismos materiales/texturas, misma iluminación, mismo encuadre y composición general -- el objetivo es que se vea como una foto de ese mismo lugar, no una variación libre ni una interpretación distinta."
+        : "Usá la imagen de referencia adjunta como guía de estética, materiales, iluminación y composición para generar un ambiente/escena temática coherente con esa referencia (por ejemplo un espacio de trabajo, estudio, escenario o entorno que represente la identidad) -- no una réplica literal de la imagen, sino algo inspirado en su estilo.")
       : "Generá un ambiente o escena temática que represente la identidad (por ejemplo un espacio de trabajo, estudio, escenario o entorno atmosférico), coherente con la energía y la paleta indicadas.",
     "Estilo: fotográfico o ilustrado con atmósfera cinematográfica, buena composición y profundidad -- apto como fondo de portada con espacio para superponer texto encima.",
     "PROHIBIDO ABSOLUTAMENTE: personas, rostros o siluetas humanas reconocibles, texto, letras, números, logos, marcas, watermarks.",
@@ -68,6 +75,7 @@ export async function generateCoverAsset(args: {
   copy: ProfileCopy;
   professionalCategories: string[];
   referenceImages?: GeminiReferenceImage[];
+  literalReference?: boolean;
 }): Promise<GeneratedAsset> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY no está configurada.");
@@ -84,7 +92,7 @@ export async function generateCoverAsset(args: {
   try {
     generated = await generateImage({
       apiKey,
-      prompt: buildCoverPrompt(args.copy, args.professionalCategories, Boolean(args.referenceImages?.length)),
+      prompt: buildCoverPrompt(args.copy, args.professionalCategories, Boolean(args.referenceImages?.length), Boolean(args.literalReference)),
       model: MODEL,
       aspectRatio: "16:9",
       referenceImages: args.referenceImages,
