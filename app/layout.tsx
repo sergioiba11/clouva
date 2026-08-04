@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
 import { AuthProvider } from "@/components/auth-provider";
+import { CurrentPlayerProvider } from "@/components/current-player-provider";
 import { ActiveAvatarHydrator } from "@/components/avatar-engine/ActiveAvatarHydrator";
 import { GlobalSpotifyPlayer } from "@/components/GlobalSpotifyPlayer";
 import { GlobalClouvaAIButton } from "@/components/GlobalClouvaAIButton";
@@ -27,10 +28,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <ThemeProvider>
           <AuthProvider>
-            <ActiveAvatarHydrator />
-            {children}
-            <GlobalClouvaAIButton />
-            <GlobalSpotifyPlayer />
+            <CurrentPlayerProvider>
+              <ActiveAvatarHydrator />
+              {children}
+              <GlobalClouvaAIButton />
+              <GlobalSpotifyPlayer />
+            </CurrentPlayerProvider>
           </AuthProvider>
         </ThemeProvider>
       </body>
