@@ -162,7 +162,7 @@ export function StudioLayoutRenderer({
   const footer = layout.footer && includedTypes.has(layout.footer.cta_section) ? (
     <div className="mx-auto flex max-w-6xl flex-col items-center gap-3 sm:flex-row sm:justify-between">
       <p className="text-sm text-white/60">{layout.footer.heading}</p>
-      <Link href={`#${SECTION_ANCHOR[layout.footer.cta_section]}`} className="rounded-xl bg-violet-600 px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-violet-500">
+      <Link href={`#${SECTION_ANCHOR[layout.footer.cta_section]}`} className="rounded-xl bg-[color:var(--public-accent)] px-5 py-2.5 text-sm font-semibold text-white transition hover:opacity-90">
         {layout.footer.cta_label}
       </Link>
     </div>
@@ -174,14 +174,14 @@ export function StudioLayoutRenderer({
     const logo = studio.logo_url ? <img src={studio.logo_url} alt={studio.name} className={`h-16 w-16 shrink-0 border-4 border-[#07060b] object-cover shadow-xl ${radiusClass}`} /> : null;
     const actions = (
       <div className="flex flex-wrap gap-2">
-        <Link href={primaryAction.href} className="rounded-full bg-violet-600 px-5 py-2.5 text-sm font-semibold transition hover:bg-violet-500">{primaryAction.label}</Link>
-        {secondaryAction ? <Link href={secondaryAction.href} className="rounded-full border border-white/15 bg-black/30 px-5 py-2.5 text-sm font-semibold transition hover:border-violet-400/60">{secondaryAction.label}</Link> : null}
+        <Link href={primaryAction.href} className="rounded-full bg-[color:var(--public-accent)] px-5 py-2.5 text-sm font-semibold transition hover:opacity-90">{primaryAction.label}</Link>
+        {secondaryAction ? <Link href={secondaryAction.href} className="rounded-full border border-white/15 bg-black/30 px-5 py-2.5 text-sm font-semibold transition hover:border-[color:var(--public-accent)]/60">{secondaryAction.label}</Link> : null}
         <PublicShareButton title={studio.name} />
       </div>
     );
     const badgeRow = badges.length ? (
       <div className="flex flex-wrap gap-2">
-        {badges.map((badge) => <span key={badge} className="rounded-full border border-violet-400/20 bg-violet-400/10 px-3 py-1 text-xs text-violet-200">{badge}</span>)}
+        {badges.map((badge) => <span key={badge} className="rounded-full border border-[color:var(--public-accent)]/30 bg-[color:var(--public-accent)]/10 px-3 py-1 text-xs text-[color:var(--public-accent)]">{badge}</span>)}
       </div>
     ) : null;
 
@@ -194,7 +194,7 @@ export function StudioLayoutRenderer({
             <div className="mx-auto grid max-w-6xl gap-8 px-4 py-14 sm:px-6 lg:grid-cols-2 lg:items-center">
               <div className="order-2 lg:order-1">
                 {logo}
-                <p className="mt-5 text-[10px] font-semibold uppercase tracking-[0.28em] text-violet-300/80">Estudio</p>
+                <p className="mt-5 text-[10px] font-semibold uppercase tracking-[0.28em] text-[color:var(--public-accent)]/80">Estudio</p>
                 <h1 className="mt-2 text-4xl font-bold tracking-tight sm:text-5xl">{section.headline}</h1>
                 {section.subheadline ? <p className="mt-4 text-lg leading-relaxed text-white/70">{section.subheadline}</p> : null}
                 {location ? <p className="mt-2 text-sm text-white/45">{location}</p> : null}
@@ -214,7 +214,7 @@ export function StudioLayoutRenderer({
         return (
           <section key={index} id={SECTION_ANCHOR.hero} className="border-b border-white/10">
             <div className="mx-auto max-w-4xl px-4 py-16 text-center sm:px-6">
-              <p className="text-xs font-semibold uppercase tracking-[0.4em] text-violet-300/80">Estudio</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.4em] text-[color:var(--public-accent)]/80">Estudio</p>
               <h1 className="mt-4 text-5xl font-black leading-[0.95] tracking-tight sm:text-7xl">{section.headline}</h1>
               {section.subheadline ? <p className="mx-auto mt-5 max-w-xl text-lg text-white/65">{section.subheadline}</p> : null}
               <div className="mt-7 flex justify-center">{actions}</div>
@@ -232,7 +232,7 @@ export function StudioLayoutRenderer({
       case "full-bleed":
         return (
           <section key={index} id={SECTION_ANCHOR.hero} className="relative flex min-h-[70vh] items-end overflow-hidden border-b border-white/10">
-            {studio.cover_url ? <img src={studio.cover_url} alt="" className="absolute inset-0 h-full w-full object-cover" /> : <div className="absolute inset-0 bg-gradient-to-br from-violet-900/40 to-black" />}
+            {studio.cover_url ? <img src={studio.cover_url} alt="" className="absolute inset-0 h-full w-full object-cover" /> : <div className="absolute inset-0 bg-gradient-to-br from-[color:var(--public-accent)]/25 to-black" />}
             <div className="absolute inset-0 bg-gradient-to-t from-[#07060b] via-[#07060b]/40 to-transparent" />
             <div className="relative w-full px-4 pb-12 sm:px-6">
               <div className="mx-auto flex max-w-6xl flex-wrap items-end justify-between gap-6">
@@ -252,7 +252,7 @@ export function StudioLayoutRenderer({
       case "overlay":
         return (
           <section key={index} id={SECTION_ANCHOR.hero} className="relative flex min-h-[75vh] flex-col items-center justify-center overflow-hidden border-b border-white/10 text-center">
-            {studio.cover_url ? <img src={studio.cover_url} alt="" className="absolute inset-0 h-full w-full object-cover" /> : <div className="absolute inset-0 bg-gradient-to-br from-violet-900/40 to-black" />}
+            {studio.cover_url ? <img src={studio.cover_url} alt="" className="absolute inset-0 h-full w-full object-cover" /> : <div className="absolute inset-0 bg-gradient-to-br from-[color:var(--public-accent)]/25 to-black" />}
             <div className="absolute inset-0 bg-black/55" />
             <div className="relative flex flex-col items-center px-4">
               {logo}
@@ -310,7 +310,7 @@ export function StudioLayoutRenderer({
         return (
           <section key={index} id={SECTION_ANCHOR.about} className={`mx-auto grid max-w-6xl gap-6 px-4 py-10 sm:px-6 ${showAside ? "lg:grid-cols-[minmax(0,1fr)_320px]" : ""}`}>
             <article className={`border border-white/10 bg-white/[0.025] p-6 sm:p-8 ${radiusClass} ${showAside ? "" : "mx-auto max-w-3xl text-center"}`}>
-              <p className="text-xs uppercase tracking-[0.24em] text-violet-300/70">{section.heading}</p>
+              <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--public-accent)]/80">{section.heading}</p>
               <h2 className="mt-2 text-2xl font-semibold">{studio.name}</h2>
               <p className="mt-5 whitespace-pre-line leading-8 text-white/70">{section.body}</p>
             </article>
@@ -328,12 +328,12 @@ export function StudioLayoutRenderer({
         if (section.variant === "icon-grid") {
           return (
             <section key={index} id={SECTION_ANCHOR.pillars} className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
-              <p className="text-xs uppercase tracking-[0.24em] text-violet-300/70">Identidad</p>
+              <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--public-accent)]/80">Identidad</p>
               <h2 className="mt-1 text-2xl font-semibold">{section.heading}</h2>
               <div className="mt-6 divide-y divide-white/10 border-y border-white/10">
                 {section.items.map((item, itemIndex) => (
                   <div key={itemIndex} className="flex items-start gap-5 py-5">
-                    <span className="text-3xl font-black text-violet-400/60">{String(itemIndex + 1).padStart(2, "0")}</span>
+                    <span className="text-3xl font-black text-[color:var(--public-accent)]/70">{String(itemIndex + 1).padStart(2, "0")}</span>
                     <div>
                       <h3 className="font-semibold">{item.title}</h3>
                       <p className="mt-1 text-sm leading-6 text-white/60">{item.description}</p>
@@ -347,7 +347,7 @@ export function StudioLayoutRenderer({
         const columns = section.variant === "4-cards" ? "sm:grid-cols-2 lg:grid-cols-4" : "sm:grid-cols-2 lg:grid-cols-3";
         return (
           <section key={index} id={SECTION_ANCHOR.pillars} className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
-            <p className="text-xs uppercase tracking-[0.24em] text-violet-300/70">Identidad</p>
+            <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--public-accent)]/80">Identidad</p>
             <h2 className="mt-1 text-2xl font-semibold">{section.heading}</h2>
             <div className={`mt-5 grid gap-4 ${columns}`}>
               {section.items.map((item, itemIndex) => (
@@ -371,15 +371,15 @@ export function StudioLayoutRenderer({
       case "roster":
         return (
           <section key={index} id={SECTION_ANCHOR.roster} className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
-            <p className="text-xs uppercase tracking-[0.24em] text-violet-300/70">Identidades</p>
+            <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--public-accent)]/80">Identidades</p>
             <h2 className="mt-1 text-2xl font-semibold">{section.heading || "Players"}</h2>
             {players.length === 0 ? (
               <div className={`mt-5 border border-dashed border-white/15 p-8 text-center text-white/45 ${radiusClass}`}>Próximos Players</div>
             ) : (
               <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 {players.map((entry, playerIndex) => entry.player ? (
-                  <Link key={`${entry.player.id}-${playerIndex}`} href={`/${entry.player.slug}`} className={`group flex items-center gap-4 border border-white/10 bg-white/[0.025] p-4 transition hover:border-violet-400/50 ${radiusClass}`}>
-                    {entry.player.profile_image_url ? <img src={entry.player.profile_image_url} alt={entry.player.display_name} className={`h-16 w-16 object-cover ${radiusClass}`} /> : <div className={`flex h-16 w-16 items-center justify-center bg-violet-500/15 text-xl font-semibold ${radiusClass}`}>{entry.player.display_name.charAt(0)}</div>}
+                  <Link key={`${entry.player.id}-${playerIndex}`} href={`/${entry.player.slug}`} className={`group flex items-center gap-4 border border-white/10 bg-white/[0.025] p-4 transition hover:border-[color:var(--public-accent)]/50 ${radiusClass}`}>
+                    {entry.player.profile_image_url ? <img src={entry.player.profile_image_url} alt={entry.player.display_name} className={`h-16 w-16 object-cover ${radiusClass}`} /> : <div className={`flex h-16 w-16 items-center justify-center bg-[color:var(--public-accent)]/15 text-xl font-semibold ${radiusClass}`}>{entry.player.display_name.charAt(0)}</div>}
                     <div className="min-w-0">
                       <p className="truncate font-semibold">{entry.player.display_name}</p>
                       <p className="mt-1 text-sm text-white/55">Player · {entry.role || "Miembro"}</p>
@@ -394,7 +394,7 @@ export function StudioLayoutRenderer({
       case "membership":
         return membershipPlans.length ? (
           <section key={index} id={SECTION_ANCHOR.membership} className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
-            <p className="text-xs uppercase tracking-[0.24em] text-violet-300/70">Formas de participar</p>
+            <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--public-accent)]/80">Formas de participar</p>
             <h2 className="mt-1 text-2xl font-semibold">{section.heading || "Membresías"}</h2>
             <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {membershipPlans.map((plan) => (
@@ -405,7 +405,7 @@ export function StudioLayoutRenderer({
                     {formatPlanPrice(plan)}
                     {!plan.is_free ? <span className="ml-1 text-sm font-normal text-white/45">/ {plan.billing_interval === "year" ? "año" : "mes"}</span> : null}
                   </p>
-                  <Link href={`/studios/${studio.slug}/checkout${plan.is_free ? "" : `?plan=${plan.slug}`}`} className="mt-6 rounded-xl bg-violet-600 px-5 py-3 text-center text-sm font-semibold transition hover:bg-violet-500">
+                  <Link href={`/studios/${studio.slug}/checkout${plan.is_free ? "" : `?plan=${plan.slug}`}`} className="mt-6 rounded-xl bg-[color:var(--public-accent)] px-5 py-3 text-center text-sm font-semibold transition hover:opacity-90">
                     {plan.join_policy === "approval" ? "Solicitar ingreso" : plan.is_free ? "Unirme gratis" : "Elegir plan"}
                   </Link>
                 </article>
@@ -417,7 +417,7 @@ export function StudioLayoutRenderer({
       case "services":
         return services.length ? (
           <section key={index} id={SECTION_ANCHOR.services} className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
-            <p className="text-xs uppercase tracking-[0.24em] text-violet-300/70">Contratar</p>
+            <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--public-accent)]/80">Contratar</p>
             <h2 className="mt-1 text-2xl font-semibold">{section.heading || "Servicios"}</h2>
             <div className="mt-5"><StudioServicesCart studioId={studio.id} studioSlug={studio.slug} services={services} /></div>
           </section>
@@ -429,7 +429,7 @@ export function StudioLayoutRenderer({
         const releases = projects.slice(0, section.variant === "featured-release" ? 1 : 6);
         return (
           <section key={index} id={SECTION_ANCHOR.music} className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
-            <p className="text-xs uppercase tracking-[0.24em] text-violet-300/70">{section.heading || "Música y lanzamientos"}</p>
+            <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--public-accent)]/80">{section.heading || "Música y lanzamientos"}</p>
             <div className={isList ? "mt-5 space-y-3" : "mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3"}>
               {releases.map((project) => (
                 <article key={String(project.id)} className={`overflow-hidden border border-white/10 bg-white/[0.025] ${radiusClass} ${isList ? "flex items-center gap-4 p-3" : ""}`}>
@@ -438,7 +438,7 @@ export function StudioLayoutRenderer({
                   ) : null}
                   <div className={isList ? "min-w-0" : "p-4"}>
                     <p className="truncate font-semibold">{String(project.title || "Lanzamiento")}</p>
-                    <div className="mt-1 flex gap-3 text-xs text-violet-300">
+                    <div className="mt-1 flex gap-3 text-xs text-[color:var(--public-accent)]">
                       {project.spotify_url ? <a href={String(project.spotify_url)} target="_blank" rel="noreferrer">Spotify</a> : null}
                       {project.youtube_url ? <a href={String(project.youtube_url)} target="_blank" rel="noreferrer">YouTube</a> : null}
                     </div>
@@ -453,7 +453,7 @@ export function StudioLayoutRenderer({
       case "contact":
         return links.length ? (
           <section key={index} id={SECTION_ANCHOR.contact} className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
-            <p className="text-xs uppercase tracking-[0.24em] text-violet-300/70">{section.heading || "Contacto"}</p>
+            <p className="text-xs uppercase tracking-[0.24em] text-[color:var(--public-accent)]/80">{section.heading || "Contacto"}</p>
             <div className={`mt-5 border border-white/10 bg-white/[0.025] p-6 ${radiusClass}`}>
               <PublicSocialLinks links={links} />
             </div>
