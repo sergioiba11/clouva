@@ -78,4 +78,21 @@ jobs:
       - name: Configure release signing
         run: node scripts/configure-android-signing.mjs
       - name: Compile signed Android release APK
-        run: ./android/gradlew -p android assembleRelease --no-daemon
+        id: gradle_release
+        shell: bash
+        run: |
+          set +e
+          ./android/gradlew -p android assembleRelease --no-daemon --stacktrace --console=plain 2>&1 | tee gradle-release.log
+          status=${PIPESTATUS[0]}
+          tail -n 500 gradle-release.log > gradle-release-tail.log
+          exit "$status"
+      - name: Upload Gradle diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clouva-control-gradle-${{ github.run_id }}
+          path: |
+            mobile/clouva-control/gradle-release.log
+            mobile/clouva-control/gradle-release-tail.log
+          if-no-files-found: warn
+          retention-days: 7
