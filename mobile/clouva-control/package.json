@@ -1,0 +1,24 @@
+{
+  "name": "clouva-control",
+  "version": "1.0.0",
+  "private": true,
+  "main": "node_modules/expo/AppEntry.js",
+  "scripts": {
+    "start": "expo start --dev-client",
+    "android": "expo run:android",
+    "prebuild": "expo prebuild --platform android",
+    "typecheck": "tsc --noEmit",
+    "expo:sync": "npx expo install expo-application expo-device expo-file-system expo-image-picker expo-intent-launcher expo-linking expo-secure-store expo-web-browser react-native-safe-area-context react-native-webview react-native-view-shot"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "2.49.8",
+    "expo": "57.0.0",
+    "react": "19.2.3",
+    "react-native": "0.86.0",
+    "react-native-url-polyfill": "2.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.2",
+    "typescript": "5.9.2"
+  }
+}
