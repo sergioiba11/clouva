@@ -95,11 +95,18 @@ export class MercadoPagoProvider implements BillingProvider {
     return this.request(`/authorized_payments/${encodeURIComponent(id)}`);
   }
 
-  // Checkout Pro: one-time payment for a cart (studio services), as opposed
-  // to /preapproval which is for recurring subscriptions. Same redirect
-  // model -- no card_token_id needed, the payer enters their card on
-  // Mercado Pago's hosted page and comes back via back_urls.
+  // Checkout Pro: one-time payments, separate from /preapproval subscriptions.
+  // The payer completes the payment on Mercado Pago's hosted checkout and
+  // returns to CLOUVA through the configured back_urls.
   createPreference(input: CreatePreferenceInput) {
+    const payer = input.payer
+      ? {
+          email: input.payer.email,
+          name: input.payer.name || undefined,
+          phone: input.payer.phone ? { number: input.payer.phone } : undefined,
+        }
+      : undefined;
+
     return this.request("/checkout/preferences", {
       method: "POST",
       body: JSON.stringify({
@@ -109,6 +116,7 @@ export class MercadoPagoProvider implements BillingProvider {
           unit_price: item.unitPrice,
           currency_id: item.currency,
         })),
+        payer,
         external_reference: input.externalReference,
         back_urls: input.backUrls,
         auto_return: "approved",
