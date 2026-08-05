@@ -28,6 +28,16 @@ export const supabase = createClient(SUPABASE_URL || "https://placeholder.supaba
   },
 });
 
+export class AdminApiError extends Error {
+  readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = "AdminApiError";
+    this.status = status;
+  }
+}
+
 export type PreviewPersona = "visitante" | "usuario_nuevo" | "free" | "vip" | "creador" | "miembro_estudio" | "manager_estudio" | "owner_estudio" | "admin";
 
 export type ScreenDefinition = {
@@ -103,7 +113,7 @@ async function token() {
 
 export async function adminFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const accessToken = await token();
-  if (!accessToken) throw new Error("La sesión administrativa no está activa");
+  if (!accessToken) throw new AdminApiError("La sesión administrativa no está activa", 401);
   const response = await fetch(`${API_URL}${path}`, {
     ...init,
     headers: {
@@ -113,7 +123,7 @@ export async function adminFetch<T>(path: string, init?: RequestInit): Promise<T
     },
   });
   const payload = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(payload.error ?? `Error ${response.status}`);
+  if (!response.ok) throw new AdminApiError(payload.error ?? `Error ${response.status}`, response.status);
   return payload as T;
 }
 
