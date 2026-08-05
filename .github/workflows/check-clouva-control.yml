@@ -1,0 +1,98 @@
+name: Check CLOUVA CONTROL
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "app/admin/clouva-control/**"
+      - "app/api/admin/clouva-control/**"
+      - "app/auth/mobile-preview/**"
+      - "components/auth-provider.tsx"
+      - "lib/clouva-control/**"
+      - "lib/server/clouva-control.ts"
+      - "mobile/clouva-control/**"
+      - "supabase/migrations/*clouva_control.sql"
+      - ".github/workflows/check-clouva-control.yml"
+      - ".github/workflows/build-clouva-control-apk.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-clouva-control-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web-typecheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+
+  android-release-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: mobile/clouva-control
+    env:
+      CLOUVA_CONTROL_KEYSTORE_PATH: ${{ github.workspace }}/mobile/clouva-control/android/keystore/ci-release.jks
+      CLOUVA_CONTROL_KEY_ALIAS: clouva-control-ci
+      CLOUVA_CONTROL_KEYSTORE_PASSWORD: clouva-ci-password
+      CLOUVA_CONTROL_KEY_PASSWORD: clouva-ci-password
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - run: npm install --no-audit --no-fund
+      - run: npm run expo:sync
+      - run: npm run typecheck
+      - name: Generate Android project
+        run: npx expo prebuild --platform android --clean --non-interactive
+      - name: Generate CI-only signing key
+        run: |
+          mkdir -p android/keystore
+          keytool -genkeypair \
+            -storetype JKS \
+            -keystore "$CLOUVA_CONTROL_KEYSTORE_PATH" \
+            -storepass "$CLOUVA_CONTROL_KEYSTORE_PASSWORD" \
+            -keypass "$CLOUVA_CONTROL_KEY_PASSWORD" \
+            -alias "$CLOUVA_CONTROL_KEY_ALIAS" \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 1 \
+            -dname "CN=CLOUVA CONTROL CI, OU=Engineering, O=CLOUVA, L=Buenos Aires, C=AR" \
+            -noprompt
+      - name: Configure release signing
+        run: node scripts/configure-android-signing.mjs
+      - name: Compile signed Android release APK
+        id: gradle_release
+        shell: bash
+        run: |
+          set +e
+          ./android/gradlew -p android assembleRelease --no-daemon --stacktrace --console=plain 2>&1 | tee gradle-release.log
+          status=${PIPESTATUS[0]}
+          tail -n 500 gradle-release.log > gradle-release-tail.log
+          exit "$status"
+      - name: Upload Gradle diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: clouva-control-gradle-${{ github.run_id }}
+          path: |
+            mobile/clouva-control/gradle-release.log
+            mobile/clouva-control/gradle-release-tail.log
+          if-no-files-found: warn
+          retention-days: 7

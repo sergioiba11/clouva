@@ -10,6 +10,7 @@ import { useEffect } from "react";
 
 const links = [
   { title: "Panel", links: ["/admin", "/admin/clientes"] },
+  { title: "Control móvil", links: ["/admin/clouva-control"] },
   { title: "Monetización", links: ["/admin/suscripciones", "/admin/marketplace", "/admin/reservas", "/admin/flows", "/admin/estudios", "/admin/estudios/membresias"] },
   { title: "Tienda clásica", links: ["/admin/productos", "/admin/categorias", "/admin/banners", "/admin/ventas", "/admin/stock", "/admin/pedidos"] },
   { title: "Cuenta", links: ["/admin/empleados", "/admin/configuracion"] },
@@ -40,7 +41,7 @@ export default function AdminLayoutClient({ children }: { children: React.ReactN
     }
     if (!user) router.replace("/login");
     else if (!hasAdminAccess) router.replace(roleHome[role]);
-  }, [loading, user, role, profile, router, pathname]);
+  }, [loading, user, role, profile, router, pathname, hydrationReady, profileReady, session]);
 
   if (loading || !hydrationReady || !profileReady) return <main><MainNav /><div className="mx-auto max-w-7xl p-6">Cargando sesión...</div></main>;
   if (!user || !canAccessAdmin(role)) return null;
