@@ -35,7 +35,6 @@ const supabaseClient = createClient(SUPABASE_URL, SUPABASE_KEY, {
 // Google Identity Services already works on clouva.com.ar. The native app uses
 // that verified web origin as an authentication bridge and receives the
 // resulting Supabase session through the registered clouvacontrol:// scheme.
-// This avoids depending on a second Google OAuth redirect configuration.
 const originalSignInWithOAuth = supabaseClient.auth.signInWithOAuth.bind(supabaseClient.auth);
 supabaseClient.auth.signInWithOAuth = async (credentials) => {
   if (credentials.provider === "google") {
@@ -62,7 +61,27 @@ export class AdminApiError extends Error {
   }
 }
 
-export type PreviewPersona = "visitante" | "usuario_nuevo" | "free" | "vip" | "creador" | "miembro_estudio" | "manager_estudio" | "owner_estudio" | "admin";
+export type PreviewPersona =
+  | "visitante"
+  | "usuario_nuevo"
+  | "free"
+  | "vip"
+  | "creador"
+  | "miembro_estudio"
+  | "manager_estudio"
+  | "owner_estudio"
+  | "admin";
+
+export type NormalizedStatus =
+  | "healthy"
+  | "running"
+  | "attention"
+  | "failed"
+  | "completed"
+  | "cancelled"
+  | "unknown";
+
+export type ActivityState = "now" | "recent" | "history";
 
 export type ScreenDefinition = {
   id: string;
@@ -72,6 +91,8 @@ export type ScreenDefinition = {
   status: string;
   allowedRoles: string[];
   previewStates: PreviewPersona[];
+  entryPoints: string[];
+  exits: string[];
   enabled: boolean;
 };
 
@@ -85,13 +106,24 @@ export type FlowDefinition = {
 export type ProcessRow = {
   id: string;
   source: string;
+  category: string;
   label: string;
+  description: string;
   status: string;
+  normalizedStatus: NormalizedStatus;
+  activityState: ActivityState;
   progress: number | null;
+  currentStage: string | null;
   userId: string | null;
-  error: string | null;
+  resourceId: string | null;
+  affectedArea: string | null;
+  route: string | null;
+  humanMessage: string;
+  technicalMessage: string | null;
   createdAt: string | null;
   updatedAt: string | null;
+  completedAt: string | null;
+  availableActions: string[];
 };
 
 export type IssueRow = {
@@ -104,6 +136,79 @@ export type IssueRow = {
   status: string;
   priority: string;
   created_at: string;
+  updated_at?: string | null;
+};
+
+export type IncidentRow = {
+  fingerprint: string;
+  title: string;
+  summary: string;
+  category: string;
+  source: string;
+  severity: "critical" | "attention" | "informative";
+  count: number;
+  firstSeen: string | null;
+  lastSeen: string | null;
+  affectedIds: string[];
+  affectedUsers: string[];
+  route: string | null;
+  technicalMessage: string | null;
+};
+
+export type ActivityEvent = {
+  id: string;
+  title: string;
+  detail: string;
+  category: string;
+  status: NormalizedStatus;
+  occurredAt: string | null;
+  route: string | null;
+};
+
+export type ServiceHealth = {
+  id: string;
+  name: string;
+  status: "healthy" | "attention" | "unknown";
+  detail: string;
+  lastCheckedAt: string;
+  lastSuccessAt: string | null;
+  recentErrors: number;
+  dependents: string[];
+  verification: "direct" | "activity" | "not_checked";
+};
+
+export type CommerceOrder = {
+  id: string;
+  orderNumber: string | null;
+  total: number;
+  currency: string;
+  paymentStatus: string;
+  shippingStatus: string;
+  status: string;
+  createdAt: string;
+  paidAt: string | null;
+};
+
+export type CommerceSummary = {
+  available: boolean;
+  approvedPaymentsToday: number;
+  pendingPayments: number;
+  refundsToday: number;
+  physicalOrdersToday: number;
+  digitalDeliveriesToday: number;
+  recentOrders: CommerceOrder[];
+};
+
+export type ControlSummary = {
+  status: "operational" | "attention" | "critical";
+  headline: string;
+  totalSystems: number;
+  healthySystems: number;
+  attentionSystems: number;
+  activeProcesses: number;
+  openProblems: number;
+  screenCount: number;
+  processCount: number;
 };
 
 export type ReleaseRow = {
@@ -126,7 +231,12 @@ export type Overview = {
   flows: FlowDefinition[];
   personas: Array<{ id: PreviewPersona; label: string }>;
   issues: IssueRow[];
+  incidents: IncidentRow[];
   processes: ProcessRow[];
+  activity: ActivityEvent[];
+  services: ServiceHealth[];
+  commerce: CommerceSummary;
+  control: ControlSummary;
   releases: ReleaseRow[];
 };
 
