@@ -763,7 +763,7 @@ const s = StyleSheet.create({
   panelKicker: { color: C.violetSoft, fontSize: 10, fontWeight: "900", letterSpacing: 1.5 },
   heroTitle: { color: C.text, fontSize: 23, lineHeight: 29, fontWeight: "900", marginTop: 3 },
   sectionTitle: { color: C.text, fontSize: 20, fontWeight: "900" },
-  cardTitle: { color: C.text, fontSize: 16, fontWeight: "850", flexShrink: 1 },
+  cardTitle: { color: C.text, fontSize: 16, fontWeight: "800", flexShrink: 1 },
   rowTitle: { color: C.text, fontWeight: "800", fontSize: 13, flexShrink: 1 },
   muted: { color: C.muted, fontSize: 13, lineHeight: 19 },
   small: { color: "#837b91", fontSize: 10, lineHeight: 15 },
@@ -824,5 +824,5 @@ const s = StyleSheet.create({
   technicalBox: { gap: 5, padding: 12, borderRadius: 15, backgroundColor: "rgba(0,0,0,.22)", borderWidth: 1, borderColor: "rgba(255,255,255,.06)" },
   actionRow: { flexDirection: "row", gap: 7 },
   smallAction: { flex: 1, minHeight: 39, borderRadius: 13, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(139,92,246,.13)", borderWidth: 1, borderColor: C.border },
-  smallActionText: { color: C.violetSoft, fontSize: 10, fontWeight: "850" },
+  smallActionText: { color: C.violetSoft, fontSize: 10, fontWeight: "800" },
 });
