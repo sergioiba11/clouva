@@ -28,7 +28,7 @@ test("canonical order API accepts only the checkout token or the real buyer", ()
 });
 
 test("one order screen preserves legacy links and recognizes commerce orders", () => {
-  assert.match(orderPage, /source\) === "commerce"/);
+  assert.match(orderPage, /search\.get\("source"\) === "commerce"/);
   assert.match(orderPage, /\/api\/commerce\/orders\//);
   assert.match(orderPage, /\/api\/orders\//);
   assert.match(orderPage, /CommerceOrderView/);
