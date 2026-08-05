@@ -3,6 +3,12 @@ import type { ExpoConfig } from "expo/config";
 const version = process.env.CLOUVA_CONTROL_VERSION ?? "1.0.0";
 const buildNumber = Number(process.env.CLOUVA_CONTROL_BUILD_NUMBER ?? "1");
 
+// CLOUVA CONTROL belongs to this single Supabase project. These are public
+// client values (never service-role credentials), so a local/CI build remains
+// connected even when GitHub variables are not injected.
+const CLOUVA_SUPABASE_URL = "https://dpawotcignpexkirhfsk.supabase.co";
+const CLOUVA_SUPABASE_PUBLISHABLE_KEY = "sb_publishable_0_fUt2edSzw90ahVNL2AeQ_P9J6wBB4";
+
 const config: ExpoConfig = {
   name: "CLOUVA CONTROL",
   slug: "clouva-control",
@@ -32,8 +38,11 @@ const config: ExpoConfig = {
   ],
   extra: {
     clouvaApiUrl: process.env.EXPO_PUBLIC_CLOUVA_API_URL ?? "https://clouva.com.ar",
-    supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL ?? "",
-    supabasePublishableKey: process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? "",
+    supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL ?? CLOUVA_SUPABASE_URL,
+    supabasePublishableKey:
+      process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY ??
+      process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ??
+      CLOUVA_SUPABASE_PUBLISHABLE_KEY,
   },
 };
 
