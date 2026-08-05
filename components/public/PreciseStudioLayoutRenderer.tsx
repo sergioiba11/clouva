@@ -21,6 +21,12 @@ const BUTTON_STYLE_CLASS: Record<ButtonStyle, string> = {
   glow: "border border-[color:var(--public-accent)]/60 bg-black/40 text-white shadow-[0_0_24px_-4px_var(--public-accent)] hover:shadow-[0_0_32px_-2px_var(--public-accent)]",
 };
 
+// Alto real aproximado del header superpuesto (fila de marca+nav+CTA, más
+// eventual segunda fila si nav_style es "bar") -- suficiente margen para que
+// nada de la primera sección quede tapado por el header real, aunque el
+// header del mockup original haya sido más chico.
+const HEADER_OVERLAY_SAFE_TOP_PX = 96;
+
 const IMAGE_FIT_CLASS: Record<ImageFit, string> = { cover: "object-cover", contain: "object-contain" };
 const IMAGE_POSITION_CLASS: Record<ImagePosition, string> = {
   center: "object-center",
@@ -61,6 +67,7 @@ export function PreciseStudioLayoutRenderer({
   joined?: boolean;
   layout: LayoutConfig;
 }) {
+  const headerOverlay = layout.page_style?.header_overlay ?? false;
   const links = studioSocialLinks(studio);
   const musicLinks = links.filter((link) => link.platform === "spotify" || link.platform === "youtube");
   const defaultMembershipPlan = membershipPlans.find((plan) => plan.is_free) ?? membershipPlans[0] ?? null;
@@ -248,11 +255,19 @@ export function PreciseStudioLayoutRenderer({
             el contenido en position:absolute, el navegador no tiene de dónde
             derivar esos porcentajes de forma confiable. */}
         <div className="relative hidden h-full md:block">
-          {elements.map((element, elIndex) => renderElement(element, elIndex, true))}
-          {/* Decoraciones solo en desktop/tablet -- son florituras del
-              mockup (waveform, indicador de scroll, etc), no aportan nada
-              en la versión apilada de mobile. */}
-          {decorations.map((decoration, decIndex) => renderDecoration(decoration, decIndex))}
+          {/* Con header_overlay, la primera sección queda detrás de la barra
+              de navegación transparente -- un elemento posicionado muy
+              cerca del borde superior (ej. un logo en y:3%) termina pisado
+              por el header real, aunque en el mockup original ese header
+              fuera más chico. Se reserva un margen de seguridad fijo arriba
+              SOLO para la primera sección de la página. */}
+          <div className="absolute inset-0" style={headerOverlay && index === 0 ? { top: HEADER_OVERLAY_SAFE_TOP_PX } : undefined}>
+            {elements.map((element, elIndex) => renderElement(element, elIndex, true))}
+            {/* Decoraciones solo en desktop/tablet -- son florituras del
+                mockup (waveform, indicador de scroll, etc), no aportan nada
+                en la versión apilada de mobile. */}
+            {decorations.map((decoration, decIndex) => renderDecoration(decoration, decIndex))}
+          </div>
         </div>
         {/* Mobile: mismos elementos, apilados en flujo normal (acá sí puede
             crecer más allá de heightVh si hace falta -- por eso el
@@ -428,7 +443,7 @@ export function PreciseStudioLayoutRenderer({
       joinAction={headerJoinAction}
       links={links}
       footer={footer}
-      headerOverlay={layout.page_style?.header_overlay ?? false}
+      headerOverlay={headerOverlay}
     >
       {sections.map((section, index) => renderSection(section, index))}
     </CustomShell>

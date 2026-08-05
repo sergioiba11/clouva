@@ -476,6 +476,64 @@ const MAX_COLUMNS = 4;
 // `allowColumns` evita más de un nivel de anidamiento -- una columna nunca
 // puede tener sus propias columnas, se ignora silenciosamente si Gemini lo
 // intenta (en vez de fallar toda la sección).
+// Estimación aproximada (sin medir DOM real, esto corre en el server) de
+// cuánto alto real va a ocupar un elemento de texto una vez renderizado --
+// Gemini estima el gap entre elementos mirando el mockup, pero el texto real
+// (nuestro copy, no el del mockup) puede envolver a más líneas de las que
+// estimó. Devuelve el alto como porcentaje de la altura de la sección, con
+// las mismas dimensiones "de diseño" asumidas en toda la estimación (no el
+// viewport real del visitante -- fontSizePx tampoco es responsive hoy).
+const ASSUMED_DESIGN_WIDTH_PX = 1280;
+const ASSUMED_DESIGN_HEIGHT_PX = 800;
+
+function estimateElementHeightPct(element: PositionedElement, sectionHeightVh: number): number {
+  if (element.type === "button" || element.type === "badge" || element.type === "image" || !element.text) return 8;
+  const fontSizePx = element.fontSizePx ?? 16;
+  const widthPx = (element.w / 100) * ASSUMED_DESIGN_WIDTH_PX;
+  // Deliberadamente conservador: mejor reservar de más (un poco de aire de
+  // sobra) que de menos (texto real pisándose) -- probado en vivo, un
+  // heading en mayúsculas/negrita necesitó bastante más alto del que un
+  // promedio de ancho de caracter más ajustado hubiera estimado.
+  const avgCharPx = fontSizePx * (element.type === "heading" || element.type === "subheading" ? 0.72 : 0.52);
+  const charsPerLine = Math.max(1, Math.floor(widthPx / avgCharPx));
+  const lines = Math.max(1, Math.ceil(element.text.length / charsPerLine));
+  const heightPx = lines * fontSizePx * 1.5;
+  const sectionHeightPx = Math.max((sectionHeightVh / 100) * ASSUMED_DESIGN_HEIGHT_PX, 1);
+  return (heightPx / sectionHeightPx) * 100;
+}
+
+function rangesOverlap(aStart: number, aEnd: number, bStart: number, bEnd: number): boolean {
+  return aStart < bEnd && bStart < aEnd;
+}
+
+// Defensivo, más allá de qué tan bien Gemini haya elegido el gap vertical
+// entre elementos: si dos elementos comparten franja horizontal (están
+// apilados en la misma "columna" visual) y el texto real del de arriba
+// necesita más alto del que el gap deja, el de abajo se empuja hacia abajo
+// lo justo y necesario -- nunca hacia arriba, nunca reordena, solo evita que
+// se pisen. Bug real encontrado en vivo: "MÚSICA. CULTURA. FAMILIA." (2
+// líneas reales a 42px) con solo 23% de gap antes del párrafo siguiente.
+function enforceMinimumVerticalGaps(elements: PositionedElement[], sectionHeightVh: number): PositionedElement[] {
+  const order = elements.map((element, index) => ({ element, index }));
+  const sortedByY = [...order].sort((a, b) => a.element.y - b.element.y);
+  const placed: Array<{ x0: number; x1: number; bottom: number }> = [];
+  const adjustedY = new Map<number, number>();
+
+  for (const { element, index } of sortedByY) {
+    const x0 = element.x;
+    const x1 = element.x + element.w;
+    let minY = element.y;
+    for (const slot of placed) {
+      if (rangesOverlap(x0, x1, slot.x0, slot.x1)) minY = Math.max(minY, slot.bottom);
+    }
+    const finalY = Math.min(Math.max(minY, element.y), 95);
+    adjustedY.set(index, finalY);
+    placed.push({ x0, x1, bottom: finalY + estimateElementHeightPct(element, sectionHeightVh) + 1 });
+  }
+
+  return elements.map((element, index) => ({ ...element, y: adjustedY.get(index) ?? element.y }));
+}
+
 function sanitizePreciseSection(raw: unknown, allowColumns = true): PreciseSection | null {
   if (!raw || typeof raw !== "object") return null;
   const value = raw as Record<string, unknown>;
@@ -496,9 +554,10 @@ function sanitizePreciseSection(raw: unknown, allowColumns = true): PreciseSecti
       }
     : null;
 
-  const elements = Array.isArray(value.elements)
+  const rawElements = Array.isArray(value.elements)
     ? value.elements.map(sanitizePositionedElement).filter((element): element is PositionedElement => element !== null).slice(0, MAX_ELEMENTS_PER_SECTION)
     : [];
+  const elements = enforceMinimumVerticalGaps(rawElements, heightVh);
 
   const rawStyleHint = value.styleHint && typeof value.styleHint === "object" ? (value.styleHint as Record<string, unknown>) : null;
   const styleHint = rawStyleHint
