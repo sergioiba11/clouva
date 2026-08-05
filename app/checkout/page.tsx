@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { MainFooter, MainNav } from "@/components/layout";
+import { useAuth } from "@/components/auth-provider";
 import { useCart } from "@/lib/cart-store";
 import { money } from "@/lib/store-utils";
 
@@ -13,6 +14,7 @@ type CustomerForm = {
 };
 
 export default function CheckoutPage() {
+  const { session, user } = useAuth();
   const { items, subtotal, clear } = useCart();
   const [customer, setCustomer] = useState<CustomerForm>({
     name: "",
@@ -23,21 +25,38 @@ export default function CheckoutPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
+  useEffect(() => {
+    if (user?.email) {
+      setCustomer((current) => ({ ...current, email: current.email || user.email || "" }));
+    }
+  }, [user?.email]);
+
   async function submit() {
     setError("");
     if (!items.length) {
       setError("El carrito está vacío.");
       return;
     }
+    if (!session?.access_token) {
+      setError("Iniciá sesión en CLOUVA para confirmar la compra.");
+      return;
+    }
 
     setBusy(true);
     try {
-      const response = await fetch("/api/checkout", {
+      const response = await fetch("/api/commerce/checkout", {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${session.access_token}`,
+        },
         body: JSON.stringify({
           customer,
-          items: items.map((item) => ({ id: item.id, quantity: item.quantity })),
+          items: items.map((item) => ({
+            productId: item.productId,
+            variantId: item.variantId,
+            quantity: item.quantity,
+          })),
         }),
       });
       const payload = (await response.json().catch(() => ({}))) as {
@@ -55,6 +74,8 @@ export default function CheckoutPage() {
       setBusy(false);
     }
   }
+
+  const currency = items[0]?.currency ?? "ARS";
 
   return (
     <main>
@@ -92,8 +113,8 @@ export default function CheckoutPage() {
             ))}
 
             <div className="mt-2 flex items-center justify-between border-t border-white/10 pt-5 text-xl">
-              <span>Total</span>
-              <strong>{money(subtotal())}</strong>
+              <span>Total de productos</span>
+              <strong>{money(subtotal(), currency)}</strong>
             </div>
 
             <button
@@ -102,7 +123,7 @@ export default function CheckoutPage() {
               onClick={() => void submit()}
               className="rounded-full bg-white px-5 py-3 font-semibold text-black transition hover:scale-[1.01] disabled:cursor-wait disabled:opacity-50"
             >
-              {busy ? "Abriendo Mercado Pago…" : "Pagar con Mercado Pago"}
+              {busy ? "Abriendo Mercado Pago…" : "Continuar con Mercado Pago"}
             </button>
             <p className="text-center text-xs text-white/40">Pago único. No activa ninguna suscripción mensual.</p>
             {error ? <p className="rounded-2xl border border-red-400/20 bg-red-400/10 p-4 text-sm text-red-200">{error}</p> : null}
