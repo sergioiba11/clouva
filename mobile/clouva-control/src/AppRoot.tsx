@@ -600,7 +600,7 @@ const s = StyleSheet.create({
   inspectBannerText: { color: C.violetSoft, textAlign: "center", fontSize: 11, fontWeight: "800" },
   webFrame: { flex: 1, marginHorizontal: 8, marginBottom: 7, borderRadius: 24, overflow: "hidden", borderWidth: 1, borderColor: C.border, backgroundColor: "black" },
   web: { flex: 1, backgroundColor: "#050409" },
-  problemOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(5,4,9,.88)", alignItems: "center", justifyContent: "center", padding: 22 },
+  problemOverlay: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0, backgroundColor: "rgba(5,4,9,.88)", alignItems: "center", justifyContent: "center", padding: 22 },
   problemCard: { width: "100%", maxWidth: 430, borderRadius: 25, backgroundColor: C.panel2, borderWidth: 1, borderColor: "rgba(252,165,165,.28)", padding: 20, gap: 10 },
   problemIcon: { width: 50, height: 50, borderRadius: 18, backgroundColor: "rgba(252,165,165,.12)", borderWidth: 1, borderColor: "rgba(252,165,165,.3)", alignItems: "center", justifyContent: "center" },
   problemIconText: { color: C.red, fontSize: 24, fontWeight: "900" },
