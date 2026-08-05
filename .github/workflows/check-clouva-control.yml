@@ -36,9 +36,9 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm run typecheck
 
-  android-typecheck:
+  android-build:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     defaults:
       run:
         working-directory: mobile/clouva-control
@@ -47,6 +47,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
       - run: npm install --no-audit --no-fund
       - run: npm run expo:sync
       - run: npm run typecheck
+      - name: Generate Android project
+        run: npx expo prebuild --platform android --clean --non-interactive
+      - name: Compile Android debug APK
+        run: ./android/gradlew -p android assembleDebug --no-daemon
