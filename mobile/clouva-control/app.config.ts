@@ -11,7 +11,6 @@ const config: ExpoConfig = {
   orientation: "portrait",
   userInterfaceStyle: "dark",
   scheme: "clouvacontrol",
-  newArchEnabled: true,
   android: {
     package: "com.clouva.control",
     versionCode: buildNumber,
