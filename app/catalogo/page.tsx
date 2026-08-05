@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
 import { MainFooter, MainNav } from "@/components/layout";
 import { ProductCard } from "@/components/store/product-card";
 import {
@@ -12,13 +11,13 @@ import {
 import { supabase } from "@/lib/supabase";
 
 export default function CatalogPage() {
-  const searchParams = useSearchParams();
   const [products, setProducts] = useState<CommerceProduct[]>([]);
   const [query, setQuery] = useState("");
-  const [category, setCategory] = useState(searchParams.get("category") ?? "");
+  const [category, setCategory] = useState("");
   const [sort, setSort] = useState("recent");
 
   useEffect(() => {
+    setCategory(new URLSearchParams(window.location.search).get("category") ?? "");
     void (async () => {
       const { data } = await supabase
         .from("commerce_products")
