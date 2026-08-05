@@ -5,6 +5,7 @@
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
     "prepare:assets": "node scripts/prepare-assets.mjs",
+    "postinstall": "npm run prepare:assets",
     "start": "npm run prepare:assets && expo start --dev-client",
     "android": "npm run prepare:assets && expo run:android",
     "prebuild": "npm run prepare:assets && expo prebuild --platform android",
