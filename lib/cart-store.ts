@@ -85,33 +85,33 @@ export const useCart = create<CartState>()(
     {
       name: "clouva-cart",
       version: 2,
-      merge: (persisted, current) => {
+      merge: (persisted, current): CartState => {
         const previous = persisted as {
           items?: Array<Partial<CartItem> & { id?: string; variantId?: string | null }>;
         };
-        const items = (previous.items ?? [])
-          .map((item) => {
-            const productId = item.productId ?? item.id;
-            if (!productId || !item.slug || !item.name || typeof item.price !== "number") return null;
-            const variantId = item.variantId ?? null;
-            return {
-              lineId: lineId(productId, variantId),
-              productId,
-              variantId,
-              slug: item.slug,
-              name: item.name,
-              price: item.price,
-              currency: item.currency ?? "ARS",
-              image: item.image,
-              quantity: clampQuantity(item.quantity ?? 1, item.stock),
-              sku: item.sku,
-              variantTitle: item.variantTitle,
-              size: item.size,
-              color: item.color,
-              stock: item.stock,
-            } satisfies CartItem;
-          })
-          .filter((item): item is CartItem => item !== null);
+        const items: CartItem[] = [];
+
+        for (const item of previous.items ?? []) {
+          const productId = item.productId ?? item.id;
+          if (!productId || !item.slug || !item.name || typeof item.price !== "number") continue;
+          const variantId = item.variantId ?? null;
+          items.push({
+            lineId: lineId(productId, variantId),
+            productId,
+            variantId,
+            slug: item.slug,
+            name: item.name,
+            price: item.price,
+            currency: item.currency ?? "ARS",
+            image: item.image,
+            quantity: clampQuantity(item.quantity ?? 1, item.stock),
+            sku: item.sku,
+            variantTitle: item.variantTitle,
+            size: item.size,
+            color: item.color,
+            stock: item.stock,
+          });
+        }
 
         return { ...current, items };
       },
