@@ -11,7 +11,18 @@ import { useEffect } from "react";
 const links = [
   { title: "Panel", links: ["/admin", "/admin/clientes"] },
   { title: "Control móvil", links: ["/admin/clouva-control"] },
-  { title: "Monetización", links: ["/admin/suscripciones", "/admin/marketplace", "/admin/reservas", "/admin/flows", "/admin/estudios", "/admin/estudios/membresias"] },
+  {
+    title: "Monetización",
+    links: [
+      "/admin/suscripciones",
+      "/admin/marketplace",
+      "/admin/marketplace/compatibilidad",
+      "/admin/reservas",
+      "/admin/flows",
+      "/admin/estudios",
+      "/admin/estudios/membresias",
+    ],
+  },
   { title: "Tienda clásica", links: ["/admin/productos", "/admin/categorias", "/admin/banners", "/admin/ventas", "/admin/stock", "/admin/pedidos"] },
   { title: "Cuenta", links: ["/admin/empleados", "/admin/configuracion"] },
 ];
