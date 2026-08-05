@@ -13,3 +13,5 @@ __pycache__/
 /mobile/clouva-control/dist/
 /mobile/clouva-control/*.jks
 /mobile/clouva-control/*.keystore
+/mobile/clouva-control/assets/icon.png
+/mobile/clouva-control/assets/adaptive-icon.png
