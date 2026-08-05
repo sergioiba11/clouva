@@ -7,6 +7,7 @@ const read = (path) => fs.readFileSync(new URL(path, import.meta.url), "utf8");
 const foundation = read("./supabase/migrations/20260805230000_commerce_physical_foundation.sql");
 const atomic = read("./supabase/migrations/20260805231000_commerce_atomic_payment.sql");
 const uniqueness = read("./supabase/migrations/20260805231100_commerce_order_item_uniqueness.sql");
+const checkout = read("./app/api/commerce/checkout/route.ts");
 const webhook = read("./app/api/webhooks/mercadopago/commerce-orders/route.ts");
 
 test("canonical commerce stores physical variants instead of flattening size and color", () => {
@@ -71,6 +72,15 @@ test("one variant can only occupy one line per order", () => {
   assert.match(uniqueness, /order_id/);
   assert.match(uniqueness, /product_id/);
   assert.match(uniqueness, /coalesce\(variant_id/);
+});
+
+test("checkout consolidates repeated client lines before price and stock validation", () => {
+  assert.match(checkout, /const quantities = new Map<string, number>\(\)/);
+  assert.match(checkout, /quantities\.set\(productId, Math\.min\(50, \(quantities\.get\(productId\) \?\? 0\) \+ quantity\)\)/);
+  assert.match(checkout, /for \(const productId of productIds\)/);
+  assert.match(checkout, /\.select\("id,checkout_token"\)/);
+  assert.match(checkout, /source=commerce&token=/);
+  assert.match(checkout, /record_commerce_order_event/);
 });
 
 test("refund restores committed stock once and revokes delivered inventory", () => {
