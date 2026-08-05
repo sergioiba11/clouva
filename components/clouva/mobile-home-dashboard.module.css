@@ -1,0 +1,444 @@
+.page {
+  --nav-height: 76px;
+  position: relative;
+  min-height: 100dvh;
+  overflow-x: hidden;
+  background: #030308;
+  color: #fff;
+  padding: max(0.7rem, env(safe-area-inset-top)) 0.8rem calc(var(--nav-height) + env(safe-area-inset-bottom) + 1.5rem);
+}
+
+.ambient {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 85% 8%, rgba(116, 40, 236, 0.12), transparent 22rem),
+    radial-gradient(circle at 0% 72%, rgba(63, 24, 142, 0.1), transparent 22rem),
+    #030308;
+}
+
+.loading {
+  display: grid;
+  min-height: 100dvh;
+  place-items: center;
+  background: #030308;
+  color: #a970ff;
+}
+
+.header {
+  position: relative;
+  z-index: 5;
+  display: flex;
+  height: 58px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.65rem;
+  padding: 0 0.25rem;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-width: 0;
+}
+
+.brandMark {
+  display: grid;
+  width: 2.55rem;
+  height: 2.55rem;
+  place-items: center;
+  color: #c797ff;
+  filter: drop-shadow(0 0 12px rgba(151, 77, 255, 0.5));
+}
+
+.brand strong {
+  font-size: clamp(1.22rem, 6vw, 1.5rem);
+  font-weight: 850;
+  letter-spacing: 0.035em;
+}
+
+.notificationButton {
+  display: grid;
+  width: 2.75rem;
+  height: 2.75rem;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 50%;
+  color: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.hero {
+  position: relative;
+  z-index: 2;
+  min-height: clamp(25rem, 112vw, 31rem);
+  overflow: hidden;
+  border: 1px solid rgba(145, 68, 255, 0.4);
+  border-radius: 1.35rem;
+  background-color: #090512;
+  background-position: center;
+  background-size: cover;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.38);
+  isolation: isolate;
+}
+
+.heroShade {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background:
+    linear-gradient(90deg, rgba(5, 3, 13, 0.98) 0%, rgba(5, 3, 13, 0.87) 35%, rgba(5, 3, 13, 0.28) 70%, rgba(5, 3, 13, 0.12) 100%),
+    linear-gradient(0deg, rgba(4, 3, 10, 0.74), transparent 48%);
+}
+
+.heroBrandVisual {
+  position: absolute;
+  right: -7%;
+  top: 11%;
+  display: grid;
+  width: 64%;
+  height: 70%;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid rgba(181, 112, 255, 0.25);
+  border-radius: 48% 48% 42% 42%;
+  color: rgba(179, 105, 255, 0.42);
+  background:
+    radial-gradient(circle, rgba(137, 58, 237, 0.38), rgba(31, 10, 68, 0.34) 54%, transparent 72%);
+  filter: drop-shadow(0 0 34px rgba(139, 61, 239, 0.35));
+}
+
+.heroBrandVisual img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+}
+
+.heroContent {
+  display: flex;
+  width: min(68%, 17rem);
+  min-height: inherit;
+  flex-direction: column;
+  justify-content: center;
+  padding: 1.35rem 0 1.35rem 1.25rem;
+}
+
+.heroContent > span {
+  color: #aa6cff;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.heroContent h1 {
+  margin-top: 0.65rem;
+  font-size: clamp(2rem, 10vw, 3rem);
+  font-weight: 850;
+  letter-spacing: -0.055em;
+  line-height: 0.98;
+}
+
+.heroContent p {
+  margin-top: 0.85rem;
+  color: #b56dff;
+  font-size: clamp(0.95rem, 4.6vw, 1.22rem);
+  font-weight: 600;
+}
+
+.heroActions {
+  display: grid;
+  gap: 0.62rem;
+  margin-top: 1.25rem;
+}
+
+.heroActions a {
+  display: inline-flex;
+  min-height: 3rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+  border-radius: 999px;
+  padding: 0.7rem 0.9rem;
+  font-size: clamp(0.72rem, 3.5vw, 0.9rem);
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.primaryAction {
+  border: 1px solid rgba(218, 179, 255, 0.66);
+  background: linear-gradient(90deg, #7929ef, #a64fff);
+  box-shadow: 0 0 24px rgba(139, 55, 255, 0.38), inset 0 1px rgba(255, 255, 255, 0.3);
+}
+
+.secondaryAction {
+  border: 1px solid rgba(163, 86, 255, 0.72);
+  background: rgba(5, 3, 14, 0.72);
+  backdrop-filter: blur(10px);
+}
+
+.musicCard {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  min-width: 0;
+  grid-template-columns: clamp(5.5rem, 28vw, 7.5rem) minmax(0, 1fr);
+  gap: 0.9rem;
+  margin-top: 0.75rem;
+  overflow: hidden;
+  border: 1px solid rgba(147, 75, 246, 0.25);
+  border-radius: 1.25rem;
+  background: linear-gradient(145deg, rgba(18, 13, 38, 0.96), rgba(7, 6, 18, 0.98));
+  padding: 0.8rem;
+}
+
+.musicCover {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  aspect-ratio: 1;
+  place-items: center;
+  border-radius: 0.9rem;
+  color: #d5b6ff;
+  background-position: center;
+  background-size: cover;
+  box-shadow: inset 0 0 0 999px rgba(21, 5, 47, 0.38);
+}
+
+.musicInfo {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.musicInfo small { color: #b77bff; font-size: 0.65rem; }
+
+.musicInfo h2 {
+  overflow: hidden;
+  margin-top: 0.15rem;
+  font-size: clamp(1rem, 4.8vw, 1.28rem);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.musicInfo p {
+  overflow: hidden;
+  margin-top: 0.2rem;
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 0.72rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.musicInfo a {
+  display: inline-flex;
+  width: fit-content;
+  min-height: 2.45rem;
+  align-items: center;
+  gap: 0.42rem;
+  margin-top: 0.7rem;
+  border: 1px solid rgba(163, 92, 255, 0.42);
+  border-radius: 999px;
+  padding: 0.45rem 0.75rem;
+  color: #f4eaff;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.featureGrid {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+  margin-top: 0.75rem;
+}
+
+.featureCard {
+  position: relative;
+  min-width: 0;
+  min-height: clamp(13rem, 62vw, 17rem);
+  overflow: hidden;
+  border: 1px solid rgba(145, 69, 248, 0.3);
+  border-radius: 1.2rem;
+  background-color: #090511;
+  background-position: center;
+  background-size: cover;
+  isolation: isolate;
+}
+
+.featureShade {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(90deg, rgba(5, 3, 13, 0.96), rgba(5, 3, 13, 0.54) 58%, rgba(5, 3, 13, 0.08));
+}
+
+.featureCard > div {
+  display: flex;
+  height: 100%;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 1rem 0.75rem;
+}
+
+.featureCard h2 { font-size: clamp(1.05rem, 5vw, 1.35rem); line-height: 1.05; }
+
+.featureCard p {
+  margin-top: 0.55rem;
+  color: #c38cff;
+  font-size: clamp(0.68rem, 3.15vw, 0.83rem);
+  line-height: 1.45;
+}
+
+.featureCard b {
+  display: grid;
+  width: 2.7rem;
+  height: 2.7rem;
+  place-items: center;
+  margin-top: auto;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #8b32f5, #aa54ff);
+  box-shadow: 0 0 22px rgba(141, 58, 242, 0.42);
+}
+
+.bottomNav {
+  position: fixed;
+  left: 0.7rem;
+  right: 0.7rem;
+  bottom: calc(0.55rem + env(safe-area-inset-bottom));
+  z-index: 30;
+  display: grid;
+  min-height: var(--nav-height);
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  align-items: end;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 1.25rem;
+  background: rgba(8, 7, 20, 0.92);
+  padding: 0.4rem 0.35rem;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(22px);
+}
+
+.bottomNav > a {
+  display: flex;
+  min-width: 0;
+  min-height: 3.3rem;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.2rem;
+  border-radius: 0.85rem;
+  color: rgba(255, 255, 255, 0.56);
+}
+
+.bottomNav > a > span {
+  overflow: hidden;
+  max-width: 100%;
+  font-size: 0.58rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bottomNav .activeNav { color: #a94fff; }
+
+.createNav {
+  position: relative;
+  transform: translateY(-0.45rem);
+  color: #d8baff !important;
+}
+
+.createNav > b {
+  display: grid;
+  width: 3.55rem;
+  height: 3.55rem;
+  place-items: center;
+  border: 1px solid rgba(218, 181, 255, 0.6);
+  border-radius: 50%;
+  color: white;
+  background: linear-gradient(145deg, #7e29e9, #ad5bff);
+  box-shadow: 0 0 30px rgba(146, 60, 245, 0.55);
+}
+
+.createNav small { font-size: 0.58rem; }
+
+.profileNav img,
+.profileNav b {
+  display: grid;
+  width: 2.65rem;
+  height: 2.65rem;
+  place-items: center;
+  overflow: hidden;
+  border: 2px solid #8f3af1;
+  border-radius: 50%;
+  object-fit: cover;
+  background: linear-gradient(145deg, #6e27cf, #171023);
+  color: white;
+  font-size: 0.72rem;
+  box-shadow: 0 0 18px rgba(134, 49, 234, 0.32);
+}
+
+.drawerLayer {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: flex-end;
+  background: rgba(0, 0, 0, 0.66);
+  backdrop-filter: blur(5px);
+}
+
+.drawer {
+  width: 100%;
+  min-height: min(23rem, 55dvh);
+  border: 1px solid rgba(158, 87, 255, 0.35);
+  border-bottom: 0;
+  border-radius: 1.5rem 1.5rem 0 0;
+  background: #090712;
+  padding: 1.1rem 1rem calc(1.2rem + env(safe-area-inset-bottom));
+  box-shadow: 0 -20px 60px rgba(0, 0, 0, 0.5);
+}
+
+.drawer header { display: flex; align-items: center; justify-content: space-between; }
+.drawer header small { color: #a76dff; font-size: 0.62rem; }
+.drawer header h2 { margin-top: 0.15rem; font-size: 1.25rem; }
+
+.drawer header button {
+  display: grid;
+  width: 2.65rem;
+  height: 2.65rem;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 50%;
+  color: white;
+}
+
+.emptyNotifications {
+  display: flex;
+  min-height: 14rem;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #a66cff;
+  text-align: center;
+}
+
+.emptyNotifications strong { margin-top: 0.7rem; color: white; }
+.emptyNotifications p { margin-top: 0.25rem; color: rgba(255, 255, 255, 0.52); font-size: 0.8rem; }
+
+@media (max-width: 350px) {
+  .page { padding-inline: 0.55rem; }
+  .heroContent { width: 72%; padding-left: 0.9rem; }
+  .heroActions a { padding-inline: 0.55rem; }
+  .musicCard { grid-template-columns: 5rem minmax(0, 1fr); gap: 0.65rem; padding: 0.65rem; }
+  .featureGrid { gap: 0.5rem; }
+  .featureCard > div { padding-inline: 0.6rem; }
+  .bottomNav { left: 0.45rem; right: 0.45rem; }
+}
+
+@media (orientation: landscape) and (max-height: 540px) {
+  .hero { min-height: 23rem; }
+  .featureCard { min-height: 12rem; }
+}
