@@ -111,6 +111,7 @@ export async function POST(request: NextRequest) {
             .from("orders")
             .update({
               payment_status: "pagado",
+              shipping_status: "pendiente",
               status: "confirmado",
               payment_method: "mercadopago",
               external_payment_id: resourceId,
@@ -158,6 +159,7 @@ export async function POST(request: NextRequest) {
     } else if (paymentStatus === "rejected") {
       patch = {
         payment_status: "rechazado",
+        shipping_status: "cancelado",
         status: "cancelado",
         external_payment_id: resourceId,
       };
