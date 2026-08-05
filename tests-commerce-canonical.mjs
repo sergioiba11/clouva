@@ -7,6 +7,8 @@ const read = (path) => fs.readFileSync(new URL(path, import.meta.url), "utf8");
 const foundation = read("./supabase/migrations/20260805230000_commerce_physical_foundation.sql");
 const atomic = read("./supabase/migrations/20260805231000_commerce_atomic_payment.sql");
 const uniqueness = read("./supabase/migrations/20260805231100_commerce_order_item_uniqueness.sql");
+const shippingSchema = read("./supabase/migrations/20260805232000_commerce_shipping_methods.sql");
+const shippingService = read("./core/commerce/shipping/service.ts");
 const checkout = read("./app/api/commerce/checkout/route.ts");
 const webhook = read("./app/api/webhooks/mercadopago/commerce-orders/route.ts");
 const storefront = read("./app/tienda/page.tsx");
@@ -118,6 +120,43 @@ test("visible checkout sends canonical variant identifiers", () => {
   assert.match(checkoutPage, /productId: item\.productId/);
   assert.match(checkoutPage, /variantId: item\.variantId/);
   assert.doesNotMatch(checkoutPage, /fetch\("\/api\/checkout"/);
+});
+
+test("shipping methods are seller-owned and transport-independent", () => {
+  assert.match(shippingSchema, /create table if not exists public\.commerce_shipping_methods/);
+  assert.match(shippingSchema, /owner_type text not null check \(owner_type in \('player', 'studio', 'clouva'\)\)/);
+  assert.match(shippingSchema, /delivery_method in \('shipping', 'pickup'\)/);
+  assert.match(shippingSchema, /pricing_type in \('flat', 'free', 'adapter'\)/);
+  assert.match(shippingSchema, /adapter_key text/);
+  assert.match(shippingSchema, /shipping_method_snapshot jsonb/);
+  assert.match(shippingService, /interface CommerceShippingAdapter/);
+  assert.match(shippingService, /registerCommerceShippingAdapter/);
+  assert.match(shippingService, /quoteCommerceShipping/);
+  assert.match(shippingService, /method\.pricing_type === "flat"/);
+  assert.match(shippingService, /method\.pricing_type === "free"/);
+});
+
+test("checkout calculates shipping on the server and includes it in Mercado Pago total", () => {
+  assert.match(checkout, /from\("commerce_shipping_methods"\)/);
+  assert.match(checkout, /shippingMethodMatchesSeller/);
+  assert.match(checkout, /quoteCommerceShipping\(method, address/);
+  assert.match(checkout, /shippingSubtotal = quote\.price/);
+  assert.match(checkout, /title: `Entrega — \$\{method\.name\}`/);
+  assert.match(checkout, /const total = subtotal \+ shippingSubtotal/);
+  assert.match(checkout, /shipping_subtotal: shippingSubtotal/);
+  assert.match(checkout, /from\("commerce_shipments"\)\.insert/);
+  assert.match(checkout, /shipping_method_snapshot/);
+});
+
+test("visible checkout captures a structured address and pickup alternative", () => {
+  assert.match(checkoutPage, /from\("commerce_shipping_methods"\)/);
+  assert.match(checkoutPage, /recipientName/);
+  assert.match(checkoutPage, /addressLine1/);
+  assert.match(checkoutPage, /addressLine2/);
+  assert.match(checkoutPage, /postalCode/);
+  assert.match(checkoutPage, /selectedMethod\?\.delivery_method === "shipping"/);
+  assert.match(checkoutPage, /shipping,/);
+  assert.doesNotMatch(checkoutPage, /address:\s*""/);
 });
 
 test("refund restores committed stock once and revokes delivered inventory", () => {

@@ -2,6 +2,11 @@ import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { MercadoPagoProvider } from "@/core/billing/providers/mercadopago/client";
 import { isBillingEnabled } from "@/core/billing/providers/mercadopago/config";
+import {
+  quoteCommerceShipping,
+  type CommerceShippingAddress,
+  type CommerceShippingMethod,
+} from "@/core/commerce/shipping/service";
 import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
 
 export const runtime = "nodejs";
@@ -9,9 +14,39 @@ export const dynamic = "force-dynamic";
 
 type CartItemInput = { productId?: unknown; variantId?: unknown; quantity?: unknown };
 type RequestedLine = { productId: string; variantId: string | null; quantity: number };
+type ShippingInput = {
+  methodId?: unknown;
+  recipientName?: unknown;
+  recipientPhone?: unknown;
+  recipientEmail?: unknown;
+  addressLine1?: unknown;
+  addressLine2?: unknown;
+  city?: unknown;
+  province?: unknown;
+  postalCode?: unknown;
+  country?: unknown;
+};
 
 function lineKey(productId: string, variantId: string | null) {
   return `${productId}:${variantId ?? "base"}`;
+}
+
+function cleanText(value: unknown, maxLength: number) {
+  return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+}
+
+function validEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function shippingMethodMatchesSeller(
+  method: CommerceShippingMethod,
+  seller: { owner_type: string; player_id: string | null; studio_id: string | null },
+) {
+  if (method.owner_type !== seller.owner_type) return false;
+  if (method.owner_type === "player") return method.player_id === seller.player_id;
+  if (method.owner_type === "studio") return method.studio_id === seller.studio_id;
+  return method.player_id == null && method.studio_id == null;
 }
 
 export async function POST(request: NextRequest) {
@@ -25,7 +60,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Tu cuenta necesita un correo válido para pagar." }, { status: 400 });
     }
 
-    const body = (await request.json().catch(() => ({}))) as { items?: CartItemInput[] };
+    const body = (await request.json().catch(() => ({}))) as {
+      items?: CartItemInput[];
+      shipping?: ShippingInput;
+    };
     const requested = Array.isArray(body.items) ? body.items : [];
     const lines = new Map<string, RequestedLine>();
 
@@ -60,7 +98,7 @@ export async function POST(request: NextRequest) {
         .in("id", productIds),
       admin
         .from("commerce_product_variants")
-        .select("id,product_id,sku,title,size,color,price_override,stock,active")
+        .select("id,product_id,sku,title,size,color,price_override,stock,active,weight_grams")
         .in("product_id", productIds),
     ]);
     if (productsError || variantsError) throw new Error(productsError?.message || variantsError?.message);
@@ -76,6 +114,7 @@ export async function POST(request: NextRequest) {
       unit_price: number;
       quantity: number;
       total: number;
+      metadata: Record<string, unknown>;
     }> = [];
 
     for (const requestedLine of requestedLines) {
@@ -134,6 +173,7 @@ export async function POST(request: NextRequest) {
         unit_price: price,
         quantity: requestedLine.quantity,
         total: price * requestedLine.quantity,
+        metadata: selectedVariant?.weight_grams == null ? {} : { weight_grams: selectedVariant.weight_grams },
       });
     }
 
@@ -165,6 +205,97 @@ export async function POST(request: NextRequest) {
 
     const currency = mercadoPagoItems[0].currency;
     const subtotal = orderItems.reduce((sum, item) => sum + item.total, 0);
+    const hasPhysical = orderItems.some((item) => item.product_type === "physical");
+    let shippingSubtotal = 0;
+    let shipment: null | {
+      method: CommerceShippingMethod;
+      address: CommerceShippingAddress;
+      carrier: string | null;
+      quoteMetadata: Record<string, unknown>;
+    } = null;
+
+    if (hasPhysical) {
+      const shipping = body.shipping ?? {};
+      const methodId = cleanText(shipping.methodId, 80);
+      if (!methodId) {
+        return NextResponse.json({ error: "Elegí un método de entrega." }, { status: 400 });
+      }
+
+      const { data: methodRow, error: methodError } = await admin
+        .from("commerce_shipping_methods")
+        .select("id,owner_type,player_id,studio_id,code,name,description,delivery_method,carrier,pricing_type,flat_price,currency,adapter_key,config")
+        .eq("id", methodId)
+        .eq("active", true)
+        .maybeSingle();
+      if (methodError) throw new Error(methodError.message);
+      if (!methodRow) {
+        return NextResponse.json({ error: "El método de entrega ya no está disponible." }, { status: 409 });
+      }
+
+      const method = methodRow as CommerceShippingMethod;
+      if (!shippingMethodMatchesSeller(method, firstProduct)) {
+        return NextResponse.json({ error: "El método de entrega no pertenece al vendedor de esta orden." }, { status: 400 });
+      }
+      if (method.currency !== currency) {
+        return NextResponse.json({ error: "El método de entrega usa una moneda distinta a la orden." }, { status: 400 });
+      }
+
+      const address: CommerceShippingAddress = {
+        recipientName: cleanText(shipping.recipientName, 160),
+        recipientPhone: cleanText(shipping.recipientPhone, 60),
+        recipientEmail: cleanText(shipping.recipientEmail, 320).toLowerCase() || user.email.toLowerCase(),
+        addressLine1: cleanText(shipping.addressLine1, 240),
+        addressLine2: cleanText(shipping.addressLine2, 240),
+        city: cleanText(shipping.city, 120),
+        province: cleanText(shipping.province, 120),
+        postalCode: cleanText(shipping.postalCode, 30),
+        country: cleanText(shipping.country, 2).toUpperCase() || "AR",
+      };
+
+      if (!address.recipientName || !address.recipientPhone || !validEmail(address.recipientEmail)) {
+        return NextResponse.json({ error: "Completá destinatario, teléfono y email válidos." }, { status: 400 });
+      }
+      if (
+        method.delivery_method === "shipping" &&
+        (!address.addressLine1 || !address.city || !address.province || !address.postalCode || !address.country)
+      ) {
+        return NextResponse.json({ error: "Completá calle, localidad, provincia y código postal." }, { status: 400 });
+      }
+
+      const physicalItems = orderItems.filter((item) => item.product_type === "physical");
+      const knownWeights = physicalItems
+        .map((item) => Number(item.metadata.weight_grams))
+        .filter((weight) => Number.isFinite(weight) && weight >= 0);
+      const totalWeightGrams = knownWeights.length === physicalItems.length
+        ? physicalItems.reduce((sum, item) => sum + Number(item.metadata.weight_grams) * item.quantity, 0)
+        : null;
+      const quote = await quoteCommerceShipping(method, address, {
+        subtotal,
+        itemCount: physicalItems.reduce((sum, item) => sum + item.quantity, 0),
+        totalWeightGrams,
+      });
+      shippingSubtotal = quote.price;
+      shipment = {
+        method,
+        address,
+        carrier: quote.carrier,
+        quoteMetadata: {
+          service_code: quote.serviceCode,
+          ...(quote.metadata ?? {}),
+        },
+      };
+
+      if (shippingSubtotal > 0) {
+        mercadoPagoItems.push({
+          title: `Entrega — ${method.name}`,
+          quantity: 1,
+          unitPrice: shippingSubtotal,
+          currency,
+        });
+      }
+    }
+
+    const total = subtotal + shippingSubtotal;
     const externalReference = randomUUID();
 
     const { data: order, error: orderError } = await admin
@@ -175,8 +306,8 @@ export async function POST(request: NextRequest) {
         seller_player_id: firstProduct.owner_type === "player" ? firstProduct.player_id : null,
         seller_studio_id: firstProduct.owner_type === "studio" ? firstProduct.studio_id : null,
         subtotal,
-        shipping_subtotal: 0,
-        total: subtotal,
+        shipping_subtotal: shippingSubtotal,
+        total,
         currency,
         status: "pending",
         payment_status: "pending",
@@ -198,12 +329,55 @@ export async function POST(request: NextRequest) {
       throw new Error(itemsError.message);
     }
 
+    if (shipment) {
+      const { method, address, carrier, quoteMetadata } = shipment;
+      const { error: shipmentError } = await admin.from("commerce_shipments").insert({
+        order_id: order.id,
+        shipment_group: "primary",
+        recipient_name: address.recipientName,
+        recipient_phone: address.recipientPhone,
+        recipient_email: address.recipientEmail,
+        address_line_1: method.delivery_method === "shipping" ? address.addressLine1 : null,
+        address_line_2: method.delivery_method === "shipping" ? address.addressLine2 || null : null,
+        city: method.delivery_method === "shipping" ? address.city : null,
+        province: method.delivery_method === "shipping" ? address.province : null,
+        postal_code: method.delivery_method === "shipping" ? address.postalCode : null,
+        country: address.country,
+        delivery_method: method.delivery_method,
+        carrier,
+        shipping_cost: shippingSubtotal,
+        status: "pending",
+        shipping_method_id: method.id,
+        shipping_method_snapshot: {
+          id: method.id,
+          code: method.code,
+          name: method.name,
+          delivery_method: method.delivery_method,
+          carrier: method.carrier,
+          pricing_type: method.pricing_type,
+          currency: method.currency,
+        },
+        metadata: { quote: quoteMetadata },
+      });
+      if (shipmentError) {
+        await admin
+          .from("commerce_orders")
+          .update({ status: "cancelled", fulfillment_status: "cancelled" })
+          .eq("id", order.id);
+        throw new Error(shipmentError.message);
+      }
+    }
+
     await admin.rpc("record_commerce_order_event", {
       p_order_id: order.id,
       p_event_type: "checkout_started",
       p_note: "La orden fue creada y está lista para abrir Mercado Pago.",
       p_dedupe_key: `checkout:${externalReference}:started`,
-      p_metadata: { external_reference: externalReference },
+      p_metadata: {
+        external_reference: externalReference,
+        shipping_subtotal: shippingSubtotal,
+        shipping_method_id: shipment?.method.id ?? null,
+      },
     });
 
     const appBase = (process.env.APP_BASE_URL?.trim() || "https://clouva.com.ar").replace(/\/$/, "");
@@ -234,6 +408,7 @@ export async function POST(request: NextRequest) {
         .from("commerce_orders")
         .update({ status: "cancelled", fulfillment_status: "cancelled" })
         .eq("id", order.id);
+      await admin.from("commerce_shipments").update({ status: "cancelled" }).eq("order_id", order.id);
       await admin.rpc("record_commerce_order_event", {
         p_order_id: order.id,
         p_event_type: "checkout_error",
