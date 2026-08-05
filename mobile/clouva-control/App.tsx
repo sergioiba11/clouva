@@ -2,11 +2,10 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   ActivityIndicator,
   Alert,
+  BackHandler,
   FlatList,
-  Linking,
   Modal,
   Pressable,
-  RefreshControl,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -15,13 +14,15 @@ import {
   View,
 } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
-import { WebView } from "react-native-webview";
+import { WebView, type WebViewMessageEvent } from "react-native-webview";
 import { captureRef } from "react-native-view-shot";
 import * as WebBrowser from "expo-web-browser";
 import * as ExpoLinking from "expo-linking";
 import * as Application from "expo-application";
+import * as ImagePicker from "expo-image-picker";
 import type { Session } from "@supabase/supabase-js";
 import {
+  AdminApiError,
   adminFetch,
   compareVersions,
   deviceEvidence,
@@ -74,6 +75,16 @@ const TABS = [
 ] as const;
 
 type TabId = (typeof TABS)[number]["id"];
+type IssueAttachment = { base64: string; mime: string; label: string };
+type IssueDraft = { title: string; description: string; priority: string; attachment: IssueAttachment | null };
+type InspectorInfo = {
+  tag: string;
+  id: string | null;
+  classes: string[];
+  text: string;
+  path: string;
+  rect: { x: number; y: number; width: number; height: number };
+};
 
 function Card({ children, style }: { children: React.ReactNode; style?: object }) {
   return <View style={[styles.card, style]}>{children}</View>;
@@ -164,6 +175,15 @@ function Header({ overview, refresh, refreshing }: { overview: Overview | null; 
 }
 
 function MapScreen({ overview, onOpen }: { overview: Overview; onOpen: (screen: ScreenDefinition) => void }) {
+  const issueCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const issue of overview.issues) {
+      if (!issue.route || issue.status === "resuelto") continue;
+      counts.set(issue.route, (counts.get(issue.route) ?? 0) + 1);
+    }
+    return counts;
+  }, [overview.issues]);
+
   const groups = useMemo(() => {
     const map = new Map<string, ScreenDefinition[]>();
     for (const screen of overview.screens) map.set(screen.module, [...(map.get(screen.module) ?? []), screen]);
@@ -179,19 +199,28 @@ function MapScreen({ overview, onOpen }: { overview: Overview; onOpen: (screen: 
       {groups.map(([module, screens]) => (
         <View key={module} style={styles.group}>
           <Text style={styles.groupTitle}>{module}</Text>
-          {screens.map((screen) => (
-            <Pressable key={screen.id} onPress={() => onOpen(screen)} style={styles.screenRow}>
-              <View style={{ flex: 1 }}>
-                <View style={styles.rowLine}><Text style={styles.screenName}>{screen.name}</Text><Badge tone={screen.status === "active" ? "green" : "violet"}>{screen.status}</Badge></View>
-                <Text style={styles.route}>{screen.route}</Text>
-              </View>
-              <Text style={styles.chevron}>›</Text>
-            </Pressable>
-          ))}
+          {screens.map((screen) => {
+            const issueCount = issueCounts.get(screen.route) ?? 0;
+            return (
+              <Pressable key={screen.id} onPress={() => onOpen(screen)} style={styles.screenRow}>
+                <View style={{ flex: 1 }}>
+                  <View style={styles.rowLine}>
+                    <Text style={styles.screenName}>{screen.name}</Text>
+                    <View style={styles.rowBadges}>
+                      {issueCount > 0 ? <Badge tone="red">{issueCount} abiertos</Badge> : null}
+                      <Badge tone={screen.status === "active" ? "green" : "violet"}>{screen.status}</Badge>
+                    </View>
+                  </View>
+                  <Text style={styles.route}>{screen.route}</Text>
+                </View>
+                <Text style={styles.chevron}>›</Text>
+              </Pressable>
+            );
+          })}
         </View>
       ))}
       <Text style={styles.groupTitle}>Recorridos</Text>
-      {overview.flows.map((flow) => <FlowCard key={flow.id} flow={flow} onOpen={(route) => onOpen({ id: flow.id, name: flow.name, route, module: "Recorridos", status: "active", allowedRoles: [], previewStates: PERSONAS.map((p) => p.id), enabled: true })} />)}
+      {overview.flows.map((flow) => <FlowCard key={flow.id} flow={flow} onOpen={(route) => onOpen({ id: flow.id, name: flow.name, route, module: "Recorridos", status: "active", allowedRoles: [], previewStates: PERSONAS.map((persona) => persona.id), enabled: true })} />)}
     </ScrollView>
   );
 }
@@ -216,9 +245,104 @@ function FlowCard({ flow, onOpen }: { flow: FlowDefinition; onOpen: (route: stri
 
 function PreviewScreen({ session, screen, persona, setPersona, onReport }: { session: Session; screen: ScreenDefinition | null; persona: PreviewPersona; setPersona: (persona: PreviewPersona) => void; onReport: () => void }) {
   const webRef = useRef<WebView>(null);
-  const containerRef = useRef<View>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const [canGoBack, setCanGoBack] = useState(false);
+  const [inspecting, setInspecting] = useState(false);
+  const [inspector, setInspector] = useState<InspectorInfo | null>(null);
   const uri = previewUrl(session, screen?.route ?? "/matrix", persona);
+
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (!canGoBack) return false;
+      webRef.current?.goBack();
+      return true;
+    });
+    return () => subscription.remove();
+  }, [canGoBack]);
+
+  function startInspector() {
+    setInspecting(true);
+    webRef.current?.injectJavaScript(`
+      (() => {
+        if (window.__clouvaControlInspectorCleanup) window.__clouvaControlInspectorCleanup();
+        const previousOutline = new WeakMap();
+        const describePath = (element) => {
+          const parts = [];
+          let current = element;
+          while (current && current.nodeType === 1 && parts.length < 6) {
+            let part = current.tagName.toLowerCase();
+            if (current.id) part += '#' + current.id;
+            else if (current.classList && current.classList.length) part += '.' + Array.from(current.classList).slice(0, 2).join('.');
+            parts.unshift(part);
+            current = current.parentElement;
+          }
+          return parts.join(' > ');
+        };
+        const hover = (event) => {
+          const target = event.target;
+          if (!(target instanceof HTMLElement)) return;
+          if (!previousOutline.has(target)) previousOutline.set(target, target.style.outline);
+          target.style.outline = '2px solid #a78bfa';
+          setTimeout(() => { target.style.outline = previousOutline.get(target) || ''; }, 140);
+        };
+        const click = (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          event.stopImmediatePropagation();
+          const target = event.target;
+          if (!(target instanceof HTMLElement)) return;
+          const rect = target.getBoundingClientRect();
+          window.ReactNativeWebView.postMessage(JSON.stringify({
+            type: 'clouva-control-inspector',
+            payload: {
+              tag: target.tagName.toLowerCase(),
+              id: target.id || null,
+              classes: Array.from(target.classList || []).slice(0, 12),
+              text: (target.innerText || target.getAttribute('aria-label') || '').trim().slice(0, 500),
+              path: describePath(target),
+              rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+            }
+          }));
+          window.__clouvaControlInspectorCleanup();
+        };
+        window.__clouvaControlInspectorCleanup = () => {
+          document.removeEventListener('mousemove', hover, true);
+          document.removeEventListener('click', click, true);
+          delete window.__clouvaControlInspectorCleanup;
+        };
+        document.addEventListener('mousemove', hover, true);
+        document.addEventListener('click', click, true);
+      })();
+      true;
+    `);
+  }
+
+  function clearState() {
+    Alert.alert("Limpiar estado de prueba", "Se borrarán localStorage y sessionStorage de la vista interna y se recargará la pantalla.", [
+      { text: "Cancelar", style: "cancel" },
+      {
+        text: "Limpiar",
+        style: "destructive",
+        onPress: () => webRef.current?.injectJavaScript(`
+          try { localStorage.clear(); sessionStorage.clear(); } catch (error) {}
+          window.location.reload();
+          true;
+        `),
+      },
+    ]);
+  }
+
+  function onMessage(event: WebViewMessageEvent) {
+    try {
+      const message = JSON.parse(event.nativeEvent.data) as { type?: string; payload?: InspectorInfo };
+      if (message.type === "clouva-control-inspector" && message.payload) {
+        setInspector(message.payload);
+        setInspecting(false);
+      }
+    } catch {
+      // Other page messages remain available for future native bridges.
+    }
+  }
 
   return (
     <View style={styles.previewRoot}>
@@ -227,13 +351,45 @@ function PreviewScreen({ session, screen, persona, setPersona, onReport }: { ses
       </ScrollView>
       <View style={styles.previewToolbar}>
         <View style={{ flex: 1 }}><Text style={styles.previewTitle}>{screen?.name ?? "La Matrix"}</Text><Text style={styles.route}>{screen?.route ?? "/matrix"}</Text></View>
-        <Pressable onPress={() => webRef.current?.goBack()} style={styles.toolButton}><Text style={styles.toolText}>‹</Text></Pressable>
+        <Pressable onPress={() => webRef.current?.goBack()} disabled={!canGoBack} style={[styles.toolButton, !canGoBack && styles.disabled]}><Text style={styles.toolText}>‹</Text></Pressable>
         <Pressable onPress={() => setReloadKey((value) => value + 1)} style={styles.toolButton}><Text style={styles.toolText}>↻</Text></Pressable>
+        <Pressable onPress={startInspector} style={[styles.toolButton, inspecting && styles.toolButtonActive]}><Text style={styles.toolText}>⌖</Text></Pressable>
+        <Pressable onPress={clearState} style={styles.toolButton}><Text style={styles.toolText}>⌫</Text></Pressable>
         <Pressable onPress={onReport} style={[styles.toolButton, { borderColor: "rgba(252,165,165,.35)" }]}><Text style={[styles.toolText, { color: COLORS.red }]}>!</Text></Pressable>
       </View>
-      <View ref={containerRef} collapsable={false} style={styles.webContainer}>
-        <WebView key={`${uri}-${reloadKey}`} ref={webRef} source={{ uri }} sharedCookiesEnabled thirdPartyCookiesEnabled javaScriptEnabled domStorageEnabled cacheEnabled allowsBackForwardNavigationGestures setSupportMultipleWindows={false} style={styles.webview} />
+      {inspecting ? <View style={styles.inspectBanner}><Text style={styles.inspectBannerText}>Tocá un elemento dentro de CLOUVA para inspeccionarlo</Text></View> : null}
+      <View style={styles.webContainer}>
+        <WebView
+          key={`${uri}-${reloadKey}`}
+          ref={webRef}
+          source={{ uri }}
+          sharedCookiesEnabled
+          thirdPartyCookiesEnabled
+          javaScriptEnabled
+          domStorageEnabled
+          cacheEnabled
+          allowsBackForwardNavigationGestures
+          setSupportMultipleWindows={false}
+          onNavigationStateChange={(state) => setCanGoBack(state.canGoBack)}
+          onMessage={onMessage}
+          style={styles.webview}
+        />
       </View>
+      <Modal visible={Boolean(inspector)} transparent animationType="slide" onRequestClose={() => setInspector(null)}>
+        <View style={styles.modalBackdrop}><SafeAreaView style={styles.modalSheet}>
+          <Text style={styles.sectionTitle}>Inspector visual</Text>
+          {inspector ? (
+            <>
+              <View style={styles.rowLine}><Badge>{inspector.tag}</Badge><Text style={styles.inspectorSize}>{Math.round(inspector.rect.width)} × {Math.round(inspector.rect.height)}</Text></View>
+              <Text selectable style={styles.inspectorPath}>{inspector.path}</Text>
+              {inspector.id ? <Text style={styles.sectionText}>ID: {inspector.id}</Text> : null}
+              {inspector.classes.length ? <Text style={styles.sectionText}>Clases: {inspector.classes.join(" · ")}</Text> : null}
+              {inspector.text ? <Text selectable style={styles.inspectorText}>{inspector.text}</Text> : null}
+            </>
+          ) : null}
+          <Button label="Cerrar" onPress={() => setInspector(null)} />
+        </SafeAreaView></View>
+      </Modal>
     </View>
   );
 }
@@ -279,6 +435,7 @@ function SystemScreen({ releases, onInstall, installing }: { releases: ReleaseRo
           <View style={styles.rowLine}><Text style={styles.cardTitle}>v{release.version}</Text>{release.is_stable ? <Badge tone="green">estable</Badge> : <Badge>histórica</Badge>}</View>
           <Text style={styles.sectionText}>{release.release_notes ?? "Sin notas de versión"}</Text>
           <Text style={styles.route}>build {release.build_number} · mínimo {release.minimum_required ?? "sin bloqueo"}</Text>
+          <Text selectable style={styles.checksum}>SHA-256: {release.checksum}</Text>
           <Button label={installing === release.id ? "Descargando..." : "Descargar e instalar"} onPress={() => onInstall(release)} disabled={installing != null} />
         </Card>
       ))}
@@ -287,11 +444,57 @@ function SystemScreen({ releases, onInstall, installing }: { releases: ReleaseRo
   );
 }
 
-function IssueModal({ visible, close, submit, defaultRoute }: { visible: boolean; close: () => void; submit: (data: { title: string; description: string; priority: string }) => Promise<void>; defaultRoute: string | null }) {
+function IssueModal({ visible, close, submit, defaultRoute }: { visible: boolean; close: () => void; submit: (data: IssueDraft) => Promise<void>; defaultRoute: string | null }) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [priority, setPriority] = useState("media");
+  const [attachment, setAttachment] = useState<IssueAttachment | null>(null);
   const [busy, setBusy] = useState(false);
+
+  async function chooseAttachment(source: "camera" | "library") {
+    try {
+      if (source === "camera") {
+        const permission = await ImagePicker.requestCameraPermissionsAsync();
+        if (!permission.granted) throw new Error("La cámara necesita permiso para adjuntar evidencia");
+      } else {
+        const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+        if (!permission.granted) throw new Error("La galería necesita permiso para adjuntar evidencia");
+      }
+
+      const options: ImagePicker.ImagePickerOptions = {
+        mediaTypes: ["images"],
+        allowsEditing: false,
+        quality: 0.72,
+        base64: true,
+      };
+      const result = source === "camera" ? await ImagePicker.launchCameraAsync(options) : await ImagePicker.launchImageLibraryAsync(options);
+      if (result.canceled || !result.assets[0]?.base64) return;
+      const asset = result.assets[0];
+      setAttachment({
+        base64: asset.base64,
+        mime: asset.mimeType ?? "image/jpeg",
+        label: source === "camera" ? "Foto tomada" : asset.fileName ?? "Imagen de galería",
+      });
+    } catch (error) {
+      Alert.alert("No se pudo adjuntar", error instanceof Error ? error.message : "Error desconocido");
+    }
+  }
+
+  async function save() {
+    setBusy(true);
+    try {
+      await submit({ title, description, priority, attachment });
+      setTitle("");
+      setDescription("");
+      setPriority("media");
+      setAttachment(null);
+    } catch (error) {
+      Alert.alert("No se pudo guardar", error instanceof Error ? error.message : "Error desconocido");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={close}>
       <View style={styles.modalBackdrop}><SafeAreaView style={styles.modalSheet}>
@@ -300,7 +503,12 @@ function IssueModal({ visible, close, submit, defaultRoute }: { visible: boolean
         <TextInput value={title} onChangeText={setTitle} placeholder="Qué está mal" placeholderTextColor="#716a80" style={styles.input} />
         <TextInput value={description} onChangeText={setDescription} placeholder="Qué esperabas que sucediera" placeholderTextColor="#716a80" multiline style={[styles.input, { minHeight: 110, textAlignVertical: "top" }]} />
         <View style={styles.priorityRow}>{["baja", "media", "alta", "critica"].map((item) => <Pressable key={item} onPress={() => setPriority(item)} style={[styles.persona, priority === item && styles.personaActive]}><Text style={styles.personaText}>{item}</Text></Pressable>)}</View>
-        <Button label={busy ? "Guardando..." : "Guardar con captura"} onPress={() => { setBusy(true); void submit({ title, description, priority }).finally(() => { setBusy(false); setTitle(""); setDescription(""); }); }} disabled={busy || !title.trim()} />
+        <View style={styles.attachmentRow}>
+          <Pressable onPress={() => void chooseAttachment("camera")} style={styles.attachmentButton}><Text style={styles.attachmentButtonText}>Cámara</Text></Pressable>
+          <Pressable onPress={() => void chooseAttachment("library")} style={styles.attachmentButton}><Text style={styles.attachmentButtonText}>Galería</Text></Pressable>
+          {attachment ? <Pressable onPress={() => setAttachment(null)} style={[styles.attachmentButton, styles.attachmentReady]}><Text style={styles.attachmentButtonText}>{attachment.label} ×</Text></Pressable> : null}
+        </View>
+        <Button label={busy ? "Guardando..." : attachment ? "Guardar con adjunto" : "Guardar con captura"} onPress={() => void save()} disabled={busy || !title.trim()} />
         <Button label="Cancelar" onPress={close} secondary disabled={busy} />
       </SafeAreaView></View>
     </Modal>
@@ -317,20 +525,28 @@ function ControlApp({ session }: { session: Session }) {
   const [installing, setInstalling] = useState<string | null>(null);
   const previewCaptureRef = useRef<View>(null);
 
+  async function rejectUnauthorized(error: unknown) {
+    if (!(error instanceof AdminApiError) || (error.status !== 401 && error.status !== 403)) return false;
+    Alert.alert("Acceso bloqueado", "Esta cuenta no tiene permiso administrativo activo para usar CLOUVA CONTROL.");
+    await supabase.auth.signOut();
+    return true;
+  }
+
   const load = useCallback(async () => {
     setRefreshing(true);
     try {
       const data = await adminFetch<Overview>("/api/admin/clouva-control/overview");
       setOverview(data);
-      if (!selectedScreen) setSelectedScreen(data.screens.find((screen) => screen.id === "matrix") ?? data.screens[0] ?? null);
+      setSelectedScreen((current) => current ?? data.screens.find((screen) => screen.id === "matrix") ?? data.screens[0] ?? null);
     } catch (error) {
+      if (await rejectUnauthorized(error)) return;
       Alert.alert("CLOUVA CONTROL", error instanceof Error ? error.message : "No se pudo cargar el sistema");
     } finally {
       setRefreshing(false);
     }
-  }, [selectedScreen]);
+  }, []);
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => { void load(); }, [load]);
 
   const latest = overview?.releases.find((release) => release.is_stable) ?? overview?.releases[0] ?? null;
   const currentVersion = Application.nativeApplicationVersion ?? "0.0.0";
@@ -338,18 +554,40 @@ function ControlApp({ session }: { session: Session }) {
 
   async function install(release: ReleaseRow) {
     setInstalling(release.id);
-    try { await downloadAndInstallRelease(release); } catch (error) { Alert.alert("No se pudo instalar", error instanceof Error ? error.message : "Error desconocido"); } finally { setInstalling(null); }
+    try {
+      await downloadAndInstallRelease(release);
+    } catch (error) {
+      if (await rejectUnauthorized(error)) return;
+      Alert.alert("No se pudo instalar", error instanceof Error ? error.message : "Error desconocido");
+    } finally {
+      setInstalling(null);
+    }
   }
 
-  async function submitIssue(data: { title: string; description: string; priority: string }) {
-    let screenshotBase64: string | null = null;
-    if (tab === "preview" && previewCaptureRef.current) {
-      try { screenshotBase64 = await captureRef(previewCaptureRef, { format: "jpg", quality: 0.72, result: "base64" }); } catch { screenshotBase64 = null; }
+  async function submitIssue(data: IssueDraft) {
+    let screenshotBase64 = data.attachment?.base64 ?? null;
+    let screenshotMime = data.attachment?.mime ?? "image/jpeg";
+    if (!screenshotBase64 && tab === "preview" && previewCaptureRef.current) {
+      try {
+        screenshotBase64 = await captureRef(previewCaptureRef, { format: "jpg", quality: 0.72, result: "base64" });
+      } catch {
+        screenshotBase64 = null;
+      }
     }
     const evidence = deviceEvidence();
     await adminFetch("/api/admin/clouva-control/issues", {
       method: "POST",
-      body: JSON.stringify({ ...data, module: selectedScreen?.module ?? null, route: selectedScreen?.route ?? null, previewPersona: persona, screenshotBase64, screenshotMime: "image/jpeg", ...evidence }),
+      body: JSON.stringify({
+        title: data.title,
+        description: data.description,
+        priority: data.priority,
+        module: selectedScreen?.module ?? null,
+        route: selectedScreen?.route ?? null,
+        previewPersona: persona,
+        screenshotBase64,
+        screenshotMime,
+        ...evidence,
+      }),
     });
     setIssueOpen(false);
     await load();
@@ -392,7 +630,7 @@ const styles = StyleSheet.create({
   loginSafe: { flex: 1, backgroundColor: COLORS.background, justifyContent: "center", padding: 22, overflow: "hidden" },
   loginGlow: { position: "absolute", width: 360, height: 360, borderRadius: 999, backgroundColor: "rgba(124,58,237,.2)", top: -140, right: -150 },
   loginBox: { gap: 14, backgroundColor: "rgba(16,13,28,.94)", borderWidth: 1, borderColor: COLORS.border, borderRadius: 30, padding: 24 },
-  appMark: { width: 64, height: 64, borderRadius: 23, alignItems: "center", justifyContent: "center", backgroundColor: COLORS.violet, shadowColor: COLORS.violet, shadowOpacity: .5, shadowRadius: 24 },
+  appMark: { width: 64, height: 64, borderRadius: 23, alignItems: "center", justifyContent: "center", backgroundColor: COLORS.violet, shadowColor: COLORS.violet, shadowOpacity: 0.5, shadowRadius: 24 },
   appMarkText: { color: "white", fontSize: 32, fontWeight: "900" },
   loginTitle: { color: COLORS.text, fontSize: 28, fontWeight: "900", letterSpacing: -1 },
   loginSubtitle: { color: COLORS.muted, fontSize: 14, lineHeight: 21, marginBottom: 5 },
@@ -401,10 +639,10 @@ const styles = StyleSheet.create({
   button: { minHeight: 50, borderRadius: 16, backgroundColor: COLORS.violet, alignItems: "center", justifyContent: "center", paddingHorizontal: 18, marginTop: 4 },
   buttonSecondary: { backgroundColor: "rgba(255,255,255,.055)", borderWidth: 1, borderColor: "rgba(255,255,255,.12)" },
   buttonText: { color: "white", fontWeight: "800", fontSize: 14 },
-  disabled: { opacity: .45 },
+  disabled: { opacity: 0.4 },
   header: { paddingHorizontal: 18, paddingTop: 10, paddingBottom: 13, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderBottomWidth: 1, borderColor: "rgba(255,255,255,.07)" },
   eyebrow: { color: COLORS.violetSoft, fontSize: 9, fontWeight: "800", letterSpacing: 1.8 },
-  headerTitle: { color: COLORS.text, fontSize: 20, fontWeight: "900", letterSpacing: -.4, marginTop: 2 },
+  headerTitle: { color: COLORS.text, fontSize: 20, fontWeight: "900", letterSpacing: -0.4, marginTop: 2 },
   headerMeta: { color: COLORS.muted, fontSize: 11, marginTop: 2 },
   refreshButton: { width: 42, height: 42, borderRadius: 14, backgroundColor: "rgba(255,255,255,.05)", borderWidth: 1, borderColor: COLORS.border, alignItems: "center", justifyContent: "center" },
   refreshText: { color: COLORS.violetSoft, fontSize: 21 },
@@ -412,7 +650,7 @@ const styles = StyleSheet.create({
   loading: { flex: 1, backgroundColor: COLORS.background, alignItems: "center", justifyContent: "center", gap: 12 },
   content: { padding: 14, paddingBottom: 32, gap: 12 },
   card: { backgroundColor: COLORS.panel, borderWidth: 1, borderColor: COLORS.border, borderRadius: 22, padding: 16, gap: 8 },
-  sectionTitle: { color: COLORS.text, fontSize: 19, fontWeight: "900", letterSpacing: -.3 },
+  sectionTitle: { color: COLORS.text, fontSize: 19, fontWeight: "900", letterSpacing: -0.3 },
   sectionText: { color: COLORS.muted, fontSize: 13, lineHeight: 19 },
   cardTitle: { color: COLORS.text, fontSize: 15, fontWeight: "800", flexShrink: 1 },
   group: { gap: 7 },
@@ -420,6 +658,7 @@ const styles = StyleSheet.create({
   screenRow: { minHeight: 66, paddingHorizontal: 15, paddingVertical: 12, borderRadius: 18, backgroundColor: COLORS.panel, borderWidth: 1, borderColor: "rgba(255,255,255,.07)", flexDirection: "row", alignItems: "center", gap: 10 },
   screenName: { color: COLORS.text, fontWeight: "800", fontSize: 14, flexShrink: 1 },
   rowLine: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  rowBadges: { flexDirection: "row", alignItems: "center", gap: 5 },
   route: { color: "#81798e", fontSize: 11, fontFamily: "monospace", marginTop: 3 },
   chevron: { color: COLORS.violetSoft, fontSize: 27, fontWeight: "300" },
   badge: { borderWidth: 1, paddingHorizontal: 7, paddingVertical: 3, borderRadius: 999 },
@@ -433,23 +672,34 @@ const styles = StyleSheet.create({
   persona: { minHeight: 35, paddingHorizontal: 12, borderRadius: 999, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,.045)", borderWidth: 1, borderColor: "rgba(255,255,255,.08)" },
   personaActive: { backgroundColor: "rgba(139,92,246,.35)", borderColor: "rgba(196,181,253,.55)" },
   personaText: { color: COLORS.muted, fontSize: 11, fontWeight: "800" },
-  previewToolbar: { paddingHorizontal: 12, paddingBottom: 9, flexDirection: "row", alignItems: "center", gap: 7 },
+  previewToolbar: { paddingHorizontal: 10, paddingBottom: 9, flexDirection: "row", alignItems: "center", gap: 5 },
   previewTitle: { color: COLORS.text, fontWeight: "900", fontSize: 14 },
-  toolButton: { width: 39, height: 39, borderRadius: 13, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.panel, alignItems: "center", justifyContent: "center" },
-  toolText: { color: COLORS.violetSoft, fontSize: 20, fontWeight: "800" },
+  toolButton: { width: 36, height: 39, borderRadius: 12, borderWidth: 1, borderColor: COLORS.border, backgroundColor: COLORS.panel, alignItems: "center", justifyContent: "center" },
+  toolButtonActive: { backgroundColor: "rgba(139,92,246,.3)", borderColor: "rgba(196,181,253,.6)" },
+  toolText: { color: COLORS.violetSoft, fontSize: 18, fontWeight: "800" },
+  inspectBanner: { marginHorizontal: 9, marginBottom: 7, borderRadius: 12, borderWidth: 1, borderColor: "rgba(196,181,253,.32)", backgroundColor: "rgba(139,92,246,.15)", paddingHorizontal: 12, paddingVertical: 8 },
+  inspectBannerText: { color: COLORS.violetSoft, textAlign: "center", fontSize: 11, fontWeight: "800" },
   webContainer: { flex: 1, marginHorizontal: 8, marginBottom: 7, borderRadius: 24, overflow: "hidden", borderWidth: 1, borderColor: COLORS.border, backgroundColor: "black" },
   webview: { flex: 1, backgroundColor: "#050409" },
+  inspectorSize: { color: COLORS.muted, fontSize: 12, fontFamily: "monospace" },
+  inspectorPath: { color: COLORS.violetSoft, fontSize: 12, lineHeight: 18, fontFamily: "monospace" },
+  inspectorText: { color: COLORS.text, backgroundColor: "rgba(255,255,255,.04)", borderRadius: 14, padding: 12, fontSize: 12, lineHeight: 18 },
   progressTrack: { height: 7, borderRadius: 999, overflow: "hidden", backgroundColor: "rgba(255,255,255,.07)", marginTop: 8 },
   progressBar: { height: "100%", borderRadius: 999, backgroundColor: COLORS.violet },
   errorText: { color: COLORS.red, fontSize: 12, lineHeight: 17 },
   timestamp: { color: "#746c80", fontSize: 10, marginTop: 3 },
+  checksum: { color: "#746c80", fontSize: 10, lineHeight: 15, fontFamily: "monospace" },
   bottomNav: { minHeight: 66, flexDirection: "row", borderTopWidth: 1, borderColor: "rgba(255,255,255,.08)", backgroundColor: "#0b0812", paddingHorizontal: 5, paddingBottom: 3 },
   tab: { flex: 1, alignItems: "center", justifyContent: "center", gap: 2 },
   tabGlyph: { color: "#756d82", fontSize: 17, fontWeight: "900" },
   tabLabel: { color: "#756d82", fontSize: 9, fontWeight: "800" },
   tabActive: { color: COLORS.violetSoft },
   modalBackdrop: { flex: 1, backgroundColor: "rgba(0,0,0,.72)", justifyContent: "flex-end" },
-  modalSheet: { backgroundColor: COLORS.panel2, borderTopLeftRadius: 28, borderTopRightRadius: 28, borderWidth: 1, borderColor: COLORS.border, padding: 20, gap: 12 },
+  modalSheet: { backgroundColor: COLORS.panel2, borderTopLeftRadius: 28, borderTopRightRadius: 28, borderWidth: 1, borderColor: COLORS.border, padding: 20, gap: 12, maxHeight: "92%" },
   priorityRow: { flexDirection: "row", flexWrap: "wrap", gap: 7 },
+  attachmentRow: { flexDirection: "row", flexWrap: "wrap", gap: 7 },
+  attachmentButton: { minHeight: 38, justifyContent: "center", borderRadius: 12, borderWidth: 1, borderColor: "rgba(255,255,255,.1)", backgroundColor: "rgba(255,255,255,.05)", paddingHorizontal: 12 },
+  attachmentReady: { borderColor: "rgba(110,231,183,.35)", backgroundColor: "rgba(110,231,183,.1)" },
+  attachmentButtonText: { color: COLORS.text, fontSize: 11, fontWeight: "800" },
   blockUpdate: { margin: 22, backgroundColor: COLORS.panel2, borderWidth: 1, borderColor: "rgba(252,211,77,.28)", borderRadius: 26, padding: 22, gap: 13 },
 });
