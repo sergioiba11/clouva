@@ -3,6 +3,7 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import type { AuthChangeEvent, Session, User } from "@supabase/supabase-js";
 import { normalizeRole, type Role } from "@/lib/auth";
+import { PREVIEW_PERSONAS, previewPersonaRole, type PreviewPersona } from "@/lib/clouva-control/screens";
 import { saveAccount, setActiveAccountId } from "@/lib/account-switcher";
 
 type Profile = {
@@ -22,6 +23,8 @@ type AuthContextType = {
   user: User | null;
   profile: Profile | null;
   role: Role;
+  realRole: Role;
+  previewPersona: PreviewPersona | null;
   loading: boolean;
   hydrationReady: boolean;
   profileReady: boolean;
@@ -31,6 +34,8 @@ type AuthContextType = {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 const AUTH_TIMEOUT_MS = 10000;
 const PROFILE_COLUMNS = "id, role, display_name, full_name, avatar_url, avatar_3d_url, spotify_url, username, onboarding_status";
+const PREVIEW_PERSONA_KEY = "clouva-control-preview-persona";
+const PREVIEW_PERSONA_IDS = new Set(PREVIEW_PERSONAS.map((persona) => persona.id));
 
 function withTimeout<T>(promise: PromiseLike<T>, label: string, timeoutMs = AUTH_TIMEOUT_MS): Promise<T> {
   return Promise.race([
@@ -107,6 +112,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [role, setRole] = useState<Role>("cliente");
+  const [previewPersona, setPreviewPersona] = useState<PreviewPersona | null>(null);
   const [loading, setLoading] = useState(true);
   const [hydrationReady, setHydrationReady] = useState(false);
   const [profileReady, setProfileReady] = useState(false);
@@ -115,6 +121,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const resolvedUserIdRef = useRef<string | null>(null);
   const pendingUserIdRef = useRef<string | null>(null);
   const runRef = useRef(0);
+
+  useEffect(() => {
+    function readPreviewPersona(value?: unknown) {
+      const candidate = typeof value === "string" ? value : sessionStorage.getItem(PREVIEW_PERSONA_KEY);
+      setPreviewPersona(candidate && PREVIEW_PERSONA_IDS.has(candidate as PreviewPersona) ? candidate as PreviewPersona : null);
+    }
+
+    readPreviewPersona();
+    const handlePreview = (event: Event) => readPreviewPersona((event as CustomEvent<unknown>).detail);
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === PREVIEW_PERSONA_KEY) readPreviewPersona(event.newValue);
+    };
+    window.addEventListener("clouva-control-preview-persona", handlePreview);
+    window.addEventListener("storage", handleStorage);
+    return () => {
+      window.removeEventListener("clouva-control-preview-persona", handlePreview);
+      window.removeEventListener("storage", handleStorage);
+    };
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -239,9 +264,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(refreshed.data.session?.user ?? null);
   };
 
+  const effectiveRole = previewPersonaRole(previewPersona) ?? role;
   const value = useMemo(
-    () => ({ session, user, profile, role, loading, hydrationReady, profileReady, refreshSession }),
-    [session, user, profile, role, loading, hydrationReady, profileReady],
+    () => ({ session, user, profile, role: effectiveRole, realRole: role, previewPersona, loading, hydrationReady, profileReady, refreshSession }),
+    [session, user, profile, effectiveRole, role, previewPersona, loading, hydrationReady, profileReady],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
