@@ -7,6 +7,7 @@ const config: ExpoConfig = {
   name: "CLOUVA CONTROL",
   slug: "clouva-control",
   version,
+  icon: "./assets/icon.png",
   orientation: "portrait",
   userInterfaceStyle: "dark",
   scheme: "clouvacontrol",
@@ -15,6 +16,7 @@ const config: ExpoConfig = {
     package: "com.clouva.control",
     versionCode: buildNumber,
     adaptiveIcon: {
+      foregroundImage: "./assets/adaptive-icon.png",
       backgroundColor: "#090711",
     },
     permissions: [
