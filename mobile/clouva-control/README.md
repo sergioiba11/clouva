@@ -7,12 +7,15 @@ Aplicación Android privada para inspeccionar, probar y controlar CLOUVA desde e
 - Interfaz principal: React Native + Expo.
 - Identidad: `com.clouva.control`.
 - Autenticación: la misma cuenta de Supabase Auth de CLOUVA.
-- Autorización: cada API vuelve a validar `profiles.role` / `profiles.role_v2` en el servidor.
+- Autorización: cada API recibe el JWT real del administrador y vuelve a validarlo mediante RLS y funciones `security definer` con control administrativo explícito.
 - Preview: WebView interna que muestra la web real de CLOUVA; no abre un navegador externo.
 - Datos: APIs administrativas de CLOUVA y tablas actuales de Supabase.
 - Releases: APK firmado en el bucket privado `admin-apk-releases`.
+- Ícono: se genera automáticamente desde `assets/icon-source.svg` antes del build.
 
 La persona simulada del preview solo modifica la experiencia visual. Nunca autoriza operaciones de backend.
+
+La aplicación web no utiliza una `service_role` para atender a CLOUVA CONTROL. La service role se limita al workflow privado que publica el APK en Storage.
 
 ## Variables locales
 
@@ -25,6 +28,16 @@ EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
 ```
 
 También puede utilizarse temporalmente la anon key pública mediante `EXPO_PUBLIC_SUPABASE_ANON_KEY`.
+
+## Redirect de Google
+
+Para que **Continuar con Google** vuelva a la aplicación instalada, agregar esta URL a la lista de redirect URLs permitidas de Supabase Auth:
+
+```text
+clouvacontrol://auth/callback
+```
+
+El login por email y contraseña no depende de este redirect.
 
 ## Desarrollo Android
 
@@ -78,8 +91,8 @@ Variables del repositorio:
 Secrets:
 
 - `SUPABASE_URL`
-- `SUPABASE_SERVICE_ROLE_KEY`
-- `SUPABASE_PUBLISHABLE_KEY`, recomendado.
+- `SUPABASE_SERVICE_ROLE_KEY`, usada solo para publicar releases desde CI.
+- `SUPABASE_PUBLISHABLE_KEY`, recomendado para el APK.
 - `CLOUVA_CONTROL_KEYSTORE_BASE64`
 - `CLOUVA_CONTROL_KEY_ALIAS`
 - `CLOUVA_CONTROL_KEYSTORE_PASSWORD`
@@ -100,13 +113,14 @@ En GitHub:
 
 El workflow:
 
-1. verifica TypeScript;
-2. genera el proyecto Android;
-3. firma el APK;
-4. calcula SHA-256 y tamaño;
-5. sube el archivo al bucket privado;
-6. registra la versión en `mobile_app_releases`;
-7. la deja disponible en `/admin/clouva-control` y dentro de la app.
+1. genera el ícono oficial del módulo;
+2. verifica TypeScript;
+3. genera el proyecto Android;
+4. firma el APK;
+5. calcula SHA-256 y tamaño;
+6. sube el archivo al bucket privado;
+7. registra la versión en `mobile_app_releases`;
+8. la deja disponible en `/admin/clouva-control` y dentro de la app.
 
 ## Primera instalación
 
@@ -119,22 +133,24 @@ El workflow:
 
 Las actualizaciones siguientes se descargan desde la pestaña **Sistema** de CLOUVA CONTROL y se instalan sobre la aplicación existente.
 
-## Migración requerida
+## Migraciones requeridas
 
-Aplicar:
+Aplicar, en orden:
 
 ```text
 supabase/migrations/20260805010000_clouva_control.sql
+supabase/migrations/20260805014500_clouva_control_user_scoped_api.sql
 ```
 
-Crea:
+Crean:
 
 - `mobile_app_releases`;
 - `admin_mobile_issues`;
 - `admin_audit_logs`;
 - bucket privado `admin-apk-releases`;
 - bucket privado `admin-mobile-issues`;
-- políticas RLS para administradores.
+- políticas RLS para administradores;
+- RPC segura para validar al administrador y consultar procesos sin exponer la service role.
 
 ## Pantallas nativas
 
