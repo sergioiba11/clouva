@@ -1,30 +1,35 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   ArrowRight,
   Bell,
   CircleUserRound,
+  Heart,
   Home,
-  Music2,
+  Pause,
   Plus,
   ShoppingBag,
+  SkipBack,
+  SkipForward,
   Sparkles,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { CloverIcon } from "@/components/clover-icon";
 import { useAuth } from "@/components/auth-provider";
 import { useCurrentPlayer } from "@/components/current-player-provider";
 import { resolveAccountDisplayName } from "@/lib/identity-names";
-import { VISUAL_ASSETS } from "@/lib/visual-assets";
 import styles from "./mobile-home-dashboard.module.css";
 
-type MusicTrack = {
-  id: string;
-  title: string;
-  status: string | null;
-};
+const HOME_ASSETS = {
+  hero: "/assets/home-mobile/hero.webp",
+  music: "/assets/home-mobile/music-cover.webp",
+  continue: "/assets/home-mobile/continue.webp",
+  iglu: "/assets/home-mobile/iglu.webp",
+  brandAvatar: "/assets/home-mobile/brand-avatar.webp",
+} as const;
 
 function initials(value: string) {
   return value
@@ -35,58 +40,18 @@ function initials(value: string) {
     .join("");
 }
 
-function formatTrackStatus(value?: string | null) {
-  if (!value) return "Proyecto musical";
-  return value.charAt(0).toUpperCase() + value.slice(1);
-}
-
 export function MobileHomeDashboard() {
+  const router = useRouter();
   const { user, profile, loading } = useAuth();
   const { currentPlayer, playerLoading, playerReady } = useCurrentPlayer();
   const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const [latestTrack, setLatestTrack] = useState<MusicTrack | null>(null);
-  const [musicLoading, setMusicLoading] = useState(true);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadLatestTrack() {
-      if (!user) {
-        setLatestTrack(null);
-        setMusicLoading(false);
-        return;
-      }
-
-      setMusicLoading(true);
-      try {
-        const { supabase } = await import("@/lib/supabase");
-        const { data } = await supabase
-          .from("flow_music_tracks")
-          .select("id,title,status")
-          .eq("owner_id", user.id)
-          .order("created_at", { ascending: false })
-          .limit(1)
-          .maybeSingle();
-
-        if (!cancelled) setLatestTrack((data as MusicTrack | null) ?? null);
-      } catch {
-        if (!cancelled) setLatestTrack(null);
-      } finally {
-        if (!cancelled) setMusicLoading(false);
-      }
-    }
-
-    void loadLatestTrack();
-    return () => {
-      cancelled = true;
-    };
-  }, [user]);
+  const [favorite, setFavorite] = useState(true);
 
   const accountName = resolveAccountDisplayName({ profile, user });
-  const profileImage = currentPlayer?.profile_image_url
+  const playerImage = currentPlayer?.profile_image_url
     || currentPlayer?.logo_url
     || profile?.avatar_url
-    || user?.user_metadata?.avatar_url;
+    || null;
   const profileFallback = useMemo(() => initials(accountName) || "C", [accountName]);
 
   if ((user && !playerReady) || loading) {
@@ -97,14 +62,7 @@ export function MobileHomeDashboard() {
     );
   }
 
-  const musicTitle = musicLoading
-    ? "Cargando…"
-    : latestTrack?.title || (profile?.spotify_url ? "Spotify conectado" : "Conectá tu música");
-  const musicDetail = latestTrack
-    ? formatTrackStatus(latestTrack.status)
-    : profile?.spotify_url
-      ? "Disponible en tu identidad"
-      : "Llevá tu sonido a CLOUVA";
+  const openMusic = () => router.push("/mi-flow/music");
 
   return (
     <main className={styles.page}>
@@ -112,63 +70,81 @@ export function MobileHomeDashboard() {
 
       <header className={styles.header}>
         <Link href="/" className={styles.brand} aria-label="Inicio de CLOUVA">
-          <span className={styles.brandMark}><CloverIcon size={28} /></span>
+          <span className={styles.brandMark}><CloverIcon size={29} /></span>
           <strong>CLOUVA</strong>
         </Link>
-        <button
-          type="button"
-          className={styles.notificationButton}
-          onClick={() => setNotificationsOpen(true)}
-          aria-label="Abrir notificaciones"
-          aria-expanded={notificationsOpen}
-        >
-          <Bell size={23} />
-        </button>
+
+        <div className={styles.headerActions}>
+          <button
+            type="button"
+            className={styles.notificationButton}
+            onClick={() => setNotificationsOpen(true)}
+            aria-label="Abrir notificaciones"
+            aria-expanded={notificationsOpen}
+          >
+            <Bell size={24} />
+            <span aria-hidden="true" />
+          </button>
+          <span className={styles.brandAvatar} aria-hidden="true">
+            <img src={HOME_ASSETS.brandAvatar} alt="" />
+          </span>
+        </div>
       </header>
 
       <section
         className={styles.hero}
         aria-labelledby="mobile-home-title"
-        style={{ backgroundImage: `url(${VISUAL_ASSETS["home-avatar-atmosphere-01"]})` }}
+        style={{ backgroundImage: `url(${HOME_ASSETS.hero})` }}
       >
         <div className={styles.heroShade} aria-hidden="true" />
-        <div className={styles.heroBrandVisual} aria-hidden="true">
-          {profileImage ? <img src={String(profileImage)} alt="" /> : <CloverIcon size={160} />}
-        </div>
         <div className={styles.heroContent}>
           <span>Bienvenido de nuevo</span>
-          <h1 id="mobile-home-title">Crea.<br />Personaliza.<br />Conecta.</h1>
+          <h1 id="mobile-home-title">Crea. Personaliza.<br />Conecta.</h1>
           <p>Viví tu propio mundo.</p>
           <div className={styles.heroActions}>
             <Link href="/mi-flow/avatar" className={styles.primaryAction}>
-              <CircleUserRound size={18} />
+              <CircleUserRound size={17} />
               Entrar a mi Avatar
             </Link>
             <Link href="/matrix" className={styles.secondaryAction}>
-              <Sparkles size={18} />
+              <Sparkles size={17} />
               Explorar Mundos
             </Link>
           </div>
         </div>
       </section>
 
-      <section className={styles.musicCard} aria-label="Tu música en CLOUVA">
-        <div
-          className={styles.musicCover}
-          style={{ backgroundImage: `url(${VISUAL_ASSETS["player-public-profile-cover-01"]})` }}
-          aria-hidden="true"
-        >
-          <Music2 size={29} />
-        </div>
-        <div className={styles.musicInfo}>
-          <small>Tu música</small>
-          <h2>{musicTitle}</h2>
-          <p>{musicDetail}</p>
-          <Link href="/mi-flow/music">
-            <Music2 size={16} />
-            Abrir Música
-            <ArrowRight size={15} />
-          </Link>
+      <section className={styles.musicCard} aria-label="Vida de Flows, Clouva">
+        <button type="button" className={styles.musicCover} onClick={openMusic} aria-label="Abrir Vida de Flows">
+          <img src={HOME_ASSETS.music} alt="Portada de Vida de Flows" />
+        </button>
+
+        <div className={styles.musicPanel}>
+          <div className={styles.musicHeading}>
+            <div>
+              <h2>Vida de Flows</h2>
+              <p>Clouva</p>
+            </div>
+            <button
+              type="button"
+              className={favorite ? styles.favoriteActive : styles.favoriteButton}
+              onClick={() => setFavorite((value) => !value)}
+              aria-label={favorite ? "Quitar de favoritos" : "Agregar a favoritos"}
+            >
+              <Heart size={23} fill={favorite ? "currentColor" : "none"} />
+            </button>
+          </div>
+
+          <button type="button" className={styles.progressButton} onClick={openMusic} aria-label="Abrir reproductor musical">
+            <span><i /></span>
+          </button>
+          <div className={styles.musicTimes}><span>1:32</span><span>3:24</span></div>
+
+          <div className={styles.musicControls}>
+            <button type="button" onClick={openMusic} aria-label="Tema anterior"><SkipBack size={22} fill="currentColor" /></button>
+            <button type="button" className={styles.playButton} onClick={openMusic} aria-label="Abrir reproductor"><Pause size={25} fill="currentColor" /></button>
+            <button type="button" onClick={openMusic} aria-label="Tema siguiente"><SkipForward size={22} fill="currentColor" /></button>
+          </div>
         </div>
       </section>
 
@@ -176,7 +152,7 @@ export function MobileHomeDashboard() {
         <Link
           href="/creator-studio"
           className={styles.featureCard}
-          style={{ backgroundImage: `url(${VISUAL_ASSETS["landing-card-store-01"]})` }}
+          style={{ backgroundImage: `url(${HOME_ASSETS.continue})` }}
         >
           <span className={styles.featureShade} aria-hidden="true" />
           <div>
@@ -189,7 +165,7 @@ export function MobileHomeDashboard() {
         <Link
           href="/studios/iglu"
           className={styles.featureCard}
-          style={{ backgroundImage: `url(${VISUAL_ASSETS["studio-directory-hero-01"]})` }}
+          style={{ backgroundImage: `url(${HOME_ASSETS.iglu})` }}
         >
           <span className={styles.featureShade} aria-hidden="true" />
           <div>
@@ -202,23 +178,23 @@ export function MobileHomeDashboard() {
 
       <nav className={styles.bottomNav} aria-label="Navegación principal móvil">
         <Link href="/" className={styles.activeNav}>
-          <Home size={22} />
+          <Home size={22} fill="currentColor" />
           <span>Inicio</span>
         </Link>
         <Link href="/mi-flow/avatar">
-          <CircleUserRound size={22} />
+          <CircleUserRound size={23} />
           <span>Avatar</span>
         </Link>
         <Link href="/creator-studio" className={styles.createNav} aria-label="Crear en Creator Studio">
-          <b><Plus size={31} /></b>
+          <b><Plus size={32} /></b>
           <small>Crear</small>
         </Link>
         <Link href="/tienda">
-          <ShoppingBag size={22} />
+          <ShoppingBag size={23} />
           <span>Marketplace</span>
         </Link>
-        <Link href="/perfil" className={styles.profileNav} aria-label="Abrir mi perfil">
-          {profileImage ? <img src={String(profileImage)} alt="" /> : <b>{profileFallback}</b>}
+        <Link href="/perfil" className={styles.profileNav} aria-label="Abrir mi Player">
+          {playerImage ? <img src={String(playerImage)} alt="" /> : <b>{profileFallback}</b>}
         </Link>
       </nav>
 
