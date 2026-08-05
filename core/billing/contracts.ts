@@ -45,6 +45,7 @@ export type CreatePreferenceInput = {
   externalReference: string;
   backUrls: { success: string; failure: string; pending: string };
   notificationUrl: string;
+  payer?: { email: string; name?: string; phone?: string };
 };
 
 export interface BillingProvider {
