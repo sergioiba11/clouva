@@ -36,12 +36,17 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: npm run typecheck
 
-  android-build:
+  android-release-build:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 40
     defaults:
       run:
         working-directory: mobile/clouva-control
+    env:
+      CLOUVA_CONTROL_KEYSTORE_PATH: ${{ github.workspace }}/mobile/clouva-control/android/keystore/ci-release.jks
+      CLOUVA_CONTROL_KEY_ALIAS: clouva-control-ci
+      CLOUVA_CONTROL_KEYSTORE_PASSWORD: clouva-ci-password
+      CLOUVA_CONTROL_KEY_PASSWORD: clouva-ci-password
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -57,5 +62,21 @@ jobs:
       - run: npm run typecheck
       - name: Generate Android project
         run: npx expo prebuild --platform android --clean --non-interactive
-      - name: Compile Android debug APK
-        run: ./android/gradlew -p android assembleDebug --no-daemon
+      - name: Generate CI-only signing key
+        run: |
+          mkdir -p android/keystore
+          keytool -genkeypair \
+            -storetype JKS \
+            -keystore "$CLOUVA_CONTROL_KEYSTORE_PATH" \
+            -storepass "$CLOUVA_CONTROL_KEYSTORE_PASSWORD" \
+            -keypass "$CLOUVA_CONTROL_KEY_PASSWORD" \
+            -alias "$CLOUVA_CONTROL_KEY_ALIAS" \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 1 \
+            -dname "CN=CLOUVA CONTROL CI, OU=Engineering, O=CLOUVA, L=Buenos Aires, C=AR" \
+            -noprompt
+      - name: Configure release signing
+        run: node scripts/configure-android-signing.mjs
+      - name: Compile signed Android release APK
+        run: ./android/gradlew -p android assembleRelease --no-daemon
