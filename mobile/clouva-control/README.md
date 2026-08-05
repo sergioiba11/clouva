@@ -27,7 +27,7 @@ EXPO_PUBLIC_SUPABASE_URL=https://PROJECT_REF.supabase.co
 EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_...
 ```
 
-También puede utilizarse temporalmente la anon key pública mediante `EXPO_PUBLIC_SUPABASE_ANON_KEY`.
+También puede utilizarse la anon key pública mediante `EXPO_PUBLIC_SUPABASE_ANON_KEY` cuando el proyecto todavía no usa publishable keys.
 
 ## Redirect de Google
 
@@ -140,6 +140,7 @@ Aplicar, en orden:
 ```text
 supabase/migrations/20260805010000_clouva_control.sql
 supabase/migrations/20260805014500_clouva_control_user_scoped_api.sql
+supabase/migrations/20260805021500_clouva_control_revoke_anon_rpc.sql
 ```
 
 Crean:
@@ -150,7 +151,8 @@ Crean:
 - bucket privado `admin-apk-releases`;
 - bucket privado `admin-mobile-issues`;
 - políticas RLS para administradores;
-- RPC segura para validar al administrador y consultar procesos sin exponer la service role.
+- RPC segura para validar al administrador y consultar procesos sin exponer la service role;
+- revocación explícita del acceso anónimo a las RPC administrativas.
 
 ## Pantallas nativas
 
