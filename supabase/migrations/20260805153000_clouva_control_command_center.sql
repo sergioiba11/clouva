@@ -148,24 +148,39 @@ begin
 
     select * from (
       select
-        id::text,
+        order_row.id::text,
         'store_orders'::text,
-        'Pedido físico'::text,
         case
-          when coalesce(shipping_status::text, '') = 'entregado' then 'entregado'
-          when coalesce(payment_status::text, '') = 'pagado'
-               and coalesce(shipping_status::text, '') not in ('', 'pendiente') then shipping_status::text
-          when coalesce(payment_status::text, '') = 'pagado' then 'pagado'
-          else coalesce(payment_status::text, status::text, 'pendiente')
-        end as status,
+          when order_row.has_physical then 'Pedido físico'::text
+          else 'Pedido digital 3D'::text
+        end,
+        case
+          when order_row.payment_status::text in ('failed', 'refunded') then order_row.payment_status::text
+          when order_row.payment_status::text <> 'paid' then order_row.payment_status::text
+          else coalesce(order_row.fulfillment_status::text, order_row.status::text, 'pending')
+        end as process_status,
         null::double precision,
-        customer_id::text,
-        null::text,
-        created_at,
-        coalesce(paid_at, created_at)
-      from public.orders
-      order by created_at desc
-      limit safe_limit
+        order_row.buyer_id::text,
+        case
+          when order_row.fulfillment_status::text = 'stock_conflict'
+            then 'El pago fue registrado, pero el stock necesita reconciliación antes de continuar.'::text
+          else null::text
+        end,
+        order_row.created_at,
+        coalesce(order_row.completed_at, order_row.paid_at, order_row.created_at)
+      from (
+        select
+          o.*,
+          exists (
+            select 1
+            from public.commerce_order_items oi
+            where oi.order_id = o.id
+              and oi.product_type = 'physical'
+          ) as has_physical
+        from public.commerce_orders o
+        order by o.created_at desc
+        limit safe_limit
+      ) order_row
     ) store_jobs
   ) process_row;
 
@@ -194,45 +209,60 @@ begin
     'available', true,
     'approvedPaymentsToday', (
       select count(*)
-      from public.orders
-      where payment_status::text = 'pagado'
+      from public.commerce_orders
+      where payment_status = 'paid'
         and coalesce(paid_at, created_at) >= date_trunc('day', now())
     ),
     'pendingPayments', (
       select count(*)
-      from public.orders
-      where payment_status::text in ('pendiente', 'pending')
+      from public.commerce_orders
+      where payment_status = 'pending'
     ),
     'refundsToday', (
       select count(*)
-      from public.orders
-      where payment_status::text in ('reembolsado', 'refunded')
-        and created_at >= date_trunc('day', now())
+      from public.commerce_orders
+      where payment_status = 'refunded'
+        and coalesce(refunded_at, created_at) >= date_trunc('day', now())
     ),
     'physicalOrdersToday', (
-      select count(*)
-      from public.orders
-      where created_at >= date_trunc('day', now())
+      select count(distinct o.id)
+      from public.commerce_orders o
+      join public.commerce_order_items oi on oi.order_id = o.id
+      where oi.product_type = 'physical'
+        and o.created_at >= date_trunc('day', now())
     ),
-    'digitalDeliveriesToday', 0,
+    'digitalDeliveriesToday', (
+      select count(*)
+      from public.commerce_order_items oi
+      where oi.product_type in ('digital', 'avatar_item', 'asset_3d', 'music', 'beat', 'exclusive_content', 'bundle')
+        and oi.delivery_status = 'delivered'
+        and coalesce(oi.delivered_at, oi.delivery_claimed_at) >= date_trunc('day', now())
+    ),
     'recentOrders', (
       select coalesce(jsonb_agg(order_payload order by created_at desc), '[]'::jsonb)
       from (
         select
-          created_at,
+          o.created_at,
           jsonb_build_object(
-            'id', id::text,
-            'orderNumber', order_number,
-            'total', coalesce(total, 0),
-            'currency', coalesce(currency, 'ARS'),
-            'paymentStatus', coalesce(payment_status::text, 'unknown'),
-            'shippingStatus', coalesce(shipping_status::text, 'unknown'),
-            'status', coalesce(status::text, 'unknown'),
-            'createdAt', created_at,
-            'paidAt', paid_at
+            'id', o.id::text,
+            'orderNumber', null,
+            'total', coalesce(o.total, 0),
+            'currency', coalesce(o.currency, 'ARS'),
+            'paymentStatus', coalesce(o.payment_status::text, 'unknown'),
+            'shippingStatus', coalesce(shipment.status::text, o.fulfillment_status::text, 'unknown'),
+            'status', coalesce(o.status::text, 'unknown'),
+            'createdAt', o.created_at,
+            'paidAt', o.paid_at
           ) as order_payload
-        from public.orders
-        order by created_at desc
+        from public.commerce_orders o
+        left join lateral (
+          select s.status
+          from public.commerce_shipments s
+          where s.order_id = o.id
+          order by s.updated_at desc, s.created_at desc
+          limit 1
+        ) shipment on true
+        order by o.created_at desc
         limit 20
       ) recent
     )
