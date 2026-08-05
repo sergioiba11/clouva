@@ -349,33 +349,32 @@ export function groupControlIncidents(processes: UnifiedProcess[]): ControlIncid
     groups.set(key, [...(groups.get(key) ?? []), process]);
   }
 
-  return [...groups.entries()]
-    .map(([key, rows]) => {
-      const first = rows[0];
-      if (!first) return null;
-      const dates = rows
-        .map((row) => row.updatedAt ?? row.createdAt)
-        .filter((value): value is string => Boolean(value))
-        .sort();
-      const fingerprint = createHash("sha256").update(key).digest("hex").slice(0, 24);
-      return {
-        fingerprint,
-        title: rows.length > 1 ? `${rows.length} procesos presentan el mismo problema` : first.humanMessage,
-        summary: first.humanMessage,
-        category: first.category,
-        source: first.source,
-        severity: first.normalizedStatus === "failed" ? "critical" as const : "attention" as const,
-        count: rows.length,
-        firstSeen: dates.at(0) ?? null,
-        lastSeen: dates.at(-1) ?? null,
-        affectedIds: rows.map((row) => row.id).filter(Boolean).slice(0, 50),
-        affectedUsers: [...new Set(rows.map((row) => row.userId).filter((value): value is string => Boolean(value)))].slice(0, 50),
-        route: first.route,
-        technicalMessage: first.technicalMessage,
-      };
-    })
-    .filter((value): value is ControlIncident => value !== null)
-    .sort((left, right) => String(right.lastSeen ?? "").localeCompare(String(left.lastSeen ?? "")));
+  const incidents: ControlIncident[] = [];
+  for (const [key, rows] of groups.entries()) {
+    const first = rows[0];
+    if (!first) continue;
+    const dates = rows
+      .map((row) => row.updatedAt ?? row.createdAt)
+      .filter((value): value is string => Boolean(value))
+      .sort();
+    incidents.push({
+      fingerprint: createHash("sha256").update(key).digest("hex").slice(0, 24),
+      title: rows.length > 1 ? `${rows.length} procesos presentan el mismo problema` : first.humanMessage,
+      summary: first.humanMessage,
+      category: first.category,
+      source: first.source,
+      severity: first.normalizedStatus === "failed" ? "critical" : "attention",
+      count: rows.length,
+      firstSeen: dates.at(0) ?? null,
+      lastSeen: dates.at(-1) ?? null,
+      affectedIds: rows.map((row) => row.id).filter(Boolean).slice(0, 50),
+      affectedUsers: [...new Set(rows.map((row) => row.userId).filter((value): value is string => Boolean(value)))].slice(0, 50),
+      route: first.route,
+      technicalMessage: first.technicalMessage,
+    });
+  }
+
+  return incidents.sort((left, right) => String(right.lastSeen ?? "").localeCompare(String(left.lastSeen ?? "")));
 }
 
 export function buildActivity(processes: UnifiedProcess[]) {
