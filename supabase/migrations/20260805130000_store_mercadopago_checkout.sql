@@ -170,6 +170,7 @@ begin
 
   update public.orders
   set payment_status = 'pagado',
+      shipping_status = 'pendiente',
       status = 'confirmado',
       payment_method = 'mercadopago',
       external_payment_id = p_payment_id,
