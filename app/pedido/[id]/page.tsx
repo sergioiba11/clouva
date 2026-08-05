@@ -43,8 +43,6 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
   useEffect(() => {
     if (!id || !token) return;
     let active = true;
-    let pollId: number | undefined;
-    let stopId: number | undefined;
 
     async function loadOrder() {
       try {
@@ -56,7 +54,7 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
         if (!active) return;
         setOrder(payload.order);
         setError("");
-        if (TERMINAL_PAYMENT_STATES.has(payload.order.payment_status) && pollId) {
+        if (TERMINAL_PAYMENT_STATES.has(payload.order.payment_status)) {
           window.clearInterval(pollId);
         }
       } catch (loadError) {
@@ -64,16 +62,14 @@ export default function OrderPage({ params }: { params: Promise<{ id: string }> 
       }
     }
 
+    const pollId = window.setInterval(() => void loadOrder(), 2500);
+    const stopId = window.setTimeout(() => window.clearInterval(pollId), 45000);
     void loadOrder();
-    pollId = window.setInterval(() => void loadOrder(), 2500);
-    stopId = window.setTimeout(() => {
-      if (pollId) window.clearInterval(pollId);
-    }, 45000);
 
     return () => {
       active = false;
-      if (pollId) window.clearInterval(pollId);
-      if (stopId) window.clearTimeout(stopId);
+      window.clearInterval(pollId);
+      window.clearTimeout(stopId);
     };
   }, [id, token]);
 
