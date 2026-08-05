@@ -114,8 +114,74 @@ begin
 end
 $$;
 
--- These trigger functions are internal database mechanisms, not public RPCs.
+-- Lock the order and every product before changing payment_status to pagado.
+-- This closes the race where two already-open checkouts try to buy the final
+-- unit at the same time. The update fires the stock trigger above in the same
+-- transaction, so either the whole confirmation succeeds or nothing changes.
+create or replace function public.confirm_store_order_payment(
+  p_order_id uuid,
+  p_payment_id text,
+  p_paid_at timestamptz
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  current_payment_status text;
+  line record;
+  available_stock integer;
+begin
+  select payment_status::text
+    into current_payment_status
+  from public.orders
+  where id = p_order_id
+  for update;
+
+  if not found then
+    raise exception 'Pedido inexistente %', p_order_id;
+  end if;
+
+  if current_payment_status = 'pagado' then
+    return false;
+  end if;
+
+  for line in
+    select product_id, qty
+    from public.order_items
+    where order_id = p_order_id
+    order by product_id
+  loop
+    select stock
+      into available_stock
+    from public.products
+    where id = line.product_id
+    for update;
+
+    if available_stock is null then
+      raise exception 'Producto inexistente %', line.product_id;
+    end if;
+
+    if available_stock < line.qty then
+      raise exception 'Stock insuficiente para producto %', line.product_id;
+    end if;
+  end loop;
+
+  update public.orders
+  set payment_status = 'pagado',
+      status = 'confirmado',
+      payment_method = 'mercadopago',
+      external_payment_id = p_payment_id,
+      paid_at = p_paid_at
+  where id = p_order_id;
+
+  return true;
+end
+$$;
+
+-- These functions are internal database mechanisms, not public RPCs.
 revoke all on function public.ensure_stock_before_order_items() from public, anon, authenticated;
 revoke all on function public.apply_stock_on_order_state_change() from public, anon, authenticated;
-grant execute on function public.ensure_stock_before_order_items() to service_role;
-grant execute on function public.apply_stock_on_order_state_change() to service_role;
+revoke all on function public.confirm_store_order_payment(uuid, text, timestamptz) from public, anon, authenticated;
+grant execute on function public.confirm_store_order_payment(uuid, text, timestamptz) to service_role;
