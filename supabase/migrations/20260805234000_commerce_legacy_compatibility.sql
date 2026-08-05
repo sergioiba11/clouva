@@ -348,7 +348,7 @@ begin
         where link.legacy_entity_type = 'order'
           and link.legacy_id = o.id
       )
-      order by o.created_at nulls last, o.id
+      order by o.order_number nulls last, o.id
     loop
       order_json := to_jsonb(legacy_order);
       buyer_id := null;
