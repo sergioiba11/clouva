@@ -27,6 +27,7 @@ const config: ExpoConfig = {
     ],
   },
   plugins: [
+    "expo-web-browser",
     ["expo-secure-store", { configureAndroidBackup: true }],
     ["expo-image-picker", { photosPermission: "CLOUVA CONTROL necesita acceder a imágenes para adjuntar evidencia a un problema.", cameraPermission: "CLOUVA CONTROL necesita la cámara para registrar evidencia visual." }]
   ],
