@@ -13,13 +13,17 @@ export const API_URL = (extra.clouvaApiUrl ?? "https://clouva.com.ar").replace(/
 const SUPABASE_URL = extra.supabaseUrl ?? "";
 const SUPABASE_KEY = extra.supabasePublishableKey ?? "";
 
+if (!SUPABASE_URL || !SUPABASE_KEY) {
+  throw new Error("CLOUVA CONTROL no recibió la configuración pública de Supabase");
+}
+
 const secureStorage = {
   getItem: (key: string) => SecureStore.getItemAsync(key),
   setItem: (key: string, value: string) => SecureStore.setItemAsync(key, value),
   removeItem: (key: string) => SecureStore.deleteItemAsync(key),
 };
 
-export const supabase = createClient(SUPABASE_URL || "https://placeholder.supabase.co", SUPABASE_KEY || "placeholder", {
+const supabaseClient = createClient(SUPABASE_URL, SUPABASE_KEY, {
   auth: {
     storage: secureStorage,
     persistSession: true,
@@ -27,6 +31,26 @@ export const supabase = createClient(SUPABASE_URL || "https://placeholder.supaba
     detectSessionInUrl: false,
   },
 });
+
+// Google Identity Services already works on clouva.com.ar. The native app uses
+// that verified web origin as an authentication bridge and receives the
+// resulting Supabase session through the registered clouvacontrol:// scheme.
+// This avoids depending on a second Google OAuth redirect configuration.
+const originalSignInWithOAuth = supabaseClient.auth.signInWithOAuth.bind(supabaseClient.auth);
+supabaseClient.auth.signInWithOAuth = async (credentials) => {
+  if (credentials.provider === "google") {
+    return {
+      data: {
+        provider: "google",
+        url: `${API_URL}/auth/clouva-control-login`,
+      },
+      error: null,
+    };
+  }
+  return originalSignInWithOAuth(credentials);
+};
+
+export const supabase = supabaseClient;
 
 export class AdminApiError extends Error {
   readonly status: number;
