@@ -39,10 +39,6 @@ jobs:
       run:
         working-directory: mobile/clouva-control
     env:
-      VERSION: ${{ inputs.version || github.ref_name }}
-      RELEASE_NOTES: ${{ inputs.release_notes || format('Release {0}', github.ref_name) }}
-      IS_STABLE: ${{ inputs.stable || true }}
-      MINIMUM_REQUIRED: ${{ inputs.minimum_required }}
       EXPO_PUBLIC_CLOUVA_API_URL: ${{ vars.CLOUVA_CONTROL_API_URL || 'https://clouva.com.ar' }}
       EXPO_PUBLIC_SUPABASE_URL: ${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
       EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY || vars.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
@@ -53,8 +49,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: mobile/clouva-control/package.json
 
       - uses: actions/setup-java@v4
         with:
@@ -62,16 +56,40 @@ jobs:
           java-version: "17"
           cache: gradle
 
-      - name: Resolve version and build number
+      - name: Resolve release configuration
         id: release
         shell: bash
+        env:
+          DISPATCH_VERSION: ${{ inputs.version }}
+          DISPATCH_NOTES: ${{ inputs.release_notes }}
+          DISPATCH_STABLE: ${{ inputs.stable }}
+          DISPATCH_MINIMUM: ${{ inputs.minimum_required }}
         run: |
-          version="$VERSION"
-          version="${version#clouva-control-v}"
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            version="$DISPATCH_VERSION"
+            notes="$DISPATCH_NOTES"
+            stable="$DISPATCH_STABLE"
+            minimum="$DISPATCH_MINIMUM"
+          else
+            version="${GITHUB_REF_NAME#clouva-control-v}"
+            notes="Release $GITHUB_REF_NAME"
+            stable="true"
+            minimum=""
+          fi
+
           test -n "$version"
-          build_number="${GITHUB_RUN_NUMBER}"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "build_number=$build_number" >> "$GITHUB_OUTPUT"
+          [[ "$stable" == "true" || "$stable" == "false" ]]
+          build_number="$GITHUB_RUN_NUMBER"
+
+          {
+            echo "version=$version"
+            echo "build_number=$build_number"
+            echo "stable=$stable"
+            echo "minimum=$minimum"
+            echo "notes<<EOF"
+            echo "$notes"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Install base dependencies
         run: npm install --no-audit --no-fund
@@ -155,10 +173,21 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          RELEASE_NOTES: ${{ steps.release.outputs.notes }}
+          IS_STABLE: ${{ steps.release.outputs.stable }}
+          MINIMUM_REQUIRED: ${{ steps.release.outputs.minimum }}
         shell: bash
         run: |
-          stable="${IS_STABLE:-true}"
-          minimum="${MINIMUM_REQUIRED:-}"
+          if [[ "$IS_STABLE" == "true" ]]; then
+            curl --fail --silent --show-error \
+              -X PATCH "$SUPABASE_URL/rest/v1/mobile_app_releases?platform=eq.android&is_stable=eq.true" \
+              -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+              -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+              -H "Content-Type: application/json" \
+              -H "Prefer: return=minimal" \
+              --data '{"is_stable":false}'
+          fi
+
           payload="$(jq -n \
             --arg app_name "CLOUVA CONTROL" \
             --arg platform "android" \
@@ -168,9 +197,10 @@ jobs:
             --argjson file_size "${{ steps.artifact.outputs.size }}" \
             --arg checksum "${{ steps.artifact.outputs.checksum }}" \
             --arg release_notes "$RELEASE_NOTES" \
-            --arg stable "$stable" \
-            --arg minimum "$minimum" \
+            --arg stable "$IS_STABLE" \
+            --arg minimum "$MINIMUM_REQUIRED" \
             '{app_name:$app_name,platform:$platform,version:$version,build_number:$build_number,storage_path:$storage_path,file_size:$file_size,checksum:$checksum,release_notes:$release_notes,is_stable:($stable=="true"),minimum_required:(if $minimum=="" then null else $minimum end),published_at:(now|todateiso8601)}')"
+
           curl --fail --silent --show-error \
             -X POST "$SUPABASE_URL/rest/v1/mobile_app_releases?on_conflict=app_name,platform,version,build_number" \
             -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
