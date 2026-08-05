@@ -1,0 +1,52 @@
+name: Check CLOUVA CONTROL
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "app/admin/clouva-control/**"
+      - "app/api/admin/clouva-control/**"
+      - "app/auth/mobile-preview/**"
+      - "components/auth-provider.tsx"
+      - "lib/clouva-control/**"
+      - "lib/server/clouva-control.ts"
+      - "mobile/clouva-control/**"
+      - "supabase/migrations/*clouva_control.sql"
+      - ".github/workflows/check-clouva-control.yml"
+      - ".github/workflows/build-clouva-control-apk.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-clouva-control-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web-typecheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+
+  android-typecheck:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: mobile/clouva-control
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - run: npm run expo:sync
+      - run: npm run typecheck
