@@ -9,6 +9,12 @@ const atomic = read("./supabase/migrations/20260805231000_commerce_atomic_paymen
 const uniqueness = read("./supabase/migrations/20260805231100_commerce_order_item_uniqueness.sql");
 const checkout = read("./app/api/commerce/checkout/route.ts");
 const webhook = read("./app/api/webhooks/mercadopago/commerce-orders/route.ts");
+const storefront = read("./app/tienda/page.tsx");
+const catalog = read("./app/catalogo/page.tsx");
+const productPage = read("./app/producto/[slug]/page.tsx");
+const cartStore = read("./lib/cart-store.ts");
+const addToCart = read("./components/store/add-to-cart.tsx");
+const checkoutPage = read("./app/checkout/page.tsx");
 
 test("canonical commerce stores physical variants instead of flattening size and color", () => {
   assert.match(foundation, /create table if not exists public\.commerce_product_variants/);
@@ -74,13 +80,44 @@ test("one variant can only occupy one line per order", () => {
   assert.match(uniqueness, /coalesce\(variant_id/);
 });
 
-test("checkout consolidates repeated client lines before price and stock validation", () => {
-  assert.match(checkout, /const quantities = new Map<string, number>\(\)/);
-  assert.match(checkout, /quantities\.set\(productId, Math\.min\(50, \(quantities\.get\(productId\) \?\? 0\) \+ quantity\)\)/);
-  assert.match(checkout, /for \(const productId of productIds\)/);
+test("checkout consolidates and validates exact product variants", () => {
+  assert.match(checkout, /type CartItemInput = \{ productId\?: unknown; variantId\?: unknown; quantity\?: unknown \}/);
+  assert.match(checkout, /const lines = new Map<string, RequestedLine>\(\)/);
+  assert.match(checkout, /lineKey\(productId, variantId\)/);
+  assert.match(checkout, /from\("commerce_product_variants"\)/);
+  assert.match(checkout, /selectedVariant\?\.price_override \?\? product\.price/);
+  assert.match(checkout, /variant_id: selectedVariant\?\.id \?\? null/);
+  assert.match(checkout, /sku_snapshot: selectedVariant\?\.sku \?\? null/);
+  assert.match(checkout, /variant_snapshot: variantSnapshot/);
   assert.match(checkout, /\.select\("id,checkout_token"\)/);
   assert.match(checkout, /source=commerce&token=/);
-  assert.match(checkout, /record_commerce_order_event/);
+});
+
+test("official storefront reads only published CLOUVA physical commerce products", () => {
+  for (const source of [storefront, catalog, productPage]) {
+    assert.match(source, /from\("commerce_products"\)/);
+    assert.match(source, /\.eq\("owner_type", "clouva"\)/);
+    assert.match(source, /\.eq\("product_type", "physical"\)/);
+    assert.match(source, /\.eq\("status", "published"\)/);
+    assert.doesNotMatch(source, /from\("products"\)/);
+  }
+});
+
+test("cart lines cannot merge different sizes or colors", () => {
+  assert.match(cartStore, /lineId\(productId: string, variantId: string \| null\)/);
+  assert.match(cartStore, /`\$\{productId\}:\$\{variantId \?\? "base"\}`/);
+  assert.match(cartStore, /variantId: string \| null/);
+  assert.match(addToCart, /variantId: selectedVariant\?\.id \?\? null/);
+  assert.match(addToCart, /size: selectedVariant\?\.size/);
+  assert.match(addToCart, /color: selectedVariant\?\.color/);
+});
+
+test("visible checkout sends canonical variant identifiers", () => {
+  assert.match(checkoutPage, /fetch\("\/api\/commerce\/checkout"/);
+  assert.match(checkoutPage, /authorization: `Bearer \$\{session\.access_token\}`/);
+  assert.match(checkoutPage, /productId: item\.productId/);
+  assert.match(checkoutPage, /variantId: item\.variantId/);
+  assert.doesNotMatch(checkoutPage, /fetch\("\/api\/checkout"/);
 });
 
 test("refund restores committed stock once and revokes delivered inventory", () => {
