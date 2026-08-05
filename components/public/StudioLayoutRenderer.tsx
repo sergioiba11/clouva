@@ -84,8 +84,8 @@ export function CustomShell({
           </Link>
           {navLinks.length && navStyle === "pill" ? (
             <nav className="mx-auto hidden items-center gap-2 rounded-full border border-white/10 bg-white/[0.025] p-1 text-xs text-white/65 md:flex">
-              {navLinks.map((link) => (
-                <Link key={link.href} href={link.href} className="rounded-full px-4 py-2 transition hover:bg-[color:var(--public-accent)]/10 hover:text-white">{link.label}</Link>
+              {navLinks.map((link, linkIndex) => (
+                <Link key={`${link.href}-${linkIndex}`} href={link.href} className="rounded-full px-4 py-2 transition hover:bg-[color:var(--public-accent)]/10 hover:text-white">{link.label}</Link>
               ))}
             </nav>
           ) : null}
@@ -98,12 +98,12 @@ export function CustomShell({
         </div>
         {navLinks.length && navStyle === "bar" ? (
           <nav className="hidden justify-center gap-8 border-t border-white/[0.06] bg-black/40 px-4 py-3 text-xs font-medium uppercase tracking-[0.18em] text-white/60 md:flex">
-            {navLinks.map((link) => <Link key={link.href} href={link.href} className="transition hover:text-[color:var(--public-accent)]">{link.label}</Link>)}
+            {navLinks.map((link, linkIndex) => <Link key={`${link.href}-${linkIndex}`} href={link.href} className="transition hover:text-[color:var(--public-accent)]">{link.label}</Link>)}
           </nav>
         ) : null}
         {navLinks.length ? (
           <nav className="flex gap-1 overflow-x-auto border-t border-white/[0.06] px-3 py-2 text-[11px] text-white/60 md:hidden">
-            {navLinks.map((link) => <Link key={link.href} href={link.href} className="shrink-0 rounded-full px-3 py-1.5 hover:bg-white/5 hover:text-white">{link.label}</Link>)}
+            {navLinks.map((link, linkIndex) => <Link key={`${link.href}-${linkIndex}`} href={link.href} className="shrink-0 rounded-full px-3 py-1.5 hover:bg-white/5 hover:text-white">{link.label}</Link>)}
           </nav>
         ) : null}
       </header>

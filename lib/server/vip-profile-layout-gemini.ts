@@ -353,7 +353,7 @@ export async function generatePreciseLayoutConfig(args: {
     "",
     `Para secciones "estáticas" (hero, about, pillars, contact -- las que muestran texto/botones fijos, no una lista de datos reales) incluí "elements": un array con cada texto/botón/ícono/logo visible DENTRO de esa sección, cada uno con:`,
     `  - "type": uno de ${POSITIONED_ELEMENT_TYPES.join(", ")} ("eyebrow" es un label chico en mayúsculas arriba de un título, ej. "BIENVENIDO A").`,
-    '  - "text": el contenido real (para pillars, generá 2-4 elementos "heading"+"paragraph" por tarjeta, basados en servicios/valores reales del Estudio -- nunca inventados de la nada). Omitilo para type "image".',
+    '  - "text": el contenido real (para pillars, generá 2-4 elementos "heading"+"paragraph" por tarjeta, basados en servicios/valores reales del Estudio -- nunca inventados de la nada). Omitilo para type "image". "heading"/"subheading" tienen que ser CORTOS (el nombre real, una frase de 2-5 palabras) -- la descripción larga va en un "paragraph" aparte, nunca metida dentro del heading a la fuerza.',
     '  - "box": la caja de ESE elemento puntual (no de toda la sección), mismo formato {top,left,bottom,right} 0-1000 sobre la imagen completa -- tiene que caer DENTRO de la caja de su sección, y su "top" tiene que reflejar su posición vertical real respecto a los demás elementos de la misma sección (si el botón está debajo del título en el mockup, su "top" tiene que ser mayor que el "top" del título, nunca menor).',
     '  - "fontSizePx": tamaño de fuente estimado en píxeles (10-96) -- solo para eyebrow/heading/subheading/paragraph/badge/button.',
     `  - "fontWeight": el más parecido de ${FONT_WEIGHTS.join(", ")}.`,
