@@ -60,7 +60,7 @@ test("Admin routes require CLOUVA CONTROL admin identity", () => {
 });
 
 test("Migration enables RLS and atomic versioned publication", () => {
-  const migration = read("./supabase/migrations/20260806101500_clouva_lab_v1.sql");
+  const migration = read("./supabase/migrations/20260806101821_clouva_lab_v1.sql");
   for (const table of ["ui_pages", "ui_page_versions", "ui_blocks", "ui_assets", "ui_feature_flags"]) {
     assert.match(migration, new RegExp(`alter table public\\.${table} enable row level security`));
   }
