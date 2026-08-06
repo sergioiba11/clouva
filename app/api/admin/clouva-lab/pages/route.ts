@@ -4,6 +4,17 @@ import { sanitizeMobileHomeConfig } from "@/lib/clouva-lab/mobile-home-config";
 
 export const dynamic = "force-dynamic";
 
+type VersionRow = {
+  id: string;
+  page_id: string;
+  version_number: number;
+  status: string;
+  source_version: number | null;
+  note: string | null;
+  created_at: string;
+  created_by: string | null;
+};
+
 function sanitizeConfig(slug: string, config: unknown) {
   if (slug === "mobile-home") return sanitizeMobileHomeConfig(config);
   return config;
@@ -25,11 +36,11 @@ export async function GET(request: NextRequest) {
           .select("id,page_id,version_number,status,source_version,note,created_at,created_by")
           .in("page_id", pageIds)
           .order("version_number", { ascending: false })
-      : { data: [], error: null };
+      : { data: [] as VersionRow[], error: null };
     if (versionsResult.error) throw versionsResult.error;
 
-    const versionsByPage = new Map<string, typeof versionsResult.data>();
-    for (const version of versionsResult.data ?? []) {
+    const versionsByPage = new Map<string, VersionRow[]>();
+    for (const version of (versionsResult.data ?? []) as VersionRow[]) {
       const current = versionsByPage.get(version.page_id) ?? [];
       current.push(version);
       versionsByPage.set(version.page_id, current);
