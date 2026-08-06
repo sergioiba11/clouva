@@ -1,0 +1,28 @@
+name: Trigger CLOUVA CONTROL release
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/trigger-clouva-control-release.yml"
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch stable CLOUVA CONTROL APK build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh workflow run build-clouva-control-apk.yml \
+            --repo "${{ github.repository }}" \
+            --ref main \
+            -f version=1.1.0 \
+            -f release_notes="Nuevo centro de mando operativo de CLOUVA CONTROL" \
+            -f stable=true \
+            -f minimum_required=""
