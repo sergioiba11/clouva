@@ -32,6 +32,7 @@ import {
 } from "@/lib/clouva-lab/mobile-home-config";
 import { usePublishedUiPage } from "@/lib/clouva-lab/use-published-ui-page";
 import styles from "./mobile-home-dashboard.module.css";
+import labStyles from "./mobile-home-lab.module.css";
 
 function initials(value: string) {
   return value
@@ -192,7 +193,7 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
     const cards = [featureCard("continue", config.cards.continue), featureCard("iglu", config.cards.iglu)].filter(Boolean);
     if (cards.length === 0) return null;
     return (
-      <section key="features" className={`${styles.featureGrid} ${cards.length === 1 ? styles.singleFeatureGrid : ""}`} aria-label="Acciones principales" data-clouva-block="features">
+      <section key="features" className={styles.featureGrid} aria-label="Acciones principales" data-clouva-block="features">
         {cards}
       </section>
     );
@@ -206,12 +207,13 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
 
   return (
     <main
-      className={`${styles.page} ${previewMode ? styles.previewPage : ""}`}
+      className={`${styles.page} ${labStyles.configurablePage} ${previewMode ? labStyles.previewPage : ""}`}
       style={cssVariables}
       data-ui-page="mobile-home"
       data-ui-version={version ?? "draft-preview"}
+      data-ui-preview={previewMode ? "true" : "false"}
     >
-      <div className={styles.ambient} aria-hidden="true" />
+      <div className={styles.ambient} data-clouva-ambient aria-hidden="true" />
 
       <header className={styles.header} data-clouva-block="header">
         <Link href="/" className={styles.brand} aria-label="Inicio de CLOUVA" onClick={preventPreviewNavigation}>
