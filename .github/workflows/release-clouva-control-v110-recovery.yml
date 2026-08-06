@@ -1,0 +1,207 @@
+name: Recover and publish CLOUVA CONTROL 1.1.0
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/release-clouva-control-v110-recovery.yml"
+
+permissions:
+  contents: read
+  statuses: write
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: mobile/clouva-control
+    env:
+      EXPO_PUBLIC_CLOUVA_API_URL: ${{ vars.CLOUVA_CONTROL_API_URL || 'https://clouva.com.ar' }}
+      EXPO_PUBLIC_SUPABASE_URL: ${{ vars.NEXT_PUBLIC_SUPABASE_URL || secrets.SUPABASE_URL }}
+      EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY || vars.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      GH_TOKEN: ${{ github.token }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Mark release pending
+        shell: bash
+        run: |
+          gh api --method POST \
+            "repos/${{ github.repository }}/statuses/${{ github.sha }}" \
+            -f state=pending \
+            -f context='clouva-control/recovery-release' \
+            -f description='Generando y publicando APK 1.1.0' \
+            -f target_url="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+      - name: Validate required private credentials
+        shell: bash
+        run: |
+          test -n "$SUPABASE_URL"
+          test -n "$SUPABASE_SERVICE_ROLE_KEY"
+
+      - name: Install dependencies
+        run: |
+          npm install --no-audit --no-fund
+          npm run expo:sync
+          npm run typecheck
+
+      - name: Generate Android project
+        env:
+          CLOUVA_CONTROL_VERSION: 1.1.0
+          CLOUVA_CONTROL_BUILD_NUMBER: 1001000
+        run: npx expo prebuild --platform android --clean --non-interactive
+
+      - name: Restore or create persistent signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p android/keystore
+          keystore="android/keystore/clouva-control-release.jks"
+          object_path="clouva-control/signing/clouva-control-release.jks"
+          alias_name="clouva-control"
+          password="$(printf '%s' "${SUPABASE_SERVICE_ROLE_KEY}|clouva-control-signing-v1" | sha256sum | awk '{print $1}' | cut -c1-32)"
+
+          if ! curl --fail --silent --show-error \
+            "$SUPABASE_URL/storage/v1/object/authenticated/admin-apk-releases/$object_path" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+            -o "$keystore"; then
+            rm -f "$keystore"
+            keytool -genkeypair \
+              -keystore "$keystore" \
+              -storepass "$password" \
+              -keypass "$password" \
+              -alias "$alias_name" \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=CLOUVA CONTROL, OU=CLOUVA, O=CLOUVA, L=Buenos Aires, ST=Buenos Aires, C=AR"
+
+            curl --fail --silent --show-error \
+              -X POST "$SUPABASE_URL/storage/v1/object/admin-apk-releases/$object_path" \
+              -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+              -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+              -H "Content-Type: application/octet-stream" \
+              -H "x-upsert: true" \
+              --data-binary "@$keystore"
+          fi
+
+          keytool -list -keystore "$keystore" -storepass "$password" -alias "$alias_name" >/dev/null
+
+          {
+            echo "CLOUVA_CONTROL_KEYSTORE_PATH=${{ github.workspace }}/mobile/clouva-control/$keystore"
+            echo "CLOUVA_CONTROL_KEY_ALIAS=$alias_name"
+            echo "CLOUVA_CONTROL_KEYSTORE_PASSWORD=$password"
+            echo "CLOUVA_CONTROL_KEY_PASSWORD=$password"
+          } >> "$GITHUB_ENV"
+
+      - name: Configure Android signing
+        run: node scripts/configure-android-signing.mjs
+
+      - name: Build signed release APK
+        run: ./android/gradlew -p android assembleRelease --no-daemon
+
+      - name: Prepare release
+        id: artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          source_apk="android/app/build/outputs/apk/release/app-release.apk"
+          test -f "$source_apk"
+          filename="clouva-control-1.1.0.apk"
+          cp "$source_apk" "dist/$filename"
+          checksum="$(sha256sum "dist/$filename" | awk '{print $1}')"
+          size="$(stat -c%s "dist/$filename")"
+          storage_path="clouva-control/1.1.0/$filename"
+          {
+            echo "filename=$filename"
+            echo "checksum=$checksum"
+            echo "size=$size"
+            echo "storage_path=$storage_path"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: clouva-control-1.1.0
+          path: mobile/clouva-control/dist/clouva-control-1.1.0.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload APK to private Supabase Storage
+        run: |
+          curl --fail --silent --show-error \
+            -X POST "$SUPABASE_URL/storage/v1/object/admin-apk-releases/${{ steps.artifact.outputs.storage_path }}" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Content-Type: application/vnd.android.package-archive" \
+            -H "x-upsert: true" \
+            --data-binary "@dist/${{ steps.artifact.outputs.filename }}"
+
+      - name: Register stable release in Supabase
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error \
+            -X PATCH "$SUPABASE_URL/rest/v1/mobile_app_releases?platform=eq.android&is_stable=eq.true" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: return=minimal" \
+            --data '{"is_stable":false}'
+
+          payload="$(jq -n \
+            --arg app_name "CLOUVA CONTROL" \
+            --arg platform "android" \
+            --arg version "1.1.0" \
+            --argjson build_number "1001000" \
+            --arg storage_path "${{ steps.artifact.outputs.storage_path }}" \
+            --argjson file_size "${{ steps.artifact.outputs.size }}" \
+            --arg checksum "${{ steps.artifact.outputs.checksum }}" \
+            --arg release_notes "Nuevo centro de mando operativo de CLOUVA CONTROL" \
+            '{app_name:$app_name,platform:$platform,version:$version,build_number:$build_number,storage_path:$storage_path,file_size:$file_size,checksum:$checksum,release_notes:$release_notes,is_stable:true,minimum_required:null,published_at:(now|todateiso8601)}')"
+
+          curl --fail --silent --show-error \
+            -X POST "$SUPABASE_URL/rest/v1/mobile_app_releases?on_conflict=app_name,platform,version,build_number" \
+            -H "Authorization: Bearer $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "apikey: $SUPABASE_SERVICE_ROLE_KEY" \
+            -H "Content-Type: application/json" \
+            -H "Prefer: resolution=merge-duplicates,return=representation" \
+            --data "$payload"
+
+      - name: Mark release successful
+        if: success()
+        shell: bash
+        run: |
+          gh api --method POST \
+            "repos/${{ github.repository }}/statuses/${{ github.sha }}" \
+            -f state=success \
+            -f context='clouva-control/recovery-release' \
+            -f description='APK 1.1.0 publicado correctamente' \
+            -f target_url="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+      - name: Mark release failed
+        if: failure()
+        shell: bash
+        run: |
+          gh api --method POST \
+            "repos/${{ github.repository }}/statuses/${{ github.sha }}" \
+            -f state=failure \
+            -f context='clouva-control/recovery-release' \
+            -f description='Falló la recuperación del APK 1.1.0' \
+            -f target_url="https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
