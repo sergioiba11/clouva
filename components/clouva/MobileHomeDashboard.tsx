@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import type { CSSProperties, MouseEvent } from "react";
 import {
   ArrowRight,
   Bell,
@@ -16,20 +17,21 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CloverIcon } from "@/components/clover-icon";
 import { useAuth } from "@/components/auth-provider";
 import { useCurrentPlayer } from "@/components/current-player-provider";
 import { resolveAccountDisplayName } from "@/lib/identity-names";
+import {
+  configCssVariables,
+  DEFAULT_MOBILE_HOME_CONFIG,
+  sanitizeMobileHomeConfig,
+  type MobileHomeCardConfig,
+  type MobileHomeConfig,
+  type MobileHomeSectionKey,
+} from "@/lib/clouva-lab/mobile-home-config";
+import { usePublishedUiPage } from "@/lib/clouva-lab/use-published-ui-page";
 import styles from "./mobile-home-dashboard.module.css";
-
-const HOME_ASSETS = {
-  hero: "/assets/home-mobile/hero.webp",
-  music: "/assets/home-mobile/music-cover.webp",
-  continue: "/assets/home-mobile/continue.webp",
-  iglu: "/assets/home-mobile/iglu.webp",
-  brandAvatar: "/assets/home-mobile/brand-avatar.webp",
-} as const;
 
 function initials(value: string) {
   return value
@@ -40,12 +42,36 @@ function initials(value: string) {
     .join("");
 }
 
-export function MobileHomeDashboard() {
+function multiline(value: string) {
+  return value.split("\n").map((line, index, lines) => (
+    <span key={`${line}-${index}`}>
+      {line}
+      {index < lines.length - 1 ? <br /> : null}
+    </span>
+  ));
+}
+
+type MobileHomeDashboardProps = {
+  configOverride?: MobileHomeConfig;
+  previewMode?: boolean;
+};
+
+export function MobileHomeDashboard({ configOverride, previewMode = false }: MobileHomeDashboardProps = {}) {
   const router = useRouter();
   const { user, profile, loading } = useAuth();
   const { currentPlayer, playerLoading, playerReady } = useCurrentPlayer();
+  const { config, version, loading: configLoading } = usePublishedUiPage(
+    "mobile-home",
+    DEFAULT_MOBILE_HOME_CONFIG,
+    sanitizeMobileHomeConfig,
+    configOverride,
+  );
   const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const [favorite, setFavorite] = useState(true);
+  const [favorite, setFavorite] = useState(config.music.favoriteDefault);
+
+  useEffect(() => {
+    setFavorite(config.music.favoriteDefault);
+  }, [config.music.favoriteDefault]);
 
   const accountName = resolveAccountDisplayName({ profile, user });
   const playerImage = currentPlayer?.profile_image_url
@@ -53,77 +79,68 @@ export function MobileHomeDashboard() {
     || profile?.avatar_url
     || null;
   const profileFallback = useMemo(() => initials(accountName) || "C", [accountName]);
+  const cssVariables = useMemo(
+    () => ({ ...configCssVariables(config), backgroundColor: config.theme.backgroundColor }) as CSSProperties,
+    [config],
+  );
 
-  if ((user && !playerReady) || loading) {
+  if ((user && !playerReady) || loading || (configLoading && !configOverride)) {
     return (
-      <main className={styles.loading} aria-busy={loading || playerLoading} aria-label="Cargando CLOUVA">
+      <main className={styles.loading} aria-busy={loading || playerLoading || configLoading} aria-label="Cargando CLOUVA">
         <CloverIcon size={34} />
       </main>
     );
   }
 
-  const openMusic = () => router.push("/mi-flow/music");
+  const preventPreviewNavigation = (event: MouseEvent<HTMLElement>) => {
+    if (previewMode) event.preventDefault();
+  };
+  const openMusic = () => {
+    if (!previewMode) router.push("/mi-flow/music");
+  };
 
-  return (
-    <main className={styles.page}>
-      <div className={styles.ambient} aria-hidden="true" />
-
-      <header className={styles.header}>
-        <Link href="/" className={styles.brand} aria-label="Inicio de CLOUVA">
-          <span className={styles.brandMark}><CloverIcon size={29} /></span>
-          <strong>CLOUVA</strong>
-        </Link>
-
-        <div className={styles.headerActions}>
-          <button
-            type="button"
-            className={styles.notificationButton}
-            onClick={() => setNotificationsOpen(true)}
-            aria-label="Abrir notificaciones"
-            aria-expanded={notificationsOpen}
-          >
-            <Bell size={24} />
-            <span aria-hidden="true" />
-          </button>
-          <span className={styles.brandAvatar} aria-hidden="true">
-            <img src={HOME_ASSETS.brandAvatar} alt="" />
-          </span>
-        </div>
-      </header>
-
+  function renderHero() {
+    return (
       <section
+        key="hero"
         className={styles.hero}
         aria-labelledby="mobile-home-title"
-        style={{ backgroundImage: `url(${HOME_ASSETS.hero})` }}
+        style={{ backgroundImage: `url(${config.hero.imageUrl})` }}
+        data-clouva-block="hero"
       >
         <div className={styles.heroShade} aria-hidden="true" />
         <div className={styles.heroContent}>
-          <span>Bienvenido de nuevo</span>
-          <h1 id="mobile-home-title">Crea. Personaliza.<br />Conecta.</h1>
-          <p>Viví tu propio mundo.</p>
+          <span>{config.hero.eyebrow}</span>
+          <h1 id="mobile-home-title">{multiline(config.hero.title)}</h1>
+          <p>{config.hero.subtitle}</p>
           <div className={styles.heroActions}>
-            <Link href="/mi-flow/avatar" className={styles.primaryAction}>
+            <Link href={config.hero.primaryHref} className={styles.primaryAction} onClick={preventPreviewNavigation}>
               <CircleUserRound size={17} />
-              Entrar a mi Avatar
+              {config.hero.primaryLabel}
             </Link>
-            <Link href="/matrix" className={styles.secondaryAction}>
+            <Link href={config.hero.secondaryHref} className={styles.secondaryAction} onClick={preventPreviewNavigation}>
               <Sparkles size={17} />
-              Explorar Mundos
+              {config.hero.secondaryLabel}
             </Link>
           </div>
         </div>
       </section>
+    );
+  }
 
-      <section className={styles.musicCard} aria-label="Vida de Flows, Clouva">
-        <button type="button" className={styles.musicCover} onClick={openMusic} aria-label="Abrir Vida de Flows">
-          <img src={HOME_ASSETS.music} alt="Portada de Vida de Flows" />
+  function renderMusic() {
+    if (!config.music.visible) return null;
+    return (
+      <section key="music" className={styles.musicCard} aria-label={`${config.music.title}, ${config.music.artist}`} data-clouva-block="music">
+        <button type="button" className={styles.musicCover} onClick={openMusic} aria-label={`Abrir ${config.music.title}`}>
+          <img src={config.music.coverUrl} alt={`Portada de ${config.music.title}`} />
         </button>
 
         <div className={styles.musicPanel}>
           <div className={styles.musicHeading}>
             <div>
-              <h2>Vida de Flows</h2>
-              <p>Clouva</p>
+              <h2>{config.music.title}</h2>
+              <p>{config.music.artist}</p>
             </div>
             <button
               type="button"
@@ -138,7 +155,7 @@ export function MobileHomeDashboard() {
           <button type="button" className={styles.progressButton} onClick={openMusic} aria-label="Abrir reproductor musical">
             <span><i /></span>
           </button>
-          <div className={styles.musicTimes}><span>1:32</span><span>3:24</span></div>
+          <div className={styles.musicTimes}><span>{config.music.currentTime}</span><span>{config.music.duration}</span></div>
 
           <div className={styles.musicControls}>
             <button type="button" onClick={openMusic} aria-label="Tema anterior"><SkipBack size={22} fill="currentColor" /></button>
@@ -147,53 +164,100 @@ export function MobileHomeDashboard() {
           </div>
         </div>
       </section>
+    );
+  }
 
-      <section className={styles.featureGrid} aria-label="Acciones principales">
-        <Link
-          href="/creator-studio"
-          className={styles.featureCard}
-          style={{ backgroundImage: `url(${HOME_ASSETS.continue})` }}
-        >
-          <span className={styles.featureShade} aria-hidden="true" />
-          <div>
-            <h2>Continuar<br />creando</h2>
-            <p>Seguí diseñando<br />tu próximo ítem.</p>
-            <b aria-hidden="true"><ArrowRight size={20} /></b>
-          </div>
-        </Link>
+  function featureCard(id: "continue" | "iglu", card: MobileHomeCardConfig) {
+    if (!card.visible) return null;
+    return (
+      <Link
+        key={id}
+        href={card.href}
+        className={styles.featureCard}
+        style={{ backgroundImage: `url(${card.imageUrl})` }}
+        onClick={preventPreviewNavigation}
+        data-clouva-block={id}
+      >
+        <span className={styles.featureShade} aria-hidden="true" />
+        <div>
+          <h2>{multiline(card.title)}</h2>
+          <p>{multiline(card.body)}</p>
+          <b aria-hidden="true"><ArrowRight size={20} /></b>
+        </div>
+      </Link>
+    );
+  }
 
-        <Link
-          href="/studios/iglu"
-          className={styles.featureCard}
-          style={{ backgroundImage: `url(${HOME_ASSETS.iglu})` }}
-        >
-          <span className={styles.featureShade} aria-hidden="true" />
-          <div>
-            <h2>Entrar<br />al Iglú</h2>
-            <p>Tu estudio.<br />Tu música.<br />Tu universo.</p>
-            <b aria-hidden="true"><ArrowRight size={20} /></b>
-          </div>
-        </Link>
+  function renderFeatures() {
+    const cards = [featureCard("continue", config.cards.continue), featureCard("iglu", config.cards.iglu)].filter(Boolean);
+    if (cards.length === 0) return null;
+    return (
+      <section key="features" className={`${styles.featureGrid} ${cards.length === 1 ? styles.singleFeatureGrid : ""}`} aria-label="Acciones principales" data-clouva-block="features">
+        {cards}
       </section>
+    );
+  }
 
-      <nav className={styles.bottomNav} aria-label="Navegación principal móvil">
-        <Link href="/" className={styles.activeNav}>
+  const sectionRenderers: Record<MobileHomeSectionKey, () => React.ReactNode> = {
+    hero: renderHero,
+    music: renderMusic,
+    features: renderFeatures,
+  };
+
+  return (
+    <main
+      className={`${styles.page} ${previewMode ? styles.previewPage : ""}`}
+      style={cssVariables}
+      data-ui-page="mobile-home"
+      data-ui-version={version ?? "draft-preview"}
+    >
+      <div className={styles.ambient} aria-hidden="true" />
+
+      <header className={styles.header} data-clouva-block="header">
+        <Link href="/" className={styles.brand} aria-label="Inicio de CLOUVA" onClick={preventPreviewNavigation}>
+          <span className={styles.brandMark}><CloverIcon size={29} /></span>
+          <strong>{config.header.logoText}</strong>
+        </Link>
+
+        <div className={styles.headerActions}>
+          <button
+            type="button"
+            className={styles.notificationButton}
+            onClick={() => setNotificationsOpen(true)}
+            aria-label="Abrir notificaciones"
+            aria-expanded={notificationsOpen}
+          >
+            <Bell size={24} />
+            {config.header.showNotificationDot ? <span aria-hidden="true" /> : null}
+          </button>
+          {config.header.showBrandAvatar ? (
+            <span className={styles.brandAvatar} aria-hidden="true">
+              <img src={config.header.brandAvatarUrl} alt="" />
+            </span>
+          ) : null}
+        </div>
+      </header>
+
+      {config.sections.map((section) => sectionRenderers[section]())}
+
+      <nav className={styles.bottomNav} aria-label="Navegación principal móvil" data-clouva-block="navigation">
+        <Link href="/" className={styles.activeNav} onClick={preventPreviewNavigation}>
           <Home size={22} fill="currentColor" />
-          <span>Inicio</span>
+          <span>{config.navigation.homeLabel}</span>
         </Link>
-        <Link href="/mi-flow/avatar">
+        <Link href="/mi-flow/avatar" onClick={preventPreviewNavigation}>
           <CircleUserRound size={23} />
-          <span>Avatar</span>
+          <span>{config.navigation.avatarLabel}</span>
         </Link>
-        <Link href="/creator-studio" className={styles.createNav} aria-label="Crear en Creator Studio">
+        <Link href="/creator-studio" className={styles.createNav} aria-label="Crear en Creator Studio" onClick={preventPreviewNavigation}>
           <b><Plus size={32} /></b>
-          <small>Crear</small>
+          <small>{config.navigation.createLabel}</small>
         </Link>
-        <Link href="/tienda">
+        <Link href="/tienda" onClick={preventPreviewNavigation}>
           <ShoppingBag size={23} />
-          <span>Marketplace</span>
+          <span>{config.navigation.marketplaceLabel}</span>
         </Link>
-        <Link href="/perfil" className={styles.profileNav} aria-label="Abrir mi Player">
+        <Link href="/perfil" className={styles.profileNav} aria-label="Abrir mi Player" onClick={preventPreviewNavigation}>
           {playerImage ? <img src={String(playerImage)} alt="" /> : <b>{profileFallback}</b>}
         </Link>
       </nav>
