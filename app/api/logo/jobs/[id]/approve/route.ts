@@ -5,6 +5,8 @@ import { requireActiveVipEntitlement } from "@/lib/server/vip-profile-permission
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const V4_MODES = ["owned_identity_reconstruction", "clouva_generated_redesign", "standalone_creation"];
+
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
@@ -20,15 +22,16 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (!brandAsset) return NextResponse.json({ error: "El brand_asset no existe." }, { status: 404 });
     await requireActiveVipEntitlement({ admin, userId: user.id, playerId: brandAsset.owner_type === "player" ? brandAsset.owner_id as string : undefined, studioId: brandAsset.owner_type === "studio" ? brandAsset.owner_id as string : undefined });
 
+    const isV4 = typeof version.import_mode === "string" && V4_MODES.includes(version.import_mode);
     if (version.status === "rejected") return NextResponse.json({ error: "Una identidad descartada no puede publicarse." }, { status: 409 });
     if (version.import_mode === "owned_identity_reconstruction" && version.ownership_attested !== true) return NextResponse.json({ error: "Falta la declaración de titularidad o autorización." }, { status: 409 });
-    if (["owned_identity_reconstruction", "clouva_generated_redesign", "standalone_creation"].includes(version.import_mode) && !version.master_svg_url) return NextResponse.json({ error: "Falta el SVG maestro profesional." }, { status: 409 });
-    if (!version.primary_logo_url) return NextResponse.json({ error: "Falta la vista principal derivada del SVG." }, { status: 409 });
+    if (isV4 && !version.master_svg_url) return NextResponse.json({ error: "Falta el SVG maestro profesional." }, { status: 409 });
+    if (!version.primary_logo_url) return NextResponse.json({ error: "Falta la vista principal de la identidad." }, { status: 409 });
     if (version.import_mode === "owned_identity_reconstruction") {
       const validation = version.validation_report as { rasterSimilarity?: number; smallSizeLegible?: boolean } | null;
       if (!validation || (validation.rasterSimilarity ?? 0) < 0.68 || validation.smallSizeLegible !== true) return NextResponse.json({ error: "La reconstrucción todavía necesita ajustes antes de publicarse." }, { status: 422 });
     }
-    if (version.clearance_status !== "clear") {
+    if (isV4 && version.clearance_status !== "clear") {
       const blocked = typeof version.clearance_status === "string" && version.clearance_status.startsWith("blocked_");
       return NextResponse.json({ error: blocked ? "Esta identidad presenta un conflicto y no puede publicarse." : "La identidad todavía requiere revisión de originalidad y propiedad intelectual." }, { status: blocked ? 409 : 422 });
     }
