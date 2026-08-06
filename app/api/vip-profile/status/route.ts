@@ -54,7 +54,7 @@ export async function GET(request: NextRequest) {
         .maybeSingle(),
       admin
         .from("player_profile_versions")
-        .select("id,version_number,status,profile_level,copy_config,asset_references,created_at,published_at")
+        .select("id,version_number,status,profile_level,copy_config,asset_references,brand_asset_version_id,created_at,published_at")
         .eq(subjectColumn, subjectId)
         .order("version_number", { ascending: false }),
     ]);

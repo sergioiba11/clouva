@@ -33,7 +33,10 @@ export class LayoutGeminiError extends Error {
   }
 }
 
-async function callGeminiJson(args: { apiKey: string; promptText: string; images: GeminiReferenceImage[] }) {
+// Exportado para que lib/server/brand-engine/ reuse exactamente el mismo
+// helper de JSON-mode+imágenes en vez de reimplementarlo -- un solo cliente
+// Gemini-texto-con-imágenes para todo lo que necesite JSON estructurado.
+export async function callGeminiJson(args: { apiKey: string; promptText: string; images: GeminiReferenceImage[] }) {
   const parts: Array<Record<string, unknown>> = [{ text: args.promptText }];
   for (const image of args.images) parts.push({ inlineData: { mimeType: image.mimeType, data: image.data } });
 

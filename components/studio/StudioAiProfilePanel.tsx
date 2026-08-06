@@ -44,6 +44,7 @@ type Version = {
   profile_level: "basic" | "vip";
   copy_config: ProfileCopy;
   asset_references: GeneratedAsset[];
+  brand_asset_version_id: string | null;
   published_at: string | null;
 };
 
@@ -264,11 +265,23 @@ export function StudioAiProfilePanel({ studioId }: { studioId: string }) {
 
   const publish = async () => {
     if (!draftVersion) return;
+    // Publicar la página nunca publica el logo solo (regla explícita) --
+    // si esta versión trae un logo nuevo (brand_asset_version_id), hay que
+    // confirmar antes de que se vuelva la identidad oficial del Estudio.
+    let publishLogoToo = false;
+    if (draftVersion.brand_asset_version_id) {
+      publishLogoToo = window.confirm(
+        "Esta página incluye una nueva identidad visual.\n¿Querés publicar también este logo como identidad oficial?",
+      );
+    }
     if (Object.keys(draftEdits).length > 0) await saveEdits();
     setStarting(true);
     setError(null);
     try {
-      const response = await authenticatedFetch(`/api/vip-profile/versions/${draftVersion.id}/publish`, { method: "POST" });
+      const response = await authenticatedFetch(`/api/vip-profile/versions/${draftVersion.id}/publish`, {
+        method: "POST",
+        body: JSON.stringify({ publishLogoToo }),
+      });
       await readApiJson(response);
       setMessage("Identidad del Estudio publicada.");
       await load();
