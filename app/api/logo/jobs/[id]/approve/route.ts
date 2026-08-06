@@ -13,7 +13,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     const { data: version, error: versionError } = await admin
       .from("brand_asset_versions")
-      .select("id,brand_asset_id,status,clearance_status,ownership_attested")
+      .select("id,brand_asset_id,status,import_mode,clearance_status,ownership_attested")
       .eq("id", id)
       .maybeSingle();
     if (versionError) throw new Error(versionError.message);
@@ -35,7 +35,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     });
 
     if (version.status === "rejected") return NextResponse.json({ error: "Una identidad descartada no puede publicarse." }, { status: 409 });
-    if (version.ownership_attested !== true) {
+    if (version.import_mode === "real_identity_import" && version.ownership_attested !== true) {
       return NextResponse.json({ error: "Falta la declaración de titularidad o autorización de uso." }, { status: 409 });
     }
     if (version.clearance_status !== "clear") {
