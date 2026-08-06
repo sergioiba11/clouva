@@ -65,7 +65,7 @@ function urlsFromVersion(version: BrandAssetVersionRow): LogoCandidateUrls | nul
     transparent_logo_url: version.transparent_logo_url ?? version.primary_logo_url,
     white_logo_url: version.white_logo_url ?? version.primary_logo_url,
     black_logo_url: version.black_logo_url ?? version.primary_logo_url,
-    favicon_url: version.favicon_logo_url ?? version.primary_logo_url,
+    favicon_url: version.favicon_url ?? version.primary_logo_url,
   };
 }
 
