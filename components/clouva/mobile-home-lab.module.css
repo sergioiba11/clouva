@@ -1,0 +1,86 @@
+.configurablePage {
+  background: var(--lab-background) !important;
+  padding-left: var(--lab-page-padding) !important;
+  padding-right: var(--lab-page-padding) !important;
+}
+
+.configurablePage > [data-clouva-block="hero"] {
+  height: var(--lab-hero-height) !important;
+  aspect-ratio: auto !important;
+  border-color: var(--lab-border) !important;
+  border-radius: var(--lab-radius) !important;
+}
+
+.configurablePage > [data-clouva-block="hero"] > div:last-child {
+  width: var(--lab-hero-text-width) !important;
+  padding-left: var(--lab-hero-padding-left) !important;
+}
+
+.configurablePage > [data-clouva-block="hero"] a:first-child {
+  border-color: color-mix(in srgb, var(--lab-accent-secondary) 70%, white 30%) !important;
+  background: linear-gradient(90deg, var(--lab-accent), var(--lab-accent-secondary)) !important;
+  box-shadow: 0 0 var(--lab-glow-size) color-mix(in srgb, var(--lab-accent) 58%, transparent) !important;
+}
+
+.configurablePage > [data-clouva-block="hero"] a:last-child {
+  border-color: var(--lab-accent) !important;
+}
+
+.configurablePage > [data-clouva-block="music"],
+.configurablePage > [data-clouva-block="features"] {
+  margin-top: var(--lab-section-gap) !important;
+}
+
+.configurablePage > [data-clouva-block="music"],
+.configurablePage [data-clouva-block="continue"],
+.configurablePage [data-clouva-block="iglu"] {
+  border-color: var(--lab-border) !important;
+  border-radius: var(--lab-radius) !important;
+}
+
+.configurablePage [data-clouva-block="music"] button[aria-label="Abrir reproductor musical"] i {
+  width: var(--lab-music-progress) !important;
+  background: linear-gradient(90deg, var(--lab-accent), var(--lab-accent-secondary)) !important;
+}
+
+.configurablePage [data-clouva-block="music"] button[aria-label="Abrir reproductor"] {
+  background: linear-gradient(145deg, var(--lab-accent), var(--lab-accent-secondary)) !important;
+  box-shadow: 0 0 var(--lab-glow-size) color-mix(in srgb, var(--lab-accent) 58%, transparent) !important;
+}
+
+.configurablePage [data-clouva-block="continue"] b,
+.configurablePage [data-clouva-block="iglu"] b,
+.configurablePage [data-clouva-block="navigation"] a[aria-label="Crear en Creator Studio"] > b {
+  background: linear-gradient(145deg, var(--lab-accent), var(--lab-accent-secondary)) !important;
+  box-shadow: 0 0 var(--lab-glow-size) color-mix(in srgb, var(--lab-accent) 58%, transparent) !important;
+}
+
+.configurablePage [data-clouva-block="navigation"] > a:first-child {
+  color: var(--lab-accent) !important;
+}
+
+.previewPage {
+  position: relative !important;
+  min-height: 790px !important;
+  max-height: 900px !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  border-radius: 28px;
+  scrollbar-width: thin;
+}
+
+.previewPage [data-clouva-ambient] {
+  position: absolute !important;
+}
+
+.previewPage [data-clouva-block="navigation"] {
+  position: sticky !important;
+  left: 10px !important;
+  right: 10px !important;
+  bottom: 8px !important;
+  margin: 16px 0 0 !important;
+}
+
+.previewPage > [role="presentation"] {
+  position: absolute !important;
+}

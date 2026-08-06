@@ -10,7 +10,7 @@ import { useEffect } from "react";
 
 const links = [
   { title: "Panel", links: ["/admin", "/admin/clientes"] },
-  { title: "Control móvil", links: ["/admin/clouva-control"] },
+  { title: "Experiencia", links: ["/admin/clouva-lab", "/admin/clouva-control"] },
   {
     title: "Monetización",
     links: [
@@ -57,5 +57,5 @@ export default function AdminLayoutClient({ children }: { children: React.ReactN
   if (loading || !hydrationReady || !profileReady) return <main><MainNav /><div className="mx-auto max-w-7xl p-6">Cargando sesión...</div></main>;
   if (!user || !canAccessAdmin(role)) return null;
 
-  return <main><MainNav /><div className="mx-auto grid max-w-7xl gap-4 p-4 md:grid-cols-[240px_1fr] md:p-6"><Sidebar links={links} /><section>{children}</section></div></main>;
+  return <main><MainNav /><div className="mx-auto grid max-w-[1600px] gap-4 p-4 md:grid-cols-[240px_1fr] md:p-6"><Sidebar links={links} /><section className="min-w-0">{children}</section></div></main>;
 }
