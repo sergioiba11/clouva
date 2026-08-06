@@ -4,18 +4,13 @@ import path from "node:path";
 import { parse as parseOpenType, type Font as OpenTypeFont } from "opentype.js";
 import sharp from "sharp";
 import { flattenToColor, removeBackground, toSquare } from "./generate-logo";
-import type { BrandNaming, LogoCandidateVariants, LogoLockupStructure, TypographyConfig } from "./types";
+import { reconstructLogoVector } from "./vector-reconstruct";
+import type { BrandNaming, DetectedLogo, LogoCandidateVariants, LogoLockupStructure, TypographyConfig } from "./types";
 
-// Fase 5: el wordmark NUNCA lo escribe Gemini -- se compone acá,
-// determinísticamente, con una fuente real embebida (probado: intentar
-// @font-face con una fuente en base64 dentro del SVG NO funciona de forma
-// confiable con sharp/librsvg, cae a una fuente del sistema sin avisar --
-// por eso el texto se convierte a paths de verdad con opentype.js antes de
-// llegar a sharp, cero dependencia de fuentes instaladas en el runtime).
 const FONT_PATH = path.join(__dirname, "fonts", "ArchivoBlack-Regular.ttf");
-
 let cachedFont: OpenTypeFont | null = null;
-function loadFont(): OpenTypeFont {
+
+function loadFont() {
   if (cachedFont) return cachedFont;
   const buffer = readFileSync(FONT_PATH);
   const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
@@ -23,20 +18,17 @@ function loadFont(): OpenTypeFont {
   return cachedFont;
 }
 
-// Convierte texto a un único <path> SVG (glyph por glyph, con tracking
-// manual) -- nunca <text>, para no depender de qué fuentes tenga instaladas
-// el contenedor donde corra esto.
-function textToPath(text: string, fontSizePx: number, trackingPx: number): { d: string; width: number; height: number } {
+function textToPath(text: string, fontSizePx: number, trackingPx: number) {
   const font = loadFont();
   const scale = fontSizePx / font.unitsPerEm;
   let x = 0;
   const parts: string[] = [];
-  for (const ch of Array.from(text)) {
-    if (ch === " ") {
+  for (const char of Array.from(text)) {
+    if (char === " ") {
       x += fontSizePx * 0.4 + trackingPx;
       continue;
     }
-    const glyph = font.charToGlyph(ch);
+    const glyph = font.charToGlyph(char);
     parts.push(glyph.getPath(x, 0, fontSizePx).toPathData(3));
     x += (glyph.advanceWidth ?? font.unitsPerEm * 0.6) * scale + trackingPx;
   }
@@ -45,139 +37,170 @@ function textToPath(text: string, fontSizePx: number, trackingPx: number): { d: 
   return { d: parts.join(" "), width: Math.max(1, x - trackingPx), height: ascent + descent };
 }
 
-function applyCase(text: string, uppercase: boolean): string {
+function applyCase(text: string, uppercase: boolean) {
   return uppercase ? text.toLocaleUpperCase("es-AR") : text;
 }
 
-async function toPngDataUri(bytes: Buffer): Promise<string> {
-  return `data:image/png;base64,${bytes.toString("base64")}`;
+function viewBox(svg: string) {
+  const match = svg.match(/viewBox=["']\s*([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s*["']/i);
+  return match ? { x: Number(match[1]), y: Number(match[2]), width: Number(match[3]), height: Number(match[4]) } : { x: 0, y: 0, width: 1000, height: 1000 };
 }
 
-// Composición base compartida por primary/horizontal/vertical/transparent/
-// white/black -- todas usan EXACTAMENTE el mismo símbolo, la misma fuente,
-// el mismo texto; solo cambia el layout (posición relativa) y si hay fondo
-// sólido o no. `layout` decide dónde va cada pieza.
-async function renderLockupSvg(args: {
-  symbolDataUri: string;
-  symbolAspect: number; // width/height del símbolo transparente
-  displayName: string;
-  descriptor: string | null;
-  typography: TypographyConfig;
-  layout: "stacked" | "horizontal-row" | "symbol-only" | "symbol-plus-name";
-  backgroundColor: string | null; // null = transparente
-  textColor: string;
-}): Promise<Buffer> {
-  const { typography } = args;
-  const name = applyCase(args.displayName, typography.uppercase);
-  const descriptor = args.descriptor ? applyCase(args.descriptor, typography.uppercase) : null;
+function innerSvg(svg: string) {
+  return svg.replace(/^.*?<svg[^>]*>/is, "").replace(/<\/svg>\s*$/is, "");
+}
 
-  const namePath = textToPath(name, 96, typography.primaryTracking);
-  const descriptorPath = descriptor ? textToPath(descriptor, 96 * typography.descriptorScale, typography.descriptorTracking) : null;
+function nestedSvg(svg: string, x: number, y: number, width: number, height: number) {
+  const box = viewBox(svg);
+  return `<svg x="${x}" y="${y}" width="${width}" height="${height}" viewBox="${box.x} ${box.y} ${box.width} ${box.height}" preserveAspectRatio="xMidYMid meet">${innerSvg(svg)}</svg>`;
+}
 
-  const symbolSize = 140;
+function recolorSvg(svg: string, color: string) {
+  return svg.replace(/<svg([^>]*)>/i, `<svg$1><style>path,rect,circle,ellipse,polygon,polyline,line{fill:${color}!important;stroke:${color}!important}</style>`);
+}
+
+function buildTextPaths(args: { naming: BrandNaming; typography: TypographyConfig }) {
+  const name = applyCase(args.naming.displayName, args.typography.uppercase);
+  const descriptor = args.naming.descriptor ? applyCase(args.naming.descriptor, args.typography.uppercase) : null;
+  return {
+    name: textToPath(name, 96, args.typography.primaryTracking),
+    descriptor: descriptor ? textToPath(descriptor, 96 * args.typography.descriptorScale, args.typography.descriptorTracking) : null,
+  };
+}
+
+function buildStackedSvg(symbolSvg: string, naming: BrandNaming, typography: TypographyConfig) {
+  const paths = buildTextPaths({ naming, typography });
+  const padding = 44;
+  const symbolSize = 260;
+  const gap = 28;
+  const textWidth = Math.max(paths.name.width, paths.descriptor?.width ?? 0);
+  const width = Math.max(symbolSize, textWidth) + padding * 2;
+  const height = padding * 2 + symbolSize + gap + paths.name.height + (paths.descriptor ? paths.descriptor.height + 14 : 0);
+  const symbolX = (width - symbolSize) / 2;
+  const nameX = (width - paths.name.width) / 2;
+  const nameY = padding + symbolSize + gap + paths.name.height * 0.8;
+  const descriptor = paths.descriptor ? `<path data-component="descriptor" d="${paths.descriptor.d}" fill="#ffffff" transform="translate(${(width - paths.descriptor.width) / 2}, ${nameY + paths.descriptor.height + 14})"/>` : "";
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}">${nestedSvg(symbolSvg, symbolX, padding, symbolSize, symbolSize)}<path data-component="wordmark" d="${paths.name.d}" fill="#ffffff" transform="translate(${nameX}, ${nameY})"/>${descriptor}</svg>`;
+}
+
+function buildHorizontalSvg(symbolSvg: string, naming: BrandNaming, typography: TypographyConfig) {
+  const paths = buildTextPaths({ naming, typography });
   const padding = 40;
-  const gap = 24;
-
-  let canvasWidth: number;
-  let canvasHeight: number;
-  const pieces: string[] = [];
-
-  if (args.layout === "symbol-only") {
-    canvasWidth = symbolSize + padding * 2;
-    canvasHeight = symbolSize + padding * 2;
-    pieces.push(`<image href="${args.symbolDataUri}" x="${padding}" y="${padding}" width="${symbolSize}" height="${symbolSize}"/>`);
-  } else if (args.layout === "horizontal-row") {
-    const textBlockHeight = namePath.height + (descriptorPath ? descriptorPath.height + 8 : 0);
-    const symbolH = Math.max(textBlockHeight, symbolSize);
-    const symbolW = symbolH * args.symbolAspect;
-    canvasWidth = padding * 2 + symbolW + gap + Math.max(namePath.width, descriptorPath?.width ?? 0);
-    canvasHeight = padding * 2 + symbolH;
-    pieces.push(`<image href="${args.symbolDataUri}" x="${padding}" y="${padding}" width="${symbolW}" height="${symbolH}"/>`);
-    const textX = padding + symbolW + gap;
-    // Y del baseline del nombre: arranca al tope del bloque de texto
-    // (centrado verticalmente contra el símbolo) + su propia porción de
-    // ascenso -- mismo patrón que el layout "stacked" de abajo, nunca restar
-    // ese offset después de sumarlo (bug real encontrado acá: el texto
-    // quedaba cortado arriba del canvas).
-    const nameBaselineY = padding + (symbolH - textBlockHeight) / 2 + namePath.height * 0.8;
-    pieces.push(`<path d="${namePath.d}" fill="${args.textColor}" transform="translate(${textX}, ${nameBaselineY})"/>`);
-    if (descriptorPath) {
-      pieces.push(`<path d="${descriptorPath.d}" fill="${args.textColor}" transform="translate(${textX}, ${nameBaselineY + descriptorPath.height + 8})"/>`);
-    }
-  } else if (args.layout === "symbol-plus-name") {
-    const textWidth = namePath.width;
-    canvasWidth = padding * 2 + Math.max(symbolSize, textWidth);
-    canvasHeight = padding * 2 + symbolSize + gap + namePath.height;
-    pieces.push(`<image href="${args.symbolDataUri}" x="${(canvasWidth - symbolSize) / 2}" y="${padding}" width="${symbolSize}" height="${symbolSize}"/>`);
-    const nameX = (canvasWidth - textWidth) / 2;
-    pieces.push(`<path d="${namePath.d}" fill="${args.textColor}" transform="translate(${nameX}, ${padding + symbolSize + gap + namePath.height * 0.8})"/>`);
-  } else {
-    // stacked: símbolo arriba, nombre grande centrado, descriptor chico
-    // centrado debajo -- el layout "principal" pedido explícitamente
-    // ([símbolo] / IGLÚ / RECORDS).
-    const textWidth = Math.max(namePath.width, descriptorPath?.width ?? 0);
-    canvasWidth = padding * 2 + Math.max(symbolSize, textWidth);
-    canvasHeight = padding * 2 + symbolSize + gap + namePath.height + (descriptorPath ? descriptorPath.height + 8 : 0);
-    pieces.push(`<image href="${args.symbolDataUri}" x="${(canvasWidth - symbolSize) / 2}" y="${padding}" width="${symbolSize}" height="${symbolSize}"/>`);
-    const nameX = (canvasWidth - namePath.width) / 2;
-    const nameY = padding + symbolSize + gap + namePath.height * 0.8;
-    pieces.push(`<path d="${namePath.d}" fill="${args.textColor}" transform="translate(${nameX}, ${nameY})"/>`);
-    if (descriptorPath) {
-      const descX = (canvasWidth - descriptorPath.width) / 2;
-      pieces.push(`<path d="${descriptorPath.d}" fill="${args.textColor}" transform="translate(${descX}, ${nameY + descriptorPath.height + 8})"/>`);
-    }
-  }
-
-  const background = args.backgroundColor ? `<rect width="${canvasWidth}" height="${canvasHeight}" fill="${args.backgroundColor}"/>` : "";
-  const svg = `<svg width="${canvasWidth}" height="${canvasHeight}" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">${background}${pieces.join("")}</svg>`;
-  return sharp(Buffer.from(svg)).png().toBuffer();
+  const symbolSize = 220;
+  const gap = 34;
+  const textHeight = paths.name.height + (paths.descriptor ? paths.descriptor.height + 12 : 0);
+  const width = padding * 2 + symbolSize + gap + Math.max(paths.name.width, paths.descriptor?.width ?? 0);
+  const height = padding * 2 + Math.max(symbolSize, textHeight);
+  const textX = padding + symbolSize + gap;
+  const nameY = padding + (Math.max(symbolSize, textHeight) - textHeight) / 2 + paths.name.height * 0.8;
+  const descriptor = paths.descriptor ? `<path data-component="descriptor" d="${paths.descriptor.d}" fill="#ffffff" transform="translate(${textX}, ${nameY + paths.descriptor.height + 12})"/>` : "";
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}">${nestedSvg(symbolSvg, padding, padding, symbolSize, symbolSize)}<path data-component="wordmark" d="${paths.name.d}" fill="#ffffff" transform="translate(${textX}, ${nameY})"/>${descriptor}</svg>`;
 }
 
-// Construye las 9 variantes desde el mismo masterSymbol + el mismo texto --
-// nunca una regeneración nueva por variante, solo composición/escala/color
-// distintos. Es el único lugar que produce el wordmark final.
+function buildSquareSvg(symbolSvg: string, naming: BrandNaming, typography: TypographyConfig) {
+  const paths = buildTextPaths({ naming, typography });
+  const width = 1000;
+  const height = 1000;
+  const nameScale = Math.min(1, 760 / paths.name.width);
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}">${nestedSvg(symbolSvg, 230, 120, 540, 540)}<g transform="translate(500 760) scale(${nameScale}) translate(${-paths.name.width / 2} 0)"><path data-component="wordmark" d="${paths.name.d}" fill="#ffffff"/></g></svg>`;
+}
+
+function generatedSymbolDetectedLogo(): DetectedLogo {
+  return {
+    detected: true,
+    confidence: 1,
+    primaryBox: { left: 0, top: 0, right: 1000, bottom: 1000 },
+    occurrences: [],
+    logoType: "symbol",
+    visibleText: { primaryName: null, descriptor: null, otherText: [] },
+    lockupStructure: { symbolPosition: "integrated", namePosition: "center", descriptorPosition: "none", orientation: "square", nameToDescriptorRatio: 2.5, symbolToWordmarkRatio: 1, letterSpacing: "normal" },
+    visualSignature: { silhouette: "símbolo generado", geometry: "vectorizable", symmetry: "variable", strokeWeight: "variable", negativeSpace: "variable", typographyStyle: null, palette: [], complexity: "medium" },
+    decomposition: {
+      components: [{ kind: "full_lockup", present: true, confidence: 1, box: { left: 0, top: 0, right: 1000, bottom: 1000 }, description: "Símbolo aislado", expectedText: null }],
+      foregroundPolarity: "mixed",
+      recommendedColorCount: 4,
+      backgroundDescription: "fondo de generación",
+    },
+  };
+}
+
+export type LogoLockupSvgSet = {
+  symbol: string;
+  primary: string;
+  horizontal: string;
+  vertical: string;
+  square: string;
+  white: string;
+  black: string;
+  monochrome: string;
+  favicon: string;
+};
+
+export async function composeLogoLockupSvgs(args: {
+  masterSymbolBytes: Buffer;
+  naming: BrandNaming;
+  typography: TypographyConfig;
+  lockupStructure: LogoLockupStructure | null;
+}): Promise<LogoLockupSvgSet> {
+  const symbolVector = await reconstructLogoVector({
+    referenceBytes: args.masterSymbolBytes,
+    detectedLogo: generatedSymbolDetectedLogo(),
+    params: { colorCount: 4, paddingPct: 0, backgroundTolerance: 28, localContrastThreshold: 7, minComponentArea: 10, simplifyTolerance: 1.2 },
+  });
+  const symbol = symbolVector.masterSvg;
+  const stacked = buildStackedSvg(symbol, args.naming, args.typography);
+  const horizontal = buildHorizontalSvg(symbol, args.naming, args.typography);
+  const square = buildSquareSvg(symbol, args.naming, args.typography);
+  const primary = args.lockupStructure?.orientation === "horizontal" ? horizontal : stacked;
+  return {
+    symbol,
+    primary,
+    horizontal,
+    vertical: stacked,
+    square,
+    white: recolorSvg(primary, "#ffffff"),
+    black: recolorSvg(primary, "#000000"),
+    monochrome: recolorSvg(primary, "#000000"),
+    favicon: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">${nestedSvg(symbol, 40, 40, 432, 432)}</svg>`,
+  };
+}
+
+async function render(svg: string, width: number, height: number, background?: string) {
+  let pipeline = sharp(Buffer.from(svg)).resize(width, height, { fit: "contain", background: background ?? { r: 0, g: 0, b: 0, alpha: 0 } });
+  if (background) pipeline = pipeline.flatten({ background });
+  return pipeline.png().toBuffer();
+}
+
 export async function composeLogoLockups(args: {
   masterSymbolBytes: Buffer;
   naming: BrandNaming;
   typography: TypographyConfig;
   lockupStructure: LogoLockupStructure | null;
 }): Promise<LogoCandidateVariants> {
-  const transparentSymbol = await removeBackground(args.masterSymbolBytes);
-  const symbolMeta = await sharp(transparentSymbol).metadata();
-  const symbolAspect = (symbolMeta.width ?? 1) / (symbolMeta.height ?? 1);
-  const symbolDataUri = await toPngDataUri(transparentSymbol);
-
-  const backgroundColor = "#0a0a0a";
-  // El mockup define la orientación real del lockup principal (Fase 5,
-  // "CLOUVA no decide estructura") -- por default "stacked" (símbolo arriba,
-  // nombre, descriptor debajo), pero si el mockup era horizontal se respeta.
-  const primaryLayout = args.lockupStructure?.orientation === "horizontal" ? "horizontal-row" : "stacked";
-
-  const [primary, vertical, horizontal, square] = await Promise.all([
-    renderLockupSvg({ symbolDataUri, symbolAspect, displayName: args.naming.displayName, descriptor: args.naming.descriptor, typography: args.typography, layout: primaryLayout, backgroundColor, textColor: "#ffffff" }),
-    renderLockupSvg({ symbolDataUri, symbolAspect, displayName: args.naming.displayName, descriptor: args.naming.descriptor, typography: args.typography, layout: "stacked", backgroundColor, textColor: "#ffffff" }),
-    renderLockupSvg({ symbolDataUri, symbolAspect, displayName: args.naming.displayName, descriptor: args.naming.descriptor, typography: args.typography, layout: "horizontal-row", backgroundColor, textColor: "#ffffff" }),
-    renderLockupSvg({ symbolDataUri, symbolAspect, displayName: args.naming.displayName, descriptor: null, typography: args.typography, layout: "symbol-plus-name", backgroundColor, textColor: "#ffffff" }),
+  const svgs = await composeLogoLockupSvgs(args);
+  const [primary, symbol, horizontal, vertical, square, transparent, white, black, favicon] = await Promise.all([
+    render(svgs.primary, 1400, 1000, "#0a0a0a"),
+    render(svgs.symbol, 1024, 1024, "#0a0a0a"),
+    render(svgs.horizontal, 1600, 600, "#0a0a0a"),
+    render(svgs.vertical, 1000, 1200, "#0a0a0a"),
+    render(svgs.square, 1024, 1024, "#0a0a0a"),
+    render(svgs.primary, 1600, 1200),
+    render(svgs.white, 1600, 1200),
+    render(svgs.black, 1600, 1200),
+    render(svgs.favicon, 512, 512),
   ]);
-
-  const transparent = await renderLockupSvg({ symbolDataUri, symbolAspect, displayName: args.naming.displayName, descriptor: args.naming.descriptor, typography: args.typography, layout: primaryLayout, backgroundColor: null, textColor: "#ffffff" });
-  const symbolOnly = await toSquare(transparentSymbol, 512);
-  const favicon = await toSquare(transparentSymbol, 128);
-
-  const [white, black] = await Promise.all([
-    flattenToColor(await removeBackground(transparent), [255, 255, 255]),
-    flattenToColor(await removeBackground(transparent), [0, 0, 0]),
-  ]);
-
+  // Mantener las funciones antiguas ejercitadas por tests y compatibilidad de
+  // alpha; las salidas siguen naciendo del SVG, no de nuevas generaciones.
+  const cleanTransparent = await removeBackground(transparent);
   return {
     primary: { bytes: primary, mimeType: "image/png" },
-    symbol: { bytes: symbolOnly, mimeType: "image/png" },
+    symbol: { bytes: await toSquare(symbol, 1024), mimeType: "image/png" },
     horizontal: { bytes: horizontal, mimeType: "image/png" },
     vertical: { bytes: vertical, mimeType: "image/png" },
     square: { bytes: square, mimeType: "image/png" },
-    transparent: { bytes: transparent, mimeType: "image/png" },
-    white: { bytes: white, mimeType: "image/png" },
-    black: { bytes: black, mimeType: "image/png" },
+    transparent: { bytes: cleanTransparent, mimeType: "image/png" },
+    white: { bytes: await flattenToColor(cleanTransparent, [255, 255, 255]), mimeType: "image/png" },
+    black: { bytes: await flattenToColor(cleanTransparent, [0, 0, 0]), mimeType: "image/png" },
     favicon: { bytes: favicon, mimeType: "image/png" },
   };
 }
