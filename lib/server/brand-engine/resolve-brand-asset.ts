@@ -127,6 +127,14 @@ function countryFromFacts(facts: Record<string, unknown>) {
   return typeof facts.country === "string" && facts.country.trim() ? facts.country.trim() : null;
 }
 
+function namingForOriginalDesign(request: LogoGenerationRequest, analyzedNaming: BrandNaming): BrandNaming {
+  // Un mockup ajeno puede aportar lenguaje visual, nunca su nombre. Solo se
+  // conserva un nombre distinto del entityName cuando el usuario lo confirmó
+  // explícitamente desde /logo.
+  if (!request.referenceImages.length || request.naming?.source === "user_confirmed") return analyzedNaming;
+  return { entityName: request.entityName, displayName: request.entityName, descriptor: null, source: "entity_fallback" };
+}
+
 async function checkClearance(args: { admin: SupabaseClient; request: LogoGenerationRequest; naming: BrandNaming; bytes: Buffer; fingerprint: Awaited<ReturnType<typeof fingerprintLogo>> }) {
   return runBrandClearance({ admin: args.admin, ownerType: args.request.ownerType, ownerId: args.request.ownerId, fingerprint: args.fingerprint, naming: args.naming, imageBytes: args.bytes, categories: categoriesFromFacts(args.request.facts), country: countryFromFacts(args.request.facts) });
 }
@@ -347,5 +355,6 @@ export async function resolveBrandAsset(admin: SupabaseClient, request: LogoGene
   }
   const reconstructAsOwned = Boolean(request.referenceImages.length && !request.forceRedesign && request.ownershipAttested === true && request.sourceKind !== "reference_only");
   if (reconstructAsOwned) return reconstructOwned(admin, request, brandAsset, detectedLogo, naming);
-  return createOriginal(admin, request, brandAsset, detectedLogo, naming, request.typography ?? suggestTypography(detectedLogo));
+  const originalNaming = namingForOriginalDesign(request, naming);
+  return createOriginal(admin, request, brandAsset, detectedLogo, originalNaming, request.typography ?? suggestTypography(detectedLogo));
 }
