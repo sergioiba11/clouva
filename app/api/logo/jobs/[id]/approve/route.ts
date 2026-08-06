@@ -5,11 +5,6 @@ import { requireActiveVipEntitlement } from "@/lib/server/vip-profile-permission
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// Única puerta de entrada desde /logo para que un candidato en 'draft' se
-// vuelva identidad oficial -- nunca pasa solo (resolveBrandAsset jamás
-// publica). Reusa la misma función SQL que publish_player_profile_version
-// llama cuando el usuario confirma "publicar también el logo" al publicar
-// una página (p_publish_logo_too) -- una sola lógica de sincronización.
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
@@ -18,7 +13,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     const { data: version, error: versionError } = await admin
       .from("brand_asset_versions")
-      .select("id,brand_asset_id,status")
+      .select("id,brand_asset_id,status,clearance_status,ownership_attested")
       .eq("id", id)
       .maybeSingle();
     if (versionError) throw new Error(versionError.message);
@@ -39,9 +34,20 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       studioId: brandAsset.owner_type === "studio" ? (brandAsset.owner_id as string) : undefined,
     });
 
+    if (version.status === "rejected") return NextResponse.json({ error: "Una identidad descartada no puede publicarse." }, { status: 409 });
+    if (version.ownership_attested !== true) {
+      return NextResponse.json({ error: "Falta la declaración de titularidad o autorización de uso." }, { status: 409 });
+    }
+    if (version.clearance_status !== "clear") {
+      const blocked = typeof version.clearance_status === "string" && version.clearance_status.startsWith("blocked_");
+      return NextResponse.json(
+        { error: blocked ? "Esta identidad presenta un conflicto y no puede publicarse." : "La identidad todavía requiere revisión de originalidad y propiedad intelectual." },
+        { status: blocked ? 409 : 422 },
+      );
+    }
+
     const { data: published, error: publishError } = await admin.rpc("publish_brand_asset_version", { p_version_id: id });
     if (publishError) throw new Error(publishError.message);
-
     return NextResponse.json({ version: published });
   } catch (error) {
     const status = (error as Error & { status?: number })?.status ?? (isAuthError(error) ? 401 : 500);
