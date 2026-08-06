@@ -519,7 +519,7 @@ async function generateAndValidateNewIdentity(args: {
 }
 
 export async function resolveBrandAsset(admin: SupabaseClient, request: LogoGenerationRequest): Promise<ResolveBrandAssetResult> {
-  let brandAsset = await findActiveBrandAsset(admin, request.ownerType, request.ownerId);
+  const brandAsset = await findActiveBrandAsset(admin, request.ownerType, request.ownerId);
   if (!request.forceRedesign && brandAsset?.active_version_id) {
     const publishedVersion = await getBrandAssetVersion(admin, brandAsset.active_version_id);
     if (publishedVersion?.status === "published") return reuseOfficialAsset({ admin, request, brandAsset, publishedVersion });
