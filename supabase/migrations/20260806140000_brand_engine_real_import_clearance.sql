@@ -85,9 +85,9 @@ create policy brand_clearance_checks_admin_write on public.brand_clearance_check
   using (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin'))
   with check (exists (select 1 from public.profiles p where p.id = auth.uid() and p.role = 'admin'));
 
--- Publicar exige un SVG maestro para cualquier identidad V4. Los activos
--- legacy conservan compatibilidad, pero ninguna reconstrucción nueva puede
--- publicar el recorte fuente como primary_logo_url.
+-- Las exigencias V4 se aplican solo a las identidades creadas por V4.
+-- Los registros legacy (import_mode null, real_identity_import o
+-- legacy_raster_import) mantienen el comportamiento de publicación anterior.
 create or replace function public.publish_brand_asset_version(p_version_id uuid)
 returns public.brand_asset_versions
 language plpgsql
@@ -104,6 +104,7 @@ declare
   v_ownership_attested boolean;
   v_master_svg_url text;
   v_primary_logo_url text;
+  v_is_v4 boolean;
   v_result public.brand_asset_versions%rowtype;
 begin
   select v.brand_asset_id, v.status, v.import_mode, v.clearance_status,
@@ -116,14 +117,17 @@ begin
 
   if not found then raise exception 'La versión de marca no existe.'; end if;
   if v_status = 'rejected' then raise exception 'Una identidad rechazada no puede publicarse.'; end if;
+
+  v_is_v4 := v_import_mode in ('owned_identity_reconstruction','clouva_generated_redesign','standalone_creation');
+
   if v_import_mode = 'owned_identity_reconstruction' and coalesce(v_ownership_attested, false) is not true then
     raise exception 'Falta la declaración de titularidad o autorización de uso.';
   end if;
-  if v_import_mode in ('owned_identity_reconstruction','clouva_generated_redesign','standalone_creation') and v_master_svg_url is null then
+  if v_is_v4 and v_master_svg_url is null then
     raise exception 'Falta el SVG maestro profesional de esta identidad.';
   end if;
-  if v_primary_logo_url is null then raise exception 'Falta la vista principal derivada del SVG maestro.'; end if;
-  if v_clearance_status is distinct from 'clear' then
+  if v_primary_logo_url is null then raise exception 'Falta la vista principal de la identidad.'; end if;
+  if v_is_v4 and v_clearance_status is distinct from 'clear' then
     if v_clearance_status in ('blocked_internal_duplicate','blocked_external_name_conflict','blocked_external_visual_conflict','blocked_combined_conflict') then
       raise exception 'Esta identidad presenta un conflicto y no puede publicarse.';
     end if;
