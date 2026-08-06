@@ -7,6 +7,7 @@ import { enqueueVipProfileJobStep } from "@/lib/server/cloud-tasks";
 import { fetchReferenceImages, generateCoverAsset, generateLogoAsset, generatePillarAsset, type GeneratedAsset } from "@/lib/server/vip-profile-assets";
 import { analyzeReferenceImages, generateLayoutConfig, generateLayoutVariants, generatePreciseLayoutConfig, type ReferenceAnalysis } from "@/lib/server/vip-profile-layout-gemini";
 import { pickAccentFromPalette, sanitizeLayoutConfig, type ImageSlot, type LayoutConfig, type LayoutSection } from "@/lib/server/layout-config";
+import { resolveBrandAsset } from "@/lib/server/brand-engine/resolve-brand-asset";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
@@ -66,7 +67,7 @@ export async function POST(request: NextRequest) {
   const admin = createAdminSupabase();
   const { data: job, error: jobError } = await admin
     .from("vip_profile_generation_jobs")
-    .select("id,player_id,studio_id,status,attempts,identity_brief,generated_copy,generated_assets,generated_layout,layout_analysis,layout_variants,actual_cost_usd,reference_image_urls")
+    .select("id,user_id,player_id,studio_id,status,attempts,identity_brief,generated_copy,generated_assets,generated_layout,layout_analysis,layout_variants,actual_cost_usd,reference_image_urls,brand_asset_version_id")
     .eq("id", body.jobId)
     .maybeSingle();
   if (jobError) return NextResponse.json({ error: jobError.message }, { status: 500 });
@@ -179,18 +180,18 @@ export async function POST(request: NextRequest) {
           : (job.identity_brief as unknown as StudioIdentityBrief).services.map((s) => s.name);
         const referenceImageUrls = (job.reference_image_urls as string[] | null) ?? [];
         const referenceImages = referenceImageUrls.length ? await fetchReferenceImages(referenceImageUrls) : undefined;
-        const existingLogoUrl = isPlayer
-          ? (job.identity_brief as unknown as IdentityBrief).logo_url
-          : (job.identity_brief as unknown as StudioIdentityBrief).logo_url;
+        const facts = isPlayer
+          ? playerBriefToFacts(job.identity_brief as unknown as IdentityBrief)
+          : studioBriefToFacts(job.identity_brief as unknown as StudioIdentityBrief);
+        const entityName = isPlayer
+          ? (job.identity_brief as unknown as IdentityBrief).display_name
+          : (job.identity_brief as unknown as StudioIdentityBrief).name;
 
         const analysis = job.layout_analysis as unknown as ReferenceAnalysis | null;
         const layoutResult = await (async (): Promise<{ layout: LayoutConfig | null; costUsd: number } | null> => {
           const apiKey = process.env.GEMINI_API_KEY;
           if (!apiKey || !analysis) return null;
           try {
-            const facts = isPlayer
-              ? playerBriefToFacts(job.identity_brief as unknown as IdentityBrief)
-              : studioBriefToFacts(job.identity_brief as unknown as StudioIdentityBrief);
             // Pedido explícito del usuario: para reference_layout, réplica
             // pixel por pixel del mockup en vez de aproximar con variantes
             // fijas -- generatePreciseLayoutConfig extrae geometría real por
@@ -216,16 +217,33 @@ export async function POST(request: NextRequest) {
           }
         })();
 
-        const results = await Promise.allSettled([
+        // Logo: ya no generateLogoAsset() acá -- el motor compartido
+        // (lib/server/brand-engine) es el único generador de logo, tanto
+        // para este flujo automático como para /logo. Regla 1 (obligatoria):
+        // si el owner ya tiene un logo oficial publicado, resolveBrandAsset
+        // NUNCA lo rediseña por este camino (forceRedesign nunca se manda en
+        // true acá) -- solo adapta cuál variante ya aprobada usar.
+        const [coverResult, brandResult] = await Promise.allSettled([
           generateCoverAsset({ admin, entityPathPrefix, copy, professionalCategories, referenceImages, literalReference: analysis?.mode === "reference_layout" }),
-          existingLogoUrl
-            ? Promise.resolve<GeneratedAsset>({ kind: "logo", url: existingLogoUrl, costUsd: 0 })
-            : generateLogoAsset({ admin, entityPathPrefix, copy, professionalCategories, referenceImages }),
+          resolveBrandAsset(admin, {
+            ownerType: isPlayer ? "player" : "studio",
+            ownerId: subjectId as string,
+            name: entityName,
+            facts,
+            source: analysis?.mode === "reference_layout" ? "website_mockup" : "identity_brief",
+            referenceImages: referenceImages ?? [],
+            createdBy: (job.user_id as string | null) ?? null,
+          }),
         ]);
-        const assets = results
-          .filter((result): result is PromiseFulfilledResult<GeneratedAsset> => result.status === "fulfilled")
-          .map((result) => result.value);
-        const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
+
+        const assets: GeneratedAsset[] = [];
+        if (coverResult.status === "fulfilled") assets.push(coverResult.value);
+        let brandAssetVersionId: string | null = null;
+        if (brandResult.status === "fulfilled" && brandResult.value.urls) {
+          brandAssetVersionId = brandResult.value.brandAssetVersionId;
+          assets.push({ kind: "logo", url: brandResult.value.urls.primary_logo_url, costUsd: brandResult.value.costUsd });
+        }
+        const failure = [coverResult, brandResult].find((result): result is PromiseRejectedResult => result.status === "rejected");
 
         // Fotos de fondo por pillar -- solo en reference_layout (nunca en las
         // 3 variantes de adaptive_layout, por costo/timeout), y solo si el
@@ -310,6 +328,7 @@ export async function POST(request: NextRequest) {
             ...(failure ? {} : { status: "assembling_profile" }),
             generated_assets: assets,
             generated_layout: layoutResult?.layout ?? null,
+            brand_asset_version_id: brandAssetVersionId,
             actual_cost_usd: Number((((job.actual_cost_usd as number | null) ?? 0) + costUsd).toFixed(6)),
           })
           .eq("id", job.id)
@@ -454,6 +473,7 @@ export async function POST(request: NextRequest) {
               ...(logo ? [{ kind: "logo", url: logo.url }] : []),
             ],
             layout_config: layoutConfig,
+            brand_asset_version_id: (job.brand_asset_version_id as string | null) ?? null,
             source_snapshot: job.identity_brief,
           })
           .select("id")

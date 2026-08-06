@@ -34,8 +34,25 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       studioId: (version.studio_id as string | null) ?? undefined,
     });
 
+    // Publicar la página nunca publica el logo solo -- regla explícita del
+    // usuario. Sin confirmación, un brand_asset_version en draft/approved
+    // ligado a esta versión se sigue viendo en la página (image_slots.logo ya
+    // apunta a su URL real) pero players.logo_url/studios.logo_url/
+    // brand_assets.active_version_id quedan intactos. El caller debe haber
+    // mostrado la confirmación ("¿Querés publicar también este logo como
+    // identidad oficial?") antes de mandar publishLogoToo: true.
+    let publishLogoToo = false;
+    try {
+      const body = await request.json();
+      publishLogoToo = body?.publishLogoToo === true;
+    } catch {
+      // Sin body (o no-JSON) -- valor por defecto false, comportamiento
+      // conservador (nunca publicar el logo sin confirmación explícita).
+    }
+
     const { data: published, error: publishError } = await admin.rpc("publish_player_profile_version", {
       p_version_id: id,
+      p_publish_logo_too: publishLogoToo,
     });
     if (publishError) throw new Error(publishError.message);
 
