@@ -36,6 +36,17 @@ export type LayoutSectionType = (typeof LAYOUT_SECTION_TYPES)[number];
 export const LAYOUT_MODES = ["reference_layout", "adaptive_layout"] as const;
 export type LayoutMode = (typeof LAYOUT_MODES)[number];
 
+// Único subconjunto de tipos que PreciseStudioLayoutRenderer.tsx sabe pintar
+// a partir de un `styleHint` solo (sin `elements`) -- son los que muestran
+// datos reales de cantidad variable (Players/servicios/planes/galería/
+// lanzamientos), donde Gemini no puede saber de antemano cuántas tarjetas
+// va a haber. Cualquier otro tipo (ej. "pillars") con `styleHint` pero sin
+// `elements` reales se descarta en sanitizePreciseSection en vez de quedar
+// como una sección fantasma que el renderer no sabe pintar y desaparece en
+// silencio -- ver bug real encontrado 2026-08-06 en El Iglú (6/6 intentos
+// precise con "pillars" vacío).
+export const PRECISE_DYNAMIC_SECTION_TYPES = ["roster", "services", "membership", "gallery", "music"] as const;
+
 // Catálogo fijo de variantes por tipo de sección. El renderer no tiene por
 // qué diferenciar visualmente cada una desde el día uno -- las que todavía
 // no tienen un tratamiento propio caen al default (primera de la lista) sin
@@ -579,6 +590,18 @@ function sanitizePreciseSection(raw: unknown, allowColumns = true): PreciseSecti
   // no aporta nada -- se descarta en vez de dejar un bloque vacío en la
   // página.
   if (elements.length === 0 && !styleHint && columns.length === 0) return null;
+
+  // Un `styleHint` solo (sin `elements` ni `columns`) únicamente lo sabe
+  // pintar el renderer para los tipos "dinámicos" reales (ver
+  // PRECISE_DYNAMIC_SECTION_TYPES). Para cualquier otro tipo -- típicamente
+  // "pillars", cuando Gemini se salteó los `elements` posicionados que le
+  // pedimos -- esto antes sobrevivía la sanitización y quedaba como sección
+  // fantasma que el renderer no sabe pintar (desaparece en silencio, sin
+  // error). Se descarta acá en su lugar: mejor sin esa sección que con una
+  // rota que nadie nota.
+  if (elements.length === 0 && columns.length === 0 && styleHint && !(PRECISE_DYNAMIC_SECTION_TYPES as readonly string[]).includes(type)) {
+    return null;
+  }
 
   return { type, heightVh, widthPct, background, elements, styleHint, decorations, columns };
 }
