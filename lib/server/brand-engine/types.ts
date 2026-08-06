@@ -1,9 +1,10 @@
 // Tipos compartidos del CLOUVA Logo Engine.
 //
-// Regla principal V3:
-// - importar identidad real conserva el activo seleccionado y NO llama a Gemini para crear imágenes;
-// - rediseñar identidad es el único flujo que puede generar un símbolo nuevo;
-// - ninguna identidad se publica sin titularidad declarada y clearance aprobado.
+// Regla principal V4:
+// - el mockup/recorte es únicamente una referencia de análisis;
+// - una identidad propia se reconstruye como SVG editable y medible;
+// - una referencia ajena solo puede inspirar un rediseño original;
+// - todas las variantes y exportaciones nacen de un único SVG maestro.
 
 export const BRAND_OWNER_TYPES = ["player", "studio"] as const;
 export type BrandOwnerType = (typeof BRAND_OWNER_TYPES)[number];
@@ -21,7 +22,12 @@ export type BrandSourceType = (typeof BRAND_SOURCE_TYPES)[number];
 export const BRAND_SOURCE_KINDS = ["own_logo_file", "own_mockup", "designer_delivery", "reference_only"] as const;
 export type BrandSourceKind = (typeof BRAND_SOURCE_KINDS)[number];
 
-export const BRAND_IMPORT_MODES = ["real_identity_import", "clouva_generated_redesign", "standalone_creation"] as const;
+export const BRAND_IMPORT_MODES = [
+  "legacy_raster_import",
+  "owned_identity_reconstruction",
+  "clouva_generated_redesign",
+  "standalone_creation",
+] as const;
 export type BrandImportMode = (typeof BRAND_IMPORT_MODES)[number];
 
 export const EXTRACTION_METHODS = ["manual_crop", "confirmed_detected_crop"] as const;
@@ -49,6 +55,9 @@ export type LogoComplexity = (typeof LOGO_COMPLEXITY)[number];
 
 export const LOGO_OCCURRENCE_ROLES = ["primary_lockup", "symbol", "wordmark", "secondary_application"] as const;
 export type LogoOccurrenceRole = (typeof LOGO_OCCURRENCE_ROLES)[number];
+
+export const LOGO_COMPONENT_KINDS = ["symbol", "wordmark", "descriptor", "full_lockup"] as const;
+export type LogoComponentKind = (typeof LOGO_COMPONENT_KINDS)[number];
 
 export const SYMBOL_POSITIONS = ["above", "left", "right", "integrated", "none"] as const;
 export type SymbolPosition = (typeof SYMBOL_POSITIONS)[number];
@@ -92,6 +101,24 @@ export type LogoVisualSignature = {
   complexity: LogoComplexity;
 };
 
+// Component boxes are normalized 0-1000 RELATIVE TO primaryBox, not to the
+// complete mockup. This makes reconstruction independent of the source size.
+export type LogoComponentAnalysis = {
+  kind: LogoComponentKind;
+  present: boolean;
+  confidence: number;
+  box: NormalizedBox | null;
+  description: string;
+  expectedText: string | null;
+};
+
+export type LogoDecomposition = {
+  components: LogoComponentAnalysis[];
+  foregroundPolarity: "light_on_dark" | "dark_on_light" | "mixed";
+  recommendedColorCount: number;
+  backgroundDescription: string;
+};
+
 export type DetectedLogo = {
   detected: boolean;
   confidence: number;
@@ -101,6 +128,7 @@ export type DetectedLogo = {
   visibleText: LogoVisibleText;
   lockupStructure: LogoLockupStructure | null;
   visualSignature: LogoVisualSignature | null;
+  decomposition: LogoDecomposition | null;
 };
 
 export type LogoFingerprint = {
@@ -136,6 +164,60 @@ export type TypographyConfig = {
 export const REFERENCE_FIDELITY_LEVELS = ["creative", "balanced", "high"] as const;
 export type ReferenceFidelity = (typeof REFERENCE_FIDELITY_LEVELS)[number];
 
+export type VectorReconstructionParams = {
+  maxDimension: number;
+  colorCount: number;
+  backgroundTolerance: number;
+  localContrastThreshold: number;
+  brightnessThreshold: number;
+  minComponentArea: number;
+  simplifyTolerance: number;
+  smoothing: number;
+  paddingPct: number;
+};
+
+export const DEFAULT_VECTOR_RECONSTRUCTION_PARAMS: VectorReconstructionParams = {
+  maxDimension: 960,
+  colorCount: 2,
+  backgroundTolerance: 34,
+  localContrastThreshold: 10,
+  brightnessThreshold: 168,
+  minComponentArea: 8,
+  simplifyTolerance: 1.3,
+  smoothing: 0,
+  paddingPct: 0.04,
+};
+
+export type VectorComponentResult = {
+  kind: LogoComponentKind;
+  svg: string;
+  box: NormalizedBox;
+  pathCount: number;
+  sourcePixelCount: number;
+};
+
+export type VectorValidationReport = {
+  rasterSimilarity: number;
+  edgeSimilarity: number;
+  smallSizeLegible: boolean;
+  monochromeValid: boolean;
+  transparentBackground: boolean;
+  nodeCount: number;
+  warnings: string[];
+};
+
+export type LogoVectorReconstruction = {
+  masterSvg: string;
+  symbolSvg: string | null;
+  wordmarkSvg: string | null;
+  descriptorSvg: string | null;
+  components: VectorComponentResult[];
+  params: VectorReconstructionParams;
+  validation: VectorValidationReport;
+  sourceCropPng: Buffer;
+  previewPng: Buffer;
+};
+
 export type LogoCandidateVariants = {
   primary: { bytes: Buffer; mimeType: string };
   symbol: { bytes: Buffer; mimeType: string };
@@ -158,23 +240,15 @@ export type LogoCandidateUrls = {
   white_logo_url: string;
   black_logo_url: string;
   favicon_url: string;
-};
-
-export type ImportedBrandMaster = {
-  originalBytes: Buffer;
-  cleanedBytes: Buffer;
-  mimeType: "image/png";
-  width: number;
-  height: number;
-  sourceImageUrl: string | null;
-  sourceBox: NormalizedBox;
-  extractionMethod: ExtractionMethod;
-};
-
-export type ImportedBrandParts = {
-  fullLockup: Buffer;
-  standaloneSymbol: Buffer | null;
-  wordmark: Buffer | null;
+  master_svg_url?: string | null;
+  symbol_svg_url?: string | null;
+  horizontal_svg_url?: string | null;
+  vertical_svg_url?: string | null;
+  white_svg_url?: string | null;
+  black_svg_url?: string | null;
+  monochrome_svg_url?: string | null;
+  print_pdf_url?: string | null;
+  brand_config_url?: string | null;
 };
 
 export type InternalBrandMatch = {
@@ -250,6 +324,7 @@ export type LogoGenerationRequest = {
   ownershipAttestedBy?: string | null;
   sourceKind?: BrandSourceKind;
   sourceNote?: string | null;
+  reconstructionParams?: Partial<VectorReconstructionParams>;
 };
 
 export type ResolveBrandAssetResult = {
@@ -259,11 +334,12 @@ export type ResolveBrandAssetResult = {
   status: "awaiting_review" | "reused_official";
   mode: BrandImportMode;
   urls: LogoCandidateUrls | null;
-  originalAssetUrl: string | null;
-  cleanedAssetUrl: string | null;
+  sourceReferenceUrl: string | null;
+  reconstructionPreviewUrl: string | null;
   standaloneSymbolAvailable: boolean;
   clearance: BrandClearanceResult | null;
   detectedLogo: DetectedLogo | null;
   naming: BrandNaming | null;
+  validation: VectorValidationReport | null;
   costUsd: number;
 };
