@@ -71,7 +71,6 @@ alter table public.brand_asset_versions
   add constraint brand_asset_versions_source_kind_check
   check (source_kind is null or source_kind in ('own_logo_file', 'own_mockup', 'designer_delivery', 'reference_only'));
 
--- Nuevos estados operativos del job. No se toca ninguna fila existente.
 alter table public.brand_generation_jobs drop constraint if exists brand_generation_jobs_status_check;
 alter table public.brand_generation_jobs
   add constraint brand_generation_jobs_status_check
@@ -111,6 +110,8 @@ create policy brand_clearance_checks_admin_write
 
 -- La base también aplica la compuerta; no se confía en el frontend ni solo
 -- en la ruta API. `external_check_unavailable` y `review_required` no publican.
+-- La declaración de titularidad es obligatoria para importar un activo real;
+-- un rediseño nuevo creado por CLOUVA no afirma propiedad sobre la referencia.
 create or replace function public.publish_brand_asset_version(p_version_id uuid)
 returns public.brand_asset_versions
 language plpgsql
@@ -122,12 +123,13 @@ declare
   v_owner_type text;
   v_owner_id uuid;
   v_status text;
+  v_import_mode text;
   v_clearance_status text;
   v_ownership_attested boolean;
   v_result public.brand_asset_versions%rowtype;
 begin
-  select v.brand_asset_id, v.status, v.clearance_status, v.ownership_attested
-    into v_brand_asset_id, v_status, v_clearance_status, v_ownership_attested
+  select v.brand_asset_id, v.status, v.import_mode, v.clearance_status, v.ownership_attested
+    into v_brand_asset_id, v_status, v_import_mode, v_clearance_status, v_ownership_attested
   from public.brand_asset_versions v
   where v.id = p_version_id
   for update;
@@ -138,7 +140,7 @@ begin
   if v_status = 'rejected' then
     raise exception 'Una identidad rechazada no puede publicarse.';
   end if;
-  if coalesce(v_ownership_attested, false) is not true then
+  if v_import_mode = 'real_identity_import' and coalesce(v_ownership_attested, false) is not true then
     raise exception 'Falta la declaración de titularidad o autorización de uso.';
   end if;
   if v_clearance_status is distinct from 'clear' then
