@@ -228,7 +228,7 @@ export async function POST(request: NextRequest) {
           resolveBrandAsset(admin, {
             ownerType: isPlayer ? "player" : "studio",
             ownerId: subjectId as string,
-            name: entityName,
+            entityName,
             facts,
             source: analysis?.mode === "reference_layout" ? "website_mockup" : "identity_brief",
             referenceImages: referenceImages ?? [],

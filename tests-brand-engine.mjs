@@ -4,6 +4,10 @@ import sharp from "sharp";
 import { fingerprintLogo, hammingDistanceHex } from "./lib/server/brand-engine/fingerprint-logo.ts";
 import { PHASH_SIMILARITY_THRESHOLD, checkUniqueness } from "./lib/server/brand-engine/validate-uniqueness.ts";
 import { flattenToColor, removeBackground, toSquare } from "./lib/server/brand-engine/generate-logo.ts";
+import { cropLogoRegion, normalizedBoxToPixelBox } from "./lib/server/brand-engine/crop-logo-region.ts";
+import { resolveBrandNaming, suggestTypography } from "./lib/server/brand-engine/resolve-brand-naming.ts";
+import { composeLogoLockups } from "./lib/server/brand-engine/compose-logo-lockups.ts";
+import { resolveBrandAsset } from "./lib/server/brand-engine/resolve-brand-asset.ts";
 import { pickAccentFromPalette } from "./lib/server/layout-config.ts";
 
 // Imágenes sintéticas -- nunca llaman a Gemini ni tocan una base real, solo
@@ -112,6 +116,194 @@ test("toSquare: siempre devuelve dimensiones cuadradas exactas", async () => {
   const meta = await sharp(square).metadata();
   assert.equal(meta.width, 256);
   assert.equal(meta.height, 256);
+});
+
+// ---------------------------------------------------------------------------
+// V2 -- hotfix de fidelidad al mockup (crop real, naming IGLÚ/RECORDS,
+// composición determinista, un solo masterSymbol).
+// ---------------------------------------------------------------------------
+
+test("normalizedBoxToPixelBox: convierte 0-1000 a píxeles reales (test #1)", () => {
+  const box = normalizedBoxToPixelBox({ top: 100, left: 200, bottom: 300, right: 600 }, 1000, 800, 0);
+  assert.deepEqual(box, { left: 200, top: 80, width: 400, height: 160 });
+});
+
+test("normalizedBoxToPixelBox: el padding nunca saca la caja de los límites de la imagen (test #1/#2)", () => {
+  const box = normalizedBoxToPixelBox({ top: 0, left: 0, bottom: 200, right: 200 }, 500, 500, 0.5);
+  assert.ok(box.left >= 0 && box.top >= 0, "nunca coordenadas negativas");
+  const farRight = normalizedBoxToPixelBox({ top: 800, left: 800, bottom: 1000, right: 1000 }, 500, 500, 0.5);
+  assert.ok(farRight.left + farRight.width <= 500 && farRight.top + farRight.height <= 500, "nunca se pasa del borde derecho/inferior");
+});
+
+test("cropLogoRegion: recorta la región real con padding (test #2)", async () => {
+  const svg = `<svg width="400" height="300" xmlns="http://www.w3.org/2000/svg"><rect width="400" height="300" fill="#000000"/><rect x="150" y="100" width="100" height="80" fill="#ff0000"/></svg>`;
+  const referenceBytes = await sharp(Buffer.from(svg)).png().toBuffer();
+  // box normalizado 0-1000 correspondiente aprox al rectángulo rojo (150-250, 100-180 sobre 400x300).
+  const box = { top: (100 / 300) * 1000, left: (150 / 400) * 1000, bottom: (180 / 300) * 1000, right: (250 / 400) * 1000 };
+  const cropped = await cropLogoRegion({ referenceBytes, normalizedBox: box, paddingPct: 0.2 });
+  const meta = await sharp(cropped).metadata();
+  // Con 20% de padding el recorte tiene que ser MÁS GRANDE que el rectángulo original (100x80).
+  assert.ok(meta.width > 100 && meta.height > 80, "el padding agranda el recorte");
+  // El centro del recorte tiene que seguir siendo rojo (no se perdió el contenido real).
+  const { data, info } = await sharp(cropped).raw().toBuffer({ resolveWithObject: true });
+  const centerIdx = Math.floor(info.height / 2) * info.width * info.channels + Math.floor(info.width / 2) * info.channels;
+  assert.ok(data[centerIdx] > 150 && data[centerIdx + 1] < 100, "el centro del recorte sigue siendo el rectángulo rojo");
+});
+
+const IGLU_DETECTED_LOGO = {
+  detected: true,
+  confidence: 0.9,
+  primaryBox: { top: 100, left: 100, bottom: 400, right: 900 },
+  occurrences: [],
+  logoType: "combination",
+  visibleText: { primaryName: "IGLÚ", descriptor: "RECORDS", otherText: [] },
+  lockupStructure: { symbolPosition: "above", namePosition: "center", descriptorPosition: "below", orientation: "stacked", nameToDescriptorRatio: 2.5, symbolToWordmarkRatio: 1, letterSpacing: "very_wide" },
+  visualSignature: { silhouette: "montañas lineales", geometry: "angular", symmetry: "simétrico", strokeWeight: "fino", negativeSpace: "abierto", typographyStyle: "geométrica ancha", palette: ["#a8d8ea"], complexity: "minimal" },
+};
+
+test('resolveBrandNaming: "El Iglú" (entityName) NUNCA reemplaza "IGLÚ" detectado en el mockup (test #3/#4)', () => {
+  const naming = resolveBrandNaming({ entityName: "El Iglú", detectedLogo: IGLU_DETECTED_LOGO });
+  assert.equal(naming.entityName, "El Iglú");
+  assert.equal(naming.displayName, "IGLÚ");
+  assert.notEqual(naming.displayName, "El Iglú");
+  assert.notEqual(naming.displayName, "EL IGLÚ");
+  assert.equal(naming.source, "mockup_detected");
+});
+
+test('resolveBrandNaming: el descriptor "RECORDS" se conserva (test #5)', () => {
+  const naming = resolveBrandNaming({ entityName: "El Iglú", detectedLogo: IGLU_DETECTED_LOGO });
+  assert.equal(naming.descriptor, "RECORDS");
+});
+
+test("resolveBrandNaming: confianza baja del mockup cae a identidad oficial, después a entityName", () => {
+  const lowConfidence = { ...IGLU_DETECTED_LOGO, confidence: 0.2 };
+  const withOfficial = resolveBrandNaming({ entityName: "El Iglú", detectedLogo: lowConfidence, officialNaming: { displayName: "IGLÚ OFICIAL", descriptor: null } });
+  assert.equal(withOfficial.displayName, "IGLÚ OFICIAL");
+  assert.equal(withOfficial.source, "official_identity");
+
+  const withoutOfficial = resolveBrandNaming({ entityName: "El Iglú", detectedLogo: lowConfidence, officialNaming: null });
+  assert.equal(withoutOfficial.displayName, "El Iglú");
+  assert.equal(withoutOfficial.source, "entity_fallback");
+});
+
+test("resolveBrandNaming: userConfirmed siempre gana, incluso sobre una detección de alta confianza", () => {
+  const naming = resolveBrandNaming({ entityName: "El Iglú", detectedLogo: IGLU_DETECTED_LOGO, userConfirmed: { displayName: "IGLU CORREGIDO", descriptor: null } });
+  assert.equal(naming.displayName, "IGLU CORREGIDO");
+  assert.equal(naming.descriptor, null);
+  assert.equal(naming.source, "user_confirmed");
+});
+
+test("suggestTypography: siempre usa la fuente embebida verificada, tracking varía con letterSpacing detectado", () => {
+  const wide = suggestTypography(IGLU_DETECTED_LOGO);
+  assert.equal(wide.family, "Archivo Black");
+  const tight = suggestTypography({ ...IGLU_DETECTED_LOGO, lockupStructure: { ...IGLU_DETECTED_LOGO.lockupStructure, letterSpacing: "tight" } });
+  assert.ok(tight.primaryTracking < wide.primaryTracking, "tight tiene que trackear menos que very_wide");
+});
+
+async function syntheticMasterSymbol() {
+  const svg = `<svg width="512" height="512" xmlns="http://www.w3.org/2000/svg"><rect width="512" height="512" fill="#0a0a0a"/><polyline points="80,380 180,220 260,320 340,180 440,380" stroke="#a8d8ea" stroke-width="14" fill="none"/></svg>`;
+  return sharp(Buffer.from(svg)).png().toBuffer();
+}
+
+test("composeLogoLockups: nunca escribe el entityName ('EL IGLÚ') -- solo naming.displayName (test #6/#7/#8)", async () => {
+  const masterSymbolBytes = await syntheticMasterSymbol();
+  const naming = { entityName: "El Iglú", displayName: "IGLÚ", descriptor: "RECORDS", source: "mockup_detected" };
+  const typography = suggestTypography(IGLU_DETECTED_LOGO);
+  const variants = await composeLogoLockups({ masterSymbolBytes, naming, typography, lockupStructure: IGLU_DETECTED_LOGO.lockupStructure });
+  // No hay forma de "leer" texto de un PNG sin OCR (fuera de alcance de esta
+  // fase) -- lo que SÍ podemos afirmar con certeza es que compose nunca
+  // recibió "El Iglú" como texto a dibujar (solo como metadata), y que las 9
+  // variantes existen y son PNGs válidos no vacíos.
+  for (const key of ["primary", "symbol", "horizontal", "vertical", "square", "transparent", "white", "black", "favicon"]) {
+    assert.ok(variants[key].bytes.length > 0, `${key} generó bytes`);
+    const meta = await sharp(variants[key].bytes).metadata();
+    assert.equal(meta.format, "png");
+  }
+});
+
+test("composeLogoLockups: es determinista -- mismo input produce bytes idénticos, prueba que no hay llamadas a Gemini escondidas (test #9)", async () => {
+  const masterSymbolBytes = await syntheticMasterSymbol();
+  const naming = { entityName: "El Iglú", displayName: "IGLÚ", descriptor: "RECORDS", source: "mockup_detected" };
+  const typography = suggestTypography(IGLU_DETECTED_LOGO);
+  const a = await composeLogoLockups({ masterSymbolBytes, naming, typography, lockupStructure: IGLU_DETECTED_LOGO.lockupStructure });
+  const b = await composeLogoLockups({ masterSymbolBytes, naming, typography, lockupStructure: IGLU_DETECTED_LOGO.lockupStructure });
+  for (const key of ["primary", "horizontal", "vertical", "square"]) {
+    assert.ok(a[key].bytes.equals(b[key].bytes), `${key} tiene que ser byte-idéntico entre corridas (determinista, sin red)`);
+  }
+});
+
+test("composeLogoLockups: nunca llama a red (fetch) -- horizontal/vertical/square/símbolo son 100% derivados, no generaciones nuevas (test #9)", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = () => { throw new Error("composeLogoLockups no debería llamar a fetch/red -- sería una generación de Gemini escondida."); };
+  try {
+    const masterSymbolBytes = await syntheticMasterSymbol();
+    const naming = { entityName: "El Iglú", displayName: "IGLÚ", descriptor: "RECORDS", source: "mockup_detected" };
+    const typography = suggestTypography(IGLU_DETECTED_LOGO);
+    await composeLogoLockups({ masterSymbolBytes, naming, typography, lockupStructure: IGLU_DETECTED_LOGO.lockupStructure });
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("resolveBrandAsset: un logo oficial publicado NUNCA se rediseña sin forceRedesign -- cero llamadas a Gemini (test #10)", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalKey = process.env.GEMINI_API_KEY;
+  process.env.GEMINI_API_KEY = "test-fake-key";
+  globalThis.fetch = () => { throw new Error("No debería intentar generar -- ya hay un logo oficial publicado y forceRedesign es false."); };
+
+  const publishedVersionRow = {
+    id: "version-1",
+    status: "published",
+    primary_logo_url: "https://storage.googleapis.com/bucket/primary.png",
+    symbol_logo_url: "https://storage.googleapis.com/bucket/symbol.png",
+    horizontal_logo_url: null,
+    vertical_logo_url: null,
+    square_logo_url: null,
+    transparent_logo_url: null,
+    white_logo_url: null,
+    black_logo_url: null,
+    favicon_url: null,
+    generation_metadata: { naming: { entityName: "El Iglú", displayName: "IGLÚ", descriptor: "RECORDS", source: "mockup_detected" } },
+  };
+
+  function chainable(resolveValue) {
+    const handler = {
+      select() { return handler; },
+      eq() { return handler; },
+      insert() { return handler; },
+      async maybeSingle() { return resolveValue; },
+      async single() { return resolveValue; },
+    };
+    return handler;
+  }
+
+  const admin = {
+    from(table) {
+      if (table === "brand_assets") return chainable({ data: { id: "brand-asset-1", owner_type: "studio", owner_id: "studio-1", active_version_id: "version-1" }, error: null });
+      if (table === "brand_asset_versions") return chainable({ data: publishedVersionRow, error: null });
+      if (table === "brand_generation_jobs") return chainable({ data: { id: "job-1" }, error: null });
+      throw new Error(`stub: tabla no esperada ${table}`);
+    },
+  };
+
+  try {
+    const result = await resolveBrandAsset(admin, {
+      ownerType: "studio",
+      ownerId: "studio-1",
+      entityName: "El Iglú",
+      facts: {},
+      source: "website_mockup",
+      referenceImages: [],
+      forceRedesign: false,
+    });
+    assert.equal(result.status, "reused_official");
+    assert.equal(result.costUsd, 0);
+    assert.equal(result.urls.primary_logo_url, publishedVersionRow.primary_logo_url);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.GEMINI_API_KEY;
+    else process.env.GEMINI_API_KEY = originalKey;
+  }
 });
 
 test("pickAccentFromPalette: elige un tono intermedio real, nunca el más oscuro ni el más claro", () => {
