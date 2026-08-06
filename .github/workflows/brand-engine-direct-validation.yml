@@ -22,7 +22,7 @@ concurrency:
 
 jobs:
   validate-brand-engine:
-    runs-on: ubuntu-22.04
+    runs-on: macos-latest
     timeout-minutes: 45
     steps:
       - name: Clone current PR branch without checkout action
