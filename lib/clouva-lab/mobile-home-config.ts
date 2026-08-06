@@ -273,6 +273,7 @@ export function sanitizeMobileHomeConfig(value: unknown): MobileHomeConfig {
 }
 
 export function configCssVariables(config: MobileHomeConfig): Record<string, string> {
+  const glowSize = Math.round(8 + config.theme.glowStrength * 28);
   return {
     "--lab-background": config.theme.backgroundColor,
     "--lab-accent": config.theme.accentColor,
@@ -281,7 +282,7 @@ export function configCssVariables(config: MobileHomeConfig): Record<string, str
     "--lab-page-padding": `${config.theme.pagePadding}px`,
     "--lab-section-gap": `${config.theme.sectionGap}px`,
     "--lab-radius": `${config.theme.radius}px`,
-    "--lab-glow-strength": String(config.theme.glowStrength),
+    "--lab-glow-size": `${glowSize}px`,
     "--lab-hero-height": `${config.hero.height}px`,
     "--lab-hero-text-width": `${config.hero.textWidth}%`,
     "--lab-hero-padding-left": `${config.hero.contentPaddingLeft}px`,
