@@ -1,0 +1,50 @@
+name: Brand Engine direct validation
+
+on:
+  pull_request:
+    paths:
+      - "app/logo/**"
+      - "app/api/logo/**"
+      - "app/api/admin/brand-clearance/**"
+      - "lib/server/brand-engine/**"
+      - "supabase/migrations/*brand*"
+      - "tests-brand-*.mjs"
+      - "package.json"
+      - ".github/workflows/brand-engine-direct-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate-brand-engine:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Clone PR branch without checkout action
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          BRANCH="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
+          git clone --depth 1 --branch "$BRANCH" "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" repo
+
+      - name: Install dependencies
+        working-directory: repo
+        run: npm ci
+
+      - name: Typecheck
+        working-directory: repo
+        run: npm run typecheck
+
+      - name: Lint brand engine
+        working-directory: repo
+        run: npx eslint app/logo app/api/logo app/api/admin/brand-clearance lib/server/brand-engine tests-brand-engine.mjs tests-brand-import-clearance.mjs
+
+      - name: Brand Engine tests
+        working-directory: repo
+        run: npm run test:brand-engine
+
+      - name: Production build
+        working-directory: repo
+        run: npm run build
