@@ -4,6 +4,7 @@ import { requireActiveVipEntitlement } from "@/lib/server/vip-profile-permission
 import { buildIdentityBrief, buildStudioIdentityBrief, playerBriefToFacts, studioBriefToFacts } from "@/lib/server/vip-profile-brief";
 import { fetchReferenceImages } from "@/lib/server/vip-profile-assets";
 import { resolveBrandAsset } from "@/lib/server/brand-engine/resolve-brand-asset";
+import { hasUsableSymbolReference } from "@/lib/server/brand-engine/analyze-logo-source";
 import type { BrandNaming, BrandSourceType, DetectedLogo, ReferenceFidelity, TypographyConfig } from "@/lib/server/brand-engine/types";
 
 export const runtime = "nodejs";
@@ -19,12 +20,6 @@ function sanitizeReferenceImageUrls(value: unknown): string[] {
   return value.filter((url): url is string => typeof url === "string" && REFERENCE_IMAGE_URL_RE.test(url)).slice(0, MAX_REFERENCE_IMAGES);
 }
 
-// Herramienta independiente /logo -- mismo motor compartido
-// (lib/server/brand-engine) que usa el generador de páginas automático.
-// Fase 6: este paso es "Confirmar análisis y generar" -- llega DESPUÉS de
-// /api/logo/analyze, con el naming/detectedLogo que el usuario ya vio (y
-// pudo corregir) en el preview. Si igual no vienen, resolveBrandAsset
-// analiza internamente (mismo comportamiento que el flujo automático).
 export async function POST(request: NextRequest) {
   try {
     const { user } = await requireUser(request);
@@ -55,6 +50,18 @@ export async function POST(request: NextRequest) {
       ? (body.referenceFidelity as ReferenceFidelity)
       : undefined;
 
+    // Compuerta anti-gasto: con una referencia visual y el flujo normal, no
+    // se genera si el análisis no encontró un símbolo real dentro de un box
+    // compacto. El usuario debe marcar manualmente la zona correcta y
+    // reanalizarla. "Rediseñar identidad" sí puede crear un símbolo nuevo sin
+    // copiar una referencia concreta porque esa acción es explícita.
+    if (referenceImages.length > 0 && body.forceRedesign !== true && !hasUsableSymbolReference(body.detectedLogo)) {
+      return NextResponse.json(
+        { error: "No detectamos un símbolo real y compacto en la referencia. Marcá con el mouse el área exacta del logo o isotipo, tocá ‘Analizar área marcada’ y recién después generá." },
+        { status: 422 },
+      );
+    }
+
     const isPlayer = Boolean(body.playerId);
     const { facts, entityName } = isPlayer
       ? await (async () => {
@@ -66,9 +73,6 @@ export async function POST(request: NextRequest) {
           return { facts: studioBriefToFacts(brief), entityName: brief.name };
         })();
 
-    // Regla 1 (obligatoria): forceRedesign SOLO puede venir en true desde
-    // acá (acción explícita "Rediseñar identidad" en /logo) -- el generador
-    // de páginas automático NUNCA la manda.
     const result = await resolveBrandAsset(admin, {
       ownerType: isPlayer ? "player" : "studio",
       ownerId: (body.playerId || body.studioId) as string,

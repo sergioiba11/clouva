@@ -22,6 +22,7 @@ import {
   type LogoVisibleText,
   type LogoVisualSignature,
   type NamePosition,
+  type NormalizedBox,
   type SymbolPosition,
 } from "./types";
 
@@ -35,10 +36,30 @@ function clampBoxCoord(value: unknown): number {
   return Math.min(1000, Math.max(0, Math.round(n)));
 }
 
-function sanitizeBox(raw: unknown): { top: number; left: number; bottom: number; right: number } | null {
+function sanitizeBox(raw: unknown): NormalizedBox | null {
   if (!raw || typeof raw !== "object") return null;
   const value = raw as Record<string, unknown>;
-  return { top: clampBoxCoord(value.top), left: clampBoxCoord(value.left), bottom: clampBoxCoord(value.bottom), right: clampBoxCoord(value.right) };
+  const box = { top: clampBoxCoord(value.top), left: clampBoxCoord(value.left), bottom: clampBoxCoord(value.bottom), right: clampBoxCoord(value.right) };
+  return box.right > box.left && box.bottom > box.top ? box : null;
+}
+
+function boxArea(box: NormalizedBox): number {
+  return Math.max(0, box.right - box.left) * Math.max(0, box.bottom - box.top);
+}
+
+// Un logo dentro de un mockup no puede ser una franja que contenga media web.
+// El fallo real de El Iglú fue un box de ~18.5% de toda la captura que incluía
+// hero, texto y botones. Ese recorte no representa un logo y no debe llegar a
+// la generación visual.
+export function isLogoBoxUsable(box: NormalizedBox | null | undefined): box is NormalizedBox {
+  if (!box) return false;
+  const width = box.right - box.left;
+  const height = box.bottom - box.top;
+  if (width < 18 || height < 18) return false;
+  if (width > 900 || height > 900) return false;
+  if (boxArea(box) > 160_000) return false; // máximo 16% de la imagen completa
+  const aspect = width / height;
+  return aspect >= 0.18 && aspect <= 8;
 }
 
 function sanitizeOccurrences(raw: unknown): LogoOccurrence[] {
@@ -118,6 +139,23 @@ function sanitizeDetectedLogo(raw: unknown): DetectedLogo {
   };
 }
 
+export function hasUsableSymbolReference(detected: DetectedLogo | null | undefined): boolean {
+  if (!detected?.detected || !isLogoBoxUsable(detected.primaryBox) || !detected.visualSignature) return false;
+  const standaloneSymbol = detected.logoType === "symbol" || detected.logoType === "monogram" || detected.logoType === "emblem";
+  const symbolInLockup = detected.lockupStructure?.symbolPosition && detected.lockupStructure.symbolPosition !== "none";
+  return Boolean(standaloneSymbol || symbolInLockup);
+}
+
+function chooseUsableBox(initial: DetectedLogo): NormalizedBox | null {
+  const rolePriority: Record<LogoOccurrenceRole, number> = { symbol: 0, primary_lockup: 1, wordmark: 2, secondary_application: 3 };
+  const candidates: Array<{ box: NormalizedBox; role: LogoOccurrenceRole; confidence: number }> = [];
+  if (initial.primaryBox) candidates.push({ box: initial.primaryBox, role: "primary_lockup", confidence: initial.confidence });
+  for (const occurrence of initial.occurrences) candidates.push(occurrence);
+  return candidates
+    .filter((candidate) => isLogoBoxUsable(candidate.box))
+    .sort((a, b) => rolePriority[a.role] - rolePriority[b.role] || b.confidence - a.confidence || boxArea(a.box) - boxArea(b.box))[0]?.box ?? null;
+}
+
 const DETECTED_LOGO_JSON_SHAPE = [
   "{",
   '  "detected": boolean,',
@@ -142,68 +180,86 @@ const DETECTED_LOGO_JSON_SHAPE = [
   "}",
 ].join("\n");
 
-// Paso 1 del análisis: mirar el mockup COMPLETO y ubicar dónde está el logo
-// (primaryBox) -- sin esto no hay región que recortar todavía.
 async function detectPrimaryBox(apiKey: string, referenceImage: GeminiReferenceImage): Promise<DetectedLogo> {
   const promptText = [
     "Sos un analizador visual de marcas/logos para CLOUVA.",
-    "Mirá la imagen completa adjunta (mockup de web, foto de branding, dibujo/sketch) y ubicá la aparición MÁS CLARA y COMPLETA del logo/isotipo/wordmark real -- no la más chica (ej. un ícono de navbar), la que mejor muestra su composición completa (ej. un logo grande en el hero, en una pared, en un disco).",
+    "Mirá la imagen completa adjunta y ubicá SOLO marcas gráficas reales: isotipos, símbolos, monogramas, emblemas o lockups compactos de símbolo + nombre.",
+    "NO confundas el título gigante del hero, un eslogan, párrafos, botones, navegación ni una sección completa con el logo. Un box válido debe encerrar únicamente la marca y un margen pequeño; nunca media pantalla ni contenido de la web.",
+    "Preferí una aplicación clara en pared, monitor, portada, disco o navbar. Si hay símbolo y wordmark, registralos por separado en occurrences y elegí como primaryBox la aplicación compacta más nítida que incluya el símbolo real.",
+    "El primaryBox ideal ocupa menos del 12% de la imagen completa. Si la única caja que encontrás supera aproximadamente 16%, devolvé primaryBox null y mantené las occurrences pequeñas válidas.",
     "No inventés nada que no esté visible. No generás HTML, CSS ni código.",
     "",
     "Devolvé exactamente este JSON, sin texto alrededor:",
     DETECTED_LOGO_JSON_SHAPE,
     "",
-    'El "primaryBox" y cada "box" de "occurrences" son normalizados 0-1000 relativos a TODA la imagen (0,0 esquina superior izquierda, 1000,1000 esquina inferior derecha). Completá "occurrences" con TODAS las apariciones del logo que veas (navbar, pared, portada, disco, footer, etc), no solo la principal.',
-    'Si todavía no podés leer el texto con claridad por lo chico del recorte, dejá "visibleText"/"lockupStructure"/"visualSignature" con tu mejor estimación -- se van a refinar con un recorte más grande en el siguiente paso.',
+    'Los boxes son normalizados 0-1000 relativos a TODA la imagen. Completá occurrences con TODAS las apariciones compactas del logo que veas.',
   ].join("\n");
 
   const { parsed } = await callGeminiJson({ apiKey, promptText, images: [referenceImage] });
   return sanitizeDetectedLogo(parsed);
 }
 
-// Paso 2: con el recorte real de la región principal (más grande, más nítido
-// que el mockup completo achicado), refinar texto/estructura/lenguaje
-// visual. Sin librería de OCR nueva -- Gemini multimodal lee el texto
-// visible directamente del recorte con salida estructurada.
-async function refineWithCrop(apiKey: string, fullImage: GeminiReferenceImage, cropImage: GeminiReferenceImage, initial: DetectedLogo): Promise<DetectedLogo> {
+async function refineWithCrop(apiKey: string, fullImage: GeminiReferenceImage, cropImage: GeminiReferenceImage, initial: DetectedLogo, manual: boolean): Promise<DetectedLogo> {
   const promptText = [
     "Sos un analizador visual de marcas/logos para CLOUVA.",
-    "Se te adjuntan DOS imágenes: la imagen 0 es el mockup/referencia completo, la imagen 1 es un RECORTE ampliado de la región principal del logo (misma imagen, más grande y nítido) -- usá el recorte para leer el texto y la estructura con precisión, y la imagen completa para confirmar contexto/paleta general.",
-    `Análisis previo (a refinar, no a ignorar): ${JSON.stringify({ logoType: initial.logoType, visibleText: initial.visibleText, lockupStructure: initial.lockupStructure })}`,
-    "",
-    "Prestá especial atención a: el texto EXACTO visible (mayúsculas/tildes tal cual aparecen, ej. si dice \"IGLÚ\" no lo cambies a \"Iglu\" ni a \"El Iglú\"), si hay un nombre principal y un descriptor secundario debajo/al lado, el tracking (espaciado entre letras) de cada uno, y la posición relativa del símbolo respecto al texto.",
-    "",
-    "Devolvé exactamente este JSON, sin texto alrededor (mismo esquema que antes, ahora refinado):",
+    `Se te adjuntan DOS imágenes: imagen 0 = referencia completa; imagen 1 = ${manual ? "RECORTE ELEGIDO MANUALMENTE POR EL USUARIO" : "recorte automático"} que debe analizarse como la fuente principal de la marca.`,
+    "Analizá únicamente la marca contenida en el recorte. Ignorá cualquier texto de interfaz, hero, botones o arquitectura que haya quedado fuera de la marca.",
+    `Análisis previo: ${JSON.stringify({ logoType: initial.logoType, visibleText: initial.visibleText, lockupStructure: initial.lockupStructure })}`,
+    "Leé el texto exacto, identificá el símbolo real y su posición. Si el recorte contiene solo wordmark y ningún símbolo, declaralo con symbolPosition none; no inventes uno.",
+    "Devolvé exactamente este JSON, sin texto alrededor:",
     DETECTED_LOGO_JSON_SHAPE,
   ].join("\n");
 
   const { parsed } = await callGeminiJson({ apiKey, promptText, images: [fullImage, cropImage] });
   const refined = sanitizeDetectedLogo(parsed);
-  // Defensivo: si el paso de refinamiento no detecta nada (falla parcial),
-  // preferimos el análisis inicial antes que perder toda la información.
   return refined.detected ? refined : initial;
 }
 
-// Punto de entrada del motor: detecta y describe (nunca copia) el logo real
-// de una imagen de referencia -- dos pasadas (mockup completo -> recorte de
-// la región principal) para leer texto/estructura con precisión sin
-// necesitar una librería de OCR nueva.
 export async function detectLogoInReference(args: {
   apiKey: string;
   referenceImage: GeminiReferenceImage;
+  manualBox?: NormalizedBox | null;
 }): Promise<DetectedLogo> {
-  const initial = await detectPrimaryBox(args.apiKey, args.referenceImage);
-  if (!initial.detected || !initial.primaryBox) return initial;
+  const manualBox = isLogoBoxUsable(args.manualBox) ? args.manualBox : null;
+  const detectedInitial = manualBox
+    ? {
+        detected: true,
+        confidence: 1,
+        primaryBox: manualBox,
+        occurrences: [{ box: manualBox, role: "primary_lockup" as const, confidence: 1 }],
+        logoType: null,
+        visibleText: { primaryName: null, descriptor: null, otherText: [] },
+        lockupStructure: null,
+        visualSignature: null,
+      }
+    : await detectPrimaryBox(args.apiKey, args.referenceImage);
+
+  if (!detectedInitial.detected) return detectedInitial;
+  const chosenBox = manualBox ?? chooseUsableBox(detectedInitial);
+  if (!chosenBox) {
+    return { ...detectedInitial, confidence: Math.min(detectedInitial.confidence, 0.49), primaryBox: null };
+  }
+
+  const initial: DetectedLogo = {
+    ...detectedInitial,
+    primaryBox: chosenBox,
+    occurrences: detectedInitial.occurrences.length > 0
+      ? detectedInitial.occurrences
+      : [{ box: chosenBox, role: "primary_lockup", confidence: detectedInitial.confidence }],
+  };
 
   try {
     const referenceBytes = Buffer.from(args.referenceImage.data, "base64");
-    const cropBytes = await cropLogoRegion({ referenceBytes, normalizedBox: initial.primaryBox });
+    const cropBytes = await cropLogoRegion({ referenceBytes, normalizedBox: chosenBox, paddingPct: manualBox ? 0.04 : 0.1 });
     const cropImage: GeminiReferenceImage = { mimeType: "image/png", data: cropBytes.toString("base64") };
-    return await refineWithCrop(args.apiKey, args.referenceImage, cropImage, initial);
+    const refined = await refineWithCrop(args.apiKey, args.referenceImage, cropImage, initial, Boolean(manualBox));
+    return {
+      ...refined,
+      primaryBox: chosenBox,
+      occurrences: initial.occurrences,
+      confidence: manualBox ? Math.max(refined.confidence, 0.95) : refined.confidence,
+    };
   } catch {
-    // El recorte/refinamiento es best-effort -- si falla (imagen rara,
-    // Gemini no responde), nos quedamos con la primera pasada en vez de
-    // tumbar todo el análisis.
     return initial;
   }
 }
