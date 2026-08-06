@@ -1,14 +1,10 @@
-// Esquema del CLOUVA Logo Engine -- motor compartido entre el generador de
-// páginas (process-job/route.ts) y la herramienta independiente /logo. Ver
-// plan de esta sesión: nunca dos generadores de logo distintos, uno solo
-// consumido de dos lugares.
+// Tipos compartidos del CLOUVA Logo Engine.
 //
-// V2 (hotfix 2026-08-06): el V1 generaba 4 símbolos independientes con 4
-// llamadas a Gemini -- perdía la estructura real del wordmark ("IGLÚ
-// RECORDS" se convirtió en "EL IGLÚ" con un triángulo genérico). V2 separa
-// "análisis" (qué dice y cómo está compuesto el logo real) de "generación"
-// (un solo símbolo maestro) de "composición" (el wordmark se arma
-// determinísticamente con una fuente real, nunca lo escribe Gemini).
+// Regla principal V4:
+// - el mockup/recorte es únicamente una referencia de análisis;
+// - una identidad propia se reconstruye como SVG editable y medible;
+// - una referencia ajena solo puede inspirar un rediseño original;
+// - todas las variantes y exportaciones nacen de un único SVG maestro.
 
 export const BRAND_OWNER_TYPES = ["player", "studio"] as const;
 export type BrandOwnerType = (typeof BRAND_OWNER_TYPES)[number];
@@ -23,6 +19,34 @@ export const BRAND_SOURCE_TYPES = [
 ] as const;
 export type BrandSourceType = (typeof BRAND_SOURCE_TYPES)[number];
 
+export const BRAND_SOURCE_KINDS = ["own_logo_file", "own_mockup", "designer_delivery", "reference_only"] as const;
+export type BrandSourceKind = (typeof BRAND_SOURCE_KINDS)[number];
+
+export const BRAND_IMPORT_MODES = [
+  "legacy_raster_import",
+  "owned_identity_reconstruction",
+  "clouva_generated_redesign",
+  "standalone_creation",
+] as const;
+export type BrandImportMode = (typeof BRAND_IMPORT_MODES)[number];
+
+export const EXTRACTION_METHODS = ["manual_crop", "confirmed_detected_crop"] as const;
+export type ExtractionMethod = (typeof EXTRACTION_METHODS)[number];
+
+export const BRAND_CLEARANCE_STATUSES = [
+  "clear",
+  "review_required",
+  "blocked_internal_duplicate",
+  "blocked_external_name_conflict",
+  "blocked_external_visual_conflict",
+  "blocked_combined_conflict",
+  "external_check_unavailable",
+] as const;
+export type BrandClearanceStatus = (typeof BRAND_CLEARANCE_STATUSES)[number];
+
+export const INTERNAL_CLEARANCE_STATUSES = ["internal_clear", "internal_review_required", "internal_blocked_duplicate"] as const;
+export type InternalClearanceStatus = (typeof INTERNAL_CLEARANCE_STATUSES)[number];
+
 export const LOGO_TYPES = ["symbol", "wordmark", "monogram", "combination", "emblem"] as const;
 export type LogoType = (typeof LOGO_TYPES)[number];
 
@@ -31,6 +55,9 @@ export type LogoComplexity = (typeof LOGO_COMPLEXITY)[number];
 
 export const LOGO_OCCURRENCE_ROLES = ["primary_lockup", "symbol", "wordmark", "secondary_application"] as const;
 export type LogoOccurrenceRole = (typeof LOGO_OCCURRENCE_ROLES)[number];
+
+export const LOGO_COMPONENT_KINDS = ["symbol", "wordmark", "descriptor", "full_lockup"] as const;
+export type LogoComponentKind = (typeof LOGO_COMPONENT_KINDS)[number];
 
 export const SYMBOL_POSITIONS = ["above", "left", "right", "integrated", "none"] as const;
 export type SymbolPosition = (typeof SYMBOL_POSITIONS)[number];
@@ -47,9 +74,6 @@ export type LockupOrientation = (typeof LOCKUP_ORIENTATIONS)[number];
 export const LETTER_SPACING_VALUES = ["tight", "normal", "wide", "very_wide"] as const;
 export type LetterSpacing = (typeof LETTER_SPACING_VALUES)[number];
 
-// Caja 0-1000 relativa a la imagen COMPLETA -- mismo formato ya probado y
-// documentado en lib/server/layout-config.ts (gotcha real: nunca porcentajes
-// relativos a una sub-región, nunca array posicional).
 export type NormalizedBox = { top: number; left: number; bottom: number; right: number };
 
 export type LogoOccurrence = { box: NormalizedBox; role: LogoOccurrenceRole; confidence: number };
@@ -77,12 +101,24 @@ export type LogoVisualSignature = {
   complexity: LogoComplexity;
 };
 
-// Resultado de analyze-logo-source.ts -- nunca contiene una URL ni bytes de
-// imagen generados, solo la descripción/estructura/texto real que después
-// alimenta build-logo-brief.ts (para el símbolo) y compose-logo-lockups.ts
-// (para el wordmark). primaryBox es la caja del lockup completo; occurrences
-// lista cada aparición del logo en el mockup (navbar/pared/portada/etc), útil
-// para elegir la más clara como fuente del recorte real.
+// Component boxes are normalized 0-1000 RELATIVE TO primaryBox, not to the
+// complete mockup. This makes reconstruction independent of the source size.
+export type LogoComponentAnalysis = {
+  kind: LogoComponentKind;
+  present: boolean;
+  confidence: number;
+  box: NormalizedBox | null;
+  description: string;
+  expectedText: string | null;
+};
+
+export type LogoDecomposition = {
+  components: LogoComponentAnalysis[];
+  foregroundPolarity: "light_on_dark" | "dark_on_light" | "mixed";
+  recommendedColorCount: number;
+  backgroundDescription: string;
+};
+
 export type DetectedLogo = {
   detected: boolean;
   confidence: number;
@@ -92,13 +128,16 @@ export type DetectedLogo = {
   visibleText: LogoVisibleText;
   lockupStructure: LogoLockupStructure | null;
   visualSignature: LogoVisualSignature | null;
+  decomposition: LogoDecomposition | null;
 };
 
-export type LogoFingerprint = { sha256: string; phash: string };
+export type LogoFingerprint = {
+  sha256: string;
+  phash: string;
+  normalizedSha256?: string;
+  dhash?: string;
+};
 
-// Fase 3: nombre interno de CLOUVA vs. texto real mostrado en el logo --
-// nunca se transforma uno en el otro automáticamente ("IGLÚ" no se convierte
-// en "El Iglú" ni viceversa).
 export const BRAND_NAMING_SOURCES = ["user_confirmed", "mockup_detected", "official_identity", "entity_fallback"] as const;
 export type BrandNamingSource = (typeof BRAND_NAMING_SOURCES)[number];
 
@@ -109,10 +148,6 @@ export type BrandNaming = {
   source: BrandNamingSource;
 };
 
-// Fase 5: el wordmark se compone determinísticamente (nunca lo escribe
-// Gemini) -- family siempre "Archivo Black" en esta fase (única fuente
-// embebida y verificada, ver lib/server/brand-engine/fonts/), el resto de
-// los campos controla tracking/escala/mayúsculas por lockup.
 export const TYPOGRAPHY_WIDTHS = ["condensed", "normal", "extended"] as const;
 export type TypographyWidth = (typeof TYPOGRAPHY_WIDTHS)[number];
 
@@ -126,12 +161,62 @@ export type TypographyConfig = {
   descriptorScale: number;
 };
 
-// Fase 7: cuánto se apega la generación del símbolo maestro a la referencia
-// real. "high" es el default para cualquier logo detectado en un mockup --
-// nunca significa copiar el símbolo exacto, significa respetar composición/
-// proporción/paleta/complejidad con más rigor.
 export const REFERENCE_FIDELITY_LEVELS = ["creative", "balanced", "high"] as const;
 export type ReferenceFidelity = (typeof REFERENCE_FIDELITY_LEVELS)[number];
+
+export type VectorReconstructionParams = {
+  maxDimension: number;
+  colorCount: number;
+  backgroundTolerance: number;
+  localContrastThreshold: number;
+  brightnessThreshold: number;
+  minComponentArea: number;
+  simplifyTolerance: number;
+  smoothing: number;
+  paddingPct: number;
+};
+
+export const DEFAULT_VECTOR_RECONSTRUCTION_PARAMS: VectorReconstructionParams = {
+  maxDimension: 960,
+  colorCount: 2,
+  backgroundTolerance: 34,
+  localContrastThreshold: 10,
+  brightnessThreshold: 168,
+  minComponentArea: 8,
+  simplifyTolerance: 1.3,
+  smoothing: 0,
+  paddingPct: 0.04,
+};
+
+export type VectorComponentResult = {
+  kind: LogoComponentKind;
+  svg: string;
+  box: NormalizedBox;
+  pathCount: number;
+  sourcePixelCount: number;
+};
+
+export type VectorValidationReport = {
+  rasterSimilarity: number;
+  edgeSimilarity: number;
+  smallSizeLegible: boolean;
+  monochromeValid: boolean;
+  transparentBackground: boolean;
+  nodeCount: number;
+  warnings: string[];
+};
+
+export type LogoVectorReconstruction = {
+  masterSvg: string;
+  symbolSvg: string | null;
+  wordmarkSvg: string | null;
+  descriptorSvg: string | null;
+  components: VectorComponentResult[];
+  params: VectorReconstructionParams;
+  validation: VectorValidationReport;
+  sourceCropPng: Buffer;
+  previewPng: Buffer;
+};
 
 export type LogoCandidateVariants = {
   primary: { bytes: Buffer; mimeType: string };
@@ -155,11 +240,57 @@ export type LogoCandidateUrls = {
   white_logo_url: string;
   black_logo_url: string;
   favicon_url: string;
+  master_svg_url?: string | null;
+  symbol_svg_url?: string | null;
+  horizontal_svg_url?: string | null;
+  vertical_svg_url?: string | null;
+  white_svg_url?: string | null;
+  black_svg_url?: string | null;
+  monochrome_svg_url?: string | null;
+  print_pdf_url?: string | null;
+  brand_config_url?: string | null;
 };
 
-// Paso 1 (barato, sin generar imágenes): analizar la referencia y proponer
-// naming/estructura. /logo lo llama primero y deja que el usuario corrija
-// antes de gastar una generación real (Fase 6).
+export type InternalBrandMatch = {
+  versionId: string;
+  ownerType: BrandOwnerType;
+  ownerId: string;
+  similarity: number;
+  reason: string;
+};
+
+export type ExternalBrandMatch = {
+  source: string;
+  reference: string;
+  name: string | null;
+  similarity: number;
+  classOverlap: number;
+  url: string | null;
+};
+
+export type BrandClearanceResult = {
+  status: BrandClearanceStatus;
+  internal: {
+    checked: boolean;
+    status: InternalClearanceStatus;
+    highestSimilarity: number;
+    conflictingOwnerId: string | null;
+    conflictingVersionId: string | null;
+    matches: InternalBrandMatch[];
+  };
+  external: {
+    checked: boolean;
+    status: "clear" | "review_required" | "blocked" | "external_check_unavailable";
+    nameRisk: number;
+    visualRisk: number;
+    classOverlap: number;
+    sourcesChecked: string[];
+    matches: ExternalBrandMatch[];
+  };
+  decisionReasons: string[];
+  checkedAt: string;
+};
+
 export type AnalyzeBrandSourceRequest = {
   ownerType: BrandOwnerType;
   ownerId: string;
@@ -174,33 +305,26 @@ export type AnalyzeBrandSourceResult = {
   suggestedTypography: TypographyConfig;
 };
 
-// Paso 2: generar de verdad. Si detectedLogo/naming ya vienen (porque el
-// caller ya pasó por analyzeBrandSource, con o sin ediciones del usuario),
-// resolveBrandAsset NO vuelve a analizar -- los usa tal cual. El flujo
-// automático de páginas (process-job/route.ts) nunca pasa por el paso de
-// preview: llama analyzeBrandSource + resolveBrandAsset seguidos, sin
-// intervención humana, igual que antes.
 export type LogoGenerationRequest = {
   ownerType: BrandOwnerType;
   ownerId: string;
-  // Nombre interno de la entidad en CLOUVA (players.display_name /
-  // studios.name) -- fallback de BrandNaming si no hay nada mejor, nunca se
-  // usa como texto del logo si el mockup detectó otro (Fase 3).
   entityName: string;
   facts: Record<string, unknown>;
   source: BrandSourceType;
   referenceImages: Array<{ mimeType: string; data: string }>;
+  referenceImageUrls?: string[];
   createdBy?: string | null;
-  // Regla 1 (correción obligatoria): con un logo oficial ya `published`, un
-  // mockup nuevo NUNCA rediseña el símbolo por defecto -- solo una acción
-  // explícita "Rediseñar identidad" (únicamente disponible desde /logo,
-  // NUNCA desde la generación automática de páginas) puede mandar esto en
-  // true.
   forceRedesign?: boolean;
   referenceFidelity?: ReferenceFidelity;
   detectedLogo?: DetectedLogo | null;
   naming?: BrandNaming | null;
   typography?: TypographyConfig | null;
+  extractionMethod?: ExtractionMethod;
+  ownershipAttested?: boolean;
+  ownershipAttestedBy?: string | null;
+  sourceKind?: BrandSourceKind;
+  sourceNote?: string | null;
+  reconstructionParams?: Partial<VectorReconstructionParams>;
 };
 
 export type ResolveBrandAssetResult = {
@@ -208,8 +332,14 @@ export type ResolveBrandAssetResult = {
   brandAssetId: string;
   brandAssetVersionId: string;
   status: "awaiting_review" | "reused_official";
+  mode: BrandImportMode;
   urls: LogoCandidateUrls | null;
+  sourceReferenceUrl: string | null;
+  reconstructionPreviewUrl: string | null;
+  standaloneSymbolAvailable: boolean;
+  clearance: BrandClearanceResult | null;
   detectedLogo: DetectedLogo | null;
   naming: BrandNaming | null;
+  validation: VectorValidationReport | null;
   costUsd: number;
 };
