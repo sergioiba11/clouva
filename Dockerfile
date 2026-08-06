@@ -40,6 +40,10 @@ RUN groupadd --system --gid 1001 nodejs \
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+# Next compila compose-logo-lockups dentro de .next/server/chunks y __dirname
+# apunta ahí en producción. La fuente no entra sola al bundle standalone, así
+# que la copiamos explícitamente donde el módulo la busca en Cloud Run.
+COPY --from=builder --chown=nextjs:nodejs /app/lib/server/brand-engine/fonts ./.next/server/chunks/fonts
 
 USER nextjs
 
