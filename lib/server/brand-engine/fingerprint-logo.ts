@@ -3,14 +3,22 @@ import { createHash } from "node:crypto";
 import sharp from "sharp";
 import type { LogoFingerprint } from "./types";
 
-// dHash (difference hash) de 64 bits: reduce la imagen a una grilla 9x8 en
-// grises, compara cada píxel contra su vecino de la derecha (más claro =
-// bit 1) -- 8 filas x 8 comparaciones = 64 bits. Tolera compresión/reescalado
-// y cambios chicos de color (no es exacto como sha256, es "se ve casi
-// igual"), que es justo lo que hace falta para el punto 8 del pedido:
-// detectar la MISMA imagen recoloreada/escalada/levemente modificada.
-async function perceptualHash(bytes: Buffer): Promise<string> {
+// Normalización determinista para comparar el mismo activo aunque haya sido
+// recomprimido, reescalado o haya cambiado el contenedor de archivo.
+export async function normalizeLogoBytes(bytes: Buffer): Promise<Buffer> {
+  return sharp(bytes)
+    .ensureAlpha()
+    .trim({ background: { r: 0, g: 0, b: 0, alpha: 0 } })
+    .resize(512, 512, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } })
+    .png({ compressionLevel: 9, adaptiveFiltering: false })
+    .toBuffer();
+}
+
+// dHash de 64 bits. El campo histórico se mantiene como `phash` para no
+// romper versiones existentes; `dhash` explicita qué algoritmo se usa hoy.
+async function differenceHash(bytes: Buffer): Promise<string> {
   const { data } = await sharp(bytes)
+    .flatten({ background: "#000000" })
     .resize(9, 8, { fit: "fill" })
     .grayscale()
     .raw()
@@ -24,20 +32,17 @@ async function perceptualHash(bytes: Buffer): Promise<string> {
       bits += left < right ? "1" : "0";
     }
   }
-  // Guardado como hex (16 caracteres) -- más compacto que el string binario,
-  // misma información.
   return BigInt(`0b${bits}`).toString(16).padStart(16, "0");
 }
 
 export async function fingerprintLogo(bytes: Buffer): Promise<LogoFingerprint> {
+  const normalized = await normalizeLogoBytes(bytes);
   const sha256 = createHash("sha256").update(bytes).digest("hex");
-  const phash = await perceptualHash(bytes);
-  return { sha256, phash };
+  const normalizedSha256 = createHash("sha256").update(normalized).digest("hex");
+  const dhash = await differenceHash(normalized);
+  return { sha256, normalizedSha256, phash: dhash, dhash };
 }
 
-// Hamming distance entre dos phash hex de 64 bits -- cuántos bits difieren.
-// 0 = idénticos, 64 = opuestos. Umbral de "demasiado parecido" vive en
-// validate-uniqueness.ts (a calibrar con casos reales, ver plan).
 export function hammingDistanceHex(a: string, b: string): number {
   const bigA = BigInt(`0x${a}`);
   const bigB = BigInt(`0x${b}`);
