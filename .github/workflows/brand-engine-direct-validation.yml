@@ -25,13 +25,15 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 45
     steps:
-      - name: Clone PR branch without checkout action
+      - name: Clone current PR branch without checkout action
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           BRANCH="${GITHUB_HEAD_REF:-${GITHUB_REF_NAME}}"
           git clone --depth 1 --branch "$BRANCH" "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" repo
+          cd repo
+          echo "Validating commit $(git rev-parse HEAD) — Logo Engine V4 SVG"
 
       - name: Install dependencies
         working-directory: repo
