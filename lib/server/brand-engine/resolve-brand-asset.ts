@@ -65,7 +65,7 @@ function urlsFromVersion(version: BrandAssetVersionRow): LogoCandidateUrls | nul
     transparent_logo_url: version.transparent_logo_url ?? version.primary_logo_url,
     white_logo_url: version.white_logo_url ?? version.primary_logo_url,
     black_logo_url: version.black_logo_url ?? version.primary_logo_url,
-    favicon_url: version.favicon_url ?? version.primary_logo_url,
+    favicon_url: version.favicon_logo_url ?? version.primary_logo_url,
   };
 }
 
@@ -95,13 +95,6 @@ async function uploadAllVariants(ownerType: string, ownerId: string, variants: L
   };
 }
 
-// Regla 1 (correción obligatoria del usuario): con un logo oficial ya
-// publicado, subir OTRO mockup nunca rediseña el símbolo -- solo puede
-// determinar qué composición (horizontal/vertical/cuadrada) es la más
-// parecida a lo detectado, para que el generador de páginas la use en
-// image_slots.logo. Ningún byte de imagen nuevo, $0 de Gemini de más allá de
-// la detección (barata, ~$0.001) que ya hacía falta para saber la
-// orientación.
 function pickBestOrientationUrl(urls: LogoCandidateUrls, detected: DetectedLogo): string {
   const orientation = detected.visualSignature?.orientation;
   if (orientation === "horizontal") return urls.horizontal_logo_url;
@@ -119,14 +112,11 @@ async function reuseOfficialAsset(args: {
   const urls = urlsFromVersion(publishedVersion);
 
   let detectedLogo: DetectedLogo | null = null;
-  let costUsd = 0;
+  const costUsd = 0;
   if (request.referenceImages.length > 0 && process.env.GEMINI_API_KEY) {
     try {
       detectedLogo = await detectLogoInReference({ apiKey: process.env.GEMINI_API_KEY, referenceImage: request.referenceImages[0] });
     } catch {
-      // Best-effort: si la detección falla, seguimos reusando el logo
-      // oficial igual (sin orientación específica) -- nunca bloquea la
-      // generación de la página por esto.
       detectedLogo = null;
     }
   }
@@ -165,13 +155,6 @@ async function reuseOfficialAsset(args: {
   };
 }
 
-// Punto de entrada único del motor -- lo llaman tanto el generador de
-// páginas (process-job/route.ts, source: "website_mockup"/"identity_brief")
-// como la herramienta /logo (source: cualquiera, incluyendo "standalone").
-// Nunca publica nada solo (regla 2): siempre devuelve una versión en
-// 'draft' (o reusa la ya 'published' sin crear una nueva, regla 1) -- la
-// promoción a oficial pasa por publish_brand_asset_version, disparada por
-// una acción explícita del usuario.
 export async function resolveBrandAsset(admin: SupabaseClient, request: LogoGenerationRequest): Promise<ResolveBrandAssetResult> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY no está configurada.");
