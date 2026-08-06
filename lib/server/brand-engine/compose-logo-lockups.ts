@@ -1,7 +1,7 @@
 import "server-only";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import opentype from "opentype.js";
+import { parse as parseOpenType, type Font as OpenTypeFont } from "opentype.js";
 import sharp from "sharp";
 import { flattenToColor, removeBackground, toSquare } from "./generate-logo";
 import type { BrandNaming, LogoCandidateVariants, LogoLockupStructure, TypographyConfig } from "./types";
@@ -14,12 +14,12 @@ import type { BrandNaming, LogoCandidateVariants, LogoLockupStructure, Typograph
 // llegar a sharp, cero dependencia de fuentes instaladas en el runtime).
 const FONT_PATH = path.join(__dirname, "fonts", "ArchivoBlack-Regular.ttf");
 
-let cachedFont: opentype.Font | null = null;
-function loadFont(): opentype.Font {
+let cachedFont: OpenTypeFont | null = null;
+function loadFont(): OpenTypeFont {
   if (cachedFont) return cachedFont;
   const buffer = readFileSync(FONT_PATH);
   const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
-  cachedFont = opentype.parse(arrayBuffer);
+  cachedFont = parseOpenType(arrayBuffer);
   return cachedFont;
 }
 
