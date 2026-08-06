@@ -1,0 +1,72 @@
+name: Trigger CLOUVA CONTROL 1.1.0 release
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/trigger-clouva-control-release-v110.yml"
+
+permissions:
+  actions: write
+  contents: read
+  statuses: write
+
+jobs:
+  dispatch-and-watch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch and watch stable APK build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gh workflow run build-clouva-control-apk.yml \
+            --repo "${{ github.repository }}" \
+            --ref main \
+            -f version=1.1.0 \
+            -f release_notes="Nuevo centro de mando operativo de CLOUVA CONTROL" \
+            -f stable=true \
+            -f minimum_required=""
+
+          sleep 8
+
+          run_id="$(gh run list \
+            --repo "${{ github.repository }}" \
+            --workflow build-clouva-control-apk.yml \
+            --branch main \
+            --event workflow_dispatch \
+            --limit 1 \
+            --json databaseId \
+            --jq '.[0].databaseId')"
+
+          run_url="https://github.com/${{ github.repository }}/actions/runs/$run_id"
+
+          gh api \
+            --method POST \
+            "repos/${{ github.repository }}/statuses/${{ github.sha }}" \
+            -f state=pending \
+            -f context='clouva-control/release-build' \
+            -f description="Compilando APK 1.1.0 (run $run_id)" \
+            -f target_url="$run_url"
+
+          if gh run watch "$run_id" --repo "${{ github.repository }}" --exit-status; then
+            gh api \
+              --method POST \
+              "repos/${{ github.repository }}/statuses/${{ github.sha }}" \
+              -f state=success \
+              -f context='clouva-control/release-build' \
+              -f description="APK 1.1.0 compilado y publicado" \
+              -f target_url="$run_url"
+          else
+            gh api \
+              --method POST \
+              "repos/${{ github.repository }}/statuses/${{ github.sha }}" \
+              -f state=failure \
+              -f context='clouva-control/release-build' \
+              -f description="Falló la compilación del APK 1.1.0" \
+              -f target_url="$run_url"
+            exit 1
+          fi
