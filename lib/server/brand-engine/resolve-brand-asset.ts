@@ -38,7 +38,7 @@ const EMPTY_DETECTED_LOGO: DetectedLogo = {
 };
 
 type BrandAssetRow = { id: string; owner_type: string; owner_id: string; active_version_id: string | null };
-type BrandAssetVersionRow = {
+type VersionRow = {
   id: string;
   status: string;
   import_mode: BrandImportMode | null;
@@ -51,40 +51,35 @@ type BrandAssetVersionRow = {
   white_logo_url: string | null;
   black_logo_url: string | null;
   favicon_url: string | null;
-  master_svg_url?: string | null;
-  symbol_svg_url?: string | null;
-  horizontal_svg_url?: string | null;
-  vertical_svg_url?: string | null;
-  white_svg_url?: string | null;
-  black_svg_url?: string | null;
-  monochrome_svg_url?: string | null;
-  print_pdf_url?: string | null;
-  brand_config_url?: string | null;
-  source_reference_url?: string | null;
-  reconstruction_preview_url?: string | null;
-  standalone_symbol_available?: boolean | null;
-  clearance_status?: string | null;
-  validation_report?: VectorValidationReport | null;
+  master_svg_url: string | null;
+  symbol_svg_url: string | null;
+  horizontal_svg_url: string | null;
+  vertical_svg_url: string | null;
+  white_svg_url: string | null;
+  black_svg_url: string | null;
+  monochrome_svg_url: string | null;
+  print_pdf_url: string | null;
+  brand_config_url: string | null;
+  source_reference_url: string | null;
+  reconstruction_preview_url: string | null;
+  standalone_symbol_available: boolean | null;
+  validation_report: VectorValidationReport | null;
   generation_metadata: { naming?: BrandNaming; typography?: TypographyConfig; importMode?: BrandImportMode } | null;
 };
 
-type UploadedBrandKit = { urls: LogoCandidateUrls; profile1024Url: string; transparent4096Url: string };
-
-async function findActiveBrandAsset(admin: SupabaseClient, ownerType: BrandOwnerType, ownerId: string) {
+async function findBrandAsset(admin: SupabaseClient, ownerType: BrandOwnerType, ownerId: string) {
   const { data, error } = await admin.from("brand_assets").select("id,owner_type,owner_id,active_version_id").eq("owner_type", ownerType).eq("owner_id", ownerId).eq("status", "active").maybeSingle();
-  if (error) throw new Error(`No se pudo leer brand_assets: ${error.message}`);
+  if (error) throw new Error(`No se pudo leer la identidad: ${error.message}`);
   return data as BrandAssetRow | null;
 }
 
-async function getBrandAssetVersion(admin: SupabaseClient, versionId: string) {
-  const { data, error } = await admin.from("brand_asset_versions")
-    .select("id,status,import_mode,primary_logo_url,symbol_logo_url,horizontal_logo_url,vertical_logo_url,square_logo_url,transparent_logo_url,white_logo_url,black_logo_url,favicon_url,master_svg_url,symbol_svg_url,horizontal_svg_url,vertical_svg_url,white_svg_url,black_svg_url,monochrome_svg_url,print_pdf_url,brand_config_url,source_reference_url,reconstruction_preview_url,standalone_symbol_available,clearance_status,validation_report,generation_metadata")
-    .eq("id", versionId).maybeSingle();
-  if (error) throw new Error(`No se pudo leer brand_asset_versions: ${error.message}`);
-  return data as BrandAssetVersionRow | null;
+async function readVersion(admin: SupabaseClient, versionId: string) {
+  const { data, error } = await admin.from("brand_asset_versions").select("id,status,import_mode,primary_logo_url,symbol_logo_url,horizontal_logo_url,vertical_logo_url,square_logo_url,transparent_logo_url,white_logo_url,black_logo_url,favicon_url,master_svg_url,symbol_svg_url,horizontal_svg_url,vertical_svg_url,white_svg_url,black_svg_url,monochrome_svg_url,print_pdf_url,brand_config_url,source_reference_url,reconstruction_preview_url,standalone_symbol_available,validation_report,generation_metadata").eq("id", versionId).maybeSingle();
+  if (error) throw new Error(`No se pudo leer la versión: ${error.message}`);
+  return data as VersionRow | null;
 }
 
-function urlsFromVersion(version: BrandAssetVersionRow): LogoCandidateUrls | null {
+function versionUrls(version: VersionRow): LogoCandidateUrls | null {
   if (!version.primary_logo_url) return null;
   return {
     primary_logo_url: version.primary_logo_url,
@@ -96,163 +91,77 @@ function urlsFromVersion(version: BrandAssetVersionRow): LogoCandidateUrls | nul
     white_logo_url: version.white_logo_url ?? version.primary_logo_url,
     black_logo_url: version.black_logo_url ?? version.primary_logo_url,
     favicon_url: version.favicon_url ?? version.primary_logo_url,
-    master_svg_url: version.master_svg_url ?? null,
-    symbol_svg_url: version.symbol_svg_url ?? null,
-    horizontal_svg_url: version.horizontal_svg_url ?? null,
-    vertical_svg_url: version.vertical_svg_url ?? null,
-    white_svg_url: version.white_svg_url ?? null,
-    black_svg_url: version.black_svg_url ?? null,
-    monochrome_svg_url: version.monochrome_svg_url ?? null,
-    print_pdf_url: version.print_pdf_url ?? null,
-    brand_config_url: version.brand_config_url ?? null,
+    master_svg_url: version.master_svg_url,
+    symbol_svg_url: version.symbol_svg_url,
+    horizontal_svg_url: version.horizontal_svg_url,
+    vertical_svg_url: version.vertical_svg_url,
+    white_svg_url: version.white_svg_url,
+    black_svg_url: version.black_svg_url,
+    monochrome_svg_url: version.monochrome_svg_url,
+    print_pdf_url: version.print_pdf_url,
+    brand_config_url: version.brand_config_url,
   };
 }
 
-async function ensureBrandAsset(args: { admin: SupabaseClient; existing: BrandAssetRow | null; ownerType: BrandOwnerType; ownerId: string; name: string; createdBy: string | null }) {
+async function ensureBrandAsset(args: { admin: SupabaseClient; existing: BrandAssetRow | null; request: LogoGenerationRequest; naming: BrandNaming }) {
   if (args.existing) return args.existing;
-  const { data, error } = await args.admin.from("brand_assets").insert({ owner_type: args.ownerType, owner_id: args.ownerId, name: args.name, created_by: args.createdBy }).select("id,owner_type,owner_id,active_version_id").single();
-  if (error) throw new Error(`No se pudo crear brand_assets: ${error.message}`);
+  const { data, error } = await args.admin.from("brand_assets").insert({ owner_type: args.request.ownerType, owner_id: args.request.ownerId, name: args.naming.entityName, created_by: args.request.createdBy ?? null }).select("id,owner_type,owner_id,active_version_id").single();
+  if (error) throw new Error(`No se pudo crear la identidad: ${error.message}`);
   return data as BrandAssetRow;
 }
 
 function categoriesFromFacts(facts: Record<string, unknown>) {
-  const values: string[] = [];
+  const output: string[] = [];
   for (const key of ["professional_categories", "services", "categories", "genres"]) {
-    const raw = facts[key];
-    if (!Array.isArray(raw)) continue;
-    for (const item of raw) {
-      if (typeof item === "string") values.push(item);
-      else if (item && typeof item === "object" && "name" in item && typeof (item as { name?: unknown }).name === "string") values.push((item as { name: string }).name);
+    const value = facts[key];
+    if (!Array.isArray(value)) continue;
+    for (const item of value) {
+      if (typeof item === "string") output.push(item);
+      else if (item && typeof item === "object" && "name" in item && typeof (item as { name?: unknown }).name === "string") output.push((item as { name: string }).name);
     }
   }
-  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean))).slice(0, 20);
+  return Array.from(new Set(output.map((value) => value.trim()).filter(Boolean))).slice(0, 20);
 }
 
 function countryFromFacts(facts: Record<string, unknown>) {
   return typeof facts.country === "string" && facts.country.trim() ? facts.country.trim() : null;
 }
 
-async function saveClearanceCheck(args: { admin: SupabaseClient; versionId: string; ownerType: BrandOwnerType; ownerId: string; clearance: BrandClearanceResult }) {
-  const { data, error } = await args.admin.from("brand_clearance_checks").insert({
-    brand_asset_version_id: args.versionId,
-    owner_type: args.ownerType,
-    owner_id: args.ownerId,
-    status: args.clearance.status,
-    internal_similarity_score: args.clearance.internal.highestSimilarity,
-    external_name_risk_score: args.clearance.external.nameRisk,
-    external_visual_risk_score: args.clearance.external.visualRisk,
-    class_overlap_score: args.clearance.external.classOverlap,
-    sources_checked: args.clearance.external.sourcesChecked,
-    internal_matches: args.clearance.internal.matches,
-    external_matches: args.clearance.external.matches,
-    decision_reasons: args.clearance.decisionReasons,
-    checked_at: args.clearance.checkedAt,
+async function checkClearance(args: { admin: SupabaseClient; request: LogoGenerationRequest; naming: BrandNaming; bytes: Buffer; fingerprint: Awaited<ReturnType<typeof fingerprintLogo>> }) {
+  return runBrandClearance({ admin: args.admin, ownerType: args.request.ownerType, ownerId: args.request.ownerId, fingerprint: args.fingerprint, naming: args.naming, imageBytes: args.bytes, categories: categoriesFromFacts(args.request.facts), country: countryFromFacts(args.request.facts) });
+}
+
+async function saveClearance(admin: SupabaseClient, versionId: string, request: LogoGenerationRequest, clearance: BrandClearanceResult) {
+  const { data, error } = await admin.from("brand_clearance_checks").insert({
+    brand_asset_version_id: versionId,
+    owner_type: request.ownerType,
+    owner_id: request.ownerId,
+    status: clearance.status,
+    internal_similarity_score: clearance.internal.highestSimilarity,
+    external_name_risk_score: clearance.external.nameRisk,
+    external_visual_risk_score: clearance.external.visualRisk,
+    class_overlap_score: clearance.external.classOverlap,
+    sources_checked: clearance.external.sourcesChecked,
+    internal_matches: clearance.internal.matches,
+    external_matches: clearance.external.matches,
+    decision_reasons: clearance.decisionReasons,
+    checked_at: clearance.checkedAt,
   }).select("id").single();
-  if (error) throw new Error(`No se pudo guardar brand_clearance_checks: ${error.message}`);
+  if (error) throw new Error(`No se pudo guardar el clearance: ${error.message}`);
+  await admin.from("brand_asset_versions").update({ clearance_check_id: data.id }).eq("id", versionId);
+}
+
+async function createJob(admin: SupabaseClient, request: LogoGenerationRequest, status: string, detectedLogo: DetectedLogo) {
+  const { data, error } = await admin.from("brand_generation_jobs").insert({ owner_type: request.ownerType, owner_id: request.ownerId, status, source: request.source, reference_image_urls: request.referenceImageUrls ?? [], identity_facts: request.facts, detected_logo: detectedLogo, actual_cost_usd: 0, created_by: request.createdBy ?? null }).select("id").single();
+  if (error) throw new Error(`No se pudo crear el trabajo: ${error.message}`);
   return data.id as string;
 }
 
-async function uploadBrandKit(args: { kit: BrandKitFiles; ownerType: BrandOwnerType; ownerId: string; versionId: string; naming: BrandNaming; palette: string[]; validation: VectorValidationReport }) {
-  const prefix = `public-identity/${args.ownerType}s/${args.ownerId}/brand-logo/${args.versionId}`;
-  const svgEntries = Object.entries(args.kit.svgs) as Array<[keyof BrandKitFiles["svgs"], string]>;
-  const pngEntries = Object.entries(args.kit.pngs) as Array<[keyof BrandKitFiles["pngs"], { bytes: Buffer; mimeType: string }]>;
-  const svgUrls = Object.fromEntries(await Promise.all(svgEntries.map(async ([key, svg]) => [key, await uploadGeneratedMedia({ bytes: Buffer.from(svg), mimeType: "image/svg+xml", pathPrefix: `${prefix}/svg/${key}` })])));
-  const pngUrls = Object.fromEntries(await Promise.all(pngEntries.map(async ([key, file]) => [key, await uploadGeneratedMedia({ bytes: file.bytes, mimeType: file.mimeType, pathPrefix: `${prefix}/png/${key}` })])));
-  const [printPdfUrl, transparent4096Url, profile1024Url] = await Promise.all([
-    uploadGeneratedMedia({ bytes: args.kit.printPdf, mimeType: "application/pdf", pathPrefix: `${prefix}/print` }),
-    uploadGeneratedMedia({ bytes: args.kit.transparent4096, mimeType: "image/png", pathPrefix: `${prefix}/transparent-4096` }),
-    uploadGeneratedMedia({ bytes: args.kit.profile1024, mimeType: "image/png", pathPrefix: `${prefix}/profile-1024` }),
-  ]);
-  const urls: LogoCandidateUrls = {
-    primary_logo_url: pngUrls.primary as string,
-    symbol_logo_url: pngUrls.symbol as string,
-    horizontal_logo_url: pngUrls.horizontal as string,
-    vertical_logo_url: pngUrls.vertical as string,
-    square_logo_url: pngUrls.square as string,
-    transparent_logo_url: pngUrls.transparent as string,
-    white_logo_url: pngUrls.white as string,
-    black_logo_url: pngUrls.black as string,
-    favicon_url: pngUrls.favicon as string,
-    master_svg_url: svgUrls.master as string,
-    symbol_svg_url: svgUrls.symbol as string,
-    horizontal_svg_url: svgUrls.horizontal as string,
-    vertical_svg_url: svgUrls.vertical as string,
-    white_svg_url: svgUrls.white as string,
-    black_svg_url: svgUrls.black as string,
-    monochrome_svg_url: svgUrls.monochrome as string,
-    print_pdf_url: printPdfUrl,
-    brand_config_url: null,
-  };
-  const config = Buffer.from(JSON.stringify({
-    schema_version: 1,
-    brand_id: args.ownerId,
-    brand_version_id: args.versionId,
-    display_name: args.naming.displayName,
-    descriptor: args.naming.descriptor,
-    palette: args.palette,
-    validation: args.validation,
-    assets: { ...urls, profile_1024_url: profile1024Url, transparent_4096_url: transparent4096Url, favicon_svg_url: svgUrls.favicon },
-  }, null, 2));
-  urls.brand_config_url = await uploadGeneratedMedia({ bytes: config, mimeType: "application/json", pathPrefix: `${prefix}/brand-config` });
-  return { urls, profile1024Url, transparent4096Url } satisfies UploadedBrandKit;
+async function failJob(admin: SupabaseClient, jobId: string, error: unknown) {
+  await admin.from("brand_generation_jobs").update({ status: "failed", error_message: error instanceof Error ? error.message : "Falló el Logo Engine.", completed_at: new Date().toISOString() }).eq("id", jobId);
 }
 
-function pickBestOrientationUrl(urls: LogoCandidateUrls, detected: DetectedLogo | null) {
-  if (detected?.lockupStructure?.orientation === "horizontal") return urls.horizontal_logo_url;
-  if (detected?.lockupStructure?.orientation === "vertical") return urls.vertical_logo_url;
-  return urls.primary_logo_url;
-}
-
-export async function analyzeBrandSource(admin: SupabaseClient, request: AnalyzeBrandSourceRequest): Promise<AnalyzeBrandSourceResult> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) throw new Error("GEMINI_API_KEY no está configurada.");
-  const detectedLogo = request.referenceImages.length ? await detectLogoInReference({ apiKey, referenceImage: request.referenceImages[0] }) : EMPTY_DETECTED_LOGO;
-  const brandAsset = await findActiveBrandAsset(admin, request.ownerType, request.ownerId);
-  let officialNaming: { displayName: string; descriptor: string | null } | null = null;
-  if (brandAsset?.active_version_id) {
-    const official = await getBrandAssetVersion(admin, brandAsset.active_version_id);
-    const naming = official?.generation_metadata?.naming;
-    if (official?.status === "published" && naming) officialNaming = { displayName: naming.displayName, descriptor: naming.descriptor };
-  }
-  const naming = resolveBrandNaming({ entityName: request.entityName, detectedLogo, officialNaming });
-  return { detectedLogo, naming, suggestedTypography: suggestTypography(detectedLogo) };
-}
-
-async function reuseOfficialAsset(args: { admin: SupabaseClient; request: LogoGenerationRequest; brandAsset: BrandAssetRow; publishedVersion: BrandAssetVersionRow }): Promise<ResolveBrandAssetResult> {
-  const urls = urlsFromVersion(args.publishedVersion);
-  const { data: job, error } = await args.admin.from("brand_generation_jobs").insert({
-    owner_type: args.request.ownerType,
-    owner_id: args.request.ownerId,
-    status: "completed",
-    source: args.request.source,
-    identity_facts: args.request.facts,
-    detected_logo: args.request.detectedLogo ?? {},
-    result_brand_asset_version_id: args.publishedVersion.id,
-    actual_cost_usd: 0,
-    created_by: args.request.createdBy ?? null,
-    completed_at: new Date().toISOString(),
-  }).select("id").single();
-  if (error) throw new Error(`No se pudo registrar el reuso: ${error.message}`);
-  if (urls) urls.primary_logo_url = pickBestOrientationUrl(urls, args.request.detectedLogo ?? null);
-  return {
-    jobId: job.id as string,
-    brandAssetId: args.brandAsset.id,
-    brandAssetVersionId: args.publishedVersion.id,
-    status: "reused_official",
-    mode: args.publishedVersion.import_mode ?? "legacy_raster_import",
-    urls,
-    sourceReferenceUrl: args.publishedVersion.source_reference_url ?? null,
-    reconstructionPreviewUrl: args.publishedVersion.reconstruction_preview_url ?? null,
-    standaloneSymbolAvailable: Boolean(args.publishedVersion.standalone_symbol_available),
-    clearance: null,
-    detectedLogo: args.request.detectedLogo ?? null,
-    naming: args.publishedVersion.generation_metadata?.naming ?? null,
-    validation: args.publishedVersion.validation_report ?? null,
-    costUsd: 0,
-  };
-}
-
-async function createDraftVersion(args: {
+async function insertDraft(args: {
   admin: SupabaseClient;
   brandAssetId: string;
   request: LogoGenerationRequest;
@@ -287,27 +196,52 @@ async function createDraftVersion(args: {
     standalone_symbol_available: Boolean(args.detectedLogo.decomposition?.components.some((component) => component.kind === "symbol" && component.present)),
     status: "draft",
   }).select("id").single();
-  if (error) throw new Error(`No se pudo guardar la versión vectorial: ${error.message}`);
+  if (error) throw new Error(`No se pudo guardar la versión: ${error.message}`);
   return data.id as string;
 }
 
-async function finalizeVersion(args: {
-  admin: SupabaseClient;
-  versionId: string;
-  kit: BrandKitFiles;
-  request: LogoGenerationRequest;
-  naming: BrandNaming;
-  validation: VectorValidationReport;
-  sourceReferenceBytes?: Buffer | null;
-  previewBytes: Buffer;
-}) {
-  const palette = args.request.detectedLogo?.visualSignature?.palette ?? [];
-  const uploaded = await uploadBrandKit({ kit: args.kit, ownerType: args.request.ownerType, ownerId: args.request.ownerId, versionId: args.versionId, naming: args.naming, palette, validation: args.validation });
-  const [sourceReferenceUrl, reconstructionPreviewUrl] = await Promise.all([
-    args.sourceReferenceBytes ? uploadGeneratedMedia({ bytes: args.sourceReferenceBytes, mimeType: "image/png", pathPrefix: `public-identity/${args.request.ownerType}s/${args.request.ownerId}/brand-logo/${args.versionId}/source-reference` }) : Promise.resolve(null),
-    uploadGeneratedMedia({ bytes: args.previewBytes, mimeType: "image/png", pathPrefix: `public-identity/${args.request.ownerType}s/${args.request.ownerId}/brand-logo/${args.versionId}/reconstruction-preview` }),
+async function uploadKit(args: { kit: BrandKitFiles; request: LogoGenerationRequest; versionId: string; naming: BrandNaming; validation: VectorValidationReport }) {
+  const prefix = `public-identity/${args.request.ownerType}s/${args.request.ownerId}/brand-logo/${args.versionId}`;
+  const svgPairs = await Promise.all(Object.entries(args.kit.svgs).map(async ([key, svg]) => [key, await uploadGeneratedMedia({ bytes: Buffer.from(svg), mimeType: "image/svg+xml", pathPrefix: `${prefix}/svg/${key}` })] as const));
+  const pngPairs = await Promise.all(Object.entries(args.kit.pngs).map(async ([key, file]) => [key, await uploadGeneratedMedia({ bytes: file.bytes, mimeType: file.mimeType, pathPrefix: `${prefix}/png/${key}` })] as const));
+  const svg = Object.fromEntries(svgPairs) as Record<string, string>;
+  const png = Object.fromEntries(pngPairs) as Record<string, string>;
+  const [printPdfUrl, transparent4096Url, profile1024Url] = await Promise.all([
+    uploadGeneratedMedia({ bytes: args.kit.printPdf, mimeType: "application/pdf", pathPrefix: `${prefix}/print` }),
+    uploadGeneratedMedia({ bytes: args.kit.transparent4096, mimeType: "image/png", pathPrefix: `${prefix}/transparent-4096` }),
+    uploadGeneratedMedia({ bytes: args.kit.profile1024, mimeType: "image/png", pathPrefix: `${prefix}/profile-1024` }),
   ]);
-  const { urls } = uploaded;
+  const urls: LogoCandidateUrls = {
+    primary_logo_url: png.primary,
+    symbol_logo_url: png.symbol,
+    horizontal_logo_url: png.horizontal,
+    vertical_logo_url: png.vertical,
+    square_logo_url: png.square,
+    transparent_logo_url: png.transparent,
+    white_logo_url: png.white,
+    black_logo_url: png.black,
+    favicon_url: png.favicon,
+    master_svg_url: svg.master,
+    symbol_svg_url: svg.symbol,
+    horizontal_svg_url: svg.horizontal,
+    vertical_svg_url: svg.vertical,
+    white_svg_url: svg.white,
+    black_svg_url: svg.black,
+    monochrome_svg_url: svg.monochrome,
+    print_pdf_url: printPdfUrl,
+    brand_config_url: null,
+  };
+  const config = Buffer.from(JSON.stringify({ schema_version: 1, brand_version_id: args.versionId, display_name: args.naming.displayName, descriptor: args.naming.descriptor, validation: args.validation, assets: { ...urls, favicon_svg_url: svg.favicon, transparent_4096_url: transparent4096Url, profile_1024_url: profile1024Url } }, null, 2));
+  urls.brand_config_url = await uploadGeneratedMedia({ bytes: config, mimeType: "application/json", pathPrefix: `${prefix}/brand-config` });
+  return urls;
+}
+
+async function finalizeDraft(args: { admin: SupabaseClient; request: LogoGenerationRequest; versionId: string; kit: BrandKitFiles; naming: BrandNaming; validation: VectorValidationReport; sourceReference?: Buffer; preview: Buffer }) {
+  const urls = await uploadKit({ kit: args.kit, request: args.request, versionId: args.versionId, naming: args.naming, validation: args.validation });
+  const [sourceReferenceUrl, reconstructionPreviewUrl] = await Promise.all([
+    args.sourceReference ? uploadGeneratedMedia({ bytes: args.sourceReference, mimeType: "image/png", pathPrefix: `public-identity/${args.request.ownerType}s/${args.request.ownerId}/brand-logo/${args.versionId}/source-reference` }) : Promise.resolve(null),
+    uploadGeneratedMedia({ bytes: args.preview, mimeType: "image/png", pathPrefix: `public-identity/${args.request.ownerType}s/${args.request.ownerId}/brand-logo/${args.versionId}/preview` }),
+  ]);
   const { error } = await args.admin.from("brand_asset_versions").update({
     primary_logo_url: urls.primary_logo_url,
     symbol_logo_url: urls.symbol_logo_url,
@@ -330,97 +264,88 @@ async function finalizeVersion(args: {
     source_reference_url: sourceReferenceUrl,
     reconstruction_preview_url: reconstructionPreviewUrl,
   }).eq("id", args.versionId);
-  if (error) throw new Error(`No se pudieron vincular los archivos del Brand Kit: ${error.message}`);
+  if (error) throw new Error(`No se pudieron vincular los archivos: ${error.message}`);
   return { urls, sourceReferenceUrl, reconstructionPreviewUrl };
 }
 
-async function reconstructOwnedIdentity(args: { admin: SupabaseClient; request: LogoGenerationRequest; brandAsset: BrandAssetRow | null; detectedLogo: DetectedLogo; naming: BrandNaming }): Promise<ResolveBrandAssetResult> {
-  if (!args.detectedLogo.primaryBox || !args.request.referenceImages.length) throw new Error("Falta el recorte confirmado del logo.");
-  if (args.request.sourceKind === "reference_only") throw new Error("Una referencia ajena no puede reconstruirse como identidad propia. Usá Crear una identidad original.");
-  if (args.request.ownershipAttested !== true) throw new Error("Confirmá que el logo pertenece a tu proyecto o que tenés autorización para reconstruirlo.");
-  const { data: job, error: jobError } = await args.admin.from("brand_generation_jobs").insert({
-    owner_type: args.request.ownerType,
-    owner_id: args.request.ownerId,
-    status: "reconstructing_vector",
-    source: args.request.source,
-    reference_image_urls: args.request.referenceImageUrls ?? [],
-    identity_facts: args.request.facts,
-    detected_logo: args.detectedLogo,
-    actual_cost_usd: 0,
-    created_by: args.request.createdBy ?? null,
-  }).select("id").single();
-  if (jobError) throw new Error(jobError.message);
-  const jobId = job.id as string;
-  try {
-    const referenceBytes = Buffer.from(args.request.referenceImages[0].data, "base64");
-    const reconstruction = await reconstructLogoVector({ referenceBytes, detectedLogo: args.detectedLogo, params: args.request.reconstructionParams });
-    const fingerprint = await fingerprintLogo(reconstruction.previewPng);
-    const clearance = await runBrandClearance({
-      admin: args.admin,
-      ownerType: args.request.ownerType,
-      ownerId: args.request.ownerId,
-      fingerprint,
-      naming: args.naming,
-      imageBytes: reconstruction.previewPng,
-      categories: categoriesFromFacts(args.request.facts),
-      country: countryFromFacts(args.request.facts),
-    });
-    const brandAsset = await ensureBrandAsset({ admin: args.admin, existing: args.brandAsset, ownerType: args.request.ownerType, ownerId: args.request.ownerId, name: args.naming.entityName, createdBy: args.request.createdBy ?? null });
-    const versionId = await createDraftVersion({ admin: args.admin, brandAssetId: brandAsset.id, request: args.request, detectedLogo: args.detectedLogo, naming: args.naming, typography: null, mode: "owned_identity_reconstruction", fingerprint, clearance, validation: reconstruction.validation, reconstructionParams: reconstruction.params });
-    const kit = await buildBrandKit({ reconstruction, naming: args.naming, brandAssetId: brandAsset.id, versionId, palette: args.detectedLogo.visualSignature?.palette ?? [] });
-    const finalized = await finalizeVersion({ admin: args.admin, versionId, kit, request: args.request, naming: args.naming, validation: reconstruction.validation, sourceReferenceBytes: reconstruction.sourceCropPng, previewBytes: reconstruction.previewPng });
-    const clearanceCheckId = await saveClearanceCheck({ admin: args.admin, versionId, ownerType: args.request.ownerType, ownerId: args.request.ownerId, clearance });
-    await args.admin.from("brand_asset_versions").update({ clearance_check_id: clearanceCheckId }).eq("id", versionId);
-    await args.admin.from("brand_generation_jobs").update({ status: "completed", result_brand_asset_version_id: versionId, actual_cost_usd: 0, completed_at: new Date().toISOString() }).eq("id", jobId);
-    return { jobId, brandAssetId: brandAsset.id, brandAssetVersionId: versionId, status: "awaiting_review", mode: "owned_identity_reconstruction", urls: finalized.urls, sourceReferenceUrl: finalized.sourceReferenceUrl, reconstructionPreviewUrl: finalized.reconstructionPreviewUrl, standaloneSymbolAvailable: Boolean(reconstruction.symbolSvg), clearance, detectedLogo: args.detectedLogo, naming: args.naming, validation: reconstruction.validation, costUsd: 0 };
-  } catch (error) {
-    await args.admin.from("brand_generation_jobs").update({ status: "failed", error_message: error instanceof Error ? error.message : "Fallo reconstruyendo SVG.", completed_at: new Date().toISOString() }).eq("id", jobId);
-    throw error;
-  }
-}
-
-async function generateOriginalIdentity(args: { admin: SupabaseClient; request: LogoGenerationRequest; brandAsset: BrandAssetRow | null; detectedLogo: DetectedLogo; naming: BrandNaming; typography: TypographyConfig }): Promise<ResolveBrandAssetResult> {
+export async function analyzeBrandSource(admin: SupabaseClient, request: AnalyzeBrandSourceRequest): Promise<AnalyzeBrandSourceResult> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY no está configurada.");
-  const mode: BrandImportMode = args.request.forceRedesign ? "clouva_generated_redesign" : "standalone_creation";
-  const { data: job, error: jobError } = await args.admin.from("brand_generation_jobs").insert({ owner_type: args.request.ownerType, owner_id: args.request.ownerId, status: "generating_candidates", source: args.request.source, reference_image_urls: args.request.referenceImageUrls ?? [], identity_facts: args.request.facts, detected_logo: args.detectedLogo, created_by: args.request.createdBy ?? null }).select("id").single();
-  if (jobError) throw new Error(jobError.message);
-  const jobId = job.id as string;
-  try {
-    const fidelity = args.request.referenceFidelity ?? (args.detectedLogo.detected ? "high" : "balanced");
-    const generated = await generateMasterSymbol({ admin: args.admin, apiKey, prompt: buildMasterSymbolPrompt({ entityName: args.naming.entityName, detected: args.detectedLogo, fidelity }) });
-    const svgs = await composeLogoLockupSvgs({ masterSymbolBytes: generated.bytes, naming: args.naming, typography: args.typography, lockupStructure: args.detectedLogo.lockupStructure });
-    const validation: VectorValidationReport = { rasterSimilarity: 1, edgeSimilarity: 1, smallSizeLegible: true, monochromeValid: true, transparentBackground: true, nodeCount: (svgs.master.match(/[MLQ]/g)?.length ?? 0), warnings: [] };
-    const brandAsset = await ensureBrandAsset({ admin: args.admin, existing: args.brandAsset, ownerType: args.request.ownerType, ownerId: args.request.ownerId, name: args.naming.entityName, createdBy: args.request.createdBy ?? null });
-    const preliminaryKit = await buildBrandKitFromSvgs({ svgs: { master: svgs.primary, ...svgs }, naming: args.naming, brandAssetId: brandAsset.id, versionId: "pending", palette: args.detectedLogo.visualSignature?.palette ?? [], validation });
-    const fingerprint = await fingerprintLogo(preliminaryKit.pngs.primary.bytes);
-    const clearance = await runBrandClearance({ admin: args.admin, ownerType: args.request.ownerType, ownerId: args.request.ownerId, fingerprint, naming: args.naming, imageBytes: preliminaryKit.pngs.primary.bytes, categories: categoriesFromFacts(args.request.facts), country: countryFromFacts(args.request.facts) });
-    const versionId = await createDraftVersion({ admin: args.admin, brandAssetId: brandAsset.id, request: args.request, detectedLogo: args.detectedLogo, naming: args.naming, typography: args.typography, mode, fingerprint, clearance, validation, reconstructionParams: { source: "generated_symbol_then_vectorized" } });
-    const kit = await buildBrandKitFromSvgs({ svgs: { master: svgs.primary, ...svgs }, naming: args.naming, brandAssetId: brandAsset.id, versionId, palette: args.detectedLogo.visualSignature?.palette ?? [], validation });
-    const finalized = await finalizeVersion({ admin: args.admin, versionId, kit, request: args.request, naming: args.naming, validation, previewBytes: kit.pngs.primary.bytes });
-    const clearanceCheckId = await saveClearanceCheck({ admin: args.admin, versionId, ownerType: args.request.ownerType, ownerId: args.request.ownerId, clearance });
-    await args.admin.from("brand_asset_versions").update({ clearance_check_id: clearanceCheckId }).eq("id", versionId);
-    await args.admin.from("brand_generation_jobs").update({ status: "completed", result_brand_asset_version_id: versionId, actual_cost_usd: generated.costUsd, completed_at: new Date().toISOString() }).eq("id", jobId);
-    return { jobId, brandAssetId: brandAsset.id, brandAssetVersionId: versionId, status: "awaiting_review", mode, urls: finalized.urls, sourceReferenceUrl: null, reconstructionPreviewUrl: finalized.reconstructionPreviewUrl, standaloneSymbolAvailable: true, clearance, detectedLogo: args.detectedLogo, naming: args.naming, validation, costUsd: generated.costUsd };
-  } catch (error) {
-    await args.admin.from("brand_generation_jobs").update({ status: "failed", error_message: error instanceof Error ? error.message : "Fallo generando identidad.", completed_at: new Date().toISOString() }).eq("id", jobId);
-    throw error;
+  const detectedLogo = request.referenceImages.length ? await detectLogoInReference({ apiKey, referenceImage: request.referenceImages[0] }) : EMPTY_DETECTED_LOGO;
+  const brandAsset = await findBrandAsset(admin, request.ownerType, request.ownerId);
+  let officialNaming: { displayName: string; descriptor: string | null } | null = null;
+  if (brandAsset?.active_version_id) {
+    const official = await readVersion(admin, brandAsset.active_version_id);
+    const naming = official?.generation_metadata?.naming;
+    if (official?.status === "published" && naming) officialNaming = { displayName: naming.displayName, descriptor: naming.descriptor };
   }
+  const naming = resolveBrandNaming({ entityName: request.entityName, detectedLogo, officialNaming });
+  return { detectedLogo, naming, suggestedTypography: suggestTypography(detectedLogo) };
+}
+
+async function reuseOfficial(admin: SupabaseClient, request: LogoGenerationRequest, brandAsset: BrandAssetRow, version: VersionRow): Promise<ResolveBrandAssetResult> {
+  const jobId = await createJob(admin, request, "completed", request.detectedLogo ?? EMPTY_DETECTED_LOGO);
+  await admin.from("brand_generation_jobs").update({ result_brand_asset_version_id: version.id, completed_at: new Date().toISOString() }).eq("id", jobId);
+  const urls = versionUrls(version);
+  if (urls && request.detectedLogo?.lockupStructure?.orientation === "horizontal") urls.primary_logo_url = urls.horizontal_logo_url;
+  return { jobId, brandAssetId: brandAsset.id, brandAssetVersionId: version.id, status: "reused_official", mode: version.import_mode ?? "legacy_raster_import", urls, sourceReferenceUrl: version.source_reference_url, reconstructionPreviewUrl: version.reconstruction_preview_url, standaloneSymbolAvailable: Boolean(version.standalone_symbol_available), clearance: null, detectedLogo: request.detectedLogo ?? null, naming: version.generation_metadata?.naming ?? null, validation: version.validation_report, costUsd: 0 };
+}
+
+async function reconstructOwned(admin: SupabaseClient, request: LogoGenerationRequest, existing: BrandAssetRow | null, detectedLogo: DetectedLogo, naming: BrandNaming): Promise<ResolveBrandAssetResult> {
+  if (!detectedLogo.primaryBox || !request.referenceImages.length) throw new Error("Falta el área confirmada del logo.");
+  if (request.sourceKind === "reference_only" || request.ownershipAttested !== true) throw new Error("Confirmá que el logo pertenece a tu proyecto o elegí Crear una identidad original.");
+  const jobId = await createJob(admin, request, "reconstructing_vector", detectedLogo);
+  try {
+    const reconstruction = await reconstructLogoVector({ referenceBytes: Buffer.from(request.referenceImages[0].data, "base64"), detectedLogo, params: request.reconstructionParams });
+    const fingerprint = await fingerprintLogo(reconstruction.previewPng);
+    const clearance = await checkClearance({ admin, request, naming, bytes: reconstruction.previewPng, fingerprint });
+    const brandAsset = await ensureBrandAsset({ admin, existing, request, naming });
+    const versionId = await insertDraft({ admin, brandAssetId: brandAsset.id, request, detectedLogo, naming, typography: null, mode: "owned_identity_reconstruction", fingerprint, clearance, validation: reconstruction.validation, reconstructionParams: reconstruction.params });
+    const kit = await buildBrandKit({ reconstruction, naming, brandAssetId: brandAsset.id, versionId, palette: detectedLogo.visualSignature?.palette ?? [] });
+    const final = await finalizeDraft({ admin, request, versionId, kit, naming, validation: reconstruction.validation, sourceReference: reconstruction.sourceCropPng, preview: reconstruction.previewPng });
+    await saveClearance(admin, versionId, request, clearance);
+    await admin.from("brand_generation_jobs").update({ status: "completed", result_brand_asset_version_id: versionId, completed_at: new Date().toISOString() }).eq("id", jobId);
+    return { jobId, brandAssetId: brandAsset.id, brandAssetVersionId: versionId, status: "awaiting_review", mode: "owned_identity_reconstruction", urls: final.urls, sourceReferenceUrl: final.sourceReferenceUrl, reconstructionPreviewUrl: final.reconstructionPreviewUrl, standaloneSymbolAvailable: Boolean(reconstruction.symbolSvg), clearance, detectedLogo, naming, validation: reconstruction.validation, costUsd: 0 };
+  } catch (error) { await failJob(admin, jobId, error); throw error; }
+}
+
+async function createOriginal(admin: SupabaseClient, request: LogoGenerationRequest, existing: BrandAssetRow | null, detectedLogo: DetectedLogo, naming: BrandNaming, typography: TypographyConfig): Promise<ResolveBrandAssetResult> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error("GEMINI_API_KEY no está configurada.");
+  const mode: BrandImportMode = request.referenceImages.length || request.forceRedesign ? "clouva_generated_redesign" : "standalone_creation";
+  const jobId = await createJob(admin, request, "generating_candidates", detectedLogo);
+  try {
+    const fidelity = request.referenceFidelity ?? (detectedLogo.detected ? "high" : "balanced");
+    const generated = await generateMasterSymbol({ admin, apiKey, prompt: buildMasterSymbolPrompt({ entityName: naming.entityName, detected: detectedLogo, fidelity }) });
+    const svgs = await composeLogoLockupSvgs({ masterSymbolBytes: generated.bytes, naming, typography, lockupStructure: detectedLogo.lockupStructure });
+    const validation: VectorValidationReport = { rasterSimilarity: 1, edgeSimilarity: 1, smallSizeLegible: true, monochromeValid: true, transparentBackground: true, nodeCount: svgs.master.match(/[MLQ]/g)?.length ?? 0, warnings: [] };
+    const brandAsset = await ensureBrandAsset({ admin, existing, request, naming });
+    const previewKit = await buildBrandKitFromSvgs({ svgs, naming, brandAssetId: brandAsset.id, versionId: "pending", palette: detectedLogo.visualSignature?.palette ?? [], validation });
+    const fingerprint = await fingerprintLogo(previewKit.pngs.primary.bytes);
+    const clearance = await checkClearance({ admin, request, naming, bytes: previewKit.pngs.primary.bytes, fingerprint });
+    const versionId = await insertDraft({ admin, brandAssetId: brandAsset.id, request, detectedLogo, naming, typography, mode, fingerprint, clearance, validation, reconstructionParams: { source: "generated_symbol_then_vectorized" } });
+    const kit = await buildBrandKitFromSvgs({ svgs, naming, brandAssetId: brandAsset.id, versionId, palette: detectedLogo.visualSignature?.palette ?? [], validation });
+    const final = await finalizeDraft({ admin, request, versionId, kit, naming, validation, preview: kit.pngs.primary.bytes });
+    await saveClearance(admin, versionId, request, clearance);
+    await admin.from("brand_generation_jobs").update({ status: "completed", result_brand_asset_version_id: versionId, actual_cost_usd: generated.costUsd, completed_at: new Date().toISOString() }).eq("id", jobId);
+    return { jobId, brandAssetId: brandAsset.id, brandAssetVersionId: versionId, status: "awaiting_review", mode, urls: final.urls, sourceReferenceUrl: null, reconstructionPreviewUrl: final.reconstructionPreviewUrl, standaloneSymbolAvailable: true, clearance, detectedLogo, naming, validation, costUsd: generated.costUsd };
+  } catch (error) { await failJob(admin, jobId, error); throw error; }
 }
 
 export async function resolveBrandAsset(admin: SupabaseClient, request: LogoGenerationRequest): Promise<ResolveBrandAssetResult> {
-  const brandAsset = await findActiveBrandAsset(admin, request.ownerType, request.ownerId);
+  const brandAsset = await findBrandAsset(admin, request.ownerType, request.ownerId);
   if (!request.forceRedesign && brandAsset?.active_version_id) {
-    const published = await getBrandAssetVersion(admin, brandAsset.active_version_id);
-    if (published?.status === "published") return reuseOfficialAsset({ admin, request, brandAsset, publishedVersion: published });
+    const official = await readVersion(admin, brandAsset.active_version_id);
+    if (official?.status === "published") return reuseOfficial(admin, request, brandAsset, official);
   }
   let detectedLogo = request.detectedLogo ?? null;
   let naming = request.naming ?? null;
   if (!detectedLogo || !naming) {
-    const analyzed = await analyzeBrandSource(admin, { ownerType: request.ownerType, ownerId: request.ownerId, entityName: request.entityName, source: request.source, referenceImages: request.referenceImages });
-    detectedLogo = detectedLogo ?? analyzed.detectedLogo;
-    naming = naming ?? analyzed.naming;
+    const analysis = await analyzeBrandSource(admin, { ownerType: request.ownerType, ownerId: request.ownerId, entityName: request.entityName, source: request.source, referenceImages: request.referenceImages });
+    detectedLogo = detectedLogo ?? analysis.detectedLogo;
+    naming = naming ?? analysis.naming;
   }
-  if (request.referenceImages.length && request.forceRedesign !== true) return reconstructOwnedIdentity({ admin, request, brandAsset, detectedLogo, naming });
-  return generateOriginalIdentity({ admin, request, brandAsset, detectedLogo, naming, typography: request.typography ?? suggestTypography(detectedLogo) });
+  const reconstructAsOwned = Boolean(request.referenceImages.length && !request.forceRedesign && request.ownershipAttested === true && request.sourceKind !== "reference_only");
+  if (reconstructAsOwned) return reconstructOwned(admin, request, brandAsset, detectedLogo, naming);
+  return createOriginal(admin, request, brandAsset, detectedLogo, naming, request.typography ?? suggestTypography(detectedLogo));
 }
