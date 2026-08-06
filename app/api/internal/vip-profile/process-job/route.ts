@@ -6,7 +6,7 @@ import { playerBriefToFacts, studioBriefToFacts, type IdentityBrief, type Studio
 import { enqueueVipProfileJobStep } from "@/lib/server/cloud-tasks";
 import { fetchReferenceImages, generateCoverAsset, generateLogoAsset, generatePillarAsset, type GeneratedAsset } from "@/lib/server/vip-profile-assets";
 import { analyzeReferenceImages, generateLayoutConfig, generateLayoutVariants, generatePreciseLayoutConfig, type ReferenceAnalysis } from "@/lib/server/vip-profile-layout-gemini";
-import { sanitizeLayoutConfig, type ImageSlot, type LayoutConfig, type LayoutSection } from "@/lib/server/layout-config";
+import { pickAccentFromPalette, sanitizeLayoutConfig, type ImageSlot, type LayoutConfig, type LayoutSection } from "@/lib/server/layout-config";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 export const runtime = "nodejs";
@@ -413,7 +413,19 @@ export async function POST(request: NextRequest) {
         // Se vuelve a sanitizar acá (no solo confiar en lo que guardó el paso
         // anterior) -- defensa en profundidad antes de persistir en la
         // versión pública real.
-        const layoutConfig = sanitizeLayoutConfig(job.generated_layout) ?? {};
+        const sanitizedLayout = sanitizeLayoutConfig(job.generated_layout);
+        // Bug real confirmado: en modo "precise" Gemini viene omitiendo
+        // page_style.palette siempre, aunque el prompt lo pida -- sin esto el
+        // renderer cae al violeta genérico en vez de la identidad real del
+        // Estudio/Player. Nunca inventamos un color: si falta, lo tomamos de
+        // la paleta ya aprobada de la identidad (copy.palette).
+        if (sanitizedLayout && !sanitizedLayout.page_style?.palette?.accent) {
+          const accent = pickAccentFromPalette(copy.palette);
+          if (accent) {
+            sanitizedLayout.page_style = { ...sanitizedLayout.page_style, palette: { ...sanitizedLayout.page_style?.palette, accent } };
+          }
+        }
+        const layoutConfig = sanitizedLayout ?? {};
 
         const { data: lastVersion, error: lastVersionError } = await admin
           .from("player_profile_versions")

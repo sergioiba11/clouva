@@ -646,6 +646,26 @@ function sanitizeNavItems(raw: unknown, validSections: Set<LayoutSectionType>): 
 // corrupto) ni en lo que devuelve Gemini -- todo campo se revalida acá antes
 // de llegar al renderer. Devuelve null si no queda ninguna sección válida
 // (el caller debe caer al template fijo existente en ese caso).
+// Respaldo real cuando Gemini no devuelve page_style.palette (pasa siempre
+// en modo "precise" -- el prompt de geometría es tan pesado que en la
+// práctica el modelo lo omite; confirmado en 6/6 generaciones reales de un
+// mismo Estudio). Sin esto, el renderer cae al violeta genérico de Clouva
+// (`#8f7cff`) en vez de la identidad real -- así que en vez de inventar un
+// color nuevo, reusamos `copy.palette` (mismo array ya aprobado que se ve en
+// el panel "Identidad del Estudio", generado por separado y confiable).
+// El array viene documentado "de oscuro a claro" (ver vip-profile-gemini.ts)
+// -- evitamos los dos extremos (el más oscuro se pierde contra el fondo
+// oscuro del sitio, el más claro queda lavado como botón sólido) y elegimos
+// un tono intermedio real.
+export function pickAccentFromPalette(rawPalette: unknown): string | null {
+  if (!Array.isArray(rawPalette)) return null;
+  const valid = rawPalette.filter((color): color is string => typeof color === "string" && HEX_COLOR_RE.test(color));
+  if (valid.length === 0) return null;
+  if (valid.length <= 2) return valid[0];
+  const interior = valid.slice(1, -1);
+  return interior[Math.floor((interior.length - 1) / 2)];
+}
+
 export function sanitizeLayoutConfig(raw: unknown): LayoutConfig | null {
   if (!raw || typeof raw !== "object") return null;
   const value = raw as Record<string, unknown>;
