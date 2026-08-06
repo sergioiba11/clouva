@@ -10,6 +10,7 @@ on:
 permissions:
   actions: write
   contents: read
+  statuses: write
 
 jobs:
   dispatch-release:
@@ -18,11 +19,54 @@ jobs:
       - name: Dispatch stable CLOUVA CONTROL APK build
         env:
           GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
-          gh workflow run build-clouva-control-apk.yml \
+          set -euo pipefail
+
+          latest="$(gh run list \
             --repo "${{ github.repository }}" \
-            --ref main \
-            -f version=1.1.0 \
-            -f release_notes="Nuevo centro de mando operativo de CLOUVA CONTROL" \
-            -f stable=true \
-            -f minimum_required=""
+            --workflow build-clouva-control-apk.yml \
+            --branch main \
+            --event workflow_dispatch \
+            --limit 1 \
+            --json databaseId,status,conclusion,createdAt \
+            --jq '.[0] // empty')"
+
+          should_dispatch=true
+          if [[ -n "$latest" ]]; then
+            created_at="$(jq -r '.createdAt' <<<"$latest")"
+            created_epoch="$(date -d "$created_at" +%s)"
+            now_epoch="$(date +%s)"
+            age="$((now_epoch - created_epoch))"
+            if (( age < 1800 )); then
+              should_dispatch=false
+              run_id="$(jq -r '.databaseId' <<<"$latest")"
+              echo "Ya existe una ejecución reciente: $run_id"
+            fi
+          fi
+
+          if [[ "$should_dispatch" == "true" ]]; then
+            gh workflow run build-clouva-control-apk.yml \
+              --repo "${{ github.repository }}" \
+              --ref main \
+              -f version=1.1.0 \
+              -f release_notes="Nuevo centro de mando operativo de CLOUVA CONTROL" \
+              -f stable=true \
+              -f minimum_required=""
+            sleep 5
+            run_id="$(gh run list \
+              --repo "${{ github.repository }}" \
+              --workflow build-clouva-control-apk.yml \
+              --branch main \
+              --event workflow_dispatch \
+              --limit 1 \
+              --json databaseId \
+              --jq '.[0].databaseId')"
+          fi
+
+          gh api \
+            --method POST \
+            "repos/${{ github.repository }}/statuses/${{ github.sha }}" \
+            -f state=success \
+            -f context='clouva-control/release-dispatch' \
+            -f description="APK 1.1.0 enviado al workflow (run $run_id)"
