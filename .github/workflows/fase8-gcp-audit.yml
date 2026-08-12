@@ -1,0 +1,93 @@
+name: Fase 8 GCP read-only audit
+
+on:
+  push:
+    branches:
+      - feat/workspace-cloud-web
+    paths:
+      - ".github/workflows/fase8-gcp-audit.yml"
+      - ".github/fase8-audit-trigger.txt"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: fase8-gcp-audit
+  cancel-in-progress: true
+
+env:
+  PROJECT_ID: gen-lang-client-0737053175
+  REGION: us-central1
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA_EMAIL }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Collect read-only GCP state
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p fase8-audit
+          {
+            echo "# Fase 8 GCP read-only audit"
+            echo
+            echo "generated_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "project=$PROJECT_ID"
+            echo "region=$REGION"
+            echo
+            echo "## gcloud account"
+            gcloud auth list --filter=status:ACTIVE --format='value(account)' || true
+            echo
+            echo "## Cloud Run services"
+            gcloud run services list --project "$PROJECT_ID" --region "$REGION" --format='table(metadata.name,status.url,status.latestReadyRevisionName)' || true
+            echo
+            echo "## clouva-gateway"
+            gcloud run services describe clouva-gateway --project "$PROJECT_ID" --region "$REGION" --format='yaml(metadata.name,status.url,status.latestReadyRevisionName,status.conditions,spec.template.spec.containers[0].image)' || true
+            echo
+            echo "## clouva-web"
+            gcloud run services describe clouva-web --project "$PROJECT_ID" --region "$REGION" --format='yaml(metadata.name,status.url,status.latestReadyRevisionName,status.conditions,spec.template.spec.containers[0].image)' || true
+            echo
+            echo "## Compute instances"
+            gcloud compute instances list --project "$PROJECT_ID" --format='table(name,zone,status,machineType.basename())' || true
+          } | tee fase8-audit/gcp-state.txt
+
+      - name: Check public Gateway endpoints
+        shell: bash
+        run: |
+          set -euo pipefail
+          gateway_url="$(gcloud run services describe clouva-gateway --project "$PROJECT_ID" --region "$REGION" --format='value(status.url)' 2>/dev/null || true)"
+          {
+            echo "gateway_url=$gateway_url"
+            if [ -n "$gateway_url" ]; then
+              echo
+              echo "## /status"
+              curl --silent --show-error --location --max-time 20 -i "$gateway_url/status" || true
+              echo
+              echo "## OAuth metadata"
+              curl --silent --show-error --location --max-time 20 -i "$gateway_url/.well-known/oauth-authorization-server" || true
+              echo
+              echo "## /mcp unauthenticated probe"
+              curl --silent --show-error --location --max-time 20 -i "$gateway_url/mcp" || true
+            fi
+          } | tee fase8-audit/gateway-public.txt
+
+      - name: Upload audit evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: fase8-gcp-audit-${{ github.sha }}
+          path: fase8-audit/
+          if-no-files-found: error
+          retention-days: 7
