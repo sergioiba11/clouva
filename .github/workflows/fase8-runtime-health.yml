@@ -1,0 +1,79 @@
+name: Fase 8 Runtime health
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feat/workspace-cloud-web
+    paths:
+      - ".github/workflows/fase8-runtime-health.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: gen-lang-client-0737053175
+  REGION: us-central1
+  GATEWAY_SERVICE: clouva-gateway
+
+jobs:
+  runtime-health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA_EMAIL }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Resolve Gateway URL
+        id: gateway
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="$(gcloud run services describe "$GATEWAY_SERVICE" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --format='value(status.url)')"
+          test -n "$url"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+
+      - name: Check Gateway and Runtime Agent connectivity
+        env:
+          GATEWAY_URL: ${{ steps.gateway.outputs.url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p fase8-runtime-health
+
+          response="$(curl --fail --silent --show-error --location --max-time 20 "$GATEWAY_URL/status")"
+          printf '%s\n' "$response" | tee fase8-runtime-health/status.json
+
+          python3 - "$response" <<'PY'
+          import json, sys
+          data = json.loads(sys.argv[1])
+          assert data.get("ok") is True, data
+          print("Gateway OK")
+          print("desktopsOnline=", data.get("desktopsOnline"))
+          print("agentsOnline=", data.get("agentsOnline"))
+          print("operatorConnections=", data.get("operatorConnections"))
+          print("mcpBridges=", data.get("mcpBridges"))
+
+          # Fase 8 is not cloud-first until at least one Cloud Runtime Agent is online.
+          if int(data.get("agentsOnline") or 0) < 1:
+              raise SystemExit("Fase 8 BLOCKED: no Cloud Runtime Agent is currently connected (agentsOnline < 1)")
+          PY
+
+      - name: Upload runtime health evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fase8-runtime-health-${{ github.sha }}
+          path: fase8-runtime-health/
+          if-no-files-found: warn
+          retention-days: 7
