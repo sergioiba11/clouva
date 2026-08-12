@@ -77,3 +77,5 @@ jobs:
           path: fase8-runtime-health/
           if-no-files-found: warn
           retention-days: 7
+
+      # This workflow is intentionally health-only. Deploy stays separate.
