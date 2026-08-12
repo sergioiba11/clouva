@@ -1,0 +1,111 @@
+name: Fase 8 Cloud discovery
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feat/workspace-cloud-web
+    paths:
+      - ".github/workflows/fase8-cloud-discovery.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: gen-lang-client-0737053175
+  REGION: us-central1
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA_EMAIL }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Discover existing Workspace/Runtime resources without mutating GCP
+        shell: bash
+        run: |
+          set -u
+          mkdir -p fase8-cloud-discovery
+          out=fase8-cloud-discovery/discovery.txt
+          : > "$out"
+
+          section() { printf '\n## %s\n' "$1" | tee -a "$out"; }
+          safe() { "$@" 2>&1 | tee -a "$out" || true; }
+
+          section "Cloud Run services"
+          safe gcloud run services list --project "$PROJECT_ID" --region "$REGION" \
+            --format='table(metadata.name,status.url,status.latestReadyRevisionName)'
+
+          section "Cloud Run jobs"
+          safe gcloud run jobs list --project "$PROJECT_ID" --region "$REGION" \
+            --format='table(metadata.name,status.conditions[0].type,status.conditions[0].status)'
+
+          section "Gateway configuration metadata (values redacted)"
+          python3 - <<'PY' | tee -a "$out"
+          import json, subprocess
+          p = subprocess.run([
+              'gcloud','run','services','describe','clouva-gateway',
+              '--project','gen-lang-client-0737053175','--region','us-central1','--format=json'
+          ], capture_output=True, text=True)
+          if p.returncode:
+              print(p.stderr.strip())
+          else:
+              d=json.loads(p.stdout)
+              md=d.get('metadata',{})
+              tmpl=d.get('spec',{}).get('template',{})
+              spec=tmpl.get('spec',{})
+              c=(spec.get('containers') or [{}])[0]
+              print('service=', md.get('name'))
+              print('revision=', d.get('status',{}).get('latestReadyRevisionName'))
+              print('serviceAccountName=', spec.get('serviceAccountName'))
+              print('image=', c.get('image'))
+              print('envNames=', sorted([x.get('name') for x in c.get('env',[]) if x.get('name')]))
+              ann={k:v for k,v in (md.get('annotations') or {}).items() if any(s in k.lower() for s in ['source','client','build','creator','modifier'])}
+              print('annotations=', ann)
+          PY
+
+          section "Recent Cloud Build records"
+          safe gcloud builds list --project "$PROJECT_ID" --limit=20 \
+            --format='table(id,status,createTime,source.repoSource.repoName,source.repoSource.branchName,images)'
+
+          section "Artifact Registry repositories"
+          safe gcloud artifacts repositories list --project "$PROJECT_ID" --location="$REGION" \
+            --format='table(name.basename(),format,description)'
+
+          section "Potential workspace/runtime resources via Cloud Asset Inventory"
+          safe gcloud asset search-all-resources --project "$PROJECT_ID" \
+            --query='clouva OR workspace OR runtime OR agent' \
+            --format='table(assetType,name,location,state)' --limit=200
+
+          section "Compute instances (may be denied by least-privilege IAM)"
+          safe gcloud compute instances list --project "$PROJECT_ID" \
+            --format='table(name,zone,status,machineType.basename())'
+
+          section "Managed instance groups"
+          safe gcloud compute instance-groups managed list --project "$PROJECT_ID" \
+            --format='table(name,location(),targetSize,instanceTemplate.basename())'
+
+          section "Cloud Run service accounts"
+          for svc in clouva-gateway clouva-web clouva-blender-worker clouva-mediapipe-detector; do
+            printf '%s: ' "$svc" | tee -a "$out"
+            gcloud run services describe "$svc" --project "$PROJECT_ID" --region "$REGION" \
+              --format='value(spec.template.spec.serviceAccountName)' 2>&1 | tee -a "$out" || true
+          done
+
+      - name: Upload discovery evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fase8-cloud-discovery-${{ github.sha }}
+          path: fase8-cloud-discovery/
+          if-no-files-found: warn
+          retention-days: 7
