@@ -1,0 +1,9 @@
+.venv/
+frontend/node_modules/
+frontend/dist/
+output/*
+!output/.gitkeep
+backend/models/*.task
+__pycache__/
+.pytest_cache/
+.local-pids.json

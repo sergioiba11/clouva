@@ -1,0 +1,5 @@
+Cambios del visor v8.3:
+- ocultar por defecto los landmarks faciales rechazados
+- mostrar anchors de aritos con color destacado (amarillo/dorado)
+- mostrar etiqueta left_earlobe_anchor / right_earlobe_anchor al seleccionar
+- Face Ready = Sí solo si no quedan rechazos críticos

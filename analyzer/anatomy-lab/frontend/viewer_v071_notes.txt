@@ -1,0 +1,5 @@
+Visor v0.7.1:
+- mostrar pines amarillos pequeños solamente en lóbulos
+- no dibujar pin si falla la validación del par
+- si falla, mostrar mensaje "Pins De Lóbulos Listos: No"
+- permitir inspeccionar el error vertical de cada lado
