@@ -1,0 +1,89 @@
+name: Deploy Workspace Preview
+
+on:
+  push:
+    branches:
+      - workspace-official-v1
+    paths:
+      - "app/workspace/**"
+      - "components/workspace/**"
+      - ".github/workflows/deploy-workspace-preview.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: workspace-preview
+  cancel-in-progress: true
+
+env:
+  PROJECT_ID: gen-lang-client-0737053175
+  REGION: us-central1
+  SERVICE: clouva-workspace-preview
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: workspace-official-v1
+          fetch-depth: 0
+
+      - name: Resolve commit
+        id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA_EMAIL }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build preview image
+        env:
+          COMMIT_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          gcloud builds submit \
+            --project "$PROJECT_ID" \
+            --config cloudbuild-web.yaml \
+            --substitutions="_NEXT_PUBLIC_SUPABASE_URL=${{ vars.NEXT_PUBLIC_SUPABASE_URL }},_NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ vars.NEXT_PUBLIC_SUPABASE_ANON_KEY }},_NEXT_PUBLIC_GOOGLE_CLIENT_ID=${{ vars.NEXT_PUBLIC_GOOGLE_CLIENT_ID }},_DEPLOY_REF=workspace-official-v1,COMMIT_SHA=$COMMIT_SHA" \
+            .
+
+      - name: Deploy isolated preview service
+        env:
+          COMMIT_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          gcloud run deploy "$SERVICE" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --image "us-central1-docker.pkg.dev/$PROJECT_ID/clouva/clouva-web:$COMMIT_SHA" \
+            --allow-unauthenticated \
+            --min-instances 0 \
+            --max-instances 1 \
+            --quiet
+
+      - name: Show preview URL
+        id: preview
+        run: |
+          url="$(gcloud run services describe "$SERVICE" --project "$PROJECT_ID" --region "$REGION" --format='value(status.url)')/workspace"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "### CLOUVA Workspace Preview" >> "$GITHUB_STEP_SUMMARY"
+          echo "$url" >> "$GITHUB_STEP_SUMMARY"
+          echo "Preview aislada: no modifica el servicio clouva-web." >> "$GITHUB_STEP_SUMMARY"
