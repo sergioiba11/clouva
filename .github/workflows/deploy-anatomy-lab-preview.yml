@@ -40,10 +40,31 @@ jobs:
           IMAGE: us-central1-docker.pkg.dev/${{ env.PROJECT_ID }}/clouva/clouva-anatomy-lab:${{ github.sha }}
         run: |
           cd analyzer/anatomy-lab
-          gcloud builds submit \
+          BUILD_ID="$(gcloud builds submit \
             --project "$PROJECT_ID" \
             --tag "$IMAGE" \
-            .
+            --async \
+            --format='value(id)' \
+            .)"
+          echo "Cloud Build: $BUILD_ID" >> "$GITHUB_STEP_SUMMARY"
+
+          for attempt in $(seq 1 90); do
+            STATUS="$(gcloud builds describe "$BUILD_ID" --project "$PROJECT_ID" --format='value(status)')"
+            echo "Build status: $STATUS"
+            case "$STATUS" in
+              SUCCESS)
+                exit 0
+                ;;
+              FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
+                echo "Cloud Build failed with status: $STATUS" >&2
+                exit 1
+                ;;
+            esac
+            sleep 10
+          done
+
+          echo "Cloud Build polling timed out" >&2
+          exit 1
 
       - name: Deploy isolated Analyzer service
         env:
