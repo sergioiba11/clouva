@@ -1,0 +1,77 @@
+name: Deploy Anatomy Lab Preview
+
+on:
+  push:
+    branches:
+      - workspace-official-v1
+    paths:
+      - "analyzer/anatomy-lab/**"
+      - ".github/workflows/deploy-anatomy-lab-preview.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: gen-lang-client-0737053175
+  REGION: us-central1
+  SERVICE: clouva-anatomy-lab-preview
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: workspace-official-v1
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA_EMAIL }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build Anatomy Lab image
+        env:
+          IMAGE: us-central1-docker.pkg.dev/${{ env.PROJECT_ID }}/clouva/clouva-anatomy-lab:${{ github.sha }}
+        run: |
+          cd analyzer/anatomy-lab
+          gcloud builds submit \
+            --project "$PROJECT_ID" \
+            --tag "$IMAGE" \
+            .
+
+      - name: Deploy isolated Analyzer service
+        env:
+          IMAGE: us-central1-docker.pkg.dev/${{ env.PROJECT_ID }}/clouva/clouva-anatomy-lab:${{ github.sha }}
+        run: |
+          gcloud run deploy "$SERVICE" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --image "$IMAGE" \
+            --allow-unauthenticated \
+            --cpu 2 \
+            --memory 4Gi \
+            --concurrency 1 \
+            --timeout 900 \
+            --min-instances 0 \
+            --max-instances 1 \
+            --quiet
+
+      - name: Verify Analyzer health
+        run: |
+          url="$(gcloud run services describe "$SERVICE" --project "$PROJECT_ID" --region "$REGION" --format='value(status.url)')"
+          echo "Analyzer URL: $url" >> "$GITHUB_STEP_SUMMARY"
+          for attempt in $(seq 1 20); do
+            if curl --fail --silent --show-error "$url/health"; then
+              echo >> "$GITHUB_STEP_SUMMARY"
+              echo "Health OK" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep 5
+          done
+          exit 1
