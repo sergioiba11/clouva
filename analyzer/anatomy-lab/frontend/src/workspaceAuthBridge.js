@@ -17,6 +17,23 @@ function validSignedIn(command) {
     && command.refresh_token.length > 0;
 }
 
+function normalizeCommand(data) {
+  const candidate = data?.command && typeof data.command === "object" ? data.command : data;
+  if (candidate?.type === "signed-out") return { type: "signed-out" };
+  if (validSignedIn(candidate)) return candidate;
+
+  const accessToken = candidate?.accessToken || candidate?.access_token || data?.accessToken || data?.access_token;
+  const refreshToken = candidate?.refreshToken || candidate?.refresh_token || data?.refreshToken || data?.refresh_token;
+  if (typeof accessToken === "string" && accessToken && typeof refreshToken === "string" && refreshToken) {
+    return {
+      type: "signed-in",
+      access_token: accessToken,
+      refresh_token: refreshToken,
+    };
+  }
+  return null;
+}
+
 function allowedWorkspaceOrigin(origin) {
   return typeof origin === "string" && ALLOWED_WORKSPACE_ORIGINS.has(origin);
 }
@@ -61,8 +78,18 @@ function postToWorkspace(target, payload, preferredOrigin = null) {
   return true;
 }
 
-function notifyWorkspaceReady(target = window) {
-  return postToWorkspace(target, { channel: ANALYZER_AUTH_CHANNEL, type: "ready" });
+function notifyWorkspaceReady(target = window, preferredOrigin = null) {
+  const ready = postToWorkspace(
+    target,
+    { channel: ANALYZER_AUTH_CHANNEL, type: "ready" },
+    preferredOrigin,
+  );
+  postToWorkspace(
+    target,
+    { channel: ANALYZER_AUTH_CHANNEL, type: "request-session" },
+    preferredOrigin,
+  );
+  return ready;
 }
 
 function notifyWorkspaceAuthResult(target, result, preferredOrigin = null) {
@@ -85,9 +112,12 @@ function installPrebootCommandQueue(target = window) {
   const listener = (event) => {
     if (!allowedWorkspaceOrigin(event?.origin)) return;
     if (target.parent && event?.source !== target.parent) return;
-    if (event?.data?.channel !== WORKSPACE_AUTH_CHANNEL) return;
+    const command = normalizeCommand(event?.data);
+    if (!command) return;
+    const channel = event?.data?.channel;
+    if (channel && channel !== WORKSPACE_AUTH_CHANNEL) return;
     target[PENDING_COMMAND_KEY] = {
-      command: event.data.command,
+      command,
       origin: event.origin,
     };
   };
@@ -96,20 +126,23 @@ function installPrebootCommandQueue(target = window) {
   target[PREBOOT_LISTENER_KEY] = listener;
 }
 
-// Install the receiver immediately when the bundle evaluates. This removes the
-// race where Workspace sends its canonical session before Supabase/config boot
-// has finished inside the Analyzer iframe.
+// Install immediately so a session sent by Workspace can never be lost while
+// Supabase/config is still booting inside the Analyzer iframe.
 if (typeof window !== "undefined") {
   installPrebootCommandQueue(window);
   notifyWorkspaceReady(window);
 }
 
-/** Receive the canonical Workspace session through either the legacy verified
- * Electron handoff or the isolated CLOUVA Workspace web iframe bridge.
- * Workspace remains the canonical session owner. */
+/**
+ * Receive the canonical CLOUVA session from Workspace.
+ * The Analyzer never becomes the canonical owner of that session: it only
+ * mirrors it locally and stops its own refresh loop while Workspace manages it.
+ */
 export function installWorkspaceAuthBridge({ target = window, client, onSession, onManagedChange }) {
-  const receiver = async (command, preferredOrigin = null) => {
+  const receiver = async (rawCommand, preferredOrigin = null) => {
+    const command = normalizeCommand(rawCommand);
     let result;
+
     if (command?.type === "signed-out") {
       const signedOut = await client.auth.signOut({ scope: "local" });
       if (signedOut.error) throw signedOut.error;
@@ -119,9 +152,11 @@ export function installWorkspaceAuthBridge({ target = window, client, onSession,
       notifyWorkspaceAuthResult(target, result, preferredOrigin);
       return result;
     }
+
     if (!validSignedIn(command)) {
       result = { accepted: false, signedIn: false, userId: null };
       notifyWorkspaceAuthResult(target, result, preferredOrigin);
+      notifyWorkspaceReady(target, preferredOrigin);
       return result;
     }
 
@@ -150,10 +185,15 @@ export function installWorkspaceAuthBridge({ target = window, client, onSession,
   const handleMessage = (event) => {
     if (!allowedWorkspaceOrigin(event?.origin)) return;
     if (target.parent && event?.source !== target.parent) return;
-    if (event?.data?.channel !== WORKSPACE_AUTH_CHANNEL) return;
-    void receiver(event.data.command, event.origin).catch((error) => {
+    const command = normalizeCommand(event?.data);
+    if (!command) return;
+    const channel = event?.data?.channel;
+    if (channel && channel !== WORKSPACE_AUTH_CHANNEL) return;
+
+    void receiver(command, event.origin).catch((error) => {
       console.error("[anatomy-lab] Workspace web auth handoff failed", error);
       notifyWorkspaceAuthResult(target, { accepted: false, signedIn: false, userId: null }, event.origin);
+      notifyWorkspaceReady(target, event.origin);
     });
   };
 
@@ -167,10 +207,14 @@ export function installWorkspaceAuthBridge({ target = window, client, onSession,
     void receiver(pending.command, pending.origin).catch((error) => {
       console.error("[anatomy-lab] queued Workspace auth handoff failed", error);
       notifyWorkspaceAuthResult(target, { accepted: false, signedIn: false, userId: null }, pending.origin);
+      notifyWorkspaceReady(target, pending.origin);
     });
   }
 
-  const retryDelays = [0, 150, 500, 1200, 2500, 5000];
+  // Keep requesting the canonical session until Workspace answers. This makes
+  // the bridge independent from iframe load timing, HMR remounts and mobile
+  // browsers that suspend/resume the embedded page.
+  const retryDelays = [0, 100, 300, 700, 1500, 3000, 6000, 10000, 15000];
   const readyTimers = retryDelays.map((delay) => target.setTimeout?.(() => notifyWorkspaceReady(target), delay));
 
   return () => {
