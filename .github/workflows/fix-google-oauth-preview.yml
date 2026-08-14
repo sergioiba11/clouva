@@ -42,7 +42,6 @@ jobs:
           URL="https://clientauthconfig.clients6.google.com/v1/clients?projectNumber=${PROJECT_NUMBER}&returnClientSecrets=false&returnDisabledClients=true&readOptions.staleness=0.02s"
           HTTP_CODE="$(curl -sS -o oauth-clients.json -w '%{http_code}' \
             -H "Authorization: Bearer $TOKEN" \
-            -H "Origin: https://console.cloud.google.com" \
             -H "X-Origin: https://console.cloud.google.com" \
             -H "X-Goog-User-Project: $PROJECT_ID" \
             "$URL")"
