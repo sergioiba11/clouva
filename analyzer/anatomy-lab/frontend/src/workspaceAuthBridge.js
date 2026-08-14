@@ -85,11 +85,17 @@ export function installWorkspaceAuthBridge({ target = window, client, onSession,
     target.addEventListener("message", handleMessage);
   }
 
-  // Repeat the ready signal once the auth receiver is installed so a session
-  // sent by the parent can be applied immediately.
-  notifyWorkspaceReady(target);
+  // Supabase boot can briefly race the iframe load event. Re-announce readiness
+  // a few times after the receiver exists so the parent resends its canonical
+  // session after local auth initialization has settled. This keeps Analyzer
+  // hot-reload only; no Workspace or Cloud Run deploy is needed for auth fixes.
+  const retryDelays = [0, 150, 500, 1200, 2500, 5000];
+  const readyTimers = retryDelays.map((delay) => target.setTimeout?.(() => notifyWorkspaceReady(target), delay));
 
   return () => {
+    readyTimers.forEach((timer) => {
+      if (timer !== undefined && timer !== null) target.clearTimeout?.(timer);
+    });
     if (target.__CLOUVA_WORKSPACE_SYNC_SESSION__ === receiver) {
       delete target.__CLOUVA_WORKSPACE_SYNC_SESSION__;
     }
