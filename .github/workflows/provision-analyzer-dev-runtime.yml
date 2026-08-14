@@ -6,6 +6,7 @@ on:
       - workspace-official-v1
     paths:
       - ".github/workflows/provision-analyzer-dev-runtime.yml"
+      - "analyzer/dev-runtime/**"
   workflow_dispatch:
 
 permissions:
@@ -15,15 +16,13 @@ permissions:
 env:
   PROJECT_ID: gen-lang-client-0737053175
   REGION: us-central1
-  ZONE: us-central1-a
-  VM_NAME: clouva-analyzer-dev
-  ADDRESS_NAME: clouva-analyzer-dev-ip
-  FIREWALL_RULE: clouva-analyzer-dev-web
+  SERVICE: clouva-analyzer-dev
+  IMAGE: us-central1-docker.pkg.dev/gen-lang-client-0737053175/clouva/clouva-analyzer-dev:runtime-v1
 
 jobs:
   provision:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
@@ -37,83 +36,68 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
-      - name: Ensure static IP
-        id: address
+      - name: Build generic dev runtime image
         run: |
           set -euo pipefail
-          if ! gcloud compute addresses describe "$ADDRESS_NAME" --project "$PROJECT_ID" --region "$REGION" >/dev/null 2>&1; then
-            gcloud compute addresses create "$ADDRESS_NAME" --project "$PROJECT_ID" --region "$REGION" --quiet
-          fi
-          ip="$(gcloud compute addresses describe "$ADDRESS_NAME" --project "$PROJECT_ID" --region "$REGION" --format='value(address)')"
-          test -n "$ip"
-          echo "ip=$ip" >> "$GITHUB_OUTPUT"
-          echo "url=https://${ip}.sslip.io" >> "$GITHUB_OUTPUT"
+          BUILD_ID="$(gcloud builds submit analyzer/dev-runtime \
+            --project "$PROJECT_ID" \
+            --tag "$IMAGE" \
+            --async \
+            --format='value(id)')"
+          echo "Cloud Build: $BUILD_ID" >> "$GITHUB_STEP_SUMMARY"
+          for attempt in $(seq 1 90); do
+            STATUS="$(gcloud builds describe "$BUILD_ID" --project "$PROJECT_ID" --format='value(status)')"
+            echo "Build status: $STATUS"
+            case "$STATUS" in
+              SUCCESS) break ;;
+              FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED) exit 1 ;;
+            esac
+            sleep 10
+          done
 
-      - name: Ensure web firewall
+      - name: Deploy persistent self-syncing runtime
         run: |
           set -euo pipefail
-          if ! gcloud compute firewall-rules describe "$FIREWALL_RULE" --project "$PROJECT_ID" >/dev/null 2>&1; then
-            gcloud compute firewall-rules create "$FIREWALL_RULE" \
-              --project "$PROJECT_ID" \
-              --direction INGRESS \
-              --action ALLOW \
-              --rules tcp:80,tcp:443 \
-              --source-ranges 0.0.0.0/0 \
-              --target-tags clouva-analyzer-dev \
-              --quiet
-          fi
+          gcloud run deploy "$SERVICE" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --image "$IMAGE" \
+            --allow-unauthenticated \
+            --execution-environment gen2 \
+            --cpu 2 \
+            --memory 4Gi \
+            --concurrency 1 \
+            --timeout 900 \
+            --min-instances 1 \
+            --max-instances 1 \
+            --no-cpu-throttling \
+            --set-env-vars "REPO_URL=https://github.com/sergioiba11/clouva.git,BRANCH=workspace-official-v1,LAB_PATH=analyzer/anatomy-lab,SYNC_SECONDS=10" \
+            --quiet
 
-      - name: Create or refresh persistent VM
-        env:
-          STATIC_IP: ${{ steps.address.outputs.ip }}
+      - name: Verify dev runtime
+        id: runtime
         run: |
           set -euo pipefail
-          if gcloud compute instances describe "$VM_NAME" --project "$PROJECT_ID" --zone "$ZONE" >/dev/null 2>&1; then
-            gcloud compute instances add-metadata "$VM_NAME" \
-              --project "$PROJECT_ID" \
-              --zone "$ZONE" \
-              --metadata-from-file startup-script=.github/scripts/analyzer-dev-startup.sh \
-              --quiet
-            gcloud compute instances reset "$VM_NAME" --project "$PROJECT_ID" --zone "$ZONE" --quiet
-          else
-            gcloud compute instances create "$VM_NAME" \
-              --project "$PROJECT_ID" \
-              --zone "$ZONE" \
-              --machine-type e2-standard-2 \
-              --boot-disk-size 60GB \
-              --boot-disk-type pd-balanced \
-              --image-family debian-12 \
-              --image-project debian-cloud \
-              --address "$STATIC_IP" \
-              --tags clouva-analyzer-dev \
-              --metadata-from-file startup-script=.github/scripts/analyzer-dev-startup.sh \
-              --quiet
-          fi
-
-      - name: Verify persistent runtime
-        env:
-          RUNTIME_URL: ${{ steps.address.outputs.url }}
-        run: |
-          set -euo pipefail
-          echo "Waiting for $RUNTIME_URL"
-          for attempt in $(seq 1 80); do
-            if curl --fail --silent --show-error --connect-timeout 5 "$RUNTIME_URL/health" >/tmp/health.json 2>/dev/null; then
+          url="$(gcloud run services describe "$SERVICE" --project "$PROJECT_ID" --region "$REGION" --format='value(status.url)')"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "Waiting for $url"
+          for attempt in $(seq 1 90); do
+            if curl --fail --silent --show-error --connect-timeout 5 "$url/health" >/tmp/health.json 2>/dev/null; then
               cat /tmp/health.json
-              curl --fail --silent --show-error --connect-timeout 5 "$RUNTIME_URL/" >/dev/null
-              echo "Runtime OK: $RUNTIME_URL"
+              curl --fail --silent --show-error --connect-timeout 5 "$url/" >/dev/null
+              echo "Runtime OK: $url"
               exit 0
             fi
             sleep 10
           done
-          echo "Persistent Analyzer runtime did not become healthy" >&2
-          gcloud compute instances get-serial-port-output "$VM_NAME" --project "$PROJECT_ID" --zone "$ZONE" --port=1 | tail -n 250 || true
+          echo "Analyzer dev runtime did not become healthy" >&2
           exit 1
 
       - name: Summary
         env:
-          RUNTIME_URL: ${{ steps.address.outputs.url }}
+          RUNTIME_URL: ${{ steps.runtime.outputs.url }}
         run: |
           echo "### CLOUVA Analyzer Dev Runtime" >> "$GITHUB_STEP_SUMMARY"
-          echo "Persistent runtime: $RUNTIME_URL" >> "$GITHUB_STEP_SUMMARY"
+          echo "Runtime: $RUNTIME_URL" >> "$GITHUB_STEP_SUMMARY"
           echo "Source: workspace-official-v1 / analyzer/anatomy-lab" >> "$GITHUB_STEP_SUMMARY"
-          echo "Sync: every 10 seconds; Vite + Uvicorn reload without image rebuilds." >> "$GITHUB_STEP_SUMMARY"
+          echo "Analyzer source syncs every 10 seconds. Editing Analyzer code no longer rebuilds or redeploys this service." >> "$GITHUB_STEP_SUMMARY"
