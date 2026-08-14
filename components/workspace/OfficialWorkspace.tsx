@@ -14,6 +14,7 @@ import styles from "./OfficialWorkspace.module.css";
 
 type WorkspaceMode = "web" | "analyzer";
 type PreviewMode = "actual" | "proposal" | "compare";
+type AnalyzerAuthState = "idle" | "sending" | "synced" | "failed";
 
 const PREVIEW_LABELS: Record<PreviewMode, string> = {
   actual: "Actual",
@@ -32,6 +33,7 @@ export function OfficialWorkspace() {
   const [previewMode, setPreviewMode] = useState<PreviewMode>("actual");
   const [webReloadKey, setWebReloadKey] = useState(0);
   const [analyzerReloadKey, setAnalyzerReloadKey] = useState(0);
+  const [analyzerAuthState, setAnalyzerAuthState] = useState<AnalyzerAuthState>("idle");
   const analyzerFrameRef = useRef<HTMLIFrameElement>(null);
 
   const statusText = useMemo(
@@ -52,24 +54,48 @@ export function OfficialWorkspace() {
         }
       : { type: "signed-out" as const };
 
+    setAnalyzerAuthState("sending");
     target.postMessage({ channel: WORKSPACE_AUTH_CHANNEL, command }, ANALYZER_URL);
   }, [hydrationReady, session?.access_token, session?.refresh_token]);
 
   useEffect(() => {
-    const handleAnalyzerReady = (event: MessageEvent) => {
+    const handleAnalyzerMessage = (event: MessageEvent) => {
       if (event.origin !== ANALYZER_URL) return;
       if (event.source !== analyzerFrameRef.current?.contentWindow) return;
-      if (event.data?.channel !== ANALYZER_AUTH_CHANNEL || event.data?.type !== "ready") return;
-      sendAnalyzerSession();
+      if (event.data?.channel !== ANALYZER_AUTH_CHANNEL) return;
+
+      if (event.data?.type === "ready") {
+        sendAnalyzerSession();
+        return;
+      }
+
+      if (event.data?.type === "auth-result") {
+        const expectedSignedIn = Boolean(session?.access_token && session.refresh_token);
+        const accepted = Boolean(event.data?.accepted);
+        const signedIn = Boolean(event.data?.signedIn);
+        setAnalyzerAuthState(accepted && signedIn === expectedSignedIn ? "synced" : "failed");
+      }
     };
 
-    window.addEventListener("message", handleAnalyzerReady);
-    return () => window.removeEventListener("message", handleAnalyzerReady);
-  }, [sendAnalyzerSession]);
+    window.addEventListener("message", handleAnalyzerMessage);
+    return () => window.removeEventListener("message", handleAnalyzerMessage);
+  }, [sendAnalyzerSession, session?.access_token, session?.refresh_token]);
 
   useEffect(() => {
     if (mode === "analyzer") sendAnalyzerSession();
   }, [mode, analyzerReloadKey, sendAnalyzerSession]);
+
+  useEffect(() => {
+    setAnalyzerAuthState("idle");
+  }, [session?.access_token, session?.refresh_token]);
+
+  const analyzerSessionLabel = useMemo(() => {
+    if (!hydrationReady) return "Cloud aislado · preparando sesión";
+    if (!session) return "Cloud aislado · sin sesión CLOUVA";
+    if (analyzerAuthState === "synced") return "Cloud aislado · sesión CLOUVA verificada";
+    if (analyzerAuthState === "failed") return "Cloud aislado · sesión CLOUVA no aceptada";
+    return "Cloud aislado · sincronizando sesión CLOUVA…";
+  }, [hydrationReady, session, analyzerAuthState]);
 
   return (
     <main className={styles.workspaceRoot}>
@@ -181,11 +207,7 @@ export function OfficialWorkspace() {
               <span className={styles.liveDot} />
               <div>
                 <strong>Analyzer Lab</strong>
-                <span>
-                  {hydrationReady && session
-                    ? "Cloud aislado · sesión CLOUVA sincronizada"
-                    : "Cloud aislado · listo para probar"}
-                </span>
+                <span>{analyzerSessionLabel}</span>
               </div>
             </div>
 
@@ -193,7 +215,10 @@ export function OfficialWorkspace() {
               <button
                 type="button"
                 className={styles.iconButton}
-                onClick={() => setAnalyzerReloadKey((value) => value + 1)}
+                onClick={() => {
+                  setAnalyzerAuthState("idle");
+                  setAnalyzerReloadKey((value) => value + 1);
+                }}
                 title="Recargar Analyzer"
               >
                 <RefreshCw size={16} />
