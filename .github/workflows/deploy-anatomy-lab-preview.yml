@@ -1,12 +1,6 @@
-name: Deploy Anatomy Lab Preview
+name: Deploy Anatomy Lab Snapshot
 
 on:
-  push:
-    branches:
-      - workspace-official-v1
-    paths:
-      - "analyzer/anatomy-lab/**"
-      - ".github/workflows/deploy-anatomy-lab-preview.yml"
   workflow_dispatch:
 
 permissions:
@@ -65,26 +59,18 @@ jobs:
             --format='value(id)' \
             .)"
           echo "Cloud Build: $BUILD_ID" >> "$GITHUB_STEP_SUMMARY"
-
           for attempt in $(seq 1 90); do
             STATUS="$(gcloud builds describe "$BUILD_ID" --project "$PROJECT_ID" --format='value(status)')"
             echo "Build status: $STATUS"
             case "$STATUS" in
-              SUCCESS)
-                exit 0
-                ;;
-              FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
-                echo "Cloud Build failed with status: $STATUS" >&2
-                exit 1
-                ;;
+              SUCCESS) exit 0 ;;
+              FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED) exit 1 ;;
             esac
             sleep 10
           done
-
-          echo "Cloud Build polling timed out" >&2
           exit 1
 
-      - name: Deploy isolated Analyzer service
+      - name: Deploy isolated Analyzer snapshot
         env:
           IMAGE: us-central1-docker.pkg.dev/${{ env.PROJECT_ID }}/clouva/clouva-anatomy-lab:${{ github.sha }}
         run: |
@@ -101,14 +87,12 @@ jobs:
             --max-instances 1 \
             --quiet
 
-      - name: Verify Analyzer health
+      - name: Verify Analyzer snapshot health
         run: |
           url="$(gcloud run services describe "$SERVICE" --project "$PROJECT_ID" --region "$REGION" --format='value(status.url)')"
-          echo "Analyzer URL: $url" >> "$GITHUB_STEP_SUMMARY"
           for attempt in $(seq 1 20); do
             if curl --fail --silent --show-error "$url/health"; then
-              echo >> "$GITHUB_STEP_SUMMARY"
-              echo "Health OK" >> "$GITHUB_STEP_SUMMARY"
+              echo "Snapshot health OK: $url" >> "$GITHUB_STEP_SUMMARY"
               exit 0
             fi
             sleep 5
