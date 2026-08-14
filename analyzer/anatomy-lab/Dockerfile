@@ -12,18 +12,16 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PORT=8080
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends nginx libgl1 libglib2.0-0 libgomp1 curl \
+    && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 COPY backend ./backend
-COPY --from=frontend /src/dist /usr/share/nginx/html
-COPY cloud/nginx.conf /etc/nginx/nginx.conf
-COPY cloud/start.sh /start.sh
+COPY cloud/cloud_app.py ./cloud_app.py
+COPY --from=frontend /src/dist ./frontend
 
 RUN pip install --no-cache-dir -r backend/requirements.txt \
-    && mkdir -p /app/input /app/output \
-    && chmod +x /start.sh
+    && mkdir -p /app/input /app/output
 
 EXPOSE 8080
-CMD ["/start.sh"]
+CMD ["sh", "-c", "python -m uvicorn cloud_app:app --host 0.0.0.0 --port ${PORT:-8080}"]
