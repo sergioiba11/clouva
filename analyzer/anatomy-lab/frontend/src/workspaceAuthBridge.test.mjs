@@ -95,3 +95,51 @@ test("Analyzer announces readiness even when cross-origin referrer is suppressed
   assert.ok(messages.every(({ payload }) => payload.channel === "clouva-analyzer-auth-v1" && payload.type === "ready"));
   cleanup();
 });
+
+test("Analyzer applies a Workspace command queued before Supabase boot and sends ACK", async () => {
+  const messages = [];
+  const parent = {
+    postMessage: (payload, origin) => messages.push({ payload, origin }),
+  };
+  const target = {
+    parent,
+    document: { referrer: "https://clouva.com.ar/workspace" },
+    location: {},
+    __CLOUVA_WORKSPACE_PENDING_AUTH__: {
+      command: {
+        type: "signed-in",
+        access_token: "queued-access",
+        refresh_token: "queued-refresh",
+      },
+      origin: "https://clouva.com.ar",
+    },
+  };
+  const calls = [];
+
+  const cleanup = installWorkspaceAuthBridge({
+    target,
+    client: {
+      auth: {
+        setSession: async (tokens) => {
+          calls.push(tokens);
+          return { data: { session: { user: { id: "queued-user" } } }, error: null };
+        },
+        signOut: async () => ({ error: null }),
+        stopAutoRefresh: () => {},
+      },
+    },
+    onManagedChange: () => {},
+    onSession: () => {},
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.deepEqual(calls, [{ access_token: "queued-access", refresh_token: "queued-refresh" }]);
+  assert.ok(messages.some(({ payload, origin }) => (
+    origin === "https://clouva.com.ar"
+    && payload.type === "auth-result"
+    && payload.accepted === true
+    && payload.signedIn === true
+    && payload.userId === "queued-user"
+  )));
+  cleanup();
+});
