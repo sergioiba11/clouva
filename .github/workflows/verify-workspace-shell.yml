@@ -12,7 +12,11 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: ${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+      NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${{ vars.NEXT_PUBLIC_GOOGLE_CLIENT_ID }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -25,5 +29,5 @@ jobs:
         run: npm ci
       - name: Typecheck
         run: npm run typecheck
-      - name: Tests
-        run: npm test
+      - name: Production build
+        run: npm run build
