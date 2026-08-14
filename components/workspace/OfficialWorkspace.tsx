@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ExternalLink,
   Globe2,
@@ -9,6 +9,7 @@ import {
   ShieldCheck,
   Sparkles,
 } from "lucide-react";
+import { useAuth } from "@/components/auth-provider";
 import styles from "./OfficialWorkspace.module.css";
 
 type WorkspaceMode = "web" | "analyzer";
@@ -21,17 +22,53 @@ const PREVIEW_LABELS: Record<PreviewMode, string> = {
 };
 
 const ANALYZER_URL = "https://clouva-anatomy-lab-preview-37640598175.us-central1.run.app";
+const WORKSPACE_AUTH_CHANNEL = "clouva-workspace-auth-v1";
+const ANALYZER_AUTH_CHANNEL = "clouva-analyzer-auth-v1";
 
 export function OfficialWorkspace() {
+  const { session, hydrationReady } = useAuth();
   const [mode, setMode] = useState<WorkspaceMode>("web");
   const [previewMode, setPreviewMode] = useState<PreviewMode>("actual");
   const [webReloadKey, setWebReloadKey] = useState(0);
   const [analyzerReloadKey, setAnalyzerReloadKey] = useState(0);
+  const analyzerFrameRef = useRef<HTMLIFrameElement>(null);
 
   const statusText = useMemo(
     () => (mode === "web" ? "Web protegida" : "Analyzer cloud activo"),
     [mode],
   );
+
+  const sendAnalyzerSession = useCallback(() => {
+    if (!hydrationReady) return;
+    const target = analyzerFrameRef.current?.contentWindow;
+    if (!target) return;
+
+    const command = session?.access_token && session.refresh_token
+      ? {
+          type: "signed-in" as const,
+          access_token: session.access_token,
+          refresh_token: session.refresh_token,
+        }
+      : { type: "signed-out" as const };
+
+    target.postMessage({ channel: WORKSPACE_AUTH_CHANNEL, command }, ANALYZER_URL);
+  }, [hydrationReady, session?.access_token, session?.refresh_token]);
+
+  useEffect(() => {
+    const handleAnalyzerReady = (event: MessageEvent) => {
+      if (event.origin !== ANALYZER_URL) return;
+      if (event.source !== analyzerFrameRef.current?.contentWindow) return;
+      if (event.data?.channel !== ANALYZER_AUTH_CHANNEL || event.data?.type !== "ready") return;
+      sendAnalyzerSession();
+    };
+
+    window.addEventListener("message", handleAnalyzerReady);
+    return () => window.removeEventListener("message", handleAnalyzerReady);
+  }, [sendAnalyzerSession]);
+
+  useEffect(() => {
+    if (mode === "analyzer") sendAnalyzerSession();
+  }, [mode, analyzerReloadKey, sendAnalyzerSession]);
 
   return (
     <main className={styles.workspaceRoot}>
@@ -142,8 +179,12 @@ export function OfficialWorkspace() {
             <div className={styles.analyzerStatus}>
               <span className={styles.liveDot} />
               <div>
-                <strong>Anatomy Lab</strong>
-                <span>Cloud aislado · listo para probar</span>
+                <strong>Analyzer Lab</strong>
+                <span>
+                  {hydrationReady && session
+                    ? "Cloud aislado · sesión CLOUVA sincronizada"
+                    : "Cloud aislado · listo para probar"}
+                </span>
               </div>
             </div>
 
@@ -176,10 +217,12 @@ export function OfficialWorkspace() {
           <div className={styles.analyzerFrame}>
             <iframe
               key={analyzerReloadKey}
+              ref={analyzerFrameRef}
               className={styles.analyzerPreview}
               src={ANALYZER_URL}
-              title="CLOUVA Anatomy Lab"
+              title="CLOUVA Analyzer Lab"
               allow="clipboard-read; clipboard-write"
+              onLoad={sendAnalyzerSession}
             />
           </div>
         </section>
