@@ -1,3 +1,11 @@
+const WORKSPACE_AUTH_CHANNEL = "clouva-workspace-auth-v1";
+const ANALYZER_AUTH_CHANNEL = "clouva-analyzer-auth-v1";
+const ALLOWED_WORKSPACE_ORIGINS = new Set([
+  "https://clouva-workspace-preview-37640598175.us-central1.run.app",
+  "https://clouva.com.ar",
+  "https://www.clouva.com.ar",
+]);
+
 function validSignedIn(command) {
   return command?.type === "signed-in"
     && typeof command.access_token === "string"
@@ -6,8 +14,13 @@ function validSignedIn(command) {
     && command.refresh_token.length > 0;
 }
 
-/** Receive the canonical Workspace session only through Electron's verified
- * local Preview handoff. Workspace remains the sole refresh-token owner. */
+function allowedWorkspaceOrigin(origin) {
+  return typeof origin === "string" && ALLOWED_WORKSPACE_ORIGINS.has(origin);
+}
+
+/** Receive the canonical Workspace session through either the legacy verified
+ * Electron handoff or the isolated CLOUVA Workspace web iframe bridge.
+ * Workspace remains the canonical session owner. */
 export function installWorkspaceAuthBridge({ target = window, client, onSession, onManagedChange }) {
   const receiver = async (command) => {
     if (command?.type === "signed-out") {
@@ -32,9 +45,41 @@ export function installWorkspaceAuthBridge({ target = window, client, onSession,
   };
 
   target.__CLOUVA_WORKSPACE_SYNC_SESSION__ = receiver;
+
+  const handleMessage = (event) => {
+    if (!allowedWorkspaceOrigin(event?.origin)) return;
+    if (target.parent && event?.source !== target.parent) return;
+    if (event?.data?.channel !== WORKSPACE_AUTH_CHANNEL) return;
+    void receiver(event.data.command).catch((error) => {
+      console.error("[anatomy-lab] Workspace web auth handoff failed", error);
+    });
+  };
+
+  if (typeof target.addEventListener === "function") {
+    target.addEventListener("message", handleMessage);
+  }
+
+  try {
+    const parentOrigin = target.document?.referrer ? new URL(target.document.referrer).origin : null;
+    if (
+      parentOrigin
+      && allowedWorkspaceOrigin(parentOrigin)
+      && target.parent
+      && target.parent !== target
+      && typeof target.parent.postMessage === "function"
+    ) {
+      target.parent.postMessage({ channel: ANALYZER_AUTH_CHANNEL, type: "ready" }, parentOrigin);
+    }
+  } catch {
+    // Standalone Analyzer does not need the Workspace web bridge.
+  }
+
   return () => {
     if (target.__CLOUVA_WORKSPACE_SYNC_SESSION__ === receiver) {
       delete target.__CLOUVA_WORKSPACE_SYNC_SESSION__;
+    }
+    if (typeof target.removeEventListener === "function") {
+      target.removeEventListener("message", handleMessage);
     }
   };
 }
