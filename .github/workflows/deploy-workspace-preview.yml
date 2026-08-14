@@ -1,4 +1,5 @@
 name: Deploy Workspace Preview
+# Redeploy marker: force Workspace preview to build current branch HEAD.
 
 on:
   push:
