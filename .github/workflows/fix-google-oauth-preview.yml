@@ -1,0 +1,59 @@
+name: Fix Google OAuth Preview Origin
+
+on:
+  push:
+    branches:
+      - workspace-official-v1
+    paths:
+      - ".github/workflows/fix-google-oauth-preview.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: gen-lang-client-0737053175
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: workspace-official-v1
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA_EMAIL }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Inspect OAuth client safely
+        env:
+          CLIENT_ID: ${{ vars.NEXT_PUBLIC_GOOGLE_CLIENT_ID }}
+        run: |
+          set -euo pipefail
+          PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')"
+          TOKEN="$(gcloud auth print-access-token)"
+          URL="https://clientauthconfig.googleapis.com/v1/clients?projectNumber=${PROJECT_NUMBER}&returnClientSecrets=false&returnDisabledClients=true"
+          HTTP_CODE="$(curl -sS -o oauth-clients.json -w '%{http_code}' \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "X-Goog-User-Project: $PROJECT_ID" \
+            "$URL")"
+          echo "HTTP $HTTP_CODE"
+          if [ "$HTTP_CODE" != "200" ]; then
+            cat oauth-clients.json
+            exit 1
+          fi
+          MATCH="$(jq --arg id "$CLIENT_ID" '[.clients[]? | select(.clientId == $id) | {clientId,projectNumber,brandId,type,authType,displayName,postMessageOrigins,redirectUris}]' oauth-clients.json)"
+          echo "$MATCH"
+          COUNT="$(echo "$MATCH" | jq 'length')"
+          if [ "$COUNT" -ne 1 ]; then
+            echo "Expected exactly one matching OAuth client, found $COUNT" >&2
+            exit 1
+          fi
+          echo "OAuth client found and ready for a safe origin update." >> "$GITHUB_STEP_SUMMARY"
