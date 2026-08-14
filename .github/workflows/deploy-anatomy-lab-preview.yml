@@ -27,6 +27,24 @@ jobs:
         with:
           ref: workspace-official-v1
 
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: analyzer/anatomy-lab/backend/requirements.txt
+
+      - name: Backend startup smoke
+        working-directory: analyzer/anatomy-lab
+        run: |
+          python -m pip install --disable-pip-version-check -r backend/requirements.txt
+          python - <<'PY'
+          import sys
+          sys.path.insert(0, "backend")
+          import main
+          print(main.health())
+          PY
+
       - id: auth
         uses: google-github-actions/auth@v2
         with:
