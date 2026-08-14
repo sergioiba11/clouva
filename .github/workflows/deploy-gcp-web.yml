@@ -1,4 +1,5 @@
 name: Deploy CLOUVA web to Cloud Run
+# Maintenance marker: redeploy main after removing obsolete /workspace route.
 
 on:
   push:
