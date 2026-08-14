@@ -21,6 +21,7 @@ const PREVIEW_LABELS: Record<PreviewMode, string> = {
   compare: "Comparar",
 };
 
+const CLOUVA_WEB_URL = "https://clouva.com.ar";
 const ANALYZER_URL = "https://clouva-anatomy-lab-preview-37640598175.us-central1.run.app";
 const WORKSPACE_AUTH_CHANNEL = "clouva-workspace-auth-v1";
 const ANALYZER_AUTH_CHANNEL = "clouva-analyzer-auth-v1";
@@ -131,7 +132,7 @@ export function OfficialWorkspace() {
               >
                 <RefreshCw size={16} />
               </button>
-              <a className={styles.secondaryAction} href="/" target="_blank" rel="noreferrer">
+              <a className={styles.secondaryAction} href={CLOUVA_WEB_URL} target="_blank" rel="noreferrer">
                 Abrir aparte
                 <ExternalLink size={15} />
               </a>
@@ -159,7 +160,7 @@ export function OfficialWorkspace() {
               <iframe
                 key={webReloadKey}
                 className={styles.webPreview}
-                src="/"
+                src={CLOUVA_WEB_URL}
                 title="CLOUVA Web actual"
               />
             ) : (
