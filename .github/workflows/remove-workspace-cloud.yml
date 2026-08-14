@@ -1,0 +1,36 @@
+name: Remove Workspace Cloud
+
+on:
+  push:
+    branches:
+      - workspace-official-v1
+    paths:
+      - ".github/workflows/remove-workspace-cloud.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  remove:
+    if: contains(github.event.head_commit.message, '[cleanup cloud workspace]')
+    runs-on: ubuntu-latest
+    steps:
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA_EMAIL }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Remove obsolete Workspace and Analyzer cloud services
+        run: |
+          set -euo pipefail
+          PROJECT_ID="gen-lang-client-0737053175"
+          REGION="us-central1"
+          for service in clouva-workspace-preview clouva-analyzer-dev clouva-anatomy-lab-preview; do
+            if gcloud run services describe "$service" --project "$PROJECT_ID" --region "$REGION" >/dev/null 2>&1; then
+              gcloud run services delete "$service" --project "$PROJECT_ID" --region "$REGION" --quiet
+            fi
+          done
