@@ -7,7 +7,7 @@ import styles from "./OfficialWorkspace.module.css";
 
 type WorkspaceMode = "web" | "analyzer";
 type PreviewMode = "actual" | "proposal" | "compare";
-type AnalyzerBootState = "idle" | "waking" | "ready" | "error";
+type AnalyzerBootState = "idle" | "ready" | "error";
 
 type SessionCommand =
   | { type: "signed-in"; access_token: string; refresh_token: string }
@@ -36,10 +36,6 @@ function sessionCommand(session: ReturnType<typeof useAuth>["session"]): Session
     : { type: "signed-out" };
 }
 
-function wait(ms: number) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
-}
-
 export function OfficialWorkspace() {
   const { session, hydrationReady } = useAuth();
   const [mode, setMode] = useState<WorkspaceMode>("web");
@@ -54,10 +50,10 @@ export function OfficialWorkspace() {
 
   const statusText = useMemo(() => {
     if (mode === "web") return "Web protegida";
-    if (analyzerBootState === "waking") return "Iniciando Analyzer";
     if (analyzerBootState === "error") return "Analyzer sin respuesta";
-    return "Analyzer cloud activo";
-  }, [mode, analyzerBootState]);
+    if (!analyzerFrameReady) return "Cargando Analyzer";
+    return "Analyzer dev activo";
+  }, [mode, analyzerBootState, analyzerFrameReady]);
 
   const postSession = useCallback(
     (target: Window | null | undefined, origin: string) => {
@@ -105,43 +101,8 @@ export function OfficialWorkspace() {
 
   useEffect(() => {
     if (mode !== "analyzer") return;
-
-    let cancelled = false;
-    setAnalyzerBootState("waking");
+    setAnalyzerBootState("ready");
     setAnalyzerFrameReady(false);
-
-    const wakeAnalyzer = async () => {
-      for (let attempt = 1; attempt <= 5; attempt += 1) {
-        const controller = new AbortController();
-        const timeout = window.setTimeout(() => controller.abort(), 20_000);
-        try {
-          const response = await fetch(`${ANALYZER_URL}/health`, {
-            cache: "no-store",
-            signal: controller.signal,
-          });
-          if (response.ok) {
-            const payload = await response.json().catch(() => ({}));
-            if (payload?.ok !== false) {
-              if (!cancelled) setAnalyzerBootState("ready");
-              return;
-            }
-          }
-        } catch {
-          // The dev runtime can be warming after a platform restart.
-        } finally {
-          window.clearTimeout(timeout);
-        }
-
-        if (!cancelled && attempt < 5) await wait(1_500);
-      }
-
-      if (!cancelled) setAnalyzerBootState("error");
-    };
-
-    void wakeAnalyzer();
-    return () => {
-      cancelled = true;
-    };
   }, [mode, analyzerReloadKey]);
 
   useEffect(() => {
@@ -293,15 +254,13 @@ export function OfficialWorkspace() {
               <div>
                 <strong>Analyzer Lab</strong>
                 <span>
-                  {analyzerBootState === "waking"
-                    ? "Conectando con el runtime de desarrollo…"
-                    : analyzerBootState === "error"
-                      ? "El runtime no respondió · tocá recargar"
-                      : !analyzerFrameReady
-                        ? "Cargando interfaz del Analyzer…"
-                        : hydrationReady && session
-                          ? "Runtime cloud · hot reload · sesión CLOUVA sincronizada"
-                          : "Runtime cloud · hot reload · listo para probar"}
+                  {analyzerBootState === "error"
+                    ? "El runtime no respondió · tocá recargar"
+                    : !analyzerFrameReady
+                      ? "Cargando interfaz del Analyzer…"
+                      : hydrationReady && session
+                        ? "Runtime cloud · hot reload · sesión CLOUVA sincronizada"
+                        : "Runtime cloud · hot reload · listo para probar"}
                 </span>
               </div>
             </div>
@@ -328,29 +287,24 @@ export function OfficialWorkspace() {
           </div>
 
           <div className={styles.analyzerFrame}>
-            {analyzerBootState === "ready" && (
-              <iframe
-                key={analyzerReloadKey}
-                ref={analyzerFrameRef}
-                className={styles.analyzerPreview}
-                src={ANALYZER_URL}
-                title="CLOUVA Analyzer Lab"
-                allow="clipboard-read; clipboard-write"
-                onLoad={sendAnalyzerSession}
-              />
-            )}
+            <iframe
+              key={analyzerReloadKey}
+              ref={analyzerFrameRef}
+              className={styles.analyzerPreview}
+              src={ANALYZER_URL}
+              title="CLOUVA Analyzer Lab"
+              allow="clipboard-read; clipboard-write"
+              onLoad={() => {
+                setAnalyzerFrameReady(true);
+                sendAnalyzerSession();
+              }}
+            />
 
-            {(!analyzerFrameReady || analyzerBootState !== "ready") && (
+            {!analyzerFrameReady && (
               <div className={styles.analyzerLoading} role="status" aria-live="polite">
                 <span className={styles.loadingSpinner} />
-                <strong>
-                  {analyzerBootState === "error" ? "No pudimos abrir el Analyzer" : "Preparando Analyzer Lab"}
-                </strong>
-                <span>
-                  {analyzerBootState === "error"
-                    ? "Tocá recargar para reintentar."
-                    : "El Workspace está conectando con el runtime cloud de desarrollo."}
-                </span>
+                <strong>Preparando Analyzer Lab</strong>
+                <span>Cargando directamente el runtime cloud de desarrollo.</span>
               </div>
             )}
           </div>
