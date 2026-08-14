@@ -18,6 +18,32 @@ function allowedWorkspaceOrigin(origin) {
   return typeof origin === "string" && ALLOWED_WORKSPACE_ORIGINS.has(origin);
 }
 
+function notifyWorkspaceReady(target = window) {
+  try {
+    const parentOrigin = target.document?.referrer ? new URL(target.document.referrer).origin : null;
+    if (
+      parentOrigin
+      && allowedWorkspaceOrigin(parentOrigin)
+      && target.parent
+      && target.parent !== target
+      && typeof target.parent.postMessage === "function"
+    ) {
+      target.parent.postMessage({ channel: ANALYZER_AUTH_CHANNEL, type: "ready" }, parentOrigin);
+      return true;
+    }
+  } catch {
+    // Standalone Analyzer does not need the Workspace web bridge.
+  }
+  return false;
+}
+
+// Signal iframe readiness as soon as this module is evaluated. The Workspace
+// must be able to reveal the Analyzer UI even while Supabase/auth boot is still
+// initializing in the background.
+if (typeof window !== "undefined") {
+  notifyWorkspaceReady(window);
+}
+
 /** Receive the canonical Workspace session through either the legacy verified
  * Electron handoff or the isolated CLOUVA Workspace web iframe bridge.
  * Workspace remains the canonical session owner. */
@@ -59,20 +85,9 @@ export function installWorkspaceAuthBridge({ target = window, client, onSession,
     target.addEventListener("message", handleMessage);
   }
 
-  try {
-    const parentOrigin = target.document?.referrer ? new URL(target.document.referrer).origin : null;
-    if (
-      parentOrigin
-      && allowedWorkspaceOrigin(parentOrigin)
-      && target.parent
-      && target.parent !== target
-      && typeof target.parent.postMessage === "function"
-    ) {
-      target.parent.postMessage({ channel: ANALYZER_AUTH_CHANNEL, type: "ready" }, parentOrigin);
-    }
-  } catch {
-    // Standalone Analyzer does not need the Workspace web bridge.
-  }
+  // Repeat the ready signal once the auth receiver is installed so a session
+  // sent by the parent can be applied immediately.
+  notifyWorkspaceReady(target);
 
   return () => {
     if (target.__CLOUVA_WORKSPACE_SYNC_SESSION__ === receiver) {
