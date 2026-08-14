@@ -1,0 +1,151 @@
+name: Deploy Workspace Shell to CLOUVA Origin
+
+on:
+  push:
+    branches:
+      - workspace-shell-main-safe
+    paths:
+      - ".github/workflows/deploy-workspace-shell-production.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: gen-lang-client-0737053175
+  REGION: us-central1
+  SERVICE: clouva-web
+  SOURCE_REF: workspace-shell-main-safe
+
+jobs:
+  deploy-shell:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: workspace-shell-main-safe
+          fetch-depth: 0
+
+      - name: Guard production diff
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git diff --name-only origin/main...HEAD | sort > /tmp/changed.txt
+          cat > /tmp/allowed.txt <<'EOF'
+          .github/workflows/deploy-workspace-shell-production.yml
+          .github/workflows/verify-workspace-shell.yml
+          app/workspace/page.tsx
+          components/workspace/OfficialWorkspace.module.css
+          components/workspace/OfficialWorkspace.tsx
+          EOF
+          sort -o /tmp/allowed.txt /tmp/allowed.txt
+          echo "Workspace shell diff:"
+          cat /tmp/changed.txt
+          unexpected="$(comm -23 /tmp/changed.txt /tmp/allowed.txt)"
+          if [ -n "$unexpected" ]; then
+            echo "Unexpected production files:" >&2
+            echo "$unexpected" >&2
+            exit 1
+          fi
+
+      - name: Resolve source commit
+        id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA_EMAIL }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build isolated shell image
+        env:
+          DEPLOYED_COMMIT: ${{ steps.source.outputs.sha }}
+        run: |
+          gcloud builds submit \
+            --project "$PROJECT_ID" \
+            --config cloudbuild-web.yaml \
+            --substitutions="_NEXT_PUBLIC_SUPABASE_URL=${{ vars.NEXT_PUBLIC_SUPABASE_URL }},_NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ vars.NEXT_PUBLIC_SUPABASE_ANON_KEY }},_NEXT_PUBLIC_GOOGLE_CLIENT_ID=${{ vars.NEXT_PUBLIC_GOOGLE_CLIENT_ID }},_DEPLOY_REF=$SOURCE_REF,COMMIT_SHA=$DEPLOYED_COMMIT" \
+            .
+
+      - name: Resolve image digest
+        id: image
+        env:
+          DEPLOYED_COMMIT: ${{ steps.source.outputs.sha }}
+        run: |
+          digest="$(gcloud artifacts docker images describe \
+            "us-central1-docker.pkg.dev/$PROJECT_ID/clouva/clouva-web:$DEPLOYED_COMMIT" \
+            --format='value(image_summary.digest)')"
+          test -n "$digest"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy shell revision with zero traffic
+        id: deploy
+        env:
+          IMAGE: us-central1-docker.pkg.dev/${{ env.PROJECT_ID }}/clouva/clouva-web@${{ steps.image.outputs.digest }}
+        run: |
+          suffix="workspace$(date +%s)"
+          gcloud run deploy "$SERVICE" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --image "$IMAGE" \
+            --revision-suffix "$suffix" \
+            --tag "$suffix" \
+            --no-traffic \
+            --quiet
+          echo "revision=$SERVICE-$suffix" >> "$GITHUB_OUTPUT"
+          echo "tag=$suffix" >> "$GITHUB_OUTPUT"
+
+      - name: Verify health and workspace route before traffic
+        env:
+          EXPECTED_SHA: ${{ steps.source.outputs.sha }}
+          TAG: ${{ steps.deploy.outputs.tag }}
+        run: |
+          set -euo pipefail
+          host="$(gcloud run services describe "$SERVICE" --project "$PROJECT_ID" --region "$REGION" --format='value(status.url)' | sed -E 's#https://##')"
+          tag_url="https://${TAG}---${host}"
+          response="$(curl --fail --silent --show-error --retry 10 --retry-all-errors --retry-delay 5 "$tag_url/api/health")"
+          python3 - "$EXPECTED_SHA" "$response" <<'PY'
+          import json, sys
+          expected = sys.argv[1]
+          data = json.loads(sys.argv[2] or "{}")
+          assert data.get("ok") is True, data
+          assert data.get("commit") == expected, (data.get("commit"), expected)
+          print("Health OK:", expected)
+          PY
+          curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 3 "$tag_url/workspace" >/dev/null
+          echo "Workspace route OK: $tag_url/workspace"
+
+      - name: Shift production traffic only after verification
+        env:
+          REVISION: ${{ steps.deploy.outputs.revision }}
+        run: |
+          gcloud run services update-traffic "$SERVICE" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --to-revisions "$REVISION=100" \
+            --quiet
+
+      - name: Summary
+        env:
+          REVISION: ${{ steps.deploy.outputs.revision }}
+        run: |
+          echo "### CLOUVA Workspace shell" >> "$GITHUB_STEP_SUMMARY"
+          echo "Verified revision: $REVISION" >> "$GITHUB_STEP_SUMMARY"
+          echo "Workspace: https://clouva.com.ar/workspace" >> "$GITHUB_STEP_SUMMARY"
+          echo "Proposal remains on clouva-workspace-preview; this deploy does not publish proposal changes." >> "$GITHUB_STEP_SUMMARY"
