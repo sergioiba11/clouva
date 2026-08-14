@@ -5,8 +5,19 @@ on:
     branches:
       - workspace-official-v1
     paths:
-      - "app/workspace/**"
-      - "components/workspace/**"
+      - "app/**"
+      - "components/**"
+      - "core/**"
+      - "lib/**"
+      - "public/**"
+      - "scripts/**"
+      - "Dockerfile"
+      - ".dockerignore"
+      - "cloudbuild-web.yaml"
+      - "next.config.ts"
+      - "package.json"
+      - "package-lock.json"
+      - "tsconfig.json"
       - ".github/workflows/deploy-workspace-preview.yml"
   workflow_dispatch:
 
@@ -78,6 +89,21 @@ jobs:
             --min-instances 0 \
             --max-instances 1 \
             --quiet
+
+      - name: Verify isolated preview health
+        env:
+          EXPECTED_SHA: ${{ steps.source.outputs.sha }}
+        run: |
+          url="$(gcloud run services describe "$SERVICE" --project "$PROJECT_ID" --region "$REGION" --format='value(status.url)')"
+          response="$(curl --fail --silent --show-error --retry 10 --retry-all-errors --retry-delay 5 "$url/api/health")"
+          python3 - "$EXPECTED_SHA" "$response" <<'PY'
+          import json, sys
+          expected = sys.argv[1]
+          data = json.loads(sys.argv[2] or "{}")
+          assert data.get("ok") is True, data
+          assert data.get("commit") == expected, (data.get("commit"), expected)
+          print("Preview health OK:", expected)
+          PY
 
       - name: Show preview URL
         id: preview
