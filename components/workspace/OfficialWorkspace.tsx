@@ -20,13 +20,16 @@ const PREVIEW_LABELS: Record<PreviewMode, string> = {
   compare: "Comparar",
 };
 
+const ANALYZER_URL = "https://clouva-anatomy-lab-preview-37640598175.us-central1.run.app";
+
 export function OfficialWorkspace() {
   const [mode, setMode] = useState<WorkspaceMode>("web");
   const [previewMode, setPreviewMode] = useState<PreviewMode>("actual");
-  const [reloadKey, setReloadKey] = useState(0);
+  const [webReloadKey, setWebReloadKey] = useState(0);
+  const [analyzerReloadKey, setAnalyzerReloadKey] = useState(0);
 
   const statusText = useMemo(
-    () => (mode === "web" ? "Web protegida" : "Analyzer aislado"),
+    () => (mode === "web" ? "Web protegida" : "Analyzer cloud activo"),
     [mode],
   );
 
@@ -86,7 +89,7 @@ export function OfficialWorkspace() {
               <button
                 type="button"
                 className={styles.iconButton}
-                onClick={() => setReloadKey((value) => value + 1)}
+                onClick={() => setWebReloadKey((value) => value + 1)}
                 title="Recargar vista"
               >
                 <RefreshCw size={16} />
@@ -103,9 +106,7 @@ export function OfficialWorkspace() {
 
           <div className={styles.safetyStrip}>
             <ShieldCheck size={16} />
-            <span>
-              Modo seguro activo: este Workspace no aplica cambios a producción.
-            </span>
+            <span>Modo seguro activo: este Workspace no aplica cambios a producción.</span>
           </div>
 
           <div className={styles.browserFrame}>
@@ -119,7 +120,7 @@ export function OfficialWorkspace() {
 
             {previewMode === "actual" ? (
               <iframe
-                key={reloadKey}
+                key={webReloadKey}
                 className={styles.webPreview}
                 src="/"
                 title="CLOUVA Web actual"
@@ -137,44 +138,49 @@ export function OfficialWorkspace() {
         </section>
       ) : (
         <section className={styles.analyzerArea}>
-          <div className={styles.analyzerIntro}>
-            <div className={styles.analyzerIcon}>
-              <ScanLine size={28} />
+          <div className={styles.analyzerToolbar}>
+            <div className={styles.analyzerStatus}>
+              <span className={styles.liveDot} />
+              <div>
+                <strong>Anatomy Lab</strong>
+                <span>Cloud aislado · listo para probar</span>
+              </div>
             </div>
-            <div>
-              <p className={styles.eyebrow}>ANALYZER LAB</p>
-              <h2>El Analyzer actual se conserva.</h2>
-              <p>
-                Este espacio será la interfaz oficial para seguir mejorándolo sin modificar CLOUVA Web.
-              </p>
+
+            <div className={styles.toolbarActions}>
+              <button
+                type="button"
+                className={styles.iconButton}
+                onClick={() => setAnalyzerReloadKey((value) => value + 1)}
+                title="Recargar Analyzer"
+              >
+                <RefreshCw size={16} />
+              </button>
+              <a
+                className={styles.secondaryAction}
+                href={ANALYZER_URL}
+                target="_blank"
+                rel="noreferrer"
+              >
+                Abrir Analyzer
+                <ExternalLink size={15} />
+              </a>
             </div>
           </div>
 
-          <div className={styles.analyzerGrid}>
-            <article className={styles.labCard}>
-              <span className={styles.cardLabel}>Estado</span>
-              <strong>Preservado</strong>
-              <p>El Anatomy Lab existente no se reemplaza ni se reinicia desde cero.</p>
-            </article>
-            <article className={styles.labCard}>
-              <span className={styles.cardLabel}>Web</span>
-              <strong>Aislada</strong>
-              <p>Las pruebas del Analyzer no tienen permiso para publicar cambios en la web.</p>
-            </article>
-            <article className={styles.labCard}>
-              <span className={styles.cardLabel}>Próximo paso</span>
-              <strong>Conectar el Analyzer real</strong>
-              <p>Primero se integra la versión existente; después se mueve el procesamiento pesado a cloud.</p>
-            </article>
+          <div className={styles.analyzerSafetyStrip}>
+            <ShieldCheck size={16} />
+            <span>Laboratorio aislado: trabajar acá no publica cambios en CLOUVA Web.</span>
           </div>
 
-          <div className={styles.analyzerCanvasPlaceholder}>
-            <div className={styles.scanGlow} />
-            <ScanLine size={54} />
-            <h3>Analyzer listo para integrar</h3>
-            <p>
-              En esta primera versión no se ejecuta ningún proceso local ni se modifica el Analyzer respaldado.
-            </p>
+          <div className={styles.analyzerFrame}>
+            <iframe
+              key={analyzerReloadKey}
+              className={styles.analyzerPreview}
+              src={ANALYZER_URL}
+              title="CLOUVA Anatomy Lab"
+              allow="clipboard-read; clipboard-write"
+            />
           </div>
         </section>
       )}
