@@ -5,6 +5,8 @@ on:
     branches:
       - workspace-shell-main-safe
     paths:
+      - "app/workspace/**"
+      - "components/workspace/**"
       - ".github/workflows/deploy-workspace-shell-production.yml"
   workflow_dispatch:
 
