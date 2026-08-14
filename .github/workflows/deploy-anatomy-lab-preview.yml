@@ -1,6 +1,12 @@
 name: Deploy Anatomy Lab Snapshot
 
 on:
+  push:
+    branches:
+      - workspace-official-v1
+    paths:
+      - "analyzer/**"
+      - ".github/workflows/deploy-anatomy-lab-preview.yml"
   workflow_dispatch:
 
 permissions:
@@ -14,6 +20,7 @@ env:
 
 jobs:
   deploy:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[deploy analyzer]')
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
