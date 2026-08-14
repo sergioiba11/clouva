@@ -1,0 +1,22 @@
+header h1 {
+  font-size: 0 !important;
+}
+
+header h1::before {
+  content: "Analyzer Lab";
+  font-size: 28px;
+}
+
+header h1 small {
+  font-size: 11px !important;
+  margin-left: 7px;
+}
+
+.auth-card:has(.email-input) > .local-note {
+  font-size: 0;
+}
+
+.auth-card:has(.email-input) > .local-note::after {
+  content: "La sesión se gestiona de forma segura en CLOUVA.";
+  font-size: 11px;
+}
