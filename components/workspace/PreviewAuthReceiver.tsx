@@ -9,6 +9,7 @@ const ALLOWED_PARENT_ORIGINS = new Set([
   "https://www.clouva.com.ar",
 ]);
 
+// Only the official CLOUVA origin may hand a session into the isolated preview.
 export function PreviewAuthReceiver() {
   useEffect(() => {
     if (window.parent === window) return;
