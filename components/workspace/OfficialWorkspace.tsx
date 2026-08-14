@@ -21,7 +21,7 @@ const PREVIEW_LABELS: Record<PreviewMode, string> = {
 
 const PRODUCTION_URL = "https://clouva.com.ar";
 const PREVIEW_URL = "https://clouva-workspace-preview-37640598175.us-central1.run.app";
-const ANALYZER_URL = "https://clouva-anatomy-lab-preview-37640598175.us-central1.run.app";
+const ANALYZER_URL = "https://clouva-analyzer-dev-6i67fzm65q-uc.a.run.app";
 const WORKSPACE_AUTH_CHANNEL = "clouva-workspace-auth-v1";
 const ANALYZER_AUTH_CHANNEL = "clouva-analyzer-auth-v1";
 const PREVIEW_AUTH_CHANNEL = "clouva-preview-auth-v1";
@@ -127,7 +127,7 @@ export function OfficialWorkspace() {
             }
           }
         } catch {
-          // A cold Cloud Run instance can miss the first request while it wakes.
+          // The dev runtime can be warming after a platform restart.
         } finally {
           window.clearTimeout(timeout);
         }
@@ -294,14 +294,14 @@ export function OfficialWorkspace() {
                 <strong>Analyzer Lab</strong>
                 <span>
                   {analyzerBootState === "waking"
-                    ? "Despertando el Analyzer cloud…"
+                    ? "Conectando con el runtime de desarrollo…"
                     : analyzerBootState === "error"
-                      ? "El servicio no respondió · tocá recargar"
+                      ? "El runtime no respondió · tocá recargar"
                       : !analyzerFrameReady
                         ? "Cargando interfaz del Analyzer…"
                         : hydrationReady && session
-                          ? "Cloud aislado · sesión CLOUVA sincronizada"
-                          : "Cloud aislado · listo para probar"}
+                          ? "Runtime cloud · hot reload · sesión CLOUVA sincronizada"
+                          : "Runtime cloud · hot reload · listo para probar"}
                 </span>
               </div>
             </div>
@@ -349,7 +349,7 @@ export function OfficialWorkspace() {
                 <span>
                   {analyzerBootState === "error"
                     ? "Tocá recargar para reintentar."
-                    : "El Workspace está iniciando el servicio cloud antes de mostrarlo."}
+                    : "El Workspace está conectando con el runtime cloud de desarrollo."}
                 </span>
               </div>
             )}
