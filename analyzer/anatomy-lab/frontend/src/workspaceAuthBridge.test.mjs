@@ -59,3 +59,39 @@ test("Analyzer Workspace sign-out is local and never revokes other CLOUVA sessio
   assert.deepEqual(signOutCalls, [{ scope: "local" }]);
   cleanup();
 });
+
+test("Analyzer announces readiness even when cross-origin referrer is suppressed", () => {
+  const messages = [];
+  const parent = {
+    postMessage: (payload, origin) => messages.push({ payload, origin }),
+  };
+  const target = {
+    parent,
+    document: { referrer: "" },
+    location: {},
+  };
+
+  const cleanup = installWorkspaceAuthBridge({
+    target,
+    client: {
+      auth: {
+        setSession: async () => ({ data: { session: null }, error: null }),
+        signOut: async () => ({ error: null }),
+        stopAutoRefresh: () => {},
+      },
+    },
+    onManagedChange: () => {},
+    onSession: () => {},
+  });
+
+  assert.deepEqual(
+    messages.map(({ origin }) => origin),
+    [
+      "https://clouva-workspace-preview-37640598175.us-central1.run.app",
+      "https://clouva.com.ar",
+      "https://www.clouva.com.ar",
+    ],
+  );
+  assert.ok(messages.every(({ payload }) => payload.channel === "clouva-analyzer-auth-v1" && payload.type === "ready"));
+  cleanup();
+});
