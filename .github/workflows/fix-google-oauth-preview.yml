@@ -39,9 +39,11 @@ jobs:
           set -euo pipefail
           PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')"
           TOKEN="$(gcloud auth print-access-token)"
-          URL="https://clientauthconfig.googleapis.com/v1/clients?projectNumber=${PROJECT_NUMBER}&returnClientSecrets=false&returnDisabledClients=true"
+          URL="https://clientauthconfig.clients6.google.com/v1/clients?projectNumber=${PROJECT_NUMBER}&returnClientSecrets=false&returnDisabledClients=true&readOptions.staleness=0.02s"
           HTTP_CODE="$(curl -sS -o oauth-clients.json -w '%{http_code}' \
             -H "Authorization: Bearer $TOKEN" \
+            -H "Origin: https://console.cloud.google.com" \
+            -H "X-Origin: https://console.cloud.google.com" \
             -H "X-Goog-User-Project: $PROJECT_ID" \
             "$URL")"
           echo "HTTP $HTTP_CODE"
