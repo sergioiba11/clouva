@@ -18,23 +18,48 @@ function allowedWorkspaceOrigin(origin) {
   return typeof origin === "string" && ALLOWED_WORKSPACE_ORIGINS.has(origin);
 }
 
-function notifyWorkspaceReady(target = window) {
+function workspaceParentOrigin(target = window) {
   try {
-    const parentOrigin = target.document?.referrer ? new URL(target.document.referrer).origin : null;
-    if (
-      parentOrigin
-      && allowedWorkspaceOrigin(parentOrigin)
-      && target.parent
-      && target.parent !== target
-      && typeof target.parent.postMessage === "function"
-    ) {
-      target.parent.postMessage({ channel: ANALYZER_AUTH_CHANNEL, type: "ready" }, parentOrigin);
-      return true;
-    }
+    const referrerOrigin = target.document?.referrer ? new URL(target.document.referrer).origin : null;
+    if (allowedWorkspaceOrigin(referrerOrigin)) return referrerOrigin;
   } catch {
-    // Standalone Analyzer does not need the Workspace web bridge.
+    // Some deployments intentionally suppress Referer. The allow-list fallback
+    // below still performs an exact-origin postMessage handshake.
   }
-  return false;
+
+  try {
+    const ancestorOrigin = target.location?.ancestorOrigins?.[0] || null;
+    if (allowedWorkspaceOrigin(ancestorOrigin)) return ancestorOrigin;
+  } catch {
+    // ancestorOrigins is not available in every browser.
+  }
+
+  return null;
+}
+
+function notifyWorkspaceReady(target = window) {
+  if (
+    !target.parent
+    || target.parent === target
+    || typeof target.parent.postMessage !== "function"
+  ) {
+    return false;
+  }
+
+  const parentOrigin = workspaceParentOrigin(target);
+  if (parentOrigin) {
+    target.parent.postMessage({ channel: ANALYZER_AUTH_CHANNEL, type: "ready" }, parentOrigin);
+    return true;
+  }
+
+  // Referrer-Policy can remove document.referrer for the cross-origin iframe.
+  // The ready packet contains no credentials, so announce only to the finite
+  // CLOUVA allow-list. Browsers deliver postMessage solely when targetOrigin
+  // matches the real parent origin, preserving the same trust boundary.
+  for (const origin of ALLOWED_WORKSPACE_ORIGINS) {
+    target.parent.postMessage({ channel: ANALYZER_AUTH_CHANNEL, type: "ready" }, origin);
+  }
+  return true;
 }
 
 // Signal iframe readiness as soon as this module is evaluated. The Workspace
@@ -87,8 +112,7 @@ export function installWorkspaceAuthBridge({ target = window, client, onSession,
 
   // Supabase boot can briefly race the iframe load event. Re-announce readiness
   // a few times after the receiver exists so the parent resends its canonical
-  // session after local auth initialization has settled. This keeps Analyzer
-  // hot-reload only; no Workspace or Cloud Run deploy is needed for auth fixes.
+  // session after local auth initialization has settled.
   const retryDelays = [0, 150, 500, 1200, 2500, 5000];
   const readyTimers = retryDelays.map((delay) => target.setTimeout?.(() => notifyWorkspaceReady(target), delay));
 
