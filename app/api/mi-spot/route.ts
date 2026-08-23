@@ -11,7 +11,12 @@ export const dynamic = "force-dynamic";
 
 const SPOT_SELECT = "id,studio_id,owner_type,owner_user_id,beneficiary_user_id,slug,name,country_code,currency,timezone,fx_source,public_enabled,status,business_type,business_categories,enabled_modules,brand_tone,description,logo_url,cover_url,accent_color,palette,ai_profile,settings,created_at,updated_at";
 
-type SpotRow = Record<string, unknown> & { id: string; studio_id?: string | null };
+type SpotRow = Record<string, unknown> & {
+  id: string;
+  studio_id?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
 
 function short(value: unknown, max: number) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
