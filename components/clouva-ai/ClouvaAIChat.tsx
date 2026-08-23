@@ -1,17 +1,23 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
+  ArrowRight,
   Check,
   CheckCircle2,
   Code2,
   Copy,
   FileCode2,
   FolderGit2,
+  FolderKanban,
   GitBranch,
   History,
+  Home,
+  ImageIcon,
+  Library,
   Loader2,
   MessageCircle,
   PanelLeft,
@@ -21,16 +27,19 @@ import {
   Send,
   ShieldCheck,
   Sparkles,
+  Video,
   WandSparkles,
   X,
 } from "lucide-react";
 import { GeminiModelSelector } from "@/components/clouva-ai/GeminiModelSelector";
+import { buildMediaCreatorHref } from "@/lib/media-creator-navigation";
 import {
   CLOUVA_AI_WELCOME,
   useClouvaAIConversation,
   type ClouvaAIProjectAccessState,
 } from "@/components/clouva-ai/useClouvaAIConversation";
 import styles from "./ClouvaAIChat.module.css";
+import studioStyles from "./ClouvaAIStudio.module.css";
 
 const MASCOT_SRC = "/assets/clouva-ai/trebol-mascot.png";
 const INITIAL_VISIBLE_MESSAGES = 12;
@@ -39,6 +48,15 @@ const QUICK_PROMPTS = [
   { icon: WandSparkles, label: "Mejorar una pantalla", prompt: "Quiero mejorar una pantalla de CLOUVA. Ayudame a definir el cambio y qué archivos tenemos que revisar." },
   { icon: ShieldCheck, label: "Buscar riesgos", prompt: "Auditá el proyecto y priorizá riesgos de seguridad, permisos y datos." },
 ];
+
+const STUDIO_NAV = [
+  { label: "Inicio", href: "/", icon: Home },
+  { label: "Trébol / Chat", href: "/clouva-ai", icon: MessageCircle, active: true },
+  { label: "Crear imagen", href: buildMediaCreatorHref("image"), icon: ImageIcon },
+  { label: "Crear video", href: buildMediaCreatorHref("video"), icon: Video },
+  { label: "Biblioteca", href: "/biblioteca", icon: Library },
+  { label: "Proyectos", href: "/studios", icon: FolderKanban },
+] as const;
 
 function previewSelection(content: string) {
   if (!content.includes("Web Preview") || !content.includes("Selector:")) return null;
@@ -236,10 +254,24 @@ export function ClouvaAIChat() {
 
       <div className={styles.workspace}>
         <aside className={`${styles.sidebar} ${showConversations ? styles.drawerOpen : ""}`}>
-          <div className={styles.brand}>
+          <Link href="/" className={`${styles.brand} ${studioStyles.brandLink}`} onClick={() => setShowConversations(false)}>
             <div className={styles.brandMascot}><Mascot size={48} priority /></div>
             <div><strong>CLOUVA</strong><span>AI Studio</span></div>
-          </div>
+          </Link>
+
+          <nav className={studioStyles.primaryNav} aria-label="Navegación de CLOUVA AI Studio">
+            {STUDIO_NAV.map(({ label, href, icon: Icon, active }) => (
+              <Link
+                key={label}
+                href={href}
+                onClick={() => setShowConversations(false)}
+                className={`${studioStyles.navItem} ${active ? studioStyles.navItemActive : ""}`}
+              >
+                <Icon className="h-4 w-4" />
+                <span>{label}</span>
+              </Link>
+            ))}
+          </nav>
 
           <button type="button" className={styles.newChatButton} onClick={startNewConversation} disabled={loading || applying}>
             <Plus className="h-4 w-4" /> Nueva conversación
@@ -282,6 +314,14 @@ export function ClouvaAIChat() {
             </div>
           </header>
 
+          <div className={studioStyles.studioTabsRow}>
+            <nav className={studioStyles.studioTabs} aria-label="Herramientas de CLOUVA AI Studio">
+              <Link href="/clouva-ai" className={`${studioStyles.studioTab} ${studioStyles.studioTabActive}`}><MessageCircle className="h-3.5 w-3.5" />Chat</Link>
+              <Link href={buildMediaCreatorHref("image")} className={studioStyles.studioTab}><ImageIcon className="h-3.5 w-3.5" />Imagen</Link>
+              <Link href={buildMediaCreatorHref("video")} className={studioStyles.studioTab}><Video className="h-3.5 w-3.5" />Video</Link>
+            </nav>
+          </div>
+
           <div className={styles.modebar}>
             <div className={styles.modeSwitch}>
               <button type="button" onClick={() => changeMode("chat")} disabled={loading || applying} className={mode === "chat" ? styles.modeActive : ""}><MessageCircle className="h-3.5 w-3.5" /> Chat</button>
@@ -298,9 +338,31 @@ export function ClouvaAIChat() {
             ) : isWelcome ? (
               <section className={styles.welcome}>
                 <div className={styles.welcomeGlow}><Mascot size={164} /></div>
-                <p className={styles.eyebrow}><Sparkles className="h-3.5 w-3.5" /> CLOUVA AI</p>
+                <p className={styles.eyebrow}><Sparkles className="h-3.5 w-3.5" /> CLOUVA AI STUDIO</p>
                 <h2>¿Qué hacemos hoy?</h2>
-                <p>Investigá tu proyecto, convertí una idea en un plan o prepará la próxima mejora con Trébol.</p>
+                <p>Hablá con Trébol, creá imágenes o convertí tus ideas en video desde un mismo estudio.</p>
+
+                <div className={studioStyles.welcomeGrid}>
+                  <a href="#clouva-ai-composer" className={studioStyles.welcomeCard}>
+                    <span className={studioStyles.welcomeCardIcon}><MessageCircle className="h-5 w-5" /></span>
+                    <strong>Hablar con Trébol</strong>
+                    <p>Conversá, investigá y transformá ideas en planes de acción.</p>
+                    <span className={studioStyles.welcomeCardAction}>Abrir chat <ArrowRight className="h-3.5 w-3.5" /></span>
+                  </a>
+                  <Link href={buildMediaCreatorHref("image")} className={studioStyles.welcomeCard}>
+                    <span className={studioStyles.welcomeCardIcon}><ImageIcon className="h-5 w-5" /></span>
+                    <strong>Generar imagen</strong>
+                    <p>Creá imágenes con IA a partir de tus ideas o referencias.</p>
+                    <span className={studioStyles.welcomeCardAction}>Ir al generador <ArrowRight className="h-3.5 w-3.5" /></span>
+                  </Link>
+                  <Link href={buildMediaCreatorHref("video")} className={studioStyles.welcomeCard}>
+                    <span className={studioStyles.welcomeCardIcon}><Video className="h-5 w-5" /></span>
+                    <strong>Generar video</strong>
+                    <p>Convertí tus ideas o imágenes en videos con IA.</p>
+                    <span className={studioStyles.welcomeCardAction}>Ir al generador <ArrowRight className="h-3.5 w-3.5" /></span>
+                  </Link>
+                </div>
+
                 <div className={styles.quickPrompts}>
                   {QUICK_PROMPTS.map(({ icon: Icon, label, prompt }) => (
                     <button type="button" key={label} onClick={() => setInput(prompt)}><Icon className="h-4 w-4" /><span>{label}</span></button>
@@ -342,7 +404,7 @@ export function ClouvaAIChat() {
             )}
           </div>
 
-          <form onSubmit={sendMessage} className={styles.composerArea}>
+          <form id="clouva-ai-composer" onSubmit={sendMessage} className={styles.composerArea}>
             {error && <div className={styles.errorBanner}><AlertTriangle className="h-4 w-4" /><span>{error}</span><button type="button" onClick={clearError} aria-label="Cerrar error"><X className="h-3.5 w-3.5" /></button></div>}
             <div className={styles.composer}>
               <textarea
@@ -375,6 +437,13 @@ export function ClouvaAIChat() {
               {!!projectReport.coverageAreas.length && <div className={styles.tags}>{projectReport.coverageAreas.slice(0, 5).map((area) => <span key={area}>{area}</span>)}</div>}
               {!!projectReport.filesReviewed.length && <ul>{projectReport.filesReviewed.slice(0, 6).map((file) => <li key={file}><FileCode2 className="h-3 w-3" /><span>{file}</span></li>)}</ul>}
             </> : <div className={styles.emptyContext}><Sparkles className="h-5 w-5" /><p>Usá el modo Proyecto y la evidencia de la próxima consulta aparecerá acá.</p></div>}
+          </section>
+
+          <section className={studioStyles.creativeToolsCard}>
+            <div className={studioStyles.creativeToolsTitle}><WandSparkles className="h-4 w-4" /> Herramientas creativas</div>
+            <Link href={buildMediaCreatorHref("image")} className={studioStyles.creativeToolLink}><ImageIcon className="h-4 w-4" /><span>Crear imagen</span><ArrowRight className="h-3.5 w-3.5" /></Link>
+            <Link href={buildMediaCreatorHref("video")} className={studioStyles.creativeToolLink}><Video className="h-4 w-4" /><span>Crear video</span><ArrowRight className="h-3.5 w-3.5" /></Link>
+            <Link href="/biblioteca" className={studioStyles.creativeToolLink}><Library className="h-4 w-4" /><span>Biblioteca</span><ArrowRight className="h-3.5 w-3.5" /></Link>
           </section>
 
           <section className={styles.safetyCard}><ShieldCheck className="h-4 w-4" /><div><strong>Revisión segura</strong><p>Trébol investiga primero. Ningún archivo cambia sin tu confirmación.</p></div></section>
