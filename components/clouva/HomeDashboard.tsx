@@ -109,8 +109,8 @@ export function HomeDashboard() {
       : user
         ? "Tu identidad CLOUVA"
         : "Explorá tu propio mundo";
-  const heroPlayerImage = currentPlayer?.profile_image_url || profile?.avatar_url || user?.user_metadata?.avatar_url || null;
-  const identityAvatarImage = heroPlayerImage;
+  const identityAvatarImage = currentPlayer?.profile_image_url || profile?.avatar_url || user?.user_metadata?.avatar_url || null;
+  const heroPlayerImage = currentPlayer?.cover_url || currentPlayer?.hero_image_url || identityAvatarImage || null;
   const isSignedIn = Boolean(user);
   const hasAvatar = Boolean(profile?.avatar_3d_url);
   const completedSteps = [isSignedIn, Boolean(profile?.username), hasAvatar].filter(Boolean).length;
@@ -226,7 +226,7 @@ export function HomeDashboard() {
                 <img
                   className={styles.heroPlayerImage}
                   src={String(heroPlayerImage)}
-                  alt={`Foto principal de ${displayName}`}
+                  alt={`Imagen principal de ${displayName}`}
                 />
               ) : (
                 <div className={styles.heroPlayerFallbackContent}>
