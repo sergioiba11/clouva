@@ -3,6 +3,7 @@ import { MercadoPagoProvider } from "@/core/billing/providers/mercadopago/client
 import { getMercadoPagoConfig } from "@/core/billing/providers/mercadopago/config";
 import { verifyMercadoPagoSignature } from "@/core/billing/providers/mercadopago/signature";
 import { createAdminSupabase } from "@/lib/server/supabase";
+import { latestOrRefreshSpotFxRate } from "@/lib/server/commerce-fx";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -50,7 +51,7 @@ async function deliverPurchasedItems(
     .from("commerce_order_items")
     .select("id,product_type")
     .eq("order_id", orderId)
-    .neq("product_type", "physical");
+    .not("product_type", "in", "(physical,bundle)");
   if (itemsError) throw new Error(itemsError.message);
 
   let delivered = 0;
@@ -146,7 +147,7 @@ export async function POST(request: NextRequest) {
     const admin = createAdminSupabase();
     const { data: order, error: orderError } = await admin
       .from("commerce_orders")
-      .select("id,buyer_id,total,currency,payment_status,fulfillment_status")
+      .select("id,buyer_id,total,currency,payment_status,fulfillment_status,spot_id")
       .eq("external_reference", externalReference)
       .maybeSingle();
     if (orderError) throw new Error(orderError.message);
@@ -166,6 +167,14 @@ export async function POST(request: NextRequest) {
     const providerDate = validProviderDate(payment.date_approved || payment.date_created);
 
     if (paymentStatus === "approved") {
+      if (order.spot_id) {
+        const { error: expansionError } = await admin.rpc("expand_commerce_bundle_order_items", {
+          p_order_id: order.id,
+          p_idempotency_key: `mercadopago:${resourceId}:bundle`,
+        });
+        if (expansionError) throw new Error(expansionError.message);
+      }
+
       const { data: confirmation, error: confirmationError } = await admin.rpc(
         "confirm_commerce_order_payment",
         {
@@ -182,7 +191,48 @@ export async function POST(request: NextRequest) {
         stock_conflict?: boolean;
       } | null;
 
-      const delivery = await deliverPurchasedItems(admin, order.id, resourceId);
+      if (order.spot_id && !confirmationResult?.stock_conflict) {
+        const { error: movementError } = await admin.rpc("record_commerce_order_stock_movements", {
+          p_order_id: order.id,
+          p_actor_id: null,
+          p_idempotency_key: `mercadopago:${resourceId}:inventory`,
+        });
+        if (movementError) throw new Error(movementError.message);
+      }
+
+      const delivery = confirmationResult?.stock_conflict
+        ? { delivered: 0, failures: [] }
+        : await deliverPurchasedItems(admin, order.id, resourceId);
+      let flow: unknown = null;
+      if (order.spot_id) {
+        const { data: spot, error: spotError } = await admin
+          .from("commerce_spots")
+          .select("id,currency,fx_source")
+          .eq("id", order.spot_id)
+          .maybeSingle();
+        if (spotError) throw new Error(spotError.message);
+        if (!spot) throw new Error("El pedido pagado no tiene un Spot válido.");
+        const rate = await latestOrRefreshSpotFxRate({ admin, spot });
+        const feeDetails = Array.isArray(payment.fee_details) ? payment.fee_details : [];
+        const feeAmount = feeDetails.reduce((sum, item) => {
+          if (!item || typeof item !== "object") return sum;
+          return sum + Math.max(0, Number((item as Record<string, unknown>).amount || 0));
+        }, 0);
+        const { data: flowResult, error: flowError } = await admin.rpc("record_commerce_spot_payment", {
+          p_order_id: order.id,
+          p_spot_id: spot.id,
+          p_provider: "mercadopago",
+          p_payment_method: "mercadopago",
+          p_external_payment_id: resourceId,
+          p_fee_amount: feeAmount,
+          p_fx_rate_id: rate.id,
+          p_actor_id: null,
+          p_idempotency_key: `mercadopago:${resourceId}:confirmed`,
+          p_metadata: { provider_status: paymentStatus },
+        });
+        if (flowError) throw new Error(flowError.message);
+        flow = flowResult;
+      }
 
       return NextResponse.json({
         received: true,
@@ -191,6 +241,7 @@ export async function POST(request: NextRequest) {
         stockConflict: Boolean(confirmationResult?.stock_conflict),
         deliveredItems: delivery.delivered,
         deliveryFailures: delivery.failures,
+        flow,
         orderId: order.id,
       });
     }
@@ -205,11 +256,23 @@ export async function POST(request: NextRequest) {
         },
       );
       if (refundError) throw new Error(refundError.message);
+      let flowRefund: unknown = null;
+      if (order.spot_id) {
+        const { data, error } = await admin.rpc("record_commerce_spot_refund", {
+          p_order_id: order.id,
+          p_external_payment_id: resourceId,
+          p_actor_id: null,
+          p_idempotency_key: `mercadopago:${resourceId}:refunded`,
+        });
+        if (error) throw new Error(error.message);
+        flowRefund = data;
+      }
 
       return NextResponse.json({
         received: true,
         processed: true,
         refund,
+        flowRefund,
         orderId: order.id,
       });
     }

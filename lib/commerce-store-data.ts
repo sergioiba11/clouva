@@ -14,6 +14,10 @@ export type CommerceVariant = {
 export type CommerceProduct = {
   id: string;
   owner_type: "player" | "studio" | "clouva";
+  player_id?: string | null;
+  studio_id?: string | null;
+  spot_id?: string | null;
+  catalog_product_id?: string | null;
   product_type: string;
   name: string;
   slug: string;
@@ -32,6 +36,10 @@ export type CommerceProduct = {
 export const commerceProductSelect = [
   "id",
   "owner_type",
+  "player_id",
+  "studio_id",
+  "spot_id",
+  "catalog_product_id",
   "product_type",
   "name",
   "slug",

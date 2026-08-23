@@ -293,7 +293,7 @@ export default function StudioDashboardPage({ params }: { params: Promise<{ stud
             {data.studio.logo_url ? <img src={String(data.studio.logo_url)} alt="" className="h-10 w-10 rounded-xl object-cover" /> : <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-500/15 font-semibold">{studioName.charAt(0)}</div>}
             <div><p className="text-xs uppercase tracking-[0.2em] text-violet-300/70">Panel del Estudio</p><h1 className="font-semibold">{studioName}</h1></div>
           </div>
-          <div className="flex items-center gap-2"><span className="hidden rounded-full border border-amber-400/25 bg-amber-400/10 px-3 py-1 text-xs text-amber-300 sm:block">VIP · {data.permission.role}</span><Link href={`/studios/${studioSlug}`} className="rounded-xl border border-white/15 px-4 py-2 text-sm">Ver perfil</Link></div>
+          <div className="flex items-center gap-2"><span className="hidden rounded-full border border-amber-400/25 bg-amber-400/10 px-3 py-1 text-xs text-amber-300 sm:block">VIP · {data.permission.role}</span><Link href={`/studio-dashboard/${studioId}/commerce`} className="rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold">Mi Spot</Link><Link href={`/studios/${studioSlug}`} className="rounded-xl border border-white/15 px-4 py-2 text-sm">Ver perfil</Link></div>
         </div>
       </header>
 

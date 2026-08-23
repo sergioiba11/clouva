@@ -91,17 +91,21 @@ export async function POST(request: NextRequest) {
     const requestedLines = [...lines.values()];
     const productIds = [...new Set(requestedLines.map((line) => line.productId))];
     const admin = createAdminSupabase();
-    const [{ data: products, error: productsError }, { data: variants, error: variantsError }] = await Promise.all([
+    const [{ data: products, error: productsError }, { data: variants, error: variantsError }, { data: bundleComponents, error: bundleComponentsError }] = await Promise.all([
       admin
         .from("commerce_products")
-        .select("id,name,price,currency,product_type,stock,status,owner_type,player_id,studio_id")
+        .select("id,name,price,currency,product_type,listing_kind,stock,status,owner_type,player_id,studio_id,spot_id,metadata")
         .in("id", productIds),
       admin
         .from("commerce_product_variants")
         .select("id,product_id,sku,title,size,color,price_override,stock,active,weight_grams")
         .in("product_id", productIds),
+      admin
+        .from("commerce_listing_components")
+        .select("bundle_listing_id,component_role")
+        .in("bundle_listing_id", productIds),
     ]);
-    if (productsError || variantsError) throw new Error(productsError?.message || variantsError?.message);
+    if (productsError || variantsError || bundleComponentsError) throw new Error(productsError?.message || variantsError?.message || bundleComponentsError?.message);
 
     const mercadoPagoItems: Array<{ title: string; quantity: number; unitPrice: number; currency: string }> = [];
     const orderItems: Array<{
@@ -122,6 +126,15 @@ export async function POST(request: NextRequest) {
       const productVariants = (variants ?? []).filter((candidate) => candidate.product_id === requestedLine.productId);
       if (!product || product.status !== "published") {
         return NextResponse.json({ error: "Uno de los productos elegidos ya no está disponible." }, { status: 409 });
+      }
+      if (product.metadata?.availability === "coming_soon") {
+        return NextResponse.json({ error: `“${product.name}” figura como PRÓXIMAMENTE y todavía no admite compras.` }, { status: 409 });
+      }
+      if (product.product_type === "bundle") {
+        const configured = (bundleComponents ?? []).filter((component) => component.bundle_listing_id === product.id);
+        if (!configured.some((component) => component.component_role === "physical") || !configured.some((component) => component.component_role === "digital")) {
+          return NextResponse.json({ error: `El combo “${product.name}” todavía no tiene conectados sus componentes físico y digital.` }, { status: 409 });
+        }
       }
 
       let selectedVariant = null as (typeof productVariants)[number] | null;
@@ -194,6 +207,10 @@ export async function POST(request: NextRequest) {
     if (sellerCandidates.size !== 1) {
       return NextResponse.json({ error: "Todos los productos de una orden deben pertenecer al mismo vendedor." }, { status: 400 });
     }
+    const spotCandidates = new Set(selectedProducts.map((product) => product.spot_id ?? "none"));
+    if (spotCandidates.size !== 1) {
+      return NextResponse.json({ error: "Todos los productos de una orden deben pertenecer al mismo Spot." }, { status: 400 });
+    }
 
     const currencies = new Set(mercadoPagoItems.map((item) => item.currency));
     if (currencies.size !== 1) {
@@ -205,7 +222,7 @@ export async function POST(request: NextRequest) {
 
     const currency = mercadoPagoItems[0].currency;
     const subtotal = orderItems.reduce((sum, item) => sum + item.total, 0);
-    const hasPhysical = orderItems.some((item) => item.product_type === "physical");
+    const hasPhysical = selectedProducts.some((item) => item.product_type === "physical" || item.listing_kind === "combo");
     let shippingSubtotal = 0;
     let shipment: null | {
       method: CommerceShippingMethod;
@@ -262,16 +279,16 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: "Completá calle, localidad, provincia y código postal." }, { status: 400 });
       }
 
-      const physicalItems = orderItems.filter((item) => item.product_type === "physical");
-      const knownWeights = physicalItems
+      const shippableItems = orderItems.filter((item) => item.product_type === "physical" || item.product_type === "bundle");
+      const knownWeights = shippableItems
         .map((item) => Number(item.metadata.weight_grams))
         .filter((weight) => Number.isFinite(weight) && weight >= 0);
-      const totalWeightGrams = knownWeights.length === physicalItems.length
-        ? physicalItems.reduce((sum, item) => sum + Number(item.metadata.weight_grams) * item.quantity, 0)
+      const totalWeightGrams = knownWeights.length === shippableItems.length
+        ? shippableItems.reduce((sum, item) => sum + Number(item.metadata.weight_grams) * item.quantity, 0)
         : null;
       const quote = await quoteCommerceShipping(method, address, {
         subtotal,
-        itemCount: physicalItems.reduce((sum, item) => sum + item.quantity, 0),
+        itemCount: shippableItems.reduce((sum, item) => sum + item.quantity, 0),
         totalWeightGrams,
       });
       shippingSubtotal = quote.price;
@@ -305,6 +322,7 @@ export async function POST(request: NextRequest) {
         seller_type: firstProduct.owner_type,
         seller_player_id: firstProduct.owner_type === "player" ? firstProduct.player_id : null,
         seller_studio_id: firstProduct.owner_type === "studio" ? firstProduct.studio_id : null,
+        spot_id: firstProduct.spot_id ?? null,
         subtotal,
         shipping_subtotal: shippingSubtotal,
         total,
@@ -313,6 +331,8 @@ export async function POST(request: NextRequest) {
         payment_status: "pending",
         fulfillment_status: "pending",
         external_reference: externalReference,
+        sales_channel: firstProduct.spot_id ? "online" : "marketplace",
+        created_by: user.id,
       })
       .select("id,checkout_token")
       .single();

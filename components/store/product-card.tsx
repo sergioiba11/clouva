@@ -6,11 +6,11 @@ import {
 } from "@/lib/commerce-store-data";
 import { money } from "@/lib/store-utils";
 
-export function ProductCard({ product }: { product: CommerceProduct }) {
+export function ProductCard({ product, href }: { product: CommerceProduct; href?: string }) {
   const image = commerceProductImages(product)[0];
   return (
     <Link
-      href={`/producto/${product.slug}`}
+      href={href ?? `/producto/${product.slug}`}
       className="group overflow-hidden rounded-[2rem] border border-white/10 bg-white/[0.03] transition hover:-translate-y-1 hover:bg-white/[0.06]"
     >
       <div className="aspect-[4/5] bg-white/[0.04]">
@@ -27,8 +27,9 @@ export function ProductCard({ product }: { product: CommerceProduct }) {
       <div className="p-5">
         <p className="text-xs uppercase tracking-[0.2em] text-white/45">{commerceProductCategory(product)}</p>
         <h3 className="mt-2 text-lg font-medium">{product.name}</h3>
-        <div className="mt-3 flex items-center gap-2">
+        <div className="mt-3 flex items-center justify-between gap-2">
           <span className="text-[#95d8ff]">{money(Number(product.price), product.currency)}</span>
+          {product.metadata?.availability === "coming_soon" ? <span className="rounded-full border border-violet-400/25 px-2 py-1 text-[10px] uppercase tracking-wider text-violet-200">Próximamente</span> : null}
         </div>
       </div>
     </Link>
