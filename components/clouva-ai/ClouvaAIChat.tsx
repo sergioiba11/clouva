@@ -32,6 +32,7 @@ import {
   X,
 } from "lucide-react";
 import { GeminiModelSelector } from "@/components/clouva-ai/GeminiModelSelector";
+import { ClouvaAIMediaCard } from "@/components/clouva-ai/ClouvaAIMediaCard";
 import { buildMediaCreatorHref } from "@/lib/media-creator-navigation";
 import {
   CLOUVA_AI_WELCOME,
@@ -171,6 +172,7 @@ export function ClouvaAIChat() {
     projectReport,
     loadingHistory,
     loading,
+    mediaGenerating,
     applying,
     error,
     clearError,
@@ -181,6 +183,7 @@ export function ClouvaAIChat() {
     refreshProjectAccess,
     openConversation,
     sendMessage,
+    generateImageFromInput,
     applyChange,
     newConversation,
   } = useClouvaAIConversation();
@@ -193,6 +196,7 @@ export function ClouvaAIChat() {
   const messageOffset = Math.max(messages.length - visibleCount, 0);
   const visibleMessages = messages.slice(messageOffset);
   const hiddenMessageCount = messageOffset;
+  const mediaRevision = messages.map((message) => message.mediaJob ? `${message.mediaJob.requestId}:${message.mediaJob.status}:${message.mediaJob.outputUrl || ""}` : "").join("|");
 
   useEffect(() => {
     const container = chatScrollRef.current;
@@ -201,7 +205,7 @@ export function ClouvaAIChat() {
       container.scrollTo({ top: container.scrollHeight, behavior: loadingHistory ? "auto" : "smooth" });
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [messages.length, loading, pendingAction, loadingHistory]);
+  }, [messages.length, mediaRevision, loading, pendingAction, loadingHistory]);
 
   async function copyMessage(content: string, index: number) {
     try {
@@ -273,7 +277,7 @@ export function ClouvaAIChat() {
             ))}
           </nav>
 
-          <button type="button" className={styles.newChatButton} onClick={startNewConversation} disabled={loading || applying}>
+          <button type="button" className={styles.newChatButton} onClick={startNewConversation} disabled={loading || applying || mediaGenerating}>
             <Plus className="h-4 w-4" /> Nueva conversación
           </button>
 
@@ -285,6 +289,7 @@ export function ClouvaAIChat() {
                 key={conversation.id}
                 onClick={() => void selectConversation(conversation.id)}
                 className={conversation.id === conversationId ? styles.conversationActive : ""}
+                disabled={mediaGenerating}
               >
                 <MessageCircle className="h-3.5 w-3.5" />
                 <span>{conversation.title || "Conversación sin título"}</span>
@@ -309,7 +314,7 @@ export function ClouvaAIChat() {
             </div>
             <div className={styles.topbarActions}>
               <div className={styles.modelWrapper}><GeminiModelSelector /></div>
-              <button type="button" className={styles.iconButton} onClick={startNewConversation} disabled={loading || applying} aria-label="Nueva conversación"><Plus className="h-4 w-4" /></button>
+              <button type="button" className={styles.iconButton} onClick={startNewConversation} disabled={loading || applying || mediaGenerating} aria-label="Nueva conversación"><Plus className="h-4 w-4" /></button>
               <button type="button" className={styles.mobilePanelButton} onClick={() => setShowProject(true)} aria-label="Abrir contexto del proyecto"><PanelRight className="h-4 w-4" /></button>
             </div>
           </header>
@@ -324,8 +329,8 @@ export function ClouvaAIChat() {
 
           <div className={styles.modebar}>
             <div className={styles.modeSwitch}>
-              <button type="button" onClick={() => changeMode("chat")} disabled={loading || applying} className={mode === "chat" ? styles.modeActive : ""}><MessageCircle className="h-3.5 w-3.5" /> Chat</button>
-              <button type="button" onClick={() => changeMode("project")} disabled={loading || applying} className={mode === "project" ? styles.modeActive : ""}><GitBranch className="h-3.5 w-3.5" /> Proyecto</button>
+              <button type="button" onClick={() => changeMode("chat")} disabled={loading || applying || mediaGenerating} className={mode === "chat" ? styles.modeActive : ""}><MessageCircle className="h-3.5 w-3.5" /> Chat</button>
+              <button type="button" onClick={() => changeMode("project")} disabled={loading || applying || mediaGenerating} className={mode === "project" ? styles.modeActive : ""}><GitBranch className="h-3.5 w-3.5" /> Proyecto</button>
             </div>
             <div className={`${styles.accessPill} ${styles[projectAccess.state]}`} title={projectAccess.message || accessText}>
               <StatusIcon state={projectAccess.state} /><span>{accessText}</span>
@@ -381,6 +386,7 @@ export function ClouvaAIChat() {
                       <div className={styles.messageBubble}>
                         <div className={styles.messageMeta}>{message.role === "assistant" ? "Trébol" : "Vos"}</div>
                         {message.role === "user" ? <PreviewSelectionCard content={message.content} /> : <RichMessage content={message.content} />}
+                        {message.mediaJob ? <ClouvaAIMediaCard media={message.mediaJob} /> : null}
                         <button type="button" onClick={() => void copyMessage(message.content, globalIndex)} className={styles.copyButton} aria-label="Copiar mensaje">
                           {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}{copied ? "Copiado" : "Copiar"}
                         </button>
@@ -398,7 +404,7 @@ export function ClouvaAIChat() {
                 <div className={styles.changeIcon}><FileCode2 className="h-5 w-5" /></div>
                 <div className={styles.changeBody}>
                   <p>Cambio listo para revisar</p><h2>{pendingAction.path}</h2><span>{pendingAction.summary}</span><code>{pendingAction.message}</code>
-                  <div><button type="button" onClick={applyChange} disabled={applying || projectAccess.state !== "connected"}>{applying ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}{applying ? "Aplicando…" : "Aplicar cambio"}</button><button type="button" onClick={dismissPendingAction} disabled={applying}><X className="h-4 w-4" /> Cancelar</button></div>
+                  <div><button type="button" onClick={applyChange} disabled={applying || projectAccess.state !== "connected" || mediaGenerating}>{applying ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}{applying ? "Aplicando…" : "Aplicar cambio"}</button><button type="button" onClick={dismissPendingAction} disabled={applying}><X className="h-4 w-4" /> Cancelar</button></div>
                 </div>
               </section>
             )}
@@ -413,10 +419,25 @@ export function ClouvaAIChat() {
                 onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }}
                 rows={2}
                 placeholder={mode === "project" ? "Pedile a Trébol que investigue o mejore tu proyecto…" : "Escribile a Trébol…"}
+                disabled={mediaGenerating}
               />
               <div className={styles.composerBottom}>
-                <span>{mode === "project" ? <><FolderGit2 className="h-3.5 w-3.5" /> Trabajando con GitHub real</> : <><Sparkles className="h-3.5 w-3.5" /> Pensamiento creativo</>}</span>
-                <button type="submit" disabled={loadingHistory || loading || applying || !input.trim()} aria-label="Enviar mensaje"><Send className="h-4 w-4" /></button>
+                <span>
+                  {mode === "project" ? <><FolderGit2 className="h-3.5 w-3.5" /> Trabajando con GitHub real</> : <><Sparkles className="h-3.5 w-3.5" /> Pensamiento creativo</>}
+                  {mode === "chat" ? (
+                    <button
+                      type="button"
+                      className={studioStyles.composerToolButton}
+                      onClick={() => void generateImageFromInput()}
+                      disabled={loadingHistory || loading || applying || mediaGenerating || !input.trim()}
+                      title="Generar una imagen con el texto actual"
+                    >
+                      {mediaGenerating ? <Loader2 className={studioStyles.composerToolSpin} size={13} /> : <ImageIcon size={13} />}
+                      <span>{mediaGenerating ? "Generando…" : "Crear imagen"}</span>
+                    </button>
+                  ) : null}
+                </span>
+                <button type="submit" disabled={loadingHistory || loading || applying || mediaGenerating || !input.trim()} aria-label="Enviar mensaje"><Send className="h-4 w-4" /></button>
               </div>
             </div>
             <p className={styles.disclaimer}>Trébol puede equivocarse. Revisá siempre los cambios antes de aplicarlos.</p>
