@@ -6,6 +6,16 @@ import {
   type GeminiReferenceImage,
 } from "@/lib/gemini-image";
 import { uploadGeneratedMediaObject } from "@/lib/gcs-media";
+import {
+  canonicalProductCaptureLabel,
+  countProductCaptureLabels,
+  MAX_PRODUCT_DETAIL_IMAGES,
+  MAX_PRODUCT_IMAGE_BYTES,
+  MAX_PRODUCT_REFERENCE_IMAGES,
+  MAX_PRODUCT_TOTAL_BYTES,
+  orderProductCaptures,
+  type ProductCaptureLabel,
+} from "@/lib/commerce/product-capture-contract";
 import { requireManagedSpot } from "@/lib/server/commerce-spot";
 import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
 
@@ -13,7 +23,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 180;
 
-type CaptureLabel = "Frente" | "Atrás" | "Detalle";
+type CaptureLabel = ProductCaptureLabel;
 type ProductCaptureInput = { label?: unknown; dataUrl?: unknown };
 type ProductDraft = {
   name?: unknown;
@@ -31,11 +41,9 @@ type ParsedCapture = {
   bytes: Buffer;
   base64: string;
 };
+type IndexedCapture = ParsedCapture & { detailIndex: number | null; displayLabel: string };
 type GeneratedKind = "front_catalog" | "back_catalog" | "detail_catalog";
 
-const MAX_IMAGES = 3;
-const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-const MAX_TOTAL_BYTES = 12 * 1024 * 1024;
 const ALLOWED_MIME = new Set(["image/jpeg", "image/png", "image/webp"]);
 const IMAGE_MODELS = new Set<GeminiImageModel>([
   "gemini-3.1-flash-lite-image",
@@ -55,15 +63,8 @@ function shortText(value: unknown, maxLength: number) {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
 }
 
-function captureLabel(value: unknown): CaptureLabel | null {
-  if (value === "Frente" || value === "Atrás" || value === "Detalle") return value;
-  // Compatibilidad con capturas creadas antes del cambio de nombre.
-  if (value === "Dorso") return "Atrás";
-  return null;
-}
-
 function parseCapture(input: ProductCaptureInput, index: number): ParsedCapture {
-  const label = captureLabel(input.label);
+  const label = canonicalProductCaptureLabel(input.label);
   if (!label) throw new ProductImageError(`La vista ${index + 1} no tiene un label válido.`);
   if (typeof input.dataUrl !== "string") throw new ProductImageError(`La vista ${label} no contiene una imagen.`);
   const match = input.dataUrl.match(/^data:(image\/[a-z0-9.+-]+);base64,([a-z0-9+/=\r\n]+)$/i);
@@ -72,10 +73,22 @@ function parseCapture(input: ProductCaptureInput, index: number): ParsedCapture 
   if (!ALLOWED_MIME.has(mimeType)) throw new ProductImageError("Usá fotos JPG, PNG o WEBP.", 415);
   const base64 = match[2].replace(/\s/g, "");
   const bytes = Buffer.from(base64, "base64");
-  if (!bytes.length || bytes.length > MAX_IMAGE_BYTES) {
+  if (!bytes.length || bytes.length > MAX_PRODUCT_IMAGE_BYTES) {
     throw new ProductImageError(`La vista ${label} debe pesar hasta 5 MB.`, 413);
   }
   return { label, mimeType: mimeType as ParsedCapture["mimeType"], bytes, base64 };
+}
+
+function indexCaptures(captures: ParsedCapture[]): IndexedCapture[] {
+  let detailIndex = 0;
+  return orderProductCaptures(captures).map((capture) => {
+    const index = capture.label === "Detalle" ? ++detailIndex : null;
+    return {
+      ...capture,
+      detailIndex: index,
+      displayLabel: index ? `Detalle ${index}` : capture.label,
+    };
+  });
 }
 
 function productFacts(draft: ProductDraft | undefined, identifier: IdentifierDraft | undefined) {
@@ -97,7 +110,7 @@ function productFacts(draft: ProductDraft | undefined, identifier: IdentifierDra
   ].filter(Boolean).join("\n");
 }
 
-function generationPrompt(kind: GeneratedKind, facts: string) {
+function generationPrompt(kind: GeneratedKind, facts: string, referenceOrder: string[]) {
   const target = kind === "front_catalog"
     ? "una vista frontal principal para catálogo"
     : kind === "back_catalog"
@@ -107,7 +120,9 @@ function generationPrompt(kind: GeneratedKind, facts: string) {
     "Sos el generador de imágenes de producto de CLOUVA.",
     `Creá ${target} del MISMO producto físico mostrado en las imágenes de referencia.`,
     facts,
-    "Las referencias Frente, Atrás y Detalle pertenecen al mismo producto y deben usarse juntas para preservar su identidad.",
+    `Las referencias llegan exactamente en este orden: ${referenceOrder.join(", ")}.`,
+    "Frente, Atrás y todos los Detalles pertenecen al mismo producto y deben interpretarse juntos como evidencia complementaria de un único objeto.",
+    "Usá TODAS las referencias para reconstruir la identidad del producto con máxima fidelidad; los múltiples Detalles sirven para confirmar materiales, bordes, cierres, impresión, packaging, logotipos, gráficos, textura y textos pequeños visibles.",
     "Conservá con máxima fidelidad la forma, proporciones, packaging, materiales visibles, colores, marca, logotipos, gráficos y textos que realmente se distingan en las referencias.",
     "No inventes texto, claims, accesorios, variantes, sellos, ingredientes, códigos, logos ni detalles que no estén sustentados por las referencias.",
     "No cambies el branding ni rediseñes el envase. No conviertas el producto en otro modelo o variante.",
@@ -117,7 +132,7 @@ function generationPrompt(kind: GeneratedKind, facts: string) {
       ? "La orientación final debe corresponder a la cara frontal principal del producto."
       : kind === "back_catalog"
         ? "La orientación final debe corresponder a la cara posterior del producto y respetar la información visible de esa cara."
-        : "La composición debe destacar el detalle realmente fotografiado sin alterar el producto.",
+        : "La composición debe destacar un detalle realmente sustentado por las referencias de Detalle y usar las demás vistas para no alterar la identidad del producto.",
     "No agregues texto externo, marcos, mockups, decoraciones ni marcas de agua.",
   ].filter(Boolean).join("\n");
 }
@@ -148,17 +163,21 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (!Array.isArray(body.captures) || body.captures.length < 1) {
       throw new ProductImageError("Capturá al menos el Frente del producto.");
     }
-    if (body.captures.length > MAX_IMAGES) throw new ProductImageError("Podés usar hasta tres vistas del producto.");
-
-    const captures = body.captures.map(parseCapture);
-    const labels = new Set<CaptureLabel>();
-    for (const capture of captures) {
-      if (labels.has(capture.label)) throw new ProductImageError(`La vista ${capture.label} está repetida.`);
-      labels.add(capture.label);
+    if (body.captures.length > MAX_PRODUCT_REFERENCE_IMAGES) {
+      throw new ProductImageError(`Podés usar hasta ${MAX_PRODUCT_REFERENCE_IMAGES} referencias del producto.`);
     }
-    if (!labels.has("Frente")) throw new ProductImageError("Capturá el Frente antes de generar imágenes de catálogo.");
+
+    const parsedCaptures = body.captures.map(parseCapture);
+    const counts = countProductCaptureLabels(parsedCaptures.map((capture) => capture.label));
+    if (counts.front !== 1) throw new ProductImageError("Necesitás exactamente un Frente para generar imágenes de catálogo.");
+    if (counts.back > 1) throw new ProductImageError("Podés usar como máximo una vista Atrás.");
+    if (counts.detail > MAX_PRODUCT_DETAIL_IMAGES) {
+      throw new ProductImageError(`Podés usar hasta ${MAX_PRODUCT_DETAIL_IMAGES} imágenes de Detalle.`);
+    }
+
+    const captures = indexCaptures(parsedCaptures);
     const totalBytes = captures.reduce((sum, capture) => sum + capture.bytes.length, 0);
-    if (totalBytes > MAX_TOTAL_BYTES) throw new ProductImageError("Las fotos juntas superan el máximo de 12 MB.", 413);
+    if (totalBytes > MAX_PRODUCT_TOTAL_BYTES) throw new ProductImageError("Las fotos juntas superan el máximo de 24 MB.", 413);
 
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) throw new ProductImageError("GEMINI_API_KEY no está configurada.", 500);
@@ -170,6 +189,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       ? configuredModel as GeminiImageModel
       : "gemini-3.1-flash-image";
     const facts = productFacts(body.productDraft, body.identifier ?? undefined);
+    const referenceOrder = captures.map((capture) => capture.displayLabel);
     const referenceImages: GeminiReferenceImage[] = captures.map((capture) => ({
       mimeType: capture.mimeType,
       data: capture.base64,
@@ -183,21 +203,24 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       });
       return {
         label: capture.label,
+        detailIndex: capture.detailIndex,
+        displayLabel: capture.displayLabel,
         url: stored.url,
         storagePath: stored.objectPath,
         mimeType: capture.mimeType,
       };
     }));
 
-    const targets: Array<{ kind: GeneratedKind; sourceLabel: CaptureLabel }> = [
-      { kind: "front_catalog", sourceLabel: "Frente" },
-      ...(labels.has("Atrás") ? [{ kind: "back_catalog" as const, sourceLabel: "Atrás" as const }] : []),
-      ...(labels.has("Detalle") ? [{ kind: "detail_catalog" as const, sourceLabel: "Detalle" as const }] : []),
+    const targets: Array<{ kind: GeneratedKind; sourceLabel: CaptureLabel; detailIndex: number | null }> = [
+      { kind: "front_catalog", sourceLabel: "Frente", detailIndex: null },
+      ...(counts.back ? [{ kind: "back_catalog" as const, sourceLabel: "Atrás" as const, detailIndex: null }] : []),
+      ...(counts.detail ? [{ kind: "detail_catalog" as const, sourceLabel: "Detalle" as const, detailIndex: 1 }] : []),
     ];
 
     const generatedImages = [] as Array<{
       kind: GeneratedKind;
       sourceLabel: CaptureLabel;
+      detailIndex: number | null;
       url: string;
       storagePath: string;
       mimeType: string;
@@ -205,12 +228,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     }>;
 
     // Se ejecutan en serie para mantener una sola línea de generación por Spot y
-    // evitar ráfagas de cuota cuando se cargan Frente + Atrás + Detalle juntos.
+    // evitar ráfagas de cuota. Cada generación recibe Frente + Atrás + TODOS los Detalles.
     for (const target of targets) {
       const generated = await generateImage({
         apiKey,
         model,
-        prompt: generationPrompt(target.kind, facts),
+        prompt: generationPrompt(target.kind, facts, referenceOrder),
         referenceImages,
         aspectRatio: "1:1",
         imageSize: "1K",
@@ -224,6 +247,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       generatedImages.push({
         kind: target.kind,
         sourceLabel: target.sourceLabel,
+        detailIndex: target.detailIndex,
         url: stored.url,
         storagePath: stored.objectPath,
         mimeType: generated.mimeType,
