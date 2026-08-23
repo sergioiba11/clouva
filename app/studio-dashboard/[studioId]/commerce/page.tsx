@@ -1,3 +1,4 @@
+import { ClouvaQrEngineEventBridge } from "@/components/commerce/ClouvaQrEngineEventBridge";
 import { ClouvaQrEnginePanel } from "@/components/commerce/ClouvaQrEnginePanel";
 import { SpotCommerceDashboard } from "@/components/commerce/SpotCommerceDashboard";
 
@@ -9,6 +10,7 @@ export default async function StudioCommercePage({ params }: { params: Promise<{
     <>
       <SpotCommerceDashboard studioId={studioId} />
       <ClouvaQrEnginePanel studioId={studioId} />
+      <ClouvaQrEngineEventBridge />
     </>
   );
 }
