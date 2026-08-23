@@ -92,6 +92,21 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
+      - name: Ensure runtime access to configured Spotify secrets
+        run: |
+          runtime_sa="$(gcloud run services describe "$SERVICE" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --format='value(spec.template.spec.serviceAccountName)')"
+          test -n "$runtime_sa"
+          for secret in SPOTIFY_CLIENT_SECRET SPOTIFY_TOKEN_ENCRYPTION_KEY; do
+            gcloud secrets add-iam-policy-binding "$secret" \
+              --project "$PROJECT_ID" \
+              --member="serviceAccount:$runtime_sa" \
+              --role='roles/secretmanager.secretAccessor' \
+              --quiet
+          done
+
       - name: Build image via Cloud Build
         env:
           DEPLOYED_COMMIT: ${{ steps.source.outputs.sha }}
