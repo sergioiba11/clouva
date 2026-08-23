@@ -103,9 +103,11 @@ function buildPrompt(args: {
     "Sos el analizador visual de productos físicos de CLOUVA.",
     `Contexto: el producto se está cargando en el Spot \"${args.spotName}\" en Argentina.`,
     `Imágenes recibidas: ${args.imageLabels.join(", ")}. Consideralas vistas del mismo producto.`,
+    "Las vistas canónicas son Frente (cara principal), Atrás (cara posterior) y Detalle (acercamiento complementario). Si llega una captura histórica llamada Dorso, interpretala exactamente como Atrás.",
+    "Combiná la evidencia de todas las vistas: usá Frente para identidad comercial, Atrás para información posterior/códigos y Detalle para confirmar variante, presentación o textos pequeños cuando sean legibles.",
     args.suppliedIdentifier
-      ? `Código ya leído por el escáner: ${args.suppliedIdentifier.type} ${args.suppliedIdentifier.value}. Conservá exactamente ese código en identifier.`
-      : "No hay un código confirmado. Solo devolvé identifier si podés leer el valor completo e inequívoco en la imagen.",
+      ? `Código ya leído por el escáner: ${args.suppliedIdentifier.type} ${args.suppliedIdentifier.value}. Es una fuente confirmada y prioritaria: conservá exactamente ese código en identifier.`
+      : "No hay un código confirmado. Solo devolvé identifier si podés leer el valor completo e inequívoco en alguna de las imágenes.",
     "Identificá el objeto, leé el envase y devolvé una ficha comercial editable.",
     "Usá exclusivamente evidencia visible. No inventes marca, modelo, sabor, cantidad, material, beneficios, fabricante ni procedencia.",
     "No inventes costo, precio de venta, stock ni disponibilidad: esos datos no forman parte de la respuesta.",
