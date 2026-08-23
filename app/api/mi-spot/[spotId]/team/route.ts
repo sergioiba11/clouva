@@ -1,15 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isSpotRole, SPOT_ROLE_LABELS, SPOT_ROLES } from "@/lib/commerce/spot-permissions";
+import {
+  isSpotRole,
+  SPOT_ROLE_LABELS,
+  SPOT_ROLES,
+  type SpotRole,
+} from "@/lib/commerce/spot-permissions";
 import { requireSpotAccess } from "@/lib/server/commerce-spot";
 import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const ASSIGNABLE = new Set(SPOT_ROLES.filter((role) => role !== "owner"));
+const ASSIGNABLE = new Set<SpotRole>(SPOT_ROLES.filter((role) => role !== "owner"));
 
-function mapRole(role: string) {
-  return isSpotRole(role) ? { id: role, label: SPOT_ROLE_LABELS[role] } : { id: role, label: role };
+function isAssignableRole(value: unknown): value is SpotRole {
+  return isSpotRole(value) && value !== "owner" && ASSIGNABLE.has(value);
+}
+
+function mapRole(role: SpotRole) {
+  return { id: role, label: SPOT_ROLE_LABELS[role] };
 }
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ spotId: string }> }) {
@@ -40,8 +49,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const { spotId } = await params;
     const admin = createAdminSupabase();
     await requireSpotAccess({ admin, userId: user.id, spotId, capability: "team" });
-    const body = (await request.json().catch(() => ({}))) as { userId?: string; role?: string };
-    if (!body.userId || !body.role || !ASSIGNABLE.has(body.role as never)) {
+    const body = (await request.json().catch(() => ({}))) as { userId?: string; role?: unknown };
+    if (!body.userId || !isAssignableRole(body.role)) {
       return NextResponse.json({ error: "Usuario o rol inválido." }, { status: 400 });
     }
     const { data, error } = await admin
@@ -63,10 +72,10 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     const { spotId } = await params;
     const admin = createAdminSupabase();
     await requireSpotAccess({ admin, userId: user.id, spotId, capability: "team" });
-    const body = (await request.json().catch(() => ({}))) as { memberId?: string; role?: string; status?: string };
+    const body = (await request.json().catch(() => ({}))) as { memberId?: string; role?: unknown; status?: unknown };
     if (!body.memberId) return NextResponse.json({ error: "Miembro inválido." }, { status: 400 });
-    if (body.role !== undefined && !ASSIGNABLE.has(body.role as never)) return NextResponse.json({ error: "Ese rol no se puede asignar desde esta pantalla." }, { status: 400 });
-    if (body.status !== undefined && !["active", "invited", "disabled"].includes(body.status)) return NextResponse.json({ error: "Estado inválido." }, { status: 400 });
+    if (body.role !== undefined && !isAssignableRole(body.role)) return NextResponse.json({ error: "Ese rol no se puede asignar desde esta pantalla." }, { status: 400 });
+    if (body.status !== undefined && (typeof body.status !== "string" || !["active", "invited", "disabled"].includes(body.status))) return NextResponse.json({ error: "Estado inválido." }, { status: 400 });
 
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
     if (body.role !== undefined) patch.role = body.role;
