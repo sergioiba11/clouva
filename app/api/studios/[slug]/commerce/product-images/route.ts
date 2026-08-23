@@ -42,12 +42,12 @@ type ParsedCapture = {
   base64: string;
 };
 type IndexedCapture = ParsedCapture & { detailIndex: number | null; displayLabel: string };
-type GeneratedKind = "front_catalog" | "back_catalog" | "detail_catalog";
-type GenerationTarget = { kind: GeneratedKind; sourceLabel: CaptureLabel; detailIndex: number | null };
+type GeneratedKind = "front_catalog" | "back_catalog";
+type GenerationTarget = { kind: GeneratedKind; sourceLabel: "Frente" | "Atrás"; detailIndex: null };
 type GeneratedProductImage = {
   kind: GeneratedKind;
-  sourceLabel: CaptureLabel;
-  detailIndex: number | null;
+  sourceLabel: "Frente" | "Atrás";
+  detailIndex: null;
   url: string;
   storagePath: string;
   mimeType: string;
@@ -121,16 +121,8 @@ function productFacts(draft: ProductDraft | undefined, identifier: IdentifierDra
   ].filter(Boolean).join("\n");
 }
 
-function targetDisplayLabel(target: GenerationTarget) {
-  if (target.sourceLabel === "Detalle" && target.detailIndex) return `Detalle ${target.detailIndex}`;
-  return target.sourceLabel;
-}
-
 function referencesForTarget(target: GenerationTarget, captures: IndexedCapture[]) {
-  const primary = captures.find((capture) => (
-    capture.label === target.sourceLabel
-    && (target.sourceLabel !== "Detalle" || capture.detailIndex === target.detailIndex)
-  ));
+  const primary = captures.find((capture) => capture.label === target.sourceLabel);
   if (!primary) return captures;
   return [primary, ...captures.filter((capture) => capture !== primary)];
 }
@@ -138,33 +130,27 @@ function referencesForTarget(target: GenerationTarget, captures: IndexedCapture[
 function generationPrompt(target: GenerationTarget, facts: string, referenceOrder: string[]) {
   const requestedView = target.kind === "front_catalog"
     ? "una vista frontal principal para catálogo"
-    : target.kind === "back_catalog"
-      ? "una vista trasera para catálogo"
-      : "una vista de detalle complementaria para catálogo";
-  const primaryLabel = targetDisplayLabel(target);
+    : "una vista trasera para catálogo";
 
   return [
     "Sos el generador de imágenes de producto de CLOUVA.",
     `Creá ${requestedView} del MISMO producto físico mostrado en las fotografías de referencia.`,
     facts,
     `Las referencias llegan exactamente en este orden: ${referenceOrder.join(", ")}.`,
-    `REGLA PRINCIPAL: la primera referencia (${primaryLabel}) es la fuente factual y visual canónica para esta imagen. Conservá el producto tal como aparece físicamente en esa foto.`,
-    "Las demás referencias son evidencia complementaria del mismo objeto y solo sirven para confirmar identidad, branding, materiales, color, textos y detalles que ya existen en el producto real.",
+    `REGLA PRINCIPAL: la primera referencia (${target.sourceLabel}) es la fuente factual y visual canónica para esta imagen. Conservá el producto tal como aparece físicamente en esa foto.`,
+    "Las fotos de Detalle NO son objetivos de generación. Solo son evidencia complementaria para confirmar identidad, materiales, color, branding y construcción del producto real.",
+    "Generá únicamente la cara solicitada: Frente o Atrás. No generes vistas de detalle, producto abierto, perspectiva tres cuartos, interior, composición creativa ni una tercera imagen.",
     "NO reconstruyas, rediseñes, completes creativamente ni reinterpretés el producto. No generes una versión idealizada, un mockup ni una variante comercial distinta.",
-    "Mantené exactamente la geometría y las proporciones visibles del objeto, la forma del packaging, sus pliegues, solapas, aberturas, bordes, cortes, cierres y la relación espacial entre sus piezas.",
-    "Mantené exactamente el ESTADO FÍSICO visible en la referencia principal: si está abierto, cerrado, parcialmente abierto, desplegado, doblado o con componentes/papeles saliendo, debe seguir en ese mismo estado. No cierres lo que está abierto ni abras lo que está cerrado.",
-    "Conservá la cantidad, posición y orientación de los componentes visibles. No muevas papeles, tapas, insertos, accesorios o partes internas para hacer una composición más estética.",
+    "Mantené exactamente la geometría y las proporciones visibles del objeto, la forma del packaging, sus pliegues, solapas, bordes, cortes, cierres y la relación espacial entre sus piezas.",
     "Conservá con máxima fidelidad colores, marca, logotipos, ilustraciones, patrones, símbolos, tipografías y textos impresos realmente visibles. No traduzcas, reescribas ni corrijas textos del packaging.",
     "No inventes texto, claims, accesorios, variantes, sellos, ingredientes, códigos, QR, logos, gráficos ni superficies ocultas que no estén sustentados por las fotografías.",
-    "Si una zona está tapada, borrosa o no puede determinarse con certeza, no inventes información para completarla; mantenela visualmente neutra y coherente con lo que sí está documentado.",
+    "Si una zona está tapada, borrosa o no puede determinarse con certeza, no inventes información para completarla.",
     "La única transformación permitida es FOTOGRÁFICA: eliminar mano/persona y fondo de captura, limpiar ruido visual, mejorar iluminación, balance, nitidez, encuadre y presentación de estudio.",
-    "Podés usar un fondo de estudio limpio y neutro y una sombra natural de apoyo, pero sin modificar el objeto fotografiado.",
+    "Usá un fondo de estudio limpio y neutro y una sombra natural de apoyo, sin modificar el objeto fotografiado.",
     target.kind === "front_catalog"
-      ? "La orientación final debe respetar la cara frontal mostrada en la referencia principal; no inventes una nueva vista frontal."
-      : target.kind === "back_catalog"
-        ? "La orientación final debe respetar la cara posterior mostrada en la referencia principal; no inventes información que no se vea en esa cara."
-        : `El resultado debe ser una versión de catálogo de ${primaryLabel}: preservá específicamente el ángulo, la apertura/configuración física y el detalle mostrado en esa fotografía.`,
-    "Antes de responder, compará mentalmente el resultado con la primera referencia: si cambiaste packaging, geometría, apertura, componentes, branding o textos, corregilo para que vuelva a coincidir con el objeto real.",
+      ? "La imagen final debe mostrar exclusivamente la cara FRONTAL, recta y claramente legible, respetando la referencia Frente."
+      : "La imagen final debe mostrar exclusivamente la cara TRASERA, recta y claramente legible, respetando la referencia Atrás.",
+    "Antes de responder, verificá que el resultado siga siendo exactamente el mismo producto y que la cara mostrada corresponda a la referencia principal.",
     "No agregues texto externo, marcos, mockups, decoraciones ni marcas de agua.",
   ].filter(Boolean).join("\n");
 }
@@ -208,7 +194,7 @@ async function generateCatalogTarget(args: {
   return {
     kind: args.target.kind,
     sourceLabel: args.target.sourceLabel,
-    detailIndex: args.target.detailIndex,
+    detailIndex: null,
     url: stored.url,
     storagePath: stored.objectPath,
     mimeType: generated.mimeType,
@@ -275,12 +261,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const targets: GenerationTarget[] = [
       { kind: "front_catalog", sourceLabel: "Frente", detailIndex: null },
       ...(counts.back ? [{ kind: "back_catalog" as const, sourceLabel: "Atrás" as const, detailIndex: null }] : []),
-      ...(counts.detail ? [{ kind: "detail_catalog" as const, sourceLabel: "Detalle" as const, detailIndex: 1 }] : []),
     ];
 
-    // Cada target pone primero su foto fuente canónica. Esto evita que Gemini
-    // mezcle estados físicos o reconstruya un Detalle usando otra vista del producto.
-    // Las demás capturas siguen disponibles como evidencia complementaria de identidad.
+    // Los Detalles se conservan como referencias del producto, pero nunca generan
+    // una imagen de catálogo propia. El resultado comercial es solamente Frente + Atrás.
     const generatedImages = await Promise.all(targets.map((target) => {
       const targetCaptures = referencesForTarget(target, captures);
       const referenceOrder = targetCaptures.map((capture) => capture.displayLabel);
