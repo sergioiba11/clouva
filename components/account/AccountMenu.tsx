@@ -9,6 +9,7 @@ import {
   CircleUserRound,
   LogOut,
   Plus,
+  QrCode,
   Repeat2,
   Settings,
   ShieldCheck,
@@ -105,6 +106,7 @@ export function AccountMenu({ variant = "nav", triggerClassName = "", preferUser
             <MenuLink href="/mi-flow" icon={<UserRound size={17} />} label="MI FLOW" detail="Billetera, ganancias, FLOWS y Diamantes" onSelect={closeMenu} tone="accent" />
             <MenuLink href="/mi-spot" icon={<Boxes size={17} />} label="MI SPOT" detail="Productos, ventas, stock y scanner" onSelect={closeMenu} />
             <MenuLink href={publicProfileHref} icon={<CircleUserRound size={17} />} label="Mi perfil público" detail="Tu identidad dentro de La Matrix" onSelect={closeMenu} />
+            <MenuLink href="/mi-qr" icon={<QrCode size={17} />} label="Mi QR" detail="Mostrar, compartir y descargar tu QR CLOUVA" onSelect={closeMenu} />
             {canAdmin ? <MenuLink href="/mi-flow/avatar" icon={<Boxes size={17} />} label="Mi Avatar 3D" detail="Personalizá tu personaje" onSelect={closeMenu} /> : <div role="menuitem" className={`${styles.menuItem} ${styles.disabled}`} aria-disabled="true"><span className={styles.itemIcon}><Boxes size={17} /></span><span><b>Mi Avatar 3D</b><small>Próximamente</small></span></div>}
             <MenuLink href="/perfil/configuracion" icon={<Settings size={17} />} label="Configuración" detail="Privacidad y preferencias" onSelect={closeMenu} />
           </div>

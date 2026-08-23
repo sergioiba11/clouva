@@ -50,7 +50,7 @@ test("CLOUVA QR uses an unpredictable public token and never exposes the interna
   assert.match(migration, /commerce_product_identifiers_public_token_unique/);
   assert.match(qrResolver, /\.eq\("public_token", publicToken\)/);
   assert.match(qrResolver, /\.eq\("status", "active"\)/);
-  assert.match(qrResolver, /destination_path\?\.startsWith\("\/"\)/);
+  assert.match(qrResolver, /safeInternalPath\(identifier\.destination_path\)/);
 });
 
 test("variant generation is idempotent and preserves active identifiers", () => {
