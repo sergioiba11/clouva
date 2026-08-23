@@ -1,408 +1,54 @@
 "use client";
 
-import {
-  ArrowDownLeft,
-  ArrowUpRight,
-  CircleDollarSign,
-  Pencil,
-  Plus,
-  ReceiptText,
-  RefreshCw,
-  Trash2,
-  TrendingUp,
-  WalletCards,
-  X,
-} from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { ArrowRight, CircleDollarSign, History, RefreshCw, Store, TrendingUp, WalletCards } from "lucide-react";
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
+import { CloverIcon } from "@/components/clover-icon";
+import { DiamondIcon } from "@/components/diamond-icon";
 import { MainNav } from "@/components/layout";
+import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
 
-type EntryType = "ingreso" | "gasto";
+type CreditEntry = { id:string; transaction_type:string; amount:number; balance_after:number; source:string|null; reference_id:string|null; created_at:string };
+type MoneySummary = { currency:string; generatedMinor:number; pendingMinor:number; availableMinor:number; withdrawnMinor:number; refundedMinor:number };
+type MoneyEntry = { id:string; beneficiary_user_id:string; beneficiary_type:"player"|"studio"; beneficiary_entity_id:string; currency:string; source_type:"commerce_order"|"service_order"|"booking"; source_id:string; gross_amount_minor:number; fees_amount_minor:number; commission_amount_minor:number; net_amount_minor:number; status:"pending"|"available"|"withdrawn"|"refunded"|"reversed"; created_at:string };
+type SummaryPayload = { wallets:{flows:number;diamonds:number}; walletActivity:{flows:CreditEntry[];diamonds:CreditEntry[]}; money:{personal:MoneySummary[];personalActivity:MoneyEntry[];managed:MoneySummary[];managedActivity:MoneyEntry[]}; access:{players:string[];studios:string[]} };
 
-type MoneyEntry = {
-  id: string;
-  owner_id?: string;
-  type: EntryType;
-  amount: number | string | null;
-  category: string | null;
-  source: string | null;
-  date: string | null;
-  notes: string | null;
-  created_at: string | null;
-};
-
-type MoneyForm = {
-  type: EntryType;
-  amount: string;
-  category: string;
-  source: string;
-  date: string;
-  notes: string;
-};
-
-const TABLE = "flow_money_entries";
 const CARD = "rounded-[24px] border border-white/[0.08] bg-[#0c0a13]/95 shadow-[0_22px_70px_rgba(0,0,0,.18)]";
-const INPUT = "w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2.5 text-sm text-white outline-none transition placeholder:text-white/25 focus:border-violet-400/60";
+const SOURCE_LABEL: Record<MoneyEntry["source_type"], string> = { commerce_order:"Venta en MI SPOT / Marketplace", service_order:"Servicio de Estudio", booking:"Reserva de Estudio" };
+const STATUS_LABEL: Record<MoneyEntry["status"], string> = { pending:"Pendiente", available:"Disponible", withdrawn:"Retirado", refunded:"Reembolsado", reversed:"Revertido" };
 
-function localDate() {
-  const now = new Date();
-  const offset = now.getTimezoneOffset() * 60_000;
-  return new Date(now.getTime() - offset).toISOString().slice(0, 10);
+function moneyMinor(value:number,currency:string){return new Intl.NumberFormat("es-AR",{style:"currency",currency,maximumFractionDigits:2}).format(value/100)}
+function when(value:string){return new Date(value).toLocaleString("es-AR",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"})}
+
+export default function MiFlowPage(){
+  const {user,loading:authLoading}=useAuth();
+  const [data,setData]=useState<SummaryPayload|null>(null);
+  const [loading,setLoading]=useState(true);
+  const [error,setError]=useState<string|null>(null);
+  const load=useCallback(async()=>{if(!user)return;setLoading(true);setError(null);try{const response=await authenticatedFetch("/api/mi-flow/summary");setData(await readApiJson<SummaryPayload>(response))}catch(cause){setError(cause instanceof Error?cause.message:"No se pudo cargar MI FLOW.")}finally{setLoading(false)}},[user]);
+  useEffect(()=>{if(authLoading)return;if(!user){setLoading(false);return}void load()},[authLoading,load,user]);
+  useEffect(()=>{if(!data||typeof window==="undefined")return;const asset=new URLSearchParams(window.location.search).get("asset");if(asset!=="flows"&&asset!=="diamonds")return;requestAnimationFrame(()=>document.getElementById(asset)?.scrollIntoView({behavior:"smooth",block:"center"}))},[data]);
+  const combinedActivity=useMemo(()=>[...(data?.money.personalActivity??[]),...(data?.money.managedActivity??[])].sort((a,b)=>new Date(b.created_at).getTime()-new Date(a.created_at).getTime()).slice(0,12),[data]);
+
+  return <main className="min-h-screen bg-[#07060d] text-white">
+    <MainNav/>
+    <div className="relative overflow-hidden border-b border-white/[0.06]"><div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_76%_18%,rgba(124,58,237,.24),transparent_34%),radial-gradient(circle_at_18%_0%,rgba(91,33,182,.12),transparent_30%)]"/><div className="relative mx-auto max-w-7xl px-4 py-8 md:px-8 md:py-12"><section className="rounded-[30px] border border-violet-400/15 bg-gradient-to-br from-[#171022] via-[#0f0b18] to-[#09080f] p-6 md:p-8"><div className="inline-flex items-center gap-2 rounded-full border border-violet-300/15 bg-violet-400/[0.07] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-violet-200"><WalletCards size={14}/> Tu billetera CLOUVA</div><div className="mt-5 flex flex-col justify-between gap-5 lg:flex-row lg:items-end"><div><h1 className="text-4xl font-semibold tracking-tight md:text-6xl">MI FLOW</h1><p className="mt-3 max-w-2xl text-sm leading-6 text-white/55 md:text-base">Dinero generado, ganancias, actividad, FLOWS y Diamantes en un solo centro económico personal.</p></div><div className="flex flex-wrap gap-2"><Link href="/mi-flow/negocios" className="inline-flex items-center gap-2 rounded-xl bg-[#8f5cff] px-4 py-2.5 text-sm font-semibold shadow-[0_10px_35px_rgba(139,92,246,.28)]">Hacer dinero <ArrowRight size={16}/></Link><Link href="/mi-spot" className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm font-semibold"><Store size={16}/> MI SPOT</Link></div></div></section></div></div>
+
+    <div className="mx-auto max-w-7xl space-y-5 px-4 py-6 md:px-8 md:py-8">
+      {error?<div className="rounded-2xl border border-rose-300/15 bg-rose-300/[0.06] p-4 text-sm text-rose-200">{error}</div>:null}
+      <div className="flex items-center justify-between"><div><p className="text-xs uppercase tracking-[0.16em] text-white/35">Situación económica</p><h2 className="mt-1 text-xl font-semibold">Dinero real</h2></div><button type="button" onClick={()=>void load()} disabled={loading} className="inline-flex items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-xs text-white/60 disabled:opacity-50"><RefreshCw size={14} className={loading?"animate-spin":""}/> Actualizar</button></div>
+      {loading?<section className={`${CARD} grid min-h-40 place-items-center text-sm text-white/40`}><span className="inline-flex items-center gap-2"><RefreshCw className="animate-spin" size={16}/> Cargando economía real…</span></section>:data?.money.personal.length?<section className="grid gap-3">{data.money.personal.map(summary=><div key={summary.currency} className={`${CARD} p-5`}><div className="mb-4 flex items-center justify-between"><strong>{summary.currency}</strong><CircleDollarSign size={19} className="text-emerald-300"/></div><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><Metric label="Generado" value={moneyMinor(summary.generatedMinor,summary.currency)}/><Metric label="Pendiente" value={moneyMinor(summary.pendingMinor,summary.currency)} note="Pago confirmado; aún sin liquidación de retiro."/><Metric label="Disponible" value={moneyMinor(summary.availableMinor,summary.currency)} note="Solo dinero marcado como liquidado."/><Metric label="Retirado" value={moneyMinor(summary.withdrawnMinor,summary.currency)}/></div></div>)}</section>:<section className={`${CARD} p-6`}><p className="font-semibold">Todavía no hay ganancias acreditadas a tu MI FLOW.</p><p className="mt-1 text-sm text-white/45">No se calcula un saldo ficticio desde tus registros manuales. Las ganancias aparecen cuando un pago real queda confirmado.</p></section>}
+
+      <section className="grid gap-4 lg:grid-cols-2"><article id="flows" className={`${CARD} scroll-mt-24 p-6`}><div className="flex items-center justify-between"><div><p className="text-xs uppercase tracking-[0.16em] text-white/35">Moneda CLOUVA</p><h2 className="mt-1 flex items-center gap-2 text-xl font-semibold"><CloverIcon className="text-[#8f7cff]" size={22}/> FLOWS</h2></div><strong className="text-3xl">{data?.wallets.flows??0}</strong></div><CreditActivity rows={data?.walletActivity.flows??[]} empty="Todavía no hay movimientos de FLOWS."/></article><article id="diamonds" className={`${CARD} scroll-mt-24 p-6`}><div className="flex items-center justify-between"><div><p className="text-xs uppercase tracking-[0.16em] text-white/35">Crédito premium</p><h2 className="mt-1 flex items-center gap-2 text-xl font-semibold"><DiamondIcon className="text-cyan-300" size={22}/> Diamantes</h2></div><strong className="text-3xl">{data?.wallets.diamonds??0}</strong></div><CreditActivity rows={data?.walletActivity.diamonds??[]} empty="Todavía no hay movimientos de Diamantes."/></article></section>
+
+      <section className={`${CARD} overflow-hidden`}><div className="border-b border-white/[0.07] px-5 py-4 md:px-6"><p className="text-xs uppercase tracking-[0.16em] text-white/35">Actividad económica</p><h2 className="mt-1 flex items-center gap-2 text-lg font-semibold"><History size={18}/> Ganancias y operaciones</h2></div>{combinedActivity.length?<div className="divide-y divide-white/[0.06]">{combinedActivity.map(entry=>{const managed=entry.beneficiary_user_id!==user?.id;return <div key={entry.id} className="flex flex-col gap-2 px-5 py-4 sm:flex-row sm:items-center sm:justify-between md:px-6"><div><p className="text-sm font-medium">{SOURCE_LABEL[entry.source_type]}</p><p className="mt-1 text-xs text-white/35">{managed?"Entidad que administrás":"Tu ingreso"} · {when(entry.created_at)}</p></div><div className="text-left sm:text-right"><strong>{moneyMinor(entry.net_amount_minor,entry.currency)}</strong><p className="mt-1 text-xs text-white/35">{STATUS_LABEL[entry.status]}</p></div></div>})}</div>:<div className="px-6 py-10 text-sm text-white/40">Todavía no hay actividad económica verificada.</div>}</section>
+
+      <section className="grid gap-3 md:grid-cols-3"><ActionCard icon={<TrendingUp size={19}/>} title="Hacer dinero" copy="Tu panel original de ideas, proyectos e ingresos esperados." href="/mi-flow/negocios" cta="Abrir panel"/><ActionCard icon={<Store size={19}/>} title="MI SPOT" copy="Productos, ventas, stock, scanner, QR y códigos en tu negocio." href="/mi-spot" cta="Ir al negocio"/><ActionCard icon={<History size={19}/>} title="Finanzas personales" copy="Tus ingresos y gastos manuales siguen separados de la billetera real." href="/mi-flow/finanzas" cta="Abrir registro"/></section>
+    </div>
+  </main>
 }
 
-function emptyForm(type: EntryType = "ingreso"): MoneyForm {
-  return { type, amount: "", category: "", source: "", date: localDate(), notes: "" };
-}
-
-function numberValue(value: unknown) {
-  const parsed = Number(value ?? 0);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function amount(value: unknown) {
-  return `$ ${new Intl.NumberFormat("es-AR", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(numberValue(value))}`;
-}
-
-function shortDate(value: string | null) {
-  if (!value) return "Sin fecha";
-  const [year, month, day] = value.slice(0, 10).split("-");
-  if (!year || !month || !day) return value;
-  return `${day}/${month}/${year}`;
-}
-
-export default function MiFlowPage() {
-  const { user } = useAuth();
-  const [entries, setEntries] = useState<MoneyEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [formOpen, setFormOpen] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState<MoneyForm>(() => emptyForm());
-
-  const loadEntries = useCallback(async () => {
-    if (!user) return;
-    setLoading(true);
-    setError(null);
-
-    const { supabase } = await import("@/lib/supabase");
-    const { data, error: loadError } = await supabase
-      .from(TABLE)
-      .select("id, owner_id, type, amount, category, source, date, notes, created_at")
-      .eq("owner_id", user.id)
-      .order("created_at", { ascending: false });
-
-    if (loadError) {
-      setError("No pude cargar tus movimientos.");
-      setEntries([]);
-    } else {
-      setEntries((data ?? []) as MoneyEntry[]);
-    }
-    setLoading(false);
-  }, [user]);
-
-  useEffect(() => {
-    void loadEntries();
-  }, [loadEntries]);
-
-  const totals = useMemo(() => {
-    const income = entries.reduce((sum, entry) => sum + (entry.type === "ingreso" ? numberValue(entry.amount) : 0), 0);
-    const expense = entries.reduce((sum, entry) => sum + (entry.type === "gasto" ? numberValue(entry.amount) : 0), 0);
-    const month = localDate().slice(0, 7);
-    const currentMonth = entries.reduce((sum, entry) => {
-      if (!entry.date?.startsWith(month)) return sum;
-      return sum + (entry.type === "ingreso" ? numberValue(entry.amount) : -numberValue(entry.amount));
-    }, 0);
-
-    return { income, expense, balance: income - expense, currentMonth };
-  }, [entries]);
-
-  const sortedEntries = useMemo(
-    () => [...entries].sort((a, b) => String(b.date ?? b.created_at ?? "").localeCompare(String(a.date ?? a.created_at ?? ""))),
-    [entries],
-  );
-
-  function openCreate(type: EntryType) {
-    setEditingId(null);
-    setForm(emptyForm(type));
-    setError(null);
-    setFormOpen(true);
-  }
-
-  function openEdit(entry: MoneyEntry) {
-    setEditingId(entry.id);
-    setForm({
-      type: entry.type,
-      amount: String(entry.amount ?? ""),
-      category: entry.category ?? "",
-      source: entry.source ?? "",
-      date: entry.date?.slice(0, 10) ?? localDate(),
-      notes: entry.notes ?? "",
-    });
-    setError(null);
-    setFormOpen(true);
-  }
-
-  function closeForm() {
-    if (saving) return;
-    setFormOpen(false);
-    setEditingId(null);
-    setForm(emptyForm());
-  }
-
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!user || saving) return;
-
-    const parsedAmount = Number(form.amount);
-    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
-      setError("Ingresá un monto mayor a cero.");
-      return;
-    }
-
-    setSaving(true);
-    setError(null);
-    const { supabase } = await import("@/lib/supabase");
-    const payload = {
-      owner_id: user.id,
-      type: form.type,
-      amount: parsedAmount,
-      category: form.category.trim() || null,
-      source: form.source.trim() || null,
-      date: form.date || null,
-      notes: form.notes.trim() || null,
-    };
-
-    const result = editingId
-      ? await supabase.from(TABLE).update(payload).eq("id", editingId).eq("owner_id", user.id)
-      : await supabase.from(TABLE).insert(payload);
-
-    if (result.error) {
-      setError(editingId ? "No pude actualizar el movimiento." : "No pude guardar el movimiento.");
-      setSaving(false);
-      return;
-    }
-
-    setSaving(false);
-    closeForm();
-    await loadEntries();
-  }
-
-  async function remove(entry: MoneyEntry) {
-    if (!user) return;
-    const confirmed = window.confirm(`¿Eliminar este ${entry.type} de ${amount(entry.amount)}?`);
-    if (!confirmed) return;
-
-    const { supabase } = await import("@/lib/supabase");
-    const { error: deleteError } = await supabase.from(TABLE).delete().eq("id", entry.id).eq("owner_id", user.id);
-    if (deleteError) {
-      setError("No pude eliminar el movimiento.");
-      return;
-    }
-    await loadEntries();
-  }
-
-  return (
-    <main className="min-h-screen bg-[#07060d] text-white">
-      <MainNav />
-
-      <div className="relative overflow-hidden border-b border-white/[0.06]">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_76%_18%,rgba(124,58,237,.23),transparent_34%),radial-gradient(circle_at_18%_0%,rgba(91,33,182,.12),transparent_30%)]" />
-        <div className="relative mx-auto max-w-7xl px-4 py-8 md:px-8 md:py-12">
-          <div className="grid gap-5 lg:grid-cols-[1fr_360px]">
-            <section className="rounded-[28px] border border-violet-400/15 bg-gradient-to-br from-[#171022] via-[#0f0b18] to-[#09080f] p-6 md:p-8">
-              <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-violet-300/15 bg-violet-400/[0.07] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-violet-200">
-                <WalletCards size={14} />
-                Tu economía personal
-              </div>
-              <h1 className="text-3xl font-semibold tracking-tight md:text-5xl">MI FLOW</h1>
-              <p className="mt-2 max-w-2xl text-sm text-white/55 md:text-base">Dinero, ganancias, gastos y movimientos dentro de tu cuenta CLOUVA.</p>
-
-              <div className="mt-7 flex flex-wrap gap-3">
-                <button onClick={() => openCreate("ingreso")} className="inline-flex items-center gap-2 rounded-xl bg-[#8f5cff] px-4 py-2.5 text-sm font-semibold text-white shadow-[0_10px_35px_rgba(139,92,246,.28)] transition hover:bg-[#9c6aff]">
-                  <ArrowDownLeft size={17} />
-                  Nuevo ingreso
-                </button>
-                <button onClick={() => openCreate("gasto")} className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-white/[0.08]">
-                  <ArrowUpRight size={17} />
-                  Nuevo gasto
-                </button>
-              </div>
-            </section>
-
-            <section className={`${CARD} flex flex-col justify-between p-6`}>
-              <div>
-                <div className="flex items-center justify-between">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-white/35">Disponible</span>
-                  <CircleDollarSign size={19} className="text-emerald-300" />
-                </div>
-                <strong className="mt-4 block text-3xl font-semibold tracking-tight md:text-4xl">{amount(totals.balance)}</strong>
-              </div>
-              <div className="mt-7 grid grid-cols-2 gap-3 border-t border-white/[0.07] pt-5 text-xs">
-                <div>
-                  <span className="block uppercase tracking-[0.12em] text-white/30">Este mes</span>
-                  <b className={totals.currentMonth >= 0 ? "mt-1 block text-emerald-300" : "mt-1 block text-rose-300"}>{amount(totals.currentMonth)}</b>
-                </div>
-                <div>
-                  <span className="block uppercase tracking-[0.12em] text-white/30">Movimientos</span>
-                  <b className="mt-1 block text-white/85">{entries.length}</b>
-                </div>
-              </div>
-            </section>
-          </div>
-        </div>
-      </div>
-
-      <div className="mx-auto max-w-7xl space-y-5 px-4 py-6 md:px-8 md:py-8">
-        <section className="grid gap-3 md:grid-cols-3">
-          <article className={`${CARD} p-5`}>
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/35">Ingresos</span>
-                <strong className="mt-3 block text-2xl font-semibold text-emerald-300">{amount(totals.income)}</strong>
-              </div>
-              <span className="rounded-xl border border-emerald-300/15 bg-emerald-300/[0.06] p-2 text-emerald-300"><ArrowDownLeft size={18} /></span>
-            </div>
-          </article>
-          <article className={`${CARD} p-5`}>
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/35">Gastos</span>
-                <strong className="mt-3 block text-2xl font-semibold text-rose-300">{amount(totals.expense)}</strong>
-              </div>
-              <span className="rounded-xl border border-rose-300/15 bg-rose-300/[0.06] p-2 text-rose-300"><ArrowUpRight size={18} /></span>
-            </div>
-          </article>
-          <article className={`${CARD} p-5`}>
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/35">Balance</span>
-                <strong className="mt-3 block text-2xl font-semibold">{amount(totals.balance)}</strong>
-              </div>
-              <span className="rounded-xl border border-violet-300/15 bg-violet-300/[0.06] p-2 text-violet-300"><TrendingUp size={18} /></span>
-            </div>
-          </article>
-        </section>
-
-        <section className={`${CARD} overflow-hidden`}>
-          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/[0.07] px-5 py-4 md:px-6">
-            <div>
-              <h2 className="text-lg font-semibold">Movimientos</h2>
-              <p className="mt-0.5 text-xs text-white/40">Tu historial de ingresos y gastos.</p>
-            </div>
-            <div className="flex gap-2">
-              <button onClick={() => void loadEntries()} disabled={loading} className="inline-flex items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-xs text-white/65 transition hover:bg-white/[0.05] disabled:opacity-50">
-                <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
-                Actualizar
-              </button>
-              <button onClick={() => openCreate("ingreso")} className="inline-flex items-center gap-2 rounded-xl bg-violet-500 px-3 py-2 text-xs font-semibold text-white">
-                <Plus size={14} />
-                Agregar
-              </button>
-            </div>
-          </div>
-
-          {error && !formOpen ? <div className="border-b border-rose-300/10 bg-rose-300/[0.04] px-5 py-3 text-sm text-rose-200 md:px-6">{error}</div> : null}
-
-          {loading ? (
-            <div className="flex min-h-44 items-center justify-center gap-2 text-sm text-white/40"><RefreshCw size={16} className="animate-spin" /> Cargando movimientos...</div>
-          ) : sortedEntries.length === 0 ? (
-            <div className="flex min-h-56 flex-col items-center justify-center px-6 text-center">
-              <span className="mb-4 rounded-2xl border border-violet-300/15 bg-violet-300/[0.06] p-3 text-violet-300"><ReceiptText size={24} /></span>
-              <h3 className="font-semibold">Tu Flow empieza acá</h3>
-              <p className="mt-1 max-w-md text-sm text-white/40">Registrá el primer ingreso o gasto y el tablero se actualiza automáticamente.</p>
-              <button onClick={() => openCreate("ingreso")} className="mt-5 inline-flex items-center gap-2 rounded-xl bg-violet-500 px-4 py-2 text-sm font-semibold"><Plus size={16} /> Nuevo movimiento</button>
-            </div>
-          ) : (
-            <div className="divide-y divide-white/[0.06]">
-              {sortedEntries.map((entry) => {
-                const isIncome = entry.type === "ingreso";
-                return (
-                  <article key={entry.id} className="group flex flex-col gap-3 px-5 py-4 transition hover:bg-white/[0.025] md:flex-row md:items-center md:px-6">
-                    <div className="flex min-w-0 flex-1 items-center gap-3">
-                      <span className={isIncome ? "rounded-xl border border-emerald-300/15 bg-emerald-300/[0.06] p-2.5 text-emerald-300" : "rounded-xl border border-rose-300/15 bg-rose-300/[0.06] p-2.5 text-rose-300"}>
-                        {isIncome ? <ArrowDownLeft size={18} /> : <ArrowUpRight size={18} />}
-                      </span>
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                          <strong className="truncate text-sm">{entry.category || (isIncome ? "Ingreso" : "Gasto")}</strong>
-                          {entry.source ? <span className="rounded-full border border-white/[0.07] px-2 py-0.5 text-[10px] text-white/40">{entry.source}</span> : null}
-                        </div>
-                        <p className="mt-1 truncate text-xs text-white/35">{entry.notes || shortDate(entry.date)}{entry.notes ? ` · ${shortDate(entry.date)}` : ""}</p>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center justify-between gap-4 pl-[52px] md:pl-0">
-                      <strong className={isIncome ? "text-sm text-emerald-300" : "text-sm text-rose-300"}>{isIncome ? "+" : "−"}{amount(entry.amount)}</strong>
-                      <div className="flex gap-1 opacity-70 transition group-hover:opacity-100">
-                        <button onClick={() => openEdit(entry)} aria-label="Editar movimiento" className="rounded-lg p-2 text-white/50 transition hover:bg-white/[0.06] hover:text-white"><Pencil size={14} /></button>
-                        <button onClick={() => void remove(entry)} aria-label="Eliminar movimiento" className="rounded-lg p-2 text-white/35 transition hover:bg-rose-300/[0.07] hover:text-rose-300"><Trash2 size={14} /></button>
-                      </div>
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-          )}
-        </section>
-      </div>
-
-      {formOpen ? (
-        <div className="fixed inset-0 z-[80] flex items-end justify-center bg-black/70 p-0 backdrop-blur-sm md:items-center md:p-5" onMouseDown={(event) => event.target === event.currentTarget && closeForm()}>
-          <section className="w-full max-w-xl rounded-t-[28px] border border-white/10 bg-[#100d17] p-5 shadow-2xl md:rounded-[28px] md:p-6">
-            <div className="mb-5 flex items-start justify-between gap-4">
-              <div>
-                <span className="text-[10px] font-semibold uppercase tracking-[0.17em] text-violet-300">MI FLOW</span>
-                <h2 className="mt-1 text-xl font-semibold">{editingId ? "Editar movimiento" : "Nuevo movimiento"}</h2>
-              </div>
-              <button onClick={closeForm} aria-label="Cerrar" className="rounded-xl border border-white/10 p-2 text-white/50 hover:bg-white/[0.05] hover:text-white"><X size={18} /></button>
-            </div>
-
-            <form onSubmit={submit} className="grid gap-4 md:grid-cols-2">
-              <label className="text-sm">
-                <span className="mb-1.5 block text-xs text-white/50">Tipo</span>
-                <select className={INPUT} value={form.type} onChange={(event) => setForm((current) => ({ ...current, type: event.target.value as EntryType }))}>
-                  <option value="ingreso">Ingreso</option>
-                  <option value="gasto">Gasto</option>
-                </select>
-              </label>
-              <label className="text-sm">
-                <span className="mb-1.5 block text-xs text-white/50">Monto</span>
-                <input className={INPUT} type="number" min="0" step="0.01" inputMode="decimal" placeholder="0,00" required value={form.amount} onChange={(event) => setForm((current) => ({ ...current, amount: event.target.value }))} />
-              </label>
-              <label className="text-sm">
-                <span className="mb-1.5 block text-xs text-white/50">Categoría</span>
-                <input className={INPUT} placeholder="Ej: Música, ventas, comida" value={form.category} onChange={(event) => setForm((current) => ({ ...current, category: event.target.value }))} />
-              </label>
-              <label className="text-sm">
-                <span className="mb-1.5 block text-xs text-white/50">Fuente</span>
-                <input className={INPUT} placeholder="Ej: Iglú, Spotify, efectivo" value={form.source} onChange={(event) => setForm((current) => ({ ...current, source: event.target.value }))} />
-              </label>
-              <label className="text-sm md:col-span-2">
-                <span className="mb-1.5 block text-xs text-white/50">Fecha</span>
-                <input className={INPUT} type="date" value={form.date} onChange={(event) => setForm((current) => ({ ...current, date: event.target.value }))} />
-              </label>
-              <label className="text-sm md:col-span-2">
-                <span className="mb-1.5 block text-xs text-white/50">Notas</span>
-                <textarea className={INPUT} rows={3} placeholder="Detalle opcional" value={form.notes} onChange={(event) => setForm((current) => ({ ...current, notes: event.target.value }))} />
-              </label>
-
-              {error ? <p className="rounded-xl border border-rose-300/15 bg-rose-300/[0.05] px-3 py-2 text-xs text-rose-200 md:col-span-2">{error}</p> : null}
-
-              <div className="flex flex-wrap justify-end gap-2 pt-1 md:col-span-2">
-                <button type="button" onClick={closeForm} disabled={saving} className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/60 hover:bg-white/[0.05] disabled:opacity-50">Cancelar</button>
-                <button type="submit" disabled={saving} className="inline-flex items-center gap-2 rounded-xl bg-violet-500 px-4 py-2.5 text-sm font-semibold text-white shadow-[0_10px_30px_rgba(139,92,246,.24)] hover:bg-violet-400 disabled:opacity-50">
-                  {saving ? <RefreshCw size={15} className="animate-spin" /> : <Plus size={15} />}
-                  {saving ? "Guardando..." : editingId ? "Guardar cambios" : "Crear movimiento"}
-                </button>
-              </div>
-            </form>
-          </section>
-        </div>
-      ) : null}
-    </main>
-  );
-}
+function Metric({label,value,note}:{label:string;value:string;note?:string}){return <div className="rounded-2xl border border-white/[0.07] bg-black/20 p-4"><span className="text-[11px] uppercase tracking-[0.14em] text-white/35">{label}</span><strong className="mt-2 block text-xl">{value}</strong>{note?<p className="mt-2 text-[11px] leading-4 text-white/30">{note}</p>:null}</div>}
+function CreditActivity({rows,empty}:{rows:CreditEntry[];empty:string}){if(!rows.length)return <p className="mt-6 border-t border-white/[0.07] pt-5 text-sm text-white/35">{empty}</p>;return <div className="mt-5 divide-y divide-white/[0.06] border-t border-white/[0.07]">{rows.slice(0,5).map(row=><div key={row.id} className="flex items-center justify-between py-3 text-sm"><div><p>{row.source||row.transaction_type}</p><p className="mt-0.5 text-xs text-white/30">{when(row.created_at)}</p></div><div className="text-right"><b className={row.amount>=0?"text-emerald-300":"text-rose-300"}>{row.amount>=0?"+":""}{row.amount}</b><p className="text-xs text-white/30">saldo {row.balance_after}</p></div></div>)}</div>}
+function ActionCard({icon,title,copy,href,cta}:{icon:React.ReactNode;title:string;copy:string;href:string;cta:string}){return <Link href={href} className={`${CARD} group p-5 transition hover:border-violet-400/25 hover:bg-[#110d1b]`}><span className="inline-grid rounded-xl border border-violet-300/15 bg-violet-300/[0.06] p-2 text-violet-300">{icon}</span><h3 className="mt-4 font-semibold">{title}</h3><p className="mt-1 min-h-10 text-sm text-white/40">{copy}</p><span className="mt-4 inline-flex items-center gap-1 text-xs font-semibold text-violet-300">{cta} <ArrowRight size={14}/></span></Link>}
