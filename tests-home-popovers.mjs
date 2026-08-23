@@ -24,25 +24,28 @@ test("Inicio abre un menú de cuenta compartido y separa MI FLOW de MI SPOT", ()
   assert.match(menu, /Conectado/);
 });
 
-test("MI FLOW usa wallets y ledger reales, no flow_money_entries", () => {
+test("MI FLOW usa wallets reales y Hacer dinero entra a MI SPOT", () => {
   const miFlow = read("./app/mi-flow/page.tsx");
   const summary = read("./app/api/mi-flow/summary/route.ts");
   const balances = read("./app/api/wallet/balances/route.ts");
   const walletChip = read("./components/wallet/WalletBalanceChip.tsx");
   const manualFinances = read("./app/mi-flow/finanzas/page.tsx");
   const legacyMoney = read("./app/mi-flow/money/page.tsx");
+  const incomeProjects = read("./app/mi-flow/negocios/page.tsx");
 
   assert.doesNotMatch(miFlow, /flow_money_entries/);
   assert.match(miFlow, /\/api\/mi-flow\/summary/);
   assert.match(miFlow, />MI FLOW</);
   assert.match(miFlow, /Hacer dinero/);
-  assert.match(miFlow, /href="\/mi-flow\/negocios"/);
-  assert.match(miFlow, /href="\/mi-spot"/);
+  assert.match(miFlow, /href="\/mi-spot"[\s\S]*?>[\s\S]*?Hacer dinero/);
+  assert.match(miFlow, /title="Proyectos de ingresos"[\s\S]*?href="\/mi-flow\/negocios"/);
+  assert.doesNotMatch(miFlow, /href="\/mi-flow\/negocios"[^>]*>Hacer dinero/);
   assert.match(summary, /flows_wallets/);
   assert.match(summary, /flows_wallet_ledger/);
   assert.match(summary, /diamond_wallets/);
   assert.match(summary, /diamond_wallet_ledger/);
   assert.match(summary, /mi_flow_money_ledger/);
+  assert.match(summary, /beneficiary_type: "user" \| "player" \| "studio"/);
   assert.match(balances, /flows_wallets/);
   assert.match(balances, /diamond_wallets/);
   assert.match(walletChip, /\/api\/wallet\/balances/);
@@ -51,6 +54,9 @@ test("MI FLOW usa wallets y ledger reales, no flow_money_entries", () => {
   assert.match(manualFinances, /table: "flow_money_entries"/);
   assert.match(manualFinances, /no modifica el saldo real de MI FLOW/);
   assert.match(legacyMoney, /redirect\("\/mi-flow"\)/);
+  assert.match(incomeProjects, /flow_businesses/);
+  assert.match(incomeProjects, /Proyectos de ingresos/);
+  assert.match(incomeProjects, /No es MI SPOT/);
 });
 
 test("el ledger monetario de MI FLOW es idempotente, privado y seller-scoped", () => {
@@ -70,6 +76,7 @@ test("el ledger monetario de MI FLOW es idempotente, privado y seller-scoped", (
   assert.match(summary, /neq\("beneficiary_user_id", user\.id\)/);
   assert.match(summary, /managedPlayerIds/);
   assert.match(summary, /managedStudioIds/);
+  assert.match(summary, /Merely managing a Spot never turns its/);
 });
 
 test("FLOWS queda reservado para la moneda y el CRUD creativo conserva sus datos con otro nombre", () => {
@@ -86,13 +93,28 @@ test("FLOWS queda reservado para la moneda y el CRUD creativo conserva sus datos
   assert.match(menu, /Notas creativas/);
 });
 
-test("MI SPOT reutiliza el dashboard comercial real y sigue siendo distinto de MI FLOW", () => {
-  const spot = read("./app/mi-spot/page.tsx");
+test("MI SPOT es universal y reutiliza el commerce real en vez de clonarlo", () => {
+  const selector = read("./app/mi-spot/page.tsx");
+  const onboarding = read("./app/mi-spot/new/page.tsx");
+  const home = read("./app/mi-spot/[spotId]/page.tsx");
+  const commerce = read("./app/mi-spot/[spotId]/commerce/page.tsx");
   const dashboard = read("./components/commerce/SpotCommerceDashboard.tsx");
-  assert.match(spot, /SpotCommerceDashboard/);
-  assert.match(spot, /productos, ventas, pedidos, stock, scanner, QR y códigos/i);
+  const spotApi = read("./app/api/mi-spot/route.ts");
+  const helper = read("./lib/server/commerce-spot.ts");
+
+  assert.match(selector, /No necesitás ser artista, productor ni tener un Estudio/);
+  assert.match(selector, /href="\/mi-spot\/new"/);
+  assert.match(onboarding, /QUICK_SPOT_INTENTS/);
+  assert.match(onboarding, /Preparar mi Spot con Gemini/);
+  assert.match(spotApi, /create_user_commerce_spot/);
+  assert.match(home, /Este Spot se adapta a tu negocio/);
+  assert.match(commerce, /<SpotCommerceDashboard studioId=\{commerceScope\}/);
+  assert.match(commerce, /`spot:\$\{scope\.spot\.id\}`/);
+  assert.match(helper, /args\.studioId\.startsWith\("spot:"\)/);
   assert.match(dashboard, /\/api\/studios\/\$\{encodeURIComponent\(studioId\)\}\/commerce\/spot/);
-  assert.match(dashboard, /grid-cols|sm:|lg:/);
+  assert.match(dashboard, /\/commerce\/scan/);
+  assert.match(dashboard, /\/commerce\/inventory/);
+  assert.match(dashboard, /\/commerce\/pos/);
 });
 
 test("Trébol es un asistente global activo con la mascota oficial", () => {
