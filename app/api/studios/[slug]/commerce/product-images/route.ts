@@ -123,49 +123,42 @@ function productFacts(draft: ProductDraft | undefined, identifier: IdentifierDra
 
 function referencesForTarget(target: GenerationTarget, captures: IndexedCapture[]) {
   const primary = captures.find((capture) => capture.label === target.sourceLabel);
-  if (!primary) return captures;
-  return [primary, ...captures.filter((capture) => capture !== primary)];
+  return primary ? [primary] : [];
 }
 
 function generationPrompt(target: GenerationTarget, facts: string, referenceOrder: string[]) {
-  const requestedView = target.kind === "front_catalog"
-    ? "una vista frontal principal para catálogo"
-    : "una vista trasera para catálogo";
-
   return [
-    "Sos el generador de imágenes de producto de CLOUVA.",
-    `Creá ${requestedView} del MISMO producto físico mostrado en las fotografías de referencia.`,
+    "Sos el editor de fondo de imágenes de producto de CLOUVA.",
+    `La única imagen de referencia es la foto ${target.sourceLabel} real que debés editar.`,
     facts,
-    `Las referencias llegan exactamente en este orden: ${referenceOrder.join(", ")}.`,
-    `REGLA PRINCIPAL: la primera referencia (${target.sourceLabel}) es la fuente factual y visual canónica para esta imagen. Conservá el producto tal como aparece físicamente en esa foto.`,
-    "Las fotos de Detalle NO son objetivos de generación. Solo son evidencia complementaria para confirmar identidad, materiales, color, branding y construcción del producto real.",
-    "Generá únicamente la cara solicitada: Frente o Atrás. No generes vistas de detalle, producto abierto, perspectiva tres cuartos, interior, composición creativa ni una tercera imagen.",
-    "NO reconstruyas, rediseñes, completes creativamente ni reinterpretés el producto. No generes una versión idealizada, un mockup ni una variante comercial distinta.",
-    "Mantené exactamente la geometría y las proporciones visibles del objeto, la forma del packaging, sus pliegues, solapas, bordes, cortes, cierres y la relación espacial entre sus piezas.",
-    "Conservá con máxima fidelidad colores, marca, logotipos, ilustraciones, patrones, símbolos, tipografías y textos impresos realmente visibles. No traduzcas, reescribas ni corrijas textos del packaging.",
-    "No inventes texto, claims, accesorios, variantes, sellos, ingredientes, códigos, QR, logos, gráficos ni superficies ocultas que no estén sustentados por las fotografías.",
-    "Si una zona está tapada, borrosa o no puede determinarse con certeza, no inventes información para completarla.",
-    "La única transformación permitida es FOTOGRÁFICA: eliminar mano/persona y fondo de captura, limpiar ruido visual, mejorar iluminación, balance, nitidez, encuadre y presentación de estudio.",
-    "Usá un fondo de estudio limpio y neutro y una sombra natural de apoyo, sin modificar el objeto fotografiado.",
+    referenceOrder.length ? `Referencia: ${referenceOrder.join(", ")}.` : "",
+    "REGLA ABSOLUTA: NO generes, reconstruyas, redibujes, completes, mejores ni reinterpretés el producto.",
+    "El producto visible debe quedar exactamente igual a la fotografía original: misma geometría, proporciones, perspectiva, posición, apertura, pliegues, bordes, textura, color, iluminación sobre el producto, reflejos, sombras propias, desgaste, imperfecciones, textos, logos, tipografías, códigos, QR, gráficos y todos los detalles visibles.",
+    "NO cambies ni un carácter del packaging. NO corrijas textos. NO inventes partes ocultas. NO agregues ni quites componentes. NO cambies el ángulo ni la orientación del producto.",
+    "NO uses las fotos de Detalle ni ninguna otra vista para completar el producto. Para esta salida solo existe la foto Frente o Atrás correspondiente.",
+    "ÚNICA MODIFICACIÓN PERMITIDA: reemplazar exclusivamente los píxeles del FONDO que estén fuera de la silueta visible del producto por un fondo de catálogo blanco/neutro limpio.",
+    "No retoques el producto, no aumentes su nitidez, no cambies exposición, contraste, saturación ni balance de blancos sobre el producto.",
+    "Si una mano, dedo u otro objeto se superpone al producto y quitarlo requeriría inventar una parte oculta, NO lo quites ni reconstruyas lo que hay debajo. Conservá esa zona exactamente como está.",
+    "Podés limpiar únicamente fondo visible que no tape ninguna parte del producto. No hagas inpainting dentro de la silueta del producto.",
     target.kind === "front_catalog"
-      ? "La imagen final debe mostrar exclusivamente la cara FRONTAL, recta y claramente legible, respetando la referencia Frente."
-      : "La imagen final debe mostrar exclusivamente la cara TRASERA, recta y claramente legible, respetando la referencia Atrás.",
-    "Antes de responder, verificá que el resultado siga siendo exactamente el mismo producto y que la cara mostrada corresponda a la referencia principal.",
-    "No agregues texto externo, marcos, mockups, decoraciones ni marcas de agua.",
+      ? "El resultado corresponde al Frente real; no crees otra vista frontal."
+      : "El resultado corresponde al Atrás real; no crees otra vista trasera.",
+    "El objetivo no es crear una foto nueva del producto. Es la MISMA foto del producto con otro fondo.",
+    "No agregues texto externo, marcos, decoraciones, props, superficies nuevas ni marcas de agua.",
   ].filter(Boolean).join("\n");
 }
 
 function publicError(error: unknown) {
   if (error instanceof ProductImageError) return { status: error.status, message: error.message };
   if (error instanceof GeminiImageError) {
-    const message = error.message || "Gemini no pudo generar las imágenes del producto.";
+    const message = error.message || "Gemini no pudo editar las imágenes del producto.";
     if (/quota|resource exhausted|rate limit/i.test(message)) return { status: 429, message: "La cuota de Gemini para imágenes está agotada." };
-    if (/billing|paid tier|payment/i.test(message)) return { status: 402, message: "La generación de imágenes de Gemini requiere facturación habilitada." };
-    if (/abort|timeout|timed out/i.test(message)) return { status: 504, message: "Gemini superó el tiempo de espera generando la imagen." };
+    if (/billing|paid tier|payment/i.test(message)) return { status: 402, message: "La edición de imágenes de Gemini requiere facturación habilitada." };
+    if (/abort|timeout|timed out/i.test(message)) return { status: 504, message: "Gemini superó el tiempo de espera editando la imagen." };
     return { status: error.status || 502, message };
   }
   const status = (error as Error & { status?: number })?.status ?? (isAuthError(error) ? 401 : 500);
-  return { status, message: error instanceof Error ? error.message : "No se pudieron generar las imágenes del producto." };
+  return { status, message: error instanceof Error ? error.message : "No se pudieron editar las imágenes del producto." };
 }
 
 async function generateCatalogTarget(args: {
@@ -177,6 +170,7 @@ async function generateCatalogTarget(args: {
   referenceImages: GeminiReferenceImage[];
   spotId: string;
 }): Promise<GeneratedProductImage> {
+  if (!args.referenceImages.length) throw new ProductImageError(`Falta la foto ${args.target.sourceLabel}.`);
   const generated = await generateImage({
     apiKey: args.apiKey,
     model: args.model,
@@ -263,8 +257,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       ...(counts.back ? [{ kind: "back_catalog" as const, sourceLabel: "Atrás" as const, detailIndex: null }] : []),
     ];
 
-    // Los Detalles se conservan como referencias del producto, pero nunca generan
-    // una imagen de catálogo propia. El resultado comercial es solamente Frente + Atrás.
+    // Cada salida recibe solo su fotografía real (Frente o Atrás). Los Detalles
+    // se guardan para análisis del producto, pero no participan en la edición visual.
     const generatedImages = await Promise.all(targets.map((target) => {
       const targetCaptures = referencesForTarget(target, captures);
       const referenceOrder = targetCaptures.map((capture) => capture.displayLabel);
