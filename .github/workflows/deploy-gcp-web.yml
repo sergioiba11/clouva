@@ -1,5 +1,5 @@
 name: Deploy CLOUVA web to Cloud Run
-# Maintenance marker: redeploy main after removing obsolete /workspace route.
+# Release marker: deploy Mi Spot and CLOUVA media creator from main.
 
 on:
   push:
