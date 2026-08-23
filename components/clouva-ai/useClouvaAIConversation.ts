@@ -88,7 +88,7 @@ export function useClouvaAIConversation() {
   useEffect(() => {
     const storedMode = normalizeClouvaAIMode(window.localStorage.getItem(CLOUVA_AI_MODE_STORAGE_KEY));
     setMode(storedMode);
-    void loadLatestConversation();
+    void loadConversationHistory();
     void refreshProjectAccess();
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
@@ -179,7 +179,7 @@ export function useClouvaAIConversation() {
     setMessages(restored.length ? restored.map(({ role, content }) => ({ role, content })) : [{ role: "assistant", content: CLOUVA_AI_WELCOME }]);
   }
 
-  async function loadLatestConversation() {
+  async function loadConversationHistory() {
     setLoadingHistory(true);
     setError(null);
     try {
@@ -193,12 +193,10 @@ export function useClouvaAIConversation() {
       if (conversationError) throw conversationError;
       const recent = (data ?? []) as ClouvaAIConversationSummary[];
       setConversations(recent);
-      if (!recent[0]) {
-        setMessages([{ role: "assistant", content: CLOUVA_AI_WELCOME }]);
-        return;
-      }
-      await loadMessages(recent[0].id);
+      setConversationId(null);
+      setMessages([{ role: "assistant", content: CLOUVA_AI_WELCOME }]);
     } catch (caught) {
+      setConversationId(null);
       setMessages([{ role: "assistant", content: CLOUVA_AI_WELCOME }]);
       setError(caught instanceof Error ? caught.message : "No se pudo cargar el historial.");
     } finally {
@@ -350,6 +348,7 @@ export function useClouvaAIConversation() {
   function newConversation() {
     setConversationId(null);
     setMessages([{ role: "assistant", content: CLOUVA_AI_WELCOME }]);
+    setInput("");
     setError(null);
     setActiveModel(null);
     setPendingAction(null);
@@ -377,7 +376,7 @@ export function useClouvaAIConversation() {
     pendingAction,
     dismissPendingAction: () => setPendingAction(null),
     refreshProjectAccess,
-    loadLatestConversation,
+    loadConversationHistory,
     openConversation,
     sendMessage,
     applyChange,

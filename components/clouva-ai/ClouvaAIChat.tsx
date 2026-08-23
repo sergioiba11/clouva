@@ -294,7 +294,7 @@ export function ClouvaAIChat() {
 
           <div ref={chatScrollRef} className={styles.messages}>
             {loadingHistory ? (
-              <div className={styles.centerLoader}><Mascot size={72} /><span><Loader2 className="h-4 w-4 animate-spin" /> Recuperando tu conversación…</span></div>
+              <div className={styles.centerLoader}><Mascot size={72} /><span><Loader2 className="h-4 w-4 animate-spin" /> Preparando una conversación nueva…</span></div>
             ) : isWelcome ? (
               <section className={styles.welcome}>
                 <div className={styles.welcomeGlow}><Mascot size={164} /></div>

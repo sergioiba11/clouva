@@ -15,11 +15,27 @@ test("Inicio abre un menú de cuenta compartido y accesible", () => {
   assert.match(layout, /<AccountMenu \/>/);
   assert.match(menu, /aria-expanded=\{openMenu\}/);
   assert.match(menu, /event\.key !== "Escape"/);
-  assert.match(menu, /Mi cuenta CLOUVA/);
+  assert.match(menu, /href="\/mi-flow"[\s\S]*?label="MI FLOW"[\s\S]*?Dinero, metas y movimientos/);
   assert.match(menu, /Mi perfil público/);
+  assert.match(menu, /`\/\$\{encodeURIComponent\(currentPlayer\.slug\)\}`/);
+  assert.doesNotMatch(menu, /`\/u\/\$\{encodeURIComponent\(currentPlayer\.slug\)\}`/);
   assert.match(menu, /Mi Avatar 3D/);
   assert.match(menu, /Configuración/);
+  assert.match(menu, /href="\/mi-flow\/creative"[\s\S]*?label="Centro creativo"/);
   assert.match(menu, /Conectado/);
+});
+
+test("MI FLOW económico ocupa la ruta canónica y el panel anterior vive en Centro creativo", () => {
+  const miFlow = read("./app/mi-flow/page.tsx");
+  const legacyMoney = read("./app/mi-flow/money/page.tsx");
+  const creative = read("./app/mi-flow/creative/page.tsx");
+  const menu = read("./app/mi-flow/menu/page.tsx");
+
+  assert.match(miFlow, /table: "flow_money_entries"/);
+  assert.match(miFlow, /title: "MI FLOW"/);
+  assert.match(legacyMoney, /redirect\("\/mi-flow"\)/);
+  assert.match(creative, /Centro creativo/);
+  assert.match(menu, /Herramientas CLOUVA/);
 });
 
 test("Trébol es un asistente global activo con la mascota oficial", () => {
@@ -48,6 +64,18 @@ test("página completa y popover comparten conversación, historial y memoria", 
   assert.match(controller, /from\("ai_conversations"\)/);
   assert.match(controller, /from\("ai_messages"\)/);
   assert.match(controller, /project_key", "clouva"/);
+});
+
+test("Trébol inicia una conversación nueva cada vez que se abre", () => {
+  const controller = read("./components/clouva-ai/useClouvaAIConversation.ts");
+  const compact = read("./components/clouva-ai/ClouvaAICompactPanel.tsx");
+
+  assert.match(controller, /void loadConversationHistory\(\)/);
+  assert.match(controller, /async function loadConversationHistory\(\)/);
+  assert.match(controller, /setConversations\(recent\);\s+setConversationId\(null\);\s+setMessages\(\[\{ role: "assistant", content: CLOUVA_AI_WELCOME \}\]\);/);
+  assert.doesNotMatch(controller, /await loadMessages\(recent\[0\]\.id\)/);
+  assert.match(controller, /function newConversation\(\)[\s\S]*?setInput\(""\)/);
+  assert.match(compact, /Preparando una conversación nueva/);
 });
 
 test("no queda un segundo asistente legacy en Avatar", () => {

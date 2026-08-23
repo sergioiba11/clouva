@@ -68,7 +68,7 @@ export function AccountMenu({ variant = "nav", triggerClassName = "", preferUser
   const avatar = profile?.avatar_url ?? user?.user_metadata?.avatar_url;
   const canAdmin = role === "admin";
   const publicProfileHref = resolveCurrentPlayerStatus(currentPlayer) === "published" && currentPlayer
-    ? `/u/${encodeURIComponent(currentPlayer.slug)}`
+    ? `/${encodeURIComponent(currentPlayer.slug)}`
     : "/profile/edit";
 
   useEffect(() => {
@@ -145,7 +145,7 @@ export function AccountMenu({ variant = "nav", triggerClassName = "", preferUser
           </header>
 
           <div className={styles.primaryLinks}>
-            <MenuLink href="/cuenta" icon={<UserRound size={17} />} label="Mi cuenta CLOUVA" detail="Datos, compras y pagos" onSelect={closeMenu} tone="accent" />
+            <MenuLink href="/mi-flow" icon={<UserRound size={17} />} label="MI FLOW" detail="Dinero, metas y movimientos" onSelect={closeMenu} tone="accent" />
             <MenuLink href={publicProfileHref} icon={<CircleUserRound size={17} />} label="Mi perfil público" detail="Tu identidad dentro de La Matrix" onSelect={closeMenu} />
             {canAdmin ? (
               <MenuLink href="/mi-flow/avatar" icon={<Boxes size={17} />} label="Mi Avatar 3D" detail="Personalizá tu personaje" onSelect={closeMenu} />
@@ -159,6 +159,7 @@ export function AccountMenu({ variant = "nav", triggerClassName = "", preferUser
           </div>
 
           <div className={styles.secondaryLinks}>
+            <MenuLink href="/mi-flow/creative" icon={<Sparkles size={16} />} label="Centro creativo" onSelect={closeMenu} />
             <MenuLink href="/profile/edit" icon={<Sparkles size={16} />} label="Editar identidad" onSelect={closeMenu} />
             <MenuLink href="/profile/memberships" icon={<UsersRound size={16} />} label="Mis Estudios" onSelect={closeMenu} />
             <MenuLink href="/login?addAccount=1" icon={<Plus size={16} />} label="Agregar cuenta" onSelect={closeMenu} />

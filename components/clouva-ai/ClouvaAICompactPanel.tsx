@@ -129,7 +129,7 @@ export function ClouvaAICompactPanel() {
 
             <div ref={scrollRef} className={styles.messages} aria-live="polite">
               {loadingHistory ? (
-                <div className={styles.loadingState}><Image src={MASCOT_SRC} alt="" width={72} height={72} /><span><Loader2 size={15} className={styles.spin} /> Recuperando tu conversación…</span></div>
+                <div className={styles.loadingState}><Image src={MASCOT_SRC} alt="" width={72} height={72} /><span><Loader2 size={15} className={styles.spin} /> Preparando una conversación nueva…</span></div>
               ) : isFresh ? (
                 <section className={styles.welcome}>
                   <span className={styles.eyebrow}><Sparkles size={13} /> TRÉBOL ESTÁ CON VOS</span>

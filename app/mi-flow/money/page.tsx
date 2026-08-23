@@ -1,2 +1,5 @@
-import { FlowModuleCrud } from "@/components/flow-module-crud";
-export default function Page(){return <FlowModuleCrud config={{table:"flow_money_entries",title:"Money",subtitle:"Ganancias, gastos, metas e inversiones.",createLabel:"Nuevo movimiento",fields:[{key:"type",label:"Tipo (ingreso/gasto)"},{key:"amount",label:"Monto",type:"number"},{key:"category",label:"Categoría"},{key:"source",label:"Fuente"},{key:"date",label:"Fecha",type:"date"},{key:"notes",label:"Notas",type:"textarea"}]}}/>}
+import { redirect } from "next/navigation";
+
+export default function LegacyMoneyPage() {
+  redirect("/mi-flow");
+}

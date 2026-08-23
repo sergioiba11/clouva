@@ -6,6 +6,8 @@ import { CloverIcon } from "@/components/clover-icon";
 import { useAuth } from "@/components/auth-provider";
 
 const sections = [
+  { title: "MI FLOW", href: "/mi-flow" },
+  { title: "Centro creativo", href: "/mi-flow/creative" },
   { title: "Avatar", href: "/mi-flow/avatar", available: false },
   { title: "Flows", href: "/mi-flow/flows" },
   { title: "Studio", href: "/mi-flow/studio" },
@@ -13,7 +15,6 @@ const sections = [
   { title: "Launch", href: "/mi-flow/launch" },
   { title: "Visual", href: "/mi-flow/visual" },
   { title: "Store", href: "/mi-flow/store" },
-  { title: "Money", href: "/mi-flow/money" },
   { title: "Tasks", href: "/mi-flow/tasks" },
   { title: "Lore", href: "/mi-flow/lore" },
   { title: "Agenda", href: "/mi-flow/agenda" },
@@ -27,8 +28,8 @@ export default function MenuPage() {
       <div className="mx-auto flex max-w-3xl items-center gap-3">
         <CloverIcon className="text-[#8f7cff]" size={26} />
         <div>
-          <p className="text-xs uppercase tracking-[0.28em] text-white/40">Todo Clouva</p>
-          <h1 className="font-stencil text-2xl tracking-wide">¿Qué querés hacer?</h1>
+          <p className="text-xs uppercase tracking-[0.28em] text-white/40">Herramientas CLOUVA</p>
+          <h1 className="font-stencil text-2xl tracking-wide">Centro creativo</h1>
         </div>
       </div>
 
