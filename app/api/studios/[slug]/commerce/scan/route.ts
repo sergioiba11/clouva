@@ -11,6 +11,18 @@ import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supa
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function resultListingId(value: unknown) {
+  const root = record(value);
+  const listing = record(root.listing);
+  return typeof listing.id === "string" ? listing.id : null;
+}
+
 export async function GET(request: NextRequest, { params }: { params: Promise<{ slug: string }> }) {
   try {
     const { user } = await requireUser(request);
@@ -65,6 +77,44 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       p_idempotency_key: body.idempotencyKey || `scan:${spot.id}:${randomUUID()}`,
     });
     if (error) throw new Error(error.message);
+
+    // El RPC canónico conserva la creación/resolución del producto. La portada
+    // es una propiedad de la publicación del Spot, así que la persistimos sobre
+    // commerce_products una vez que conocemos el listing resultante. De esta
+    // forma no hace falta cambiar la firma del RPC ni duplicar su lógica.
+    const listingId = resultListingId(data);
+    const requestedCover = typeof body.listing?.cover_url === "string" ? body.listing.cover_url.trim() : "";
+    const requestedMetadata = record(body.listing?.metadata);
+    if (listingId && (requestedCover || Object.keys(requestedMetadata).length)) {
+      const { data: existing, error: existingError } = await admin
+        .from("commerce_products")
+        .select("metadata")
+        .eq("id", listingId)
+        .eq("spot_id", spot.id)
+        .maybeSingle();
+      if (existingError) throw new Error(existingError.message);
+
+      const patch: Record<string, unknown> = {};
+      if (requestedCover) patch.cover_url = requestedCover;
+      if (Object.keys(requestedMetadata).length) {
+        patch.metadata = { ...record(existing?.metadata), ...requestedMetadata };
+      }
+      const { error: updateError } = await admin
+        .from("commerce_products")
+        .update(patch)
+        .eq("id", listingId)
+        .eq("spot_id", spot.id);
+      if (updateError) throw new Error(updateError.message);
+
+      const root = record(data);
+      const listing = record(root.listing);
+      root.listing = {
+        ...listing,
+        ...(requestedCover ? { cover_url: requestedCover } : {}),
+        ...(Object.keys(requestedMetadata).length ? { metadata: patch.metadata } : {}),
+      };
+    }
+
     return NextResponse.json({ result: data }, { status: 201 });
   } catch (error) {
     const status = (error as Error & { status?: number })?.status ?? (isAuthError(error) ? 401 : 500);
