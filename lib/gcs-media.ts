@@ -15,11 +15,21 @@ const EXTENSION_BY_MIME: Record<string, string> = {
   "image/jpeg": "jpg",
   "image/webp": "webp",
   "image/svg+xml": "svg",
+  "video/mp4": "mp4",
   "application/pdf": "pdf",
   "application/json": "json",
 };
 
 export async function uploadGeneratedMedia(args: {
+  bytes: Buffer;
+  mimeType: string;
+  pathPrefix: string;
+}) {
+  const uploaded = await uploadGeneratedMediaObject(args);
+  return uploaded.url;
+}
+
+export async function uploadGeneratedMediaObject(args: {
   bytes: Buffer;
   mimeType: string;
   pathPrefix: string;
@@ -37,5 +47,14 @@ export async function uploadGeneratedMedia(args: {
     },
   });
 
-  return `https://storage.googleapis.com/${BUCKET_NAME}/${objectPath}`;
+  return {
+    url: `https://storage.googleapis.com/${BUCKET_NAME}/${objectPath}`,
+    objectPath,
+  };
+}
+
+export async function deleteGeneratedMedia(objectPath: string) {
+  const normalized = objectPath.replace(/^\/+/, "");
+  if (!normalized || normalized.includes("..")) throw new Error("Ruta de almacenamiento inválida.");
+  await getStorage().bucket(BUCKET_NAME).file(normalized).delete({ ignoreNotFound: true });
 }

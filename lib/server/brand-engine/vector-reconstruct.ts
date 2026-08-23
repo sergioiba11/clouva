@@ -507,10 +507,11 @@ async function validateVector(args: {
     const resizedMask = await sharp(Buffer.from(component.foregroundMask), { raw: { width: component.width, height: component.height, channels: 1 } })
       .resize(box.width, box.height, { fit: "fill", kernel: sharp.kernel.nearest })
       .raw()
-      .toBuffer();
+      .toBuffer({ resolveWithObject: true });
     for (let y = 0; y < box.height; y += 1) {
       for (let x = 0; x < box.width; x += 1) {
-        if (resizedMask[y * box.width + x]) expected[(box.top + y) * args.width + box.left + x] = 1;
+        const sourceIndex = (y * box.width + x) * resizedMask.info.channels;
+        if (resizedMask.data[sourceIndex]) expected[(box.top + y) * args.width + box.left + x] = 1;
       }
     }
   }

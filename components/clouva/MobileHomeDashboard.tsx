@@ -59,7 +59,7 @@ type MobileHomeDashboardProps = {
 
 export function MobileHomeDashboard({ configOverride, previewMode = false }: MobileHomeDashboardProps = {}) {
   const router = useRouter();
-  const { user, profile, loading } = useAuth();
+  const { user, profile, role, loading } = useAuth();
   const { currentPlayer, playerLoading, playerReady } = useCurrentPlayer();
   const { config, version, loading: configLoading } = usePublishedUiPage(
     "mobile-home",
@@ -251,7 +251,7 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
           <CircleUserRound size={23} />
           <span>{config.navigation.avatarLabel}</span>
         </Link>
-        <Link href="/creator-studio" className={styles.createNav} aria-label="Crear en Creator Studio" onClick={preventPreviewNavigation}>
+        <Link href={role === "admin" ? "/crear" : "/creator-studio"} className={styles.createNav} aria-label={role === "admin" ? "Crear con CLOUVA" : "Crear en Creator Studio"} onClick={preventPreviewNavigation}>
           <b><Plus size={32} /></b>
           <small>{config.navigation.createLabel}</small>
         </Link>

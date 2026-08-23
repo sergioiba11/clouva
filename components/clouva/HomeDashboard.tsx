@@ -30,6 +30,7 @@ import styles from "./home-dashboard.module.css";
 
 const primaryNav = [
   { label: "Inicio", href: "/", icon: Home, available: true },
+  { label: "Crear", href: "/crear", icon: Sparkles, available: false, adminOnly: true },
   { label: "Mi Avatar", href: "/mi-flow/avatar", icon: CircleUserRound, available: false },
   { label: "Música", href: "/mi-flow/music", icon: Music2, available: true },
   { label: "Tienda", href: "/tienda", icon: ShoppingBag, available: true },
@@ -116,7 +117,9 @@ export function HomeDashboard() {
   // El admin necesita poder entrar a las pantallas "Próximamente" para
   // probarlas/gestionarlas -- el resto de los usuarios sigue viendo el gate.
   const isAdmin = role === "admin";
-  const effectivePrimaryNav = primaryNav.map((item) => ({ ...item, available: item.available || isAdmin }));
+  const effectivePrimaryNav = primaryNav
+    .filter((item) => !("adminOnly" in item) || !item.adminOnly || isAdmin)
+    .map((item) => ({ ...item, available: item.available || isAdmin }));
   const effectiveModules = modules.map((item) => ({ ...item, available: item.available || isAdmin }));
 
   return (
