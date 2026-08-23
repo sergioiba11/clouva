@@ -10,6 +10,7 @@ const route = read("./app/api/studios/[slug]/commerce/recognize/route.ts");
 const scannerRoute = read("./app/api/studios/[slug]/commerce/scan/route.ts");
 const productImagesRoute = read("./app/api/studios/[slug]/commerce/product-images/route.ts");
 const captureContract = read("./lib/commerce/product-capture-contract.ts");
+const deployWorkflow = read("./.github/workflows/deploy-gcp-web.yml");
 
 test("Gemini product recognition is sanitized before it reaches the form", () => {
   const recognition = sanitizeCommerceProductRecognition({
@@ -127,4 +128,12 @@ test("commerce product image generation reuses Gemini Image and all CLOUVA refer
   assert.match(productImagesRoute, /detailIndex/);
   assert.match(productImagesRoute, /displayLabel/);
   assert.match(productImagesRoute, /TODAS las referencias/);
+});
+
+test("commerce product image generation has a coherent timeout budget", () => {
+  assert.match(productImagesRoute, /maxDuration\s*=\s*300/);
+  assert.match(productImagesRoute, /PRODUCT_IMAGE_GENERATION_TIMEOUT_MS\s*=\s*150_000/);
+  assert.match(productImagesRoute, /Promise\.all\(targets\.map/);
+  assert.doesNotMatch(productImagesRoute, /timeoutMs:\s*55_000/);
+  assert.match(deployWorkflow, /--timeout 300/);
 });
