@@ -19,6 +19,11 @@ export type ClouvaQrRecord = {
   updated_at: string;
 };
 
+type ClouvaQrRpcResult = {
+  qr: ClouvaQrRecord;
+  created: boolean;
+};
+
 export function clouvaQrUrl(publicToken: string) {
   return `${siteUrl.replace(/\/$/, "")}/q/${encodeURIComponent(publicToken)}`;
 }
@@ -65,8 +70,9 @@ export async function getOrCreateClouvaQr(args: {
     p_metadata: args.metadata ?? {},
   });
   if (error) throw new Error(error.message);
-  const qr = data as ClouvaQrRecord;
-  return { qr, created: true, url: clouvaQrUrl(qr.public_token) };
+  const result = data as ClouvaQrRpcResult | null;
+  if (!result?.qr?.public_token) throw new Error("El registro QR no devolvió un token válido.");
+  return { qr: result.qr, created: Boolean(result.created), url: clouvaQrUrl(result.qr.public_token) };
 }
 
 export function serializeClouvaQr(qr: ClouvaQrRecord, created = false) {
