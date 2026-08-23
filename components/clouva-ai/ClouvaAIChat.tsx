@@ -1,17 +1,30 @@
 "use client";
 
+import Image from "next/image";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   Check,
   CheckCircle2,
+  Code2,
   Copy,
+  FileCode2,
+  FolderGit2,
   GitBranch,
+  History,
   Loader2,
   MessageCircle,
+  PanelLeft,
+  PanelRight,
+  Plus,
   RefreshCw,
+  Send,
+  ShieldCheck,
+  Sparkles,
+  WandSparkles,
   X,
 } from "lucide-react";
+import { GeminiModelSelector } from "@/components/clouva-ai/GeminiModelSelector";
 import {
   CLOUVA_AI_MODE_STORAGE_KEY,
   DEFAULT_CLOUVA_AI_MODE,
@@ -21,6 +34,7 @@ import {
   type ClouvaAIMode,
 } from "@/lib/clouva-ai/project-access";
 import { supabase } from "@/lib/supabase";
+import styles from "./ClouvaAIChat.module.css";
 
 type Message = { role: "user" | "assistant"; content: string };
 type PendingAction = {
@@ -35,9 +49,18 @@ type ApiPayload = {
   message?: string;
   model?: string;
   pendingAction?: PendingAction | null;
+  analysisScope?: "status" | "explicit" | "broad";
+  coverageAreas?: string[];
+  filesReviewed?: string[];
   error?: string;
 };
 type StoredMessage = Message & { metadata?: Record<string, unknown> | null };
+type ConversationSummary = { id: string; title: string | null; created_at: string };
+type ProjectReport = {
+  scope: "status" | "explicit" | "broad";
+  coverageAreas: string[];
+  filesReviewed: string[];
+};
 type ProjectAccessState = "checking" | "connected" | "unavailable" | "signed_out";
 type ProjectAccess = {
   state: ProjectAccessState;
@@ -52,13 +75,11 @@ type ProjectStatusPayload = {
     connected?: boolean;
     repository?: string;
     branch?: string;
-    private?: boolean;
-    url?: string;
-    pushedAt?: string;
   };
   error?: string;
 };
 
+const MASCOT_SRC = "/assets/clouva-ai/trebol-mascot.png";
 const WELCOME =
   "Soy Trébol — CLOUVA AI. Proyecto queda listo para investigar el repositorio real mientras tu sesión autorizada siga activa.";
 const INITIAL_VISIBLE_MESSAGES = 12;
@@ -69,6 +90,11 @@ const INITIAL_PROJECT_ACCESS: ProjectAccess = {
   message: null,
   checkedAt: null,
 };
+const QUICK_PROMPTS = [
+  { icon: Code2, label: "Revisar código", prompt: "Revisá el estado del proyecto y decime cuál es la mejora técnica más importante para hacer ahora." },
+  { icon: WandSparkles, label: "Mejorar una pantalla", prompt: "Quiero mejorar una pantalla de CLOUVA. Ayudame a definir el cambio y qué archivos tenemos que revisar." },
+  { icon: ShieldCheck, label: "Buscar riesgos", prompt: "Auditá el proyecto y priorizá riesgos de seguridad, permisos y datos." },
+];
 
 function deduplicate(messages: StoredMessage[]) {
   return messages.filter((message, index) => {
@@ -78,35 +104,113 @@ function deduplicate(messages: StoredMessage[]) {
   });
 }
 
-function SelectableMessage({ content }: { content: string }) {
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+function previewSelection(content: string) {
+  if (!content.includes("Web Preview") || !content.includes("Selector:")) return null;
+  const values: Record<string, string> = {};
+  for (const line of content.split("\n")) {
+    const separator = line.indexOf(":");
+    if (separator < 0) continue;
+    values[line.slice(0, separator).trim()] = line.slice(separator + 1).trim();
+  }
+  return {
+    request: values.Pedido || "Cambio solicitado desde Web Preview",
+    element: values.Elemento || "Elemento seleccionado",
+    selector: values.Selector || "Sin selector",
+    route: values.Ruta || "/",
+  };
+}
 
-  useEffect(() => {
-    const textarea = textareaRef.current;
-    if (!textarea) return;
-    textarea.style.height = "0px";
-    textarea.style.height = `${textarea.scrollHeight}px`;
-  }, [content]);
-
+function InlineCode({ text }: { text: string }) {
+  const pieces = text.split(/(`[^`]+`)/g);
   return (
-    <textarea
-      ref={textareaRef}
-      value={content}
-      readOnly
-      rows={1}
-      aria-label="Contenido del mensaje"
-      className="block w-full resize-none overflow-hidden border-0 bg-transparent p-0 text-sm leading-6 text-inherit outline-none"
-      style={{ font: "inherit", lineHeight: "inherit" }}
+    <>
+      {pieces.map((piece, index) =>
+        piece.startsWith("`") && piece.endsWith("`") ? (
+          <code key={index} className={styles.inlineCode}>{piece.slice(1, -1)}</code>
+        ) : (
+          <span key={index}>{piece}</span>
+        ),
+      )}
+    </>
+  );
+}
+
+function RichMessage({ content }: { content: string }) {
+  const blocks = content.split(/(```[\s\S]*?```)/g).filter(Boolean);
+  return (
+    <div className={styles.richMessage}>
+      {blocks.map((block, blockIndex) => {
+        if (block.startsWith("```") && block.endsWith("```")) {
+          const raw = block.slice(3, -3);
+          const newline = raw.indexOf("\n");
+          const language = newline > -1 ? raw.slice(0, newline).trim() : "";
+          const code = newline > -1 ? raw.slice(newline + 1) : raw;
+          return (
+            <div key={blockIndex} className={styles.codeBlock}>
+              {language && <span>{language}</span>}
+              <pre>{code}</pre>
+            </div>
+          );
+        }
+
+        return block.split("\n").map((line, lineIndex) => {
+          const trimmed = line.trim();
+          if (!trimmed) return <span key={`${blockIndex}-${lineIndex}`} className={styles.messageSpacer} />;
+          if (trimmed.startsWith("### ")) return <h4 key={`${blockIndex}-${lineIndex}`}><InlineCode text={trimmed.slice(4)} /></h4>;
+          if (trimmed.startsWith("## ")) return <h3 key={`${blockIndex}-${lineIndex}`}><InlineCode text={trimmed.slice(3)} /></h3>;
+          if (/^[-*] /.test(trimmed)) return <p key={`${blockIndex}-${lineIndex}`} className={styles.listLine}>• <InlineCode text={trimmed.slice(2)} /></p>;
+          return <p key={`${blockIndex}-${lineIndex}`}><InlineCode text={line} /></p>;
+        });
+      })}
+    </div>
+  );
+}
+
+function PreviewSelectionCard({ content }: { content: string }) {
+  const selection = previewSelection(content);
+  if (!selection) return <RichMessage content={content} />;
+  return (
+    <div className={styles.previewCard}>
+      <div className={styles.previewCardHeader}>
+        <span><Sparkles className="h-3.5 w-3.5" /> Web Preview</span>
+        <code>{selection.route}</code>
+      </div>
+      <strong>{selection.request}</strong>
+      <dl>
+        <div><dt>Elemento</dt><dd>{selection.element}</dd></div>
+        <div><dt>Selector</dt><dd>{selection.selector}</dd></div>
+      </dl>
+    </div>
+  );
+}
+
+function Mascot({ size = 42, priority = false }: { size?: number; priority?: boolean }) {
+  return (
+    <Image
+      src={MASCOT_SRC}
+      alt="Trébol, la mascota de CLOUVA AI"
+      width={size}
+      height={size}
+      priority={priority}
+      className={styles.mascotImage}
     />
   );
 }
 
+function StatusIcon({ state }: { state: ProjectAccessState }) {
+  if (state === "connected") return <CheckCircle2 className="h-3.5 w-3.5" />;
+  if (state === "checking") return <Loader2 className="h-3.5 w-3.5 animate-spin" />;
+  return <AlertTriangle className="h-3.5 w-3.5" />;
+}
+
 export function ClouvaAIChat() {
   const [messages, setMessages] = useState<Message[]>([]);
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<ClouvaAIMode>(DEFAULT_CLOUVA_AI_MODE);
   const [projectAccess, setProjectAccess] = useState<ProjectAccess>(INITIAL_PROJECT_ACCESS);
+  const [projectReport, setProjectReport] = useState<ProjectReport | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [loading, setLoading] = useState(false);
   const [applying, setApplying] = useState(false);
@@ -115,6 +219,8 @@ export function ClouvaAIChat() {
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_MESSAGES);
   const [copiedMessageIndex, setCopiedMessageIndex] = useState<number | null>(null);
+  const [showConversations, setShowConversations] = useState(false);
+  const [showProject, setShowProject] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const projectCheckIdRef = useRef(0);
 
@@ -123,17 +229,15 @@ export function ClouvaAIChat() {
   const hiddenMessageCount = messageOffset;
   const accessText = projectAccessLabel(projectAccess);
 
+  // The initial load is intentionally tied to the mounted workspace; auth changes are
+  // handled by Supabase's subscription below without reloading the active conversation.
   useEffect(() => {
-    const storedMode = normalizeClouvaAIMode(
-      window.localStorage.getItem(CLOUVA_AI_MODE_STORAGE_KEY),
-    );
+    const storedMode = normalizeClouvaAIMode(window.localStorage.getItem(CLOUVA_AI_MODE_STORAGE_KEY));
     setMode(storedMode);
     void loadLatestConversation();
     void refreshProjectAccess();
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!session) {
         setProjectAccess({
           state: "signed_out",
@@ -148,19 +252,15 @@ export function ClouvaAIChat() {
     });
 
     return () => subscription.unsubscribe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
     const container = chatScrollRef.current;
     if (!container) return;
-
     const frame = window.requestAnimationFrame(() => {
-      container.scrollTo({
-        top: container.scrollHeight,
-        behavior: loadingHistory ? "auto" : "smooth",
-      });
+      container.scrollTo({ top: container.scrollHeight, behavior: loadingHistory ? "auto" : "smooth" });
     });
-
     return () => window.cancelAnimationFrame(frame);
   }, [messages.length, loading, pendingAction, loadingHistory]);
 
@@ -172,11 +272,7 @@ export function ClouvaAIChat() {
 
   async function refreshProjectAccess(accessToken?: string): Promise<boolean> {
     const checkId = ++projectCheckIdRef.current;
-    setProjectAccess((current) => ({
-      ...current,
-      state: "checking",
-      message: null,
-    }));
+    setProjectAccess((current) => ({ ...current, state: "checking", message: null }));
 
     try {
       let token = accessToken;
@@ -184,16 +280,9 @@ export function ClouvaAIChat() {
         const { data } = await supabase.auth.getSession();
         token = data.session?.access_token;
       }
-
       if (!token) {
         if (projectCheckIdRef.current === checkId) {
-          setProjectAccess({
-            state: "signed_out",
-            repository: null,
-            branch: null,
-            message: "Iniciá sesión para activar Proyecto",
-            checkedAt: Date.now(),
-          });
+          setProjectAccess({ state: "signed_out", repository: null, branch: null, message: "Iniciá sesión para activar Proyecto", checkedAt: Date.now() });
         }
         return false;
       }
@@ -204,10 +293,7 @@ export function ClouvaAIChat() {
         cache: "no-store",
       });
       const payload = (await response.json().catch(() => ({}))) as ProjectStatusPayload;
-
-      if (!response.ok || !payload.status?.connected) {
-        throw new Error(payload.error || "GitHub no confirmó el acceso al repositorio.");
-      }
+      if (!response.ok || !payload.status?.connected) throw new Error(payload.error || "GitHub no confirmó el acceso al repositorio.");
 
       if (projectCheckIdRef.current === checkId) {
         setProjectAccess({
@@ -220,16 +306,9 @@ export function ClouvaAIChat() {
       }
       return true;
     } catch (caught) {
-      const message =
-        caught instanceof Error ? caught.message : "No se pudo verificar el acceso a GitHub.";
+      const message = caught instanceof Error ? caught.message : "No se pudo verificar el acceso a GitHub.";
       if (projectCheckIdRef.current === checkId) {
-        setProjectAccess({
-          state: "unavailable",
-          repository: null,
-          branch: null,
-          message,
-          checkedAt: Date.now(),
-        });
+        setProjectAccess({ state: "unavailable", repository: null, branch: null, message, checkedAt: Date.now() });
       }
       return false;
     }
@@ -239,50 +318,44 @@ export function ClouvaAIChat() {
     setMode(nextMode);
     window.localStorage.setItem(CLOUVA_AI_MODE_STORAGE_KEY, nextMode);
     setError(null);
+    if (nextMode === "project" && projectAccess.state !== "connected") void refreshProjectAccess();
+  }
 
-    if (nextMode === "project" && projectAccess.state !== "connected") {
-      void refreshProjectAccess();
-    }
+  async function loadMessages(id: string, userId: string) {
+    const { data, error: messagesError } = await supabase
+      .from("ai_messages")
+      .select("role,content,metadata,created_at")
+      .eq("conversation_id", id)
+      .eq("user_id", userId)
+      .order("created_at", { ascending: true });
+    if (messagesError) throw messagesError;
+    const restored = deduplicate((data ?? []) as StoredMessage[]);
+    setConversationId(id);
+    setVisibleCount(INITIAL_VISIBLE_MESSAGES);
+    setMessages(restored.length ? restored.map(({ role, content }) => ({ role, content })) : [{ role: "assistant", content: WELCOME }]);
   }
 
   async function loadLatestConversation() {
     setLoadingHistory(true);
     setError(null);
-
     try {
       const session = await getSession();
-      const { data: conversation, error: conversationError } = await supabase
+      const { data, error: conversationError } = await supabase
         .from("ai_conversations")
-        .select("id")
+        .select("id,title,created_at")
         .eq("user_id", session.user.id)
         .eq("project_key", "clouva")
         .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
+        .limit(24);
       if (conversationError) throw conversationError;
-      if (!conversation) {
+      const recent = (data ?? []) as ConversationSummary[];
+      setConversations(recent);
+      if (!recent[0]) {
         setMessages([{ role: "assistant", content: WELCOME }]);
         setVisibleCount(INITIAL_VISIBLE_MESSAGES);
         return;
       }
-
-      const { data, error: messagesError } = await supabase
-        .from("ai_messages")
-        .select("role,content,metadata,created_at")
-        .eq("conversation_id", conversation.id)
-        .eq("user_id", session.user.id)
-        .order("created_at", { ascending: true });
-
-      if (messagesError) throw messagesError;
-      const restored = deduplicate((data ?? []) as StoredMessage[]);
-      setConversationId(conversation.id);
-      setVisibleCount(INITIAL_VISIBLE_MESSAGES);
-      setMessages(
-        restored.length
-          ? restored.map(({ role, content }) => ({ role, content }))
-          : [{ role: "assistant", content: WELCOME }],
-      );
+      await loadMessages(recent[0].id, session.user.id);
     } catch (caught) {
       setMessages([{ role: "assistant", content: WELCOME }]);
       setError(caught instanceof Error ? caught.message : "No se pudo cargar el historial.");
@@ -291,46 +364,46 @@ export function ClouvaAIChat() {
     }
   }
 
-  async function ensureConversation(userId: string, title: string) {
-    if (conversationId) return conversationId;
-
-    const { data, error } = await supabase
-      .from("ai_conversations")
-      .insert({
-        user_id: userId,
-        project_key: "clouva",
-        title: title.slice(0, 72),
-      })
-      .select("id")
-      .single();
-
-    if (error || !data) throw new Error(error?.message ?? "No se pudo crear la conversación.");
-    setConversationId(data.id);
-    return data.id as string;
+  async function openConversation(id: string) {
+    if (id === conversationId || loading || applying) return;
+    setLoadingHistory(true);
+    setError(null);
+    setPendingAction(null);
+    setProjectReport(null);
+    try {
+      const session = await getSession();
+      await loadMessages(id, session.user.id);
+      setShowConversations(false);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "No se pudo abrir la conversación.");
+    } finally {
+      setLoadingHistory(false);
+    }
   }
 
-  async function saveMessage(
-    id: string,
-    userId: string,
-    role: "user" | "assistant",
-    content: string,
-    metadata: Record<string, unknown> = {},
-  ) {
-    const { error } = await supabase.from("ai_messages").insert({
-      conversation_id: id,
-      user_id: userId,
-      role,
-      content,
-      metadata,
-    });
+  async function ensureConversation(userId: string, title: string) {
+    if (conversationId) return conversationId;
+    const { data, error } = await supabase
+      .from("ai_conversations")
+      .insert({ user_id: userId, project_key: "clouva", title: title.slice(0, 72) })
+      .select("id,title,created_at")
+      .single();
+    if (error || !data) throw new Error(error?.message ?? "No se pudo crear la conversación.");
+    const created = data as ConversationSummary;
+    setConversationId(created.id);
+    setConversations((current) => [created, ...current.filter((item) => item.id !== created.id)]);
+    return created.id;
+  }
+
+  async function saveMessage(id: string, userId: string, role: "user" | "assistant", content: string, metadata: Record<string, unknown> = {}) {
+    const { error } = await supabase.from("ai_messages").insert({ conversation_id: id, user_id: userId, role, content, metadata });
     if (error) throw new Error(error.message);
   }
 
   async function copyMessage(content: string, index: number) {
     try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(content);
-      } else {
+      if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(content);
+      else {
         const textarea = document.createElement("textarea");
         textarea.value = content;
         textarea.style.position = "fixed";
@@ -350,15 +423,10 @@ export function ClouvaAIChat() {
   function showOlderMessages() {
     const container = chatScrollRef.current;
     const previousHeight = container?.scrollHeight ?? 0;
-
     setVisibleCount((current) => current + INITIAL_VISIBLE_MESSAGES);
-
-    window.requestAnimationFrame(() => {
-      window.requestAnimationFrame(() => {
-        if (!container) return;
-        container.scrollTop += container.scrollHeight - previousHeight;
-      });
-    });
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+      if (container) container.scrollTop += container.scrollHeight - previousHeight;
+    }));
   }
 
   async function sendMessage(event: FormEvent) {
@@ -377,40 +445,25 @@ export function ClouvaAIChat() {
       const session = await getSession();
       if (mode === "project" && projectAccess.state !== "connected") {
         const connected = await refreshProjectAccess(session.access_token);
-        if (!connected) {
-          throw new Error(
-            "Proyecto no pudo acceder a GitHub. Revisá la sesión o la conexión y reintentá.",
-          );
-        }
+        if (!connected) throw new Error("Proyecto no pudo acceder a GitHub. Revisá la sesión o la conexión y reintentá.");
       }
 
       const endpoint = endpointForClouvaAIMode(mode);
       const controller = new AbortController();
-      const timeout = window.setTimeout(
-        () => controller.abort(),
-        mode === "project" ? 60_000 : 38_000,
-      );
-
+      const timeout = window.setTimeout(() => controller.abort(), mode === "project" ? 60_000 : 38_000);
       const response = await fetch(endpoint, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(mode === "project" ? { Authorization: `Bearer ${session.access_token}` } : {}),
-        },
+        headers: { "Content-Type": "application/json", ...(mode === "project" ? { Authorization: `Bearer ${session.access_token}` } : {}) },
         body: JSON.stringify({
           message,
           history: previousMessages.slice(-8),
-          ...(mode === "project"
-            ? {
-                screenContext: {
-                  page: window.location.pathname,
-                  url: window.location.href,
-                  capturedAt: new Date().toISOString(),
-                  repository: projectAccess.repository || "sergioiba11/clouva",
-                  branch: projectAccess.branch || "main",
-                },
-              }
-            : {}),
+          ...(mode === "project" ? { screenContext: {
+            page: window.location.pathname,
+            url: window.location.href,
+            capturedAt: new Date().toISOString(),
+            repository: projectAccess.repository || "sergioiba11/clouva",
+            branch: projectAccess.branch || "main",
+          } } : {}),
         }),
         signal: controller.signal,
         cache: "no-store",
@@ -418,40 +471,29 @@ export function ClouvaAIChat() {
 
       const payload = (await response.json().catch(() => ({}))) as ApiPayload;
       if (!response.ok) throw new Error(payload.error ?? "CLOUVA AI no respondió.");
-
       const answer = mode === "project" ? payload.message : payload.reply;
       if (!answer) throw new Error("CLOUVA AI respondió sin contenido.");
 
       const activeConversationId = await ensureConversation(session.user.id, message);
       await saveMessage(activeConversationId, session.user.id, "user", message, {
-        provider: "gemini",
-        mode,
-        repository: mode === "project" ? projectAccess.repository : null,
-        branch: mode === "project" ? projectAccess.branch : null,
+        provider: "gemini", mode, repository: mode === "project" ? projectAccess.repository : null, branch: mode === "project" ? projectAccess.branch : null,
       });
       await saveMessage(activeConversationId, session.user.id, "assistant", answer, {
-        provider: "gemini",
-        mode,
-        model: payload.model ?? null,
-        pendingAction: payload.pendingAction ?? null,
+        provider: "gemini", mode, model: payload.model ?? null, pendingAction: payload.pendingAction ?? null,
       });
 
       setActiveModel(payload.model ?? null);
       setPendingAction(payload.pendingAction ?? null);
+      if (mode === "project" && payload.analysisScope) {
+        setProjectReport({ scope: payload.analysisScope, coverageAreas: payload.coverageAreas ?? [], filesReviewed: payload.filesReviewed ?? [] });
+      }
       setMessages((current) => [...current, { role: "assistant", content: answer }]);
     } catch (caught) {
-      const failure =
-        caught instanceof Error && caught.name === "AbortError"
-          ? "La consulta superó el tiempo máximo. Probá nuevamente."
-          : caught instanceof Error
-            ? caught.message
-            : "Error inesperado.";
-
+      const failure = caught instanceof Error && caught.name === "AbortError"
+        ? "La consulta superó el tiempo máximo. Probá nuevamente."
+        : caught instanceof Error ? caught.message : "Error inesperado.";
       setError(failure);
-      setMessages((current) => [
-        ...current,
-        { role: "assistant", content: `No pude responder: ${failure}` },
-      ]);
+      setMessages((current) => [...current, { role: "assistant", content: `No pude responder: ${failure}` }]);
     } finally {
       setLoading(false);
     }
@@ -461,42 +503,22 @@ export function ClouvaAIChat() {
     if (!pendingAction || applying) return;
     setApplying(true);
     setError(null);
-
     try {
       const session = await getSession();
       if (projectAccess.state !== "connected") {
         const connected = await refreshProjectAccess(session.access_token);
         if (!connected) throw new Error("GitHub requiere reconexión antes de aplicar cambios.");
       }
-
       const response = await fetch("/api/clouva-ai/github", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${session.access_token}`,
-        },
-        body: JSON.stringify({
-          action: "write",
-          path: pendingAction.path,
-          content: pendingAction.content,
-          message: pendingAction.message,
-          confirm: true,
-        }),
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
+        body: JSON.stringify({ action: "write", path: pendingAction.path, content: pendingAction.content, message: pendingAction.message, confirm: true }),
       });
-
-      const payload = (await response.json().catch(() => ({}))) as {
-        result?: { commitSha?: string; path?: string; branch?: string };
-        error?: string;
-      };
+      const payload = (await response.json().catch(() => ({}))) as { result?: { commitSha?: string; path?: string; branch?: string }; error?: string };
       if (!response.ok) throw new Error(payload.error ?? "No se pudo aplicar el cambio.");
 
       const text = `Cambio aplicado en \`${payload.result?.path ?? pendingAction.path}\`. Commit \`${payload.result?.commitSha?.slice(0, 7) ?? "creado"}\` sobre \`${payload.result?.branch ?? "main"}\`.`;
-      if (conversationId) {
-        await saveMessage(conversationId, session.user.id, "assistant", text, {
-          provider: "github",
-          commit: payload.result ?? {},
-        });
-      }
+      if (conversationId) await saveMessage(conversationId, session.user.id, "assistant", text, { provider: "github", commit: payload.result ?? {} });
       setMessages((current) => [...current, { role: "assistant", content: text }]);
       setPendingAction(null);
       void refreshProjectAccess(session.access_token);
@@ -514,219 +536,173 @@ export function ClouvaAIChat() {
     setError(null);
     setActiveModel(null);
     setPendingAction(null);
+    setProjectReport(null);
+    setShowConversations(false);
   }
 
+  const isWelcome = !loadingHistory && visibleMessages.length === 1 && visibleMessages[0]?.role === "assistant" && visibleMessages[0].content === WELCOME;
+
   return (
-    <section className="mx-auto flex min-h-0 w-full max-w-5xl flex-1 flex-col px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 text-white sm:px-6">
-      <header className="mb-3 flex shrink-0 items-center justify-between gap-3 border-b border-violet-500/20 pb-3">
-        <div className="min-w-0">
-          <p className="text-[10px] uppercase tracking-[0.28em] text-violet-300">Asistente CLOUVA</p>
-          <h1 className="text-xl font-semibold">Trébol — CLOUVA AI</h1>
-          <p className="mt-0.5 truncate text-xs text-white/50">
-            {activeModel ? `Modelo activo: ${activeModel}` : "Proyecto con acceso GitHub persistente"}
-          </p>
-        </div>
+    <section className={styles.shell}>
+      <div className={styles.auroraOne} />
+      <div className={styles.auroraTwo} />
+      <div className={styles.gridTexture} />
 
-        <button
-          type="button"
-          onClick={newConversation}
-          disabled={loadingHistory || loading || applying}
-          className="shrink-0 rounded-full border border-white/15 px-3 py-2 text-xs text-white/75 transition hover:border-violet-400/60 hover:text-white disabled:opacity-40"
-        >
-          Nueva
-        </button>
-      </header>
+      <div className={styles.workspace}>
+        <aside className={`${styles.sidebar} ${showConversations ? styles.drawerOpen : ""}`}>
+          <div className={styles.brand}>
+            <div className={styles.brandMascot}><Mascot size={48} priority /></div>
+            <div><strong>CLOUVA</strong><span>AI Studio</span></div>
+          </div>
 
-      <div className="mb-2 grid shrink-0 grid-cols-2 gap-2 rounded-2xl border border-white/10 bg-zinc-950 p-1">
-        <button
-          type="button"
-          onClick={() => changeMode("chat")}
-          disabled={loading || applying}
-          className={`flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-sm transition ${
-            mode === "chat" ? "bg-violet-600 text-white" : "text-white/55 hover:text-white"
-          }`}
-        >
-          <MessageCircle className="h-4 w-4" /> Chat
-        </button>
-        <button
-          type="button"
-          onClick={() => changeMode("project")}
-          disabled={loading || applying}
-          className={`flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-sm transition ${
-            mode === "project" ? "bg-violet-600 text-white" : "text-white/55 hover:text-white"
-          }`}
-        >
-          <GitBranch className="h-4 w-4" /> Proyecto
-        </button>
-      </div>
-
-      <div
-        className={`mb-3 flex shrink-0 items-center gap-2 rounded-xl border px-3 py-2 text-xs ${
-          projectAccess.state === "connected"
-            ? "border-emerald-400/25 bg-emerald-500/10 text-emerald-200"
-            : projectAccess.state === "checking"
-              ? "border-violet-400/20 bg-violet-500/10 text-violet-200"
-              : "border-amber-400/25 bg-amber-500/10 text-amber-100"
-        }`}
-      >
-        {projectAccess.state === "connected" ? (
-          <CheckCircle2 className="h-4 w-4 shrink-0" />
-        ) : projectAccess.state === "checking" ? (
-          <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
-        ) : (
-          <AlertTriangle className="h-4 w-4 shrink-0" />
-        )}
-        <span className="min-w-0 flex-1 truncate">{accessText}</span>
-        {(projectAccess.state === "unavailable" || projectAccess.state === "signed_out") && (
-          <button
-            type="button"
-            onClick={() => void refreshProjectAccess()}
-            disabled={loading || applying}
-            className="inline-flex shrink-0 items-center gap-1 rounded-full border border-current/20 px-2 py-1 font-medium disabled:opacity-40"
-          >
-            <RefreshCw className="h-3 w-3" /> Reintentar
+          <button type="button" className={styles.newChatButton} onClick={newConversation} disabled={loading || applying}>
+            <Plus className="h-4 w-4" /> Nueva conversación
           </button>
-        )}
-      </div>
 
-      <div
-        ref={chatScrollRef}
-        className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain rounded-3xl border border-white/10 bg-white/[0.025] p-3 shadow-2xl shadow-violet-950/20 sm:p-5"
-      >
-        {loadingHistory ? (
-          <article className="flex items-center gap-3 rounded-2xl border border-violet-400/20 bg-violet-500/10 px-4 py-3 text-sm text-violet-100">
-            <Loader2 className="h-4 w-4 animate-spin" /> Recuperando conversación…
-          </article>
-        ) : (
-          <>
-            {hiddenMessageCount > 0 && (
-              <div className="flex justify-center">
-                <button
-                  type="button"
-                  onClick={showOlderMessages}
-                  className="rounded-full border border-white/10 bg-black/50 px-4 py-2 text-xs text-white/60 transition hover:border-violet-400/40 hover:text-white"
-                >
-                  Mostrar {Math.min(INITIAL_VISIBLE_MESSAGES, hiddenMessageCount)} mensajes anteriores
-                </button>
-              </div>
+          <div className={styles.sidebarTitle}><span><History className="h-3.5 w-3.5" /> Recientes</span><small>{conversations.length}</small></div>
+          <nav className={styles.conversationList} aria-label="Conversaciones recientes">
+            {conversations.length ? conversations.map((conversation) => (
+              <button
+                type="button"
+                key={conversation.id}
+                onClick={() => void openConversation(conversation.id)}
+                className={conversation.id === conversationId ? styles.conversationActive : ""}
+              >
+                <MessageCircle className="h-3.5 w-3.5" />
+                <span>{conversation.title || "Conversación sin título"}</span>
+              </button>
+            )) : <p className={styles.emptyHistory}>Tus conversaciones van a aparecer acá.</p>}
+          </nav>
+
+          <div className={styles.sidebarFooter}>
+            <span className={styles.onlineDot} />
+            <div><strong>Trébol está online</strong><small>Listo para crear con vos</small></div>
+          </div>
+        </aside>
+
+        <div className={styles.mainColumn}>
+          <header className={styles.topbar}>
+            <button type="button" className={styles.mobilePanelButton} onClick={() => setShowConversations(true)} aria-label="Abrir conversaciones">
+              <PanelLeft className="h-4 w-4" />
+            </button>
+            <div className={styles.chatIdentity}>
+              <div className={styles.topbarMascot}><Mascot size={40} /></div>
+              <div><h1>Trébol</h1><p>CLOUVA AI <span>•</span> {activeModel ? activeModel.replace("gemini-", "Gemini ") : "Asistente creativo"}</p></div>
+            </div>
+            <div className={styles.topbarActions}>
+              <div className={styles.modelWrapper}><GeminiModelSelector /></div>
+              <button type="button" className={styles.iconButton} onClick={newConversation} disabled={loading || applying} aria-label="Nueva conversación"><Plus className="h-4 w-4" /></button>
+              <button type="button" className={styles.mobilePanelButton} onClick={() => setShowProject(true)} aria-label="Abrir contexto del proyecto"><PanelRight className="h-4 w-4" /></button>
+            </div>
+          </header>
+
+          <div className={styles.modebar}>
+            <div className={styles.modeSwitch}>
+              <button type="button" onClick={() => changeMode("chat")} disabled={loading || applying} className={mode === "chat" ? styles.modeActive : ""}><MessageCircle className="h-3.5 w-3.5" /> Chat</button>
+              <button type="button" onClick={() => changeMode("project")} disabled={loading || applying} className={mode === "project" ? styles.modeActive : ""}><GitBranch className="h-3.5 w-3.5" /> Proyecto</button>
+            </div>
+            <div className={`${styles.accessPill} ${styles[projectAccess.state]}`} title={projectAccess.message || accessText}>
+              <StatusIcon state={projectAccess.state} /><span>{accessText}</span>
+            </div>
+          </div>
+
+          <div ref={chatScrollRef} className={styles.messages}>
+            {loadingHistory ? (
+              <div className={styles.centerLoader}><Mascot size={72} /><span><Loader2 className="h-4 w-4 animate-spin" /> Recuperando tu conversación…</span></div>
+            ) : isWelcome ? (
+              <section className={styles.welcome}>
+                <div className={styles.welcomeGlow}><Mascot size={164} /></div>
+                <p className={styles.eyebrow}><Sparkles className="h-3.5 w-3.5" /> CLOUVA AI</p>
+                <h2>¿Qué hacemos hoy?</h2>
+                <p>Investigá tu proyecto, convertí una idea en un plan o prepará la próxima mejora con Trébol.</p>
+                <div className={styles.quickPrompts}>
+                  {QUICK_PROMPTS.map(({ icon: Icon, label, prompt }) => (
+                    <button type="button" key={label} onClick={() => setInput(prompt)}><Icon className="h-4 w-4" /><span>{label}</span></button>
+                  ))}
+                </div>
+              </section>
+            ) : (
+              <>
+                {hiddenMessageCount > 0 && <button type="button" onClick={showOlderMessages} className={styles.olderButton}>Mostrar {Math.min(INITIAL_VISIBLE_MESSAGES, hiddenMessageCount)} mensajes anteriores</button>}
+                {visibleMessages.map((message, index) => {
+                  const globalIndex = messageOffset + index;
+                  const copied = copiedMessageIndex === globalIndex;
+                  return (
+                    <article key={`${message.role}-${globalIndex}`} className={`${styles.messageRow} ${message.role === "user" ? styles.userRow : styles.assistantRow}`}>
+                      {message.role === "assistant" && <div className={styles.assistantAvatar}><Mascot size={38} /></div>}
+                      <div className={styles.messageBubble}>
+                        <div className={styles.messageMeta}>{message.role === "assistant" ? "Trébol" : "Vos"}</div>
+                        {message.role === "user" ? <PreviewSelectionCard content={message.content} /> : <RichMessage content={message.content} />}
+                        <button type="button" onClick={() => void copyMessage(message.content, globalIndex)} className={styles.copyButton} aria-label="Copiar mensaje">
+                          {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}{copied ? "Copiado" : "Copiar"}
+                        </button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </>
             )}
 
-            {visibleMessages.map((message, index) => {
-              const globalIndex = messageOffset + index;
-              const copied = copiedMessageIndex === globalIndex;
+            {loading && <article className={`${styles.messageRow} ${styles.assistantRow}`}><div className={styles.assistantAvatar}><Mascot size={38} /></div><div className={`${styles.messageBubble} ${styles.thinking}`}><span><Loader2 className="h-4 w-4 animate-spin" /> {mode === "project" ? "Trébol está leyendo el repositorio…" : "Trébol está pensando…"}</span><i /><i /><i /></div></article>}
 
-              return (
-                <article
-                  key={`${message.role}-${globalIndex}`}
-                  className={`group relative max-w-[94%] rounded-2xl px-4 pb-3 pt-4 text-sm leading-6 ${
-                    message.role === "user"
-                      ? "ml-auto bg-violet-600 text-white"
-                      : "border border-white/10 bg-white/[0.055] text-white/85"
-                  }`}
-                >
-                  <button
-                    type="button"
-                    onClick={() => void copyMessage(message.content, globalIndex)}
-                    className={`absolute right-2 top-2 flex items-center gap-1 rounded-full px-2 py-1 text-[10px] transition ${
-                      message.role === "user"
-                        ? "bg-black/20 text-white/70 hover:bg-black/30"
-                        : "bg-black/35 text-white/55 hover:text-white"
-                    }`}
-                    aria-label="Copiar este mensaje"
-                  >
-                    {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
-                    {copied ? "Copiado" : "Copiar"}
-                  </button>
-
-                  <div className="pr-14">
-                    <SelectableMessage content={message.content} />
-                  </div>
-                </article>
-              );
-            })}
-          </>
-        )}
-
-        {loading && (
-          <article className="flex max-w-[94%] items-center gap-3 rounded-2xl border border-violet-400/20 bg-violet-500/10 px-4 py-3 text-sm text-violet-100">
-            <Loader2 className="h-4 w-4 animate-spin" />
-            {mode === "project" ? "Leyendo el repositorio…" : "Gemini está respondiendo…"}
-          </article>
-        )}
-
-        {pendingAction && (
-          <section className="rounded-3xl border border-violet-400/30 bg-violet-500/10 p-4">
-            <p className="text-xs font-bold uppercase tracking-[0.2em] text-violet-300">Cambio preparado</p>
-            <h2 className="mt-2 break-all font-semibold">{pendingAction.path}</h2>
-            <p className="mt-2 text-sm leading-6 text-white/70">{pendingAction.summary}</p>
-            <p className="mt-2 text-xs text-white/40">Commit: {pendingAction.message}</p>
-            <div className="mt-4 flex gap-3">
-              <button
-                type="button"
-                onClick={applyChange}
-                disabled={applying || projectAccess.state !== "connected"}
-                className="flex flex-1 items-center justify-center gap-2 rounded-full bg-violet-600 px-4 py-3 text-sm font-semibold disabled:opacity-50"
-              >
-                {applying ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-                {applying ? "Aplicando…" : "Aplicar cambio"}
-              </button>
-              <button
-                type="button"
-                onClick={() => setPendingAction(null)}
-                disabled={applying}
-                className="flex items-center gap-2 rounded-full border border-white/15 px-4 py-3 text-sm"
-              >
-                <X className="h-4 w-4" /> Cancelar
-              </button>
-            </div>
-          </section>
-        )}
-      </div>
-
-      <form onSubmit={sendMessage} className="mt-3 shrink-0">
-        <div className="rounded-3xl border border-white/10 bg-zinc-950 p-3 transition focus-within:border-violet-400/50">
-          <textarea
-            value={input}
-            onChange={(event) => setInput(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                event.currentTarget.form?.requestSubmit();
-              }
-            }}
-            rows={2}
-            placeholder={
-              mode === "project"
-                ? "Pedile que investigue archivos reales del proyecto…"
-                : "Escribile a Trébol…"
-            }
-            className="w-full resize-none bg-transparent px-2 py-1.5 text-sm outline-none placeholder:text-white/30"
-          />
-
-          <div className="flex items-center justify-between gap-3">
-            <p className="px-2 text-[11px] text-white/35">
-              {mode === "project"
-                ? projectAccess.state === "connected"
-                  ? "Proyecto usa GitHub real"
-                  : "Proyecto verificará GitHub antes de responder"
-                : "Chat usa la visión de CLOUVA"}
-            </p>
-            <button
-              type="submit"
-              disabled={loadingHistory || loading || applying || !input.trim()}
-              className="rounded-full bg-violet-600 px-5 py-2 text-sm font-medium transition hover:bg-violet-500 disabled:opacity-40"
-            >
-              {loading ? "Esperando…" : "Enviar"}
-            </button>
+            {pendingAction && (
+              <section className={styles.changeCard}>
+                <div className={styles.changeIcon}><FileCode2 className="h-5 w-5" /></div>
+                <div className={styles.changeBody}>
+                  <p>Cambio listo para revisar</p><h2>{pendingAction.path}</h2><span>{pendingAction.summary}</span><code>{pendingAction.message}</code>
+                  <div><button type="button" onClick={applyChange} disabled={applying || projectAccess.state !== "connected"}>{applying ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}{applying ? "Aplicando…" : "Aplicar cambio"}</button><button type="button" onClick={() => setPendingAction(null)} disabled={applying}><X className="h-4 w-4" /> Cancelar</button></div>
+                </div>
+              </section>
+            )}
           </div>
+
+          <form onSubmit={sendMessage} className={styles.composerArea}>
+            {error && <div className={styles.errorBanner}><AlertTriangle className="h-4 w-4" /><span>{error}</span><button type="button" onClick={() => setError(null)} aria-label="Cerrar error"><X className="h-3.5 w-3.5" /></button></div>}
+            <div className={styles.composer}>
+              <textarea
+                value={input}
+                onChange={(event) => setInput(event.target.value)}
+                onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }}
+                rows={2}
+                placeholder={mode === "project" ? "Pedile a Trébol que investigue o mejore tu proyecto…" : "Escribile a Trébol…"}
+              />
+              <div className={styles.composerBottom}>
+                <span>{mode === "project" ? <><FolderGit2 className="h-3.5 w-3.5" /> Trabajando con GitHub real</> : <><Sparkles className="h-3.5 w-3.5" /> Pensamiento creativo</>}</span>
+                <button type="submit" disabled={loadingHistory || loading || applying || !input.trim()} aria-label="Enviar mensaje"><Send className="h-4 w-4" /></button>
+              </div>
+            </div>
+            <p className={styles.disclaimer}>Trébol puede equivocarse. Revisá siempre los cambios antes de aplicarlos.</p>
+          </form>
         </div>
 
-        {error && (
-          <div className="mt-2 rounded-2xl border border-red-400/20 bg-red-500/10 px-4 py-2.5 text-sm text-red-200">
-            {error}
-          </div>
-        )}
-      </form>
+        <aside className={`${styles.projectPanel} ${showProject ? styles.drawerOpen : ""}`}>
+          <div className={styles.projectHeading}><span>Contexto del proyecto</span><button type="button" onClick={() => setShowProject(false)} className={styles.closeDrawer} aria-label="Cerrar panel"><X className="h-4 w-4" /></button></div>
+          <section className={styles.repositoryCard}>
+            <div><span className={`${styles.repoStatus} ${styles[projectAccess.state]}`}><StatusIcon state={projectAccess.state} /></span><div><strong>{projectAccess.repository || "Repositorio CLOUVA"}</strong><small>{projectAccess.branch ? `rama ${projectAccess.branch}` : "Conexión del proyecto"}</small></div></div>
+            {projectAccess.state !== "connected" && <button type="button" onClick={() => void refreshProjectAccess()} disabled={projectAccess.state === "checking"}><RefreshCw className="h-3.5 w-3.5" /> Reintentar</button>}
+          </section>
+
+          <section className={styles.contextCard}>
+            <div className={styles.contextCardTitle}><span><FolderGit2 className="h-4 w-4" /> Última investigación</span>{projectReport && <small>{projectReport.scope === "broad" ? "Auditoría" : projectReport.scope === "explicit" ? "Archivos" : "Estado"}</small>}</div>
+            {projectReport ? <>
+              <p>{projectReport.filesReviewed.length ? `${projectReport.filesReviewed.length} archivos revisados` : "Estado del repositorio verificado"}</p>
+              {!!projectReport.coverageAreas.length && <div className={styles.tags}>{projectReport.coverageAreas.slice(0, 5).map((area) => <span key={area}>{area}</span>)}</div>}
+              {!!projectReport.filesReviewed.length && <ul>{projectReport.filesReviewed.slice(0, 6).map((file) => <li key={file}><FileCode2 className="h-3 w-3" /><span>{file}</span></li>)}</ul>}
+            </> : <div className={styles.emptyContext}><Sparkles className="h-5 w-5" /><p>Usá el modo Proyecto y la evidencia de la próxima consulta aparecerá acá.</p></div>}
+          </section>
+
+          <section className={styles.safetyCard}><ShieldCheck className="h-4 w-4" /><div><strong>Revisión segura</strong><p>Trébol investiga primero. Ningún archivo cambia sin tu confirmación.</p></div></section>
+        </aside>
+      </div>
+
+      {(showConversations || showProject) && (
+        <button
+          type="button"
+          className={styles.drawerBackdrop}
+          onClick={() => { setShowConversations(false); setShowProject(false); }}
+          aria-label="Cerrar panel"
+        />
+      )}
     </section>
   );
 }
