@@ -6,17 +6,23 @@ export type ImageGenerationIntent = {
   quality: ImageQuality;
 };
 
-const IMAGE_NOUNS = /(imagen|foto|portada|render|ilustraci[oó]n|poster|afiche|arte|visual)/i;
-const CREATE_VERBS = /(generame|generá|genera|generar|creame|creá|crea|crear|haceme|hacé|hace|hacer|diseñame|diseñá|diseña|armame|armá|arma|quiero)/i;
-const STRONG_PHRASES = /(us[aá] este prompt para (crear|generar)|quiero una (imagen|foto|portada|ilustraci[oó]n|render)|haceme un render)/i;
+const IMAGE_NOUNS = /(imagen|foto|portada|render|ilustraci[oó]n|poster|afiche|arte|visual|plano|blueprint|diagrama|esquema|infograf[ií]a|mockup|wireframe|storyboard|l[aá]mina|miniatura|thumbnail)/i;
+const IMAGE_FORMATS = /\b(png|jpe?g|webp)\b/i;
+const CREATE_VERBS = /(generame|generá|genera|generar|creame|creá|crea|crear|haceme|hacé|hace|hacer|diseñame|diseñá|diseña|armame|armá|arma|quiero|convertime|convertí|converti|pasame|pasá|pasa)/i;
+const REFERENTIAL_CREATE = /\b(hacelo|hacela|generalo|generala|crealo|creala|armalo|armala|pasalo|pasala|convertirlo|convertirla|convertirlo|convertirla)\b/i;
+const STRONG_PHRASES = /(us[aá] este prompt para (crear|generar)|quiero una (imagen|foto|portada|ilustraci[oó]n|render)|haceme un render|haceme (un|el) plano|hac[eé] (un|el) plano)/i;
 const TECHNICAL_CONTEXT = /(generador de im[aá]genes|api|endpoint|c[oó]digo|componente|pantalla|bug|error|typescript|github)/i;
 
 export function detectImageGenerationIntent(message: string) {
   const text = message.trim();
   if (!text) return false;
   if (STRONG_PHRASES.test(text)) return true;
-  if (TECHNICAL_CONTEXT.test(text) && !/(generame|creame|haceme|diseñame|armame)/i.test(text)) return false;
-  return CREATE_VERBS.test(text) && IMAGE_NOUNS.test(text);
+
+  const directCreate = CREATE_VERBS.test(text) || REFERENTIAL_CREATE.test(text);
+  const visualTarget = IMAGE_NOUNS.test(text) || IMAGE_FORMATS.test(text);
+
+  if (TECHNICAL_CONTEXT.test(text) && !directCreate) return false;
+  return directCreate && visualTarget;
 }
 
 function inferAspectRatio(message: string): ImageAspectRatio {
@@ -39,9 +45,11 @@ function inferQuality(message: string): ImageQuality {
 function extractPrompt(message: string) {
   const stripped = message
     .trim()
-    .replace(/^\s*(por favor\s+)?(generame|generá|genera|creame|creá|crea|haceme|hacé|hace|diseñame|diseñá|diseña|armame|armá|arma)\s+(una?\s+)?(imagen|foto|portada|render|ilustraci[oó]n|poster|afiche|arte|visual)?\s*(de|con|que|:)?\s*/i, "")
-    .replace(/^\s*quiero\s+una?\s+(imagen|foto|portada|render|ilustraci[oó]n|poster|afiche|arte|visual)\s*(de|con|que|:)?\s*/i, "")
-    .replace(/^\s*us[aá]\s+este\s+prompt\s+para\s+(crear|generar)\s+(una?\s+)?(imagen|foto)?\s*:?\s*/i, "")
+    .replace(/^\s*(ahora|listo|bueno|ok(?:ay)?|dale)\b[\s,;:\-]*/i, "")
+    .replace(/^\s*(por favor\s+)?(generame|generá|genera|creame|creá|crea|haceme|hacé|hace|diseñame|diseñá|diseña|armame|armá|arma|convertime|convertí|converti|pasame|pasá|pasa)\s+(un|una|el|la)?\s*/i, "")
+    .replace(/^\s*(imagen|foto|portada|render|ilustraci[oó]n|poster|afiche|arte|visual)\s*(de|con|que|:)?\s*/i, "")
+    .replace(/^\s*quiero\s+(un|una|el|la)?\s*(imagen|foto|portada|render|ilustraci[oó]n|poster|afiche|arte|visual|plano|blueprint|diagrama|esquema)?\s*(de|con|que|:)?\s*/i, "")
+    .replace(/^\s*us[aá]\s+este\s+prompt\s+para\s+(crear|generar)\s+(un|una|el|la)?\s*(imagen|foto)?\s*:?\s*/i, "")
     .trim();
   return stripped || message.trim();
 }
