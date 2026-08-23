@@ -159,7 +159,10 @@ create trigger commerce_product_identifiers_sync_clouva_qr
 
 -- Service-role-only idempotent allocator. API routes perform the user/studio
 -- authorization first, then this RPC provides concurrency-safe get-or-create.
-create or replace function public.get_or_create_clouva_qr(
+-- The RPC itself returns whether this transaction inserted the canonical row,
+-- so the `created` flag remains correct even when two requests race.
+drop function if exists public.get_or_create_clouva_qr(text, uuid, uuid, uuid, text, jsonb);
+create function public.get_or_create_clouva_qr(
   p_entity_type text,
   p_entity_id uuid,
   p_actor_id uuid,
@@ -167,7 +170,7 @@ create or replace function public.get_or_create_clouva_qr(
   p_destination_path text default null,
   p_metadata jsonb default '{}'::jsonb
 )
-returns public.clouva_qr_registry
+returns jsonb
 language plpgsql
 security definer
 set search_path = ''
@@ -203,7 +206,7 @@ begin
   order by registry.created_at
   limit 1;
   if found then
-    return v_existing;
+    return jsonb_build_object('qr', to_jsonb(v_existing), 'created', false);
   end if;
 
   loop
@@ -216,7 +219,7 @@ begin
         v_token, p_entity_type, p_entity_id, p_studio_id, 'ACTIVE', true,
         p_destination_path, coalesce(p_metadata, '{}'::jsonb), p_actor_id
       ) returning * into v_created;
-      exit;
+      return jsonb_build_object('qr', to_jsonb(v_created), 'created', true);
     exception when unique_violation then
       select * into v_existing
       from public.clouva_qr_registry registry
@@ -225,11 +228,12 @@ begin
         and registry.status = 'ACTIVE'
         and registry.is_canonical
       limit 1;
-      if found then return v_existing; end if;
+      if found then
+        return jsonb_build_object('qr', to_jsonb(v_existing), 'created', false);
+      end if;
+      -- Token collision only: loop and allocate a different random token.
     end;
   end loop;
-
-  return v_created;
 end;
 $$;
 
