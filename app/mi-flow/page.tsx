@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, CircleDollarSign, History, RefreshCw, Store, TrendingUp, WalletCards } from "lucide-react";
+import { ArrowRight, CircleDollarSign, History, Lightbulb, RefreshCw, Store, WalletCards } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
@@ -9,46 +9,164 @@ import { DiamondIcon } from "@/components/diamond-icon";
 import { MainNav } from "@/components/layout";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
 
-type CreditEntry = { id:string; transaction_type:string; amount:number; balance_after:number; source:string|null; reference_id:string|null; created_at:string };
-type MoneySummary = { currency:string; generatedMinor:number; pendingMinor:number; availableMinor:number; withdrawnMinor:number; refundedMinor:number };
-type MoneyEntry = { id:string; beneficiary_user_id:string; beneficiary_type:"player"|"studio"; beneficiary_entity_id:string; currency:string; source_type:"commerce_order"|"service_order"|"booking"; source_id:string; gross_amount_minor:number; fees_amount_minor:number; commission_amount_minor:number; net_amount_minor:number; status:"pending"|"available"|"withdrawn"|"refunded"|"reversed"; created_at:string };
-type SummaryPayload = { wallets:{flows:number;diamonds:number}; walletActivity:{flows:CreditEntry[];diamonds:CreditEntry[]}; money:{personal:MoneySummary[];personalActivity:MoneyEntry[];managed:MoneySummary[];managedActivity:MoneyEntry[]}; access:{players:string[];studios:string[]} };
+type CreditEntry = {
+  id: string;
+  transaction_type: string;
+  amount: number;
+  balance_after: number;
+  source: string | null;
+  reference_id: string | null;
+  created_at: string;
+};
+type MoneySummary = {
+  currency: string;
+  generatedMinor: number;
+  pendingMinor: number;
+  availableMinor: number;
+  withdrawnMinor: number;
+  refundedMinor: number;
+};
+type MoneyEntry = {
+  id: string;
+  beneficiary_user_id: string;
+  beneficiary_type: "user" | "player" | "studio";
+  beneficiary_entity_id: string;
+  currency: string;
+  source_type: "commerce_order" | "service_order" | "booking";
+  source_id: string;
+  gross_amount_minor: number;
+  fees_amount_minor: number;
+  commission_amount_minor: number;
+  net_amount_minor: number;
+  status: "pending" | "available" | "withdrawn" | "refunded" | "reversed";
+  created_at: string;
+};
+type SummaryPayload = {
+  wallets: { flows: number; diamonds: number };
+  walletActivity: { flows: CreditEntry[]; diamonds: CreditEntry[] };
+  money: {
+    personal: MoneySummary[];
+    personalActivity: MoneyEntry[];
+    managed: MoneySummary[];
+    managedActivity: MoneyEntry[];
+  };
+  access: { players: string[]; studios: string[] };
+};
 
 const CARD = "rounded-[24px] border border-white/[0.08] bg-[#0c0a13]/95 shadow-[0_22px_70px_rgba(0,0,0,.18)]";
-const SOURCE_LABEL: Record<MoneyEntry["source_type"], string> = { commerce_order:"Venta en MI SPOT / Marketplace", service_order:"Servicio de Estudio", booking:"Reserva de Estudio" };
-const STATUS_LABEL: Record<MoneyEntry["status"], string> = { pending:"Pendiente", available:"Disponible", withdrawn:"Retirado", refunded:"Reembolsado", reversed:"Revertido" };
+const SOURCE_LABEL: Record<MoneyEntry["source_type"], string> = {
+  commerce_order: "Venta en MI SPOT / Marketplace",
+  service_order: "Servicio de Estudio",
+  booking: "Reserva de Estudio",
+};
+const STATUS_LABEL: Record<MoneyEntry["status"], string> = {
+  pending: "Pendiente",
+  available: "Disponible",
+  withdrawn: "Retirado",
+  refunded: "Reembolsado",
+  reversed: "Revertido",
+};
 
-function moneyMinor(value:number,currency:string){return new Intl.NumberFormat("es-AR",{style:"currency",currency,maximumFractionDigits:2}).format(value/100)}
-function when(value:string){return new Date(value).toLocaleString("es-AR",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"})}
-
-export default function MiFlowPage(){
-  const {user,loading:authLoading}=useAuth();
-  const [data,setData]=useState<SummaryPayload|null>(null);
-  const [loading,setLoading]=useState(true);
-  const [error,setError]=useState<string|null>(null);
-  const load=useCallback(async()=>{if(!user)return;setLoading(true);setError(null);try{const response=await authenticatedFetch("/api/mi-flow/summary");setData(await readApiJson<SummaryPayload>(response))}catch(cause){setError(cause instanceof Error?cause.message:"No se pudo cargar MI FLOW.")}finally{setLoading(false)}},[user]);
-  useEffect(()=>{if(authLoading)return;if(!user){setLoading(false);return}void load()},[authLoading,load,user]);
-  useEffect(()=>{if(!data||typeof window==="undefined")return;const asset=new URLSearchParams(window.location.search).get("asset");if(asset!=="flows"&&asset!=="diamonds")return;requestAnimationFrame(()=>document.getElementById(asset)?.scrollIntoView({behavior:"smooth",block:"center"}))},[data]);
-  const combinedActivity=useMemo(()=>[...(data?.money.personalActivity??[]),...(data?.money.managedActivity??[])].sort((a,b)=>new Date(b.created_at).getTime()-new Date(a.created_at).getTime()).slice(0,12),[data]);
-
-  return <main className="min-h-screen bg-[#07060d] text-white">
-    <MainNav/>
-    <div className="relative overflow-hidden border-b border-white/[0.06]"><div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_76%_18%,rgba(124,58,237,.24),transparent_34%),radial-gradient(circle_at_18%_0%,rgba(91,33,182,.12),transparent_30%)]"/><div className="relative mx-auto max-w-7xl px-4 py-8 md:px-8 md:py-12"><section className="rounded-[30px] border border-violet-400/15 bg-gradient-to-br from-[#171022] via-[#0f0b18] to-[#09080f] p-6 md:p-8"><div className="inline-flex items-center gap-2 rounded-full border border-violet-300/15 bg-violet-400/[0.07] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-violet-200"><WalletCards size={14}/> Tu billetera CLOUVA</div><div className="mt-5 flex flex-col justify-between gap-5 lg:flex-row lg:items-end"><div><h1 className="text-4xl font-semibold tracking-tight md:text-6xl">MI FLOW</h1><p className="mt-3 max-w-2xl text-sm leading-6 text-white/55 md:text-base">Dinero generado, ganancias, actividad, FLOWS y Diamantes en un solo centro económico personal.</p></div><div className="flex flex-wrap gap-2"><Link href="/mi-flow/negocios" className="inline-flex items-center gap-2 rounded-xl bg-[#8f5cff] px-4 py-2.5 text-sm font-semibold shadow-[0_10px_35px_rgba(139,92,246,.28)]">Hacer dinero <ArrowRight size={16}/></Link><Link href="/mi-spot" className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm font-semibold"><Store size={16}/> MI SPOT</Link></div></div></section></div></div>
-
-    <div className="mx-auto max-w-7xl space-y-5 px-4 py-6 md:px-8 md:py-8">
-      {error?<div className="rounded-2xl border border-rose-300/15 bg-rose-300/[0.06] p-4 text-sm text-rose-200">{error}</div>:null}
-      <div className="flex items-center justify-between"><div><p className="text-xs uppercase tracking-[0.16em] text-white/35">Situación económica</p><h2 className="mt-1 text-xl font-semibold">Dinero real</h2></div><button type="button" onClick={()=>void load()} disabled={loading} className="inline-flex items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-xs text-white/60 disabled:opacity-50"><RefreshCw size={14} className={loading?"animate-spin":""}/> Actualizar</button></div>
-      {loading?<section className={`${CARD} grid min-h-40 place-items-center text-sm text-white/40`}><span className="inline-flex items-center gap-2"><RefreshCw className="animate-spin" size={16}/> Cargando economía real…</span></section>:data?.money.personal.length?<section className="grid gap-3">{data.money.personal.map(summary=><div key={summary.currency} className={`${CARD} p-5`}><div className="mb-4 flex items-center justify-between"><strong>{summary.currency}</strong><CircleDollarSign size={19} className="text-emerald-300"/></div><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><Metric label="Generado" value={moneyMinor(summary.generatedMinor,summary.currency)}/><Metric label="Pendiente" value={moneyMinor(summary.pendingMinor,summary.currency)} note="Pago confirmado; aún sin liquidación de retiro."/><Metric label="Disponible" value={moneyMinor(summary.availableMinor,summary.currency)} note="Solo dinero marcado como liquidado."/><Metric label="Retirado" value={moneyMinor(summary.withdrawnMinor,summary.currency)}/></div></div>)}</section>:<section className={`${CARD} p-6`}><p className="font-semibold">Todavía no hay ganancias acreditadas a tu MI FLOW.</p><p className="mt-1 text-sm text-white/45">No se calcula un saldo ficticio desde tus registros manuales. Las ganancias aparecen cuando un pago real queda confirmado.</p></section>}
-
-      <section className="grid gap-4 lg:grid-cols-2"><article id="flows" className={`${CARD} scroll-mt-24 p-6`}><div className="flex items-center justify-between"><div><p className="text-xs uppercase tracking-[0.16em] text-white/35">Moneda CLOUVA</p><h2 className="mt-1 flex items-center gap-2 text-xl font-semibold"><CloverIcon className="text-[#8f7cff]" size={22}/> FLOWS</h2></div><strong className="text-3xl">{data?.wallets.flows??0}</strong></div><CreditActivity rows={data?.walletActivity.flows??[]} empty="Todavía no hay movimientos de FLOWS."/></article><article id="diamonds" className={`${CARD} scroll-mt-24 p-6`}><div className="flex items-center justify-between"><div><p className="text-xs uppercase tracking-[0.16em] text-white/35">Crédito premium</p><h2 className="mt-1 flex items-center gap-2 text-xl font-semibold"><DiamondIcon className="text-cyan-300" size={22}/> Diamantes</h2></div><strong className="text-3xl">{data?.wallets.diamonds??0}</strong></div><CreditActivity rows={data?.walletActivity.diamonds??[]} empty="Todavía no hay movimientos de Diamantes."/></article></section>
-
-      <section className={`${CARD} overflow-hidden`}><div className="border-b border-white/[0.07] px-5 py-4 md:px-6"><p className="text-xs uppercase tracking-[0.16em] text-white/35">Actividad económica</p><h2 className="mt-1 flex items-center gap-2 text-lg font-semibold"><History size={18}/> Ganancias y operaciones</h2></div>{combinedActivity.length?<div className="divide-y divide-white/[0.06]">{combinedActivity.map(entry=>{const managed=entry.beneficiary_user_id!==user?.id;return <div key={entry.id} className="flex flex-col gap-2 px-5 py-4 sm:flex-row sm:items-center sm:justify-between md:px-6"><div><p className="text-sm font-medium">{SOURCE_LABEL[entry.source_type]}</p><p className="mt-1 text-xs text-white/35">{managed?"Entidad que administrás":"Tu ingreso"} · {when(entry.created_at)}</p></div><div className="text-left sm:text-right"><strong>{moneyMinor(entry.net_amount_minor,entry.currency)}</strong><p className="mt-1 text-xs text-white/35">{STATUS_LABEL[entry.status]}</p></div></div>})}</div>:<div className="px-6 py-10 text-sm text-white/40">Todavía no hay actividad económica verificada.</div>}</section>
-
-      <section className="grid gap-3 md:grid-cols-3"><ActionCard icon={<TrendingUp size={19}/>} title="Hacer dinero" copy="Tu panel original de ideas, proyectos e ingresos esperados." href="/mi-flow/negocios" cta="Abrir panel"/><ActionCard icon={<Store size={19}/>} title="MI SPOT" copy="Productos, ventas, stock, scanner, QR y códigos en tu negocio." href="/mi-spot" cta="Ir al negocio"/><ActionCard icon={<History size={19}/>} title="Finanzas personales" copy="Tus ingresos y gastos manuales siguen separados de la billetera real." href="/mi-flow/finanzas" cta="Abrir registro"/></section>
-    </div>
-  </main>
+function moneyMinor(value: number, currency: string) {
+  return new Intl.NumberFormat("es-AR", { style: "currency", currency, maximumFractionDigits: 2 }).format(value / 100);
+}
+function when(value: string) {
+  return new Date(value).toLocaleString("es-AR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
-function Metric({label,value,note}:{label:string;value:string;note?:string}){return <div className="rounded-2xl border border-white/[0.07] bg-black/20 p-4"><span className="text-[11px] uppercase tracking-[0.14em] text-white/35">{label}</span><strong className="mt-2 block text-xl">{value}</strong>{note?<p className="mt-2 text-[11px] leading-4 text-white/30">{note}</p>:null}</div>}
-function CreditActivity({rows,empty}:{rows:CreditEntry[];empty:string}){if(!rows.length)return <p className="mt-6 border-t border-white/[0.07] pt-5 text-sm text-white/35">{empty}</p>;return <div className="mt-5 divide-y divide-white/[0.06] border-t border-white/[0.07]">{rows.slice(0,5).map(row=><div key={row.id} className="flex items-center justify-between py-3 text-sm"><div><p>{row.source||row.transaction_type}</p><p className="mt-0.5 text-xs text-white/30">{when(row.created_at)}</p></div><div className="text-right"><b className={row.amount>=0?"text-emerald-300":"text-rose-300"}>{row.amount>=0?"+":""}{row.amount}</b><p className="text-xs text-white/30">saldo {row.balance_after}</p></div></div>)}</div>}
-function ActionCard({icon,title,copy,href,cta}:{icon:React.ReactNode;title:string;copy:string;href:string;cta:string}){return <Link href={href} className={`${CARD} group p-5 transition hover:border-violet-400/25 hover:bg-[#110d1b]`}><span className="inline-grid rounded-xl border border-violet-300/15 bg-violet-300/[0.06] p-2 text-violet-300">{icon}</span><h3 className="mt-4 font-semibold">{title}</h3><p className="mt-1 min-h-10 text-sm text-white/40">{copy}</p><span className="mt-4 inline-flex items-center gap-1 text-xs font-semibold text-violet-300">{cta} <ArrowRight size={14}/></span></Link>}
+export default function MiFlowPage() {
+  const { user, loading: authLoading } = useAuth();
+  const [data, setData] = useState<SummaryPayload | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    if (!user) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await authenticatedFetch("/api/mi-flow/summary");
+      setData(await readApiJson<SummaryPayload>(response));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "No se pudo cargar MI FLOW.");
+    } finally {
+      setLoading(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
+    if (authLoading) return;
+    if (!user) {
+      setLoading(false);
+      return;
+    }
+    void load();
+  }, [authLoading, load, user]);
+
+  useEffect(() => {
+    if (!data || typeof window === "undefined") return;
+    const asset = new URLSearchParams(window.location.search).get("asset");
+    if (asset !== "flows" && asset !== "diamonds") return;
+    requestAnimationFrame(() => document.getElementById(asset)?.scrollIntoView({ behavior: "smooth", block: "center" }));
+  }, [data]);
+
+  const combinedActivity = useMemo(() => [
+    ...(data?.money.personalActivity ?? []),
+    ...(data?.money.managedActivity ?? []),
+  ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).slice(0, 12), [data]);
+
+  return (
+    <main className="min-h-screen bg-[#07060d] text-white">
+      <MainNav />
+      <div className="relative overflow-hidden border-b border-white/[0.06]">
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_76%_18%,rgba(124,58,237,.24),transparent_34%),radial-gradient(circle_at_18%_0%,rgba(91,33,182,.12),transparent_30%)]" />
+        <div className="relative mx-auto max-w-7xl px-4 py-8 md:px-8 md:py-12">
+          <section className="rounded-[30px] border border-violet-400/15 bg-gradient-to-br from-[#171022] via-[#0f0b18] to-[#09080f] p-6 md:p-8">
+            <div className="inline-flex items-center gap-2 rounded-full border border-violet-300/15 bg-violet-400/[0.07] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-violet-200"><WalletCards size={14} /> Tu billetera CLOUVA</div>
+            <div className="mt-5 flex flex-col justify-between gap-5 lg:flex-row lg:items-end">
+              <div><h1 className="text-4xl font-semibold tracking-tight md:text-6xl">MI FLOW</h1><p className="mt-3 max-w-2xl text-sm leading-6 text-white/55 md:text-base">Dinero generado, ganancias, actividad, FLOWS y Diamantes en un solo centro económico personal.</p></div>
+              <div className="flex flex-wrap gap-2">
+                <Link href="/mi-spot" className="inline-flex items-center gap-2 rounded-xl bg-[#8f5cff] px-4 py-2.5 text-sm font-semibold shadow-[0_10px_35px_rgba(139,92,246,.28)]"><Store size={16} /> Hacer dinero <ArrowRight size={16} /></Link>
+                <a href="#activity" className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm font-semibold"><History size={16} /> Movimientos</a>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+
+      <div className="mx-auto max-w-7xl space-y-5 px-4 py-6 md:px-8 md:py-8">
+        {error ? <div className="rounded-2xl border border-rose-300/15 bg-rose-300/[0.06] p-4 text-sm text-rose-200">{error}</div> : null}
+        <div className="flex items-center justify-between"><div><p className="text-xs uppercase tracking-[0.16em] text-white/35">Situación económica</p><h2 className="mt-1 text-xl font-semibold">Dinero real</h2></div><button type="button" onClick={() => void load()} disabled={loading} className="inline-flex items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-xs text-white/60 disabled:opacity-50"><RefreshCw size={14} className={loading ? "animate-spin" : ""} /> Actualizar</button></div>
+
+        {loading ? <section className={`${CARD} grid min-h-40 place-items-center text-sm text-white/40`}><span className="inline-flex items-center gap-2"><RefreshCw className="animate-spin" size={16} /> Cargando economía real…</span></section> : data?.money.personal.length ? <section className="grid gap-3">{data.money.personal.map((summary) => <div key={summary.currency} className={`${CARD} p-5`}><div className="mb-4 flex items-center justify-between"><strong>{summary.currency}</strong><CircleDollarSign size={19} className="text-emerald-300" /></div><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><Metric label="Generado" value={moneyMinor(summary.generatedMinor, summary.currency)} /><Metric label="Pendiente" value={moneyMinor(summary.pendingMinor, summary.currency)} note="Pago confirmado; aún sin liquidación de retiro." /><Metric label="Disponible" value={moneyMinor(summary.availableMinor, summary.currency)} note="Solo dinero marcado como liquidado." /><Metric label="Retirado" value={moneyMinor(summary.withdrawnMinor, summary.currency)} /></div></div>)}</section> : <section className={`${CARD} p-6`}><p className="font-semibold">Todavía no hay ganancias acreditadas a tu MI FLOW.</p><p className="mt-1 text-sm text-white/45">No se calcula un saldo ficticio desde tus registros manuales. Las ganancias aparecen cuando un pago real queda confirmado.</p></section>}
+
+        <section className="grid gap-4 lg:grid-cols-2">
+          <article id="flows" className={`${CARD} scroll-mt-24 p-6`}><div className="flex items-center justify-between"><div><p className="text-xs uppercase tracking-[0.16em] text-white/35">Moneda CLOUVA</p><h2 className="mt-1 flex items-center gap-2 text-xl font-semibold"><CloverIcon className="text-[#8f7cff]" size={22} /> FLOWS</h2></div><strong className="text-3xl">{data?.wallets.flows ?? 0}</strong></div><CreditActivity rows={data?.walletActivity.flows ?? []} empty="Todavía no hay movimientos de FLOWS." /></article>
+          <article id="diamonds" className={`${CARD} scroll-mt-24 p-6`}><div className="flex items-center justify-between"><div><p className="text-xs uppercase tracking-[0.16em] text-white/35">Crédito premium</p><h2 className="mt-1 flex items-center gap-2 text-xl font-semibold"><DiamondIcon className="text-cyan-300" size={22} /> Diamantes</h2></div><strong className="text-3xl">{data?.wallets.diamonds ?? 0}</strong></div><CreditActivity rows={data?.walletActivity.diamonds ?? []} empty="Todavía no hay movimientos de Diamantes." /></article>
+        </section>
+
+        <section id="activity" className={`${CARD} scroll-mt-24 overflow-hidden`}>
+          <div className="border-b border-white/[0.07] px-5 py-4 md:px-6"><p className="text-xs uppercase tracking-[0.16em] text-white/35">Actividad económica</p><h2 className="mt-1 flex items-center gap-2 text-lg font-semibold"><History size={18} /> Ganancias y operaciones</h2></div>
+          {combinedActivity.length ? <div className="divide-y divide-white/[0.06]">{combinedActivity.map((entry) => { const managed = entry.beneficiary_user_id !== user?.id; return <div key={entry.id} className="flex flex-col gap-2 px-5 py-4 sm:flex-row sm:items-center sm:justify-between md:px-6"><div><p className="text-sm font-medium">{SOURCE_LABEL[entry.source_type]}</p><p className="mt-1 text-xs text-white/35">{managed ? "Entidad que administrás" : "Tu ingreso"} · {when(entry.created_at)}</p></div><div className="text-left sm:text-right"><strong>{moneyMinor(entry.net_amount_minor, entry.currency)}</strong><p className="mt-1 text-xs text-white/35">{STATUS_LABEL[entry.status]}</p></div></div>; })}</div> : <div className="px-6 py-10 text-sm text-white/40">Todavía no hay actividad económica verificada.</div>}
+        </section>
+
+        <section className="grid gap-3 md:grid-cols-3">
+          <ActionCard icon={<Store size={19} />} title="Hacer dinero" copy="Entrá a MI SPOT: tu negocio, tus productos, ventas, servicios y operación." href="/mi-spot" cta="Abrir MI SPOT" />
+          <ActionCard icon={<Lightbulb size={19} />} title="Proyectos de ingresos" copy="Tu herramienta histórica de ideas, proyectos e ingresos esperados sigue disponible aparte." href="/mi-flow/negocios" cta="Abrir proyectos" />
+          <ActionCard icon={<History size={19} />} title="Finanzas personales" copy="Tus ingresos y gastos manuales siguen separados de la billetera real." href="/mi-flow/finanzas" cta="Abrir registro" />
+        </section>
+      </div>
+    </main>
+  );
+}
+
+function Metric({ label, value, note }: { label: string; value: string; note?: string }) {
+  return <div className="rounded-2xl border border-white/[0.07] bg-black/20 p-4"><span className="text-[11px] uppercase tracking-[0.14em] text-white/35">{label}</span><strong className="mt-2 block text-xl">{value}</strong>{note ? <p className="mt-2 text-[11px] leading-4 text-white/30">{note}</p> : null}</div>;
+}
+function CreditActivity({ rows, empty }: { rows: CreditEntry[]; empty: string }) {
+  if (!rows.length) return <p className="mt-6 border-t border-white/[0.07] pt-5 text-sm text-white/35">{empty}</p>;
+  return <div className="mt-5 divide-y divide-white/[0.06] border-t border-white/[0.07]">{rows.slice(0, 5).map((row) => <div key={row.id} className="flex items-center justify-between py-3 text-sm"><div><p>{row.source || row.transaction_type}</p><p className="mt-0.5 text-xs text-white/30">{when(row.created_at)}</p></div><div className="text-right"><b className={row.amount >= 0 ? "text-emerald-300" : "text-rose-300"}>{row.amount >= 0 ? "+" : ""}{row.amount}</b><p className="text-xs text-white/30">saldo {row.balance_after}</p></div></div>)}</div>;
+}
+function ActionCard({ icon, title, copy, href, cta }: { icon: React.ReactNode; title: string; copy: string; href: string; cta: string }) {
+  return <Link href={href} className={`${CARD} group p-5 transition hover:border-violet-400/25 hover:bg-[#110d1b]`}><span className="inline-grid rounded-xl border border-violet-300/15 bg-violet-300/[0.06] p-2 text-violet-300">{icon}</span><h3 className="mt-4 font-semibold">{title}</h3><p className="mt-1 min-h-10 text-sm text-white/40">{copy}</p><span className="mt-4 inline-flex items-center gap-1 text-xs font-semibold text-violet-300">{cta} <ArrowRight size={14} /></span></Link>;
+}
