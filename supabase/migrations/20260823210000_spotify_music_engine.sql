@@ -46,6 +46,9 @@ create table if not exists public.external_music_tracks (
 create index if not exists external_music_tracks_player_idx
   on public.external_music_tracks(player_id, provider, release_date desc);
 
+-- This helper is intentionally SECURITY DEFINER so membership checks are not
+-- coupled to player_members/players client RLS. It is callable only by signed-in
+-- users (and the service role), never by anon.
 create or replace function public.can_manage_player(check_player_id uuid)
 returns boolean
 language sql
@@ -71,53 +74,76 @@ as $$
     );
 $$;
 
-create or replace function public.can_view_player_music(check_player_id uuid)
-returns boolean
-language sql
-stable
-security definer
-set search_path = public
-as $$
-  select
-    exists (
-      select 1 from public.players p
-      where p.id = check_player_id
-        and p.is_published = true
-        and p.publication_status = 'published'
-        and coalesce(p.privacy_status, 'public') <> 'private'
-    )
-    or public.can_manage_player(check_player_id);
-$$;
-
 revoke all on function public.can_manage_player(uuid) from public;
-grant execute on function public.can_manage_player(uuid) to authenticated;
-revoke all on function public.can_view_player_music(uuid) from public;
-grant execute on function public.can_view_player_music(uuid) to anon, authenticated;
+revoke all on function public.can_manage_player(uuid) from anon;
+revoke all on function public.can_manage_player(uuid) from authenticated;
+grant execute on function public.can_manage_player(uuid) to authenticated, service_role;
 
 alter table public.player_music_connections enable row level security;
 alter table public.external_music_tracks enable row level security;
 
+-- Public reads are expressed directly against the already-public Player model.
+-- Manager reads are a separate authenticated-only policy so anon never needs
+-- EXECUTE on the SECURITY DEFINER authorization helper.
 drop policy if exists player_music_connections_read on public.player_music_connections;
-create policy player_music_connections_read
+drop policy if exists player_music_connections_public_read on public.player_music_connections;
+create policy player_music_connections_public_read
   on public.player_music_connections for select
-  using (public.can_view_player_music(player_id));
+  to anon, authenticated
+  using (
+    exists (
+      select 1 from public.players p
+      where p.id = player_music_connections.player_id
+        and p.is_published = true
+        and p.publication_status = 'published'
+        and coalesce(p.privacy_status, 'public') <> 'private'
+    )
+  );
+
+drop policy if exists player_music_connections_manager_read on public.player_music_connections;
+create policy player_music_connections_manager_read
+  on public.player_music_connections for select
+  to authenticated
+  using (public.can_manage_player(player_id));
 
 drop policy if exists player_music_connections_manage on public.player_music_connections;
 create policy player_music_connections_manage
   on public.player_music_connections for all
+  to authenticated
   using (public.can_manage_player(player_id))
   with check (public.can_manage_player(player_id));
 
 drop policy if exists external_music_tracks_read on public.external_music_tracks;
-create policy external_music_tracks_read
+drop policy if exists external_music_tracks_public_read on public.external_music_tracks;
+create policy external_music_tracks_public_read
   on public.external_music_tracks for select
-  using (public.can_view_player_music(player_id));
+  to anon, authenticated
+  using (
+    exists (
+      select 1 from public.players p
+      where p.id = external_music_tracks.player_id
+        and p.is_published = true
+        and p.publication_status = 'published'
+        and coalesce(p.privacy_status, 'public') <> 'private'
+    )
+  );
+
+drop policy if exists external_music_tracks_manager_read on public.external_music_tracks;
+create policy external_music_tracks_manager_read
+  on public.external_music_tracks for select
+  to authenticated
+  using (public.can_manage_player(player_id));
 
 drop policy if exists external_music_tracks_manage on public.external_music_tracks;
 create policy external_music_tracks_manage
   on public.external_music_tracks for all
+  to authenticated
   using (public.can_manage_player(player_id))
   with check (public.can_manage_player(player_id));
+
+-- If an earlier pre-release iteration created this helper, remove it after the
+-- policies no longer depend on it so it cannot be exposed as an RPC.
+drop function if exists public.can_view_player_music(uuid);
 
 -- Keep timestamps correct for direct authenticated writes as well as server writes.
 create or replace function public.touch_music_updated_at()
