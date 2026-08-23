@@ -1,16 +1,15 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { buildSpotifyAuthorizationUrl } from "@/core/integrations/spotify/client";
 import { isSpotifyEnabled } from "@/core/integrations/spotify/config";
 import { createSpotifyState } from "@/core/integrations/spotify/state";
-import { createAdminSupabase, isAuthError, readBearerToken, requireUser } from "@/lib/server/supabase";
+import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
     if (!isSpotifyEnabled()) {
       return NextResponse.json({ ok: false, code: "spotify_disabled" }, { status: 503 });
     }
-    const token = readBearerToken(request);
-    const user = await requireUser(token);
+    const { user } = await requireUser(request);
     const body = (await request.json().catch(() => ({}))) as { returnPath?: unknown; pendingAction?: unknown };
     const state = await createSpotifyState({
       admin: createAdminSupabase(),
