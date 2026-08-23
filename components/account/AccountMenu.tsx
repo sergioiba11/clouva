@@ -20,7 +20,7 @@ import {
 import { useAuth } from "@/components/auth-provider";
 import { useCurrentPlayer } from "@/components/current-player-provider";
 import { getAccounts, switchAccount, type StoredAccount } from "@/lib/account-switcher";
-import { resolveCurrentPlayerStatus } from "@/lib/identity-names";
+import { resolveAccountDisplayName, resolveCurrentPlayerStatus } from "@/lib/identity-names";
 import styles from "./AccountMenu.module.css";
 
 type AccountMenuProps = {
@@ -64,7 +64,11 @@ export function AccountMenu({ variant = "nav", triggerClassName = "", preferUser
     currentPlayer?.username?.trim().replace(/^@/, "") ||
     profile?.username?.trim().replace(/^@/, "") ||
     null;
-  const clouvaName = currentPlayer?.display_name?.trim() || username || "CLOUVA";
+  const accountName = resolveAccountDisplayName({
+    profile: username ? { username } : null,
+    user: null,
+  });
+  const clouvaName = currentPlayer?.display_name?.trim() || accountName;
   const primaryName = preferUsername ? username || clouvaName : clouvaName;
   const accountUsername = username ? `@${username}` : "Tu cuenta CLOUVA";
   const accountDetail = accountUsername;
