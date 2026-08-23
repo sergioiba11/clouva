@@ -65,7 +65,7 @@ export function publicMediaError(error: unknown) {
     return { status: 422, body: { error: "El modelo seleccionado no está disponible para este proyecto.", code: "model_unavailable" } };
   }
 
-  if (error instanceof Error && error.name === "GeminiImageError") {
+  if (error instanceof Error && error.constructor?.name === "GeminiImageError") {
     const providerStatus = typeof (error as Error & { status?: unknown }).status === "number"
       ? (error as Error & { status: number }).status
       : 502;
