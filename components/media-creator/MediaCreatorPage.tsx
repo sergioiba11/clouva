@@ -2,37 +2,34 @@
 /* eslint-disable @next/next/no-img-element -- URLs de medios generados y avatares son dinámicas y externas. */
 
 import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowDownToLine,
   Check,
   ChevronDown,
   CircleHelp,
-  Clock3,
   Copy,
   FolderKanban,
-  Heart,
   Home,
   ImageIcon,
   Images,
-  LayoutTemplate,
   Library,
   LoaderCircle,
   Menu,
   Mic,
-  Palette,
   Play,
   Settings,
   ShieldCheck,
   Sparkles,
   Trash2,
   Video,
-  WandSparkles,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
 import { CloverIcon } from "@/components/clover-icon";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
+import { buildMediaCreatorHref } from "@/lib/media-creator-navigation";
 import {
   estimateVideoCostUsd,
   formatAspectRatio,
@@ -62,18 +59,11 @@ const promptIdeas = [
 const navSections = [
   [
     { label: "Inicio", href: "/", icon: Home },
-    { label: "CLOUVA AI", href: "/clouva-ai", icon: Sparkles },
-    { label: "Proyectos", href: "/studios", icon: FolderKanban },
+    { label: "Trébol / Chat", href: "/clouva-ai", icon: Sparkles },
+    { label: "Crear imagen", href: buildMediaCreatorHref("image"), icon: ImageIcon },
+    { label: "Crear video", href: buildMediaCreatorHref("video"), icon: Video },
     { label: "Biblioteca", href: "/biblioteca", icon: Library },
-    { label: "Plantillas", href: "/creator-studio", icon: LayoutTemplate },
-  ],
-  [
-    { label: "Herramientas", href: "/clouva-ai", icon: WandSparkles },
-    { label: "Brand Kit", href: "/logo", icon: Palette },
-  ],
-  [
-    { label: "Actividad", href: "/perfil", icon: Clock3 },
-    { label: "Favoritos", href: "/biblioteca", icon: Heart },
+    { label: "Proyectos", href: "/studios", icon: FolderKanban },
   ],
 ] as const;
 
@@ -97,9 +87,14 @@ function SelectChevron() {
 }
 
 export function MediaCreatorPage() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+  const requestedMode = searchParams.get("mode");
+  const requestedPrompt = searchParams.get("prompt");
   const { user, profile, role, loading } = useAuth();
-  const [mode, setMode] = useState<MediaType>("image");
-  const [prompt, setPrompt] = useState("");
+  const [mode, setMode] = useState<MediaType>(requestedMode === "video" ? "video" : "image");
+  const [prompt, setPrompt] = useState(() => (requestedPrompt || "").slice(0, 4_000));
   const [reference, setReference] = useState<ReferenceAsset | null>(null);
   const [imageAspect, setImageAspect] = useState<ImageAspectRatio>("16:9");
   const [imageQuality, setImageQuality] = useState<ImageQuality>("high");
@@ -135,6 +130,22 @@ export function MediaCreatorPage() {
     if (currentJob?.type === "video" && activeStatuses.has(currentJob.status) && !ids.includes(currentJob.id)) ids.push(currentJob.id);
     return ids.sort().join(",");
   }, [currentJob, history]);
+
+  const changeCreatorMode = useCallback((nextMode: MediaType) => {
+    setMode(nextMode);
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("mode", nextMode);
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  }, [pathname, router, searchParams]);
+
+  useEffect(() => {
+    if (requestedMode === "image" || requestedMode === "video") setMode(requestedMode);
+    else if (requestedMode !== null) setMode("image");
+  }, [requestedMode]);
+
+  useEffect(() => {
+    if (requestedPrompt !== null) setPrompt(requestedPrompt.slice(0, 4_000));
+  }, [requestedPrompt]);
 
   const updateJob = useCallback((job: MediaJob) => {
     setHistory((items) => {
@@ -296,7 +307,7 @@ export function MediaCreatorPage() {
   const selectAsReference = (job: MediaJob) => {
     if (!job.outputUrl) return;
     setReference({ url: job.outputUrl, storagePath: "", mimeType: job.mimeType || "image/png", width: 0, height: 0, size: 0 });
-    setMode("image");
+    changeCreatorMode("image");
     setNotice("La creación se cargó como referencia.");
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
@@ -330,13 +341,13 @@ export function MediaCreatorPage() {
 
       <aside className={`${styles.sidebar} ${mobileMenu ? styles.sidebarOpen : ""}`}>
         <Link href="/" className={styles.brand}><span><CloverIcon size={25} /></span>CLOUVA</Link>
-        <Link href="/crear" className={styles.createLink}><Sparkles size={18} />Crear</Link>
+        <Link href={buildMediaCreatorHref(mode)} className={styles.createLink}><Sparkles size={18} />Crear</Link>
         <nav aria-label="Navegación de CLOUVA">
           {navSections.map((section, index) => (
             <div key={index} className={styles.navSection}>
               {section.map((item) => {
                 const Icon = item.icon;
-                return <Link key={`${item.label}-${item.href}`} href={item.href}><Icon size={18} />{item.label}</Link>;
+                return <Link key={`${item.label}-${item.href}`} href={item.href} onClick={() => setMobileMenu(false)}><Icon size={18} />{item.label}</Link>;
               })}
             </div>
           ))}
@@ -354,16 +365,16 @@ export function MediaCreatorPage() {
       <section className={styles.workspace}>
         <div className={styles.workspaceInner}>
           <header className={styles.hero}>
-            <span className={styles.heroEyebrow}><Sparkles size={14} />CLOUVA CREATIVE</span>
+            <span className={styles.heroEyebrow}><Sparkles size={14} />CLOUVA AI STUDIO</span>
             <h1>Crear con <em>CLOUVA</em></h1>
             <p>Convertí una idea en una imagen o video.</p>
           </header>
 
           <div className={styles.modeSwitch} aria-label="Tipo de creación">
-            <button type="button" className={mode === "image" ? styles.modeActive : ""} onClick={() => setMode("image")} disabled={busy} aria-pressed={mode === "image"}>
+            <button type="button" className={mode === "image" ? styles.modeActive : ""} onClick={() => changeCreatorMode("image")} disabled={busy} aria-pressed={mode === "image"}>
               <ImageIcon size={19} />Imagen
             </button>
-            <button type="button" className={mode === "video" ? styles.modeActive : ""} onClick={() => setMode("video")} disabled={busy} aria-pressed={mode === "video"}>
+            <button type="button" className={mode === "video" ? styles.modeActive : ""} onClick={() => changeCreatorMode("video")} disabled={busy} aria-pressed={mode === "video"}>
               <Play size={19} />Video
             </button>
           </div>
