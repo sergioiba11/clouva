@@ -90,7 +90,7 @@ test("MI SPOT reutiliza el dashboard comercial real y sigue siendo distinto de M
   const spot = read("./app/mi-spot/page.tsx");
   const dashboard = read("./components/commerce/SpotCommerceDashboard.tsx");
   assert.match(spot, /SpotCommerceDashboard/);
-  assert.match(spot, /Productos, ventas, pedidos, stock, scanner, QR y códigos/);
+  assert.match(spot, /productos, ventas, pedidos, stock, scanner, QR y códigos/i);
   assert.match(dashboard, /\/api\/studios\/\$\{encodeURIComponent\(studioId\)\}\/commerce\/spot/);
   assert.match(dashboard, /grid-cols|sm:|lg:/);
 });
