@@ -64,5 +64,14 @@ export function publicMediaError(error: unknown) {
   if (/model.*not found|not available|unsupported model/i.test(message)) {
     return { status: 422, body: { error: "El modelo seleccionado no está disponible para este proyecto.", code: "model_unavailable" } };
   }
+
+  if (error instanceof Error && error.name === "GeminiImageError") {
+    const providerStatus = typeof (error as Error & { status?: unknown }).status === "number"
+      ? (error as Error & { status: number }).status
+      : 502;
+    const safeStatus = providerStatus >= 400 && providerStatus <= 599 ? providerStatus : 502;
+    return { status: safeStatus, body: { error: message.slice(0, 300), code: "gemini_image_error" } };
+  }
+
   return { status: 500, body: { error: "La generación no pudo completarse.", code: "generation_failed" } };
 }
