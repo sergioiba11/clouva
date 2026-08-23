@@ -8,6 +8,7 @@ export type RetryableImageRequest = {
   referenceStoragePath?: string | null;
 };
 
+export const CLOUVA_AI_RETRY_IMAGE_EVENT = "clouva-ai:retry-image";
 export const MAX_AUTOMATIC_STOP_RETRIES = 1;
 
 export function isStopImageGenerationFailure(error: string | null | undefined) {
