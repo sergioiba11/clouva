@@ -207,7 +207,7 @@ begin
   end if;
 
   loop
-    v_token := encode(extensions.gen_random_bytes(24), 'hex');
+    v_token := replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '');
     begin
       insert into public.clouva_qr_registry(
         public_token, entity_type, entity_id, studio_id, status, is_canonical,
