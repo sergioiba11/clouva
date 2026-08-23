@@ -9,10 +9,14 @@ import { GlobalClouvaAIButton } from "@/components/GlobalClouvaAIButton";
 import { ClouvaAIAssistantProvider } from "@/components/clouva-ai/ClouvaAIAssistantProvider";
 
 export const metadata: Metadata = {
-  title: "CLOUVA | Premium Underground",
+  title: "Clouva Vida de Flows",
   description: "Vida de flows. Directamente desde el southside.",
+  icons: {
+    icon: "/icon.svg",
+    shortcut: "/icon.svg",
+  },
   openGraph: {
-    title: "CLOUVA",
+    title: "Clouva Vida de Flows",
     description: "Premium underground fashion desde Zapala",
     url: "https://clouva.com.ar"
   }
