@@ -16,7 +16,8 @@
     "test:identity-revenue": "node --import tsx --test tests-identity-revenue.mjs tests-multirol-studio-os.mjs tests-current-player-identity.mjs tests-commerce-canonical.mjs tests-commerce-order-tracking.mjs tests-commerce-admin.mjs tests-commerce-legacy-compatibility.mjs tests-commerce-spot.mjs tests-commerce-identifiers-labels.mjs tests-commerce-product-recognition.mjs tests-clouva-lab.mjs tests-home-popovers.mjs tests-universal-mi-spot.mjs",
     "test:brand-engine": "node --require ./scripts/stub-server-only.cjs --import tsx --test tests-brand-engine.mjs tests-brand-import-clearance.mjs",
     "test:media": "node --test tests-media-creator.mjs",
-    "test": "npm run test:legacy && npm run test:avatar-analyzer && npm run test:identity-revenue && npm run test:brand-engine && npm run test:media"
+    "test:music": "node --import tsx --test tests-music-engine.mjs",
+    "test": "npm run test:legacy && npm run test:avatar-analyzer && npm run test:identity-revenue && npm run test:brand-engine && npm run test:media && npm run test:music"
   },
   "overrides": {
     "three": "$three"
