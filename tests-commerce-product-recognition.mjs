@@ -8,6 +8,7 @@ const dashboard = read("./components/commerce/SpotCommerceDashboard.tsx");
 const service = read("./lib/server/commerce-product-recognition.ts");
 const route = read("./app/api/studios/[slug]/commerce/recognize/route.ts");
 const scannerRoute = read("./app/api/studios/[slug]/commerce/scan/route.ts");
+const productImagesRoute = read("./app/api/studios/[slug]/commerce/product-images/route.ts");
 
 test("Gemini product recognition is sanitized before it reaches the form", () => {
   const recognition = sanitizeCommerceProductRecognition({
@@ -49,6 +50,9 @@ test("uncertain or invalid identifiers from vision are never registered", () => 
 test("visual scanner uses server-side Gemini structured multimodal output", () => {
   assert.match(service, /process\.env\.GEMINI_API_KEY/);
   assert.doesNotMatch(service, /NEXT_PUBLIC_GEMINI/);
+  assert.match(service, /Frente/);
+  assert.match(service, /Atrás/);
+  assert.match(service, /Detalle/);
   assert.match(service, /inlineData/);
   assert.match(service, /responseMimeType:\s*"application\/json"/);
   assert.match(service, /responseJsonSchema:\s*RESPONSE_SCHEMA/);
@@ -57,13 +61,37 @@ test("visual scanner uses server-side Gemini structured multimodal output", () =
   assert.match(route, /recognizeCommerceProduct/);
 });
 
-test("scanner captures product views, fills an editable form and preserves canonical creation", () => {
+test("scanner captures canonical views, generates catalog images and preserves canonical creation", () => {
   assert.match(dashboard, /Escanear producto con IA/);
   assert.match(dashboard, /captureProductPhoto\("Frente"\)/);
-  assert.match(dashboard, /captureProductPhoto\("Dorso"\)/);
+  assert.match(dashboard, /captureProductPhoto\("Atrás"\)/);
+  assert.match(dashboard, /captureProductPhoto\("Detalle"\)/);
+  assert.doesNotMatch(dashboard, /captureProductPhoto\("Dorso"\)/);
   assert.match(dashboard, /Analizar y completar datos/);
+  assert.match(dashboard, /Generar imágenes del producto/);
+  assert.match(dashboard, /generateProductImagesWithGemini/);
+  assert.match(dashboard, /commerce\/product-images/);
   assert.match(dashboard, /setCreation\(\(current\) =>/);
   assert.match(dashboard, /buildSpotSku/);
   assert.match(dashboard, /source:\s*"gemini_product_vision"/);
+  assert.match(dashboard, /source_photos/);
+  assert.match(dashboard, /generated_images/);
+  assert.match(dashboard, /cover_image/);
+  assert.match(dashboard, /cover_url:\s*coverImage/);
   assert.match(scannerRoute, /upsert_commerce_scanned_product/);
+  assert.match(scannerRoute, /commerce_products/);
+  assert.match(scannerRoute, /cover_url/);
+});
+
+test("commerce product image generation reuses Gemini Image and CLOUVA storage", () => {
+  assert.match(productImagesRoute, /requireUser/);
+  assert.match(productImagesRoute, /requireManagedSpot/);
+  assert.match(productImagesRoute, /generateImage/);
+  assert.match(productImagesRoute, /uploadGeneratedMediaObject/);
+  assert.match(productImagesRoute, /front_catalog/);
+  assert.match(productImagesRoute, /back_catalog/);
+  assert.match(productImagesRoute, /detail_catalog/);
+  assert.match(productImagesRoute, /sourcePhotos/);
+  assert.match(productImagesRoute, /generatedImages/);
+  assert.match(productImagesRoute, /coverImage/);
 });
