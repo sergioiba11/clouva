@@ -46,7 +46,7 @@ test("public resolver routes USER QR to the existing Player and keeps product le
   assert.match(resolver, /\.eq\("owner_user_id", registry\.entity_id\)/);
   assert.match(resolver, /public_slug_aliases/);
   assert.match(resolver, /commerce_product_identifiers/);
-  assert.match(resolver, /\^\[0-9a-f-\]\{36\}\$/i/);
+  assert.ok(resolver.includes('/^[0-9a-f-]{36}$/i'));
 });
 
 test("each authenticated account can get its permanent QR and export PNG/SVG", () => {
