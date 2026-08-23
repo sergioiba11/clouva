@@ -14,6 +14,13 @@ import {
   parseImageGenerationIntent,
   type ImageGenerationIntent,
 } from "@/lib/clouva-ai/image-generation-intent";
+import {
+  buildRetryImageRequest,
+  CLOUVA_AI_RETRY_IMAGE_EVENT,
+  imageGenerationErrorCopy,
+  shouldAutoRetryImageGeneration,
+  type RetryableImageRequest,
+} from "@/lib/clouva-ai/image-generation-retry";
 import { createImageJob, waitForMediaJob } from "@/lib/media-generation-client";
 import type { ImageAspectRatio, ImageQuality } from "@/lib/media-generation-config";
 import type { MediaJob, MediaStatus } from "@/components/media-creator/types";
@@ -29,6 +36,10 @@ export type ClouvaAIMediaAttachment = {
   quality: ImageQuality;
   outputUrl: string | null;
   error: string | null;
+  technicalError?: string | null;
+  referenceUrl?: string | null;
+  referenceStoragePath?: string | null;
+  autoRetryCount?: number;
 };
 
 export type ClouvaAIMessage = {
@@ -82,6 +93,11 @@ type ProjectStatusPayload = {
   error?: string;
 };
 
+type ClouvaAIImageGenerationRequest = ImageGenerationIntent & {
+  referenceUrl?: string | null;
+  referenceStoragePath?: string | null;
+};
+
 export const CLOUVA_AI_WELCOME =
   "Soy Trébol — CLOUVA AI. Proyecto queda listo para investigar el repositorio real mientras tu sesión autorizada siga activa.";
 
@@ -111,7 +127,13 @@ function deduplicate(messages: StoredMessage[]) {
   });
 }
 
-function attachmentFromJob(requestId: string, job: MediaJob): ClouvaAIMediaAttachment {
+function attachmentFromJob(
+  requestId: string,
+  job: MediaJob,
+  request: ClouvaAIImageGenerationRequest,
+  autoRetryCount = 0,
+): ClouvaAIMediaAttachment {
+  const errorCopy = job.error ? imageGenerationErrorCopy(job.error) : null;
   return {
     requestId,
     jobId: job.id,
@@ -121,8 +143,49 @@ function attachmentFromJob(requestId: string, job: MediaJob): ClouvaAIMediaAttac
     aspectRatio: job.aspectRatio as ImageAspectRatio,
     quality: job.quality as ImageQuality,
     outputUrl: job.outputUrl,
-    error: job.error,
+    error: errorCopy?.message ?? null,
+    technicalError: errorCopy?.detail ?? null,
+    referenceUrl: job.referenceUrl ?? request.referenceUrl ?? null,
+    referenceStoragePath: request.referenceStoragePath ?? null,
+    autoRetryCount,
   };
+}
+
+function pendingAttachment(requestId: string, request: ClouvaAIImageGenerationRequest, autoRetryCount = 0): ClouvaAIMediaAttachment {
+  return {
+    requestId,
+    jobId: null,
+    type: "image",
+    status: "preparing",
+    prompt: request.prompt,
+    aspectRatio: request.aspectRatio,
+    quality: request.quality,
+    outputUrl: null,
+    error: null,
+    technicalError: null,
+    referenceUrl: request.referenceUrl ?? null,
+    referenceStoragePath: request.referenceStoragePath ?? null,
+    autoRetryCount,
+  };
+}
+
+function failedAttachment(
+  base: ClouvaAIMediaAttachment,
+  failure: string,
+  autoRetryCount: number,
+): ClouvaAIMediaAttachment {
+  const copy = imageGenerationErrorCopy(failure);
+  return {
+    ...base,
+    status: "failed",
+    error: copy.message,
+    technicalError: copy.detail,
+    autoRetryCount,
+  };
+}
+
+function isTerminalFailure(status: ClouvaAIMediaAttachment["status"]) {
+  return status === "failed" || status === "storage_failed" || status === "cancelled";
 }
 
 export function useClouvaAIConversation() {
@@ -141,6 +204,7 @@ export function useClouvaAIConversation() {
   const [activeModel, setActiveModel] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<ClouvaAIPendingAction | null>(null);
   const projectCheckIdRef = useRef(0);
+  const retryHandlerRef = useRef<(request: RetryableImageRequest) => void>(() => undefined);
 
   useEffect(() => {
     const storedMode = normalizeClouvaAIMode(window.localStorage.getItem(CLOUVA_AI_MODE_STORAGE_KEY));
@@ -165,6 +229,16 @@ export function useClouvaAIConversation() {
     return () => subscription.unsubscribe();
     // The controller owns the canonical initial load and auth subscription.
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<RetryableImageRequest>).detail;
+      if (!detail || typeof detail.prompt !== "string" || !detail.prompt.trim()) return;
+      retryHandlerRef.current(buildRetryImageRequest(detail));
+    };
+    window.addEventListener(CLOUVA_AI_RETRY_IMAGE_EVENT, handler);
+    return () => window.removeEventListener(CLOUVA_AI_RETRY_IMAGE_EVENT, handler);
   }, []);
 
   async function getSession() {
@@ -300,7 +374,49 @@ export function useClouvaAIConversation() {
     setMessages((current) => current.map((message) => message.mediaJob?.requestId === requestId ? { ...message, mediaJob } : message));
   }
 
-  async function runImageGeneration(message: string, request: ImageGenerationIntent) {
+  async function executeImageGeneration(
+    requestId: string,
+    request: ClouvaAIImageGenerationRequest,
+    baseMedia: ClouvaAIMediaAttachment,
+  ) {
+    let autoRetryCount = 0;
+
+    while (true) {
+      try {
+        const created = await createImageJob({
+          prompt: request.prompt,
+          aspectRatio: request.aspectRatio,
+          quality: request.quality,
+          referenceUrl: request.referenceUrl ?? null,
+          referenceStoragePath: request.referenceStoragePath ?? null,
+        });
+        let job = created.job;
+        replaceMediaAttachment(requestId, attachmentFromJob(requestId, job, request, autoRetryCount));
+
+        job = await waitForMediaJob(job, {
+          onUpdate: (updated) => replaceMediaAttachment(requestId, attachmentFromJob(requestId, updated, request, autoRetryCount)),
+        });
+
+        if (isTerminalFailure(job.status) && shouldAutoRetryImageGeneration(job.error, autoRetryCount)) {
+          autoRetryCount += 1;
+          replaceMediaAttachment(requestId, pendingAttachment(requestId, request, autoRetryCount));
+          continue;
+        }
+
+        return attachmentFromJob(requestId, job, request, autoRetryCount);
+      } catch (caught) {
+        const failure = caught instanceof Error ? caught.message : "No se pudo generar la imagen.";
+        if (shouldAutoRetryImageGeneration(failure, autoRetryCount)) {
+          autoRetryCount += 1;
+          replaceMediaAttachment(requestId, pendingAttachment(requestId, request, autoRetryCount));
+          continue;
+        }
+        return failedAttachment(baseMedia, failure, autoRetryCount);
+      }
+    }
+  }
+
+  async function runImageGeneration(message: string, request: ClouvaAIImageGenerationRequest) {
     if (loading || applying || mediaGenerating) return;
     const cleanMessage = message.trim();
     if (!cleanMessage) {
@@ -310,17 +426,7 @@ export function useClouvaAIConversation() {
 
     const requestId = crypto.randomUUID();
     const assistantText = "Listo. Voy a crear una imagen con este concepto.";
-    const pendingMedia: ClouvaAIMediaAttachment = {
-      requestId,
-      jobId: null,
-      type: "image",
-      status: "preparing",
-      prompt: request.prompt,
-      aspectRatio: request.aspectRatio,
-      quality: request.quality,
-      outputUrl: null,
-      error: null,
-    };
+    const pendingMedia = pendingAttachment(requestId, request);
 
     setInput("");
     setError(null);
@@ -344,19 +450,7 @@ export function useClouvaAIConversation() {
         action: "generate_image",
       });
 
-      const created = await createImageJob({
-        prompt: request.prompt,
-        aspectRatio: request.aspectRatio,
-        quality: request.quality,
-      });
-      let job = created.job;
-      replaceMediaAttachment(requestId, attachmentFromJob(requestId, job));
-
-      job = await waitForMediaJob(job, {
-        onUpdate: (updated) => replaceMediaAttachment(requestId, attachmentFromJob(requestId, updated)),
-      });
-
-      const finalMedia = attachmentFromJob(requestId, job);
+      const finalMedia = await executeImageGeneration(requestId, request, pendingMedia);
       replaceMediaAttachment(requestId, finalMedia);
       await saveMessage(activeConversationId, session.user.id, "assistant", assistantText, {
         provider: "clouva-media",
@@ -365,14 +459,14 @@ export function useClouvaAIConversation() {
         mediaJob: finalMedia,
       });
 
-      if (job.status === "failed" || job.status === "storage_failed" || job.status === "cancelled") {
-        setError(job.error || "La generación no pudo completarse.");
+      if (isTerminalFailure(finalMedia.status)) {
+        setError(finalMedia.error || "La generación no pudo completarse.");
       }
     } catch (caught) {
       const failure = caught instanceof Error ? caught.message : "No se pudo generar la imagen.";
-      const failedMedia: ClouvaAIMediaAttachment = { ...pendingMedia, status: "failed", error: failure };
+      const failedMedia = failedAttachment(pendingMedia, failure, pendingMedia.autoRetryCount ?? 0);
       replaceMediaAttachment(requestId, failedMedia);
-      setError(failure);
+      setError(failedMedia.error);
       if (activeConversationId && userId) {
         try {
           await saveMessage(activeConversationId, userId, "assistant", assistantText, {
@@ -389,6 +483,47 @@ export function useClouvaAIConversation() {
       setMediaGenerating(false);
     }
   }
+
+  async function retryImageGeneration(request: RetryableImageRequest) {
+    if (loading || applying || mediaGenerating) return;
+    const normalized = buildRetryImageRequest(request) as ClouvaAIImageGenerationRequest;
+    const requestId = crypto.randomUUID();
+    const assistantText = "Reintentando la generación con el mismo concepto.";
+    const pendingMedia = pendingAttachment(requestId, normalized);
+
+    setError(null);
+    setPendingAction(null);
+    setMediaGenerating(true);
+    setMessages((current) => [...current, { role: "assistant", content: assistantText, mediaJob: pendingMedia }]);
+
+    try {
+      const session = await getSession();
+      const activeConversationId = await ensureConversation(session.user.id, normalized.prompt);
+      const finalMedia = await executeImageGeneration(requestId, normalized, pendingMedia);
+      replaceMediaAttachment(requestId, finalMedia);
+      await saveMessage(activeConversationId, session.user.id, "assistant", assistantText, {
+        provider: "clouva-media",
+        mode: "chat",
+        action: "retry_image",
+        mediaJob: finalMedia,
+      });
+
+      if (isTerminalFailure(finalMedia.status)) {
+        setError(finalMedia.error || "La generación no pudo completarse.");
+      }
+    } catch (caught) {
+      const failure = caught instanceof Error ? caught.message : "No se pudo reintentar la imagen.";
+      const failedMedia = failedAttachment(pendingMedia, failure, pendingMedia.autoRetryCount ?? 0);
+      replaceMediaAttachment(requestId, failedMedia);
+      setError(failedMedia.error);
+    } finally {
+      setMediaGenerating(false);
+    }
+  }
+
+  retryHandlerRef.current = (request) => {
+    void retryImageGeneration(request);
+  };
 
   async function generateImageFromInput() {
     const message = input.trim();
