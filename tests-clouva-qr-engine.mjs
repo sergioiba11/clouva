@@ -9,6 +9,7 @@ const resolver = read("./app/q/[identifierId]/page.tsx");
 const selfApi = read("./app/api/clouva-qr/route.ts");
 const userQrApi = read("./app/api/studios/[slug]/commerce/user-qr/route.ts");
 const userSearchApi = read("./app/api/studios/[slug]/commerce/users/route.ts");
+const scanRoute = read("./app/api/studios/[slug]/commerce/scan/route.ts");
 const panel = read("./components/commerce/ClouvaQrEnginePanel.tsx");
 const account = read("./components/account/AccountMenu.tsx");
 const myQr = read("./components/account/MyQrCard.tsx");
@@ -72,8 +73,19 @@ test("MI SPOT QR engine creates garment QR labels and user QR without duplicatin
   assert.match(userQrApi, /entityType: "USER"/);
 });
 
+test("the existing commerce scanner recognizes the shared CLOUVA QR resolver", () => {
+  assert.match(scanRoute, /function clouvaQrToken/);
+  assert.match(scanRoute, /from\("clouva_qr_registry"\)/);
+  assert.match(scanRoute, /registry\?\.entity_type === "USER"/);
+  assert.match(scanRoute, /registry\?\.entity_type === "ITEM"/);
+  assert.match(scanRoute, /registry\?\.entity_type === "PRODUCT"/);
+  assert.match(scanRoute, /registry\?\.entity_type === "VARIANT"/);
+  assert.match(scanRoute, /public_url/);
+  assert.doesNotMatch(scanRoute, /email/);
+});
+
 test("QR values encode only the stable public resolver token", () => {
   assert.match(qrService, /\/q\/\$\{encodeURIComponent\(publicToken\)\}/);
   assert.doesNotMatch(qrService, /\/q\/\$\{.*entityId/);
-  assert.match(migration, /encode\(extensions\.gen_random_bytes\(24\), 'hex'\)/);
+  assert.match(migration, /replace\(gen_random_uuid\(\)::text, '-', ''\) \|\| replace\(gen_random_uuid\(\)::text, '-', ''\)/);
 });
