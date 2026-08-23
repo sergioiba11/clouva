@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable @next/next/no-img-element -- Generated media URLs are dynamic and external. */
 
 import Link from "next/link";
 import { Check, Copy, Download, ImageIcon, Loader2, Sparkles, TriangleAlert } from "lucide-react";
