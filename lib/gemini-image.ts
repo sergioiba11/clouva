@@ -124,11 +124,9 @@ export async function generateImage(args: GenerateImageArgs): Promise<GeneratedI
         contents: [{ role: "user", parts }],
         generationConfig: {
           responseModalities: ["TEXT", "IMAGE"],
-          responseFormat: {
-            image: {
-              aspectRatio: args.aspectRatio ?? "1:1",
-              ...(args.imageSize ? { imageSize: args.imageSize } : {}),
-            },
+          imageConfig: {
+            aspectRatio: args.aspectRatio ?? "1:1",
+            ...(args.imageSize ? { imageSize: args.imageSize } : {}),
           },
         },
       }),
