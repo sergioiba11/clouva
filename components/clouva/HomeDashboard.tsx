@@ -26,6 +26,7 @@ import { useAuth } from "@/components/auth-provider";
 import { useCurrentPlayer } from "@/components/current-player-provider";
 import { AccountMenu } from "@/components/account/AccountMenu";
 import { useClouvaAIAssistant } from "@/components/clouva-ai/ClouvaAIAssistantProvider";
+import { SpotifyHomeStatus } from "@/components/music/SpotifyHomeStatus";
 import { resolveHomeDisplayName } from "@/lib/identity-names";
 import { VISUAL_ASSETS } from "@/lib/visual-assets";
 import styles from "./home-dashboard.module.css";
@@ -115,8 +116,6 @@ export function HomeDashboard() {
   const hasAvatar = Boolean(profile?.avatar_3d_url);
   const completedSteps = [isSignedIn, Boolean(profile?.username), hasAvatar].filter(Boolean).length;
   const progress = Math.round((completedSteps / 3) * 100);
-  // El admin necesita poder entrar a las pantallas "Próximamente" para
-  // probarlas/gestionarlas -- el resto de los usuarios sigue viendo el gate.
   const isAdmin = role === "admin";
   const effectivePrimaryNav = primaryNav
     .filter((item) => !("adminOnly" in item) || !item.adminOnly || isAdmin)
@@ -252,11 +251,7 @@ export function HomeDashboard() {
 
           <div className={styles.nowPlaying}>
             <div className={styles.cover}><Music2 size={20} /></div>
-            <div>
-              <small>Tu música</small>
-              <strong>{profile?.spotify_url ? "Perfil conectado" : "Conectá Spotify"}</strong>
-              <span>{profile?.spotify_url ? "Disponible en CLOUVA" : "Llevá tu sonido a tu identidad"}</span>
-            </div>
+            <SpotifyHomeStatus />
             <Link href="/mi-flow/music" aria-label="Abrir música"><ArrowRight size={17} /></Link>
           </div>
         </section>
