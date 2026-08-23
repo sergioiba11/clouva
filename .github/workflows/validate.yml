@@ -7,7 +7,7 @@ on:
     branches: [main, agent/base-mesh-auto-rig]
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: validate-${{ github.ref }}
@@ -20,6 +20,23 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.head_ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Apply scoped MI SPOT multi-detail patch
+        if: github.event_name == 'pull_request' && github.head_ref == 'feat/mi-spot-multi-detail-images'
+        shell: bash
+        run: |
+          python3 scripts/patch-mi-spot-multi-detail.py
+          git diff --check
+          git config user.name "Clouva"
+          git config user.email "sergio.iba.11@gmail.com"
+          git add components/commerce/SpotCommerceDashboard.tsx
+          if ! git diff --cached --quiet; then
+            git commit -m "feat(commerce): support multiple product detail captures"
+            git push origin HEAD:${GITHUB_HEAD_REF}
+          fi
 
       - name: Setup Node
         uses: actions/setup-node@v4
