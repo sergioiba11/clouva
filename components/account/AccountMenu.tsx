@@ -20,7 +20,7 @@ import {
 import { useAuth } from "@/components/auth-provider";
 import { useCurrentPlayer } from "@/components/current-player-provider";
 import { getAccounts, switchAccount, type StoredAccount } from "@/lib/account-switcher";
-import { resolveAccountDisplayName, resolveCurrentPlayerStatus, resolveEmailUsername } from "@/lib/identity-names";
+import { resolveCurrentPlayerStatus } from "@/lib/identity-names";
 import styles from "./AccountMenu.module.css";
 
 type AccountMenuProps = {
@@ -47,7 +47,7 @@ function MenuLink({ href, icon, label, detail, onSelect, tone = "default" }: Men
   );
 }
 
-export function AccountMenu({ variant = "nav", triggerClassName = "", preferUsername = false }: AccountMenuProps) {
+export function AccountMenu({ variant = "nav", triggerClassName = "", preferUsername = true }: AccountMenuProps) {
   const { user, profile, role, loading } = useAuth();
   const { currentPlayer } = useCurrentPlayer();
   const pathname = usePathname();
@@ -60,12 +60,15 @@ export function AccountMenu({ variant = "nav", triggerClassName = "", preferUser
   const [accounts, setAccounts] = useState<StoredAccount[]>([]);
   const [avatarBroken, setAvatarBroken] = useState(false);
 
-  const displayName = resolveAccountDisplayName({ profile, user });
-  const username = profile?.username?.trim().replace(/^@/, "") || resolveEmailUsername(user);
-  const primaryName = preferUsername ? username || displayName : displayName;
-  const accountUsername = profile?.username ? `@${profile.username.replace(/^@/, "")}` : user?.email ?? "Tu cuenta CLOUVA";
-  const accountDetail = preferUsername ? user?.email ?? accountUsername : accountUsername;
-  const avatar = profile?.avatar_url ?? user?.user_metadata?.avatar_url;
+  const username =
+    currentPlayer?.username?.trim().replace(/^@/, "") ||
+    profile?.username?.trim().replace(/^@/, "") ||
+    null;
+  const clouvaName = currentPlayer?.display_name?.trim() || username || "CLOUVA";
+  const primaryName = preferUsername ? username || clouvaName : clouvaName;
+  const accountUsername = username ? `@${username}` : "Tu cuenta CLOUVA";
+  const accountDetail = accountUsername;
+  const avatar = currentPlayer?.profile_image_url ?? currentPlayer?.logo_url ?? profile?.avatar_url ?? user?.user_metadata?.avatar_url;
   const canAdmin = role === "admin";
   const publicProfileHref = resolveCurrentPlayerStatus(currentPlayer) === "published" && currentPlayer
     ? `/${encodeURIComponent(currentPlayer.slug)}`
