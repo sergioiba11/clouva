@@ -20,12 +20,13 @@ import {
 import { useAuth } from "@/components/auth-provider";
 import { useCurrentPlayer } from "@/components/current-player-provider";
 import { getAccounts, switchAccount, type StoredAccount } from "@/lib/account-switcher";
-import { resolveAccountDisplayName, resolveCurrentPlayerStatus } from "@/lib/identity-names";
+import { resolveAccountDisplayName, resolveCurrentPlayerStatus, resolveEmailUsername } from "@/lib/identity-names";
 import styles from "./AccountMenu.module.css";
 
 type AccountMenuProps = {
   variant?: "nav" | "home";
   triggerClassName?: string;
+  preferUsername?: boolean;
 };
 
 type MenuLinkProps = {
@@ -46,7 +47,7 @@ function MenuLink({ href, icon, label, detail, onSelect, tone = "default" }: Men
   );
 }
 
-export function AccountMenu({ variant = "nav", triggerClassName = "" }: AccountMenuProps) {
+export function AccountMenu({ variant = "nav", triggerClassName = "", preferUsername = false }: AccountMenuProps) {
   const { user, profile, role, loading } = useAuth();
   const { currentPlayer } = useCurrentPlayer();
   const pathname = usePathname();
@@ -60,11 +61,14 @@ export function AccountMenu({ variant = "nav", triggerClassName = "" }: AccountM
   const [avatarBroken, setAvatarBroken] = useState(false);
 
   const displayName = resolveAccountDisplayName({ profile, user });
+  const username = profile?.username?.trim().replace(/^@/, "") || resolveEmailUsername(user);
+  const primaryName = preferUsername ? username || displayName : displayName;
   const accountUsername = profile?.username ? `@${profile.username.replace(/^@/, "")}` : user?.email ?? "Tu cuenta CLOUVA";
+  const accountDetail = preferUsername ? user?.email ?? accountUsername : accountUsername;
   const avatar = profile?.avatar_url ?? user?.user_metadata?.avatar_url;
   const canAdmin = role === "admin";
   const publicProfileHref = resolveCurrentPlayerStatus(currentPlayer) === "published" && currentPlayer
-    ? `/u/${encodeURIComponent(currentPlayer.slug)}`
+    ? `/${encodeURIComponent(currentPlayer.slug)}`
     : "/profile/edit";
 
   useEffect(() => {
@@ -117,11 +121,11 @@ export function AccountMenu({ variant = "nav", triggerClassName = "" }: AccountM
         {avatar && !avatarBroken ? (
           <Image src={String(avatar)} alt="" width={32} height={32} className={styles.avatar} onError={() => setAvatarBroken(true)} />
         ) : (
-          <span className={styles.avatarFallback}>{displayName.charAt(0).toUpperCase() || "C"}</span>
+          <span className={styles.avatarFallback}>{primaryName.charAt(0).toUpperCase() || "C"}</span>
         )}
         <span className={styles.triggerCopy}>
-          <b>{displayName}</b>
-          <small>{variant === "home" ? "Tu cuenta CLOUVA" : accountUsername}</small>
+          <b>{primaryName}</b>
+          <small>{variant === "home" ? "Tu cuenta CLOUVA" : accountDetail}</small>
         </span>
       </button>
 
@@ -131,17 +135,17 @@ export function AccountMenu({ variant = "nav", triggerClassName = "" }: AccountM
             {avatar && !avatarBroken ? (
               <Image src={String(avatar)} alt="" width={48} height={48} className={styles.identityAvatar} />
             ) : (
-              <span className={styles.identityFallback}>{displayName.charAt(0).toUpperCase() || "C"}</span>
+              <span className={styles.identityFallback}>{primaryName.charAt(0).toUpperCase() || "C"}</span>
             )}
             <div>
-              <strong>{displayName}</strong>
-              <span>{accountUsername}</span>
+              <strong>{primaryName}</strong>
+              <span>{accountDetail}</span>
               <small><i /> Conectado</small>
             </div>
           </header>
 
           <div className={styles.primaryLinks}>
-            <MenuLink href="/cuenta" icon={<UserRound size={17} />} label="Mi cuenta CLOUVA" detail="Datos, compras y pagos" onSelect={closeMenu} tone="accent" />
+            <MenuLink href="/mi-flow" icon={<UserRound size={17} />} label="MI FLOW" detail="Dinero, metas y movimientos" onSelect={closeMenu} tone="accent" />
             <MenuLink href={publicProfileHref} icon={<CircleUserRound size={17} />} label="Mi perfil público" detail="Tu identidad dentro de La Matrix" onSelect={closeMenu} />
             {canAdmin ? (
               <MenuLink href="/mi-flow/avatar" icon={<Boxes size={17} />} label="Mi Avatar 3D" detail="Personalizá tu personaje" onSelect={closeMenu} />
@@ -155,6 +159,7 @@ export function AccountMenu({ variant = "nav", triggerClassName = "" }: AccountM
           </div>
 
           <div className={styles.secondaryLinks}>
+            <MenuLink href="/mi-flow/creative" icon={<Sparkles size={16} />} label="Centro creativo" onSelect={closeMenu} />
             <MenuLink href="/profile/edit" icon={<Sparkles size={16} />} label="Editar identidad" onSelect={closeMenu} />
             <MenuLink href="/profile/memberships" icon={<UsersRound size={16} />} label="Mis Estudios" onSelect={closeMenu} />
             <MenuLink href="/login?addAccount=1" icon={<Plus size={16} />} label="Agregar cuenta" onSelect={closeMenu} />

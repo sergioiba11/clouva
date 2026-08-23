@@ -85,6 +85,22 @@ test("the scanner supports rear camera, torch, browser fallback and manual entry
   assert.match(scanner, /Configurar físico \+ 3D/);
 });
 
+test("the Spot dashboard exposes real operating actions and no dead AI placeholder", () => {
+  assert.match(scanner, /Centro operativo/);
+  assert.match(scanner, /Todo listo para la primera venta/);
+  assert.match(scanner, /Nueva venta/);
+  assert.match(scanner, /Escanear producto/);
+  assert.match(scanner, /Cargar stock/);
+  assert.match(scanner, /Crear etiquetas/);
+  assert.match(scanner, /href="\/clouva-ai"/);
+  assert.doesNotMatch(scanner, /Próximamente/);
+});
+
+test("the Spot header reuses the authenticated account menu and prefers the username", () => {
+  assert.match(scanner, /<AccountMenu preferUsername\s*\/>/);
+  assert.doesNotMatch(scanner, />Sergio</);
+});
+
 test("operational ledgers remain manager-readable and service-role writable", () => {
   assert.match(migration, /alter table public\.commerce_flow_ledger enable row level security/);
   assert.match(migration, /commerce_flow_ledger_manager_select/);

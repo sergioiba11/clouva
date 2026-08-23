@@ -1,11 +1,17 @@
 "use client";
 
 import {
+  Activity,
+  ArrowRight,
+  ArrowUpRight,
   Barcode,
+  BadgeDollarSign,
   Boxes,
   Camera,
   ChartNoAxesCombined,
+  CheckCircle2,
   CircleDollarSign,
+  CircleGauge,
   ClipboardList,
   ExternalLink,
   Flashlight,
@@ -18,13 +24,15 @@ import {
   Settings,
   ShoppingCart,
   Store,
-  WalletCards,
+  TrendingUp,
   X,
 } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { IScannerControls } from "@zxing/browser";
+import { AccountMenu } from "@/components/account/AccountMenu";
 import { useAuth } from "@/components/auth-provider";
 import { detectCommerceIdentifierType, type CommerceIdentifierType } from "@/lib/commerce/identifiers";
 
@@ -156,7 +164,7 @@ const NAV: Array<{ id: Tab; label: string; icon: typeof Store }> = [
 ];
 
 const INPUT = "w-full rounded-xl border border-white/10 bg-black/35 px-3 py-2.5 text-sm text-white outline-none transition focus:border-violet-400/60";
-const CARD = "rounded-2xl border border-white/10 bg-[#0b0912]";
+const CARD = "rounded-2xl border border-white/[0.08] bg-[#0b0912]/95 shadow-[0_18px_55px_rgba(0,0,0,.14)]";
 const DEFAULT_LABEL_OPTIONS: LabelOptions = {
   format: "pdf",
   layout: "full",
@@ -615,38 +623,41 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
   const goalProgress = goal ? Math.max(0, Math.min(100, Number(goal.progress_amount || 0) / Number(goal.target_amount || 1) * 100)) : 0;
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_50%_-20%,rgba(91,33,182,.18),transparent_35%),#050507] text-white">
-      <header className="sticky top-0 z-40 border-b border-white/10 bg-black/85 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-[1600px] items-center justify-between gap-4 px-4 py-3 sm:px-6">
-          <div className="flex min-w-0 items-center gap-3"><div className="grid h-10 w-10 place-items-center rounded-2xl border border-violet-400/25 bg-violet-500/10"><Store className="h-5 w-5 text-violet-300" /></div><div className="min-w-0"><p className="truncate font-semibold">MI SPOT — {data.spot.name}</p><p className="text-xs text-white/35">{data.studio.name} · {data.role}</p></div></div>
-          <div className="hidden items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2 text-sm md:flex"><span className="text-violet-300">◎ {decimal(data.summary.flows)} FLOWS</span><span className="text-white/25">·</span><span>{money(data.summary.available_local, data.spot.currency)}</span><span className="text-white/25">·</span><span>USD {decimal(data.summary.net_usd)}</span></div>
-          <Link href={`/studios/${data.studio.slug}/tienda`} className="flex items-center gap-2 rounded-xl border border-violet-400/25 px-3 py-2 text-sm text-violet-200">Ver tienda <ExternalLink className="h-4 w-4" /></Link>
+    <main className="relative min-h-screen overflow-hidden bg-[radial-gradient(circle_at_48%_-18%,rgba(105,46,196,.2),transparent_34%),radial-gradient(circle_at_95%_32%,rgba(76,29,149,.12),transparent_24%),#050507] text-white">
+      <div className="pointer-events-none fixed inset-0 opacity-[.17] [background-image:linear-gradient(rgba(139,92,246,.13)_1px,transparent_1px),linear-gradient(90deg,rgba(139,92,246,.13)_1px,transparent_1px)] [background-size:42px_42px] [mask-image:linear-gradient(to_bottom,black,transparent_88%)]" />
+      <header className="sticky top-0 z-40 border-b border-white/[0.08] bg-[#050507]/88 backdrop-blur-2xl">
+        <div className="mx-auto flex max-w-[1600px] items-center justify-between gap-3 px-4 py-3 sm:px-6">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="relative grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-2xl border border-violet-400/25 bg-[radial-gradient(circle_at_50%_20%,rgba(168,85,247,.26),rgba(76,29,149,.08))] shadow-[0_0_28px_rgba(124,58,237,.14)]"><Store className="h-5 w-5 text-violet-200" /><span className="absolute bottom-1 right-1 h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_7px_#34d399]" /></div>
+            <div className="min-w-0"><div className="flex items-center gap-2"><p className="truncate text-sm font-bold sm:text-base">MI SPOT — {data.spot.name}</p><span className="hidden rounded-full border border-emerald-400/20 bg-emerald-400/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-emerald-300 sm:inline">Activo</span></div><p className="mt-0.5 text-[11px] text-white/35">{data.studio.name} · Centro de operaciones</p></div>
+          </div>
+          <div className="hidden items-center gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.025] px-4 py-2 text-xs xl:flex"><span className="font-semibold text-violet-300">◎ {decimal(data.summary.flows)} FLOWS</span><span className="h-4 w-px bg-white/10" /><span className="text-white/65">{money(data.summary.available_local, data.spot.currency)}</span><span className="h-4 w-px bg-white/10" /><span className="text-white/45">USD {decimal(data.summary.net_usd)}</span></div>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={() => setTab("sales")} className="hidden items-center gap-2 rounded-xl bg-violet-600 px-3.5 py-2.5 text-xs font-semibold shadow-[0_8px_24px_rgba(124,58,237,.25)] transition hover:bg-violet-500 sm:flex"><ShoppingCart className="h-4 w-4" /> Nueva venta</button>
+            <Link href={`/studios/${data.studio.slug}/tienda`} className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.025] px-3 py-2.5 text-xs text-white/65 transition hover:border-violet-400/30 hover:text-white"><span className="hidden sm:inline">Ver tienda</span><ExternalLink className="h-4 w-4" /></Link>
+            <AccountMenu preferUsername />
+          </div>
         </div>
       </header>
 
-      <div className="mx-auto grid max-w-[1600px] gap-4 p-3 sm:p-5 lg:grid-cols-[220px_minmax(0,1fr)]">
-        <aside className={`${CARD} flex gap-2 overflow-x-auto p-2 lg:sticky lg:top-[78px] lg:h-[calc(100vh-98px)] lg:flex-col`}>
-          {NAV.map((item) => { const Icon = item.icon; return <button key={item.id} type="button" onClick={() => setTab(item.id)} className={`flex shrink-0 items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm transition ${tab === item.id ? "bg-violet-600 text-white" : "text-white/50 hover:bg-white/5 hover:text-white"}`}><Icon className="h-4 w-4" />{item.label}</button>; })}
-          <div className="mt-auto hidden border-t border-white/10 pt-3 text-xs text-white/35 lg:block">◎ 1 Flow = USD 1<br />Cotización: {data.summary.fx_rate ? `${money(data.summary.fx_rate.local_per_quote)} / USD` : "sin actualizar"}</div>
+      <div className="relative mx-auto grid max-w-[1600px] gap-4 p-3 sm:p-5 lg:grid-cols-[230px_minmax(0,1fr)]">
+        <aside className={`${CARD} flex gap-1.5 overflow-x-auto p-2 lg:sticky lg:top-[78px] lg:h-[calc(100vh-98px)] lg:flex-col lg:p-3`}>
+          <p className="hidden px-3 pb-2 pt-1 text-[9px] font-bold uppercase tracking-[.2em] text-white/25 lg:block">Administración</p>
+          {NAV.map((item) => { const Icon = item.icon; return <button key={item.id} type="button" onClick={() => setTab(item.id)} className={`group relative flex shrink-0 items-center gap-3 overflow-hidden rounded-xl px-3 py-2.5 text-left text-sm transition ${tab === item.id ? "bg-gradient-to-r from-violet-600 to-violet-600/80 text-white shadow-[0_8px_24px_rgba(109,40,217,.2)]" : "text-white/45 hover:bg-white/[0.04] hover:text-white"}`}>{tab === item.id ? <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-white/80" /> : null}<Icon className={`h-4 w-4 ${tab === item.id ? "text-white" : "text-white/35 transition group-hover:text-violet-300"}`} />{item.label}</button>; })}
+          <div className="mt-auto hidden space-y-3 lg:block">
+            <Link href="/clouva-ai" className="group flex items-center gap-3 rounded-2xl border border-violet-400/20 bg-[radial-gradient(circle_at_0%_0%,rgba(139,92,246,.18),transparent_60%),rgba(255,255,255,.025)] p-3 transition hover:border-violet-400/40">
+              <div className="grid h-10 w-10 shrink-0 place-items-center"><Image src="/assets/clouva-ai/trebol-mascot.png" alt="Trébol CLOUVA AI" width={48} height={48} className="drop-shadow-[0_0_12px_rgba(168,85,247,.55)]" /></div>
+              <div className="min-w-0 flex-1"><p className="text-xs font-semibold text-white/75">Trébol AI</p><p className="mt-1 text-[9px] text-white/30">Ayuda para tu Spot</p></div><ArrowUpRight className="h-3.5 w-3.5 text-violet-300/60 transition group-hover:text-violet-200" />
+            </Link>
+            <div className="border-t border-white/[0.08] px-2 pt-3 text-[10px] leading-5 text-white/30">◎ 1 Flow = USD 1<br />Cotización: {data.summary.fx_rate ? `${money(data.summary.fx_rate.local_per_quote)} / USD` : "sin actualizar"}</div>
+          </div>
         </aside>
 
         <section className="min-w-0 space-y-4">
           {error ? <div className="flex items-start justify-between gap-3 rounded-xl border border-red-400/25 bg-red-400/10 p-3 text-sm text-red-100"><span>{error}</span><button onClick={() => setError(null)}><X className="h-4 w-4" /></button></div> : null}
           {message ? <div className="flex items-start justify-between gap-3 rounded-xl border border-emerald-400/25 bg-emerald-400/10 p-3 text-sm text-emerald-100"><span>{message}</span><button onClick={() => setMessage(null)}><X className="h-4 w-4" /></button></div> : null}
 
-          {tab === "dashboard" ? <>
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              <Metric label="Ventas brutas" value={money(data.summary.gross_local, data.spot.currency)} icon={CircleDollarSign} />
-              <Metric label="Costos" value={money(data.summary.costs_local, data.spot.currency)} icon={WalletCards} />
-              <Metric label="Ganancia neta" value={money(data.summary.net_local, data.spot.currency)} positive icon={ChartNoAxesCombined} />
-              <Metric label="Saldo Flow" value={`◎ ${decimal(data.summary.flows)} `} icon={History} />
-            </div>
-            <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
-              <div className={`${CARD} p-5 sm:p-6`}><div className="flex items-start justify-between gap-4"><div><p className="text-xs uppercase tracking-[.2em] text-violet-300">Objetivo</p><h2 className="mt-2 text-3xl font-semibold">{goal?.name || "Objetivo económico"}</h2></div><span className="rounded-full border border-violet-400/25 px-3 py-1 text-sm text-violet-200">{goalProgress.toFixed(1)}%</span></div><div className="mt-8 h-3 overflow-hidden rounded-full bg-white/8"><div className="h-full rounded-full bg-gradient-to-r from-violet-700 to-fuchsia-400" style={{ width: `${goalProgress}%` }} /></div><div className="mt-4 flex justify-between text-sm"><span className="text-white/50">◎ {decimal(goal?.progress_amount)} generados</span><span>◎ {decimal(goal?.target_amount)} meta</span></div></div>
-              <div className={`${CARD} p-5`}><div className="flex items-center justify-between"><div><p className="text-xs uppercase tracking-[.2em] text-white/35">USD oficial</p><p className="mt-2 text-2xl font-semibold">{data.summary.fx_rate ? money(data.summary.fx_rate.local_per_quote, data.spot.currency) : "Sin datos"}</p></div><button disabled={busy} onClick={() => void refreshFx()} className="grid h-11 w-11 place-items-center rounded-xl border border-violet-400/25 text-violet-200"><RefreshCw className={`h-5 w-5 ${busy ? "animate-spin" : ""}`} /></button></div><p className="mt-4 text-xs leading-5 text-white/40">Fuente configurada: {data.spot.fx_source}. Cada venta conserva su propia cotización histórica.</p></div>
-            </div>
-            <div className="grid gap-4 xl:grid-cols-2"><RecentMovements data={data} /><RecentOrders data={data} /></div>
-          </> : null}
+          {tab === "dashboard" ? <SpotDashboard data={data} goal={goal} goalProgress={goalProgress} busy={busy} onNavigate={setTab} onRefreshFx={() => void refreshFx()} /> : null}
 
           {tab === "scanner" ? <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
             <div className={`${CARD} overflow-hidden`}><div className="flex items-center justify-between border-b border-white/10 p-4"><div><h1 className="text-xl font-semibold">Escanear producto</h1><p className="mt-1 text-sm text-white/40">EAN, UPC, Code 128 y QR</p></div><div className="flex gap-2"><button onClick={() => void toggleTorch()} disabled={!scanning} className="rounded-xl border border-white/10 p-2.5 disabled:opacity-30"><Flashlight className={`h-5 w-5 ${torch ? "text-amber-300" : ""}`} /></button><button onClick={scanning ? stopScanner : () => void startScanner()} className="rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold">{scanning ? "Detener" : "Abrir cámara"}</button></div></div><div className="relative aspect-[4/3] bg-black"><video ref={videoRef} muted playsInline className="h-full w-full object-cover" /><div className="pointer-events-none absolute inset-[14%] rounded-3xl border-2 border-violet-400 shadow-[0_0_0_999px_rgba(0,0,0,.42),0_0_35px_rgba(139,92,246,.45)]"><div className="absolute left-3 right-3 top-1/2 h-px bg-gradient-to-r from-transparent via-violet-300 to-transparent shadow-[0_0_15px_#c4b5fd]" /></div>{!scanning ? <div className="absolute inset-0 grid place-items-center text-center"><div><Camera className="mx-auto h-10 w-10 text-white/30" /><p className="mt-3 text-sm text-white/45">Abrí la cámara trasera para escanear</p></div></div> : null}</div><div className="grid gap-3 p-4 sm:grid-cols-[1fr_auto]">{cameras.length > 1 ? <select className={INPUT} value={cameraId} onChange={(event) => setCameraId(event.target.value)}>{cameras.map((camera, index) => <option key={camera.deviceId} value={camera.deviceId}>Cámara {index + 1} {camera.label}</option>)}</select> : <div className="text-sm text-white/35">La cámara prioriza el lente trasero.</div>}{cameraId && scanning ? <button onClick={() => void startScanner()} className="rounded-xl border border-white/10 px-4 py-2 text-sm">Cambiar</button> : null}</div>{cameraError ? <p className="mx-4 mb-4 rounded-xl border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">{cameraError}</p> : null}</div>
@@ -685,9 +696,105 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
   );
 }
 
-function Metric({ label, value, icon: Icon, positive = false }: { label: string; value: string; icon: typeof Store; positive?: boolean }) { return <div className={`${CARD} p-4`}><div className="flex items-center justify-between"><p className="text-xs uppercase tracking-[.16em] text-white/35">{label}</p><Icon className="h-4 w-4 text-violet-300" /></div><p className={`mt-3 text-2xl font-semibold ${positive ? "text-emerald-300" : ""}`}>{value}</p></div>; }
-function RecentMovements({ data }: { data: Overview }) { return <div className={`${CARD} p-5`}><h2 className="font-semibold">Movimientos recientes</h2><div className="mt-4 space-y-2">{data.movements.slice(0, 7).map((movement) => <div key={String(movement.id)} className="flex items-center justify-between gap-3 rounded-xl border border-white/8 bg-black/25 p-3 text-sm"><div><p>{String(movement.movement_type).replaceAll("_", " ")}</p><p className="text-xs text-white/35">{when(movement.created_at)}</p></div><span className={Number(movement.quantity_delta) > 0 ? "text-emerald-300" : "text-red-300"}>{Number(movement.quantity_delta) > 0 ? "+" : ""}{String(movement.quantity_delta)}</span></div>)}{!data.movements.length ? <p className="py-8 text-center text-sm text-white/35">Todavía no hay movimientos.</p> : null}</div></div>; }
-function RecentOrders({ data }: { data: Overview }) { return <div className={`${CARD} p-5`}><h2 className="font-semibold">Últimos pedidos</h2><div className="mt-4 space-y-2">{data.orders.slice(0, 7).map((order) => <div key={String(order.id)} className="grid grid-cols-[1fr_auto] gap-3 rounded-xl border border-white/8 bg-black/25 p-3 text-sm"><div><p>#{String(order.id).slice(0, 8)} · {String(order.sales_channel)}</p><p className="text-xs text-white/35">{when(order.created_at)}</p></div><div className="text-right"><p>{money(order.total, String(order.currency))}</p><p className="text-xs text-emerald-300">{String(order.payment_status)}</p></div></div>)}{!data.orders.length ? <p className="py-8 text-center text-sm text-white/35">Todavía no hay pedidos.</p> : null}</div></div>; }
+function SpotDashboard({ data, goal, goalProgress, busy, onNavigate, onRefreshFx }: {
+  data: Overview;
+  goal: Overview["summary"]["goal"];
+  goalProgress: number;
+  busy: boolean;
+  onNavigate: (tab: Tab) => void;
+  onRefreshFx: () => void;
+}) {
+  const variantProductIds = new Set(data.variants.map((variant) => variant.product_id));
+  const stockTotal = data.variants.reduce((sum, variant) => sum + Math.max(0, Number(variant.stock || 0)), 0)
+    + data.listings.filter((listing) => !variantProductIds.has(listing.id)).reduce((sum, listing) => sum + Math.max(0, Number(listing.stock || 0)), 0);
+  const activeIdentifiers = data.identifiers.filter((identifier) => identifier.status === "active").length;
+  const publishedProducts = data.listings.filter((listing) => listing.status === "published").length;
+  const pendingOrders = data.orders.filter((order) => !["fulfilled", "completed", "cancelled"].includes(String(order.fulfillment_status || "").toLowerCase())).length;
+  const target = Number(goal?.target_amount || 0);
+  const generated = Number(goal?.progress_amount || 0);
+  const remaining = Math.max(0, target - generated);
+  const hasSales = Number(data.summary.gross_local || 0) > 0 || data.orders.length > 0;
+
+  const quickActions: Array<{ label: string; detail: string; tab: Tab; icon: typeof Store; tone: string }> = [
+    { label: "Nueva venta", detail: "Abrir caja", tab: "sales", icon: ShoppingCart, tone: "from-violet-600/25 to-fuchsia-500/5 text-violet-200" },
+    { label: "Escanear", detail: "Buscar o crear", tab: "scanner", icon: ScanLine, tone: "from-cyan-500/15 to-cyan-500/0 text-cyan-200" },
+    { label: "Cargar stock", detail: "Actualizar inventario", tab: "inventory", icon: PackagePlus, tone: "from-emerald-500/15 to-emerald-500/0 text-emerald-200" },
+    { label: "Crear etiquetas", detail: "QR y barras", tab: "codes", icon: Printer, tone: "from-fuchsia-500/15 to-fuchsia-500/0 text-fuchsia-200" },
+  ];
+
+  return <div className="space-y-4">
+    <section className="relative overflow-hidden rounded-3xl border border-violet-400/15 bg-[linear-gradient(120deg,rgba(76,29,149,.24),rgba(11,9,18,.92)_46%,rgba(15,10,25,.96))] p-5 shadow-[0_22px_80px_rgba(50,18,91,.18)] sm:p-7">
+      <div className="pointer-events-none absolute -right-20 -top-32 h-80 w-80 rounded-full bg-violet-600/15 blur-3xl" />
+      <div className="pointer-events-none absolute bottom-0 right-[22%] h-28 w-52 bg-fuchsia-500/10 blur-3xl" />
+      <div className="relative grid items-center gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <div>
+          <p className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[.22em] text-violet-300"><CircleGauge className="h-3.5 w-3.5" /> Centro operativo · {data.spot.name}</p>
+          <h1 className="mt-3 max-w-2xl text-3xl font-bold tracking-[-.035em] sm:text-4xl">{hasSales ? "Tu Spot está en movimiento." : "Todo listo para la primera venta."}</h1>
+          <p className="mt-3 max-w-xl text-sm leading-6 text-white/45">{hasSales ? "Seguí ventas, stock, pedidos y crecimiento desde un solo lugar." : "Cargá un producto, asignale su código y vendelo desde la misma operación."}</p>
+          <div className="mt-6 flex flex-wrap gap-2.5">
+            <button type="button" onClick={() => onNavigate("sales")} className="flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-xs font-bold text-[#10091a] transition hover:bg-violet-100"><ShoppingCart className="h-4 w-4" /> Iniciar venta</button>
+            <button type="button" onClick={() => onNavigate("scanner")} className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-xs font-semibold text-white/70 transition hover:border-violet-400/35 hover:text-white"><ScanLine className="h-4 w-4 text-violet-300" /> Escanear producto</button>
+          </div>
+        </div>
+        <div className="rounded-2xl border border-white/[0.08] bg-black/20 p-4 backdrop-blur-sm">
+          <div className="flex items-center justify-between"><span className="text-[10px] font-bold uppercase tracking-[.18em] text-white/30">Disponible</span><BadgeDollarSign className="h-4 w-4 text-emerald-300" /></div>
+          <p className="mt-3 text-3xl font-semibold tracking-tight">{money(data.summary.available_local, data.spot.currency)}</p>
+          <div className="mt-4 grid grid-cols-2 gap-2 border-t border-white/[0.08] pt-4"><div><p className="text-[9px] uppercase tracking-wider text-white/25">Neto en USD</p><p className="mt-1 text-sm font-semibold text-white/70">USD {decimal(data.summary.net_usd)}</p></div><div><p className="text-[9px] uppercase tracking-wider text-white/25">Saldo Flow</p><p className="mt-1 text-sm font-semibold text-violet-300">◎ {decimal(data.summary.flows)}</p></div></div>
+        </div>
+      </div>
+    </section>
+
+    <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+      {quickActions.map(({ label, detail, tab, icon: Icon, tone }) => <button key={tab} type="button" onClick={() => onNavigate(tab)} className={`group flex items-center gap-3 rounded-2xl border border-white/[0.08] bg-gradient-to-br ${tone} p-3.5 text-left transition hover:-translate-y-0.5 hover:border-white/15 sm:p-4`}><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-current/10 bg-black/20"><Icon className="h-4 w-4" /></span><span className="min-w-0 flex-1"><strong className="block text-xs text-white/80 sm:text-sm">{label}</strong><small className="mt-1 hidden text-[9px] text-white/30 sm:block">{detail}</small></span><ArrowRight className="hidden h-3.5 w-3.5 text-white/20 transition group-hover:translate-x-0.5 group-hover:text-white/55 sm:block" /></button>)}
+    </div>
+
+    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <Metric label="Ventas brutas" value={money(data.summary.gross_local, data.spot.currency)} detail={`${data.orders.length} pedidos registrados`} icon={CircleDollarSign} />
+      <Metric label="Ganancia neta" value={money(data.summary.net_local, data.spot.currency)} detail={`${money(data.summary.costs_local, data.spot.currency)} en costos`} icon={TrendingUp} positive />
+      <Metric label="Stock disponible" value={`${decimal(stockTotal, 0)} unidades`} detail={`${publishedProducts} de ${data.listings.length} productos publicados`} icon={Boxes} />
+      <Metric label="Identificadores" value={`${activeIdentifiers} activos`} detail="QR, EAN, UPC, SKU y Code 128" icon={QrCode} />
+    </div>
+
+    <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+      <section className={`${CARD} relative overflow-hidden p-5 sm:p-6`}>
+        <div className="pointer-events-none absolute right-0 top-0 h-48 w-48 rounded-full bg-violet-600/[0.07] blur-3xl" />
+        <div className="relative grid items-center gap-6 sm:grid-cols-[minmax(0,1fr)_150px]">
+          <div>
+            <div className="flex items-center gap-2"><span className="rounded-full border border-violet-400/20 bg-violet-500/10 px-2.5 py-1 text-[9px] font-bold uppercase tracking-[.18em] text-violet-300">Objetivo principal</span>{goalProgress >= 100 ? <CheckCircle2 className="h-4 w-4 text-emerald-300" /> : null}</div>
+            <h2 className="mt-4 text-2xl font-semibold tracking-tight sm:text-3xl">{goal?.name || "Objetivo económico"}</h2>
+            <p className="mt-2 text-xs leading-5 text-white/35">Cada venta confirmada actualiza el avance usando la cotización histórica guardada en ese pedido.</p>
+            <div className="mt-6 h-2 overflow-hidden rounded-full bg-white/[0.06]"><div className="h-full rounded-full bg-gradient-to-r from-violet-600 via-fuchsia-500 to-pink-400 shadow-[0_0_16px_rgba(192,38,211,.35)] transition-[width] duration-700" style={{ width: `${goalProgress}%` }} /></div>
+            <div className="mt-3 flex flex-wrap justify-between gap-2 text-[10px]"><span className="text-white/35">Generado <strong className="ml-1 text-white/70">USD {decimal(generated)}</strong></span><span className="text-white/35">Faltan <strong className="ml-1 text-violet-300">USD {decimal(remaining)}</strong></span></div>
+          </div>
+          <div className="mx-auto grid h-32 w-32 place-items-center rounded-full p-[9px] shadow-[0_0_42px_rgba(124,58,237,.13)]" style={{ background: `conic-gradient(#a855f7 ${goalProgress * 3.6}deg, rgba(255,255,255,.055) 0deg)` }}><div className="grid h-full w-full place-items-center rounded-full border border-white/[0.06] bg-[#0b0912]"><div className="text-center"><p className="text-2xl font-bold">{goalProgress.toFixed(1)}%</p><span className="text-[8px] uppercase tracking-[.17em] text-white/25">Completado</span></div></div></div>
+        </div>
+      </section>
+
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
+        <section className={`${CARD} p-5`}><div className="flex items-start justify-between gap-3"><div><p className="text-[10px] font-bold uppercase tracking-[.18em] text-white/30">USD oficial</p><p className="mt-2 text-2xl font-semibold">{data.summary.fx_rate ? money(data.summary.fx_rate.local_per_quote, data.spot.currency) : "Sin datos"}</p><p className="mt-1 text-[9px] text-white/25">1 USD · fuente {data.spot.fx_source.replaceAll("_", " ")}</p></div><button type="button" disabled={busy} onClick={onRefreshFx} className="grid h-10 w-10 place-items-center rounded-xl border border-violet-400/20 bg-violet-500/[0.06] text-violet-300 transition hover:border-violet-400/40 disabled:opacity-40"><RefreshCw className={`h-4 w-4 ${busy ? "animate-spin" : ""}`} /></button></div></section>
+        <section className={`${CARD} p-5`}><div className="flex items-center justify-between"><div><p className="text-[10px] font-bold uppercase tracking-[.18em] text-white/30">Operación</p><p className="mt-2 text-sm font-semibold text-white/75">{pendingOrders ? `${pendingOrders} pedidos por resolver` : "Todo al día"}</p></div><Activity className={`h-5 w-5 ${pendingOrders ? "text-amber-300" : "text-emerald-300"}`} /></div><button type="button" onClick={() => onNavigate("orders")} className="mt-4 flex items-center gap-2 text-[10px] font-semibold text-violet-300">Ver pedidos <ArrowRight className="h-3 w-3" /></button></section>
+      </div>
+    </div>
+
+    <div className="grid gap-4 xl:grid-cols-2"><RecentMovements data={data} onNavigate={onNavigate} /><RecentOrders data={data} onNavigate={onNavigate} /></div>
+  </div>;
+}
+
+function Metric({ label, value, detail, icon: Icon, positive = false }: { label: string; value: string; detail: string; icon: typeof Store; positive?: boolean }) {
+  return <div className={`${CARD} group relative overflow-hidden p-4 transition hover:border-violet-400/20 sm:p-5`}><div className="absolute right-0 top-0 h-20 w-20 rounded-full bg-violet-600/[0.05] blur-2xl transition group-hover:bg-violet-600/10" /><div className="relative flex items-center justify-between"><p className="text-[10px] font-bold uppercase tracking-[.16em] text-white/30">{label}</p><span className="grid h-8 w-8 place-items-center rounded-lg border border-violet-400/10 bg-violet-500/[0.06]"><Icon className="h-3.5 w-3.5 text-violet-300" /></span></div><p className={`relative mt-3 text-xl font-semibold tracking-tight sm:text-2xl ${positive ? "text-emerald-300" : ""}`}>{value}</p><p className="relative mt-2 truncate text-[9px] text-white/25">{detail}</p></div>;
+}
+
+function RecentMovements({ data, onNavigate }: { data: Overview; onNavigate?: (tab: Tab) => void }) {
+  return <section className={`${CARD} overflow-hidden`}><div className="flex items-center justify-between border-b border-white/[0.06] px-5 py-4"><div><p className="font-semibold">Movimientos recientes</p><p className="mt-1 text-[9px] text-white/25">Entradas y salidas de inventario</p></div>{onNavigate ? <button type="button" onClick={() => onNavigate("inventory")} className="text-[10px] font-semibold text-violet-300">Ver inventario</button> : null}</div><div className="space-y-2 p-4">{data.movements.slice(0, 7).map((movement) => <div key={String(movement.id)} className="flex items-center justify-between gap-3 rounded-xl border border-white/[0.06] bg-black/20 p-3 text-sm"><div className="flex items-center gap-3"><span className="grid h-8 w-8 place-items-center rounded-lg bg-white/[0.035]"><History className="h-3.5 w-3.5 text-violet-300" /></span><div><p className="text-xs capitalize text-white/70">{String(movement.movement_type).replaceAll("_", " ")}</p><p className="mt-1 text-[9px] text-white/25">{when(movement.created_at)}</p></div></div><span className={`text-xs font-semibold ${Number(movement.quantity_delta) > 0 ? "text-emerald-300" : "text-red-300"}`}>{Number(movement.quantity_delta) > 0 ? "+" : ""}{String(movement.quantity_delta)}</span></div>)}{!data.movements.length ? <EmptyDashboardState icon={Boxes} title="Sin movimientos todavía" detail="La primera carga de stock va a aparecer acá." action={onNavigate ? "Cargar inventario" : undefined} onClick={onNavigate ? () => onNavigate("inventory") : undefined} /> : null}</div></section>;
+}
+
+function RecentOrders({ data, onNavigate }: { data: Overview; onNavigate: (tab: Tab) => void }) {
+  return <section className={`${CARD} overflow-hidden`}><div className="flex items-center justify-between border-b border-white/[0.06] px-5 py-4"><div><p className="font-semibold">Últimos pedidos</p><p className="mt-1 text-[9px] text-white/25">Ventas y estado de cobro</p></div><button type="button" onClick={() => onNavigate("orders")} className="text-[10px] font-semibold text-violet-300">Ver todos</button></div><div className="space-y-2 p-4">{data.orders.slice(0, 7).map((order) => <div key={String(order.id)} className="grid grid-cols-[1fr_auto] gap-3 rounded-xl border border-white/[0.06] bg-black/20 p-3 text-sm"><div className="flex items-center gap-3"><span className="grid h-8 w-8 place-items-center rounded-lg bg-white/[0.035]"><ClipboardList className="h-3.5 w-3.5 text-violet-300" /></span><div><p className="text-xs text-white/70">#{String(order.id).slice(0, 8)} · {String(order.sales_channel)}</p><p className="mt-1 text-[9px] text-white/25">{when(order.created_at)}</p></div></div><div className="text-right"><p className="text-xs font-semibold">{money(order.total, String(order.currency))}</p><p className="mt-1 text-[9px] text-emerald-300">{String(order.payment_status)}</p></div></div>)}{!data.orders.length ? <EmptyDashboardState icon={ShoppingCart} title="Todavía no hay ventas" detail="Abrí la caja y registrá la primera operación del Spot." action="Iniciar venta" onClick={() => onNavigate("sales")} /> : null}</div></section>;
+}
+
+function EmptyDashboardState({ icon: Icon, title, detail, action, onClick }: { icon: typeof Store; title: string; detail: string; action?: string; onClick?: () => void }) {
+  return <div className="grid min-h-44 place-items-center rounded-2xl border border-dashed border-white/[0.08] bg-white/[0.015] px-5 py-7 text-center"><div><span className="mx-auto grid h-11 w-11 place-items-center rounded-2xl border border-violet-400/15 bg-violet-500/[0.06]"><Icon className="h-4 w-4 text-violet-300" /></span><p className="mt-3 text-sm font-semibold text-white/65">{title}</p><p className="mx-auto mt-1 max-w-xs text-[10px] leading-5 text-white/25">{detail}</p>{action && onClick ? <button type="button" onClick={onClick} className="mt-4 inline-flex items-center gap-2 rounded-lg border border-violet-400/20 px-3 py-2 text-[10px] font-semibold text-violet-300 transition hover:bg-violet-500/10">{action}<ArrowRight className="h-3 w-3" /></button> : null}</div></div>;
+}
 
 function ScanExisting({ result, onOpen, onSell, onStock, onPrint }: { result: ScanResult; onOpen: (listing: Listing, variant?: Variant | null) => void; onSell: (listing: Listing, variant?: Variant | null) => void; onStock: (listing: Listing, variant?: Variant | null) => void; onPrint: (identifier: Identifier) => void }) {
   const listing = result.listing!;
