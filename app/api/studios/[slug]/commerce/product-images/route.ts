@@ -121,29 +121,50 @@ function productFacts(draft: ProductDraft | undefined, identifier: IdentifierDra
   ].filter(Boolean).join("\n");
 }
 
-function generationPrompt(kind: GeneratedKind, facts: string, referenceOrder: string[]) {
-  const target = kind === "front_catalog"
+function targetDisplayLabel(target: GenerationTarget) {
+  if (target.sourceLabel === "Detalle" && target.detailIndex) return `Detalle ${target.detailIndex}`;
+  return target.sourceLabel;
+}
+
+function referencesForTarget(target: GenerationTarget, captures: IndexedCapture[]) {
+  const primary = captures.find((capture) => (
+    capture.label === target.sourceLabel
+    && (target.sourceLabel !== "Detalle" || capture.detailIndex === target.detailIndex)
+  ));
+  if (!primary) return captures;
+  return [primary, ...captures.filter((capture) => capture !== primary)];
+}
+
+function generationPrompt(target: GenerationTarget, facts: string, referenceOrder: string[]) {
+  const requestedView = target.kind === "front_catalog"
     ? "una vista frontal principal para catálogo"
-    : kind === "back_catalog"
+    : target.kind === "back_catalog"
       ? "una vista trasera para catálogo"
       : "una vista de detalle complementaria para catálogo";
+  const primaryLabel = targetDisplayLabel(target);
+
   return [
     "Sos el generador de imágenes de producto de CLOUVA.",
-    `Creá ${target} del MISMO producto físico mostrado en las imágenes de referencia.`,
+    `Creá ${requestedView} del MISMO producto físico mostrado en las fotografías de referencia.`,
     facts,
     `Las referencias llegan exactamente en este orden: ${referenceOrder.join(", ")}.`,
-    "Frente, Atrás y todos los Detalles pertenecen al mismo producto y deben interpretarse juntos como evidencia complementaria de un único objeto.",
-    "Usá TODAS las referencias para reconstruir la identidad del producto con máxima fidelidad; los múltiples Detalles sirven para confirmar materiales, bordes, cierres, impresión, packaging, logotipos, gráficos, textura y textos pequeños visibles.",
-    "Conservá con máxima fidelidad la forma, proporciones, packaging, materiales visibles, colores, marca, logotipos, gráficos y textos que realmente se distingan en las referencias.",
-    "No inventes texto, claims, accesorios, variantes, sellos, ingredientes, códigos, logos ni detalles que no estén sustentados por las referencias.",
-    "No cambies el branding ni rediseñes el envase. No conviertas el producto en otro modelo o variante.",
-    "Quitá únicamente el contexto fotográfico no comercial: manos, habitación, mesa desordenada, sombras accidentales y fondo de captura.",
-    "Usá fondo de estudio limpio y neutro, iluminación e-commerce uniforme, producto completo y nítido, centrado, con escala natural.",
-    kind === "front_catalog"
-      ? "La orientación final debe corresponder a la cara frontal principal del producto."
-      : kind === "back_catalog"
-        ? "La orientación final debe corresponder a la cara posterior del producto y respetar la información visible de esa cara."
-        : "La composición debe destacar un detalle realmente sustentado por las referencias de Detalle y usar las demás vistas para no alterar la identidad del producto.",
+    `REGLA PRINCIPAL: la primera referencia (${primaryLabel}) es la fuente factual y visual canónica para esta imagen. Conservá el producto tal como aparece físicamente en esa foto.`,
+    "Las demás referencias son evidencia complementaria del mismo objeto y solo sirven para confirmar identidad, branding, materiales, color, textos y detalles que ya existen en el producto real.",
+    "NO reconstruyas, rediseñes, completes creativamente ni reinterpretés el producto. No generes una versión idealizada, un mockup ni una variante comercial distinta.",
+    "Mantené exactamente la geometría y las proporciones visibles del objeto, la forma del packaging, sus pliegues, solapas, aberturas, bordes, cortes, cierres y la relación espacial entre sus piezas.",
+    "Mantené exactamente el ESTADO FÍSICO visible en la referencia principal: si está abierto, cerrado, parcialmente abierto, desplegado, doblado o con componentes/papeles saliendo, debe seguir en ese mismo estado. No cierres lo que está abierto ni abras lo que está cerrado.",
+    "Conservá la cantidad, posición y orientación de los componentes visibles. No muevas papeles, tapas, insertos, accesorios o partes internas para hacer una composición más estética.",
+    "Conservá con máxima fidelidad colores, marca, logotipos, ilustraciones, patrones, símbolos, tipografías y textos impresos realmente visibles. No traduzcas, reescribas ni corrijas textos del packaging.",
+    "No inventes texto, claims, accesorios, variantes, sellos, ingredientes, códigos, QR, logos, gráficos ni superficies ocultas que no estén sustentados por las fotografías.",
+    "Si una zona está tapada, borrosa o no puede determinarse con certeza, no inventes información para completarla; mantenela visualmente neutra y coherente con lo que sí está documentado.",
+    "La única transformación permitida es FOTOGRÁFICA: eliminar mano/persona y fondo de captura, limpiar ruido visual, mejorar iluminación, balance, nitidez, encuadre y presentación de estudio.",
+    "Podés usar un fondo de estudio limpio y neutro y una sombra natural de apoyo, pero sin modificar el objeto fotografiado.",
+    target.kind === "front_catalog"
+      ? "La orientación final debe respetar la cara frontal mostrada en la referencia principal; no inventes una nueva vista frontal."
+      : target.kind === "back_catalog"
+        ? "La orientación final debe respetar la cara posterior mostrada en la referencia principal; no inventes información que no se vea en esa cara."
+        : `El resultado debe ser una versión de catálogo de ${primaryLabel}: preservá específicamente el ángulo, la apertura/configuración física y el detalle mostrado en esa fotografía.`,
+    "Antes de responder, compará mentalmente el resultado con la primera referencia: si cambiaste packaging, geometría, apertura, componentes, branding o textos, corregilo para que vuelva a coincidir con el objeto real.",
     "No agregues texto externo, marcos, mockups, decoraciones ni marcas de agua.",
   ].filter(Boolean).join("\n");
 }
@@ -173,7 +194,7 @@ async function generateCatalogTarget(args: {
   const generated = await generateImage({
     apiKey: args.apiKey,
     model: args.model,
-    prompt: generationPrompt(args.target.kind, args.facts, args.referenceOrder),
+    prompt: generationPrompt(args.target, args.facts, args.referenceOrder),
     referenceImages: args.referenceImages,
     aspectRatio: "1:1",
     imageSize: "1K",
@@ -234,11 +255,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       ? configuredModel as GeminiImageModel
       : "gemini-3.1-flash-image";
     const facts = productFacts(body.productDraft, body.identifier ?? undefined);
-    const referenceOrder = captures.map((capture) => capture.displayLabel);
-    const referenceImages: GeminiReferenceImage[] = captures.map((capture) => ({
-      mimeType: capture.mimeType,
-      data: capture.base64,
-    }));
 
     const sourcePhotos = await Promise.all(captures.map(async (capture) => {
       const stored = await uploadGeneratedMediaObject({
@@ -262,18 +278,26 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       ...(counts.detail ? [{ kind: "detail_catalog" as const, sourceLabel: "Detalle" as const, detailIndex: 1 }] : []),
     ];
 
-    // Cada target recibe exactamente el mismo conjunto ordenado de referencias.
-    // Se generan en paralelo para que Frente + Atrás + Detalle no acumulen tres
-    // ventanas de timeout consecutivas dentro de una sola request de Cloud Run.
-    const generatedImages = await Promise.all(targets.map((target) => generateCatalogTarget({
-      target,
-      apiKey,
-      model,
-      facts,
-      referenceOrder,
-      referenceImages,
-      spotId: spot.id,
-    })));
+    // Cada target pone primero su foto fuente canónica. Esto evita que Gemini
+    // mezcle estados físicos o reconstruya un Detalle usando otra vista del producto.
+    // Las demás capturas siguen disponibles como evidencia complementaria de identidad.
+    const generatedImages = await Promise.all(targets.map((target) => {
+      const targetCaptures = referencesForTarget(target, captures);
+      const referenceOrder = targetCaptures.map((capture) => capture.displayLabel);
+      const referenceImages: GeminiReferenceImage[] = targetCaptures.map((capture) => ({
+        mimeType: capture.mimeType,
+        data: capture.base64,
+      }));
+      return generateCatalogTarget({
+        target,
+        apiKey,
+        model,
+        facts,
+        referenceOrder,
+        referenceImages,
+        spotId: spot.id,
+      });
+    }));
 
     const coverImage = generatedImages.find((image) => image.kind === "front_catalog")?.url
       ?? generatedImages[0]?.url
