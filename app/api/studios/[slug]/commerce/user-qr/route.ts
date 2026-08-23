@@ -32,7 +32,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           entityType: "USER",
           entityId: body.userId,
           actorId: user.id,
-          studioId: spot.studio_id,
           metadata: { player_id: player.id, generated_from_spot_id: spot.id },
         });
 
