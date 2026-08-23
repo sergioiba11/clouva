@@ -1,11 +1,10 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { disconnectSpotify } from "@/core/integrations/spotify/service";
-import { createAdminSupabase, isAuthError, readBearerToken, requireUser } from "@/lib/server/supabase";
+import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
-    const token = readBearerToken(request);
-    const user = await requireUser(token);
+    const { user } = await requireUser(request);
     await disconnectSpotify(createAdminSupabase(), user.id);
     return NextResponse.json({ ok: true, connected: false });
   } catch (error) {
