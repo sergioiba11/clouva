@@ -46,11 +46,15 @@ function extractPrompt(message: string) {
   return stripped || message.trim();
 }
 
-export function parseImageGenerationIntent(message: string): ImageGenerationIntent | null {
-  if (!detectImageGenerationIntent(message)) return null;
+export function buildImageGenerationRequest(message: string): ImageGenerationIntent {
   return {
     prompt: extractPrompt(message),
     aspectRatio: inferAspectRatio(message),
     quality: inferQuality(message),
   };
+}
+
+export function parseImageGenerationIntent(message: string): ImageGenerationIntent | null {
+  if (!detectImageGenerationIntent(message)) return null;
+  return buildImageGenerationRequest(message);
 }
