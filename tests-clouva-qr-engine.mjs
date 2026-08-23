@@ -3,7 +3,7 @@ import fs from "node:fs";
 import test from "node:test";
 
 const read = (path) => fs.readFileSync(new URL(path, import.meta.url), "utf8");
-const migration = read("./supabase/migrations/20260823195000_clouva_qr_registry_users.sql");
+const migration = read("./supabase/migrations/20260823212921_clouva_qr_registry_users.sql");
 const qrService = read("./lib/server/clouva-qr.ts");
 const resolver = read("./app/q/[identifierId]/page.tsx");
 const selfApi = read("./app/api/clouva-qr/route.ts");
