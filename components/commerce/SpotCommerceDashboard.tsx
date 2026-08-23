@@ -22,6 +22,7 @@ import {
   X,
 } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { IScannerControls } from "@zxing/browser";
 import { useAuth } from "@/components/auth-provider";
@@ -139,6 +140,7 @@ function when(value: unknown) {
 }
 
 export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
+  const router = useRouter();
   const { session, user, loading: authLoading } = useAuth();
   const [tab, setTab] = useState<Tab>("dashboard");
   const [data, setData] = useState<Overview | null>(null);
@@ -198,7 +200,15 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
     }
   }, [authFetch, session?.access_token, studioId]);
 
-  useEffect(() => { if (!authLoading && user) void load(); }, [authLoading, load, user]);
+  useEffect(() => {
+    if (authLoading) return;
+    if (!user) {
+      setLoading(false);
+      router.replace(`/login?next=${encodeURIComponent(`/studio-dashboard/${studioId}/commerce`)}`);
+      return;
+    }
+    void load();
+  }, [authLoading, load, router, studioId, user]);
 
   const stopScanner = useCallback(() => {
     if (animationRef.current != null) cancelAnimationFrame(animationRef.current);
