@@ -21,7 +21,7 @@ import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supa
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 180;
+export const maxDuration = 300;
 
 type CaptureLabel = ProductCaptureLabel;
 type ProductCaptureInput = { label?: unknown; dataUrl?: unknown };
@@ -43,6 +43,16 @@ type ParsedCapture = {
 };
 type IndexedCapture = ParsedCapture & { detailIndex: number | null; displayLabel: string };
 type GeneratedKind = "front_catalog" | "back_catalog" | "detail_catalog";
+type GenerationTarget = { kind: GeneratedKind; sourceLabel: CaptureLabel; detailIndex: number | null };
+type GeneratedProductImage = {
+  kind: GeneratedKind;
+  sourceLabel: CaptureLabel;
+  detailIndex: number | null;
+  url: string;
+  storagePath: string;
+  mimeType: string;
+  model: GeminiImageModel;
+};
 
 const ALLOWED_MIME = new Set(["image/jpeg", "image/png", "image/webp"]);
 const IMAGE_MODELS = new Set<GeminiImageModel>([
@@ -50,6 +60,7 @@ const IMAGE_MODELS = new Set<GeminiImageModel>([
   "gemini-3.1-flash-image",
   "gemini-3-pro-image",
 ]);
+const PRODUCT_IMAGE_GENERATION_TIMEOUT_MS = 150_000;
 
 class ProductImageError extends Error {
   status: number;
@@ -150,6 +161,40 @@ function publicError(error: unknown) {
   return { status, message: error instanceof Error ? error.message : "No se pudieron generar las imágenes del producto." };
 }
 
+async function generateCatalogTarget(args: {
+  target: GenerationTarget;
+  apiKey: string;
+  model: GeminiImageModel;
+  facts: string;
+  referenceOrder: string[];
+  referenceImages: GeminiReferenceImage[];
+  spotId: string;
+}): Promise<GeneratedProductImage> {
+  const generated = await generateImage({
+    apiKey: args.apiKey,
+    model: args.model,
+    prompt: generationPrompt(args.target.kind, args.facts, args.referenceOrder),
+    referenceImages: args.referenceImages,
+    aspectRatio: "1:1",
+    imageSize: "1K",
+    timeoutMs: PRODUCT_IMAGE_GENERATION_TIMEOUT_MS,
+  });
+  const stored = await uploadGeneratedMediaObject({
+    bytes: generated.bytes,
+    mimeType: generated.mimeType,
+    pathPrefix: `commerce/${args.spotId}/product-generated`,
+  });
+  return {
+    kind: args.target.kind,
+    sourceLabel: args.target.sourceLabel,
+    detailIndex: args.target.detailIndex,
+    url: stored.url,
+    storagePath: stored.objectPath,
+    mimeType: generated.mimeType,
+    model: args.model,
+  };
+}
+
 export async function POST(request: NextRequest, { params }: { params: Promise<{ slug: string }> }) {
   try {
     const { user } = await requireUser(request);
@@ -211,49 +256,24 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       };
     }));
 
-    const targets: Array<{ kind: GeneratedKind; sourceLabel: CaptureLabel; detailIndex: number | null }> = [
+    const targets: GenerationTarget[] = [
       { kind: "front_catalog", sourceLabel: "Frente", detailIndex: null },
       ...(counts.back ? [{ kind: "back_catalog" as const, sourceLabel: "Atrás" as const, detailIndex: null }] : []),
       ...(counts.detail ? [{ kind: "detail_catalog" as const, sourceLabel: "Detalle" as const, detailIndex: 1 }] : []),
     ];
 
-    const generatedImages = [] as Array<{
-      kind: GeneratedKind;
-      sourceLabel: CaptureLabel;
-      detailIndex: number | null;
-      url: string;
-      storagePath: string;
-      mimeType: string;
-      model: GeminiImageModel;
-    }>;
-
-    // Se ejecutan en serie para mantener una sola línea de generación por Spot y
-    // evitar ráfagas de cuota. Cada generación recibe Frente + Atrás + TODOS los Detalles.
-    for (const target of targets) {
-      const generated = await generateImage({
-        apiKey,
-        model,
-        prompt: generationPrompt(target.kind, facts, referenceOrder),
-        referenceImages,
-        aspectRatio: "1:1",
-        imageSize: "1K",
-        timeoutMs: 55_000,
-      });
-      const stored = await uploadGeneratedMediaObject({
-        bytes: generated.bytes,
-        mimeType: generated.mimeType,
-        pathPrefix: `commerce/${spot.id}/product-generated`,
-      });
-      generatedImages.push({
-        kind: target.kind,
-        sourceLabel: target.sourceLabel,
-        detailIndex: target.detailIndex,
-        url: stored.url,
-        storagePath: stored.objectPath,
-        mimeType: generated.mimeType,
-        model,
-      });
-    }
+    // Cada target recibe exactamente el mismo conjunto ordenado de referencias.
+    // Se generan en paralelo para que Frente + Atrás + Detalle no acumulen tres
+    // ventanas de timeout consecutivas dentro de una sola request de Cloud Run.
+    const generatedImages = await Promise.all(targets.map((target) => generateCatalogTarget({
+      target,
+      apiKey,
+      model,
+      facts,
+      referenceOrder,
+      referenceImages,
+      spotId: spot.id,
+    })));
 
     const coverImage = generatedImages.find((image) => image.kind === "front_catalog")?.url
       ?? generatedImages[0]?.url
