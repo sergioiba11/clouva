@@ -8,8 +8,18 @@ import {
   type CommerceIdentifierType,
   validateCommerceIdentifier,
 } from "@/lib/commerce/identifiers";
+import {
+  canonicalProductCaptureLabel,
+  countProductCaptureLabels,
+  MAX_PRODUCT_DETAIL_IMAGES,
+  MAX_PRODUCT_IMAGE_BYTES,
+  MAX_PRODUCT_REFERENCE_IMAGES,
+  MAX_PRODUCT_TOTAL_BYTES,
+  orderProductCaptures,
+  type ProductCaptureLabel,
+} from "@/lib/commerce/product-capture-contract";
 
-type RecognitionImage = { dataUrl: string; label?: string };
+type RecognitionImage = { dataUrl: string; label?: unknown };
 type GeminiPayload = {
   candidates?: Array<{
     content?: { parts?: Array<{ text?: string }> };
@@ -19,9 +29,6 @@ type GeminiPayload = {
   error?: { message?: string };
 };
 
-const MAX_IMAGES = 3;
-const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-const MAX_TOTAL_BYTES = 12 * 1024 * 1024;
 const ACCEPTED_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
 const RESPONSE_SCHEMA = {
@@ -74,7 +81,13 @@ export class CommerceProductRecognitionError extends Error {
   }
 }
 
+function inferredLabel(index: number): ProductCaptureLabel {
+  return index === 0 ? "Frente" : index === 1 ? "Atrás" : "Detalle";
+}
+
 function parseImage(image: RecognitionImage, index: number) {
+  const label = canonicalProductCaptureLabel(image.label ?? inferredLabel(index));
+  if (!label) throw new CommerceProductRecognitionError(`La foto ${index + 1} no tiene una vista válida.`, 400);
   const match = image.dataUrl.match(/^data:(image\/[a-z0-9.+-]+);base64,([a-z0-9+/=\r\n]+)$/i);
   if (!match) throw new CommerceProductRecognitionError(`La foto ${index + 1} no tiene un formato válido.`, 400);
   const mimeType = match[1].toLowerCase();
@@ -83,14 +96,14 @@ function parseImage(image: RecognitionImage, index: number) {
   }
   const data = match[2].replace(/\s/g, "");
   const bytes = Buffer.from(data, "base64");
-  if (!bytes.length || bytes.length > MAX_IMAGE_BYTES) {
+  if (!bytes.length || bytes.length > MAX_PRODUCT_IMAGE_BYTES) {
     throw new CommerceProductRecognitionError(`La foto ${index + 1} supera el máximo de 5 MB.`, 413);
   }
   return {
     mimeType,
     data,
     byteLength: bytes.length,
-    label: typeof image.label === "string" ? image.label.trim().slice(0, 40) : `Foto ${index + 1}`,
+    label,
   };
 }
 
@@ -102,9 +115,10 @@ function buildPrompt(args: {
   return [
     "Sos el analizador visual de productos físicos de CLOUVA.",
     `Contexto: el producto se está cargando en el Spot \"${args.spotName}\" en Argentina.`,
-    `Imágenes recibidas: ${args.imageLabels.join(", ")}. Consideralas vistas del mismo producto.`,
-    "Las vistas canónicas son Frente (cara principal), Atrás (cara posterior) y Detalle (acercamiento complementario). Si llega una captura histórica llamada Dorso, interpretala exactamente como Atrás.",
-    "Combiná la evidencia de todas las vistas: usá Frente para identidad comercial, Atrás para información posterior/códigos y Detalle para confirmar variante, presentación o textos pequeños cuando sean legibles.",
+    `Imágenes recibidas en orden: ${args.imageLabels.join(", ")}. Todas pertenecen al mismo producto físico.`,
+    "Las vistas canónicas son Frente (cara principal), Atrás (cara posterior) y uno o varios Detalles complementarios. Si llega una captura histórica llamada Dorso, interpretala exactamente como Atrás.",
+    "Combiná la evidencia de TODAS las vistas: usá Frente para identidad comercial, Atrás para información posterior/códigos y cada Detalle para confirmar variante, materiales, presentación, branding y textos pequeños cuando sean legibles.",
+    "Cuando haya varios Detalles, tratá cada uno como evidencia complementaria del mismo objeto; no los interpretes como productos o variantes distintos.",
     args.suppliedIdentifier
       ? `Código ya leído por el escáner: ${args.suppliedIdentifier.type} ${args.suppliedIdentifier.value}. Es una fuente confirmada y prioritaria: conservá exactamente ese código en identifier.`
       : "No hay un código confirmado. Solo devolvé identifier si podés leer el valor completo e inequívoco en alguna de las imágenes.",
@@ -130,16 +144,27 @@ export async function recognizeCommerceProduct(args: {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new CommerceProductRecognitionError("GEMINI_API_KEY no está configurada.", 500);
   if (!Array.isArray(args.images) || args.images.length < 1) {
-    throw new CommerceProductRecognitionError("Capturá al menos una foto del producto.", 400);
+    throw new CommerceProductRecognitionError("Capturá al menos el Frente del producto.", 400);
   }
-  if (args.images.length > MAX_IMAGES) {
-    throw new CommerceProductRecognitionError("Podés analizar hasta tres fotos por producto.", 400);
+  if (args.images.length > MAX_PRODUCT_REFERENCE_IMAGES) {
+    throw new CommerceProductRecognitionError(`Podés analizar hasta ${MAX_PRODUCT_REFERENCE_IMAGES} referencias por producto.`, 400);
   }
 
-  const images = args.images.map(parseImage);
+  const images = orderProductCaptures(args.images.map(parseImage));
+  const counts = countProductCaptureLabels(images.map((image) => image.label));
+  if (counts.front !== 1) {
+    throw new CommerceProductRecognitionError("El análisis necesita exactamente un Frente del producto.", 400);
+  }
+  if (counts.back > 1) {
+    throw new CommerceProductRecognitionError("Podés usar como máximo una vista Atrás.", 400);
+  }
+  if (counts.detail > MAX_PRODUCT_DETAIL_IMAGES) {
+    throw new CommerceProductRecognitionError(`Podés usar hasta ${MAX_PRODUCT_DETAIL_IMAGES} imágenes de Detalle.`, 400);
+  }
+
   const totalBytes = images.reduce((sum, image) => sum + image.byteLength, 0);
-  if (totalBytes > MAX_TOTAL_BYTES) {
-    throw new CommerceProductRecognitionError("Las fotos juntas superan el máximo de 12 MB.", 413);
+  if (totalBytes > MAX_PRODUCT_TOTAL_BYTES) {
+    throw new CommerceProductRecognitionError("Las fotos juntas superan el máximo de 24 MB.", 413);
   }
 
   let suppliedIdentifier = args.suppliedIdentifier ?? null;
@@ -150,13 +175,19 @@ export async function recognizeCommerceProduct(args: {
       : null;
   }
 
+  let detailIndex = 0;
+  const labeledImages = images.map((image) => ({
+    ...image,
+    displayLabel: image.label === "Detalle" ? `Detalle ${++detailIndex}` : image.label,
+  }));
+
   const model = process.env.GEMINI_PRODUCT_VISION_MODEL
     ?? process.env.GEMINI_MODEL
     ?? "gemini-3.5-flash";
   const parts: Array<Record<string, unknown>> = [
-    { text: buildPrompt({ spotName: args.spotName, suppliedIdentifier, imageLabels: images.map((image) => image.label) }) },
-    ...images.flatMap((image) => [
-      { text: `Vista: ${image.label}` },
+    { text: buildPrompt({ spotName: args.spotName, suppliedIdentifier, imageLabels: labeledImages.map((image) => image.displayLabel) }) },
+    ...labeledImages.flatMap((image) => [
+      { text: `Vista: ${image.displayLabel}` },
       { inlineData: { mimeType: image.mimeType, data: image.data } },
     ]),
   ];
