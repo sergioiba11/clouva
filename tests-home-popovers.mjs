@@ -15,7 +15,7 @@ test("Inicio abre un menú de cuenta compartido y separa MI FLOW de MI SPOT", ()
   assert.match(layout, /<AccountMenu \/>/);
   assert.match(menu, /aria-expanded=\{openMenu\}/);
   assert.match(menu, /event\.key === "Escape"/);
-  assert.match(menu, /href="\/mi-flow"[\s\S]*?label="MI FLOW"[\s\S]*?Billetera, ganancias, FLOWS y Diamantes/);
+  assert.match(menu, /href="\/mi-flow"[\s\S]*?label="MI FLOW"/);
   assert.match(menu, /href="\/mi-spot"[\s\S]*?label="MI SPOT"/);
   assert.match(menu, /Mi perfil público/);
   assert.match(menu, /Mi Avatar 3D/);
@@ -24,8 +24,10 @@ test("Inicio abre un menú de cuenta compartido y separa MI FLOW de MI SPOT", ()
   assert.match(menu, /Conectado/);
 });
 
-test("MI FLOW usa wallets reales y Hacer dinero entra a MI SPOT", () => {
+test("MI FLOW abre el panel operativo del Spot y conserva la billetera aparte", () => {
   const miFlow = read("./app/mi-flow/page.tsx");
+  const entry = read("./components/mi-flow/MiFlowSpotEntry.tsx");
+  const wallet = read("./app/mi-flow/billetera/page.tsx");
   const summary = read("./app/api/mi-flow/summary/route.ts");
   const balances = read("./app/api/wallet/balances/route.ts");
   const walletChip = read("./components/wallet/WalletBalanceChip.tsx");
@@ -33,13 +35,14 @@ test("MI FLOW usa wallets reales y Hacer dinero entra a MI SPOT", () => {
   const legacyMoney = read("./app/mi-flow/money/page.tsx");
   const incomeProjects = read("./app/mi-flow/negocios/page.tsx");
 
-  assert.doesNotMatch(miFlow, /flow_money_entries/);
-  assert.match(miFlow, /\/api\/mi-flow\/summary/);
-  assert.match(miFlow, />MI FLOW</);
-  assert.match(miFlow, /Hacer dinero/);
-  assert.match(miFlow, /href="\/mi-spot"[\s\S]*?>[\s\S]*?Hacer dinero/);
-  assert.match(miFlow, /title="Proyectos de ingresos"[\s\S]*?href="\/mi-flow\/negocios"/);
-  assert.doesNotMatch(miFlow, /href="\/mi-flow\/negocios"[^>]*>Hacer dinero/);
+  assert.match(miFlow, /MiFlowSpotEntry/);
+  assert.match(entry, /\/api\/mi-spot/);
+  assert.match(entry, /SpotCommerceDashboard/);
+  assert.match(entry, /includes\("operations"\)/);
+  assert.match(entry, /`spot:\$\{operationalSpot\.id\}`/);
+  assert.match(wallet, /\/api\/mi-flow\/summary/);
+  assert.match(wallet, /> FLOWS</);
+  assert.match(wallet, /> Diamantes</);
   assert.match(summary, /flows_wallets/);
   assert.match(summary, /flows_wallet_ledger/);
   assert.match(summary, /diamond_wallets/);
@@ -49,11 +52,11 @@ test("MI FLOW usa wallets reales y Hacer dinero entra a MI SPOT", () => {
   assert.match(balances, /flows_wallets/);
   assert.match(balances, /diamond_wallets/);
   assert.match(walletChip, /\/api\/wallet\/balances/);
-  assert.match(walletChip, /href="\/mi-flow\?asset=flows"/);
-  assert.match(walletChip, /href="\/mi-flow\?asset=diamonds"/);
+  assert.match(walletChip, /href="\/mi-flow\/billetera\?asset=flows"/);
+  assert.match(walletChip, /href="\/mi-flow\/billetera\?asset=diamonds"/);
   assert.match(manualFinances, /table: "flow_money_entries"/);
   assert.match(manualFinances, /no modifica el saldo real de MI FLOW/);
-  assert.match(legacyMoney, /redirect\("\/mi-flow"\)/);
+  assert.match(legacyMoney, /redirect\("\/mi-flow\/billetera"\)/);
   assert.match(incomeProjects, /flow_businesses/);
   assert.match(incomeProjects, /Proyectos de ingresos/);
   assert.match(incomeProjects, /No es MI SPOT/);
