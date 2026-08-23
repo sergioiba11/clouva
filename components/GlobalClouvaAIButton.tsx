@@ -17,13 +17,15 @@ export function GlobalClouvaAIButton() {
   const { user, loading } = useAuth();
   const { open, toggleAssistant, closeAssistant } = useClouvaAIAssistant();
   const launcherRef = useRef<HTMLButtonElement>(null);
+  const hideLauncherOnSignedInHome = pathname === "/" && Boolean(user);
 
   useEffect(() => {
     if (!open) return;
     const handleKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       closeAssistant();
-      launcherRef.current?.focus();
+      const launcher = launcherRef.current;
+      if (launcher?.getClientRects().length) launcher.focus();
     };
     document.addEventListener("keydown", handleKey);
     return () => document.removeEventListener("keydown", handleKey);
@@ -47,7 +49,7 @@ export function GlobalClouvaAIButton() {
       <button
         ref={launcherRef}
         type="button"
-        className={styles.launcher}
+        className={`${styles.launcher} ${hideLauncherOnSignedInHome ? styles.homeLauncher : ""}`}
         onClick={toggleAssistant}
         aria-expanded={open}
         aria-label={open ? "Cerrar CLOUVA AI" : "Abrir CLOUVA AI"}
