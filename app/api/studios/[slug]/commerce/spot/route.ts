@@ -12,7 +12,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     const admin = createAdminSupabase();
     const { spot, studio, role } = await requireManagedSpot({ admin, userId: user.id, studioId });
 
-    const [summaryResult, listingsResult, identifiersResult, movementsResult, ordersResult, paymentsResult, locationsResult] = await Promise.all([
+    const [summaryResult, listingsResult, identifierEventsResult, movementsResult, ordersResult, paymentsResult, locationsResult] = await Promise.all([
       admin.rpc("commerce_spot_financial_summary", { p_spot_id: spot.id }),
       admin
         .from("commerce_products")
@@ -20,10 +20,11 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         .eq("spot_id", spot.id)
         .order("created_at", { ascending: false }),
       admin
-        .from("commerce_product_identifiers")
-        .select("id,catalog_product_id,catalog_variant_id,spot_id,identifier_type,value,normalized_value,is_primary,created_at")
-        .or(`spot_id.is.null,spot_id.eq.${spot.id}`)
-        .order("created_at"),
+        .from("commerce_product_identifier_events")
+        .select("id,identifier_id,event_type,from_status,to_status,actor_id,metadata,created_at")
+        .eq("spot_id", spot.id)
+        .order("created_at", { ascending: false })
+        .limit(200),
       admin
         .from("commerce_inventory_movements")
         .select("id,location_id,listing_id,listing_variant_id,movement_type,quantity_delta,stock_after,unit_cost,currency,reference,note,created_at")
@@ -51,6 +52,15 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
     const listings = listingsResult.data ?? [];
     const listingIds = listings.map((listing) => listing.id);
+    const catalogProductIds = listings.flatMap((listing) => listing.catalog_product_id ? [listing.catalog_product_id] : []);
+    const identifiersResult = catalogProductIds.length
+      ? await admin
+          .from("commerce_product_identifiers")
+          .select("id,catalog_product_id,catalog_variant_id,studio_id,spot_id,identifier_type,value,normalized_value,origin,status,scope,is_primary,public_token,destination_type,destination_path,destination_metadata,replaces_identifier_id,created_by,created_at,disabled_at,disabled_by,updated_at")
+          .in("catalog_product_id", catalogProductIds)
+          .or(`scope.eq.global,spot_id.is.null,spot_id.eq.${spot.id}`)
+          .order("created_at")
+      : { data: [], error: null };
     const [variantsResult, componentsResult] = listingIds.length
       ? await Promise.all([
         admin
@@ -70,6 +80,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       summaryResult.error,
       listingsResult.error,
       identifiersResult.error,
+      identifierEventsResult.error,
       movementsResult.error,
       ordersResult.error,
       paymentsResult.error,
@@ -88,6 +99,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       variants: variantsResult.data ?? [],
       components: componentsResult.data ?? [],
       identifiers: identifiersResult.data ?? [],
+      identifierEvents: identifierEventsResult.data ?? [],
       movements: movementsResult.data ?? [],
       orders: ordersResult.data ?? [],
       payments: paymentsResult.data ?? [],
