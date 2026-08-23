@@ -16,6 +16,8 @@ import {
   ExternalLink,
   Flashlight,
   History,
+  ImagePlus,
+  LoaderCircle,
   PackagePlus,
   Printer,
   QrCode,
@@ -23,7 +25,9 @@ import {
   ScanLine,
   Settings,
   ShoppingCart,
+  Sparkles,
   Store,
+  Trash2,
   TrendingUp,
   X,
 } from "lucide-react";
@@ -34,7 +38,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { IScannerControls } from "@zxing/browser";
 import { AccountMenu } from "@/components/account/AccountMenu";
 import { useAuth } from "@/components/auth-provider";
-import { detectCommerceIdentifierType, type CommerceIdentifierType } from "@/lib/commerce/identifiers";
+import {
+  buildSpotSku,
+  detectCommerceIdentifierType,
+  type CommerceIdentifierType,
+} from "@/lib/commerce/identifiers";
+import type { CommerceProductRecognition } from "@/lib/commerce/product-recognition";
 
 type Tab = "dashboard" | "scanner" | "catalog" | "inventory" | "sales" | "orders" | "codes" | "settings";
 type Listing = {
@@ -146,6 +155,17 @@ type ScanResult = {
   listing?: Listing | null;
   listing_variant?: Variant | null;
 };
+type ProductCapture = {
+  id: string;
+  label: "Frente" | "Dorso" | "Detalle";
+  dataUrl: string;
+};
+type RecognitionResult = {
+  recognition: CommerceProductRecognition;
+  provider: "gemini";
+  model: string;
+  analyzedAt: string;
+};
 
 type NativeBarcodeDetector = {
   detect(source: CanvasImageSource): Promise<Array<{ rawValue: string; format: string }>>;
@@ -190,6 +210,32 @@ function when(value: unknown) {
   return new Date(value).toLocaleString("es-AR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
+function nextCaptureLabel(index: number): ProductCapture["label"] {
+  return index === 0 ? "Frente" : index === 1 ? "Dorso" : "Detalle";
+}
+
+function imageToJpegDataUrl(source: CanvasImageSource, width: number, height: number) {
+  const maxSide = 1440;
+  const scale = Math.min(1, maxSide / Math.max(width, height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(width * scale));
+  canvas.height = Math.max(1, Math.round(height * scale));
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("No se pudo preparar la foto.");
+  context.drawImage(source, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/jpeg", 0.84);
+}
+
+async function compressProductImage(file: File) {
+  if (!file.type.startsWith("image/")) throw new Error("Elegí una imagen del producto.");
+  const bitmap = await createImageBitmap(file);
+  try {
+    return imageToJpegDataUrl(bitmap, bitmap.width, bitmap.height);
+  } finally {
+    bitmap.close();
+  }
+}
+
 export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
   const router = useRouter();
   const { session, user, loading: authLoading } = useAuth();
@@ -207,6 +253,9 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
   const [cameraId, setCameraId] = useState("");
   const [torch, setTorch] = useState(false);
+  const [productCaptures, setProductCaptures] = useState<ProductCapture[]>([]);
+  const [recognizingProduct, setRecognizingProduct] = useState(false);
+  const [recognitionResult, setRecognitionResult] = useState<RecognitionResult | null>(null);
   const [creation, setCreation] = useState({ name: "", brand: "", category: "", description: "", productKind: "physical", listingKind: "resale", cost: "", price: "", stock: "1", status: "draft", size: "", color: "", presentation: "" });
   const [stockDraft, setStockDraft] = useState({ listingId: "", variantId: "", quantity: "1", note: "" });
   const [cart, setCart] = useState<Array<{ listingId: string; variantId: string | null; quantity: number }>>([]);
@@ -279,19 +328,20 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
 
   useEffect(() => stopScanner, [stopScanner]);
 
-  const processCode = useCallback(async (raw: string) => {
+  const processCode = useCallback(async (raw: string, requestedType?: CommerceIdentifierType) => {
     const code = raw.trim();
     if (!code) return;
     const now = Date.now();
     if (lastScanRef.current.value === code && now - lastScanRef.current.at < 2200) return;
     lastScanRef.current = { value: code, at: now };
+    const identifierType = requestedType ?? detectCommerceIdentifierType(code);
     setManualCode(code);
-    setScanType(detectCommerceIdentifierType(code));
+    setScanType(identifierType);
     setBusy(true);
     setError(null);
     setMessage(null);
     try {
-      const payload = await authFetch(`/api/studios/${encodeURIComponent(studioId)}/commerce/scan?code=${encodeURIComponent(code)}`);
+      const payload = await authFetch(`/api/studios/${encodeURIComponent(studioId)}/commerce/scan?code=${encodeURIComponent(code)}&type=${encodeURIComponent(identifierType)}`);
       const result = payload.result as ScanResult;
       setScanResult(result);
       if (result.catalog_product && !result.listing) {
@@ -386,6 +436,122 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
     setTorch(next);
   }
 
+  function captureProductPhoto(label: ProductCapture["label"]) {
+    const video = videoRef.current;
+    if (!video || video.readyState < 2 || !video.videoWidth || !video.videoHeight) {
+      setError("Abrí la cámara y enfocá el producto antes de capturar.");
+      return;
+    }
+    try {
+      const dataUrl = imageToJpegDataUrl(video, video.videoWidth, video.videoHeight);
+      setProductCaptures((current) => {
+        const capture = { id: crypto.randomUUID(), label, dataUrl };
+        const existingIndex = current.findIndex((item) => item.label === label);
+        if (existingIndex >= 0) return current.map((item, index) => index === existingIndex ? capture : item);
+        return [...current, capture].slice(0, 3);
+      });
+      setRecognitionResult(null);
+      setMessage(`${label} capturado. ${label === "Frente" ? "Ahora podés sumar el dorso." : "La foto quedó lista para Gemini."}`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "No se pudo capturar la foto.");
+    }
+  }
+
+  async function uploadProductPhotos(files: FileList | null) {
+    const selected = Array.from(files ?? []).slice(0, Math.max(0, 3 - productCaptures.length));
+    if (!selected.length) return;
+    setError(null);
+    try {
+      const compressed = await Promise.all(selected.map(compressProductImage));
+      setProductCaptures((current) => [
+        ...current,
+        ...compressed.map((dataUrl, index) => ({
+          id: crypto.randomUUID(),
+          label: nextCaptureLabel(current.length + index),
+          dataUrl,
+        })),
+      ].slice(0, 3));
+      setRecognitionResult(null);
+      setMessage(`${compressed.length} ${compressed.length === 1 ? "foto cargada" : "fotos cargadas"} para analizar.`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "No se pudieron preparar las fotos.");
+    }
+  }
+
+  async function analyzeProductWithGemini() {
+    if (!data) {
+      setError("Todavía estamos cargando los datos del Spot.");
+      return;
+    }
+    if (!productCaptures.length) {
+      setError("Capturá el frente del producto o subí una foto.");
+      return;
+    }
+    setRecognizingProduct(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const payload = await authFetch(`/api/studios/${encodeURIComponent(studioId)}/commerce/recognize`, {
+        method: "POST",
+        body: JSON.stringify({
+          images: productCaptures.map(({ label, dataUrl }) => ({ label, dataUrl })),
+          identifier: manualCode.trim() || null,
+          identifierType: manualCode.trim() ? scanType : null,
+        }),
+      }) as RecognitionResult;
+      const recognized = payload.recognition;
+      const recognizedName = recognized.name || recognized.detectedObject;
+      setRecognitionResult(payload);
+      setCreation((current) => ({
+        ...current,
+        name: recognizedName || current.name,
+        brand: recognized.brand || current.brand,
+        category: recognized.category || current.category,
+        description: recognized.description || current.description,
+        productKind: recognized.productKind || current.productKind,
+        listingKind: recognized.listingKind || current.listingKind,
+        size: recognized.size || current.size,
+        color: recognized.color || current.color,
+        presentation: recognized.presentation || current.presentation,
+      }));
+
+      let identifierMessage = "";
+      if (!manualCode.trim() && recognized.identifier?.value) {
+        setManualCode(recognized.identifier.value);
+        setScanType(recognized.identifier.type);
+        await processCode(recognized.identifier.value, recognized.identifier.type);
+        identifierMessage = ` También leyó ${recognized.identifier.type.replaceAll("_", " ").toUpperCase()}.`;
+      } else if (!manualCode.trim()) {
+        const generatedSku = buildSpotSku({
+          spotSlug: data.spot.slug,
+          productName: recognizedName || "Producto",
+          color: recognized.color,
+          size: recognized.size,
+          suffix: crypto.randomUUID().slice(0, 6),
+        });
+        setManualCode(generatedSku);
+        setScanType("sku");
+        setScanResult({ exists: false });
+        identifierMessage = " No encontró un código comercial seguro, así que preparó un SKU interno del Spot.";
+      }
+
+      const completedFields = [
+        recognizedName,
+        recognized.brand,
+        recognized.category,
+        recognized.description,
+        recognized.size,
+        recognized.color,
+        recognized.presentation,
+      ].filter(Boolean).length;
+      setMessage(`Gemini identificó ${recognized.detectedObject || recognizedName} y completó ${completedFields} campos.${identifierMessage}`);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Gemini no pudo analizar el producto.");
+    } finally {
+      setRecognizingProduct(false);
+    }
+  }
+
   async function refreshFx() {
     setBusy(true); setError(null); setMessage(null);
     try {
@@ -403,14 +569,25 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
     setBusy(true); setError(null); setMessage(null);
     try {
       const hasVariant = Boolean(creation.size || creation.color || creation.presentation);
+      const recognitionMetadata = recognitionResult ? {
+        source: "gemini_product_vision",
+        provider: recognitionResult.provider,
+        model: recognitionResult.model,
+        analyzed_at: recognitionResult.analyzedAt,
+        detected_object: recognitionResult.recognition.detectedObject,
+        confidence: recognitionResult.recognition.confidence,
+        visible_text: recognitionResult.recognition.visibleText,
+        uncertain_fields: recognitionResult.recognition.uncertainFields,
+        captured_views: productCaptures.map((capture) => capture.label),
+      } : null;
       const payload = await authFetch(`/api/studios/${encodeURIComponent(studioId)}/commerce/scan`, {
         method: "POST",
         body: JSON.stringify({
           code: manualCode,
           identifierType: scanType,
-          product: { product_kind: creation.productKind, name: creation.name, brand: creation.brand, category: creation.category, description: creation.description },
-          listing: { listing_kind: creation.listingKind, cost: Number(creation.cost || 0), price: Number(creation.price), initial_stock: Number(creation.stock || 0), status: creation.status },
-          variant: hasVariant ? { size: creation.size, color: creation.color, presentation: creation.presentation } : {},
+          product: { product_kind: creation.productKind, name: creation.name, brand: creation.brand, category: creation.category, description: creation.description, metadata: recognitionMetadata ? { recognition: recognitionMetadata } : {} },
+          listing: { listing_kind: creation.listingKind, cost: Number(creation.cost || 0), price: Number(creation.price), initial_stock: Number(creation.stock || 0), status: creation.status, metadata: recognitionMetadata ? { recognition: recognitionMetadata } : {} },
+          variant: hasVariant ? { size: creation.size, color: creation.color, presentation: creation.presentation, metadata: recognitionMetadata ? { recognition: recognitionMetadata } : {} } : {},
           idempotencyKey: `scan-ui:${data?.spot.id}:${manualCode}:${Date.now()}`,
         }),
       });
@@ -660,8 +837,25 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
           {tab === "dashboard" ? <SpotDashboard data={data} goal={goal} goalProgress={goalProgress} busy={busy} onNavigate={setTab} onRefreshFx={() => void refreshFx()} /> : null}
 
           {tab === "scanner" ? <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
-            <div className={`${CARD} overflow-hidden`}><div className="flex items-center justify-between border-b border-white/10 p-4"><div><h1 className="text-xl font-semibold">Escanear producto</h1><p className="mt-1 text-sm text-white/40">EAN, UPC, Code 128 y QR</p></div><div className="flex gap-2"><button onClick={() => void toggleTorch()} disabled={!scanning} className="rounded-xl border border-white/10 p-2.5 disabled:opacity-30"><Flashlight className={`h-5 w-5 ${torch ? "text-amber-300" : ""}`} /></button><button onClick={scanning ? stopScanner : () => void startScanner()} className="rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold">{scanning ? "Detener" : "Abrir cámara"}</button></div></div><div className="relative aspect-[4/3] bg-black"><video ref={videoRef} muted playsInline className="h-full w-full object-cover" /><div className="pointer-events-none absolute inset-[14%] rounded-3xl border-2 border-violet-400 shadow-[0_0_0_999px_rgba(0,0,0,.42),0_0_35px_rgba(139,92,246,.45)]"><div className="absolute left-3 right-3 top-1/2 h-px bg-gradient-to-r from-transparent via-violet-300 to-transparent shadow-[0_0_15px_#c4b5fd]" /></div>{!scanning ? <div className="absolute inset-0 grid place-items-center text-center"><div><Camera className="mx-auto h-10 w-10 text-white/30" /><p className="mt-3 text-sm text-white/45">Abrí la cámara trasera para escanear</p></div></div> : null}</div><div className="grid gap-3 p-4 sm:grid-cols-[1fr_auto]">{cameras.length > 1 ? <select className={INPUT} value={cameraId} onChange={(event) => setCameraId(event.target.value)}>{cameras.map((camera, index) => <option key={camera.deviceId} value={camera.deviceId}>Cámara {index + 1} {camera.label}</option>)}</select> : <div className="text-sm text-white/35">La cámara prioriza el lente trasero.</div>}{cameraId && scanning ? <button onClick={() => void startScanner()} className="rounded-xl border border-white/10 px-4 py-2 text-sm">Cambiar</button> : null}</div>{cameraError ? <p className="mx-4 mb-4 rounded-xl border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">{cameraError}</p> : null}</div>
-            <div className="space-y-4"><div className={`${CARD} p-4`}><p className="text-xs uppercase tracking-[.2em] text-white/35">Ingreso manual</p><div className="mt-3 flex gap-2"><input value={manualCode} onChange={(event) => { setManualCode(event.target.value); setScanType(detectCommerceIdentifierType(event.target.value)); }} onKeyDown={(event) => { if (event.key === "Enter") void processCode(manualCode); }} placeholder="Código de barras, SKU o QR" className={INPUT} /><button disabled={busy} onClick={() => void processCode(manualCode)} className="rounded-xl bg-violet-600 px-4"><ScanLine className="h-5 w-5" /></button></div><p className="mt-2 text-xs text-white/35">Detectado como {scanType.replaceAll("_", " ").toUpperCase()}</p></div>
+            <div className={`${CARD} overflow-hidden`}>
+              <div className="flex items-center justify-between border-b border-white/10 p-4"><div><h1 className="text-xl font-semibold">Escanear código o producto</h1><p className="mt-1 text-sm text-white/40">EAN, UPC, Code 128, QR y reconocimiento visual con Gemini</p></div><div className="flex gap-2"><button onClick={() => void toggleTorch()} disabled={!scanning} className="rounded-xl border border-white/10 p-2.5 disabled:opacity-30"><Flashlight className={`h-5 w-5 ${torch ? "text-amber-300" : ""}`} /></button><button onClick={scanning ? stopScanner : () => void startScanner()} className="rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold">{scanning ? "Detener" : "Abrir cámara"}</button></div></div>
+              <div className="relative aspect-[4/3] bg-black"><video ref={videoRef} muted playsInline className="h-full w-full object-cover" /><div className="pointer-events-none absolute inset-[14%] rounded-3xl border-2 border-violet-400 shadow-[0_0_0_999px_rgba(0,0,0,.42),0_0_35px_rgba(139,92,246,.45)]"><div className="absolute left-3 right-3 top-1/2 h-px bg-gradient-to-r from-transparent via-violet-300 to-transparent shadow-[0_0_15px_#c4b5fd]" /></div>{!scanning ? <div className="absolute inset-0 grid place-items-center text-center"><div><Camera className="mx-auto h-10 w-10 text-white/30" /><p className="mt-3 text-sm text-white/45">Abrí la cámara para leer el código o fotografiar el producto</p></div></div> : null}</div>
+              <div className="grid gap-3 p-4 sm:grid-cols-[1fr_auto]">{cameras.length > 1 ? <select className={INPUT} value={cameraId} onChange={(event) => setCameraId(event.target.value)}>{cameras.map((camera, index) => <option key={camera.deviceId} value={camera.deviceId}>Cámara {index + 1} {camera.label}</option>)}</select> : <div className="text-sm text-white/35">La cámara prioriza el lente trasero.</div>}{cameraId && scanning ? <button onClick={() => void startScanner()} className="rounded-xl border border-white/10 px-4 py-2 text-sm">Cambiar</button> : null}</div>
+              {cameraError ? <p className="mx-4 mb-4 rounded-xl border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100">{cameraError}</p> : null}
+              <section className="border-t border-white/[0.08] bg-[radial-gradient(circle_at_0%_0%,rgba(124,58,237,.12),transparent_48%)] p-4">
+                <div className="flex items-start justify-between gap-4"><div><p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[.18em] text-violet-300"><Sparkles className="h-4 w-4" /> Escanear producto con IA</p><p className="mt-2 text-xs leading-5 text-white/40">Capturá frente y dorso. Gemini detecta qué objeto es, lee el envase y completa la ficha editable.</p></div><span className="shrink-0 rounded-full border border-violet-400/20 bg-violet-500/10 px-2 py-1 text-[9px] font-bold text-violet-200">GEMINI</span></div>
+                <div className="mt-4 grid grid-cols-3 gap-2">
+                  <button type="button" disabled={!scanning} onClick={() => captureProductPhoto("Frente")} className="rounded-xl border border-white/10 px-3 py-2.5 text-xs disabled:opacity-35"><Camera className="mr-1.5 inline h-3.5 w-3.5" />Frente</button>
+                  <button type="button" disabled={!scanning} onClick={() => captureProductPhoto("Dorso")} className="rounded-xl border border-white/10 px-3 py-2.5 text-xs disabled:opacity-35"><Camera className="mr-1.5 inline h-3.5 w-3.5" />Dorso</button>
+                  <label className="cursor-pointer rounded-xl border border-white/10 px-3 py-2.5 text-center text-xs"><ImagePlus className="mr-1.5 inline h-3.5 w-3.5" />Subir<input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" multiple className="hidden" onChange={(event) => { void uploadProductPhotos(event.currentTarget.files); event.currentTarget.value = ""; }} /></label>
+                </div>
+                {productCaptures.length ? <div className="mt-3 grid grid-cols-3 gap-2">{productCaptures.map((capture) => <div key={capture.id} className="group relative overflow-hidden rounded-xl border border-white/10 bg-black"><img src={capture.dataUrl} alt={capture.label} className="aspect-square h-full w-full object-cover" /><span className="absolute bottom-1.5 left-1.5 rounded-md bg-black/75 px-1.5 py-1 text-[9px]">{capture.label}</span><button type="button" onClick={() => { setProductCaptures((current) => current.filter((item) => item.id !== capture.id)); setRecognitionResult(null); }} className="absolute right-1.5 top-1.5 grid h-7 w-7 place-items-center rounded-lg bg-black/75 text-white/70"><Trash2 className="h-3.5 w-3.5" /></button></div>)}</div> : null}
+                <button type="button" disabled={recognizingProduct || !productCaptures.length} onClick={() => void analyzeProductWithGemini()} className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-fuchsia-600 px-4 py-3 text-sm font-semibold shadow-[0_10px_28px_rgba(124,58,237,.22)] disabled:opacity-40">{recognizingProduct ? <><LoaderCircle className="h-4 w-4 animate-spin" />Analizando producto…</> : <><Sparkles className="h-4 w-4" />Analizar y completar datos</>}</button>
+              </section>
+            </div>
+            <div className="space-y-4">
+              {recognitionResult ? <RecognitionSummary result={recognitionResult} /> : null}
+              <div className={`${CARD} p-4`}><p className="text-xs uppercase tracking-[.2em] text-white/35">Código detectado o Ingreso manual</p><div className="mt-3 flex gap-2"><input value={manualCode} onChange={(event) => { setManualCode(event.target.value); setScanType(detectCommerceIdentifierType(event.target.value)); }} onKeyDown={(event) => { if (event.key === "Enter") void processCode(manualCode); }} placeholder="Código de barras, SKU o QR" className={INPUT} /><button disabled={busy} onClick={() => void processCode(manualCode)} className="rounded-xl bg-violet-600 px-4"><ScanLine className="h-5 w-5" /></button></div><p className="mt-2 text-xs text-white/35">Detectado como {scanType.replaceAll("_", " ").toUpperCase()}</p></div>
               {scanResult?.listing ? <ScanExisting
                 result={scanResult}
                 onOpen={(listing, variant) => { setCodeDraft({ listingId: listing.id, variantId: variant?.id || "" }); setTab("catalog"); }}
@@ -794,6 +988,16 @@ function RecentOrders({ data, onNavigate }: { data: Overview; onNavigate: (tab: 
 
 function EmptyDashboardState({ icon: Icon, title, detail, action, onClick }: { icon: typeof Store; title: string; detail: string; action?: string; onClick?: () => void }) {
   return <div className="grid min-h-44 place-items-center rounded-2xl border border-dashed border-white/[0.08] bg-white/[0.015] px-5 py-7 text-center"><div><span className="mx-auto grid h-11 w-11 place-items-center rounded-2xl border border-violet-400/15 bg-violet-500/[0.06]"><Icon className="h-4 w-4 text-violet-300" /></span><p className="mt-3 text-sm font-semibold text-white/65">{title}</p><p className="mx-auto mt-1 max-w-xs text-[10px] leading-5 text-white/25">{detail}</p>{action && onClick ? <button type="button" onClick={onClick} className="mt-4 inline-flex items-center gap-2 rounded-lg border border-violet-400/20 px-3 py-2 text-[10px] font-semibold text-violet-300 transition hover:bg-violet-500/10">{action}<ArrowRight className="h-3 w-3" /></button> : null}</div></div>;
+}
+
+function RecognitionSummary({ result }: { result: RecognitionResult }) {
+  const recognition = result.recognition;
+  const confidence = Math.round(recognition.confidence.overall * 100);
+  const facts = [recognition.brand, recognition.category, recognition.presentation, recognition.color, recognition.size].filter(Boolean);
+  return <div className={`${CARD} overflow-hidden border-violet-400/20`}>
+    <div className="flex items-start justify-between gap-3 border-b border-white/[0.08] bg-violet-500/[0.06] p-4"><div><p className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[.2em] text-violet-300"><Sparkles className="h-3.5 w-3.5" /> Datos completados por Gemini</p><h2 className="mt-2 text-lg font-semibold">{recognition.name || recognition.detectedObject}</h2><p className="mt-1 text-xs text-white/40">Objeto: {recognition.detectedObject || "producto físico"}</p></div><span className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-2.5 py-1 text-[10px] font-semibold text-emerald-200">{confidence}%</span></div>
+    <div className="p-4"><div className="flex flex-wrap gap-1.5">{facts.map((fact) => <span key={fact} className="rounded-lg border border-white/10 bg-white/[0.025] px-2 py-1 text-[10px] text-white/55">{fact}</span>)}</div>{recognition.visibleText.length ? <p className="mt-3 line-clamp-2 text-[10px] leading-5 text-white/30">Texto leído: {recognition.visibleText.join(" · ")}</p> : null}{recognition.uncertainFields.length ? <p className="mt-3 text-[10px] leading-5 text-amber-200/65">Revisar: {recognition.uncertainFields.join(", ")}</p> : null}<p className="mt-3 border-t border-white/[0.07] pt-3 text-[10px] leading-5 text-white/30">La propuesta ya está en el formulario y se puede corregir. Precio, costo y stock se confirman manualmente.</p></div>
+  </div>;
 }
 
 function ScanExisting({ result, onOpen, onSell, onStock, onPrint }: { result: ScanResult; onOpen: (listing: Listing, variant?: Variant | null) => void; onSell: (listing: Listing, variant?: Variant | null) => void; onStock: (listing: Listing, variant?: Variant | null) => void; onPrint: (identifier: Identifier) => void }) {
@@ -952,7 +1156,7 @@ function Codes({ data, draft, setDraft, onGenerate, onAttach, onUpdate, onDownlo
       <div className="mt-4 flex gap-2 overflow-x-auto">{([['scan', 'ESCANEAR'], ['create', 'CREAR CÓDIGO'], ['labels', 'ETIQUETAS'], ['history', 'HISTORIAL']] as const).map(([id, label]) => <button key={id} onClick={() => setSubtab(id)} className={`shrink-0 rounded-xl px-4 py-2 text-xs font-semibold ${subtab === id ? "bg-violet-600" : "border border-white/10 text-white/50"}`}>{label}</button>)}</div>
     </div>
 
-    {subtab === "scan" ? <div className={`${CARD} p-6 text-center`}><ScanLine className="mx-auto h-10 w-10 text-violet-300" /><h2 className="mt-3 text-xl font-semibold">Escaneá y resolvé contra el mismo registro</h2><p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-white/45">EAN/UPC del fabricante, SKU, Code 128 y QR CLOUVA consultan el catálogo canónico. Si es desconocido, el código vuelve precargado al alta.</p><button onClick={onScan} className="mt-5 rounded-xl bg-violet-600 px-5 py-3 font-semibold">Abrir escáner</button></div> : null}
+    {subtab === "scan" ? <div className={`${CARD} p-6 text-center`}><ScanLine className="mx-auto h-10 w-10 text-violet-300" /><h2 className="mt-3 text-xl font-semibold">Escaneá el código o el producto completo</h2><p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-white/45">EAN/UPC, SKU, Code 128 y QR consultan el catálogo canónico. También podés fotografiar frente y dorso para que Gemini reconozca el objeto y complete automáticamente su ficha.</p><button onClick={onScan} className="mt-5 rounded-xl bg-violet-600 px-5 py-3 font-semibold">Abrir escáner de código o producto</button></div> : null}
 
     {subtab === "create" ? <div className="grid gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
       <div className={`${CARD} p-5`}><p className="text-xs uppercase tracking-[.2em] text-violet-300">Identificación y etiquetas</p><h2 className="mt-1 text-xl font-semibold">{listing?.name || "Elegí un producto"}</h2><p className="mt-1 text-sm text-white/40">{selectedVariant ? [selectedVariant.color, selectedVariant.size, selectedVariant.sku].filter(Boolean).join(" · ") : variants.length ? "Todas las variantes" : "Producto base"}</p><div className="mt-5 space-y-3"><button onClick={onScan} className="w-full rounded-xl border border-white/10 px-4 py-3 text-sm"><Camera className="mr-2 inline h-4 w-4" />Escanear código existente</button><input className={INPUT} value={manual} onChange={(event) => changeManual(event.target.value)} placeholder="Ingresar código manualmente" /><div className="grid grid-cols-2 gap-2"><select className={INPUT} value={manualType} onChange={(event) => setManualType(event.target.value as CommerceIdentifierType)}>{["ean_13", "ean_8", "upc_a", "upc_e", "sku", "code_128"].map((type) => <option key={type} value={type}>{type.replaceAll("_", " ").toUpperCase()}</option>)}</select><select className={INPUT} value={origin} onChange={(event) => setOrigin(event.target.value as Identifier["origin"])}><option value="manufacturer">Fabricante</option><option value="imported">Importado</option><option value="manual">Manual</option></select></div><button disabled={busy || !listing || !manual} onClick={() => onAttach(manual, manualType, origin)} className="w-full rounded-xl bg-violet-600 px-4 py-3 font-semibold disabled:opacity-40">Guardar en el producto</button><div className="grid grid-cols-3 gap-2"><button disabled={busy || !listing} onClick={() => onGenerate("generate", ["sku"])} className="rounded-xl border border-white/10 p-2 text-xs">Generar SKU</button><button disabled={busy || !listing} onClick={() => onGenerate("generate", ["code_128"])} className="rounded-xl border border-white/10 p-2 text-xs">Code 128</button><button disabled={busy || !listing} onClick={() => onGenerate("generate", ["clouva_qr"])} className="rounded-xl border border-white/10 p-2 text-xs">QR CLOUVA</button></div><button disabled={busy || !listing} onClick={() => onGenerate("generate_all_variants")} className="w-full rounded-xl border border-violet-400/30 p-3 text-sm text-violet-200 disabled:opacity-40">Generar identificadores para todas las variantes</button></div><p className="mt-4 text-xs leading-5 text-white/35">Nunca se reemplaza un EAN comercial. Los códigos activos se reutilizan y no se regeneran.</p></div>
