@@ -8,6 +8,7 @@ import { GlobalSpotifyPlayer } from "@/components/GlobalSpotifyPlayer";
 import { GlobalClouvaAIButton } from "@/components/GlobalClouvaAIButton";
 import { ClouvaAIAssistantProvider } from "@/components/clouva-ai/ClouvaAIAssistantProvider";
 
+// Browser identity is global: the tab always carries the CLOUVA brand and official clover icon.
 export const metadata: Metadata = {
   title: "Clouva Vida de Flows",
   description: "Vida de flows. Directamente desde el southside.",
