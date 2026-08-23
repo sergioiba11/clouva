@@ -88,51 +88,6 @@ function interactionToImage(data: InteractionResponse): GeneratedImage {
   };
 }
 
-async function requestInteraction(args: GenerateImageArgs) {
-  const input: string | Array<Record<string, string>> = args.referenceImages?.length
-    ? [
-      { type: "text", text: args.prompt },
-      ...args.referenceImages.map((reference) => ({
-        type: "image",
-        mime_type: reference.mimeType,
-        data: reference.data,
-      })),
-    ]
-    : args.prompt;
-
-  const response = await fetch(INTERACTIONS_ENDPOINT, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-goog-api-key": args.apiKey,
-    },
-    body: JSON.stringify({
-      model: args.model ?? "gemini-3.1-flash-image",
-      input,
-      response_format: {
-        type: "image",
-        mime_type: "image/png",
-        aspect_ratio: args.aspectRatio ?? "1:1",
-        ...(args.imageSize ? { image_size: args.imageSize } : {}),
-      },
-    }),
-    cache: "no-store",
-    signal: AbortSignal.timeout(args.timeoutMs ?? 55_000),
-  });
-
-  const raw = await response.text();
-  let data: InteractionResponse = {};
-  try {
-    data = raw ? JSON.parse(raw) as InteractionResponse : {};
-  } catch {
-    throw new GeminiImageError("Gemini devolvió una respuesta inválida.", 502);
-  }
-  if (!response.ok) {
-    throw new GeminiImageError(data.error?.message ?? `Gemini respondió HTTP ${response.status}`, response.status);
-  }
-  return interactionToImage(data);
-}
-
 export async function getStoredGeneratedImage(args: { apiKey: string; interactionId: string; timeoutMs?: number }) {
   if (!/^int_[a-zA-Z0-9_-]+$/.test(args.interactionId)) {
     throw new GeminiImageError("Identificador de interacción inválido.", 400);
@@ -151,35 +106,39 @@ export async function getStoredGeneratedImage(args: { apiKey: string; interactio
 }
 
 export async function generateImage(args: GenerateImageArgs): Promise<GeneratedImage> {
-  if (args.imageSize) return requestInteraction(args);
-
   const model = args.model ?? "gemini-3.1-flash-image";
-
   const parts: Array<Record<string, unknown>> = [{ text: args.prompt }];
   for (const ref of args.referenceImages ?? []) {
     parts.push({ inlineData: { mimeType: ref.mimeType, data: ref.data } });
   }
 
-  const response = await fetch(`${ENDPOINT}/${encodeURIComponent(model)}:generateContent`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-goog-api-key": args.apiKey,
-    },
-    body: JSON.stringify({
-      contents: [{ parts }],
-      generationConfig: {
-        responseModalities: ["TEXT", "IMAGE"],
-        responseFormat: {
-          image: {
-            aspectRatio: args.aspectRatio ?? "1:1",
+  let response: Response;
+  try {
+    response = await fetch(`${ENDPOINT}/${encodeURIComponent(model)}:generateContent`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": args.apiKey,
+      },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts }],
+        generationConfig: {
+          responseModalities: ["TEXT", "IMAGE"],
+          responseFormat: {
+            image: {
+              aspectRatio: args.aspectRatio ?? "1:1",
+              ...(args.imageSize ? { imageSize: args.imageSize } : {}),
+            },
           },
         },
-      },
-    }),
-    cache: "no-store",
-    signal: AbortSignal.timeout(args.timeoutMs ?? 55_000),
-  });
+      }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(args.timeoutMs ?? 55_000),
+    });
+  } catch (error) {
+    const detail = error instanceof Error && error.message ? `: ${error.message}` : "";
+    throw new GeminiImageError(`No se pudo conectar con Gemini${detail}`, 502);
+  }
 
   const raw = await response.text();
   let data: {
@@ -193,16 +152,18 @@ export async function generateImage(args: GenerateImageArgs): Promise<GeneratedI
       thoughtsTokenCount?: number;
       totalTokenCount?: number;
     };
-    error?: { message?: string };
+    error?: { message?: string; status?: string; code?: number };
   } = {};
   try {
     data = raw ? JSON.parse(raw) : {};
   } catch {
-    throw new GeminiImageError("Gemini devolvió una respuesta inválida.", 502);
+    throw new GeminiImageError(`Gemini devolvió una respuesta inválida (HTTP ${response.status}).`, response.ok ? 502 : response.status);
   }
 
   if (!response.ok) {
-    throw new GeminiImageError(data.error?.message ?? `Gemini respondió HTTP ${response.status}`, response.status);
+    const providerMessage = data.error?.message?.trim();
+    const suffix = data.error?.status ? ` [${data.error.status}]` : "";
+    throw new GeminiImageError(providerMessage ? `${providerMessage}${suffix}` : `Gemini respondió HTTP ${response.status}`, response.status);
   }
 
   const responseParts = data.candidates?.[0]?.content?.parts ?? [];
