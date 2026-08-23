@@ -152,6 +152,17 @@ type Overview = {
   payments: Array<Record<string, unknown>>;
   locations: Array<{ id: string; code: string; name: string; status: string }>;
 };
+type ClouvaQrScan = {
+  entity_type: "PRODUCT" | "VARIANT" | "ITEM" | "USER";
+  public_url: string;
+  player?: {
+    slug: string;
+    username: string | null;
+    display_name: string;
+    profile_image_url: string | null;
+    public: boolean;
+  } | null;
+};
 type ScanResult = {
   exists?: boolean;
   exists_in_spot?: boolean;
@@ -160,6 +171,7 @@ type ScanResult = {
   catalog_variant?: Record<string, unknown> | null;
   listing?: Listing | null;
   listing_variant?: Variant | null;
+  clouva_qr?: ClouvaQrScan | null;
 };
 type ProductCapture = {
   id: string;
@@ -413,7 +425,9 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
         }));
       }
       if (navigator.vibrate) navigator.vibrate(80);
-      if (result.exists_in_spot) setMessage(`Encontrado en ${data?.spot.name || "el Spot"}.`);
+      if (result.clouva_qr?.entity_type === "USER") setMessage("QR CLOUVA de usuario reconocido. Podés abrir su Player público desde esta misma lectura.");
+      else if (result.clouva_qr?.entity_type === "ITEM") setMessage("Prenda física CLOUVA identificada por su QR único.");
+      else if (result.exists_in_spot) setMessage(`Encontrado en ${data?.spot.name || "el Spot"}.`);
       else if (result.catalog_product) setMessage("El producto ya existe en CLOUVA y puede agregarse a El Iglú sin duplicarlo.");
       else setMessage("Código nuevo: completá los datos para crear el producto.");
     } catch (cause) {
@@ -1058,7 +1072,7 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
             <div className="space-y-4">
               {recognitionResult ? <RecognitionSummary result={recognitionResult} /> : null}
               <div className={`${CARD} p-4`}><p className="text-xs uppercase tracking-[.2em] text-white/35">Código detectado o Ingreso manual</p><div className="mt-3 flex gap-2"><input value={manualCode} onChange={(event) => { setManualCode(event.target.value); setScanType(detectCommerceIdentifierType(event.target.value)); }} onKeyDown={(event) => { if (event.key === "Enter") void processCode(manualCode); }} placeholder="Código de barras, SKU o QR" className={INPUT} /><button disabled={busy} onClick={() => void processCode(manualCode)} className="rounded-xl bg-violet-600 px-4"><ScanLine className="h-5 w-5" /></button></div><p className="mt-2 text-xs text-white/35">Detectado como {scanType.replaceAll("_", " ").toUpperCase()}</p></div>
-              {scanResult?.listing ? <ScanExisting
+              {scanResult?.clouva_qr && ["USER", "ITEM"].includes(scanResult.clouva_qr.entity_type) ? <ScanClouvaQrEntity result={scanResult} /> : scanResult?.listing ? <ScanExisting
                 result={scanResult}
                 onOpen={(listing, variant) => { setCodeDraft({ listingId: listing.id, variantId: variant?.id || "" }); setTab("catalog"); }}
                 onSell={(listing, variant) => addToCart(listing, variant)}
@@ -1204,6 +1218,19 @@ function RecognitionSummary({ result }: { result: RecognitionResult }) {
   return <div className={`${CARD} overflow-hidden border-violet-400/20`}>
     <div className="flex items-start justify-between gap-3 border-b border-white/[0.08] bg-violet-500/[0.06] p-4"><div><p className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[.2em] text-violet-300"><Sparkles className="h-3.5 w-3.5" /> Datos completados por Gemini</p><h2 className="mt-2 text-lg font-semibold">{recognition.name || recognition.detectedObject}</h2><p className="mt-1 text-xs text-white/40">Objeto: {recognition.detectedObject || "producto físico"}</p></div><span className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-2.5 py-1 text-[10px] font-semibold text-emerald-200">{confidence}%</span></div>
     <div className="p-4"><div className="flex flex-wrap gap-1.5">{facts.map((fact) => <span key={fact} className="rounded-lg border border-white/10 bg-white/[0.025] px-2 py-1 text-[10px] text-white/55">{fact}</span>)}</div>{recognition.visibleText.length ? <p className="mt-3 line-clamp-2 text-[10px] leading-5 text-white/30">Texto leído: {recognition.visibleText.join(" · ")}</p> : null}{recognition.uncertainFields.length ? <p className="mt-3 text-[10px] leading-5 text-amber-200/65">Revisar: {recognition.uncertainFields.join(", ")}</p> : null}<p className="mt-3 border-t border-white/[0.07] pt-3 text-[10px] leading-5 text-white/30">La propuesta ya está en el formulario y se puede corregir. Precio, costo y stock se confirman manualmente.</p></div>
+  </div>;
+}
+
+function ScanClouvaQrEntity({ result }: { result: ScanResult }) {
+  const qr = result.clouva_qr!;
+  const player = qr.player;
+  const isUser = qr.entity_type === "USER";
+  return <div className={`${CARD} overflow-hidden border-violet-400/20`}>
+    <div className="border-b border-white/[0.08] bg-[radial-gradient(circle_at_top_right,rgba(124,58,237,.2),transparent_55%)] p-5">
+      <div className="flex items-center justify-between gap-3"><p className="text-xs font-semibold uppercase tracking-[.2em] text-violet-300">QR CLOUVA · {qr.entity_type}</p><span className="rounded-full border border-emerald-400/25 bg-emerald-400/10 px-2.5 py-1 text-[10px] font-semibold text-emerald-200">IDENTIFICADO</span></div>
+      {isUser ? <div className="mt-5 flex items-center gap-4">{player?.profile_image_url ? <img src={player.profile_image_url} alt={player.display_name} className="h-16 w-16 rounded-2xl object-cover" /> : <div className="grid h-16 w-16 place-items-center rounded-2xl border border-violet-400/20 bg-violet-500/10"><CircleGauge className="h-6 w-6 text-violet-300" /></div>}<div><h2 className="text-xl font-semibold">{player?.display_name || "Player CLOUVA"}</h2><p className="mt-1 text-sm text-white/45">{player?.username ? `@${player.username.replace(/^@/, "")}` : player?.slug || "Usuario CLOUVA"}</p><p className="mt-1 text-xs text-white/30">{player?.public ? "Player público disponible" : "Player no publicado"}</p></div></div> : <div className="mt-5"><h2 className="text-xl font-semibold">Prenda física CLOUVA</h2><p className="mt-2 text-sm leading-6 text-white/45">Este QR identifica una unidad física concreta dentro del registro CLOUVA.</p></div>}
+    </div>
+    <div className="p-5"><p className="break-all text-xs text-white/35">{qr.public_url}</p><a href={qr.public_url} target="_blank" rel="noreferrer" className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-violet-600 px-4 py-3 text-sm font-semibold">{isUser ? "Abrir Player" : "Abrir QR CLOUVA"}<ExternalLink className="h-4 w-4" /></a></div>
   </div>;
 }
 
@@ -1356,6 +1383,7 @@ function Codes({ data, draft, setDraft, onGenerate, onAttach, onUpdate, onDownlo
     onUpdate(identifier, "destination", { destinationType, destinationPath });
   };
   const setLabel = <K extends keyof LabelOptions>(key: K, value: LabelOptions[K]) => setLabelOptions((current) => ({ ...current, [key]: value }));
+  const openQrEngine = () => window.dispatchEvent(new CustomEvent("clouva:open-qr-engine", { detail: { listingId: draft.listingId, variantId: draft.variantId } }));
 
   return <div className="space-y-4">
     <div className={`${CARD} p-4`}>
@@ -1366,7 +1394,7 @@ function Codes({ data, draft, setDraft, onGenerate, onAttach, onUpdate, onDownlo
     {subtab === "scan" ? <div className={`${CARD} p-6 text-center`}><ScanLine className="mx-auto h-10 w-10 text-violet-300" /><h2 className="mt-3 text-xl font-semibold">Escaneá el código o el producto completo</h2><p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-white/45">EAN/UPC, SKU, Code 128 y QR consultan el catálogo canónico. También podés fotografiar Frente, Atrás y Detalle para que Gemini reconozca el objeto y complete automáticamente su ficha.</p><button onClick={onScan} className="mt-5 rounded-xl bg-violet-600 px-5 py-3 font-semibold">Abrir escáner de código o producto</button></div> : null}
 
     {subtab === "create" ? <div className="grid gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
-      <div className={`${CARD} p-5`}><p className="text-xs uppercase tracking-[.2em] text-violet-300">Identificación y etiquetas</p><h2 className="mt-1 text-xl font-semibold">{listing?.name || "Elegí un producto"}</h2><p className="mt-1 text-sm text-white/40">{selectedVariant ? [selectedVariant.color, selectedVariant.size, selectedVariant.sku].filter(Boolean).join(" · ") : variants.length ? "Todas las variantes" : "Producto base"}</p><div className="mt-5 space-y-3"><button onClick={onScan} className="w-full rounded-xl border border-white/10 px-4 py-3 text-sm"><Camera className="mr-2 inline h-4 w-4" />Escanear código existente</button><input className={INPUT} value={manual} onChange={(event) => changeManual(event.target.value)} placeholder="Ingresar código manualmente" /><div className="grid grid-cols-2 gap-2"><select className={INPUT} value={manualType} onChange={(event) => setManualType(event.target.value as CommerceIdentifierType)}>{["ean_13", "ean_8", "upc_a", "upc_e", "sku", "code_128"].map((type) => <option key={type} value={type}>{type.replaceAll("_", " ").toUpperCase()}</option>)}</select><select className={INPUT} value={origin} onChange={(event) => setOrigin(event.target.value as Identifier["origin"])}><option value="manufacturer">Fabricante</option><option value="imported">Importado</option><option value="manual">Manual</option></select></div><button disabled={busy || !listing || !manual} onClick={() => onAttach(manual, manualType, origin)} className="w-full rounded-xl bg-violet-600 px-4 py-3 font-semibold disabled:opacity-40">Guardar en el producto</button><div className="grid grid-cols-3 gap-2"><button disabled={busy || !listing} onClick={() => onGenerate("generate", ["sku"])} className="rounded-xl border border-white/10 p-2 text-xs">Generar SKU</button><button disabled={busy || !listing} onClick={() => onGenerate("generate", ["code_128"])} className="rounded-xl border border-white/10 p-2 text-xs">Code 128</button><button disabled={busy || !listing} onClick={() => onGenerate("generate", ["clouva_qr"])} className="rounded-xl border border-white/10 p-2 text-xs">QR CLOUVA</button></div><button disabled={busy || !listing} onClick={() => onGenerate("generate_all_variants")} className="w-full rounded-xl border border-violet-400/30 p-3 text-sm text-violet-200 disabled:opacity-40">Generar identificadores para todas las variantes</button></div><p className="mt-4 text-xs leading-5 text-white/35">Nunca se reemplaza un EAN comercial. Los códigos activos se reutilizan y no se regeneran.</p></div>
+      <div className={`${CARD} p-5`}><p className="text-xs uppercase tracking-[.2em] text-violet-300">Identificación y etiquetas</p><h2 className="mt-1 text-xl font-semibold">{listing?.name || "Elegí un producto"}</h2><p className="mt-1 text-sm text-white/40">{selectedVariant ? [selectedVariant.color, selectedVariant.size, selectedVariant.sku].filter(Boolean).join(" · ") : variants.length ? "Todas las variantes" : "Producto base"}</p><div className="mt-5 space-y-3"><button onClick={onScan} className="w-full rounded-xl border border-white/10 px-4 py-3 text-sm"><Camera className="mr-2 inline h-4 w-4" />Escanear código existente</button><input className={INPUT} value={manual} onChange={(event) => changeManual(event.target.value)} placeholder="Ingresar código manualmente" /><div className="grid grid-cols-2 gap-2"><select className={INPUT} value={manualType} onChange={(event) => setManualType(event.target.value as CommerceIdentifierType)}>{["ean_13", "ean_8", "upc_a", "upc_e", "sku", "code_128"].map((type) => <option key={type} value={type}>{type.replaceAll("_", " ").toUpperCase()}</option>)}</select><select className={INPUT} value={origin} onChange={(event) => setOrigin(event.target.value as Identifier["origin"])}><option value="manufacturer">Fabricante</option><option value="imported">Importado</option><option value="manual">Manual</option></select></div><button disabled={busy || !listing || !manual} onClick={() => onAttach(manual, manualType, origin)} className="w-full rounded-xl bg-violet-600 px-4 py-3 font-semibold disabled:opacity-40">Guardar en el producto</button><div className="grid grid-cols-3 gap-2"><button disabled={busy || !listing} onClick={() => onGenerate("generate", ["sku"])} className="rounded-xl border border-white/10 p-2 text-xs">Generar SKU</button><button disabled={busy || !listing} onClick={() => onGenerate("generate", ["code_128"])} className="rounded-xl border border-white/10 p-2 text-xs">Code 128</button><button disabled={busy || !listing} onClick={() => onGenerate("generate", ["clouva_qr"])} className="rounded-xl border border-white/10 p-2 text-xs">QR CLOUVA</button></div><button disabled={busy || !listing} onClick={openQrEngine} className="w-full rounded-xl border border-violet-400/35 bg-violet-500/[0.07] p-3 text-sm font-semibold text-violet-100 disabled:opacity-40"><QrCode className="mr-2 inline h-4 w-4" />QR CLOUVA · Prenda / Usuario</button><button disabled={busy || !listing} onClick={() => onGenerate("generate_all_variants")} className="w-full rounded-xl border border-violet-400/30 p-3 text-sm text-violet-200 disabled:opacity-40">Generar identificadores para todas las variantes</button></div><p className="mt-4 text-xs leading-5 text-white/35">Nunca se reemplaza un EAN comercial. Los códigos activos se reutilizan y no se regeneran.</p></div>
       <IdentifierRegistry identifiers={identifiers} spotId={data.spot.id} selectedId={selected?.id || ""} onSelect={setSelectedId} onUpdate={onUpdate} onReplace={replaceIdentifier} onDestination={updateQrDestination} busy={busy} />
     </div> : null}
 
