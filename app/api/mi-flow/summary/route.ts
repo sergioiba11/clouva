@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 type MoneyLedgerRow = {
   id: string;
   beneficiary_user_id: string;
-  beneficiary_type: "player" | "studio";
+  beneficiary_type: "user" | "player" | "studio";
   beneficiary_entity_id: string;
   currency: string;
   source_type: "commerce_order" | "service_order" | "booking";
@@ -130,6 +130,9 @@ export async function GET(request: NextRequest) {
       money: {
         personal: summarize(personalRows),
         personalActivity: personalRows.slice(0, 40),
+        // This section intentionally contains entity money only when the ledger
+        // beneficiary is someone else. Merely managing a Spot never turns its
+        // proceeds into the current user's personal balance.
         managed: summarize(managedMoneyRows),
         managedActivity: managedMoneyRows.slice(0, 40),
       },
