@@ -1,7 +1,7 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { spotifyErrorPayload } from "@/core/integrations/spotify/http";
 import { isSpotifyUriSaved, removeSpotifyUri, saveSpotifyUri } from "@/core/integrations/spotify/service";
-import { createAdminSupabase, isAuthError, readBearerToken, requireUser } from "@/lib/server/supabase";
+import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
 
 function validUri(value: unknown) {
   if (typeof value !== "string") return null;
@@ -13,16 +13,15 @@ function responseKey(uri: string, value: boolean) {
   return uri.startsWith("spotify:artist:") ? { followed: value } : { saved: value };
 }
 
-async function auth(request: Request) {
-  const token = readBearerToken(request);
-  const user = await requireUser(token);
+async function auth(request: NextRequest) {
+  const { user } = await requireUser(request);
   return { user, admin: createAdminSupabase() };
 }
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   try {
     const { user, admin } = await auth(request);
-    const uri = validUri(new URL(request.url).searchParams.get("uri"));
+    const uri = validUri(request.nextUrl.searchParams.get("uri"));
     if (!uri) return NextResponse.json({ ok: false, code: "invalid_request" }, { status: 400 });
     const saved = await isSpotifyUriSaved(admin, user.id, uri);
     return NextResponse.json({ ok: true, ...responseKey(uri, saved) });
@@ -33,7 +32,7 @@ export async function GET(request: Request) {
   }
 }
 
-export async function PUT(request: Request) {
+export async function PUT(request: NextRequest) {
   try {
     const { user, admin } = await auth(request);
     const body = (await request.json().catch(() => ({}))) as { uri?: unknown };
@@ -48,7 +47,7 @@ export async function PUT(request: Request) {
   }
 }
 
-export async function DELETE(request: Request) {
+export async function DELETE(request: NextRequest) {
   try {
     const { user, admin } = await auth(request);
     const body = (await request.json().catch(() => ({}))) as { uri?: unknown };
