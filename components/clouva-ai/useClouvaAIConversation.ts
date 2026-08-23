@@ -9,9 +9,34 @@ import {
   projectAccessLabel,
   type ClouvaAIMode,
 } from "@/lib/clouva-ai/project-access";
+import {
+  buildImageGenerationRequest,
+  parseImageGenerationIntent,
+  type ImageGenerationIntent,
+} from "@/lib/clouva-ai/image-generation-intent";
+import { createImageJob, waitForMediaJob } from "@/lib/media-generation-client";
+import type { ImageAspectRatio, ImageQuality } from "@/lib/media-generation-config";
+import type { MediaJob, MediaStatus } from "@/components/media-creator/types";
 import { supabase } from "@/lib/supabase";
 
-export type ClouvaAIMessage = { role: "user" | "assistant"; content: string };
+export type ClouvaAIMediaAttachment = {
+  requestId: string;
+  jobId: string | null;
+  type: "image";
+  status: "preparing" | MediaStatus;
+  prompt: string;
+  aspectRatio: ImageAspectRatio;
+  quality: ImageQuality;
+  outputUrl: string | null;
+  error: string | null;
+};
+
+export type ClouvaAIMessage = {
+  role: "user" | "assistant";
+  content: string;
+  mediaJob?: ClouvaAIMediaAttachment;
+};
+
 export type ClouvaAIPendingAction = {
   type: "write_file";
   path: string;
@@ -19,6 +44,7 @@ export type ClouvaAIPendingAction = {
   message: string;
   summary: string;
 };
+
 type ApiPayload = {
   reply?: string;
   message?: string;
@@ -29,7 +55,13 @@ type ApiPayload = {
   filesReviewed?: string[];
   error?: string;
 };
-type StoredMessage = ClouvaAIMessage & { metadata?: Record<string, unknown> | null };
+
+type StoredMessage = {
+  role: "user" | "assistant";
+  content: string;
+  metadata?: Record<string, unknown> | null;
+};
+
 export type ClouvaAIConversationSummary = { id: string; title: string | null; created_at: string };
 export type ClouvaAIProjectReport = {
   scope: "status" | "explicit" | "broad";
@@ -61,12 +93,36 @@ const INITIAL_PROJECT_ACCESS: ClouvaAIProjectAccess = {
   checkedAt: null,
 };
 
+function restoredMediaAttachment(metadata?: Record<string, unknown> | null) {
+  const candidate = metadata?.mediaJob;
+  if (!candidate || typeof candidate !== "object") return undefined;
+  const media = candidate as Partial<ClouvaAIMediaAttachment>;
+  if (media.type !== "image" || typeof media.requestId !== "string" || typeof media.prompt !== "string") return undefined;
+  return media as ClouvaAIMediaAttachment;
+}
+
 function deduplicate(messages: StoredMessage[]) {
   return messages.filter((message, index) => {
     if (index === 0) return true;
     const previous = messages[index - 1];
-    return previous.role !== message.role || previous.content !== message.content;
+    const currentMedia = restoredMediaAttachment(message.metadata)?.requestId;
+    const previousMedia = restoredMediaAttachment(previous.metadata)?.requestId;
+    return previous.role !== message.role || previous.content !== message.content || previousMedia !== currentMedia;
   });
+}
+
+function attachmentFromJob(requestId: string, job: MediaJob): ClouvaAIMediaAttachment {
+  return {
+    requestId,
+    jobId: job.id,
+    type: "image",
+    status: job.status,
+    prompt: job.prompt,
+    aspectRatio: job.aspectRatio as ImageAspectRatio,
+    quality: job.quality as ImageQuality,
+    outputUrl: job.outputUrl,
+    error: job.error,
+  };
 }
 
 export function useClouvaAIConversation() {
@@ -79,6 +135,7 @@ export function useClouvaAIConversation() {
   const [projectReport, setProjectReport] = useState<ClouvaAIProjectReport | null>(null);
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [loading, setLoading] = useState(false);
+  const [mediaGenerating, setMediaGenerating] = useState(false);
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeModel, setActiveModel] = useState<string | null>(null);
@@ -176,7 +233,7 @@ export function useClouvaAIConversation() {
     if (messagesError) throw messagesError;
     const restored = deduplicate((data ?? []) as StoredMessage[]);
     setConversationId(id);
-    setMessages(restored.length ? restored.map(({ role, content }) => ({ role, content })) : [{ role: "assistant", content: CLOUVA_AI_WELCOME }]);
+    setMessages(restored.length ? restored.map(({ role, content, metadata }) => ({ role, content, mediaJob: restoredMediaAttachment(metadata) })) : [{ role: "assistant", content: CLOUVA_AI_WELCOME }]);
   }
 
   async function loadConversationHistory() {
@@ -205,7 +262,7 @@ export function useClouvaAIConversation() {
   }
 
   async function openConversation(id: string) {
-    if (id === conversationId || loading || applying) return;
+    if (id === conversationId || loading || applying || mediaGenerating) return;
     setLoadingHistory(true);
     setError(null);
     setPendingAction(null);
@@ -239,10 +296,121 @@ export function useClouvaAIConversation() {
     if (insertError) throw new Error(insertError.message);
   }
 
+  function replaceMediaAttachment(requestId: string, mediaJob: ClouvaAIMediaAttachment) {
+    setMessages((current) => current.map((message) => message.mediaJob?.requestId === requestId ? { ...message, mediaJob } : message));
+  }
+
+  async function runImageGeneration(message: string, request: ImageGenerationIntent) {
+    if (loading || applying || mediaGenerating) return;
+    const cleanMessage = message.trim();
+    if (!cleanMessage) {
+      setError("Escribí primero lo que querés crear.");
+      return;
+    }
+
+    const requestId = crypto.randomUUID();
+    const assistantText = "Listo. Voy a crear una imagen con este concepto.";
+    const pendingMedia: ClouvaAIMediaAttachment = {
+      requestId,
+      jobId: null,
+      type: "image",
+      status: "preparing",
+      prompt: request.prompt,
+      aspectRatio: request.aspectRatio,
+      quality: request.quality,
+      outputUrl: null,
+      error: null,
+    };
+
+    setInput("");
+    setError(null);
+    setPendingAction(null);
+    setMediaGenerating(true);
+    setMessages((current) => [
+      ...current,
+      { role: "user", content: cleanMessage },
+      { role: "assistant", content: assistantText, mediaJob: pendingMedia },
+    ]);
+
+    let activeConversationId: string | null = null;
+    let userId: string | null = null;
+    try {
+      const session = await getSession();
+      userId = session.user.id;
+      activeConversationId = await ensureConversation(session.user.id, cleanMessage);
+      await saveMessage(activeConversationId, session.user.id, "user", cleanMessage, {
+        provider: "clouva-media",
+        mode: "chat",
+        action: "generate_image",
+      });
+
+      const created = await createImageJob({
+        prompt: request.prompt,
+        aspectRatio: request.aspectRatio,
+        quality: request.quality,
+      });
+      let job = created.job;
+      replaceMediaAttachment(requestId, attachmentFromJob(requestId, job));
+
+      job = await waitForMediaJob(job, {
+        onUpdate: (updated) => replaceMediaAttachment(requestId, attachmentFromJob(requestId, updated)),
+      });
+
+      const finalMedia = attachmentFromJob(requestId, job);
+      replaceMediaAttachment(requestId, finalMedia);
+      await saveMessage(activeConversationId, session.user.id, "assistant", assistantText, {
+        provider: "clouva-media",
+        mode: "chat",
+        action: "generate_image",
+        mediaJob: finalMedia,
+      });
+
+      if (job.status === "failed" || job.status === "storage_failed" || job.status === "cancelled") {
+        setError(job.error || "La generación no pudo completarse.");
+      }
+    } catch (caught) {
+      const failure = caught instanceof Error ? caught.message : "No se pudo generar la imagen.";
+      const failedMedia: ClouvaAIMediaAttachment = { ...pendingMedia, status: "failed", error: failure };
+      replaceMediaAttachment(requestId, failedMedia);
+      setError(failure);
+      if (activeConversationId && userId) {
+        try {
+          await saveMessage(activeConversationId, userId, "assistant", assistantText, {
+            provider: "clouva-media",
+            mode: "chat",
+            action: "generate_image",
+            mediaJob: failedMedia,
+          });
+        } catch {
+          // The live chat still keeps the failed card even if persistence is unavailable.
+        }
+      }
+    } finally {
+      setMediaGenerating(false);
+    }
+  }
+
+  async function generateImageFromInput() {
+    const message = input.trim();
+    if (!message) {
+      setError("Escribí primero lo que querés crear.");
+      return;
+    }
+    await runImageGeneration(message, buildImageGenerationRequest(message));
+  }
+
   async function sendMessage(event?: FormEvent) {
     event?.preventDefault();
     const message = input.trim();
-    if (!message || loading || applying) return;
+    if (!message || loading || applying || mediaGenerating) return;
+
+    if (mode === "chat") {
+      const imageIntent = parseImageGenerationIntent(message);
+      if (imageIntent) {
+        await runImageGeneration(message, imageIntent);
+        return;
+      }
+    }
 
     const previousMessages = messages;
     setInput("");
@@ -266,7 +434,7 @@ export function useClouvaAIConversation() {
         headers: { "Content-Type": "application/json", ...(mode === "project" ? { Authorization: `Bearer ${session.access_token}` } : {}) },
         body: JSON.stringify({
           message,
-          history: previousMessages.slice(-8),
+          history: previousMessages.slice(-8).map(({ role, content }) => ({ role, content })),
           ...(mode === "project" ? { screenContext: {
             page: window.location.pathname,
             url: window.location.href,
@@ -316,7 +484,7 @@ export function useClouvaAIConversation() {
   }
 
   async function applyChange() {
-    if (!pendingAction || applying) return;
+    if (!pendingAction || applying || mediaGenerating) return;
     setApplying(true);
     setError(null);
     try {
@@ -346,6 +514,7 @@ export function useClouvaAIConversation() {
   }
 
   function newConversation() {
+    if (mediaGenerating) return;
     setConversationId(null);
     setMessages([{ role: "assistant", content: CLOUVA_AI_WELCOME }]);
     setInput("");
@@ -368,6 +537,7 @@ export function useClouvaAIConversation() {
     projectReport,
     loadingHistory,
     loading,
+    mediaGenerating,
     applying,
     error,
     clearError: () => setError(null),
@@ -379,6 +549,7 @@ export function useClouvaAIConversation() {
     loadConversationHistory,
     openConversation,
     sendMessage,
+    generateImageFromInput,
     applyChange,
     newConversation,
   };
