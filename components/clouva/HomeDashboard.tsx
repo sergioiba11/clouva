@@ -109,7 +109,8 @@ export function HomeDashboard() {
       : user
         ? "Tu identidad CLOUVA"
         : "Explorá tu propio mundo";
-  const identityAvatarImage = currentPlayer?.profile_image_url || currentPlayer?.logo_url || profile?.avatar_url || user?.user_metadata?.avatar_url;
+  const heroPlayerImage = currentPlayer?.profile_image_url || profile?.avatar_url || user?.user_metadata?.avatar_url || null;
+  const identityAvatarImage = heroPlayerImage;
   const isSignedIn = Boolean(user);
   const hasAvatar = Boolean(profile?.avatar_3d_url);
   const completedSteps = [isSignedIn, Boolean(profile?.username), hasAvatar].filter(Boolean).length;
@@ -218,19 +219,35 @@ export function HomeDashboard() {
             </div>
           </div>
 
-          <div className={styles.avatarStage} aria-label="Avatar CLOUVA">
-            <div className={styles.avatarHalo} aria-hidden="true" />
-            <div className={styles.avatarComingSoon}>
-              <CircleUserRound size={40} />
-              <span>Tu avatar 3D</span>
-              <small>Próximamente</small>
+          <div className={styles.heroPlayer} aria-label={`Tu Player: ${displayName}`}>
+            <div className={styles.heroPlayerGlow} aria-hidden="true" />
+            <div className={styles.heroPlayerFrame}>
+              {heroPlayerImage ? (
+                <img
+                  className={styles.heroPlayerImage}
+                  src={String(heroPlayerImage)}
+                  alt={`Foto principal de ${displayName}`}
+                />
+              ) : (
+                <div className={styles.heroPlayerFallbackContent}>
+                  <span className={styles.heroPlayerInitials}>{initials(displayName) || "C"}</span>
+                  <small>Tu Player</small>
+                </div>
+              )}
             </div>
           </div>
 
-          <button type="button" className={styles.aiPrompt} onClick={() => openAssistant("Ayudame a elegir la mejor mejora para mi mundo CLOUVA.")}>
-            <Image src="/assets/clouva-ai/trebol-mascot.png" alt="" width={30} height={30} />
-            <span>CLOUVA AI</span>
-            <small>Preguntale a Trébol</small>
+          <button
+            type="button"
+            className={styles.heroAICompanion}
+            onClick={() => openAssistant()}
+            aria-label="Abrir CLOUVA AI"
+          >
+            <span className={styles.heroAISpeech}>¿Qué hacemos hoy, {displayName}?</span>
+            <span className={styles.heroAIGlow} aria-hidden="true" />
+            <span className={styles.heroAIMascot}>
+              <Image src="/assets/clouva-ai/trebol-mascot.png" alt="" width={150} height={150} />
+            </span>
           </button>
 
           <div className={styles.nowPlaying}>
