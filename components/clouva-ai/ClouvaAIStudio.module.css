@@ -1,0 +1,216 @@
+.brandLink {
+  color: inherit;
+  text-decoration: none;
+}
+
+.primaryNav {
+  display: grid;
+  gap: 6px;
+  margin: 2px 0 18px;
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.navItem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 0 12px;
+  border-radius: 11px;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background 160ms ease, color 160ms ease, transform 160ms ease;
+}
+
+.navItem:hover {
+  color: #fff;
+  background: rgba(139, 62, 255, 0.12);
+  transform: translateX(1px);
+}
+
+.navItemActive {
+  color: #fff;
+  background: linear-gradient(135deg, rgba(124, 47, 255, 0.42), rgba(157, 61, 255, 0.22));
+  box-shadow: inset 0 0 0 1px rgba(180, 117, 255, 0.16), 0 8px 28px rgba(74, 20, 134, 0.18);
+}
+
+.studioTabsRow {
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: 10px 18px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.055);
+}
+
+.studioTabs {
+  display: inline-grid;
+  grid-template-columns: repeat(3, minmax(96px, 1fr));
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.studioTab {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 34px;
+  padding: 0 14px;
+  border-radius: 9px;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none;
+  transition: color 160ms ease, background 160ms ease;
+}
+
+.studioTab:hover {
+  color: #fff;
+  background: rgba(129, 52, 255, 0.12);
+}
+
+.studioTabActive {
+  color: #fff;
+  background: linear-gradient(135deg, rgba(123, 45, 246, 0.68), rgba(97, 37, 196, 0.48));
+  box-shadow: inset 0 0 0 1px rgba(198, 151, 255, 0.18);
+}
+
+.welcomeGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  width: min(840px, 100%);
+  margin-top: 20px;
+}
+
+.welcomeCard {
+  display: flex;
+  min-height: 154px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 17px;
+  border: 1px solid rgba(255, 255, 255, 0.085);
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.038), rgba(255, 255, 255, 0.018));
+  color: #fff;
+  text-align: left;
+  text-decoration: none;
+  transition: transform 180ms ease, border-color 180ms ease, background 180ms ease;
+}
+
+.welcomeCard:hover {
+  transform: translateY(-2px);
+  border-color: rgba(166, 93, 255, 0.3);
+  background: linear-gradient(180deg, rgba(132, 50, 255, 0.1), rgba(255, 255, 255, 0.02));
+}
+
+.welcomeCardIcon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 11px;
+  color: #c48cff;
+  background: rgba(134, 51, 255, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(183, 118, 255, 0.12);
+}
+
+.welcomeCard strong {
+  font-size: 14px;
+}
+
+.welcomeCard p {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.52);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.welcomeCardAction {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: auto;
+  color: #d7b8ff;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.creativeToolsCard {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 15px;
+  background: rgba(255, 255, 255, 0.022);
+}
+
+.creativeToolsTitle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 2px;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.creativeToolLink {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 38px;
+  padding: 0 10px;
+  border-radius: 10px;
+  color: rgba(255, 255, 255, 0.64);
+  font-size: 11px;
+  font-weight: 650;
+  text-decoration: none;
+  transition: color 160ms ease, background 160ms ease;
+}
+
+.creativeToolLink:hover {
+  color: #fff;
+  background: rgba(132, 51, 255, 0.11);
+}
+
+.creativeToolLink svg:last-child {
+  margin-left: auto;
+  opacity: 0.45;
+}
+
+@media (max-width: 980px) {
+  .welcomeGrid {
+    grid-template-columns: 1fr;
+    width: min(560px, 100%);
+  }
+
+  .welcomeCard {
+    min-height: 126px;
+  }
+}
+
+@media (max-width: 720px) {
+  .studioTabsRow {
+    padding: 8px 12px 0;
+  }
+
+  .studioTabs {
+    width: 100%;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .studioTab {
+    min-width: 0;
+    padding: 0 8px;
+  }
+}
