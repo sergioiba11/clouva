@@ -50,12 +50,12 @@ const QUICK_PROMPTS = [
 ];
 
 const STUDIO_NAV = [
-  { label: "Inicio", href: "/", icon: Home },
+  { label: "Inicio", href: "/", icon: Home, active: false },
   { label: "Trébol / Chat", href: "/clouva-ai", icon: MessageCircle, active: true },
-  { label: "Crear imagen", href: buildMediaCreatorHref("image"), icon: ImageIcon },
-  { label: "Crear video", href: buildMediaCreatorHref("video"), icon: Video },
-  { label: "Biblioteca", href: "/biblioteca", icon: Library },
-  { label: "Proyectos", href: "/studios", icon: FolderKanban },
+  { label: "Crear imagen", href: buildMediaCreatorHref("image"), icon: ImageIcon, active: false },
+  { label: "Crear video", href: buildMediaCreatorHref("video"), icon: Video, active: false },
+  { label: "Biblioteca", href: "/biblioteca", icon: Library, active: false },
+  { label: "Proyectos", href: "/studios", icon: FolderKanban, active: false },
 ] as const;
 
 function previewSelection(content: string) {
