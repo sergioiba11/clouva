@@ -127,7 +127,9 @@ test("commerce product image generation reuses Gemini Image and all CLOUVA refer
   assert.match(productImagesRoute, /coverImage/);
   assert.match(productImagesRoute, /detailIndex/);
   assert.match(productImagesRoute, /displayLabel/);
-  assert.match(productImagesRoute, /TODAS las referencias/);
+  assert.match(productImagesRoute, /referencesForTarget/);
+  assert.match(productImagesRoute, /referenceImages/);
+  assert.match(productImagesRoute, /Las demás referencias son evidencia complementaria/);
 });
 
 test("commerce product image generation has a coherent timeout budget", () => {
