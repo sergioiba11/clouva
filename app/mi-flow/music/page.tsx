@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
@@ -72,7 +73,7 @@ export default function MusicHubPage() {
             <p className="text-[10px] uppercase tracking-[0.2em] text-violet-300/65">Mi Spotify</p>
             <h2 className="mt-1 text-lg font-bold">Biblioteca y artistas</h2>
             <p className="mt-2 text-sm leading-5 text-white/45">Los corazones y los botones “Seguir” de CLOUVA actúan sobre tu cuenta Spotify conectada.</p>
-            <a href="/settings/connections" className="mt-4 inline-flex rounded-full border border-white/12 px-4 py-2 text-xs font-semibold hover:border-violet-400/45">Administrar conexiones</a>
+            <Link href="/settings/connections" className="mt-4 inline-flex rounded-full border border-white/12 px-4 py-2 text-xs font-semibold hover:border-violet-400/45">Administrar conexiones</Link>
           </section>
         </div>
 
