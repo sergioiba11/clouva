@@ -8,6 +8,10 @@ import {
   VIDEO_QUALITY_CONFIG,
 } from "./lib/media-generation-config.ts";
 import {
+  detectImageGenerationIntent,
+  parseImageGenerationIntent,
+} from "./lib/clouva-ai/image-generation-intent.ts";
+import {
   downloadGeneratedVideo,
   getVideoOperation,
   startVideoGeneration,
@@ -22,6 +26,19 @@ test("mapea calidad de imagen a modelos y resolución oficiales", () => {
   assert.equal(IMAGE_QUALITY_CONFIG.high.imageSize, "2K");
   assert.equal(IMAGE_QUALITY_CONFIG.maximum.model, "gemini-3-pro-image");
   assert.equal(IMAGE_QUALITY_CONFIG.maximum.imageSize, "4K");
+});
+
+test("Trébol enruta pedidos de plano y PNG al generador real", () => {
+  assert.equal(detectImageGenerationIntent("AHORA HACE EL PLANO PNG"), true);
+  assert.equal(detectImageGenerationIntent("haceme el plano que te pedi"), true);
+  assert.equal(detectImageGenerationIntent("pasame eso a PNG"), true);
+  assert.equal(detectImageGenerationIntent("hay un bug en el generador de imágenes"), false);
+
+  const intent = parseImageGenerationIntent("AHORA HACE EL PLANO PNG");
+  assert.ok(intent);
+  assert.equal(intent.aspectRatio, "16:9");
+  assert.equal(intent.quality, "high");
+  assert.match(intent.prompt, /plano png/i);
 });
 
 test("limita Veo a duraciones válidas y calcula el costo confirmado", () => {
