@@ -6,6 +6,7 @@ import { CurrentPlayerProvider } from "@/components/current-player-provider";
 import { ActiveAvatarHydrator } from "@/components/avatar-engine/ActiveAvatarHydrator";
 import { GlobalSpotifyPlayer } from "@/components/GlobalSpotifyPlayer";
 import { GlobalClouvaAIButton } from "@/components/GlobalClouvaAIButton";
+import { ClouvaAIAssistantProvider } from "@/components/clouva-ai/ClouvaAIAssistantProvider";
 
 export const metadata: Metadata = {
   title: "CLOUVA | Premium Underground",
@@ -29,10 +30,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <ThemeProvider>
           <AuthProvider>
             <CurrentPlayerProvider>
-              <ActiveAvatarHydrator />
-              {children}
-              <GlobalClouvaAIButton />
-              <GlobalSpotifyPlayer />
+              <ClouvaAIAssistantProvider>
+                <ActiveAvatarHydrator />
+                {children}
+                <GlobalClouvaAIButton />
+                <GlobalSpotifyPlayer />
+              </ClouvaAIAssistantProvider>
             </CurrentPlayerProvider>
           </AuthProvider>
         </ThemeProvider>

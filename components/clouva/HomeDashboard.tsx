@@ -1,10 +1,10 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import {
   ArrowRight,
   Bell,
-  Bot,
   Box,
   CircleUserRound,
   Compass,
@@ -24,7 +24,9 @@ import {
 import { CloverIcon } from "@/components/clover-icon";
 import { useAuth } from "@/components/auth-provider";
 import { useCurrentPlayer } from "@/components/current-player-provider";
-import { resolveAccountDisplayName, resolveHomeDisplayName } from "@/lib/identity-names";
+import { AccountMenu } from "@/components/account/AccountMenu";
+import { useClouvaAIAssistant } from "@/components/clouva-ai/ClouvaAIAssistantProvider";
+import { resolveHomeDisplayName } from "@/lib/identity-names";
 import { VISUAL_ASSETS } from "@/lib/visual-assets";
 import styles from "./home-dashboard.module.css";
 
@@ -91,15 +93,15 @@ function initials(value: string) {
 }
 
 export function HomeDashboard() {
-  const { user, profile, role, loading } = useAuth();
+  const { user, profile, role } = useAuth();
   const { currentPlayer, playerLoading, playerReady } = useCurrentPlayer();
+  const { openAssistant } = useClouvaAIAssistant();
 
   if (user && !playerReady) {
     return <main className="min-h-screen bg-[#060612]" aria-busy={playerLoading} aria-label="Cargando tu identidad CLOUVA" />;
   }
 
   const displayName = resolveHomeDisplayName({ currentPlayer, profile, user });
-  const accountDisplayName = resolveAccountDisplayName({ profile, user });
   const username = currentPlayer?.username
     ? `@${currentPlayer.username.replace(/^@/, "")}`
     : profile?.username
@@ -107,9 +109,7 @@ export function HomeDashboard() {
       : user
         ? "Tu identidad CLOUVA"
         : "Explorá tu propio mundo";
-  const accountUsername = profile?.username ? `@${profile.username.replace(/^@/, "")}` : "Tu cuenta CLOUVA";
-  const accountAvatarImage = profile?.avatar_url || user?.user_metadata?.avatar_url;
-  const identityAvatarImage = currentPlayer?.profile_image_url || currentPlayer?.logo_url || accountAvatarImage;
+  const identityAvatarImage = currentPlayer?.profile_image_url || currentPlayer?.logo_url || profile?.avatar_url || user?.user_metadata?.avatar_url;
   const isSignedIn = Boolean(user);
   const hasAvatar = Boolean(profile?.avatar_3d_url);
   const completedSteps = [isSignedIn, Boolean(profile?.username), hasAvatar].filter(Boolean).length;
@@ -143,13 +143,7 @@ export function HomeDashboard() {
         <div className={styles.topActions}>
           <button type="button" aria-label="Buscar"><Search size={18} /></button>
           <button type="button" aria-label="Notificaciones"><Bell size={18} /></button>
-          <Link href={isSignedIn ? "/perfil" : "/login"} className={styles.accountPill}>
-            {accountAvatarImage ? <img src={String(accountAvatarImage)} alt="" /> : <span>{initials(accountDisplayName) || "C"}</span>}
-            <span className={styles.accountCopy}>
-              <b>{loading ? "Cargando…" : accountDisplayName}</b>
-              <small>{isSignedIn ? accountUsername : "Ingresar"}</small>
-            </span>
-          </Link>
+          <AccountMenu variant="home" triggerClassName={styles.accountPill} />
           <button type="button" className={styles.mobileMenu} aria-label="Abrir menú"><Menu size={20} /></button>
         </div>
       </header>
@@ -184,24 +178,14 @@ export function HomeDashboard() {
           })}
         </nav>
 
-        {isAdmin ? (
-          <Link href="/clouva-ai" className={styles.aiStatus}>
-            <span><Bot size={17} /></span>
-            <div>
-              <b>CLOUVA AI</b>
-              <small>Abrir</small>
-            </div>
-          </Link>
-        ) : (
-          <section className={styles.aiStatus}>
-            <span><Bot size={17} /></span>
-            <div>
-              <b>CLOUVA AI</b>
-              <small>Próximamente</small>
-            </div>
-            <i className={styles.comingDot} />
-          </section>
-        )}
+        <button type="button" className={styles.aiStatus} onClick={() => openAssistant()}>
+          <span className={styles.aiMascot}><Image src="/assets/clouva-ai/trebol-mascot.png" alt="" width={36} height={36} /></span>
+          <div>
+            <b>CLOUVA AI</b>
+            <small>Lista para ayudarte</small>
+          </div>
+          <i />
+        </button>
       </aside>
 
       <section className={styles.content}>
@@ -243,17 +227,11 @@ export function HomeDashboard() {
             </div>
           </div>
 
-          {isAdmin ? (
-            <Link href="/clouva-ai" className={styles.aiPrompt}>
-              <Sparkles size={17} />
-              <span>CLOUVA AI</span>
-            </Link>
-          ) : (
-            <div className={styles.aiPrompt}>
-              <Sparkles size={17} />
-              <span>CLOUVA AI · Próximamente</span>
-            </div>
-          )}
+          <button type="button" className={styles.aiPrompt} onClick={() => openAssistant("Ayudame a elegir la mejor mejora para mi mundo CLOUVA.")}>
+            <Image src="/assets/clouva-ai/trebol-mascot.png" alt="" width={30} height={30} />
+            <span>CLOUVA AI</span>
+            <small>Preguntale a Trébol</small>
+          </button>
 
           <div className={styles.nowPlaying}>
             <div className={styles.cover}><Music2 size={20} /></div>

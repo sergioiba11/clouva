@@ -21,6 +21,7 @@ import { useEffect, useMemo, useState } from "react";
 import { CloverIcon } from "@/components/clover-icon";
 import { useAuth } from "@/components/auth-provider";
 import { useCurrentPlayer } from "@/components/current-player-provider";
+import { AccountMenu } from "@/components/account/AccountMenu";
 import { resolveAccountDisplayName } from "@/lib/identity-names";
 import {
   configCssVariables,
@@ -237,6 +238,7 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
               <img src={config.header.brandAvatarUrl} alt="" />
             </span>
           ) : null}
+          {!previewMode ? <AccountMenu variant="home" /> : null}
         </div>
       </header>
 

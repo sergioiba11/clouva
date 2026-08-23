@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   Check,
@@ -26,83 +26,19 @@ import {
 } from "lucide-react";
 import { GeminiModelSelector } from "@/components/clouva-ai/GeminiModelSelector";
 import {
-  CLOUVA_AI_MODE_STORAGE_KEY,
-  DEFAULT_CLOUVA_AI_MODE,
-  endpointForClouvaAIMode,
-  normalizeClouvaAIMode,
-  projectAccessLabel,
-  type ClouvaAIMode,
-} from "@/lib/clouva-ai/project-access";
-import { supabase } from "@/lib/supabase";
+  CLOUVA_AI_WELCOME,
+  useClouvaAIConversation,
+  type ClouvaAIProjectAccessState,
+} from "@/components/clouva-ai/useClouvaAIConversation";
 import styles from "./ClouvaAIChat.module.css";
 
-type Message = { role: "user" | "assistant"; content: string };
-type PendingAction = {
-  type: "write_file";
-  path: string;
-  content: string;
-  message: string;
-  summary: string;
-};
-type ApiPayload = {
-  reply?: string;
-  message?: string;
-  model?: string;
-  pendingAction?: PendingAction | null;
-  analysisScope?: "status" | "explicit" | "broad";
-  coverageAreas?: string[];
-  filesReviewed?: string[];
-  error?: string;
-};
-type StoredMessage = Message & { metadata?: Record<string, unknown> | null };
-type ConversationSummary = { id: string; title: string | null; created_at: string };
-type ProjectReport = {
-  scope: "status" | "explicit" | "broad";
-  coverageAreas: string[];
-  filesReviewed: string[];
-};
-type ProjectAccessState = "checking" | "connected" | "unavailable" | "signed_out";
-type ProjectAccess = {
-  state: ProjectAccessState;
-  repository: string | null;
-  branch: string | null;
-  message: string | null;
-  checkedAt: number | null;
-};
-type ProjectStatusPayload = {
-  ok?: boolean;
-  status?: {
-    connected?: boolean;
-    repository?: string;
-    branch?: string;
-  };
-  error?: string;
-};
-
 const MASCOT_SRC = "/assets/clouva-ai/trebol-mascot.png";
-const WELCOME =
-  "Soy Trébol — CLOUVA AI. Proyecto queda listo para investigar el repositorio real mientras tu sesión autorizada siga activa.";
 const INITIAL_VISIBLE_MESSAGES = 12;
-const INITIAL_PROJECT_ACCESS: ProjectAccess = {
-  state: "checking",
-  repository: null,
-  branch: null,
-  message: null,
-  checkedAt: null,
-};
 const QUICK_PROMPTS = [
   { icon: Code2, label: "Revisar código", prompt: "Revisá el estado del proyecto y decime cuál es la mejora técnica más importante para hacer ahora." },
   { icon: WandSparkles, label: "Mejorar una pantalla", prompt: "Quiero mejorar una pantalla de CLOUVA. Ayudame a definir el cambio y qué archivos tenemos que revisar." },
   { icon: ShieldCheck, label: "Buscar riesgos", prompt: "Auditá el proyecto y priorizá riesgos de seguridad, permisos y datos." },
 ];
-
-function deduplicate(messages: StoredMessage[]) {
-  return messages.filter((message, index) => {
-    if (index === 0) return true;
-    const previous = messages[index - 1];
-    return previous.role !== message.role || previous.content !== message.content;
-  });
-}
 
 function previewSelection(content: string) {
   if (!content.includes("Web Preview") || !content.includes("Selector:")) return null;
@@ -197,63 +133,48 @@ function Mascot({ size = 42, priority = false }: { size?: number; priority?: boo
   );
 }
 
-function StatusIcon({ state }: { state: ProjectAccessState }) {
+function StatusIcon({ state }: { state: ClouvaAIProjectAccessState }) {
   if (state === "connected") return <CheckCircle2 className="h-3.5 w-3.5" />;
   if (state === "checking") return <Loader2 className="h-3.5 w-3.5 animate-spin" />;
   return <AlertTriangle className="h-3.5 w-3.5" />;
 }
 
 export function ClouvaAIChat() {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
-  const [conversationId, setConversationId] = useState<string | null>(null);
-  const [input, setInput] = useState("");
-  const [mode, setMode] = useState<ClouvaAIMode>(DEFAULT_CLOUVA_AI_MODE);
-  const [projectAccess, setProjectAccess] = useState<ProjectAccess>(INITIAL_PROJECT_ACCESS);
-  const [projectReport, setProjectReport] = useState<ProjectReport | null>(null);
-  const [loadingHistory, setLoadingHistory] = useState(true);
-  const [loading, setLoading] = useState(false);
-  const [applying, setApplying] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [activeModel, setActiveModel] = useState<string | null>(null);
-  const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
+  const {
+    messages,
+    conversations,
+    conversationId,
+    input,
+    setInput,
+    mode,
+    changeMode,
+    projectAccess,
+    accessText,
+    projectReport,
+    loadingHistory,
+    loading,
+    applying,
+    error,
+    clearError,
+    reportError,
+    activeModel,
+    pendingAction,
+    dismissPendingAction,
+    refreshProjectAccess,
+    openConversation,
+    sendMessage,
+    applyChange,
+    newConversation,
+  } = useClouvaAIConversation();
   const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE_MESSAGES);
   const [copiedMessageIndex, setCopiedMessageIndex] = useState<number | null>(null);
   const [showConversations, setShowConversations] = useState(false);
   const [showProject, setShowProject] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement>(null);
-  const projectCheckIdRef = useRef(0);
 
   const messageOffset = Math.max(messages.length - visibleCount, 0);
   const visibleMessages = messages.slice(messageOffset);
   const hiddenMessageCount = messageOffset;
-  const accessText = projectAccessLabel(projectAccess);
-
-  // The initial load is intentionally tied to the mounted workspace; auth changes are
-  // handled by Supabase's subscription below without reloading the active conversation.
-  useEffect(() => {
-    const storedMode = normalizeClouvaAIMode(window.localStorage.getItem(CLOUVA_AI_MODE_STORAGE_KEY));
-    setMode(storedMode);
-    void loadLatestConversation();
-    void refreshProjectAccess();
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (!session) {
-        setProjectAccess({
-          state: "signed_out",
-          repository: null,
-          branch: null,
-          message: "Iniciá sesión para activar Proyecto",
-          checkedAt: Date.now(),
-        });
-        return;
-      }
-      void refreshProjectAccess(session.access_token);
-    });
-
-    return () => subscription.unsubscribe();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   useEffect(() => {
     const container = chatScrollRef.current;
@@ -263,142 +184,6 @@ export function ClouvaAIChat() {
     });
     return () => window.cancelAnimationFrame(frame);
   }, [messages.length, loading, pendingAction, loadingHistory]);
-
-  async function getSession() {
-    const { data } = await supabase.auth.getSession();
-    if (!data.session) throw new Error("Iniciá sesión en CLOUVA.");
-    return data.session;
-  }
-
-  async function refreshProjectAccess(accessToken?: string): Promise<boolean> {
-    const checkId = ++projectCheckIdRef.current;
-    setProjectAccess((current) => ({ ...current, state: "checking", message: null }));
-
-    try {
-      let token = accessToken;
-      if (!token) {
-        const { data } = await supabase.auth.getSession();
-        token = data.session?.access_token;
-      }
-      if (!token) {
-        if (projectCheckIdRef.current === checkId) {
-          setProjectAccess({ state: "signed_out", repository: null, branch: null, message: "Iniciá sesión para activar Proyecto", checkedAt: Date.now() });
-        }
-        return false;
-      }
-
-      const response = await fetch("/api/clouva-ai/github", {
-        method: "GET",
-        headers: { Authorization: `Bearer ${token}` },
-        cache: "no-store",
-      });
-      const payload = (await response.json().catch(() => ({}))) as ProjectStatusPayload;
-      if (!response.ok || !payload.status?.connected) throw new Error(payload.error || "GitHub no confirmó el acceso al repositorio.");
-
-      if (projectCheckIdRef.current === checkId) {
-        setProjectAccess({
-          state: "connected",
-          repository: payload.status.repository || "sergioiba11/clouva",
-          branch: payload.status.branch || "main",
-          message: null,
-          checkedAt: Date.now(),
-        });
-      }
-      return true;
-    } catch (caught) {
-      const message = caught instanceof Error ? caught.message : "No se pudo verificar el acceso a GitHub.";
-      if (projectCheckIdRef.current === checkId) {
-        setProjectAccess({ state: "unavailable", repository: null, branch: null, message, checkedAt: Date.now() });
-      }
-      return false;
-    }
-  }
-
-  function changeMode(nextMode: ClouvaAIMode) {
-    setMode(nextMode);
-    window.localStorage.setItem(CLOUVA_AI_MODE_STORAGE_KEY, nextMode);
-    setError(null);
-    if (nextMode === "project" && projectAccess.state !== "connected") void refreshProjectAccess();
-  }
-
-  async function loadMessages(id: string, userId: string) {
-    const { data, error: messagesError } = await supabase
-      .from("ai_messages")
-      .select("role,content,metadata,created_at")
-      .eq("conversation_id", id)
-      .eq("user_id", userId)
-      .order("created_at", { ascending: true });
-    if (messagesError) throw messagesError;
-    const restored = deduplicate((data ?? []) as StoredMessage[]);
-    setConversationId(id);
-    setVisibleCount(INITIAL_VISIBLE_MESSAGES);
-    setMessages(restored.length ? restored.map(({ role, content }) => ({ role, content })) : [{ role: "assistant", content: WELCOME }]);
-  }
-
-  async function loadLatestConversation() {
-    setLoadingHistory(true);
-    setError(null);
-    try {
-      const session = await getSession();
-      const { data, error: conversationError } = await supabase
-        .from("ai_conversations")
-        .select("id,title,created_at")
-        .eq("user_id", session.user.id)
-        .eq("project_key", "clouva")
-        .order("created_at", { ascending: false })
-        .limit(24);
-      if (conversationError) throw conversationError;
-      const recent = (data ?? []) as ConversationSummary[];
-      setConversations(recent);
-      if (!recent[0]) {
-        setMessages([{ role: "assistant", content: WELCOME }]);
-        setVisibleCount(INITIAL_VISIBLE_MESSAGES);
-        return;
-      }
-      await loadMessages(recent[0].id, session.user.id);
-    } catch (caught) {
-      setMessages([{ role: "assistant", content: WELCOME }]);
-      setError(caught instanceof Error ? caught.message : "No se pudo cargar el historial.");
-    } finally {
-      setLoadingHistory(false);
-    }
-  }
-
-  async function openConversation(id: string) {
-    if (id === conversationId || loading || applying) return;
-    setLoadingHistory(true);
-    setError(null);
-    setPendingAction(null);
-    setProjectReport(null);
-    try {
-      const session = await getSession();
-      await loadMessages(id, session.user.id);
-      setShowConversations(false);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "No se pudo abrir la conversación.");
-    } finally {
-      setLoadingHistory(false);
-    }
-  }
-
-  async function ensureConversation(userId: string, title: string) {
-    if (conversationId) return conversationId;
-    const { data, error } = await supabase
-      .from("ai_conversations")
-      .insert({ user_id: userId, project_key: "clouva", title: title.slice(0, 72) })
-      .select("id,title,created_at")
-      .single();
-    if (error || !data) throw new Error(error?.message ?? "No se pudo crear la conversación.");
-    const created = data as ConversationSummary;
-    setConversationId(created.id);
-    setConversations((current) => [created, ...current.filter((item) => item.id !== created.id)]);
-    return created.id;
-  }
-
-  async function saveMessage(id: string, userId: string, role: "user" | "assistant", content: string, metadata: Record<string, unknown> = {}) {
-    const { error } = await supabase.from("ai_messages").insert({ conversation_id: id, user_id: userId, role, content, metadata });
-    if (error) throw new Error(error.message);
-  }
 
   async function copyMessage(content: string, index: number) {
     try {
@@ -416,7 +201,7 @@ export function ClouvaAIChat() {
       setCopiedMessageIndex(index);
       window.setTimeout(() => setCopiedMessageIndex(null), 1600);
     } catch {
-      setError("No se pudo copiar este mensaje.");
+      reportError("No se pudo copiar este mensaje.");
     }
   }
 
@@ -429,118 +214,19 @@ export function ClouvaAIChat() {
     }));
   }
 
-  async function sendMessage(event: FormEvent) {
-    event.preventDefault();
-    const message = input.trim();
-    if (!message || loading || applying) return;
-
-    const previousMessages = messages;
-    setInput("");
-    setError(null);
-    setPendingAction(null);
-    setLoading(true);
-    setMessages((current) => [...current, { role: "user", content: message }]);
-
-    try {
-      const session = await getSession();
-      if (mode === "project" && projectAccess.state !== "connected") {
-        const connected = await refreshProjectAccess(session.access_token);
-        if (!connected) throw new Error("Proyecto no pudo acceder a GitHub. Revisá la sesión o la conexión y reintentá.");
-      }
-
-      const endpoint = endpointForClouvaAIMode(mode);
-      const controller = new AbortController();
-      const timeout = window.setTimeout(() => controller.abort(), mode === "project" ? 60_000 : 38_000);
-      const response = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", ...(mode === "project" ? { Authorization: `Bearer ${session.access_token}` } : {}) },
-        body: JSON.stringify({
-          message,
-          history: previousMessages.slice(-8),
-          ...(mode === "project" ? { screenContext: {
-            page: window.location.pathname,
-            url: window.location.href,
-            capturedAt: new Date().toISOString(),
-            repository: projectAccess.repository || "sergioiba11/clouva",
-            branch: projectAccess.branch || "main",
-          } } : {}),
-        }),
-        signal: controller.signal,
-        cache: "no-store",
-      }).finally(() => window.clearTimeout(timeout));
-
-      const payload = (await response.json().catch(() => ({}))) as ApiPayload;
-      if (!response.ok) throw new Error(payload.error ?? "CLOUVA AI no respondió.");
-      const answer = mode === "project" ? payload.message : payload.reply;
-      if (!answer) throw new Error("CLOUVA AI respondió sin contenido.");
-
-      const activeConversationId = await ensureConversation(session.user.id, message);
-      await saveMessage(activeConversationId, session.user.id, "user", message, {
-        provider: "gemini", mode, repository: mode === "project" ? projectAccess.repository : null, branch: mode === "project" ? projectAccess.branch : null,
-      });
-      await saveMessage(activeConversationId, session.user.id, "assistant", answer, {
-        provider: "gemini", mode, model: payload.model ?? null, pendingAction: payload.pendingAction ?? null,
-      });
-
-      setActiveModel(payload.model ?? null);
-      setPendingAction(payload.pendingAction ?? null);
-      if (mode === "project" && payload.analysisScope) {
-        setProjectReport({ scope: payload.analysisScope, coverageAreas: payload.coverageAreas ?? [], filesReviewed: payload.filesReviewed ?? [] });
-      }
-      setMessages((current) => [...current, { role: "assistant", content: answer }]);
-    } catch (caught) {
-      const failure = caught instanceof Error && caught.name === "AbortError"
-        ? "La consulta superó el tiempo máximo. Probá nuevamente."
-        : caught instanceof Error ? caught.message : "Error inesperado.";
-      setError(failure);
-      setMessages((current) => [...current, { role: "assistant", content: `No pude responder: ${failure}` }]);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function applyChange() {
-    if (!pendingAction || applying) return;
-    setApplying(true);
-    setError(null);
-    try {
-      const session = await getSession();
-      if (projectAccess.state !== "connected") {
-        const connected = await refreshProjectAccess(session.access_token);
-        if (!connected) throw new Error("GitHub requiere reconexión antes de aplicar cambios.");
-      }
-      const response = await fetch("/api/clouva-ai/github", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${session.access_token}` },
-        body: JSON.stringify({ action: "write", path: pendingAction.path, content: pendingAction.content, message: pendingAction.message, confirm: true }),
-      });
-      const payload = (await response.json().catch(() => ({}))) as { result?: { commitSha?: string; path?: string; branch?: string }; error?: string };
-      if (!response.ok) throw new Error(payload.error ?? "No se pudo aplicar el cambio.");
-
-      const text = `Cambio aplicado en \`${payload.result?.path ?? pendingAction.path}\`. Commit \`${payload.result?.commitSha?.slice(0, 7) ?? "creado"}\` sobre \`${payload.result?.branch ?? "main"}\`.`;
-      if (conversationId) await saveMessage(conversationId, session.user.id, "assistant", text, { provider: "github", commit: payload.result ?? {} });
-      setMessages((current) => [...current, { role: "assistant", content: text }]);
-      setPendingAction(null);
-      void refreshProjectAccess(session.access_token);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "No se pudo aplicar el cambio.");
-    } finally {
-      setApplying(false);
-    }
-  }
-
-  function newConversation() {
-    setConversationId(null);
-    setMessages([{ role: "assistant", content: WELCOME }]);
+  function startNewConversation() {
+    newConversation();
     setVisibleCount(INITIAL_VISIBLE_MESSAGES);
-    setError(null);
-    setActiveModel(null);
-    setPendingAction(null);
-    setProjectReport(null);
     setShowConversations(false);
   }
 
-  const isWelcome = !loadingHistory && visibleMessages.length === 1 && visibleMessages[0]?.role === "assistant" && visibleMessages[0].content === WELCOME;
+  async function selectConversation(id: string) {
+    await openConversation(id);
+    setVisibleCount(INITIAL_VISIBLE_MESSAGES);
+    setShowConversations(false);
+  }
+
+  const isWelcome = !loadingHistory && visibleMessages.length === 1 && visibleMessages[0]?.role === "assistant" && visibleMessages[0].content === CLOUVA_AI_WELCOME;
 
   return (
     <section className={styles.shell}>
@@ -555,7 +241,7 @@ export function ClouvaAIChat() {
             <div><strong>CLOUVA</strong><span>AI Studio</span></div>
           </div>
 
-          <button type="button" className={styles.newChatButton} onClick={newConversation} disabled={loading || applying}>
+          <button type="button" className={styles.newChatButton} onClick={startNewConversation} disabled={loading || applying}>
             <Plus className="h-4 w-4" /> Nueva conversación
           </button>
 
@@ -565,7 +251,7 @@ export function ClouvaAIChat() {
               <button
                 type="button"
                 key={conversation.id}
-                onClick={() => void openConversation(conversation.id)}
+                onClick={() => void selectConversation(conversation.id)}
                 className={conversation.id === conversationId ? styles.conversationActive : ""}
               >
                 <MessageCircle className="h-3.5 w-3.5" />
@@ -591,7 +277,7 @@ export function ClouvaAIChat() {
             </div>
             <div className={styles.topbarActions}>
               <div className={styles.modelWrapper}><GeminiModelSelector /></div>
-              <button type="button" className={styles.iconButton} onClick={newConversation} disabled={loading || applying} aria-label="Nueva conversación"><Plus className="h-4 w-4" /></button>
+              <button type="button" className={styles.iconButton} onClick={startNewConversation} disabled={loading || applying} aria-label="Nueva conversación"><Plus className="h-4 w-4" /></button>
               <button type="button" className={styles.mobilePanelButton} onClick={() => setShowProject(true)} aria-label="Abrir contexto del proyecto"><PanelRight className="h-4 w-4" /></button>
             </div>
           </header>
@@ -650,14 +336,14 @@ export function ClouvaAIChat() {
                 <div className={styles.changeIcon}><FileCode2 className="h-5 w-5" /></div>
                 <div className={styles.changeBody}>
                   <p>Cambio listo para revisar</p><h2>{pendingAction.path}</h2><span>{pendingAction.summary}</span><code>{pendingAction.message}</code>
-                  <div><button type="button" onClick={applyChange} disabled={applying || projectAccess.state !== "connected"}>{applying ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}{applying ? "Aplicando…" : "Aplicar cambio"}</button><button type="button" onClick={() => setPendingAction(null)} disabled={applying}><X className="h-4 w-4" /> Cancelar</button></div>
+                  <div><button type="button" onClick={applyChange} disabled={applying || projectAccess.state !== "connected"}>{applying ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}{applying ? "Aplicando…" : "Aplicar cambio"}</button><button type="button" onClick={dismissPendingAction} disabled={applying}><X className="h-4 w-4" /> Cancelar</button></div>
                 </div>
               </section>
             )}
           </div>
 
           <form onSubmit={sendMessage} className={styles.composerArea}>
-            {error && <div className={styles.errorBanner}><AlertTriangle className="h-4 w-4" /><span>{error}</span><button type="button" onClick={() => setError(null)} aria-label="Cerrar error"><X className="h-3.5 w-3.5" /></button></div>}
+            {error && <div className={styles.errorBanner}><AlertTriangle className="h-4 w-4" /><span>{error}</span><button type="button" onClick={clearError} aria-label="Cerrar error"><X className="h-3.5 w-3.5" /></button></div>}
             <div className={styles.composer}>
               <textarea
                 value={input}

@@ -232,11 +232,18 @@
   border-radius: 0.9rem;
   background: rgba(255, 255, 255, 0.025);
   padding: 0.65rem;
-  color: rgba(255, 255, 255, 0.34);
-  filter: saturate(0);
+  width: 100%;
+  color: rgba(255, 255, 255, 0.78);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
 }
 
+.aiStatus:hover { transform: translateY(-1px); border-color: rgba(162, 103, 255, .38); background: rgba(124, 58, 237, .08); }
+
 .aiStatus > span { color: #b488ff; }
+.aiStatus .aiMascot { display: grid; width: 2.2rem; height: 2.2rem; place-items: center; }
+.aiStatus .aiMascot img { width: 2.2rem; height: 2.2rem; object-fit: contain; filter: drop-shadow(0 0 8px rgba(168,85,247,.48)); }
 .aiStatus div { display: grid; flex: 1; }
 .aiStatus b { font-size: 0.64rem; }
 .aiStatus small { color: var(--home-muted); font-size: 0.56rem; }
@@ -381,18 +388,24 @@
   top: 1.4rem;
   z-index: 6;
   display: flex;
-  max-width: 11.5rem;
+  max-width: 13rem;
   align-items: center;
   gap: 0.48rem;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 0.85rem 0.85rem 0.2rem 0.85rem;
-  background: rgba(45, 45, 53, 0.6);
+  background: rgba(16, 9, 35, 0.76);
   padding: 0.65rem 0.75rem;
-  color: rgba(255, 255, 255, 0.42);
+  color: rgba(255, 255, 255, 0.82);
   font-size: 0.65rem;
   backdrop-filter: blur(12px);
-  filter: saturate(0);
+  cursor: pointer;
+  box-shadow: 0 10px 35px rgba(0,0,0,.25);
+  transition: border-color 160ms ease, transform 160ms ease;
 }
+.aiPrompt:hover { transform: translateY(-2px); border-color: rgba(175,120,255,.4); }
+.aiPrompt > img { width: 2rem; height: 2rem; object-fit: contain; filter: drop-shadow(0 0 8px rgba(168,85,247,.48)); }
+.aiPrompt > span { font-weight: 750; }
+.aiPrompt > small { color: rgba(255,255,255,.43); font-size: .52rem; }
 
 .nowPlaying {
   position: absolute;
