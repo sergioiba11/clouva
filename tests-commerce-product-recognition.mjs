@@ -9,6 +9,7 @@ const service = read("./lib/server/commerce-product-recognition.ts");
 const route = read("./app/api/studios/[slug]/commerce/recognize/route.ts");
 const scannerRoute = read("./app/api/studios/[slug]/commerce/scan/route.ts");
 const productImagesRoute = read("./app/api/studios/[slug]/commerce/product-images/route.ts");
+const captureContract = read("./lib/commerce/product-capture-contract.ts");
 
 test("Gemini product recognition is sanitized before it reaches the form", () => {
   const recognition = sanitizeCommerceProductRecognition({
@@ -56,17 +57,44 @@ test("visual scanner uses server-side Gemini structured multimodal output", () =
   assert.match(service, /inlineData/);
   assert.match(service, /responseMimeType:\s*"application\/json"/);
   assert.match(service, /responseJsonSchema:\s*RESPONSE_SCHEMA/);
-  assert.match(service, /MAX_TOTAL_BYTES/);
+  assert.match(service, /MAX_PRODUCT_TOTAL_BYTES/);
   assert.match(route, /requireManagedSpot/);
   assert.match(route, /recognizeCommerceProduct/);
 });
 
-test("scanner captures canonical views, generates catalog images and preserves canonical creation", () => {
+test("product capture contract supports one front, one back and many details", () => {
+  assert.match(captureContract, /MAX_PRODUCT_DETAIL_IMAGES\s*=\s*12/);
+  assert.match(captureContract, /MAX_PRODUCT_REFERENCE_IMAGES\s*=\s*MAX_PRODUCT_DETAIL_IMAGES\s*\+\s*2/);
+  assert.match(captureContract, /orderProductCaptures/);
+  assert.match(captureContract, /Frente/);
+  assert.match(captureContract, /Atrás/);
+  assert.match(captureContract, /Detalle/);
+  assert.doesNotMatch(service, /const MAX_IMAGES\s*=\s*3/);
+  assert.doesNotMatch(productImagesRoute, /const MAX_IMAGES\s*=\s*3/);
+  assert.match(service, /counts\.front\s*!==\s*1/);
+  assert.match(service, /counts\.back\s*>\s*1/);
+  assert.match(service, /MAX_PRODUCT_DETAIL_IMAGES/);
+  assert.match(service, /orderProductCaptures/);
+  assert.match(productImagesRoute, /counts\.front\s*!==\s*1/);
+  assert.match(productImagesRoute, /counts\.back\s*>\s*1/);
+  assert.match(productImagesRoute, /MAX_PRODUCT_DETAIL_IMAGES/);
+  assert.match(productImagesRoute, /referenceOrder/);
+});
+
+test("scanner captures canonical views, multiple details and preserves canonical creation", () => {
   assert.match(dashboard, /Escanear producto con IA/);
   assert.match(dashboard, /captureProductPhoto\("Frente"\)/);
   assert.match(dashboard, /captureProductPhoto\("Atrás"\)/);
   assert.match(dashboard, /captureProductPhoto\("Detalle"\)/);
   assert.doesNotMatch(dashboard, /captureProductPhoto\("Dorso"\)/);
+  assert.match(dashboard, /getFrontCapture/);
+  assert.match(dashboard, /getBackCapture/);
+  assert.match(dashboard, /getDetailCaptures/);
+  assert.match(dashboard, /MAX_PRODUCT_DETAIL_IMAGES/);
+  assert.match(dashboard, /Detalle agregado/);
+  assert.match(dashboard, /Subir detalles/);
+  assert.match(dashboard, /Detalle \$\{index \+ 1\}/);
+  assert.doesNotMatch(dashboard, /slice\(0,\s*3\)/);
   assert.match(dashboard, /Analizar y completar datos/);
   assert.match(dashboard, /Generar imágenes del producto/);
   assert.match(dashboard, /generateProductImagesWithGemini/);
@@ -76,6 +104,8 @@ test("scanner captures canonical views, generates catalog images and preserves c
   assert.match(dashboard, /source:\s*"gemini_product_vision"/);
   assert.match(dashboard, /source_photos/);
   assert.match(dashboard, /generated_images/);
+  assert.match(dashboard, /detail_index/);
+  assert.match(dashboard, /display_label/);
   assert.match(dashboard, /cover_image/);
   assert.match(dashboard, /cover_url:\s*coverImage/);
   assert.match(scannerRoute, /upsert_commerce_scanned_product/);
@@ -83,7 +113,7 @@ test("scanner captures canonical views, generates catalog images and preserves c
   assert.match(scannerRoute, /cover_url/);
 });
 
-test("commerce product image generation reuses Gemini Image and CLOUVA storage", () => {
+test("commerce product image generation reuses Gemini Image and all CLOUVA references", () => {
   assert.match(productImagesRoute, /requireUser/);
   assert.match(productImagesRoute, /requireManagedSpot/);
   assert.match(productImagesRoute, /generateImage/);
@@ -94,4 +124,7 @@ test("commerce product image generation reuses Gemini Image and CLOUVA storage",
   assert.match(productImagesRoute, /sourcePhotos/);
   assert.match(productImagesRoute, /generatedImages/);
   assert.match(productImagesRoute, /coverImage/);
+  assert.match(productImagesRoute, /detailIndex/);
+  assert.match(productImagesRoute, /displayLabel/);
+  assert.match(productImagesRoute, /TODAS las referencias/);
 });
