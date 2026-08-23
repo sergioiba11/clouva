@@ -31,8 +31,9 @@ test("MI FLOW económico ocupa la ruta canónica y el panel anterior vive en Cen
   const creative = read("./app/mi-flow/creative/page.tsx");
   const menu = read("./app/mi-flow/menu/page.tsx");
 
-  assert.match(miFlow, /table: "flow_money_entries"/);
-  assert.match(miFlow, /title: "MI FLOW"/);
+  assert.match(miFlow, /const TABLE = "flow_money_entries"/);
+  assert.match(miFlow, /\.from\(TABLE\)/);
+  assert.match(miFlow, /<h1[^>]*>MI FLOW<\/h1>/);
   assert.match(legacyMoney, /redirect\("\/mi-flow"\)/);
   assert.match(creative, /Centro creativo/);
   assert.match(menu, /Herramientas CLOUVA/);
