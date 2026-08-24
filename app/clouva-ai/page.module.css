@@ -16,6 +16,20 @@
   overflow: hidden;
 }
 
+/* The chat shell contains three decorative absolute divs and then the real
+   workspace. Constrain the workspace grid row explicitly so its auto row can
+   never grow past the viewport and push the composer below the fold. */
+.page > section > div:has(> aside) {
+  grid-template-rows: minmax(0, 1fr);
+  min-height: 0;
+}
+
+.page > section > div:has(> aside) > div {
+  min-height: 0;
+  max-height: 100%;
+  overflow: hidden;
+}
+
 .page :global(#clouva-ai-composer) {
   position: relative;
   z-index: 2;
