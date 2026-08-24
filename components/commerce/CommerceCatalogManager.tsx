@@ -1,6 +1,6 @@
 "use client";
 
-import { Archive, LoaderCircle, X } from "lucide-react";
+import { Archive, LoaderCircle, RotateCcw, X } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
@@ -30,7 +30,7 @@ export function CommerceCatalogManager() {
   const { session } = useAuth();
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [archivingId, setArchivingId] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
   const [listings, setListings] = useState<Listing[]>([]);
   const [spotName, setSpotName] = useState("MI SPOT");
   const [error, setError] = useState<string | null>(null);
@@ -70,11 +70,11 @@ export function CommerceCatalogManager() {
   if (!active) return null;
 
   const archive = async (listing: Listing) => {
-    if (!studioId || !session?.access_token || archivingId || listing.status === "archived") return;
+    if (!studioId || !session?.access_token || busyId || listing.status === "archived") return;
     const confirmed = window.confirm(`¿Archivar “${listing.name}” del catálogo de ${spotName}?\n\nDejará de aparecer en el catálogo activo. Se conservarán el inventario y el historial de ventas.`);
     if (!confirmed) return;
 
-    setArchivingId(listing.id);
+    setBusyId(listing.id);
     setError(null);
     try {
       const response = await fetch(`/api/studios/${encodeURIComponent(studioId)}/commerce/products/archive`, {
@@ -88,11 +88,39 @@ export function CommerceCatalogManager() {
       const payload = (await response.json().catch(() => ({}))) as { error?: string };
       if (!response.ok) throw new Error(payload.error || "No se pudo archivar el producto.");
       setListings((current) => current.map((item) => item.id === listing.id ? { ...item, status: "archived" } : item));
-      setArchivingId(null);
+      setBusyId(null);
       window.dispatchEvent(new Event("clouva:commerce-product-archived"));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "No se pudo archivar el producto.");
-      setArchivingId(null);
+      setBusyId(null);
+    }
+  };
+
+  const restore = async (listing: Listing) => {
+    if (!studioId || !session?.access_token || busyId || listing.status !== "archived") return;
+    const confirmed = window.confirm(`¿Reactivar “${listing.name}” en ${spotName}?\n\nVolverá como borrador para que puedas revisarlo antes de publicarlo.`);
+    if (!confirmed) return;
+
+    setBusyId(listing.id);
+    setError(null);
+    try {
+      const response = await fetch(`/api/studios/${encodeURIComponent(studioId)}/commerce/products/restore`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ listingId: listing.id }),
+      });
+      const payload = (await response.json().catch(() => ({}))) as { error?: string; status?: string };
+      if (!response.ok) throw new Error(payload.error || "No se pudo reactivar el producto.");
+      setListings((current) => current.map((item) => item.id === listing.id ? { ...item, status: payload.status || "draft" } : item));
+      setBusyId(null);
+      window.dispatchEvent(new Event("clouva:commerce-product-restored"));
+      window.location.reload();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "No se pudo reactivar el producto.");
+      setBusyId(null);
     }
   };
 
@@ -114,7 +142,7 @@ export function CommerceCatalogManager() {
               <div>
                 <p className="text-xs uppercase tracking-[.2em] text-violet-300">Catálogo de {spotName}</p>
                 <h2 className="mt-1 text-xl font-semibold text-white">Administrar productos</h2>
-                <p className="mt-1 text-xs text-white/35">Los archivados se conservan para mantener el historial del Spot.</p>
+                <p className="mt-1 text-xs text-white/35">Los archivados se conservan para mantener el historial y se pueden reactivar como borrador.</p>
               </div>
               <button type="button" onClick={() => setOpen(false)} className="rounded-xl border border-white/10 p-2 text-white/60 hover:text-white">
                 <X className="h-5 w-5" />
@@ -130,26 +158,35 @@ export function CommerceCatalogManager() {
                   {listings.map((listing) => {
                     const archived = listing.status === "archived";
                     return (
-                      <div key={listing.id} className={`flex items-center gap-3 rounded-2xl border p-3 ${archived ? "border-white/[0.07] bg-white/[0.015] opacity-75" : "border-white/10 bg-white/[0.03]"}`}>
-                        {listing.cover_url ? <img src={listing.cover_url} alt="" className="h-14 w-14 rounded-xl object-cover" /> : <div className="h-14 w-14 rounded-xl bg-white/5" />}
+                      <div key={listing.id} className={`flex items-center gap-3 rounded-2xl border p-3 ${archived ? "border-white/[0.07] bg-white/[0.015]" : "border-white/10 bg-white/[0.03]"}`}>
+                        {listing.cover_url ? <img src={listing.cover_url} alt="" className={`h-14 w-14 rounded-xl object-cover ${archived ? "opacity-60" : ""}`} /> : <div className="h-14 w-14 rounded-xl bg-white/5" />}
                         <div className="min-w-0 flex-1">
-                          <p className="truncate font-medium text-white">{listing.name}</p>
+                          <p className={`truncate font-medium text-white ${archived ? "opacity-65" : ""}`}>{listing.name}</p>
                           <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-white/40">
                             <span>Stock {listing.stock ?? "∞"}</span>
                             <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${archived ? "border-white/10 bg-white/[0.04] text-white/45" : "border-emerald-400/20 bg-emerald-400/10 text-emerald-200"}`}>{statusLabel(listing.status)}</span>
                           </div>
                         </div>
                         {archived ? (
-                          <span className="rounded-xl border border-white/10 px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-white/35">Archivado</span>
+                          <button
+                            type="button"
+                            disabled={Boolean(busyId)}
+                            onClick={() => void restore(listing)}
+                            className="flex min-h-11 items-center gap-2 rounded-xl border border-emerald-400/25 bg-emerald-500/10 px-3 text-xs font-semibold text-emerald-200 transition hover:bg-emerald-500/20 disabled:opacity-40"
+                            aria-label={`Reactivar ${listing.name}`}
+                          >
+                            {busyId === listing.id ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+                            <span className="hidden sm:inline">Reactivar</span>
+                          </button>
                         ) : (
                           <button
                             type="button"
-                            disabled={Boolean(archivingId)}
+                            disabled={Boolean(busyId)}
                             onClick={() => void archive(listing)}
                             className="flex min-h-11 items-center gap-2 rounded-xl border border-red-400/25 bg-red-500/10 px-3 text-xs font-semibold text-red-200 transition hover:bg-red-500/20 disabled:opacity-40"
                             aria-label={`Archivar ${listing.name}`}
                           >
-                            {archivingId === listing.id ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Archive className="h-4 w-4" />}
+                            {busyId === listing.id ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Archive className="h-4 w-4" />}
                             <span className="hidden sm:inline">Archivar</span>
                           </button>
                         )}
