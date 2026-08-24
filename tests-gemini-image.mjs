@@ -22,7 +22,7 @@ function imagePayload(overrides = {}) {
   };
 }
 
-test("Gemini image generation uses Interactions and explicitly requests inline delivery", async (t) => {
+test("Gemini image generation uses the documented Interactions REST contract", async (t) => {
   const originalFetch = globalThis.fetch;
   t.after(() => { globalThis.fetch = originalFetch; });
 
@@ -48,10 +48,12 @@ test("Gemini image generation uses Interactions and explicitly requests inline d
 
   const body = JSON.parse(capturedInit.body);
   assert.equal(body.model, "gemini-3.1-flash-image");
-  assert.equal(body.input, "Plano técnico de CLOUVA");
+  assert.deepEqual(body.input, [
+    { type: "text", text: "Plano técnico de CLOUVA" },
+  ]);
   assert.deepEqual(body.response_format, {
     type: "image",
-    delivery: "inline",
+    mime_type: "image/png",
     aspect_ratio: "16:9",
     image_size: "2K",
   });
@@ -220,5 +222,6 @@ test("Gemini Interactions serializes reference images in the canonical input arr
     { type: "image", mime_type: "image/png", data: PNG_BASE64 },
   ]);
   assert.equal(capturedBody.response_format.type, "image");
-  assert.equal(capturedBody.response_format.delivery, "inline");
+  assert.equal(capturedBody.response_format.mime_type, "image/png");
+  assert.equal("delivery" in capturedBody.response_format, false);
 });
