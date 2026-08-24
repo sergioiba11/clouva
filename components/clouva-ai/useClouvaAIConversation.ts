@@ -388,8 +388,15 @@ export function useClouvaAIConversation() {
       if (conversationError) throw conversationError;
       const recent = (data ?? []) as ClouvaAIConversationSummary[];
       setConversations(recent);
-      setConversationId(null);
-      setMessages([{ role: "assistant", content: CLOUVA_AI_WELCOME }]);
+      const activeConversationId = conversationId && recent.some((item) => item.id === conversationId)
+        ? conversationId
+        : null;
+      if (activeConversationId) {
+        await loadMessages(activeConversationId);
+      } else {
+        setConversationId(null);
+        setMessages([{ role: "assistant", content: CLOUVA_AI_WELCOME }]);
+      }
     } catch (caught) {
       setConversationId(null);
       setMessages([{ role: "assistant", content: CLOUVA_AI_WELCOME }]);
