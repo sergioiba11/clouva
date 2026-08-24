@@ -1,5 +1,5 @@
 name: Deploy CLOUVA web to Cloud Run
-# Release marker: deploy catalog hand-removal fix from main.
+# Release marker: deploy catalog delete controls from main.
 
 on:
   push:
@@ -122,12 +122,6 @@ jobs:
           IMAGE: us-central1-docker.pkg.dev/${{ env.PROJECT_ID }}/clouva/clouva-web@${{ steps.image.outputs.digest }}
         run: |
           suffix="r$(date +%s)"
-          # --tag is required: Cloud Run only routes the "REVISION---SERVICE-hash"
-          # health-check URL below for revisions carrying an explicit URL tag --
-          # without it, that URL 404s at Google's frontend even though the
-          # revision itself is healthy (found the hard way: the first real run
-          # of this workflow deployed a perfectly healthy revision that got
-          # stuck at 0% traffic because of exactly this).
           gcloud run deploy "$SERVICE" \
             --project "$PROJECT_ID" \
             --region "$REGION" \
@@ -146,19 +140,11 @@ jobs:
           REVISION: ${{ steps.deploy.outputs.revision }}
           TAG: ${{ steps.deploy.outputs.tag }}
         run: |
-          # status.url is already "https://<service>-<hash>-<region>.a.run.app" --
-          # prepending "${SERVICE}-" again here used to duplicate the service
-          # name in the host and 404 at Google's frontend even though the
-          # tagged revision itself was healthy.
           tag_url="https://${TAG}---$(gcloud run services describe "$SERVICE" --project "$PROJECT_ID" --region "$REGION" --format='value(status.url)' | sed -E 's#https://##')"
           response="$(curl --fail --silent --show-error \
             --retry 10 --retry-all-errors --retry-delay 5 \
             "$tag_url/api/health" || true)"
           echo "$response"
-          # The response must travel as an argv value: piping it while the
-          # heredoc supplies the script makes the heredoc win the stdin
-          # redirect, so sys.stdin.read() always saw "" and the assertion
-          # failed on {} even when the health check itself returned 200.
           python3 - "$EXPECTED_SHA" "$response" <<'PY'
           import json, sys
           expected = sys.argv[1]
