@@ -3,6 +3,7 @@
 import { Loader2, Mic, MicOff, Radio, Volume2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
+import { CLOUVA_AI_START_VOICE_EVENT } from "@/lib/clouva-ai/engine-router";
 import styles from "./ClouvaAIVoiceControls.module.css";
 
 const LIVE_WS_ENDPOINT = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained";
@@ -138,10 +139,7 @@ export function ClouvaAIVoiceControls({ conversationId, disabled = false, onConv
   const finalizeTimerRef = useRef<number | null>(null);
   const reconnectAttemptsRef = useRef(0);
   const reconnectTimerRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    currentConversationRef.current = conversationId;
-  }, [conversationId]);
+  const startHandlerRef = useRef<() => void>(() => undefined);
 
   function updateState(next: ClouvaAIVoiceState) {
     setVoiceState(next);
@@ -277,12 +275,7 @@ export function ClouvaAIVoiceControls({ conversationId, disabled = false, onConv
         }),
       });
       await readApiJson<{ ok: true }>(response);
-      onTurn?.({
-        conversationId: activeConversationId,
-        userText,
-        assistantText,
-        model: modelRef.current,
-      });
+      onTurn?.({ conversationId: activeConversationId, userText, assistantText, model: modelRef.current });
     } catch (error) {
       const message = error instanceof Error ? error.message : "No se pudo guardar la transcripción de voz.";
       onError?.(message);
@@ -340,9 +333,7 @@ export function ClouvaAIVoiceControls({ conversationId, disabled = false, onConv
       }
     }
 
-    if (message.goAway || message.go_away) {
-      socketRef.current?.close(1012, "Gemini Live pidió reconexión");
-    }
+    if (message.goAway || message.go_away) socketRef.current?.close(1012, "Gemini Live pidió reconexión");
   }
 
   async function provisionAndConnect(requestedConversationId: string | null) {
@@ -376,7 +367,7 @@ export function ClouvaAIVoiceControls({ conversationId, disabled = false, onConv
       if (typeof event.data === "string") handleServerMessage(event.data);
     };
     socket.onerror = () => {
-      if (activeRef.current) updateState("error");
+      if (activeRef.current) updateState("connecting");
     };
     socket.onclose = () => {
       readyRef.current = false;
@@ -397,6 +388,16 @@ export function ClouvaAIVoiceControls({ conversationId, disabled = false, onConv
 
   function fail(error: unknown) {
     const message = error instanceof Error ? error.message : "No se pudo usar la voz en tiempo real.";
+    manualCloseRef.current = true;
+    activeRef.current = false;
+    readyRef.current = false;
+    clearReconnectTimer();
+    clearFinalizeTimer();
+    stopMicrophone();
+    stopPlayback();
+    const socket = socketRef.current;
+    socketRef.current = null;
+    if (socket && socket.readyState < WebSocket.CLOSING) socket.close(1011, "CLOUVA voice error");
     updateState("error");
     onError?.(message);
   }
@@ -421,7 +422,6 @@ export function ClouvaAIVoiceControls({ conversationId, disabled = false, onConv
       if (outputContext.state === "suspended") await outputContext.resume();
       await provisionAndConnect(conversationId);
     } catch (error) {
-      activeRef.current = false;
       fail(error);
     }
   }
@@ -448,6 +448,26 @@ export function ClouvaAIVoiceControls({ conversationId, disabled = false, onConv
     updateState("idle");
   }
 
+  startHandlerRef.current = () => {
+    if (!activeRef.current) void start();
+  };
+
+  useEffect(() => {
+    const handler = () => startHandlerRef.current();
+    window.addEventListener(CLOUVA_AI_START_VOICE_EVENT, handler);
+    return () => window.removeEventListener(CLOUVA_AI_START_VOICE_EVENT, handler);
+  }, []);
+
+  useEffect(() => {
+    if (activeRef.current && conversationId !== currentConversationRef.current) {
+      void stop();
+      return;
+    }
+    currentConversationRef.current = conversationId;
+    // stop is intentionally driven only by an external conversation switch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationId]);
+
   useEffect(() => () => {
     manualCloseRef.current = true;
     activeRef.current = false;
@@ -465,7 +485,7 @@ export function ClouvaAIVoiceControls({ conversationId, disabled = false, onConv
   const active = voiceState !== "idle" && voiceState !== "error";
 
   return (
-    <div className={`${styles.voiceControl} ${styles[voiceState]}`}>
+    <span className={`${styles.voiceControl} ${styles[voiceState]}`}>
       <button
         type="button"
         className={styles.voiceButton}
@@ -483,6 +503,6 @@ export function ClouvaAIVoiceControls({ conversationId, disabled = false, onConv
           {statusCopy(voiceState)}
         </span>
       ) : null}
-    </div>
+    </span>
   );
 }
