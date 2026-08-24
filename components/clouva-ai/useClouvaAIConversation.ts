@@ -11,9 +11,13 @@ import {
 } from "@/lib/clouva-ai/project-access";
 import {
   buildImageGenerationRequest,
-  parseImageGenerationIntent,
   type ImageGenerationIntent,
 } from "@/lib/clouva-ai/image-generation-intent";
+import {
+  CLOUVA_AI_START_VOICE_EVENT,
+  routeClouvaIntent,
+} from "@/lib/clouva-ai/engine-router";
+import type { VideoGenerationIntent } from "@/lib/clouva-ai/video-generation-intent";
 import {
   buildRetryImageRequest,
   CLOUVA_AI_RETRY_IMAGE_EVENT,
@@ -21,19 +25,28 @@ import {
   shouldAutoRetryImageGeneration,
   type RetryableImageRequest,
 } from "@/lib/clouva-ai/image-generation-retry";
-import { createImageJob, waitForMediaJob } from "@/lib/media-generation-client";
-import type { ImageAspectRatio, ImageQuality } from "@/lib/media-generation-config";
+import { createImageJob, createVideoJob, waitForMediaJob } from "@/lib/media-generation-client";
+import {
+  estimateVideoCostUsd,
+  type ImageAspectRatio,
+  type ImageQuality,
+  type VideoAspectRatio,
+  type VideoDuration,
+  type VideoQuality,
+} from "@/lib/media-generation-config";
 import type { MediaJob, MediaStatus } from "@/components/media-creator/types";
 import { supabase } from "@/lib/supabase";
 
 export type ClouvaAIMediaAttachment = {
   requestId: string;
   jobId: string | null;
-  type: "image";
+  type: "image" | "video";
   status: "preparing" | MediaStatus;
   prompt: string;
-  aspectRatio: ImageAspectRatio;
-  quality: ImageQuality;
+  aspectRatio: ImageAspectRatio | VideoAspectRatio;
+  quality: ImageQuality | VideoQuality;
+  durationSeconds?: VideoDuration | null;
+  estimatedCostUsd?: number | null;
   outputUrl: string | null;
   error: string | null;
   technicalError?: string | null;
@@ -98,6 +111,11 @@ type ClouvaAIImageGenerationRequest = ImageGenerationIntent & {
   referenceStoragePath?: string | null;
 };
 
+type ClouvaAIVideoGenerationRequest = VideoGenerationIntent & {
+  referenceUrl?: string | null;
+  referenceStoragePath?: string | null;
+};
+
 export const CLOUVA_AI_WELCOME =
   "Soy Trébol — CLOUVA AI. Proyecto queda listo para investigar el repositorio real mientras tu sesión autorizada siga activa.";
 
@@ -113,7 +131,7 @@ function restoredMediaAttachment(metadata?: Record<string, unknown> | null) {
   const candidate = metadata?.mediaJob;
   if (!candidate || typeof candidate !== "object") return undefined;
   const media = candidate as Partial<ClouvaAIMediaAttachment>;
-  if (media.type !== "image" || typeof media.requestId !== "string" || typeof media.prompt !== "string") return undefined;
+  if ((media.type !== "image" && media.type !== "video") || typeof media.requestId !== "string" || typeof media.prompt !== "string") return undefined;
   return media as ClouvaAIMediaAttachment;
 }
 
@@ -127,7 +145,7 @@ function deduplicate(messages: StoredMessage[]) {
   });
 }
 
-function attachmentFromJob(
+function imageAttachmentFromJob(
   requestId: string,
   job: MediaJob,
   request: ClouvaAIImageGenerationRequest,
@@ -151,7 +169,7 @@ function attachmentFromJob(
   };
 }
 
-function pendingAttachment(requestId: string, request: ClouvaAIImageGenerationRequest, autoRetryCount = 0): ClouvaAIMediaAttachment {
+function pendingImageAttachment(requestId: string, request: ClouvaAIImageGenerationRequest, autoRetryCount = 0): ClouvaAIMediaAttachment {
   return {
     requestId,
     jobId: null,
@@ -169,7 +187,7 @@ function pendingAttachment(requestId: string, request: ClouvaAIImageGenerationRe
   };
 }
 
-function failedAttachment(
+function failedImageAttachment(
   base: ClouvaAIMediaAttachment,
   failure: string,
   autoRetryCount: number,
@@ -182,6 +200,52 @@ function failedAttachment(
     technicalError: copy.detail,
     autoRetryCount,
   };
+}
+
+function videoAttachmentFromJob(
+  requestId: string,
+  job: MediaJob,
+  request: ClouvaAIVideoGenerationRequest,
+): ClouvaAIMediaAttachment {
+  return {
+    requestId,
+    jobId: job.id,
+    type: "video",
+    status: job.status,
+    prompt: job.prompt,
+    aspectRatio: job.aspectRatio as VideoAspectRatio,
+    quality: job.quality as VideoQuality,
+    durationSeconds: (job.durationSeconds ?? request.durationSeconds) as VideoDuration,
+    estimatedCostUsd: job.estimatedCostUsd ?? estimateVideoCostUsd(request.quality, request.durationSeconds),
+    outputUrl: job.outputUrl,
+    error: job.error ?? null,
+    technicalError: job.error ?? null,
+    referenceUrl: job.referenceUrl ?? request.referenceUrl ?? null,
+    referenceStoragePath: request.referenceStoragePath ?? null,
+  };
+}
+
+function pendingVideoAttachment(requestId: string, request: ClouvaAIVideoGenerationRequest): ClouvaAIMediaAttachment {
+  return {
+    requestId,
+    jobId: null,
+    type: "video",
+    status: "preparing",
+    prompt: request.prompt,
+    aspectRatio: request.aspectRatio,
+    quality: request.quality,
+    durationSeconds: request.durationSeconds,
+    estimatedCostUsd: estimateVideoCostUsd(request.quality, request.durationSeconds),
+    outputUrl: null,
+    error: null,
+    technicalError: null,
+    referenceUrl: request.referenceUrl ?? null,
+    referenceStoragePath: request.referenceStoragePath ?? null,
+  };
+}
+
+function failedVideoAttachment(base: ClouvaAIMediaAttachment, failure: string): ClouvaAIMediaAttachment {
+  return { ...base, status: "failed", error: failure, technicalError: failure };
 }
 
 function isTerminalFailure(status: ClouvaAIMediaAttachment["status"]) {
@@ -324,8 +388,15 @@ export function useClouvaAIConversation() {
       if (conversationError) throw conversationError;
       const recent = (data ?? []) as ClouvaAIConversationSummary[];
       setConversations(recent);
-      setConversationId(null);
-      setMessages([{ role: "assistant", content: CLOUVA_AI_WELCOME }]);
+      const activeConversationId = conversationId && recent.some((item) => item.id === conversationId)
+        ? conversationId
+        : null;
+      if (activeConversationId) {
+        await loadMessages(activeConversationId);
+      } else {
+        setConversationId(null);
+        setMessages([{ role: "assistant", content: CLOUVA_AI_WELCOME }]);
+      }
     } catch (caught) {
       setConversationId(null);
       setMessages([{ role: "assistant", content: CLOUVA_AI_WELCOME }]);
@@ -391,27 +462,27 @@ export function useClouvaAIConversation() {
           referenceStoragePath: request.referenceStoragePath ?? null,
         });
         let job = created.job;
-        replaceMediaAttachment(requestId, attachmentFromJob(requestId, job, request, autoRetryCount));
+        replaceMediaAttachment(requestId, imageAttachmentFromJob(requestId, job, request, autoRetryCount));
 
         job = await waitForMediaJob(job, {
-          onUpdate: (updated) => replaceMediaAttachment(requestId, attachmentFromJob(requestId, updated, request, autoRetryCount)),
+          onUpdate: (updated) => replaceMediaAttachment(requestId, imageAttachmentFromJob(requestId, updated, request, autoRetryCount)),
         });
 
         if (isTerminalFailure(job.status) && shouldAutoRetryImageGeneration(job.error, autoRetryCount)) {
           autoRetryCount += 1;
-          replaceMediaAttachment(requestId, pendingAttachment(requestId, request, autoRetryCount));
+          replaceMediaAttachment(requestId, pendingImageAttachment(requestId, request, autoRetryCount));
           continue;
         }
 
-        return attachmentFromJob(requestId, job, request, autoRetryCount);
+        return imageAttachmentFromJob(requestId, job, request, autoRetryCount);
       } catch (caught) {
         const failure = caught instanceof Error ? caught.message : "No se pudo generar la imagen.";
         if (shouldAutoRetryImageGeneration(failure, autoRetryCount)) {
           autoRetryCount += 1;
-          replaceMediaAttachment(requestId, pendingAttachment(requestId, request, autoRetryCount));
+          replaceMediaAttachment(requestId, pendingImageAttachment(requestId, request, autoRetryCount));
           continue;
         }
-        return failedAttachment(baseMedia, failure, autoRetryCount);
+        return failedImageAttachment(baseMedia, failure, autoRetryCount);
       }
     }
   }
@@ -426,7 +497,7 @@ export function useClouvaAIConversation() {
 
     const requestId = crypto.randomUUID();
     const assistantText = "Listo. Voy a crear una imagen con este concepto.";
-    const pendingMedia = pendingAttachment(requestId, request);
+    const pendingMedia = pendingImageAttachment(requestId, request);
 
     setInput("");
     setError(null);
@@ -464,7 +535,7 @@ export function useClouvaAIConversation() {
       }
     } catch (caught) {
       const failure = caught instanceof Error ? caught.message : "No se pudo generar la imagen.";
-      const failedMedia = failedAttachment(pendingMedia, failure, pendingMedia.autoRetryCount ?? 0);
+      const failedMedia = failedImageAttachment(pendingMedia, failure, pendingMedia.autoRetryCount ?? 0);
       replaceMediaAttachment(requestId, failedMedia);
       setError(failedMedia.error);
       if (activeConversationId && userId) {
@@ -484,12 +555,101 @@ export function useClouvaAIConversation() {
     }
   }
 
+  async function runVideoGeneration(message: string, request: ClouvaAIVideoGenerationRequest) {
+    if (loading || applying || mediaGenerating) return;
+    const cleanMessage = message.trim();
+    if (!cleanMessage) {
+      setError("Escribí primero lo que querés crear.");
+      return;
+    }
+
+    const estimatedCostUsd = estimateVideoCostUsd(request.quality, request.durationSeconds);
+    const confirmed = window.confirm(
+      `Generar este video de ${request.durationSeconds} s con Veo tiene un costo estimado de USD ${estimatedCostUsd.toFixed(2)}. ¿Querés continuar?`,
+    );
+    if (!confirmed) return;
+
+    const requestId = crypto.randomUUID();
+    const assistantText = "Listo. Voy a crear el video con Veo y te lo devuelvo acá mismo.";
+    const pendingMedia = pendingVideoAttachment(requestId, request);
+
+    setInput("");
+    setError(null);
+    setPendingAction(null);
+    setMediaGenerating(true);
+    setMessages((current) => [
+      ...current,
+      { role: "user", content: cleanMessage },
+      { role: "assistant", content: assistantText, mediaJob: pendingMedia },
+    ]);
+
+    let activeConversationId: string | null = null;
+    let userId: string | null = null;
+    try {
+      const session = await getSession();
+      userId = session.user.id;
+      activeConversationId = await ensureConversation(session.user.id, cleanMessage);
+      await saveMessage(activeConversationId, session.user.id, "user", cleanMessage, {
+        provider: "clouva-media",
+        mode: "chat",
+        action: "generate_video",
+        estimatedCostUsd,
+      });
+
+      const created = await createVideoJob({
+        prompt: request.prompt,
+        aspectRatio: request.aspectRatio,
+        quality: request.quality,
+        durationSeconds: request.durationSeconds,
+        referenceUrl: request.referenceUrl ?? null,
+        referenceStoragePath: request.referenceStoragePath ?? null,
+        confirmedCostUsd: estimatedCostUsd,
+      });
+      let job = created.job;
+      replaceMediaAttachment(requestId, videoAttachmentFromJob(requestId, job, request));
+      job = await waitForMediaJob(job, {
+        intervalMs: 5_000,
+        timeoutMs: 12 * 60_000,
+        onUpdate: (updated) => replaceMediaAttachment(requestId, videoAttachmentFromJob(requestId, updated, request)),
+      });
+
+      const finalMedia = videoAttachmentFromJob(requestId, job, request);
+      replaceMediaAttachment(requestId, finalMedia);
+      await saveMessage(activeConversationId, session.user.id, "assistant", assistantText, {
+        provider: "clouva-media",
+        mode: "chat",
+        action: "generate_video",
+        mediaJob: finalMedia,
+      });
+      if (isTerminalFailure(finalMedia.status)) setError(finalMedia.error || "El video no pudo completarse.");
+    } catch (caught) {
+      const failure = caught instanceof Error ? caught.message : "No se pudo generar el video.";
+      const failedMedia = failedVideoAttachment(pendingMedia, failure);
+      replaceMediaAttachment(requestId, failedMedia);
+      setError(failure);
+      if (activeConversationId && userId) {
+        try {
+          await saveMessage(activeConversationId, userId, "assistant", assistantText, {
+            provider: "clouva-media",
+            mode: "chat",
+            action: "generate_video",
+            mediaJob: failedMedia,
+          });
+        } catch {
+          // Keep the live failed card even if persistence is unavailable.
+        }
+      }
+    } finally {
+      setMediaGenerating(false);
+    }
+  }
+
   async function retryImageGeneration(request: RetryableImageRequest) {
     if (loading || applying || mediaGenerating) return;
     const normalized = buildRetryImageRequest(request) as ClouvaAIImageGenerationRequest;
     const requestId = crypto.randomUUID();
     const assistantText = "Reintentando la generación con el mismo concepto.";
-    const pendingMedia = pendingAttachment(requestId, normalized);
+    const pendingMedia = pendingImageAttachment(requestId, normalized);
 
     setError(null);
     setPendingAction(null);
@@ -513,7 +673,7 @@ export function useClouvaAIConversation() {
       }
     } catch (caught) {
       const failure = caught instanceof Error ? caught.message : "No se pudo reintentar la imagen.";
-      const failedMedia = failedAttachment(pendingMedia, failure, pendingMedia.autoRetryCount ?? 0);
+      const failedMedia = failedImageAttachment(pendingMedia, failure, pendingMedia.autoRetryCount ?? 0);
       replaceMediaAttachment(requestId, failedMedia);
       setError(failedMedia.error);
     } finally {
@@ -540,11 +700,25 @@ export function useClouvaAIConversation() {
     if (!message || loading || applying || mediaGenerating) return;
 
     if (mode === "chat") {
-      const imageIntent = parseImageGenerationIntent(message);
-      if (imageIntent) {
-        await runImageGeneration(message, imageIntent);
+      const intent = routeClouvaIntent(message);
+      console.info("AI_INTENT_DETECTED", { engine: intent.engine, action: intent.action, confidence: intent.confidence });
+      if (intent.engine === "image") {
+        console.info("AI_ENGINE_SELECTED", { engine: "image" });
+        await runImageGeneration(message, intent.payload);
         return;
       }
+      if (intent.engine === "video") {
+        console.info("AI_ENGINE_SELECTED", { engine: "video" });
+        await runVideoGeneration(message, intent.payload);
+        return;
+      }
+      if (intent.engine === "voice") {
+        console.info("AI_ENGINE_SELECTED", { engine: "voice" });
+        setInput("");
+        window.dispatchEvent(new Event(CLOUVA_AI_START_VOICE_EVENT));
+        return;
+      }
+      console.info("AI_ENGINE_SELECTED", { engine: "text" });
     }
 
     const previousMessages = messages;

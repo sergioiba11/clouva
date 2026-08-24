@@ -120,7 +120,8 @@
   background: #09070d;
 }
 
-.media img {
+.media img,
+.media video {
   display: block;
   width: 100%;
   max-height: min(520px, 56dvh);
