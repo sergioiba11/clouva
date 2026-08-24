@@ -10,8 +10,8 @@ test("Inicio abre un menú de cuenta compartido y separa MI FLOW de MI SPOT", ()
   const layout = read("./components/layout.tsx");
   const menu = read("./components/account/AccountMenu.tsx");
 
-  assert.match(home, /<AccountMenu variant="home"/);
-  assert.match(mobileHome, /<AccountMenu variant="home"/);
+  assert.match(home, /<AccountMenu\s+variant="home"/);
+  assert.match(mobileHome, /<AccountMenu\s+variant="home"/);
   assert.match(layout, /<AccountMenu \/>/);
   assert.match(menu, /aria-expanded=\{openMenu\}/);
   assert.match(menu, /event\.key === "Escape"/);
