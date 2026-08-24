@@ -23,7 +23,7 @@ import { useAuth } from "@/components/auth-provider";
 import { useCurrentPlayer } from "@/components/current-player-provider";
 import { AccountMenu } from "@/components/account/AccountMenu";
 import { SpotifyHomeConnectAction } from "@/components/music/SpotifyHomeConnectAction";
-import { resolveAccountDisplayName } from "@/lib/identity-names";
+import { resolveAccountDisplayName, resolveCurrentPlayerStatus } from "@/lib/identity-names";
 import {
   configCssVariables,
   DEFAULT_MOBILE_HOME_CONFIG,
@@ -82,6 +82,9 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
     || profile?.avatar_url
     || null;
   const profileFallback = useMemo(() => initials(accountName) || "C", [accountName]);
+  const publicProfileHref = resolveCurrentPlayerStatus(currentPlayer) === "published" && currentPlayer
+    ? `/${encodeURIComponent(currentPlayer.slug)}`
+    : "/mi-flow";
   const cssVariables = useMemo(
     () => ({ ...configCssVariables(config), backgroundColor: config.theme.backgroundColor }) as CSSProperties,
     [config],
@@ -235,12 +238,16 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
             <Bell size={24} />
             {config.header.showNotificationDot ? <span aria-hidden="true" /> : null}
           </button>
-          {config.header.showBrandAvatar ? (
+          {!previewMode ? (
+            <AccountMenu
+              variant="home"
+              triggerImageUrl={config.header.showBrandAvatar ? config.header.brandAvatarUrl : undefined}
+            />
+          ) : config.header.showBrandAvatar ? (
             <span className={styles.brandAvatar} aria-hidden="true">
               <img src={config.header.brandAvatarUrl} alt="" />
             </span>
           ) : null}
-          {!previewMode ? <AccountMenu variant="home" /> : null}
         </div>
       </header>
 
@@ -263,7 +270,7 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
           <ShoppingBag size={23} />
           <span>{config.navigation.marketplaceLabel}</span>
         </Link>
-        <Link href="/perfil" className={styles.profileNav} aria-label="Abrir mi Player" onClick={preventPreviewNavigation}>
+        <Link href={publicProfileHref} className={styles.profileNav} aria-label="Abrir mi Player" onClick={preventPreviewNavigation}>
           {playerImage ? <img src={String(playerImage)} alt="" /> : <b>{profileFallback}</b>}
         </Link>
       </nav>
