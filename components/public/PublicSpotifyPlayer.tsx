@@ -3,11 +3,10 @@
 import { ExternalLink, Heart, Loader2, Music2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
+import { authenticatedFetch } from "@/lib/authenticated-fetch";
 
 type SpotifyPlaybackEvent = {
-  data?: {
-    playingURI?: string;
-  };
+  data?: { playingURI?: string };
 };
 
 type SpotifyEmbedController = {
@@ -115,9 +114,13 @@ export function PublicSpotifyPlayer({ spotifyUrl, artistName }: { spotifyUrl: st
     if (!currentUri || !user) return () => { cancelled = true; };
 
     void (async () => {
-      const response = await fetch(`/api/integrations/spotify/library?uri=${encodeURIComponent(currentUri)}`, { cache: "no-store" });
-      const payload = await readPayload(response);
-      if (!cancelled && response.ok) setSaved(payload.saved === true);
+      try {
+        const response = await authenticatedFetch(`/api/integrations/spotify/library?uri=${encodeURIComponent(currentUri)}`, { cache: "no-store" });
+        const payload = await readPayload(response);
+        if (!cancelled && response.ok) setSaved(payload.saved === true);
+      } catch {
+        if (!cancelled) setSaved(null);
+      }
     })();
 
     return () => {
@@ -127,9 +130,8 @@ export function PublicSpotifyPlayer({ spotifyUrl, artistName }: { spotifyUrl: st
 
   const connectAndSave = async (uri: string) => {
     const returnPath = `${window.location.pathname}${window.location.search}#musica`;
-    const response = await fetch("/api/integrations/spotify/connect", {
+    const response = await authenticatedFetch("/api/integrations/spotify/connect", {
       method: "POST",
-      headers: { "content-type": "application/json" },
       body: JSON.stringify({
         returnPath,
         pendingAction: { type: "save_track", uri },
@@ -157,9 +159,8 @@ export function PublicSpotifyPlayer({ spotifyUrl, artistName }: { spotifyUrl: st
     setSaving(true);
     setStatusMessage(null);
     try {
-      const response = await fetch("/api/integrations/spotify/library", {
+      const response = await authenticatedFetch("/api/integrations/spotify/library", {
         method: saved ? "DELETE" : "PUT",
-        headers: { "content-type": "application/json" },
         body: JSON.stringify({ uri: currentUri }),
       });
       const payload = await readPayload(response);
@@ -176,8 +177,10 @@ export function PublicSpotifyPlayer({ spotifyUrl, artistName }: { spotifyUrl: st
         return;
       }
       setStatusMessage(messageForCode(payload.code));
-    } catch {
-      setStatusMessage("No pude conectar con Spotify. Probá de nuevo.");
+    } catch (error) {
+      setStatusMessage(error instanceof Error && /sesión requerida/i.test(error.message)
+        ? "Iniciá sesión en CLOUVA para guardar este tema en tu Spotify."
+        : "No pude conectar con Spotify. Probá de nuevo.");
     } finally {
       setSaving(false);
     }
@@ -189,18 +192,11 @@ export function PublicSpotifyPlayer({ spotifyUrl, artistName }: { spotifyUrl: st
         <div className="overflow-hidden rounded-[1.6rem] border border-white/10 bg-[#0b0a12]/92 shadow-2xl">
           <div className="flex flex-col gap-4 border-b border-white/10 p-5 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <p className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-violet-300/75">
-                <Music2 size={14} /> Música en CLOUVA
-              </p>
+              <p className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-violet-300/75"><Music2 size={14} /> Música en CLOUVA</p>
               <h2 className="mt-2 text-2xl font-black tracking-[-0.03em]">Escuchá a {artistName}</h2>
               <p className="mt-1 text-xs text-white/45">Reproducí sin salir del perfil. Cuando suene un tema, podés guardarlo en tu propia cuenta de Spotify.</p>
             </div>
-            <a
-              href={spotifyUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex shrink-0 items-center gap-2 rounded-full border border-white/12 bg-white/[0.04] px-4 py-2 text-xs font-semibold text-white/75 transition hover:border-[#1DB954]/50 hover:text-white"
-            >
+            <a href={spotifyUrl} target="_blank" rel="noreferrer" className="inline-flex shrink-0 items-center gap-2 rounded-full border border-white/12 bg-white/[0.04] px-4 py-2 text-xs font-semibold text-white/75 transition hover:border-[#1DB954]/50 hover:text-white">
               Abrir Spotify <ExternalLink size={13} />
             </a>
           </div>
@@ -214,18 +210,10 @@ export function PublicSpotifyPlayer({ spotifyUrl, artistName }: { spotifyUrl: st
             <aside className="flex min-h-40 flex-col justify-between rounded-2xl border border-white/10 bg-white/[0.025] p-4">
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/35">Me gusta</p>
-                <p className="mt-2 text-sm leading-5 text-white/65">
-                  {currentUri ? "Este corazón guarda el tema que está sonando en la biblioteca de Spotify del visitante." : "Poné un tema en el reproductor para activar el corazón."}
-                </p>
+                <p className="mt-2 text-sm leading-5 text-white/65">{currentUri ? "Este corazón guarda el tema que está sonando en la biblioteca de Spotify del visitante." : "Poné un tema en el reproductor para activar el corazón."}</p>
               </div>
-
               <div className="mt-6">
-                <button
-                  type="button"
-                  onClick={toggleSaved}
-                  disabled={saving}
-                  className={`inline-flex w-full items-center justify-center gap-2 rounded-full px-4 py-3 text-sm font-bold transition disabled:cursor-wait disabled:opacity-60 ${saved ? "bg-[#1DB954] text-black hover:bg-[#28d867]" : "border border-white/15 bg-white/[0.05] text-white hover:border-violet-400/55 hover:bg-violet-500/10"}`}
-                >
+                <button type="button" onClick={toggleSaved} disabled={saving} className={`inline-flex w-full items-center justify-center gap-2 rounded-full px-4 py-3 text-sm font-bold transition disabled:cursor-wait disabled:opacity-60 ${saved ? "bg-[#1DB954] text-black hover:bg-[#28d867]" : "border border-white/15 bg-white/[0.05] text-white hover:border-violet-400/55 hover:bg-violet-500/10"}`}>
                   {saving ? <Loader2 size={17} className="animate-spin" /> : <Heart size={17} fill={saved ? "currentColor" : "none"} />}
                   {saved ? "Guardado en Spotify" : "Me gusta / Guardar"}
                 </button>
