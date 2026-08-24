@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { ExternalLink, Heart, Loader2, Music2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
@@ -218,7 +219,7 @@ export function PublicSpotifyPlayer({ spotifyUrl, artistName }: { spotifyUrl: st
                   {saved ? "Guardado en Spotify" : "Me gusta / Guardar"}
                 </button>
                 {statusMessage ? <p className="mt-3 text-center text-[11px] leading-4 text-white/50">{statusMessage}</p> : null}
-                {!user ? <a href="/login" className="mt-3 block text-center text-[11px] font-semibold text-violet-300 hover:text-violet-200">Entrar a CLOUVA</a> : null}
+                {!user ? <Link href="/login" className="mt-3 block text-center text-[11px] font-semibold text-violet-300 hover:text-violet-200">Entrar a CLOUVA</Link> : null}
               </div>
             </aside>
           </div>
