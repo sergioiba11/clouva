@@ -1,6 +1,12 @@
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
 import type { MediaJob } from "@/components/media-creator/types";
-import type { ImageAspectRatio, ImageQuality } from "@/lib/media-generation-config";
+import type {
+  ImageAspectRatio,
+  ImageQuality,
+  VideoAspectRatio,
+  VideoDuration,
+  VideoQuality,
+} from "@/lib/media-generation-config";
 
 export const ACTIVE_MEDIA_STATUSES = new Set<MediaJob["status"]>(["queued", "generating", "processing", "saving"]);
 
@@ -10,6 +16,16 @@ export type CreateImageJobInput = {
   quality?: ImageQuality;
   referenceUrl?: string | null;
   referenceStoragePath?: string | null;
+};
+
+export type CreateVideoJobInput = {
+  prompt: string;
+  aspectRatio?: VideoAspectRatio;
+  quality?: VideoQuality;
+  durationSeconds?: VideoDuration;
+  referenceUrl?: string | null;
+  referenceStoragePath?: string | null;
+  confirmedCostUsd: number;
 };
 
 export async function createImageJob(input: CreateImageJobInput) {
@@ -24,6 +40,25 @@ export async function createImageJob(input: CreateImageJobInput) {
       referenceUrl: input.referenceUrl ?? null,
       referenceStoragePath: input.referenceStoragePath ?? null,
       idempotencyKey: crypto.randomUUID().replaceAll("-", ""),
+    }),
+  });
+  return readApiJson<{ job: MediaJob; reused?: boolean }>(response);
+}
+
+export async function createVideoJob(input: CreateVideoJobInput) {
+  const response = await authenticatedFetch("/api/media/generate", {
+    method: "POST",
+    body: JSON.stringify({
+      type: "video",
+      sourceMode: input.referenceUrl ? "reference" : "text",
+      prompt: input.prompt,
+      quality: input.quality ?? "fast",
+      aspectRatio: input.aspectRatio ?? "16:9",
+      durationSeconds: input.durationSeconds ?? 8,
+      referenceUrl: input.referenceUrl ?? null,
+      referenceStoragePath: input.referenceStoragePath ?? null,
+      idempotencyKey: crypto.randomUUID().replaceAll("-", ""),
+      confirmedCostUsd: input.confirmedCostUsd,
     }),
   });
   return readApiJson<{ job: MediaJob; reused?: boolean }>(response);
