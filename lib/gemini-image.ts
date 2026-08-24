@@ -1,4 +1,3 @@
-const ENDPOINT = "https://generativelanguage.googleapis.com/v1/models";
 const INTERACTIONS_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/interactions";
 
 export type GeminiImageModel = "gemini-3.1-flash-lite-image" | "gemini-3.1-flash-image" | "gemini-3-pro-image";
@@ -62,7 +61,7 @@ type InteractionResponse = {
     completion_tokens?: number;
     total_tokens?: number;
   };
-  error?: { message?: string; code?: number };
+  error?: { message?: string; code?: number; status?: string };
 };
 
 function interactionToImage(data: InteractionResponse): GeneratedImage {
@@ -73,7 +72,13 @@ function interactionToImage(data: InteractionResponse): GeneratedImage {
   ];
   const image = content.find((item) => item.type === "image" && item.data);
   const text = data.output_text?.trim() || content.find((item) => item.type === "text" && item.text?.trim())?.text?.trim() || null;
-  if (!image?.data) throw new GeminiImageError("Gemini terminó sin devolver una imagen.", 502);
+  if (!image?.data) {
+    const status = data.status?.trim();
+    throw new GeminiImageError(
+      status ? `Gemini terminó sin devolver una imagen (status ${status}).` : "Gemini terminó sin devolver una imagen.",
+      502,
+    );
+  }
 
   return {
     bytes: Buffer.from(image.data, "base64"),
@@ -107,27 +112,33 @@ export async function getStoredGeneratedImage(args: { apiKey: string; interactio
 
 export async function generateImage(args: GenerateImageArgs): Promise<GeneratedImage> {
   const model = args.model ?? "gemini-3.1-flash-image";
-  const parts: Array<Record<string, unknown>> = [{ text: args.prompt }];
-  for (const ref of args.referenceImages ?? []) {
-    parts.push({ inlineData: { mimeType: ref.mimeType, data: ref.data } });
-  }
+  const referenceImages = args.referenceImages ?? [];
+  const input: string | InteractionContent[] = referenceImages.length
+    ? [
+        { type: "text", text: args.prompt },
+        ...referenceImages.map((ref) => ({
+          type: "image",
+          mime_type: ref.mimeType,
+          data: ref.data,
+        })),
+      ]
+    : args.prompt;
 
   let response: Response;
   try {
-    response = await fetch(`${ENDPOINT}/${encodeURIComponent(model)}:generateContent`, {
+    response = await fetch(INTERACTIONS_ENDPOINT, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "x-goog-api-key": args.apiKey,
       },
       body: JSON.stringify({
-        contents: [{ role: "user", parts }],
-        generationConfig: {
-          responseModalities: ["TEXT", "IMAGE"],
-          imageConfig: {
-            aspectRatio: args.aspectRatio ?? "1:1",
-            ...(args.imageSize ? { imageSize: args.imageSize } : {}),
-          },
+        model,
+        input,
+        response_format: {
+          type: "image",
+          aspect_ratio: args.aspectRatio ?? "1:1",
+          ...(args.imageSize ? { image_size: args.imageSize } : {}),
         },
       }),
       cache: "no-store",
@@ -139,21 +150,9 @@ export async function generateImage(args: GenerateImageArgs): Promise<GeneratedI
   }
 
   const raw = await response.text();
-  let data: {
-    candidates?: Array<{
-      content?: { parts?: Array<{ text?: string; inlineData?: { mimeType?: string; data?: string }; inline_data?: { mime_type?: string; data?: string } }> };
-      finishReason?: string;
-    }>;
-    usageMetadata?: {
-      promptTokenCount?: number;
-      candidatesTokenCount?: number;
-      thoughtsTokenCount?: number;
-      totalTokenCount?: number;
-    };
-    error?: { message?: string; status?: string; code?: number };
-  } = {};
+  let data: InteractionResponse = {};
   try {
-    data = raw ? JSON.parse(raw) : {};
+    data = raw ? JSON.parse(raw) as InteractionResponse : {};
   } catch {
     throw new GeminiImageError(`Gemini devolvió una respuesta inválida (HTTP ${response.status}).`, response.ok ? 502 : response.status);
   }
@@ -164,26 +163,9 @@ export async function generateImage(args: GenerateImageArgs): Promise<GeneratedI
     throw new GeminiImageError(providerMessage ? `${providerMessage}${suffix}` : `Gemini respondió HTTP ${response.status}`, response.status);
   }
 
-  const responseParts = data.candidates?.[0]?.content?.parts ?? [];
-  const imagePart = responseParts.find((part) => part.inlineData?.data || part.inline_data?.data);
-  const textPart = responseParts.find((part) => typeof part.text === "string" && part.text.trim());
-  const inlineData = imagePart?.inlineData;
-  const legacyInlineData = imagePart?.inline_data;
-  const imageData = inlineData?.data ?? legacyInlineData?.data;
-
-  if (!imageData) {
-    const finishReason = data.candidates?.[0]?.finishReason;
-    throw new GeminiImageError(
-      finishReason ? `Gemini terminó sin imagen (${finishReason}).` : "Gemini no devolvió ninguna imagen.",
-      502,
-    );
+  if (data.error?.message) {
+    throw new GeminiImageError(data.error.message, data.error.code ?? 502);
   }
 
-  return {
-    bytes: Buffer.from(imageData, "base64"),
-    mimeType: inlineData?.mimeType ?? legacyInlineData?.mime_type ?? "image/png",
-    text: textPart?.text?.trim() ?? null,
-    usageMetadata: data.usageMetadata ?? null,
-    providerOperationId: null,
-  };
+  return interactionToImage(data);
 }
