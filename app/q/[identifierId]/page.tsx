@@ -5,18 +5,95 @@ import { createAdminSupabase } from "@/lib/server/supabase";
 
 export const dynamic = "force-dynamic";
 
-export default async function ClouvaProductQrPage({ params }: { params: Promise<{ identifierId: string }> }) {
+type RegistryRow = {
+  entity_type: "PRODUCT" | "VARIANT" | "ITEM" | "USER";
+  entity_id: string;
+  source_identifier_id: string | null;
+  destination_path: string | null;
+};
+
+function safeInternalPath(value: string | null | undefined) {
+  return Boolean(value?.startsWith("/") && !value.startsWith("//"));
+}
+
+function QrState({ title, detail }: { title: string; detail: string }) {
+  return (
+    <main className="min-h-screen bg-black text-white">
+      <MainNav />
+      <section className="mx-auto max-w-2xl px-4 py-20 sm:px-6">
+        <div className="rounded-[2rem] border border-violet-400/25 bg-[radial-gradient(circle_at_top_right,rgba(124,58,237,.22),transparent_45%),#09070f] p-8 text-center">
+          <p className="text-xs font-semibold uppercase tracking-[.24em] text-violet-300">QR CLOUVA</p>
+          <h1 className="mt-4 text-3xl font-semibold">{title}</h1>
+          <p className="mx-auto mt-3 max-w-lg leading-7 text-white/55">{detail}</p>
+        </div>
+      </section>
+      <MainFooter />
+    </main>
+  );
+}
+
+export default async function ClouvaQrPage({ params }: { params: Promise<{ identifierId: string }> }) {
   const { identifierId: publicToken } = await params;
   const admin = createAdminSupabase();
-  const identifierFields = "id,catalog_product_id,catalog_variant_id,spot_id,identifier_type,value,status,public_token,destination_type,destination_path,destination_metadata";
-  const { data: tokenIdentifier } = await admin
-    .from("commerce_product_identifiers")
-    .select(identifierFields)
+
+  // The registry is the canonical resolver. Query errors are intentionally
+  // tolerated so old product QR links keep working during migration rollout.
+  const { data: registryData } = await admin
+    .from("clouva_qr_registry")
+    .select("entity_type,entity_id,source_identifier_id,destination_path")
     .eq("public_token", publicToken)
-    .eq("identifier_type", "clouva_qr")
-    .eq("status", "active")
+    .eq("status", "ACTIVE")
     .maybeSingle();
-  const { data: legacyIdentifier } = !tokenIdentifier && /^[0-9a-f-]{36}$/i.test(publicToken)
+  const registry = registryData as RegistryRow | null;
+
+  if (registry?.entity_type === "USER") {
+    if (safeInternalPath(registry.destination_path)) redirect(registry.destination_path!);
+    const { data: player } = await admin
+      .from("players")
+      .select("id,slug,is_published,publication_status,privacy_status")
+      .eq("owner_user_id", registry.entity_id)
+      .eq("is_published", true)
+      .eq("publication_status", "published")
+      .neq("privacy_status", "private")
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (!player) return <QrState title="Perfil no disponible" detail="Este QR es válido, pero su Player no está publicado en este momento." />;
+    const { data: alias } = await admin
+      .from("public_slug_aliases")
+      .select("alias")
+      .eq("entity_type", "player")
+      .eq("entity_id", player.id)
+      .eq("is_primary", true)
+      .maybeSingle();
+    redirect(`/${encodeURIComponent(alias?.alias || player.slug)}`);
+  }
+
+  if (registry?.entity_type === "ITEM") {
+    if (safeInternalPath(registry.destination_path)) redirect(registry.destination_path!);
+    return <QrState title="Prenda CLOUVA identificada" detail="La unidad física tiene una identidad QR válida. Todavía no tiene una experiencia pública adicional asignada." />;
+  }
+
+  const identifierFields = "id,catalog_product_id,catalog_variant_id,spot_id,identifier_type,value,status,public_token,destination_type,destination_path,destination_metadata";
+  const { data: registryIdentifier } = registry?.source_identifier_id
+    ? await admin
+        .from("commerce_product_identifiers")
+        .select(identifierFields)
+        .eq("id", registry.source_identifier_id)
+        .eq("identifier_type", "clouva_qr")
+        .eq("status", "active")
+        .maybeSingle()
+    : { data: null };
+  const { data: tokenIdentifier } = !registryIdentifier
+    ? await admin
+        .from("commerce_product_identifiers")
+        .select(identifierFields)
+        .eq("public_token", publicToken)
+        .eq("identifier_type", "clouva_qr")
+        .eq("status", "active")
+        .maybeSingle()
+    : { data: null };
+  const { data: legacyIdentifier } = !registryIdentifier && !tokenIdentifier && /^[0-9a-f-]{36}$/i.test(publicToken)
     ? await admin
         .from("commerce_product_identifiers")
         .select(identifierFields)
@@ -25,11 +102,10 @@ export default async function ClouvaProductQrPage({ params }: { params: Promise<
         .eq("status", "active")
         .maybeSingle()
     : { data: null };
-  const identifier = tokenIdentifier ?? legacyIdentifier;
+  const identifier = registryIdentifier ?? tokenIdentifier ?? legacyIdentifier;
   if (!identifier) notFound();
-  if (identifier.destination_path?.startsWith("/") && !identifier.destination_path.startsWith("//")) {
-    redirect(identifier.destination_path);
-  }
+  if (safeInternalPath(identifier.destination_path)) redirect(identifier.destination_path!);
+
   const [{ data: catalog }, { data: listing }, variantResult, spotResult] = await Promise.all([
     admin.from("commerce_catalog_products").select("name,description,brand,product_kind,avatar_asset_id").eq("id", identifier.catalog_product_id).maybeSingle(),
     identifier.spot_id

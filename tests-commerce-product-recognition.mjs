@@ -114,20 +114,25 @@ test("scanner captures canonical views, multiple details and preserves canonical
   assert.match(scannerRoute, /cover_url/);
 });
 
-test("commerce product image generation reuses Gemini Image and all CLOUVA references", () => {
+test("commerce product image generation reuses Gemini Image and isolates each real catalog view", () => {
   assert.match(productImagesRoute, /requireUser/);
   assert.match(productImagesRoute, /requireManagedSpot/);
   assert.match(productImagesRoute, /generateImage/);
   assert.match(productImagesRoute, /uploadGeneratedMediaObject/);
   assert.match(productImagesRoute, /front_catalog/);
   assert.match(productImagesRoute, /back_catalog/);
-  assert.match(productImagesRoute, /detail_catalog/);
+  assert.doesNotMatch(productImagesRoute, /detail_catalog/);
   assert.match(productImagesRoute, /sourcePhotos/);
   assert.match(productImagesRoute, /generatedImages/);
   assert.match(productImagesRoute, /coverImage/);
   assert.match(productImagesRoute, /detailIndex/);
   assert.match(productImagesRoute, /displayLabel/);
-  assert.match(productImagesRoute, /TODAS las referencias/);
+  assert.match(productImagesRoute, /referencesForTarget/);
+  assert.match(productImagesRoute, /referenceImages/);
+  assert.match(productImagesRoute, /SOLO el producto/);
+  assert.match(productImagesRoute, /Eliminá por completo manos, dedos, brazos/);
+  assert.match(productImagesRoute, /referencias adicionales sirven SOLO como evidencia factual/);
+  assert.match(productImagesRoute, /No inventes ilustraciones, palabras, símbolos, piezas, pestañas ni contenido/);
 });
 
 test("commerce product image generation has a coherent timeout budget", () => {

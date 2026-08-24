@@ -18,6 +18,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
         .from("commerce_products")
         .select("id,spot_id,catalog_product_id,product_type,listing_kind,name,slug,description,price,cost_amount,currency,stock,status,cover_url,gallery,avatar_asset_id,metadata,created_at,updated_at")
         .eq("spot_id", spot.id)
+        .neq("status", "archived")
         .order("created_at", { ascending: false }),
       admin
         .from("commerce_product_identifier_events")
