@@ -123,28 +123,29 @@ function productFacts(draft: ProductDraft | undefined, identifier: IdentifierDra
 
 function referencesForTarget(target: GenerationTarget, captures: IndexedCapture[]) {
   const primary = captures.find((capture) => capture.label === target.sourceLabel);
-  return primary ? [primary] : [];
+  if (!primary) return [];
+  const support = captures.filter((capture) => capture !== primary);
+  return [primary, ...support];
 }
 
 function generationPrompt(target: GenerationTarget, facts: string, referenceOrder: string[]) {
   return [
-    "Sos el editor de fondo de imágenes de producto de CLOUVA.",
-    `La única imagen de referencia es la foto ${target.sourceLabel} real que debés editar.`,
+    "Sos el generador de imágenes de catálogo de producto de CLOUVA.",
+    `La primera referencia es la vista ${target.sourceLabel} canónica y define el ángulo, frente/atrás y composición del producto.`,
     facts,
-    referenceOrder.length ? `Referencia: ${referenceOrder.join(", ")}.` : "",
-    "REGLA ABSOLUTA: NO generes, reconstruyas, redibujes, completes, mejores ni reinterpretés el producto.",
-    "El producto visible debe quedar exactamente igual a la fotografía original: misma geometría, proporciones, perspectiva, posición, apertura, pliegues, bordes, textura, color, iluminación sobre el producto, reflejos, sombras propias, desgaste, imperfecciones, textos, logos, tipografías, códigos, QR, gráficos y todos los detalles visibles.",
-    "NO cambies ni un carácter del packaging. NO corrijas textos. NO inventes partes ocultas. NO agregues ni quites componentes. NO cambies el ángulo ni la orientación del producto.",
-    "NO uses las fotos de Detalle ni ninguna otra vista para completar el producto. Para esta salida solo existe la foto Frente o Atrás correspondiente.",
-    "ÚNICA MODIFICACIÓN PERMITIDA: reemplazar exclusivamente los píxeles del FONDO que estén fuera de la silueta visible del producto por un fondo de catálogo blanco/neutro limpio.",
-    "No retoques el producto, no aumentes su nitidez, no cambies exposición, contraste, saturación ni balance de blancos sobre el producto.",
-    "Si una mano, dedo u otro objeto se superpone al producto y quitarlo requeriría inventar una parte oculta, NO lo quites ni reconstruyas lo que hay debajo. Conservá esa zona exactamente como está.",
-    "Podés limpiar únicamente fondo visible que no tape ninguna parte del producto. No hagas inpainting dentro de la silueta del producto.",
+    referenceOrder.length ? `Referencias disponibles en orden: ${referenceOrder.join(", ")}.` : "",
+    "OBJETIVO: producir una foto de catálogo limpia donde aparezca SOLO el producto, aislado sobre fondo blanco/neutro. No deben aparecer manos, dedos, brazos, personas, mesa, piso, silla, objetos del entorno ni props.",
+    "REGLA DE IDENTIDAD: el producto final debe ser exactamente el mismo producto físico de las referencias. No rediseñes packaging, no cambies geometría, proporciones, apertura, bordes, pliegues, color, materiales, textura, logos, tipografías, códigos, QR, gráficos ni ningún texto visible.",
+    "Usá la primera referencia para fijar la vista. Las referencias adicionales sirven SOLO como evidencia factual para recuperar partes del producto tapadas por la mano o por el entorno.",
+    "Cuando una zona esté tapada por una mano, completala únicamente con información visual confirmada por otra referencia del mismo producto. No inventes ilustraciones, palabras, símbolos, piezas, pestañas ni contenido que no aparezca en ninguna referencia.",
+    "Si varias referencias muestran la misma zona, respetá la coincidencia entre ellas. Priorizá textos y gráficos legibles de la referencia donde estén más claros.",
+    "Eliminá por completo manos, dedos, brazos y cualquier elemento ajeno al producto. El resultado debe parecer una fotografía de estudio del producto solo, no un recorte con restos humanos.",
+    "Podés reconstruir exclusivamente las áreas del producto que estaban físicamente ocultas por la mano usando evidencia de las otras referencias; fuera de esas áreas, no reinterpretés ni mejores el diseño.",
+    "No agregues accesorios, sombras dramáticas, soportes, superficies, decoración, etiquetas nuevas, marcas de agua ni texto externo. Usá una sombra de apoyo mínima y realista solo para separar el producto del fondo.",
     target.kind === "front_catalog"
-      ? "El resultado corresponde al Frente real; no crees otra vista frontal."
-      : "El resultado corresponde al Atrás real; no crees otra vista trasera.",
-    "El objetivo no es crear una foto nueva del producto. Es la MISMA foto del producto con otro fondo.",
-    "No agregues texto externo, marcos, decoraciones, props, superficies nuevas ni marcas de agua.",
+      ? "La salida es Frente: mantené una vista frontal coherente con la referencia Frente y no la conviertas en perspectiva de detalle."
+      : "La salida es Atrás: mantené una vista trasera coherente con la referencia Atrás y no mezcles el diseño del frente.",
+    "Antes de entregar, verificá: cero manos/personas visibles; solo producto; textos/logos preservados; sin piezas inventadas; misma identidad visual que las referencias.",
   ].filter(Boolean).join("\n");
 }
 
@@ -257,8 +258,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       ...(counts.back ? [{ kind: "back_catalog" as const, sourceLabel: "Atrás" as const, detailIndex: null }] : []),
     ];
 
-    // Cada salida recibe solo su fotografía real (Frente o Atrás). Los Detalles
-    // se guardan para análisis del producto, pero no participan en la edición visual.
+    // Frente/Atrás definen la vista. Las demás fotos aportan evidencia para
+    // quitar manos/oclusiones sin inventar packaging ni detalles del producto.
     const generatedImages = await Promise.all(targets.map((target) => {
       const targetCaptures = referencesForTarget(target, captures);
       const referenceOrder = targetCaptures.map((capture) => capture.displayLabel);
