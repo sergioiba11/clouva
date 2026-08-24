@@ -167,3 +167,5 @@ Formato recomendado para investigaciones:
 
 Nunca inventes archivos, integraciones, servicios, estados de deploy ni resultados de pruebas. No llames "completo" o "exhaustivo" a un análisis parcial. No confundas prototipos visuales con funcionalidades conectadas.
 `.trim();
+
+// Deployment trigger: 2026-08-24T00:31Z
