@@ -35,11 +35,22 @@ test("mapea calidad de imagen a modelos y resolución oficiales", () => {
   assert.equal(IMAGE_QUALITY_CONFIG.maximum.imageSize, "4K");
 });
 
-test("Trébol enruta pedidos de plano y PNG al generador real", () => {
-  for (const prompt of ["HACE EL PLANO", "HACE EL PLANO PNG", "GENERAME EL PLANO", "AHORA HACE EL PLANO PNG", "haceme el plano que te pedi", "pasame eso a PNG"]) {
+test("Trébol enruta pedidos de plano, PNG y referencias visuales al generador real", () => {
+  for (const prompt of [
+    "HACE EL PLANO",
+    "HACE EL PLANO PNG",
+    "GENERAME EL PLANO",
+    "AHORA HACE EL PLANO PNG",
+    "haceme el plano que te pedi",
+    "pasame eso a PNG",
+    "EL PLANO QUE TE PEDI ANTES",
+    "¿Y EL PLANO?",
+    "ESE PLANO",
+  ]) {
     assert.equal(detectImageGenerationIntent(prompt), true, prompt);
   }
   assert.equal(detectImageGenerationIntent("hay un bug en el generador de imágenes"), false);
+  assert.equal(detectImageGenerationIntent("explicame el plano de base de datos"), false);
 
   const intent = parseImageGenerationIntent("AHORA HACE EL PLANO PNG");
   assert.ok(intent);
@@ -183,10 +194,11 @@ test("la UI incluye estados, historial, carga accesible y corte responsive", asy
   assert.match(css, /@media \(max-width: 680px\)/);
 });
 
-test("CLOUVA AI mantiene composer visible y media card reintentable", async () => {
+test("CLOUVA AI mantiene composer visible, media card reintentable y no niega generación de imágenes", async () => {
   const pageCss = await readFile(new URL("./app/clouva-ai/page.module.css", import.meta.url), "utf8");
   const card = await readFile(new URL("./components/clouva-ai/ClouvaAIMediaCard.tsx", import.meta.url), "utf8");
   const hook = await readFile(new URL("./components/clouva-ai/useClouvaAIConversation.ts", import.meta.url), "utf8");
+  const vision = await readFile(new URL("./lib/clouva-ai/vision.ts", import.meta.url), "utf8");
   assert.match(pageCss, /#clouva-ai-composer/);
   assert.match(pageCss, /min-height:\s*0/);
   assert.match(pageCss, /overflow-y:\s*auto/);
@@ -194,4 +206,6 @@ test("CLOUVA AI mantiene composer visible y media card reintentable", async () =
   assert.match(card, /Reintentar/);
   assert.match(hook, /shouldAutoRetryImageGeneration/);
   assert.match(hook, /action:\s*"retry_image"/);
+  assert.match(vision, /sí está integrada con el generador real de imágenes de CLOUVA/);
+  assert.match(vision, /Nunca digas que "no podés generar imágenes"/);
 });
