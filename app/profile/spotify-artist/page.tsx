@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { CheckCircle2, ExternalLink, Loader2, Music2, Unlink } from "lucide-react";
+import { CheckCircle2, ExternalLink, Loader2, Music2, Search, Unlink } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/auth-provider";
@@ -21,6 +21,8 @@ type ArtistPayload = {
   name: string;
   url: string;
   imageUrl: string | null;
+  followers?: number;
+  popularity?: number;
 };
 
 export default function SpotifyArtistConnectPage() {
@@ -29,7 +31,10 @@ export default function SpotifyArtistConnectPage() {
   const [player, setPlayer] = useState<PlayerSpotify | null>(null);
   const [artistUrl, setArtistUrl] = useState("");
   const [artist, setArtist] = useState<ArtistPayload | null>(null);
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<ArtistPayload[]>([]);
   const [loading, setLoading] = useState(true);
+  const [searching, setSearching] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -53,6 +58,7 @@ export default function SpotifyArtistConnectPage() {
         if (!cancelled) {
           setPlayer(payload.player);
           setArtistUrl(payload.player.spotify_profile_url || "");
+          setQuery(payload.player.display_name || "");
         }
       } catch (loadError) {
         if (!cancelled) setError(loadError instanceof Error ? loadError.message : "No se pudo cargar tu Player.");
@@ -63,19 +69,37 @@ export default function SpotifyArtistConnectPage() {
     return () => { cancelled = true; };
   }, [router, user]);
 
-  const connect = async () => {
+  const searchArtists = async () => {
+    if (query.trim().length < 2) return;
+    setSearching(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const response = await authenticatedFetch(`/api/integrations/spotify/artist-link?q=${encodeURIComponent(query.trim())}`);
+      const payload = await readApiJson<{ artists: ArtistPayload[] }>(response);
+      setResults(payload.artists || []);
+      if (!payload.artists?.length) setMessage("No encontramos artistas con ese nombre. Probá otra búsqueda o pegá el link abajo.");
+    } catch (searchError) {
+      setError(searchError instanceof Error ? searchError.message : "No se pudo buscar en Spotify.");
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  const connectArtist = async (artistId?: string) => {
     setSaving(true);
     setError(null);
     setMessage(null);
     try {
       const response = await authenticatedFetch("/api/integrations/spotify/artist-link", {
         method: "POST",
-        body: JSON.stringify({ artistUrl }),
+        body: JSON.stringify(artistId ? { artistId } : { artistUrl }),
       });
       const payload = await readApiJson<{ artist: ArtistPayload; player: PlayerSpotify }>(response);
       setArtist(payload.artist);
       setPlayer(payload.player);
       setArtistUrl(payload.artist.url);
+      setResults([]);
       setMessage(`${payload.artist.name} quedó conectado a tu Player.`);
     } catch (connectError) {
       setError(connectError instanceof Error ? connectError.message : "No se pudo conectar Spotify Artist.");
@@ -124,7 +148,7 @@ export default function SpotifyArtistConnectPage() {
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-[#57df87]">Música del Player</p>
                 <h1 className="mt-1 text-3xl font-black tracking-[-0.04em]">Conectar Spotify for Artists</h1>
-                <p className="mt-2 max-w-xl text-sm leading-6 text-white/55">Vinculá el perfil de artista que querés mostrar en CLOUVA. Ese perfil alimenta el botón “Escuchar música” y el reproductor público.</p>
+                <p className="mt-2 max-w-xl text-sm leading-6 text-white/55">Buscá tu nombre artístico en Spotify y elegí tu perfil. CLOUVA lo usa para “Escuchar música” y el reproductor público.</p>
               </div>
             </div>
           </div>
@@ -142,24 +166,61 @@ export default function SpotifyArtistConnectPage() {
             ) : null}
 
             <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
-              <p className="text-sm font-semibold">1. Entrá o reclamá tu perfil en Spotify for Artists</p>
-              <p className="mt-1 text-xs leading-5 text-white/45">Spotify for Artists usa tu cuenta personal para darte acceso al perfil de artista. Si todavía no lo reclamaste, hacelo primero ahí.</p>
-              <a href="https://artists.spotify.com/" target="_blank" rel="noreferrer" className="mt-4 inline-flex items-center gap-2 rounded-xl bg-[#1DB954] px-4 py-2.5 text-sm font-black text-black transition hover:brightness-110">Abrir Spotify for Artists <ExternalLink size={14} /></a>
+              <p className="text-sm font-semibold">1. Buscar mi artista en Spotify</p>
+              <p className="mt-1 text-xs leading-5 text-white/45">Ya no necesitás copiar ningún link. Buscá por tu nombre artístico y elegí el perfil correcto.</p>
+              <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+                <input
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  onKeyDown={(event) => { if (event.key === "Enter") void searchArtists(); }}
+                  placeholder="Nombre artístico"
+                  className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/35 px-4 py-3 text-sm outline-none transition focus:border-[#1DB954]/60"
+                />
+                <button onClick={() => void searchArtists()} disabled={searching || query.trim().length < 2} className="inline-flex items-center justify-center gap-2 rounded-xl bg-[#1DB954] px-5 py-3 text-sm font-black text-black disabled:cursor-not-allowed disabled:opacity-45">
+                  {searching ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />} Buscar
+                </button>
+              </div>
+
+              {results.length ? (
+                <div className="mt-4 grid gap-2">
+                  {results.map((item) => (
+                    <div key={item.id} className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.025] p-3">
+                      <div
+                        className="h-14 w-14 shrink-0 rounded-xl border border-white/10 bg-white/5 bg-cover bg-center"
+                        style={item.imageUrl ? { backgroundImage: `url("${item.imageUrl}")` } : undefined}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate font-semibold">{item.name}</p>
+                        <p className="mt-1 text-xs text-white/40">{item.followers ? `${item.followers.toLocaleString("es-AR")} seguidores` : "Artista en Spotify"}</p>
+                      </div>
+                      <button onClick={() => void connectArtist(item.id)} disabled={saving} className="shrink-0 rounded-xl bg-violet-600 px-4 py-2 text-xs font-bold hover:bg-violet-500 disabled:opacity-45">
+                        Este soy yo
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
             </div>
 
             <div className="rounded-2xl border border-white/10 bg-black/20 p-5">
-              <label htmlFor="spotify-artist-url" className="text-sm font-semibold">2. Pegá el link de tu perfil de artista</label>
-              <p className="mt-1 text-xs text-white/40">Ejemplo: https://open.spotify.com/artist/...</p>
+              <p className="text-sm font-semibold">2. Si todavía no reclamaste tu artista</p>
+              <p className="mt-1 text-xs leading-5 text-white/45">Spotify for Artists administra el acceso privado al perfil. Podés abrirlo para reclamarlo o administrar tu equipo.</p>
+              <a href="https://artists.spotify.com/" target="_blank" rel="noreferrer" className="mt-4 inline-flex items-center gap-2 rounded-xl border border-[#1DB954]/35 px-4 py-2.5 text-sm font-bold text-[#72e49a]">Abrir Spotify for Artists <ExternalLink size={14} /></a>
+            </div>
+
+            <details className="rounded-2xl border border-white/10 bg-black/20 p-5">
+              <summary className="cursor-pointer text-sm font-semibold text-white/65">Tengo el link del artista</summary>
+              <p className="mt-2 text-xs text-white/40">También podés pegar un enlace open.spotify.com/artist/...</p>
               <div className="mt-4 flex flex-col gap-2 sm:flex-row">
                 <input id="spotify-artist-url" value={artistUrl} onChange={(event) => setArtistUrl(event.target.value)} placeholder="https://open.spotify.com/artist/..." className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/35 px-4 py-3 text-sm outline-none transition focus:border-[#1DB954]/60" />
-                <button onClick={() => void connect()} disabled={saving || !artistUrl.trim()} className="inline-flex items-center justify-center gap-2 rounded-xl bg-violet-600 px-5 py-3 text-sm font-bold transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-45">{saving ? <Loader2 size={16} className="animate-spin" /> : <Music2 size={16} />} {connected ? "Actualizar vínculo" : "Conectar a CLOUVA"}</button>
+                <button onClick={() => void connectArtist()} disabled={saving || !artistUrl.trim()} className="inline-flex items-center justify-center gap-2 rounded-xl bg-violet-600 px-5 py-3 text-sm font-bold transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-45">{saving ? <Loader2 size={16} className="animate-spin" /> : <Music2 size={16} />} Vincular</button>
               </div>
-            </div>
+            </details>
 
             {message ? <p className="rounded-xl border border-emerald-400/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-200">{message}</p> : null}
             {error ? <p className="rounded-xl border border-red-400/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">{error}</p> : null}
 
-            <p className="text-xs leading-5 text-white/35">CLOUVA valida el perfil contra el catálogo oficial de Spotify y guarda únicamente el ID y la URL pública del artista. El acceso privado al dashboard de Spotify for Artists sigue administrado por Spotify.</p>
+            <p className="text-xs leading-5 text-white/35">CLOUVA vincula únicamente la identidad pública del artista. El acceso privado a Spotify for Artists sigue siendo administrado por Spotify.</p>
           </div>
         </section>
       </div>
