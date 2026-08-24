@@ -1,5 +1,7 @@
 const INTERACTIONS_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/interactions";
 const MAX_REMOTE_IMAGE_BYTES = 30 * 1024 * 1024;
+const DEFAULT_TIMEOUT_MS = 55_000;
+const RECOVERY_ATTEMPTS = 5;
 
 export type GeminiImageModel = "gemini-3.1-flash-lite-image" | "gemini-3.1-flash-image" | "gemini-3-pro-image";
 export type GeminiAspectRatio =
@@ -86,6 +88,7 @@ type InteractionResponse = {
     total_thought_tokens?: number;
   };
   error?: { message?: string; code?: number; status?: string };
+  errors?: Array<{ message?: string; code?: string }>;
 };
 
 type ImageCandidate = {
@@ -151,7 +154,7 @@ function collectImageCandidates(payload: InteractionResponse) {
   const seen = new Set<unknown>();
 
   function visit(value: unknown, path: string, depth: number) {
-    if (depth > 7 || value == null || seen.has(value) || typeof value !== "object") return;
+    if (depth > 8 || value == null || seen.has(value) || typeof value !== "object") return;
     seen.add(value);
 
     if (Array.isArray(value)) {
@@ -186,11 +189,11 @@ function detectImageMimeType(bytes: Buffer): string | null {
 }
 
 function decodeBase64Image(data: string, declaredMimeType?: string) {
-  const normalized = data.startsWith("data:") && data.includes(",")
+  const raw = data.startsWith("data:") && data.includes(",")
     ? data.slice(data.indexOf(",") + 1)
     : data;
-
-  if (!/^[A-Za-z0-9+/\r\n=]+$/.test(normalized) || normalized.length < 16) return null;
+  const normalized = raw.replace(/\s+/g, "").replace(/-/g, "+").replace(/_/g, "/");
+  if (!/^[A-Za-z0-9+/=]+$/.test(normalized) || normalized.length < 16) return null;
 
   const bytes = Buffer.from(normalized, "base64");
   if (!bytes.length) return null;
@@ -265,6 +268,14 @@ function interactionText(data: InteractionResponse) {
   return null;
 }
 
+function providerDiagnostic(data: InteractionResponse) {
+  const direct = data.error?.message?.trim();
+  if (direct) return direct;
+  const recorded = data.errors?.map((item) => item.message?.trim()).filter(Boolean).join(" · ");
+  if (recorded) return recorded;
+  return null;
+}
+
 function usageMetadata(data: InteractionResponse): GeminiUsageMetadata | null {
   if (!data.usage) return null;
   return {
@@ -281,6 +292,7 @@ export function describeGeminiInteractionPayload(data: InteractionResponse) {
     model: data.model ?? null,
     status: data.status ?? null,
     rootKeys: Object.keys(data as Record<string, unknown>).sort(),
+    errorCount: data.errors?.length ?? (data.error ? 1 : 0),
     steps: (data.steps ?? []).map((step) => ({
       type: step.type ?? null,
       status: step.status ?? null,
@@ -364,17 +376,13 @@ async function fetchInteraction(args: { apiKey: string; interactionId: string; t
 
   const data = await response.json().catch(() => ({})) as InteractionResponse;
   if (!response.ok) {
-    throw new GeminiImageError(data.error?.message ?? "No se pudo recuperar la imagen generada.", response.status);
+    throw new GeminiImageError(providerDiagnostic(data) ?? "No se pudo recuperar la imagen generada.", response.status);
   }
   return data;
 }
 
-function isRecoverableStatus(status?: string) {
-  return status === "in_progress"
-    || status === "queued"
-    || status === "running"
-    || status === "requires_action"
-    || !status;
+function isTerminalFailureStatus(status?: string) {
+  return status === "failed" || status === "cancelled" || status === "incomplete";
 }
 
 async function recoverInteractionImage(args: {
@@ -383,12 +391,11 @@ async function recoverInteractionImage(args: {
   timeoutMs: number;
 }) {
   const startedAt = Date.now();
-  let attempt = 0;
   let latest: InteractionResponse | null = null;
 
-  while (attempt < 5 && Date.now() - startedAt < args.timeoutMs) {
+  for (let attempt = 0; attempt < RECOVERY_ATTEMPTS && Date.now() - startedAt < args.timeoutMs; attempt += 1) {
     if (attempt > 0) {
-      await new Promise((resolve) => setTimeout(resolve, Math.min(500 * 2 ** attempt, 2_000)));
+      await new Promise((resolve) => setTimeout(resolve, Math.min(650 * 2 ** (attempt - 1), 2_500)));
     }
 
     latest = await fetchInteraction({
@@ -403,11 +410,20 @@ async function recoverInteractionImage(args: {
       timeoutMs: Math.min(15_000, args.timeoutMs),
     });
     if (generated) return { generated, latest };
-    if (!isRecoverableStatus(latest.status)) break;
-    attempt += 1;
+    if (providerDiagnostic(latest) || isTerminalFailureStatus(latest.status)) break;
   }
 
   return { generated: null, latest };
+}
+
+function missingImageError(data: InteractionResponse | null | undefined) {
+  const diagnostic = data ? providerDiagnostic(data) : null;
+  if (diagnostic) return diagnostic;
+  const text = data ? interactionText(data) : null;
+  const suffix = data?.status ? ` (status ${data.status})` : "";
+  return text
+    ? `Gemini terminó sin devolver una imagen utilizable${suffix}. Respuesta del modelo: ${text.slice(0, 220)}`
+    : `Gemini terminó sin devolver una imagen utilizable${suffix}.`;
 }
 
 export async function getStoredGeneratedImage(args: {
@@ -424,21 +440,12 @@ export async function getStoredGeneratedImage(args: {
   });
   if (generated) return generated;
 
-  throw new GeminiImageError(
-    data.status
-      ? `Gemini terminó sin devolver una imagen utilizable (status ${data.status}).`
-      : "Gemini terminó sin devolver una imagen utilizable.",
-    502,
-  );
+  throw new GeminiImageError(missingImageError(data), 502);
 }
 
 export async function generateImage(args: GenerateImageArgs): Promise<GeneratedImage> {
   const model = args.model ?? "gemini-3.1-flash-image";
   const referenceImages = args.referenceImages ?? [];
-
-  // REST Interactions documents input as an array of typed content blocks.
-  // Keep text-only generation on that same canonical contract instead of
-  // sending a raw string, so image generation follows the provider example.
   const input: InteractionContent[] = [
     { type: "text", text: args.prompt },
     ...referenceImages.map((ref) => ({
@@ -459,15 +466,17 @@ export async function generateImage(args: GenerateImageArgs): Promise<GeneratedI
       body: JSON.stringify({
         model,
         input,
+        store: true,
         response_format: {
           type: "image",
+          delivery: "inline",
           mime_type: "image/jpeg",
           aspect_ratio: args.aspectRatio ?? "1:1",
           ...(args.imageSize ? { image_size: args.imageSize } : {}),
         },
       }),
       cache: "no-store",
-      signal: AbortSignal.timeout(args.timeoutMs ?? 55_000),
+      signal: AbortSignal.timeout(args.timeoutMs ?? DEFAULT_TIMEOUT_MS),
     });
   } catch (error) {
     const detail = error instanceof Error && error.message ? `: ${error.message}` : "";
@@ -488,17 +497,15 @@ export async function generateImage(args: GenerateImageArgs): Promise<GeneratedI
   console.info("GEMINI_IMAGE_RESPONSE_SHAPE", describeGeminiInteractionPayload(data));
 
   if (!response.ok) {
-    const providerMessage = data.error?.message?.trim();
     const suffix = data.error?.status ? ` [${data.error.status}]` : "";
     throw new GeminiImageError(
-      providerMessage ? `${providerMessage}${suffix}` : `Gemini respondió HTTP ${response.status}`,
+      providerDiagnostic(data) ? `${providerDiagnostic(data)}${suffix}` : `Gemini respondió HTTP ${response.status}`,
       response.status,
     );
   }
 
-  if (data.error?.message) {
-    throw new GeminiImageError(data.error.message, data.error.code ?? 502);
-  }
+  const diagnostic = providerDiagnostic(data);
+  if (diagnostic) throw new GeminiImageError(diagnostic, data.error?.code ?? 502);
 
   const generated = await extractGeminiImageResult(data, {
     apiKey: args.apiKey,
@@ -513,20 +520,8 @@ export async function generateImage(args: GenerateImageArgs): Promise<GeneratedI
       timeoutMs: Math.min(args.timeoutMs ?? 30_000, 30_000),
     });
     if (recovered.generated) return recovered.generated;
-
-    const finalStatus = recovered.latest?.status ?? data.status;
-    throw new GeminiImageError(
-      finalStatus
-        ? `Gemini terminó sin devolver una imagen utilizable (status ${finalStatus}).`
-        : "Gemini terminó sin devolver una imagen utilizable.",
-      502,
-    );
+    throw new GeminiImageError(missingImageError(recovered.latest ?? data), 502);
   }
 
-  throw new GeminiImageError(
-    data.status
-      ? `Gemini terminó sin devolver una imagen utilizable (status ${data.status}).`
-      : "Gemini terminó sin devolver una imagen utilizable.",
-    502,
-  );
+  throw new GeminiImageError(missingImageError(data), 502);
 }
