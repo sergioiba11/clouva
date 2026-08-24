@@ -33,6 +33,7 @@ import {
 } from "lucide-react";
 import { GeminiModelSelector } from "@/components/clouva-ai/GeminiModelSelector";
 import { ClouvaAIMediaCard } from "@/components/clouva-ai/ClouvaAIMediaCard";
+import { ClouvaAIVoiceControls, type ClouvaAIVoiceTurn } from "@/components/clouva-ai/ClouvaAIVoiceControls";
 import { buildMediaCreatorHref } from "@/lib/media-creator-navigation";
 import {
   CLOUVA_AI_WELCOME,
@@ -134,6 +135,7 @@ function PreviewSelectionCard({ content }: { content: string }) {
       <dl>
         <div><dt>Elemento</dt><dd>{selection.element}</dd></div>
         <div><dt>Selector</dt><dd>{selection.selector}</dd></div>
+        <div><dt>Ruta</dt><dd>{selection.route}</dd></div>
       </dl>
     </div>
   );
@@ -181,6 +183,7 @@ export function ClouvaAIChat() {
     pendingAction,
     dismissPendingAction,
     refreshProjectAccess,
+    loadConversationHistory,
     openConversation,
     sendMessage,
     generateImageFromInput,
@@ -246,6 +249,16 @@ export function ClouvaAIChat() {
     await openConversation(id);
     setVisibleCount(INITIAL_VISIBLE_MESSAGES);
     setShowConversations(false);
+  }
+
+  async function syncVoiceTurn(turn: ClouvaAIVoiceTurn) {
+    try {
+      await loadConversationHistory();
+      await openConversation(turn.conversationId);
+      setVisibleCount(INITIAL_VISIBLE_MESSAGES);
+    } catch (caught) {
+      reportError(caught instanceof Error ? caught.message : "La voz respondió, pero no se pudo refrescar el historial.");
+    }
   }
 
   const isWelcome = !loadingHistory && visibleMessages.length === 1 && visibleMessages[0]?.role === "assistant" && visibleMessages[0].content === CLOUVA_AI_WELCOME;
@@ -425,16 +438,25 @@ export function ClouvaAIChat() {
                 <span>
                   {mode === "project" ? <><FolderGit2 className="h-3.5 w-3.5" /> Trabajando con GitHub real</> : <><Sparkles className="h-3.5 w-3.5" /> Pensamiento creativo</>}
                   {mode === "chat" ? (
-                    <button
-                      type="button"
-                      className={studioStyles.composerToolButton}
-                      onClick={() => void generateImageFromInput()}
-                      disabled={loadingHistory || loading || applying || mediaGenerating || !input.trim()}
-                      title="Generar una imagen con el texto actual"
-                    >
-                      {mediaGenerating ? <Loader2 className={studioStyles.composerToolSpin} size={13} /> : <ImageIcon size={13} />}
-                      <span>{mediaGenerating ? "Generando…" : "Crear imagen"}</span>
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        className={studioStyles.composerToolButton}
+                        onClick={() => void generateImageFromInput()}
+                        disabled={loadingHistory || loading || applying || mediaGenerating || !input.trim()}
+                        title="Generar una imagen con el texto actual"
+                      >
+                        {mediaGenerating ? <Loader2 className={studioStyles.composerToolSpin} size={13} /> : <ImageIcon size={13} />}
+                        <span>{mediaGenerating ? "Generando…" : "Crear imagen"}</span>
+                      </button>
+                      <ClouvaAIVoiceControls
+                        conversationId={conversationId}
+                        disabled={loadingHistory || loading || applying || mediaGenerating}
+                        onConversationReady={async (id) => { if (conversationId !== id) await selectConversation(id); }}
+                        onTurn={(turn) => void syncVoiceTurn(turn)}
+                        onError={reportError}
+                      />
+                    </>
                   ) : null}
                 </span>
                 <button type="submit" disabled={loadingHistory || loading || applying || mediaGenerating || !input.trim()} aria-label="Enviar mensaje"><Send className="h-4 w-4" /></button>
