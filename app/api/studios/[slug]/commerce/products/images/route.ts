@@ -26,8 +26,7 @@ function record(value: unknown): JsonRecord {
 }
 
 function productImages(metadata: unknown) {
-  const root = record(metadata);
-  return record(root.product_images);
+  return record(record(metadata).product_images);
 }
 
 function catalogImages(metadata: unknown): CatalogImage[] {
@@ -104,6 +103,10 @@ function setCover(metadata: unknown, coverUrl: string) {
   return root;
 }
 
+function referencesImage(metadata: unknown, storagePath: string) {
+  return catalogImages(metadata).some((image) => image.storagePath === storagePath);
+}
+
 export async function POST(request: NextRequest, { params }: { params: Promise<{ slug: string }> }) {
   try {
     const { user } = await requireUser(request);
@@ -131,29 +134,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       if (!url || !images.some((image) => image.url === url)) {
         return NextResponse.json({ error: "La portada debe ser una imagen guardada en este producto." }, { status: 400 });
       }
-      const now = new Date().toISOString();
       const { error: updateError } = await admin
         .from("commerce_products")
-        .update({ cover_url: url, metadata: setCover(listing.metadata, url), updated_at: now })
+        .update({ cover_url: url, metadata: setCover(listing.metadata, url), updated_at: new Date().toISOString() })
         .eq("id", listing.id)
         .eq("spot_id", spot.id);
       if (updateError) throw new Error(updateError.message);
-
-      if (listing.catalog_product_id) {
-        const { data: catalog, error: catalogError } = await admin
-          .from("commerce_catalog_products")
-          .select("id,metadata")
-          .eq("id", listing.catalog_product_id)
-          .maybeSingle();
-        if (catalogError) throw new Error(catalogError.message);
-        if (catalog) {
-          const { error: updateCatalogError } = await admin
-            .from("commerce_catalog_products")
-            .update({ metadata: setCover(catalog.metadata, url), updated_at: now })
-            .eq("id", catalog.id);
-          if (updateCatalogError) throw new Error(updateCatalogError.message);
-        }
-      }
 
       return NextResponse.json({ ok: true, action, listingId: listing.id, coverUrl: url });
     }
@@ -163,43 +149,53 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (!storagePath || !target) return NextResponse.json({ error: "La imagen no pertenece a este producto." }, { status: 404 });
 
     const now = new Date().toISOString();
-    const relatedQuery = listing.catalog_product_id
-      ? admin.from("commerce_products").select("id,spot_id,cover_url,metadata").eq("catalog_product_id", listing.catalog_product_id)
-      : admin.from("commerce_products").select("id,spot_id,cover_url,metadata").eq("id", listing.id);
-    const { data: relatedListings, error: relatedError } = await relatedQuery;
-    if (relatedError) throw new Error(relatedError.message);
+    const next = removeImage(listing.metadata, storagePath);
+    const currentCover = listing.cover_url === target.url ? next.coverUrl : listing.cover_url;
+    const { error: updateError } = await admin
+      .from("commerce_products")
+      .update({ cover_url: currentCover, metadata: next.metadata, updated_at: now })
+      .eq("id", listing.id)
+      .eq("spot_id", spot.id);
+    if (updateError) throw new Error(updateError.message);
 
-    let currentCover: string | null = listing.cover_url;
-    for (const related of relatedListings ?? []) {
-      const next = removeImage(related.metadata, storagePath);
-      const coverUrl = related.cover_url === target.url ? next.coverUrl : related.cover_url;
-      const { error: updateError } = await admin
-        .from("commerce_products")
-        .update({ cover_url: coverUrl, metadata: next.metadata, updated_at: now })
-        .eq("id", related.id);
-      if (updateError) throw new Error(updateError.message);
-      if (related.id === listing.id) currentCover = coverUrl;
-    }
-
+    let sharedElsewhere = false;
     if (listing.catalog_product_id) {
-      const { data: catalog, error: catalogError } = await admin
-        .from("commerce_catalog_products")
-        .select("id,metadata")
-        .eq("id", listing.catalog_product_id)
-        .maybeSingle();
-      if (catalogError) throw new Error(catalogError.message);
-      if (catalog) {
-        const next = removeImage(catalog.metadata, storagePath);
-        const { error: updateCatalogError } = await admin
+      const { data: relatedListings, error: relatedError } = await admin
+        .from("commerce_products")
+        .select("id,cover_url,metadata")
+        .eq("catalog_product_id", listing.catalog_product_id)
+        .neq("id", listing.id);
+      if (relatedError) throw new Error(relatedError.message);
+      sharedElsewhere = (relatedListings ?? []).some((related) => related.cover_url === target.url || referencesImage(related.metadata, storagePath));
+
+      if (!sharedElsewhere) {
+        const { data: catalog, error: catalogError } = await admin
           .from("commerce_catalog_products")
-          .update({ metadata: next.metadata, updated_at: now })
-          .eq("id", catalog.id);
-        if (updateCatalogError) throw new Error(updateCatalogError.message);
+          .select("id,metadata")
+          .eq("id", listing.catalog_product_id)
+          .maybeSingle();
+        if (catalogError) throw new Error(catalogError.message);
+        if (catalog) {
+          const catalogNext = removeImage(catalog.metadata, storagePath);
+          const { error: updateCatalogError } = await admin
+            .from("commerce_catalog_products")
+            .update({ metadata: catalogNext.metadata, updated_at: now })
+            .eq("id", catalog.id);
+          if (updateCatalogError) throw new Error(updateCatalogError.message);
+        }
       }
     }
 
-    await deleteGeneratedMedia(storagePath);
-    return NextResponse.json({ ok: true, action, listingId: listing.id, deletedStoragePath: storagePath, coverUrl: currentCover });
+    if (!sharedElsewhere) await deleteGeneratedMedia(storagePath);
+
+    return NextResponse.json({
+      ok: true,
+      action,
+      listingId: listing.id,
+      deletedStoragePath: storagePath,
+      coverUrl: currentCover,
+      mediaDeleted: !sharedElsewhere,
+    });
   } catch (error) {
     const status = (error as Error & { status?: number })?.status ?? (isAuthError(error) ? 401 : 500);
     return NextResponse.json({ error: error instanceof Error ? error.message : "No se pudo administrar la imagen." }, { status });
