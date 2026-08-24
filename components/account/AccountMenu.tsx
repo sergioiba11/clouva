@@ -28,6 +28,7 @@ type AccountMenuProps = {
   variant?: "nav" | "home";
   triggerClassName?: string;
   preferUsername?: boolean;
+  triggerImageUrl?: string;
 };
 
 type MenuLinkProps = {
@@ -48,7 +49,7 @@ function MenuLink({ href, icon, label, detail, onSelect, tone = "default" }: Men
   );
 }
 
-export function AccountMenu({ variant = "nav", triggerClassName = "", preferUsername = true }: AccountMenuProps) {
+export function AccountMenu({ variant = "nav", triggerClassName = "", preferUsername = true, triggerImageUrl }: AccountMenuProps) {
   const { user, profile, role, loading } = useAuth();
   const { currentPlayer } = useCurrentPlayer();
   const pathname = usePathname();
@@ -60,6 +61,7 @@ export function AccountMenu({ variant = "nav", triggerClassName = "", preferUser
   const [openSwitch, setOpenSwitch] = useState(false);
   const [accounts, setAccounts] = useState<StoredAccount[]>([]);
   const [avatarBroken, setAvatarBroken] = useState(false);
+  const [triggerAvatarBroken, setTriggerAvatarBroken] = useState(false);
 
   const username = currentPlayer?.username?.trim().replace(/^@/, "") || profile?.username?.trim().replace(/^@/, "") || null;
   const accountName = resolveAccountDisplayName({ profile: username ? { username } : null, user: null });
@@ -68,12 +70,14 @@ export function AccountMenu({ variant = "nav", triggerClassName = "", preferUser
   const accountUsername = username ? `@${username}` : "Tu cuenta CLOUVA";
   const accountDetail = accountUsername;
   const avatar = currentPlayer?.profile_image_url ?? currentPlayer?.logo_url ?? profile?.avatar_url ?? user?.user_metadata?.avatar_url;
+  const triggerAvatar = triggerImageUrl || avatar;
   const canAdmin = role === "admin";
   const publicProfileHref = resolveCurrentPlayerStatus(currentPlayer) === "published" && currentPlayer ? `/${encodeURIComponent(currentPlayer.slug)}` : "/profile/edit";
 
   useEffect(() => { if (openSwitch) setAccounts(getAccounts()); }, [openSwitch]);
   useEffect(() => { if (typeof window !== "undefined" && user && new URLSearchParams(window.location.search).get("openAccountSwitcher") === "1") setOpenSwitch(true); }, [user]);
   useEffect(() => { setOpenMenu(false); }, [pathname]);
+  useEffect(() => { setTriggerAvatarBroken(false); }, [triggerImageUrl]);
   useEffect(() => {
     if (!openMenu) return;
     const handlePointer = (event: MouseEvent) => { if (!rootRef.current?.contains(event.target as Node)) setOpenMenu(false); };
@@ -90,8 +94,14 @@ export function AccountMenu({ variant = "nav", triggerClassName = "", preferUser
 
   return (
     <div ref={rootRef} className={`${styles.root} ${variant === "home" ? styles.homeRoot : ""}`}>
-      <button ref={triggerRef} type="button" className={`${styles.trigger} ${variant === "home" ? styles.homeTrigger : ""} ${triggerClassName}`} onClick={() => setOpenMenu((value) => !value)} aria-expanded={openMenu} aria-controls={menuId} aria-haspopup="menu">
-        {avatar && !avatarBroken ? <Image src={String(avatar)} alt="" width={32} height={32} className={styles.avatar} onError={() => setAvatarBroken(true)} /> : <span className={styles.avatarFallback}>{primaryName.charAt(0).toUpperCase() || "C"}</span>}
+      <button ref={triggerRef} type="button" className={`${styles.trigger} ${variant === "home" ? styles.homeTrigger : ""} ${triggerClassName}`} onClick={() => setOpenMenu((value) => !value)} aria-expanded={openMenu} aria-controls={menuId} aria-haspopup="menu" aria-label="Abrir Mi cuenta">
+        {triggerImageUrl && !triggerAvatarBroken ? (
+          <img src={triggerImageUrl} alt="" className={styles.avatar} onError={() => setTriggerAvatarBroken(true)} />
+        ) : triggerAvatar && !avatarBroken ? (
+          <Image src={String(triggerAvatar)} alt="" width={32} height={32} className={styles.avatar} onError={() => setAvatarBroken(true)} />
+        ) : (
+          <span className={styles.avatarFallback}>{primaryName.charAt(0).toUpperCase() || "C"}</span>
+        )}
         <span className={styles.triggerCopy}><b>{primaryName}</b><small>{variant === "home" ? "Tu cuenta CLOUVA" : accountDetail}</small></span>
       </button>
 
