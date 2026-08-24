@@ -467,6 +467,7 @@ export async function generateImage(args: GenerateImageArgs): Promise<GeneratedI
         model,
         input,
         store: true,
+        // Ask Gemini to include the generated media directly in the stored interaction.
         response_format: {
           type: "image",
           delivery: "inline",
