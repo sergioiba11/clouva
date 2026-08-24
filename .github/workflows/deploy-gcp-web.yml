@@ -1,5 +1,5 @@
 name: Deploy CLOUVA web to Cloud Run
-# Release marker: deploy catalog delete controls from main.
+# Release marker: deploy Gemini image REST contract and CLOUVA AI viewport fix.
 
 on:
   push:
