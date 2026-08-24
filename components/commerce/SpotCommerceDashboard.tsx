@@ -38,6 +38,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { IScannerControls } from "@zxing/browser";
 import { AccountMenu } from "@/components/account/AccountMenu";
 import { useAuth } from "@/components/auth-provider";
+import { CatalogProductActions } from "@/components/commerce/CatalogProductActions";
 import {
   buildSpotSku,
   detectCommerceIdentifierType,
@@ -1068,7 +1069,7 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
             </div>
           </div> : null}
 
-          {tab === "catalog" ? <Catalog data={data} bundleDraft={bundleDraft} setBundleDraft={setBundleDraft} onSaveBundle={() => void saveBundle()} busy={busy} onSell={addToCart} onCodes={(listing, variant) => { setCodeDraft({ listingId: listing.id, variantId: variant?.id || "" }); setTab("codes"); }} /> : null}
+          {tab === "catalog" ? <Catalog data={data} studioId={studioId} onChanged={load} bundleDraft={bundleDraft} setBundleDraft={setBundleDraft} onSaveBundle={() => void saveBundle()} busy={busy} onSell={addToCart} onCodes={(listing, variant) => { setCodeDraft({ listingId: listing.id, variantId: variant?.id || "" }); setTab("codes"); }} /> : null}
           {tab === "inventory" ? <Inventory data={data} draft={stockDraft} setDraft={setStockDraft} onSubmit={() => void adjustStock()} busy={busy} /> : null}
           {tab === "sales" ? <Sales data={data} cart={cart} setCart={setCart} total={cartTotal} paymentMethod={paymentMethod} setPaymentMethod={setPaymentMethod} customer={customer} setCustomer={setCustomer} onSubmit={() => void completeSale()} busy={busy} /> : null}
           {tab === "orders" ? <Orders data={data} /> : null}
@@ -1091,7 +1092,6 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
     </main>
   );
 }
-
 
 function ProductCapturePreview({ capture, label, onRemove }: { capture: ProductCapture; label: string; onRemove: () => void }) {
   return <div className="group relative overflow-hidden rounded-xl border border-white/10 bg-black"><img src={capture.dataUrl} alt={label} className="aspect-square h-full w-full object-cover" /><span className="absolute bottom-1.5 left-1.5 rounded-md bg-black/80 px-1.5 py-1 text-[9px]">{label}</span><button type="button" aria-label={`Eliminar ${label}`} onClick={onRemove} className="absolute right-1.5 top-1.5 grid h-7 w-7 place-items-center rounded-lg bg-black/80 text-white/70 transition hover:text-white"><Trash2 className="h-3.5 w-3.5" /></button></div>;
@@ -1230,7 +1230,7 @@ function CreateProductForm({ value, onChange, onSubmit, busy, globalMatch, scann
 
 type BundleDraft = { bundleListingId: string; physicalSelection: string; digitalSelection: string };
 
-function Catalog({ data, bundleDraft, setBundleDraft, onSaveBundle, busy, onSell, onCodes }: { data: Overview; bundleDraft: BundleDraft; setBundleDraft: React.Dispatch<React.SetStateAction<BundleDraft>>; onSaveBundle: () => void; busy: boolean; onSell: (listing: Listing, variant?: Variant | null) => void; onCodes: (listing: Listing, variant?: Variant | null) => void }) {
+function Catalog({ data, studioId, onChanged, bundleDraft, setBundleDraft, onSaveBundle, busy, onSell, onCodes }: { data: Overview; studioId: string; onChanged: () => void | Promise<void>; bundleDraft: BundleDraft; setBundleDraft: React.Dispatch<React.SetStateAction<BundleDraft>>; onSaveBundle: () => void; busy: boolean; onSell: (listing: Listing, variant?: Variant | null) => void; onCodes: (listing: Listing, variant?: Variant | null) => void }) {
   const openBundle = (listing: Listing) => {
     const components = data.components.filter((component) => component.bundle_listing_id === listing.id);
     const physical = components.find((component) => component.component_role === "physical");
@@ -1261,6 +1261,7 @@ function Catalog({ data, bundleDraft, setBundleDraft, onSaveBundle, busy, onSell
             return <button key={variant?.id || "base-identifiers"} onClick={() => onCodes(listing, variant)} className="flex w-full items-center justify-between gap-3 rounded-xl border border-white/8 p-2 text-left text-xs"><span>{variant ? [variant.color, variant.size, variant.sku].filter(Boolean).join(" · ") || "Variante" : "Producto base"}</span><span className="text-white/40">{scoped.filter((identifier) => identifier.status === "active").map((identifier) => identifier.identifier_type.replace("clouva_", "").replace("code_128", "CODE 128").toUpperCase()).join(" · ") || "Sin códigos"}</span></button>;
           })}</div>
         </section>
+        <CatalogProductActions studioId={studioId} listing={listing} onChanged={onChanged} />
       </article>;
     })}{!data.listings.length ? <p className="py-16 text-center text-white/35 lg:col-span-2">Escaneá el primer producto para empezar el catálogo.</p> : null}</div>
   </div>;
