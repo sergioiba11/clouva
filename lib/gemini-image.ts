@@ -35,6 +35,7 @@ export type GeneratedImage = {
 
 export class GeminiImageError extends Error {
   status: number;
+
   constructor(message: string, status = 500) {
     super(message);
     this.name = "GeminiImageError";
@@ -95,7 +96,9 @@ type ImageCandidate = {
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
 }
 
 function stringValue(value: unknown) {
@@ -109,7 +112,10 @@ function mimeFromRecord(record: Record<string, unknown>) {
 function imageCandidateFromRecord(record: Record<string, unknown>, source: string): ImageCandidate | null {
   const mimeType = mimeFromRecord(record);
   const directData = stringValue(record.data);
-  const directUri = stringValue(record.uri) ?? stringValue(record.url) ?? stringValue(record.file_uri) ?? stringValue(record.fileUri);
+  const directUri = stringValue(record.uri)
+    ?? stringValue(record.url)
+    ?? stringValue(record.file_uri)
+    ?? stringValue(record.fileUri);
   const semanticImage = record.type === "image" || Boolean(mimeType?.startsWith("image/"));
 
   if ((directData || directUri) && semanticImage) {
@@ -119,11 +125,21 @@ function imageCandidateFromRecord(record: Record<string, unknown>, source: strin
   for (const key of ["inline_data", "inlineData", "file_data", "fileData", "image"] as const) {
     const nested = asRecord(record[key]);
     if (!nested) continue;
+
     const nestedMime = mimeFromRecord(nested) ?? mimeType;
     const nestedData = stringValue(nested.data);
-    const nestedUri = stringValue(nested.uri) ?? stringValue(nested.url) ?? stringValue(nested.file_uri) ?? stringValue(nested.fileUri);
+    const nestedUri = stringValue(nested.uri)
+      ?? stringValue(nested.url)
+      ?? stringValue(nested.file_uri)
+      ?? stringValue(nested.fileUri);
+
     if ((nestedData || nestedUri) && (semanticImage || nestedMime?.startsWith("image/") || key === "image")) {
-      return { data: nestedData, uri: nestedUri, mimeType: nestedMime, source: `${source}.${key}` };
+      return {
+        data: nestedData,
+        uri: nestedUri,
+        mimeType: nestedMime,
+        source: `${source}.${key}`,
+      };
     }
   }
 
@@ -135,8 +151,7 @@ function collectImageCandidates(payload: InteractionResponse) {
   const seen = new Set<unknown>();
 
   function visit(value: unknown, path: string, depth: number) {
-    if (depth > 7 || value == null || seen.has(value)) return;
-    if (typeof value !== "object") return;
+    if (depth > 7 || value == null || seen.has(value) || typeof value !== "object") return;
     seen.add(value);
 
     if (Array.isArray(value)) {
@@ -159,7 +174,10 @@ function collectImageCandidates(payload: InteractionResponse) {
 }
 
 function detectImageMimeType(bytes: Buffer): string | null {
-  if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return "image/png";
+  if (
+    bytes.length >= 8
+    && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+  ) return "image/png";
   if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
   if (bytes.length >= 12 && bytes.toString("ascii", 0, 4) === "RIFF" && bytes.toString("ascii", 8, 12) === "WEBP") return "image/webp";
   if (bytes.length >= 6 && ["GIF87a", "GIF89a"].includes(bytes.toString("ascii", 0, 6))) return "image/gif";
@@ -168,15 +186,22 @@ function detectImageMimeType(bytes: Buffer): string | null {
 }
 
 function decodeBase64Image(data: string, declaredMimeType?: string) {
-  const normalized = data.includes(",") && data.startsWith("data:") ? data.slice(data.indexOf(",") + 1) : data;
+  const normalized = data.startsWith("data:") && data.includes(",")
+    ? data.slice(data.indexOf(",") + 1)
+    : data;
+
   if (!/^[A-Za-z0-9+/\r\n=]+$/.test(normalized) || normalized.length < 16) return null;
+
   const bytes = Buffer.from(normalized, "base64");
   if (!bytes.length) return null;
+
   const detectedMimeType = detectImageMimeType(bytes);
   if (!detectedMimeType) return null;
+
   if (declaredMimeType?.startsWith("image/") && declaredMimeType !== detectedMimeType) {
     console.warn("GEMINI_IMAGE_MIME_MISMATCH", { declaredMimeType, detectedMimeType });
   }
+
   return { bytes, mimeType: detectedMimeType };
 }
 
@@ -195,7 +220,10 @@ function isAllowedGeminiMediaUrl(rawUrl: string) {
 }
 
 async function downloadGeminiImageUri(uri: string, apiKey: string, timeoutMs: number) {
-  if (!isAllowedGeminiMediaUrl(uri)) throw new GeminiImageError("Gemini devolvió una URI de imagen no autorizada.", 502);
+  if (!isAllowedGeminiMediaUrl(uri)) {
+    throw new GeminiImageError("Gemini devolvió una URI de imagen no autorizada.", 502);
+  }
+
   const url = new URL(uri);
   const headers: Record<string, string> = {};
   if (url.hostname === "generativelanguage.googleapis.com") headers["x-goog-api-key"] = apiKey;
@@ -205,17 +233,25 @@ async function downloadGeminiImageUri(uri: string, apiKey: string, timeoutMs: nu
     cache: "no-store",
     signal: AbortSignal.timeout(timeoutMs),
   });
-  if (!response.ok) throw new GeminiImageError(`No se pudo descargar la imagen de Gemini (HTTP ${response.status}).`, 502);
+  if (!response.ok) {
+    throw new GeminiImageError(`No se pudo descargar la imagen de Gemini (HTTP ${response.status}).`, 502);
+  }
 
   const declaredLength = Number(response.headers.get("content-length") || "0");
-  if (declaredLength > MAX_REMOTE_IMAGE_BYTES) throw new GeminiImageError("La imagen de Gemini supera el tamaño permitido.", 502);
+  if (declaredLength > MAX_REMOTE_IMAGE_BYTES) {
+    throw new GeminiImageError("La imagen de Gemini supera el tamaño permitido.", 502);
+  }
+
   const bytes = Buffer.from(await response.arrayBuffer());
-  if (!bytes.length || bytes.length > MAX_REMOTE_IMAGE_BYTES) throw new GeminiImageError("La imagen descargada de Gemini no es válida.", 502);
+  if (!bytes.length || bytes.length > MAX_REMOTE_IMAGE_BYTES) {
+    throw new GeminiImageError("La imagen descargada de Gemini no es válida.", 502);
+  }
 
   const detectedMimeType = detectImageMimeType(bytes);
   const responseMimeType = response.headers.get("content-type")?.split(";", 1)[0]?.trim();
   const mimeType = detectedMimeType ?? (responseMimeType?.startsWith("image/") ? responseMimeType : null);
   if (!mimeType) throw new GeminiImageError("Gemini devolvió un recurso que no es una imagen válida.", 502);
+
   return { bytes, mimeType };
 }
 
@@ -240,12 +276,11 @@ function usageMetadata(data: InteractionResponse): GeminiUsageMetadata | null {
 }
 
 export function describeGeminiInteractionPayload(data: InteractionResponse) {
-  const root = data as Record<string, unknown>;
   return {
     id: data.id ?? null,
     model: data.model ?? null,
     status: data.status ?? null,
-    rootKeys: Object.keys(root).sort(),
+    rootKeys: Object.keys(data as Record<string, unknown>).sort(),
     steps: (data.steps ?? []).map((step) => ({
       type: step.type ?? null,
       status: step.status ?? null,
@@ -256,7 +291,14 @@ export function describeGeminiInteractionPayload(data: InteractionResponse) {
         mimeType: content.mime_type ?? content.mimeType ?? null,
         hasData: Boolean(content.data || content.inline_data?.data || content.inlineData?.data),
         dataLength: content.data?.length ?? content.inline_data?.data?.length ?? content.inlineData?.data?.length ?? 0,
-        hasUri: Boolean(content.uri || content.url || content.file_uri || content.fileUri || content.file_data?.uri || content.fileData?.uri),
+        hasUri: Boolean(
+          content.uri
+          || content.url
+          || content.file_uri
+          || content.fileUri
+          || content.file_data?.uri
+          || content.fileData?.uri
+        ),
       })),
     })),
     outputCount: data.outputs?.length ?? 0,
@@ -289,8 +331,13 @@ export async function extractGeminiImageResult(
         };
       }
     }
+
     if (candidate.uri) {
-      const downloaded = await downloadGeminiImageUri(candidate.uri, options.apiKey, options.timeoutMs ?? 30_000);
+      const downloaded = await downloadGeminiImageUri(
+        candidate.uri,
+        options.apiKey,
+        options.timeoutMs ?? 30_000,
+      );
       return {
         bytes: downloaded.bytes,
         mimeType: downloaded.mimeType,
@@ -300,6 +347,7 @@ export async function extractGeminiImageResult(
       };
     }
   }
+
   return null;
 }
 
@@ -313,13 +361,20 @@ async function fetchInteraction(args: { apiKey: string; interactionId: string; t
     cache: "no-store",
     signal: AbortSignal.timeout(args.timeoutMs ?? 30_000),
   });
+
   const data = await response.json().catch(() => ({})) as InteractionResponse;
-  if (!response.ok) throw new GeminiImageError(data.error?.message ?? "No se pudo recuperar la imagen generada.", response.status);
+  if (!response.ok) {
+    throw new GeminiImageError(data.error?.message ?? "No se pudo recuperar la imagen generada.", response.status);
+  }
   return data;
 }
 
 function isRecoverableStatus(status?: string) {
-  return status === "in_progress" || status === "requires_action" || !status;
+  return status === "in_progress"
+    || status === "queued"
+    || status === "running"
+    || status === "requires_action"
+    || !status;
 }
 
 async function recoverInteractionImage(args: {
@@ -332,10 +387,21 @@ async function recoverInteractionImage(args: {
   let latest: InteractionResponse | null = null;
 
   while (attempt < 5 && Date.now() - startedAt < args.timeoutMs) {
-    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, Math.min(500 * 2 ** attempt, 2_000)));
-    latest = await fetchInteraction({ apiKey: args.apiKey, interactionId: args.interactionId, timeoutMs: Math.min(15_000, args.timeoutMs) });
+    if (attempt > 0) {
+      await new Promise((resolve) => setTimeout(resolve, Math.min(500 * 2 ** attempt, 2_000)));
+    }
+
+    latest = await fetchInteraction({
+      apiKey: args.apiKey,
+      interactionId: args.interactionId,
+      timeoutMs: Math.min(15_000, args.timeoutMs),
+    });
     console.info("GEMINI_IMAGE_RECOVERY_RESPONSE_SHAPE", describeGeminiInteractionPayload(latest));
-    const generated = await extractGeminiImageResult(latest, { apiKey: args.apiKey, timeoutMs: Math.min(15_000, args.timeoutMs) });
+
+    const generated = await extractGeminiImageResult(latest, {
+      apiKey: args.apiKey,
+      timeoutMs: Math.min(15_000, args.timeoutMs),
+    });
     if (generated) return { generated, latest };
     if (!isRecoverableStatus(latest.status)) break;
     attempt += 1;
@@ -344,13 +410,24 @@ async function recoverInteractionImage(args: {
   return { generated: null, latest };
 }
 
-export async function getStoredGeneratedImage(args: { apiKey: string; interactionId: string; timeoutMs?: number }) {
+export async function getStoredGeneratedImage(args: {
+  apiKey: string;
+  interactionId: string;
+  timeoutMs?: number;
+}) {
   const data = await fetchInteraction(args);
   console.info("GEMINI_IMAGE_RECOVERY_RESPONSE_SHAPE", describeGeminiInteractionPayload(data));
-  const generated = await extractGeminiImageResult(data, { apiKey: args.apiKey, timeoutMs: args.timeoutMs });
+
+  const generated = await extractGeminiImageResult(data, {
+    apiKey: args.apiKey,
+    timeoutMs: args.timeoutMs,
+  });
   if (generated) return generated;
+
   throw new GeminiImageError(
-    data.status ? `Gemini terminó sin devolver una imagen utilizable (status ${data.status}).` : "Gemini terminó sin devolver una imagen utilizable.",
+    data.status
+      ? `Gemini terminó sin devolver una imagen utilizable (status ${data.status}).`
+      : "Gemini terminó sin devolver una imagen utilizable.",
     502,
   );
 }
@@ -358,24 +435,33 @@ export async function getStoredGeneratedImage(args: { apiKey: string; interactio
 export async function generateImage(args: GenerateImageArgs): Promise<GeneratedImage> {
   const model = args.model ?? "gemini-3.1-flash-image";
   const referenceImages = args.referenceImages ?? [];
-  const input: string | InteractionContent[] = referenceImages.length
-    ? [
-        { type: "text", text: args.prompt },
-        ...referenceImages.map((ref) => ({ type: "image", mime_type: ref.mimeType, data: ref.data })),
-      ]
-    : args.prompt;
+
+  // REST Interactions documents input as an array of typed content blocks.
+  // Keep text-only generation on that same canonical contract instead of
+  // sending a raw string, so image generation follows the provider example.
+  const input: InteractionContent[] = [
+    { type: "text", text: args.prompt },
+    ...referenceImages.map((ref) => ({
+      type: "image",
+      mime_type: ref.mimeType,
+      data: ref.data,
+    })),
+  ];
 
   let response: Response;
   try {
     response = await fetch(INTERACTIONS_ENDPOINT, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": args.apiKey },
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": args.apiKey,
+      },
       body: JSON.stringify({
         model,
         input,
         response_format: {
           type: "image",
-          delivery: "inline",
+          mime_type: "image/png",
           aspect_ratio: args.aspectRatio ?? "1:1",
           ...(args.imageSize ? { image_size: args.imageSize } : {}),
         },
@@ -393,7 +479,10 @@ export async function generateImage(args: GenerateImageArgs): Promise<GeneratedI
   try {
     data = raw ? JSON.parse(raw) as InteractionResponse : {};
   } catch {
-    throw new GeminiImageError(`Gemini devolvió una respuesta inválida (HTTP ${response.status}).`, response.ok ? 502 : response.status);
+    throw new GeminiImageError(
+      `Gemini devolvió una respuesta inválida (HTTP ${response.status}).`,
+      response.ok ? 502 : response.status,
+    );
   }
 
   console.info("GEMINI_IMAGE_RESPONSE_SHAPE", describeGeminiInteractionPayload(data));
@@ -401,11 +490,20 @@ export async function generateImage(args: GenerateImageArgs): Promise<GeneratedI
   if (!response.ok) {
     const providerMessage = data.error?.message?.trim();
     const suffix = data.error?.status ? ` [${data.error.status}]` : "";
-    throw new GeminiImageError(providerMessage ? `${providerMessage}${suffix}` : `Gemini respondió HTTP ${response.status}`, response.status);
+    throw new GeminiImageError(
+      providerMessage ? `${providerMessage}${suffix}` : `Gemini respondió HTTP ${response.status}`,
+      response.status,
+    );
   }
-  if (data.error?.message) throw new GeminiImageError(data.error.message, data.error.code ?? 502);
 
-  const generated = await extractGeminiImageResult(data, { apiKey: args.apiKey, timeoutMs: Math.min(args.timeoutMs ?? 30_000, 30_000) });
+  if (data.error?.message) {
+    throw new GeminiImageError(data.error.message, data.error.code ?? 502);
+  }
+
+  const generated = await extractGeminiImageResult(data, {
+    apiKey: args.apiKey,
+    timeoutMs: Math.min(args.timeoutMs ?? 30_000, 30_000),
+  });
   if (generated) return generated;
 
   if (data.id) {
@@ -415,15 +513,20 @@ export async function generateImage(args: GenerateImageArgs): Promise<GeneratedI
       timeoutMs: Math.min(args.timeoutMs ?? 30_000, 30_000),
     });
     if (recovered.generated) return recovered.generated;
+
     const finalStatus = recovered.latest?.status ?? data.status;
     throw new GeminiImageError(
-      finalStatus ? `Gemini terminó sin devolver una imagen utilizable (status ${finalStatus}).` : "Gemini terminó sin devolver una imagen utilizable.",
+      finalStatus
+        ? `Gemini terminó sin devolver una imagen utilizable (status ${finalStatus}).`
+        : "Gemini terminó sin devolver una imagen utilizable.",
       502,
     );
   }
 
   throw new GeminiImageError(
-    data.status ? `Gemini terminó sin devolver una imagen utilizable (status ${data.status}).` : "Gemini terminó sin devolver una imagen utilizable.",
+    data.status
+      ? `Gemini terminó sin devolver una imagen utilizable (status ${data.status}).`
+      : "Gemini terminó sin devolver una imagen utilizable.",
     502,
   );
 }
