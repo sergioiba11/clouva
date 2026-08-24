@@ -101,3 +101,23 @@ test("Public Player keeps Spotify listening and likes inside CLOUVA", () => {
   assert.match(libraryRoute, /saveSpotifyUri/);
   assert.match(libraryRoute, /removeSpotifyUri/);
 });
+
+test("Spotify for Artists bridge separates professional workspace, public artist and imported analytics", () => {
+  const page = read("./app/profile/spotify-artist/page.tsx");
+  const artistRoute = read("./app/api/integrations/spotify/artist-link/route.ts");
+  const importRoute = read("./app/api/integrations/spotify/artist-import/route.ts");
+  const migration = read("./supabase/migrations/20260824011000_spotify_for_artists_bridge.sql");
+
+  assert.match(page, /Spotify \+ Spotify for Artists/);
+  assert.match(page, /spotify_for_artists_url/);
+  assert.match(page, /mode=\$\{mode\}/);
+  assert.match(page, /Importar CSV/);
+  assert.match(artistRoute, /for_artists_workspace/);
+  assert.match(artistRoute, /spotify_for_artists_id/);
+  assert.match(artistRoute, /spotify_artist_data/);
+  assert.match(artistRoute, /type=track&limit=10/);
+  assert.match(importRoute, /spotify_for_artists_imports/);
+  assert.match(importRoute, /MAX_ROWS = 5_000/);
+  assert.match(migration, /spotify_for_artists_status/);
+  assert.match(migration, /spotify_for_artists_imports/);
+});
