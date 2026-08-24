@@ -22,6 +22,7 @@ import { CloverIcon } from "@/components/clover-icon";
 import { useAuth } from "@/components/auth-provider";
 import { useCurrentPlayer } from "@/components/current-player-provider";
 import { AccountMenu } from "@/components/account/AccountMenu";
+import { SpotifyHomeConnectAction } from "@/components/music/SpotifyHomeConnectAction";
 import { resolveAccountDisplayName } from "@/lib/identity-names";
 import {
   configCssVariables,
@@ -143,6 +144,7 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
             <div>
               <h2>{config.music.title}</h2>
               <p>{config.music.artist}</p>
+              {!previewMode ? <SpotifyHomeConnectAction /> : null}
             </div>
             <button
               type="button"
