@@ -16,7 +16,7 @@ export function detectVideoGenerationIntent(message: string) {
   const text = message.trim();
   if (!text) return false;
   if (STRONG_PHRASES.test(text)) return true;
-  if (TECHNICAL_CONTEXT.test(text) && !CREATE_VERBS.test(text)) return false;
+  if (TECHNICAL_CONTEXT.test(text)) return false;
   return CREATE_VERBS.test(text) && VIDEO_NOUNS.test(text);
 }
 
