@@ -22,7 +22,7 @@ function imagePayload(overrides = {}) {
   };
 }
 
-test("Gemini image generation uses the documented Interactions REST contract", async (t) => {
+test("Gemini image generation uses stored inline Interactions REST delivery", async (t) => {
   const originalFetch = globalThis.fetch;
   t.after(() => { globalThis.fetch = originalFetch; });
 
@@ -48,11 +48,13 @@ test("Gemini image generation uses the documented Interactions REST contract", a
 
   const body = JSON.parse(capturedInit.body);
   assert.equal(body.model, "gemini-3.1-flash-image");
+  assert.equal(body.store, true);
   assert.deepEqual(body.input, [
     { type: "text", text: "Plano técnico de CLOUVA" },
   ]);
   assert.deepEqual(body.response_format, {
     type: "image",
+    delivery: "inline",
     mime_type: "image/jpeg",
     aspect_ratio: "16:9",
     image_size: "2K",
@@ -116,6 +118,17 @@ test("extracts inlineData image variants", async () => {
   assert.deepEqual(result?.bytes, PNG_BYTES);
 });
 
+test("accepts URL-safe base64 image data", async () => {
+  const urlSafe = PNG_BASE64.replaceAll("+", "-").replaceAll("/", "_");
+  const result = await extractGeminiImageResult({
+    id: "v1_url_safe",
+    status: "completed",
+    steps: [{ type: "model_output", content: [{ type: "image", mime_type: "image/png", data: urlSafe }] }],
+  }, { apiKey: "test-key" });
+
+  assert.deepEqual(result?.bytes, PNG_BYTES);
+});
+
 test("downloads an authorized Gemini image URI server-side", async (t) => {
   const originalFetch = globalThis.fetch;
   t.after(() => { globalThis.fetch = originalFetch; });
@@ -166,7 +179,31 @@ test("recovers an image with GET when the initial completed response omits media
   assert.deepEqual(generated.bytes, PNG_BYTES);
 });
 
-test("completed response without an image fails only after recovery is checked", async (t) => {
+test("completed interactions keep retrying briefly while inline media propagates", async (t) => {
+  const originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  let calls = 0;
+  globalThis.fetch = async (_url, init) => {
+    calls += 1;
+    if ((init?.method ?? "GET") === "POST") {
+      return Response.json({ id: "v1_delayed", status: "completed", steps: [] });
+    }
+    if (calls < 4) return Response.json({ id: "v1_delayed", status: "completed", steps: [] });
+    return Response.json(imagePayload({ id: "v1_delayed" }));
+  };
+
+  const generated = await generateImage({
+    apiKey: "test-key",
+    prompt: "Plano visual de CLOUVA",
+    timeoutMs: 10_000,
+  });
+
+  assert.equal(calls, 4);
+  assert.deepEqual(generated.bytes, PNG_BYTES);
+});
+
+test("completed response without an image fails after the bounded recovery window", async (t) => {
   const originalFetch = globalThis.fetch;
   t.after(() => { globalThis.fetch = originalFetch; });
 
@@ -177,10 +214,26 @@ test("completed response without an image fails only after recovery is checked",
   };
 
   await assert.rejects(
-    generateImage({ apiKey: "test-key", prompt: "Generá una imagen" }),
+    generateImage({ apiKey: "test-key", prompt: "Generá una imagen", timeoutMs: 10_000 }),
     /sin devolver una imagen utilizable/,
   );
-  assert.equal(calls, 2);
+  assert.equal(calls, 6);
+});
+
+test("provider errors recorded on a completed interaction are surfaced", async (t) => {
+  const originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  globalThis.fetch = async () => Response.json({
+    id: "v1_provider_error",
+    status: "completed",
+    errors: [{ code: "IMAGE_OUTPUT_FAILED", message: "Provider image generation failed" }],
+  });
+
+  await assert.rejects(
+    generateImage({ apiKey: "test-key", prompt: "Generá una imagen" }),
+    /Provider image generation failed/,
+  );
 });
 
 test("unknown payload returns null from the canonical extractor", async () => {
@@ -221,7 +274,8 @@ test("Gemini Interactions serializes reference images in the canonical input arr
     { type: "text", text: "Convertí esta referencia en un plano" },
     { type: "image", mime_type: "image/png", data: PNG_BASE64 },
   ]);
+  assert.equal(capturedBody.store, true);
   assert.equal(capturedBody.response_format.type, "image");
+  assert.equal(capturedBody.response_format.delivery, "inline");
   assert.equal(capturedBody.response_format.mime_type, "image/jpeg");
-  assert.equal("delivery" in capturedBody.response_format, false);
 });
