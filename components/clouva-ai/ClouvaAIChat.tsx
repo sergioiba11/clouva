@@ -209,6 +209,17 @@ export function ClouvaAIChat() {
     return () => window.cancelAnimationFrame(frame);
   }, [messages.length, mediaRevision, loading, pendingAction, loadingHistory]);
 
+  useEffect(() => {
+    if (!showConversations && !showProject) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setShowConversations(false);
+      setShowProject(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [showConversations, showProject]);
+
   async function copyMessage(content: string, index: number) {
     try {
       if (navigator.clipboard?.writeText) await navigator.clipboard.writeText(content);
@@ -242,6 +253,7 @@ export function ClouvaAIChat() {
     newConversation();
     setVisibleCount(INITIAL_VISIBLE_MESSAGES);
     setShowConversations(false);
+    setShowProject(false);
   }
 
   async function selectConversation(id: string) {
@@ -317,7 +329,12 @@ export function ClouvaAIChat() {
 
         <div className={styles.mainColumn}>
           <header className={styles.topbar}>
-            <button type="button" className={styles.mobilePanelButton} onClick={() => setShowConversations(true)} aria-label="Abrir conversaciones">
+            <button
+              type="button"
+              className={styles.mobilePanelButton}
+              onClick={() => { setShowProject(false); setShowConversations(true); }}
+              aria-label="Abrir conversaciones"
+            >
               <PanelLeft className="h-4 w-4" />
             </button>
             <div className={styles.chatIdentity}>
@@ -327,7 +344,12 @@ export function ClouvaAIChat() {
             <div className={styles.topbarActions}>
               <div className={styles.modelWrapper}><GeminiModelSelector /></div>
               <button type="button" className={styles.iconButton} onClick={startNewConversation} disabled={loading || applying || mediaGenerating} aria-label="Nueva conversación"><Plus className="h-4 w-4" /></button>
-              <button type="button" className={styles.mobilePanelButton} onClick={() => setShowProject(true)} aria-label="Abrir contexto del proyecto"><PanelRight className="h-4 w-4" /></button>
+              <button
+                type="button"
+                className={styles.mobilePanelButton}
+                onClick={() => { setShowConversations(false); setShowProject(true); }}
+                aria-label="Abrir contexto del proyecto"
+              ><PanelRight className="h-4 w-4" /></button>
             </div>
           </header>
 
@@ -490,16 +512,16 @@ export function ClouvaAIChat() {
 
           <section className={styles.safetyCard}><ShieldCheck className="h-4 w-4" /><div><strong>Revisión segura</strong><p>Trébol investiga primero. Ningún archivo cambia sin tu confirmación.</p></div></section>
         </aside>
-      </div>
 
-      {(showConversations || showProject) && (
-        <button
-          type="button"
-          className={styles.drawerBackdrop}
-          onClick={() => { setShowConversations(false); setShowProject(false); }}
-          aria-label="Cerrar panel"
-        />
-      )}
+        {(showConversations || showProject) && (
+          <button
+            type="button"
+            className={styles.drawerBackdrop}
+            onClick={() => { setShowConversations(false); setShowProject(false); }}
+            aria-label="Cerrar panel"
+          />
+        )}
+      </div>
     </section>
   );
 }
