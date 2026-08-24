@@ -49,12 +49,17 @@ type InteractionContent = {
   mimeType?: string;
 };
 
+type InteractionStep = {
+  type?: string;
+  content?: InteractionContent[];
+};
+
 type InteractionResponse = {
   id?: string;
   status?: string;
   output_image?: InteractionContent;
   output_text?: string;
-  steps?: Array<{ type?: string; content?: InteractionContent[] }>;
+  steps?: InteractionStep[];
   outputs?: InteractionContent[];
   usage?: {
     prompt_tokens?: number;
@@ -64,24 +69,28 @@ type InteractionResponse = {
   error?: { message?: string; code?: number; status?: string };
 };
 
-function interactionToImage(data: InteractionResponse): GeneratedImage {
-  const content = [
+function collectInteractionContent(data: InteractionResponse) {
+  return [
     ...(data.output_image ? [{ ...data.output_image, type: data.output_image.type ?? "image" }] : []),
-    ...(data.steps ?? []).flatMap((step) => step.type === "model_output" ? (step.content ?? []) : []),
+    ...(data.steps ?? []).flatMap((step) => step.content ?? []),
     ...(data.outputs ?? []),
   ];
-  const image = content.find((item) => item.type === "image" && item.data);
-  const text = data.output_text?.trim() || content.find((item) => item.type === "text" && item.text?.trim())?.text?.trim() || null;
-  if (!image?.data) {
-    const status = data.status?.trim();
-    throw new GeminiImageError(
-      status ? `Gemini terminó sin devolver una imagen (status ${status}).` : "Gemini terminó sin devolver una imagen.",
-      502,
-    );
-  }
+}
+
+function tryInteractionToImage(data: InteractionResponse): GeneratedImage | null {
+  const content = collectInteractionContent(data);
+  const image = content.find((item) => item.type === "image" && typeof item.data === "string" && item.data.length > 0);
+  if (!image?.data) return null;
+
+  const bytes = Buffer.from(image.data, "base64");
+  if (!bytes.length) return null;
+
+  const text = data.output_text?.trim()
+    || content.find((item) => item.type === "text" && item.text?.trim())?.text?.trim()
+    || null;
 
   return {
-    bytes: Buffer.from(image.data, "base64"),
+    bytes,
     mimeType: image.mime_type ?? image.mimeType ?? "image/png",
     text,
     usageMetadata: data.usage ? {
@@ -93,10 +102,25 @@ function interactionToImage(data: InteractionResponse): GeneratedImage {
   };
 }
 
-export async function getStoredGeneratedImage(args: { apiKey: string; interactionId: string; timeoutMs?: number }) {
-  if (!/^int_[a-zA-Z0-9_-]+$/.test(args.interactionId)) {
+function interactionDiagnostic(data: InteractionResponse) {
+  const contentTypes = collectInteractionContent(data)
+    .map((item) => item.type)
+    .filter((value): value is string => Boolean(value));
+  return {
+    id: data.id ?? null,
+    status: data.status ?? null,
+    stepTypes: (data.steps ?? []).map((step) => step.type ?? "unknown"),
+    contentTypes,
+    hasOutputImage: Boolean(data.output_image?.data),
+    hasOutputText: Boolean(data.output_text?.trim()),
+  };
+}
+
+async function fetchInteraction(args: { apiKey: string; interactionId: string; timeoutMs?: number }) {
+  if (!/^[a-zA-Z0-9._:-]{3,256}$/.test(args.interactionId)) {
     throw new GeminiImageError("Identificador de interacción inválido.", 400);
   }
+
   const response = await fetch(
     `${INTERACTIONS_ENDPOINT}/${encodeURIComponent(args.interactionId)}`,
     {
@@ -106,8 +130,23 @@ export async function getStoredGeneratedImage(args: { apiKey: string; interactio
     },
   );
   const data = await response.json().catch(() => ({})) as InteractionResponse;
-  if (!response.ok) throw new GeminiImageError(data.error?.message ?? "No se pudo recuperar la imagen generada.", response.status);
-  return interactionToImage(data);
+  if (!response.ok) {
+    throw new GeminiImageError(data.error?.message ?? "No se pudo recuperar la imagen generada.", response.status);
+  }
+  return data;
+}
+
+export async function getStoredGeneratedImage(args: { apiKey: string; interactionId: string; timeoutMs?: number }) {
+  const data = await fetchInteraction(args);
+  const generated = tryInteractionToImage(data);
+  if (generated) return generated;
+
+  console.error("GEMINI_IMAGE_MISSING_AFTER_GET", interactionDiagnostic(data));
+  const status = data.status?.trim();
+  throw new GeminiImageError(
+    status ? `Gemini terminó sin devolver una imagen (status ${status}).` : "Gemini terminó sin devolver una imagen.",
+    502,
+  );
 }
 
 export async function generateImage(args: GenerateImageArgs): Promise<GeneratedImage> {
@@ -167,5 +206,35 @@ export async function generateImage(args: GenerateImageArgs): Promise<GeneratedI
     throw new GeminiImageError(data.error.message, data.error.code ?? 502);
   }
 
-  return interactionToImage(data);
+  const generated = tryInteractionToImage(data);
+  if (generated) return generated;
+
+  if (data.id) {
+    try {
+      const recovered = await fetchInteraction({
+        apiKey: args.apiKey,
+        interactionId: data.id,
+        timeoutMs: Math.min(args.timeoutMs ?? 30_000, 30_000),
+      });
+      const recoveredImage = tryInteractionToImage(recovered);
+      if (recoveredImage) return recoveredImage;
+      console.error("GEMINI_IMAGE_MISSING_AFTER_RECOVERY", {
+        initial: interactionDiagnostic(data),
+        recovered: interactionDiagnostic(recovered),
+      });
+    } catch (error) {
+      console.error("GEMINI_IMAGE_RECOVERY_FAILED", {
+        initial: interactionDiagnostic(data),
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  } else {
+    console.error("GEMINI_IMAGE_MISSING_WITHOUT_ID", interactionDiagnostic(data));
+  }
+
+  const status = data.status?.trim();
+  throw new GeminiImageError(
+    status ? `Gemini terminó sin devolver una imagen (status ${status}).` : "Gemini terminó sin devolver una imagen.",
+    502,
+  );
 }
