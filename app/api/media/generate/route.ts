@@ -40,6 +40,8 @@ const MAX_PROMPT_LENGTH = 4_000;
 const RATE_LIMIT_WINDOW_MINUTES = 10;
 const RATE_LIMIT_REQUESTS = 8;
 const ACTIVE_JOB_LIMIT = 2;
+const MAX_CLOUVA_AI_CONTEXT_CHARS = 2_800;
+const REFERENTIAL_IMAGE_PROMPT = /(?:\b(?:esto|eso|aquello|lo anterior|lo de antes|como dijimos|como hablamos|que te ped[ií]|que te dije)\b|\b(?:el|la|ese|esa|este|esta)\s+(?:plano|imagen|foto|portada|render|ilustraci[oó]n|visual|diagrama|esquema|mockup|wireframe|storyboard|l[aá]mina)\b|\b(?:hacelo|hacela|armalo|armala|generalo|generala|crealo|creala)\b)/i;
 
 type MediaGenerateBody = {
   type?: "image" | "video";
@@ -57,11 +59,78 @@ type MediaGenerateBody = {
   pathPrefix?: string;
 };
 
+type ClouvaAIContextMessage = {
+  conversation_id: string;
+  role: string;
+  content: string;
+  metadata?: Record<string, unknown> | null;
+  created_at: string;
+};
+
 function validatePrompt(raw: unknown) {
   const prompt = typeof raw === "string" ? raw.trim() : "";
   if (!prompt) throw new MediaApiError("Describí lo que querés crear.", 400, "prompt_required");
   if (prompt.length > MAX_PROMPT_LENGTH) throw new MediaApiError("El prompt supera los 4.000 caracteres.", 413, "prompt_too_long");
   return prompt;
+}
+
+function isClouvaAIImageMessage(row: ClouvaAIContextMessage, prompt: string) {
+  const metadata = row.metadata && typeof row.metadata === "object" ? row.metadata : {};
+  return row.content.trim() === prompt
+    && metadata.provider === "clouva-media"
+    && metadata.mode === "chat"
+    && metadata.action === "generate_image";
+}
+
+async function resolveClouvaAIImagePrompt(
+  admin: Awaited<ReturnType<typeof requireMediaAdmin>>["admin"],
+  userId: string,
+  prompt: string,
+) {
+  if (prompt.length > 240 || !REFERENTIAL_IMAGE_PROMPT.test(prompt)) return prompt;
+
+  const { data: recentRows, error: recentError } = await admin
+    .from("ai_messages")
+    .select("conversation_id,role,content,metadata,created_at")
+    .eq("user_id", userId)
+    .eq("role", "user")
+    .order("created_at", { ascending: false })
+    .limit(20);
+  if (recentError || !recentRows?.length) return prompt;
+
+  const currentMessage = (recentRows as unknown as ClouvaAIContextMessage[])
+    .find((row) => isClouvaAIImageMessage(row, prompt));
+  if (!currentMessage?.conversation_id) return prompt;
+
+  const { data: historyRows, error: historyError } = await admin
+    .from("ai_messages")
+    .select("conversation_id,role,content,metadata,created_at")
+    .eq("conversation_id", currentMessage.conversation_id)
+    .lt("created_at", currentMessage.created_at)
+    .order("created_at", { ascending: false })
+    .limit(8);
+  if (historyError || !historyRows?.length) return prompt;
+
+  const context = (historyRows as unknown as ClouvaAIContextMessage[])
+    .reverse()
+    .map((row) => {
+      const label = row.role === "assistant" ? "Trébol" : "Usuario";
+      const content = row.content.replace(/\s+/g, " ").trim().slice(0, 700);
+      return content ? `${label}: ${content}` : "";
+    })
+    .filter(Boolean)
+    .join("\n");
+  if (!context) return prompt;
+
+  const boundedContext = context.length > MAX_CLOUVA_AI_CONTEXT_CHARS
+    ? context.slice(context.length - MAX_CLOUVA_AI_CONTEXT_CHARS)
+    : context;
+  return [
+    "Usá el contexto previo únicamente para resolver a qué se refiere el pedido visual actual. Conservá el concepto ya definido; no lo reemplaces por uno nuevo.",
+    boundedContext,
+    `Pedido visual actual: ${prompt}`,
+    "Generá la imagen solicitada materializando el concepto previo al que hace referencia el pedido actual.",
+  ].join("\n\n").slice(0, MAX_PROMPT_LENGTH);
 }
 
 async function enforceRateLimit(admin: Awaited<ReturnType<typeof requireMediaAdmin>>["admin"], userId: string) {
@@ -191,6 +260,7 @@ export async function POST(request: NextRequest) {
       const quality: ImageQuality = isImageQuality(body.quality) ? body.quality : "high";
       const aspectRatio: ImageAspectRatio = isImageAspectRatio(body.aspectRatio) ? body.aspectRatio : "1:1";
       const config = IMAGE_QUALITY_CONFIG[quality];
+      const generationPrompt = await resolveClouvaAIImagePrompt(admin, authenticated.user.id, prompt);
       const created = await createJob({
         admin,
         userId: authenticated.user.id,
@@ -212,7 +282,7 @@ export async function POST(request: NextRequest) {
       const reference = body.referenceUrl ? await downloadReferenceImage(body.referenceUrl) : null;
       const generated = await generateImage({
         apiKey,
-        prompt,
+        prompt: generationPrompt,
         model: config.model,
         aspectRatio,
         imageSize: config.imageSize,
