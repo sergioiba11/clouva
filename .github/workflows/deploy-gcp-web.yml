@@ -1,5 +1,5 @@
 name: Deploy CLOUVA web to Cloud Run
-# Release marker: deploy Gemini image REST contract and CLOUVA AI viewport fix.
+# Release marker: deploy latest main after Gemini JPEG test sync.
 
 on:
   push:
