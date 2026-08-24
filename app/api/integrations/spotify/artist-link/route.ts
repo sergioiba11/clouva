@@ -18,6 +18,15 @@ type SpotifyArtistSearch = {
   };
 };
 
+type SpotifyOEmbed = {
+  title?: string;
+  html?: string;
+  provider_name?: string;
+  thumbnail_url?: string;
+  thumbnail_width?: number;
+  thumbnail_height?: number;
+};
+
 const ARTIST_ID_RE = /^[A-Za-z0-9]{10,64}$/;
 
 function parseArtistId(value: unknown) {
@@ -28,7 +37,10 @@ function parseArtistId(value: unknown) {
 
   try {
     const url = new URL(input);
-    if (!/^(?:open\.)?spotify\.com$/i.test(url.hostname)) return null;
+    const isOpenSpotify = /^(?:open\.)?spotify\.com$/i.test(url.hostname);
+    const isSpotifyForArtists = /^artists\.spotify\.com$/i.test(url.hostname);
+    if (!isOpenSpotify && !isSpotifyForArtists) return null;
+
     const parts = url.pathname.split("/").filter(Boolean);
     const artistIndex = parts.findIndex((part) => part.toLowerCase() === "artist");
     const id = artistIndex >= 0 ? parts[artistIndex + 1] : null;
@@ -74,6 +86,61 @@ function publicArtist(artist: SpotifyArtist) {
   };
 }
 
+function cleanOEmbedTitle(title: string | undefined, fallbackName: string) {
+  const cleaned = title
+    ?.trim()
+    .replace(/\s*[|·–—-]\s*Spotify(?:\s.*)?$/i, "")
+    .trim();
+  return cleaned || fallbackName;
+}
+
+async function spotifyArtistFromOEmbed(artistId: string, fallbackName: string): Promise<SpotifyArtist | null> {
+  const spotifyProfileUrl = `https://open.spotify.com/artist/${artistId}`;
+  const response = await fetch(`https://open.spotify.com/oembed?url=${encodeURIComponent(spotifyProfileUrl)}`, {
+    headers: { Accept: "application/json" },
+    cache: "no-store",
+  }).catch(() => null);
+
+  if (!response?.ok) return null;
+
+  const payload = (await response.json().catch(() => null)) as SpotifyOEmbed | null;
+  const embedHtml = payload?.html || "";
+  const providerIsSpotify = payload?.provider_name?.toLowerCase() === "spotify";
+  const isArtistEmbed = embedHtml.includes(`/embed/artist/${artistId}`);
+  if (!payload || !providerIsSpotify || !isArtistEmbed) return null;
+
+  return {
+    id: artistId,
+    name: cleanOEmbedTitle(payload.title, fallbackName),
+    uri: `spotify:artist:${artistId}`,
+    external_urls: { spotify: spotifyProfileUrl },
+    images: payload.thumbnail_url
+      ? [{ url: payload.thumbnail_url, width: payload.thumbnail_width ?? null, height: payload.thumbnail_height ?? null }]
+      : [],
+    followers: { total: 0 },
+    popularity: 0,
+  };
+}
+
+async function resolveSpotifyArtist(artistId: string, fallbackName: string) {
+  const token = await getSpotifyAppAccessToken();
+  try {
+    return await spotifyApiFetch<SpotifyArtist>({
+      accessToken: token.access_token,
+      path: `/artists/${encodeURIComponent(artistId)}`,
+    });
+  } catch (error) {
+    // Some valid/public artist pages can be omitted by the catalog view available
+    // to a Spotify Web API app. Spotify's official oEmbed endpoint still exposes
+    // and validates the public artist page used by our embedded player.
+    if (error instanceof SpotifyApiError && error.status === 404) {
+      const oEmbedArtist = await spotifyArtistFromOEmbed(artistId, fallbackName);
+      if (oEmbedArtist) return oEmbedArtist;
+    }
+    throw error;
+  }
+}
+
 export async function GET(request: NextRequest) {
   try {
     const { user } = await requireUser(request);
@@ -110,11 +177,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Elegí un artista de los resultados o pegá un enlace válido de Spotify." }, { status: 400 });
     }
 
-    const token = await getSpotifyAppAccessToken();
-    const artist = await spotifyApiFetch<SpotifyArtist>({
-      accessToken: token.access_token,
-      path: `/artists/${encodeURIComponent(artistId)}`,
-    });
+    const artist = await resolveSpotifyArtist(artistId, player.display_name || "Artista de Spotify");
     if (!artist?.id || !artist?.name) throw new Error("Spotify devolvió un perfil de artista inválido.");
 
     const spotifyProfileUrl = artist.external_urls?.spotify || `https://open.spotify.com/artist/${artist.id}`;
