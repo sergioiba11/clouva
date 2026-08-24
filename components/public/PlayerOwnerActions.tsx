@@ -1,15 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { Building2, Pencil, Plus } from "lucide-react";
+import { Building2, Music2, Pencil, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
 
 /**
- * Botones "Editar mi perfil" / "Administrar estudio" (o "Crear estudio" si
- * todavía no tiene uno) directamente en el perfil público -- solo visibles
- * cuando quien mira la página es el dueño logueado. No se renderiza nada
- * para cualquier otro visitante.
+ * Acciones privadas del dueño directamente sobre su perfil público.
+ * No se renderiza nada para cualquier otro visitante.
  */
 export function PlayerOwnerActions({ ownerUserId }: { ownerUserId: string | null }) {
   const { user } = useAuth();
@@ -41,6 +39,12 @@ export function PlayerOwnerActions({ ownerUserId }: { ownerUserId: string | null
         className="inline-flex items-center gap-2 rounded-full border border-violet-400/35 bg-violet-500/15 px-4 py-2 text-xs font-semibold text-violet-200 transition hover:bg-violet-500/25"
       >
         <Pencil size={14} /> Editar mi perfil
+      </Link>
+      <Link
+        href="/profile/spotify-artist"
+        className="inline-flex items-center gap-2 rounded-full border border-[#1DB954]/35 bg-[#1DB954]/10 px-4 py-2 text-xs font-semibold text-[#72e49a] transition hover:bg-[#1DB954]/20"
+      >
+        <Music2 size={14} /> Conectar Spotify for Artists
       </Link>
       {ownedStudioId ? (
         <Link
