@@ -135,7 +135,6 @@ function PreviewSelectionCard({ content }: { content: string }) {
       <dl>
         <div><dt>Elemento</dt><dd>{selection.element}</dd></div>
         <div><dt>Selector</dt><dd>{selection.selector}</dd></div>
-        <div><dt>Ruta</dt><dd>{selection.route}</dd></div>
       </dl>
     </div>
   );
