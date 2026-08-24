@@ -11,15 +11,21 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     const { slug: studioId } = await params;
     const admin = createAdminSupabase();
     const { spot, studio, role } = await requireManagedSpot({ admin, userId: user.id, studioId });
+    const includeArchived = request.nextUrl.searchParams.get("includeArchived") === "1";
+
+    let listingsQuery = admin
+      .from("commerce_products")
+      .select("id,spot_id,catalog_product_id,product_type,listing_kind,name,slug,description,price,cost_amount,currency,stock,status,cover_url,gallery,avatar_asset_id,metadata,created_at,updated_at")
+      .eq("spot_id", spot.id)
+      .order("created_at", { ascending: false });
+
+    if (!includeArchived) {
+      listingsQuery = listingsQuery.neq("status", "archived");
+    }
 
     const [summaryResult, listingsResult, identifierEventsResult, movementsResult, ordersResult, paymentsResult, locationsResult] = await Promise.all([
       admin.rpc("commerce_spot_financial_summary", { p_spot_id: spot.id }),
-      admin
-        .from("commerce_products")
-        .select("id,spot_id,catalog_product_id,product_type,listing_kind,name,slug,description,price,cost_amount,currency,stock,status,cover_url,gallery,avatar_asset_id,metadata,created_at,updated_at")
-        .eq("spot_id", spot.id)
-        .neq("status", "archived")
-        .order("created_at", { ascending: false }),
+      listingsQuery,
       admin
         .from("commerce_product_identifier_events")
         .select("id,identifier_id,event_type,from_status,to_status,actor_id,metadata,created_at")
