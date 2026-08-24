@@ -129,9 +129,10 @@ test("commerce product image generation reuses Gemini Image and isolates each re
   assert.match(productImagesRoute, /displayLabel/);
   assert.match(productImagesRoute, /referencesForTarget/);
   assert.match(productImagesRoute, /referenceImages/);
-  assert.match(productImagesRoute, /NO uses las fotos de Detalle ni ninguna otra vista/);
-  assert.match(productImagesRoute, /solo existe la foto Frente o Atrás correspondiente/);
-  assert.match(productImagesRoute, /MISMA foto del producto con otro fondo/);
+  assert.match(productImagesRoute, /SOLO el producto/);
+  assert.match(productImagesRoute, /Eliminá por completo manos, dedos, brazos/);
+  assert.match(productImagesRoute, /referencias adicionales sirven SOLO como evidencia factual/);
+  assert.match(productImagesRoute, /No inventes ilustraciones, palabras, símbolos, piezas, pestañas ni contenido/);
 });
 
 test("commerce product image generation has a coherent timeout budget", () => {
