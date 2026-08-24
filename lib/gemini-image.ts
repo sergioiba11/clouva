@@ -461,7 +461,7 @@ export async function generateImage(args: GenerateImageArgs): Promise<GeneratedI
         input,
         response_format: {
           type: "image",
-          mime_type: "image/png",
+          mime_type: "image/jpeg",
           aspect_ratio: args.aspectRatio ?? "1:1",
           ...(args.imageSize ? { image_size: args.imageSize } : {}),
         },
