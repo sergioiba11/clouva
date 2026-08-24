@@ -3,6 +3,8 @@ import { parseVideoGenerationIntent, type VideoGenerationIntent } from "@/lib/cl
 
 export type ClouvaEngine = "text" | "image" | "video" | "voice" | "tool";
 
+export const CLOUVA_AI_START_VOICE_EVENT = "clouva-ai:start-voice";
+
 export type ClouvaIntent =
   | { engine: "image"; confidence: number; action: "generate_image"; payload: ImageGenerationIntent }
   | { engine: "video"; confidence: number; action: "generate_video"; payload: VideoGenerationIntent }
