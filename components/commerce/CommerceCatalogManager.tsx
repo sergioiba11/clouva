@@ -1,6 +1,6 @@
 "use client";
 
-import { LoaderCircle, Trash2, X } from "lucide-react";
+import { Archive, LoaderCircle, X } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
@@ -18,12 +18,19 @@ type Overview = {
   listings?: Listing[];
 };
 
+function statusLabel(status: string) {
+  if (status === "archived") return "Archivado";
+  if (status === "published" || status === "active") return "Activo";
+  if (status === "draft") return "Borrador";
+  return status;
+}
+
 export function CommerceCatalogManager() {
   const pathname = usePathname();
   const { session } = useAuth();
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [archivingId, setArchivingId] = useState<string | null>(null);
   const [listings, setListings] = useState<Listing[]>([]);
   const [spotName, setSpotName] = useState("MI SPOT");
   const [error, setError] = useState<string | null>(null);
@@ -40,7 +47,7 @@ export function CommerceCatalogManager() {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`/api/studios/${encodeURIComponent(studioId)}/commerce/spot`, {
+      const response = await fetch(`/api/studios/${encodeURIComponent(studioId)}/commerce/spot?includeArchived=1`, {
         headers: { authorization: `Bearer ${session.access_token}` },
       });
       const payload = (await response.json().catch(() => ({}))) as Overview & { error?: string };
@@ -62,12 +69,12 @@ export function CommerceCatalogManager() {
 
   if (!active) return null;
 
-  const remove = async (listing: Listing) => {
-    if (!studioId || !session?.access_token || deletingId) return;
-    const confirmed = window.confirm(`¿Eliminar “${listing.name}” del catálogo de ${spotName}?\n\nSe quitará del catálogo activo y se conservará el historial de inventario y ventas.`);
+  const archive = async (listing: Listing) => {
+    if (!studioId || !session?.access_token || archivingId || listing.status === "archived") return;
+    const confirmed = window.confirm(`¿Archivar “${listing.name}” del catálogo de ${spotName}?\n\nDejará de aparecer en el catálogo activo. Se conservarán el inventario y el historial de ventas.`);
     if (!confirmed) return;
 
-    setDeletingId(listing.id);
+    setArchivingId(listing.id);
     setError(null);
     try {
       const response = await fetch(`/api/studios/${encodeURIComponent(studioId)}/commerce/products/archive`, {
@@ -79,13 +86,13 @@ export function CommerceCatalogManager() {
         body: JSON.stringify({ listingId: listing.id }),
       });
       const payload = (await response.json().catch(() => ({}))) as { error?: string };
-      if (!response.ok) throw new Error(payload.error || "No se pudo eliminar el producto.");
-      setListings((current) => current.filter((item) => item.id !== listing.id));
+      if (!response.ok) throw new Error(payload.error || "No se pudo archivar el producto.");
+      setListings((current) => current.map((item) => item.id === listing.id ? { ...item, status: "archived" } : item));
+      setArchivingId(null);
       window.dispatchEvent(new Event("clouva:commerce-product-archived"));
-      window.location.reload();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "No se pudo eliminar el producto.");
-      setDeletingId(null);
+      setError(cause instanceof Error ? cause.message : "No se pudo archivar el producto.");
+      setArchivingId(null);
     }
   };
 
@@ -94,9 +101,9 @@ export function CommerceCatalogManager() {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="fixed bottom-24 left-4 z-[72] flex items-center gap-2 rounded-full border border-red-400/25 bg-[#110b14]/95 px-4 py-3 text-sm font-semibold text-red-200 shadow-[0_12px_40px_rgba(0,0,0,.45)] backdrop-blur-xl transition hover:border-red-300/45"
+        className="fixed bottom-24 left-4 z-[72] flex items-center gap-2 rounded-full border border-violet-400/25 bg-[#110b14]/95 px-4 py-3 text-sm font-semibold text-violet-100 shadow-[0_12px_40px_rgba(0,0,0,.45)] backdrop-blur-xl transition hover:border-violet-300/45"
       >
-        <Trash2 className="h-4 w-4" />
+        <Archive className="h-4 w-4" />
         Administrar catálogo
       </button>
 
@@ -106,7 +113,8 @@ export function CommerceCatalogManager() {
             <div className="flex items-center justify-between border-b border-white/10 p-5">
               <div>
                 <p className="text-xs uppercase tracking-[.2em] text-violet-300">Catálogo de {spotName}</p>
-                <h2 className="mt-1 text-xl font-semibold text-white">Eliminar productos</h2>
+                <h2 className="mt-1 text-xl font-semibold text-white">Administrar productos</h2>
+                <p className="mt-1 text-xs text-white/35">Los archivados se conservan para mantener el historial del Spot.</p>
               </div>
               <button type="button" onClick={() => setOpen(false)} className="rounded-xl border border-white/10 p-2 text-white/60 hover:text-white">
                 <X className="h-5 w-5" />
@@ -119,27 +127,38 @@ export function CommerceCatalogManager() {
                 <div className="grid min-h-40 place-items-center text-white/50"><LoaderCircle className="h-6 w-6 animate-spin" /></div>
               ) : listings.length ? (
                 <div className="space-y-2">
-                  {listings.map((listing) => (
-                    <div key={listing.id} className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.03] p-3">
-                      {listing.cover_url ? <img src={listing.cover_url} alt="" className="h-14 w-14 rounded-xl object-cover" /> : <div className="h-14 w-14 rounded-xl bg-white/5" />}
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate font-medium text-white">{listing.name}</p>
-                        <p className="mt-1 text-xs text-white/40">Stock {listing.stock ?? "∞"} · {listing.status}</p>
+                  {listings.map((listing) => {
+                    const archived = listing.status === "archived";
+                    return (
+                      <div key={listing.id} className={`flex items-center gap-3 rounded-2xl border p-3 ${archived ? "border-white/[0.07] bg-white/[0.015] opacity-75" : "border-white/10 bg-white/[0.03]"}`}>
+                        {listing.cover_url ? <img src={listing.cover_url} alt="" className="h-14 w-14 rounded-xl object-cover" /> : <div className="h-14 w-14 rounded-xl bg-white/5" />}
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate font-medium text-white">{listing.name}</p>
+                          <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-white/40">
+                            <span>Stock {listing.stock ?? "∞"}</span>
+                            <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${archived ? "border-white/10 bg-white/[0.04] text-white/45" : "border-emerald-400/20 bg-emerald-400/10 text-emerald-200"}`}>{statusLabel(listing.status)}</span>
+                          </div>
+                        </div>
+                        {archived ? (
+                          <span className="rounded-xl border border-white/10 px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-white/35">Archivado</span>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled={Boolean(archivingId)}
+                            onClick={() => void archive(listing)}
+                            className="flex min-h-11 items-center gap-2 rounded-xl border border-red-400/25 bg-red-500/10 px-3 text-xs font-semibold text-red-200 transition hover:bg-red-500/20 disabled:opacity-40"
+                            aria-label={`Archivar ${listing.name}`}
+                          >
+                            {archivingId === listing.id ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Archive className="h-4 w-4" />}
+                            <span className="hidden sm:inline">Archivar</span>
+                          </button>
+                        )}
                       </div>
-                      <button
-                        type="button"
-                        disabled={Boolean(deletingId)}
-                        onClick={() => void remove(listing)}
-                        className="grid h-11 w-11 place-items-center rounded-xl border border-red-400/25 bg-red-500/10 text-red-200 transition hover:bg-red-500/20 disabled:opacity-40"
-                        aria-label={`Eliminar ${listing.name}`}
-                      >
-                        {deletingId === listing.id ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                      </button>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               ) : (
-                <p className="py-12 text-center text-sm text-white/40">No hay productos activos en el catálogo.</p>
+                <p className="py-12 text-center text-sm text-white/40">No hay productos para administrar.</p>
               )}
             </div>
           </div>
