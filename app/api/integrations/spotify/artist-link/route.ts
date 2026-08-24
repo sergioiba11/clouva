@@ -65,6 +65,23 @@ type SpotifyReference = {
   url: string;
 };
 
+type OwnedPlayer = {
+  id: string;
+  slug: string;
+  display_name: string;
+  spotify_artist_id: string | null;
+  spotify_profile_url: string | null;
+  spotify_sync_status: string | null;
+  spotify_last_sync_at: string | null;
+  spotify_sync_error: string | null;
+  spotify_for_artists_id: string | null;
+  spotify_for_artists_url: string | null;
+  spotify_for_artists_status: string | null;
+  spotify_artist_data: Record<string, unknown> | null;
+  spotify_artist_data_updated_at: string | null;
+  spotify_for_artists_last_import_at: string | null;
+};
+
 const SPOTIFY_ID_RE = /^[A-Za-z0-9]{10,64}$/;
 
 function parseSpotifyReference(value: unknown, forcedKind?: SpotifyReference["kind"]): SpotifyReference | null {
@@ -117,7 +134,7 @@ function parseSpotifyReference(value: unknown, forcedKind?: SpotifyReference["ki
   }
 }
 
-async function ownedPlayer(userId: string) {
+async function ownedPlayer(userId: string): Promise<OwnedPlayer | null> {
   const admin = createAdminSupabase();
   const { data, error } = await admin
     .from("players")
@@ -128,7 +145,7 @@ async function ownedPlayer(userId: string) {
     .eq("owner_user_id", userId)
     .maybeSingle();
   if (error) throw new Error(error.message);
-  return data;
+  return data as unknown as OwnedPlayer | null;
 }
 
 function apiError(error: unknown) {
@@ -242,7 +259,7 @@ async function persistCatalogArtist(options: {
   artist: SpotifyArtist;
   accessToken: string;
   source: "web_api" | "oembed";
-}) {
+}): Promise<OwnedPlayer> {
   const { playerId, artist, accessToken, source } = options;
   const now = new Date().toISOString();
   const spotifyProfileUrl = artist.external_urls?.spotify || `https://open.spotify.com/artist/${artist.id}`;
@@ -261,15 +278,15 @@ async function persistCatalogArtist(options: {
     })
     .eq("id", playerId)
     .select([
-      "id,slug,display_name,spotify_artist_id,spotify_profile_url,spotify_sync_status,spotify_last_sync_at",
+      "id,slug,display_name,spotify_artist_id,spotify_profile_url,spotify_sync_status,spotify_last_sync_at,spotify_sync_error",
       "spotify_for_artists_id,spotify_for_artists_url,spotify_for_artists_status,spotify_artist_data,spotify_artist_data_updated_at,spotify_for_artists_last_import_at",
     ].join(","))
     .single();
   if (error) throw new Error(error.message);
-  return data;
+  return data as unknown as OwnedPlayer;
 }
 
-async function persistForArtistsWorkspace(playerId: string, reference: SpotifyReference) {
+async function persistForArtistsWorkspace(playerId: string, reference: SpotifyReference): Promise<OwnedPlayer> {
   const now = new Date().toISOString();
   const { data, error } = await createAdminSupabase()
     .from("players")
@@ -281,12 +298,12 @@ async function persistForArtistsWorkspace(playerId: string, reference: SpotifyRe
     })
     .eq("id", playerId)
     .select([
-      "id,slug,display_name,spotify_artist_id,spotify_profile_url,spotify_sync_status,spotify_last_sync_at",
+      "id,slug,display_name,spotify_artist_id,spotify_profile_url,spotify_sync_status,spotify_last_sync_at,spotify_sync_error",
       "spotify_for_artists_id,spotify_for_artists_url,spotify_for_artists_status,spotify_artist_data,spotify_artist_data_updated_at,spotify_for_artists_last_import_at",
     ].join(","))
     .single();
   if (error) throw new Error(error.message);
-  return data;
+  return data as unknown as OwnedPlayer;
 }
 
 export async function GET(request: NextRequest) {
@@ -371,19 +388,15 @@ export async function POST(request: NextRequest) {
     }
 
     if (reference.kind === "for_artists_workspace") {
-      const updated = await persistForArtistsWorkspace(String(player.id), reference);
+      const updated = await persistForArtistsWorkspace(player.id, reference);
 
-      // The identifier used by Spotify for Artists is not guaranteed to be the same
-      // resource exposed by the public Web API. If it is resolvable, link both sides;
-      // otherwise keep the professional workspace connected without fabricating a
-      // broken public artist URL.
       let catalogArtist: ReturnType<typeof publicArtist> | null = null;
       let publicPlayer = updated;
       try {
         const resolved = await resolveSpotifyCatalogArtist(reference.id, player.display_name || "Artista de Spotify");
         if (resolved.artist?.id && resolved.artist?.name) {
           publicPlayer = await persistCatalogArtist({
-            playerId: String(player.id),
+            playerId: player.id,
             artist: resolved.artist,
             accessToken: resolved.accessToken,
             source: resolved.source,
@@ -406,7 +419,7 @@ export async function POST(request: NextRequest) {
     const resolved = await resolveSpotifyCatalogArtist(reference.id, player.display_name || "Artista de Spotify");
     if (!resolved.artist?.id || !resolved.artist?.name) throw new Error("Spotify devolvió un perfil de artista inválido.");
     const updated = await persistCatalogArtist({
-      playerId: String(player.id),
+      playerId: player.id,
       artist: resolved.artist,
       accessToken: resolved.accessToken,
       source: resolved.source,
