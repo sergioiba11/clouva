@@ -19,8 +19,8 @@ export async function GET(request: Request) {
   const providerError = url.searchParams.get("error");
   const admin = createAdminSupabase();
 
-  if (!isSpotifyEnabled()) return redirectWith(request, "/", { spotify: "disabled" });
-  if (!stateRaw) return redirectWith(request, "/", { spotify: "invalid_state" });
+  if (!isSpotifyEnabled()) return redirectWith(request, "/settings/connections", { spotify: "disabled" });
+  if (!stateRaw) return redirectWith(request, "/settings/connections", { spotify: "invalid_state" });
 
   try {
     const state = await consumeSpotifyState(admin, stateRaw);
@@ -41,6 +41,6 @@ export async function GET(request: Request) {
     }
     return redirectWith(request, state.returnPath, { spotify: "connected", action });
   } catch {
-    return redirectWith(request, "/", { spotify: "error" });
+    return redirectWith(request, "/settings/connections", { spotify: "error" });
   }
 }

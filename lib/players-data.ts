@@ -70,6 +70,35 @@ export type PlayerMedia = {
   display_order: number;
 };
 
+export type PlayerMusicConnection = {
+  id: string;
+  player_id: string;
+  provider: "spotify";
+  external_artist_id: string;
+  external_uri: string;
+  external_url: string;
+  artist_name: string;
+  artist_image_url: string | null;
+  verification_status: "unverified" | "verified";
+  last_synced_at: string | null;
+};
+
+export type ExternalMusicTrack = {
+  id: string;
+  player_id: string;
+  provider: "spotify";
+  external_track_id: string;
+  external_track_uri: string;
+  external_album_id: string | null;
+  title: string;
+  artist_name: string;
+  album_name: string | null;
+  cover_url: string | null;
+  external_url: string;
+  release_date: string | null;
+  last_synced_at: string;
+};
+
 export type StudioRow = {
   id: string;
   slug: string;

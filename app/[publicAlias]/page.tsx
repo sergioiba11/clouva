@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { PlayerMusicSection } from "@/components/music/PlayerMusicSection";
 import { PlayerPublicView } from "@/components/public/PlayerPublicView";
 import { resolvePlayerAlias } from "@/lib/server/public-identity-data";
 
@@ -37,11 +38,14 @@ export default async function PublicPlayerAliasPage({ params }: { params: Promis
   if (!result) notFound();
 
   return (
-    <PlayerPublicView
-      player={result.player}
-      affiliations={result.affiliations}
-      media={result.media}
-      isVip={result.isVip}
-    />
+    <div className="min-h-screen bg-[#07060b] text-white">
+      <PlayerPublicView
+        player={result.player}
+        affiliations={result.affiliations}
+        media={result.media}
+        isVip={result.isVip}
+      />
+      <PlayerMusicSection connection={result.musicConnection} tracks={result.musicTracks} />
+    </div>
   );
 }

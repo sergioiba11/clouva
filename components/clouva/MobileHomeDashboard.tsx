@@ -22,7 +22,8 @@ import { CloverIcon } from "@/components/clover-icon";
 import { useAuth } from "@/components/auth-provider";
 import { useCurrentPlayer } from "@/components/current-player-provider";
 import { AccountMenu } from "@/components/account/AccountMenu";
-import { SpotifyHomeConnectAction } from "@/components/music/SpotifyHomeConnectAction";
+import { SpotifyLikeButton } from "@/components/music/SpotifyLikeButton";
+import type { NormalizedMusicTrack } from "@/core/integrations/spotify/types";
 import { resolveAccountDisplayName } from "@/lib/identity-names";
 import {
   configCssVariables,
@@ -70,11 +71,17 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
     configOverride,
   );
   const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const [favorite, setFavorite] = useState(config.music.favoriteDefault);
+  const [homeTrack, setHomeTrack] = useState<NormalizedMusicTrack | null>(null);
 
   useEffect(() => {
-    setFavorite(config.music.favoriteDefault);
-  }, [config.music.favoriteDefault]);
+    if (previewMode) return;
+    let cancelled = false;
+    void fetch("/api/music/home", { cache: "no-store" })
+      .then(async (response) => response.json() as Promise<{ track?: NormalizedMusicTrack | null }>)
+      .then((payload) => { if (!cancelled) setHomeTrack(payload.track || null); })
+      .catch(() => { if (!cancelled) setHomeTrack(null); });
+    return () => { cancelled = true; };
+  }, [previewMode]);
 
   const accountName = resolveAccountDisplayName({ profile, user });
   const playerImage = currentPlayer?.profile_image_url
@@ -133,27 +140,28 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
 
   function renderMusic() {
     if (!config.music.visible) return null;
+    const title = homeTrack?.title || config.music.title;
+    const artist = homeTrack?.artist || config.music.artist;
+    const coverUrl = homeTrack?.coverUrl || config.music.coverUrl;
     return (
-      <section key="music" className={styles.musicCard} aria-label={`${config.music.title}, ${config.music.artist}`} data-clouva-block="music">
-        <button type="button" className={styles.musicCover} onClick={openMusic} aria-label={`Abrir ${config.music.title}`}>
-          <img src={config.music.coverUrl} alt={`Portada de ${config.music.title}`} />
+      <section key="music" className={styles.musicCard} aria-label={`${title}, ${artist}`} data-clouva-block="music">
+        <button type="button" className={styles.musicCover} onClick={openMusic} aria-label={`Abrir ${title}`}>
+          <img src={coverUrl} alt={`Portada de ${title}`} />
         </button>
 
         <div className={styles.musicPanel}>
           <div className={styles.musicHeading}>
             <div>
-              <h2>{config.music.title}</h2>
-              <p>{config.music.artist}</p>
-              {!previewMode ? <SpotifyHomeConnectAction /> : null}
+              <h2>{title}</h2>
+              <p>{artist}</p>
             </div>
-            <button
-              type="button"
-              className={favorite ? styles.favoriteActive : styles.favoriteButton}
-              onClick={() => setFavorite((value) => !value)}
-              aria-label={favorite ? "Quitar de favoritos" : "Agregar a favoritos"}
-            >
-              <Heart size={23} fill={favorite ? "currentColor" : "none"} />
-            </button>
+            {previewMode ? (
+              <button type="button" className={styles.favoriteButton} aria-label="Favorito de vista previa"><Heart size={23} /></button>
+            ) : homeTrack ? (
+              <SpotifyLikeButton uri={homeTrack.uri} />
+            ) : (
+              <Link href="/settings/connections" className={styles.favoriteButton} aria-label="Conectar Spotify"><Heart size={23} /></Link>
+            )}
           </div>
 
           <button type="button" className={styles.progressButton} onClick={openMusic} aria-label="Abrir reproductor musical">

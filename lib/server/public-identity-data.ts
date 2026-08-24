@@ -6,8 +6,10 @@ import {
   studioMembershipPlansSelect,
   studioPlayersSelect,
   studioServicesSelect,
+  type ExternalMusicTrack,
   type Player,
   type PlayerMedia,
+  type PlayerMusicConnection,
   type PlayerStudioAffiliation,
   type StudioMembershipPlan,
   type StudioPlayer,
@@ -51,11 +53,13 @@ export async function resolvePlayerAlias(alias: string) {
   if (playerError) throw new Error(playerError.message);
   if (!player) return null;
 
-  const [affiliationResult, mediaResult, aliasResult, vipResult] = await Promise.all([
+  const [affiliationResult, mediaResult, aliasResult, vipResult, musicConnectionResult, musicTracksResult] = await Promise.all([
     supabase.from("player_studios").select(playerStudiosSelect).eq("player_id", player.id).eq("is_visible", true).eq("status", "active").order("display_order"),
     supabase.from("player_media").select("id,media_type,origin,source_url,public_url,thumbnail_url,caption,display_order").eq("player_id", player.id).eq("visibility", "public").order("display_order"),
     supabase.from("public_slug_aliases").select("alias").eq("entity_type", "player").eq("entity_id", player.id).eq("is_primary", true).maybeSingle(),
     supabase.rpc("is_player_vip", { p_player_id: player.id }),
+    supabase.from("player_music_connections").select("id,player_id,provider,external_artist_id,external_uri,external_url,artist_name,artist_image_url,verification_status,last_synced_at").eq("player_id", player.id).eq("provider", "spotify").maybeSingle(),
+    supabase.from("external_music_tracks").select("id,player_id,provider,external_track_id,external_track_uri,external_album_id,title,artist_name,album_name,cover_url,external_url,release_date,last_synced_at").eq("player_id", player.id).eq("provider", "spotify").order("release_date", { ascending: false }).limit(12),
   ]);
   if (affiliationResult.error) throw new Error(affiliationResult.error.message);
   if (mediaResult.error) throw new Error(mediaResult.error.message);
@@ -64,6 +68,8 @@ export async function resolvePlayerAlias(alias: string) {
     player: player as unknown as Player,
     affiliations: (affiliationResult.data ?? []) as unknown as PlayerStudioAffiliation[],
     media: (mediaResult.data ?? []) as unknown as PlayerMedia[],
+    musicConnection: musicConnectionResult.error ? null : musicConnectionResult.data as unknown as PlayerMusicConnection | null,
+    musicTracks: musicTracksResult.error ? [] : (musicTracksResult.data ?? []) as unknown as ExternalMusicTrack[],
     canonicalAlias: aliasResult.data?.alias || player.slug,
     isVip: vipResult.data === true,
   };
@@ -116,18 +122,40 @@ export async function resolveStudioAlias(alias: string) {
   if (projectsResult.error) throw new Error(projectsResult.error.message);
   if (servicesResult.error) throw new Error(servicesResult.error.message);
   if (membershipPlansResult.error) throw new Error(membershipPlansResult.error.message);
-  // No lanza si falla -- una versión publicada rara sin layout_config legible
-  // no debe tumbar la página pública, solo hace que caiga al template fijo.
+
   const layoutConfig: LayoutConfig | null = versionResult.error
     ? null
     : sanitizeLayoutConfig(versionResult.data?.layout_config);
 
-  const projects = projectsResult.data ?? [];
-  // Cuando el Estudio no tiene ningún lanzamiento propio cargado, la sección
-  // de música del layout custom cae a mostrar lanzamientos de otros artistas
-  // de La Matrix en vez de desaparecer -- pedido explícito del usuario. Solo
-  // se ejecuta cuando hace falta, no pesa en el camino normal donde el
-  // Estudio ya tiene música propia.
+  const studioPlayers = (playersResult.data ?? []) as unknown as StudioPlayer[];
+  const playerIds = studioPlayers.map((entry) => entry.player?.id).filter((id): id is string => Boolean(id));
+  const musicResult = playerIds.length
+    ? await supabase
+        .from("external_music_tracks")
+        .select("id,player_id,title,artist_name,cover_url,external_url,release_date")
+        .in("player_id", playerIds)
+        .eq("provider", "spotify")
+        .order("release_date", { ascending: false })
+        .limit(18)
+    : { data: [], error: null };
+
+  const baseProjects = projectsResult.data ?? [];
+  const knownSpotifyUrls = new Set(baseProjects.map((project) => project.spotify_url).filter(Boolean));
+  const spotifyProjects = (musicResult.data ?? [])
+    .filter((track) => track.external_url && !knownSpotifyUrls.has(track.external_url))
+    .map((track) => ({
+      id: `spotify-${track.id}`,
+      title: track.title,
+      cover_url: track.cover_url,
+      release_type: "spotify",
+      release_date: track.release_date,
+      spotify_url: track.external_url,
+      youtube_url: null,
+      description: track.artist_name,
+    }));
+  const projects = [...baseProjects, ...spotifyProjects]
+    .sort((a, b) => String(b.release_date || "").localeCompare(String(a.release_date || "")));
+
   const matrixDiscoveryProjects = projects.length === 0
     ? await (async () => {
         const { data, error } = await supabase
@@ -144,7 +172,7 @@ export async function resolveStudioAlias(alias: string) {
 
   return {
     studio: studio as unknown as StudioRow,
-    players: (playersResult.data ?? []) as unknown as StudioPlayer[],
+    players: studioPlayers,
     media: (mediaResult.data ?? []) as unknown as PlayerMedia[],
     projects,
     matrixDiscoveryProjects,
