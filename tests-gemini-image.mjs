@@ -53,7 +53,7 @@ test("Gemini image generation uses the documented Interactions REST contract", a
   ]);
   assert.deepEqual(body.response_format, {
     type: "image",
-    mime_type: "image/png",
+    mime_type: "image/jpeg",
     aspect_ratio: "16:9",
     image_size: "2K",
   });
@@ -222,6 +222,6 @@ test("Gemini Interactions serializes reference images in the canonical input arr
     { type: "image", mime_type: "image/png", data: PNG_BASE64 },
   ]);
   assert.equal(capturedBody.response_format.type, "image");
-  assert.equal(capturedBody.response_format.mime_type, "image/png");
+  assert.equal(capturedBody.response_format.mime_type, "image/jpeg");
   assert.equal("delivery" in capturedBody.response_format, false);
 });
