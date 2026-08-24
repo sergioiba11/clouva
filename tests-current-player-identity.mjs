@@ -86,3 +86,18 @@ test("Home and account surfaces consume the centralized identity helpers", () =>
   assert.match(profilePage, /display_name:\s*data\?\.display_name/);
   assert.match(profilePage, /Nombre completo \(opcional\)/);
 });
+
+test("Public Player keeps Spotify listening and likes inside CLOUVA", () => {
+  const profile = read("./components/public/PlayerPublicView.tsx");
+  const spotifyPlayer = read("./components/public/PublicSpotifyPlayer.tsx");
+  const libraryRoute = read("./app/api/integrations/spotify/library/route.ts");
+
+  assert.match(profile, /href="#musica"/);
+  assert.match(profile, /<PublicSpotifyPlayer/);
+  assert.match(spotifyPlayer, /open\.spotify\.com\/embed\/iframe-api\/v1/);
+  assert.match(spotifyPlayer, /authenticatedFetch\("\/api\/integrations\/spotify\/library"/);
+  assert.match(spotifyPlayer, /pendingAction:\s*\{\s*type:\s*"save_track",\s*uri\s*\}/);
+  assert.match(libraryRoute, /isSpotifyUriSaved/);
+  assert.match(libraryRoute, /saveSpotifyUri/);
+  assert.match(libraryRoute, /removeSpotifyUri/);
+});
