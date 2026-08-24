@@ -14,6 +14,7 @@ import {
 import { PlayerOwnerActions } from "./PlayerOwnerActions";
 import { PublicMediaGallery } from "./PublicMediaGallery";
 import { PublicSocialLinks } from "./PublicSocialLinks";
+import { PublicSpotifyPlayer } from "./PublicSpotifyPlayer";
 import { PublicShell } from "./PublicShell";
 import { VISUAL_ASSETS } from "@/lib/visual-assets";
 import {
@@ -162,7 +163,7 @@ export function PlayerPublicView({
 
             <div className="mt-6 flex flex-wrap gap-2">
               {player.spotify_profile_url ? (
-                <a href={player.spotify_profile_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full bg-violet-500 px-5 py-2.5 text-sm font-semibold transition hover:bg-violet-400">
+                <a href="#musica" className="inline-flex items-center gap-2 rounded-full bg-violet-500 px-5 py-2.5 text-sm font-semibold transition hover:bg-violet-400">
                   <Play size={15} fill="currentColor" /> Escuchar música
                 </a>
               ) : null}
@@ -187,6 +188,8 @@ export function PlayerPublicView({
           </aside>
         </div>
       </section>
+
+      {player.spotify_profile_url ? <PublicSpotifyPlayer spotifyUrl={player.spotify_profile_url} artistName={player.display_name} /> : null}
 
       <section id="presentacion" className="mx-auto grid max-w-7xl gap-4 px-4 py-6 sm:px-6 lg:grid-cols-[minmax(0,.9fr)_minmax(0,1.4fr)_280px]">
         <article className="rounded-[1.5rem] border border-white/10 bg-white/[0.025] p-5">
