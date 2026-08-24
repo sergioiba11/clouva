@@ -8,6 +8,14 @@ type SpotifyArtist = {
   uri: string;
   external_urls?: { spotify?: string };
   images?: Array<{ url: string; width?: number | null; height?: number | null }>;
+  followers?: { total?: number };
+  popularity?: number;
+};
+
+type SpotifyArtistSearch = {
+  artists?: {
+    items?: SpotifyArtist[];
+  };
 };
 
 const ARTIST_ID_RE = /^[A-Za-z0-9]{10,64}$/;
@@ -55,6 +63,41 @@ function apiError(error: unknown) {
   return NextResponse.json({ error: error instanceof Error ? error.message : "No se pudo conectar Spotify Artist." }, { status: 500 });
 }
 
+function publicArtist(artist: SpotifyArtist) {
+  return {
+    id: artist.id,
+    name: artist.name,
+    url: artist.external_urls?.spotify || `https://open.spotify.com/artist/${artist.id}`,
+    imageUrl: artist.images?.[0]?.url || null,
+    followers: Number(artist.followers?.total || 0),
+    popularity: Number(artist.popularity || 0),
+  };
+}
+
+export async function GET(request: NextRequest) {
+  try {
+    const { user } = await requireUser(request);
+    const player = await ownedPlayer(user.id);
+    if (!player) return NextResponse.json({ error: "Primero creá tu Player." }, { status: 404 });
+
+    const query = request.nextUrl.searchParams.get("q")?.trim() || player.display_name?.trim() || "";
+    if (query.length < 2) {
+      return NextResponse.json({ error: "Escribí al menos 2 caracteres para buscar tu artista." }, { status: 400 });
+    }
+
+    const token = await getSpotifyAppAccessToken();
+    const result = await spotifyApiFetch<SpotifyArtistSearch>({
+      accessToken: token.access_token,
+      path: `/search?q=${encodeURIComponent(query)}&type=artist&limit=8`,
+    });
+
+    const artists = (result.artists?.items || []).filter((item) => item?.id && item?.name).map(publicArtist);
+    return NextResponse.json({ ok: true, query, artists });
+  } catch (error) {
+    return apiError(error);
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const { user } = await requireUser(request);
@@ -64,7 +107,7 @@ export async function POST(request: NextRequest) {
     const body = (await request.json().catch(() => ({}))) as { artistUrl?: unknown; artistId?: unknown };
     const artistId = parseArtistId(body.artistUrl ?? body.artistId);
     if (!artistId) {
-      return NextResponse.json({ error: "Pegá un enlace de artista de Spotify válido (open.spotify.com/artist/...)." }, { status: 400 });
+      return NextResponse.json({ error: "Elegí un artista de los resultados o pegá un enlace válido de Spotify." }, { status: 400 });
     }
 
     const token = await getSpotifyAppAccessToken();
@@ -94,12 +137,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       ok: true,
-      artist: {
-        id: artist.id,
-        name: artist.name,
-        url: spotifyProfileUrl,
-        imageUrl: artist.images?.[0]?.url || null,
-      },
+      artist: publicArtist(artist),
       player: updated,
     });
   } catch (error) {
