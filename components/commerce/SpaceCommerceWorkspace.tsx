@@ -5,7 +5,8 @@ import { ClouvaQrEnginePanel } from "@/components/commerce/ClouvaQrEnginePanel";
 import { SpotCommerceDashboard } from "@/components/commerce/SpotCommerceDashboard";
 
 /**
- * Canonical operational workspace for every CLOUVA Space with commerce enabled.
+ * Canonical operational workspace for every CLOUVA Space with commerce enabled:
+ * Studio, business, Spot, club, brand or any future Space that activates Commerce.
  *
  * `commerceScopeId` can be either a Studio id or the direct Spot scope
  * `spot:<uuid>`. The commerce API resolves both through requireManagedSpot(),
