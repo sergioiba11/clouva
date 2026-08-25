@@ -1,10 +1,11 @@
 "use client";
 
-import { ArrowLeft, ArrowRight, Boxes, ChartNoAxesCombined, ClipboardList, Loader2, Package, Save, Settings2, Sparkles, Store, Users } from "lucide-react";
+import { ArrowLeft, ArrowRight, Boxes, ChartNoAxesCombined, ClipboardList, Loader2, Megaphone, Package, Save, Settings2, Sparkles, Store, Users } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
+import { SpaceQrPanel } from "@/components/commerce/SpaceQrPanel";
 import { MainNav } from "@/components/layout";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
 
@@ -25,6 +26,14 @@ type SpotDetail = {
     public_enabled: boolean;
     ai_profile: Record<string, unknown>;
   };
+  space: {
+    id: string;
+    slug: string;
+    name: string;
+    type: "studio" | "business" | "spot" | "club" | "brand" | "other";
+    public_enabled: boolean;
+    status: string;
+  } | null;
   studio: { id: string; name: string; slug: string } | null;
   role: string;
   capabilities: string[];
@@ -62,7 +71,7 @@ export default function SpotHomePage() {
         accentColor: payload.spot.accent_color ?? "",
       });
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "No se pudo cargar el Spot.");
+      setError(cause instanceof Error ? cause.message : "No se pudo cargar el espacio.");
     } finally {
       setLoading(false);
     }
@@ -82,6 +91,7 @@ export default function SpotHomePage() {
   const suggestedOnlyModules = modules.filter((module) => !OPERATION_MODULES.has(module) && !["dashboard", "settings"].includes(module));
   const canSettings = data?.capabilities.includes("settings") ?? false;
   const canTeam = data?.capabilities.includes("team") ?? false;
+  const canContent = data?.capabilities.includes("content") ?? false;
 
   async function saveSettings() {
     if (!data) return;
@@ -96,7 +106,7 @@ export default function SpotHomePage() {
       setEditing(false);
       await load();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "No se pudo guardar el estilo del Spot.");
+      setError(cause instanceof Error ? cause.message : "No se pudo guardar el estilo del espacio.");
     } finally {
       setSaving(false);
     }
@@ -108,8 +118,8 @@ export default function SpotHomePage() {
     <main className="min-h-screen bg-[#05040a] text-white">
       <MainNav />
       <div className="mx-auto max-w-6xl px-4 py-8 sm:px-8 sm:py-10">
-        <Link href="/mi-spot" className="inline-flex items-center gap-2 text-sm text-white/42 transition hover:text-white"><ArrowLeft size={15} /> Todos mis Spots</Link>
-        {loading ? <div className="mt-6 grid min-h-56 place-items-center rounded-3xl border border-white/[0.08] bg-[#0b0912]"><span className="inline-flex items-center gap-2 text-sm text-white/45"><Loader2 size={16} className="animate-spin" /> Cargando negocio…</span></div> : null}
+        <Link href="/mi-spot" className="inline-flex items-center gap-2 text-sm text-white/42 transition hover:text-white"><ArrowLeft size={15} /> Todos mis espacios</Link>
+        {loading ? <div className="mt-6 grid min-h-56 place-items-center rounded-3xl border border-white/[0.08] bg-[#0b0912]"><span className="inline-flex items-center gap-2 text-sm text-white/45"><Loader2 size={16} className="animate-spin" /> Cargando espacio…</span></div> : null}
         {error ? <p className="mt-5 rounded-2xl border border-rose-300/15 bg-rose-300/[0.06] p-4 text-sm text-rose-200">{error}</p> : null}
 
         {!loading && data ? <>
@@ -117,13 +127,14 @@ export default function SpotHomePage() {
             <div className="pointer-events-none absolute -right-10 -top-20 h-72 w-72 rounded-full blur-3xl" style={{ backgroundColor: `${accent}22` }} />
             <div className="relative flex flex-col justify-between gap-6 md:flex-row md:items-end">
               <div>
-                <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[11px] uppercase tracking-[0.15em] text-white/55"><Store size={13} /> {data.studio ? `Spot de ${data.studio.name}` : "Negocio independiente"}</div>
+                <div className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[11px] uppercase tracking-[0.15em] text-white/55"><Store size={13} /> {data.space?.type ?? (data.studio ? "studio" : "spot")}</div>
                 <h1 className="mt-5 text-4xl font-semibold tracking-tight sm:text-6xl">{data.spot.name}</h1>
-                <p className="mt-2 text-sm capitalize text-white/42">{data.spot.business_type?.replaceAll("_", " ") || "negocio"} · rol {data.role}</p>
-                <p className="mt-3 max-w-2xl text-sm leading-6 text-white/52">{data.spot.description || "Este Spot todavía no tiene descripción."}</p>
+                <p className="mt-2 text-sm capitalize text-white/42">{data.spot.business_type?.replaceAll("_", " ") || data.space?.type || "negocio"} · rol {data.role}</p>
+                <p className="mt-3 max-w-2xl text-sm leading-6 text-white/52">{data.spot.description || "Este espacio todavía no tiene descripción."}</p>
               </div>
               <div className="flex flex-wrap gap-2">
                 {data.canOpenCommerce ? <Link href={`/mi-spot/${spotId}/commerce`} className="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white" style={{ backgroundColor: accent }}>Abrir operaciones <ArrowRight size={16} /></Link> : null}
+                {canContent && data.space ? <Link href={`/mi-spot/${spotId}/publicaciones`} className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm"><Megaphone size={15} /> Publicaciones</Link> : null}
                 {canTeam ? <Link href={`/mi-spot/${spotId}/team`} className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm"><Users size={15} /> Equipo</Link> : null}
                 {canSettings ? <button type="button" onClick={() => setEditing((value) => !value)} className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm"><Settings2 size={15} /> Estilo</button> : null}
               </div>
@@ -137,12 +148,14 @@ export default function SpotHomePage() {
             <Metric icon={<Users size={18} />} label="Equipo" value={data.counts.members} />
           </section>
 
+          {data.space && canSettings ? <SpaceQrPanel spaceId={data.space.id} /> : null}
+
           {editing && canSettings ? <section className="mt-5 rounded-[24px] border border-white/[0.08] bg-[#0b0912] p-5 sm:p-6"><div className="flex items-center justify-between"><div><p className="text-xs uppercase tracking-[0.15em] text-white/32">Identidad</p><h2 className="mt-1 text-lg font-semibold">Tu estilo</h2></div><Sparkles size={18} className="text-violet-300" /></div><div className="mt-5 grid gap-3 sm:grid-cols-2"><input value={draft.name} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Nombre" className="rounded-xl border border-white/10 bg-black/25 px-3 py-2.5 text-sm outline-none" /><input value={draft.businessType} onChange={(event) => setDraft((current) => ({ ...current, businessType: event.target.value }))} placeholder="Tipo de negocio" className="rounded-xl border border-white/10 bg-black/25 px-3 py-2.5 text-sm outline-none" /><input value={draft.brandTone} onChange={(event) => setDraft((current) => ({ ...current, brandTone: event.target.value }))} placeholder="Tono de marca" className="rounded-xl border border-white/10 bg-black/25 px-3 py-2.5 text-sm outline-none" /><input value={draft.accentColor} onChange={(event) => setDraft((current) => ({ ...current, accentColor: event.target.value }))} placeholder="#8f5cff" className="rounded-xl border border-white/10 bg-black/25 px-3 py-2.5 text-sm outline-none" /><textarea value={draft.description} onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))} placeholder="Descripción" rows={4} className="rounded-xl border border-white/10 bg-black/25 px-3 py-2.5 text-sm outline-none sm:col-span-2" /></div><button type="button" onClick={() => void saveSettings()} disabled={saving} className="mt-4 inline-flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold disabled:opacity-50">{saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} Guardar</button></section> : null}
 
           <section className="mt-6 grid gap-4 lg:grid-cols-[1.25fr_.75fr]">
             <article className="rounded-[24px] border border-white/[0.08] bg-[#0b0912] p-5 sm:p-6">
-              <p className="text-xs uppercase tracking-[0.15em] text-white/32">Herramientas activas</p><h2 className="mt-1 text-xl font-semibold">Este Spot se adapta a tu negocio</h2>
-              <div className="mt-5 grid gap-3 sm:grid-cols-2">{operationModules.map((module) => <div key={module} className="rounded-2xl border border-white/[0.07] bg-black/20 p-4"><div className="flex items-center gap-2"><ChartNoAxesCombined size={16} className="text-violet-300" /><strong className="text-sm capitalize">{module}</strong></div><p className="mt-2 text-xs leading-5 text-white/35">Disponible dentro del Core comercial del Spot.</p></div>)}</div>
+              <p className="text-xs uppercase tracking-[0.15em] text-white/32">Herramientas activas</p><h2 className="mt-1 text-xl font-semibold">Este espacio se adapta a tu operación</h2>
+              <div className="mt-5 grid gap-3 sm:grid-cols-2">{operationModules.map((module) => <div key={module} className="rounded-2xl border border-white/[0.07] bg-black/20 p-4"><div className="flex items-center gap-2"><ChartNoAxesCombined size={16} className="text-violet-300" /><strong className="text-sm capitalize">{module}</strong></div><p className="mt-2 text-xs leading-5 text-white/35">Disponible dentro del Core comercial compartido.</p></div>)}</div>
               {data.canOpenCommerce ? <Link href={`/mi-spot/${spotId}/commerce`} className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-violet-300">Entrar al Core comercial <ArrowRight size={15} /></Link> : <p className="mt-5 text-xs text-white/35">Tu rol es específico. Las operaciones de escritura se limitan por permisos server-side.</p>}
             </article>
             <aside className="rounded-[24px] border border-white/[0.08] bg-[#0b0912] p-5 sm:p-6"><p className="text-xs uppercase tracking-[0.15em] text-white/32">Configuración IA</p><h2 className="mt-1 text-lg font-semibold">Perfil del negocio</h2><div className="mt-4 flex flex-wrap gap-2">{(data.spot.business_categories ?? []).map((category) => <span key={category} className="rounded-xl border border-white/10 bg-white/[0.03] px-2.5 py-1.5 text-xs text-white/48">{category}</span>)}</div>{data.spot.brand_tone ? <p className="mt-4 text-sm leading-6 text-white/42"><b className="text-white/65">Tono:</b> {data.spot.brand_tone}</p> : null}{suggestedOnlyModules.length ? <div className="mt-5"><p className="text-[10px] uppercase tracking-[0.13em] text-white/28">Módulos sugeridos fuera del commerce físico</p><div className="mt-2 flex flex-wrap gap-2">{suggestedOnlyModules.map((module) => <span key={module} className="rounded-lg bg-violet-300/[0.06] px-2 py-1 text-[11px] text-violet-200/65">{module}</span>)}</div></div> : null}</aside>
