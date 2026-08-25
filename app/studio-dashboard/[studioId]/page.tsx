@@ -7,6 +7,7 @@ import { useAuth } from "@/components/auth-provider";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
 import { ClouvaAIChat } from "@/components/clouva-ai/ClouvaAIChat";
 import { useTrebolContextRegistration } from "@/components/clouva-ai/ClouvaAIAssistantProvider";
+import { SpotQrCard } from "@/components/studio/SpotQrCard";
 import { StudioAiProfilePanel } from "@/components/studio/StudioAiProfilePanel";
 
 type DashboardData = {
@@ -19,8 +20,8 @@ type DashboardData = {
   events: Array<Record<string, unknown>>;
 };
 
-type Section = "Resumen" | "Perfil público" | "Identidad IA" | "CLOUVA AI" | "Players" | "Membresías" | "Servicios" | "Solicitudes" | "Roles" | "Proyectos" | "Música" | "Eventos" | "Configuración";
-const SECTIONS: Section[] = ["Resumen", "Perfil público", "Identidad IA", "CLOUVA AI", "Players", "Membresías", "Servicios", "Solicitudes", "Roles", "Proyectos", "Música", "Eventos", "Configuración"];
+type Section = "Resumen" | "Perfil público" | "Identidad IA" | "CLOUVA AI" | "Players" | "Membresías" | "Servicios" | "Comercio" | "Solicitudes" | "Roles" | "Proyectos" | "Música" | "Eventos" | "QR del Spot" | "Configuración";
+const SECTIONS: Section[] = ["Resumen", "Perfil público", "Identidad IA", "CLOUVA AI", "Players", "Membresías", "Servicios", "Comercio", "Solicitudes", "Roles", "Proyectos", "Música", "Eventos", "QR del Spot", "Configuración"];
 
 type PlanRow = {
   id: string;
@@ -70,8 +71,10 @@ export default function StudioDashboardPage({ params }: { params: Promise<{ stud
   // la pestaña donde se ve el resultado, en vez de dejar al usuario en
   // "Resumen" preguntándose si se conectó o no.
   useEffect(() => {
-    if (searchParams.get("tab") === "ai-profile") setSection("Identidad IA");
-    if (searchParams.get("tab") === "clouva-ai") setSection("CLOUVA AI");
+    const requestedTab = searchParams.get("tab");
+    if (requestedTab === "ai-profile") setSection("Identidad IA");
+    if (requestedTab === "clouva-ai") setSection("CLOUVA AI");
+    if (requestedTab === "spot-qr") setSection("QR del Spot");
   }, [searchParams]);
   const [profileDraft, setProfileDraft] = useState<Record<string, unknown>>({});
   const [loading, setLoading] = useState(true);
@@ -149,7 +152,7 @@ export default function StudioDashboardPage({ params }: { params: Promise<{ stud
     try {
       const result = await patch({ action: "update_studio", changes: profileDraft });
       setData((current) => current ? { ...current, studio: result.studio as Record<string, unknown> } : current);
-      setMessage("Perfil del Estudio guardado.");
+      setMessage("Perfil del Spot guardado.");
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "No se pudo guardar.");
     } finally {
@@ -295,10 +298,14 @@ export default function StudioDashboardPage({ params }: { params: Promise<{ stud
   };
 
   if (loading) return <main className="min-h-screen bg-[#05040a] px-4 py-10 text-white"><div className="mx-auto h-[75vh] max-w-7xl animate-pulse rounded-[2rem] bg-white/[0.04]" /></main>;
-  if (!data) return <main className="min-h-screen bg-[#05040a] px-4 py-20 text-white"><div className="mx-auto max-w-xl rounded-[2rem] border border-red-400/20 bg-red-400/10 p-8 text-center"><h1 className="text-2xl font-semibold">Acceso bloqueado</h1><p className="mt-3 text-red-100/70">{error || "No pudimos abrir este Estudio."}</p><Link href="/vip" className="mt-6 inline-flex rounded-xl bg-amber-400 px-5 py-3 font-semibold text-black">Ver CLOUVA VIP</Link></div></main>;
+  if (!data) return <main className="min-h-screen bg-[#05040a] px-4 py-20 text-white"><div className="mx-auto max-w-xl rounded-[2rem] border border-red-400/20 bg-red-400/10 p-8 text-center"><h1 className="text-2xl font-semibold">Acceso bloqueado</h1><p className="mt-3 text-red-100/70">{error || "No pudimos abrir este Spot."}</p><Link href="/vip" className="mt-6 inline-flex rounded-xl bg-amber-400 px-5 py-3 font-semibold text-black">Ver CLOUVA VIP</Link></div></main>;
 
   const studioName = String(data.studio.name || "Estudio");
   const studioSlug = String(data.studio.slug || studioId);
+  const spotIsPublic = Boolean(data.studio.is_published)
+    && String(data.studio.publication_status || "") === "published"
+    && ["active", "grace", "legacy_active"].includes(String(data.studio.studio_os_status || ""));
+  const publicSpotPath = `/studios/${studioSlug}`;
 
   return (
     <main className="min-h-screen bg-[#05040a] text-white">
@@ -306,27 +313,41 @@ export default function StudioDashboardPage({ params }: { params: Promise<{ stud
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
           <div className="flex items-center gap-3">
             {data.studio.logo_url ? <img src={String(data.studio.logo_url)} alt="" className="h-10 w-10 rounded-xl object-cover" /> : <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-500/15 font-semibold">{studioName.charAt(0)}</div>}
-            <div><p className="text-xs uppercase tracking-[0.2em] text-violet-300/70">Panel del Estudio</p><h1 className="font-semibold">{studioName}</h1></div>
+            <div><p className="text-xs uppercase tracking-[0.2em] text-violet-300/70">Admin del Spot</p><h1 className="font-semibold">{studioName}</h1></div>
           </div>
-          <div className="flex items-center gap-2"><span className="hidden rounded-full border border-amber-400/25 bg-amber-400/10 px-3 py-1 text-xs text-amber-300 sm:block">VIP · {data.permission.role}</span><Link href={`/studios/${studioSlug}`} className="rounded-xl border border-white/15 px-4 py-2 text-sm">Ver perfil</Link></div>
+          <div className="flex items-center gap-2">
+            <span className="hidden rounded-full border border-amber-400/25 bg-amber-400/10 px-3 py-1 text-xs text-amber-300 sm:block">VIP · {data.permission.role}</span>
+            <Link href={`/studio-dashboard/${studioId}/commerce`} className="hidden rounded-xl border border-violet-400/25 bg-violet-500/10 px-4 py-2 text-sm font-semibold text-violet-100 sm:inline-flex">Comercio</Link>
+            <Link href={publicSpotPath} target="_blank" className="rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold">Ver Spot</Link>
+          </div>
         </div>
       </header>
 
       <div className="mx-auto grid max-w-7xl gap-6 px-4 py-6 sm:px-6 lg:grid-cols-[220px_minmax(0,1fr)]">
         <nav className="flex gap-2 overflow-x-auto lg:flex-col">
-          {SECTIONS.map((item) => <button key={item} onClick={() => setSection(item)} className={`relative shrink-0 rounded-xl px-4 py-3 text-left text-sm transition ${section === item ? "bg-violet-600" : "border border-white/10 bg-white/[0.025] text-white/55 hover:text-white"}`}>{item}{item === "Solicitudes" && pendingApplications.length ? <span className="ml-2 rounded-full bg-white/15 px-2 py-0.5 text-[10px]">{pendingApplications.length}</span> : null}</button>)}
+          {SECTIONS.map((item) => (
+            <button
+              key={item}
+              onClick={() => item === "Comercio" ? router.push(`/studio-dashboard/${studioId}/commerce`) : setSection(item)}
+              className={`relative shrink-0 rounded-xl px-4 py-3 text-left text-sm transition ${section === item ? "bg-violet-600" : "border border-white/10 bg-white/[0.025] text-white/55 hover:text-white"}`}
+            >
+              {item}
+              {item === "Solicitudes" && pendingApplications.length ? <span className="ml-2 rounded-full bg-white/15 px-2 py-0.5 text-[10px]">{pendingApplications.length}</span> : null}
+            </button>
+          ))}
         </nav>
 
         <section className="min-w-0">
           {section === "Resumen" ? <div className="space-y-5">
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4"><Metric label="Solicitudes pendientes" value={pendingApplications.length} /><Metric label="Players" value={data.players.length} /><Metric label="Miembros internos" value={data.members.length} /><Metric label="Proyectos" value={data.projects.length} /></div>
+            <SpotQrCard entityName={studioName} publicPath={publicSpotPath} isPublic={spotIsPublic} compact />
             <Panel title="Actividad que requiere atención"><div className="space-y-3">{pendingApplications.slice(0, 5).map((application) => <ApplicationRow key={String(application.id)} application={application} working={workingId === application.id} onReview={review} />)}{pendingApplications.length === 0 ? <p className="text-sm text-white/45">No hay solicitudes pendientes.</p> : null}</div></Panel>
             <Panel title="Miembros por rol"><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">{Object.entries(memberCounts).map(([role, count]) => <div key={role} className="rounded-xl border border-white/8 bg-black/20 p-4"><p className="text-sm capitalize text-white/55">{role}</p><p className="mt-2 text-2xl font-semibold">{count}</p></div>)}</div></Panel>
           </div> : null}
 
-          {section === "Perfil público" ? <Panel title="Editar presentación pública"><div className="space-y-4"><Field label="Nombre" value={String(profileDraft.name || "")} onChange={(value) => setProfileDraft((current) => ({ ...current, name: value }))} /><Field label="Frase institucional" value={String(profileDraft.tagline || "")} onChange={(value) => setProfileDraft((current) => ({ ...current, tagline: value }))} /><TextArea label="Presentación" value={String(profileDraft.description || "")} onChange={(value) => setProfileDraft((current) => ({ ...current, description: value }))} rows={8} /><div className="grid gap-4 sm:grid-cols-2"><Field label="Logo URL" value={String(profileDraft.logo_url || "")} onChange={(value) => setProfileDraft((current) => ({ ...current, logo_url: value }))} /><Field label="Portada URL" value={String(profileDraft.cover_url || "")} onChange={(value) => setProfileDraft((current) => ({ ...current, cover_url: value }))} /></div><div className="grid gap-4 sm:grid-cols-2"><Field label="Ciudad" value={String(profileDraft.city || "")} onChange={(value) => setProfileDraft((current) => ({ ...current, city: value }))} /><Field label="País" value={String(profileDraft.country || "")} onChange={(value) => setProfileDraft((current) => ({ ...current, country: value }))} /></div><button disabled={workingId === "profile"} onClick={() => void saveStudio()} className="rounded-xl bg-violet-600 px-5 py-3 font-semibold">{workingId === "profile" ? "Guardando..." : "Guardar cambios"}</button></div></Panel> : null}
+          {section === "Perfil público" ? <Panel title="Editar presentación pública del Spot"><div className="space-y-4"><Field label="Nombre" value={String(profileDraft.name || "")} onChange={(value) => setProfileDraft((current) => ({ ...current, name: value }))} /><Field label="Frase institucional" value={String(profileDraft.tagline || "")} onChange={(value) => setProfileDraft((current) => ({ ...current, tagline: value }))} /><TextArea label="Presentación" value={String(profileDraft.description || "")} onChange={(value) => setProfileDraft((current) => ({ ...current, description: value }))} rows={8} /><div className="grid gap-4 sm:grid-cols-2"><Field label="Logo URL" value={String(profileDraft.logo_url || "")} onChange={(value) => setProfileDraft((current) => ({ ...current, logo_url: value }))} /><Field label="Portada URL" value={String(profileDraft.cover_url || "")} onChange={(value) => setProfileDraft((current) => ({ ...current, cover_url: value }))} /></div><div className="grid gap-4 sm:grid-cols-2"><Field label="Ciudad" value={String(profileDraft.city || "")} onChange={(value) => setProfileDraft((current) => ({ ...current, city: value }))} /><Field label="País" value={String(profileDraft.country || "")} onChange={(value) => setProfileDraft((current) => ({ ...current, country: value }))} /></div><button disabled={workingId === "profile"} onClick={() => void saveStudio()} className="rounded-xl bg-violet-600 px-5 py-3 font-semibold">{workingId === "profile" ? "Guardando..." : "Guardar cambios"}</button></div></Panel> : null}
 
-          {section === "Identidad IA" ? <Panel title="Identidad del Estudio"><StudioAiProfilePanel studioId={studioId} /></Panel> : null}
+          {section === "Identidad IA" ? <Panel title="Identidad del Spot"><StudioAiProfilePanel studioId={studioId} /></Panel> : null}
 
           {section === "CLOUVA AI" ? <ClouvaAIChat studioId={studioId} studioSlug={studioSlug} studioName={studioName} /> : null}
 
@@ -334,6 +355,10 @@ export default function StudioDashboardPage({ params }: { params: Promise<{ stud
 
           {section === "Membresías" ? <div className="space-y-5">
             <Panel title="Planes de membresía">
+              <div className="mb-5 flex flex-col justify-between gap-3 rounded-2xl border border-violet-400/15 bg-violet-500/[0.06] p-4 sm:flex-row sm:items-center">
+                <div><p className="text-sm font-semibold text-violet-100">Conectado al Spot público</p><p className="mt-1 text-xs text-white/45">Los planes públicos y activos se muestran en {studioName}.</p></div>
+                <Link href={publicSpotPath} target="_blank" className="shrink-0 rounded-xl border border-violet-400/25 px-3 py-2 text-xs font-semibold text-violet-100">Ver Spot</Link>
+              </div>
               <div className="space-y-3">
                 {plans.map((plan) => (
                   <div key={plan.id} className="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-black/20 p-4">
@@ -341,6 +366,7 @@ export default function StudioDashboardPage({ params }: { params: Promise<{ stud
                       <div className="flex items-center gap-2">
                         <p className="font-semibold">{plan.name}</p>
                         {!plan.is_active ? <span className="rounded-full bg-white/8 px-2 py-0.5 text-[10px] uppercase text-white/40">Inactivo</span> : null}
+                        {plan.is_public && plan.is_active ? <span className="rounded-full bg-violet-500/10 px-2 py-0.5 text-[10px] uppercase text-violet-200">Visible en Spot</span> : null}
                       </div>
                       <p className="mt-1 text-sm text-white/45">{plan.is_free ? "Gratis" : `${new Intl.NumberFormat("es-AR", { style: "currency", currency: plan.currency, maximumFractionDigits: 0 }).format(Number(plan.price))} / ${plan.billing_interval === "year" ? "año" : "mes"}`}</p>
                     </div>
@@ -393,6 +419,7 @@ export default function StudioDashboardPage({ params }: { params: Promise<{ stud
           </div> : null}
 
           {section === "Servicios" ? <Panel title="Catálogo de servicios">
+            <div className="mb-5 rounded-2xl border border-violet-400/15 bg-violet-500/[0.06] p-4"><p className="text-sm font-semibold text-violet-100">Servicios del Spot</p><p className="mt-1 text-xs text-white/45">Los servicios activos se consumen desde la misma fuente canónica que la página pública.</p></div>
             <div className="space-y-3">
               {services.map((service) => (
                 <div key={service.id} className="flex items-center justify-between gap-4 rounded-2xl border border-white/10 bg-black/20 p-4">
@@ -436,9 +463,10 @@ export default function StudioDashboardPage({ params }: { params: Promise<{ stud
           {section === "Roles" ? <Panel title="Roles internos"><div className="space-y-3">{data.members.map((member) => { const profile = member.profile as Record<string, unknown> | null; return <div key={String(member.id)} className="flex items-center justify-between gap-4 rounded-2xl border border-white/10 p-4"><div><p className="font-semibold">{String(profile?.display_name || profile?.full_name || profile?.username || "Miembro")}</p><p className="text-xs text-white/40">{String(member.status)}</p></div><span className="rounded-full border border-violet-400/20 bg-violet-500/10 px-3 py-1 text-xs capitalize">{String(member.role)}</span></div>; })}</div></Panel> : null}
 
           {section === "Proyectos" ? <Panel title="Proyectos"><ContentList items={data.projects} empty="Todavía no hay proyectos." /></Panel> : null}
-          {section === "Música" ? <Panel title="Música"><p className="text-white/50">La música publicada por el Estudio se gestiona desde sus proyectos y links oficiales.</p></Panel> : null}
+          {section === "Música" ? <Panel title="Música"><p className="text-white/50">La música publicada por el Spot se gestiona desde sus proyectos y links oficiales.</p></Panel> : null}
           {section === "Eventos" ? <Panel title="Eventos"><ContentList items={data.events} empty="Todavía no hay eventos." /></Panel> : null}
-          {section === "Configuración" ? <Panel title="Configuración"><div className="space-y-4"><Field label="Sitio web" value={String(profileDraft.website_url || "")} onChange={(value) => setProfileDraft((current) => ({ ...current, website_url: value }))} /><Field label="Correo de contacto" value={String(profileDraft.contact_email || "")} onChange={(value) => setProfileDraft((current) => ({ ...current, contact_email: value }))} /><button disabled={workingId === "profile"} onClick={() => void saveStudio()} className="rounded-xl bg-violet-600 px-5 py-3 font-semibold">Guardar configuración</button></div></Panel> : null}
+          {section === "QR del Spot" ? <SpotQrCard entityName={studioName} publicPath={publicSpotPath} isPublic={spotIsPublic} /> : null}
+          {section === "Configuración" ? <Panel title="Configuración del Spot"><div className="space-y-4"><Field label="Sitio web" value={String(profileDraft.website_url || "")} onChange={(value) => setProfileDraft((current) => ({ ...current, website_url: value }))} /><Field label="Correo de contacto" value={String(profileDraft.contact_email || "")} onChange={(value) => setProfileDraft((current) => ({ ...current, contact_email: value }))} /><div className="rounded-xl border border-white/10 bg-black/20 p-4"><p className="text-xs uppercase tracking-[0.16em] text-white/35">Página pública del Spot</p><p className="mt-2 break-all text-sm text-white/65">https://clouva.com.ar{publicSpotPath}</p></div><button disabled={workingId === "profile"} onClick={() => void saveStudio()} className="rounded-xl bg-violet-600 px-5 py-3 font-semibold">Guardar configuración</button></div></Panel> : null}
 
           {error ? <p className="mt-5 rounded-xl border border-red-400/20 bg-red-400/10 p-3 text-sm text-red-200">{error}</p> : null}
           {message ? <p className="mt-5 rounded-xl border border-emerald-400/20 bg-emerald-400/10 p-3 text-sm text-emerald-200">{message}</p> : null}

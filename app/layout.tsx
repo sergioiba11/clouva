@@ -7,13 +7,17 @@ import { ActiveAvatarHydrator } from "@/components/avatar-engine/ActiveAvatarHyd
 import { GlobalSpotifyPlayer } from "@/components/GlobalSpotifyPlayer";
 import { GlobalClouvaAIButton } from "@/components/GlobalClouvaAIButton";
 import { ClouvaAIAssistantProvider } from "@/components/clouva-ai/ClouvaAIAssistantProvider";
-import { ClouvaAICompactPanel } from "@/components/clouva-ai/ClouvaAICompactPanel";
 
+// Browser identity is global: the tab always carries the CLOUVA brand and official clover icon.
 export const metadata: Metadata = {
-  title: "CLOUVA | Premium Underground",
+  title: "Clouva Vida de Flows",
   description: "Vida de flows. Directamente desde el southside.",
+  icons: {
+    icon: "/icon.svg",
+    shortcut: "/icon.svg",
+  },
   openGraph: {
-    title: "CLOUVA",
+    title: "Clouva Vida de Flows",
     description: "Premium underground fashion desde Zapala",
     url: "https://clouva.com.ar"
   }
@@ -35,9 +39,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                 <ActiveAvatarHydrator />
                 {children}
                 <GlobalClouvaAIButton />
-                <ClouvaAICompactPanel />
+                <GlobalSpotifyPlayer />
               </ClouvaAIAssistantProvider>
-              <GlobalSpotifyPlayer />
             </CurrentPlayerProvider>
           </AuthProvider>
         </ThemeProvider>

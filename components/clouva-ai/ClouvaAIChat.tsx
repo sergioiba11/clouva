@@ -359,6 +359,8 @@ export function ClouvaAIChat({ studioId = null, studioSlug = null, studioName = 
     setConversationId: setSharedConversationId,
     setPendingAction: setSharedPendingAction,
     notifyToolDecision,
+    starterPrompt,
+    consumeStarterPrompt,
   } = useClouvaAIAssistant();
   const isStudioScoped = Boolean(studioId);
   const welcomeMessage = isStudioScoped && studioName ? STUDIO_WELCOME(studioName) : WELCOME;
@@ -386,6 +388,12 @@ export function ClouvaAIChat({ studioId = null, studioSlug = null, studioName = 
   const projectCheckIdRef = useRef(0);
   const activeControllerRef = useRef<AbortController | null>(null);
   const stopRequestedRef = useRef(false);
+
+  useEffect(() => {
+    if (!starterPrompt) return;
+    const prompt = consumeStarterPrompt();
+    if (prompt) setInput(prompt);
+  }, [consumeStarterPrompt, starterPrompt]);
 
   const messageOffset = Math.max(messages.length - visibleCount, 0);
   const visibleMessages = messages.slice(messageOffset);

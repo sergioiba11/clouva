@@ -6,6 +6,12 @@ import { useAuth } from "@/components/auth-provider";
 import { useClouvaAIAssistant } from "./ClouvaAIAssistantProvider";
 import { ClouvaAIChat } from "./ClouvaAIChat";
 
+const QUICK_ACTIONS = [
+  { label: "Crear un proyecto", prompt: "Quiero crear un proyecto nuevo en CLOUVA. Ayudame a definirlo y convertirlo en próximos pasos claros." },
+  { label: "Mejorar mi avatar", prompt: "Quiero mejorar mi avatar de CLOUVA. Guiame con ideas concretas para que represente mejor mi identidad." },
+  { label: "Ayudarme con música", prompt: "Quiero trabajar mi música dentro de CLOUVA. Ayudame a ordenar la idea y decidir el próximo paso." },
+] as const;
+
 export function ClouvaAICompactPanel() {
   const { user } = useAuth();
   const {
@@ -16,6 +22,7 @@ export function ClouvaAICompactPanel() {
     startElementSelection,
     stopElementSelection,
     clearSelection,
+    openAssistant,
   } = useClouvaAIAssistant();
   if (!isOpen) return null;
   const studioId = context.active.studioId ?? null;
@@ -63,6 +70,18 @@ export function ClouvaAICompactPanel() {
             Quitar selección
           </button>
         ) : null}
+        <div className="grid grid-cols-3 gap-1.5" aria-label="Acciones rápidas de Trébol">
+          {QUICK_ACTIONS.map((action) => (
+            <button
+              key={action.label}
+              type="button"
+              onClick={() => openAssistant(action.prompt)}
+              className="rounded-xl border border-white/10 px-2 py-2 text-[10px] leading-tight text-white/65 hover:border-violet-300/30 hover:bg-violet-400/10 hover:text-white"
+            >
+              {action.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {user ? (

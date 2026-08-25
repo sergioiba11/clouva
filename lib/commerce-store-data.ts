@@ -13,7 +13,12 @@ export type CommerceVariant = {
 
 export type CommerceProduct = {
   id: string;
-  owner_type: "player" | "studio" | "clouva";
+  owner_type: "player" | "studio" | "user" | "clouva";
+  player_id?: string | null;
+  studio_id?: string | null;
+  owner_user_id?: string | null;
+  spot_id?: string | null;
+  catalog_product_id?: string | null;
   product_type: string;
   name: string;
   slug: string;
@@ -32,6 +37,11 @@ export type CommerceProduct = {
 export const commerceProductSelect = [
   "id",
   "owner_type",
+  "player_id",
+  "studio_id",
+  "owner_user_id",
+  "spot_id",
+  "catalog_product_id",
   "product_type",
   "name",
   "slug",
@@ -52,6 +62,22 @@ export function commerceProductCategory(product: CommerceProduct) {
   return typeof value === "string" && value.trim() ? value.trim() : "Merch";
 }
 
+function metadataImageUrls(metadata: Record<string, unknown> | null) {
+  const root = metadata && typeof metadata === "object" ? metadata : {};
+  const productImages = root.product_images && typeof root.product_images === "object" && !Array.isArray(root.product_images)
+    ? root.product_images as Record<string, unknown>
+    : {};
+  const rows = [
+    ...(Array.isArray(productImages.generated_images) ? productImages.generated_images : []),
+    ...(Array.isArray(productImages.source_photos) ? productImages.source_photos : []),
+  ];
+  return rows.flatMap((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+    const url = (entry as Record<string, unknown>).url;
+    return typeof url === "string" && url.trim() ? [url.trim()] : [];
+  });
+}
+
 export function commerceProductImages(product: CommerceProduct) {
   const images: string[] = [];
   if (product.cover_url) images.push(product.cover_url);
@@ -65,6 +91,7 @@ export function commerceProductImages(product: CommerceProduct) {
     }
   }
 
+  images.push(...metadataImageUrls(product.metadata));
   return [...new Set(images)];
 }
 

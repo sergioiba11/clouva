@@ -25,7 +25,8 @@ export function AddToCart({ product }: { product: CommerceProduct }) {
   const image = commerceProductImages(product)[0];
   const price = commerceVariantPrice(product, selectedVariant);
   const stock = selectedVariant ? selectedVariant.stock : product.stock;
-  const available = variants.length ? Boolean(selectedVariant?.active && selectedVariant.stock > 0) : stock == null || stock > 0;
+  const comingSoon = product.metadata?.availability === "coming_soon";
+  const available = !comingSoon && (variants.length ? Boolean(selectedVariant?.active && selectedVariant.stock > 0) : stock == null || stock > 0);
 
   function chooseVariant(candidate: CommerceVariant | undefined) {
     if (!candidate) return;
@@ -120,7 +121,7 @@ export function AddToCart({ product }: { product: CommerceProduct }) {
         }
         className="w-full rounded-full bg-white px-6 py-4 font-semibold text-black disabled:cursor-not-allowed disabled:opacity-40"
       >
-        {available ? "Agregar al carrito" : "Sin stock"}
+        {comingSoon ? "Próximamente" : available ? "Agregar al carrito" : "Sin stock"}
       </button>
     </div>
   );

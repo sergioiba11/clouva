@@ -1,0 +1,45 @@
+name: Validate MI FLOW / MI SPOT
+
+on:
+  pull_request:
+    paths:
+      - "app/mi-flow/**"
+      - "app/mi-spot/**"
+      - "app/api/mi-flow/**"
+      - "components/account/**"
+      - "components/wallet/**"
+      - "supabase/migrations/**mi_flow**"
+      - "tests-home-popovers.mjs"
+      - ".github/workflows/mi-flow-validation.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mi-flow-validation-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: ${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+      NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${{ vars.NEXT_PUBLIC_GOOGLE_CLIENT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Tests
+        run: npm test
+      - name: Production build
+        run: npm run build

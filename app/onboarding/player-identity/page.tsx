@@ -11,6 +11,9 @@ const OPTIONS = [
   ["Productor", "Producción musical y sonora"],
   ["Creador", "Contenido y proyectos"],
   ["Manager", "Gestión artística y profesional"],
+  ["Emprendedor", "Negocios, marcas y proyectos propios"],
+  ["Profesional", "Servicios y trabajo profesional"],
+  ["Comerciante", "Productos, ventas y operación comercial"],
   ["Diseñador", "Imagen, moda y dirección visual"],
   ["Modelo", "Imagen, campañas y experiencias"],
 ] as const;
@@ -31,11 +34,6 @@ export default function PlayerIdentityOnboardingPage() {
   };
 
   const continueOnboarding = async () => {
-    if (selected.length === 0) {
-      setError("Elegí al menos una identidad profesional.");
-      return;
-    }
-
     setSaving(true);
     setError(null);
     try {
@@ -47,7 +45,7 @@ export default function PlayerIdentityOnboardingPage() {
       sessionStorage.setItem("clouva.professional_categories", JSON.stringify(selected));
       router.push("/onboarding/instagram");
     } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "No se pudo crear tu Player.");
+      setError(saveError instanceof Error ? saveError.message : "No se pudo guardar tu Player.");
       setSaving(false);
     }
   };
@@ -55,8 +53,8 @@ export default function PlayerIdentityOnboardingPage() {
   return (
     <OnboardingShell
       step={2}
-      title="Construí la identidad de tu Player"
-      description="Acá sí podés elegir más de una identidad profesional y cambiarla cuando quieras."
+      title="Personalizá tu Player"
+      description="Tu Player ya existe. Si querés, contanos qué hacés para adaptar CLOUVA a vos. Podés elegir varias opciones o seguir sin elegir ninguna."
     >
       <div className="grid gap-3 sm:grid-cols-2">
         {OPTIONS.map(([label, detail]) => {
@@ -76,9 +74,10 @@ export default function PlayerIdentityOnboardingPage() {
           );
         })}
       </div>
+      <p className="mt-4 text-xs leading-5 text-white/40">Player es tu identidad dentro de CLOUVA; no significa que tengas que ser artista o creador.</p>
       {error ? <p className="mt-4 rounded-xl border border-red-400/20 bg-red-400/10 p-3 text-sm text-red-200">{error}</p> : null}
       <button disabled={saving || loading} onClick={() => void continueOnboarding()} className="mt-6 w-full rounded-xl bg-violet-600 px-5 py-3.5 font-semibold transition hover:bg-violet-500 disabled:opacity-60">
-        {saving ? "Creando tu Player..." : "Continuar con mi Player"}
+        {saving ? "Guardando..." : selected.length ? "Guardar y continuar" : "Continuar como Player"}
       </button>
     </OnboardingShell>
   );

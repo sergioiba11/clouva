@@ -3,8 +3,6 @@
 import { Suspense, useEffect, useRef, useState } from "react";
 import { Radio } from "lucide-react";
 import { AvatarModel } from "@/components/clouva/AvatarModel";
-import { CloverAIButton } from "@/components/clouva/CloverAIButton";
-import { CloverAIPanel } from "@/components/clouva/CloverAIPanel";
 import { MinimalNavigation } from "@/components/clouva/MinimalNavigation";
 import { useAuth } from "@/components/auth-provider";
 import { spotifyEmbedUrl } from "@/lib/spotify";
@@ -13,7 +11,6 @@ import { VISUAL_ASSETS } from "@/lib/visual-assets";
 export function AvatarScene() {
   const { user, profile } = useAuth();
   const [interfaceVisible, setInterfaceVisible] = useState(false);
-  const [aiOpen, setAiOpen] = useState(false);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const showInterfaceTemporarily = () => {
@@ -69,8 +66,6 @@ export function AvatarScene() {
         </section>
       ) : null}
 
-      <CloverAIButton open={aiOpen} onClick={() => setAiOpen((value) => !value)} />
-      <CloverAIPanel open={aiOpen} onClose={() => setAiOpen(false)} />
       <MinimalNavigation visible={interfaceVisible} />
     </main>
   );

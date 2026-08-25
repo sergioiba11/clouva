@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ChevronDown, Cpu, Loader2, RefreshCw } from "lucide-react";
+import { ChevronDown, Loader2, RefreshCw, Sparkles } from "lucide-react";
 
 type ModelOption = {
   id: string;
@@ -37,13 +37,9 @@ export function GeminiModelSelector() {
     setError(null);
 
     try {
-      const response = await fetch("/api/clouva-ai/models", {
-        cache: "no-store",
-      });
+      const response = await fetch("/api/clouva-ai/models", { cache: "no-store" });
       const payload = (await response.json().catch(() => ({}))) as ModelsPayload;
-      if (!response.ok) {
-        throw new Error(payload.error ?? "No se pudieron cargar los modelos.");
-      }
+      if (!response.ok) throw new Error(payload.error ?? "No se pudieron cargar los modelos.");
 
       const available = payload.models ?? [];
       const configuredDefault = payload.defaultModel ?? "gemini-3.5-flash";
@@ -60,11 +56,7 @@ export function GeminiModelSelector() {
       setSelected(next);
       saveModel(next);
     } catch (caught) {
-      setError(
-        caught instanceof Error
-          ? caught.message
-          : "No se pudieron cargar los modelos.",
-      );
+      setError(caught instanceof Error ? caught.message : "No se pudieron cargar los modelos.");
     } finally {
       setLoading(false);
     }
@@ -80,71 +72,54 @@ export function GeminiModelSelector() {
   );
 
   return (
-    <section className="mx-auto w-full max-w-5xl shrink-0 px-4 pt-3 sm:px-6">
-      <div className="rounded-2xl border border-violet-500/20 bg-zinc-950/95 p-3 shadow-lg shadow-violet-950/20">
-        <div className="flex items-center gap-3">
-          <div className="shrink-0 rounded-xl bg-violet-500/15 p-2 text-violet-300">
-            <Cpu className="h-4 w-4" />
-          </div>
+    <div className="group relative flex min-w-0 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.045] p-1.5 transition hover:border-violet-400/35">
+      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-violet-500/15 text-violet-300">
+        {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+      </span>
 
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-violet-300">
-                Modelo Gemini
-              </p>
-              {current && (
-                <p className="max-w-[52%] truncate font-mono text-[10px] text-white/35">
-                  {current.id}
-                </p>
-              )}
-            </div>
-
-            <div className="relative mt-1.5">
-              <select
-                value={selected}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  setSelected(value);
-                  saveModel(value);
-                }}
-                disabled={loading || models.length === 0}
-                className="w-full appearance-none rounded-xl border border-white/10 bg-black px-3 py-2 pr-9 text-xs text-white outline-none transition focus:border-violet-400/60 disabled:opacity-50"
-              >
-                {models.length === 0 ? (
-                  <option value={defaultModel}>{defaultModel}</option>
-                ) : (
-                  models.map((model) => (
-                    <option key={model.id} value={model.id}>
-                      {model.name} — {model.id}
-                    </option>
-                  ))
-                )}
-              </select>
-              <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-white/45" />
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => void loadModels()}
-            disabled={loading}
-            className="shrink-0 rounded-full border border-white/10 p-2 text-white/55 transition hover:border-violet-400/50 hover:text-white disabled:opacity-40"
-            aria-label="Actualizar modelos"
-          >
-            {loading ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <RefreshCw className="h-3.5 w-3.5" />
-            )}
-          </button>
-        </div>
-
-        {error && (
-          <p className="mt-2 rounded-xl border border-red-400/20 bg-red-500/10 px-3 py-2 text-xs text-red-200">
-            {error}
-          </p>
-        )}
+      <div className="relative min-w-0 flex-1">
+        <span className="pointer-events-none block truncate pr-5 text-[9px] font-bold uppercase tracking-[0.16em] text-white/35">
+          Modelo
+        </span>
+        <select
+          value={selected}
+          onChange={(event) => {
+            setSelected(event.target.value);
+            saveModel(event.target.value);
+          }}
+          disabled={loading || models.length === 0}
+          aria-label="Modelo de inteligencia artificial"
+          className="block w-full appearance-none truncate bg-transparent pr-6 text-[11px] font-medium text-white/80 outline-none disabled:opacity-50"
+          title={current?.description || current?.name || selected}
+        >
+          {models.length === 0 ? (
+            <option value={defaultModel}>{defaultModel}</option>
+          ) : (
+            models.map((model) => (
+              <option key={model.id} value={model.id} className="bg-zinc-950">
+                {model.name}
+              </option>
+            ))
+          )}
+        </select>
+        <ChevronDown className="pointer-events-none absolute bottom-0.5 right-1 h-3 w-3 text-white/35" />
       </div>
-    </section>
+
+      <button
+        type="button"
+        onClick={() => void loadModels()}
+        disabled={loading}
+        className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-white/35 transition hover:bg-white/5 hover:text-white disabled:opacity-40"
+        aria-label="Actualizar modelos"
+      >
+        <RefreshCw className="h-3.5 w-3.5" />
+      </button>
+
+      {error && (
+        <p className="absolute right-0 top-[calc(100%+0.5rem)] z-50 w-64 rounded-xl border border-red-400/25 bg-[#160b12] px-3 py-2 text-xs text-red-200 shadow-2xl">
+          {error}
+        </p>
+      )}
+    </div>
   );
 }

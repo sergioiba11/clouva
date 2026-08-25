@@ -232,11 +232,18 @@
   border-radius: 0.9rem;
   background: rgba(255, 255, 255, 0.025);
   padding: 0.65rem;
-  color: rgba(255, 255, 255, 0.34);
-  filter: saturate(0);
+  width: 100%;
+  color: rgba(255, 255, 255, 0.78);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
 }
 
+.aiStatus:hover { transform: translateY(-1px); border-color: rgba(162, 103, 255, .38); background: rgba(124, 58, 237, .08); }
+
 .aiStatus > span { color: #b488ff; }
+.aiStatus .aiMascot { display: grid; width: 2.2rem; height: 2.2rem; place-items: center; }
+.aiStatus .aiMascot img { width: 2.2rem; height: 2.2rem; object-fit: contain; filter: drop-shadow(0 0 8px rgba(168,85,247,.48)); }
 .aiStatus div { display: grid; flex: 1; }
 .aiStatus b { font-size: 0.64rem; }
 .aiStatus small { color: var(--home-muted); font-size: 0.56rem; }
@@ -381,18 +388,24 @@
   top: 1.4rem;
   z-index: 6;
   display: flex;
-  max-width: 11.5rem;
+  max-width: 13rem;
   align-items: center;
   gap: 0.48rem;
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 0.85rem 0.85rem 0.2rem 0.85rem;
-  background: rgba(45, 45, 53, 0.6);
+  background: rgba(16, 9, 35, 0.76);
   padding: 0.65rem 0.75rem;
-  color: rgba(255, 255, 255, 0.42);
+  color: rgba(255, 255, 255, 0.82);
   font-size: 0.65rem;
   backdrop-filter: blur(12px);
-  filter: saturate(0);
+  cursor: pointer;
+  box-shadow: 0 10px 35px rgba(0,0,0,.25);
+  transition: border-color 160ms ease, transform 160ms ease;
 }
+.aiPrompt:hover { transform: translateY(-2px); border-color: rgba(175,120,255,.4); }
+.aiPrompt > img { width: 2rem; height: 2rem; object-fit: contain; filter: drop-shadow(0 0 8px rgba(168,85,247,.48)); }
+.aiPrompt > span { font-weight: 750; }
+.aiPrompt > small { color: rgba(255,255,255,.43); font-size: .52rem; }
 
 .nowPlaying {
   position: absolute;
@@ -640,4 +653,200 @@
 
 @media (prefers-reduced-motion: reduce) {
   .moduleCard { transition: none; }
+}
+
+.heroPlayer {
+  position: absolute;
+  z-index: 3;
+  left: 48%;
+  top: 7%;
+  width: clamp(210px, 20vw, 340px);
+  height: clamp(300px, 29vw, 420px);
+}
+
+.heroPlayerGlow {
+  position: absolute;
+  inset: 8% -10% -4%;
+  border-radius: 48%;
+  background:
+    radial-gradient(circle at 52% 42%, rgba(153, 88, 255, 0.32), transparent 52%),
+    radial-gradient(circle at 50% 72%, rgba(95, 44, 202, 0.18), transparent 66%);
+  filter: blur(24px);
+}
+
+.heroPlayerFrame {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border: 1px solid rgba(190, 148, 255, 0.2);
+  border-radius: clamp(1.35rem, 2.4vw, 2.2rem);
+  background:
+    radial-gradient(circle at 50% 38%, rgba(144, 78, 255, 0.2), transparent 45%),
+    linear-gradient(145deg, rgba(43, 25, 83, 0.56), rgba(7, 6, 18, 0.82));
+  box-shadow:
+    0 24px 65px rgba(0, 0, 0, 0.42),
+    0 0 38px rgba(125, 63, 243, 0.16),
+    inset 0 0 35px rgba(136, 75, 255, 0.08);
+}
+
+.heroPlayerFrame::after {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(0deg, rgba(6, 5, 17, 0.72) 0%, rgba(6, 5, 17, 0.08) 34%, transparent 58%),
+    radial-gradient(circle at 50% 44%, transparent 53%, rgba(6, 5, 17, 0.22) 100%);
+  content: "";
+}
+
+.heroPlayerImage {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+}
+
+.heroPlayerFallbackContent {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  color: white;
+  text-align: center;
+}
+
+.heroPlayerInitials {
+  font-size: clamp(4.2rem, 7vw, 7rem);
+  font-weight: 900;
+  letter-spacing: -0.08em;
+  line-height: 1;
+  text-shadow: 0 0 34px rgba(164, 102, 255, 0.42);
+}
+
+.heroPlayerFallbackContent small {
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.heroAICompanion {
+  position: absolute;
+  right: clamp(0.75rem, 1.8vw, 1.6rem);
+  top: clamp(4.6rem, 14%, 6.6rem);
+  z-index: 6;
+  display: flex;
+  width: clamp(140px, 13vw, 200px);
+  height: clamp(210px, 23vw, 300px);
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: white;
+  cursor: pointer;
+  isolation: isolate;
+  transition: transform 180ms ease;
+}
+
+.heroAICompanion:hover { transform: translateY(-4px); }
+.heroAICompanion:focus-visible {
+  outline: 2px solid rgba(210, 177, 255, 0.92);
+  outline-offset: 5px;
+  border-radius: 1.3rem;
+}
+
+.heroAIGlow {
+  position: absolute;
+  left: 50%;
+  bottom: 0.1rem;
+  z-index: -1;
+  width: 88%;
+  height: 58%;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(151, 78, 255, 0.42), rgba(95, 43, 205, 0.12) 48%, transparent 72%);
+  filter: blur(16px);
+  transform: translateX(-50%);
+}
+
+.heroAIMascot {
+  display: grid;
+  place-items: center;
+  line-height: 0;
+}
+
+.heroAIMascot img {
+  width: clamp(90px, 9vw, 145px);
+  height: auto;
+  object-fit: contain;
+  filter: drop-shadow(0 0 11px rgba(168, 85, 247, 0.58)) drop-shadow(0 18px 30px rgba(0, 0, 0, 0.34));
+}
+
+.heroAISpeech {
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: clamp(125px, 12vw, 176px);
+  border: 1px solid rgba(179, 124, 255, 0.42);
+  border-radius: 1rem 1rem 0.35rem 1rem;
+  background: linear-gradient(145deg, rgba(49, 23, 94, 0.94), rgba(18, 10, 38, 0.94));
+  padding: 0.72rem 0.82rem;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.34), 0 0 22px rgba(126, 62, 240, 0.18);
+  font-size: clamp(0.58rem, 0.72vw, 0.72rem);
+  font-weight: 720;
+  line-height: 1.35;
+  text-align: left;
+  backdrop-filter: blur(14px);
+}
+
+.heroAISpeech::after {
+  position: absolute;
+  right: 1rem;
+  bottom: -0.48rem;
+  width: 0.85rem;
+  height: 0.85rem;
+  border-right: 1px solid rgba(179, 124, 255, 0.32);
+  border-bottom: 1px solid rgba(179, 124, 255, 0.32);
+  background: #211143;
+  content: "";
+  transform: rotate(45deg);
+}
+
+@media (max-width: 1180px) and (min-width: 981px) {
+  .heroPlayer { left: 47%; width: clamp(220px, 22vw, 290px); height: clamp(310px, 31vw, 400px); }
+  .heroAICompanion { right: 0.7rem; width: clamp(132px, 13vw, 170px); }
+}
+
+@media (max-width: 980px) and (min-width: 821px) {
+  .heroPlayer {
+    left: 49%;
+    top: 10%;
+    width: clamp(190px, 24vw, 235px);
+    height: clamp(285px, 37vw, 360px);
+  }
+  .heroAICompanion {
+    right: 0.35rem;
+    top: 5.2rem;
+    width: 8rem;
+    height: 13.5rem;
+  }
+  .heroAIMascot img { width: 90px; }
+  .heroAISpeech { width: 7.7rem; padding: 0.58rem 0.65rem; font-size: 0.58rem; }
+}
+
+@media (max-width: 820px) {
+  .heroPlayer,
+  .heroAICompanion { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .heroAICompanion { transition: none; }
 }

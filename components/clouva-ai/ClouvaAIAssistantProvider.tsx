@@ -32,7 +32,13 @@ type Registration = { scope: string; id: string; data: Record<string, unknown> }
 
 type ClouvaAIAssistantValue = {
   isOpen: boolean;
+  open: boolean;
   setOpen: (open: boolean) => void;
+  starterPrompt: string | null;
+  openAssistant: (prompt?: string) => void;
+  closeAssistant: () => void;
+  toggleAssistant: () => void;
+  consumeStarterPrompt: () => string | null;
   conversationId: string | null;
   setConversationId: (id: string | null) => void;
   pendingAction: PendingToolActionView | null;
@@ -74,6 +80,8 @@ export function ClouvaAIAssistantProvider({ children }: { children: React.ReactN
   const { currentPlayer } = useCurrentPlayer();
   const avatar = useActiveAvatarStore((state) => state.avatar);
   const [isOpen, setOpen] = useState(false);
+  const [starterPrompt, setStarterPrompt] = useState<string | null>(null);
+  const starterPromptRef = useRef<string | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [pendingAction, setPendingAction] = useState<PendingToolActionView | null>(null);
   const [toolDecisionNotice, setToolDecisionNotice] = useState<{ id: number; message: string } | null>(null);
@@ -82,6 +90,23 @@ export function ClouvaAIAssistantProvider({ children }: { children: React.ReactN
   const [selectedElement, setSelectedElement] = useState<TrebolSelectedElement>();
   const [selectingElement, setSelectingElement] = useState(false);
   const previousContextRef = useRef<TrebolRuntimeContext | null>(null);
+
+  const openAssistant = useCallback((prompt?: string) => {
+    const normalizedPrompt = prompt?.trim();
+    if (normalizedPrompt) {
+      starterPromptRef.current = normalizedPrompt;
+      setStarterPrompt(normalizedPrompt);
+    }
+    setOpen(true);
+  }, []);
+  const closeAssistant = useCallback(() => setOpen(false), []);
+  const toggleAssistant = useCallback(() => setOpen((current) => !current), []);
+  const consumeStarterPrompt = useCallback(() => {
+    const prompt = starterPromptRef.current;
+    starterPromptRef.current = null;
+    setStarterPrompt(null);
+    return prompt;
+  }, []);
 
   const registerContext = useCallback((registration: Registration) => {
     const key = `${registration.scope}:${registration.id}`;
@@ -158,7 +183,13 @@ export function ClouvaAIAssistantProvider({ children }: { children: React.ReactN
 
   const value = useMemo<ClouvaAIAssistantValue>(() => ({
     isOpen,
+    open: isOpen,
     setOpen,
+    starterPrompt,
+    openAssistant,
+    closeAssistant,
+    toggleAssistant,
+    consumeStarterPrompt,
     conversationId,
     setConversationId,
     pendingAction,
@@ -175,7 +206,7 @@ export function ClouvaAIAssistantProvider({ children }: { children: React.ReactN
     stopElementSelection: () => setSelectingElement(false),
     clearSelection: () => setSelectedElement(undefined),
     registerContext,
-  }), [context, contextPatch, conversationId, isOpen, pendingAction, registerContext, selectingElement, toolDecisionNotice]);
+  }), [closeAssistant, consumeStarterPrompt, context, contextPatch, conversationId, isOpen, openAssistant, pendingAction, registerContext, selectingElement, starterPrompt, toggleAssistant, toolDecisionNotice]);
 
   return (
     <ClouvaAIAssistantContext.Provider value={value}>

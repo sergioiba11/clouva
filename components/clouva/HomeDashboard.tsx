@@ -1,10 +1,10 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import {
   ArrowRight,
   Bell,
-  Bot,
   Box,
   CircleUserRound,
   Compass,
@@ -24,12 +24,16 @@ import {
 import { CloverIcon } from "@/components/clover-icon";
 import { useAuth } from "@/components/auth-provider";
 import { useCurrentPlayer } from "@/components/current-player-provider";
-import { resolveAccountDisplayName, resolveHomeDisplayName } from "@/lib/identity-names";
+import { AccountMenu } from "@/components/account/AccountMenu";
+import { useClouvaAIAssistant } from "@/components/clouva-ai/ClouvaAIAssistantProvider";
+import { SpotifyHomeStatus } from "@/components/music/SpotifyHomeStatus";
+import { resolveHomeDisplayName } from "@/lib/identity-names";
 import { VISUAL_ASSETS } from "@/lib/visual-assets";
 import styles from "./home-dashboard.module.css";
 
 const primaryNav = [
   { label: "Inicio", href: "/", icon: Home, available: true },
+  { label: "Crear", href: "/crear", icon: Sparkles, available: false, adminOnly: true },
   { label: "Mi Avatar", href: "/mi-flow/avatar", icon: CircleUserRound, available: false },
   { label: "Música", href: "/mi-flow/music", icon: Music2, available: true },
   { label: "Tienda", href: "/tienda", icon: ShoppingBag, available: true },
@@ -90,15 +94,15 @@ function initials(value: string) {
 }
 
 export function HomeDashboard() {
-  const { user, profile, role, loading } = useAuth();
+  const { user, profile, role } = useAuth();
   const { currentPlayer, playerLoading, playerReady } = useCurrentPlayer();
+  const { openAssistant } = useClouvaAIAssistant();
 
   if (user && !playerReady) {
     return <main className="min-h-screen bg-[#060612]" aria-busy={playerLoading} aria-label="Cargando tu identidad CLOUVA" />;
   }
 
   const displayName = resolveHomeDisplayName({ currentPlayer, profile, user });
-  const accountDisplayName = resolveAccountDisplayName({ profile, user });
   const username = currentPlayer?.username
     ? `@${currentPlayer.username.replace(/^@/, "")}`
     : profile?.username
@@ -106,17 +110,16 @@ export function HomeDashboard() {
       : user
         ? "Tu identidad CLOUVA"
         : "Explorá tu propio mundo";
-  const accountUsername = profile?.username ? `@${profile.username.replace(/^@/, "")}` : "Tu cuenta CLOUVA";
-  const accountAvatarImage = profile?.avatar_url || user?.user_metadata?.avatar_url;
-  const identityAvatarImage = currentPlayer?.profile_image_url || currentPlayer?.logo_url || accountAvatarImage;
+  const identityAvatarImage = currentPlayer?.profile_image_url || profile?.avatar_url || user?.user_metadata?.avatar_url || null;
+  const heroPlayerImage = currentPlayer?.cover_url || currentPlayer?.hero_image_url || identityAvatarImage || null;
   const isSignedIn = Boolean(user);
   const hasAvatar = Boolean(profile?.avatar_3d_url);
   const completedSteps = [isSignedIn, Boolean(profile?.username), hasAvatar].filter(Boolean).length;
   const progress = Math.round((completedSteps / 3) * 100);
-  // El admin necesita poder entrar a las pantallas "Próximamente" para
-  // probarlas/gestionarlas -- el resto de los usuarios sigue viendo el gate.
   const isAdmin = role === "admin";
-  const effectivePrimaryNav = primaryNav.map((item) => ({ ...item, available: item.available || isAdmin }));
+  const effectivePrimaryNav = primaryNav
+    .filter((item) => !("adminOnly" in item) || !item.adminOnly || isAdmin)
+    .map((item) => ({ ...item, available: item.available || isAdmin }));
   const effectiveModules = modules.map((item) => ({ ...item, available: item.available || isAdmin }));
 
   return (
@@ -140,13 +143,7 @@ export function HomeDashboard() {
         <div className={styles.topActions}>
           <button type="button" aria-label="Buscar"><Search size={18} /></button>
           <button type="button" aria-label="Notificaciones"><Bell size={18} /></button>
-          <Link href={isSignedIn ? "/perfil" : "/login"} className={styles.accountPill}>
-            {accountAvatarImage ? <img src={String(accountAvatarImage)} alt="" /> : <span>{initials(accountDisplayName) || "C"}</span>}
-            <span className={styles.accountCopy}>
-              <b>{loading ? "Cargando…" : accountDisplayName}</b>
-              <small>{isSignedIn ? accountUsername : "Ingresar"}</small>
-            </span>
-          </Link>
+          <AccountMenu variant="home" triggerClassName={styles.accountPill} />
           <button type="button" className={styles.mobileMenu} aria-label="Abrir menú"><Menu size={20} /></button>
         </div>
       </header>
@@ -181,24 +178,14 @@ export function HomeDashboard() {
           })}
         </nav>
 
-        {isAdmin ? (
-          <Link href="/clouva-ai" className={styles.aiStatus}>
-            <span><Bot size={17} /></span>
-            <div>
-              <b>CLOUVA AI</b>
-              <small>Abrir</small>
-            </div>
-          </Link>
-        ) : (
-          <section className={styles.aiStatus}>
-            <span><Bot size={17} /></span>
-            <div>
-              <b>CLOUVA AI</b>
-              <small>Próximamente</small>
-            </div>
-            <i className={styles.comingDot} />
-          </section>
-        )}
+        <button type="button" className={styles.aiStatus} onClick={() => openAssistant()}>
+          <span className={styles.aiMascot}><Image src="/assets/clouva-ai/trebol-mascot.png" alt="" width={36} height={36} /></span>
+          <div>
+            <b>CLOUVA AI</b>
+            <small>Lista para ayudarte</small>
+          </div>
+          <i />
+        </button>
       </aside>
 
       <section className={styles.content}>
@@ -231,34 +218,40 @@ export function HomeDashboard() {
             </div>
           </div>
 
-          <div className={styles.avatarStage} aria-label="Avatar CLOUVA">
-            <div className={styles.avatarHalo} aria-hidden="true" />
-            <div className={styles.avatarComingSoon}>
-              <CircleUserRound size={40} />
-              <span>Tu avatar 3D</span>
-              <small>Próximamente</small>
+          <div className={styles.heroPlayer} aria-label={`Tu Player: ${displayName}`}>
+            <div className={styles.heroPlayerGlow} aria-hidden="true" />
+            <div className={styles.heroPlayerFrame}>
+              {heroPlayerImage ? (
+                <img
+                  className={styles.heroPlayerImage}
+                  src={String(heroPlayerImage)}
+                  alt={`Imagen principal de ${displayName}`}
+                />
+              ) : (
+                <div className={styles.heroPlayerFallbackContent}>
+                  <span className={styles.heroPlayerInitials}>{initials(displayName) || "C"}</span>
+                  <small>Tu Player</small>
+                </div>
+              )}
             </div>
           </div>
 
-          {isAdmin ? (
-            <Link href="/clouva-ai" className={styles.aiPrompt}>
-              <Sparkles size={17} />
-              <span>CLOUVA AI</span>
-            </Link>
-          ) : (
-            <div className={styles.aiPrompt}>
-              <Sparkles size={17} />
-              <span>CLOUVA AI · Próximamente</span>
-            </div>
-          )}
+          <button
+            type="button"
+            className={styles.heroAICompanion}
+            onClick={() => openAssistant()}
+            aria-label="Abrir CLOUVA AI"
+          >
+            <span className={styles.heroAISpeech}>¿Qué hacemos hoy, {displayName}?</span>
+            <span className={styles.heroAIGlow} aria-hidden="true" />
+            <span className={styles.heroAIMascot}>
+              <Image src="/assets/clouva-ai/trebol-mascot.png" alt="" width={150} height={150} />
+            </span>
+          </button>
 
           <div className={styles.nowPlaying}>
             <div className={styles.cover}><Music2 size={20} /></div>
-            <div>
-              <small>Tu música</small>
-              <strong>{profile?.spotify_url ? "Perfil conectado" : "Conectá Spotify"}</strong>
-              <span>{profile?.spotify_url ? "Disponible en CLOUVA" : "Llevá tu sonido a tu identidad"}</span>
-            </div>
+            <SpotifyHomeStatus />
             <Link href="/mi-flow/music" aria-label="Abrir música"><ArrowRight size={17} /></Link>
           </div>
         </section>

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import { StudioIdentityRenderer } from "@/components/public/StudioIdentityRenderer";
 import { TrebolContextRegistration } from "@/components/clouva-ai/TrebolContextRegistration";
+import { PublicMerchSection } from "@/components/public/PublicMerchSection";
 import { resolveStudioAlias } from "@/lib/server/public-identity-data";
 
 export const dynamic = "force-dynamic";
@@ -41,6 +42,14 @@ export default async function StudioProfilePage({
     redirect(`/studios/${result.canonicalAlias}${query.joined === "1" ? "?joined=1" : ""}`);
   }
 
+  const merch = (
+    <PublicMerchSection
+      studioId={result.studio.id}
+      eyebrow={`Tienda de ${result.studio.name}`}
+      title="Merch"
+    />
+  );
+
   // layout_config solo existe (no vacío) cuando el Estudio corrió CLOUVA AI
   // Profile con un mockup replicado o eligió una variante de diseño -- todos
   // los demás siguen con la plantilla fija de siempre, sin ningún cambio.
@@ -60,6 +69,7 @@ export default async function StudioProfilePage({
         }}
       />
       <StudioIdentityRenderer data={result} joined={query.joined === "1"} />
+      {merch}
     </>
   );
 }

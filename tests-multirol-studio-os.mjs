@@ -18,17 +18,20 @@ test("onboarding asks for an action and keeps professional identity separate", a
   assert.match(modeApi, /profile_modes/);
 });
 
-test("Studio OS is owned by the Studio and management has no personal VIP gate", async () => {
-  const [permissions, aiPermissions, createPage, createApi, studioOsApi, billing] = await Promise.all([
+test("Studio OS sigue perteneciendo al Studio y el rol administrativo además exige VIP", async () => {
+  const [permissions, spaceAccess, aiPermissions, createPage, createApi, studioOsApi, billing] = await Promise.all([
     read("./lib/server/studio-permissions.ts"),
+    read("./lib/server/space-access.ts"),
     read("./lib/server/vip-profile-permissions.ts"),
     read("./app/studios/nuevo/page.tsx"),
     read("./app/api/studios/create/route.ts"),
     read("./app/api/studios/[slug]/studio-os/route.ts"),
     read("./core/billing/service.ts"),
   ]);
-  assert.doesNotMatch(permissions, /user_entitlements|tier.*vip/i);
+  assert.match(permissions, /requireSpaceAdminPlan/);
   assert.match(permissions, /studio_os_status/);
+  assert.match(spaceAccess, /tier", "vip"/);
+  assert.match(spaceAccess, /CLOUVA VIP es necesario para crear y administrar espacios/);
   assert.match(aiPermissions, /if \(args\.studioId\)/);
   assert.match(aiPermissions, /requireStudioManager/);
   assert.match(aiPermissions, /productGate: "studio_os"/);

@@ -8,7 +8,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
 
-const links = ["/mi-flow", "/mi-flow/agenda", "/mi-flow/flows", "/mi-flow/studio", "/mi-flow/vault", "/mi-flow/launch", "/mi-flow/visual", "/mi-flow/store", "/mi-flow/money", "/mi-flow/tasks", "/mi-flow/assistant", "/mi-flow/lore"];
+const links = ["/mi-flow", "/mi-flow/creative", "/mi-flow/agenda", "/mi-flow/flows", "/mi-flow/studio", "/mi-flow/vault", "/mi-flow/launch", "/mi-flow/visual", "/mi-flow/store", "/mi-flow/tasks", "/mi-flow/assistant", "/mi-flow/lore"];
 
 export default function FlowLayoutClient({ children }: { children: React.ReactNode }) {
   const { user, loading, hydrationReady } = useAuth();
@@ -23,7 +23,11 @@ export default function FlowLayoutClient({ children }: { children: React.ReactNo
   if (loading || !hydrationReady) return <main><MainNav /><div className="mx-auto max-w-7xl p-6">Cargando sesión...</div></main>;
   if (!user) return null;
 
+  // Las experiencias principales de CLOUVA tienen su propio shell visual.
+  // El resto de las herramientas históricas conserva el navegador de módulos
+  // hasta que cada sección sea integrada a su superficie canónica.
   const fullScreenPages = [
+    "/mi-flow",
     "/mi-flow/avatar",
     "/mi-flow/menu",
     "/mi-flow/avatar-ia",
