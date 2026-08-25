@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
-import { StudioPublicView } from "@/components/public/StudioPublicView";
-import { StudioLayoutRenderer } from "@/components/public/StudioLayoutRenderer";
-import { PreciseStudioLayoutRenderer } from "@/components/public/PreciseStudioLayoutRenderer";
+import { StudioIdentityRenderer } from "@/components/public/StudioIdentityRenderer";
+import { TrebolContextRegistration } from "@/components/clouva-ai/TrebolContextRegistration";
 import { resolveStudioAlias } from "@/lib/server/public-identity-data";
 
 export const dynamic = "force-dynamic";
@@ -48,47 +47,19 @@ export default async function StudioProfilePage({
   // "precise" (pixel por pixel del mockup subido) es un esquema paralelo,
   // nuevo, que usa su propio renderer -- las páginas ya publicadas con el
   // esquema viejo (layout_kind "template") siguen exactamente igual.
-  if (result.layoutConfig?.layout_kind === "precise") {
-    return (
-      <PreciseStudioLayoutRenderer
-        studio={result.studio}
-        players={result.players}
-        media={result.media}
-        projects={result.projects as Array<Record<string, unknown>>}
-        matrixDiscoveryProjects={result.matrixDiscoveryProjects as Array<Record<string, unknown>>}
-        services={result.services}
-        membershipPlans={result.membershipPlans}
-        joined={query.joined === "1"}
-        layout={result.layoutConfig}
-      />
-    );
-  }
-
-  if (result.layoutConfig) {
-    return (
-      <StudioLayoutRenderer
-        studio={result.studio}
-        players={result.players}
-        media={result.media}
-        projects={result.projects as Array<Record<string, unknown>>}
-        matrixDiscoveryProjects={result.matrixDiscoveryProjects as Array<Record<string, unknown>>}
-        services={result.services}
-        membershipPlans={result.membershipPlans}
-        joined={query.joined === "1"}
-        layout={result.layoutConfig}
-      />
-    );
-  }
-
   return (
-    <StudioPublicView
-      studio={result.studio}
-      players={result.players}
-      media={result.media}
-      projects={result.projects as Array<Record<string, unknown>>}
-      services={result.services}
-      membershipPlans={result.membershipPlans}
-      joined={query.joined === "1"}
-    />
+    <>
+      <TrebolContextRegistration
+        scope="studio-public"
+        id={result.studio.id}
+        data={{
+          studioId: result.studio.id,
+          slug: result.studio.slug,
+          name: result.studio.name,
+          section: "public-profile",
+        }}
+      />
+      <StudioIdentityRenderer data={result} joined={query.joined === "1"} />
+    </>
   );
 }

@@ -126,7 +126,7 @@ export async function POST(request: NextRequest) {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       return NextResponse.json(
-        { error: "GEMINI_API_KEY no está configurada en Railway." },
+        { error: "GEMINI_API_KEY no está configurada en el servicio de Cloud Run." },
         { status: 500 },
       );
     }

@@ -50,7 +50,7 @@ export async function POST(request: Request) {
     const file = await readWithRetry(path);
     const apiKey = process.env.GEMINI_API_KEY;
     const model = process.env.GEMINI_MODEL ?? "gemini-3.5-flash";
-    if (!apiKey) throw new Error("Falta GEMINI_API_KEY en Railway.");
+    if (!apiKey) throw new Error("Falta GEMINI_API_KEY en el servicio de Cloud Run.");
 
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,

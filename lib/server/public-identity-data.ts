@@ -1,3 +1,4 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createPublicSupabase } from "./public-supabase";
 import { sanitizeLayoutConfig, type LayoutConfig } from "./layout-config";
 import {
@@ -17,6 +18,68 @@ import {
 
 const studioPublicSelect =
   "id,slug,name,logo_url,cover_url,description,short_bio,tagline,categories,city,country,website_url,social_links,contact_email,is_published,publication_status,studio_os_status,seo_title,seo_description,share_title,share_description,og_image_url,accent_color,palette";
+
+export type StudioIdentityData = {
+  studio: StudioRow;
+  players: StudioPlayer[];
+  media: PlayerMedia[];
+  projects: Array<Record<string, unknown>>;
+  matrixDiscoveryProjects: Array<Record<string, unknown>>;
+  services: StudioService[];
+  membershipPlans: StudioMembershipPlan[];
+  canonicalAlias: string;
+  layoutConfig: LayoutConfig | null;
+};
+
+async function loadStudioIdentityData(
+  supabase: SupabaseClient,
+  studio: StudioRow,
+): Promise<StudioIdentityData> {
+  const [playersResult, mediaResult, projectsResult, servicesResult, membershipPlansResult, aliasResult, versionResult] = await Promise.all([
+    supabase.from("player_studios").select(studioPlayersSelect).eq("studio_id", studio.id).eq("is_visible", true).eq("status", "active").order("display_order"),
+    supabase.from("player_media").select("id,media_type,origin,source_url,public_url,thumbnail_url,caption,display_order").eq("studio_id", studio.id).eq("visibility", "public").order("display_order"),
+    supabase.from("community_projects").select("id,title,cover_url,release_type,release_date,spotify_url,youtube_url,description").eq("studio_id", studio.id).order("release_date", { ascending: false }),
+    supabase.from("studio_services").select(studioServicesSelect).eq("studio_id", studio.id).eq("is_active", true).order("display_order"),
+    supabase.from("studio_membership_plans").select(studioMembershipPlansSelect).eq("studio_id", studio.id).eq("is_active", true).eq("is_public", true).order("display_order"),
+    supabase.from("public_slug_aliases").select("alias").eq("entity_type", "studio").eq("entity_id", studio.id).eq("is_primary", true).maybeSingle(),
+    supabase.from("player_profile_versions").select("layout_config").eq("studio_id", studio.id).eq("status", "published").maybeSingle(),
+  ]);
+  if (playersResult.error) throw new Error(playersResult.error.message);
+  if (mediaResult.error) throw new Error(mediaResult.error.message);
+  if (projectsResult.error) throw new Error(projectsResult.error.message);
+  if (servicesResult.error) throw new Error(servicesResult.error.message);
+  if (membershipPlansResult.error) throw new Error(membershipPlansResult.error.message);
+
+  const layoutConfig: LayoutConfig | null = versionResult.error
+    ? null
+    : sanitizeLayoutConfig(versionResult.data?.layout_config);
+  const projects = (projectsResult.data ?? []) as Array<Record<string, unknown>>;
+  const matrixDiscoveryProjects = projects.length === 0
+    ? await (async () => {
+        const { data, error } = await supabase
+          .from("community_projects")
+          .select("id,title,cover_url,spotify_url,youtube_url,studio:studios(name,slug)")
+          .neq("studio_id", studio.id)
+          .or("spotify_url.not.is.null,youtube_url.not.is.null")
+          .order("release_date", { ascending: false })
+          .limit(6);
+        if (error) return [];
+        return (data ?? []) as Array<Record<string, unknown>>;
+      })()
+    : [];
+
+  return {
+    studio,
+    players: (playersResult.data ?? []) as unknown as StudioPlayer[],
+    media: (mediaResult.data ?? []) as unknown as PlayerMedia[],
+    projects,
+    matrixDiscoveryProjects,
+    services: (servicesResult.data ?? []) as unknown as StudioService[],
+    membershipPlans: (membershipPlansResult.data ?? []) as unknown as StudioMembershipPlan[],
+    canonicalAlias: aliasResult.data?.alias || studio.slug,
+    layoutConfig,
+  };
+}
 
 export async function listPublishedPlayers() {
   const { data, error } = await createPublicSupabase()
@@ -153,4 +216,21 @@ export async function resolveStudioAlias(alias: string) {
     canonicalAlias: aliasResult.data?.alias || studio.slug,
     layoutConfig,
   };
+}
+
+/** Authorized dashboard counterpart of the public resolver. Its caller must
+ * already have validated Studio permissions; this does not make drafts
+ * public, it only lets the version Preview reuse the canonical data loader. */
+export async function resolveStudioIdentityById(
+  supabase: SupabaseClient,
+  studioId: string,
+): Promise<StudioIdentityData | null> {
+  const { data: studio, error } = await supabase
+    .from("studios")
+    .select(studioPublicSelect)
+    .eq("id", studioId)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!studio) return null;
+  return loadStudioIdentityData(supabase, studio as unknown as StudioRow);
 }

@@ -83,6 +83,9 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: CLOUVA AI tests
+        run: npm run test:clouva-ai
+
       - id: auth
         uses: google-github-actions/auth@v2
         with:

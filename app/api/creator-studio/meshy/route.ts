@@ -27,7 +27,7 @@ export async function POST(request: Request) {
         mock: true,
         taskId: `meshy_preview_${Date.now()}`,
         status: "PENDING_CONFIGURATION",
-        message: "El módulo está instalado. Agregá MESHY_API_KEY en Vercel para activar la generación real.",
+        message: "El módulo está instalado. Agregá MESHY_API_KEY al servicio clouva-web de Cloud Run para activar la generación real.",
       });
     }
 

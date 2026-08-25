@@ -506,6 +506,7 @@ async function validateVector(args: {
     const box = boxToPixels(component.box, args.width, args.height);
     const resizedMask = await sharp(Buffer.from(component.foregroundMask), { raw: { width: component.width, height: component.height, channels: 1 } })
       .resize(box.width, box.height, { fit: "fill", kernel: sharp.kernel.nearest })
+      .greyscale()
       .raw()
       .toBuffer();
     for (let y = 0; y < box.height; y += 1) {

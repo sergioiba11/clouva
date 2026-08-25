@@ -16,7 +16,9 @@ Incluye rutas públicas, admin y Mi Flow solicitadas.
 - SQL con RLS para productos, órdenes y módulos Flow owner-only.
 
 ## Deploy
-Preparado para Vercel y dominio `clouva.com.ar`.
+La aplicación web se publica en Google Cloud Run (`clouva-web`, proyecto
+`gen-lang-client-0737053175`, región `us-central1`) mediante
+`.github/workflows/deploy-gcp-web.yml`. El dominio público es `clouva.com.ar`.
 
 ## Tienda online editable con Supabase
 

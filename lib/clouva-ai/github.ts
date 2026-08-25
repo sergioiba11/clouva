@@ -12,7 +12,7 @@ function githubConfig() {
   const repo = process.env.GITHUB_REPO ?? "clouva";
   const branch = process.env.GITHUB_BRANCH ?? "main";
 
-  if (!token) throw new Error("Falta GITHUB_TOKEN en Railway.");
+  if (!token) throw new Error("Falta GITHUB_TOKEN en el servicio de Cloud Run.");
 
   return { token, owner, repo, branch };
 }
@@ -20,7 +20,7 @@ function githubConfig() {
 function friendlyGitHubError(status: number, raw: string, data: unknown) {
   const contentTypeLooksHtml = /<!doctype html|<html|<head|<body/i.test(raw);
 
-  if (status === 401) return "GitHub rechazó el token configurado. Revisá GITHUB_TOKEN en Railway.";
+  if (status === 401) return "GitHub rechazó el token configurado. Revisá GITHUB_TOKEN en Cloud Run.";
   if (status === 403) return "GitHub bloqueó temporalmente la solicitud o se alcanzó un límite. Esperá unos segundos y reintentá.";
   if (status === 404) return "GitHub no encontró el repositorio o archivo solicitado.";
   if (status === 409) return "GitHub detectó un conflicto al actualizar el archivo. Volvé a leerlo y reintentá.";
@@ -137,10 +137,39 @@ export async function readRepositoryFile(path: string) {
   };
 }
 
+export async function searchRepositoryCode(args: { query: string; path?: string; limit?: number }) {
+  const { owner, repo } = githubConfig();
+  const query = args.query.trim().slice(0, 200);
+  if (query.length < 2) throw new Error("La búsqueda de código debe tener al menos 2 caracteres.");
+  const normalizedPath = args.path?.trim().replace(/^\/+|\/+$/g, "").slice(0, 500);
+  if (normalizedPath?.split("/").includes("..")) throw new Error("La ruta de búsqueda no es válida.");
+  const limit = Math.min(Math.max(args.limit ?? 10, 1), 20);
+  const qualifiers = [`repo:${owner}/${repo}`, ...(normalizedPath ? [`path:${normalizedPath}`] : [])];
+  const data = (await githubFetch(
+    `/search/code?q=${encodeURIComponent(`${query} ${qualifiers.join(" ")}`)}&per_page=${limit}`,
+  )) as {
+    total_count?: number;
+    incomplete_results?: boolean;
+    items?: Array<{ name?: string; path?: string; sha?: string; html_url?: string; score?: number }>;
+  };
+  return {
+    total: data.total_count ?? 0,
+    incomplete: Boolean(data.incomplete_results),
+    results: (data.items ?? []).slice(0, limit).map((item) => ({
+      name: item.name ?? "",
+      path: item.path ?? "",
+      sha: item.sha ?? "",
+      url: item.html_url,
+      score: item.score ?? null,
+    })),
+  };
+}
+
 export async function writeRepositoryFile(args: {
   path: string;
   content: string;
   message: string;
+  expectedSha?: string | null;
 }) {
   const { owner, repo, branch } = githubConfig();
   const normalizedPath = args.path.replace(/^\/+/, "");
@@ -152,6 +181,15 @@ export async function writeRepositoryFile(args: {
   } catch (error) {
     const message = error instanceof Error ? error.message.toLowerCase() : "";
     if (!message.includes("no encontró")) throw error;
+  }
+
+  if (args.expectedSha !== undefined) {
+    const expected = args.expectedSha || undefined;
+    if (existingSha !== expected) {
+      throw new Error(
+        "El archivo cambió desde que se preparó el diff. Volvé a pedir el cambio para revisar la versión actual antes de confirmar.",
+      );
+    }
   }
 
   const body: Record<string, unknown> = {

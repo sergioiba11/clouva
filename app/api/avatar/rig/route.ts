@@ -427,10 +427,10 @@ async function completeRigWithWorker(sourceUrl: string) {
   };
 
   if (workerVersion !== EXPECTED_WORKER_RIG_VERSION) {
-    throw new Error(`Railway respondió con el rig ${workerVersion || "sin versión"}; se exige ${EXPECTED_WORKER_RIG_VERSION}`);
+    throw new Error(`El Blender Worker respondió con el rig ${workerVersion || "sin versión"}; se exige ${EXPECTED_WORKER_RIG_VERSION}`);
   }
   if (analyzerHeader !== EXPECTED_ANALYZER_VERSION) {
-    throw new Error(`Railway respondió con ${analyzerHeader || "Analyzer sin versión"}; se exige ${EXPECTED_ANALYZER_VERSION}`);
+    throw new Error(`El Blender Worker respondió con ${analyzerHeader || "Analyzer sin versión"}; se exige ${EXPECTED_ANALYZER_VERSION}`);
   }
   if (
     proof.version !== EXPECTED_PROFILE_VERSION

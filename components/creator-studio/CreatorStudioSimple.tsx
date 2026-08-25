@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
+import { useTrebolContextRegistration } from "@/components/clouva-ai/ClouvaAIAssistantProvider";
 import { RigApprovalWorkspace } from "@/components/creator-studio/RigApprovalWorkspace";
 import {
   OFFICIAL_CLOUVA_AVATAR,
@@ -531,6 +532,41 @@ updatedAt: new Date().toISOString(),
     && !garmentRigging,
   );
   const dressedPreview = Boolean(selectedAsset?.kind === "clothing" && selectedAsset.rigged && selectedAsset.modelUrl);
+
+  useTrebolContextRegistration({
+    scope: "creator-studio",
+    id: user?.id ?? "anonymous",
+    data: {
+      activeAvatar: {
+        id: activeAvatar.id,
+        source: activeAvatar.source,
+        status: activeAvatar.status,
+      },
+      selectedAsset: selectedAsset ? {
+        id: selectedAsset.id,
+        kind: selectedAsset.kind,
+        name: selectedAsset.name,
+        category: selectedAsset.category,
+        clothingItemId: selectedAsset.clothingItemId,
+        rigged: selectedAsset.rigged,
+      } : null,
+      assetId: selectedAsset?.id,
+      avatarRigging,
+      avatarRigProgress,
+      avatarRigReady,
+      rigApproved,
+      rigProfile: rigProfile ? {
+        complete: rigProfile.complete,
+        boneCount: rigProfile.boneCount,
+        version: rigProfile.version,
+      } : null,
+      avatarFbxReady: Boolean(avatarFbx?.url),
+      bodyDataReady,
+      garmentRigging,
+      operationalMessage: message,
+      operationalError: error,
+    },
+  });
 
   if (loading || !user) return null;
 

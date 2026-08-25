@@ -47,7 +47,7 @@ export async function GET() {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
       return NextResponse.json(
-        { error: "Falta GEMINI_API_KEY en Railway." },
+        { error: "Falta GEMINI_API_KEY en el servicio de Cloud Run." },
         { status: 500 },
       );
     }

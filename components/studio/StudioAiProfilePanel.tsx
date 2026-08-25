@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
 
 // Studio counterpart of components/profile/VipAiProfilePanel.tsx -- same
@@ -409,7 +410,12 @@ export function StudioAiProfilePanel({ studioId }: { studioId: string }) {
 
       {draftVersion && copy ? (
         <div className="space-y-4 rounded-2xl border border-white/10 bg-black/20 p-5">
-          <p className="text-xs uppercase tracking-[0.2em] text-white/40">Revisá y editá (v{draftVersion.version_number}, borrador)</p>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-xs uppercase tracking-[0.2em] text-white/40">Revisá y editá (v{draftVersion.version_number}, borrador)</p>
+            <Link href={`/studio-dashboard/${studioId}/identity-preview`} className="rounded-xl border border-violet-400/30 bg-violet-500/10 px-4 py-2 text-xs font-semibold text-violet-100 transition hover:bg-violet-500/20">
+              Abrir Actual / Propuesta
+            </Link>
+          </div>
           {cover ? <img src={cover.url} alt="" className="h-40 w-full rounded-xl object-cover" /> : null}
           {logo || palette.length > 0 ? (
             <div className="flex items-center gap-4 rounded-xl border border-white/10 bg-black/20 p-4">

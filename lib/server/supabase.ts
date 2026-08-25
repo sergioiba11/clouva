@@ -67,6 +67,17 @@ export async function requireUser(request: NextRequest): Promise<{
   return { accessToken, user: data.user, supabase };
 }
 
+/** True if `email` is in the CLOUVA_ADMIN_EMAILS allowlist (comma-separated,
+ * case-insensitive). Shared by every clouva-ai route that gates a feature
+ * (project/repo mode, GitHub access, Workspace pairing) behind admin status. */
+export function isAdminEmail(email: string | null | undefined): boolean {
+  const allowed = (process.env.CLOUVA_ADMIN_EMAILS ?? "")
+    .split(",")
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+  return Boolean(email && allowed.includes(email.toLowerCase()));
+}
+
 export function isAuthError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
   return /sesión requerida|sesión inválida|no autorizado|cuenta fue bloqueada/i.test(message);

@@ -5,6 +5,7 @@ import type { AuthChangeEvent, Session, User } from "@supabase/supabase-js";
 import { normalizeRole, type Role } from "@/lib/auth";
 import { PREVIEW_PERSONAS, previewPersonaRole, type PreviewPersona } from "@/lib/clouva-control/screens";
 import { saveAccount, setActiveAccountId } from "@/lib/account-switcher";
+import { installWorkspacePreviewAuthBridge } from "@/lib/workspace-preview-auth";
 
 type Profile = {
   id: string;
@@ -247,12 +248,36 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     };
 
+    const supabaseModule = import("@/lib/supabase");
+    const removeWorkspacePreviewAuthBridge = installWorkspacePreviewAuthBridge({
+      target: window,
+      location: window.location,
+      auth: {
+        setSession: async (tokens) => {
+          const { supabase } = await supabaseModule;
+          const result = await supabase.auth.setSession(tokens);
+          if (!result.error) await resolveSession(result.data.session ?? null, "SIGNED_IN");
+          return result;
+        },
+        signOut: async (options) => {
+          const { supabase } = await supabaseModule;
+          const result = await supabase.auth.signOut(options);
+          if (!result.error) await resolveSession(null, "SIGNED_OUT");
+          return result;
+        },
+        stopAutoRefresh: () => {
+          void supabaseModule.then(({ supabase }) => supabase.auth.stopAutoRefresh());
+        },
+      },
+    });
+
     void bootstrap();
 
     return () => {
       alive = false;
       runRef.current += 1;
       unsubscribe?.();
+      removeWorkspacePreviewAuthBridge();
     };
   }, []);
 

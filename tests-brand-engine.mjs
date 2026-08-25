@@ -271,8 +271,10 @@ test("resolveBrandAsset: un logo oficial publicado NUNCA se rediseña sin forceR
       select() { return handler; },
       eq() { return handler; },
       insert() { return handler; },
+      update() { return handler; },
       async maybeSingle() { return resolveValue; },
       async single() { return resolveValue; },
+      then(resolve) { return Promise.resolve({ data: null, error: null }).then(resolve); },
     };
     return handler;
   }

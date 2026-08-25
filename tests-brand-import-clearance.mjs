@@ -49,7 +49,10 @@ test("reconstrucción IGLÚ produce un SVG de paths, nunca una imagen raster emb
   assert.ok(reconstruction.symbolSvg?.includes("<path"));
   assert.ok(reconstruction.wordmarkSvg?.includes("<path"));
   assert.ok(reconstruction.descriptorSvg?.includes("<path"));
-  assert.ok(reconstruction.validation.rasterSimilarity >= 0.68);
+  assert.ok(
+    reconstruction.validation.rasterSimilarity >= 0.68,
+    `similaridad raster inesperada: ${reconstruction.validation.rasterSimilarity}`,
+  );
   assert.equal(reconstruction.validation.transparentBackground, true);
 });
 

@@ -3,7 +3,6 @@ import { test } from "node:test";
 
 const {
   DEFAULT_CLOUVA_AI_MODE,
-  endpointForClouvaAIMode,
   normalizeClouvaAIMode,
   projectAccessLabel,
 } = await import("./lib/clouva-ai/project-access.ts");
@@ -19,10 +18,10 @@ test("la preferencia válida del usuario se conserva", () => {
   assert.equal(normalizeClouvaAIMode("project"), "project");
 });
 
-test("Proyecto siempre usa el agente con acceso al repositorio", () => {
-  assert.equal(endpointForClouvaAIMode("project"), "/api/clouva-ai/agent");
-  assert.equal(endpointForClouvaAIMode("chat"), "/api/gemini");
-});
+// Both modes now go through the same canonical Orchestrator
+// (app/api/clouva-ai/chat/route.ts), with `mode` in the request body
+// deciding GitHub-repo-context vs plain chat — there's no more per-mode
+// endpoint routing to test here. See ClouvaAIChat.tsx's ORCHESTRATOR_ENDPOINT.
 
 test("el estado conectado identifica repositorio y rama", () => {
   assert.equal(

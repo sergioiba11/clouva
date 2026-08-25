@@ -7,10 +7,6 @@ export function normalizeClouvaAIMode(value: unknown): ClouvaAIMode {
   return value === "chat" || value === "project" ? value : DEFAULT_CLOUVA_AI_MODE;
 }
 
-export function endpointForClouvaAIMode(mode: ClouvaAIMode) {
-  return mode === "project" ? "/api/clouva-ai/agent" : "/api/gemini";
-}
-
 export function projectAccessLabel(args: {
   state: "checking" | "connected" | "unavailable" | "signed_out";
   repository?: string | null;

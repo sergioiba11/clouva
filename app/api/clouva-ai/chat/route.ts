@@ -1,412 +1,630 @@
-import { createClient } from "@supabase/supabase-js";
+import { randomUUID } from "node:crypto";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
+import { buildTrebolRuntimeContext } from "@/lib/clouva-ai/agent/context-builder";
+import {
+  agentHttpStatus,
+  assertNoPendingAgentAction,
+  authenticateAgentRequest,
+  resolveAgentConversation,
+} from "@/lib/clouva-ai/agent/orchestrator";
+import { finishAgentRun, recordAgentToolCall, startAgentRun } from "@/lib/clouva-ai/agent/run-store";
+import { decidePendingToolAction } from "@/lib/clouva-ai/agent/tool-decision";
+import { createAgentToolRouter } from "@/lib/clouva-ai/agent/tool-service";
+import { resolveStudioContext } from "@/lib/clouva-ai/context-resolver";
+import { selectedModelFromRequest } from "@/lib/clouva-ai/gemini-text";
+import { streamGeminiWithFallback } from "@/lib/clouva-ai/gemini-stream";
+import { runGeminiToolLoop, type ToolCallTrace } from "@/lib/clouva-ai/gemini-tools";
+import {
+  createMemoryProposal,
+  detectMemoryCandidate,
+  pendingMemoryProposalView,
+  type MemoryProposal,
+} from "@/lib/clouva-ai/memory-proposals";
+import {
+  pendingToolActionView,
+  ToolConfirmationGate,
+  type PendingToolAction,
+} from "@/lib/clouva-ai/tool-confirmation";
+import { ToolRouter } from "@/lib/clouva-ai/tool-router";
+import { decideMemoryProposal, loadEffectiveMemory } from "@/lib/server/memory-approval";
+import { createAdminSupabase, isAdminEmail } from "@/lib/server/supabase";
+import { CLOUVA_CHAT_SYSTEM_PROMPT, CLOUVA_PRODUCT_CONTEXT, CLOUVA_REPOSITORY_AGENT_PROMPT } from "@/lib/clouva-ai/vision";
+import { attachmentPart, normalizeAttachments, normalizeScreenContext } from "@/lib/clouva-ai/multimodal";
+import { projectToolScopeFromScreenContext } from "@/lib/clouva-ai/project-tool-scope";
+
+// THE canonical CLOUVA AI Conversation Orchestrator. Single server-side
+// writer of ai_conversations/ai_messages — components/clouva-ai/ClouvaAIChat.tsx
+// no longer inserts into Supabase itself, and no longer calls /api/gemini or
+// /api/clouva-ai/agent directly; both those routes are legacy now (kept
+// working, not deleted, per the approved migration plan).
+//
+// Persistence + auth run under the CALLING USER's own JWT (not a service
+// role) — RLS on ai_conversations/ai_messages is what actually decides who
+// can read/write a conversation, this route doesn't re-implement that
+// decision. See supabase/migrations for is_active_studio_participant()
+// (chat) vs can_manage_studio() (creating a Studio conversation, and every
+// sensitive/structured action layered on top later).
+//
+// Studio-conversation context (studio/members/players/relevant profile
+// versions) comes from lib/clouva-ai/context-resolver.ts — selective, not a
+// full-table dump. Project and Studio domain function-calling are routed only
+// through ToolRouter + ToolConfirmationGate: reads may execute immediately;
+// no write/destructive/sensitive call can bypass the persisted human review.
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-type ChatRequest = {
+type ChatMode = "chat" | "project";
+type ChatMessageRow = { role: "user" | "assistant"; content: string; created_at: string };
+type RequestBody = {
+  action?: "message" | "confirm_tool" | "cancel_tool" | "approve_memory" | "reject_memory";
   message?: string;
   conversationId?: string | null;
-  projectKey?: string;
+  studioId?: string | null;
+  mode?: ChatMode;
   screenContext?: Record<string, unknown>;
-};
-
-type ChatItem = {
-  role: "user" | "assistant";
-  content: string;
-};
-
-type GeminiResponse = {
-  candidates?: Array<{
-    content?: {
-      parts?: Array<{ text?: string }>;
-    };
+  attachments?: Array<{
+    name?: string;
+    mimeType?: string;
+    size?: number;
+    dataBase64?: string;
+    kind?: "image" | "audio" | "file" | "preview";
   }>;
-  error?: { message?: string };
+  pendingMessageId?: string;
+  pendingActionId?: string;
+  memoryMessageId?: string;
+  memoryProposalId?: string;
 };
 
-const PROJECT_CORE = `
-Sos CLOUVA AI, el centro de comando técnico, creativo y operativo del proyecto CLOUVA.
+const STUDIO_DOMAIN_TOOL_RULES = `REGLAS DE HERRAMIENTAS DE DOMINIO
+- Usá getStudio y getStudioPlayers para consultar datos actuales; no inventes IDs, roles ni estados.
+- Para trabajar sobre el Preview de identidad, primero llamá getStudioIdentityVersions y usá exclusivamente el id/configuración del draft devuelto.
+- updateStudioIdentityDraft modifica sólo la PROPUESTA draft. La versión publicada (ACTUAL) es inmutable y esta herramienta nunca publica.
+- El layout debe conservar el contrato canónico y sólo puede reutilizar assets ya vinculados al draft. No generes HTML, JSX, CSS libre ni URLs de assets inventadas.
+- Toda escritura queda como propuesta pendiente de revisión humana. Iniciar una generación de perfil además requiere confirmación reforzada porque consume el pipeline de IA.
+- Nunca pidas un argumento de confirmación ni afirmes que una escritura ocurrió antes de recibir su resultado.
+- Si el servicio real rechaza una acción por permisos, Studio OS, VIP o estado de versión, explicá ese motivo sin intentar una escritura alternativa.`;
 
-CLOUVA es una plataforma avatar-first que integra:
-- avatar 3D modular;
-- creación y prueba de ropa, accesorios y merch;
-- música, perfiles de artistas y comunidad;
-- marketplace de estilos y productos;
-- mundos digitales conectados;
-- automatizaciones y workers para Blender, rigging y generación 3D;
-- integración futura con Unreal Engine 5.
-
-Stack confirmado: Next.js, React, TypeScript, Supabase, Railway, GitHub, Three.js, Blender Worker, Garment Rig Worker y Meshy.
-
-Tu función es ayudar al usuario a manejar y desarrollar todo el proyecto como un copiloto permanente. Debés:
-1. diagnosticar errores usando el mensaje, la pantalla actual, la memoria y los eventos disponibles;
-2. explicar la causa probable antes de proponer cambios;
-3. dar soluciones concretas, ordenadas y aplicables;
-4. ayudar a diseñar e implementar funciones nuevas sin romper lo existente;
-5. tener en cuenta arquitectura, usuarios, avatares, prendas, workers, APIs, base de datos, costos y experiencia móvil;
-6. recordar decisiones, soluciones, incidentes y preferencias durables mediante la memoria del proyecto;
-7. diferenciar claramente hechos confirmados, inferencias y datos faltantes;
-8. nunca afirmar que viste archivos, logs, Railway, Supabase, GitHub o una pantalla si ese contenido no fue realmente incluido en el contexto;
-9. nunca afirmar que ejecutaste, publicaste o corregiste algo si solamente propusiste instrucciones;
-10. pedir confirmación antes de borrar datos, publicar, gastar créditos, rotar claves o hacer acciones irreversibles.
-
-No expongas claves, tokens ni secretos. No sugieras poner secretos en variables NEXT_PUBLIC_.
-Respondé en español rioplatense, directo, claro y práctico.
-`.trim();
-
-function getSupabase(accessToken: string) {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (!url || !anonKey) throw new Error("Faltan las variables públicas de Supabase.");
-
-  return createClient(url, anonKey, {
-    global: { headers: { Authorization: `Bearer ${accessToken}` } },
-    auth: { persistSession: false, autoRefreshToken: false },
+async function persistDecisionMessage(args: {
+  supabase: SupabaseClient;
+  conversationId: string;
+  userId: string;
+  content: string;
+  metadata: Record<string, unknown>;
+}) {
+  const { error } = await args.supabase.from("ai_messages").insert({
+    conversation_id: args.conversationId,
+    user_id: args.userId,
+    role: "assistant",
+    content: args.content,
+    metadata: args.metadata,
   });
+  if (error) throw new Error(error.message);
+  await args.supabase.from("ai_conversations").update({ updated_at: new Date().toISOString() }).eq("id", args.conversationId);
 }
 
-function extractGeminiText(data: GeminiResponse) {
-  return (
-    data.candidates?.[0]?.content?.parts
-      ?.map((part) => part.text ?? "")
-      .join("")
-      .trim() ?? ""
-  );
-}
-
-async function callGemini(input: ChatItem[], instructions: string) {
-  const apiKey = process.env.GEMINI_API_KEY;
-  const model = process.env.GEMINI_MODEL ?? "gemini-3.5-flash";
-
-  if (!apiKey) throw new Error("Falta GEMINI_API_KEY en Railway.");
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 50_000);
-
+async function handleToolDecision(args: {
+  body: RequestBody;
+  supabase: SupabaseClient;
+  userId: string;
+  userEmail: string | null | undefined;
+}): Promise<NextResponse> {
+  const { body, supabase, userId, userEmail } = args;
+  const conversationId = body.conversationId?.trim();
+  const pendingMessageId = body.pendingMessageId?.trim();
+  const pendingActionId = body.pendingActionId?.trim();
+  if (!conversationId || !pendingMessageId || !pendingActionId) {
+    return NextResponse.json({ error: "Faltan los identificadores de la acción pendiente." }, { status: 400 });
+  }
   try {
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-goog-api-key": apiKey,
-        },
-        body: JSON.stringify({
-          systemInstruction: {
-            parts: [{ text: instructions }],
-          },
-          contents: input.map((item) => ({
-            role: item.role === "assistant" ? "model" : "user",
-            parts: [{ text: item.content }],
-          })),
-          generationConfig: {
-            temperature: 0.65,
-            maxOutputTokens: 4096,
-          },
-        }),
-        cache: "no-store",
-        signal: controller.signal,
-      },
-    );
-
-    const raw = await response.text();
-    let data: GeminiResponse = {};
-
-    try {
-      data = raw ? (JSON.parse(raw) as GeminiResponse) : {};
-    } catch {
-      // Conservamos el texto crudo para mostrar un error útil.
-    }
-
-    if (!response.ok) {
-      throw new Error(
-        data.error?.message || raw || `Gemini respondió HTTP ${response.status}`,
-      );
-    }
-
-    return extractGeminiText(data);
+    const result = await decidePendingToolAction({
+      supabase,
+      userId,
+      userEmail,
+      conversationId,
+      pendingMessageId,
+      pendingActionId,
+      decision: body.action === "cancel_tool" ? "cancel" : "confirm",
+      source: "ui",
+    });
+    return NextResponse.json(result);
   } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
-      throw new Error("Gemini tardó demasiado en responder.");
-    }
-    throw error;
-  } finally {
-    clearTimeout(timeout);
+    const status = (error as Error & { status?: number }).status ?? 500;
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "No se pudo resolver la acción.", pendingAction: null },
+      { status },
+    );
   }
 }
 
-async function captureMemory(args: {
-  supabase: ReturnType<typeof getSupabase>;
+async function handleMemoryDecision(args: {
+  body: RequestBody;
+  supabase: SupabaseClient;
+  admin: SupabaseClient;
   userId: string;
-  projectKey: string;
-  conversationId: string;
-  userMessage: string;
-  assistantMessage: string;
-}) {
-  const memoryPrompt = `
-Analizá el intercambio y devolvé únicamente JSON válido, sin markdown.
-Guardá solo información durable y confirmada del proyecto: decisiones, arquitectura,
-procedimientos, incidentes, soluciones, objetivos o preferencias importantes.
-No guardes saludos, hipótesis, secretos, claves, tokens ni datos casuales.
-
-Formato exacto:
-{"save":boolean,"memory_type":"decision|fact|procedure|incident|solution|preference|architecture|goal","title":"...","content":"...","importance":1}
-
-Si no hay nada durable:
-{"save":false,"memory_type":"fact","title":"","content":"","importance":1}
-`.trim();
+}): Promise<NextResponse> {
+  const conversationId = args.body.conversationId?.trim();
+  const messageId = args.body.memoryMessageId?.trim();
+  const proposalId = args.body.memoryProposalId?.trim();
+  if (!conversationId || !messageId || !proposalId) {
+    return NextResponse.json({ error: "Faltan los identificadores de la propuesta de memoria." }, { status: 400 });
+  }
 
   try {
-    const raw = await callGemini(
-      [
-        {
-          role: "user",
-          content: `USUARIO:\n${args.userMessage}\n\nASISTENTE:\n${args.assistantMessage}`,
-        },
-      ],
-      memoryPrompt,
-    );
-
-    const cleaned = raw
-      .replace(/^```json\s*/i, "")
-      .replace(/```$/i, "")
-      .trim();
-
-    const memory = JSON.parse(cleaned) as {
-      save?: boolean;
-      memory_type?: string;
-      title?: string;
-      content?: string;
-      importance?: number;
-    };
-
-    if (!memory.save || !memory.title || !memory.content) return;
-
-    await args.supabase.from("project_memory").insert({
-      user_id: args.userId,
-      project_key: args.projectKey,
-      memory_type: memory.memory_type ?? "fact",
-      title: memory.title.slice(0, 180),
-      content: memory.content,
-      importance: Math.max(1, Math.min(5, Number(memory.importance ?? 3))),
-      source_conversation_id: args.conversationId,
-      metadata: { captured_by: "clouva-ai", provider: "gemini" },
+    const approved = args.body.action === "approve_memory";
+    const result = await decideMemoryProposal({
+      supabase: args.supabase,
+      admin: args.admin,
+      userId: args.userId,
+      conversationId,
+      messageId,
+      proposalId,
+      decision: approved ? "approve" : "reject",
     });
+
+    const message = approved
+      ? result.duplicate
+        ? "Memoria aprobada. Ya existía una memoria equivalente, así que no se creó un duplicado."
+        : "Memoria aprobada y agregada al contexto futuro."
+      : "Propuesta de memoria rechazada. No entrará al contexto futuro.";
+
+    await persistDecisionMessage({
+      supabase: args.supabase,
+      conversationId,
+      userId: args.userId,
+      content: message,
+      metadata: {
+        mode: "chat",
+        memoryDecision: {
+          proposalId,
+          status: result.status,
+          memoryId: "memoryId" in result ? result.memoryId : null,
+          duplicate: "duplicate" in result ? result.duplicate : false,
+          idempotent: result.idempotent,
+        },
+      },
+    });
+    await args.supabase.from("project_events").insert({
+      user_id: args.userId,
+      project_key: "clouva",
+      event_type: approved ? "ai_memory_approved" : "ai_memory_rejected",
+      component: "clouva-ai",
+      summary: message,
+      payload: {
+        conversationId,
+        sourceMessageId: messageId,
+        proposalId,
+        memoryId: "memoryId" in result ? result.memoryId : null,
+        duplicate: "duplicate" in result ? result.duplicate : false,
+      },
+    });
+
+    return NextResponse.json({ ok: true, message, result, pendingMemoryProposal: null });
   } catch (error) {
-    console.error("CLOUVA AI memory capture failed", error);
+    const status = (error as Error & { status?: number }).status ?? 500;
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "No se pudo resolver la propuesta de memoria." },
+      { status },
+    );
   }
 }
 
 export async function POST(request: Request) {
   try {
-    const authorization = request.headers.get("authorization") ?? "";
-    const accessToken = authorization.startsWith("Bearer ")
-      ? authorization.slice(7)
-      : "";
+    const body = (await request.json()) as RequestBody;
+    const { user, supabase } = await authenticateAgentRequest(request);
+    const userId = user.id;
 
-    if (!accessToken) {
-      return NextResponse.json({ error: "Sesión requerida." }, { status: 401 });
+    if (body.action === "confirm_tool" || body.action === "cancel_tool") {
+      return handleToolDecision({ body, supabase, userId, userEmail: user.email });
+    }
+    if (body.action === "approve_memory" || body.action === "reject_memory") {
+      return handleMemoryDecision({
+        body,
+        supabase,
+        admin: createAdminSupabase(),
+        userId,
+      });
     }
 
-    const body = (await request.json()) as ChatRequest;
     const message = body.message?.trim();
+    if (!message) return NextResponse.json({ error: "Escribí un mensaje." }, { status: 400 });
+    if (message.length > 20_000) return NextResponse.json({ error: "El mensaje es demasiado largo." }, { status: 413 });
+    const screenContext = normalizeScreenContext(body.screenContext);
+    const attachments = normalizeAttachments(body.attachments);
 
-    if (!message) {
-      return NextResponse.json({ error: "Escribí un mensaje." }, { status: 400 });
+    const mode: ChatMode = body.mode === "project" ? "project" : "chat";
+    const requestedStudioId = body.studioId?.trim() || null;
+
+    if (mode === "project" && !isAdminEmail(user.email)) {
+      return NextResponse.json({ error: "Tu usuario no está autorizado para el modo Proyecto." }, { status: 403 });
     }
 
-    if (message.length > 20_000) {
+    // Resolve or create the conversation. RLS decides whether this user may
+    // see/reuse an existing one, or create a new Studio-scoped one — this
+    // route never overrides that with a service role. If conversationId is
+    // given but RLS hides it (wrong owner, not a participant of that
+    // Studio), it's treated as if it didn't exist rather than erroring.
+    const conversation = await resolveAgentConversation({
+      supabase,
+      userId,
+      conversationId: body.conversationId,
+      requestedStudioId,
+      title: message,
+    });
+    const activeConversationId = conversation.id;
+    const studioId = conversation.studioId;
+
+    // Context and approved memory are available in every mode. Project and
+    // Studio executors are added only when their real scope allows them.
+    const toolsEnabled = true;
+
+    const [, unresolvedMemoryResult] = await Promise.all([
+      toolsEnabled
+        ? assertNoPendingAgentAction({ supabase, userId, conversationId: activeConversationId })
+        : Promise.resolve(),
+      supabase
+        .from("ai_messages")
+        .select("id")
+        .eq("conversation_id", activeConversationId)
+        .eq("user_id", userId)
+        .contains("metadata", { memoryProposal: { status: "pending" } })
+        .limit(1),
+    ]);
+    if (unresolvedMemoryResult.error) throw new Error(unresolvedMemoryResult.error.message);
+    if (unresolvedMemoryResult.data?.length) {
       return NextResponse.json(
-        { error: "El mensaje es demasiado largo." },
-        { status: 413 },
+        { error: "Hay una propuesta de memoria pendiente. Aprobala o rechazala antes de continuar." },
+        { status: 409 },
       );
     }
-
-    const projectKey = body.projectKey?.trim() || "clouva";
-    const supabase = getSupabase(accessToken);
-    const { data: authData, error: authError } = await supabase.auth.getUser(accessToken);
-
-    if (authError || !authData.user) {
-      return NextResponse.json({ error: "Sesión inválida." }, { status: 401 });
-    }
-
-    const userId = authData.user.id;
-    let conversationId = body.conversationId ?? null;
-
-    if (conversationId) {
-      const { data } = await supabase
-        .from("ai_conversations")
-        .select("id")
-        .eq("id", conversationId)
-        .eq("user_id", userId)
-        .maybeSingle();
-
-      if (!data) conversationId = null;
-    }
-
-    if (!conversationId) {
-      const { data, error } = await supabase
-        .from("ai_conversations")
-        .insert({
-          user_id: userId,
-          project_key: projectKey,
-          title: message.slice(0, 72),
-        })
-        .select("id")
-        .single();
-
-      if (error || !data) {
-        throw new Error(error?.message ?? "No se pudo crear la conversación.");
-      }
-
-      conversationId = data.id;
-    }
-
-    if (!conversationId) {
-      throw new Error("No se pudo resolver la conversación activa.");
-    }
-
-    const activeConversationId: string = conversationId;
 
     await supabase.from("ai_messages").insert({
       conversation_id: activeConversationId,
       user_id: userId,
       role: "user",
       content: message,
-      metadata: { screenContext: body.screenContext ?? {} },
+      metadata: {
+        mode,
+        screenContext,
+        attachments: attachments.map(({ name, mimeType, size, kind }) => ({ name, mimeType, size, kind })),
+      },
     });
 
-    const [
-      { data: recentMessages },
-      { data: memories },
-      { data: recentEvents },
-    ] = await Promise.all([
+    // --- Context gathering -------------------------------------------------
+    const [{ data: recentMessages }, studioContextResult, memoryRows, eventRows] = await Promise.all([
       supabase
         .from("ai_messages")
         .select("role,content,created_at")
         .eq("conversation_id", activeConversationId)
         .order("created_at", { ascending: false })
         .limit(24),
-      supabase
-        .from("project_memory")
-        .select("memory_type,title,content,importance,updated_at")
-        .eq("user_id", userId)
-        .eq("project_key", projectKey)
-        .eq("status", "active")
-        .order("importance", { ascending: false })
-        .order("updated_at", { ascending: false })
-        .limit(40),
-      supabase
-        .from("project_events")
-        .select("event_type,component,summary,payload,created_at")
-        .eq("user_id", userId)
-        .eq("project_key", projectKey)
-        .order("created_at", { ascending: false })
-        .limit(24),
+      studioId ? resolveStudioContext(supabase, studioId) : Promise.resolve(null),
+      loadEffectiveMemory({ supabase, userId, studioId }),
+      studioId
+        ? Promise.resolve({ data: [] as Array<{ event_type: string; component: string | null; summary: string; created_at: string }> })
+        : supabase
+            .from("project_events")
+            .select("event_type,component,summary,created_at")
+            .eq("user_id", userId)
+            .eq("project_key", "clouva")
+            .order("created_at", { ascending: false })
+            .limit(24),
     ]);
 
-    const memoryContext = (memories ?? [])
+    const memoryContext = memoryRows
       .map((item) => `[${item.memory_type}] ${item.title}: ${item.content}`)
       .join("\n");
-
-    const eventContext = (recentEvents ?? [])
-      .map(
-        (item) =>
-          `[${item.created_at}] ${item.event_type}/${item.component ?? "general"}: ${item.summary}`,
-      )
+    const eventContext = (eventRows.data ?? [])
+      .map((item) => `[${item.created_at}] ${item.event_type}/${item.component ?? "general"}: ${item.summary}`)
       .join("\n");
+    const studioContext = studioContextResult?.summary ?? "";
 
-    const screenContext = JSON.stringify(body.screenContext ?? {}, null, 2);
+    let instruction: string;
+    if (mode === "project") {
+      instruction = `${CLOUVA_REPOSITORY_AGENT_PROMPT}
 
-    const instructions = `${PROJECT_CORE}
+REGLAS DE HERRAMIENTAS
+- Usá las funciones disponibles para obtener hechos reales de GitHub o del Workspace conectado; no inventes lecturas.
+- Las herramientas de lectura se ejecutan automáticamente y podés encadenarlas.
+- Cuando hay un Web Preview local activo, priorizá workspace.files.list/read/write sobre GitHub: Workspace representa el código local actual y permite verificar Hot Reload. Usá GitHub sólo si el usuario pide explícitamente el remoto o si Workspace no está disponible.
+- No repitas una lectura con la misma herramienta y los mismos argumentos. Leé sólo los archivos necesarios; cuando ya tengas el archivo objetivo, avanzá a una sola propuesta de escritura.
+- Para modificar algo, llamá la herramienta de escritura con el contenido completo propuesto. La aplicación va a mostrar el diff y esperar una decisión humana; nunca afirmes que el cambio ya ocurrió antes de recibir el resultado de ejecución.
+- No pidas ni generes un argumento de confirmación: la confirmación sólo puede venir de la interfaz humana y del servidor.
+- No agrupes varias escrituras en paralelo. Prepará una sola acción revisable por vez.
+- Si una herramienta falla o Workspace no está conectado, explicá el error real y ofrecé el siguiente paso sin fingir acceso.
 
-CONTEXTO REAL DE LA PANTALLA ACTUAL:
-${screenContext}
+MEMORIA PERSISTENTE DEL PROYECTO
+${memoryContext || "Sin memoria adicional guardada."}
 
-MEMORIA CONFIRMADA DEL PROYECTO:
-${memoryContext || "Todavía no hay memoria guardada."}
+CONTEXTO DE PANTALLA
+${JSON.stringify(screenContext)}
 
-EVENTOS RECIENTES DEL PROYECTO:
-${eventContext || "No hay eventos recientes registrados."}
-
-Usá primero los hechos confirmados. Para diagnosticar un problema, indicá: qué entendiste,
-causa probable, comprobación recomendada y solución. Para funciones nuevas, indicá impacto,
-archivos o componentes probables, datos necesarios y criterios para validar que quedó bien.
-Cuando no tengas acceso real a un archivo, log, servicio o repositorio, pedilo o explicá cómo obtenerlo.`;
-
-    const input: ChatItem[] = (recentMessages ?? [])
-      .reverse()
-      .map((item) => ({
-        role: item.role === "assistant" ? "assistant" : "user",
-        content: item.content,
-      }));
-
-    const assistantMessage = await callGemini(input, instructions);
-
-    if (!assistantMessage) {
-      throw new Error("Gemini no devolvió texto.");
+Recordatorio de visión estable:
+${CLOUVA_PRODUCT_CONTEXT}`;
+      if (studioId) instruction += `\n\n${STUDIO_DOMAIN_TOOL_RULES}`;
+    } else {
+      instruction = `${CLOUVA_CHAT_SYSTEM_PROMPT}\n\n${studioContext}\n\nMEMORIA CONFIRMADA DEL PROYECTO\n${memoryContext || "Todavía no hay memoria guardada."}\n\nEVENTOS RECIENTES\n${eventContext || "No hay eventos recientes registrados."}\n\nCONTEXTO DE WORKSPACE\n${JSON.stringify(screenContext)}`;
+      if (studioId) {
+        instruction += `\n\n${STUDIO_DOMAIN_TOOL_RULES}\n- updatePlayer sólo cambia la relación pública del Player con este Estudio, nunca su identidad global.`;
+      }
     }
 
-    const model = process.env.GEMINI_MODEL ?? "gemini-3.5-flash";
+    const history: ChatMessageRow[] = (recentMessages ?? []).slice().reverse() as ChatMessageRow[];
+    const contents: Array<{ role: string; parts: Array<Record<string, unknown>> }> = history.map((item) => ({
+      role: item.role === "assistant" ? "model" : "user",
+      parts: [{ text: item.content.slice(0, 10_000) }],
+    }));
+    if (attachments.length) {
+      for (let index = contents.length - 1; index >= 0; index -= 1) {
+        if (contents[index].role !== "user") continue;
+        contents[index] = {
+          ...contents[index],
+          parts: [...contents[index].parts, ...attachments.map(attachmentPart)],
+        };
+        break;
+      }
+    }
 
-    await Promise.all([
-      supabase.from("ai_messages").insert({
-        conversation_id: activeConversationId,
-        user_id: userId,
-        role: "assistant",
-        content: assistantMessage,
-        metadata: { model, provider: "gemini" },
-      }),
-      supabase
-        .from("ai_conversations")
-        .update({ updated_at: new Date().toISOString() })
-        .eq("id", activeConversationId),
-      supabase.from("project_events").insert({
-        user_id: userId,
-        project_key: projectKey,
-        event_type: "ai_interaction",
-        component:
-          typeof body.screenContext?.page === "string"
-            ? body.screenContext.page
-            : "clouva-ai",
-        summary: message.slice(0, 240),
-        payload: {
-          conversationId: activeConversationId,
-          provider: "gemini",
-          model,
-        },
-      }),
-    ]);
-
-    void captureMemory({
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) throw new Error("Falta GEMINI_API_KEY en el servicio de Cloud Run.");
+    const selectedModel = selectedModelFromRequest(request);
+    const runtimeContext = buildTrebolRuntimeContext(screenContext);
+    const agentRun = await startAgentRun({
       supabase,
       userId,
-      projectKey,
       conversationId: activeConversationId,
-      userMessage: message,
-      assistantMessage,
+      transport: "text",
+      model: selectedModel,
+      context: runtimeContext,
+    });
+    const generationOptions = {
+      temperature: mode === "project" ? 0.25 : 0.45,
+      maxOutputTokens: mode === "project" ? 6000 : 4096,
+    };
+
+    // The client keeps one NDJSON protocol for both modes. Chat streams text
+    // directly; project mode first completes the function-calling/gate loop,
+    // then emits the final answer or the persisted proposal as a chunk.
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        function send(frame: Record<string, unknown>) {
+          controller.enqueue(encoder.encode(`${JSON.stringify(frame)}\n`));
+        }
+
+        let assistantMessage = "";
+        let model = selectedModel;
+        let pendingAction: PendingToolAction | null = null;
+        let toolTraces: ToolCallTrace[] = [];
+        let usage: Record<string, unknown> | null = null;
+        let router: ToolRouter | null = null;
+        // Detection is independent from answer generation and considers only
+        // the user's explicit statement. Run it concurrently so the review
+        // card does not add another full model round trip after streaming.
+        const memoryDetectionPromise = detectMemoryCandidate({
+          apiKey,
+          selectedModel,
+          userMessage: message,
+          assistantMessage: "",
+          studioId,
+        }).catch((error) => {
+          console.error("CLOUVA AI memory proposal detection failed", error);
+          return null;
+        });
+
+        try {
+          if (toolsEnabled) {
+            router = await createAgentToolRouter({
+              userId,
+              project: mode === "project",
+              studioId,
+              supabase,
+              currentContext: runtimeContext,
+              conversationId: activeConversationId,
+              transport: "text",
+              projectScope: projectToolScopeFromScreenContext(screenContext),
+            });
+            const result = await runGeminiToolLoop({
+              apiKey,
+              selectedModel,
+              instruction,
+              contents,
+              router,
+              gate: new ToolConfirmationGate(),
+              onToolCall: async (event) => {
+                await recordAgentToolCall({
+                  supabase,
+                  run: agentRun,
+                  userId,
+                  routed: event.routed,
+                  toolArguments: event.arguments,
+                  status: event.status,
+                  confirmation: event.pendingAction
+                    ? { actionId: event.pendingAction.id, status: event.pendingAction.status }
+                    : null,
+                  result: event.result,
+                  errorMessage: event.error,
+                });
+              },
+              ...generationOptions,
+            });
+            model = result.model;
+            pendingAction = result.pendingAction;
+            toolTraces = result.traces;
+            usage = result.usage;
+
+            if (pendingAction) {
+              assistantMessage = result.text;
+            } else {
+              // The function-selection loop is deliberately buffered so a
+              // tool call cannot slip past the gate. Once it has finished,
+              // make a final tools-disabled streaming pass over the exact
+              // model/function history. If that pass fails before emitting
+              // text, the loop's already-valid draft remains a safe fallback.
+              try {
+                const finalGenerator = streamGeminiWithFallback({
+                  apiKey,
+                  selectedModel: result.model,
+                  instruction: `${instruction}\n\nRESPUESTA FINAL\nLas herramientas ya fueron resueltas para este turno. Respondé ahora con la conclusión final basada únicamente en el historial y los resultados de función disponibles.${result.limitReached ? " Se alcanzó el límite seguro del ciclo: no hay una propuesta de escritura pendiente ni un cambio ejecutado. No pidas más herramientas; explicá lo averiguado y el próximo paso concreto sin afirmar que modificaste archivos." : ""}`,
+                  contents: result.continuationContents,
+                  ...generationOptions,
+                });
+                while (true) {
+                  const { value, done } = await finalGenerator.next();
+                  if (done) {
+                    model = value.model;
+                    usage = value.usage;
+                    break;
+                  }
+                  assistantMessage += value;
+                  send({ type: "chunk", text: value });
+                }
+              } catch (streamError) {
+                if (assistantMessage) throw streamError;
+                assistantMessage = result.text;
+                send({ type: "chunk", text: assistantMessage });
+              }
+            }
+          } else {
+            const generator = streamGeminiWithFallback({ apiKey, selectedModel, instruction, contents, ...generationOptions });
+            while (true) {
+              const { value, done } = await generator.next();
+              if (done) {
+                model = value.model;
+                usage = value.usage;
+                break;
+              }
+              assistantMessage += value;
+              send({ type: "chunk", text: value });
+            }
+          }
+
+          if (!assistantMessage) throw new Error("CLOUVA AI no devolvió texto.");
+
+          const assistantMessageId = randomUUID();
+          let memoryProposal: MemoryProposal | null = null;
+          if (!pendingAction) {
+            const detected = await memoryDetectionPromise;
+            if (detected?.candidate) {
+              memoryProposal = createMemoryProposal({
+                candidate: detected.candidate,
+                userId,
+                studioId,
+                conversationId: activeConversationId,
+                sourceMessageId: assistantMessageId,
+                detectorModel: detected.model,
+              });
+            }
+          }
+
+          const { data: assistantRow, error: assistantError } = await supabase
+            .from("ai_messages")
+            .insert({
+              id: assistantMessageId,
+              conversation_id: activeConversationId,
+              user_id: userId,
+              role: "assistant",
+              content: assistantMessage,
+              metadata: {
+                model,
+                provider: "gemini",
+                mode,
+                runId: agentRun.id,
+                pendingAction,
+                memoryProposal,
+                toolCalls: toolTraces,
+                usage,
+              },
+            })
+            .select("id")
+            .single();
+
+          if (assistantError && (pendingAction || memoryProposal)) {
+            throw new Error(`No se pudo guardar la propuesta para revisarla: ${assistantError.message}`);
+          }
+          if (assistantError) {
+            console.error("CLOUVA AI orchestrator: failed to persist the assistant turn", assistantError);
+          }
+
+          const pendingActionForClient = pendingAction && assistantRow?.id
+            ? pendingToolActionView(pendingAction, assistantRow.id)
+            : null;
+          const pendingMemoryForClient = memoryProposal && assistantRow?.id
+            ? pendingMemoryProposalView(memoryProposal, assistantRow.id)
+            : null;
+
+          // Project/tool turns are buffered until the action proposal is
+          // safely persisted. Ordinary chat already emitted its real token
+          // chunks above.
+          if (toolsEnabled && pendingAction) send({ type: "chunk", text: assistantMessage });
+
+          await Promise.all([
+            supabase.from("ai_conversations").update({ updated_at: new Date().toISOString() }).eq("id", activeConversationId),
+            supabase.from("project_events").insert({
+              user_id: userId,
+              project_key: "clouva",
+              event_type: "ai_interaction",
+              component: typeof body.screenContext?.page === "string" ? body.screenContext.page : "clouva-ai",
+              summary: message.slice(0, 240),
+              payload: {
+                conversationId: activeConversationId,
+                studioId,
+                provider: "gemini",
+                model,
+                mode,
+                toolCalls: toolTraces,
+                pendingActionId: pendingAction?.id ?? null,
+                memoryProposalId: memoryProposal?.id ?? null,
+              },
+            }),
+          ]);
+
+          await finishAgentRun({
+            supabase,
+            run: agentRun,
+            status: pendingAction ? "waiting_confirmation" : "completed",
+          });
+
+          send({
+            type: "done",
+            conversationId: activeConversationId,
+            studioId,
+            model,
+            mode,
+            pendingAction: pendingActionForClient,
+            pendingMemoryProposal: pendingMemoryForClient,
+            toolCalls: toolTraces,
+          });
+        } catch (error) {
+          await finishAgentRun({
+            supabase,
+            run: agentRun,
+            status: "failed",
+            errorCode: "AGENT_TURN_FAILED",
+            errorMessage: error instanceof Error ? error.message : "CLOUVA AI no respondió.",
+          }).catch((auditError) => console.error("CLOUVA AI run finalization failed", auditError));
+          send({ type: "error", error: error instanceof Error ? error.message : "CLOUVA AI no respondió." });
+        } finally {
+          if (router) await router.close().catch((error) => console.error("CLOUVA AI: failed to close tool router", error));
+          controller.close();
+        }
+      },
     });
 
-    return NextResponse.json({
-      ok: true,
-      conversationId: activeConversationId,
-      message: assistantMessage,
-      provider: "gemini",
-      model,
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "application/x-ndjson; charset=utf-8",
+        "Cache-Control": "no-store",
+        "X-Accel-Buffering": "no",
+      },
     });
   } catch (error) {
-    console.error("CLOUVA AI chat error", error);
-
+    console.error("CLOUVA AI orchestrator error", error);
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Error inesperado en CLOUVA AI.",
-      },
-      { status: 500 },
+      { error: error instanceof Error ? error.message : "Error inesperado en CLOUVA AI." },
+      { status: agentHttpStatus(error) },
     );
   }
 }

@@ -121,8 +121,11 @@ test("V15 usa la malla corporal como fuente de verdad para escala y roundtrip", 
   assert.equal(workerCopiesAllPython, true);
 });
 
-test("V43 mantiene la referencia visible del avatar activo", () => {
-  assert.match(garmentDockerfile, /CLOUVA_RIG_VERSION=v43/);
+test("V46 mantiene la referencia visible del avatar activo", () => {
+  assert.match(garmentDockerfile, /CLOUVA_RIG_VERSION=v46/);
+  assert.match(garmentDockerfile, /CLOUVA_RIG_ENTRYPOINT=v46/);
+  assert.match(garmentDockerfile, /cp rig_garment_v34\.py rig_garment\.py/);
+  assert.match(garmentDockerfile, /test_surface_fit_v45\.py/);
   assert.match(garmentDockerfile, /CLOUVA_UNREAL_MOLD_RIG=v2/);
   assert.match(garmentApiV8Source, /def run_fresh_garment_rig/);
   assert.match(garmentApiV8Source, /def resolve_user_avatar_url/);

@@ -7,6 +7,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 // requests -- this module intentionally does no arithmetic of its own that
 // could race against another request.
 export const VISUAL_REDESIGN_BUDGET_SCOPE = "visual_redesign_2026";
+export const TREBOL_MEDIA_BUDGET_SCOPE = "trebol_media_2026";
 export const MAX_CONCURRENT_GENERATIONS = 2;
 export const MAX_RETRIES_PER_ASSET = 2;
 

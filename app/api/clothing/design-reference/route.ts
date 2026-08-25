@@ -26,7 +26,7 @@ function adminClient() {
 
 function openAiKey() {
   const key = process.env.OPENAI_API_KEY?.trim();
-  if (!key) throw new Error("Falta configurar OPENAI_API_KEY en Vercel");
+  if (!key) throw new Error("Falta configurar OPENAI_API_KEY en el servicio de Cloud Run");
   return key;
 }
 
