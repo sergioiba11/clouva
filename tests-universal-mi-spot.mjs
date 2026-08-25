@@ -27,7 +27,7 @@ test("roles de MI SPOT aplican capacidades mínimas server-side", () => {
   assert.equal(spotRoleAllows("viewer", "operations"), false);
 });
 
-test("migración universal conserva Spots de Studio y permite propietario user", () => {
+test("migración universal conserva Spots de Studio y permite propietario user durante la transición", () => {
   const migration = read("./supabase/migrations/20260823194000_universal_commerce_spots.sql");
   assert.match(migration, /alter column studio_id drop not null/i);
   assert.match(migration, /owner_type in \('user', 'studio'\)/);
@@ -41,17 +41,30 @@ test("migración universal conserva Spots de Studio y permite propietario user",
   assert.match(migration, /insert into public\.commerce_flow_accounts/);
 });
 
-test("Spot user reutiliza productos, órdenes y ledger sin fingir Studio", () => {
-  const migration = read("./supabase/migrations/20260823194000_universal_commerce_spots.sql");
-  assert.match(migration, /commerce_products_owner_user_id_fkey/);
-  assert.match(migration, /owner_type in \('player', 'studio', 'user', 'clouva'\)/);
-  assert.match(migration, /commerce_products_normalize_spot_owner/);
-  assert.match(migration, /commerce_orders_seller_user_id_fkey/);
-  assert.match(migration, /seller_type in \('player', 'studio', 'user', 'clouva'\)/);
-  assert.match(migration, /commerce_orders_normalize_spot_seller/);
-  assert.match(migration, /new\.seller_type = 'user'/);
-  assert.match(migration, /beneficiary_type in \('user', 'player', 'studio'\)/);
-  assert.doesNotMatch(migration, /buyer_id[^\n]*beneficiary/i);
+test("Space Core proyecta legacy Studio/Spot sin duplicar Commerce", () => {
+  const migration = read("./supabase/migrations/20260825004237_player_spaces_commerce_miflow_normalization.sql");
+  assert.match(migration, /create table if not exists public\.spaces/);
+  assert.match(migration, /legacy_studio_id/);
+  assert.match(migration, /legacy_commerce_spot_id/);
+  assert.match(migration, /owner_player_id/);
+  assert.match(migration, /create table if not exists public\.space_members/);
+  assert.match(migration, /type in \('studio','business','spot','club','brand','other'\)/);
+  assert.doesNotMatch(migration, /drop table public\.(studios|commerce_spots)/i);
+});
+
+test("Spot del Player reutiliza productos, órdenes y ledger con identidad económica Player", () => {
+  const legacy = read("./supabase/migrations/20260823194000_universal_commerce_spots.sql");
+  const canonical = read("./supabase/migrations/20260825004237_player_spaces_commerce_miflow_normalization.sql");
+  assert.match(legacy, /commerce_products_owner_user_id_fkey/);
+  assert.match(legacy, /owner_type in \('player', 'studio', 'user', 'clouva'\)/);
+  assert.match(legacy, /commerce_orders_seller_user_id_fkey/);
+  assert.match(legacy, /seller_type in \('player', 'studio', 'user', 'clouva'\)/);
+  assert.match(canonical, /normalize_commerce_listing_spot_owner/);
+  assert.match(canonical, /new\.owner_type := 'player'/);
+  assert.match(canonical, /normalize_commerce_order_spot_seller/);
+  assert.match(canonical, /new\.seller_type := 'player'/);
+  assert.match(canonical, /beneficiary_type/);
+  assert.doesNotMatch(canonical, /buyer_id[^\n]*beneficiary/i);
 });
 
 test("manager administra pero no se transforma en beneficiario económico", () => {
@@ -60,8 +73,10 @@ test("manager administra pero no se transforma en beneficiario económico", () =
   assert.match(migration, /v_spot\.beneficiary_user_id/);
   assert.match(migration, /new\.seller_user_id/);
   assert.doesNotMatch(migration, /commerce_spot_members[^;]*beneficiary_user_id/is);
-  assert.match(summary, /Merely managing a Spot never turns its/);
-  assert.match(summary, /neq\("beneficiary_user_id", user\.id\)/);
+  assert.match(summary, /FINANCE_ROLES/);
+  assert.match(summary, /rowBelongsToSpace/);
+  assert.match(summary, /personalBreakdown/);
+  assert.match(summary, /if \(!personalBreakdown\) managedRows\.push/);
 });
 
 test("Gemini configura el negocio con JSON validado y sin autoridad económica", () => {
@@ -93,12 +108,31 @@ test("sanitizador de Gemini elimina módulos fuera del Core permitido", () => {
   assert.equal(analysis.suggestedInventoryMode, "variants");
 });
 
-test("API universal no exige Player ni Studio para crear un Spot", () => {
+test("crear un espacio usa Player universal, exige VIP para administrar y no obliga a crear un Studio", () => {
   const route = read("./app/api/mi-spot/route.ts");
   const onboarding = read("./app/mi-spot/new/page.tsx");
+  const canonical = read("./supabase/migrations/20260825004237_player_spaces_commerce_miflow_normalization.sql");
+  const access = read("./lib/server/space-access.ts");
   assert.match(route, /p_owner_user_id: user\.id/);
   assert.match(route, /create_user_commerce_spot/);
-  assert.doesNotMatch(route, /players.*insert/);
-  assert.doesNotMatch(route, /studios.*insert/);
-  assert.match(onboarding, /No hace falta tener Player ni Estudio/);
+  assert.match(route, /requireSpaceAdminPlan/);
+  assert.match(canonical, /ensure_player_for_user/);
+  assert.match(canonical, /VIP_REQUIRED/);
+  assert.match(access, /CLOUVA VIP es necesario para crear y administrar espacios/);
+  assert.match(onboarding, /Tu Player es la identidad propietaria dentro de CLOUVA/);
+  assert.match(onboarding, /CLOUVA VIP/);
+  assert.doesNotMatch(route, /\.from\("studios"\)\.insert/);
+});
+
+test("producto canónico se publica en múltiples targets sin copiar stock ni precio", () => {
+  const migration = read("./supabase/migrations/20260825004237_player_spaces_commerce_miflow_normalization.sql");
+  const api = read("./app/api/commerce/products/[productId]/publications/route.ts");
+  const controls = read("./components/commerce/ProductPublicationControls.tsx");
+  assert.match(migration, /create table if not exists public\.commerce_product_publications/);
+  assert.match(migration, /product_id uuid not null references public\.commerce_products/);
+  assert.match(migration, /target_type text not null check \(target_type in \('player','space','marketplace'\)\)/);
+  assert.doesNotMatch(migration, /commerce_product_publications[\s\S]{0,500}(stock|price)/i);
+  assert.match(api, /commerce_product_publications/);
+  assert.match(controls, /Mostrar en mi Player/);
+  assert.match(controls, /Mostrar en este espacio/);
 });
