@@ -24,9 +24,8 @@ test("Inicio abre un menú de cuenta compartido y separa MI FLOW de MI SPOT", ()
   assert.match(menu, /Conectado/);
 });
 
-test("MI FLOW abre el panel operativo del Spot y conserva la billetera aparte", () => {
+test("MI FLOW abre la billetera del Player y mantiene el admin de espacios separado", () => {
   const miFlow = read("./app/mi-flow/page.tsx");
-  const entry = read("./components/mi-flow/MiFlowSpotEntry.tsx");
   const wallet = read("./app/mi-flow/billetera/page.tsx");
   const summary = read("./app/api/mi-flow/summary/route.ts");
   const balances = read("./app/api/wallet/balances/route.ts");
@@ -35,11 +34,8 @@ test("MI FLOW abre el panel operativo del Spot y conserva la billetera aparte", 
   const legacyMoney = read("./app/mi-flow/money/page.tsx");
   const incomeProjects = read("./app/mi-flow/negocios/page.tsx");
 
-  assert.match(miFlow, /MiFlowSpotEntry/);
-  assert.match(entry, /\/api\/mi-spot/);
-  assert.match(entry, /SpotCommerceDashboard/);
-  assert.match(entry, /includes\("operations"\)/);
-  assert.match(entry, /`spot:\$\{operationalSpot\.id\}`/);
+  assert.match(miFlow, /\.\/billetera\/page/);
+  assert.doesNotMatch(miFlow, /MiFlowSpotEntry|SpotCommerceDashboard/);
   assert.match(wallet, /\/api\/mi-flow\/summary/);
   assert.match(wallet, /> FLOWS</);
   assert.match(wallet, /> Diamantes</);
@@ -48,7 +44,10 @@ test("MI FLOW abre el panel operativo del Spot y conserva la billetera aparte", 
   assert.match(summary, /diamond_wallets/);
   assert.match(summary, /diamond_wallet_ledger/);
   assert.match(summary, /mi_flow_money_ledger/);
-  assert.match(summary, /beneficiary_type: "user" \| "player" \| "studio"/);
+  assert.match(summary, /FINANCE_ROLES/);
+  assert.match(summary, /space_members/);
+  assert.match(summary, /rowBelongsToSpace/);
+  assert.match(summary, /personalBreakdown/);
   assert.match(balances, /flows_wallets/);
   assert.match(balances, /diamond_wallets/);
   assert.match(walletChip, /\/api\/wallet\/balances/);
@@ -62,8 +61,9 @@ test("MI FLOW abre el panel operativo del Spot y conserva la billetera aparte", 
   assert.match(incomeProjects, /No es MI SPOT/);
 });
 
-test("el ledger monetario de MI FLOW es idempotente, privado y seller-scoped", () => {
+test("el ledger monetario de MI FLOW es idempotente, privado y separa personal de managed", () => {
   const migration = read("./supabase/migrations/20260823190000_mi_flow_money_ledger.sql");
+  const canonical = read("./supabase/migrations/20260825004237_player_spaces_commerce_miflow_normalization.sql");
   const summary = read("./app/api/mi-flow/summary/route.ts");
 
   assert.match(migration, /unique \(source_type, source_id, beneficiary_user_id\)/);
@@ -76,10 +76,13 @@ test("el ledger monetario de MI FLOW es idempotente, privado y seller-scoped", (
   assert.match(migration, /beneficiary_user_id = auth\.uid\(\)/);
   assert.match(migration, /revoke insert, update, delete on public\.mi_flow_money_ledger from anon, authenticated/);
   assert.match(migration, /when excluded\.status in \('refunded', 'reversed'\)/);
-  assert.match(summary, /neq\("beneficiary_user_id", user\.id\)/);
-  assert.match(summary, /managedPlayerIds/);
-  assert.match(summary, /managedStudioIds/);
-  assert.match(summary, /Merely managing a Spot never turns its/);
+  assert.match(canonical, /new\.seller_type := 'player'/);
+  assert.match(summary, /beneficiary_type\.eq\.user/);
+  assert.match(summary, /ownedPlayer/);
+  assert.match(summary, /space_members/);
+  assert.match(summary, /FINANCE_ROLES/);
+  assert.match(summary, /rowBelongsToSpace/);
+  assert.match(summary, /if \(!personalBreakdown\) managedRows\.push/);
 });
 
 test("FLOWS queda reservado para la moneda y el CRUD creativo conserva sus datos con otro nombre", () => {
@@ -96,7 +99,7 @@ test("FLOWS queda reservado para la moneda y el CRUD creativo conserva sus datos
   assert.match(menu, /Notas creativas/);
 });
 
-test("MI SPOT es universal y reutiliza el commerce real en vez de clonarlo", () => {
+test("MI SPOT evoluciona a Espacios y reutiliza el Commerce real en vez de clonarlo", () => {
   const selector = read("./app/mi-spot/page.tsx");
   const onboarding = read("./app/mi-spot/new/page.tsx");
   const home = read("./app/mi-spot/[spotId]/page.tsx");
@@ -105,12 +108,16 @@ test("MI SPOT es universal y reutiliza el commerce real en vez de clonarlo", () 
   const spotApi = read("./app/api/mi-spot/route.ts");
   const helper = read("./lib/server/commerce-spot.ts");
 
-  assert.match(selector, /No necesitás ser artista, productor ni tener un Estudio/);
-  assert.match(selector, /href="\/mi-spot\/new"/);
-  assert.match(onboarding, /QUICK_SPOT_INTENTS/);
-  assert.match(onboarding, /Preparar mi Spot con Gemini/);
+  assert.match(selector, /MIS ESPACIOS/);
+  assert.match(selector, /Crear espacio/);
+  assert.match(selector, /Tu Player/);
+  assert.match(onboarding, /Tu Player es la identidad propietaria dentro de CLOUVA/);
+  assert.match(onboarding, /CLOUVA VIP/);
+  assert.match(onboarding, /Preparar mi espacio con Gemini|Preparar con Gemini/);
   assert.match(spotApi, /create_user_commerce_spot/);
-  assert.match(home, /Este Spot se adapta a tu negocio/);
+  assert.match(home, /Este espacio se adapta a tu operación/);
+  assert.match(home, /SpaceQrPanel/);
+  assert.match(home, /\/publicaciones/);
   assert.match(commerce, /<SpotCommerceDashboard studioId=\{commerceScope\}/);
   assert.match(commerce, /`spot:\$\{scope\.spot\.id\}`/);
   assert.match(helper, /args\.studioId\.startsWith\("spot:"\)/);
