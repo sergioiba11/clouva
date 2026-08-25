@@ -4,12 +4,14 @@ import {
   type SpotBusinessAnalysis,
 } from "@/lib/commerce/spot-business";
 import { isSpotRole, spotRoleCapabilities } from "@/lib/commerce/spot-permissions";
+import { getSpaceAdminEligibility, requireSpaceAdminPlan } from "@/lib/server/space-access";
 import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const SPOT_SELECT = "id,studio_id,owner_type,owner_user_id,beneficiary_user_id,slug,name,country_code,currency,timezone,fx_source,public_enabled,status,business_type,business_categories,enabled_modules,brand_tone,description,logo_url,cover_url,accent_color,palette,ai_profile,settings,created_at,updated_at";
+const SPACE_TYPES = new Set(["business", "spot", "club", "brand", "other"]);
 
 type SpotRow = Record<string, unknown> & {
   id: string;
@@ -24,11 +26,12 @@ function short(value: unknown, max: number) {
 
 async function listAccessibleSpots(userId: string) {
   const admin = createAdminSupabase();
-  const [ownedUser, memberships, ownedStudios, studioMemberships] = await Promise.all([
+  const [ownedUser, memberships, ownedStudios, studioMemberships, eligibility] = await Promise.all([
     admin.from("commerce_spots").select(SPOT_SELECT).eq("owner_type", "user").eq("owner_user_id", userId).neq("status", "archived"),
     admin.from("commerce_spot_members").select("spot_id,role,status").eq("user_id", userId).eq("status", "active"),
     admin.from("studios").select("id,name,slug").eq("owner_id", userId),
     admin.from("studio_members").select("studio_id,role,status").eq("profile_id", userId).eq("status", "active"),
+    getSpaceAdminEligibility({ admin, userId }),
   ]);
   for (const result of [ownedUser, memberships, ownedStudios, studioMemberships]) {
     if (result.error) throw new Error(result.error.message);
@@ -69,10 +72,12 @@ async function listAccessibleSpots(userId: string) {
     const roleResult = await admin.rpc("commerce_spot_role_for_user", { p_spot_id: spot.id, p_user_id: userId });
     if (roleResult.error) throw new Error(roleResult.error.message);
     if (!isSpotRole(roleResult.data)) continue;
+    const roleCapabilities = spotRoleCapabilities(roleResult.data);
     spots.push({
       ...spot,
       role: roleResult.data,
-      capabilities: spotRoleCapabilities(roleResult.data),
+      capabilities: eligibility.canAdministerSpaces ? roleCapabilities : roleCapabilities.filter((capability) => capability === "view"),
+      requiresVipForAdministration: !eligibility.canAdministerSpaces,
       studio: spot.studio_id ? studioMap.get(String(spot.studio_id)) ?? null : null,
     });
   }
@@ -86,7 +91,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ spots: await listAccessibleSpots(user.id) });
   } catch (error) {
     const status = (error as Error & { status?: number })?.status ?? (isAuthError(error) ? 401 : 500);
-    return NextResponse.json({ error: error instanceof Error ? error.message : "No se pudieron cargar tus Spots." }, { status });
+    return NextResponse.json({ error: error instanceof Error ? error.message : "No se pudieron cargar tus espacios." }, { status });
   }
 }
 
@@ -99,12 +104,17 @@ export async function POST(request: NextRequest) {
       countryCode?: string;
       currency?: string;
       intent?: string;
+      spaceType?: string;
       analysis?: SpotBusinessAnalysis | Record<string, unknown> | null;
     };
     const name = short(body.name, 160);
     const description = short(body.description, 1600);
-    if (!name) return NextResponse.json({ error: "Poné un nombre para tu Spot." }, { status: 400 });
-    if (!description) return NextResponse.json({ error: "Contanos qué vendés u ofrecés." }, { status: 400 });
+    const spaceType = short(body.spaceType, 20).toLowerCase() || "business";
+    if (!SPACE_TYPES.has(spaceType)) {
+      return NextResponse.json({ error: "Tipo de espacio inválido.", code: "INVALID_SPACE_TYPE" }, { status: 400 });
+    }
+    if (!name) return NextResponse.json({ error: "Poné un nombre para tu espacio." }, { status: 400 });
+    if (!description) return NextResponse.json({ error: "Contanos qué vendés, ofrecés o hacés en este espacio." }, { status: 400 });
 
     const analysis = body.analysis
       ? sanitizeSpotBusinessAnalysis(body.analysis)
@@ -123,6 +133,8 @@ export async function POST(request: NextRequest) {
     }
 
     const admin = createAdminSupabase();
+    await requireSpaceAdminPlan({ admin, userId: user.id });
+
     const { data: spot, error } = await admin.rpc("create_user_commerce_spot", {
       p_owner_user_id: user.id,
       p_name: name,
@@ -138,15 +150,20 @@ export async function POST(request: NextRequest) {
       p_ai_profile: {
         source: body.analysis ? "gemini" : "manual",
         intent: short(body.intent, 120) || null,
+        spaceType,
         analysis,
         confirmedByUser: true,
         confirmedAt: new Date().toISOString(),
       },
     });
     if (error) throw new Error(error.message);
-    return NextResponse.json({ spot, next: `/mi-spot/${spot.id}` }, { status: 201 });
+    return NextResponse.json({ spot, spaceType, next: `/mi-spot/${spot.id}` }, { status: 201 });
   } catch (error) {
-    const status = (error as Error & { status?: number })?.status ?? (isAuthError(error) ? 401 : 500);
-    return NextResponse.json({ error: error instanceof Error ? error.message : "No se pudo crear tu Spot." }, { status });
+    const typed = error as Error & { status?: number; code?: string };
+    const status = typed.status ?? (isAuthError(error) ? 401 : 500);
+    return NextResponse.json({
+      error: error instanceof Error ? error.message : "No se pudo crear tu espacio.",
+      ...(typed.code ? { code: typed.code } : {}),
+    }, { status });
   }
 }
