@@ -8,7 +8,9 @@ export type ImageGenerationIntent = {
 
 const IMAGE_NOUNS = /(imagen|foto|portada|render|ilustraci[oó]n|poster|afiche|arte|visual|plano|blueprint|diagrama|esquema|infograf[ií]a|mockup|wireframe|storyboard|l[aá]mina|miniatura|thumbnail)/i;
 const IMAGE_FORMATS = /\b(png|jpe?g|webp)\b/i;
-const CREATE_VERBS = /(generame|generá|genera|generar|creame|creá|crea|crear|haceme|hacé|hace|hacer|diseñame|diseñá|diseña|armame|armá|arma|quiero|convertime|convertí|converti|pasame|pasá|pasa)/i;
+const EXPLICIT_IMAGE_TARGET = /(imagen|foto|portada|render|ilustraci[oó]n|poster|afiche|arte\s+visual|mockup|l[aá]mina|miniatura|thumbnail)/i;
+const TEXTUAL_VISUAL_REQUEST = /(?:\b(?:plano|blueprint|diagrama|esquema|wireframe|storyboard)\b.{0,48}\b(?:escrito|por\s+escrito|en\s+texto|textual|en\s+palabras|paso\s+a\s+paso|pasos|lista|markdown|documento)\b|\b(?:escrito|por\s+escrito|en\s+texto|textual|en\s+palabras|paso\s+a\s+paso|pasos|lista|markdown|documento)\b.{0,48}\b(?:plano|blueprint|diagrama|esquema|wireframe|storyboard)\b)/i;
+const CREATE_VERBS = /(generame|generá|genera|generar|creame|creá|crea|crear|haceme|hacé|hace|hacer|diseñame|diseñá|diseña|armame|armá|arma|convertime|convertí|converti|pasame|pasá|pasa)/i;
 const REFERENTIAL_CREATE = /\b(hacelo|hacela|generalo|generala|crealo|creala|armalo|armala|pasalo|pasala|convertirlo|convertirla)\b/i;
 const STRONG_PHRASES = /(us[aá] este prompt para (crear|generar)|quiero una (imagen|foto|portada|ilustraci[oó]n|render)|haceme un render|haceme (un|el) plano|hac[eé] (un|el) plano)/i;
 const TECHNICAL_CONTEXT = /(generador de im[aá]genes|api|endpoint|c[oó]digo|componente|pantalla|bug|error|typescript|github)/i;
@@ -17,6 +19,14 @@ const REFERENTIAL_VISUAL_REQUEST = /(?:\b(?:el|la|ese|esa|este|esta|aquel|aquell
 export function detectImageGenerationIntent(message: string) {
   const text = message.trim();
   if (!text) return false;
+
+  // "Plano", "diagrama" and similar words are also normal text concepts.
+  // If the user explicitly asks for the result in writing/text, keep the request
+  // in the chat engine unless they also ask for an actual image/file format.
+  if (TEXTUAL_VISUAL_REQUEST.test(text) && !EXPLICIT_IMAGE_TARGET.test(text) && !IMAGE_FORMATS.test(text)) {
+    return false;
+  }
+
   if (STRONG_PHRASES.test(text) || REFERENTIAL_VISUAL_REQUEST.test(text)) return true;
 
   const directCreate = CREATE_VERBS.test(text) || REFERENTIAL_CREATE.test(text);
