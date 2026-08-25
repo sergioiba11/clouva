@@ -4,7 +4,7 @@ import { Loader2 } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
-import { SpotCommerceDashboard } from "@/components/commerce/SpotCommerceDashboard";
+import { SpaceCommerceWorkspace } from "@/components/commerce/SpaceCommerceWorkspace";
 import { MainNav } from "@/components/layout";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
 
@@ -29,10 +29,10 @@ export default function SpotCommercePage() {
     try {
       const response = await authenticatedFetch(`/api/mi-spot/${encodeURIComponent(spotId)}`);
       const payload = await readApiJson<SpotScope>(response);
-      if (!payload.canOpenCommerce) throw new Error("Tu rol no permite abrir el panel operativo completo de este Spot.");
+      if (!payload.canOpenCommerce) throw new Error("Tu rol no permite abrir el panel operativo completo de este Espacio.");
       setScope(payload);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "No se pudo abrir el comercio del Spot.");
+      setError(cause instanceof Error ? cause.message : "No se pudo abrir el centro operativo del Espacio.");
     } finally {
       setLoading(false);
     }
@@ -51,7 +51,7 @@ export default function SpotCommercePage() {
     const commerceScope = scope.spot.owner_type === "studio" && scope.studio?.id
       ? scope.studio.id
       : `spot:${scope.spot.id}`;
-    return <SpotCommerceDashboard studioId={commerceScope} />;
+    return <SpaceCommerceWorkspace commerceScopeId={commerceScope} />;
   }
 
   return <main className="min-h-screen bg-[#05040a] text-white"><MainNav /><div className="mx-auto max-w-3xl px-4 py-14">{loading ? <p className="flex items-center gap-2 text-sm text-white/45"><Loader2 size={16} className="animate-spin" /> Abriendo operaciones…</p> : null}{error ? <p className="rounded-2xl border border-rose-300/15 bg-rose-300/[0.06] p-4 text-sm text-rose-200">{error}</p> : null}</div></main>;
