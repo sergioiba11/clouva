@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireSpaceAdminPlan } from "@/lib/server/space-access";
 import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
 
 export const runtime = "nodejs";
@@ -17,6 +18,8 @@ export async function POST(request: NextRequest) {
     if (!name) return NextResponse.json({ error: "El nombre del Estudio es obligatorio." }, { status: 400 });
 
     const admin = createAdminSupabase();
+    await requireSpaceAdminPlan({ admin, userId: user.id });
+
     const { data, error } = await admin.rpc("create_studio_os_draft", {
       p_user_id: user.id,
       p_name: name,
@@ -41,12 +44,17 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       studio,
+      spaceType: "studio",
       studioOsRequired: true,
       checkoutAvailable: Boolean(product?.is_active && price),
       next: `/studios/${studio.slug}/studio-os`,
     }, { status: 201 });
   } catch (error) {
-    const status = isAuthError(error) ? 401 : 500;
-    return NextResponse.json({ error: error instanceof Error ? error.message : "No se pudo crear el Estudio." }, { status });
+    const typed = error as Error & { status?: number; code?: string };
+    const status = typed.status ?? (isAuthError(error) ? 401 : 500);
+    return NextResponse.json({
+      error: error instanceof Error ? error.message : "No se pudo crear el Estudio.",
+      ...(typed.code ? { code: typed.code } : {}),
+    }, { status });
   }
 }
