@@ -55,6 +55,7 @@ test("Space Core proyecta legacy Studio/Spot sin duplicar Commerce", () => {
 test("Spot del Player reutiliza productos, órdenes y ledger con identidad económica Player", () => {
   const legacy = read("./supabase/migrations/20260823194000_universal_commerce_spots.sql");
   const canonical = read("./supabase/migrations/20260825004237_player_spaces_commerce_miflow_normalization.sql");
+  const ledger = read("./supabase/migrations/20260823190000_mi_flow_money_ledger.sql");
   assert.match(legacy, /commerce_products_owner_user_id_fkey/);
   assert.match(legacy, /owner_type in \('player', 'studio', 'user', 'clouva'\)/);
   assert.match(legacy, /commerce_orders_seller_user_id_fkey/);
@@ -63,7 +64,8 @@ test("Spot del Player reutiliza productos, órdenes y ledger con identidad econ�
   assert.match(canonical, /new\.owner_type := 'player'/);
   assert.match(canonical, /normalize_commerce_order_spot_seller/);
   assert.match(canonical, /new\.seller_type := 'player'/);
-  assert.match(canonical, /beneficiary_type/);
+  assert.match(ledger, /beneficiary_type text not null/);
+  assert.match(ledger, /beneficiary_entity_id uuid not null/);
   assert.doesNotMatch(canonical, /buyer_id[^\n]*beneficiary/i);
 });
 
