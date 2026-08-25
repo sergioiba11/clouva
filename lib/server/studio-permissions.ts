@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { requireSpaceAdminPlan } from "@/lib/server/space-access";
 
 const MANAGER_ROLES = new Set(["owner", "admin", "manager", "editor", "finance", "bookings", "support"]);
 const ACTIVE_STUDIO_OS = new Set(["active", "grace", "legacy_active"]);
@@ -41,6 +42,8 @@ export async function requireStudioManager(args: {
     (error as Error & { status?: number }).status = 403;
     throw error;
   }
+
+  await requireSpaceAdminPlan({ admin: args.admin, userId: args.userId });
 
   const expiresAt = studio.studio_os_expires_at ? new Date(studio.studio_os_expires_at) : null;
   const studioOsActive = ACTIVE_STUDIO_OS.has(studio.studio_os_status)
