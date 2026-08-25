@@ -1,5 +1,1 @@
-import { MiFlowSpotEntry } from "@/components/mi-flow/MiFlowSpotEntry";
-
-export default function MiFlowPage() {
-  return <MiFlowSpotEntry />;
-}
+export { default } from "./billetera/page";
