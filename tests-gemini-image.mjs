@@ -22,7 +22,7 @@ function imagePayload(overrides = {}) {
   };
 }
 
-test("Gemini image generation uses stored inline Interactions REST delivery", async (t) => {
+test("Gemini image generation uses the documented Interactions REST response format", async (t) => {
   const originalFetch = globalThis.fetch;
   t.after(() => { globalThis.fetch = originalFetch; });
 
@@ -54,11 +54,11 @@ test("Gemini image generation uses stored inline Interactions REST delivery", as
   ]);
   assert.deepEqual(body.response_format, {
     type: "image",
-    delivery: "inline",
     mime_type: "image/jpeg",
     aspect_ratio: "16:9",
     image_size: "2K",
   });
+  assert.equal("delivery" in body.response_format, false);
   assert.deepEqual(generated.bytes, PNG_BYTES);
   assert.equal(generated.mimeType, "image/png");
   assert.equal(generated.providerOperationId, "v1_test_image");
@@ -276,6 +276,6 @@ test("Gemini Interactions serializes reference images in the canonical input arr
   ]);
   assert.equal(capturedBody.store, true);
   assert.equal(capturedBody.response_format.type, "image");
-  assert.equal(capturedBody.response_format.delivery, "inline");
+  assert.equal("delivery" in capturedBody.response_format, false);
   assert.equal(capturedBody.response_format.mime_type, "image/jpeg");
 });
