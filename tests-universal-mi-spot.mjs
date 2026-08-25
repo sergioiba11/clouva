@@ -128,7 +128,7 @@ test("crear un espacio usa Player universal, exige VIP para administrar y no obl
 
 test("producto canónico se publica en múltiples targets sin copiar stock ni precio", () => {
   const migration = read("./supabase/migrations/20260825004237_player_spaces_commerce_miflow_normalization.sql");
-  const api = read("./app/api/commerce/products/[productId]/publications/route.ts");
+  const api = read("./app/api/commerce/products/[id]/publications/route.ts");
   const controls = read("./components/commerce/ProductPublicationControls.tsx");
   assert.match(migration, /create table if not exists public\.commerce_product_publications/);
   assert.match(migration, /product_id uuid not null references public\.commerce_products/);
