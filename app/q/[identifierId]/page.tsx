@@ -6,7 +6,7 @@ import { createAdminSupabase } from "@/lib/server/supabase";
 export const dynamic = "force-dynamic";
 
 type RegistryRow = {
-  entity_type: "PRODUCT" | "VARIANT" | "ITEM" | "USER";
+  entity_type: "PRODUCT" | "VARIANT" | "ITEM" | "USER" | "SPACE";
   entity_id: string;
   source_identifier_id: string | null;
   destination_path: string | null;
@@ -67,6 +67,23 @@ export default async function ClouvaQrPage({ params }: { params: Promise<{ ident
       .eq("is_primary", true)
       .maybeSingle();
     redirect(`/${encodeURIComponent(alias?.alias || player.slug)}`);
+  }
+
+  if (registry?.entity_type === "SPACE") {
+    if (safeInternalPath(registry.destination_path)) redirect(registry.destination_path!);
+    const { data: space } = await admin
+      .from("spaces")
+      .select("slug,public_enabled,status,legacy_studio_id")
+      .eq("id", registry.entity_id)
+      .maybeSingle();
+    if (!space || !space.public_enabled || space.status !== "active") {
+      return <QrState title="Espacio no disponible" detail="Este QR es válido y permanente, pero el espacio no está publicado en este momento." />;
+    }
+    if (space.legacy_studio_id) {
+      const { data: studio } = await admin.from("studios").select("slug").eq("id", space.legacy_studio_id).maybeSingle();
+      if (studio?.slug) redirect(`/studios/${encodeURIComponent(studio.slug)}`);
+    }
+    redirect(`/spaces/${encodeURIComponent(space.slug)}`);
   }
 
   if (registry?.entity_type === "ITEM") {
