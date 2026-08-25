@@ -25,13 +25,14 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     const admin = createAdminSupabase();
     const access = await requireSpotAccess({ admin, userId: user.id, spotId, capability: "view" });
 
-    const [productCount, orderCount, inventoryCount, memberCount] = await Promise.all([
+    const [productCount, orderCount, inventoryCount, memberCount, spaceResult] = await Promise.all([
       admin.from("commerce_products").select("id", { count: "exact", head: true }).eq("spot_id", spotId),
       admin.from("commerce_orders").select("id", { count: "exact", head: true }).eq("spot_id", spotId),
       admin.from("commerce_inventory_movements").select("id", { count: "exact", head: true }).eq("spot_id", spotId),
       admin.from("commerce_spot_members").select("id", { count: "exact", head: true }).eq("spot_id", spotId).eq("status", "active"),
+      admin.from("spaces").select("id,slug,name,type,public_enabled,status,owner_player_id,legacy_studio_id,legacy_commerce_spot_id").eq("legacy_commerce_spot_id", spotId).maybeSingle(),
     ]);
-    for (const result of [productCount, orderCount, inventoryCount, memberCount]) {
+    for (const result of [productCount, orderCount, inventoryCount, memberCount, spaceResult]) {
       if (result.error) throw new Error(result.error.message);
     }
 
@@ -44,6 +45,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
     return NextResponse.json({
       spot: access.spot,
+      space: spaceResult.data ?? null,
       studio: access.studio,
       role: access.role,
       capabilities: spotRoleCapabilities(access.role),
