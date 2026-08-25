@@ -154,6 +154,7 @@ export function PlayerLiveLocationHero({ playerId, ownerUserId, coverUrl }: Play
 
   useEffect(() => {
     initializedOwnerStateRef.current = false;
+    setLoaded(false);
     void fetchLocation();
   }, [fetchLocation, isOwner]);
 
@@ -309,7 +310,7 @@ export function PlayerLiveLocationHero({ playerId, ownerUserId, coverUrl }: Play
 
   return (
     <>
-      <div className="pointer-events-none absolute inset-0 z-0" aria-hidden="true">
+      <div className="pointer-events-none absolute inset-0 z-0">
         {liveRow ? (
           <LiveMap latitude={liveRow.latitude} longitude={liveRow.longitude} />
         ) : (
