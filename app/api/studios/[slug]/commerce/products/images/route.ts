@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { deleteGeneratedMedia } from "@/lib/gcs-media";
+import { deleteGeneratedMedia, uploadGeneratedMediaObject } from "@/lib/gcs-media";
 import { requireManagedSpot } from "@/lib/server/commerce-spot";
 import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+const ALLOWED_MIME = new Set(["image/jpeg", "image/png", "image/webp"]);
 
 type JsonRecord = Record<string, unknown>;
 type ImageActionBody = {
@@ -12,6 +15,8 @@ type ImageActionBody = {
   action?: unknown;
   storagePath?: unknown;
   url?: unknown;
+  dataUrl?: unknown;
+  label?: unknown;
 };
 
 type CatalogImage = {
@@ -52,6 +57,11 @@ function catalogImages(metadata: unknown): CatalogImage[] {
     };
   });
   return [...generated, ...source].filter((item) => item.url && item.storagePath);
+}
+
+function galleryFromMetadata(metadata: unknown, coverUrl: string | null) {
+  const urls = [coverUrl, ...catalogImages(metadata).map((image) => image.url)].filter((value): value is string => Boolean(value));
+  return [...new Set(urls)];
 }
 
 function removeImage(metadata: unknown, storagePath: string) {
@@ -103,8 +113,74 @@ function setCover(metadata: unknown, coverUrl: string) {
   return root;
 }
 
+function addManualImage(metadata: unknown, image: { url: string; storagePath: string; mimeType: string }, label: string) {
+  const root = { ...record(metadata) };
+  const current = productImages(root);
+  const sourcePhotos = Array.isArray(current.source_photos) ? [...current.source_photos] : [];
+  sourcePhotos.push({
+    url: image.url,
+    storage_path: image.storagePath,
+    mime_type: image.mimeType,
+    label: "Manual",
+    display_label: label,
+    detail_index: null,
+  });
+  root.product_images = {
+    ...current,
+    provider: current.provider ?? "manual",
+    source_photos: sourcePhotos,
+  };
+  return root;
+}
+
+function parseDataUrl(value: unknown) {
+  if (typeof value !== "string") throw new Error("Falta la imagen.");
+  const match = value.match(/^data:(image\/[a-z0-9.+-]+);base64,([a-z0-9+/=\r\n]+)$/i);
+  if (!match) throw new Error("La imagen no tiene un formato válido.");
+  const mimeType = match[1].toLowerCase();
+  if (!ALLOWED_MIME.has(mimeType)) throw new Error("Usá una imagen JPG, PNG o WEBP.");
+  const bytes = Buffer.from(match[2].replace(/\s/g, ""), "base64");
+  if (!bytes.length || bytes.length > MAX_IMAGE_BYTES) throw new Error("La imagen debe pesar hasta 8 MB.");
+  return { bytes, mimeType };
+}
+
 function referencesImage(metadata: unknown, storagePath: string) {
   return catalogImages(metadata).some((image) => image.storagePath === storagePath);
+}
+
+async function removeSharedCatalogReference(args: {
+  admin: ReturnType<typeof createAdminSupabase>;
+  listingId: string;
+  catalogProductId: string | null;
+  storagePath: string;
+  targetUrl: string;
+}) {
+  if (!args.catalogProductId) return false;
+  const { data: relatedListings, error: relatedError } = await args.admin
+    .from("commerce_products")
+    .select("id,cover_url,metadata")
+    .eq("catalog_product_id", args.catalogProductId)
+    .neq("id", args.listingId);
+  if (relatedError) throw new Error(relatedError.message);
+
+  const sharedElsewhere = (relatedListings ?? []).some((related) => related.cover_url === args.targetUrl || referencesImage(related.metadata, args.storagePath));
+  if (sharedElsewhere) return true;
+
+  const { data: catalog, error: catalogError } = await args.admin
+    .from("commerce_catalog_products")
+    .select("id,metadata")
+    .eq("id", args.catalogProductId)
+    .maybeSingle();
+  if (catalogError) throw new Error(catalogError.message);
+  if (catalog) {
+    const catalogNext = removeImage(catalog.metadata, args.storagePath);
+    const { error: updateCatalogError } = await args.admin
+      .from("commerce_catalog_products")
+      .update({ metadata: catalogNext.metadata, updated_at: new Date().toISOString() })
+      .eq("id", catalog.id);
+    if (updateCatalogError) throw new Error(updateCatalogError.message);
+  }
+  return false;
 }
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ slug: string }> }) {
@@ -113,7 +189,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const { slug: studioId } = await params;
     const body = (await request.json().catch(() => ({}))) as ImageActionBody;
     const listingId = typeof body.listingId === "string" ? body.listingId.trim() : "";
-    const action = body.action === "delete" || body.action === "set_cover" ? body.action : "";
+    const action = body.action === "delete" || body.action === "set_cover" || body.action === "add" || body.action === "replace" ? body.action : "";
     if (!listingId || !action) return NextResponse.json({ error: "Faltan datos para administrar la imagen." }, { status: 400 });
 
     const admin = createAdminSupabase();
@@ -134,14 +210,60 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       if (!url || !images.some((image) => image.url === url)) {
         return NextResponse.json({ error: "La portada debe ser una imagen guardada en este producto." }, { status: 400 });
       }
+      const metadata = setCover(listing.metadata, url);
       const { error: updateError } = await admin
         .from("commerce_products")
-        .update({ cover_url: url, metadata: setCover(listing.metadata, url), updated_at: new Date().toISOString() })
+        .update({ cover_url: url, gallery: galleryFromMetadata(metadata, url), metadata, updated_at: new Date().toISOString() })
+        .eq("id", listing.id)
+        .eq("spot_id", spot.id);
+      if (updateError) throw new Error(updateError.message);
+      return NextResponse.json({ ok: true, action, listingId: listing.id, coverUrl: url });
+    }
+
+    if (action === "add" || action === "replace") {
+      const parsed = parseDataUrl(body.dataUrl);
+      const label = typeof body.label === "string" && body.label.trim() ? body.label.trim().slice(0, 80) : "Imagen agregada";
+      const stored = await uploadGeneratedMediaObject({
+        bytes: parsed.bytes,
+        mimeType: parsed.mimeType,
+        pathPrefix: `commerce/${spot.id}/product-manual`,
+      });
+
+      let metadata = listing.metadata;
+      let coverUrl = listing.cover_url;
+      let replaced: CatalogImage | null = null;
+      if (action === "replace") {
+        const storagePath = typeof body.storagePath === "string" ? body.storagePath.trim() : "";
+        replaced = images.find((image) => image.storagePath === storagePath) ?? null;
+        if (!replaced) return NextResponse.json({ error: "La imagen a reemplazar no pertenece al producto." }, { status: 404 });
+        const removed = removeImage(metadata, replaced.storagePath);
+        metadata = removed.metadata;
+        if (coverUrl === replaced.url) coverUrl = stored.url;
+      }
+
+      metadata = addManualImage(metadata, { url: stored.url, storagePath: stored.objectPath, mimeType: parsed.mimeType }, replaced?.label || label);
+      if (!coverUrl) coverUrl = stored.url;
+      if (coverUrl === stored.url) metadata = setCover(metadata, stored.url);
+
+      const { error: updateError } = await admin
+        .from("commerce_products")
+        .update({ cover_url: coverUrl, gallery: galleryFromMetadata(metadata, coverUrl), metadata, updated_at: new Date().toISOString() })
         .eq("id", listing.id)
         .eq("spot_id", spot.id);
       if (updateError) throw new Error(updateError.message);
 
-      return NextResponse.json({ ok: true, action, listingId: listing.id, coverUrl: url });
+      if (replaced) {
+        const sharedElsewhere = await removeSharedCatalogReference({
+          admin,
+          listingId: listing.id,
+          catalogProductId: listing.catalog_product_id,
+          storagePath: replaced.storagePath,
+          targetUrl: replaced.url,
+        });
+        if (!sharedElsewhere) await deleteGeneratedMedia(replaced.storagePath);
+      }
+
+      return NextResponse.json({ ok: true, action, listingId: listing.id, coverUrl, image: { url: stored.url, storagePath: stored.objectPath, mimeType: parsed.mimeType } });
     }
 
     const storagePath = typeof body.storagePath === "string" ? body.storagePath.trim() : "";
@@ -153,39 +275,18 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const currentCover = listing.cover_url === target.url ? next.coverUrl : listing.cover_url;
     const { error: updateError } = await admin
       .from("commerce_products")
-      .update({ cover_url: currentCover, metadata: next.metadata, updated_at: now })
+      .update({ cover_url: currentCover, gallery: galleryFromMetadata(next.metadata, currentCover), metadata: next.metadata, updated_at: now })
       .eq("id", listing.id)
       .eq("spot_id", spot.id);
     if (updateError) throw new Error(updateError.message);
 
-    let sharedElsewhere = false;
-    if (listing.catalog_product_id) {
-      const { data: relatedListings, error: relatedError } = await admin
-        .from("commerce_products")
-        .select("id,cover_url,metadata")
-        .eq("catalog_product_id", listing.catalog_product_id)
-        .neq("id", listing.id);
-      if (relatedError) throw new Error(relatedError.message);
-      sharedElsewhere = (relatedListings ?? []).some((related) => related.cover_url === target.url || referencesImage(related.metadata, storagePath));
-
-      if (!sharedElsewhere) {
-        const { data: catalog, error: catalogError } = await admin
-          .from("commerce_catalog_products")
-          .select("id,metadata")
-          .eq("id", listing.catalog_product_id)
-          .maybeSingle();
-        if (catalogError) throw new Error(catalogError.message);
-        if (catalog) {
-          const catalogNext = removeImage(catalog.metadata, storagePath);
-          const { error: updateCatalogError } = await admin
-            .from("commerce_catalog_products")
-            .update({ metadata: catalogNext.metadata, updated_at: now })
-            .eq("id", catalog.id);
-          if (updateCatalogError) throw new Error(updateCatalogError.message);
-        }
-      }
-    }
-
+    const sharedElsewhere = await removeSharedCatalogReference({
+      admin,
+      listingId: listing.id,
+      catalogProductId: listing.catalog_product_id,
+      storagePath,
+      targetUrl: target.url,
+    });
     if (!sharedElsewhere) await deleteGeneratedMedia(storagePath);
 
     return NextResponse.json({
