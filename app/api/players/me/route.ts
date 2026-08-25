@@ -103,28 +103,54 @@ export async function POST(request: NextRequest) {
   try {
     const { user } = await requireUser(request);
     const admin = createAdminSupabase();
+    const body = (await request.json().catch(() => ({}))) as {
+      professional_categories?: string[];
+      display_name?: string;
+    };
     const existing = await findEditablePlayer(admin, user.id);
+
+    // New Auth users already receive a basic Player from the DB trigger. The
+    // onboarding POST now enriches that Player instead of silently ignoring the
+    // selected categories or creating a second identity.
     if (existing) {
+      const categories = Array.isArray(body.professional_categories)
+        ? body.professional_categories.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean).slice(0, 12)
+        : null;
+      const changes: Record<string, unknown> = {};
+      if (categories) {
+        changes.professional_categories = categories;
+        changes.disciplines = categories;
+        changes.primary_role = categories[0] || null;
+      }
+      if (typeof body.display_name === "string" && body.display_name.trim()) {
+        changes.display_name = body.display_name.trim().slice(0, 160);
+      }
+
+      let player = existing;
+      if (Object.keys(changes).length) {
+        const updated = await admin.from("players").update(changes).eq("id", existing.id).select("*").single();
+        if (updated.error) throw new Error(updated.error.message);
+        player = updated.data;
+      }
+
       await activatePlayerMode(admin, user.id);
       let completedStudioJoins = 0;
       let pendingStudioReturnPathValue: string | null = null;
-      if (existing.owner_user_id === user.id && existing.is_published) {
+      if (player.owner_user_id === user.id && player.is_published) {
         pendingStudioReturnPathValue = await pendingStudioReturnPath(admin, user.id);
-        completedStudioJoins = await completePendingStudioJoins({ admin, userId: user.id, playerId: existing.id as string });
+        completedStudioJoins = await completePendingStudioJoins({ admin, userId: user.id, playerId: player.id as string });
       }
-      await admin.from("profiles").update({ onboarding_status: existing.is_published ? "published" : "player_created" }).eq("id", user.id);
+      await admin.from("profiles").update({ onboarding_status: player.is_published ? "published" : "player_created" }).eq("id", user.id);
       return NextResponse.json({
-        player: existing,
+        player,
         created: false,
         completedStudioJoins,
         pendingStudioReturnPath: pendingStudioReturnPathValue,
       });
     }
 
-    const body = (await request.json().catch(() => ({}))) as {
-      professional_categories?: string[];
-      display_name?: string;
-    };
+    // Compatibility fallback for an environment where the universal Player DB
+    // migration has not run yet. Normal production signups should not enter it.
     const { data: profile } = await admin
       .from("profiles")
       .select("display_name,full_name,username")
@@ -178,11 +204,9 @@ export async function POST(request: NextRequest) {
     }
 
     await activatePlayerMode(admin, user.id);
-    // Studio membership projection waits until the Player is published. This
-    // prevents a draft identity from appearing in a public Studio roster.
     return NextResponse.json({ player, created: true, completedStudioJoins: 0, pendingStudioReturnPath: null });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "No se pudo crear tu Player.";
+    const message = error instanceof Error ? error.message : "No se pudo preparar tu Player.";
     return NextResponse.json({ error: message }, { status: isAuthError(error) ? 401 : 500 });
   }
 }
@@ -192,7 +216,7 @@ export async function PATCH(request: NextRequest) {
     const { user } = await requireUser(request);
     const admin = createAdminSupabase();
     const player = await findEditablePlayer(admin, user.id);
-    if (!player) return NextResponse.json({ error: "Primero creá tu Player." }, { status: 404 });
+    if (!player) return NextResponse.json({ error: "No pudimos resolver tu Player." }, { status: 404 });
 
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     const changes = sanitizeUpdate(body);
@@ -201,7 +225,7 @@ export async function PATCH(request: NextRequest) {
     }
     if (body.publication_action === "publish") {
       if (!String(changes.display_name || player.display_name || "").trim()) {
-        return NextResponse.json({ error: "El nombre artístico es obligatorio." }, { status: 400 });
+        return NextResponse.json({ error: "El nombre del Player es obligatorio." }, { status: 400 });
       }
       changes.is_published = true;
       changes.publication_status = "published";
