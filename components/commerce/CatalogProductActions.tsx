@@ -9,7 +9,7 @@ type JsonRecord = Record<string, unknown>;
 type ListingForActions = {
   id: string;
   name: string;
-  description: string | null;
+  description?: string | null;
   price: number;
   cost_amount: number | null;
   currency: string;
