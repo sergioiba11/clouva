@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
+import { PublicMerchSection } from "@/components/public/PublicMerchSection";
 import { StudioPublicView } from "@/components/public/StudioPublicView";
 import { StudioLayoutRenderer } from "@/components/public/StudioLayoutRenderer";
 import { PreciseStudioLayoutRenderer } from "@/components/public/PreciseStudioLayoutRenderer";
@@ -42,6 +43,14 @@ export default async function StudioProfilePage({
     redirect(`/studios/${result.canonicalAlias}${query.joined === "1" ? "?joined=1" : ""}`);
   }
 
+  const merch = (
+    <PublicMerchSection
+      studioId={result.studio.id}
+      eyebrow={`Tienda de ${result.studio.name}`}
+      title="Merch"
+    />
+  );
+
   // layout_config solo existe (no vacío) cuando el Estudio corrió CLOUVA AI
   // Profile con un mockup replicado o eligió una variante de diseño -- todos
   // los demás siguen con la plantilla fija de siempre, sin ningún cambio.
@@ -50,45 +59,54 @@ export default async function StudioProfilePage({
   // esquema viejo (layout_kind "template") siguen exactamente igual.
   if (result.layoutConfig?.layout_kind === "precise") {
     return (
-      <PreciseStudioLayoutRenderer
-        studio={result.studio}
-        players={result.players}
-        media={result.media}
-        projects={result.projects as Array<Record<string, unknown>>}
-        matrixDiscoveryProjects={result.matrixDiscoveryProjects as Array<Record<string, unknown>>}
-        services={result.services}
-        membershipPlans={result.membershipPlans}
-        joined={query.joined === "1"}
-        layout={result.layoutConfig}
-      />
+      <>
+        <PreciseStudioLayoutRenderer
+          studio={result.studio}
+          players={result.players}
+          media={result.media}
+          projects={result.projects as Array<Record<string, unknown>>}
+          matrixDiscoveryProjects={result.matrixDiscoveryProjects as Array<Record<string, unknown>>}
+          services={result.services}
+          membershipPlans={result.membershipPlans}
+          joined={query.joined === "1"}
+          layout={result.layoutConfig}
+        />
+        {merch}
+      </>
     );
   }
 
   if (result.layoutConfig) {
     return (
-      <StudioLayoutRenderer
-        studio={result.studio}
-        players={result.players}
-        media={result.media}
-        projects={result.projects as Array<Record<string, unknown>>}
-        matrixDiscoveryProjects={result.matrixDiscoveryProjects as Array<Record<string, unknown>>}
-        services={result.services}
-        membershipPlans={result.membershipPlans}
-        joined={query.joined === "1"}
-        layout={result.layoutConfig}
-      />
+      <>
+        <StudioLayoutRenderer
+          studio={result.studio}
+          players={result.players}
+          media={result.media}
+          projects={result.projects as Array<Record<string, unknown>>}
+          matrixDiscoveryProjects={result.matrixDiscoveryProjects as Array<Record<string, unknown>>}
+          services={result.services}
+          membershipPlans={result.membershipPlans}
+          joined={query.joined === "1"}
+          layout={result.layoutConfig}
+        />
+        {merch}
+      </>
     );
   }
 
   return (
-    <StudioPublicView
-      studio={result.studio}
-      players={result.players}
-      media={result.media}
-      projects={result.projects as Array<Record<string, unknown>>}
-      services={result.services}
-      membershipPlans={result.membershipPlans}
-      joined={query.joined === "1"}
-    />
+    <>
+      <StudioPublicView
+        studio={result.studio}
+        players={result.players}
+        media={result.media}
+        projects={result.projects as Array<Record<string, unknown>>}
+        services={result.services}
+        membershipPlans={result.membershipPlans}
+        joined={query.joined === "1"}
+      />
+      {merch}
+    </>
   );
 }
