@@ -5,6 +5,7 @@ import {
   type SpotCapability,
   type SpotRole,
 } from "@/lib/commerce/spot-permissions";
+import { requireSpaceAdminPlan } from "@/lib/server/space-access";
 import { requireStudioManager } from "@/lib/server/studio-permissions";
 
 const SPOT_SELECT = "id,studio_id,owner_type,owner_user_id,beneficiary_user_id,slug,name,country_code,currency,timezone,fx_source,public_enabled,status,business_type,business_categories,enabled_modules,brand_tone,description,logo_url,cover_url,accent_color,palette,ai_profile,settings,created_at,updated_at";
@@ -41,6 +42,12 @@ export async function requireSpotAccess(args: {
   const capability = args.capability ?? "view";
   if (!spotRoleAllows(role, capability)) {
     throw statusError(`Tu rol ${role} no permite esta operación.`, 403, "SPOT_ROLE_FORBIDDEN");
+  }
+
+  // `view` is a membership/public capability. Every administrative capability
+  // requires an active VIP plan (global CLOUVA admins are the only bypass).
+  if (capability !== "view") {
+    await requireSpaceAdminPlan({ admin: args.admin, userId: args.userId });
   }
 
   let studio: { id: string; name: string; slug: string } | null = null;
