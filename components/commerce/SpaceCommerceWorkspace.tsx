@@ -1,3 +1,5 @@
+"use client";
+
 import { ClouvaQrEngineEventBridge } from "@/components/commerce/ClouvaQrEngineEventBridge";
 import { ClouvaQrEnginePanel } from "@/components/commerce/ClouvaQrEnginePanel";
 import { SpotCommerceDashboard } from "@/components/commerce/SpotCommerceDashboard";
