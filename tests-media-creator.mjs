@@ -35,7 +35,7 @@ test("mapea calidad de imagen a modelos y resolución oficiales", () => {
   assert.equal(IMAGE_QUALITY_CONFIG.maximum.imageSize, "4K");
 });
 
-test("Trébol enruta pedidos de plano, PNG y referencias visuales al generador real", () => {
+test("Trébol enruta pedidos visuales al generador y conserva planos escritos como texto", () => {
   for (const prompt of [
     "HACE EL PLANO",
     "HACE EL PLANO PNG",
@@ -46,11 +46,22 @@ test("Trébol enruta pedidos de plano, PNG y referencias visuales al generador r
     "EL PLANO QUE TE PEDI ANTES",
     "¿Y EL PLANO?",
     "ESE PLANO",
+    "haceme un plano escrito en PNG",
+    "quiero una imagen del plano escrito",
   ]) {
     assert.equal(detectImageGenerationIntent(prompt), true, prompt);
   }
-  assert.equal(detectImageGenerationIntent("hay un bug en el generador de imágenes"), false);
-  assert.equal(detectImageGenerationIntent("explicame el plano de base de datos"), false);
+
+  for (const prompt of [
+    "hay un bug en el generador de imágenes",
+    "explicame el plano de base de datos",
+    "Recordas lo que quiero hacer? Necesito un plano escrito",
+    "haceme un plano por escrito, paso a paso",
+    "quiero revisar el plano antes de generarlo",
+    "dame el diagrama en texto",
+  ]) {
+    assert.equal(detectImageGenerationIntent(prompt), false, prompt);
+  }
 
   const intent = parseImageGenerationIntent("AHORA HACE EL PLANO PNG");
   assert.ok(intent);
