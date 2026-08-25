@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { siteUrl } from "@/lib/site-url";
 
-export type ClouvaQrEntityType = "PRODUCT" | "VARIANT" | "ITEM" | "USER";
+export type ClouvaQrEntityType = "PRODUCT" | "VARIANT" | "ITEM" | "USER" | "SPACE";
 export type ClouvaQrStatus = "ACTIVE" | "REVOKED";
 
 export type ClouvaQrRecord = {
@@ -47,7 +47,7 @@ export async function getClouvaQr(args: {
 
 export async function getOrCreateClouvaQr(args: {
   admin: SupabaseClient;
-  entityType: Extract<ClouvaQrEntityType, "USER" | "ITEM">;
+  entityType: Extract<ClouvaQrEntityType, "USER" | "ITEM" | "SPACE">;
   entityId: string;
   actorId: string;
   studioId?: string | null;
@@ -59,8 +59,12 @@ export async function getOrCreateClouvaQr(args: {
     entityType: args.entityType,
     entityId: args.entityId,
   });
-  if (existing) return { qr: existing, created: false, url: clouvaQrUrl(existing.public_token) };
+  if (existing && (!args.destinationPath || existing.destination_path === args.destinationPath)) {
+    return { qr: existing, created: false, url: clouvaQrUrl(existing.public_token) };
+  }
 
+  // The service-role RPC is also responsible for refreshing a canonical
+  // destination path without rotating the permanent public token.
   const { data, error } = await args.admin.rpc("get_or_create_clouva_qr", {
     p_entity_type: args.entityType,
     p_entity_id: args.entityId,
@@ -83,6 +87,7 @@ export function serializeClouvaQr(qr: ClouvaQrRecord, created = false) {
     publicToken: qr.public_token,
     url: clouvaQrUrl(qr.public_token),
     status: qr.status,
+    destinationPath: qr.destination_path,
     createdAt: qr.created_at,
     created,
   };
