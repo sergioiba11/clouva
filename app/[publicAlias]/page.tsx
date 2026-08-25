@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { PlayerPublicView } from "@/components/public/PlayerPublicView";
+import { PublicMerchSection } from "@/components/public/PublicMerchSection";
 import { resolvePlayerAlias } from "@/lib/server/public-identity-data";
 
 export const dynamic = "force-dynamic";
@@ -37,11 +38,18 @@ export default async function PublicPlayerAliasPage({ params }: { params: Promis
   if (!result) notFound();
 
   return (
-    <PlayerPublicView
-      player={result.player}
-      affiliations={result.affiliations}
-      media={result.media}
-      isVip={result.isVip}
-    />
+    <>
+      <PlayerPublicView
+        player={result.player}
+        affiliations={result.affiliations}
+        media={result.media}
+        isVip={result.isVip}
+      />
+      <PublicMerchSection
+        playerId={result.player.id}
+        eyebrow={`Merch de ${result.player.display_name}`}
+        title="Tienda"
+      />
+    </>
   );
 }
