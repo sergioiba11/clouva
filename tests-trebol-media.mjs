@@ -3,6 +3,13 @@ import test from "node:test";
 import { MediaExecutor } from "./lib/clouva-ai/media-executor.ts";
 import { ToolConfirmationGate } from "./lib/clouva-ai/tool-confirmation.ts";
 import { ToolRouter } from "./lib/clouva-ai/tool-router.ts";
+import { normalizeBudgetUsd } from "./lib/ai-budget/budget-service.ts";
+
+test("media budget amounts use the same four-decimal precision as Postgres", () => {
+  assert.equal(normalizeBudgetUsd(0.04235), 0.0424);
+  assert.equal(normalizeBudgetUsd(0.042268), 0.0423);
+  assert.throws(() => normalizeBudgetUsd(Number.NaN), /no es válido/i);
+});
 
 test("media generation is shared through ToolRouter and always requires reinforced confirmation", async () => {
   const calls = [];

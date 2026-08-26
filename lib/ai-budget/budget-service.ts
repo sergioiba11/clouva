@@ -10,6 +10,15 @@ export const VISUAL_REDESIGN_BUDGET_SCOPE = "visual_redesign_2026";
 export const TREBOL_MEDIA_BUDGET_SCOPE = "trebol_media_2026";
 export const MAX_CONCURRENT_GENERATIONS = 2;
 export const MAX_RETRIES_PER_ASSET = 2;
+const BUDGET_SCALE = 10_000;
+
+/** Keep application amounts aligned with numeric(10,4) in Postgres. Without
+ * this, a value such as 0.04235 is stored as 0.0424 when reserved but later
+ * subtracted as 0.04235, leaving a phantom 0.0001 reservation. */
+export function normalizeBudgetUsd(value: number) {
+  if (!Number.isFinite(value)) throw new Error("El importe de presupuesto no es válido.");
+  return Math.round((value + Number.EPSILON) * BUDGET_SCALE) / BUDGET_SCALE;
+}
 
 export function isImageGenerationEnabled() {
   return process.env.GEMINI_IMAGE_GENERATION_ENABLED !== "false";
@@ -34,7 +43,7 @@ export async function reserveBudget(
 ): Promise<BudgetSnapshot> {
   const { data, error } = await admin.rpc("reserve_ai_image_budget", {
     p_scope: args.scope ?? VISUAL_REDESIGN_BUDGET_SCOPE,
-    p_estimated_cost_usd: args.estimatedCostUsd,
+    p_estimated_cost_usd: normalizeBudgetUsd(args.estimatedCostUsd),
     p_use_reserve: args.useReserve ?? false,
   });
   if (error) throw new Error(`No se pudo reservar presupuesto: ${error.message}`);
@@ -48,8 +57,8 @@ export async function finalizeBudget(
 ) {
   const { error } = await admin.rpc("finalize_ai_image_budget", {
     p_scope: args.scope ?? VISUAL_REDESIGN_BUDGET_SCOPE,
-    p_estimated_cost_usd: args.estimatedCostUsd,
-    p_actual_cost_usd: args.actualCostUsd,
+    p_estimated_cost_usd: normalizeBudgetUsd(args.estimatedCostUsd),
+    p_actual_cost_usd: normalizeBudgetUsd(args.actualCostUsd),
   });
   if (error) throw new Error(`No se pudo confirmar el gasto: ${error.message}`);
 }
@@ -60,7 +69,7 @@ export async function releaseBudget(
 ) {
   const { error } = await admin.rpc("release_ai_image_budget", {
     p_scope: args.scope ?? VISUAL_REDESIGN_BUDGET_SCOPE,
-    p_estimated_cost_usd: args.estimatedCostUsd,
+    p_estimated_cost_usd: normalizeBudgetUsd(args.estimatedCostUsd),
   });
   if (error) throw new Error(`No se pudo liberar la reserva: ${error.message}`);
 }
