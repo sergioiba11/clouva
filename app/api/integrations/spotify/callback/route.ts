@@ -1,13 +1,18 @@
 import { NextResponse } from "next/server";
 import { exchangeSpotifyCode, spotifyApiFetch } from "@/core/integrations/spotify/client";
-import { isSpotifyEnabled } from "@/core/integrations/spotify/config";
+import { CLOUVA_SPOTIFY_REDIRECT_URI, isSpotifyEnabled } from "@/core/integrations/spotify/config";
 import { consumeSpotifyState } from "@/core/integrations/spotify/state";
 import { persistSpotifyConnection, saveSpotifyUri } from "@/core/integrations/spotify/service";
 import type { SpotifyMe } from "@/core/integrations/spotify/types";
 import { createAdminSupabase } from "@/lib/server/supabase";
 
-function redirectWith(request: Request, path: string, params: Record<string, string>) {
-  const url = new URL(path, new URL(request.url).origin);
+function getSpotifyAppOrigin() {
+  const configuredRedirectUri = process.env.SPOTIFY_REDIRECT_URI?.trim() || CLOUVA_SPOTIFY_REDIRECT_URI;
+  return new URL(configuredRedirectUri).origin;
+}
+
+function redirectWith(path: string, params: Record<string, string>) {
+  const url = new URL(path, `${getSpotifyAppOrigin()}/`);
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
   return NextResponse.redirect(url);
 }
@@ -19,12 +24,12 @@ export async function GET(request: Request) {
   const providerError = url.searchParams.get("error");
   const admin = createAdminSupabase();
 
-  if (!isSpotifyEnabled()) return redirectWith(request, "/", { spotify: "disabled" });
-  if (!stateRaw) return redirectWith(request, "/", { spotify: "invalid_state" });
+  if (!isSpotifyEnabled()) return redirectWith("/", { spotify: "disabled" });
+  if (!stateRaw) return redirectWith("/", { spotify: "invalid_state" });
 
   try {
     const state = await consumeSpotifyState(admin, stateRaw);
-    if (providerError || !code) return redirectWith(request, state.returnPath, { spotify: "cancelled" });
+    if (providerError || !code) return redirectWith(state.returnPath, { spotify: "cancelled" });
 
     const tokens = await exchangeSpotifyCode(code);
     const me = await spotifyApiFetch<SpotifyMe>({ accessToken: tokens.access_token, path: "/me" });
@@ -39,8 +44,8 @@ export async function GET(request: Request) {
         action = "failed";
       }
     }
-    return redirectWith(request, state.returnPath, { spotify: "connected", action });
+    return redirectWith(state.returnPath, { spotify: "connected", action });
   } catch {
-    return redirectWith(request, "/", { spotify: "error" });
+    return redirectWith("/", { spotify: "error" });
   }
 }
