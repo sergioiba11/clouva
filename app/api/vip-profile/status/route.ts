@@ -5,11 +5,8 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 // Read-only, ownership-gated but NOT VIP-gated -- a subject whose VIP lapsed
-// must still be able to see their last published version (spec section 15:
-// "la última versión VIP publicada continúa visible"). Starting a new
-// generation is what actually requires active VIP (enforced in
-// /api/vip-profile/generate via requireActiveVipEntitlement). Works for
-// either a Player or an Estudio, playerId XOR studioId in the query.
+// must still be able to see their last published version. Works for either a
+// Player or an Estudio, playerId XOR studioId in the query.
 export async function GET(request: NextRequest) {
   try {
     const { user } = await requireUser(request);
@@ -54,7 +51,7 @@ export async function GET(request: NextRequest) {
         .maybeSingle(),
       admin
         .from("player_profile_versions")
-        .select("id,version_number,status,profile_level,copy_config,asset_references,brand_asset_version_id,created_at,published_at")
+        .select("id,version_number,status,profile_level,copy_config,layout_config,asset_references,brand_asset_version_id,created_at,published_at")
         .eq(subjectColumn, subjectId)
         .order("version_number", { ascending: false }),
     ]);
