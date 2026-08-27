@@ -33,6 +33,7 @@ import {
   type MobileHomeSectionKey,
 } from "@/lib/clouva-lab/mobile-home-config";
 import { usePublishedUiPage } from "@/lib/clouva-lab/use-published-ui-page";
+import { VISUAL_ASSETS } from "@/lib/visual-assets";
 import styles from "./mobile-home-dashboard.module.css";
 import labStyles from "./mobile-home-lab.module.css";
 
@@ -89,6 +90,9 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
     () => ({ ...configCssVariables(config), backgroundColor: config.theme.backgroundColor }) as CSSProperties,
     [config],
   );
+  const heroImage = previewMode
+    ? config.hero.imageUrl
+    : currentPlayer?.cover_url || currentPlayer?.hero_image_url || VISUAL_ASSETS["player-public-profile-cover-01"];
 
   if ((user && !playerReady) || loading || (configLoading && !configOverride)) {
     return (
@@ -111,7 +115,7 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
         key="hero"
         className={styles.hero}
         aria-labelledby="mobile-home-title"
-        style={{ backgroundImage: `url(${config.hero.imageUrl})` }}
+        style={{ backgroundImage: `url(${heroImage})` }}
         data-clouva-block="hero"
       >
         <div className={styles.heroShade} aria-hidden="true" />
