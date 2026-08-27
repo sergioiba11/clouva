@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
+import { IdentityConfigPanel, type IdentityLayoutConfig } from "@/components/identity/IdentityConfigPanel";
 
 type ProfileCopy = {
   tagline: string | null;
@@ -37,6 +38,7 @@ type Version = {
   status: "draft" | "review" | "published" | "archived";
   profile_level: "basic" | "vip";
   copy_config: ProfileCopy;
+  layout_config: IdentityLayoutConfig | null;
   asset_references: GeneratedAsset[];
   brand_asset_version_id: string | null;
   published_at: string | null;
@@ -47,7 +49,6 @@ const IN_PROGRESS_STATUSES = new Set([
   "generating_assets", "generating_variants", "generating_variant_assets", "assembling_profile",
 ]);
 
-// Real states only -- no invented percentages (spec section 18).
 const STATUS_LABEL: Record<string, string> = {
   queued: "En cola...",
   preparing_identity: "Preparando tu identidad...",
@@ -204,9 +205,6 @@ export function VipAiProfilePanel({ playerId, vipActive }: { playerId: string; v
 
   const publish = async () => {
     if (!draftVersion) return;
-    // Publicar la página nunca publica el logo solo (regla explícita) --
-    // si esta versión trae un logo nuevo (brand_asset_version_id), hay que
-    // confirmar antes de que se vuelva la identidad oficial del Player.
     let publishLogoToo = false;
     if (draftVersion.brand_asset_version_id) {
       publishLogoToo = window.confirm(
@@ -272,13 +270,7 @@ export function VipAiProfilePanel({ playerId, vipActive }: { playerId: string; v
             {referenceImageUrls.map((url) => (
               <div key={url} className="relative h-16 w-16 shrink-0 overflow-hidden rounded-xl border border-white/10">
                 <img src={url} alt="" className="h-full w-full object-cover" />
-                <button
-                  type="button"
-                  onClick={() => setReferenceImageUrls((current) => current.filter((item) => item !== url))}
-                  className="absolute right-0.5 top-0.5 grid h-4 w-4 place-items-center rounded-full bg-black/70 text-[10px] leading-none text-white"
-                >
-                  ×
-                </button>
+                <button type="button" onClick={() => setReferenceImageUrls((current) => current.filter((item) => item !== url))} className="absolute right-0.5 top-0.5 grid h-4 w-4 place-items-center rounded-full bg-black/70 text-[10px] leading-none text-white">×</button>
               </div>
             ))}
             {referenceImageUrls.length < MAX_REFERENCE_IMAGES ? (
@@ -310,11 +302,7 @@ export function VipAiProfilePanel({ playerId, vipActive }: { playerId: string; v
                   {variantCover ? <img src={variantCover.url} alt="" className="h-32 w-full object-cover" /> : <div className="h-32 w-full bg-white/5" />}
                   <div className="flex flex-1 flex-col gap-2 p-4">
                     <p className="text-xs text-white/50">{sections.map((s) => SECTION_LABEL[s.type] ?? s.type).join(" · ")}</p>
-                    <button
-                      disabled={selectingVariant !== null}
-                      onClick={() => void selectVariant(index)}
-                      className="mt-auto rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold disabled:opacity-60"
-                    >
+                    <button disabled={selectingVariant !== null} onClick={() => void selectVariant(index)} className="mt-auto rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold disabled:opacity-60">
                       {selectingVariant === index ? "Eligiendo..." : "Usar esta"}
                     </button>
                   </div>
@@ -339,9 +327,7 @@ export function VipAiProfilePanel({ playerId, vipActive }: { playerId: string; v
               {palette.length > 0 ? (
                 <div>
                   <p className="mb-1.5 text-xs uppercase tracking-[0.16em] text-white/40">Paleta sugerida</p>
-                  <div className="flex gap-2">
-                    {palette.map((hex) => <span key={hex} title={hex} className="h-7 w-7 rounded-full border border-white/20" style={{ backgroundColor: hex }} />)}
-                  </div>
+                  <div className="flex gap-2">{palette.map((hex) => <span key={hex} title={hex} className="h-7 w-7 rounded-full border border-white/20" style={{ backgroundColor: hex }} />)}</div>
                 </div>
               ) : null}
             </div>
@@ -362,6 +348,9 @@ export function VipAiProfilePanel({ playerId, vipActive }: { playerId: string; v
               );
             })}
           </div>
+          {draftVersion.layout_config ? (
+            <IdentityConfigPanel versionId={draftVersion.id} kind="player" layoutConfig={draftVersion.layout_config} onSaved={load} />
+          ) : null}
           <div className="flex flex-wrap gap-2 pt-1">
             <button disabled={starting || Object.keys(draftEdits).length === 0} onClick={() => void saveEdits()} className="rounded-xl border border-white/15 px-4 py-2.5 text-sm disabled:opacity-40">Guardar cambios</button>
             <button disabled={starting} onClick={() => void publish()} className="rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold disabled:opacity-60">Publicar versión profesional</button>
