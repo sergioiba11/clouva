@@ -10,6 +10,7 @@ import {
   Heart,
   Home,
   Pause,
+  Play,
   Plus,
   ShoppingBag,
   SkipBack,
@@ -23,6 +24,7 @@ import { useAuth } from "@/components/auth-provider";
 import { useCurrentPlayer } from "@/components/current-player-provider";
 import { AccountMenu } from "@/components/account/AccountMenu";
 import { SpotifyHomeConnectAction } from "@/components/music/SpotifyHomeConnectAction";
+import { useSpotifyPlayback } from "@/components/music/SpotifyPlaybackProvider";
 import { resolveAccountDisplayName, resolveCurrentPlayerStatus } from "@/lib/identity-names";
 import {
   configCssVariables,
@@ -55,6 +57,13 @@ function multiline(value: string) {
   ));
 }
 
+function formatTime(milliseconds: number) {
+  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
 type MobileHomeDashboardProps = {
   configOverride?: MobileHomeConfig;
   previewMode?: boolean;
@@ -64,6 +73,7 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
   const router = useRouter();
   const { user, profile, role, loading } = useAuth();
   const { currentPlayer, playerLoading, playerReady } = useCurrentPlayer();
+  const { playback, scopesReady, busyAction, controlPlayback } = useSpotifyPlayback();
   const { config, version, loading: configLoading } = usePublishedUiPage(
     "mobile-home",
     DEFAULT_MOBILE_HOME_CONFIG,
@@ -108,6 +118,13 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
   const openMusic = () => {
     if (!previewMode) router.push("/mi-flow/music");
   };
+  const runPlayback = (action: "play" | "pause" | "next" | "previous") => {
+    if (previewMode || !playback || !scopesReady) {
+      openMusic();
+      return;
+    }
+    void controlPlayback(action).catch(() => undefined);
+  };
 
   function renderHero() {
     return (
@@ -140,17 +157,26 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
 
   function renderMusic() {
     if (!config.music.visible) return null;
+    const title = playback?.track.title || config.music.title;
+    const artist = playback?.track.artist || config.music.artist;
+    const coverUrl = playback?.track.coverUrl || config.music.coverUrl;
+    const currentTime = playback ? formatTime(playback.progressMs) : config.music.currentTime;
+    const duration = playback ? formatTime(playback.durationMs) : config.music.duration;
+    const progress = playback?.durationMs
+      ? Math.min(100, Math.max(0, (playback.progressMs / playback.durationMs) * 100))
+      : null;
+
     return (
-      <section key="music" className={styles.musicCard} aria-label={`${config.music.title}, ${config.music.artist}`} data-clouva-block="music">
-        <button type="button" className={styles.musicCover} onClick={openMusic} aria-label={`Abrir ${config.music.title}`}>
-          <img src={config.music.coverUrl} alt={`Portada de ${config.music.title}`} />
+      <section key="music" className={styles.musicCard} aria-label={`${title}, ${artist}`} data-clouva-block="music">
+        <button type="button" className={styles.musicCover} onClick={openMusic} aria-label={`Abrir ${title}`}>
+          <img src={coverUrl} alt={`Portada de ${title}`} />
         </button>
 
         <div className={styles.musicPanel}>
           <div className={styles.musicHeading}>
             <div>
-              <h2>{config.music.title}</h2>
-              <p>{config.music.artist}</p>
+              <h2>{title}</h2>
+              <p>{artist}</p>
               {!previewMode ? <SpotifyHomeConnectAction /> : null}
             </div>
             <button
@@ -164,14 +190,16 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
           </div>
 
           <button type="button" className={styles.progressButton} onClick={openMusic} aria-label="Abrir reproductor musical">
-            <span><i /></span>
+            <span><i style={progress === null ? undefined : { width: `${progress}%` }} /></span>
           </button>
-          <div className={styles.musicTimes}><span>{config.music.currentTime}</span><span>{config.music.duration}</span></div>
+          <div className={styles.musicTimes}><span>{currentTime}</span><span>{duration}</span></div>
 
           <div className={styles.musicControls}>
-            <button type="button" onClick={openMusic} aria-label="Tema anterior"><SkipBack size={22} fill="currentColor" /></button>
-            <button type="button" className={styles.playButton} onClick={openMusic} aria-label="Abrir reproductor"><Pause size={25} fill="currentColor" /></button>
-            <button type="button" onClick={openMusic} aria-label="Tema siguiente"><SkipForward size={22} fill="currentColor" /></button>
+            <button type="button" onClick={() => runPlayback("previous")} disabled={Boolean(busyAction)} aria-label="Tema anterior"><SkipBack size={22} fill="currentColor" /></button>
+            <button type="button" className={styles.playButton} onClick={() => runPlayback(playback?.isPlaying ? "pause" : "play")} disabled={Boolean(busyAction)} aria-label={playback?.isPlaying ? "Pausar" : "Reproducir"}>
+              {playback?.isPlaying ? <Pause size={25} fill="currentColor" /> : <Play size={25} fill="currentColor" />}
+            </button>
+            <button type="button" onClick={() => runPlayback("next")} disabled={Boolean(busyAction)} aria-label="Tema siguiente"><SkipForward size={22} fill="currentColor" /></button>
           </div>
         </div>
       </section>
