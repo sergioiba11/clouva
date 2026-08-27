@@ -31,6 +31,8 @@ export type IdentityLayoutConfig = {
   [key: string]: unknown;
 };
 
+const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+
 const SECTION_LABEL: Record<string, string> = {
   hero: "Portada",
   about: "Sobre",
@@ -97,6 +99,7 @@ export function IdentityConfigPanel({
 
   const style = pageStyle(draft);
   const accent = style.palette?.accent || "#8f7cff";
+  const pickerAccent = HEX_COLOR_RE.test(accent) ? accent : "#8f7cff";
   const sectionKey = draft.layout_kind === "precise" ? "precise_sections" : "sections";
   const sections = useMemo(() => (Array.isArray(draft[sectionKey]) ? (draft[sectionKey] as IdentitySection[]) : []), [draft, sectionKey]);
 
@@ -117,13 +120,11 @@ export function IdentityConfigPanel({
   };
 
   const applyPreset = (preset: (typeof PRESETS)[number]) => {
-    setDraft((current) => mergePageStyle(current, kind === "studio" ? {
+    setDraft((current) => mergePageStyle(current, {
       palette: { accent: preset.accent },
       nav_style: preset.nav,
       radius: preset.radius,
-      header_overlay: preset.overlay,
-    } : {
-      palette: { accent: preset.accent },
+      ...(kind === "studio" ? { header_overlay: preset.overlay } : {}),
     }));
   };
 
@@ -160,7 +161,7 @@ export function IdentityConfigPanel({
         <div>
           <p className="text-xs uppercase tracking-[0.2em] text-violet-300/70">Configuración de identidad</p>
           <p className="mt-1 text-sm text-white/50">
-            {kind === "studio" ? "Ajustá la web del Estudio sin perder el diseño generado." : "Ajustá el estilo visual publicado del Player sin salir del creador."}
+            {kind === "studio" ? "Ajustá la web del Estudio sin perder el diseño generado." : "Ajustá la web pública del Player sin salir del creador."}
           </p>
         </div>
         <span className="rounded-full border border-white/10 px-2.5 py-1 text-[10px] uppercase tracking-[0.16em] text-white/35">
@@ -188,32 +189,28 @@ export function IdentityConfigPanel({
         <label className="block">
           <span className="mb-2 block text-[10px] uppercase tracking-[0.18em] text-white/35">Color principal</span>
           <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-black/20 p-2">
-            <input type="color" value={accent} onChange={(event) => setAccent(event.target.value)} className="h-9 w-12 cursor-pointer rounded-lg border-0 bg-transparent" />
+            <input type="color" value={pickerAccent} onChange={(event) => setAccent(event.target.value)} className="h-9 w-12 cursor-pointer rounded-lg border-0 bg-transparent" />
             <input value={accent} onChange={(event) => setAccent(event.target.value)} className="min-w-0 flex-1 bg-transparent text-sm uppercase outline-none" maxLength={7} />
           </div>
         </label>
 
-        {kind === "studio" ? (
-          <label className="block">
-            <span className="mb-2 block text-[10px] uppercase tracking-[0.18em] text-white/35">Navegación</span>
-            <select value={style.nav_style ?? "pill"} onChange={(event) => setNav(event.target.value as NavStyle)} className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-3 text-sm outline-none">
-              <option value="pill">Cápsula</option>
-              <option value="bar">Barra</option>
-            </select>
-          </label>
-        ) : null}
+        <label className="block">
+          <span className="mb-2 block text-[10px] uppercase tracking-[0.18em] text-white/35">Navegación</span>
+          <select value={style.nav_style ?? "pill"} onChange={(event) => setNav(event.target.value as NavStyle)} className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-3 text-sm outline-none">
+            <option value="pill">Cápsula</option>
+            <option value="bar">Barra</option>
+          </select>
+        </label>
 
-        {kind === "studio" ? (
-          <label className="block">
-            <span className="mb-2 block text-[10px] uppercase tracking-[0.18em] text-white/35">Bordes</span>
-            <select value={style.radius ?? "medium"} onChange={(event) => setRadius(event.target.value as Radius)} className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-3 text-sm outline-none">
-              <option value="none">Rectos</option>
-              <option value="small">Suaves</option>
-              <option value="medium">Medios</option>
-              <option value="large">Grandes</option>
-            </select>
-          </label>
-        ) : null}
+        <label className="block">
+          <span className="mb-2 block text-[10px] uppercase tracking-[0.18em] text-white/35">Bordes</span>
+          <select value={style.radius ?? "medium"} onChange={(event) => setRadius(event.target.value as Radius)} className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-3 text-sm outline-none">
+            <option value="none">Rectos</option>
+            <option value="small">Suaves</option>
+            <option value="medium">Medios</option>
+            <option value="large">Grandes</option>
+          </select>
+        </label>
 
         {kind === "studio" && draft.layout_kind === "precise" ? (
           <label className="flex items-center gap-3 rounded-xl border border-white/10 bg-black/20 px-3 py-3 text-sm text-white/65">
