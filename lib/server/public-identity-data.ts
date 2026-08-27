@@ -114,14 +114,19 @@ export async function resolvePlayerAlias(alias: string) {
   if (playerError) throw new Error(playerError.message);
   if (!player) return null;
 
-  const [affiliationResult, mediaResult, aliasResult, vipResult] = await Promise.all([
+  const [affiliationResult, mediaResult, aliasResult, vipResult, versionResult] = await Promise.all([
     supabase.from("player_studios").select(playerStudiosSelect).eq("player_id", player.id).eq("is_visible", true).eq("status", "active").order("display_order"),
     supabase.from("player_media").select("id,media_type,origin,source_url,public_url,thumbnail_url,caption,display_order").eq("player_id", player.id).eq("visibility", "public").order("display_order"),
     supabase.from("public_slug_aliases").select("alias").eq("entity_type", "player").eq("entity_id", player.id).eq("is_primary", true).maybeSingle(),
     supabase.rpc("is_player_vip", { p_player_id: player.id }),
+    supabase.from("player_profile_versions").select("layout_config").eq("player_id", player.id).eq("status", "published").maybeSingle(),
   ]);
   if (affiliationResult.error) throw new Error(affiliationResult.error.message);
   if (mediaResult.error) throw new Error(mediaResult.error.message);
+
+  const layoutConfig: LayoutConfig | null = versionResult.error
+    ? null
+    : sanitizeLayoutConfig(versionResult.data?.layout_config);
 
   return {
     player: player as unknown as Player,
@@ -129,6 +134,7 @@ export async function resolvePlayerAlias(alias: string) {
     media: (mediaResult.data ?? []) as unknown as PlayerMedia[],
     canonicalAlias: aliasResult.data?.alias || player.slug,
     isVip: vipResult.data === true,
+    layoutConfig,
   };
 }
 
@@ -186,11 +192,6 @@ export async function resolveStudioAlias(alias: string) {
     : sanitizeLayoutConfig(versionResult.data?.layout_config);
 
   const projects = projectsResult.data ?? [];
-  // Cuando el Estudio no tiene ningún lanzamiento propio cargado, la sección
-  // de música del layout custom cae a mostrar lanzamientos de otros artistas
-  // de La Matrix en vez de desaparecer -- pedido explícito del usuario. Solo
-  // se ejecuta cuando hace falta, no pesa en el camino normal donde el
-  // Estudio ya tiene música propia.
   const matrixDiscoveryProjects = projects.length === 0
     ? await (async () => {
         const { data, error } = await supabase
