@@ -37,6 +37,20 @@ export const AVATAR_MULTI_IMAGE_TASK_CONFIG = {
   target_formats: ["glb"],
 } as const;
 
+export const OBJECT_MULTI_IMAGE_TASK_CONFIG = {
+  ai_model: "meshy-6",
+  should_texture: true,
+  enable_pbr: true,
+  should_remesh: true,
+  topology: "quad",
+  target_polycount: 40000,
+  save_pre_remeshed_model: true,
+  image_enhancement: false,
+  remove_lighting: true,
+  multi_view_thumbnails: true,
+  target_formats: ["glb"],
+} as const;
+
 function getMeshyApiKey() {
   const apiKey = process.env.MESHY_API_KEY?.trim();
   if (!apiKey) throw new Error("Falta configurar MESHY_API_KEY en el servidor");
@@ -132,6 +146,21 @@ export async function createAvatarMultiImageTask(imageUrls: string[]) {
       image_urls: imageUrls,
       ...AVATAR_MULTI_IMAGE_TASK_CONFIG,
     }),
+  });
+  if (!data?.result || typeof data.result !== "string") throw new Error("Meshy no devolvió un ID de generación válido");
+  return data.result as string;
+}
+
+export async function createObjectMultiImageTask(imageUrls: string[], texturePrompt?: string) {
+  if (imageUrls.length !== 3) throw new Error("El objeto necesita exactamente tres referencias: frente, espalda y costado");
+  const body: Record<string, unknown> = {
+    image_urls: imageUrls,
+    ...OBJECT_MULTI_IMAGE_TASK_CONFIG,
+  };
+  if (texturePrompt?.trim()) body.texture_prompt = texturePrompt.trim().slice(0, 600);
+  const data = await meshyFetchAbsolute(MESHY_MULTI_IMAGE_BASE, {
+    method: "POST",
+    body: JSON.stringify(body),
   });
   if (!data?.result || typeof data.result !== "string") throw new Error("Meshy no devolvió un ID de generación válido");
   return data.result as string;

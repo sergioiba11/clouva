@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect } from "react";
 import { useAuth } from "@/components/auth-provider";
 import { CreatorStudioSimple } from "@/components/creator-studio/CreatorStudioSimple";
@@ -25,6 +26,14 @@ export function CreatorStudioBootstrap() {
 
   return (
     <main className="min-h-screen bg-[#050507]">
+      <div className="mx-auto flex max-w-[1100px] justify-end px-4 pt-4">
+        <Link
+          href="/creator-studio/objects"
+          className="rounded-full border border-violet-400/20 bg-violet-500/10 px-4 py-2 text-xs font-bold text-violet-200 transition hover:border-violet-400/40 hover:bg-violet-500/15"
+        >
+          Objetos & accesorios 3D →
+        </Link>
+      </div>
       <CreatorStudioSimple />
     </main>
   );
