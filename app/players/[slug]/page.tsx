@@ -30,6 +30,7 @@ export default async function LegacyPlayerProfilePage({ params }: { params: Prom
       affiliations={result.affiliations}
       media={result.media}
       isVip={result.isVip}
+      layoutConfig={result.layoutConfig}
     />
   );
 }
