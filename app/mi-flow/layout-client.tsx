@@ -34,6 +34,7 @@ export default function FlowLayoutClient({ children }: { children: React.ReactNo
     "/mi-flow/avatar-customizer",
     "/mi-flow/crear-prenda",
     "/mi-flow/armario",
+    "/mi-flow/music",
   ];
   if (fullScreenPages.includes(pathname)) return <>{children}</>;
 

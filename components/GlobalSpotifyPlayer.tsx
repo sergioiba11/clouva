@@ -32,9 +32,9 @@ export function GlobalSpotifyPlayer() {
     window.localStorage.setItem(STORAGE_KEY, nextState);
   }
 
-  // El Home integra música dentro del hero y Trébol. El launcher musical
-  // independiente solo existe fuera de la Home.
-  if (!mounted || pathname === "/") return null;
+  // Home y Mi Flow Music integran la música en su propia superficie.
+  // El launcher independiente solo existe donde no hay controles musicales nativos.
+  if (!mounted || pathname === "/" || pathname === "/mi-flow/music") return null;
 
   if (state !== "expanded") {
     return (
