@@ -5,6 +5,7 @@ import { Crosshair, X } from "lucide-react";
 import { useAuth } from "@/components/auth-provider";
 import { useClouvaAIAssistant } from "./ClouvaAIAssistantProvider";
 import { ClouvaAIChat } from "./ClouvaAIChat";
+import { SpotifyAssistantMiniPlayer } from "./SpotifyAssistantMiniPlayer";
 
 const QUICK_ACTIONS = [
   { label: "Crear un proyecto", prompt: "Quiero crear un proyecto nuevo en CLOUVA. Ayudame a definirlo y convertirlo en próximos pasos claros." },
@@ -56,6 +57,8 @@ export function ClouvaAICompactPanel() {
             <p className="mt-2 truncate text-violet-200">Selección: {context.ui.selectedElement.selector}</p>
           ) : null}
         </div>
+
+        {user ? <SpotifyAssistantMiniPlayer /> : null}
 
         <button
           type="button"
