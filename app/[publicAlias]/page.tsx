@@ -44,6 +44,7 @@ export default async function PublicPlayerAliasPage({ params }: { params: Promis
         affiliations={result.affiliations}
         media={result.media}
         isVip={result.isVip}
+        layoutConfig={result.layoutConfig}
       />
       <PublicMerchSection
         playerId={result.player.id}
