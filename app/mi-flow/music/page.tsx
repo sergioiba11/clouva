@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { MainNav } from "@/components/layout";
 import { useAuth } from "@/components/auth-provider";
+import { useCurrentPlayer } from "@/components/current-player-provider";
 import { useSpotifyPlayback } from "@/components/music/SpotifyPlaybackProvider";
 import { startSpotifyConnection } from "@/lib/music/spotify-client";
 
@@ -58,6 +59,7 @@ function formatDate(value?: string | null) {
 
 export default function MusicPage() {
   const { user } = useAuth();
+  const { currentPlayer } = useCurrentPlayer();
   const {
     enabled,
     connected,
@@ -171,6 +173,12 @@ export default function MusicPage() {
       : "Spotify necesita permisos"
     : "Conectá Spotify";
 
+  const identityArtwork = currentPlayer?.profile_image_url || connection?.avatarUrl || currentPlayer?.cover_url || currentPlayer?.hero_image_url || null;
+  const identityBackdrop = currentPlayer?.cover_url || currentPlayer?.hero_image_url || identityArtwork;
+  const activeArtwork = playback?.track.coverUrl || identityArtwork;
+  const activeBackdrop = playback?.track.coverUrl || identityBackdrop;
+  const spotifyProfileUrl = currentPlayer?.spotify_profile_url || null;
+
   return (
     <main className="min-h-screen bg-[#06060f] text-white">
       <MainNav />
@@ -185,9 +193,9 @@ export default function MusicPage() {
             <div className="mb-2 flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.24em] text-violet-300">
               <Music2 className="h-4 w-4" /> MI FLOW · MÚSICA
             </div>
-            <h1 className="max-w-3xl text-4xl font-black tracking-[-0.045em] md:text-6xl">Tu música, en un solo lugar.</h1>
+            <h1 className="max-w-3xl text-4xl font-black tracking-[-0.045em] md:text-6xl">CLOUVA Music.</h1>
             <p className="mt-3 max-w-2xl text-sm leading-6 text-white/50 md:text-base">
-              Escuchá lo que está sonando en Spotify y llevá tus canciones desde la primera idea hasta el lanzamiento sin salir de CLOUVA.
+              Tu reproducción de Spotify y tu proceso creativo, unidos en una sola superficie.
             </p>
           </div>
           <button
@@ -202,21 +210,21 @@ export default function MusicPage() {
         </section>
       </div>
 
-      <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 md:px-8 md:py-8">
-        <section className="grid gap-5 lg:grid-cols-[minmax(0,1.65fr)_minmax(280px,0.75fr)]">
-          <article className="relative overflow-hidden rounded-[28px] border border-white/10 bg-[#0b0b16] p-5 shadow-[0_30px_90px_rgba(0,0,0,0.34)] md:p-7">
-            {playback?.track.coverUrl ? (
+      <div className="mx-auto max-w-7xl space-y-6 px-4 py-6 pb-28 md:px-8 md:py-8 md:pb-16">
+        <section className="grid gap-5 lg:grid-cols-[minmax(0,1.72fr)_minmax(270px,0.68fr)]">
+          <article className="relative min-h-[330px] overflow-hidden rounded-[28px] border border-violet-300/15 bg-[#0b0b16] p-5 shadow-[0_30px_90px_rgba(0,0,0,0.34)] md:p-7">
+            {activeBackdrop ? (
               <div
-                className="pointer-events-none absolute inset-0 scale-110 bg-cover bg-center opacity-[0.12] blur-2xl"
-                style={{ backgroundImage: `url(${playback.track.coverUrl})` }}
+                className="pointer-events-none absolute inset-0 scale-110 bg-cover bg-center opacity-[0.14] blur-2xl"
+                style={{ backgroundImage: `url(${activeBackdrop})` }}
               />
             ) : null}
-            <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-violet-950/45 via-[#0b0b16]/95 to-[#0b0b16]" />
+            <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-violet-950/55 via-[#0b0b16]/92 to-[#0b0b16]" />
 
-            <div className="relative flex flex-col gap-6 md:flex-row md:items-center">
-              <div className="aspect-square w-full shrink-0 overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-violet-500/25 to-black md:w-52">
-                {playback?.track.coverUrl ? (
-                  <img src={playback.track.coverUrl} alt="" className="h-full w-full object-cover" />
+            <div className="relative flex h-full flex-col gap-6 md:flex-row md:items-center">
+              <div className="aspect-square w-full shrink-0 overflow-hidden rounded-2xl border border-violet-200/15 bg-gradient-to-br from-violet-500/25 to-black shadow-[0_20px_55px_rgba(0,0,0,0.35)] md:w-56">
+                {activeArtwork ? (
+                  <img src={activeArtwork} alt={playback ? `Portada de ${playback.track.title}` : "Identidad musical CLOUVA"} className="h-full w-full object-cover" />
                 ) : (
                   <div className="grid h-full place-items-center">
                     <Disc3 className="h-20 w-20 text-violet-300/45" />
@@ -237,8 +245,9 @@ export default function MusicPage() {
 
                 {playback ? (
                   <>
-                    <h2 className="mt-4 truncate text-3xl font-black tracking-[-0.035em] md:text-4xl">{playback.track.title}</h2>
-                    <p className="mt-1 truncate text-sm font-medium text-white/55 md:text-base">{playback.track.artist}</p>
+                    <p className="mt-5 text-[10px] font-bold uppercase tracking-[0.22em] text-white/35">SONANDO AHORA</p>
+                    <h2 className="mt-2 truncate text-3xl font-black tracking-[-0.035em] md:text-4xl">{playback.track.title}</h2>
+                    <p className="mt-1 truncate text-sm font-medium text-white/60 md:text-base">{playback.track.artist}</p>
                     {playback.track.album ? <p className="mt-1 truncate text-xs text-white/35">{playback.track.album}</p> : null}
 
                     <div className="mt-6">
@@ -251,69 +260,45 @@ export default function MusicPage() {
                       </div>
                     </div>
 
-                    <div className="mt-5 flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => void controlPlayback("previous")}
-                        disabled={Boolean(busyAction)}
-                        aria-label="Anterior"
-                        className="grid h-11 w-11 place-items-center rounded-full border border-white/10 bg-white/[0.04] text-white/70 transition hover:bg-white/10 hover:text-white disabled:opacity-40"
-                      >
-                        <SkipBack className="h-5 w-5" />
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void controlPlayback(playback.isPlaying ? "pause" : "play")}
-                        disabled={Boolean(busyAction)}
-                        aria-label={playback.isPlaying ? "Pausar" : "Reproducir"}
-                        className="grid h-13 w-13 place-items-center rounded-full bg-white text-black shadow-[0_0_28px_rgba(255,255,255,0.15)] transition hover:scale-105 disabled:opacity-50"
-                      >
+                    <div className="mt-5 flex flex-wrap items-center gap-2">
+                      <button type="button" onClick={() => void controlPlayback("previous")} disabled={Boolean(busyAction)} aria-label="Anterior" className="grid h-11 w-11 place-items-center rounded-full border border-white/10 bg-white/[0.04] text-white/70 transition hover:bg-white/10 hover:text-white disabled:opacity-40"><SkipBack className="h-5 w-5" /></button>
+                      <button type="button" onClick={() => void controlPlayback(playback.isPlaying ? "pause" : "play")} disabled={Boolean(busyAction)} aria-label={playback.isPlaying ? "Pausar" : "Reproducir"} className="grid h-14 w-14 place-items-center rounded-full bg-white text-black shadow-[0_0_28px_rgba(255,255,255,0.15)] transition hover:scale-105 disabled:opacity-50">
                         {busyAction === "play" || busyAction === "pause" ? <Loader2 className="h-5 w-5 animate-spin" /> : playback.isPlaying ? <Pause className="h-5 w-5 fill-current" /> : <Play className="h-5 w-5 fill-current" />}
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => void controlPlayback("next")}
-                        disabled={Boolean(busyAction)}
-                        aria-label="Siguiente"
-                        className="grid h-11 w-11 place-items-center rounded-full border border-white/10 bg-white/[0.04] text-white/70 transition hover:bg-white/10 hover:text-white disabled:opacity-40"
-                      >
-                        <SkipForward className="h-5 w-5" />
-                      </button>
+                      <button type="button" onClick={() => void controlPlayback("next")} disabled={Boolean(busyAction)} aria-label="Siguiente" className="grid h-11 w-11 place-items-center rounded-full border border-white/10 bg-white/[0.04] text-white/70 transition hover:bg-white/10 hover:text-white disabled:opacity-40"><SkipForward className="h-5 w-5" /></button>
                       {playback.track.externalUrl ? (
-                        <a
-                          href={playback.track.externalUrl}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="ml-auto inline-flex items-center gap-2 rounded-full border border-white/10 px-3 py-2 text-xs text-white/50 transition hover:text-white"
-                        >
-                          Abrir en Spotify <ArrowUpRight className="h-3.5 w-3.5" />
-                        </a>
+                        <a href={playback.track.externalUrl} target="_blank" rel="noreferrer" className="ml-auto inline-flex items-center gap-2 rounded-full border border-white/10 px-3 py-2 text-xs text-white/55 transition hover:border-[#1ed760]/30 hover:text-white">Abrir en Spotify <ArrowUpRight className="h-3.5 w-3.5" /></a>
                       ) : null}
                     </div>
                   </>
                 ) : (
                   <div className="mt-5 max-w-lg">
-                    <h2 className="text-2xl font-black tracking-[-0.03em]">
-                      {!connected ? "Conectá tu Spotify" : !scopesReady ? "Activá el control de reproducción" : "Poné algo a sonar en Spotify"}
+                    <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-white/35">CLOUVA MUSIC</p>
+                    <h2 className="mt-2 text-2xl font-black tracking-[-0.03em] md:text-3xl">
+                      {!connected ? "Conectá tu Spotify" : !scopesReady ? "Activá el control de reproducción" : "Poné algo a sonar"}
                     </h2>
-                    <p className="mt-2 text-sm leading-6 text-white/45">
+                    <p className="mt-2 text-sm leading-6 text-white/48">
                       {!connected
-                        ? "CLOUVA puede mostrar tu canción actual y controlar la reproducción desde esta pantalla."
+                        ? "Vinculá tu cuenta para ver la canción actual y controlarla desde CLOUVA."
                         : !scopesReady
-                          ? "Tu cuenta ya está vinculada, pero necesita aceptar los permisos de playback agregados recientemente."
-                          : "No hay una reproducción activa. Abrí Spotify en cualquier dispositivo, reproducí una canción y volvé acá."}
+                          ? "Tu cuenta está vinculada, pero necesita aceptar los permisos de playback."
+                          : "Spotify está conectado. Abrilo, reproducí cualquier canción y CLOUVA la va a detectar automáticamente."}
                     </p>
-                    {!connected || !scopesReady ? (
-                      <button
-                        type="button"
-                        onClick={() => void connectSpotify()}
-                        disabled={connecting || !enabled}
-                        className="mt-5 inline-flex items-center gap-2 rounded-full bg-[#1ed760] px-5 py-3 text-sm font-bold text-black transition hover:brightness-105 disabled:opacity-50"
-                      >
-                        {connecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Headphones className="h-4 w-4" />}
-                        {connected ? "Dar permisos de playback" : "Conectar Spotify"}
-                      </button>
-                    ) : null}
+                    <div className="mt-5 flex flex-wrap gap-2">
+                      {!connected || !scopesReady ? (
+                        <button type="button" onClick={() => void connectSpotify()} disabled={connecting || !enabled} className="inline-flex items-center gap-2 rounded-full bg-[#1ed760] px-5 py-3 text-sm font-bold text-black transition hover:brightness-105 disabled:opacity-50">
+                          {connecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Headphones className="h-4 w-4" />}
+                          {connected ? "Dar permisos de playback" : "Conectar Spotify"}
+                        </button>
+                      ) : (
+                        <a href="https://open.spotify.com/" target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full bg-[#1ed760] px-5 py-3 text-sm font-bold text-black transition hover:brightness-105">
+                          <Play className="h-4 w-4 fill-current" /> Abrir Spotify
+                        </a>
+                      )}
+                      {spotifyProfileUrl ? (
+                        <a href={spotifyProfileUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-4 py-3 text-sm font-semibold text-white/65 transition hover:bg-white/10 hover:text-white">Ver mi perfil <ArrowUpRight className="h-4 w-4" /></a>
+                      ) : null}
+                    </div>
                   </div>
                 )}
 
@@ -322,48 +307,43 @@ export default function MusicPage() {
             </div>
           </article>
 
-          <aside className="rounded-[28px] border border-white/10 bg-white/[0.025] p-5 md:p-6">
+          <aside className="rounded-[28px] border border-white/10 bg-white/[0.025] p-5">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-white/35">CUENTA MUSICAL</p>
-                <h2 className="mt-1 text-xl font-bold">Spotify</h2>
+                <h2 className="mt-1 text-lg font-bold">Spotify</h2>
               </div>
-              <span className="grid h-10 w-10 place-items-center rounded-full bg-[#1ed760]/15 text-[#1ed760]"><Music2 className="h-5 w-5" /></span>
+              <span className="grid h-9 w-9 place-items-center rounded-full bg-[#1ed760]/15 text-[#1ed760]"><Music2 className="h-4.5 w-4.5" /></span>
             </div>
 
-            <div className="mt-6 space-y-3">
-              <div className="rounded-2xl border border-white/8 bg-black/20 p-4">
+            <div className="mt-4 space-y-3">
+              <div className="rounded-2xl border border-white/8 bg-black/20 p-3.5">
                 <div className="flex items-center gap-3">
-                  {connection?.avatarUrl ? <img src={connection.avatarUrl} alt="" className="h-10 w-10 rounded-full object-cover" /> : <span className="grid h-10 w-10 place-items-center rounded-full bg-violet-500/15"><Headphones className="h-5 w-5 text-violet-300" /></span>}
+                  {connection?.avatarUrl ? <img src={connection.avatarUrl} alt="" className="h-9 w-9 rounded-full object-cover" /> : <span className="grid h-9 w-9 place-items-center rounded-full bg-violet-500/15"><Headphones className="h-4.5 w-4.5 text-violet-300" /></span>}
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-semibold">{connection?.displayName || (connected ? "Spotify conectado" : "Sin conectar")}</p>
-                    <p className="mt-0.5 text-xs text-white/35">{connected ? "Cuenta vinculada a CLOUVA" : "Conectá tu cuenta para sincronizar playback"}</p>
+                    <p className="mt-0.5 text-[11px] text-white/35">{connected ? "Cuenta vinculada a CLOUVA" : "Conectá tu cuenta"}</p>
                   </div>
                   {connected ? <Check className="h-4 w-4 text-emerald-300" /> : null}
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
-                <div className="rounded-2xl border border-white/8 bg-black/20 p-4">
+                <div className="rounded-2xl border border-white/8 bg-black/20 p-3.5">
                   <Volume2 className="h-4 w-4 text-violet-300" />
-                  <p className="mt-3 text-xs text-white/35">Dispositivo</p>
+                  <p className="mt-2.5 text-[11px] text-white/35">Dispositivo</p>
                   <p className="mt-1 truncate text-sm font-semibold">{playback?.device?.name || "Sin actividad"}</p>
                 </div>
-                <div className="rounded-2xl border border-white/8 bg-black/20 p-4">
+                <div className="rounded-2xl border border-white/8 bg-black/20 p-3.5">
                   <Disc3 className="h-4 w-4 text-[#1ed760]" />
-                  <p className="mt-3 text-xs text-white/35">Estado</p>
+                  <p className="mt-2.5 text-[11px] text-white/35">Estado</p>
                   <p className="mt-1 text-sm font-semibold">{playback?.isPlaying ? "Reproduciendo" : playback ? "Pausado" : "En espera"}</p>
                 </div>
               </div>
             </div>
 
             {!connected || !scopesReady ? (
-              <button
-                type="button"
-                onClick={() => void connectSpotify()}
-                disabled={connecting || !enabled}
-                className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl border border-[#1ed760]/25 bg-[#1ed760]/10 px-4 py-3 text-sm font-semibold text-[#70ee99] transition hover:bg-[#1ed760]/15 disabled:opacity-50"
-              >
+              <button type="button" onClick={() => void connectSpotify()} disabled={connecting || !enabled} className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl border border-[#1ed760]/25 bg-[#1ed760]/10 px-4 py-3 text-sm font-semibold text-[#70ee99] transition hover:bg-[#1ed760]/15 disabled:opacity-50">
                 {connecting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Headphones className="h-4 w-4" />}
                 {connected ? "Actualizar permisos" : "Conectar Spotify"}
               </button>
@@ -371,12 +351,12 @@ export default function MusicPage() {
           </aside>
         </section>
 
-        <section className="overflow-hidden rounded-[28px] border border-white/10 bg-[#0a0a14]">
+        <section className="overflow-hidden rounded-[28px] border border-violet-300/12 bg-[#0a0a14] shadow-[0_24px_75px_rgba(0,0,0,0.22)]">
           <div className="flex flex-col gap-4 border-b border-white/8 p-5 md:flex-row md:items-end md:justify-between md:p-6">
             <div>
               <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.22em] text-violet-300"><Sparkles className="h-3.5 w-3.5" /> PIPELINE CREATIVO</div>
               <h2 className="mt-2 text-2xl font-black tracking-[-0.03em]">Tus canciones</h2>
-              <p className="mt-1 text-sm text-white/40">La parte creativa de Music System sigue acá, pero integrada a tu superficie musical.</p>
+              <p className="mt-1 text-sm text-white/40">De la idea al lanzamiento, sin separar tu proceso de tu identidad musical.</p>
             </div>
 
             <div className="flex w-full gap-2 md:w-auto">
@@ -387,13 +367,13 @@ export default function MusicPage() {
                   if (event.key === "Enter") void createTrack();
                 }}
                 placeholder="Nombre de una nueva canción"
-                className="min-w-0 flex-1 rounded-2xl border border-white/10 bg-white/[0.035] px-4 py-3 text-sm text-white outline-none transition placeholder:text-white/25 focus:border-violet-400/40 md:w-72"
+                className="min-w-0 flex-1 rounded-2xl border border-violet-300/15 bg-white/[0.06] px-4 py-3 text-sm text-white shadow-inner outline-none transition placeholder:text-white/40 focus:border-violet-300/45 focus:bg-white/[0.08] md:w-72"
               />
               <button
                 type="button"
                 onClick={() => void createTrack()}
                 disabled={!title.trim() || saving}
-                className="inline-flex items-center gap-2 rounded-2xl bg-violet-500 px-4 py-3 text-sm font-bold text-white transition hover:bg-violet-400 disabled:cursor-not-allowed disabled:opacity-35"
+                className="inline-flex items-center gap-2 rounded-2xl bg-violet-500 px-4 py-3 text-sm font-bold text-white shadow-[0_10px_28px_rgba(124,58,237,0.24)] transition hover:bg-violet-400 disabled:cursor-not-allowed disabled:bg-violet-500/35 disabled:text-white/45 disabled:shadow-none"
               >
                 {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Crear
               </button>
