@@ -38,7 +38,7 @@ export function getSpotifyConfig(): SpotifyConfig {
     clientId: process.env.SPOTIFY_CLIENT_ID?.trim() || CLOUVA_SPOTIFY_CLIENT_ID,
     clientSecret: required("SPOTIFY_CLIENT_SECRET"),
     redirectUri: process.env.SPOTIFY_REDIRECT_URI?.trim() || CLOUVA_SPOTIFY_REDIRECT_URI,
-    scopes: (process.env.SPOTIFY_SCOPES || "user-library-read,user-library-modify,user-follow-read,user-follow-modify")
+    scopes: (process.env.SPOTIFY_SCOPES || "user-library-read,user-library-modify,user-follow-read,user-follow-modify,user-read-playback-state,user-read-currently-playing,user-modify-playback-state")
       .split(",")
       .map((scope) => scope.trim())
       .filter(Boolean),
