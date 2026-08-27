@@ -39,7 +39,7 @@ export function PublicShell({
       <header className="sticky top-0 z-20 border-b border-white/10 bg-[#07060b]/90 backdrop-blur-xl">
         <div className="mx-auto flex min-h-16 max-w-7xl items-center gap-5 px-4 py-3 sm:px-6">
           <Link href={brandHref} className="flex shrink-0 items-center gap-2 text-base font-semibold tracking-wide">
-            <span className="grid h-8 w-8 place-items-center rounded-xl border border-violet-400/35 bg-violet-500/10 text-violet-300">
+            <span className="grid h-8 w-8 place-items-center rounded-xl border border-[color:var(--public-accent)]/35 bg-[color:var(--public-accent)]/10 text-[color:var(--public-accent)]">
               <CloverIcon size={18} />
             </span>
             <span>{brand}</span>
@@ -52,7 +52,7 @@ export function PublicShell({
                   {link.label} <small className="ml-1 text-[8px] uppercase tracking-wider">Próximamente</small>
                 </span>
               ) : (
-                <Link key={link.href} href={link.href} className="rounded-full px-4 py-2 transition hover:bg-violet-500/10 hover:text-white">
+                <Link key={link.href} href={link.href} className="rounded-full px-4 py-2 transition hover:bg-[color:var(--public-accent)]/10 hover:text-white">
                   {link.label}
                 </Link>
               ))}
@@ -64,7 +64,7 @@ export function PublicShell({
               <Search size={17} />
             </button>
             <NotificationBell className="hidden sm:block" />
-            <Link href="/matrix" className="hidden items-center gap-2 rounded-full border border-violet-400/30 bg-violet-500/10 px-4 py-2 text-xs font-semibold text-violet-200 transition hover:bg-violet-500/20 sm:flex">
+            <Link href="/matrix" className="hidden items-center gap-2 rounded-full border border-[color:var(--public-accent)]/30 bg-[color:var(--public-accent)]/10 px-4 py-2 text-xs font-semibold text-[color:var(--public-accent)] transition hover:opacity-90 sm:flex">
               <Sparkles size={14} />
               Explorar La Matrix
             </Link>
@@ -87,7 +87,7 @@ export function PublicShell({
             {navLinks.map((link) => link.disabled ? (
               <span key={link.href} className="shrink-0 cursor-not-allowed rounded-full px-3 py-1.5 text-white/25">{link.label} · Próximamente</span>
             ) : (
-              <Link key={link.href} href={link.href} className="shrink-0 rounded-full px-3 py-1.5 hover:bg-white/5 hover:text-white">{link.label}</Link>
+              <Link key={link.href} href={link.href} className="shrink-0 rounded-full px-3 py-1.5 hover:bg-[color:var(--public-accent)]/10 hover:text-white">{link.label}</Link>
             ))}
           </nav>
         ) : null}
