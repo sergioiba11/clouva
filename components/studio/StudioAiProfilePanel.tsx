@@ -3,13 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
+import { IdentityConfigPanel, type IdentityLayoutConfig } from "@/components/identity/IdentityConfigPanel";
 
 // Studio counterpart of components/profile/VipAiProfilePanel.tsx -- same
-// pipeline, same job/version tables (generalized in
-// 20260731210000_studio_ai_identity.sql), just pointed at studioId instead
-// of playerId. Reaching this dashboard at all already required active VIP
-// (requireStudioManager), so there is no separate "activá VIP" gate here --
-// it's real either way, just described honestly.
+// pipeline, same job/version tables, just pointed at studioId instead of
+// playerId.
 
 type ProfileCopy = {
   tagline: string | null;
@@ -44,6 +42,7 @@ type Version = {
   status: "draft" | "review" | "published" | "archived";
   profile_level: "basic" | "vip";
   copy_config: ProfileCopy;
+  layout_config: IdentityLayoutConfig | null;
   asset_references: GeneratedAsset[];
   brand_asset_version_id: string | null;
   published_at: string | null;
@@ -131,8 +130,6 @@ export function StudioAiProfilePanel({ studioId }: { studioId: string }) {
       const payload = await readApiJson<{ connection: InstagramConnection }>(response);
       setInstagramConnection(payload.connection);
     } catch {
-      // Silencioso -- si falla, se trata como "no conectado" y el estudio
-      // igual puede usar el fallback de fotos reales.
       setInstagramConnection(null);
     } finally {
       setInstagramLoaded(true);
@@ -266,9 +263,6 @@ export function StudioAiProfilePanel({ studioId }: { studioId: string }) {
 
   const publish = async () => {
     if (!draftVersion) return;
-    // Publicar la página nunca publica el logo solo (regla explícita) --
-    // si esta versión trae un logo nuevo (brand_asset_version_id), hay que
-    // confirmar antes de que se vuelva la identidad oficial del Estudio.
     let publishLogoToo = false;
     if (draftVersion.brand_asset_version_id) {
       publishLogoToo = window.confirm(
@@ -343,30 +337,24 @@ export function StudioAiProfilePanel({ studioId }: { studioId: string }) {
 
       {!job || !IN_PROGRESS_STATUSES.has(job.status) ? (
         showReferenceUpload ? (
-        <div className="rounded-2xl border border-dashed border-white/15 p-4">
-          <p className="text-xs uppercase tracking-[0.16em] text-white/40">{instagramConnected ? "Imagen de inspiración (opcional)" : "Fotos reales de tu estudio"}</p>
-          <p className="mt-1 text-xs text-white/45">{instagramConnected ? "Además de los datos del Estudio, la IA puede usar una referencia visual para el logo y la portada." : "Subí fotos reales de tu estudio (o un mockup de web si ya tenés un diseño en mente) para que la IA las use como base."}</p>
-          <div className="mt-3 flex flex-wrap items-center gap-3">
-            {referenceImageUrls.map((url) => (
-              <div key={url} className="relative h-16 w-16 shrink-0 overflow-hidden rounded-xl border border-white/10">
-                <img src={url} alt="" className="h-full w-full object-cover" />
-                <button
-                  type="button"
-                  onClick={() => setReferenceImageUrls((current) => current.filter((item) => item !== url))}
-                  className="absolute right-0.5 top-0.5 grid h-4 w-4 place-items-center rounded-full bg-black/70 text-[10px] leading-none text-white"
-                >
-                  ×
-                </button>
-              </div>
-            ))}
-            {referenceImageUrls.length < MAX_REFERENCE_IMAGES ? (
-              <label className="grid h-16 w-16 shrink-0 cursor-pointer place-items-center rounded-xl border border-white/15 text-xs text-white/45 hover:border-violet-400/50">
-                {uploadingReference ? "..." : "+ Subir"}
-                <input type="file" accept="image/png,image/jpeg,image/webp" multiple className="hidden" disabled={uploadingReference} onChange={(event) => void uploadReferenceImages(event.target.files)} />
-              </label>
-            ) : null}
+          <div className="rounded-2xl border border-dashed border-white/15 p-4">
+            <p className="text-xs uppercase tracking-[0.16em] text-white/40">{instagramConnected ? "Imagen de inspiración (opcional)" : "Fotos reales de tu estudio"}</p>
+            <p className="mt-1 text-xs text-white/45">{instagramConnected ? "Además de los datos del Estudio, la IA puede usar una referencia visual para el logo y la portada." : "Subí fotos reales de tu estudio (o un mockup de web si ya tenés un diseño en mente) para que la IA las use como base."}</p>
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              {referenceImageUrls.map((url) => (
+                <div key={url} className="relative h-16 w-16 shrink-0 overflow-hidden rounded-xl border border-white/10">
+                  <img src={url} alt="" className="h-full w-full object-cover" />
+                  <button type="button" onClick={() => setReferenceImageUrls((current) => current.filter((item) => item !== url))} className="absolute right-0.5 top-0.5 grid h-4 w-4 place-items-center rounded-full bg-black/70 text-[10px] leading-none text-white">×</button>
+                </div>
+              ))}
+              {referenceImageUrls.length < MAX_REFERENCE_IMAGES ? (
+                <label className="grid h-16 w-16 shrink-0 cursor-pointer place-items-center rounded-xl border border-white/15 text-xs text-white/45 hover:border-violet-400/50">
+                  {uploadingReference ? "..." : "+ Subir"}
+                  <input type="file" accept="image/png,image/jpeg,image/webp" multiple className="hidden" disabled={uploadingReference} onChange={(event) => void uploadReferenceImages(event.target.files)} />
+                </label>
+              ) : null}
+            </div>
           </div>
-        </div>
         ) : null
       ) : null}
 
@@ -389,11 +377,7 @@ export function StudioAiProfilePanel({ studioId }: { studioId: string }) {
                   {variantCover ? <img src={variantCover.url} alt="" className="h-32 w-full object-cover" /> : <div className="h-32 w-full bg-white/5" />}
                   <div className="flex flex-1 flex-col gap-2 p-4">
                     <p className="text-xs text-white/50">{sections.map((s) => SECTION_LABEL[s.type] ?? s.type).join(" · ")}</p>
-                    <button
-                      disabled={selectingVariant !== null}
-                      onClick={() => void selectVariant(index)}
-                      className="mt-auto rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold disabled:opacity-60"
-                    >
+                    <button disabled={selectingVariant !== null} onClick={() => void selectVariant(index)} className="mt-auto rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold disabled:opacity-60">
                       {selectingVariant === index ? "Eligiendo..." : "Usar esta"}
                     </button>
                   </div>
@@ -423,9 +407,7 @@ export function StudioAiProfilePanel({ studioId }: { studioId: string }) {
               {palette.length > 0 ? (
                 <div>
                   <p className="mb-1.5 text-xs uppercase tracking-[0.16em] text-white/40">Paleta sugerida</p>
-                  <div className="flex gap-2">
-                    {palette.map((hex) => <span key={hex} title={hex} className="h-7 w-7 rounded-full border border-white/20" style={{ backgroundColor: hex }} />)}
-                  </div>
+                  <div className="flex gap-2">{palette.map((hex) => <span key={hex} title={hex} className="h-7 w-7 rounded-full border border-white/20" style={{ backgroundColor: hex }} />)}</div>
                 </div>
               ) : null}
             </div>
@@ -446,6 +428,9 @@ export function StudioAiProfilePanel({ studioId }: { studioId: string }) {
               );
             })}
           </div>
+          {draftVersion.layout_config ? (
+            <IdentityConfigPanel versionId={draftVersion.id} kind="studio" layoutConfig={draftVersion.layout_config} onSaved={load} />
+          ) : null}
           <div className="flex flex-wrap gap-2 pt-1">
             <button disabled={starting || Object.keys(draftEdits).length === 0} onClick={() => void saveEdits()} className="rounded-xl border border-white/15 px-4 py-2.5 text-sm disabled:opacity-40">Guardar cambios</button>
             <button disabled={starting} onClick={() => void publish()} className="rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold disabled:opacity-60">Publicar identidad del Estudio</button>
