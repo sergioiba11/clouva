@@ -33,7 +33,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
     const { data: version, error: versionError } = await admin
       .from("player_profile_versions")
-      .select("id,player_id,studio_id,status,copy_config,layout_config")
+      .select("id,player_id,studio_id,status,copy_config,layout_config,visual_config")
       .eq("id", id)
       .maybeSingle();
     if (versionError) throw new Error(versionError.message);
@@ -63,6 +63,21 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         return NextResponse.json({ error: "La configuración de identidad no es válida." }, { status: 400 });
       }
       update.layout_config = nextLayout;
+
+      // publish_player_profile_version already syncs visual_config.palette[0]
+      // to the canonical Player/Studio accent. Mirror the user-selected layout
+      // accent into that snapshot so configuration changes also reach the
+      // fixed Player renderer without adding a second persistence model.
+      const configuredAccent = nextLayout.page_style?.palette?.accent;
+      if (configuredAccent) {
+        const currentVisual = version.visual_config && typeof version.visual_config === "object"
+          ? version.visual_config as Record<string, unknown>
+          : {};
+        const currentPalette = Array.isArray(currentVisual.palette)
+          ? currentVisual.palette.filter((item): item is string => typeof item === "string" && item !== configuredAccent)
+          : [];
+        update.visual_config = { ...currentVisual, palette: [configuredAccent, ...currentPalette].slice(0, 8) };
+      }
     }
 
     if (Object.keys(update).length === 0) {
@@ -74,7 +89,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       .update(update)
       .eq("id", id)
       .eq("status", "draft")
-      .select("id,copy_config,layout_config")
+      .select("id,copy_config,layout_config,visual_config")
       .single();
     if (updateError) throw new Error(updateError.message);
 
