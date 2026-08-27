@@ -10,6 +10,8 @@ export type CreatorObjectPreset = {
   kind: CreatorObjectKind;
   category: string;
   description: string;
+  economyKey?: string;
+  assetRole?: string;
   texturePrompt?: string;
   attachmentProfile: {
     mode: "world" | "avatar";
@@ -29,6 +31,8 @@ export const CREATOR_OBJECT_PRESETS = {
     kind: "object",
     category: "currency",
     description: "Moneda oficial FLLOWS de CLOUVA.",
+    economyKey: "flows",
+    assetRole: "currency-3d-official",
     texturePrompt: "Premium chrome-silver CLOUVA FLLOWS coin, polished metallic surface, electric violet emissive accents, crisp four-loop emblem, clean readable game currency asset, preserve the reference geometry exactly.",
     attachmentProfile: {
       mode: "world",
