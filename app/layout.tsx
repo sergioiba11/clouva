@@ -7,6 +7,7 @@ import { ActiveAvatarHydrator } from "@/components/avatar-engine/ActiveAvatarHyd
 import { GlobalSpotifyPlayer } from "@/components/GlobalSpotifyPlayer";
 import { GlobalClouvaAIButton } from "@/components/GlobalClouvaAIButton";
 import { ClouvaAIAssistantProvider } from "@/components/clouva-ai/ClouvaAIAssistantProvider";
+import { SpotifyPlaybackProvider } from "@/components/music/SpotifyPlaybackProvider";
 
 // Browser identity is global: the tab always carries the CLOUVA brand and official clover icon.
 export const metadata: Metadata = {
@@ -35,12 +36,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <ThemeProvider>
           <AuthProvider>
             <CurrentPlayerProvider>
-              <ClouvaAIAssistantProvider>
-                <ActiveAvatarHydrator />
-                {children}
-                <GlobalClouvaAIButton />
-                <GlobalSpotifyPlayer />
-              </ClouvaAIAssistantProvider>
+              <SpotifyPlaybackProvider>
+                <ClouvaAIAssistantProvider>
+                  <ActiveAvatarHydrator />
+                  {children}
+                  <GlobalClouvaAIButton />
+                  <GlobalSpotifyPlayer />
+                </ClouvaAIAssistantProvider>
+              </SpotifyPlaybackProvider>
             </CurrentPlayerProvider>
           </AuthProvider>
         </ThemeProvider>
