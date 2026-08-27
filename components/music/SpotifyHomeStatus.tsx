@@ -1,72 +1,56 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { useAuth } from "@/components/auth-provider";
-import { getSpotifyConnectionStatus, startSpotifyConnection } from "@/lib/music/spotify-client";
+import { useSpotifyPlayback } from "@/components/music/SpotifyPlaybackProvider";
+import { startSpotifyConnection } from "@/lib/music/spotify-client";
 
 export function SpotifyHomeStatus() {
   const { user } = useAuth();
-  const [loading, setLoading] = useState(true);
+  const {
+    enabled,
+    connected,
+    scopesReady,
+    connection,
+    playback,
+    loading,
+    error,
+  } = useSpotifyPlayback();
   const [busy, setBusy] = useState(false);
-  const [enabled, setEnabled] = useState(true);
-  const [connected, setConnected] = useState(false);
-  const [displayName, setDisplayName] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const refresh = useCallback(async () => {
-    if (!user) {
-      setLoading(false);
-      setConnected(false);
-      setDisplayName(null);
-      return;
-    }
-    try {
-      const result = await getSpotifyConnectionStatus();
-      setEnabled(result.enabled !== false);
-      setConnected(Boolean(result.connection?.connected));
-      setDisplayName(result.connection?.displayName || null);
-      setError(null);
-    } catch {
-      setConnected(false);
-      setError("No pudimos comprobar Spotify.");
-    } finally {
-      setLoading(false);
-    }
-  }, [user]);
-
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
 
   const connect = async () => {
     if (!user || busy || !enabled) return;
     setBusy(true);
-    setError(null);
     try {
       await startSpotifyConnection({ returnPath: "/" });
-    } catch {
+    } finally {
       setBusy(false);
-      setError("No pudimos abrir Spotify. Intentá de nuevo.");
     }
   };
 
+  const title = loading
+    ? "Comprobando Spotify…"
+    : !enabled
+      ? "Spotify no disponible"
+      : !connected
+        ? "Conectá Spotify"
+        : playback?.track.title || "Spotify conectado";
+
+  const detail = playback?.track.artist
+    || connection?.displayName
+    || (connected ? "Tu cuenta está disponible en CLOUVA" : "Conectá tu cuenta sin salir del Home");
+
   return (
     <div>
-      <small>Tu música</small>
-      <strong>{loading ? "Comprobando Spotify…" : connected ? "Spotify conectado" : "Conectá Spotify"}</strong>
-      <span>
-        {connected
-          ? (displayName || "Tu cuenta está disponible en CLOUVA")
-          : enabled
-            ? "Conectá tu cuenta sin salir del Home"
-            : "Spotify todavía no está disponible"}
-      </span>
-      {!loading && !connected && enabled ? (
+      <small>{playback?.isPlaying ? "Sonando ahora" : "Tu música"}</small>
+      <strong>{title}</strong>
+      <span>{detail}</span>
+      {!loading && enabled && (!connected || !scopesReady) ? (
         <button
           type="button"
           onClick={connect}
           disabled={busy}
-          aria-label="Conectar mi cuenta de Spotify"
+          aria-label={connected ? "Reconectar Spotify para activar controles" : "Conectar mi cuenta de Spotify"}
           style={{
             marginTop: 6,
             width: "fit-content",
@@ -82,7 +66,7 @@ export function SpotifyHomeStatus() {
             opacity: busy ? 0.7 : 1,
           }}
         >
-          {busy ? "Abriendo Spotify…" : "Conectar Spotify"}
+          {busy ? "Abriendo Spotify…" : connected ? "Activar controles" : "Conectar Spotify"}
         </button>
       ) : null}
       {error ? <span role="status" style={{ marginTop: 4, color: "#ff9b9b" }}>{error}</span> : null}

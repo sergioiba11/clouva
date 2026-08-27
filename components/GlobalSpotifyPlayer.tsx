@@ -15,7 +15,6 @@ export function GlobalSpotifyPlayer() {
   const pathname = usePathname();
   const [state, setState] = useState<PlayerState>("hidden");
   const [mounted, setMounted] = useState(false);
-  const [mobileViewport, setMobileViewport] = useState(false);
 
   useEffect(() => {
     const saved = window.localStorage.getItem(STORAGE_KEY);
@@ -28,23 +27,14 @@ export function GlobalSpotifyPlayer() {
     setMounted(true);
   }, []);
 
-  useEffect(() => {
-    const media = window.matchMedia("(max-width: 820px)");
-    const sync = () => setMobileViewport(media.matches);
-
-    sync();
-    media.addEventListener("change", sync);
-    return () => media.removeEventListener("change", sync);
-  }, []);
-
   function updateState(nextState: PlayerState) {
     setState(nextState);
     window.localStorage.setItem(STORAGE_KEY, nextState);
   }
 
-  // La Home mobile ya contiene su propio reproductor integrado. El botón
-  // flotante global se mantiene en el resto de CLOUVA y en la Home desktop.
-  if (!mounted || (pathname === "/" && mobileViewport)) return null;
+  // El Home integra música dentro del hero y Trébol. El launcher musical
+  // independiente solo existe fuera de la Home.
+  if (!mounted || pathname === "/") return null;
 
   if (state !== "expanded") {
     return (

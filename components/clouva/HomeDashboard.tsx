@@ -27,6 +27,7 @@ import { useCurrentPlayer } from "@/components/current-player-provider";
 import { AccountMenu } from "@/components/account/AccountMenu";
 import { useClouvaAIAssistant } from "@/components/clouva-ai/ClouvaAIAssistantProvider";
 import { SpotifyHomeStatus } from "@/components/music/SpotifyHomeStatus";
+import { useSpotifyPlayback } from "@/components/music/SpotifyPlaybackProvider";
 import { resolveHomeDisplayName } from "@/lib/identity-names";
 import { VISUAL_ASSETS } from "@/lib/visual-assets";
 import styles from "./home-dashboard.module.css";
@@ -97,6 +98,7 @@ export function HomeDashboard() {
   const { user, profile, role } = useAuth();
   const { currentPlayer, playerLoading, playerReady } = useCurrentPlayer();
   const { openAssistant } = useClouvaAIAssistant();
+  const { playback } = useSpotifyPlayback();
 
   if (user && !playerReady) {
     return <main className="min-h-screen bg-[#060612]" aria-busy={playerLoading} aria-label="Cargando tu identidad CLOUVA" />;
@@ -111,7 +113,7 @@ export function HomeDashboard() {
         ? "Tu identidad CLOUVA"
         : "Explorá tu propio mundo";
   const identityAvatarImage = currentPlayer?.profile_image_url || profile?.avatar_url || user?.user_metadata?.avatar_url || null;
-  const heroPlayerImage = currentPlayer?.cover_url || currentPlayer?.hero_image_url || identityAvatarImage || null;
+  const heroPlayerImage = currentPlayer?.cover_url || currentPlayer?.hero_image_url || VISUAL_ASSETS["player-public-profile-cover-01"];
   const isSignedIn = Boolean(user);
   const hasAvatar = Boolean(profile?.avatar_3d_url);
   const completedSteps = [isSignedIn, Boolean(profile?.username), hasAvatar].filter(Boolean).length;
@@ -191,8 +193,8 @@ export function HomeDashboard() {
       <section className={styles.content}>
         <section
           className={styles.hero}
-          data-visual-asset="home-avatar-atmosphere-01"
-          style={{ backgroundImage: `url(${VISUAL_ASSETS["home-avatar-atmosphere-01"]})` }}
+          data-visual-asset="player-public-profile-cover-01"
+          style={{ backgroundImage: `url(${heroPlayerImage})` }}
         >
           <div className={styles.heroShade} aria-hidden="true" />
           <div className={styles.heroCopy}>
@@ -218,24 +220,6 @@ export function HomeDashboard() {
             </div>
           </div>
 
-          <div className={styles.heroPlayer} aria-label={`Tu Player: ${displayName}`}>
-            <div className={styles.heroPlayerGlow} aria-hidden="true" />
-            <div className={styles.heroPlayerFrame}>
-              {heroPlayerImage ? (
-                <img
-                  className={styles.heroPlayerImage}
-                  src={String(heroPlayerImage)}
-                  alt={`Imagen principal de ${displayName}`}
-                />
-              ) : (
-                <div className={styles.heroPlayerFallbackContent}>
-                  <span className={styles.heroPlayerInitials}>{initials(displayName) || "C"}</span>
-                  <small>Tu Player</small>
-                </div>
-              )}
-            </div>
-          </div>
-
           <button
             type="button"
             className={styles.heroAICompanion}
@@ -250,7 +234,13 @@ export function HomeDashboard() {
           </button>
 
           <div className={styles.nowPlaying}>
-            <div className={styles.cover}><Music2 size={20} /></div>
+            <div className={styles.cover}>
+              {playback?.track.coverUrl ? (
+                <img src={playback.track.coverUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: "inherit" }} />
+              ) : (
+                <Music2 size={20} />
+              )}
+            </div>
             <SpotifyHomeStatus />
             <Link href="/mi-flow/music" aria-label="Abrir música"><ArrowRight size={17} /></Link>
           </div>
