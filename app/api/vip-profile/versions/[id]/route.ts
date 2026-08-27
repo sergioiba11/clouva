@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
 import { requireActiveVipEntitlement } from "@/lib/server/vip-profile-permissions";
+import { sanitizeLayoutConfig } from "@/lib/server/layout-config";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,11 +22,9 @@ function sanitizeCopyPatch(body: unknown) {
   return patch;
 }
 
-// Lets the VIP owner (or an admin) edit the Gemini-proposed copy on their own
-// draft version before publishing -- spec section 16/22: "puedo revisarla,
-// puedo editarla". Only touches whitelisted copy_config fields, and only
-// while the version is still a draft (a published/archived version is a
-// fixed snapshot -- editing it would silently rewrite history).
+// Lets the VIP owner (or an admin) edit the Gemini-proposed copy and the
+// structured layout configuration on their own draft version before
+// publishing. Published/archived versions remain immutable snapshots.
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
@@ -34,7 +33,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
     const { data: version, error: versionError } = await admin
       .from("player_profile_versions")
-      .select("id,player_id,studio_id,status,copy_config")
+      .select("id,player_id,studio_id,status,copy_config,layout_config")
       .eq("id", id)
       .maybeSingle();
     if (versionError) throw new Error(versionError.message);
@@ -50,16 +49,32 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       studioId: (version.studio_id as string | null) ?? undefined,
     });
 
-    const body = await request.json().catch(() => ({}));
-    const patch = sanitizeCopyPatch(body);
-    const nextCopyConfig = { ...(version.copy_config as Record<string, unknown>), ...patch };
+    const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    const copyPatch = sanitizeCopyPatch(body);
+    const update: Record<string, unknown> = {};
+
+    if (Object.keys(copyPatch).length > 0) {
+      update.copy_config = { ...(version.copy_config as Record<string, unknown>), ...copyPatch };
+    }
+
+    if ("layout_config" in body) {
+      const nextLayout = sanitizeLayoutConfig(body.layout_config);
+      if (!nextLayout) {
+        return NextResponse.json({ error: "La configuración de identidad no es válida." }, { status: 400 });
+      }
+      update.layout_config = nextLayout;
+    }
+
+    if (Object.keys(update).length === 0) {
+      return NextResponse.json({ error: "No hay cambios editables para guardar." }, { status: 400 });
+    }
 
     const { data: updated, error: updateError } = await admin
       .from("player_profile_versions")
-      .update({ copy_config: nextCopyConfig })
+      .update(update)
       .eq("id", id)
       .eq("status", "draft")
-      .select("id,copy_config")
+      .select("id,copy_config,layout_config")
       .single();
     if (updateError) throw new Error(updateError.message);
 
