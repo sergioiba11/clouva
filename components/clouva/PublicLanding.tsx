@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AnimatedClouvaMark } from "@/components/clouva/AnimatedClouvaMark";
+import { OfficialClouvaMark } from "@/components/clouva/OfficialClouvaMark";
 
 export function PublicLanding() {
   return (
@@ -17,17 +17,19 @@ export function PublicLanding() {
         <header className="flex items-center justify-between">
           <Link
             href="/"
-            className="text-[11px] font-medium uppercase tracking-[0.34em] text-white/88 transition hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-300/80"
+            className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.34em] text-white/88 transition hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-300/80"
             aria-label="CLOUVA"
           >
-            CLOUVA
+            <OfficialClouvaMark className="h-6 w-6" />
+            <span>CLOUVA</span>
           </Link>
           <span className="text-[9px] uppercase tracking-[0.26em] text-white/28">vida de flows</span>
         </header>
 
         <section className="flex flex-1 flex-col items-center justify-center py-8 text-center sm:py-10">
-          <div className="w-full max-w-[31rem]">
-            <AnimatedClouvaMark />
+          <div className="relative grid w-full max-w-[24rem] place-items-center">
+            <div className="pointer-events-none absolute inset-[19%] rounded-full bg-violet-500/[0.08] blur-3xl" aria-hidden="true" />
+            <OfficialClouvaMark className="relative aspect-square w-[72%] max-w-[17rem]" />
           </div>
 
           <div className="-mt-2 sm:-mt-4">
