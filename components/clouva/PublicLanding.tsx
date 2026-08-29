@@ -42,13 +42,13 @@ export function PublicLanding() {
           <div className="mt-10 grid w-full max-w-sm grid-cols-2 gap-2.5 sm:mt-12">
             <Link
               href="/login"
-              className="inline-flex min-h-13 items-center justify-center rounded-full bg-white px-6 text-sm font-semibold text-black transition duration-300 hover:bg-white/88 active:scale-[0.985] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-300/80"
+              className="inline-flex min-h-14 items-center justify-center rounded-full bg-white px-6 text-sm font-semibold text-black transition duration-300 hover:bg-white/88 active:scale-[0.985] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-300/80"
             >
               Entrar
             </Link>
             <Link
               href="/matrix"
-              className="inline-flex min-h-13 items-center justify-center rounded-full border border-white/16 bg-white/[0.025] px-6 text-sm font-medium text-white transition duration-300 hover:border-white/32 hover:bg-white/[0.06] active:scale-[0.985] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-300/80"
+              className="inline-flex min-h-14 items-center justify-center rounded-full border border-white/16 bg-white/[0.025] px-6 text-sm font-medium text-white transition duration-300 hover:border-white/32 hover:bg-white/[0.06] active:scale-[0.985] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-300/80"
             >
               Ver
             </Link>
