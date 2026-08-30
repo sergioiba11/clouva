@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { OfficialClouvaMark } from "@/components/clouva/OfficialClouvaMark";
 
+// Deploy marker: 2026-08-30 CLOUVA landing background release.
 export function PublicLanding() {
   return (
     <main className="relative min-h-[100svh] overflow-hidden bg-black text-white">
