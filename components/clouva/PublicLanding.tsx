@@ -1,17 +1,34 @@
 import Link from "next/link";
 import { OfficialClouvaMark } from "@/components/clouva/OfficialClouvaMark";
 
+function FlowCloverOrb() {
+  return (
+    <span
+      className="pointer-events-none absolute -bottom-4 -left-4 z-20 grid h-[54px] w-[54px] place-items-center rounded-full border border-violet-400/55 bg-[#100519]/95 shadow-[0_0_22px_rgba(177,71,255,.85),inset_0_0_16px_rgba(168,85,247,.22)]"
+      aria-hidden="true"
+    >
+      <span className="relative block h-7 w-7 drop-shadow-[0_0_7px_rgba(216,180,254,1)]">
+        <span className="absolute left-1/2 top-0 h-[15px] w-[15px] -translate-x-1/2 rounded-[55%_55%_48%_48%] border-2 border-violet-200 bg-violet-500/80" />
+        <span className="absolute bottom-0 left-1/2 h-[15px] w-[15px] -translate-x-1/2 rounded-[48%_48%_55%_55%] border-2 border-violet-200 bg-violet-500/80" />
+        <span className="absolute left-0 top-1/2 h-[15px] w-[15px] -translate-y-1/2 rounded-[55%_48%_48%_55%] border-2 border-violet-200 bg-violet-500/80" />
+        <span className="absolute right-0 top-1/2 h-[15px] w-[15px] -translate-y-1/2 rounded-[48%_55%_55%_48%] border-2 border-violet-200 bg-violet-500/80" />
+        <span className="absolute left-1/2 top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-violet-100" />
+      </span>
+    </span>
+  );
+}
+
 export function PublicLanding() {
   return (
     <main className="relative min-h-[100svh] overflow-hidden bg-black text-white">
       <div
-        className="absolute inset-0 bg-cover bg-center"
-        style={{ backgroundImage: "url('/api/clouva-landing-bg?v=v4')" }}
+        className="absolute inset-0 bg-cover bg-top"
+        style={{ backgroundImage: "url('/api/clouva-landing-bg?v=v5')" }}
         aria-hidden="true"
       />
 
       <div
-        className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_bottom,rgba(0,0,0,.18)_0%,rgba(0,0,0,.03)_48%,rgba(0,0,0,.12)_58%,rgba(0,0,0,.58)_76%,rgba(0,0,0,.94)_100%)]"
+        className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_bottom,rgba(0,0,0,.12)_0%,rgba(0,0,0,.01)_47%,rgba(0,0,0,.08)_58%,rgba(0,0,0,.55)_76%,rgba(0,0,0,.96)_100%)]"
         aria-hidden="true"
       />
 
@@ -47,7 +64,7 @@ export function PublicLanding() {
             Entrá a tu universo creativo.
           </p>
 
-          <div className="mt-6 grid w-full grid-cols-2 gap-3">
+          <div className="relative mt-6 grid w-full grid-cols-2 gap-3">
             <Link
               href="/login"
               className="inline-flex min-h-16 items-center justify-center gap-3 rounded-full border border-white/90 bg-[linear-gradient(135deg,#fff_0%,#efe2ff_48%,#d19cff_100%)] px-5 text-[clamp(1.05rem,4.8vw,1.3rem)] font-bold text-violet-950 shadow-[0_0_34px_rgba(170,75,255,.8)] transition active:scale-[.985]"
@@ -64,6 +81,8 @@ export function PublicLanding() {
             >
               Ver <span className="text-2xl font-normal text-violet-400">→</span>
             </Link>
+
+            <FlowCloverOrb />
           </div>
 
           <footer className="mt-7 w-full text-center">
