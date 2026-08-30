@@ -1,0 +1,79 @@
+name: Install exact CLOUVA landing hero
+
+on:
+  push:
+    paths:
+      - "tools/landing-master/READY"
+
+permissions:
+  contents: write
+
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build exact image asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p public/assets/clouva
+          cat tools/landing-master/part-*.b64 | base64 --decode > public/assets/clouva/landing-hero.jpg
+          echo "31bfb2035b447eae9f40fc50ad69735da823ee4f92b8eafe01694d5bd1303ed7  public/assets/clouva/landing-hero.jpg" | sha256sum -c -
+          test "$(wc -c < public/assets/clouva/landing-hero.jpg)" -eq 217878
+
+      - name: Wire the landing directly to the exact asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          landing = Path("components/clouva/PublicLanding.tsx")
+          text = landing.read_text()
+          old_src = 'src="/api/clouva-landing-bg?v=v6"'
+          new_src = 'src="/assets/clouva/landing-hero.jpg"'
+          if old_src not in text:
+              raise SystemExit("Expected landing API source was not found")
+          text = text.replace(old_src, new_src, 1)
+
+          old_class = 'className="pointer-events-none absolute inset-0 h-full w-full select-none object-cover object-top"'
+          new_class = 'className="pointer-events-none absolute inset-x-0 top-0 h-auto w-full select-none"'
+          if old_class not in text:
+              raise SystemExit("Expected landing image class was not found")
+          text = text.replace(old_class, new_class, 1)
+          landing.write_text(text)
+
+          package = Path("package.json")
+          pkg = package.read_text()
+          pkg = pkg.replace(
+              'node scripts/prepare-clouva-model.mjs && node scripts/prepare-clouva-landing-bg.mjs',
+              'node scripts/prepare-clouva-model.mjs',
+          )
+          package.write_text(pkg)
+          PY
+
+      - name: Remove obsolete encoded landing pipeline
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm -f app/api/clouva-landing-bg/route.ts
+          git rm -f scripts/prepare-clouva-landing-bg.mjs
+          git rm -f public/assets/clouva/landing-bg-*.b64 || true
+          git rm -f public/assets/clouva/landing-bg.b64.txt || true
+          git rm -f tools/landing-master/part-*.b64
+          git rm -f tools/landing-master/READY
+          git rm -f .github/workflows/install-exact-landing-hero.yml
+          git add public/assets/clouva/landing-hero.jpg components/clouva/PublicLanding.tsx package.json
+
+      - name: Commit exact direct asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Clouva"
+          git config user.email "sergio.iba.11@gmail.com"
+          git commit -m "Use exact CLOUVA landing hero as direct asset"
+          git push origin HEAD:main
