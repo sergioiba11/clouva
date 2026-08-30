@@ -1,13 +1,12 @@
 import Link from "next/link";
 import { OfficialClouvaMark } from "@/components/clouva/OfficialClouvaMark";
 
-// Deploy marker: landing high-resolution background.
 export function PublicLanding() {
   return (
     <main className="relative min-h-[100svh] overflow-hidden bg-black text-white">
       <div
         className="absolute inset-0 bg-cover bg-center"
-        style={{ backgroundImage: "url('/assets/clouva/landing-bg.jpg')" }}
+        style={{ backgroundImage: "url('/api/clouva-landing-bg?v=hd2')" }}
         aria-hidden="true"
       />
 
