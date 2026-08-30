@@ -13,7 +13,7 @@ export function OfficialClouvaMark({
 
   return (
     <img
-      src="/icon.svg"
+      src="/assets/clouva/logo-official.svg"
       alt={alt}
       draggable={false}
       className={`block select-none object-contain ${toneClass} ${className}`}
