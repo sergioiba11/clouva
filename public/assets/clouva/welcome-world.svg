@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 1600" role="img" aria-label="CLOUVA world portal">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#05000d"/>
+      <stop offset="0.42" stop-color="#12051e"/>
+      <stop offset="0.76" stop-color="#09000f"/>
+      <stop offset="1" stop-color="#020204"/>
+    </linearGradient>
+    <radialGradient id="portal" cx="50%" cy="38%" r="44%">
+      <stop offset="0" stop-color="#ffffff" stop-opacity=".94"/>
+      <stop offset=".22" stop-color="#caa3ff" stop-opacity=".8"/>
+      <stop offset=".52" stop-color="#8a2cff" stop-opacity=".4"/>
+      <stop offset="1" stop-color="#4e00b6" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="floor" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2b0a46" stop-opacity=".5"/>
+      <stop offset="1" stop-color="#020204" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="7" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="soft" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="14"/></filter>
+  </defs>
+  <rect width="900" height="1600" fill="url(#sky)"/>
+  <ellipse cx="450" cy="500" rx="340" ry="340" fill="url(#portal)" opacity=".55"/>
+
+  <g fill="#0a0711" stroke="#6b20cc" stroke-opacity=".28">
+    <path d="M0 390L0 1120H120V360H170V1120H0Z"/>
+    <path d="M80 245H140V1120H80Z"/>
+    <path d="M145 310H220V1120H145Z"/>
+    <path d="M680 310H755V1120H680Z"/>
+    <path d="M735 235H790V1120H735Z"/>
+    <path d="M790 350H900V1120H790Z"/>
+    <path d="M240 500H300V1120H240Z"/>
+    <path d="M600 500H660V1120H600Z"/>
+  </g>
+  <g fill="#a45cff" opacity=".35">
+    <rect x="95" y="310" width="4" height="230"/><rect x="119" y="330" width="4" height="180"/>
+    <rect x="160" y="390" width="4" height="250"/><rect x="190" y="350" width="4" height="300"/>
+    <rect x="700" y="370" width="4" height="260"/><rect x="750" y="300" width="4" height="310"/>
+    <rect x="815" y="410" width="4" height="210"/>
+  </g>
+
+  <g fill="none" stroke="#7d35ff" stroke-opacity=".3" stroke-width="1">
+    <path d="M0 965L450 820L900 965"/><path d="M0 1040L450 820L900 1040"/>
+    <path d="M0 1120L450 820L900 1120"/><path d="M120 1600L450 820L780 1600"/>
+    <path d="M210 1600L450 820L690 1600"/><path d="M300 1600L450 820L600 1600"/>
+  </g>
+  <g stroke="#7330e8" stroke-opacity=".2" stroke-width="1">
+    <path d="M0 1115H900"/><path d="M0 1180H900"/><path d="M0 1260H900"/><path d="M0 1360H900"/>
+  </g>
+
+  <circle cx="450" cy="475" r="260" fill="none" stroke="#b56cff" stroke-width="12" stroke-opacity=".25" filter="url(#soft)"/>
+  <circle cx="450" cy="475" r="260" fill="none" stroke="#ad67ff" stroke-width="5" stroke-opacity=".9" filter="url(#glow)"/>
+  <circle cx="450" cy="475" r="238" fill="none" stroke="#ffffff" stroke-opacity=".12" stroke-width="1"/>
+  <circle cx="450" cy="475" r="282" fill="none" stroke="#a75dff" stroke-opacity=".14" stroke-width="1"/>
+
+  <g fill="#cdaaff" fill-opacity=".2" stroke="#cdaaff" stroke-opacity=".45">
+    <circle cx="110" cy="880" r="20"/><circle cx="190" cy="850" r="16"/><circle cx="286" cy="900" r="13"/>
+    <circle cx="610" cy="880" r="17"/><circle cx="720" cy="835" r="14"/><circle cx="825" cy="875" r="19"/>
+  </g>
+  <g stroke="#9c58ff" stroke-opacity=".34" stroke-width="2">
+    <path d="M110 900L190 866L286 913L450 860L610 897L720 849L825 894"/>
+    <path d="M42 930L190 866L450 860L720 849L870 930"/>
+  </g>
+
+  <g transform="translate(450 850)" fill="#050506" stroke="#5f2ba4" stroke-opacity=".5">
+    <circle cx="0" cy="-88" r="31"/>
+    <path d="M-42-48Q0-74 42-48L58 65Q34 118 0 118Q-34 118-58 65Z"/>
+    <path d="M-38 92L-58 205H-8L0 120L8 205H58L38 92Z"/>
+  </g>
+  <ellipse cx="450" cy="1075" rx="180" ry="52" fill="#7f2fff" opacity=".16" filter="url(#soft)"/>
+  <path d="M80 1160Q450 1040 820 1160V1600H80Z" fill="url(#floor)" opacity=".8"/>
+</svg>
