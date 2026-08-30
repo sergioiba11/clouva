@@ -22,7 +22,7 @@ export function PublicLanding() {
   return (
     <main className="relative min-h-[100svh] overflow-hidden bg-black text-white">
       <img
-        src="/assets/clouva/landing-bg-v6.webp"
+        src="/api/clouva-landing-bg?v=v6"
         alt=""
         aria-hidden="true"
         className="pointer-events-none absolute inset-0 h-full w-full select-none object-cover object-top"
