@@ -8,8 +8,8 @@ const CACHE_CONTROL = "public, max-age=31536000, immutable";
 export async function GET() {
   const root = path.join(process.cwd(), "public", "assets", "clouva");
   const parts = await Promise.all(
-    [0, 1, 2, 3].map((index) =>
-      readFile(path.join(root, `landing-bg-hd-${index}.b64`), "utf8"),
+    Array.from({ length: 8 }, (_, index) =>
+      readFile(path.join(root, `landing-bg-v4-${index}.b64`), "utf8"),
     ),
   );
 
@@ -17,9 +17,10 @@ export async function GET() {
 
   return new Response(body, {
     headers: {
-      "Content-Type": "image/jpeg",
+      "Content-Type": "image/webp",
       "Content-Length": String(body.length),
       "Cache-Control": CACHE_CONTROL,
+      "X-Content-Type-Options": "nosniff",
     },
   });
 }
