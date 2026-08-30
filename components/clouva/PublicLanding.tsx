@@ -21,14 +21,15 @@ function FlowCloverOrb() {
 export function PublicLanding() {
   return (
     <main className="relative min-h-[100svh] overflow-hidden bg-black text-white">
-      <div
-        className="absolute inset-0 bg-cover bg-top"
-        style={{ backgroundImage: "url('/api/clouva-landing-bg?v=v5')" }}
+      <img
+        src="/assets/clouva/landing-bg-v6.webp"
+        alt=""
         aria-hidden="true"
+        className="pointer-events-none absolute inset-0 h-full w-full select-none object-cover object-top"
       />
 
       <div
-        className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_bottom,rgba(0,0,0,.12)_0%,rgba(0,0,0,.01)_47%,rgba(0,0,0,.08)_58%,rgba(0,0,0,.55)_76%,rgba(0,0,0,.96)_100%)]"
+        className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_bottom,rgba(0,0,0,.10)_0%,rgba(0,0,0,.01)_42%,rgba(0,0,0,.06)_56%,rgba(0,0,0,.52)_76%,rgba(0,0,0,.97)_100%)]"
         aria-hidden="true"
       />
 
