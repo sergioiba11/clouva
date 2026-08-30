@@ -6,7 +6,7 @@ export function PublicLanding() {
     <main className="relative min-h-[100svh] overflow-hidden bg-black text-white">
       <div
         className="absolute inset-0 bg-cover bg-center"
-        style={{ backgroundImage: "url('/api/clouva-landing-bg?v=hd2')" }}
+        style={{ backgroundImage: "url('/api/clouva-landing-bg?v=v4')" }}
         aria-hidden="true"
       />
 
