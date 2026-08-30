@@ -8,8 +8,8 @@ const CACHE_CONTROL = "public, max-age=31536000, immutable";
 export async function GET() {
   const root = path.join(process.cwd(), "public", "assets", "clouva");
   const parts = await Promise.all(
-    Array.from({ length: 8 }, (_, index) =>
-      readFile(path.join(root, `landing-bg-v4-${index}.b64`), "utf8"),
+    Array.from({ length: 5 }, (_, index) =>
+      readFile(path.join(root, `landing-bg-v5-${index}.b64`), "utf8"),
     ),
   );
 
