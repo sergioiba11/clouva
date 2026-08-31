@@ -7,17 +7,60 @@ import { ArrowLeft, BrainCircuit, Shield, WandSparkles } from "lucide-react";
 import { AvatarCanvas } from "@/components/avatar-engine/AvatarCanvas";
 import { AvatarControls } from "@/components/avatar-engine/AvatarControls";
 import { useAvatarStore } from "@/lib/avatar-engine/avatar-store";
+import { useActiveAvatarStore } from "@/lib/avatar-engine/active-avatar-store";
 import { useAuth } from "@/components/auth-provider";
+import { supabase } from "@/lib/supabase";
 import type { AvatarCategory } from "@/lib/avatar-engine/types";
 
 export default function AvatarPage() {
   const [active, setActive] = useState<Exclude<AvatarCategory, "body">>("hair");
   const config = useAvatarStore((state) => state.config);
   const hydrate = useAvatarStore((state) => state.hydrate);
+  const loadActiveAvatar = useActiveAvatarStore((state) => state.loadActiveAvatar);
+  const activeAvatarLoading = useActiveAvatarStore((state) => state.loading);
+  const hydratedAvatarUserId = useActiveAvatarStore((state) => state.hydratedUserId);
   const router = useRouter();
-  const { role } = useAuth();
+  const { role, user, hydrationReady } = useAuth();
 
   useEffect(() => { void hydrate(); }, [hydrate]);
+
+  useEffect(() => {
+    if (!hydrationReady || role !== "admin" || activeAvatarLoading) return;
+
+    let cancelled = false;
+
+    const loadClouvaAdminAvatar = async () => {
+      const { data, error } = await supabase
+        .from("players")
+        .select("owner_user_id")
+        .eq("slug", "clouva")
+        .maybeSingle();
+
+      if (cancelled) return;
+      if (error) console.error("Could not resolve CLOUVA admin avatar owner", error);
+
+      const clouvaAdminUserId = data?.owner_user_id ?? user?.id ?? null;
+      if (!clouvaAdminUserId || hydratedAvatarUserId === clouvaAdminUserId) return;
+
+      await loadActiveAvatar(clouvaAdminUserId);
+    };
+
+    void loadClouvaAdminAvatar();
+
+    return () => {
+      cancelled = true;
+      if (user?.id && hydratedAvatarUserId && hydratedAvatarUserId !== user.id) {
+        void loadActiveAvatar(user.id);
+      }
+    };
+  }, [
+    activeAvatarLoading,
+    hydratedAvatarUserId,
+    hydrationReady,
+    loadActiveAvatar,
+    role,
+    user?.id,
+  ]);
 
   const goBack = () => {
     if (window.history.length > 1) {
