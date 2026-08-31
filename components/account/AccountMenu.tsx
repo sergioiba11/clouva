@@ -21,7 +21,8 @@ import {
 import { useAuth } from "@/components/auth-provider";
 import { useCurrentPlayer } from "@/components/current-player-provider";
 import { getAccounts, switchAccount, type StoredAccount } from "@/lib/account-switcher";
-import { resolveAccountDisplayName, resolveCurrentPlayerStatus } from "@/lib/identity-names";
+import { resolveAccountDisplayName } from "@/lib/identity-names";
+import { CLOUVA_NAVIGATION, getPlayerDestination } from "@/lib/navigation/clouva-navigation";
 import styles from "./AccountMenu.module.css";
 
 type AccountMenuProps = {
@@ -72,7 +73,7 @@ export function AccountMenu({ variant = "nav", triggerClassName = "", preferUser
   const avatar = currentPlayer?.profile_image_url ?? currentPlayer?.logo_url ?? profile?.avatar_url ?? user?.user_metadata?.avatar_url;
   const triggerAvatar = triggerImageUrl || avatar;
   const canAdmin = role === "admin";
-  const publicProfileHref = resolveCurrentPlayerStatus(currentPlayer) === "published" && currentPlayer ? `/${encodeURIComponent(currentPlayer.slug)}` : "/profile/edit";
+  const publicProfileHref = getPlayerDestination(currentPlayer);
 
   useEffect(() => { if (openSwitch) setAccounts(getAccounts()); }, [openSwitch]);
   useEffect(() => { if (typeof window !== "undefined" && user && new URLSearchParams(window.location.search).get("openAccountSwitcher") === "1") setOpenSwitch(true); }, [user]);
@@ -113,22 +114,19 @@ export function AccountMenu({ variant = "nav", triggerClassName = "", preferUser
           </header>
 
           <div className={styles.primaryLinks}>
-            <MenuLink href="/mi-flow" icon={<UserRound size={17} />} label="MI FLOW" detail="Billetera, ganancias, FLOWS y Diamantes" onSelect={closeMenu} tone="accent" />
-            <MenuLink href="/mi-spot" icon={<Boxes size={17} />} label="MI SPOT" detail="Productos, ventas, stock y scanner" onSelect={closeMenu} />
-            <MenuLink href={publicProfileHref} icon={<CircleUserRound size={17} />} label="Mi perfil público" detail="Tu identidad dentro de La Matrix" onSelect={closeMenu} />
-            <MenuLink href="/mi-qr" icon={<QrCode size={17} />} label="Mi QR" detail="Mostrar, compartir y descargar tu QR CLOUVA" onSelect={closeMenu} />
-            {canAdmin ? <MenuLink href="/mi-flow/avatar" icon={<Boxes size={17} />} label="Mi Avatar 3D" detail="Personalizá tu personaje" onSelect={closeMenu} /> : <div role="menuitem" className={`${styles.menuItem} ${styles.disabled}`} aria-disabled="true"><span className={styles.itemIcon}><Boxes size={17} /></span><span><b>Mi Avatar 3D</b><small>Próximamente</small></span></div>}
-            <MenuLink href="/perfil/configuracion" icon={<Settings size={17} />} label="Configuración" detail="Privacidad y preferencias" onSelect={closeMenu} />
+            <MenuLink href={CLOUVA_NAVIGATION.MI_FLOW.href} icon={<UserRound size={17} />} label="MI FLOW" detail="Billetera, ganancias, FLOWS y Diamantes" onSelect={closeMenu} tone="accent" />
+            <MenuLink href={CLOUVA_NAVIGATION.MI_SPOT.href} icon={<Boxes size={17} />} label="MI SPOT" detail="Lo que manejás dentro de CLOUVA" onSelect={closeMenu} />
+            <MenuLink href={publicProfileHref} icon={<CircleUserRound size={17} />} label="MI PLAYER / PERFIL PÚBLICO" detail="Tu identidad dentro de La Matrix" onSelect={closeMenu} />
+            <MenuLink href="/mi-qr" icon={<QrCode size={17} />} label="MI QR" detail="Mostrar, compartir y descargar tu QR CLOUVA" onSelect={closeMenu} />
+            <MenuLink href="/perfil/configuracion" icon={<Settings size={17} />} label="CONFIGURACIÓN" detail="Privacidad y preferencias" onSelect={closeMenu} />
           </div>
 
           <div className={styles.secondaryLinks}>
-            <MenuLink href="/mi-flow/creative" icon={<Sparkles size={16} />} label="Centro creativo" onSelect={closeMenu} />
-            <MenuLink href="/profile/edit" icon={<Sparkles size={16} />} label="Editar identidad" onSelect={closeMenu} />
-            <MenuLink href="/profile/memberships" icon={<UsersRound size={16} />} label="Mis Estudios" onSelect={closeMenu} />
-            <MenuLink href="/login?addAccount=1" icon={<Plus size={16} />} label="Agregar cuenta" onSelect={closeMenu} />
-            {canAdmin ? <MenuLink href="/admin" icon={<ShieldCheck size={16} />} label="Administración" onSelect={closeMenu} tone="admin" /> : null}
-            <button type="button" role="menuitem" className={styles.menuItem} onClick={() => { setOpenMenu(false); setOpenSwitch(true); }}><span className={styles.itemIcon}><Repeat2 size={16} /></span><span><b>Cambiar cuenta</b></span></button>
-            <button type="button" role="menuitem" className={`${styles.menuItem} ${styles.signOut}`} onClick={async () => { const { supabase } = await import("@/lib/supabase"); await supabase.auth.signOut(); setOpenMenu(false); router.push("/login"); }}><span className={styles.itemIcon}><LogOut size={16} /></span><span><b>Cerrar sesión</b></span></button>
+            <MenuLink href="/mi-flow/menu" icon={<Sparkles size={16} />} label="TODO CLOUVA" onSelect={closeMenu} />
+            <MenuLink href="/profile/memberships" icon={<UsersRound size={16} />} label="MIS ESTUDIOS" onSelect={closeMenu} />
+            {canAdmin ? <MenuLink href="/admin" icon={<ShieldCheck size={16} />} label="ADMINISTRACIÓN" onSelect={closeMenu} tone="admin" /> : null}
+            <button type="button" role="menuitem" className={styles.menuItem} onClick={() => { setOpenMenu(false); setOpenSwitch(true); }}><span className={styles.itemIcon}><Repeat2 size={16} /></span><span><b>CAMBIAR CUENTA</b></span></button>
+            <button type="button" role="menuitem" className={`${styles.menuItem} ${styles.signOut}`} onClick={async () => { const { supabase } = await import("@/lib/supabase"); await supabase.auth.signOut(); setOpenMenu(false); router.push("/login"); }}><span className={styles.itemIcon}><LogOut size={16} /></span><span><b>CERRAR SESIÓN</b></span></button>
           </div>
         </section>
       ) : null}
