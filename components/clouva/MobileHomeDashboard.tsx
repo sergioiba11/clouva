@@ -16,6 +16,7 @@ import {
   SkipBack,
   SkipForward,
   Sparkles,
+  WalletCards,
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -25,7 +26,12 @@ import { useCurrentPlayer } from "@/components/current-player-provider";
 import { AccountMenu } from "@/components/account/AccountMenu";
 import { SpotifyHomeConnectAction } from "@/components/music/SpotifyHomeConnectAction";
 import { useSpotifyPlayback } from "@/components/music/SpotifyPlaybackProvider";
-import { resolveAccountDisplayName, resolveCurrentPlayerStatus } from "@/lib/identity-names";
+import { resolveAccountDisplayName } from "@/lib/identity-names";
+import {
+  getNavigationItems,
+  getPlayerDestination,
+  MOBILE_PRIMARY_NAV_KEYS,
+} from "@/lib/navigation/clouva-navigation";
 import {
   configCssVariables,
   DEFAULT_MOBILE_HOME_CONFIG,
@@ -38,6 +44,8 @@ import { usePublishedUiPage } from "@/lib/clouva-lab/use-published-ui-page";
 import { VISUAL_ASSETS } from "@/lib/visual-assets";
 import styles from "./mobile-home-dashboard.module.css";
 import labStyles from "./mobile-home-lab.module.css";
+
+const [homeNav, playerNav, createNav, marketNav, miFlowNav] = getNavigationItems(MOBILE_PRIMARY_NAV_KEYS);
 
 function initials(value: string) {
   return value
@@ -71,7 +79,7 @@ type MobileHomeDashboardProps = {
 
 export function MobileHomeDashboard({ configOverride, previewMode = false }: MobileHomeDashboardProps = {}) {
   const router = useRouter();
-  const { user, profile, role, loading } = useAuth();
+  const { user, profile, loading } = useAuth();
   const { currentPlayer, playerLoading, playerReady } = useCurrentPlayer();
   const { playback, scopesReady, busyAction, controlPlayback } = useSpotifyPlayback();
   const { config, version, loading: configLoading } = usePublishedUiPage(
@@ -93,9 +101,7 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
     || profile?.avatar_url
     || null;
   const profileFallback = useMemo(() => initials(accountName) || "C", [accountName]);
-  const publicProfileHref = resolveCurrentPlayerStatus(currentPlayer) === "published" && currentPlayer
-    ? `/${encodeURIComponent(currentPlayer.slug)}`
-    : "/mi-flow";
+  const publicProfileHref = getPlayerDestination(currentPlayer);
   const cssVariables = useMemo(
     () => ({ ...configCssVariables(config), backgroundColor: config.theme.backgroundColor }) as CSSProperties,
     [config],
@@ -254,7 +260,7 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
       <div className={styles.ambient} data-clouva-ambient aria-hidden="true" />
 
       <header className={styles.header} data-clouva-block="header">
-        <Link href="/" className={styles.brand} aria-label="Inicio de CLOUVA" onClick={preventPreviewNavigation}>
+        <Link href={homeNav.href} className={styles.brand} aria-label="Inicio de CLOUVA" onClick={preventPreviewNavigation}>
           <span className={styles.brandMark}><CloverIcon size={29} /></span>
           <strong>{config.header.logoText}</strong>
         </Link>
@@ -286,24 +292,25 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
       {config.sections.map((section) => sectionRenderers[section]())}
 
       <nav className={styles.bottomNav} aria-label="Navegación principal móvil" data-clouva-block="navigation">
-        <Link href="/" className={styles.activeNav} onClick={preventPreviewNavigation}>
+        <Link href={homeNav.href} className={styles.activeNav} onClick={preventPreviewNavigation}>
           <Home size={22} fill="currentColor" />
-          <span>{config.navigation.homeLabel}</span>
-        </Link>
-        <Link href="/mi-flow/avatar" onClick={preventPreviewNavigation}>
-          <CircleUserRound size={23} />
-          <span>{config.navigation.avatarLabel}</span>
-        </Link>
-        <Link href={role === "admin" ? "/crear" : "/creator-studio"} className={styles.createNav} aria-label={role === "admin" ? "Crear con CLOUVA" : "Crear en Creator Studio"} onClick={preventPreviewNavigation}>
-          <b><Plus size={32} /></b>
-          <small>{config.navigation.createLabel}</small>
-        </Link>
-        <Link href="/tienda" onClick={preventPreviewNavigation}>
-          <ShoppingBag size={23} />
-          <span>{config.navigation.marketplaceLabel}</span>
+          <span>{homeNav.label}</span>
         </Link>
         <Link href={publicProfileHref} className={styles.profileNav} aria-label="Abrir mi Player" onClick={preventPreviewNavigation}>
           {playerImage ? <img src={String(playerImage)} alt="" /> : <b>{profileFallback}</b>}
+          <span>{playerNav.label}</span>
+        </Link>
+        <Link href={createNav.href} className={styles.createNav} aria-label="Crear en CLOUVA" onClick={preventPreviewNavigation}>
+          <b><Plus size={32} /></b>
+          <small>{createNav.label}</small>
+        </Link>
+        <Link href={marketNav.href} onClick={preventPreviewNavigation}>
+          <ShoppingBag size={23} />
+          <span>{marketNav.label}</span>
+        </Link>
+        <Link href={miFlowNav.href} aria-label="Abrir Mi Flow" onClick={preventPreviewNavigation}>
+          <WalletCards size={23} />
+          <span>{miFlowNav.label}</span>
         </Link>
       </nav>
 
