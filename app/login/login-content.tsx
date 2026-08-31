@@ -109,7 +109,7 @@ async function resolvePostLoginDestination(user: User) {
   }
 
   if (profile?.onboarding_status === "pending") return "/onboarding/identity";
-  if (profile?.onboarding_status === "exploring") return "/matrix";
+  if (profile?.onboarding_status === "exploring") return "/";
   if (profile?.onboarding_status === "player_created") return "/onboarding/instagram";
   if (profile?.onboarding_status === "published") return getRedirectByRole(profile.role);
 
