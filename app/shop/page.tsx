@@ -1,1 +1,5 @@
-export { default } from "@/app/catalogo/page";
+import { redirect } from "next/navigation";
+
+export default function ShopRedirectPage() {
+  redirect("/catalogo");
+}
