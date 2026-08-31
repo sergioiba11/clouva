@@ -117,12 +117,8 @@ export default function VipPage() {
     }
   };
 
-  const goToMatrix = () => {
-    router.replace("/matrix");
-  };
-
-  const goToAiProfile = () => {
-    router.push("/profile/edit?section=ai-profile");
+  const goHome = () => {
+    router.replace("/");
   };
 
   const cancel = async () => {
@@ -190,7 +186,7 @@ export default function VipPage() {
                 <p className="mt-4 text-2xl font-bold">Perfil Free</p>
                 <p className="mt-2 text-sm text-white/45">Sin costo. Tu perfil público sigue funcionando igual, sin badge VIP ni CLOUVA AI Profile. Podés activar VIP cuando quieras.</p>
                 {error ? <p className="mt-4 rounded-xl border border-red-400/20 bg-red-400/10 p-3 text-sm text-red-200">{error}</p> : null}
-                <button onClick={goToMatrix} className="mt-6 w-full rounded-xl border border-white/20 px-5 py-3.5 font-semibold transition hover:border-white/40">Continuar con Free</button>
+                <button onClick={goHome} className="mt-6 w-full rounded-xl border border-white/20 px-5 py-3.5 font-semibold transition hover:border-white/40">Continuar con Free</button>
               </>
             ) : (
               <>
@@ -203,7 +199,7 @@ export default function VipPage() {
 
                 {error ? <p className="mt-4 rounded-xl border border-red-400/20 bg-red-400/10 p-3 text-sm text-red-200">{error}</p> : null}
 
-                {vipActive ? <button onClick={goToAiProfile} className="mt-6 w-full rounded-xl bg-gradient-to-r from-amber-400 to-yellow-300 px-5 py-3.5 font-bold text-black transition hover:brightness-105">Continuar</button> : null}
+                {vipActive ? <button onClick={goHome} className="mt-6 w-full rounded-xl bg-gradient-to-r from-amber-400 to-yellow-300 px-5 py-3.5 font-bold text-black transition hover:brightness-105">Ir a Home</button> : null}
                 {!vipActive && !subscriptionActive ? <button disabled={working || !state?.enabled || !state?.price} onClick={() => void subscribe()} className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-amber-400 to-yellow-300 px-5 py-3.5 font-bold text-black transition hover:brightness-105 disabled:opacity-50">{working ? "Procesando..." : <><Crown className="h-4 w-4" strokeWidth={2.5} /> Activar CLOUVA VIP</>}</button> : null}
                 {state?.subscription?.init_point && !vipActive && ["created", "pending"].includes(state.subscription.status) ? <button disabled={working} onClick={() => void subscribe()} className="mt-3 w-full rounded-xl bg-violet-600 px-5 py-3 font-semibold">Continuar en Mercado Pago</button> : null}
                 {subscriptionActive ? <button disabled={working} onClick={() => void cancel()} className="mt-3 w-full rounded-xl border border-red-400/20 px-5 py-3 text-sm text-red-300">Cancelar renovación</button> : null}
