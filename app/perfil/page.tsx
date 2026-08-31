@@ -92,7 +92,8 @@ export default function PerfilPage() {
   };
 
   const playerHref = getPlayerDestination(currentPlayer);
-  const publicUrl = currentPlayer?.is_published && currentPlayer.publication_status === "published" && currentPlayer.slug
+  const isPublishedPlayer = currentPlayer?.is_published === true || currentPlayer?.publication_status === "published";
+  const publicUrl = isPublishedPlayer && currentPlayer?.slug
     ? `https://clouva.com.ar/${currentPlayer.slug}`
     : "";
   const avatarUrl = useMemo(
