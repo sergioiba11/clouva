@@ -15,13 +15,19 @@ test("Inicio abre un menú de cuenta compartido y separa MI FLOW de MI SPOT", ()
   assert.match(layout, /<AccountMenu \/>/);
   assert.match(menu, /aria-expanded=\{openMenu\}/);
   assert.match(menu, /event\.key === "Escape"/);
-  assert.match(menu, /href="\/mi-flow"[\s\S]*?label="MI FLOW"/);
-  assert.match(menu, /href="\/mi-spot"[\s\S]*?label="MI SPOT"/);
-  assert.match(menu, /Mi perfil público/);
-  assert.match(menu, /Mi Avatar 3D/);
-  assert.match(menu, /Configuración/);
-  assert.match(menu, /href="\/mi-flow\/creative"[\s\S]*?label="Centro creativo"/);
+  assert.match(menu, /href=\{CLOUVA_NAVIGATION\.MI_FLOW\.href\}[\s\S]*?label="MI FLOW"/);
+  assert.match(menu, /href=\{CLOUVA_NAVIGATION\.MI_SPOT\.href\}[\s\S]*?label="MI SPOT"/);
+  assert.match(menu, /href=\{publicProfileHref\}[\s\S]*?label="MI PLAYER \/ PERFIL PÚBLICO"/);
+  assert.match(menu, /href="\/mi-qr"[\s\S]*?label="MI QR"/);
+  assert.match(menu, /href="\/perfil\/configuracion"[\s\S]*?label="CONFIGURACIÓN"/);
+  assert.match(menu, /href="\/mi-flow\/menu"[\s\S]*?label="TODO CLOUVA"/);
+  assert.match(menu, /href="\/profile\/memberships"[\s\S]*?label="MIS ESTUDIOS"/);
+  assert.match(menu, /canAdmin \? <MenuLink href="\/admin"/);
+  assert.match(menu, /CAMBIAR CUENTA/);
+  assert.match(menu, /CERRAR SESIÓN/);
   assert.match(menu, /Conectado/);
+  assert.doesNotMatch(menu, /label="Mi Avatar 3D"/);
+  assert.doesNotMatch(menu, /label="Centro creativo"/);
 });
 
 test("MI FLOW abre la billetera del Player y mantiene el admin de espacios separado", () => {

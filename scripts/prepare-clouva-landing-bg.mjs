@@ -10,12 +10,13 @@ const parts = await Promise.all(
 );
 
 const image = Buffer.from(parts.join(""), "base64");
+const hasWebPContainer =
+  image.length >= 12 &&
+  image.subarray(0, 4).toString("ascii") === "RIFF" &&
+  image.subarray(8, 12).toString("ascii") === "WEBP";
+const declaredRiffSize = hasWebPContainer ? image.readUInt32LE(4) + 8 : 0;
 
-if (
-  image.length < 100_000 ||
-  image.subarray(0, 4).toString("ascii") !== "RIFF" ||
-  image.subarray(8, 12).toString("ascii") !== "WEBP"
-) {
+if (!hasWebPContainer || declaredRiffSize !== image.length) {
   throw new Error("CLOUVA landing background is not a valid WebP payload");
 }
 

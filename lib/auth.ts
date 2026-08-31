@@ -22,8 +22,8 @@ export function extractRoleValue(rawRole: unknown): string | null {
 export const roleHome: Record<Role, string> = {
   admin: "/admin",
   empleado: "/empleado",
-  cliente: "/mi-flow",
-  vip: "/mi-flow",
+  cliente: "/",
+  vip: "/",
 };
 
 export function normalizeRole(value: unknown): Role {

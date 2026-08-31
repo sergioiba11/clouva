@@ -1,10 +1,5 @@
-import { Suspense } from "react";
-import AccountClient from "./AccountClient";
+import { redirect } from "next/navigation";
 
-export default function AccountPage() {
-  return (
-    <Suspense fallback={<div />}>
-      <AccountClient />
-    </Suspense>
-  );
+export default function AccountRedirectPage() {
+  redirect("/cuenta");
 }

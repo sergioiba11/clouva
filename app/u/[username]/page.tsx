@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { MainFooter, MainNav } from "@/components/layout";
 import { useAuth } from "@/components/auth-provider";
 import { spotifyEmbedUrl } from "@/lib/spotify";
@@ -32,6 +33,7 @@ type PublicProfile = {
 
 export default function Page({ params }: { params: Promise<{ username: string }> }) {
   const { user } = useAuth();
+  const router = useRouter();
   const [username, setUsername] = useState("");
   const [p, setP] = useState<PublicProfile | null>(null);
   const [notFound, setNotFound] = useState(false);
@@ -59,6 +61,18 @@ export default function Page({ params }: { params: Promise<{ username: string }>
       setNotFound(true);
       return;
     }
+
+    const { data: player } = await supabase
+      .from("players")
+      .select("slug,is_published,publication_status")
+      .eq("owner_user_id", data.id)
+      .maybeSingle();
+    const playerPublished = player?.is_published === true || player?.publication_status === "published";
+    if (player?.slug && playerPublished) {
+      router.replace(`/${encodeURIComponent(player.slug)}`);
+      return;
+    }
+
     setP(data as PublicProfile);
 
     const [

@@ -2,7 +2,9 @@
 
 import { MainNav } from "@/components/layout";
 import { useAuth } from "@/components/auth-provider";
+import { useCurrentPlayer } from "@/components/current-player-provider";
 import { useActiveAvatarStore } from "@/lib/avatar-engine/active-avatar-store";
+import { getPlayerDestination } from "@/lib/navigation/clouva-navigation";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -20,6 +22,7 @@ const EMPTY_FORM = {
 
 export default function PerfilPage() {
   const { user, profile, role, loading: authLoading, hydrationReady, profileReady } = useAuth();
+  const { currentPlayer } = useCurrentPlayer();
   const router = useRouter();
   const activeAvatar = useActiveAvatarStore((state) => state.avatar);
   const loadActiveAvatar = useActiveAvatarStore((state) => state.loadActiveAvatar);
@@ -88,7 +91,11 @@ export default function PerfilPage() {
     setSaved(true);
   };
 
-  const publicUrl = form.username ? `https://clouva.com.ar/u/${form.username}` : "";
+  const playerHref = getPlayerDestination(currentPlayer);
+  const isPublishedPlayer = currentPlayer?.is_published === true || currentPlayer?.publication_status === "published";
+  const publicUrl = isPublishedPlayer && currentPlayer?.slug
+    ? `https://clouva.com.ar/${currentPlayer.slug}`
+    : "";
   const avatarUrl = useMemo(
     () => activeAvatar.modelUrl || profile?.avatar_3d_url || null,
     [activeAvatar.modelUrl, profile?.avatar_3d_url],
@@ -114,7 +121,15 @@ export default function PerfilPage() {
       <MainNav />
       <section className="mx-auto w-full max-w-4xl px-4 py-6 sm:py-8">
         <div className="panel rounded-3xl p-4 sm:p-6">
-          <h1 className="text-2xl font-semibold">Perfil</h1>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h1 className="text-2xl font-semibold">Perfil privado</h1>
+              <p className="mt-1 text-sm text-white/55">Datos de cuenta y preferencias personales. La página pública de tu Player se edita por separado.</p>
+            </div>
+            <Link href={playerHref} className="rounded-full border border-violet-400/35 px-4 py-2 text-sm text-violet-200">
+              {publicUrl ? "Ver mi Player" : currentPlayer ? "Editar mi Player" : "Crear mi Player"}
+            </Link>
+          </div>
 
           {profileError ? (
             <div className="mt-4 rounded-2xl border border-rose-400/25 bg-rose-400/10 p-3 text-sm text-rose-200">
@@ -139,7 +154,7 @@ export default function PerfilPage() {
               )}
             </div>
             <div className="flex-1">
-              <p className="text-sm text-white/70">Tu avatar 3D y tu foto de perfil se administran desde Mi Flow.</p>
+              <p className="text-sm text-white/70">Tu avatar 3D forma parte de tu identidad Player y conserva sus herramientas actuales.</p>
               {role === "admin" ? (
                 <Link href="/mi-flow/avatar" className="mt-2 inline-block rounded-full border border-[#8f7cff]/40 px-4 py-2 text-sm">
                   {avatarUrl ? "Editar avatar 3D" : "Crear avatar 3D"}
@@ -162,7 +177,7 @@ export default function PerfilPage() {
                 <input className="mt-1 w-full rounded-xl border border-white/20 bg-transparent px-3 py-2" value={form.display_name} onChange={(event) => setForm((value) => ({ ...value, display_name: event.target.value }))} />
               </label>
               <label className="text-sm">
-                Username público
+                Username de cuenta
                 <input className="mt-1 w-full rounded-xl border border-white/20 bg-transparent px-3 py-2" value={form.username} onChange={(event) => setForm((value) => ({ ...value, username: event.target.value.toLowerCase() }))} />
               </label>
               <label className="text-sm">
@@ -187,13 +202,19 @@ export default function PerfilPage() {
               </label>
               <div className="text-sm">CLOUVA ID: <span className="text-white/70">{form.clouva_id || "pendiente"}</span></div>
               <div className="text-sm">Rol: <span className="rounded-full border border-white/20 px-2 py-0.5 text-xs">{role}</span></div>
-              {publicUrl ? <div><img alt="QR" className="h-24 w-24" src={`https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(publicUrl)}`} /></div> : null}
+              {publicUrl ? (
+                <div className="sm:col-span-2">
+                  <p className="mb-2 text-xs text-white/50">URL pública canónica: {publicUrl}</p>
+                  <img alt="QR de tu Player" className="h-24 w-24" src={`https://api.qrserver.com/v1/create-qr-code/?size=120x120&data=${encodeURIComponent(publicUrl)}`} />
+                </div>
+              ) : null}
             </div>
           )}
 
-          <div className="mt-6 flex gap-2">
+          <div className="mt-6 flex flex-wrap gap-2">
             <button onClick={() => void save()} disabled={profileLoading} className="rounded-full bg-[#8f7cff]/25 px-4 py-2 text-sm disabled:opacity-50">Guardar</button>
             <Link href="/perfil/configuracion" className="rounded-full border border-white/20 px-4 py-2 text-sm">Configuración</Link>
+            <Link href="/profile/edit" className="rounded-full border border-white/20 px-4 py-2 text-sm">Editor profesional del Player</Link>
           </div>
           {saved ? <p className="mt-3 text-sm text-emerald-300">Perfil actualizado.</p> : null}
         </div>
