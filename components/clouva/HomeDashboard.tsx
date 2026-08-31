@@ -8,18 +8,16 @@ import {
   Box,
   CircleUserRound,
   Compass,
-  Headphones,
+  DollarSign,
   Home,
   LayoutGrid,
   Menu,
   Music2,
-  Palette,
   Search,
   ShoppingBag,
   Sparkles,
   Store,
   UsersRound,
-  WandSparkles,
 } from "lucide-react";
 import { CloverIcon } from "@/components/clover-icon";
 import { useAuth } from "@/components/auth-provider";
@@ -29,59 +27,70 @@ import { useClouvaAIAssistant } from "@/components/clouva-ai/ClouvaAIAssistantPr
 import { SpotifyHomeStatus } from "@/components/music/SpotifyHomeStatus";
 import { useSpotifyPlayback } from "@/components/music/SpotifyPlaybackProvider";
 import { resolveHomeDisplayName } from "@/lib/identity-names";
+import {
+  CLOUVA_NAVIGATION,
+  DESKTOP_PRIMARY_NAV_KEYS,
+  getNavigationItems,
+  getPlayerDestination,
+  type ClouvaSurfaceKey,
+} from "@/lib/navigation/clouva-navigation";
 import { VISUAL_ASSETS } from "@/lib/visual-assets";
 import styles from "./home-dashboard.module.css";
 
-const primaryNav = [
-  { label: "Inicio", href: "/", icon: Home, available: true },
-  { label: "Crear", href: "/crear", icon: Sparkles, available: false, adminOnly: true },
-  { label: "Mi Avatar", href: "/mi-flow/avatar", icon: CircleUserRound, available: false },
-  { label: "Música", href: "/mi-flow/music", icon: Music2, available: true },
-  { label: "Tienda", href: "/tienda", icon: ShoppingBag, available: true },
-  { label: "La Matrix", href: "/matrix", icon: LayoutGrid, available: true },
-  { label: "Creator Studio", href: "/creator-studio", icon: WandSparkles, available: false },
-];
+const navigationIcons = {
+  HOME: Home,
+  CREATE: Sparkles,
+  MARKET: ShoppingBag,
+  MATRIX: LayoutGrid,
+} satisfies Partial<Record<ClouvaSurfaceKey, typeof Home>>;
 
-const modules = [
+const primaryNav = getNavigationItems(DESKTOP_PRIMARY_NAV_KEYS).map((item) => ({
+  ...item,
+  icon: navigationIcons[item.key] ?? Home,
+}));
+
+const homeModules = [
   {
-    title: "Personalizá tu Avatar",
-    description: "Creá una identidad digital que se sienta realmente tuya.",
-    href: "/mi-flow/avatar",
-    cta: "Ir al Avatar",
+    key: "PLAYER" as const,
+    title: "Mi Player",
+    description: "Tu identidad pública, tu página y tu presencia dentro de CLOUVA.",
+    cta: "Abrir Player",
     icon: CircleUserRound,
-    available: false,
   },
   {
-    title: "Escuchá tu música",
-    description: "Tu universo musical, siempre conectado a tu perfil.",
-    href: "/mi-flow/music",
-    cta: "Ir a Música",
-    icon: Headphones,
-    available: true,
+    key: "MI_FLOW" as const,
+    title: "Mi Flow",
+    description: "Billetera, FLOWS, ingresos, balances, objetivos y movimientos.",
+    cta: "Abrir Mi Flow",
+    icon: DollarSign,
   },
   {
-    title: "Descubrí la tienda",
-    description: "Merch, ediciones limitadas y drops de la comunidad.",
-    href: "/tienda",
-    cta: "Ir a Tienda",
+    key: "CREATE" as const,
+    title: "Crear",
+    description: "Imagen, video, Trébol, Creator Studio 3D, avatar, ropa y herramientas creativas.",
+    cta: "Crear",
+    icon: Sparkles,
+  },
+  {
+    key: "MI_SPOT" as const,
+    title: "Mi Spot",
+    description: "Los negocios, Spots, marcas, clubes y Studios que manejás.",
+    cta: "Abrir Mi Spot",
+    icon: Store,
+  },
+  {
+    key: "MARKET" as const,
+    title: "Market",
+    description: "Descubrí productos, servicios, merch físico y comercio dentro de CLOUVA.",
+    cta: "Ir al Market",
     icon: ShoppingBag,
-    available: true,
   },
   {
+    key: "MATRIX" as const,
     title: "Explorá La Matrix",
-    description: "Players, Estudios y proyectos que crean en comunidad.",
-    href: "/matrix",
+    description: "Players, Studios y proyectos que forman el ecosistema CLOUVA.",
     cta: "Explorar",
     icon: Compass,
-    available: true,
-  },
-  {
-    title: "Entrá al Creator Studio",
-    description: "Prepará avatares, prendas y recursos para tu mundo.",
-    href: "/creator-studio",
-    cta: "Abrir Studio",
-    icon: Palette,
-    available: false,
   },
 ];
 
@@ -119,26 +128,25 @@ export function HomeDashboard() {
   const completedSteps = [isSignedIn, Boolean(profile?.username), hasAvatar].filter(Boolean).length;
   const progress = Math.round((completedSteps / 3) * 100);
   const isAdmin = role === "admin";
-  const effectivePrimaryNav = primaryNav
-    .filter((item) => !("adminOnly" in item) || !item.adminOnly || isAdmin)
-    .map((item) => ({ ...item, available: item.available || isAdmin }));
-  const effectiveModules = modules.map((item) => ({ ...item, available: item.available || isAdmin }));
+  const playerHref = getPlayerDestination(currentPlayer);
+  const effectiveModules = homeModules.map((item) => ({
+    ...item,
+    href: item.key === "PLAYER" ? playerHref : CLOUVA_NAVIGATION[item.key].href,
+  }));
 
   return (
     <main className={styles.page}>
       <div className={styles.ambient} aria-hidden="true" />
 
       <header className={styles.topbar}>
-        <Link href="/" className={styles.wordmark}>
+        <Link href={CLOUVA_NAVIGATION.HOME.href} className={styles.wordmark}>
           <span className={styles.brandIcon}><CloverIcon size={23} /></span>
           <span>CLOUVA</span>
         </Link>
 
         <nav className={styles.topnav} aria-label="Navegación principal">
-          {effectivePrimaryNav.slice(0, 5).map((item) => item.available ? (
-            <Link key={item.href} href={item.href} className={item.href === "/" ? styles.topnavActive : undefined}>{item.label}</Link>
-          ) : (
-            <span key={item.href} className={styles.comingNav} title="Próximamente">{item.label}<small>Próximamente</small></span>
+          {primaryNav.map((item) => (
+            <Link key={item.href} href={item.href} className={item.key === "HOME" ? styles.topnavActive : undefined}>{item.label}</Link>
           ))}
         </nav>
 
@@ -162,20 +170,14 @@ export function HomeDashboard() {
           <p className={styles.identityLine}>Vida de flows. Del Sur para el mundo.</p>
         </section>
 
-        <nav className={styles.sideNav} aria-label="Secciones de CLOUVA">
-          {effectivePrimaryNav.map((item) => {
+        <nav className={styles.sideNav} aria-label="Secciones principales de CLOUVA">
+          {primaryNav.map((item) => {
             const Icon = item.icon;
-            return item.available ? (
-              <Link key={item.href} href={item.href} className={item.href === "/" ? styles.sideNavActive : undefined}>
+            return (
+              <Link key={item.href} href={item.href} className={item.key === "HOME" ? styles.sideNavActive : undefined}>
                 <Icon size={17} />
                 <span>{item.label}</span>
               </Link>
-            ) : (
-              <span key={item.href} className={styles.disabledNav}>
-                <Icon size={17} />
-                <span>{item.label}</span>
-                <small>Próximamente</small>
-              </span>
             );
           })}
         </nav>
@@ -200,20 +202,13 @@ export function HomeDashboard() {
           <div className={styles.heroCopy}>
             <span className={styles.eyebrow}>{isSignedIn ? "Bienvenido de nuevo" : "Bienvenido a tu universo"}</span>
             <h1>{displayName}</h1>
-            <p>Crea. Personaliza. Conecta.<br />Viví tu propio mundo.</p>
+            <p>Tu casa dentro de CLOUVA.<br />Creá, administrá y explorá desde acá.</p>
             <div className={styles.heroActions}>
-              {isAdmin ? (
-                <Link href="/mi-flow/avatar">
-                  <CircleUserRound size={17} />
-                  Avatar
-                </Link>
-              ) : (
-                <span className={styles.disabledHeroAction} aria-disabled="true">
-                  <CircleUserRound size={17} />
-                  Avatar · Próximamente
-                </span>
-              )}
-              <Link href="/matrix" className={styles.secondaryAction}>
+              <Link href={playerHref}>
+                <CircleUserRound size={17} />
+                Mi Player
+              </Link>
+              <Link href={CLOUVA_NAVIGATION.MATRIX.href} className={styles.secondaryAction}>
                 <Compass size={17} />
                 Explorar La Matrix
               </Link>
@@ -246,27 +241,18 @@ export function HomeDashboard() {
           </div>
         </section>
 
-        <section className={styles.moduleGrid} aria-label="Explorar CLOUVA">
+        <section className={styles.moduleGrid} aria-label="Puertas principales de CLOUVA">
           {effectiveModules.map((module) => {
             const Icon = module.icon;
-            const cardContent = (
-              <>
+            return (
+              <Link key={module.key} href={module.href} className={styles.moduleCard}>
                 <span className={styles.moduleIcon}><Icon size={21} /></span>
                 <div>
                   <h2>{module.title}</h2>
                   <p>{module.description}</p>
-                  <span>{module.available ? module.cta : "Próximamente"} {module.available ? <ArrowRight size={13} /> : null}</span>
+                  <span>{module.cta} <ArrowRight size={13} /></span>
                 </div>
-              </>
-            );
-            return module.available ? (
-              <Link key={module.title} href={module.href} className={styles.moduleCard}>
-                {cardContent}
               </Link>
-            ) : (
-              <article key={module.title} className={`${styles.moduleCard} ${styles.moduleComing}`} aria-disabled="true">
-                {cardContent}
-              </article>
             );
           })}
         </section>
@@ -276,7 +262,7 @@ export function HomeDashboard() {
         <section className={styles.railCard}>
           <div className={styles.railHeading}>
             <h2>Tu identidad</h2>
-            <Link href="/perfil">Ver perfil</Link>
+            <Link href="/perfil">Ver perfil privado</Link>
           </div>
           <div className={styles.checkList}>
             <div>
@@ -284,8 +270,8 @@ export function HomeDashboard() {
               <p><b>Cuenta CLOUVA</b><small>{isSignedIn ? "Conectada" : "Iniciá sesión para guardar tu mundo"}</small></p>
             </div>
             <div>
-              <span className={profile?.username ? styles.done : undefined}><UsersRound size={16} /></span>
-              <p><b>Perfil público</b><small>{profile?.username ? username : "Elegí tu nombre dentro de La Matrix"}</small></p>
+              <span className={currentPlayer ? styles.done : undefined}><UsersRound size={16} /></span>
+              <p><b>Player público</b><small>{currentPlayer ? username : "Creá tu identidad dentro de La Matrix"}</small></p>
             </div>
             <div>
               <span className={hasAvatar ? styles.done : undefined}><Box size={16} /></span>
@@ -302,31 +288,29 @@ export function HomeDashboard() {
           <div className={styles.progress}><span style={{ width: `${progress}%` }} /></div>
           <p className={styles.progressCopy}>{completedSteps} de 3 pasos principales completos</p>
           <div className={styles.progressStats}>
-            <div><CircleUserRound size={17} /><b>{profile?.username ? "Activo" : "Pendiente"}</b><small>Perfil</small></div>
+            <div><CircleUserRound size={17} /><b>{currentPlayer ? "Activo" : "Pendiente"}</b><small>Player</small></div>
             <div><Box size={17} /><b>{hasAvatar ? "Listo" : "Pendiente"}</b><small>Avatar</small></div>
           </div>
         </section>
 
-        <Link href="/matrix" className={styles.matrixTeaser}>
+        <Link href={CLOUVA_NAVIGATION.MATRIX.href} className={styles.matrixTeaser}>
           <span>LA MATRIX</span>
           <h2>Tu red creativa empieza acá.</h2>
           <p>Descubrí Players, Estudios y proyectos conectados.</p>
           <b>Explorar ahora <ArrowRight size={14} /></b>
         </Link>
 
-        <Link href="/tienda" className={styles.quickLink}>
+        <Link href={CLOUVA_NAVIGATION.MARKET.href} className={styles.quickLink}>
           <Store size={19} />
-          <span><b>Últimos drops</b><small>Explorá la tienda CLOUVA</small></span>
+          <span><b>Últimos drops</b><small>Explorá CLOUVA Market</small></span>
           <ArrowRight size={15} />
         </Link>
       </aside>
 
       <nav className={styles.mobileNav} aria-label="Navegación móvil">
-        {effectivePrimaryNav.slice(0, 5).map((item) => {
+        {primaryNav.map((item) => {
           const Icon = item.icon;
-          return item.available
-            ? <Link key={item.href} href={item.href} className={item.href === "/" ? styles.mobileActive : undefined}><Icon size={18} /><span>{item.label}</span></Link>
-            : <span key={item.href} className={styles.mobileDisabled}><Icon size={18} /><span>{item.label}</span></span>;
+          return <Link key={item.href} href={item.href} className={item.key === "HOME" ? styles.mobileActive : undefined}><Icon size={18} /><span>{item.label}</span></Link>;
         })}
       </nav>
     </main>
