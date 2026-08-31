@@ -37,12 +37,12 @@ import {
 import { VISUAL_ASSETS } from "@/lib/visual-assets";
 import styles from "./home-dashboard.module.css";
 
-const navigationIcons = {
+const navigationIcons: Partial<Record<ClouvaSurfaceKey, typeof Home>> = {
   HOME: Home,
   CREATE: Sparkles,
   MARKET: ShoppingBag,
   MATRIX: LayoutGrid,
-} satisfies Partial<Record<ClouvaSurfaceKey, typeof Home>>;
+};
 
 const primaryNav = getNavigationItems(DESKTOP_PRIMARY_NAV_KEYS).map((item) => ({
   ...item,
