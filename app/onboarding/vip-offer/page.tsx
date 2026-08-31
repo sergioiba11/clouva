@@ -21,7 +21,7 @@ export default function VipOfferPage() {
       </div>
 
       <button onClick={() => router.push("/vip")} className="mt-6 w-full rounded-xl bg-gradient-to-r from-amber-400 to-yellow-300 px-5 py-3.5 font-bold text-black transition hover:brightness-105">Ver planes y activar VIP</button>
-      <button onClick={() => router.replace("/matrix")} className="mt-3 w-full rounded-xl border border-white/15 px-4 py-3 text-sm text-white/60">Seguir con el plan Free por ahora</button>
+      <button onClick={() => router.replace("/")} className="mt-3 w-full rounded-xl border border-white/15 px-4 py-3 text-sm text-white/60">Seguir con el plan Free</button>
     </OnboardingShell>
   );
 }
