@@ -75,12 +75,13 @@ export type PlayerNavigationIdentity = Pick<Player, "slug" | "is_published" | "p
 
 export function getPlayerDestination(player: PlayerNavigationIdentity | null | undefined) {
   if (!player) return "/onboarding/identity";
-  if (player.is_published && player.publication_status === "published" && player.slug) {
+  const isPublished = player.is_published === true || player.publication_status === "published";
+  if (isPublished && player.slug) {
     return `/${encodeURIComponent(player.slug)}`;
   }
   return "/profile/edit";
 }
 
-export function getNavigationItems(keys: readonly ClouvaSurfaceKey[]) {
-  return keys.map((key) => CLOUVA_NAVIGATION[key]);
+export function getNavigationItems<const T extends readonly ClouvaSurfaceKey[]>(keys: T) {
+  return keys.map((key) => CLOUVA_NAVIGATION[key]) as { [Index in keyof T]: ClouvaSurface };
 }
