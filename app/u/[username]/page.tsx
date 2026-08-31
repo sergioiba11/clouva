@@ -67,7 +67,8 @@ export default function Page({ params }: { params: Promise<{ username: string }>
       .select("slug,is_published,publication_status")
       .eq("owner_user_id", data.id)
       .maybeSingle();
-    if (player?.slug && player.is_published && player.publication_status === "published") {
+    const playerPublished = player?.is_published === true || player?.publication_status === "published";
+    if (player?.slug && playerPublished) {
       router.replace(`/${encodeURIComponent(player.slug)}`);
       return;
     }
