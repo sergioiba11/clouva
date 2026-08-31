@@ -216,7 +216,8 @@ test("onboarding and VIP flows close at Home while preserving explicit continuat
   assert.match(vipOffer, /router\.replace\(["']\/["']\)/);
   assert.match(vipPage, /router\.replace\(["']\/["']\)/);
   assert.match(login, /studioRedirectOverride/);
-  assert.match(login, /getPostAuthDestination/);
+  assert.match(login, /resolvePostLoginDestination/);
+  assert.match(login, /getRedirectByRole/);
 });
 
 test("legacy public profile routes progressively resolve to the root Player alias", () => {
