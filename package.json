@@ -18,7 +18,8 @@
     "test:orchestrator:e2e": "node --require ./scripts/stub-server-only.cjs --import tsx --test tests-orchestrator-e2e.mjs",
     "test:clouva-ai": "node --require ./scripts/stub-server-only.cjs --import tsx --test tests-architecture-blockers.mjs tests-gemini-stream.mjs tests-gemini-tools.mjs tests-tool-executor.mjs tests-tool-confirmation.mjs tests-workspace-gateway.mjs tests-workspace-executor.mjs tests-clouva-domain-tools.mjs tests-memory-approval.mjs tests-orchestrator-e2e.mjs tests-orchestrator-multimodal.mjs tests-project-tool-scope.mjs tests-workspace-preview-auth.mjs tests-trebol-context.mjs tests-trebol-live-state.mjs tests-trebol-confirmation.mjs tests-trebol-media.mjs tests-trebol-live-security.mjs",
     "test:media": "node --test tests-media-creator.mjs tests-gemini-image.mjs",
-    "test": "npm run test:legacy && npm run test:avatar-analyzer && npm run test:identity-revenue && npm run test:brand-engine && npm run test:media"
+    "test": "npm run test:legacy && npm run test:avatar-analyzer && npm run test:identity-revenue && npm run test:brand-engine && npm run test:media && npm run test:navigation",
+    "test:navigation": "node --import tsx --test tests-canonical-navigation.mjs"
   },
   "overrides": {
     "three": "$three"
