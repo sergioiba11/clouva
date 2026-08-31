@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { normalizePublicSlug } from "@/core/integrations/instagram/mapper";
+import { isReservedPublicAlias } from "@/lib/navigation/reserved-public-aliases";
 import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
 import { completePendingStudioJoins } from "@/lib/server/studio-memberships";
 
@@ -62,8 +63,18 @@ async function availableSlug(admin: ReturnType<typeof createAdminSupabase>, requ
   const base = normalizePublicSlug(requested) || "player";
   for (let index = 0; index < 100; index += 1) {
     const slug = index === 0 ? base : `${base}-${index + 1}`;
-    const { data } = await admin.from("players").select("id").eq("slug", slug).maybeSingle();
-    if (!data || data.id === currentId) return slug;
+    if (isReservedPublicAlias(slug)) continue;
+
+    const [playerResult, aliasResult] = await Promise.all([
+      admin.from("players").select("id").eq("slug", slug).maybeSingle(),
+      admin.from("public_slug_aliases").select("entity_id").eq("normalized_alias", slug).maybeSingle(),
+    ]);
+    if (playerResult.error) throw new Error(playerResult.error.message);
+    if (aliasResult.error) throw new Error(aliasResult.error.message);
+
+    const playerTaken = Boolean(playerResult.data && playerResult.data.id !== currentId);
+    const aliasTaken = Boolean(aliasResult.data && aliasResult.data.entity_id !== currentId);
+    if (!playerTaken && !aliasTaken) return slug;
   }
   throw new Error("No pudimos generar una URL disponible.");
 }
@@ -221,6 +232,10 @@ export async function PATCH(request: NextRequest) {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     const changes = sanitizeUpdate(body);
     if (typeof body.slug === "string" && body.slug.trim()) {
+      const requestedSlug = normalizePublicSlug(body.slug);
+      if (requestedSlug && isReservedPublicAlias(requestedSlug)) {
+        return NextResponse.json({ error: "Ese alias está reservado por CLOUVA." }, { status: 409 });
+      }
       changes.slug = await availableSlug(admin, body.slug, player.id as string);
     }
     if (body.publication_action === "publish") {
