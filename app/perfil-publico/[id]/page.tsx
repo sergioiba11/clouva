@@ -39,9 +39,21 @@ export default function Page({ params }: { params: Promise<{ id: string }> }) {
       .eq("id", id)
       .maybeSingle();
 
-    // Si ya tiene username, ese es el link canónico — redirigimos ahí.
+    if (data?.id) {
+      const { data: player } = await supabase
+        .from("players")
+        .select("slug,is_published,publication_status")
+        .eq("owner_user_id", data.id)
+        .maybeSingle();
+      if (player?.slug && player.is_published && player.publication_status === "published") {
+        router.replace(`/${encodeURIComponent(player.slug)}`);
+        return;
+      }
+    }
+
+    // Compatibility fallback for historical profile-only identities.
     if (data?.username) {
-      router.replace(`/u/${data.username}`);
+      router.replace(`/u/${encodeURIComponent(data.username)}`);
       return;
     }
 
@@ -106,7 +118,6 @@ export default function Page({ params }: { params: Promise<{ id: string }> }) {
                   {p.bio ? <p className="mt-3 text-sm text-white/70">{p.bio}</p> : null}
                   {p.is_vip ? <p className="mt-2 text-amber-300">VIP</p> : null}
                   <p className="mt-3 text-xs text-white/50">{followersCount} seguidores</p>
-                  <p className="mt-2 text-xs text-white/40">Tip: cargá un username en /perfil para tener un link más lindo.</p>
                   {user && user.id !== p.id ? (
                     <button
                       onClick={toggleFollow}
