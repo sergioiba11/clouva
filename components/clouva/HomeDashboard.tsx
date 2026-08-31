@@ -104,7 +104,7 @@ function initials(value: string) {
 }
 
 export function HomeDashboard() {
-  const { user, profile, role } = useAuth();
+  const { user, profile } = useAuth();
   const { currentPlayer, playerLoading, playerReady } = useCurrentPlayer();
   const { openAssistant } = useClouvaAIAssistant();
   const { playback } = useSpotifyPlayback();
@@ -127,7 +127,6 @@ export function HomeDashboard() {
   const hasAvatar = Boolean(profile?.avatar_3d_url);
   const completedSteps = [isSignedIn, Boolean(profile?.username), hasAvatar].filter(Boolean).length;
   const progress = Math.round((completedSteps / 3) * 100);
-  const isAdmin = role === "admin";
   const playerHref = getPlayerDestination(currentPlayer);
   const effectiveModules = homeModules.map((item) => ({
     ...item,
