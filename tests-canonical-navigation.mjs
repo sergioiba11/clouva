@@ -19,6 +19,17 @@ import {
 
 const read = (path) => fs.readFileSync(new URL(path, import.meta.url), "utf8");
 
+test("visitor Home keeps landing, login and Matrix discovery separated", () => {
+  const homeExperience = read("./components/clouva/HomeExperience.tsx");
+  const landing = read("./components/clouva/PublicLanding.tsx");
+
+  assert.match(homeExperience, /if \(!user\) return <PublicLanding/);
+  assert.match(homeExperience, /<MobileHomeDashboard/);
+  assert.match(homeExperience, /<HomeDashboard/);
+  assert.match(landing, /href="\/login"[\s\S]*?Entrar/);
+  assert.match(landing, /href="\/matrix"[\s\S]*?Ver/);
+});
+
 test("post-login destinations keep Home separate from Mi Flow", () => {
   assert.equal(getRedirectByRole("cliente"), "/");
   assert.equal(getRedirectByRole("vip"), "/");
@@ -180,8 +191,8 @@ test("onboarding and VIP flows close at Home while preserving explicit continuat
   const vipPage = read("./app/vip/page.tsx");
   const login = read("./app/login/login-content.tsx");
 
-  assert.match(vipOffer, /router\.(?:push|replace)\(["']\/["']\)/);
-  assert.match(vipPage, /href=["']\/["']/);
+  assert.match(vipOffer, /router\.replace\(["']\/["']\)/);
+  assert.match(vipPage, /router\.replace\(["']\/["']\)/);
   assert.match(login, /studioRedirectOverride/);
   assert.match(login, /getPostAuthDestination/);
 });
