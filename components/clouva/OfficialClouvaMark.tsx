@@ -9,14 +9,16 @@ export function OfficialClouvaMark({
   tone = "light",
   alt = "Logo oficial de CLOUVA",
 }: OfficialClouvaMarkProps) {
-  const toneClass = tone === "light" ? "brightness-0 invert" : "brightness-0";
+  const src = tone === "light"
+    ? "/assets/clouva/brand/logo-official-light.png"
+    : "/assets/clouva/brand/logo-official-dark.png";
 
   return (
     <img
-      src="/assets/clouva/logo-official.svg"
+      src={src}
       alt={alt}
       draggable={false}
-      className={`block select-none object-contain ${toneClass} ${className}`}
+      className={`block select-none object-contain ${className}`}
     />
   );
 }

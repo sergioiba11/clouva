@@ -1,6 +1,6 @@
 .launcher { position: fixed; z-index: 104; left: 1rem; bottom: 1rem; display: grid; grid-template-columns: auto 1fr; align-items: center; gap: .45rem; border: 1px solid rgba(168,112,255,.32); border-radius: 999px; background: rgba(10,7,20,.93); padding: .3rem .75rem .3rem .28rem; color: white; box-shadow: 0 14px 42px rgba(0,0,0,.55),0 0 25px rgba(124,58,237,.14); backdrop-filter: blur(18px); transition: transform 160ms ease,border-color 160ms ease; }
 .launcher:hover,.launcher[aria-expanded="true"] { transform: translateY(-2px); border-color: rgba(198,157,255,.65); }
-.launcher img { width: 2.65rem; height: 2.65rem; object-fit: contain; filter: drop-shadow(0 0 9px rgba(168,85,247,.5)); }
+.launcher img { width: 2.65rem; height: 2.65rem; object-fit: contain; filter: drop-shadow(0 0 9px rgba(168,85,247,.5)); animation: clouva-ai-logo-float 3.2s ease-in-out infinite; transform-origin: center; will-change: transform,filter; }
 .launcher span { display: grid; min-width: 0; text-align: left; }
 .launcher b { font-size: .62rem; letter-spacing: .04em; }
 .launcher small { margin-top: .04rem; color: #77e8b4; font-size: .52rem; }
@@ -13,4 +13,8 @@
 .signedOut p { margin-top: .45rem; color: rgba(255,255,255,.56); font-size: .68rem; line-height: 1.55; }
 .signedOut a { display: flex; margin-top: .9rem; align-items: center; justify-content: center; border-radius: .75rem; padding: .65rem; background: linear-gradient(90deg,#7c3aed,#9d65ff); font-size: .67rem; font-weight: 750; }
 @media (max-width: 640px) { .launcher { left: .65rem; bottom: calc(4.9rem + env(safe-area-inset-bottom)); width: 3.25rem; height: 3.25rem; padding: .15rem; place-items: center; } .launcher img { width: 3rem; height: 3rem; } .launcher span { display: none; } .signedOut { left: .5rem; bottom: calc(8.75rem + env(safe-area-inset-bottom)); width: calc(100vw - 1rem); } }
-@media (prefers-reduced-motion: reduce) { .launcher { transition: none; } }
+@keyframes clouva-ai-logo-float {
+  0%,100% { transform: translateY(0) rotate(-1deg) scale(1); filter: drop-shadow(0 0 9px rgba(168,85,247,.5)); }
+  50% { transform: translateY(-7px) rotate(1deg) scale(1.035); filter: drop-shadow(0 7px 14px rgba(168,85,247,.72)); }
+}
+@media (prefers-reduced-motion: reduce) { .launcher { transition: none; } .launcher img { animation: none; } }
