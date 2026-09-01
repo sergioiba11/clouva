@@ -1,23 +1,6 @@
 import Link from "next/link";
 import { OfficialClouvaMark } from "@/components/clouva/OfficialClouvaMark";
 
-function FlowCloverOrb() {
-  return (
-    <span
-      className="pointer-events-none absolute -bottom-4 -left-4 z-20 grid h-[54px] w-[54px] place-items-center rounded-full border border-violet-400/55 bg-[#100519]/95 shadow-[0_0_22px_rgba(177,71,255,.85),inset_0_0_16px_rgba(168,85,247,.22)]"
-      aria-hidden="true"
-    >
-      <span className="relative block h-7 w-7 drop-shadow-[0_0_7px_rgba(216,180,254,1)]">
-        <span className="absolute left-1/2 top-0 h-[15px] w-[15px] -translate-x-1/2 rounded-[55%_55%_48%_48%] border-2 border-violet-200 bg-violet-500/80" />
-        <span className="absolute bottom-0 left-1/2 h-[15px] w-[15px] -translate-x-1/2 rounded-[48%_48%_55%_55%] border-2 border-violet-200 bg-violet-500/80" />
-        <span className="absolute left-0 top-1/2 h-[15px] w-[15px] -translate-y-1/2 rounded-[55%_48%_48%_55%] border-2 border-violet-200 bg-violet-500/80" />
-        <span className="absolute right-0 top-1/2 h-[15px] w-[15px] -translate-y-1/2 rounded-[48%_55%_55%_48%] border-2 border-violet-200 bg-violet-500/80" />
-        <span className="absolute left-1/2 top-1/2 h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-violet-100" />
-      </span>
-    </span>
-  );
-}
-
 export function PublicLanding() {
   return (
     <main className="relative min-h-[100svh] overflow-hidden bg-black text-white">
@@ -25,7 +8,7 @@ export function PublicLanding() {
         src="/api/clouva-landing-bg?v=v6"
         alt=""
         aria-hidden="true"
-        className="pointer-events-none absolute inset-0 h-full w-full select-none object-cover object-top"
+        className="pointer-events-none absolute inset-0 h-full w-full select-none object-cover object-top min-[821px]:object-contain min-[821px]:object-center"
       />
 
       <div
@@ -82,8 +65,6 @@ export function PublicLanding() {
             >
               Ver <span className="text-2xl font-normal text-violet-400">→</span>
             </Link>
-
-            <FlowCloverOrb />
           </div>
 
           <footer className="mt-7 w-full text-center">
