@@ -8,6 +8,7 @@ export const maxDuration = 60;
 
 const MAX_ATTEMPTS = 5;
 const BATCH_SIZE = 50;
+const LEASE_TIMEOUT_MS = 10 * 60 * 1000;
 const SUPPORTED_SCHEMA_VERSIONS = new Set([1]);
 
 type EventRow = {
@@ -79,11 +80,28 @@ function log(event: string, fields: Record<string, unknown>) {
   console.info(JSON.stringify({ event, at: new Date().toISOString(), ...safe }));
 }
 
+async function recoverStaleLeases(admin: ReturnType<typeof createAdminSupabase>) {
+  const staleBefore = new Date(Date.now() - LEASE_TIMEOUT_MS).toISOString();
+  const { error } = await admin
+    .from("project_events")
+    .update({
+      processing_status: "failed",
+      processing_started_at: null,
+      last_error: "processing_lease_expired",
+      processed_at: null,
+    })
+    .eq("processing_status", "processing")
+    .lt("processing_started_at", staleBefore)
+    .lt("attempts", MAX_ATTEMPTS);
+  if (error) throw new Error(error.message);
+}
+
 async function claimEvent(admin: ReturnType<typeof createAdminSupabase>, event: EventRow) {
   const { data, error } = await admin
     .from("project_events")
     .update({
       processing_status: "processing",
+      processing_started_at: new Date().toISOString(),
       attempts: event.attempts + 1,
       last_error: null,
     })
@@ -172,7 +190,12 @@ async function markProcessed(admin: ReturnType<typeof createAdminSupabase>, even
   const now = new Date().toISOString();
   const { error } = await admin
     .from("project_events")
-    .update({ processing_status: "processed", processed_at: now, last_error: null })
+    .update({
+      processing_status: "processed",
+      processing_started_at: null,
+      processed_at: now,
+      last_error: null,
+    })
     .eq("id", eventId)
     .eq("processing_status", "processing");
   if (error) throw new Error(error.message);
@@ -183,6 +206,7 @@ async function markFailed(admin: ReturnType<typeof createAdminSupabase>, eventId
     .from("project_events")
     .update({
       processing_status: "failed",
+      processing_started_at: null,
       last_error: message.slice(0, 1000),
       processed_at: null,
     })
@@ -194,6 +218,13 @@ export async function POST(request: NextRequest) {
   if (!authorized(request)) return NextResponse.json({ error: "No autorizado." }, { status: 401 });
 
   const admin = createAdminSupabase();
+  try {
+    await recoverStaleLeases(admin);
+  } catch (leaseError) {
+    const message = leaseError instanceof Error ? leaseError.message : "No se pudieron recuperar leases vencidos.";
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+
   const { data, error } = await admin
     .from("project_events")
     .select(
