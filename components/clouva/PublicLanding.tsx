@@ -1,18 +1,25 @@
 import Link from "next/link";
 import { OfficialClouvaMark } from "@/components/clouva/OfficialClouvaMark";
 
+const DESKTOP_BACKGROUND = "/_next/image?url=%2Fassets%2Fclouva%2F1000222440.png&w=1920&q=80";
+
 export function PublicLanding() {
   return (
     <main className="relative min-h-[100svh] overflow-hidden bg-black text-white">
       <picture className="pointer-events-none absolute inset-0 block h-full w-full select-none">
         <source
           media="(min-width: 821px)"
-          srcSet="/assets/clouva/1000222440.png?v=20260901-2"
+          srcSet={DESKTOP_BACKGROUND}
         />
         <img
           src="/api/clouva-landing-bg?v=v6"
           alt=""
           aria-hidden="true"
+          width={1920}
+          height={1080}
+          loading="eager"
+          decoding="async"
+          fetchPriority="high"
           className="h-full w-full object-cover object-top min-[821px]:object-center"
         />
       </picture>
@@ -25,7 +32,9 @@ export function PublicLanding() {
       <div className="relative z-10 mx-auto flex min-h-[100svh] w-full max-w-[430px] flex-col px-5 pb-[max(1rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))]">
         <header className="flex items-center justify-between pt-1">
           <Link href="/" className="flex items-center gap-3" aria-label="CLOUVA">
-            <OfficialClouvaMark className="h-9 w-9 drop-shadow-[0_0_16px_rgba(190,120,255,.8)]" />
+            <span className="grid h-9 w-9 shrink-0 place-items-center">
+              <OfficialClouvaMark className="h-9 w-9 scale-[1.6] drop-shadow-[0_0_16px_rgba(190,120,255,.8)]" />
+            </span>
             <span className="text-[13px] font-semibold uppercase tracking-[0.34em]">CLOUVA</span>
           </Link>
 
@@ -60,7 +69,7 @@ export function PublicLanding() {
               className="inline-flex min-h-16 items-center justify-center gap-3 rounded-full border border-white/90 bg-[linear-gradient(135deg,#fff_0%,#efe2ff_48%,#d19cff_100%)] px-5 text-[clamp(1.05rem,4.8vw,1.3rem)] font-bold text-violet-950 shadow-[0_0_34px_rgba(170,75,255,.8)] transition active:scale-[.985]"
             >
               <span className="grid h-10 w-10 place-items-center rounded-full bg-[#160720] shadow-[0_0_18px_rgba(174,84,255,.8)]">
-                <OfficialClouvaMark className="h-6 w-6 text-violet-200" />
+                <OfficialClouvaMark className="h-6 w-6 scale-[1.65]" />
               </span>
               Entrar
             </Link>
