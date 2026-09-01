@@ -4,8 +4,12 @@ type OfficialClouvaMarkProps = {
   alt?: string;
 };
 
-const LIGHT_SRC = "https://storage.googleapis.com/clouva-generated-media/admin-assets/brand/file_0000000021bc820e8c0114ee2fce3109.png";
-const DARK_SRC = "https://storage.googleapis.com/clouva-generated-media/admin-assets/brand/file_00000000c5e4820e9a9efab6396e36b0.png";
+// Canonical transparent marks already stored with the app. These are the
+// processed derivatives of the official source artwork, so critical UI icons
+// do not depend on an extra Google Cloud Storage request or inherit the flat
+// black/white source backgrounds.
+const LIGHT_SRC = "/assets/clouva/brand/logo-official-light.png";
+const DARK_SRC = "/assets/clouva/brand/logo-official-dark.png";
 
 export function OfficialClouvaMark({
   className = "",
@@ -19,6 +23,7 @@ export function OfficialClouvaMark({
       src={src}
       alt={alt}
       draggable={false}
+      decoding="async"
       className={`block select-none object-contain ${className}`}
     />
   );
