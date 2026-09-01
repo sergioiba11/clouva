@@ -4,12 +4,18 @@ import { OfficialClouvaMark } from "@/components/clouva/OfficialClouvaMark";
 export function PublicLanding() {
   return (
     <main className="relative min-h-[100svh] overflow-hidden bg-black text-white">
-      <img
-        src="/api/clouva-landing-bg?v=v6"
-        alt=""
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0 h-full w-full select-none object-cover object-top min-[821px]:object-contain min-[821px]:object-center"
-      />
+      <picture className="pointer-events-none absolute inset-0 block h-full w-full select-none">
+        <source
+          media="(min-width: 821px)"
+          srcSet="/api/clouva-landing-bg-desktop?v=desktop-v1"
+        />
+        <img
+          src="/api/clouva-landing-bg?v=v6"
+          alt=""
+          aria-hidden="true"
+          className="h-full w-full object-cover object-top min-[821px]:object-center"
+        />
+      </picture>
 
       <div
         className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_bottom,rgba(0,0,0,.10)_0%,rgba(0,0,0,.01)_42%,rgba(0,0,0,.06)_56%,rgba(0,0,0,.52)_76%,rgba(0,0,0,.97)_100%)]"
