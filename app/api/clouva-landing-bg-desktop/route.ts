@@ -6,19 +6,17 @@ export const runtime = "nodejs";
 const CACHE_CONTROL = "public, max-age=31536000, immutable";
 
 export async function GET() {
-  const file = path.join(
-    process.cwd(),
-    "public",
-    "assets",
-    "clouva",
-    "landing-bg-desktop-v1.b64",
+  const root = path.join(process.cwd(), "public", "assets", "clouva");
+  const parts = await Promise.all(
+    Array.from({ length: 6 }, (_, index) =>
+      readFile(path.join(root, `landing-bg-desktop-v2-${index}.b64`), "utf8"),
+    ),
   );
-  const encoded = await readFile(file, "utf8");
-  const body = Buffer.from(encoded, "base64");
+  const body = Buffer.from(parts.join(""), "base64");
 
   return new Response(body, {
     headers: {
-      "Content-Type": "image/jpeg",
+      "Content-Type": "image/webp",
       "Content-Length": String(body.length),
       "Cache-Control": CACHE_CONTROL,
       "X-Content-Type-Options": "nosniff",
