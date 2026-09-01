@@ -27,15 +27,25 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     const { spotId } = await params;
     const admin = createAdminSupabase();
     await requireSpotAccess({ admin, userId: user.id, spotId, capability: "settings" });
-    const { data, error } = await admin
-      .from("commerce_spot_members")
-      .select("id,spot_id,user_id,role,status,created_at,updated_at")
-      .eq("spot_id", spotId)
-      .order("created_at");
-    if (error) throw new Error(error.message);
+    const [membersResult, spaceResult] = await Promise.all([
+      admin
+        .from("commerce_spot_members")
+        .select("id,spot_id,user_id,role,status,created_at,updated_at")
+        .eq("spot_id", spotId)
+        .order("created_at"),
+      admin
+        .from("spaces")
+        .select("id")
+        .eq("legacy_commerce_spot_id", spotId)
+        .maybeSingle(),
+    ]);
+    if (membersResult.error) throw new Error(membersResult.error.message);
+    if (spaceResult.error) throw new Error(spaceResult.error.message);
     return NextResponse.json({
-      members: data ?? [],
+      members: membersResult.data ?? [],
       roles: SPOT_ROLES.map(mapRole),
+      spaceId: spaceResult.data?.id ?? null,
+      requestsHref: spaceResult.data?.id ? `/businesses/${spaceResult.data.id}/team` : null,
     });
   } catch (error) {
     const status = (error as Error & { status?: number })?.status ?? (isAuthError(error) ? 401 : 500);
