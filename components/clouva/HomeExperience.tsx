@@ -3,24 +3,20 @@
 import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
+import { PublicLanding } from "@/components/clouva/PublicLanding";
 
 const HomeDashboard = dynamic(() => import("@/components/clouva/HomeDashboard").then((mod) => mod.HomeDashboard), {
   ssr: false,
-  loading: () => <main className="min-h-screen bg-[#060612]" aria-hidden="true" />,
+  loading: () => <PublicLanding />,
 });
 
 const MobileHomeDashboard = dynamic(
   () => import("@/components/clouva/MobileHomeDashboard").then((mod) => mod.MobileHomeDashboard),
   {
     ssr: false,
-    loading: () => <main className="min-h-screen bg-[#030308]" aria-hidden="true" />,
+    loading: () => <PublicLanding />,
   },
 );
-
-const PublicLanding = dynamic(() => import("@/components/clouva/PublicLanding").then((mod) => mod.PublicLanding), {
-  ssr: false,
-  loading: () => <main className="min-h-screen bg-[#07060b]" aria-hidden="true" />,
-});
 
 function useMobileHome() {
   const [isMobile, setIsMobile] = useState<boolean | null>(null);
@@ -38,19 +34,20 @@ function useMobileHome() {
 }
 
 export function HomeExperience() {
-  const { user, loading, hydrationReady } = useAuth();
+  const { user, hydrationReady } = useAuth();
   const isMobile = useMobileHome();
 
-  // Antes de saber si hay sesión, no se puede elegir entre dashboard y
-  // landing sin arriesgar un parpadeo del contenido equivocado.
-  if (loading || !hydrationReady) {
-    return <main className="min-h-screen bg-[#07060b]" aria-hidden="true" />;
-  }
-
+  // Render real content immediately. Auth/profile resolution continues in the
+  // background; when a session is confirmed we replace this shell with the
+  // correct dashboard instead of holding the first paint behind Supabase.
+  if (!hydrationReady) return <PublicLanding />;
   if (!user) return <PublicLanding />;
-  if (isMobile === null) return <main className="min-h-screen bg-[#030308]" aria-hidden="true" />;
+
+  // matchMedia normally resolves before auth on the client. If it has not yet,
+  // keep meaningful content visible rather than flashing an empty screen.
+  if (isMobile === null) return <PublicLanding />;
 
   // Mobile y desktop comparten los providers, pero nunca se montan a la vez.
-  // Esto evita cargar la composición desktop detrás de la nueva Home mobile.
+  // Esto evita cargar la composición desktop detrás de la Home mobile.
   return isMobile ? <MobileHomeDashboard /> : <HomeDashboard />;
 }
