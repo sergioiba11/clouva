@@ -2,7 +2,6 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
 import { useEffect, useRef } from "react";
 import { X } from "lucide-react";
 import { useAuth } from "@/components/auth-provider";
@@ -13,11 +12,9 @@ import styles from "./GlobalClouvaAIButton.module.css";
 const MASCOT_SRC = "/assets/clouva-ai/trebol-mascot.png";
 
 export function GlobalClouvaAIButton() {
-  const pathname = usePathname();
   const { user, loading } = useAuth();
   const { open, toggleAssistant, closeAssistant } = useClouvaAIAssistant();
   const launcherRef = useRef<HTMLButtonElement>(null);
-  const hideLauncherOnSignedInHome = pathname === "/" && Boolean(user);
 
   useEffect(() => {
     if (!open) return;
@@ -31,7 +28,7 @@ export function GlobalClouvaAIButton() {
     return () => document.removeEventListener("keydown", handleKey);
   }, [closeAssistant, open]);
 
-  if (pathname === "/clouva-ai" || loading) return null;
+  if (loading) return null;
 
   return (
     <>
@@ -49,7 +46,7 @@ export function GlobalClouvaAIButton() {
       <button
         ref={launcherRef}
         type="button"
-        className={`${styles.launcher} ${hideLauncherOnSignedInHome ? styles.homeLauncher : ""}`}
+        className={styles.launcher}
         onClick={toggleAssistant}
         aria-expanded={open}
         aria-label={open ? "Cerrar CLOUVA AI" : "Abrir CLOUVA AI"}
