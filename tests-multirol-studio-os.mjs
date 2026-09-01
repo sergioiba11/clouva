@@ -20,12 +20,13 @@ test("onboarding asks for an action and keeps professional identity separate", a
 });
 
 test("Studio OS sigue perteneciendo al Studio y el rol administrativo además exige VIP", async () => {
-  const [permissions, spaceAccess, aiPermissions, createPage, createApi, studioOsApi, billing] = await Promise.all([
+  const [permissions, spaceAccess, aiPermissions, createPage, createApi, businessSpaces, studioOsApi, billing] = await Promise.all([
     read("./lib/server/studio-permissions.ts"),
     read("./lib/server/space-access.ts"),
     read("./lib/server/vip-profile-permissions.ts"),
     read("./app/studios/nuevo/page.tsx"),
     read("./app/api/studios/create/route.ts"),
+    read("./lib/server/business-spaces.ts"),
     read("./app/api/studios/[slug]/studio-os/route.ts"),
     read("./core/billing/service.ts"),
   ]);
@@ -40,7 +41,7 @@ test("Studio OS sigue perteneciendo al Studio y el rol administrativo además ex
   assert.doesNotMatch(createPage, /\.from\("studios"\)\.insert/);
   assert.match(createApi, /createBusinessSpace/);
   assert.match(createApi, /kind: "studio"/);
-  assert.match(createApi, /create_studio_os_draft/);
+  assert.match(businessSpaces, /kind === "studio"[\s\S]*create_studio_os_draft/);
   assert.match(studioOsApi, /clouva_studio_os/);
   assert.match(billing, /activate_studio_os/);
 });
