@@ -6,6 +6,7 @@ const RESERVED_PUBLIC_ALIAS_VALUES = [
   "avatar-analyzer",
   "avatar-analyzer-v4",
   "biblioteca",
+  "businesses",
   "carrito",
   "catalogo",
   "checkout",
