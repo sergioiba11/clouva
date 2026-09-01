@@ -26,6 +26,7 @@ import { useCurrentPlayer } from "@/components/current-player-provider";
 import { AccountMenu } from "@/components/account/AccountMenu";
 import { SpotifyHomeConnectAction } from "@/components/music/SpotifyHomeConnectAction";
 import { useSpotifyPlayback } from "@/components/music/SpotifyPlaybackProvider";
+import { OfficialClouvaMark } from "@/components/clouva/OfficialClouvaMark";
 import { resolveAccountDisplayName } from "@/lib/identity-names";
 import {
   getNavigationItems,
@@ -41,7 +42,6 @@ import {
   type MobileHomeSectionKey,
 } from "@/lib/clouva-lab/mobile-home-config";
 import { usePublishedUiPage } from "@/lib/clouva-lab/use-published-ui-page";
-import { VISUAL_ASSETS } from "@/lib/visual-assets";
 import styles from "./mobile-home-dashboard.module.css";
 import labStyles from "./mobile-home-lab.module.css";
 
@@ -90,6 +90,7 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
   );
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [favorite, setFavorite] = useState(config.music.favoriteDefault);
+  const [showSpotifyConnect, setShowSpotifyConnect] = useState(false);
 
   useEffect(() => {
     setFavorite(config.music.favoriteDefault);
@@ -100,15 +101,15 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
     || currentPlayer?.logo_url
     || profile?.avatar_url
     || null;
-  const profileFallback = useMemo(() => initials(accountName) || "C", [accountName]);
+  const playerDisplayName = currentPlayer?.name?.trim()
+    || currentPlayer?.username?.trim()
+    || accountName;
+  const profileFallback = useMemo(() => initials(playerDisplayName) || "C", [playerDisplayName]);
   const publicProfileHref = getPlayerDestination(currentPlayer);
   const cssVariables = useMemo(
     () => ({ ...configCssVariables(config), backgroundColor: config.theme.backgroundColor }) as CSSProperties,
     [config],
   );
-  const heroImage = previewMode
-    ? config.hero.imageUrl
-    : currentPlayer?.cover_url || currentPlayer?.hero_image_url || VISUAL_ASSETS["player-public-profile-cover-01"];
 
   if ((user && !playerReady) || loading || (configLoading && !configOverride)) {
     return (
@@ -138,11 +139,22 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
         key="hero"
         className={styles.hero}
         aria-labelledby="mobile-home-title"
-        style={{ backgroundImage: `url(${heroImage})` }}
+        style={{
+          background: "transparent",
+          borderColor: "transparent",
+          boxShadow: "none",
+        }}
         data-clouva-block="hero"
       >
-        <div className={styles.heroShade} aria-hidden="true" />
-        <div className={styles.heroContent}>
+        <div
+          className={styles.heroContent}
+          style={{
+            width: "100%",
+            alignItems: "center",
+            textAlign: "center",
+            padding: "24px 16px",
+          }}
+        >
           <span>{config.hero.eyebrow}</span>
           <h1 id="mobile-home-title">{multiline(config.hero.title)}</h1>
           <p>{config.hero.subtitle}</p>
@@ -183,17 +195,25 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
             <div>
               <h2>{title}</h2>
               <p>{artist}</p>
-              {!previewMode ? <SpotifyHomeConnectAction /> : null}
             </div>
             <button
               type="button"
               className={favorite ? styles.favoriteActive : styles.favoriteButton}
-              onClick={() => setFavorite((value) => !value)}
+              onClick={() => {
+                setFavorite((value) => !value);
+                if (!previewMode) setShowSpotifyConnect(true);
+              }}
               aria-label={favorite ? "Quitar de favoritos" : "Agregar a favoritos"}
             >
               <Heart size={23} fill={favorite ? "currentColor" : "none"} />
             </button>
           </div>
+
+          {showSpotifyConnect && !previewMode ? (
+            <div style={{ marginTop: 2 }}>
+              <SpotifyHomeConnectAction />
+            </div>
+          ) : null}
 
           <button type="button" className={styles.progressButton} onClick={openMusic} aria-label="Abrir reproductor musical">
             <span><i style={progress === null ? undefined : { width: `${progress}%` }} /></span>
@@ -214,19 +234,36 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
 
   function featureCard(id: "continue" | "iglu", card: MobileHomeCardConfig) {
     if (!card.visible) return null;
+    const isVipCard = id === "continue";
+    const isSpotCard = id === "iglu";
+    const title = isVipCard ? "Desbloquea funciones VIP" : isSpotCard ? "Entrar a mi spot" : card.title;
+    const body = isVipCard ? "" : card.body;
+
     return (
       <Link
         key={id}
         href={card.href}
         className={styles.featureCard}
-        style={{ backgroundImage: `url(${card.imageUrl})` }}
+        style={isVipCard
+          ? { background: "transparent", boxShadow: "none" }
+          : { backgroundImage: `url(${card.imageUrl})` }}
         onClick={preventPreviewNavigation}
         data-clouva-block={id}
       >
-        <span className={styles.featureShade} aria-hidden="true" />
-        <div>
-          <h2>{multiline(card.title)}</h2>
-          <p>{multiline(card.body)}</p>
+        {!isVipCard ? <span className={styles.featureShade} aria-hidden="true" /> : null}
+        <div
+          style={isVipCard
+            ? {
+                width: "100%",
+                alignItems: "center",
+                justifyContent: "center",
+                textAlign: "center",
+                padding: 16,
+              }
+            : undefined}
+        >
+          <h2>{multiline(title)}</h2>
+          {body ? <p>{multiline(body)}</p> : null}
           <b aria-hidden="true"><ArrowRight size={20} /></b>
         </div>
       </Link>
@@ -261,7 +298,9 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
 
       <header className={styles.header} data-clouva-block="header">
         <Link href={homeNav.href} className={styles.brand} aria-label="Inicio de CLOUVA" onClick={preventPreviewNavigation}>
-          <span className={styles.brandMark}><CloverIcon size={29} /></span>
+          <span className={`${styles.brandMark} overflow-hidden rounded-full`}>
+            <OfficialClouvaMark tone="light" className="h-full w-full scale-[1.75] object-cover" />
+          </span>
           <strong>{config.header.logoText}</strong>
         </Link>
 
@@ -279,8 +318,12 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
           {!previewMode ? (
             <AccountMenu
               variant="home"
-              triggerImageUrl={config.header.showBrandAvatar ? config.header.brandAvatarUrl : undefined}
+              triggerImageUrl={playerImage ?? undefined}
             />
+          ) : playerImage ? (
+            <span className={styles.brandAvatar} aria-hidden="true">
+              <img src={playerImage} alt="" />
+            </span>
           ) : config.header.showBrandAvatar ? (
             <span className={styles.brandAvatar} aria-hidden="true">
               <img src={config.header.brandAvatarUrl} alt="" />
@@ -296,9 +339,9 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
           <Home size={22} fill="currentColor" />
           <span>{homeNav.label}</span>
         </Link>
-        <Link href={publicProfileHref} className={styles.profileNav} aria-label="Abrir mi Player" onClick={preventPreviewNavigation}>
+        <Link href={publicProfileHref} className={styles.profileNav} aria-label={`Abrir Player de ${playerDisplayName}`} onClick={preventPreviewNavigation}>
           {playerImage ? <img src={String(playerImage)} alt="" /> : <b>{profileFallback}</b>}
-          <span>{playerNav.label}</span>
+          <span>{playerDisplayName}</span>
         </Link>
         <Link href={createNav.href} className={styles.createNav} aria-label="Crear en CLOUVA" onClick={preventPreviewNavigation}>
           <b><Plus size={32} /></b>
