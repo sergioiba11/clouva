@@ -24,12 +24,7 @@ type ConnectionRow = {
   last_synced_at: string | null;
 };
 
-const connectionSelect = [
-  "id,user_id,external_account_id,external_username,display_name",
-  "access_token_ciphertext,token_iv,token_auth_tag",
-  "refresh_token_ciphertext,refresh_token_iv,refresh_token_auth_tag",
-  "expires_at,scopes,status,metadata,connected_at,last_synced_at",
-].join(",");
+const connectionSelect = "id,user_id,external_account_id,external_username,display_name,access_token_ciphertext,token_iv,token_auth_tag,refresh_token_ciphertext,refresh_token_iv,refresh_token_auth_tag,expires_at,scopes,status,metadata,connected_at,last_synced_at" as const;
 
 function thumbnail(channel: YoutubeChannel) {
   const thumbnails = channel.snippet?.thumbnails || {};
@@ -91,13 +86,14 @@ function decryptRefresh(row: ConnectionRow) {
 
 export async function persistYoutubeConnection(options: { admin: SupabaseClient; userId: string; tokens: YoutubeTokenResponse; channel: YoutubeChannel }) {
   const { admin, userId, tokens, channel } = options;
-  const { data: existing, error: existingError } = await admin
+  const { data: existingData, error: existingError } = await admin
     .from("social_connections")
     .select(connectionSelect)
     .eq("provider", "youtube")
     .eq("external_account_id", channel.id)
     .maybeSingle();
   if (existingError) throw new Error(`No se pudo validar la cuenta YouTube: ${existingError.message}`);
+  const existing = existingData as ConnectionRow | null;
   if (existing?.user_id && existing.user_id !== userId && existing.status === "active") throw new Error("Este canal de YouTube ya está conectado a otro usuario CLOUVA.");
 
   const config = getYoutubeConfig();
