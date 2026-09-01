@@ -20,7 +20,6 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { CloverIcon } from "@/components/clover-icon";
 import { useAuth } from "@/components/auth-provider";
 import { useCurrentPlayer } from "@/components/current-player-provider";
 import { AccountMenu } from "@/components/account/AccountMenu";
@@ -79,10 +78,10 @@ type MobileHomeDashboardProps = {
 
 export function MobileHomeDashboard({ configOverride, previewMode = false }: MobileHomeDashboardProps = {}) {
   const router = useRouter();
-  const { user, profile, loading } = useAuth();
-  const { currentPlayer, playerLoading, playerReady } = useCurrentPlayer();
+  const { user, profile } = useAuth();
+  const { currentPlayer } = useCurrentPlayer();
   const { playback, scopesReady, busyAction, controlPlayback } = useSpotifyPlayback();
-  const { config, version, loading: configLoading } = usePublishedUiPage(
+  const { config, version } = usePublishedUiPage(
     "mobile-home",
     DEFAULT_MOBILE_HOME_CONFIG,
     sanitizeMobileHomeConfig,
@@ -110,14 +109,6 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
     () => ({ ...configCssVariables(config), backgroundColor: config.theme.backgroundColor }) as CSSProperties,
     [config],
   );
-
-  if ((user && !playerReady) || loading || (configLoading && !configOverride)) {
-    return (
-      <main className={styles.loading} aria-busy={loading || playerLoading || configLoading} aria-label="Cargando CLOUVA">
-        <CloverIcon size={34} />
-      </main>
-    );
-  }
 
   const preventPreviewNavigation = (event: MouseEvent<HTMLElement>) => {
     if (previewMode) event.preventDefault();
