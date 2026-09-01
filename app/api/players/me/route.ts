@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { normalizePublicSlug } from "@/core/integrations/instagram/mapper";
 import { isReservedPublicAlias } from "@/lib/navigation/reserved-public-aliases";
+import { assertPlayerUsernameAvailable, validatePlayerUsername } from "@/lib/server/player-basics";
 import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
 import { completePendingStudioJoins } from "@/lib/server/studio-memberships";
 
@@ -231,6 +232,13 @@ export async function PATCH(request: NextRequest) {
 
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     const changes = sanitizeUpdate(body);
+
+    if (Object.prototype.hasOwnProperty.call(body, "username")) {
+      const username = validatePlayerUsername(body.username);
+      await assertPlayerUsernameAvailable(admin, username, player.id as string);
+      changes.username = username;
+    }
+
     if (typeof body.slug === "string" && body.slug.trim()) {
       const requestedSlug = normalizePublicSlug(body.slug);
       if (requestedSlug && isReservedPublicAlias(requestedSlug)) {
@@ -253,6 +261,17 @@ export async function PATCH(request: NextRequest) {
 
     const { data, error } = await admin.from("players").update(changes).eq("id", player.id).select("*").single();
     if (error) throw new Error(error.message);
+
+    if (data.owner_user_id === user.id && (changes.username !== undefined || changes.display_name !== undefined)) {
+      const profilePatch: Record<string, unknown> = {};
+      if (changes.username !== undefined) profilePatch.username = data.username;
+      if (changes.display_name !== undefined) {
+        profilePatch.display_name = data.display_name;
+        profilePatch.full_name = data.display_name;
+      }
+      const { error: profileError } = await admin.from("profiles").update(profilePatch).eq("id", user.id);
+      if (profileError) throw new Error(profileError.message);
+    }
 
     await admin.from("public_slug_aliases").upsert({
       alias: data.slug,
@@ -282,7 +301,11 @@ export async function PATCH(request: NextRequest) {
       pendingStudioReturnPath: pendingStudioReturnPathValue,
     });
   } catch (error) {
+    const typed = error as Error & { status?: number; code?: string };
     const message = error instanceof Error ? error.message : "No se pudo guardar tu Player.";
-    return NextResponse.json({ error: message }, { status: isAuthError(error) ? 401 : 500 });
+    return NextResponse.json(
+      { error: message, ...(typed.code ? { code: typed.code } : {}) },
+      { status: typed.status ?? (isAuthError(error) ? 401 : 500) },
+    );
   }
 }
