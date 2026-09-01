@@ -8,6 +8,7 @@ import { GlobalSpotifyPlayer } from "@/components/GlobalSpotifyPlayer";
 import { GlobalClouvaAIButton } from "@/components/GlobalClouvaAIButton";
 import { ClouvaAIAssistantProvider } from "@/components/clouva-ai/ClouvaAIAssistantProvider";
 import { SpotifyPlaybackProvider } from "@/components/music/SpotifyPlaybackProvider";
+import { PlayerBasicsGate } from "@/components/onboarding/PlayerBasicsGate";
 
 // Browser identity is global: the tab always carries the official CLOUVA mark.
 export const metadata: Metadata = {
@@ -35,16 +36,18 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <ThemeProvider>
           <AuthProvider>
-            <CurrentPlayerProvider>
-              <SpotifyPlaybackProvider>
-                <ClouvaAIAssistantProvider>
-                  <ActiveAvatarHydrator />
-                  {children}
-                  <GlobalClouvaAIButton />
-                  <GlobalSpotifyPlayer />
-                </ClouvaAIAssistantProvider>
-              </SpotifyPlaybackProvider>
-            </CurrentPlayerProvider>
+            <PlayerBasicsGate>
+              <CurrentPlayerProvider>
+                <SpotifyPlaybackProvider>
+                  <ClouvaAIAssistantProvider>
+                    <ActiveAvatarHydrator />
+                    {children}
+                    <GlobalClouvaAIButton />
+                    <GlobalSpotifyPlayer />
+                  </ClouvaAIAssistantProvider>
+                </SpotifyPlaybackProvider>
+              </CurrentPlayerProvider>
+            </PlayerBasicsGate>
           </AuthProvider>
         </ThemeProvider>
       </body>
