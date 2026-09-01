@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
 
 type Asset = {
@@ -27,11 +27,13 @@ function formatBytes(bytes: number) {
 export default function AdminAssetsPage() {
   const [folder, setFolder] = useState("brand");
   const [items, setItems] = useState<Asset[]>([]);
-  const [bucket, setBucket] = useState("clouva-creator-assets");
+  const [bucket, setBucket] = useState("clouva-generated-media");
   const [file, setFile] = useState<File | null>(null);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const lastHandledSelectionRef = useRef<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -46,13 +48,14 @@ export default function AdminAssetsPage() {
 
   useEffect(() => { void load(); }, [load]);
 
-  const upload = async () => {
-    if (!file) return;
+  const upload = async (selectedFile?: File | null) => {
+    const uploadFile = selectedFile ?? file;
+    if (!uploadFile || busy) return;
     setBusy(true);
-    setMessage(null);
+    setMessage(`Subiendo ${uploadFile.name}…`);
     try {
       const form = new FormData();
-      form.set("file", file);
+      form.set("file", uploadFile);
       form.set("folder", folder);
       if (name.trim()) form.set("name", name.trim());
       const response = await authenticatedFetch("/api/admin/assets", { method: "POST", body: form });
@@ -60,12 +63,27 @@ export default function AdminAssetsPage() {
       setMessage(`Subido: ${data.asset.path}`);
       setFile(null);
       setName("");
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      lastHandledSelectionRef.current = null;
       await load();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudo subir el archivo.");
     } finally {
       setBusy(false);
     }
+  };
+
+  const handleSelectedFile = (input: HTMLInputElement) => {
+    const picked = input.files?.item(0) ?? null;
+    if (!picked) return;
+
+    const selectionKey = `${picked.name}:${picked.size}:${picked.lastModified}`;
+    if (lastHandledSelectionRef.current === selectionKey) return;
+    lastHandledSelectionRef.current = selectionKey;
+
+    setFile(picked);
+    setMessage(`Seleccionado: ${picked.name}. Subiendo…`);
+    void upload(picked);
   };
 
   return (
@@ -80,20 +98,40 @@ export default function AdminAssetsPage() {
         <label className="text-xs uppercase tracking-[0.16em] text-white/50">Carpeta</label>
         <div className="mt-3 flex flex-wrap gap-2">
           {FOLDERS.map((value) => (
-            <button key={value} type="button" onClick={() => setFolder(value)} className={`rounded-full border px-4 py-2 text-sm ${folder === value ? "border-violet-300 bg-violet-400/15 text-violet-100" : "border-white/10 text-white/60"}`}>
+            <button key={value} type="button" disabled={busy} onClick={() => setFolder(value)} className={`rounded-full border px-4 py-2 text-sm disabled:opacity-40 ${folder === value ? "border-violet-300 bg-violet-400/15 text-violet-100" : "border-white/10 text-white/60"}`}>
               {value}
             </button>
           ))}
         </div>
 
-        <label className="mt-5 block text-xs uppercase tracking-[0.16em] text-white/50">Archivo</label>
-        <input className="mt-2 block w-full rounded-2xl border border-white/10 bg-black/30 p-3 text-sm" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml,.glb,.gltf,.pdf" onChange={(event) => setFile(event.target.files?.[0] ?? null)} />
+        <label className="mt-5 block text-xs uppercase tracking-[0.16em] text-white/50">Nombre definitivo (opcional)</label>
+        <input className="mt-2 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm outline-none focus:border-violet-400/50" value={name} disabled={busy} onChange={(event) => setName(event.target.value)} placeholder="ej: logo-official-light.png" />
 
-        <label className="mt-4 block text-xs uppercase tracking-[0.16em] text-white/50">Nombre definitivo (opcional)</label>
-        <input className="mt-2 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm outline-none focus:border-violet-400/50" value={name} onChange={(event) => setName(event.target.value)} placeholder={file?.name ?? "ej: logo-official-light.png"} />
+        <label className="mt-5 block text-xs uppercase tracking-[0.16em] text-white/50">Archivo</label>
+        <input
+          ref={fileInputRef}
+          className="mt-2 block w-full rounded-2xl border border-white/10 bg-black/30 p-3 text-sm"
+          type="file"
+          accept="image/*,.glb,.gltf,.pdf,application/pdf,model/gltf-binary,model/gltf+json"
+          disabled={busy}
+          onClick={(event) => {
+            event.currentTarget.value = "";
+            lastHandledSelectionRef.current = null;
+          }}
+          onInput={(event) => handleSelectedFile(event.currentTarget)}
+          onChange={(event) => handleSelectedFile(event.currentTarget)}
+        />
+        <p className="mt-2 text-xs text-white/45">Al elegir el archivo se sube automáticamente.</p>
+
+        {file ? (
+          <div className="mt-3 rounded-2xl border border-violet-400/20 bg-violet-400/10 px-4 py-3 text-sm text-violet-100">
+            <p className="truncate font-medium">{file.name}</p>
+            <p className="mt-1 text-xs text-white/50">{formatBytes(file.size)}</p>
+          </div>
+        ) : null}
 
         <button type="button" disabled={!file || busy} onClick={() => void upload()} className="mt-5 min-h-14 w-full rounded-full bg-white px-5 font-semibold text-black disabled:opacity-40">
-          {busy ? "Subiendo…" : "Subir a CLOUVA"}
+          {busy ? "Subiendo…" : "Reintentar subida"}
         </button>
         {message ? <p className="mt-3 break-all text-sm text-violet-200">{message}</p> : null}
       </div>
