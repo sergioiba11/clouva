@@ -36,6 +36,7 @@ export async function createBusinessSpace({
   userId,
   kind,
   name,
+  slug,
   description,
   category,
   subcategory,
@@ -48,6 +49,7 @@ export async function createBusinessSpace({
   userId: string;
   kind: BusinessKind;
   name: string;
+  slug?: string | null;
   description?: string | null;
   category?: string | null;
   subcategory?: string | null;
@@ -57,6 +59,7 @@ export async function createBusinessSpace({
   analysis?: SpotBusinessAnalysis | null;
 }) {
   const cleanName = short(name, 160);
+  const cleanSlug = short(slug, 120);
   const cleanDescription = short(description, 4000);
   const cleanCategory = short(category, 120);
   const cleanSubcategory = short(subcategory, 120);
@@ -70,7 +73,7 @@ export async function createBusinessSpace({
     const { data, error } = await admin.rpc("create_studio_os_draft", {
       p_user_id: userId,
       p_name: cleanName,
-      p_slug: cleanName,
+      p_slug: cleanSlug || cleanName,
       p_city: cleanLocation || null,
       p_description: cleanDescription || null,
     });
