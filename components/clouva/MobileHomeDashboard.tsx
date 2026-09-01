@@ -101,7 +101,7 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
     || currentPlayer?.logo_url
     || profile?.avatar_url
     || null;
-  const playerDisplayName = currentPlayer?.name?.trim()
+  const playerDisplayName = currentPlayer?.display_name?.trim()
     || currentPlayer?.username?.trim()
     || accountName;
   const profileFallback = useMemo(() => initials(playerDisplayName) || "C", [playerDisplayName]);
