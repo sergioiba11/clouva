@@ -55,6 +55,8 @@ export function GlobalClouvaAIButton() {
   };
 
   useEffect(() => {
+    if (loading) return;
+
     const launcher = launcherRef.current;
     if (!launcher) return;
 
@@ -89,7 +91,7 @@ export function GlobalClouvaAIButton() {
 
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
-  }, []);
+  }, [loading]);
 
   useEffect(() => {
     if (!open) return;
