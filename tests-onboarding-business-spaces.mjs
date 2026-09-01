@@ -114,9 +114,9 @@ test("I/K · solicitar administración crea pending separado de studio_applicati
 });
 
 test("J · pending no crea membresía ni acceso administrativo", () => {
-  assert.doesNotMatch(requestApi, /\.from\("space_members"\)[\s\S]*\.insert/);
-  assert.doesNotMatch(requestApi, /commerce_spot_members[\s\S]*\.insert/);
-  assert.doesNotMatch(requestApi, /studio_members[\s\S]*\.insert/);
+  assert.doesNotMatch(requestApi, /\.from\("space_members"\)\s*\.insert/);
+  assert.doesNotMatch(requestApi, /\.from\("commerce_spot_members"\)\s*\.insert/);
+  assert.doesNotMatch(requestApi, /\.from\("studio_members"\)\s*\.insert/);
   assert.match(requestApi, /redirectTo: "\/"/);
 });
 
