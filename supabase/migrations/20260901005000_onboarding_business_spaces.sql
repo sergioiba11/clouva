@@ -48,6 +48,71 @@ alter table public.players
     )
   ) not valid;
 
+-- Name + @ are one identity operation. The API performs the friendly reserved-
+-- alias check; this RPC owns the atomic DB write and repeats format/uniqueness
+-- checks so two concurrent requests cannot create divergent Player/Profile data.
+create or replace function public.set_player_basics(
+  p_user_id uuid,
+  p_display_name text,
+  p_username text
+)
+returns public.players
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_player public.players%rowtype;
+  v_display_name text := left(regexp_replace(btrim(coalesce(p_display_name,'')), '\s+', ' ', 'g'),160);
+  v_username text := lower(regexp_replace(btrim(coalesce(p_username,'')), '^@+', ''));
+begin
+  if p_user_id is null then raise exception 'Usuario inválido.'; end if;
+  if v_display_name = '' then raise exception 'Tu nombre público es obligatorio.'; end if;
+  if v_username !~ '^[a-z0-9][a-z0-9._-]{1,28}[a-z0-9]$' then
+    raise exception 'El @ tiene un formato inválido.';
+  end if;
+
+  select * into v_player
+  from public.players p
+  where p.owner_user_id = p_user_id
+  for update;
+  if not found then raise exception 'No pudimos resolver tu Player base.'; end if;
+
+  if exists (
+    select 1 from public.players p
+    where lower(p.username) = v_username and p.id <> v_player.id
+  ) then
+    raise exception 'Ese @ ya está en uso.' using errcode = '23505';
+  end if;
+
+  if exists (
+    select 1 from public.public_slug_aliases a
+    where a.normalized_alias = v_username and a.entity_id <> v_player.id
+  ) then
+    raise exception 'Ese @ ya está en uso.' using errcode = '23505';
+  end if;
+
+  update public.players
+  set display_name = v_display_name,
+      username = v_username,
+      updated_at = now()
+  where id = v_player.id
+  returning * into v_player;
+
+  update public.profiles
+  set display_name = v_display_name,
+      full_name = v_display_name,
+      username = v_username,
+      updated_at = now()
+  where id = p_user_id;
+
+  return v_player;
+end;
+$$;
+
+revoke all on function public.set_player_basics(uuid,text,text) from public,anon,authenticated;
+grant execute on function public.set_player_basics(uuid,text,text) to service_role;
+
 -- ---------------------------------------------------------------------------
 -- Space business identity + activatable modules
 -- ---------------------------------------------------------------------------
@@ -130,7 +195,15 @@ language plpgsql
 security definer
 set search_path = ''
 as $$
+declare
+  v_identity_changed boolean := tg_op = 'INSERT';
 begin
+  if tg_op = 'UPDATE' then
+    v_identity_changed := new.space_id is distinct from old.space_id
+      or new.user_id is distinct from old.user_id
+      or new.player_id is distinct from old.player_id;
+  end if;
+
   if not exists (
     select 1 from public.players p
     where p.id = new.player_id and p.owner_user_id = new.user_id
@@ -138,20 +211,25 @@ begin
     raise exception 'La solicitud debe usar el Player base del usuario.';
   end if;
 
-  if exists (
-    select 1 from public.spaces sp
-    where sp.id = new.space_id and sp.owner_player_id = new.player_id
-  ) then
-    raise exception 'El propietario ya administra este espacio.';
-  end if;
+  -- These checks protect creation / identity reassignment. A review is allowed
+  -- to activate membership first and then mark the same locked request approved
+  -- in the same transaction without the validation trigger rejecting itself.
+  if v_identity_changed then
+    if exists (
+      select 1 from public.spaces sp
+      where sp.id = new.space_id and sp.owner_player_id = new.player_id
+    ) then
+      raise exception 'El propietario ya administra este espacio.';
+    end if;
 
-  if exists (
-    select 1 from public.space_members sm
-    where sm.space_id = new.space_id
-      and sm.player_id = new.player_id
-      and sm.status = 'active'
-  ) then
-    raise exception 'Este Player ya forma parte del equipo del espacio.';
+    if exists (
+      select 1 from public.space_members sm
+      where sm.space_id = new.space_id
+        and sm.player_id = new.player_id
+        and sm.status = 'active'
+    ) then
+      raise exception 'Este Player ya forma parte del equipo del espacio.';
+    end if;
   end if;
 
   new.message := nullif(btrim(coalesce(new.message,'')), '');
