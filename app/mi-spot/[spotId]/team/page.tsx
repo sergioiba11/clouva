@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, Loader2, ShieldCheck, UserPlus, Users } from "lucide-react";
+import { ArrowLeft, ClipboardList, Loader2, ShieldCheck, UserPlus, Users } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
@@ -19,7 +19,12 @@ type Member = {
 };
 type RoleOption = { id: string; label: string };
 
-type TeamPayload = { members: Member[]; roles: RoleOption[] };
+type TeamPayload = {
+  members: Member[];
+  roles: RoleOption[];
+  spaceId: string | null;
+  requestsHref: string | null;
+};
 
 export default function SpotTeamPage() {
   const params = useParams<{ spotId: string }>();
@@ -27,6 +32,7 @@ export default function SpotTeamPage() {
   const { user, loading: authLoading } = useAuth();
   const [members, setMembers] = useState<Member[]>([]);
   const [roles, setRoles] = useState<RoleOption[]>([]);
+  const [requestsHref, setRequestsHref] = useState<string | null>(null);
   const [userId, setUserId] = useState("");
   const [role, setRole] = useState("viewer");
   const [loading, setLoading] = useState(true);
@@ -42,6 +48,7 @@ export default function SpotTeamPage() {
       const payload = await readApiJson<TeamPayload>(response);
       setMembers(payload.members ?? []);
       setRoles((payload.roles ?? []).filter((option) => option.id !== "owner"));
+      setRequestsHref(payload.requestsHref ?? null);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "No se pudo cargar el equipo.");
     } finally {
@@ -117,7 +124,10 @@ export default function SpotTeamPage() {
       <div className="mx-auto max-w-5xl px-4 py-8 sm:px-8 sm:py-10">
         <Link href={`/mi-spot/${spotId}`} className="inline-flex items-center gap-2 text-sm text-white/42 transition hover:text-white"><ArrowLeft size={15} /> Volver al Spot</Link>
         <section className="mt-5 rounded-[28px] border border-violet-400/15 bg-gradient-to-br from-[#171022] via-[#0f0b18] to-[#09080f] p-6 sm:p-8">
-          <div className="flex items-start gap-4"><span className="grid h-12 w-12 place-items-center rounded-2xl border border-violet-300/15 bg-violet-300/[0.07] text-violet-300"><Users size={21} /></span><div><p className="text-xs uppercase tracking-[0.15em] text-white/35">Roles del negocio</p><h1 className="mt-1 text-3xl font-semibold">Equipo de MI SPOT</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-white/48">Los permisos se validan server-side. Ser manager de un Spot no convierte a nadie en beneficiario de su dinero.</p></div></div>
+          <div className="flex flex-col gap-5 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex items-start gap-4"><span className="grid h-12 w-12 place-items-center rounded-2xl border border-violet-300/15 bg-violet-300/[0.07] text-violet-300"><Users size={21} /></span><div><p className="text-xs uppercase tracking-[0.15em] text-white/35">Roles del negocio</p><h1 className="mt-1 text-3xl font-semibold">Equipo de MI SPOT</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-white/48">Los permisos se validan server-side. Ser manager de un Spot no convierte a nadie en beneficiario de su dinero.</p></div></div>
+            {requestsHref ? <Link href={requestsHref} className="inline-flex shrink-0 items-center justify-center gap-2 rounded-xl border border-violet-400/25 bg-violet-500/10 px-4 py-2.5 text-sm font-medium text-violet-100"><ClipboardList size={16} /> Activos · Solicitudes · Invitaciones</Link> : null}
+          </div>
         </section>
 
         {error ? <p className="mt-5 rounded-2xl border border-rose-300/15 bg-rose-300/[0.06] p-4 text-sm text-rose-200">{error}</p> : null}
