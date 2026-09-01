@@ -6,7 +6,8 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
 import { OnboardingShell } from "@/components/onboarding/OnboardingShell";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
-import type { BusinessKind } from "@/lib/server/business-spaces";
+
+type BusinessKind = "digital_business" | "physical_business" | "studio";
 
 type Option = {
   kind: BusinessKind;
