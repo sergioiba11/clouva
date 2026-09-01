@@ -12,7 +12,8 @@ test("onboarding asks for an action and keeps professional identity separate", a
   ]);
   assert.match(modePage, /¿Qué querés hacer en CLOUVA\?/);
   assert.match(modePage, /Explorar CLOUVA/);
-  assert.match(modePage, /Crear mi Estudio/);
+  assert.match(modePage, /Crear negocio/);
+  assert.match(modePage, /destination: "\/businesses\/new"/);
   assert.doesNotMatch(modePage, /professional_categories/);
   assert.match(playerPage, /professional_categories/);
   assert.match(modeApi, /profile_modes/);
@@ -35,8 +36,10 @@ test("Studio OS sigue perteneciendo al Studio y el rol administrativo además ex
   assert.match(aiPermissions, /if \(args\.studioId\)/);
   assert.match(aiPermissions, /requireStudioManager/);
   assert.match(aiPermissions, /productGate: "studio_os"/);
-  assert.match(createPage, /\/api\/studios\/create/);
+  assert.match(createPage, /redirect\("\/businesses\/new\?type=studio"\)/);
   assert.doesNotMatch(createPage, /\.from\("studios"\)\.insert/);
+  assert.match(createApi, /createBusinessSpace/);
+  assert.match(createApi, /kind: "studio"/);
   assert.match(createApi, /create_studio_os_draft/);
   assert.match(studioOsApi, /clouva_studio_os/);
   assert.match(billing, /activate_studio_os/);
