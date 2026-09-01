@@ -10,7 +10,7 @@ import { useEffect } from "react";
 
 const links = [
   { title: "Panel", links: ["/admin", "/admin/clientes"] },
-  { title: "Experiencia", links: ["/admin/clouva-lab", "/admin/clouva-control"] },
+  { title: "Experiencia", links: ["/admin/clouva-lab", "/admin/clouva-control", "/admin/assets"] },
   {
     title: "Monetización",
     links: [
