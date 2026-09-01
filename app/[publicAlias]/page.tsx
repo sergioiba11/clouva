@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { PlayerPublicView } from "@/components/public/PlayerPublicView";
-import { PublicMerchSection } from "@/components/public/PublicMerchSection";
+import { PublicMerchSection, loadPublicMerchProducts } from "@/components/public/PublicMerchSection";
 import { resolvePlayerAlias } from "@/lib/server/public-identity-data";
 
 export const dynamic = "force-dynamic";
@@ -36,6 +36,7 @@ export default async function PublicPlayerAliasPage({ params }: { params: Promis
   const { publicAlias } = await params;
   const result = await resolvePlayerAlias(publicAlias);
   if (!result) notFound();
+  const merchProducts = await loadPublicMerchProducts({ playerId: result.player.id });
 
   return (
     <>
@@ -45,9 +46,11 @@ export default async function PublicPlayerAliasPage({ params }: { params: Promis
         media={result.media}
         isVip={result.isVip}
         layoutConfig={result.layoutConfig}
+        hasMerch={merchProducts.length > 0}
       />
       <PublicMerchSection
         playerId={result.player.id}
+        products={merchProducts}
         eyebrow={`Merch de ${result.player.display_name}`}
         title="Tienda"
       />

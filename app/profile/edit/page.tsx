@@ -3,22 +3,24 @@
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "@/components/auth-provider";
+import { SocialLinksEditor } from "@/components/profile/SocialLinksEditor";
+import { YouTubeConnectionPanel } from "@/components/profile/YouTubeConnectionPanel";
+import { VipAiProfilePanel } from "@/components/profile/VipAiProfilePanel";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
 import type { Player, SocialLink } from "@/lib/players-data";
-import { VipAiProfilePanel } from "@/components/profile/VipAiProfilePanel";
 
-const SECTIONS = ["Identidad", "Presentación", "Imagen", "Links", "Instagram", "CLOUVA AI Profile", "Privacidad y SEO"] as const;
+const SECTIONS = ["Identidad", "Presentación", "Imagen", "Redes y plataformas", "Instagram", "YouTube", "CLOUVA AI Profile", "Privacidad y SEO"] as const;
 type Section = (typeof SECTIONS)[number];
 
-// Deep-linkable section slugs, e.g. /profile/edit?section=ai-profile
-// so the post-pago flow can land the user directly on the right tab.
 const SECTION_SLUGS: Record<string, Section> = {
   "ai-profile": "CLOUVA AI Profile",
   identidad: "Identidad",
   presentacion: "Presentación",
   imagen: "Imagen",
-  links: "Links",
+  links: "Redes y plataformas",
+  redes: "Redes y plataformas",
   instagram: "Instagram",
+  youtube: "YouTube",
   seo: "Privacidad y SEO",
 };
 
@@ -44,9 +46,7 @@ function PlayerEditorContent() {
   const [player, setPlayer] = useState<Player | null>(null);
   const [connection, setConnection] = useState<InstagramConnection | null>(null);
   const [vipActive, setVipActive] = useState(false);
-  const [activeSection, setActiveSection] = useState<Section>(
-    () => SECTION_SLUGS[searchParams.get("section") || ""] || "Identidad",
-  );
+  const [activeSection, setActiveSection] = useState<Section>(() => SECTION_SLUGS[searchParams.get("section") || ""] || "Identidad");
   const [draft, setDraft] = useState<Record<string, unknown>>({});
   const [links, setLinks] = useState<SocialLink[]>([]);
   const [loading, setLoading] = useState(true);
@@ -97,7 +97,6 @@ function PlayerEditorContent() {
   useEffect(() => { void load(); }, [user]);
 
   const categories = useMemo(() => Array.isArray(draft.professional_categories) ? draft.professional_categories as string[] : [], [draft.professional_categories]);
-
   const update = (key: string, value: unknown) => setDraft((current) => ({ ...current, [key]: value }));
 
   const save = async (publicationAction?: "publish" | "unpublish") => {
@@ -112,6 +111,7 @@ function PlayerEditorContent() {
       const payload = await readApiJson<{ player: Player }>(response);
       setPlayer(payload.player);
       setDraft({ ...payload.player });
+      setLinks(parseLinks(payload.player.social_links));
       setMessage(publicationAction === "publish" ? "Perfil publicado." : publicationAction === "unpublish" ? "Perfil despublicado." : "Borrador guardado.");
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "No se pudo guardar.");
@@ -124,10 +124,7 @@ function PlayerEditorContent() {
     setSaving(true);
     setError(null);
     try {
-      const response = await authenticatedFetch("/api/integrations/instagram/connect", {
-        method: "POST",
-        body: JSON.stringify({ returnPath: "/onboarding/instagram/select" }),
-      });
+      const response = await authenticatedFetch("/api/integrations/instagram/connect", { method: "POST", body: JSON.stringify({ returnPath: "/onboarding/instagram/select" }) });
       const payload = await readApiJson<{ authorizeUrl: string }>(response);
       window.location.assign(payload.authorizeUrl);
     } catch (connectError) {
@@ -165,10 +162,6 @@ function PlayerEditorContent() {
     }
   };
 
-  const addLink = () => setLinks((current) => [...current, { platform: "website", label: "", url: "", is_visible: true, display_order: current.length }]);
-  const updateLink = (index: number, changes: Partial<SocialLink>) => setLinks((current) => current.map((link, itemIndex) => itemIndex === index ? { ...link, ...changes } : link));
-  const removeLink = (index: number) => setLinks((current) => current.filter((_, itemIndex) => itemIndex !== index));
-
   if (loading || !player) {
     return <main className="min-h-screen bg-[#05040a] px-4 py-10 text-white"><div className="mx-auto h-[70vh] max-w-6xl animate-pulse rounded-[2rem] bg-white/[0.04]" /></main>;
   }
@@ -177,10 +170,7 @@ function PlayerEditorContent() {
     <main className="min-h-screen bg-[#05040a] text-white">
       <header className="sticky top-0 z-30 border-b border-white/10 bg-[#05040a]/90 backdrop-blur-xl">
         <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
-          <div>
-            <p className="text-xs uppercase tracking-[0.24em] text-violet-300/70">Editor del Player</p>
-            <h1 className="font-semibold">{player.display_name}</h1>
-          </div>
+          <div><p className="text-xs uppercase tracking-[0.24em] text-violet-300/70">Editor del Player</p><h1 className="font-semibold">{player.display_name}</h1></div>
           <div className="flex gap-2">
             <button onClick={() => void save()} disabled={saving} className="rounded-xl border border-white/15 px-4 py-2 text-sm">Guardar borrador</button>
             <button onClick={() => router.push(`/${player.slug}`)} className="hidden rounded-xl border border-white/15 px-4 py-2 text-sm sm:block">Vista previa</button>
@@ -217,18 +207,13 @@ function PlayerEditorContent() {
             <p className="rounded-xl border border-white/10 bg-white/[0.025] p-4 text-sm leading-6 text-white/45">Las imágenes importadas desde Instagram se copian al almacenamiento público de CLOUVA. La carga manual de archivos utiliza este mismo módulo de medios.</p>
           </div> : null}
 
-          {activeSection === "Links" ? <div className="space-y-3">
-            {links.map((link, index) => <div key={index} className="grid gap-2 rounded-2xl border border-white/10 p-4 sm:grid-cols-[140px_1fr_auto]">
-              <select value={link.platform} onChange={(event) => updateLink(index, { platform: event.target.value })} className="rounded-xl border border-white/10 bg-black/30 px-3 py-2"><option value="instagram">Instagram</option><option value="spotify">Spotify</option><option value="youtube">YouTube</option><option value="tiktok">TikTok</option><option value="website">Sitio web</option><option value="contact">Contacto</option></select>
-              <input value={link.url} onChange={(event) => updateLink(index, { url: event.target.value })} placeholder="https://..." className="rounded-xl border border-white/10 bg-black/30 px-3 py-2 outline-none focus:border-violet-400/60" />
-              <button onClick={() => removeLink(index)} className="rounded-xl border border-red-400/20 px-3 py-2 text-red-300">Quitar</button>
-            </div>)}
-            <button onClick={addLink} className="rounded-xl border border-dashed border-white/20 px-4 py-3 text-sm text-white/50">+ Agregar link</button>
-          </div> : null}
+          {activeSection === "Redes y plataformas" ? <SocialLinksEditor links={links} onChange={setLinks} /> : null}
 
           {activeSection === "Instagram" ? <div className="space-y-4">
             {connection ? <div className="rounded-2xl border border-violet-400/25 bg-violet-500/10 p-5"><p className="text-xs uppercase tracking-[0.2em] text-violet-300/70">Instagram conectado</p><p className="mt-2 text-xl font-semibold">@{connection.external_username || connection.display_name || "instagram"}</p><p className="mt-1 text-sm text-white/45">{connection.account_type || "Cuenta profesional"} · Estado: {connection.status}</p><div className="mt-5 flex flex-wrap gap-2"><button onClick={() => void syncInstagram()} disabled={saving} className="rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold">Importar nuevas publicaciones</button><button onClick={() => void connectInstagram()} disabled={saving} className="rounded-xl border border-white/15 px-4 py-2 text-sm">Reconectar</button><button onClick={() => void disconnectInstagram()} disabled={saving} className="rounded-xl border border-red-400/20 px-4 py-2 text-sm text-red-300">Desconectar</button></div></div> : <div className="rounded-2xl border border-dashed border-white/15 p-6 text-center"><p className="text-white/55">Instagram todavía no está conectado.</p><button onClick={() => void connectInstagram()} disabled={saving} className="mt-4 rounded-xl bg-gradient-to-r from-fuchsia-600 to-violet-600 px-5 py-3 font-semibold">Conectar Instagram</button></div>}
           </div> : null}
+
+          {activeSection === "YouTube" ? <YouTubeConnectionPanel onChannelUrl={(url) => update("youtube_channel_url", url)} /> : null}
 
           {activeSection === "CLOUVA AI Profile" ? <VipAiProfilePanel playerId={player.id} vipActive={vipActive} /> : null}
 
@@ -257,11 +242,7 @@ function PlayerEditorContent() {
 }
 
 export default function PlayerEditorPage() {
-  return (
-    <Suspense fallback={<main className="min-h-screen bg-[#05040a] px-4 py-10 text-white"><div className="mx-auto h-[70vh] max-w-6xl animate-pulse rounded-[2rem] bg-white/[0.04]" /></main>}>
-      <PlayerEditorContent />
-    </Suspense>
-  );
+  return <Suspense fallback={<main className="min-h-screen bg-[#05040a] px-4 py-10 text-white"><div className="mx-auto h-[70vh] max-w-6xl animate-pulse rounded-[2rem] bg-white/[0.04]" /></main>}><PlayerEditorContent /></Suspense>;
 }
 
 function Label({ children }: { children: React.ReactNode }) { return <label className="mb-2 block text-xs uppercase tracking-[0.18em] text-white/40">{children}</label>; }

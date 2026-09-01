@@ -1,3 +1,5 @@
+import { normalizeSocialPlatform, sanitizeSocialUrl } from "@/lib/social-platforms";
+
 // Types for the Players/Estudios public ecosystem. These remain local because
 // database.types.ts is hand-maintained and is not the production source of truth.
 
@@ -108,15 +110,19 @@ export function parsePlayerSocialLinks(value: unknown): SocialLink[] {
   if (!Array.isArray(value)) return [];
   return value
     .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"))
-    .map((item) => ({
-      platform: String(item.platform || "link").toLowerCase(),
-      label: typeof item.label === "string" ? item.label : undefined,
-      username: typeof item.username === "string" ? item.username : undefined,
-      url: typeof item.url === "string" ? item.url : "",
-      is_visible: item.is_visible !== false,
-      display_order: Number(item.display_order || 0),
-    }))
-    .filter((item) => item.url && item.is_visible)
+    .map((item, index) => {
+      const platform = normalizeSocialPlatform(item.platform);
+      const url = sanitizeSocialUrl(item.url, platform);
+      return {
+        platform,
+        label: typeof item.label === "string" ? item.label.trim().slice(0, 80) : undefined,
+        username: typeof item.username === "string" ? item.username.trim().replace(/^@+/, "").slice(0, 120) : undefined,
+        url: url || "",
+        is_visible: item.is_visible !== false,
+        display_order: Number.isFinite(Number(item.display_order)) ? Number(item.display_order) : index,
+      } satisfies SocialLink;
+    })
+    .filter((item) => Boolean(item.url) && item.is_visible)
     .sort((a, b) => (a.display_order || 0) - (b.display_order || 0));
 }
 

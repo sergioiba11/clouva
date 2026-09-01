@@ -7,18 +7,15 @@ type Props = {
   studioId?: string | null;
   title?: string;
   eyebrow?: string;
+  products?: CommerceProduct[];
 };
 
-export async function PublicMerchSection({ playerId, studioId, title = "Merch", eyebrow = "Tienda" }: Props) {
+export async function loadPublicMerchProducts({ playerId, studioId }: { playerId?: string | null; studioId?: string | null }) {
   const supabase = createPublicSupabase();
   let targetSpaceId: string | null = null;
 
   if (studioId) {
-    const { data: space } = await supabase
-      .from("spaces")
-      .select("id")
-      .eq("legacy_studio_id", studioId)
-      .maybeSingle();
+    const { data: space } = await supabase.from("spaces").select("id").eq("legacy_studio_id", studioId).maybeSingle();
     targetSpaceId = space?.id ?? null;
   }
 
@@ -29,16 +26,12 @@ export async function PublicMerchSection({ playerId, studioId, title = "Merch", 
     .eq("placement", "merch")
     .order("display_order", { ascending: true });
 
-  if (playerId) {
-    publicationsQuery = publicationsQuery.eq("target_type", "player").eq("target_player_id", playerId);
-  } else if (targetSpaceId) {
-    publicationsQuery = publicationsQuery.eq("target_type", "space").eq("target_space_id", targetSpaceId);
-  } else {
-    return null;
-  }
+  if (playerId) publicationsQuery = publicationsQuery.eq("target_type", "player").eq("target_player_id", playerId);
+  else if (targetSpaceId) publicationsQuery = publicationsQuery.eq("target_type", "space").eq("target_space_id", targetSpaceId);
+  else return [] as CommerceProduct[];
 
   const { data: publications, error: publicationError } = await publicationsQuery;
-  if (publicationError || !publications?.length) return null;
+  if (publicationError || !publications?.length) return [] as CommerceProduct[];
 
   const productIds = Array.from(new Set(publications.map((row) => String(row.product_id))));
   const { data: products, error: productError } = await supabase
@@ -46,12 +39,16 @@ export async function PublicMerchSection({ playerId, studioId, title = "Merch", 
     .select(commerceProductSelect)
     .in("id", productIds)
     .eq("status", "published");
-  if (productError || !products?.length) return null;
+  if (productError || !products?.length) return [] as CommerceProduct[];
 
   const productMap = new Map((products as unknown as CommerceProduct[]).map((product) => [product.id, product]));
-  const ordered = publications
+  return publications
     .map((publication) => productMap.get(String(publication.product_id)))
     .filter((product): product is CommerceProduct => Boolean(product));
+}
+
+export async function PublicMerchSection({ playerId, studioId, title = "Merch", eyebrow = "Tienda", products }: Props) {
+  const ordered = products ?? await loadPublicMerchProducts({ playerId, studioId });
   if (!ordered.length) return null;
 
   return (
@@ -64,9 +61,7 @@ export async function PublicMerchSection({ playerId, studioId, title = "Merch", 
         <p className="max-w-md text-right text-xs leading-5 text-white/35">Un producto canónico: el mismo precio, stock e inventario aunque aparezca en varios perfiles.</p>
       </div>
       <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-        {ordered.map((product) => (
-          <ProductCard key={product.id} product={product} href={`/producto/id/${product.id}`} />
-        ))}
+        {ordered.map((product) => <ProductCard key={product.id} product={product} href={`/producto/id/${product.id}`} />)}
       </div>
     </section>
   );
