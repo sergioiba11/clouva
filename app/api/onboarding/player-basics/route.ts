@@ -56,22 +56,23 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "No pudimos resolver tu Player base.", code: "PLAYER_NOT_FOUND" }, { status: 409 });
     }
 
+    // Friendly preflight plus the DB unique index/RPC check for the concurrent
+    // write case. The RPC updates Player + Profile in one transaction.
     await assertPlayerUsernameAvailable(admin, username, player.id);
-
-    const { data: updated, error: playerError } = await admin
-      .from("players")
-      .update({ display_name: displayName, username })
-      .eq("id", player.id)
-      .eq("owner_user_id", user.id)
-      .select("id,display_name,username,owner_user_id")
-      .single();
-    if (playerError) throw new Error(playerError.message);
-
-    const { error: profileError } = await admin
-      .from("profiles")
-      .update({ display_name: displayName, full_name: displayName, username })
-      .eq("id", user.id);
-    if (profileError) throw new Error(profileError.message);
+    const { data: updated, error } = await admin.rpc("set_player_basics", {
+      p_user_id: user.id,
+      p_display_name: displayName,
+      p_username: username,
+    });
+    if (error) {
+      if (error.code === "23505") {
+        const taken = new Error("Ese @ ya está en uso.") as Error & { status?: number; code?: string };
+        taken.status = 409;
+        taken.code = "USERNAME_TAKEN";
+        throw taken;
+      }
+      throw new Error(error.message);
+    }
 
     return NextResponse.json({ player: updated, complete: true });
   } catch (error) {
