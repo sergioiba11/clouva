@@ -2,6 +2,9 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   images: {
+    // Prefer modern encodings for critical visual assets. The original PNGs
+    // remain the canonical sources while Next negotiates AVIF/WebP per browser.
+    formats: ["image/avif", "image/webp"],
     remotePatterns: [
       { protocol: "https", hostname: "images.unsplash.com" },
       // Google OAuth profile photos. Keep this scoped to the exact HTTPS host
