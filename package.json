@@ -28,7 +28,7 @@
     "@google-cloud/storage": "^7.21.0",
     "@google/genai": "2.18.0",
     "@react-three/drei": "^10.7.7",
-    "@react-three/fiber": "^9.7.7",
+    "@react-three/fiber": "^9.7.0",
     "@supabase/supabase-js": "^2.49.8",
     "@zxing/browser": "0.2.1",
     "bwip-js": "4.11.4",
