@@ -7,7 +7,7 @@ export function PublicLanding() {
       <picture className="pointer-events-none absolute inset-0 block h-full w-full select-none">
         <source
           media="(min-width: 821px)"
-          srcSet="/api/clouva-landing-bg-desktop?v=desktop-v1"
+          srcSet="/api/clouva-landing-bg-desktop?v=desktop-v2"
         />
         <img
           src="/api/clouva-landing-bg?v=v6"
