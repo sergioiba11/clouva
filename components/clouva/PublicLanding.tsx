@@ -68,8 +68,8 @@ export function PublicLanding() {
               href="/login"
               className="inline-flex min-h-16 items-center justify-center gap-3 rounded-full border border-white/90 bg-[linear-gradient(135deg,#fff_0%,#efe2ff_48%,#d19cff_100%)] px-5 text-[clamp(1.05rem,4.8vw,1.3rem)] font-bold text-violet-950 shadow-[0_0_34px_rgba(170,75,255,.8)] transition active:scale-[.985]"
             >
-              <span className="grid h-10 w-10 place-items-center rounded-full bg-[#160720] shadow-[0_0_18px_rgba(174,84,255,.8)]">
-                <OfficialClouvaMark className="h-6 w-6 scale-[1.65]" />
+              <span className="grid h-10 w-10 place-items-center">
+                <OfficialClouvaMark tone="dark" className="h-7 w-7 scale-[1.65] drop-shadow-[0_0_10px_rgba(95,35,145,.25)]" />
               </span>
               Entrar
             </Link>
