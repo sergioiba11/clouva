@@ -105,13 +105,9 @@ function initials(value: string) {
 
 export function HomeDashboard() {
   const { user, profile } = useAuth();
-  const { currentPlayer, playerLoading, playerReady } = useCurrentPlayer();
+  const { currentPlayer } = useCurrentPlayer();
   const { openAssistant } = useClouvaAIAssistant();
   const { playback } = useSpotifyPlayback();
-
-  if (user && !playerReady) {
-    return <main className="min-h-screen bg-[#060612]" aria-busy={playerLoading} aria-label="Cargando tu identidad CLOUVA" />;
-  }
 
   const displayName = resolveHomeDisplayName({ currentPlayer, profile, user });
   const username = currentPlayer?.username
