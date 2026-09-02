@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAgendaEvent } from "@/lib/server/agenda";
-import { getAgendaOccurrences } from "@/lib/server/agenda/recurrence";
+import { getVisibleAgendaOccurrences } from "@/lib/server/agenda/visibility";
 import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
 
 export const runtime = "nodejs";
@@ -21,7 +21,7 @@ export async function GET(request: NextRequest) {
     const from = request.nextUrl.searchParams.get("from") || "";
     const to = request.nextUrl.searchParams.get("to") || "";
     if (!agendaId || !from || !to) return NextResponse.json({ error: "agendaId, from y to son obligatorios." }, { status: 400 });
-    const events = await getAgendaOccurrences({ admin: createAdminSupabase(), userId: user.id, agendaId, from, to });
+    const events = await getVisibleAgendaOccurrences({ admin: createAdminSupabase(), userId: user.id, agendaId, from, to });
     return NextResponse.json({ events });
   } catch (error) {
     return apiError(error, "No se pudieron cargar los eventos.");
