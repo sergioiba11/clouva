@@ -1,0 +1,73 @@
+name: Agenda validation
+
+on:
+  push:
+    branches:
+      - feature/canonical-agenda
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agenda-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: agenda-ci-anon-placeholder
+      SUPABASE_SERVICE_ROLE_KEY: agenda-ci-service-role-placeholder
+      APP_BASE_URL: https://clouva.com.ar
+      NEXT_PUBLIC_APP_URL: https://clouva.com.ar
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Supabase CLI 2.116.0
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.116.0
+      - name: Install
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Lint Agenda changes
+        run: >-
+          npx eslint
+          app/agenda
+          app/api/agenda
+          'app/[publicAlias]/agenda/page.tsx'
+          'app/[publicAlias]/page.tsx'
+          'app/studios/[slug]/agenda/page.tsx'
+          'app/studios/[slug]/page.tsx'
+          'app/api/studios/[slug]/bookings/route.ts'
+          'app/mi-spot/[spotId]/page.tsx'
+          components/public/PublicAgendaSection.tsx
+          lib/server/agenda
+          lib/commerce/spot-business.ts
+          lib/navigation/reserved-public-aliases.ts
+          lib/server/business-spaces.ts
+      - name: Prepare isolated Agenda migration stack
+        run: |
+          mkdir -p /tmp/clouva-migrations
+          mv supabase/migrations/*.sql /tmp/clouva-migrations/
+          cp .github/agenda-ci-baseline.sql supabase/migrations/20260902000000_agenda_ci_baseline.sql
+          cp /tmp/clouva-migrations/2026090201*.sql supabase/migrations/
+          printf 'Agenda migrations under test:\n'
+          ls -1 supabase/migrations
+      - name: Validate Agenda migrations and invariants locally
+        run: |
+          supabase db start
+          supabase db reset --local --no-seed
+          psql 'postgresql://postgres:postgres@127.0.0.1:54322/postgres' -v ON_ERROR_STOP=1 -f .github/agenda-ci-smoke.sql
+          supabase db lint --local --fail-on error
+      - name: Build
+        run: npm run build

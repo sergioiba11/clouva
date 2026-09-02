@@ -10,12 +10,12 @@ export type BusinessKind = "digital_business" | "physical_business" | "studio";
 type AdminClient = ReturnType<typeof createAdminSupabase>;
 
 const DIGITAL_MODULES: SpotModule[] = [
-  "dashboard", "products", "catalog", "variants", "sales", "orders", "customers", "content", "finance", "settings",
+  "dashboard", "products", "catalog", "variants", "sales", "orders", "customers", "agenda", "content", "finance", "settings",
 ];
 const PHYSICAL_MODULES: SpotModule[] = [
-  "dashboard", "products", "catalog", "variants", "inventory", "scanner", "barcode", "codes", "pos", "sales", "orders", "customers", "finance", "settings",
+  "dashboard", "products", "catalog", "variants", "inventory", "scanner", "barcode", "codes", "pos", "sales", "orders", "customers", "agenda", "finance", "settings",
 ];
-const STUDIO_MODULES = ["studio_os", "services", "bookings", "memberships", "commerce"];
+const STUDIO_MODULES = ["studio_os", "services", "bookings", "agenda", "memberships", "commerce"];
 
 export function defaultModulesForBusinessKind(kind: BusinessKind) {
   if (kind === "digital_business") return [...DIGITAL_MODULES];
