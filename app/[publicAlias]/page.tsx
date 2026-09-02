@@ -1,8 +1,11 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { PlayerPublicView } from "@/components/public/PlayerPublicView";
+import { PublicAgendaSection } from "@/components/public/PublicAgendaSection";
 import { PublicMerchSection, loadPublicMerchProducts } from "@/components/public/PublicMerchSection";
+import { loadPublicAgendaByPlayer } from "@/lib/server/agenda";
 import { resolvePlayerAlias } from "@/lib/server/public-identity-data";
+import { createAdminSupabase } from "@/lib/server/supabase";
 
 export const dynamic = "force-dynamic";
 
@@ -36,7 +39,12 @@ export default async function PublicPlayerAliasPage({ params }: { params: Promis
   const { publicAlias } = await params;
   const result = await resolvePlayerAlias(publicAlias);
   if (!result) notFound();
-  const merchProducts = await loadPublicMerchProducts({ playerId: result.player.id });
+
+  const [merchProducts, publicAgenda] = await Promise.all([
+    loadPublicMerchProducts({ playerId: result.player.id }),
+    loadPublicAgendaByPlayer({ admin: createAdminSupabase(), playerId: result.player.id }).catch(() => null),
+  ]);
+  const accent = result.layoutConfig?.page_style?.palette?.accent || result.player.accent_color || "#8f7cff";
 
   return (
     <>
@@ -48,6 +56,15 @@ export default async function PublicPlayerAliasPage({ params }: { params: Promis
         layoutConfig={result.layoutConfig}
         hasMerch={merchProducts.length > 0}
       />
+      {publicAgenda ? (
+        <PublicAgendaSection
+          playerName={result.player.display_name}
+          publicAlias={result.canonicalAlias}
+          accent={accent}
+          events={publicAgenda.events}
+          bookingEnabled={publicAgenda.agenda.booking_enabled}
+        />
+      ) : null}
       <PublicMerchSection
         playerId={result.player.id}
         products={merchProducts}
