@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { PlayerPublicView } from "@/components/public/PlayerPublicView";
 import { PublicAgendaSection } from "@/components/public/PublicAgendaSection";
-import { loadPublicAgendaByPlayer } from "@/lib/server/agenda";
+import { loadPublicAgendaByPlayer } from "@/lib/server/agenda/public-loader";
 import { resolvePlayerAlias } from "@/lib/server/public-identity-data";
 import { createAdminSupabase } from "@/lib/server/supabase";
 
