@@ -4,12 +4,14 @@
 insert into auth.users(id,email,aud,role,raw_user_meta_data,raw_app_meta_data)
 values
   ('00000000-0000-4000-8000-000000000001','agenda-a@example.test','authenticated','authenticated','{}','{}'),
-  ('00000000-0000-4000-8000-000000000002','agenda-b@example.test','authenticated','authenticated','{}','{}');
+  ('00000000-0000-4000-8000-000000000002','agenda-b@example.test','authenticated','authenticated','{}','{}'),
+  ('00000000-0000-4000-8000-000000000003','agenda-stranger@example.test','authenticated','authenticated','{}','{}');
 
 insert into public.profiles(id,role)
 values
   ('00000000-0000-4000-8000-000000000001','user'),
-  ('00000000-0000-4000-8000-000000000002','user');
+  ('00000000-0000-4000-8000-000000000002','user'),
+  ('00000000-0000-4000-8000-000000000003','user');
 
 insert into public.players(id,owner_user_id,display_name,username)
 values
@@ -165,3 +167,34 @@ begin
   end if;
 end
 $$;
+
+-- Public event data must not make internal table rows available to an
+-- authenticated stranger. Public rendering uses the server-side DTO instead.
+update public.agendas
+set public_enabled=true
+where owner_player_id='10000000-0000-4000-8000-000000000001' and is_default;
+
+insert into public.agenda_events(
+  id,primary_agenda_id,created_by_player_id,title,event_type,start_at,end_at,event_timezone,visibility
+) values (
+  '50000000-0000-4000-8000-000000000001',
+  (select id from public.agendas where owner_player_id='10000000-0000-4000-8000-000000000001' and is_default),
+  '10000000-0000-4000-8000-000000000001','Evento público DTO','event',
+  '2026-09-20 20:00:00+00','2026-09-20 21:00:00+00','America/Argentina/Buenos_Aires','public'
+);
+insert into public.agenda_event_agendas(event_id,agenda_id,relation)
+select '50000000-0000-4000-8000-000000000001',id,'primary'
+from public.agendas
+where owner_player_id='10000000-0000-4000-8000-000000000001' and is_default;
+
+begin;
+set local role authenticated;
+select set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000003',true);
+-- Division by zero makes CI fail if an internal event/agenda leaks through RLS.
+select 1 / case when count(*) = 0 then 1 else 0 end
+from public.agenda_events
+where id='50000000-0000-4000-8000-000000000001';
+select 1 / case when count(*) = 0 then 1 else 0 end
+from public.agendas
+where owner_player_id='10000000-0000-4000-8000-000000000001' and is_default;
+rollback;
