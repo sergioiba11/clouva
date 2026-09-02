@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cancelAgendaEvent, updateAgendaEvent } from "@/lib/server/agenda";
+import { canonicalEventId } from "@/lib/server/agenda/recurrence";
 import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
 
 export const runtime = "nodejs";
@@ -16,7 +17,8 @@ function apiError(error: unknown, fallback: string) {
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ eventId: string }> }) {
   try {
     const { user } = await requireUser(request);
-    const { eventId } = await params;
+    const paramsValue = await params;
+    const eventId = canonicalEventId(paramsValue.eventId);
     const input = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     const result = await updateAgendaEvent({ admin: createAdminSupabase(), userId: user.id, eventId, input });
     return NextResponse.json(result);
@@ -28,7 +30,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 export async function DELETE(request: NextRequest, { params }: { params: Promise<{ eventId: string }> }) {
   try {
     const { user } = await requireUser(request);
-    const { eventId } = await params;
+    const paramsValue = await params;
+    const eventId = canonicalEventId(paramsValue.eventId);
     const result = await cancelAgendaEvent({ admin: createAdminSupabase(), userId: user.id, eventId });
     return NextResponse.json(result);
   } catch (error) {
