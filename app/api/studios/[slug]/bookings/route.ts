@@ -7,11 +7,42 @@ import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supa
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-// cta_type = 'reservar' finally has a backend. price_type 'consultar'
-// services just create a requested booking for the studio to confirm by
-// hand -- no invented price. price_type 'fixed' services go through the
-// same Checkout Pro pattern as service_orders (still CLOUVA's own Mercado
-// Pago account, no per-studio payouts yet, matching studio_services_and_orders).
+type BookingRpcRow = { booking_id: string; agenda_event_id: string };
+
+async function createCanonicalBooking(args: {
+  admin: ReturnType<typeof createAdminSupabase>;
+  serviceId: string;
+  studioId: string;
+  buyerUserId: string;
+  scheduledAt: string;
+  durationMinutes: number;
+  price: number | null;
+  currency: string;
+  paymentStatus: "not_required" | "pending";
+  externalReference?: string | null;
+  notes?: string | null;
+}) {
+  const { data, error } = await args.admin.rpc("create_studio_booking_with_agenda", {
+    p_service_id: args.serviceId,
+    p_studio_id: args.studioId,
+    p_buyer_user_id: args.buyerUserId,
+    p_scheduled_at: args.scheduledAt,
+    p_duration_minutes: args.durationMinutes,
+    p_price: args.price,
+    p_currency: args.currency,
+    p_payment_status: args.paymentStatus,
+    p_external_reference: args.externalReference ?? null,
+    p_notes: args.notes ?? null,
+  });
+  if (error) throw new Error(error.message);
+  const row = (Array.isArray(data) ? data[0] : data) as BookingRpcRow | null;
+  if (!row?.booking_id || !row?.agenda_event_id) throw new Error("No se pudo crear la reserva canónica.");
+  return row;
+}
+
+// Booking and Agenda are one scheduling operation. The DB RPC creates the
+// booking, its canonical event, participants and collision-protected slot in
+// one transaction. Checkout Pro is still the existing payment layer.
 export async function POST(request: NextRequest, { params }: { params: Promise<{ slug: string }> }) {
   try {
     const { user } = await requireUser(request);
@@ -42,47 +73,40 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (service.cta_type !== "reservar") return NextResponse.json({ error: "Este servicio no acepta reservas." }, { status: 400 });
 
     if (service.price_type !== "fixed" || service.price == null) {
-      const { data: booking, error: bookingError } = await admin
-        .from("bookings")
-        .insert({
-          service_id: service.id,
-          studio_id: studioId,
-          buyer_id: user.id,
-          scheduled_at: scheduledAt.toISOString(),
-          duration_minutes: durationMinutes,
-          status: "requested",
-          price: null,
-          payment_status: "not_required",
-          notes,
-        })
-        .select("*")
-        .single();
+      const canonical = await createCanonicalBooking({
+        admin,
+        serviceId: service.id,
+        studioId,
+        buyerUserId: user.id,
+        scheduledAt: scheduledAt.toISOString(),
+        durationMinutes,
+        price: null,
+        currency: service.currency || "ARS",
+        paymentStatus: "not_required",
+        notes,
+      });
+      const { data: booking, error: bookingError } = await admin.from("bookings").select("*").eq("id", canonical.booking_id).single();
       if (bookingError) throw new Error(bookingError.message);
-      return NextResponse.json({ booking, initPoint: null });
+      return NextResponse.json({ booking, agendaEventId: canonical.agenda_event_id, initPoint: null });
     }
 
     if (!isBillingEnabled()) return NextResponse.json({ error: "Los pagos todavía no están habilitados." }, { status: 503 });
     if (!user.email) return NextResponse.json({ error: "Tu cuenta necesita un correo válido para pagar." }, { status: 400 });
 
     const externalReference = randomUUID();
-    const { data: booking, error: bookingError } = await admin
-      .from("bookings")
-      .insert({
-        service_id: service.id,
-        studio_id: studioId,
-        buyer_id: user.id,
-        scheduled_at: scheduledAt.toISOString(),
-        duration_minutes: durationMinutes,
-        status: "requested",
-        price: service.price,
-        currency: service.currency,
-        payment_status: "pending",
-        external_reference: externalReference,
-        notes,
-      })
-      .select("id")
-      .single();
-    if (bookingError) throw new Error(bookingError.message);
+    const canonical = await createCanonicalBooking({
+      admin,
+      serviceId: service.id,
+      studioId,
+      buyerUserId: user.id,
+      scheduledAt: scheduledAt.toISOString(),
+      durationMinutes,
+      price: Number(service.price),
+      currency: service.currency,
+      paymentStatus: "pending",
+      externalReference,
+      notes,
+    });
 
     const { data: studio, error: studioError } = await admin.from("studios").select("slug").eq("id", studioId).maybeSingle();
     if (studioError) throw new Error(studioError.message);
@@ -93,22 +117,24 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         items: [{ title: `Reserva: ${service.name}`, quantity: 1, unitPrice: Number(service.price), currency: service.currency }],
         externalReference,
         backUrls: {
-          success: `${appBase}/studios/${studio?.slug ?? studioId}?booking=${booking.id}&status=success`,
-          failure: `${appBase}/studios/${studio?.slug ?? studioId}?booking=${booking.id}&status=failure`,
-          pending: `${appBase}/studios/${studio?.slug ?? studioId}?booking=${booking.id}&status=pending`,
+          success: `${appBase}/studios/${studio?.slug ?? studioId}?booking=${canonical.booking_id}&status=success`,
+          failure: `${appBase}/studios/${studio?.slug ?? studioId}?booking=${canonical.booking_id}&status=failure`,
+          pending: `${appBase}/studios/${studio?.slug ?? studioId}?booking=${canonical.booking_id}&status=pending`,
         },
         notificationUrl: `${appBase}/api/webhooks/mercadopago/bookings`,
       });
       const initPoint = typeof preference.init_point === "string" ? preference.init_point : null;
       if (!initPoint) throw new Error("Mercado Pago no devolvió el checkout.");
-      return NextResponse.json({ bookingId: booking.id, initPoint });
+      return NextResponse.json({ bookingId: canonical.booking_id, agendaEventId: canonical.agenda_event_id, initPoint });
     } catch (preferenceError) {
-      await admin.from("bookings").update({ status: "cancelled" }).eq("id", booking.id);
+      // The booking trigger also cancels the canonical event and releases its slot.
+      await admin.from("bookings").update({ status: "cancelled", payment_status: "failed" }).eq("id", canonical.booking_id);
       throw preferenceError;
     }
   } catch (error) {
-    const status = (error as Error & { status?: number })?.status ?? (isAuthError(error) ? 401 : 500);
     const message = error instanceof Error ? error.message : "No se pudo crear la reserva.";
-    return NextResponse.json({ error: message }, { status });
+    const conflict = /horario ya no está disponible|conflict|overlap|23P01/i.test(message);
+    const status = conflict ? 409 : ((error as Error & { status?: number })?.status ?? (isAuthError(error) ? 401 : 500));
+    return NextResponse.json({ error: conflict ? "Ese horario ya no está disponible." : message }, { status });
   }
 }
