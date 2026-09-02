@@ -1,6 +1,7 @@
 const RESERVED_PUBLIC_ALIAS_VALUES = [
   "account",
   "admin",
+  "agenda",
   "api",
   "auth",
   "avatar-analyzer",
