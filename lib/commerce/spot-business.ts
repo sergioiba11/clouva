@@ -13,6 +13,7 @@ export const SPOT_MODULES = [
   "customers",
   "services",
   "bookings",
+  "agenda",
   "content",
   "finance",
   "settings",
