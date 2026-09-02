@@ -14,9 +14,15 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  typecheck:
+  validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: agenda-ci-anon-placeholder
+      SUPABASE_SERVICE_ROLE_KEY: agenda-ci-service-role-placeholder
+      APP_BASE_URL: https://clouva.com.ar
+      NEXT_PUBLIC_APP_URL: https://clouva.com.ar
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -29,3 +35,21 @@ jobs:
         run: npm ci
       - name: Typecheck
         run: npm run typecheck
+      - name: Lint Agenda changes
+        run: >-
+          npx eslint
+          app/agenda
+          app/api/agenda
+          'app/[publicAlias]/agenda/page.tsx'
+          'app/[publicAlias]/page.tsx'
+          'app/studios/[slug]/agenda/page.tsx'
+          'app/studios/[slug]/page.tsx'
+          'app/api/studios/[slug]/bookings/route.ts'
+          'app/mi-spot/[spotId]/page.tsx'
+          components/public/PublicAgendaSection.tsx
+          lib/server/agenda
+          lib/commerce/spot-business.ts
+          lib/navigation/reserved-public-aliases.ts
+          lib/server/business-spaces.ts
+      - name: Build
+        run: npm run build
