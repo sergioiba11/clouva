@@ -55,9 +55,19 @@ jobs:
           lib/commerce/spot-business.ts
           lib/navigation/reserved-public-aliases.ts
           lib/server/business-spaces.ts
-      - name: Validate Supabase migrations locally
+      - name: Prepare isolated Agenda migration stack
+        run: |
+          mkdir -p /tmp/clouva-migrations
+          mv supabase/migrations/*.sql /tmp/clouva-migrations/
+          cp .github/agenda-ci-baseline.sql supabase/migrations/20260902000000_agenda_ci_baseline.sql
+          cp /tmp/clouva-migrations/20260902010*.sql supabase/migrations/
+          printf 'Agenda migrations under test:\n'
+          ls -1 supabase/migrations
+      - name: Validate Agenda migrations and invariants locally
         run: |
           supabase db start
           supabase db reset --local --no-seed
+          psql 'postgresql://postgres:postgres@127.0.0.1:54322/postgres' -v ON_ERROR_STOP=1 -f .github/agenda-ci-smoke.sql
+          supabase db lint --local --fail-on error
       - name: Build
         run: npm run build
