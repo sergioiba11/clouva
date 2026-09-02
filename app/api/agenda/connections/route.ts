@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { inviteAgendaMember, respondAgendaInvite } from "@/lib/server/agenda";
+import { listAgendaConnections, listPendingAgendaInvites } from "@/lib/server/agenda/settings";
 import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
 
 export const runtime = "nodejs";
@@ -11,6 +12,21 @@ function apiError(error: unknown, fallback: string) {
     { error: error instanceof Error ? error.message : fallback, ...(typed.code ? { code: typed.code } : {}) },
     { status: typed.status ?? (isAuthError(error) ? 401 : 500) },
   );
+}
+
+export async function GET(request: NextRequest) {
+  try {
+    const { user } = await requireUser(request);
+    const admin = createAdminSupabase();
+    const agendaId = request.nextUrl.searchParams.get("agendaId") || "";
+    const [invitations, connections] = await Promise.all([
+      listPendingAgendaInvites({ admin, userId: user.id }),
+      agendaId ? listAgendaConnections({ admin, userId: user.id, agendaId }) : Promise.resolve([]),
+    ]);
+    return NextResponse.json({ invitations, connections });
+  } catch (error) {
+    return apiError(error, "No se pudieron cargar las conexiones.");
+  }
 }
 
 export async function POST(request: NextRequest) {
