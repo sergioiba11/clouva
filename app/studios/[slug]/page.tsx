@@ -2,8 +2,11 @@ import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
 import { StudioIdentityRenderer } from "@/components/public/StudioIdentityRenderer";
 import { TrebolContextRegistration } from "@/components/clouva-ai/TrebolContextRegistration";
+import { PublicAgendaSection } from "@/components/public/PublicAgendaSection";
 import { PublicMerchSection } from "@/components/public/PublicMerchSection";
+import { loadPublicAgendaByStudio } from "@/lib/server/agenda/public";
 import { resolveStudioAlias } from "@/lib/server/public-identity-data";
+import { createAdminSupabase } from "@/lib/server/supabase";
 
 export const dynamic = "force-dynamic";
 
@@ -42,6 +45,8 @@ export default async function StudioProfilePage({
     redirect(`/studios/${result.canonicalAlias}${query.joined === "1" ? "?joined=1" : ""}`);
   }
 
+  const publicAgenda = await loadPublicAgendaByStudio({ admin: createAdminSupabase(), studioId: result.studio.id }).catch(() => null);
+  const accent = result.layoutConfig?.page_style?.palette?.accent || result.studio.accent_color || "#8f7cff";
   const merch = (
     <PublicMerchSection
       studioId={result.studio.id}
@@ -50,12 +55,8 @@ export default async function StudioProfilePage({
     />
   );
 
-  // layout_config solo existe (no vacío) cuando el Estudio corrió CLOUVA AI
-  // Profile con un mockup replicado o eligió una variante de diseño -- todos
-  // los demás siguen con la plantilla fija de siempre, sin ningún cambio.
-  // "precise" (pixel por pixel del mockup subido) es un esquema paralelo,
-  // nuevo, que usa su propio renderer -- las páginas ya publicadas con el
-  // esquema viejo (layout_kind "template") siguen exactamente igual.
+  // Agenda extends the canonical Studio identity; it never replaces or forks
+  // the fixed/template/precise renderer selected by StudioIdentityRenderer.
   return (
     <>
       <TrebolContextRegistration
@@ -69,6 +70,16 @@ export default async function StudioProfilePage({
         }}
       />
       <StudioIdentityRenderer data={result} joined={query.joined === "1"} />
+      {publicAgenda ? (
+        <PublicAgendaSection
+          identityName={result.studio.name}
+          agendaHref={`/studios/${result.canonicalAlias}/agenda`}
+          accent={accent}
+          events={publicAgenda.events}
+          bookingEnabled={publicAgenda.agenda.booking_enabled}
+          description="Sesiones, clases, reuniones, grabaciones, lanzamientos y reservas públicas del Studio."
+        />
+      ) : null}
       {merch}
     </>
   );
