@@ -60,7 +60,7 @@ jobs:
           mkdir -p /tmp/clouva-migrations
           mv supabase/migrations/*.sql /tmp/clouva-migrations/
           cp .github/agenda-ci-baseline.sql supabase/migrations/20260902000000_agenda_ci_baseline.sql
-          cp /tmp/clouva-migrations/20260902010*.sql supabase/migrations/
+          cp /tmp/clouva-migrations/2026090201*.sql supabase/migrations/
           printf 'Agenda migrations under test:\n'
           ls -1 supabase/migrations
       - name: Validate Agenda migrations and invariants locally
