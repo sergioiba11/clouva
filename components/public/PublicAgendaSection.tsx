@@ -2,7 +2,6 @@ import Link from "next/link";
 import { CalendarDays, Clock3, MapPin } from "lucide-react";
 
 type PublicAgendaEvent = {
-  id: string;
   title: string;
   description: string | null;
   event_type: string;
@@ -57,8 +56,8 @@ export function PublicAgendaSection({
 
         {visible.length ? (
           <div className="mt-5 grid gap-3 md:grid-cols-2">
-            {visible.map((event) => (
-              <article key={event.id} className="rounded-2xl border border-white/10 bg-white/[0.025] p-4 transition hover:border-[color:var(--public-accent)]/35">
+            {visible.map((event, index) => (
+              <article key={`${event.start_at}-${event.title}-${index}`} className="rounded-2xl border border-white/10 bg-white/[0.025] p-4 transition hover:border-[color:var(--public-accent)]/35">
                 <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-[color:var(--public-accent)]/70">{event.event_type || "evento"}</p>
                 <h3 className="mt-2 text-base font-semibold">{event.title}</h3>
                 <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-xs text-white/48">
