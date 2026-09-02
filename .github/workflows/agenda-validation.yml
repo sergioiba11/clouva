@@ -16,7 +16,7 @@ concurrency:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 35
     env:
       NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
       NEXT_PUBLIC_SUPABASE_ANON_KEY: agenda-ci-anon-placeholder
@@ -31,6 +31,10 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - name: Supabase CLI 2.116.0
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.116.0
       - name: Install
         run: npm ci
       - name: Typecheck
@@ -51,5 +55,9 @@ jobs:
           lib/commerce/spot-business.ts
           lib/navigation/reserved-public-aliases.ts
           lib/server/business-spaces.ts
+      - name: Validate Supabase migrations locally
+        run: |
+          supabase db start
+          supabase db reset --local --no-seed
       - name: Build
         run: npm run build
