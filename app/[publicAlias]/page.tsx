@@ -58,11 +58,12 @@ export default async function PublicPlayerAliasPage({ params }: { params: Promis
       />
       {publicAgenda ? (
         <PublicAgendaSection
-          playerName={result.player.display_name}
-          publicAlias={result.canonicalAlias}
+          identityName={result.player.display_name}
+          agendaHref={`/${result.canonicalAlias}/agenda`}
           accent={accent}
           events={publicAgenda.events}
           bookingEnabled={publicAgenda.agenda.booking_enabled}
+          description="Eventos, sesiones y fechas públicas de este Player."
         />
       ) : null}
       <PublicMerchSection
