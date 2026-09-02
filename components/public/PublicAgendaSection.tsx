@@ -26,19 +26,21 @@ function formatTime(value: string) {
 }
 
 export function PublicAgendaSection({
-  playerName,
-  publicAlias,
+  identityName,
+  agendaHref,
   accent,
   events,
   bookingEnabled = false,
   compact = true,
+  description = "Eventos, sesiones y fechas públicas de esta identidad.",
 }: {
-  playerName: string;
-  publicAlias: string;
+  identityName: string;
+  agendaHref: string;
   accent: string;
   events: PublicAgendaEvent[];
   bookingEnabled?: boolean;
   compact?: boolean;
+  description?: string;
 }) {
   const visible = compact ? events.slice(0, 4) : events;
   return (
@@ -46,11 +48,11 @@ export function PublicAgendaSection({
       <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[color:var(--public-accent)]/75">Agenda de {playerName}</p>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-[color:var(--public-accent)]/75">Agenda de {identityName}</p>
             <h2 className="mt-2 text-2xl font-black tracking-[-0.035em]">Próximos flows</h2>
-            <p className="mt-1 text-sm text-white/42">Eventos, sesiones y fechas públicas de este Player.</p>
+            <p className="mt-1 text-sm text-white/42">{description}</p>
           </div>
-          {compact ? <Link href={`/${publicAlias}/agenda`} className="inline-flex items-center gap-2 rounded-full border border-white/12 bg-white/[0.035] px-4 py-2 text-xs font-semibold transition hover:border-[color:var(--public-accent)]/45"><CalendarDays size={14} /> Ver Agenda</Link> : null}
+          {compact ? <Link href={agendaHref} className="inline-flex items-center gap-2 rounded-full border border-white/12 bg-white/[0.035] px-4 py-2 text-xs font-semibold transition hover:border-[color:var(--public-accent)]/45"><CalendarDays size={14} /> Ver Agenda</Link> : null}
         </div>
 
         {visible.length ? (
