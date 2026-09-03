@@ -115,17 +115,29 @@ test("canonical PATCH owns location geocoding and client cannot edit raw coordin
   assert.doesNotMatch(editableFields, /latitude|longitude/);
 });
 
-test("public hero renders real MapLibre layer only with persisted Player coordinates and keeps cover fallback", () => {
+test("public hero keeps cover and renders map as a compact card instead of a full background layer", () => {
   const view = readFileSync("components/public/PlayerPublicView.tsx", "utf8");
   const map = readFileSync("components/public/PlayerLocationMap.tsx", "utf8");
+  const sessionCard = readFileSync("components/public/PlayerSessionLocationCard.tsx", "utf8");
   assert.match(view, /const cover = player\.cover_url \|\| player\.hero_image_url/);
-  assert.match(view, /const hasLocationMap = Boolean/);
-  assert.match(view, /player\.location/);
-  assert.match(view, /Number\.isFinite\(player\.latitude\)/);
-  assert.match(view, /<PlayerLocationMap/);
+  assert.match(view, /<PlayerSessionLocationCard/);
+  assert.doesNotMatch(view, /<PlayerLocationMap/);
+  assert.match(sessionCard, /aspect-square/);
+  assert.match(sessionCard, /max-w-\[260px\]/);
   assert.match(map, /maplibre-gl@\$\{MAPLIBRE_VERSION\}/);
   assert.match(map, /tiles\.openfreemap\.org\/styles\/dark/);
   assert.match(map, /interactive: false/);
-  assert.doesNotMatch(map, /navigator\.geolocation/);
+  assert.match(map, /clouva-location-flicker/);
   assert.doesNotMatch(map, /NEXT_PUBLIC_[A-Z0-9_]*(TOKEN|KEY|SECRET)/);
+});
+
+test("live session coordinates are device-only, owner-gated and never sent to the Player API", () => {
+  const sessionCard = readFileSync("components/public/PlayerSessionLocationCard.tsx", "utf8");
+  assert.match(sessionCard, /user\.id === ownerUserId/);
+  assert.match(sessionCard, /navigator\.geolocation\.watchPosition/);
+  assert.match(sessionCard, /navigator\.geolocation\.clearWatch/);
+  assert.match(sessionCard, /no se guarda/);
+  assert.doesNotMatch(sessionCard, /\/api\/players\/me/);
+  assert.doesNotMatch(sessionCard, /supabase\.from\(/);
+  assert.doesNotMatch(sessionCard, /fetch\(/);
 });
