@@ -12,6 +12,7 @@ import {
   ShoppingBag,
   Video,
 } from "lucide-react";
+import { PlayerLiveLocationHero } from "./PlayerLiveLocationHero";
 import { PlayerOwnerActions } from "./PlayerOwnerActions";
 import { PublicMediaGallery } from "./PublicMediaGallery";
 import { PublicSocialLinks } from "./PublicSocialLinks";
@@ -127,11 +128,9 @@ export function PlayerPublicView({
       ]}
     >
       <section className="relative isolate overflow-hidden border-b border-white/10">
-        <div className="absolute inset-0 -z-30 bg-cover bg-center" style={{ backgroundImage: `url(${cover})` }} aria-hidden="true" />
-        <div className="absolute inset-0 -z-20 bg-[linear-gradient(90deg,#07060b_0%,rgba(7,6,11,.94)_35%,rgba(7,6,11,.28)_70%,#07060b_100%)]" />
-        <div className="absolute inset-0 -z-10 bg-[linear-gradient(0deg,#07060b_0%,transparent_50%)]" />
+        <PlayerLiveLocationHero playerId={player.id} ownerUserId={player.owner_user_id} coverUrl={cover} />
 
-        <div className="mx-auto grid min-h-[36rem] max-w-7xl gap-8 px-4 py-9 sm:px-6 lg:grid-cols-[minmax(0,1fr)_280px] lg:items-center">
+        <div className="relative z-10 mx-auto grid min-h-[36rem] max-w-7xl gap-8 px-4 py-9 sm:px-6 lg:grid-cols-[minmax(0,1fr)_280px] lg:items-center">
           <div>
             <p className="mb-6 text-xs font-semibold uppercase tracking-[0.22em] text-[color:var(--public-accent)]/80">
               Players <span className="mx-2 text-white/25">›</span> {player.display_name}
