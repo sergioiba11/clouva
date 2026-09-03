@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import { ChevronDown, ExternalLink, Music2, X } from "lucide-react";
+import { isReservedPublicAlias } from "@/lib/navigation/reserved-public-aliases";
 
 const SPOTIFY_ALBUM_ID = "6dtuD2cWFty44bX6uZiptN";
 const SPOTIFY_ALBUM_URL = `https://open.spotify.com/album/${SPOTIFY_ALBUM_ID}`;
@@ -32,9 +33,13 @@ export function GlobalSpotifyPlayer() {
     window.localStorage.setItem(STORAGE_KEY, nextState);
   }
 
-  // Home y Mi Flow Music integran la música en su propia superficie.
-  // El launcher independiente solo existe donde no hay controles musicales nativos.
-  if (!mounted || pathname === "/" || pathname === "/mi-flow/music") return null;
+  const segments = pathname.split("/").filter(Boolean);
+  const isPublicPlayer = segments.length === 1 && !isReservedPublicAlias(segments[0]);
+
+  // Home ya tiene su control musical propio. El launcher global queda reservado
+  // exclusivamente para el Player público y no invade Agenda, Mi Flow, Mi Spot,
+  // Creator ni otras superficies de CLOUVA.
+  if (!mounted || pathname === "/" || pathname === "/mi-flow/music" || !isPublicPlayer) return null;
 
   if (state !== "expanded") {
     return (
