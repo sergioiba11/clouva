@@ -87,6 +87,7 @@ const NEW_MOON_EPOCH = Date.UTC(2000, 0, 6, 18, 14, 0);
 const WEEKDAY = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
 const RRULE_DAYS = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"];
 const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
+const AGENDA_DRAFT_STORAGE_KEY = "clouva:agenda-draft:v1";
 const LUNAR_PHASE_NAMES = [
   "Luna nueva",
   "Creciente",
@@ -308,6 +309,7 @@ export default function AgendaPage() {
   const [selectedPlayers, setSelectedPlayers] = useState<PlayerResult[]>([]);
   const [shareAgendaIds, setShareAgendaIds] = useState<string[]>([]);
   const [playerSearching, setPlayerSearching] = useState(false);
+  const [draftHydrated, setDraftHydrated] = useState(false);
   const [form, setForm] = useState(() => {
     const start = new Date();
     start.setMinutes(0, 0, 0);
@@ -327,6 +329,101 @@ export default function AgendaPage() {
       customRrule: "",
     };
   });
+
+  useEffect(() => {
+    const saved = window.sessionStorage.getItem(AGENDA_DRAFT_STORAGE_KEY);
+    if (saved) {
+      try {
+        const draft = JSON.parse(saved) as {
+          activeAgendaId?: string;
+          view?: ViewMode;
+          cursor?: string;
+          createOpen?: boolean;
+          quickCreateDay?: string | null;
+          quickHour?: number;
+          quickShareOpen?: boolean;
+          connectedPlayers?: PlayerResult[];
+          selectedPlayers?: PlayerResult[];
+          shareAgendaIds?: string[];
+          playerQuery?: string;
+          playerResults?: PlayerResult[];
+          form?: typeof form;
+        };
+
+        if (typeof draft.activeAgendaId === "string") setActiveAgendaId(draft.activeAgendaId);
+        if (draft.view && ["day", "week", "month", "list"].includes(draft.view)) setView(draft.view);
+        if (draft.cursor) {
+          const restoredCursor = new Date(draft.cursor);
+          if (!Number.isNaN(restoredCursor.getTime())) setCursor(restoredCursor);
+        }
+        if (typeof draft.createOpen === "boolean") setCreateOpen(draft.createOpen);
+        if (draft.quickCreateDay) {
+          const restoredDay = new Date(draft.quickCreateDay);
+          if (!Number.isNaN(restoredDay.getTime())) setQuickCreateDay(startOfDay(restoredDay));
+        }
+        if (typeof draft.quickHour === "number" && draft.quickHour >= 0 && draft.quickHour <= 23) setQuickHour(draft.quickHour);
+        if (typeof draft.quickShareOpen === "boolean") setQuickShareOpen(draft.quickShareOpen);
+        if (Array.isArray(draft.connectedPlayers)) setConnectedPlayers(draft.connectedPlayers);
+        if (Array.isArray(draft.selectedPlayers)) setSelectedPlayers(draft.selectedPlayers);
+        if (Array.isArray(draft.shareAgendaIds)) setShareAgendaIds(draft.shareAgendaIds);
+        if (typeof draft.playerQuery === "string") setPlayerQuery(draft.playerQuery);
+        if (Array.isArray(draft.playerResults)) setPlayerResults(draft.playerResults);
+        if (draft.form) setForm(draft.form);
+      } catch {
+        window.sessionStorage.removeItem(AGENDA_DRAFT_STORAGE_KEY);
+      }
+    }
+    setDraftHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    if (!draftHydrated) return;
+
+    const hasDraft = Boolean(
+      createOpen ||
+      quickCreateDay ||
+      form.title.trim() ||
+      form.description.trim() ||
+      selectedPlayers.length ||
+      shareAgendaIds.length
+    );
+
+    if (!hasDraft) {
+      window.sessionStorage.removeItem(AGENDA_DRAFT_STORAGE_KEY);
+      return;
+    }
+
+    window.sessionStorage.setItem(AGENDA_DRAFT_STORAGE_KEY, JSON.stringify({
+      activeAgendaId,
+      view,
+      cursor: cursor.toISOString(),
+      createOpen,
+      quickCreateDay: quickCreateDay?.toISOString() ?? null,
+      quickHour,
+      quickShareOpen,
+      connectedPlayers,
+      selectedPlayers,
+      shareAgendaIds,
+      playerQuery,
+      playerResults,
+      form,
+    }));
+  }, [
+    activeAgendaId,
+    connectedPlayers,
+    createOpen,
+    cursor,
+    draftHydrated,
+    form,
+    playerQuery,
+    playerResults,
+    quickCreateDay,
+    quickHour,
+    quickShareOpen,
+    selectedPlayers,
+    shareAgendaIds,
+    view,
+  ]);
 
   const active = useMemo(() => contexts.find((context) => context.agendaId === activeAgendaId) || contexts[0] || null, [activeAgendaId, contexts]);
   const range = useMemo(() => viewRange(view, cursor), [cursor, view]);
@@ -505,6 +602,7 @@ export default function AgendaPage() {
         }),
       });
       await readApiJson(response);
+      window.sessionStorage.removeItem(AGENDA_DRAFT_STORAGE_KEY);
       setCreateOpen(false);
       setQuickCreateDay(null);
       setQuickShareOpen(false);
