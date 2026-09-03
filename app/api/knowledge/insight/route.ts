@@ -27,15 +27,37 @@ function utcDay() {
   return new Date().toISOString().slice(0, 10);
 }
 
+const RICH_FORMAT = `
+Formato de salida para CLOUVA:
+- Usá Markdown limpio pensado para una interfaz móvil: títulos ##, subtítulos ###, negritas, listas y tablas sólo cuando realmente ayuden.
+- No muestres símbolos Markdown como explicación ni encierres toda la respuesta en un bloque de código.
+- Empezá por lo más útil; evitá introducciones largas y relleno.
+- Incluí al menos un ejemplo concreto o una comparación simple cuando ayude a entender.
+- Si dos fuentes difieren, decilo y explicá brevemente la diferencia.
+- No pegues URLs dentro del cuerpo: CLOUVA muestra las fuentes aparte.
+- Podés sugerir qué convendría representar visualmente, pero no describas una imagen como si fuera evidencia real.
+`;
+
 function buildPrompt(topic: Topic, profile: PlayerKnowledgeProfile) {
   const day = utcDay();
   if (topic === "lunar") {
     if (!profile.show_lunar) throw new Error("Este Player no publica conocimiento lunar.");
     return {
       title: "Data de la Luna",
-      subjectKey: `lunar:${day}`,
+      subjectKey: `lunar:${day}:rich-v2`,
       expiresHours: 8,
-      prompt: `Fecha de referencia: ${day}. Buscá en la web información astronómica actual y verificable sobre la Luna para esta fecha. Resumí fase lunar, iluminación aproximada y cualquier evento lunar relevante sólo si una fuente lo confirma. Si agregás una lectura cultural, espiritual o astrológica, separala explícitamente de los datos astronómicos verificables. Respondé en español rioplatense claro, breve, sin inventar datos y sin pegar URLs en el cuerpo: las fuentes se muestran aparte.`,
+      prompt: `Fecha de referencia: ${day}. Buscá en la web información astronómica actual y verificable sobre la Luna para esta fecha.
+
+Explicá, cuando las fuentes lo permitan:
+- fase lunar actual;
+- iluminación aproximada;
+- edad lunar o posición dentro del ciclo si está disponible;
+- próximos hitos relevantes (cuarto, luna nueva o luna llena);
+- eventos observables destacados sólo si una fuente confiable los confirma.
+
+Separá con claridad una sección de "Datos astronómicos verificables" de cualquier "Lectura cultural, espiritual o astrológica". No mezcles constelación astronómica con signo astrológico. Si una lectura interpretativa no tiene consenso científico, marcala como tradición o interpretación.
+
+Dá un ejemplo simple que ayude a una persona a entender qué significa la fase actual dentro del ciclo lunar. Respondé en español rioplatense claro y natural.${RICH_FORMAT}`,
     };
   }
 
@@ -44,9 +66,18 @@ function buildPrompt(topic: Topic, profile: PlayerKnowledgeProfile) {
     if (!profile.show_numerology || number === null) throw new Error("Este Player no publica numerología.");
     return {
       title: `Número ${number}`,
-      subjectKey: `numerologia:${number}`,
+      subjectKey: `numerologia:${number}:rich-v2`,
       expiresHours: 24 * 30,
-      prompt: `El número calculado por suma de los dígitos de la fecha de nacimiento y reducción a un dígito es ${number}. Buscá fuentes web y explicá qué representa el número ${number} dentro de tradiciones numerológicas documentadas. Diferenciá con claridad qué es historia o práctica documentada y qué es interpretación simbólica; no presentes la numerología como un hecho científico. Respondé en español rioplatense, útil para una ficha educativa de CLOUVA, sin URLs en el cuerpo.`,
+      prompt: `El número calculado por suma de los dígitos de la fecha de nacimiento y reducción a un dígito es ${number}. Buscá fuentes web y explicá qué representa el número ${number} dentro de tradiciones numerológicas documentadas.
+
+Mostrá claramente:
+- cómo se interpreta tradicionalmente el ${number};
+- fortalezas asociadas;
+- desafíos o sombras asociadas;
+- un ejemplo cotidiano de cómo una persona que se identifica con esa lectura podría reconocer esos rasgos;
+- una nota breve sobre el origen/tradición cuando haya fuentes suficientes.
+
+Diferenciá con claridad historia o práctica documentada de interpretación simbólica. No presentes numerología como hecho científico. Respondé en español rioplatense, útil y pedagógico.${RICH_FORMAT}`,
     };
   }
 
@@ -54,9 +85,15 @@ function buildPrompt(topic: Topic, profile: PlayerKnowledgeProfile) {
   if (!profile.show_zodiac || !sign) throw new Error("Este Player no publica astrología.");
   return {
     title: sign,
-    subjectKey: `astrologia:${sign.toLocaleLowerCase("es")}:${day}`,
+    subjectKey: `astrologia:${sign.toLocaleLowerCase("es")}:${day}:rich-v2`,
     expiresHours: 18,
-    prompt: `El signo zodiacal tropical calculado por fecha de nacimiento es ${sign}. Fecha actual de referencia: ${day}. Buscá fuentes web actuales y prepará una ficha sobre ${sign}. Separá explícitamente: (1) datos astronómicos verificables relacionados con la constelación/cielo cuando sean relevantes y (2) asociaciones de la tradición astrológica. Para cualquier afirmación actual sobre el cielo, usá fuentes recientes. No presentes interpretaciones astrológicas como hechos científicos. Respondé en español rioplatense claro, sin URLs en el cuerpo.`,
+    prompt: `El signo zodiacal tropical calculado por fecha de nacimiento es ${sign}. Fecha actual de referencia: ${day}. Buscá fuentes web actuales y prepará una ficha educativa sobre ${sign}.
+
+Separá explícitamente:
+1. "Astronomía": datos verificables de la constelación/cielo cuando sean relevantes.
+2. "Astrología": asociaciones tradicionales del signo ${sign}, indicando que son interpretativas y no hechos científicos.
+
+Incluí rasgos tradicionalmente asociados, fortalezas, desafíos y un ejemplo concreto. Si hablás del cielo actual, usá fuentes recientes y no atribuyas automáticamente la posición astronómica de la Luna a un signo astrológico sin explicar el sistema usado. Respondé en español rioplatense claro y natural.${RICH_FORMAT}`,
   };
 }
 
@@ -106,9 +143,9 @@ export async function GET(request: NextRequest) {
     const result = await generateGroundedWithFallback({
       apiKey,
       selectedModel: selectedModelFromRequest(request),
-      instruction: "Sos CLOUVA AI en modo Conocimiento. Priorizá fuentes verificables y separá hechos observables de tradiciones interpretativas. Nunca inventes una fuente ni una observación actual.",
+      instruction: "Sos CLOUVA AI en modo Conocimiento. Tu tarea es enseñar, no llenar espacio. Buscá en la web cuando corresponda, priorizá fuentes verificables, explicá con ejemplos y separá hechos observables de tradiciones interpretativas. Nunca inventes una fuente, una observación actual ni una imagen real.",
       prompt: spec.prompt,
-      maxOutputTokens: 1800,
+      maxOutputTokens: 2400,
     });
     const generatedAt = new Date();
     const expiresAt = new Date(generatedAt.getTime() + spec.expiresHours * 60 * 60 * 1000);
