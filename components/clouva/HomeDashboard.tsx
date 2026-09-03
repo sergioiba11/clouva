@@ -19,7 +19,7 @@ import {
   Store,
   UsersRound,
 } from "lucide-react";
-import { CloverIcon } from "@/components/clover-icon";
+import { OfficialClouvaMark } from "@/components/clouva/OfficialClouvaMark";
 import { useAuth } from "@/components/auth-provider";
 import { useCurrentPlayer } from "@/components/current-player-provider";
 import { AccountMenu } from "@/components/account/AccountMenu";
@@ -135,7 +135,7 @@ export function HomeDashboard() {
 
       <header className={styles.topbar}>
         <Link href={CLOUVA_NAVIGATION.HOME.href} className={styles.wordmark}>
-          <span className={styles.brandIcon}><CloverIcon size={23} /></span>
+          <span className={styles.brandIcon}><OfficialClouvaMark tone="light" /></span>
           <span>CLOUVA</span>
         </Link>
 
