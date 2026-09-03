@@ -571,12 +571,12 @@
 }
 
 @media (max-width: 820px) {
-  :global(button[aria-label="Abrir CLOUVA AI"]),
-  :global(button[aria-label="Cerrar CLOUVA AI"]) {
+  :global(body):has(.page) :global(button[aria-label="Abrir CLOUVA AI"]),
+  :global(body):has(.page) :global(button[aria-label="Cerrar CLOUVA AI"]) {
     left: auto !important;
     right: 14px !important;
     top: auto !important;
-    bottom: calc(var(--mobile-nav-height) + 18px + env(safe-area-inset-bottom)) !important;
+    bottom: calc(88px + env(safe-area-inset-bottom)) !important;
   }
 }
 
