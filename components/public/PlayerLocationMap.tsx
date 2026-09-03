@@ -55,11 +55,7 @@ function loadMapLibre() {
   mapLibrePromise = new Promise<MapLibreNamespace>((resolve, reject) => {
     const existing = document.querySelector<HTMLScriptElement>(`script[data-clouva-maplibre="${MAPLIBRE_VERSION}"]`);
     const script = existing || document.createElement("script");
-
-    const finish = () => {
-      if (window.maplibregl) resolve(window.maplibregl);
-      else reject(new Error("MapLibre did not initialize."));
-    };
+    const finish = () => window.maplibregl ? resolve(window.maplibregl) : reject(new Error("MapLibre did not initialize."));
     const fail = () => reject(new Error("MapLibre could not be loaded."));
 
     script.addEventListener("load", finish, { once: true });
@@ -83,7 +79,6 @@ function createMarker(label: string, accent: string, compact: boolean) {
   const parts = label.split(",").map((part) => part.trim()).filter(Boolean);
   const locality = (parts[0] || label).toLocaleUpperCase("es-AR");
   const context = parts.slice(1).join(" · ").toLocaleUpperCase("es-AR");
-
   const root = document.createElement("div");
   root.className = `clouva-location-marker${compact ? " clouva-location-marker--compact" : ""}`;
   root.style.setProperty("--clouva-location-accent", accent);
@@ -106,7 +101,6 @@ function createMarker(label: string, accent: string, compact: boolean) {
     detail.textContent = context;
     text.appendChild(detail);
   }
-
   root.append(beacon, text);
   return root;
 }
@@ -117,28 +111,13 @@ function locationGeometry(latitude: number, longitude: number) {
   return {
     type: "FeatureCollection",
     features: [
-      {
-        type: "Feature",
-        properties: {},
-        geometry: { type: "LineString", coordinates: [[longitude - lonDelta, latitude], [longitude + lonDelta, latitude]] },
-      },
-      {
-        type: "Feature",
-        properties: {},
-        geometry: { type: "LineString", coordinates: [[longitude, latitude - latDelta], [longitude, latitude + latDelta]] },
-      },
+      { type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: [[longitude - lonDelta, latitude], [longitude + lonDelta, latitude]] } },
+      { type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: [[longitude, latitude - latDelta], [longitude, latitude + latDelta]] } },
     ],
   };
 }
 
-export function PlayerLocationMap({
-  latitude,
-  longitude,
-  label,
-  accent,
-  className = "",
-  compact = false,
-}: {
+export function PlayerLocationMap({ latitude, longitude, label, accent, className = "", compact = false }: {
   latitude: number | null;
   longitude: number | null;
   label: string;
@@ -164,7 +143,6 @@ export function PlayerLocationMap({
     setReady(false);
     void loadMapLibre().then((maplibregl) => {
       if (cancelled || !containerRef.current) return;
-
       map = new maplibregl.Map({
         container: containerRef.current,
         style: process.env.NEXT_PUBLIC_CLOUVA_MAP_STYLE_URL || DEFAULT_MAP_STYLE,
@@ -180,51 +158,33 @@ export function PlayerLocationMap({
         keyboard: false,
         doubleClickZoom: false,
         touchZoomRotate: false,
-        attributionControl: { compact: true },
+        attributionControl: false,
       });
 
       map.on("load", () => {
         if (cancelled || !map) return;
         didLoad = true;
         try {
-          map.addSource("clouva-location-axis", {
-            type: "geojson",
-            data: locationGeometry(Number(latitude), Number(longitude)),
-          });
+          map.addSource("clouva-location-axis", { type: "geojson", data: locationGeometry(Number(latitude), Number(longitude)) });
           map.addLayer({
             id: "clouva-location-axis",
             type: "line",
             source: "clouva-location-axis",
-            paint: {
-              "line-color": color,
-              "line-width": 1,
-              "line-opacity": compact ? 0.18 : 0.28,
-              "line-dasharray": [2, 3],
-            },
+            paint: { "line-color": color, "line-width": 1, "line-opacity": compact ? 0.18 : 0.28, "line-dasharray": [2, 3] },
           });
           map.addSource("clouva-location-point", {
             type: "geojson",
-            data: {
-              type: "Feature",
-              properties: {},
-              geometry: { type: "Point", coordinates: [Number(longitude), Number(latitude)] },
-            },
+            data: { type: "Feature", properties: {}, geometry: { type: "Point", coordinates: [Number(longitude), Number(latitude)] } },
           });
           map.addLayer({
             id: "clouva-location-glow",
             type: "circle",
             source: "clouva-location-point",
-            paint: {
-              "circle-radius": compact ? 14 : 18,
-              "circle-color": color,
-              "circle-opacity": 0.12,
-              "circle-blur": 0.85,
-            },
+            paint: { "circle-radius": compact ? 14 : 18, "circle-color": color, "circle-opacity": 0.12, "circle-blur": 0.85 },
           });
         } catch {
-          // The DOM beacon still renders if a custom map style rejects an optional overlay layer.
+          // Custom styles may reject optional decorative layers; the real map and DOM beacon remain available.
         }
-
         marker = new maplibregl.Marker({ element: createMarker(label, color, compact), anchor: "center" })
           .setLngLat([Number(longitude), Number(latitude)])
           .addTo(map);
@@ -234,7 +194,6 @@ export function PlayerLocationMap({
       map.on("error", () => {
         if (!didLoad && !cancelled) setReady(false);
       });
-
       resizeObserver = new ResizeObserver(() => map?.resize());
       resizeObserver.observe(containerRef.current);
     }).catch(() => {
@@ -255,24 +214,27 @@ export function PlayerLocationMap({
     <div
       className={`player-location-map pointer-events-none overflow-hidden ${className}`}
       style={{ ["--clouva-map-accent" as string]: color } as CSSProperties}
-      aria-hidden="true"
+      role="img"
+      aria-label={`Mapa de la localidad pública ${label}`}
     >
       <div ref={containerRef} className={`absolute inset-0 transition-opacity duration-700 ${ready ? "opacity-100" : "opacity-0"}`} />
       <div className={`absolute inset-0 transition-opacity duration-700 ${ready ? "opacity-100" : "opacity-0"} bg-[linear-gradient(rgba(255,255,255,.025)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,.025)_1px,transparent_1px)] bg-[size:46px_46px] mix-blend-screen`} />
       <div className={`absolute inset-0 transition-opacity duration-700 ${ready ? "opacity-100" : "opacity-0"} bg-[radial-gradient(circle_at_72%_46%,color-mix(in_srgb,var(--clouva-map-accent)_20%,transparent),transparent_24%)]`} />
+      <div className={`pointer-events-auto absolute bottom-1.5 right-2 z-20 flex max-w-[92%] flex-wrap justify-end gap-x-1 rounded-md bg-[#05070b]/76 px-1.5 py-0.5 text-[7px] leading-3 text-white/30 backdrop-blur-sm transition-opacity duration-500 ${ready ? "opacity-100" : "opacity-0"}`}>
+        <a href="https://openfreemap.org/" target="_blank" rel="noreferrer" className="hover:text-white/55">OpenFreeMap</a>
+        <span>©</span><a href="https://openmaptiles.org/" target="_blank" rel="noreferrer" className="hover:text-white/55">OpenMapTiles</a>
+        <span>Data</span><a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer" className="hover:text-white/55">OpenStreetMap</a>
+      </div>
       <style jsx global>{`
         .player-location-map .maplibregl-map,
         .player-location-map .maplibregl-canvas-container,
         .player-location-map .maplibregl-canvas { width: 100%; height: 100%; }
         .player-location-map .maplibregl-canvas { position: absolute; inset: 0; }
-        .player-location-map .maplibregl-ctrl-bottom-right { right: .5rem; bottom: .35rem; opacity: .36; transform: scale(.72); transform-origin: right bottom; }
         .clouva-location-marker { position: relative; display: flex; align-items: center; gap: .78rem; color: var(--clouva-location-accent); filter: drop-shadow(0 0 12px color-mix(in srgb, var(--clouva-location-accent) 55%, transparent)); }
         .clouva-location-marker--compact { gap: .42rem; }
         .clouva-location-beacon { position: relative; width: 2.7rem; height: 2.7rem; flex: 0 0 2.7rem; }
         .clouva-location-marker--compact .clouva-location-beacon { width: 2.05rem; height: 2.05rem; flex-basis: 2.05rem; }
-        .clouva-location-beacon__halo,
-        .clouva-location-beacon__ring,
-        .clouva-location-beacon__core { position: absolute; inset: 50% auto auto 50%; border-radius: 999px; transform: translate(-50%, -50%); }
+        .clouva-location-beacon__halo,.clouva-location-beacon__ring,.clouva-location-beacon__core { position: absolute; inset: 50% auto auto 50%; border-radius: 999px; transform: translate(-50%, -50%); }
         .clouva-location-beacon__halo { width: 2.65rem; height: 2.65rem; background: radial-gradient(circle, color-mix(in srgb, var(--clouva-location-accent) 24%, transparent), transparent 67%); animation: clouva-location-breathe 2.9s ease-in-out infinite; }
         .clouva-location-marker--compact .clouva-location-beacon__halo { width: 2rem; height: 2rem; }
         .clouva-location-beacon__ring { width: 1.2rem; height: 1.2rem; border: 1px solid color-mix(in srgb, var(--clouva-location-accent) 78%, white 8%); animation: clouva-location-ring 2.9s ease-out infinite; }
@@ -286,15 +248,9 @@ export function PlayerLocationMap({
         .clouva-location-label small { margin-top: .18rem; max-width: 15rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: rgba(255,255,255,.56); font-size: .46rem; line-height: 1.2; letter-spacing: .12em; }
         @keyframes clouva-location-ring { 0% { opacity: .88; transform: translate(-50%,-50%) scale(.5); } 72%,100% { opacity: 0; transform: translate(-50%,-50%) scale(2.45); } }
         @keyframes clouva-location-breathe { 0%,100% { opacity: .48; transform: translate(-50%,-50%) scale(.84); } 50% { opacity: .96; transform: translate(-50%,-50%) scale(1.16); } }
-        @keyframes clouva-location-flicker {
-          0%, 6%, 10%, 31%, 36%, 40%, 63%, 66%, 84%, 88%, 100% { opacity: 1; transform: translate(-50%,-50%) scale(1); }
-          7%, 34%, 64%, 86% { opacity: .46; transform: translate(-50%,-50%) scale(.76); }
-          8%, 35%, 65%, 87% { opacity: .86; transform: translate(-50%,-50%) scale(1.2); }
-        }
+        @keyframes clouva-location-flicker { 0%,6%,10%,31%,36%,40%,63%,66%,84%,88%,100% { opacity: 1; transform: translate(-50%,-50%) scale(1); } 7%,34%,64%,86% { opacity: .46; transform: translate(-50%,-50%) scale(.76); } 8%,35%,65%,87% { opacity: .86; transform: translate(-50%,-50%) scale(1.2); } }
         @media (prefers-reduced-motion: reduce) {
-          .clouva-location-beacon__halo,
-          .clouva-location-beacon__ring,
-          .clouva-location-beacon__core { animation: none; }
+          .clouva-location-beacon__halo,.clouva-location-beacon__ring,.clouva-location-beacon__core { animation: none; }
           .clouva-location-beacon__ring { opacity: .55; transform: translate(-50%,-50%) scale(1.15); }
         }
       `}</style>
