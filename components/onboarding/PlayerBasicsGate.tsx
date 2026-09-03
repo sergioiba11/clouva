@@ -32,8 +32,6 @@ export function PlayerBasicsGate({ children }: { children: ReactNode }) {
   const checkedUserIdRef = useRef<string | null>(null);
   const checkingUserIdRef = useRef<string | null>(null);
 
-  // Keep the latest route available for the onboarding redirect without making
-  // every navigation re-run the Player basics validation.
   useEffect(() => {
     pathnameRef.current = pathname;
   }, [pathname]);
@@ -53,10 +51,6 @@ export function PlayerBasicsGate({ children }: { children: ReactNode }) {
       };
     }
 
-    // Supabase can emit SIGNED_IN / TOKEN_REFRESHED again when the browser tab
-    // regains focus. Those events may replace the User object even though the
-    // authenticated account is unchanged. Validate once per stable user id so
-    // returning to CLOUVA never blanks the mounted application again.
     if (checkedUserIdRef.current === userId || checkingUserIdRef.current === userId) {
       setChecking(false);
       return () => {
@@ -91,9 +85,14 @@ export function PlayerBasicsGate({ children }: { children: ReactNode }) {
     };
   }, [bypassed, hydrationReady, loading, router, userId]);
 
-  if (checking) {
-    return <main className="min-h-screen bg-[#05040a]" aria-hidden="true" />;
-  }
-
-  return children;
+  // The onboarding check is routing logic, not a security boundary. Keep the
+  // current UI mounted while it runs so reloads and token refreshes never flash
+  // a full black page. If onboarding is incomplete, the redirect still happens
+  // as soon as the check resolves.
+  return (
+    <>
+      {children}
+      {checking ? <span className="sr-only" aria-live="polite">Verificando tu Player</span> : null}
+    </>
+  );
 }
