@@ -79,13 +79,13 @@ function loadMapLibre() {
   return mapLibrePromise;
 }
 
-function createMarker(label: string, accent: string) {
+function createMarker(label: string, accent: string, compact: boolean) {
   const parts = label.split(",").map((part) => part.trim()).filter(Boolean);
   const locality = (parts[0] || label).toLocaleUpperCase("es-AR");
   const context = parts.slice(1).join(" · ").toLocaleUpperCase("es-AR");
 
   const root = document.createElement("div");
-  root.className = "clouva-location-marker";
+  root.className = `clouva-location-marker${compact ? " clouva-location-marker--compact" : ""}`;
   root.style.setProperty("--clouva-location-accent", accent);
 
   const beacon = document.createElement("div");
@@ -101,7 +101,7 @@ function createMarker(label: string, accent: string) {
   const title = document.createElement("strong");
   title.textContent = locality;
   text.appendChild(title);
-  if (context) {
+  if (context && !compact) {
     const detail = document.createElement("small");
     detail.textContent = context;
     text.appendChild(detail);
@@ -137,12 +137,14 @@ export function PlayerLocationMap({
   label,
   accent,
   className = "",
+  compact = false,
 }: {
   latitude: number | null;
   longitude: number | null;
   label: string;
   accent?: string | null;
   className?: string;
+  compact?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [ready, setReady] = useState(false);
@@ -167,9 +169,9 @@ export function PlayerLocationMap({
         container: containerRef.current,
         style: process.env.NEXT_PUBLIC_CLOUVA_MAP_STYLE_URL || DEFAULT_MAP_STYLE,
         center: [Number(longitude), Number(latitude)],
-        zoom: window.matchMedia("(max-width: 640px)").matches ? 8.8 : 10.2,
-        pitch: 18,
-        bearing: -7,
+        zoom: compact ? 10.6 : (window.matchMedia("(max-width: 640px)").matches ? 8.8 : 10.2),
+        pitch: compact ? 10 : 18,
+        bearing: compact ? -3 : -7,
         interactive: false,
         dragPan: false,
         scrollZoom: false,
@@ -196,7 +198,7 @@ export function PlayerLocationMap({
             paint: {
               "line-color": color,
               "line-width": 1,
-              "line-opacity": 0.28,
+              "line-opacity": compact ? 0.18 : 0.28,
               "line-dasharray": [2, 3],
             },
           });
@@ -213,7 +215,7 @@ export function PlayerLocationMap({
             type: "circle",
             source: "clouva-location-point",
             paint: {
-              "circle-radius": 18,
+              "circle-radius": compact ? 14 : 18,
               "circle-color": color,
               "circle-opacity": 0.12,
               "circle-blur": 0.85,
@@ -223,7 +225,7 @@ export function PlayerLocationMap({
           // The DOM beacon still renders if a custom map style rejects an optional overlay layer.
         }
 
-        marker = new maplibregl.Marker({ element: createMarker(label, color), anchor: "center" })
+        marker = new maplibregl.Marker({ element: createMarker(label, color, compact), anchor: "center" })
           .setLngLat([Number(longitude), Number(latitude)])
           .addTo(map);
         setReady(true);
@@ -245,7 +247,7 @@ export function PlayerLocationMap({
       marker?.remove();
       map?.remove();
     };
-  }, [color, label, latitude, longitude, validCoordinates]);
+  }, [color, compact, label, latitude, longitude, validCoordinates]);
 
   if (!validCoordinates || !label.trim()) return null;
 
@@ -263,23 +265,36 @@ export function PlayerLocationMap({
         .player-location-map .maplibregl-canvas-container,
         .player-location-map .maplibregl-canvas { width: 100%; height: 100%; }
         .player-location-map .maplibregl-canvas { position: absolute; inset: 0; }
-        .player-location-map .maplibregl-ctrl-bottom-right { right: .5rem; bottom: .35rem; opacity: .42; transform: scale(.82); transform-origin: right bottom; }
+        .player-location-map .maplibregl-ctrl-bottom-right { right: .5rem; bottom: .35rem; opacity: .36; transform: scale(.72); transform-origin: right bottom; }
         .clouva-location-marker { position: relative; display: flex; align-items: center; gap: .78rem; color: var(--clouva-location-accent); filter: drop-shadow(0 0 12px color-mix(in srgb, var(--clouva-location-accent) 55%, transparent)); }
+        .clouva-location-marker--compact { gap: .42rem; }
         .clouva-location-beacon { position: relative; width: 2.7rem; height: 2.7rem; flex: 0 0 2.7rem; }
+        .clouva-location-marker--compact .clouva-location-beacon { width: 2.05rem; height: 2.05rem; flex-basis: 2.05rem; }
         .clouva-location-beacon__halo,
         .clouva-location-beacon__ring,
         .clouva-location-beacon__core { position: absolute; inset: 50% auto auto 50%; border-radius: 999px; transform: translate(-50%, -50%); }
-        .clouva-location-beacon__halo { width: 2.65rem; height: 2.65rem; background: radial-gradient(circle, color-mix(in srgb, var(--clouva-location-accent) 22%, transparent), transparent 67%); animation: clouva-location-breathe 2.6s ease-in-out infinite; }
-        .clouva-location-beacon__ring { width: 1.2rem; height: 1.2rem; border: 1px solid color-mix(in srgb, var(--clouva-location-accent) 75%, white 8%); animation: clouva-location-ring 2.6s ease-out infinite; }
-        .clouva-location-beacon__core { width: .46rem; height: .46rem; background: var(--clouva-location-accent); box-shadow: 0 0 6px white, 0 0 18px var(--clouva-location-accent), 0 0 34px var(--clouva-location-accent); }
+        .clouva-location-beacon__halo { width: 2.65rem; height: 2.65rem; background: radial-gradient(circle, color-mix(in srgb, var(--clouva-location-accent) 24%, transparent), transparent 67%); animation: clouva-location-breathe 2.9s ease-in-out infinite; }
+        .clouva-location-marker--compact .clouva-location-beacon__halo { width: 2rem; height: 2rem; }
+        .clouva-location-beacon__ring { width: 1.2rem; height: 1.2rem; border: 1px solid color-mix(in srgb, var(--clouva-location-accent) 78%, white 8%); animation: clouva-location-ring 2.9s ease-out infinite; }
+        .clouva-location-marker--compact .clouva-location-beacon__ring { width: .92rem; height: .92rem; }
+        .clouva-location-beacon__core { width: .46rem; height: .46rem; background: var(--clouva-location-accent); box-shadow: 0 0 5px white, 0 0 15px var(--clouva-location-accent), 0 0 30px var(--clouva-location-accent); animation: clouva-location-flicker 3.35s steps(1,end) infinite; }
+        .clouva-location-marker--compact .clouva-location-beacon__core { width: .38rem; height: .38rem; }
         .clouva-location-label { display: grid; gap: .08rem; min-width: 8rem; padding: .32rem .48rem .36rem; border-left: 1px solid color-mix(in srgb, var(--clouva-location-accent) 70%, transparent); background: linear-gradient(90deg, rgba(3,7,11,.76), rgba(3,7,11,.12)); backdrop-filter: blur(4px); }
+        .clouva-location-marker--compact .clouva-location-label { min-width: auto; padding: .22rem .34rem .24rem; background: rgba(3,7,11,.44); }
         .clouva-location-label strong { font-size: .7rem; line-height: 1; letter-spacing: .19em; font-weight: 800; white-space: nowrap; }
+        .clouva-location-marker--compact .clouva-location-label strong { font-size: .54rem; letter-spacing: .13em; }
         .clouva-location-label small { margin-top: .18rem; max-width: 15rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: rgba(255,255,255,.56); font-size: .46rem; line-height: 1.2; letter-spacing: .12em; }
-        @keyframes clouva-location-ring { 0% { opacity: .86; transform: translate(-50%,-50%) scale(.55); } 72%,100% { opacity: 0; transform: translate(-50%,-50%) scale(2.3); } }
-        @keyframes clouva-location-breathe { 0%,100% { opacity: .5; transform: translate(-50%,-50%) scale(.88); } 50% { opacity: .95; transform: translate(-50%,-50%) scale(1.12); } }
+        @keyframes clouva-location-ring { 0% { opacity: .88; transform: translate(-50%,-50%) scale(.5); } 72%,100% { opacity: 0; transform: translate(-50%,-50%) scale(2.45); } }
+        @keyframes clouva-location-breathe { 0%,100% { opacity: .48; transform: translate(-50%,-50%) scale(.84); } 50% { opacity: .96; transform: translate(-50%,-50%) scale(1.16); } }
+        @keyframes clouva-location-flicker {
+          0%, 6%, 10%, 31%, 36%, 40%, 63%, 66%, 84%, 88%, 100% { opacity: 1; transform: translate(-50%,-50%) scale(1); }
+          7%, 34%, 64%, 86% { opacity: .46; transform: translate(-50%,-50%) scale(.76); }
+          8%, 35%, 65%, 87% { opacity: .86; transform: translate(-50%,-50%) scale(1.2); }
+        }
         @media (prefers-reduced-motion: reduce) {
           .clouva-location-beacon__halo,
-          .clouva-location-beacon__ring { animation: none; }
+          .clouva-location-beacon__ring,
+          .clouva-location-beacon__core { animation: none; }
           .clouva-location-beacon__ring { opacity: .55; transform: translate(-50%,-50%) scale(1.15); }
         }
       `}</style>
