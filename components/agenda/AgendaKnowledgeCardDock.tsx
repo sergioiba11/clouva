@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { createPortal } from "react-dom";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
 import type { PlayerKnowledgeProfile } from "@/lib/knowledge/player-knowledge";
@@ -21,24 +21,34 @@ function zodiacSymbol(sign: string) {
 }
 
 export function AgendaKnowledgeCardDock() {
+  const pathname = usePathname();
   const router = useRouter();
   const [target, setTarget] = useState<HTMLElement | null>(null);
   const [data, setData] = useState<Payload | null>(null);
 
   useEffect(() => {
+    setTarget(null);
+    if (pathname !== "/agenda") return;
+
     let cancelled = false;
+    let observer: MutationObserver | null = null;
     const resolveTarget = () => {
       const section = document.getElementById("luna");
-      if (section && !cancelled) setTarget(section);
+      if (!section || cancelled) return false;
+      setTarget(section);
+      observer?.disconnect();
+      return true;
     };
-    resolveTarget();
-    const observer = new MutationObserver(resolveTarget);
-    observer.observe(document.body, { childList: true, subtree: true });
+
+    if (!resolveTarget()) {
+      observer = new MutationObserver(() => { void resolveTarget(); });
+      observer.observe(document.body, { childList: true, subtree: true });
+    }
     return () => {
       cancelled = true;
-      observer.disconnect();
+      observer?.disconnect();
     };
-  }, []);
+  }, [pathname]);
 
   useEffect(() => {
     let cancelled = false;
@@ -66,12 +76,16 @@ export function AgendaKnowledgeCardDock() {
     target.setAttribute("tabindex", "0");
     target.setAttribute("aria-label", "Abrir data de la Luna");
 
-    const openLunar = (event: Event) => {
+    const isInteractiveTarget = (event: Event) => {
       const element = event.target as Element | null;
-      if (element?.closest("a,button,input,select,textarea,[data-knowledge-action]")) return;
+      return Boolean(element?.closest("a,button,input,select,textarea,[data-knowledge-action]"));
+    };
+    const openLunar = (event: Event) => {
+      if (isInteractiveTarget(event)) return;
       router.push("/agenda/conocimiento/lunar");
     };
     const onKey = (event: KeyboardEvent) => {
+      if (isInteractiveTarget(event)) return;
       if (event.key !== "Enter" && event.key !== " ") return;
       event.preventDefault();
       router.push("/agenda/conocimiento/lunar");
@@ -97,7 +111,6 @@ export function AgendaKnowledgeCardDock() {
       {number !== null ? (
         <Link
           href="/agenda/conocimiento/numerologia"
-          onClick={(event) => event.stopPropagation()}
           title={`Numerología · Número ${number}`}
           className="grid h-9 min-w-9 place-items-center rounded-xl border border-violet-300/20 bg-[#0b0913]/85 px-2 text-sm font-black text-violet-100 shadow-lg backdrop-blur transition hover:border-violet-300/45 hover:bg-violet-500/15"
         >
@@ -107,7 +120,6 @@ export function AgendaKnowledgeCardDock() {
       {sign ? (
         <Link
           href="/agenda/conocimiento/astrologia"
-          onClick={(event) => event.stopPropagation()}
           title={`Astrología · ${sign}`}
           className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-violet-300/20 bg-[#0b0913]/85 px-2.5 text-xs font-semibold text-violet-100 shadow-lg backdrop-blur transition hover:border-violet-300/45 hover:bg-violet-500/15"
         >
