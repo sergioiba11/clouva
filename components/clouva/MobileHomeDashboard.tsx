@@ -10,7 +10,6 @@ import {
   Crown,
   Home,
   Pause,
-  Play,
   Plus,
   ShoppingBag,
   SkipForward,
@@ -24,7 +23,7 @@ import { useCurrentPlayer } from "@/components/current-player-provider";
 import { AccountMenu } from "@/components/account/AccountMenu";
 import { useSpotifyPlayback } from "@/components/music/SpotifyPlaybackProvider";
 import { OfficialClouvaMark } from "@/components/clouva/OfficialClouvaMark";
-import { WalletBalanceChip } from "@/components/wallet/WalletBalanceChip";
+import { GlobalFlowBalance } from "@/components/GlobalFlowBalance";
 import { resolveAccountDisplayName } from "@/lib/identity-names";
 import {
   CLOUVA_NAVIGATION,
@@ -112,7 +111,7 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
     if (!previewMode) router.push("/mi-flow/music");
   };
 
-  const runPlayback = (action: "play" | "pause" | "next") => {
+  const runPlayback = (action: "pause" | "next") => {
     if (previewMode || !playback || !scopesReady) {
       openMusic();
       return;
@@ -166,14 +165,7 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
             <strong>Tu moneda dentro de CLOUVA</strong>
           </div>
           <div className={styles.flowBalance}>
-            {!previewMode ? <WalletBalanceChip /> : <span className={styles.flowPreview}>FLOWS</span>}
-            <Link
-              href="/mi-flow/billetera?asset=flows"
-              aria-label="Abrir mi billetera de FLOWS"
-              onClick={preventPreviewNavigation}
-            >
-              <ArrowRight size={16} />
-            </Link>
+            {!previewMode ? <GlobalFlowBalance variant="inline" /> : <span className={styles.flowPreview}>FLOWS</span>}
           </div>
         </div>
       </section>
