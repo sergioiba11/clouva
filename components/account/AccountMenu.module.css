@@ -49,5 +49,45 @@
 .accountList small, .accountList p { overflow: hidden; color: rgba(255,255,255,.42); font-size: .62rem; text-overflow: ellipsis; white-space: nowrap; }
 .accountList p { padding: .8rem; text-align: center; }
 .addAccount { display: flex; align-items: center; justify-content: center; gap: .45rem; margin-top: .75rem; border: 1px solid rgba(157,101,255,.24); border-radius: .85rem; padding: .7rem; color: #cfb5ff; font-size: .7rem; }
-@media (max-width: 820px) { .homeRoot { margin-left: 0; } .homeTrigger .triggerCopy { display: none; } .homeTrigger { border: 0; padding: 0; } .popover { position: fixed; right: .5rem; top: 3.7rem; } }
+
+@media (max-width: 820px) {
+  .homeRoot { margin-left: 0; }
+  .homeTrigger .triggerCopy { display: none; }
+  .homeTrigger { border: 0; padding: 0; }
+  .homeTrigger .avatar,
+  .homeTrigger .avatarFallback { width: 2.65rem; height: 2.65rem; }
+  .popover {
+    position: fixed;
+    right: .75rem;
+    top: 4.45rem;
+    width: min(21rem, calc(100vw - 1.5rem));
+    max-height: calc(100dvh - 5.35rem - env(safe-area-inset-bottom));
+    overflow-x: hidden;
+    overflow-y: auto;
+    border-radius: 1rem;
+    box-shadow: 0 22px 66px rgba(0,0,0,.62), 0 0 34px rgba(109,40,217,.1);
+    scrollbar-width: none;
+  }
+  .popover::-webkit-scrollbar { display: none; }
+  .identity { gap: .62rem; padding: .72rem .78rem; }
+  .identityAvatar, .identityFallback { width: 2.6rem; height: 2.6rem; }
+  .identity strong { font-size: .8rem; }
+  .identity span { font-size: .6rem; }
+  .identity small { margin-top: .25rem; font-size: .54rem; }
+  .primaryLinks, .secondaryLinks { gap: .08rem; padding: .38rem; }
+  .menuItem { gap: .55rem; border-radius: .7rem; padding: .46rem .5rem; }
+  .itemIcon { width: 1.82rem; height: 1.82rem; border-radius: .58rem; }
+  .menuItem b { font-size: .64rem; }
+  .menuItem small { margin-top: .08rem; font-size: .51rem; line-height: 1.25; }
+}
+
+@media (max-width: 360px) {
+  .popover {
+    right: .55rem;
+    width: calc(100vw - 1.1rem);
+  }
+  .menuItem { padding-block: .42rem; }
+  .menuItem small { font-size: .49rem; }
+}
+
 @keyframes pulse { 50% { opacity: .55; } }
