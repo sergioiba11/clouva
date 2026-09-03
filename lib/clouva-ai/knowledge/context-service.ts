@@ -2,6 +2,7 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { loadEffectiveMemory } from "@/lib/server/memory-approval";
+import { createAdminSupabase } from "@/lib/server/supabase";
 
 export type ClouvaKnowledgeScope =
   | "core"
@@ -85,10 +86,11 @@ function hasScope(scopes: Set<ClouvaKnowledgeScope>, scope: ClouvaKnowledgeScope
 /**
  * Central selective retrieval service for CLOUVA AI.
  *
- * Canonical structured facts are resolved by the database projection/RPC;
- * approved project_memory remains the durable human-reviewed memory layer;
- * project_events remains the recent event layer; live state is returned only
- * by the RPC when the query asks for a live domain (agenda/commerce today).
+ * Canonical structured facts are resolved by an internal service-role RPC;
+ * the calling user's Supabase client still owns all memory/event reads through
+ * RLS. approved project_memory remains the durable human-reviewed memory
+ * layer; project_events remains the recent event layer; live state is returned
+ * only when the query asks for a live domain (agenda/commerce today).
  */
 export async function getClouvaContext(request: ClouvaContextRequest) {
   const query = request.query.trim().slice(0, 2_000);
@@ -97,9 +99,10 @@ export async function getClouvaContext(request: ClouvaContextRequest) {
     ? request.requiredScopes
     : DEFAULT_SCOPES);
   const tokens = tokensFor(query);
+  const admin = createAdminSupabase();
 
   const [{ data: graphData, error: graphError }, memoryRows, eventResult] = await Promise.all([
-    request.supabase.rpc("clouva_resolve_knowledge_context", {
+    admin.rpc("clouva_resolve_knowledge_context", {
       p_user_id: request.userId,
       p_query: query,
       p_studio_id: request.studioId ?? null,
