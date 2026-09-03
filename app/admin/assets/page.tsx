@@ -28,7 +28,7 @@ export default function AdminAssetsPage() {
   const [folder, setFolder] = useState("brand");
   const [items, setItems] = useState<Asset[]>([]);
   const [bucket, setBucket] = useState("clouva-generated-media");
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -48,41 +48,60 @@ export default function AdminAssetsPage() {
 
   useEffect(() => { void load(); }, [load]);
 
-  const upload = async (selectedFile?: File | null) => {
-    const uploadFile = selectedFile ?? file;
-    if (!uploadFile || busy) return;
+  const upload = async (selectedFiles?: File[]) => {
+    const uploadFiles = selectedFiles ?? files;
+    if (!uploadFiles.length || busy) return;
+
     setBusy(true);
-    setMessage(`Subiendo ${uploadFile.name}…`);
+    const failures: File[] = [];
+    let uploaded = 0;
+
     try {
-      const form = new FormData();
-      form.set("file", uploadFile);
-      form.set("folder", folder);
-      if (name.trim()) form.set("name", name.trim());
-      const response = await authenticatedFetch("/api/admin/assets", { method: "POST", body: form });
-      const data = await readApiJson<UploadResult>(response);
-      setMessage(`Subido: ${data.asset.path}`);
-      setFile(null);
-      setName("");
-      if (fileInputRef.current) fileInputRef.current.value = "";
-      lastHandledSelectionRef.current = null;
+      for (let index = 0; index < uploadFiles.length; index += 1) {
+        const uploadFile = uploadFiles[index];
+        setMessage(`Subiendo ${index + 1}/${uploadFiles.length}: ${uploadFile.name}…`);
+
+        try {
+          const form = new FormData();
+          form.set("file", uploadFile);
+          form.set("folder", folder);
+          if (uploadFiles.length === 1 && name.trim()) form.set("name", name.trim());
+
+          const response = await authenticatedFetch("/api/admin/assets", { method: "POST", body: form });
+          await readApiJson<UploadResult>(response);
+          uploaded += 1;
+        } catch {
+          failures.push(uploadFile);
+        }
+      }
+
+      if (failures.length) {
+        setFiles(failures);
+        setMessage(`${uploaded}/${uploadFiles.length} archivos subidos. Fallaron ${failures.length}; podés reintentar.`);
+      } else {
+        setFiles([]);
+        setName("");
+        if (fileInputRef.current) fileInputRef.current.value = "";
+        lastHandledSelectionRef.current = null;
+        setMessage(uploadFiles.length === 1 ? `Subido: ${uploadFiles[0].name}` : `${uploaded} archivos subidos correctamente.`);
+      }
+
       await load();
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "No se pudo subir el archivo.");
     } finally {
       setBusy(false);
     }
   };
 
-  const handleSelectedFile = (input: HTMLInputElement) => {
-    const picked = input.files?.item(0) ?? null;
-    if (!picked) return;
+  const handleSelectedFiles = (input: HTMLInputElement) => {
+    const picked = Array.from(input.files ?? []);
+    if (!picked.length) return;
 
-    const selectionKey = `${picked.name}:${picked.size}:${picked.lastModified}`;
+    const selectionKey = picked.map((file) => `${file.name}:${file.size}:${file.lastModified}`).join("|");
     if (lastHandledSelectionRef.current === selectionKey) return;
     lastHandledSelectionRef.current = selectionKey;
 
-    setFile(picked);
-    setMessage(`Seleccionado: ${picked.name}. Subiendo…`);
+    setFiles(picked);
+    setMessage(`${picked.length} archivo${picked.length === 1 ? "" : "s"} seleccionado${picked.length === 1 ? "" : "s"}. Subiendo…`);
     void upload(picked);
   };
 
@@ -105,33 +124,40 @@ export default function AdminAssetsPage() {
         </div>
 
         <label className="mt-5 block text-xs uppercase tracking-[0.16em] text-white/50">Nombre definitivo (opcional)</label>
-        <input className="mt-2 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm outline-none focus:border-violet-400/50" value={name} disabled={busy} onChange={(event) => setName(event.target.value)} placeholder="ej: logo-official-light.png" />
+        <input className="mt-2 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm outline-none focus:border-violet-400/50" value={name} disabled={busy || files.length > 1} onChange={(event) => setName(event.target.value)} placeholder="ej: logo-official-light.png" />
+        <p className="mt-2 text-xs text-white/40">Si elegís varios archivos, se conserva automáticamente el nombre original de cada uno.</p>
 
-        <label className="mt-5 block text-xs uppercase tracking-[0.16em] text-white/50">Archivo</label>
+        <label className="mt-5 block text-xs uppercase tracking-[0.16em] text-white/50">Archivos</label>
         <input
           ref={fileInputRef}
           className="mt-2 block w-full rounded-2xl border border-white/10 bg-black/30 p-3 text-sm"
           type="file"
+          multiple
           accept="image/*,.glb,.gltf,.pdf,application/pdf,model/gltf-binary,model/gltf+json"
           disabled={busy}
           onClick={(event) => {
             event.currentTarget.value = "";
             lastHandledSelectionRef.current = null;
           }}
-          onInput={(event) => handleSelectedFile(event.currentTarget)}
-          onChange={(event) => handleSelectedFile(event.currentTarget)}
+          onInput={(event) => handleSelectedFiles(event.currentTarget)}
+          onChange={(event) => handleSelectedFiles(event.currentTarget)}
         />
-        <p className="mt-2 text-xs text-white/45">Al elegir el archivo se sube automáticamente.</p>
+        <p className="mt-2 text-xs text-white/45">Podés elegir varias imágenes o archivos de una vez. Se suben automáticamente uno por uno.</p>
 
-        {file ? (
+        {files.length ? (
           <div className="mt-3 rounded-2xl border border-violet-400/20 bg-violet-400/10 px-4 py-3 text-sm text-violet-100">
-            <p className="truncate font-medium">{file.name}</p>
-            <p className="mt-1 text-xs text-white/50">{formatBytes(file.size)}</p>
+            <p className="font-medium">{files.length} archivo{files.length === 1 ? "" : "s"} seleccionado{files.length === 1 ? "" : "s"}</p>
+            <div className="mt-2 space-y-1 text-xs text-white/55">
+              {files.slice(0, 6).map((selectedFile) => (
+                <p key={`${selectedFile.name}:${selectedFile.lastModified}`} className="truncate">{selectedFile.name} · {formatBytes(selectedFile.size)}</p>
+              ))}
+              {files.length > 6 ? <p>+{files.length - 6} más</p> : null}
+            </div>
           </div>
         ) : null}
 
-        <button type="button" disabled={!file || busy} onClick={() => void upload()} className="mt-5 min-h-14 w-full rounded-full bg-white px-5 font-semibold text-black disabled:opacity-40">
-          {busy ? "Subiendo…" : "Reintentar subida"}
+        <button type="button" disabled={!files.length || busy} onClick={() => void upload()} className="mt-5 min-h-14 w-full rounded-full bg-white px-5 font-semibold text-black disabled:opacity-40">
+          {busy ? "Subiendo…" : files.length > 1 ? `Reintentar ${files.length} archivos` : "Reintentar subida"}
         </button>
         {message ? <p className="mt-3 break-all text-sm text-violet-200">{message}</p> : null}
       </div>
