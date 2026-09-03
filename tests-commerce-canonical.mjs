@@ -114,11 +114,11 @@ test("cart lines cannot merge different sizes or colors", () => {
   assert.match(addToCart, /color: selectedVariant\?\.color/);
 });
 
-test("visible checkout sends canonical variant identifiers", () => {
-  assert.match(checkoutPage, /fetch\("\/api\/commerce\/checkout"/);
-  assert.match(checkoutPage, /authorization: `Bearer \$\{session\.access_token\}`/);
+test("visible checkout sends canonical variant identifiers through authenticated checkout", () => {
+  assert.match(checkoutPage, /authenticatedFetch\("\/api\/commerce\/checkout"/);
   assert.match(checkoutPage, /productId: item\.productId/);
   assert.match(checkoutPage, /variantId: item\.variantId/);
+  assert.match(checkoutPage, /quantity: item\.quantity/);
   assert.doesNotMatch(checkoutPage, /fetch\("\/api\/checkout"/);
 });
 
@@ -148,15 +148,16 @@ test("checkout calculates shipping on the server and includes it in Mercado Pago
   assert.match(checkout, /shipping_method_snapshot/);
 });
 
-test("visible checkout captures a structured address and pickup alternative", () => {
+test("visible checkout uses the saved private address and keeps pickup as a delivery method", () => {
   assert.match(checkoutPage, /from\("commerce_shipping_methods"\)/);
-  assert.match(checkoutPage, /recipientName/);
-  assert.match(checkoutPage, /addressLine1/);
-  assert.match(checkoutPage, /addressLine2/);
-  assert.match(checkoutPage, /postalCode/);
-  assert.match(checkoutPage, /selectedMethod\?\.delivery_method === "shipping"/);
-  assert.match(checkoutPage, /shipping,/);
-  assert.doesNotMatch(checkoutPage, /address:\s*""/);
+  assert.match(checkoutPage, /authenticatedFetch\("\/api\/account\/purchase-profile"\)/);
+  assert.match(checkoutPage, /defaultAddress: PrivateAddress \| null/);
+  assert.match(checkoutPage, /const address = eligibility\?\.defaultAddress \?\? null/);
+  assert.match(checkoutPage, /address\.address_line_1/);
+  assert.match(checkoutPage, /address\.postal_code/);
+  assert.match(checkoutPage, /delivery_method: "shipping" \| "pickup"/);
+  assert.match(checkoutPage, /shipping: \{ methodId: selectedMethod\.id \}/);
+  assert.doesNotMatch(checkoutPage, /recipientName:\s*shipping|addressLine1:\s*shipping|postalCode:\s*shipping/);
 });
 
 test("refund restores committed stock once and revokes delivered inventory", () => {
