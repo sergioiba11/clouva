@@ -6,6 +6,7 @@ import { BriefcaseBusiness, Compass, Settings2, Sparkles, Store } from "lucide-r
 import { OnboardingShell } from "@/components/onboarding/OnboardingShell";
 import { useAuth } from "@/components/auth-provider";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
+import { completedOnboardingDestination } from "@/lib/onboarding-state";
 
 const OPTIONS = [
   {
@@ -62,13 +63,17 @@ const OPTIONS = [
 
 export default function IdentityOnboardingPage() {
   const router = useRouter();
-  const { user, loading } = useAuth();
+  const { user, profile, loading, profileReady } = useAuth();
   const [workingMode, setWorkingMode] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!loading && !user) router.replace("/login");
-  }, [loading, router, user]);
+    if (!loading && profileReady && user) {
+      const destination = completedOnboardingDestination(profile?.onboarding_status);
+      if (destination) router.replace(destination);
+    }
+  }, [loading, profile, profileReady, router, user]);
 
   const chooseMode = async (option: (typeof OPTIONS)[number]) => {
     if (option.disabled || !option.destination) return;

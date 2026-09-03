@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { OnboardingShell } from "@/components/onboarding/OnboardingShell";
 import { useAuth } from "@/components/auth-provider";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
+import { completedOnboardingDestination } from "@/lib/onboarding-state";
 
 const OPTIONS = [
   ["Artista", "Identidad artística y obra propia"],
@@ -20,14 +21,18 @@ const OPTIONS = [
 
 export default function PlayerIdentityOnboardingPage() {
   const router = useRouter();
-  const { user, loading } = useAuth();
+  const { user, profile, loading, profileReady } = useAuth();
   const [selected, setSelected] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!loading && !user) router.replace("/login");
-  }, [loading, router, user]);
+    if (!loading && profileReady && user) {
+      const destination = completedOnboardingDestination(profile?.onboarding_status);
+      if (destination) router.replace(destination);
+    }
+  }, [loading, profile, profileReady, router, user]);
 
   const toggle = (value: string) => {
     setSelected((current) => current.includes(value) ? current.filter((item) => item !== value) : [...current, value]);

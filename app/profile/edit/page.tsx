@@ -7,6 +7,7 @@ import { SocialLinksEditor } from "@/components/profile/SocialLinksEditor";
 import { YouTubeConnectionPanel } from "@/components/profile/YouTubeConnectionPanel";
 import { VipAiProfilePanel } from "@/components/profile/VipAiProfilePanel";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
+import { shouldRedirectMissingPlayerToOnboarding } from "@/lib/onboarding-state";
 import type { Player, SocialLink } from "@/lib/players-data";
 
 const SECTIONS = ["Identidad", "Presentación", "Imagen", "Redes y plataformas", "Instagram", "YouTube", "CLOUVA AI Profile", "Privacidad y SEO"] as const;
@@ -42,7 +43,7 @@ function parseLinks(value: unknown): SocialLink[] {
 function PlayerEditorContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { user, loading: authLoading } = useAuth();
+  const { user, profile, loading: authLoading, profileReady } = useAuth();
   const [player, setPlayer] = useState<Player | null>(null);
   const [connection, setConnection] = useState<InstagramConnection | null>(null);
   const [vipActive, setVipActive] = useState(false);
@@ -70,7 +71,11 @@ function PlayerEditorContent() {
       const playerPayload = await readApiJson<{ player: Player | null }>(playerResponse);
       const statusPayload = await readApiJson<{ connection: InstagramConnection | null }>(statusResponse);
       if (!playerPayload.player) {
-        router.replace("/onboarding/identity");
+        if (shouldRedirectMissingPlayerToOnboarding(profile?.onboarding_status)) {
+          router.replace("/onboarding/identity");
+        } else {
+          setError("Tu onboarding ya está completo, pero no pudimos cargar tu Player. Reintentá sin crear otra identidad.");
+        }
         return;
       }
       setPlayer(playerPayload.player);
@@ -94,7 +99,9 @@ function PlayerEditorContent() {
     }
   };
 
-  useEffect(() => { void load(); }, [user]);
+  useEffect(() => {
+    if (!authLoading && profileReady && user) void load();
+  }, [authLoading, profileReady, user]);
 
   const categories = useMemo(() => Array.isArray(draft.professional_categories) ? draft.professional_categories as string[] : [], [draft.professional_categories]);
   const update = (key: string, value: unknown) => setDraft((current) => ({ ...current, [key]: value }));
@@ -162,8 +169,20 @@ function PlayerEditorContent() {
     }
   };
 
-  if (loading || !player) {
+  if (loading) {
     return <main className="min-h-screen bg-[#05040a] px-4 py-10 text-white"><div className="mx-auto h-[70vh] max-w-6xl animate-pulse rounded-[2rem] bg-white/[0.04]" /></main>;
+  }
+
+  if (!player) {
+    return (
+      <main className="grid min-h-screen place-items-center bg-[#05040a] px-4 text-white">
+        <div className="w-full max-w-lg rounded-[2rem] border border-white/10 bg-[#0b0913] p-7 text-center">
+          <h1 className="text-xl font-semibold">No pudimos cargar tu Player</h1>
+          <p className="mt-3 text-sm leading-6 text-white/55">{error || "Reintentá para recuperar tu identidad existente."}</p>
+          <button type="button" onClick={() => void load()} className="mt-6 rounded-xl bg-violet-600 px-5 py-3 text-sm font-semibold">Reintentar</button>
+        </div>
+      </main>
+    );
   }
 
   return (
