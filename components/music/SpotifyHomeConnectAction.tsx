@@ -4,7 +4,11 @@ import { useEffect, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
 import { getSpotifyConnectionStatus, startSpotifyConnection } from "@/lib/music/spotify-client";
 
-export function SpotifyHomeConnectAction() {
+type SpotifyHomeConnectActionProps = {
+  returnPath?: string;
+};
+
+export function SpotifyHomeConnectAction({ returnPath = "/perfil/configuracion" }: SpotifyHomeConnectActionProps = {}) {
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [enabled, setEnabled] = useState(true);
@@ -44,10 +48,11 @@ export function SpotifyHomeConnectAction() {
           alignItems: "center",
           width: "fit-content",
           marginTop: 8,
+          border: "1px solid rgba(98,231,145,.18)",
           borderRadius: 999,
-          padding: "6px 10px",
-          background: "rgba(30,215,96,.14)",
-          color: "#62e791",
+          padding: "7px 11px",
+          background: "rgba(30,215,96,.09)",
+          color: "#78e49d",
           fontSize: 11,
           fontWeight: 800,
           lineHeight: 1,
@@ -62,7 +67,7 @@ export function SpotifyHomeConnectAction() {
     if (busy) return;
     setBusy(true);
     try {
-      await startSpotifyConnection({ returnPath: "/" });
+      await startSpotifyConnection({ returnPath });
     } catch {
       setBusy(false);
     }
@@ -79,11 +84,12 @@ export function SpotifyHomeConnectAction() {
         alignItems: "center",
         width: "fit-content",
         marginTop: 8,
-        border: 0,
+        border: "1px solid rgba(30,215,96,.28)",
         borderRadius: 999,
-        padding: "7px 11px",
+        padding: "8px 12px",
         background: "#1ed760",
         color: "#06120a",
+        boxShadow: "0 8px 24px rgba(30,215,96,.12)",
         fontSize: 11,
         fontWeight: 900,
         lineHeight: 1,
