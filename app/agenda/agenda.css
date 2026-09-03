@@ -1,17 +1,3 @@
-@media (max-width: 639px) {
-  main h2.ml-2.hidden.text-lg.font-semibold.capitalize.sm\:block {
-    display: block !important;
-    margin-left: 0.5rem;
-    font-size: 1rem;
-    line-height: 1.25rem;
-    white-space: nowrap;
-  }
-
-  button[aria-label="Abrir CLOUVA AI"],
-  button[aria-label="Cerrar CLOUVA AI"] {
-    left: auto !important;
-    right: 0.75rem !important;
-    top: auto !important;
-    bottom: calc(0.75rem + env(safe-area-inset-bottom)) !important;
-  }
+#luna {
+  scroll-margin-top: 5.5rem;
 }
