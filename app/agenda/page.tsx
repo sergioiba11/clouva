@@ -71,10 +71,12 @@ type AgendaEvent = {
 };
 
 type PlayerResult = { id: string; displayName: string; username: string | null; avatar: string | null };
+type AgendaConnection = PlayerResult & { playerId: string; status: string };
 
 const DAY_MS = 86_400_000;
 const WEEKDAY = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
 const RRULE_DAYS = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"];
+const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
 
 function startOfDay(date: Date) {
   const next = new Date(date);
@@ -126,6 +128,11 @@ function sameDay(a: Date, b: Date) {
 
 function formatDayTitle(date: Date) {
   return new Intl.DateTimeFormat("es-AR", { weekday: "long", day: "numeric", month: "long" }).format(date);
+}
+
+function formatQuickDayTitle(date: Date) {
+  const value = new Intl.DateTimeFormat("es-AR", { weekday: "long", day: "numeric" }).format(date);
+  return `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
 }
 
 function formatMonthTitle(date: Date) {
@@ -217,6 +224,11 @@ export default function AgendaPage() {
   const [query, setQuery] = useState("");
   const [relation, setRelation] = useState<"all" | AgendaEvent["relation"]>("all");
   const [createOpen, setCreateOpen] = useState(false);
+  const [quickCreateDay, setQuickCreateDay] = useState<Date | null>(null);
+  const [quickHour, setQuickHour] = useState(9);
+  const [quickShareOpen, setQuickShareOpen] = useState(false);
+  const [connectedPlayers, setConnectedPlayers] = useState<PlayerResult[]>([]);
+  const [connectionsLoading, setConnectionsLoading] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<AgendaEvent | null>(null);
   const [saving, setSaving] = useState(false);
   const [playerQuery, setPlayerQuery] = useState("");
@@ -334,6 +346,53 @@ export default function AgendaPage() {
     setPlayerResults([]);
   }
 
+  async function loadConnectedPlayers() {
+    if (!active) return;
+    setConnectionsLoading(true);
+    try {
+      const response = await authenticatedFetch(`/api/agenda/connections?agendaId=${encodeURIComponent(active.agendaId)}`);
+      const payload = await readApiJson<{ connections: AgendaConnection[] }>(response);
+      setConnectedPlayers((payload.connections || [])
+        .filter((connection) => connection.status === "active")
+        .map((connection) => ({ id: connection.playerId, displayName: connection.displayName, username: connection.username, avatar: connection.avatar })));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "No se pudieron cargar los Players conectados.");
+      setConnectedPlayers([]);
+    } finally {
+      setConnectionsLoading(false);
+    }
+  }
+
+  function openQuickCreate(day: Date) {
+    const now = new Date();
+    const hour = sameDay(day, now) ? Math.min(now.getHours() + 1, 23) : 9;
+    const start = new Date(day);
+    start.setHours(hour, 0, 0, 0);
+    resetCreateForm(day);
+    setForm((current) => ({
+      ...current,
+      startAt: localInput(start),
+      endAt: localInput(new Date(start.getTime() + 60 * 60_000)),
+    }));
+    setQuickHour(hour);
+    setQuickShareOpen(false);
+    setQuickCreateDay(startOfDay(day));
+    setCreateOpen(false);
+    void loadConnectedPlayers();
+  }
+
+  function selectQuickHour(hour: number) {
+    if (!quickCreateDay) return;
+    const start = new Date(quickCreateDay);
+    start.setHours(hour, 0, 0, 0);
+    setQuickHour(hour);
+    setForm((current) => ({
+      ...current,
+      startAt: localInput(start),
+      endAt: localInput(new Date(start.getTime() + 60 * 60_000)),
+    }));
+  }
+
   async function searchPlayers() {
     setPlayerSearching(true);
     try {
@@ -382,6 +441,8 @@ export default function AgendaPage() {
       });
       await readApiJson(response);
       setCreateOpen(false);
+      setQuickCreateDay(null);
+      setQuickShareOpen(false);
       resetCreateForm();
       await loadEvents();
     } catch (cause) {
@@ -519,7 +580,7 @@ export default function AgendaPage() {
               {monthDays.map((day) => {
                 const dayEvents = filteredEvents.filter((event) => sameDay(new Date(event.startAt), day));
                 const outside = day.getMonth() !== cursor.getMonth();
-                return <button key={day.toISOString()} type="button" onClick={() => { setCursor(day); setView("day"); }} className={`min-h-[92px] border-b border-r border-white/[0.065] p-1.5 text-left sm:min-h-[128px] sm:p-2 ${outside ? "bg-black/20 text-white/25" : "text-white"} ${sameDay(day, new Date()) ? "bg-white/[0.045]" : ""}`}><span className={`grid h-6 w-6 place-items-center rounded-full text-xs ${sameDay(day, new Date()) ? "text-white" : "text-white/55"}`} style={sameDay(day, new Date()) ? { background: accent } : undefined}>{day.getDate()}</span><div className="mt-1 space-y-1">{dayEvents.slice(0, 3).map((event) => <span key={event.id} className="block truncate rounded-md border border-white/8 bg-black/25 px-1.5 py-1 text-[9px] text-white/70 sm:text-[10px]">{formatTime(event.startAt)} {event.title}</span>)}{dayEvents.length > 3 ? <span className="block text-[9px] text-white/30">+{dayEvents.length - 3}</span> : null}</div></button>;
+                return <button key={day.toISOString()} type="button" onClick={() => { setCursor(day); if (canEdit) openQuickCreate(day); else setView("day"); }} className={`min-h-[92px] border-b border-r border-white/[0.065] p-1.5 text-left sm:min-h-[128px] sm:p-2 ${outside ? "bg-black/20 text-white/25" : "text-white"} ${sameDay(day, new Date()) ? "bg-white/[0.045]" : ""}`}><span className={`grid h-6 w-6 place-items-center rounded-full text-xs ${sameDay(day, new Date()) ? "text-white" : "text-white/55"}`} style={sameDay(day, new Date()) ? { background: accent } : undefined}>{day.getDate()}</span><div className="mt-1 space-y-1">{dayEvents.slice(0, 3).map((event) => <span key={event.id} className="block truncate rounded-md border border-white/8 bg-black/25 px-1.5 py-1 text-[9px] text-white/70 sm:text-[10px]">{formatTime(event.startAt)} {event.title}</span>)}{dayEvents.length > 3 ? <span className="block text-[9px] text-white/30">+{dayEvents.length - 3}</span> : null}</div></button>;
               })}
             </div>
           </section>
@@ -536,6 +597,57 @@ export default function AgendaPage() {
           </section>
         ) : null}
       </div>
+
+      {quickCreateDay ? (
+        <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/65 backdrop-blur-sm">
+          <div className="max-h-[94vh] w-full overflow-y-auto rounded-t-[28px] border border-white/10 bg-[#111119] px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-3 shadow-2xl sm:max-w-2xl sm:px-6 sm:pb-6">
+            <div className="mx-auto h-1.5 w-16 rounded-full bg-white/15" />
+            <div className="mt-4 flex items-start justify-between gap-3">
+              <div>
+                <h2 className="text-xl font-semibold">{formatQuickDayTitle(quickCreateDay)} · Horarios</h2>
+                <p className="mt-1 text-sm text-white/45">Tocá una hora para agendar al toque</p>
+              </div>
+              <button type="button" onClick={() => { setQuickCreateDay(null); setQuickShareOpen(false); }} className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-white/10 bg-white/[0.025]"><X size={17} /></button>
+            </div>
+
+            <div className="mt-5 grid grid-cols-6 gap-2">
+              {HOURS.map((hour) => {
+                const selected = quickHour === hour;
+                return <button key={hour} type="button" onClick={() => selectQuickHour(hour)} className={`min-h-11 rounded-xl border px-1 py-2 text-center text-[13px] font-medium tabular-nums transition active:scale-[0.97] ${selected ? "border-transparent text-white shadow-lg" : "border-white/10 bg-black/20 text-white/65 hover:border-white/20 hover:bg-white/[0.05]"}`} style={selected ? { background: accent, boxShadow: `0 10px 28px color-mix(in srgb, ${accent} 28%, transparent)` } : undefined}>{String(hour).padStart(2, "0")}:00</button>;
+              })}
+            </div>
+
+            <label className="mt-5 block">
+              <FieldLabel>Título / tarea</FieldLabel>
+              <input autoFocus value={form.title} onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))} maxLength={180} className="field" placeholder="Agregar título…" />
+            </label>
+
+            <div id="quick-share-players" className="mt-4 rounded-2xl border border-white/10 bg-white/[0.025] p-4">
+              <button type="button" onClick={() => setQuickShareOpen((value) => !value)} className="flex w-full items-center gap-3 text-left">
+                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-white/10 bg-white/[0.035]" style={{ color: accent }}><Users size={17} /></span>
+                <span className="min-w-0 flex-1"><span className="block text-sm font-semibold">Compartir esta tarea con otro Player</span><span className="mt-0.5 block text-xs text-white/35">El evento aparecerá también en su Agenda.</span></span>
+                <ChevronDown size={17} className={`text-white/35 transition ${quickShareOpen ? "rotate-180" : ""}`} />
+              </button>
+
+              {selectedPlayers.length ? <div className="mt-3 flex flex-wrap gap-2">{selectedPlayers.map((player) => <button key={player.id} type="button" onClick={() => setSelectedPlayers((list) => list.filter((item) => item.id !== player.id))} className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.05] py-1 pl-1 pr-3 text-xs"><Avatar src={player.avatar} label={player.displayName} size="sm" /><span>{player.displayName}</span><X size={12} /></button>)}</div> : null}
+
+              {quickShareOpen ? (
+                <div className="mt-4">
+                  {connectionsLoading ? <div className="flex items-center gap-2 py-4 text-xs text-white/40"><Loader2 size={14} className="animate-spin" /> Cargando Players conectados…</div> : connectedPlayers.length ? <div className="grid gap-2 sm:grid-cols-2">{connectedPlayers.map((player) => {
+                    const selected = selectedPlayers.some((item) => item.id === player.id);
+                    return <button key={player.id} type="button" onClick={() => setSelectedPlayers((list) => selected ? list.filter((item) => item.id !== player.id) : [...list, player])} className={`flex items-center gap-3 rounded-xl border p-2.5 text-left transition ${selected ? "border-white/25 bg-white/[0.08]" : "border-white/8 bg-black/20 hover:border-white/20"}`}><Avatar src={player.avatar} label={player.displayName} size="sm" /><span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium">{player.displayName}</span>{player.username ? <span className="block truncate text-[10px] text-white/35">@{player.username}</span> : null}</span>{selected ? <span className="text-xs font-bold" style={{ color: accent }}>✓</span> : null}</button>;
+                  })}</div> : <div className="rounded-xl border border-dashed border-white/10 p-4 text-center"><p className="text-xs text-white/40">No hay Players conectados activos en esta Agenda.</p><Link href="/agenda/conexiones" className="mt-2 inline-block text-xs font-medium" style={{ color: accent }}>Ir a Conexiones</Link></div>}
+                </div>
+              ) : null}
+            </div>
+
+            <div className="mt-5 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <button type="button" onClick={() => void createEvent()} disabled={saving || !form.title.trim()} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl px-5 py-3 text-sm font-semibold text-white disabled:opacity-40" style={{ background: accent }}>{saving ? <Loader2 size={17} className="animate-spin" /> : <CalendarDays size={17} />} Agendar</button>
+              <button type="button" onClick={() => setQuickShareOpen(true)} className="inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/[0.025] px-5 py-3 text-sm font-semibold text-white/80"><Users size={17} /> Compartir con otro Player</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {createOpen ? (
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-0 backdrop-blur-sm sm:items-center sm:p-5">
