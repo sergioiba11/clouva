@@ -195,7 +195,7 @@ export function GlobalClouvaAIButton() {
     <>
       {open && user ? <ClouvaAICompactPanel /> : null}
       {open && !user ? (
-        <section className={`${styles.signedOut} ${isAgendaRoute ? styles.agendaSignedOut : ""}`} role="dialog" aria-label="Ingresar a CLOUVA AI">
+        <section className={`${styles.signedOut} ${isAgendaRoute ? styles.agendaSignedOut : ""}`} role="dialog" aria-label="Ingresar a CLOUVA AI" data-trebol-ui>
           <button type="button" onClick={closeAssistant} aria-label="Cerrar"><X size={17} /></button>
           <Image src={MASCOT_SRC} alt="Trébol" width={80} height={80} />
           <small>CLOUVA AI</small>
@@ -207,6 +207,7 @@ export function GlobalClouvaAIButton() {
       <button
         ref={launcherRef}
         type="button"
+        data-trebol-ui
         className={`${styles.launcher} ${dragging ? styles.dragging : ""} ${isAgendaRoute ? styles.agendaDock : ""}`}
         style={position ? { left: position.x, top: position.y, bottom: "auto" } : undefined}
         onClick={handleClick}

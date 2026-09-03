@@ -5,6 +5,10 @@ import {
   diffTrebolRuntimeContext,
 } from "./lib/clouva-ai/agent/context-builder.ts";
 import { normalizeScreenContext } from "./lib/clouva-ai/multimodal.ts";
+import {
+  resolveClouvaPageContext,
+  trebolContextualGreeting,
+} from "./lib/clouva-ai/page-context.ts";
 
 test("sanitizes secrets, signed URLs and unbounded page data", () => {
   const context = buildTrebolRuntimeContext({
@@ -66,4 +70,38 @@ test("server-normalizes client screen context before persistence", () => {
   assert.equal(context.project.path, "D:\\Clouva");
   assert.equal(context.preview.url, "http://localhost:3000/preview");
   assert.equal(context.preview.html, undefined);
+});
+
+test("resolves contextual page semantics and merges actual visible controls", () => {
+  const context = resolveClouvaPageContext({
+    pathname: "/mi-flow",
+    visibleElements: [
+      { id: "balance", label: "0 FLOWS", purpose: "Saldo visible del Player", action: "Abrir detalle de saldo" },
+    ],
+  });
+
+  assert.equal(context.section, "Mi Flow");
+  assert.match(context.description, /económica/i);
+  assert.ok(context.elements.some((item) => item.id === "balance" && item.label === "0 FLOWS"));
+});
+
+test("contextual greeting adapts to onboarding state without changing the page model", () => {
+  const page = resolveClouvaPageContext({ pathname: "/" });
+  const newcomer = trebolContextualGreeting(page, {
+    experience: "new",
+    role: "cliente",
+    connectedServices: [],
+    player: { id: "p1", slug: "clouva", displayName: "Clouva" },
+  });
+  const existing = trebolContextualGreeting(page, {
+    experience: "existing",
+    role: "cliente",
+    connectedServices: ["spotify"],
+    player: { id: "p1", slug: "clouva", displayName: "Clouva" },
+  });
+
+  assert.match(newcomer, /Bienvenido a CLOUVA/);
+  assert.match(newcomer, /Player Clouva/);
+  assert.doesNotMatch(existing, /Bienvenido a CLOUVA/);
+  assert.match(existing, /Estás en Inicio/);
 });

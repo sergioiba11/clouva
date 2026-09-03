@@ -49,17 +49,29 @@ export function canSelectTrebolElement(target: EventTarget | null): target is HT
   return true;
 }
 
+function semanticElement(element: HTMLElement): HTMLElement {
+  return element.closest<HTMLElement>("[data-trebol-id], [data-trebol-label], [data-trebol-purpose], [data-trebol-action]") ?? element;
+}
+
 export function describeTrebolElement(element: HTMLElement, documentRef = document): TrebolSelectedElement {
-  const rect = element.getBoundingClientRect();
-  const text = element.innerText?.replace(/\s+/g, " ").trim().slice(0, 300) || undefined;
-  const componentHint = element.dataset.component
-    ?? element.getAttribute("data-component")
-    ?? Array.from(element.classList).find((item) => /^[A-Z]|component|card|panel/i.test(item));
+  const target = semanticElement(element);
+  const rect = target.getBoundingClientRect();
+  const text = target.innerText?.replace(/\s+/g, " ").trim().slice(0, 300) || undefined;
+  const semanticHint = [
+    target.dataset.trebolId,
+    target.dataset.trebolLabel,
+    target.dataset.trebolPurpose,
+    target.dataset.trebolAction,
+  ].filter(Boolean).join(" · ");
+  const componentHint = semanticHint
+    || target.dataset.component
+    || target.getAttribute("data-component")
+    || Array.from(target.classList).find((item) => /^[A-Z]|component|card|panel/i.test(item));
   return {
-    selector: stableElementSelector(element, documentRef),
-    tag: element.tagName.toLowerCase(),
+    selector: stableElementSelector(target, documentRef),
+    tag: target.tagName.toLowerCase(),
     text,
-    ariaLabel: element.getAttribute("aria-label")?.slice(0, 200) || undefined,
+    ariaLabel: (target.dataset.trebolLabel ?? target.getAttribute("aria-label"))?.slice(0, 200) || undefined,
     componentHint: componentHint?.slice(0, 120),
     boundingRect: {
       x: rect.x,

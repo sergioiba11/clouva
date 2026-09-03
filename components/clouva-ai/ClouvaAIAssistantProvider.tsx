@@ -24,6 +24,13 @@ import type {
 import type { PendingToolActionView } from "@/lib/clouva-ai/tool-confirmation";
 import { useActiveAvatarStore } from "@/lib/avatar-engine/active-avatar-store";
 import {
+  collectVisibleTrebolElements,
+  resolveClouvaPageContext,
+  type ClouvaPageContext,
+  type ClouvaPageContextRegistration,
+  type ClouvaViewerContext,
+} from "@/lib/clouva-ai/page-context";
+import {
   canSelectTrebolElement,
   describeTrebolElement,
 } from "@/lib/clouva-ai/visual-selection";
@@ -47,6 +54,8 @@ type ClouvaAIAssistantValue = {
   notifyToolDecision: (message: string) => void;
   context: TrebolRuntimeContext;
   contextPatch: TrebolContextPatch;
+  pageContext: ClouvaPageContext;
+  viewerContext: ClouvaViewerContext;
   selectingElement: boolean;
   startElementSelection: () => void;
   stopElementSelection: () => void;
@@ -73,10 +82,22 @@ function registeredValue(
   return undefined;
 }
 
+function viewerExperience(args: {
+  onboardingStatus?: string | null;
+  role?: string | null;
+  hasPlayer: boolean;
+}): ClouvaViewerContext["experience"] {
+  const status = args.onboardingStatus?.trim().toLowerCase() ?? "";
+  if (!status || status === "pending" || status === "new") return args.hasPlayer ? "onboarding" : "new";
+  if (!["completed", "complete", "done", "ready", "skipped"].includes(status)) return "onboarding";
+  if (args.role === "admin" || args.role === "empleado") return "advanced";
+  return "existing";
+}
+
 export function ClouvaAIAssistantProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const params = useParams();
-  const { user } = useAuth();
+  const { user, profile, role } = useAuth();
   const { currentPlayer } = useCurrentPlayer();
   const avatar = useActiveAvatarStore((state) => state.avatar);
   const [isOpen, setOpen] = useState(false);
@@ -89,6 +110,7 @@ export function ClouvaAIAssistantProvider({ children }: { children: React.ReactN
   const [registrations, setRegistrations] = useState<Record<string, Registration>>({});
   const [selectedElement, setSelectedElement] = useState<TrebolSelectedElement>();
   const [selectingElement, setSelectingElement] = useState(false);
+  const [visibleElements, setVisibleElements] = useState(() => collectVisibleTrebolElements());
   const previousContextRef = useRef<TrebolRuntimeContext | null>(null);
 
   const openAssistant = useCallback((prompt?: string) => {
@@ -122,6 +144,20 @@ export function ClouvaAIAssistantProvider({ children }: { children: React.ReactN
   }, []);
 
   useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    const sync = () => {
+      if (!cancelled) setVisibleElements(collectVisibleTrebolElements());
+    };
+    sync();
+    const timers = [180, 650].map((delay) => window.setTimeout(sync, delay));
+    return () => {
+      cancelled = true;
+      timers.forEach((timer) => window.clearTimeout(timer));
+    };
+  }, [isOpen, pathname]);
+
+  useEffect(() => {
     if (!selectingElement) return;
 
     const onPointer = (event: MouseEvent) => {
@@ -133,7 +169,10 @@ export function ClouvaAIAssistantProvider({ children }: { children: React.ReactN
       setOpen(true);
     };
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setSelectingElement(false);
+      if (event.key === "Escape") {
+        setSelectingElement(false);
+        setOpen(true);
+      }
     };
     document.addEventListener("click", onPointer, true);
     document.addEventListener("keydown", onKey, true);
@@ -143,13 +182,52 @@ export function ClouvaAIAssistantProvider({ children }: { children: React.ReactN
     };
   }, [selectingElement]);
 
-  const context = useMemo(() => {
+  const registeredScopes = useMemo(() => {
     const scopes: Record<string, Record<string, unknown>> = {};
     for (const registration of Object.values(registrations)) {
       const existing = scopes[registration.scope] ?? {};
       scopes[registration.scope] = { ...existing, [registration.id]: registration.data };
     }
+    return scopes;
+  }, [registrations]);
+
+  const pageContext = useMemo(
+    () => resolveClouvaPageContext({
+      pathname,
+      playerSlug: currentPlayer?.slug,
+      registered: registeredScopes.page,
+      visibleElements,
+    }),
+    [currentPlayer?.slug, pathname, registeredScopes.page, visibleElements],
+  );
+
+  const viewerContext = useMemo<ClouvaViewerContext>(() => {
+    const connectedServices: string[] = [];
+    if (profile?.spotify_url || currentPlayer?.spotify_profile_url) connectedServices.push("spotify");
+    if (currentPlayer?.youtube_channel_url) connectedServices.push("youtube");
+    return {
+      role,
+      onboardingStatus: profile?.onboarding_status ?? undefined,
+      experience: viewerExperience({
+        onboardingStatus: profile?.onboarding_status,
+        role,
+        hasPlayer: Boolean(currentPlayer),
+      }),
+      displayName: profile?.display_name ?? profile?.full_name ?? undefined,
+      player: currentPlayer
+        ? { id: currentPlayer.id, slug: currentPlayer.slug, displayName: currentPlayer.display_name }
+        : undefined,
+      connectedServices,
+    };
+  }, [currentPlayer, profile, role]);
+
+  const context = useMemo(() => {
     const safeParams = paramsRecord(params);
+    const scopes = {
+      ...registeredScopes,
+      page: { ...(registeredScopes.page ?? {}), runtime: pageContext },
+      viewer: { ...(registeredScopes.viewer ?? {}), runtime: viewerContext },
+    };
     return buildTrebolRuntimeContext({
       navigation: {
         route: pathname,
@@ -171,7 +249,7 @@ export function ClouvaAIAssistantProvider({ children }: { children: React.ReactN
       scopes,
       user: user ? { id: user.id } : undefined,
     });
-  }, [avatar.id, currentPlayer?.id, params, pathname, registrations, selectedElement, user]);
+  }, [avatar.id, currentPlayer?.id, params, pathname, pageContext, registeredScopes, registrations, selectedElement, user, viewerContext]);
 
   const contextPatch = useMemo(
     () => diffTrebolRuntimeContext(previousContextRef.current, context),
@@ -201,12 +279,20 @@ export function ClouvaAIAssistantProvider({ children }: { children: React.ReactN
     },
     context,
     contextPatch,
+    pageContext,
+    viewerContext,
     selectingElement,
-    startElementSelection: () => setSelectingElement(true),
-    stopElementSelection: () => setSelectingElement(false),
+    startElementSelection: () => {
+      setOpen(false);
+      setSelectingElement(true);
+    },
+    stopElementSelection: () => {
+      setSelectingElement(false);
+      setOpen(true);
+    },
     clearSelection: () => setSelectedElement(undefined),
     registerContext,
-  }), [closeAssistant, consumeStarterPrompt, context, contextPatch, conversationId, isOpen, openAssistant, pendingAction, registerContext, selectingElement, starterPrompt, toggleAssistant, toolDecisionNotice]);
+  }), [closeAssistant, consumeStarterPrompt, context, contextPatch, conversationId, isOpen, openAssistant, pageContext, pendingAction, registerContext, selectingElement, starterPrompt, toggleAssistant, toolDecisionNotice, viewerContext]);
 
   return (
     <ClouvaAIAssistantContext.Provider value={value}>
@@ -241,4 +327,20 @@ export function useTrebolContextRegistration(registration: Registration) {
   latest.current = registration;
 
   useEffect(() => registerContext(latest.current), [fingerprint, registerContext, registration.id, registration.scope]);
+}
+
+export function useClouvaPageContext(registration: ClouvaPageContextRegistration) {
+  const { registerContext } = useClouvaAIAssistant();
+  const fingerprint = JSON.stringify(registration);
+  const latest = useRef(registration);
+  latest.current = registration;
+
+  useEffect(
+    () => registerContext({
+      scope: "page",
+      id: latest.current.id,
+      data: latest.current as unknown as Record<string, unknown>,
+    }),
+    [fingerprint, registerContext, registration.id],
+  );
 }

@@ -18,11 +18,47 @@ const STATUS: Record<string, string> = {
   error: "No se pudo continuar",
 };
 
-export function ClouvaAIVoiceControls() {
+export function ClouvaAIVoiceControls({ compact = false }: { compact?: boolean }) {
   const { state, transcript, start, stop, setMuted } = useTrebolLiveSession();
-  // An error can be non-fatal (for example, transcript persistence). Keep
-  // the hang-up control available until the session actually closes.
   const active = !["idle", "ended"].includes(state.status);
+
+  if (compact) {
+    return (
+      <div className="flex items-center gap-1" aria-label={`Voz de Trébol · ${STATUS[state.status] ?? state.status}`}>
+        {!active ? (
+          <button
+            type="button"
+            onClick={() => void start()}
+            aria-label="Hablar con Trébol"
+            title={STATUS[state.status] ?? state.status}
+            className="grid h-9 w-9 place-items-center rounded-full text-white/55 transition hover:bg-white/10 hover:text-white"
+          >
+            <Mic className="h-4 w-4" />
+          </button>
+        ) : (
+          <>
+            <button
+              type="button"
+              onClick={() => setMuted(!state.muted)}
+              aria-label={state.muted ? "Activar micrófono" : "Silenciar micrófono"}
+              title={STATUS[state.status] ?? state.status}
+              className="grid h-9 w-9 place-items-center rounded-full bg-violet-500/15 text-violet-200 transition hover:bg-violet-500/25"
+            >
+              {state.muted ? <MicOff className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+            </button>
+            <button
+              type="button"
+              onClick={() => void stop()}
+              aria-label="Finalizar conversación por voz"
+              className="grid h-9 w-9 place-items-center rounded-full text-red-200/80 transition hover:bg-red-500/15"
+            >
+              <PhoneOff className="h-4 w-4" />
+            </button>
+          </>
+        )}
+      </div>
+    );
+  }
 
   return (
     <section className="space-y-3 rounded-2xl border border-violet-300/15 bg-violet-500/[0.06] p-3" aria-label="Controles de voz de Trébol Live">
