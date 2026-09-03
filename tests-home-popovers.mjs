@@ -139,33 +139,48 @@ test("MI SPOT evoluciona a Espacios y reutiliza el Commerce real en vez de clona
   assert.match(dashboard, /\/commerce\/pos/);
 });
 
-test("Trébol es un asistente global activo con la mascota oficial", () => {
+test("Trébol es un asistente global activo con chat rápido contextual", () => {
   const globalButton = read("./components/GlobalClouvaAIButton.tsx");
   const compact = read("./components/clouva-ai/ClouvaAICompactPanel.tsx");
+  const quick = read("./components/clouva-ai/ClouvaAIQuickChat.tsx");
   const layout = read("./app/layout.tsx");
 
   assert.match(layout, /<ClouvaAIAssistantProvider>/);
   assert.match(globalButton, /trebol-mascot\.png/);
   assert.match(globalButton, /Lista para ayudarte/);
+  assert.match(globalButton, /data-trebol-ui/);
   assert.doesNotMatch(globalButton, /Próximamente/);
-  assert.match(compact, /Crear un proyecto/);
-  assert.match(compact, /Mejorar mi avatar/);
-  assert.match(compact, /Ayudarme con música/);
+  assert.match(compact, /Chat rápido de Trébol/);
+  assert.match(compact, /Abrir completo/);
+  assert.match(compact, /<ClouvaAIQuickChat/);
   assert.match(compact, /Ingresar a CLOUVA|useAuth/);
+  assert.doesNotMatch(compact, /Crear un proyecto|Mejorar mi avatar|Ayudarme con música|SpotifyAssistantMiniPlayer|<ClouvaAIChat/);
+  assert.match(quick, /Escribile a Trébol/);
+  assert.match(quick, /Señalar algo en pantalla/);
+  assert.match(quick, /ClouvaAIVoiceControls compact/);
 });
 
-test("página completa y popover comparten el Orchestrator, la conversación y la memoria", () => {
+test("página completa y chat rápido comparten Orchestrator, conversación y memoria", () => {
   const full = read("./components/clouva-ai/ClouvaAIChat.tsx");
   const compact = read("./components/clouva-ai/ClouvaAICompactPanel.tsx");
+  const quick = read("./components/clouva-ai/ClouvaAIQuickChat.tsx");
   const provider = read("./components/clouva-ai/ClouvaAIAssistantProvider.tsx");
   assert.match(full, /ORCHESTRATOR_ENDPOINT = "\/api\/clouva-ai\/chat"/);
   assert.match(full, /conversationId: sharedConversationId/);
   assert.match(full, /from\("ai_conversations"\)/);
   assert.match(full, /from\("ai_messages"\)/);
   assert.match(full, /project_key", "clouva"/);
-  assert.match(compact, /<ClouvaAIChat[\s\S]*?compact/);
+  assert.match(compact, /<ClouvaAIQuickChat/);
+  assert.match(quick, /ORCHESTRATOR_ENDPOINT = "\/api\/clouva-ai\/chat"/);
+  assert.match(quick, /conversationId: sharedConversationId/);
+  assert.match(quick, /from\("ai_conversations"\)/);
+  assert.match(quick, /from\("ai_messages"\)/);
+  assert.match(quick, /project_key", "clouva"/);
+  assert.match(quick, /screenContext/);
   assert.match(provider, /conversationId/);
   assert.match(provider, /pendingAction/);
+  assert.match(provider, /pageContext/);
+  assert.match(provider, /viewerContext/);
 });
 
 test("Trébol conserva la conversación al abrirse y sólo crea otra por acción explícita", () => {
