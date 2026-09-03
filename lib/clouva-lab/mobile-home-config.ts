@@ -84,7 +84,7 @@ export const DEFAULT_MOBILE_HOME_CONFIG: MobileHomeConfig = {
   },
   hero: {
     eyebrow: "Bienvenido de nuevo",
-    title: "Crea. Personaliza.\nConecta.",
+    title: "VIDA DE FLOWS",
     subtitle: "Viví tu propio mundo.",
     imageUrl: "/assets/home-mobile/hero.webp",
     height: 310,
@@ -216,6 +216,11 @@ export function sanitizeMobileHomeConfig(value: unknown): MobileHomeConfig {
     if (!sections.includes(required)) sections.push(required);
   }
 
+  const sanitizedHeroTitle = text(hero.title, DEFAULT_MOBILE_HOME_CONFIG.hero.title, 100);
+  const heroTitle = sanitizedHeroTitle === "Crea. Personaliza.\nConecta."
+    ? DEFAULT_MOBILE_HOME_CONFIG.hero.title
+    : sanitizedHeroTitle;
+
   return {
     schemaVersion: 1,
     page: "mobile-home",
@@ -237,7 +242,7 @@ export function sanitizeMobileHomeConfig(value: unknown): MobileHomeConfig {
     },
     hero: {
       eyebrow: text(hero.eyebrow, DEFAULT_MOBILE_HOME_CONFIG.hero.eyebrow, 60),
-      title: text(hero.title, DEFAULT_MOBILE_HOME_CONFIG.hero.title, 100),
+      title: heroTitle,
       subtitle: text(hero.subtitle, DEFAULT_MOBILE_HOME_CONFIG.hero.subtitle, 80),
       imageUrl: imageUrl(hero.imageUrl, DEFAULT_MOBILE_HOME_CONFIG.hero.imageUrl),
       height: numberInRange(hero.height, DEFAULT_MOBILE_HOME_CONFIG.hero.height, 240, 620),
