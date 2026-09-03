@@ -12,8 +12,8 @@ import {
   ShoppingBag,
   Video,
 } from "lucide-react";
-import { PlayerLocationMap } from "./PlayerLocationMap";
 import { PlayerOwnerActions } from "./PlayerOwnerActions";
+import { PlayerSessionLocationCard } from "./PlayerSessionLocationCard";
 import { PublicMediaGallery } from "./PublicMediaGallery";
 import { PublicSocialLinks } from "./PublicSocialLinks";
 import { PublicSpotifyPlayer } from "./PublicSpotifyPlayer";
@@ -110,6 +110,7 @@ export function PlayerPublicView({
   const location = player.location || player.origin;
   const radiusClass = PLAYER_RADIUS_CLASS[layoutConfig?.page_style?.radius ?? "medium"];
   const accent = layoutConfig?.page_style?.palette?.accent || player.accent_color || "#8f7cff";
+  const locationAccent = player.accent_color || "#7ddfff";
   const navStyle = layoutConfig?.page_style?.nav_style ?? "pill";
   const hasLocationMap = Boolean(
     player.location
@@ -134,15 +135,6 @@ export function PlayerPublicView({
     >
       <section className="relative isolate overflow-hidden border-b border-white/10">
         <div className="absolute inset-0 -z-30 bg-cover bg-center" style={{ backgroundImage: `url(${cover})` }} aria-hidden="true" />
-        {hasLocationMap ? (
-          <PlayerLocationMap
-            latitude={player.latitude}
-            longitude={player.longitude}
-            label={player.location || ""}
-            accent={accent}
-            className="absolute inset-0 -z-20 opacity-95 [mask-image:linear-gradient(90deg,transparent_0%,rgba(0,0,0,.12)_22%,#000_48%,#000_100%)] max-sm:[mask-image:linear-gradient(180deg,#000_0%,#000_64%,transparent_100%)]"
-          />
-        ) : null}
         <div className="absolute inset-0 -z-10 bg-[linear-gradient(90deg,#07060b_0%,rgba(7,6,11,.94)_35%,rgba(7,6,11,.28)_70%,#07060b_100%)]" />
         <div className="absolute inset-0 -z-10 bg-[linear-gradient(0deg,#07060b_0%,transparent_50%)]" />
 
@@ -204,18 +196,30 @@ export function PlayerPublicView({
             {socialLinks.length ? <div className="mt-4"><PublicSocialLinks links={socialLinks} playerName={player.display_name} /></div> : null}
           </div>
 
-          <aside className={`self-center border border-white/12 bg-[#0c0b16]/80 p-5 shadow-2xl backdrop-blur-xl ${radiusClass}`}>
-            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[color:var(--public-accent)]/70">Identidad en La Matrix</p>
-            <div className="mt-5 grid gap-4">
-              <div className="flex gap-3"><Music2 size={17} className="mt-0.5 text-[color:var(--public-accent)]" /><p><small className="block text-[10px] uppercase tracking-wider text-white/35">Rol</small><b className="text-sm">{player.primary_role || "Player"}</b></p></div>
-              {player.genres?.length ? <div className="flex gap-3"><Play size={17} className="mt-0.5 text-[color:var(--public-accent)]" /><p><small className="block text-[10px] uppercase tracking-wider text-white/35">Género</small><b className="text-sm">{player.genres.slice(0, 3).join(" · ")}</b></p></div> : null}
-              {location ? <div className="flex gap-3"><MapPin size={17} className="mt-0.5 text-[color:var(--public-accent)]" /><p><small className="block text-[10px] uppercase tracking-wider text-white/35">Origen</small><b className="text-sm">{location}</b></p></div> : null}
-              <div className="grid grid-cols-2 gap-2 border-t border-white/10 pt-4">
-                <p className="rounded-xl bg-white/[0.035] p-3"><b className="block text-lg">{affiliations.length}</b><small className="text-[10px] text-white/40">Estudios</small></p>
-                <p className="rounded-xl bg-white/[0.035] p-3"><b className="block text-lg">{media.length}</b><small className="text-[10px] text-white/40">Contenidos</small></p>
+          <div className="grid self-center justify-items-end gap-3">
+            {hasLocationMap ? (
+              <PlayerSessionLocationCard
+                ownerUserId={player.owner_user_id}
+                latitude={player.latitude}
+                longitude={player.longitude}
+                label={player.location || ""}
+                accent={locationAccent}
+              />
+            ) : null}
+
+            <aside className={`w-full border border-white/12 bg-[#0c0b16]/80 p-5 shadow-2xl backdrop-blur-xl ${radiusClass}`}>
+              <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[color:var(--public-accent)]/70">Identidad en La Matrix</p>
+              <div className="mt-5 grid gap-4">
+                <div className="flex gap-3"><Music2 size={17} className="mt-0.5 text-[color:var(--public-accent)]" /><p><small className="block text-[10px] uppercase tracking-wider text-white/35">Rol</small><b className="text-sm">{player.primary_role || "Player"}</b></p></div>
+                {player.genres?.length ? <div className="flex gap-3"><Play size={17} className="mt-0.5 text-[color:var(--public-accent)]" /><p><small className="block text-[10px] uppercase tracking-wider text-white/35">Género</small><b className="text-sm">{player.genres.slice(0, 3).join(" · ")}</b></p></div> : null}
+                {location ? <div className="flex gap-3"><MapPin size={17} className="mt-0.5 text-[color:var(--public-accent)]" /><p><small className="block text-[10px] uppercase tracking-wider text-white/35">Origen</small><b className="text-sm">{location}</b></p></div> : null}
+                <div className="grid grid-cols-2 gap-2 border-t border-white/10 pt-4">
+                  <p className="rounded-xl bg-white/[0.035] p-3"><b className="block text-lg">{affiliations.length}</b><small className="text-[10px] text-white/40">Estudios</small></p>
+                  <p className="rounded-xl bg-white/[0.035] p-3"><b className="block text-lg">{media.length}</b><small className="text-[10px] text-white/40">Contenidos</small></p>
+                </div>
               </div>
-            </div>
-          </aside>
+            </aside>
+          </div>
         </div>
       </section>
 
