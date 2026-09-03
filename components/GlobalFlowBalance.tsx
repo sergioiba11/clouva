@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
 import { FlowCoinIcon } from "@/components/flow-coin-icon";
@@ -17,9 +18,14 @@ type FlowBalancePayload = {
   updatedAt: string | null;
 };
 
+type GlobalFlowBalanceProps = {
+  variant?: "global" | "inline";
+};
+
 const REFRESH_MS = 60_000;
 
-export function GlobalFlowBalance() {
+export function GlobalFlowBalance({ variant = "global" }: GlobalFlowBalanceProps = {}) {
+  const pathname = usePathname();
   const { user, loading: authLoading } = useAuth();
   const [data, setData] = useState<FlowBalancePayload | null>(null);
 
@@ -68,12 +74,37 @@ export function GlobalFlowBalance() {
   const label = flowLabel(data.balance);
   const region = data.region;
 
+  if (variant === "inline") {
+    return (
+      <Link
+        href="/mi-flow/billetera?asset=flows"
+        aria-label={`${data.balance} ${label}. 1 FLOW equivale a 1 dólar estadounidense.`}
+        title={`1 FLOW = US$ 1 · ${region.label}`}
+        className="group flex min-w-0 items-center gap-2.5 rounded-2xl border border-white/[0.07] bg-white/[0.025] px-2.5 py-2 text-white transition hover:bg-white/[0.045]"
+        style={{ boxShadow: `inset 0 1px rgba(255,255,255,.025), 0 0 22px ${region.glowSoft}` }}
+      >
+        <FlowCoinIcon size={31} glow={region.glow} edge={region.edge} />
+        <span className="min-w-0 leading-none">
+          <span className="flex items-baseline gap-1.5 whitespace-nowrap">
+            <strong className="text-sm font-semibold tabular-nums">{data.balance}</strong>
+            <span className="text-[9px] font-bold uppercase tracking-[0.12em] text-white/65">{label}</span>
+          </span>
+          <span className="mt-1 block truncate text-[8px] font-medium text-white/35">
+            US$ {data.usdValue} · <span style={{ color: region.glow }}>{region.label}</span>
+          </span>
+        </span>
+      </Link>
+    );
+  }
+
+  const rootMobileVisibility = pathname === "/" ? "hidden md:flex" : "flex";
+
   return (
     <Link
       href="/mi-flow/billetera?asset=flows"
       aria-label={`${data.balance} ${label}. 1 FLOW equivale a 1 dólar estadounidense.`}
       title={`1 FLOW = US$ 1 · ${region.label}`}
-      className="group fixed right-3 z-[80] flex min-h-12 items-center gap-2.5 rounded-2xl border bg-[#09080d]/92 px-2.5 py-2 text-white shadow-2xl backdrop-blur-xl transition hover:-translate-y-0.5 hover:bg-[#0d0b12]/96 md:right-5 md:gap-3 md:px-3"
+      className={`group fixed right-3 z-[80] ${rootMobileVisibility} min-h-12 items-center gap-2.5 rounded-2xl border bg-[#09080d]/92 px-2.5 py-2 text-white shadow-2xl backdrop-blur-xl transition hover:-translate-y-0.5 hover:bg-[#0d0b12]/96 md:right-5 md:gap-3 md:px-3`}
       style={{
         top: "calc(env(safe-area-inset-top, 0px) + 10px)",
         borderColor: `${region.glow}55`,
