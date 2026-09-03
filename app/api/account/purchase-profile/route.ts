@@ -56,6 +56,18 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: "Completá destinatario, calle, localidad, provincia y código postal.", field: "address" }, { status: 400 });
     }
 
+    const requestedAddressId = cleanText(source.id, 80);
+    if (requestedAddressId) {
+      const { data: ownedAddress, error: ownershipError } = await admin
+        .from("user_addresses")
+        .select("id")
+        .eq("id", requestedAddressId)
+        .eq("user_id", user.id)
+        .maybeSingle();
+      if (ownershipError) throw new Error(ownershipError.message);
+      if (!ownedAddress) return NextResponse.json({ error: "La dirección no pertenece a tu cuenta." }, { status: 404 });
+    }
+
     const now = new Date().toISOString();
     const { error: privateError } = await admin.from("account_private_data").upsert({
       user_id: user.id,
@@ -64,20 +76,20 @@ export async function PUT(request: NextRequest) {
     }, { onConflict: "user_id" });
     if (privateError) throw new Error(privateError.message);
 
-    const requestedAddressId = cleanText(source.id, 80);
-    const { error: clearDefaultError } = await admin.from("user_addresses").update({ is_default: false, updated_at: now }).eq("user_id", user.id).eq("is_default", true);
+    const { error: clearDefaultError } = await admin
+      .from("user_addresses")
+      .update({ is_default: false, updated_at: now })
+      .eq("user_id", user.id)
+      .eq("is_default", true);
     if (clearDefaultError) throw new Error(clearDefaultError.message);
 
     if (requestedAddressId) {
-      const { data: updated, error } = await admin
+      const { error } = await admin
         .from("user_addresses")
         .update({ ...address, is_default: true, updated_at: now })
         .eq("id", requestedAddressId)
-        .eq("user_id", user.id)
-        .select("id")
-        .maybeSingle();
+        .eq("user_id", user.id);
       if (error) throw new Error(error.message);
-      if (!updated) return NextResponse.json({ error: "La dirección no pertenece a tu cuenta." }, { status: 404 });
     } else {
       const { error } = await admin.from("user_addresses").insert({ ...address, user_id: user.id, is_default: true });
       if (error) throw new Error(error.message);
