@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { normalizePublicSlug } from "@/core/integrations/instagram/mapper";
 import { isReservedPublicAlias } from "@/lib/navigation/reserved-public-aliases";
 import { assertPlayerUsernameAvailable, validatePlayerUsername } from "@/lib/server/player-basics";
+import { PlayerLocationError, resolvePlayerLocationChange } from "@/lib/server/player-location";
 import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
 import { completePendingStudioJoins } from "@/lib/server/studio-memberships";
 
@@ -232,6 +233,25 @@ export async function PATCH(request: NextRequest) {
 
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     const changes = sanitizeUpdate(body);
+
+    if (Object.prototype.hasOwnProperty.call(body, "location")) {
+      try {
+        Object.assign(changes, await resolvePlayerLocationChange({
+          requestedLocation: body.location,
+          currentLocation: typeof player.location === "string" ? player.location : null,
+          currentLatitude: typeof player.latitude === "number" ? player.latitude : null,
+          currentLongitude: typeof player.longitude === "number" ? player.longitude : null,
+        }));
+      } catch (error) {
+        if (error instanceof PlayerLocationError) {
+          return NextResponse.json(
+            { error: error.message, field: "location", code: error.code },
+            { status: error.status },
+          );
+        }
+        throw error;
+      }
+    }
 
     if (Object.prototype.hasOwnProperty.call(body, "username")) {
       const username = validatePlayerUsername(body.username);

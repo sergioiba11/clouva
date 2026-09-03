@@ -25,6 +25,8 @@ export type Player = {
   secondary_tagline: string | null;
   origin: string | null;
   location: string | null;
+  latitude: number | null;
+  longitude: number | null;
   genres: string[];
   disciplines: string[];
   professional_categories: string[];
@@ -172,7 +174,7 @@ export const studioMembershipPlansSelect =
   "id,studio_id,name,slug,description,price,currency,billing_interval,is_free,is_active,is_public,benefits,display_order,public_role_key,public_role_label,area_key,area_label,join_policy,requires_approval,display_badge";
 
 export const playerPublicSelect =
-  "id,owner_user_id,slug,display_name,username,primary_role,short_bio,long_bio,tagline,secondary_tagline,origin,location,genres,disciplines,professional_categories,social_links,profile_image_url,hero_image_url,cover_url,spotify_profile_url,youtube_channel_url,contact_email,booking_email,whatsapp_url,theme_key,accent_color,font_style,logo_url,palette,privacy_status,claim_status,is_verified,is_published,publication_status,seo_title,seo_description,share_title,share_description,og_image_url";
+  "id,owner_user_id,slug,display_name,username,primary_role,short_bio,long_bio,tagline,secondary_tagline,origin,location,latitude,longitude,genres,disciplines,professional_categories,social_links,profile_image_url,hero_image_url,cover_url,spotify_profile_url,youtube_channel_url,contact_email,booking_email,whatsapp_url,theme_key,accent_color,font_style,logo_url,palette,privacy_status,claim_status,is_verified,is_published,publication_status,seo_title,seo_description,share_title,share_description,og_image_url";
 
 export const playerStudiosSelect = "role,area_label,is_primary,studio:studios(id,slug,name,logo_url)";
 

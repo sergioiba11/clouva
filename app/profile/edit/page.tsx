@@ -185,6 +185,16 @@ function PlayerEditorContent() {
     );
   }
 
+  const draftLocation = String(draft.location || "").trim();
+  const savedLocation = String(player.location || "").trim();
+  const locationIsResolved = Boolean(
+    draftLocation
+      && draftLocation === savedLocation
+      && Number.isFinite(player.latitude)
+      && Number.isFinite(player.longitude),
+  );
+  const resolvedLocationParts = locationIsResolved ? savedLocation.split(",").map((part) => part.trim()).filter(Boolean) : [];
+
   return (
     <main className="min-h-screen bg-[#05040a] text-white">
       <header className="sticky top-0 z-30 border-b border-white/10 bg-[#05040a]/90 backdrop-blur-xl">
@@ -209,7 +219,15 @@ function PlayerEditorContent() {
             <Field label="Usuario" value={String(draft.username || "")} onChange={(value) => update("username", value.replace(/^@/, ""))} prefix="@" />
             <Field label="URL pública" value={String(draft.slug || "")} onChange={(value) => update("slug", value)} prefix="clouva.com.ar/" />
             <div><Label>Categorías profesionales</Label><div className="flex flex-wrap gap-2">{categories.map((category) => <button key={category} onClick={() => update("professional_categories", categories.filter((item) => item !== category))} className="rounded-full border border-violet-400/30 bg-violet-500/10 px-3 py-1.5 text-xs">{category} ×</button>)}<button onClick={() => { const value = window.prompt("Nueva categoría"); if (value?.trim()) update("professional_categories", [...categories, value.trim()]); }} className="rounded-full border border-dashed border-white/20 px-3 py-1.5 text-xs text-white/45">+ Agregar</button></div></div>
-            <Field label="Ubicación" value={String(draft.location || "")} onChange={(value) => update("location", value)} />
+            <div>
+              <Field label="Ubicación" value={String(draft.location || "")} onChange={(value) => update("location", value)} />
+              {locationIsResolved ? (
+                <div className="mt-2 rounded-xl border border-cyan-300/15 bg-cyan-300/[0.045] px-3.5 py-3">
+                  <p className="flex items-center gap-2 text-xs font-medium text-cyan-100"><span className="h-1.5 w-1.5 rounded-full bg-cyan-300 shadow-[0_0_10px_rgba(103,232,249,.8)]" /> Ubicación encontrada</p>
+                  <div className="mt-2 grid gap-0.5 text-[11px] uppercase tracking-[0.14em] text-white/42">{resolvedLocationParts.map((part) => <span key={part}>{part}</span>)}</div>
+                </div>
+              ) : draftLocation ? <p className="mt-2 text-xs text-white/35">CLOUVA resolverá esta localidad al guardar.</p> : null}
+            </div>
             <Field label="Origen" value={String(draft.origin || "")} onChange={(value) => update("origin", value)} />
           </div> : null}
 

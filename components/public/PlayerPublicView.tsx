@@ -12,6 +12,7 @@ import {
   ShoppingBag,
   Video,
 } from "lucide-react";
+import { PlayerLocationMap } from "./PlayerLocationMap";
 import { PlayerOwnerActions } from "./PlayerOwnerActions";
 import { PublicMediaGallery } from "./PublicMediaGallery";
 import { PublicSocialLinks } from "./PublicSocialLinks";
@@ -110,6 +111,11 @@ export function PlayerPublicView({
   const radiusClass = PLAYER_RADIUS_CLASS[layoutConfig?.page_style?.radius ?? "medium"];
   const accent = layoutConfig?.page_style?.palette?.accent || player.accent_color || "#8f7cff";
   const navStyle = layoutConfig?.page_style?.nav_style ?? "pill";
+  const hasLocationMap = Boolean(
+    player.location
+      && Number.isFinite(player.latitude)
+      && Number.isFinite(player.longitude),
+  );
 
   return (
     <PublicShell
@@ -128,7 +134,16 @@ export function PlayerPublicView({
     >
       <section className="relative isolate overflow-hidden border-b border-white/10">
         <div className="absolute inset-0 -z-30 bg-cover bg-center" style={{ backgroundImage: `url(${cover})` }} aria-hidden="true" />
-        <div className="absolute inset-0 -z-20 bg-[linear-gradient(90deg,#07060b_0%,rgba(7,6,11,.94)_35%,rgba(7,6,11,.28)_70%,#07060b_100%)]" />
+        {hasLocationMap ? (
+          <PlayerLocationMap
+            latitude={player.latitude}
+            longitude={player.longitude}
+            label={player.location || ""}
+            accent={accent}
+            className="absolute inset-0 -z-20 opacity-95 [mask-image:linear-gradient(90deg,transparent_0%,rgba(0,0,0,.12)_22%,#000_48%,#000_100%)] max-sm:[mask-image:linear-gradient(180deg,#000_0%,#000_64%,transparent_100%)]"
+          />
+        ) : null}
+        <div className="absolute inset-0 -z-10 bg-[linear-gradient(90deg,#07060b_0%,rgba(7,6,11,.94)_35%,rgba(7,6,11,.28)_70%,#07060b_100%)]" />
         <div className="absolute inset-0 -z-10 bg-[linear-gradient(0deg,#07060b_0%,transparent_50%)]" />
 
         <div className="mx-auto grid min-h-[36rem] max-w-7xl gap-8 px-4 py-9 sm:px-6 lg:grid-cols-[minmax(0,1fr)_280px] lg:items-center">
