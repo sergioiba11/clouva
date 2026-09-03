@@ -33,7 +33,7 @@ async function callGroundedGemini(args: {
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: args.instruction }] },
           contents: [{ role: "user", parts: [{ text: args.prompt }] }],
-          tools: [{ googleSearch: {} }],
+          tools: [{ google_search: {} }],
           generationConfig: {
             temperature: 0.25,
             maxOutputTokens: args.maxOutputTokens ?? 1800,
