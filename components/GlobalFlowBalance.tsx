@@ -19,7 +19,7 @@ type FlowBalancePayload = {
 };
 
 type GlobalFlowBalanceProps = {
-  variant?: "global" | "inline";
+  variant?: "global" | "inline" | "header";
 };
 
 const REFRESH_MS = 60_000;
@@ -73,6 +73,28 @@ export function GlobalFlowBalance({ variant = "global" }: GlobalFlowBalanceProps
 
   const label = flowLabel(data.balance);
   const region = data.region;
+
+  if (variant === "header") {
+    return (
+      <Link
+        href="/mi-flow/billetera?asset=flows"
+        aria-label={`${data.balance} ${label}. 1 FLOW equivale a 1 dólar estadounidense.`}
+        title="Abrir Mi Flow"
+        className="group flex h-[38px] min-w-0 items-center gap-1.5 rounded-full border border-white/[0.07] bg-white/[0.025] px-1.5 pr-2 text-white backdrop-blur-xl transition hover:bg-white/[0.05]"
+      >
+        <FlowCoinIcon size={26} glow={region.glow} edge={region.edge} />
+        <span className="min-w-0 leading-none">
+          <span className="flex items-baseline gap-1 whitespace-nowrap">
+            <strong className="text-[11px] font-semibold tabular-nums">{data.balance}</strong>
+            <span className="text-[7px] font-bold uppercase tracking-[0.11em] text-white/58">{label}</span>
+          </span>
+          <span className="mt-1 block whitespace-nowrap text-[7px] font-medium text-white/34">
+            US$ {data.usdValue}
+          </span>
+        </span>
+      </Link>
+    );
+  }
 
   if (variant === "inline") {
     return (
