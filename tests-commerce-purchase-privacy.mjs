@@ -69,8 +69,11 @@ test("private purchase data never enters public Player rendering", () => {
 });
 
 test("checkout UI sends only cart identity and delivery method, not the private street address", () => {
-  assert.match(checkoutPage, /authenticatedFetch\(["']\/api\/commerce\/checkout["']/);
-  assert.match(checkoutPage, /items: items\.map/);
-  assert.match(checkoutPage, /shipping: \{ methodId: selectedMethod\.id \}/);
-  assert.doesNotMatch(checkoutPage, /body:\s*JSON\.stringify\([\s\S]*address_line_1/);
+  const requestStart = checkoutPage.indexOf('authenticatedFetch("/api/commerce/checkout"');
+  const requestEnd = checkoutPage.indexOf("const payload", requestStart);
+  assert.ok(requestStart >= 0 && requestEnd > requestStart, "canonical checkout request not found");
+  const requestPayload = checkoutPage.slice(requestStart, requestEnd);
+  assert.match(requestPayload, /items: items\.map/);
+  assert.match(requestPayload, /shipping: \{ methodId: selectedMethod\.id \}/);
+  assert.doesNotMatch(requestPayload, /address_line_1|addressLine1|recipient_name|recipientName|postal_code|postalCode|player\.location/);
 });
