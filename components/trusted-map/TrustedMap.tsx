@@ -5,8 +5,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 type MapLike = { remove: () => void; resize: () => void; setCenter: (center: [number, number]) => void };
 type MarkerLike = { setLngLat: (coordinates: [number, number]) => MarkerLike; addTo: (map: MapLike) => MarkerLike; remove: () => void };
 type MapLibreNamespace = { Map: new (options: Record<string, unknown>) => MapLike; Marker: new (options: Record<string, unknown>) => MarkerLike };
-
-declare global { interface Window { maplibregl?: MapLibreNamespace } }
+type MapLibreWindow = Window & { maplibregl?: MapLibreNamespace };
 
 const VERSION = "5.7.1";
 const STYLE_URL = "https://tiles.openfreemap.org/styles/dark";
@@ -14,7 +13,8 @@ let loader: Promise<MapLibreNamespace> | null = null;
 
 function loadMapLibre() {
   if (typeof window === "undefined") return Promise.reject(new Error("browser required"));
-  if (window.maplibregl) return Promise.resolve(window.maplibregl);
+  const browserWindow = window as MapLibreWindow;
+  if (browserWindow.maplibregl) return Promise.resolve(browserWindow.maplibregl);
   if (loader) return loader;
   loader = new Promise<MapLibreNamespace>((resolve, reject) => {
     if (!document.querySelector(`link[data-clouva-trusted-map="${VERSION}"]`)) {
@@ -26,7 +26,7 @@ function loadMapLibre() {
     }
     const existing = document.querySelector<HTMLScriptElement>(`script[data-clouva-maplibre="${VERSION}"]`);
     const script = existing || document.createElement("script");
-    const finish = () => window.maplibregl ? resolve(window.maplibregl) : reject(new Error("MapLibre unavailable"));
+    const finish = () => browserWindow.maplibregl ? resolve(browserWindow.maplibregl) : reject(new Error("MapLibre unavailable"));
     script.addEventListener("load", finish, { once: true });
     script.addEventListener("error", () => reject(new Error("MapLibre load failed")), { once: true });
     if (!existing) {
@@ -107,9 +107,10 @@ export function TrustedMap({ locations }: { locations: TrustedMapLocation[] }) {
   }, []);
 
   useEffect(() => {
-    if (!ready || !mapRef.current || !window.maplibregl) return;
+    const maplibre = (window as MapLibreWindow).maplibregl;
+    if (!ready || !mapRef.current || !maplibre) return;
     markerRefs.current.forEach((marker) => marker.remove());
-    markerRefs.current = visible.map((location) => new window.maplibregl!.Marker({ element: makeMarker(location), anchor: "center" })
+    markerRefs.current = visible.map((location) => new maplibre.Marker({ element: makeMarker(location), anchor: "center" })
       .setLngLat([Number(location.longitude), Number(location.latitude)])
       .addTo(mapRef.current!));
     if (visible[0]) mapRef.current.setCenter([Number(visible[0].longitude), Number(visible[0].latitude)]);
