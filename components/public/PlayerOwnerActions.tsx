@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Building2, Music2, Pencil, Plus } from "lucide-react";
+import { BookOpen, Building2, Music2, Pencil, Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
 
@@ -39,6 +39,12 @@ export function PlayerOwnerActions({ ownerUserId }: { ownerUserId: string | null
         className="inline-flex items-center gap-2 rounded-full border border-violet-400/35 bg-violet-500/15 px-4 py-2 text-xs font-semibold text-violet-200 transition hover:bg-violet-500/25"
       >
         <Pencil size={14} /> Editar mi perfil
+      </Link>
+      <Link
+        href="/profile/knowledge"
+        className="inline-flex items-center gap-2 rounded-full border border-violet-300/25 bg-violet-500/10 px-4 py-2 text-xs font-semibold text-violet-100 transition hover:bg-violet-500/20"
+      >
+        <BookOpen size={14} /> Mi conocimiento
       </Link>
       <Link
         href="/profile/spotify-artist"
