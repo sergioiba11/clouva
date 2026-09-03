@@ -167,6 +167,7 @@ export async function getClouvaContext(request: ClouvaContextRequest) {
   const liveData = hasScope(requested, "live_data") ? graph.liveData ?? {} : {};
 
   return {
+    contextVersion: "knowledge-v1",
     query,
     conversationId: request.conversationId ?? null,
     studioId: request.studioId ?? null,
