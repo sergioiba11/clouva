@@ -4,6 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { ClouvaDomainExecutor } from "@/lib/clouva-ai/clouva-domain-executor";
 import { ContextExecutor } from "@/lib/clouva-ai/context-executor";
 import { GitHubExecutor } from "@/lib/clouva-ai/github-executor";
+import { KnowledgeExecutor } from "@/lib/clouva-ai/knowledge-executor";
 import { MemoryExecutor } from "@/lib/clouva-ai/memory-executor";
 import { MediaExecutor } from "@/lib/clouva-ai/media-executor";
 import type { ProjectToolScope } from "@/lib/clouva-ai/project-tool-scope";
@@ -36,6 +37,12 @@ export async function createAgentToolRouter(options: AgentToolServiceOptions): P
   const executors: ToolExecutor[] = [
     new ContextExecutor(options.currentContext ?? emptyTrebolRuntimeContext()),
     new MemoryExecutor(options.supabase, options.userId, options.studioId),
+    new KnowledgeExecutor(
+      options.supabase,
+      options.userId,
+      options.studioId,
+      options.conversationId ?? null,
+    ),
     ...(options.additionalExecutors ?? []),
   ];
 
