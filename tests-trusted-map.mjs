@@ -6,6 +6,7 @@ const read = (path) => readFileSync(path, "utf8");
 const api = read("app/api/trusted-map/route.ts");
 const page = read("app/mapa-de-confianza/page.tsx");
 const migration = read("supabase/migrations/20260903154000_trusted_map_and_purchase_privacy.sql");
+const legacyHardening = read("supabase/migrations/20260903161000_harden_legacy_player_live_location.sql");
 const publicPlayer = [
   read("components/public/PlayerPublicView.tsx"),
   read("components/public/PlayerPublicLocationCard.tsx"),
@@ -77,7 +78,17 @@ test("trusted map group access is consent-scoped", () => {
   assert.match(api, /action === ["']leave_group["']/);
 });
 
-test("realtime publishes only current trusted location row", () => {
+test("realtime publishes only the active trusted-map current row", () => {
   assert.match(migration, /alter publication supabase_realtime add table public\.trusted_map_locations/);
   assert.match(migration, /There is deliberately no position-history table/);
+  assert.match(legacyHardening, /alter publication supabase_realtime drop table public\.player_live_locations/);
+});
+
+test("legacy Player live location cannot expose GPS publicly", () => {
+  assert.match(legacyHardening, /drop policy if exists player_live_locations_select_live_or_owner/);
+  assert.match(legacyHardening, /create policy player_live_locations_owner_read/);
+  assert.match(legacyHardening, /to authenticated/);
+  assert.match(legacyHardening, /p\.owner_user_id = auth\.uid\(\)/);
+  assert.match(legacyHardening, /revoke all on table public\.player_live_locations from anon/);
+  assert.doesNotMatch(legacyHardening, /updated_at > \(now\(\)/);
 });
