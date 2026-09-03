@@ -71,11 +71,22 @@ export function ClouvaAIQuickChat({ studioId = null }: { studioId?: string | nul
   const [pendingReview, setPendingReview] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const initializedRef = useRef(false);
 
   useEffect(() => {
+    if (!initializedRef.current) {
+      initializedRef.current = true;
+      setConversationId(null);
+      setSharedConversationId(null);
+      setPendingReview(false);
+      setError(null);
+      setMessages([{ role: "assistant", content: trebolContextualGreeting(pageContext, viewerContext) }]);
+      setLoadingHistory(false);
+      return;
+    }
     void loadConversation();
-    // The shared id is intentionally part of this dependency: opening the full
-    // assistant and returning to quick chat must keep the same conversation.
+    // A quick-chat mount always starts fresh. Once the first message creates a
+    // conversation, the shared id can resync only that current session.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sharedConversationId, studioId]);
 
@@ -107,15 +118,7 @@ export function ClouvaAIQuickChat({ studioId = null }: { studioId?: string | nul
       if (result.data?.id) return result.data.id;
     }
 
-    let latest = supabase
-      .from("ai_conversations")
-      .select("id,studio_id")
-      .eq("project_key", "clouva")
-      .eq("user_id", userId);
-    latest = studioId ? latest.eq("studio_id", studioId) : latest.is("studio_id", null);
-    const result = await latest.order("updated_at", { ascending: false }).limit(1).maybeSingle();
-    if (result.error) throw result.error;
-    return result.data?.id ?? null;
+    return null;
   }
 
   async function loadConversation() {
