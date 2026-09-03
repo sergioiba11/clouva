@@ -2,8 +2,10 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { PlayerPublicView } from "@/components/public/PlayerPublicView";
 import { PublicAgendaSection } from "@/components/public/PublicAgendaSection";
+import { PublicKnowledgeSection } from "@/components/public/PublicKnowledgeSection";
 import { PublicMerchSection, loadPublicMerchProducts } from "@/components/public/PublicMerchSection";
 import { loadPublicAgendaByPlayer } from "@/lib/server/agenda/public-loader";
+import { loadPublicKnowledgeByPlayer } from "@/lib/server/knowledge/public-loader";
 import { resolvePlayerAlias } from "@/lib/server/public-identity-data";
 import { createAdminSupabase } from "@/lib/server/supabase";
 
@@ -40,9 +42,11 @@ export default async function PublicPlayerAliasPage({ params }: { params: Promis
   const result = await resolvePlayerAlias(publicAlias);
   if (!result) notFound();
 
-  const [merchProducts, publicAgenda] = await Promise.all([
+  const admin = createAdminSupabase();
+  const [merchProducts, publicAgenda, publicKnowledge] = await Promise.all([
     loadPublicMerchProducts({ playerId: result.player.id }),
-    loadPublicAgendaByPlayer({ admin: createAdminSupabase(), playerId: result.player.id }).catch(() => null),
+    loadPublicAgendaByPlayer({ admin, playerId: result.player.id }).catch(() => null),
+    loadPublicKnowledgeByPlayer({ admin, playerId: result.player.id }).catch(() => null),
   ]);
   const accent = result.layoutConfig?.page_style?.palette?.accent || result.player.accent_color || "#8f7cff";
 
@@ -56,6 +60,14 @@ export default async function PublicPlayerAliasPage({ params }: { params: Promis
         layoutConfig={result.layoutConfig}
         hasMerch={merchProducts.length > 0}
       />
+      {publicKnowledge ? (
+        <PublicKnowledgeSection
+          playerName={result.player.display_name}
+          alias={result.canonicalAlias}
+          accent={accent}
+          knowledge={publicKnowledge}
+        />
+      ) : null}
       {publicAgenda ? (
         <PublicAgendaSection
           identityName={result.player.display_name}
