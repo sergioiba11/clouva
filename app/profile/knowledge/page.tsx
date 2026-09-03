@@ -5,7 +5,7 @@ import { ArrowLeft, BookOpen, Loader2, MoonStar, Save, Sparkles } from "lucide-r
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
-import type { PlayerKnowledgeProfile } from "@/lib/knowledge/player-knowledge";
+import { calculateNumerologyNumber, zodiacSignFromBirthDate, type PlayerKnowledgeProfile } from "@/lib/knowledge/player-knowledge";
 
 type Payload = {
   player: { id: string; slug: string; display_name: string };
@@ -24,6 +24,14 @@ const EMPTY: Omit<PlayerKnowledgeProfile, "player_id"> = {
 
 function parseTopics(value: string) {
   return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function zodiacSymbol(sign: string | null) {
+  const symbols: Record<string, string> = {
+    Aries: "♈", Tauro: "♉", Géminis: "♊", Cáncer: "♋", Leo: "♌", Virgo: "♍",
+    Libra: "♎", Escorpio: "♏", Sagitario: "♐", Capricornio: "♑", Acuario: "♒", Piscis: "♓",
+  };
+  return sign ? symbols[sign] || "✦" : "✦";
 }
 
 export default function PlayerKnowledgePage() {
@@ -60,28 +68,10 @@ export default function PlayerKnowledgePage() {
     })();
   }, [authLoading, user]);
 
-  const derivedPreview = useMemo(() => {
-    if (!draft.birth_date) return { number: null as number | null, sign: null as string | null };
-    const digits = draft.birth_date.replaceAll("-", "").split("").map(Number);
-    let number = digits.reduce((sum, value) => sum + value, 0);
-    while (number >= 10) number = String(number).split("").reduce((sum, value) => sum + Number(value), 0);
-    const [, monthText, dayText] = draft.birth_date.match(/^(\d{4})-(\d{2})-(\d{2})$/) || [];
-    const month = Number(monthText);
-    const day = Number(dayText);
-    const value = month * 100 + day;
-    const sign = value >= 321 && value <= 419 ? "Aries"
-      : value >= 420 && value <= 520 ? "Tauro"
-      : value >= 521 && value <= 620 ? "Géminis"
-      : value >= 621 && value <= 722 ? "Cáncer"
-      : value >= 723 && value <= 822 ? "Leo"
-      : value >= 823 && value <= 922 ? "Virgo"
-      : value >= 923 && value <= 1022 ? "Libra"
-      : value >= 1023 && value <= 1121 ? "Escorpio"
-      : value >= 1122 && value <= 1221 ? "Sagitario"
-      : value >= 1222 || value <= 119 ? "Capricornio"
-      : value >= 120 && value <= 218 ? "Acuario" : "Piscis";
-    return { number, sign };
-  }, [draft.birth_date]);
+  const derivedPreview = useMemo(() => ({
+    number: calculateNumerologyNumber(draft.birth_date),
+    sign: zodiacSignFromBirthDate(draft.birth_date),
+  }), [draft.birth_date]);
 
   const save = async () => {
     setSaving(true);
@@ -127,7 +117,7 @@ export default function PlayerKnowledgePage() {
           <div className="mt-7 grid gap-3 sm:grid-cols-3">
             <ToggleCard active={draft.show_lunar} onClick={() => setDraft((current) => ({ ...current, show_lunar: !current.show_lunar }))} title="Lunar" subtitle="Fase y data de la Luna" icon={<MoonStar size={20} />} value="Luna" />
             <ToggleCard active={draft.show_numerology} onClick={() => setDraft((current) => ({ ...current, show_numerology: !current.show_numerology }))} title="Numerología" subtitle="Número por fecha" icon={<Sparkles size={20} />} value={derivedPreview.number ? String(derivedPreview.number) : "—"} />
-            <ToggleCard active={draft.show_zodiac} onClick={() => setDraft((current) => ({ ...current, show_zodiac: !current.show_zodiac }))} title="Astrología" subtitle="Signo zodiacal" icon={<span className="text-lg">♎</span>} value={derivedPreview.sign || "—"} />
+            <ToggleCard active={draft.show_zodiac} onClick={() => setDraft((current) => ({ ...current, show_zodiac: !current.show_zodiac }))} title="Astrología" subtitle="Signo zodiacal" icon={<span className="text-lg">{zodiacSymbol(derivedPreview.sign)}</span>} value={derivedPreview.sign || "—"} />
           </div>
 
           <div className="mt-7 grid gap-5 sm:grid-cols-2">
@@ -140,7 +130,7 @@ export default function PlayerKnowledgePage() {
               <div className="mt-3 flex flex-wrap gap-2">
                 {draft.show_lunar ? <Badge>Luna</Badge> : null}
                 {draft.show_numerology && derivedPreview.number ? <Badge>Número {derivedPreview.number}</Badge> : null}
-                {draft.show_zodiac && derivedPreview.sign ? <Badge>{derivedPreview.sign}</Badge> : null}
+                {draft.show_zodiac && derivedPreview.sign ? <Badge>{zodiacSymbol(derivedPreview.sign)} {derivedPreview.sign}</Badge> : null}
               </div>
             </div>
           </div>
