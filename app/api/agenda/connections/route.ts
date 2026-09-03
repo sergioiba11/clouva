@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { inviteAgendaMember, respondAgendaInvite } from "@/lib/server/agenda";
+import { sendAgendaInvitationEmail } from "@/lib/server/agenda-invitation-email";
 import { listAgendaConnections, listPendingAgendaInvites } from "@/lib/server/agenda/settings";
 import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
 
@@ -40,14 +41,39 @@ export async function POST(request: NextRequest) {
     if (!body.agendaId || !body.playerId || !body.role) {
       return NextResponse.json({ error: "agendaId, playerId y role son obligatorios." }, { status: 400 });
     }
+
+    const admin = createAdminSupabase();
     const result = await inviteAgendaMember({
-      admin: createAdminSupabase(),
+      admin,
       userId: user.id,
       agendaId: body.agendaId,
       playerId: body.playerId,
       role: body.role,
     });
-    return NextResponse.json(result, { status: 201 });
+
+    const emailDelivery = await sendAgendaInvitationEmail({
+      admin,
+      agendaId: body.agendaId,
+      playerId: body.playerId,
+    }).catch((error) => {
+      console.error("[agenda-invite-email] Delivery failed", {
+        agendaId: body.agendaId,
+        playerId: body.playerId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return { status: "failed" as const, reason: "EMAIL_DELIVERY_ERROR" };
+    });
+
+    return NextResponse.json(
+      {
+        ...result,
+        emailDelivery: {
+          status: emailDelivery.status,
+          ...(emailDelivery.reason ? { reason: emailDelivery.reason } : {}),
+        },
+      },
+      { status: 201 },
+    );
   } catch (error) {
     return apiError(error, "No se pudo conectar la Agenda.");
   }
