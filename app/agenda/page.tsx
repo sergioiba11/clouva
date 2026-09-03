@@ -11,6 +11,7 @@ import {
   Link2,
   Loader2,
   MapPin,
+  MoonStar,
   Plus,
   Search,
   Users,
@@ -73,10 +74,29 @@ type AgendaEvent = {
 type PlayerResult = { id: string; displayName: string; username: string | null; avatar: string | null };
 type AgendaConnection = PlayerResult & { playerId: string; status: string };
 
+type LunarPhase = {
+  name: string;
+  age: number;
+  illumination: number;
+  fraction: number;
+};
+
 const DAY_MS = 86_400_000;
+const SYNODIC_MONTH = 29.530588853;
+const NEW_MOON_EPOCH = Date.UTC(2000, 0, 6, 18, 14, 0);
 const WEEKDAY = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"];
 const RRULE_DAYS = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"];
 const HOURS = Array.from({ length: 24 }, (_, hour) => hour);
+const LUNAR_PHASE_NAMES = [
+  "Luna nueva",
+  "Creciente",
+  "Cuarto creciente",
+  "Gibosa creciente",
+  "Luna llena",
+  "Gibosa menguante",
+  "Cuarto menguante",
+  "Menguante",
+] as const;
 
 function startOfDay(date: Date) {
   const next = new Date(date);
@@ -139,6 +159,11 @@ function formatMonthTitle(date: Date) {
   return new Intl.DateTimeFormat("es-AR", { month: "long", year: "numeric" }).format(date);
 }
 
+function formatFullDate(date: Date) {
+  const value = new Intl.DateTimeFormat("es-AR", { weekday: "long", day: "numeric", month: "long", year: "numeric" }).format(date);
+  return `${value.charAt(0).toUpperCase()}${value.slice(1)}`;
+}
+
 function formatTime(value: string) {
   return new Intl.DateTimeFormat("es-AR", { hour: "2-digit", minute: "2-digit" }).format(new Date(value));
 }
@@ -150,6 +175,16 @@ function formatDateTime(value: string) {
 function localInput(date: Date) {
   const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
   return local.toISOString().slice(0, 16);
+}
+
+function lunarData(date: Date): LunarPhase {
+  const sample = Date.UTC(date.getFullYear(), date.getMonth(), date.getDate(), 12, 0, 0);
+  const elapsedDays = (sample - NEW_MOON_EPOCH) / DAY_MS;
+  const age = ((elapsedDays % SYNODIC_MONTH) + SYNODIC_MONTH) % SYNODIC_MONTH;
+  const fraction = age / SYNODIC_MONTH;
+  const phaseIndex = Math.round(fraction * 8) % 8;
+  const illumination = Math.round(((1 - Math.cos(2 * Math.PI * fraction)) / 2) * 100);
+  return { name: LUNAR_PHASE_NAMES[phaseIndex], age, illumination, fraction };
 }
 
 function identityLabel(kind: AgendaContext["presentation"]["identityType"]) {
@@ -178,6 +213,47 @@ function relationLabel(relation: AgendaEvent["relation"]) {
   return "Compartido";
 }
 
+function MoonGlyph({ phase, size = 22, quiet = false }: { phase: LunarPhase; size?: number; quiet?: boolean }) {
+  const shadowShift = Math.cos(phase.fraction * Math.PI * 2) * 8;
+  const waning = phase.fraction > 0.5;
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" className={quiet ? "opacity-55" : "opacity-100"}>
+      <defs>
+        <radialGradient id={`moonGlow-${size}`} cx="35%" cy="30%" r="72%">
+          <stop offset="0%" stopColor="#f2e9ff" stopOpacity="0.92" />
+          <stop offset="45%" stopColor="#b984ff" stopOpacity="0.82" />
+          <stop offset="100%" stopColor="#6d28d9" stopOpacity="0.42" />
+        </radialGradient>
+        <filter id={`moonBlur-${size}`} x="-60%" y="-60%" width="220%" height="220%">
+          <feGaussianBlur stdDeviation="1.1" />
+        </filter>
+        <clipPath id={`moonClip-${size}`}><circle cx="12" cy="12" r="8.2" /></clipPath>
+      </defs>
+      <circle cx="12" cy="12" r="9.3" fill="#8b5cf6" opacity="0.16" filter={`url(#moonBlur-${size})`} />
+      <circle cx="12" cy="12" r="8.2" fill={`url(#moonGlow-${size})`} stroke="#c4a2ff" strokeOpacity="0.55" strokeWidth="0.55" />
+      <circle cx={12 + shadowShift * (waning ? -1 : 1)} cy="12" r="8.45" fill="#08080d" fillOpacity="0.88" clipPath={`url(#moonClip-${size})`} />
+      <path d="M4 18.5C8 21 16 21 20 18.5" fill="none" stroke="#a855f7" strokeOpacity="0.55" strokeWidth="0.55" />
+    </svg>
+  );
+}
+
+function HolographicMoon({ date }: { date: Date }) {
+  const phase = lunarData(date);
+  return (
+    <div className="relative grid h-[92px] w-[112px] shrink-0 place-items-center sm:h-[104px] sm:w-[128px]">
+      <div className="absolute inset-x-2 bottom-2 h-4 rounded-[50%] border border-violet-400/25 bg-violet-500/10 shadow-[0_0_28px_rgba(139,92,246,0.28)]" />
+      <div className="absolute inset-x-5 bottom-4 h-2 rounded-[50%] border border-violet-300/25" />
+      <div className="relative drop-shadow-[0_0_18px_rgba(168,85,247,0.7)]">
+        <MoonGlyph phase={phase} size={82} />
+        <span className="pointer-events-none absolute inset-2 rounded-full bg-[linear-gradient(105deg,transparent_20%,rgba(255,255,255,.18)_48%,transparent_58%)] opacity-60" />
+        <span className="pointer-events-none absolute left-1/2 top-1/2 h-[72px] w-[72px] -translate-x-1/2 -translate-y-1/2 rounded-full border border-violet-200/15" />
+      </div>
+      <span className="absolute right-2 top-3 h-1 w-1 rounded-full bg-violet-200 shadow-[0_0_8px_#c4b5fd]" />
+      <span className="absolute left-2 top-8 h-0.5 w-0.5 rounded-full bg-fuchsia-200 shadow-[0_0_7px_#e879f9]" />
+    </div>
+  );
+}
+
 function Avatar({ src, label, size = "md" }: { src: string | null; label: string; size?: "sm" | "md" | "lg" }) {
   const className = size === "sm" ? "h-7 w-7" : size === "lg" ? "h-14 w-14" : "h-10 w-10";
   return (
@@ -200,11 +276,7 @@ function EventCard({ event, onOpen }: { event: AgendaEvent; onOpen: (event: Agen
           <p className="mt-1 flex items-center gap-1.5 text-xs text-white/50"><Clock3 size={13} /> {formatDateTime(event.startAt)} · {formatTime(event.endAt)}</p>
           {event.locationText ? <p className="mt-1 flex items-center gap-1.5 truncate text-xs text-white/40"><MapPin size={13} /> {event.locationText}</p> : null}
         </div>
-        {event.participants.length ? (
-          <div className="flex -space-x-2">
-            {event.participants.slice(0, 4).map((participant) => <Avatar key={participant.playerId} src={participant.avatar} label={participant.displayName} size="sm" />)}
-          </div>
-        ) : null}
+        {event.participants.length ? <div className="flex -space-x-2">{event.participants.slice(0, 4).map((participant) => <Avatar key={participant.playerId} src={participant.avatar} label={participant.displayName} size="sm" />)}</div> : null}
       </div>
     </button>
   );
@@ -258,6 +330,7 @@ export default function AgendaPage() {
 
   const active = useMemo(() => contexts.find((context) => context.agendaId === activeAgendaId) || contexts[0] || null, [activeAgendaId, contexts]);
   const range = useMemo(() => viewRange(view, cursor), [cursor, view]);
+  const lunar = useMemo(() => lunarData(cursor), [cursor]);
   const canEdit = active?.role === "owner" || active?.role === "editor";
 
   const loadContexts = useCallback(async () => {
@@ -369,11 +442,7 @@ export default function AgendaPage() {
     const start = new Date(day);
     start.setHours(hour, 0, 0, 0);
     resetCreateForm(day);
-    setForm((current) => ({
-      ...current,
-      startAt: localInput(start),
-      endAt: localInput(new Date(start.getTime() + 60 * 60_000)),
-    }));
+    setForm((current) => ({ ...current, startAt: localInput(start), endAt: localInput(new Date(start.getTime() + 60 * 60_000)) }));
     setQuickHour(hour);
     setQuickShareOpen(false);
     setQuickCreateDay(startOfDay(day));
@@ -386,11 +455,7 @@ export default function AgendaPage() {
     const start = new Date(quickCreateDay);
     start.setHours(hour, 0, 0, 0);
     setQuickHour(hour);
-    setForm((current) => ({
-      ...current,
-      startAt: localInput(start),
-      endAt: localInput(new Date(start.getTime() + 60 * 60_000)),
-    }));
+    setForm((current) => ({ ...current, startAt: localInput(start), endAt: localInput(new Date(start.getTime() + 60 * 60_000)) }));
   }
 
   async function searchPlayers() {
@@ -502,11 +567,11 @@ export default function AgendaPage() {
   const monthDays = Array.from({ length: 42 }, (_, index) => addDays(startOfWeek(startOfMonth(cursor)), index));
 
   return (
-    <main className="min-h-screen bg-[#08080d] text-white" style={{ "--agenda-accent": accent } as React.CSSProperties}>
+    <main className="min-h-screen bg-[#08080d] pb-24 text-white md:pb-8" style={{ "--agenda-accent": accent } as React.CSSProperties}>
       <div className="relative overflow-hidden border-b border-white/10">
         {active.presentation.cover ? <img src={active.presentation.cover} alt="" className="absolute inset-0 h-full w-full object-cover opacity-25" /> : null}
         <div className="absolute inset-0 bg-gradient-to-b from-black/35 via-[#08080d]/75 to-[#08080d]" />
-        <div className="relative mx-auto max-w-7xl px-4 pb-5 pt-5 sm:px-6 lg:px-8">
+        <div className="relative mx-auto max-w-[1500px] px-4 pb-5 pt-5 sm:px-6 lg:px-8">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               <Avatar src={active.presentation.avatar} label={active.presentation.displayName} size="lg" />
@@ -533,18 +598,34 @@ export default function AgendaPage() {
         </div>
       </div>
 
-      <div className="mx-auto max-w-7xl px-4 py-5 sm:px-6 lg:px-8">
+      <div className="mx-auto max-w-[1500px] px-4 py-5 sm:px-6 lg:px-8">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex items-center gap-2">
-            <button type="button" onClick={() => setCursor(moveCursor(view, cursor, -1))} className="grid h-10 w-10 place-items-center rounded-xl border border-white/10 bg-white/[0.03]"><ChevronLeft size={18} /></button>
-            <button type="button" onClick={() => setCursor(new Date())} className="rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2.5 text-sm font-medium">Hoy</button>
-            <button type="button" onClick={() => setCursor(moveCursor(view, cursor, 1))} className="grid h-10 w-10 place-items-center rounded-xl border border-white/10 bg-white/[0.03]"><ChevronRight size={18} /></button>
-            <h2 className="ml-2 hidden text-lg font-semibold capitalize sm:block">{view === "day" ? formatDayTitle(cursor) : formatMonthTitle(cursor)}</h2>
+          <div className="flex min-w-0 items-center gap-2">
+            <button type="button" onClick={() => setCursor(moveCursor(view, cursor, -1))} className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-white/10 bg-white/[0.03]"><ChevronLeft size={18} /></button>
+            <button type="button" onClick={() => setCursor(new Date())} className="shrink-0 rounded-xl border border-white/10 bg-white/[0.03] px-4 py-2.5 text-sm font-medium">Hoy</button>
+            <button type="button" onClick={() => setCursor(moveCursor(view, cursor, 1))} className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-white/10 bg-white/[0.03]"><ChevronRight size={18} /></button>
+            <h2 className="ml-1 min-w-0 truncate text-base font-semibold capitalize sm:ml-2 sm:text-lg">{view === "day" ? formatDayTitle(cursor) : formatMonthTitle(cursor)}</h2>
           </div>
           <div className="flex gap-2 overflow-x-auto pb-1 lg:pb-0">
             {(["day", "week", "month", "list"] as ViewMode[]).map((mode) => <button key={mode} type="button" onClick={() => setView(mode)} className={`whitespace-nowrap rounded-xl border px-4 py-2 text-sm transition ${view === mode ? "border-white/20 bg-white/[0.09] text-white" : "border-white/8 bg-transparent text-white/45 hover:text-white"}`}>{mode === "day" ? "Día" : mode === "week" ? "Semana" : mode === "month" ? "Mes" : "Lista"}</button>)}
           </div>
         </div>
+
+        <section id="luna" className="relative mt-4 overflow-hidden rounded-3xl border border-violet-300/15 bg-[radial-gradient(circle_at_82%_15%,rgba(139,92,246,.18),transparent_34%),linear-gradient(135deg,rgba(255,255,255,.035),rgba(124,58,237,.025))] px-4 py-3 shadow-[0_18px_60px_rgba(0,0,0,.22)] sm:px-5 sm:py-4">
+          <div className="absolute inset-0 pointer-events-none opacity-30 [background-image:linear-gradient(rgba(168,85,247,.06)_1px,transparent_1px),linear-gradient(90deg,rgba(168,85,247,.06)_1px,transparent_1px)] [background-size:22px_22px]" />
+          <div className="relative flex items-center gap-3 sm:gap-5">
+            <HolographicMoon date={cursor} />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.22em] text-violet-300/75"><MoonStar size={13} /> Luna actual</div>
+              <h3 className="mt-1 text-lg font-semibold sm:text-xl">{lunar.name}</h3>
+              <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/45 sm:text-sm">
+                <span>Iluminación <strong className="font-semibold text-white/70">{lunar.illumination}%</strong></span>
+                <span>Edad lunar <strong className="font-semibold text-white/70">{lunar.age.toFixed(1)} días</strong></span>
+              </div>
+              <p className="mt-1.5 truncate text-[11px] capitalize text-white/35 sm:text-xs">{formatFullDate(cursor)}</p>
+            </div>
+          </div>
+        </section>
 
         <div className="mt-4 flex flex-col gap-3 sm:flex-row">
           <label className="flex flex-1 items-center rounded-xl border border-white/10 bg-white/[0.025] px-3"><Search size={15} className="text-white/30" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar evento, lugar o Player…" className="min-w-0 flex-1 bg-transparent px-2 py-2.5 text-sm outline-none placeholder:text-white/25" /></label>
@@ -575,12 +656,21 @@ export default function AgendaPage() {
 
         {!loading && view === "month" ? (
           <section className="mt-5 overflow-hidden rounded-2xl border border-white/10 bg-white/[0.015]">
-            <div className="grid grid-cols-7 border-b border-white/10">{WEEKDAY.map((day) => <div key={day} className="px-2 py-3 text-center text-[10px] font-bold uppercase tracking-[0.16em] text-white/35">{day}</div>)}</div>
+            <div className="grid grid-cols-7 border-b border-white/10">{WEEKDAY.map((day) => <div key={day} className="px-1 py-3 text-center text-[9px] font-bold uppercase tracking-[0.12em] text-white/35 sm:px-2 sm:text-[10px] sm:tracking-[0.16em]">{day}</div>)}</div>
             <div className="grid grid-cols-7">
               {monthDays.map((day) => {
                 const dayEvents = filteredEvents.filter((event) => sameDay(new Date(event.startAt), day));
                 const outside = day.getMonth() !== cursor.getMonth();
-                return <button key={day.toISOString()} type="button" onClick={() => { setCursor(day); if (canEdit) openQuickCreate(day); else setView("day"); }} className={`min-h-[92px] border-b border-r border-white/[0.065] p-1.5 text-left sm:min-h-[128px] sm:p-2 ${outside ? "bg-black/20 text-white/25" : "text-white"} ${sameDay(day, new Date()) ? "bg-white/[0.045]" : ""}`}><span className={`grid h-6 w-6 place-items-center rounded-full text-xs ${sameDay(day, new Date()) ? "text-white" : "text-white/55"}`} style={sameDay(day, new Date()) ? { background: accent } : undefined}>{day.getDate()}</span><div className="mt-1 space-y-1">{dayEvents.slice(0, 3).map((event) => <span key={event.id} className="block truncate rounded-md border border-white/8 bg-black/25 px-1.5 py-1 text-[9px] text-white/70 sm:text-[10px]">{formatTime(event.startAt)} {event.title}</span>)}{dayEvents.length > 3 ? <span className="block text-[9px] text-white/30">+{dayEvents.length - 3}</span> : null}</div></button>;
+                const dayMoon = lunarData(day);
+                return (
+                  <button key={day.toISOString()} type="button" onClick={() => { setCursor(day); if (canEdit) openQuickCreate(day); else setView("day"); }} className={`relative min-h-[98px] overflow-hidden border-b border-r border-white/[0.065] p-1.5 text-left sm:min-h-[138px] sm:p-2 ${outside ? "bg-black/20 text-white/25" : "text-white"} ${sameDay(day, new Date()) ? "bg-white/[0.045]" : ""}`}>
+                    <div className="flex items-start justify-between gap-1">
+                      <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-full text-xs ${sameDay(day, new Date()) ? "text-white" : "text-white/55"}`} style={sameDay(day, new Date()) ? { background: accent } : undefined}>{day.getDate()}</span>
+                      {!outside ? <span className={`flex items-center gap-0.5 text-[8px] text-violet-200/45 sm:gap-1 sm:text-[9px] ${dayEvents.length ? "opacity-45" : "opacity-80"}`}><MoonGlyph phase={dayMoon} size={16} quiet={dayEvents.length > 0} /><span className="hidden sm:inline">{dayMoon.illumination}%</span></span> : null}
+                    </div>
+                    <div className="mt-1 space-y-1">{dayEvents.slice(0, 3).map((event) => <span key={event.id} className="block truncate rounded-md border border-white/8 bg-black/35 px-1 py-1 text-[8px] text-white/75 sm:px-1.5 sm:text-[10px]">{formatTime(event.startAt)} {event.title}</span>)}{dayEvents.length > 3 ? <span className="block text-[9px] text-white/30">+{dayEvents.length - 3}</span> : null}</div>
+                  </button>
+                );
               })}
             </div>
           </section>
@@ -603,24 +693,18 @@ export default function AgendaPage() {
           <div className="max-h-[94vh] w-full overflow-y-auto rounded-t-[28px] border border-white/10 bg-[#111119] px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-3 shadow-2xl sm:max-w-2xl sm:px-6 sm:pb-6">
             <div className="mx-auto h-1.5 w-16 rounded-full bg-white/15" />
             <div className="mt-4 flex items-start justify-between gap-3">
-              <div>
-                <h2 className="text-xl font-semibold">{formatQuickDayTitle(quickCreateDay)} · Horarios</h2>
-                <p className="mt-1 text-sm text-white/45">Tocá una hora para agendar al toque</p>
-              </div>
+              <div><h2 className="text-xl font-semibold">{formatQuickDayTitle(quickCreateDay)} · Horarios</h2><p className="mt-1 text-sm text-white/45">Tocá una hora para agendar al toque</p></div>
               <button type="button" onClick={() => { setQuickCreateDay(null); setQuickShareOpen(false); }} className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-white/10 bg-white/[0.025]"><X size={17} /></button>
             </div>
 
-            <div className="mt-5 grid grid-cols-6 gap-2">
+            <div className="mt-5 grid grid-cols-4 gap-2 sm:grid-cols-6">
               {HOURS.map((hour) => {
                 const selected = quickHour === hour;
                 return <button key={hour} type="button" onClick={() => selectQuickHour(hour)} className={`min-h-11 rounded-xl border px-1 py-2 text-center text-[13px] font-medium tabular-nums transition active:scale-[0.97] ${selected ? "border-transparent text-white shadow-lg" : "border-white/10 bg-black/20 text-white/65 hover:border-white/20 hover:bg-white/[0.05]"}`} style={selected ? { background: accent, boxShadow: `0 10px 28px color-mix(in srgb, ${accent} 28%, transparent)` } : undefined}>{String(hour).padStart(2, "0")}:00</button>;
               })}
             </div>
 
-            <label className="mt-5 block">
-              <FieldLabel>Título / tarea</FieldLabel>
-              <input autoFocus value={form.title} onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))} maxLength={180} className="field" placeholder="Agregar título…" />
-            </label>
+            <label className="mt-5 block"><FieldLabel>Título / tarea</FieldLabel><input autoFocus value={form.title} onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))} maxLength={180} className="field" placeholder="Agregar título…" /></label>
 
             <div id="quick-share-players" className="mt-4 rounded-2xl border border-white/10 bg-white/[0.025] p-4">
               <button type="button" onClick={() => setQuickShareOpen((value) => !value)} className="flex w-full items-center gap-3 text-left">
@@ -628,9 +712,7 @@ export default function AgendaPage() {
                 <span className="min-w-0 flex-1"><span className="block text-sm font-semibold">Compartir esta tarea con otro Player</span><span className="mt-0.5 block text-xs text-white/35">El evento aparecerá también en su Agenda.</span></span>
                 <ChevronDown size={17} className={`text-white/35 transition ${quickShareOpen ? "rotate-180" : ""}`} />
               </button>
-
               {selectedPlayers.length ? <div className="mt-3 flex flex-wrap gap-2">{selectedPlayers.map((player) => <button key={player.id} type="button" onClick={() => setSelectedPlayers((list) => list.filter((item) => item.id !== player.id))} className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.05] py-1 pl-1 pr-3 text-xs"><Avatar src={player.avatar} label={player.displayName} size="sm" /><span>{player.displayName}</span><X size={12} /></button>)}</div> : null}
-
               {quickShareOpen ? (
                 <div className="mt-4">
                   {connectionsLoading ? <div className="flex items-center gap-2 py-4 text-xs text-white/40"><Loader2 size={14} className="animate-spin" /> Cargando Players conectados…</div> : connectedPlayers.length ? <div className="grid gap-2 sm:grid-cols-2">{connectedPlayers.map((player) => {
