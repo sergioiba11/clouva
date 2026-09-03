@@ -1,78 +1,15 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-
-type MapLibreMap = {
-  on: (event: string, handler: (event?: unknown) => void) => void;
-  addSource: (id: string, source: Record<string, unknown>) => void;
-  addLayer: (layer: Record<string, unknown>) => void;
-  resize: () => void;
-  remove: () => void;
-};
-
-type MapLibreMarker = {
-  setLngLat: (coordinates: [number, number]) => MapLibreMarker;
-  addTo: (map: MapLibreMap) => MapLibreMarker;
-  remove: () => void;
-};
-
-type MapLibreNamespace = {
-  Map: new (options: Record<string, unknown>) => MapLibreMap;
-  Marker: new (options: Record<string, unknown>) => MapLibreMarker;
-};
-
-declare global {
-  interface Window {
-    maplibregl?: MapLibreNamespace;
-  }
-}
-
-const MAPLIBRE_VERSION = "5.7.1";
-const MAPLIBRE_SCRIPT = `https://unpkg.com/maplibre-gl@${MAPLIBRE_VERSION}/dist/maplibre-gl.js`;
-const MAPLIBRE_STYLES = `https://unpkg.com/maplibre-gl@${MAPLIBRE_VERSION}/dist/maplibre-gl.css`;
-const DEFAULT_MAP_STYLE = "https://tiles.openfreemap.org/styles/dark";
-let mapLibrePromise: Promise<MapLibreNamespace> | null = null;
+import {
+  CLOUVA_MAP_STYLE_URL,
+  loadMapLibre,
+  type ClouvaMap,
+  type ClouvaMapMarker,
+} from "@/lib/maplibre-browser";
 
 function safeAccent(value: string | null | undefined) {
   return typeof value === "string" && /^#[0-9a-f]{6}$/i.test(value) ? value : "#7ddfff";
-}
-
-function ensureMapLibreStyles() {
-  if (document.querySelector(`link[data-clouva-maplibre="${MAPLIBRE_VERSION}"]`)) return;
-  const link = document.createElement("link");
-  link.rel = "stylesheet";
-  link.href = MAPLIBRE_STYLES;
-  link.dataset.clouvaMaplibre = MAPLIBRE_VERSION;
-  document.head.appendChild(link);
-}
-
-function loadMapLibre() {
-  if (typeof window === "undefined") return Promise.reject(new Error("MapLibre requires a browser."));
-  if (window.maplibregl) return Promise.resolve(window.maplibregl);
-  if (mapLibrePromise) return mapLibrePromise;
-
-  ensureMapLibreStyles();
-  mapLibrePromise = new Promise<MapLibreNamespace>((resolve, reject) => {
-    const existing = document.querySelector<HTMLScriptElement>(`script[data-clouva-maplibre="${MAPLIBRE_VERSION}"]`);
-    const script = existing || document.createElement("script");
-    const finish = () => window.maplibregl ? resolve(window.maplibregl) : reject(new Error("MapLibre did not initialize."));
-    const fail = () => reject(new Error("MapLibre could not be loaded."));
-
-    script.addEventListener("load", finish, { once: true });
-    script.addEventListener("error", fail, { once: true });
-    if (!existing) {
-      script.src = MAPLIBRE_SCRIPT;
-      script.async = true;
-      script.crossOrigin = "anonymous";
-      script.dataset.clouvaMaplibre = MAPLIBRE_VERSION;
-      document.head.appendChild(script);
-    }
-  }).catch((error) => {
-    mapLibrePromise = null;
-    throw error;
-  });
-
-  return mapLibrePromise;
 }
 
 function createMarker(label: string, accent: string, compact: boolean) {
@@ -135,8 +72,8 @@ export function PlayerLocationMap({ latitude, longitude, label, accent, classNam
   useEffect(() => {
     if (!validCoordinates || !containerRef.current || !label.trim()) return;
     let cancelled = false;
-    let map: MapLibreMap | null = null;
-    let marker: MapLibreMarker | null = null;
+    let map: ClouvaMap | null = null;
+    let marker: ClouvaMapMarker | null = null;
     let resizeObserver: ResizeObserver | null = null;
     let didLoad = false;
 
@@ -145,7 +82,7 @@ export function PlayerLocationMap({ latitude, longitude, label, accent, classNam
       if (cancelled || !containerRef.current) return;
       map = new maplibregl.Map({
         container: containerRef.current,
-        style: process.env.NEXT_PUBLIC_CLOUVA_MAP_STYLE_URL || DEFAULT_MAP_STYLE,
+        style: process.env.NEXT_PUBLIC_CLOUVA_MAP_STYLE_URL || CLOUVA_MAP_STYLE_URL,
         center: [Number(longitude), Number(latitude)],
         zoom: compact ? 10.6 : (window.matchMedia("(max-width: 640px)").matches ? 8.8 : 10.2),
         pitch: compact ? 10 : 18,
@@ -183,7 +120,7 @@ export function PlayerLocationMap({ latitude, longitude, label, accent, classNam
             paint: { "circle-radius": compact ? 14 : 18, "circle-color": color, "circle-opacity": 0.12, "circle-blur": 0.85 },
           });
         } catch {
-          // Custom styles may reject optional decorative layers; the real map and DOM beacon remain available.
+          // Decorative layers are optional. The basemap and DOM beacon still render.
         }
         marker = new maplibregl.Marker({ element: createMarker(label, color, compact), anchor: "center" })
           .setLngLat([Number(longitude), Number(latitude)])
