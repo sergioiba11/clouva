@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { X } from "lucide-react";
@@ -27,6 +28,7 @@ type DragState = {
 };
 
 export function GlobalClouvaAIButton() {
+  const pathname = usePathname();
   const { user, loading } = useAuth();
   const { open, toggleAssistant, closeAssistant } = useClouvaAIAssistant();
   const launcherRef = useRef<HTMLButtonElement>(null);
@@ -35,6 +37,7 @@ export function GlobalClouvaAIButton() {
   const suppressClickRef = useRef(false);
   const [position, setPosition] = useState<LauncherPosition | null>(null);
   const [dragging, setDragging] = useState(false);
+  const isAgendaRoute = pathname === "/agenda" || pathname.startsWith("/agenda/");
 
   const clampPosition = (x: number, y: number): LauncherPosition => {
     const launcher = launcherRef.current;
@@ -49,6 +52,16 @@ export function GlobalClouvaAIButton() {
     };
   };
 
+  const agendaDockPosition = (): LauncherPosition => {
+    const launcher = launcherRef.current;
+    const width = launcher?.offsetWidth ?? 0;
+    const height = launcher?.offsetHeight ?? 0;
+    const mobile = window.innerWidth <= 640;
+    const rightGap = mobile ? 12 : 18;
+    const bottomGap = mobile ? 88 : 18;
+    return clampPosition(window.innerWidth - width - rightGap, window.innerHeight - height - bottomGap);
+  };
+
   const applyPosition = (next: LauncherPosition) => {
     positionRef.current = next;
     setPosition(next);
@@ -61,27 +74,35 @@ export function GlobalClouvaAIButton() {
     if (!launcher) return;
 
     let nextPosition: LauncherPosition | null = null;
-    const saved = window.localStorage.getItem(POSITION_STORAGE_KEY);
 
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved) as Partial<LauncherPosition>;
-        if (Number.isFinite(parsed.x) && Number.isFinite(parsed.y)) {
-          nextPosition = clampPosition(parsed.x as number, parsed.y as number);
+    if (isAgendaRoute) {
+      nextPosition = agendaDockPosition();
+    } else {
+      const saved = window.localStorage.getItem(POSITION_STORAGE_KEY);
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved) as Partial<LauncherPosition>;
+          if (Number.isFinite(parsed.x) && Number.isFinite(parsed.y)) {
+            nextPosition = clampPosition(parsed.x as number, parsed.y as number);
+          }
+        } catch {
+          window.localStorage.removeItem(POSITION_STORAGE_KEY);
         }
-      } catch {
-        window.localStorage.removeItem(POSITION_STORAGE_KEY);
       }
-    }
 
-    if (!nextPosition) {
-      const rect = launcher.getBoundingClientRect();
-      nextPosition = clampPosition(rect.left, rect.top);
+      if (!nextPosition) {
+        const rect = launcher.getBoundingClientRect();
+        nextPosition = clampPosition(rect.left, rect.top);
+      }
     }
 
     applyPosition(nextPosition);
 
     const handleResize = () => {
+      if (isAgendaRoute) {
+        applyPosition(agendaDockPosition());
+        return;
+      }
       const current = positionRef.current;
       if (!current) return;
       const clamped = clampPosition(current.x, current.y);
@@ -91,7 +112,7 @@ export function GlobalClouvaAIButton() {
 
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
-  }, [loading]);
+  }, [isAgendaRoute, loading]);
 
   useEffect(() => {
     if (!open) return;
@@ -106,6 +127,7 @@ export function GlobalClouvaAIButton() {
   }, [closeAssistant, open]);
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (isAgendaRoute) return;
     if (event.pointerType === "mouse" && event.button !== 0) return;
 
     const launcher = launcherRef.current;
@@ -173,7 +195,7 @@ export function GlobalClouvaAIButton() {
     <>
       {open && user ? <ClouvaAICompactPanel /> : null}
       {open && !user ? (
-        <section className={styles.signedOut} role="dialog" aria-label="Ingresar a CLOUVA AI">
+        <section className={`${styles.signedOut} ${isAgendaRoute ? styles.agendaSignedOut : ""}`} role="dialog" aria-label="Ingresar a CLOUVA AI">
           <button type="button" onClick={closeAssistant} aria-label="Cerrar"><X size={17} /></button>
           <Image src={MASCOT_SRC} alt="Trébol" width={80} height={80} />
           <small>CLOUVA AI</small>
@@ -185,7 +207,7 @@ export function GlobalClouvaAIButton() {
       <button
         ref={launcherRef}
         type="button"
-        className={`${styles.launcher} ${dragging ? styles.dragging : ""}`}
+        className={`${styles.launcher} ${dragging ? styles.dragging : ""} ${isAgendaRoute ? styles.agendaDock : ""}`}
         style={position ? { left: position.x, top: position.y, bottom: "auto" } : undefined}
         onClick={handleClick}
         onPointerDown={handlePointerDown}
