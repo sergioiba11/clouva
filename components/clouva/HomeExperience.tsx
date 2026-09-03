@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
+import { useCurrentPlayer } from "@/components/current-player-provider";
 import { OfficialClouvaMark } from "@/components/clouva/OfficialClouvaMark";
 import { PublicLanding } from "@/components/clouva/PublicLanding";
 
@@ -60,8 +61,6 @@ function useMobileHome() {
 
     sync();
 
-    // Start loading the correct dashboard at the same time as auth hydration.
-    // This removes the second visual transition after the session resolves.
     if (media.matches) {
       void import("@/components/clouva/MobileHomeDashboard");
     } else {
@@ -76,16 +75,16 @@ function useMobileHome() {
 }
 
 export function HomeExperience() {
-  const { user, hydrationReady } = useAuth();
+  const { user, hydrationReady, profileReady } = useAuth();
+  const { playerReady } = useCurrentPlayer();
   const isMobile = useMobileHome();
 
-  // During session hydration we must not render the public landing because a
-  // signed-in Player would see the logged-out experience flash on every reload.
+  // Do not mount the personalized Home until auth, profile and Player identity
+  // are all stable. This prevents the reload sequence from briefly rendering
+  // account fallbacks (for example a letter avatar/name) before the real Player.
   if (!hydrationReady) return <HomeBoot />;
   if (!user) return <PublicLanding />;
+  if (!profileReady || !playerReady || isMobile === null) return <HomeBoot />;
 
-  if (isMobile === null) return <HomeBoot />;
-
-  // Mobile y desktop comparten los providers, pero nunca se montan a la vez.
   return isMobile ? <MobileHomeDashboard /> : <HomeDashboard />;
 }
