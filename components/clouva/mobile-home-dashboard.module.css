@@ -1,5 +1,5 @@
 .page {
-  --mobile-nav-height: 78px;
+  --mobile-nav-height: 70px;
   position: relative;
   width: 100%;
   max-width: 480px;
@@ -8,7 +8,7 @@
   overflow-x: hidden;
   background: #030307;
   color: #fff;
-  padding: max(10px, env(safe-area-inset-top)) 16px calc(var(--mobile-nav-height) + env(safe-area-inset-bottom) + 26px);
+  padding: max(10px, env(safe-area-inset-top)) 14px calc(var(--mobile-nav-height) + env(safe-area-inset-bottom) + 24px);
 }
 
 .ambient {
@@ -34,30 +34,40 @@
   position: relative;
   z-index: 5;
   display: flex;
-  height: 64px;
+  height: 60px;
   align-items: center;
   justify-content: space-between;
-  padding: 0 5px;
+  padding: 0 4px;
 }
 
 .brand {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 9px;
   min-width: 0;
 }
 
 .brandMark {
   display: grid;
-  width: 34px;
-  height: 34px;
+  width: 31px;
+  height: 31px;
+  flex: 0 0 31px;
   place-items: center;
+  overflow: visible !important;
+  border-radius: 0 !important;
   color: #f6efff;
-  filter: drop-shadow(0 0 10px rgba(165, 84, 255, 0.72));
+  filter: drop-shadow(0 0 9px rgba(165, 84, 255, 0.58));
+}
+
+.brandMark img {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: contain !important;
+  transform: none !important;
 }
 
 .brand strong {
-  font-size: clamp(22px, 6.5vw, 29px);
+  font-size: clamp(21px, 6vw, 27px);
   font-weight: 850;
   letter-spacing: -0.025em;
 }
@@ -65,14 +75,14 @@
 .headerActions {
   display: flex;
   align-items: center;
-  gap: 11px;
+  gap: 7px;
 }
 
 .notificationButton {
   position: relative;
   display: grid;
-  width: 42px;
-  height: 42px;
+  width: 39px;
+  height: 39px;
   place-items: center;
   border: 0;
   border-radius: 50%;
@@ -82,8 +92,8 @@
 
 .notificationButton > span {
   position: absolute;
-  top: 6px;
-  right: 5px;
+  top: 5px;
+  right: 4px;
   width: 8px;
   height: 8px;
   border-radius: 999px;
@@ -93,14 +103,14 @@
 
 .brandAvatar {
   display: grid;
-  width: 48px;
-  height: 48px;
+  width: 43px;
+  height: 43px;
   place-items: center;
   overflow: hidden;
   border: 2px solid #8a32eb;
   border-radius: 50%;
   background: #10071e;
-  box-shadow: 0 0 18px rgba(126, 43, 229, 0.4);
+  box-shadow: 0 0 16px rgba(126, 43, 229, 0.34);
 }
 
 .brandAvatar img {
@@ -113,87 +123,100 @@
   position: relative;
   z-index: 2;
   width: 100%;
-  aspect-ratio: 1.475 / 1;
+  min-height: 286px;
   overflow: hidden;
-  border: 1px solid rgba(136, 45, 226, 0.44);
-  border-radius: 22px;
-  background-color: #080411;
-  background-position: center;
-  background-size: cover;
-  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.35);
+  border: 0 !important;
+  border-radius: 20px;
+  background-color: transparent;
+  box-shadow: none !important;
   isolation: isolate;
+}
+
+.hero::before {
+  position: absolute;
+  inset: 6px 0;
+  z-index: -2;
+  pointer-events: none;
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at 50% 16%, rgba(157, 62, 245, 0.12), transparent 38%),
+    linear-gradient(180deg, rgba(124, 58, 237, 0.035), rgba(124, 58, 237, 0));
+  content: "";
 }
 
 .heroShade {
   position: absolute;
   inset: 0;
   z-index: -1;
-  background:
-    linear-gradient(90deg, rgba(4, 2, 10, 0.98) 0%, rgba(4, 2, 10, 0.9) 35%, rgba(4, 2, 10, 0.3) 61%, rgba(4, 2, 10, 0.06) 100%),
-    linear-gradient(0deg, rgba(4, 2, 10, 0.52), transparent 54%);
+  background: transparent;
 }
 
 .heroContent {
   display: flex;
-  width: 58%;
-  height: 100%;
+  width: 100%;
+  min-height: 286px;
   flex-direction: column;
+  align-items: center;
   justify-content: center;
-  padding: 17px 0 14px 22px;
+  padding: 26px 14px 24px;
+  text-align: center;
 }
 
 .heroContent > span {
   color: #aa5dff;
   font-size: clamp(10px, 2.8vw, 13px);
-  font-weight: 700;
+  font-weight: 750;
+  letter-spacing: 0.01em;
 }
 
 .heroContent h1 {
-  margin-top: 8px;
-  font-size: clamp(24px, 7.5vw, 34px);
-  font-weight: 850;
-  letter-spacing: -0.052em;
-  line-height: 1.04;
-  white-space: nowrap;
+  max-width: 330px;
+  margin-top: 10px;
+  font-size: clamp(31px, 9.3vw, 42px);
+  font-weight: 880;
+  letter-spacing: -0.055em;
+  line-height: 0.98;
+  white-space: normal;
+  text-wrap: balance;
 }
 
 .heroContent p {
-  margin-top: 8px;
+  margin-top: 13px;
   color: #aa62f4;
-  font-size: clamp(14px, 4.2vw, 19px);
-  font-weight: 500;
-  white-space: nowrap;
+  font-size: clamp(16px, 4.5vw, 20px);
+  font-weight: 550;
+  white-space: normal;
 }
 
 .heroActions {
   display: grid;
-  width: min(100%, 180px);
-  gap: 7px;
-  margin-top: 15px;
+  width: min(100%, 278px);
+  gap: 8px;
+  margin-top: 19px;
 }
 
 .heroActions a {
   display: inline-flex;
-  min-height: 42px;
+  min-height: 46px;
   align-items: center;
   justify-content: center;
   gap: 8px;
   border-radius: 999px;
-  padding: 9px 11px;
-  font-size: clamp(11px, 3.1vw, 14px);
-  font-weight: 750;
+  padding: 10px 14px;
+  font-size: clamp(12px, 3.25vw, 14px);
+  font-weight: 760;
   white-space: nowrap;
 }
 
 .primaryAction {
-  border: 1px solid rgba(226, 193, 255, 0.76);
+  border: 1px solid rgba(226, 193, 255, 0.72);
   background: linear-gradient(90deg, #7624e8, #a447ff);
-  box-shadow: 0 0 24px rgba(137, 51, 243, 0.48), inset 0 1px rgba(255, 255, 255, 0.34);
+  box-shadow: 0 0 22px rgba(137, 51, 243, 0.42), inset 0 1px rgba(255, 255, 255, 0.3);
 }
 
 .secondaryAction {
-  border: 1px solid rgba(154, 59, 242, 0.8);
-  background: rgba(4, 2, 11, 0.82);
+  border: 1px solid rgba(154, 59, 242, 0.66);
+  background: rgba(11, 6, 24, 0.6);
   backdrop-filter: blur(8px);
 }
 
@@ -203,15 +226,15 @@
   display: grid;
   width: 100%;
   min-width: 0;
-  grid-template-columns: minmax(96px, 31%) minmax(0, 1fr);
-  gap: 14px;
-  margin-top: 11px;
+  grid-template-columns: minmax(92px, 30%) minmax(0, 1fr);
+  gap: 12px;
+  margin-top: 8px;
   overflow: hidden;
-  border: 1px solid rgba(125, 50, 214, 0.35);
-  border-radius: 22px;
-  background: linear-gradient(135deg, rgba(16, 11, 35, 0.98), rgba(7, 5, 18, 0.99));
-  padding: 12px;
-  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.24);
+  border: 1px solid rgba(125, 50, 214, 0.3);
+  border-radius: 20px;
+  background: linear-gradient(135deg, rgba(16, 11, 35, 0.96), rgba(7, 5, 18, 0.98));
+  padding: 11px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.22);
 }
 
 .musicCover {
@@ -219,8 +242,8 @@
   width: 100%;
   aspect-ratio: 1;
   overflow: hidden;
-  border: 1px solid rgba(157, 69, 235, 0.32);
-  border-radius: 14px;
+  border: 1px solid rgba(157, 69, 235, 0.28);
+  border-radius: 13px;
   background: #090411;
 }
 
@@ -251,7 +274,7 @@
 
 .musicHeading h2 {
   overflow: hidden;
-  font-size: clamp(17px, 5.2vw, 23px);
+  font-size: clamp(17px, 5vw, 22px);
   font-weight: 760;
   letter-spacing: -0.035em;
   text-overflow: ellipsis;
@@ -261,15 +284,15 @@
 .musicHeading p {
   margin-top: 2px;
   color: #a65cf3;
-  font-size: clamp(12px, 3.4vw, 15px);
+  font-size: clamp(12px, 3.3vw, 14px);
 }
 
 .favoriteButton,
 .favoriteActive {
   display: grid;
-  width: 34px;
-  height: 34px;
-  flex: 0 0 34px;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
   place-items: center;
   border-radius: 50%;
   color: rgba(255, 255, 255, 0.45);
@@ -312,7 +335,7 @@
 
 .musicControls {
   display: grid;
-  grid-template-columns: 1fr 48px 1fr;
+  grid-template-columns: 1fr 46px 1fr;
   align-items: center;
   justify-items: center;
   margin-top: 4px;
@@ -320,19 +343,19 @@
 
 .musicControls button {
   display: grid;
-  width: 38px;
-  height: 38px;
+  width: 36px;
+  height: 36px;
   place-items: center;
   border-radius: 50%;
   color: rgba(255, 255, 255, 0.92);
 }
 
 .musicControls .playButton {
-  width: 48px;
-  height: 48px;
+  width: 46px;
+  height: 46px;
   color: white;
   background: linear-gradient(145deg, #7929ec, #b251ff);
-  box-shadow: 0 0 22px rgba(143, 54, 239, 0.52), inset 0 1px rgba(255, 255, 255, 0.28);
+  box-shadow: 0 0 20px rgba(143, 54, 239, 0.46), inset 0 1px rgba(255, 255, 255, 0.28);
 }
 
 .featureGrid {
@@ -340,17 +363,17 @@
   z-index: 2;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  margin-top: 11px;
+  gap: 9px;
+  margin-top: 9px;
 }
 
 .featureCard {
   position: relative;
   min-width: 0;
-  aspect-ratio: 1.2 / 1;
+  aspect-ratio: 1.18 / 1;
   overflow: hidden;
-  border: 1px solid rgba(129, 48, 216, 0.38);
-  border-radius: 21px;
+  border: 1px solid rgba(129, 48, 216, 0.34);
+  border-radius: 19px;
   background-color: #080411;
   background-position: center;
   background-size: cover;
@@ -366,16 +389,16 @@
 
 .featureCard > div {
   display: flex;
-  width: 57%;
+  width: 60%;
   height: 100%;
   flex-direction: column;
   align-items: flex-start;
-  padding: 14px 0 13px 13px;
+  padding: 13px 0 12px 12px;
 }
 
 .featureCard h2 {
-  font-size: clamp(17px, 4.9vw, 23px);
-  line-height: 1.05;
+  font-size: clamp(16px, 4.6vw, 21px);
+  line-height: 1.04;
   letter-spacing: -0.035em;
 }
 
@@ -388,49 +411,49 @@
 
 .featureCard b {
   display: grid;
-  width: 36px;
-  height: 36px;
+  width: 34px;
+  height: 34px;
   place-items: center;
   margin-top: auto;
   border-radius: 50%;
   background: linear-gradient(145deg, #7c27e5, #a54bfa);
-  box-shadow: 0 0 18px rgba(128, 42, 226, 0.38);
+  box-shadow: 0 0 16px rgba(128, 42, 226, 0.34);
 }
 
 .bottomNav {
   position: fixed;
-  left: max(14px, calc((100vw - 480px) / 2 + 14px));
-  right: max(14px, calc((100vw - 480px) / 2 + 14px));
-  bottom: calc(8px + env(safe-area-inset-bottom));
+  left: max(12px, calc((100vw - 480px) / 2 + 12px));
+  right: max(12px, calc((100vw - 480px) / 2 + 12px));
+  bottom: calc(7px + env(safe-area-inset-bottom));
   z-index: 30;
   display: grid;
   min-height: var(--mobile-nav-height);
   grid-template-columns: repeat(5, minmax(0, 1fr));
   align-items: end;
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  border-radius: 23px;
+  border: 1px solid rgba(255, 255, 255, 0.085);
+  border-radius: 20px;
   background: rgba(9, 7, 20, 0.94);
-  padding: 7px 5px;
-  box-shadow: 0 20px 58px rgba(0, 0, 0, 0.62);
+  padding: 5px 4px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.58);
   backdrop-filter: blur(22px);
 }
 
 .bottomNav > a {
   display: flex;
   min-width: 0;
-  min-height: 52px;
+  min-height: 48px;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 3px;
-  border-radius: 14px;
+  gap: 2px;
+  border-radius: 12px;
   color: rgba(255, 255, 255, 0.58);
 }
 
 .bottomNav > a > span {
   overflow: hidden;
   max-width: 100%;
-  font-size: clamp(9px, 2.45vw, 12px);
+  font-size: clamp(8px, 2.2vw, 10px);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -441,32 +464,32 @@
 
 .createNav {
   position: relative;
-  transform: translateY(-7px);
+  transform: translateY(-5px);
   color: #d9bdff !important;
 }
 
 .createNav > b {
   display: grid;
-  width: 58px;
-  height: 58px;
+  width: 52px;
+  height: 52px;
   place-items: center;
-  border: 1px solid rgba(226, 192, 255, 0.64);
+  border: 1px solid rgba(226, 192, 255, 0.58);
   border-radius: 50%;
   color: white;
   background: linear-gradient(145deg, #7626e8, #ad52ff);
-  box-shadow: 0 0 28px rgba(145, 54, 241, 0.62), inset 0 1px rgba(255, 255, 255, 0.3);
+  box-shadow: 0 0 22px rgba(145, 54, 241, 0.5), inset 0 1px rgba(255, 255, 255, 0.28);
 }
 
 .createNav small {
-  margin-top: 1px;
-  font-size: clamp(9px, 2.45vw, 12px);
+  margin-top: 0;
+  font-size: clamp(8px, 2.2vw, 10px);
 }
 
 .profileNav img,
 .profileNav b {
   display: grid;
-  width: 45px;
-  height: 45px;
+  width: 38px;
+  height: 38px;
   place-items: center;
   overflow: hidden;
   border: 2px solid #8f34ef;
@@ -474,8 +497,8 @@
   object-fit: cover;
   background: linear-gradient(145deg, #6f25cf, #171022);
   color: white;
-  font-size: 12px;
-  box-shadow: 0 0 18px rgba(134, 49, 234, 0.34);
+  font-size: 11px;
+  box-shadow: 0 0 15px rgba(134, 49, 234, 0.3);
 }
 
 .drawerLayer {
@@ -547,43 +570,68 @@
   font-size: 13px;
 }
 
+@media (max-width: 820px) {
+  :global(button[aria-label="Abrir CLOUVA AI"]),
+  :global(button[aria-label="Cerrar CLOUVA AI"]) {
+    left: auto !important;
+    right: 14px !important;
+    top: auto !important;
+    bottom: calc(var(--mobile-nav-height) + 18px + env(safe-area-inset-bottom)) !important;
+  }
+}
+
 @media (max-width: 360px) {
   .page {
     padding-inline: 11px;
   }
 
   .header {
-    height: 58px;
+    height: 56px;
+  }
+
+  .brandMark {
+    width: 28px;
+    height: 28px;
+    flex-basis: 28px;
   }
 
   .brandAvatar {
-    width: 43px;
-    height: 43px;
+    width: 40px;
+    height: 40px;
   }
 
   .headerActions {
-    gap: 5px;
+    gap: 4px;
+  }
+
+  .hero,
+  .heroContent {
+    min-height: 272px;
   }
 
   .heroContent {
-    width: 60%;
-    padding-left: 16px;
+    padding-inline: 10px;
+  }
+
+  .heroContent h1 {
+    max-width: 300px;
+    font-size: clamp(29px, 9vw, 36px);
   }
 
   .heroActions {
-    width: 164px;
-    margin-top: 11px;
+    width: min(100%, 250px);
+    margin-top: 16px;
   }
 
   .heroActions a {
-    min-height: 36px;
-    gap: 5px;
+    min-height: 42px;
+    gap: 6px;
   }
 
   .musicCard {
-    grid-template-columns: 94px minmax(0, 1fr);
-    gap: 10px;
-    padding: 10px;
+    grid-template-columns: 88px minmax(0, 1fr);
+    gap: 9px;
+    padding: 9px;
   }
 
   .musicControls {
@@ -604,8 +652,8 @@
   }
 
   .bottomNav {
-    left: 9px;
-    right: 9px;
+    left: 8px;
+    right: 8px;
   }
 }
 
@@ -615,6 +663,10 @@
   }
 
   .hero {
-    aspect-ratio: 2 / 1;
+    min-height: 236px;
+  }
+
+  .heroContent {
+    min-height: 236px;
   }
 }
