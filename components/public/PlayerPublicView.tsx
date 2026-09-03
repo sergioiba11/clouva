@@ -13,7 +13,7 @@ import {
   Video,
 } from "lucide-react";
 import { PlayerOwnerActions } from "./PlayerOwnerActions";
-import { PlayerSessionLocationCard } from "./PlayerSessionLocationCard";
+import { PlayerPublicLocationCard } from "./PlayerPublicLocationCard";
 import { PublicMediaGallery } from "./PublicMediaGallery";
 import { PublicSocialLinks } from "./PublicSocialLinks";
 import { PublicSpotifyPlayer } from "./PublicSpotifyPlayer";
@@ -112,11 +112,7 @@ export function PlayerPublicView({
   const accent = layoutConfig?.page_style?.palette?.accent || player.accent_color || "#8f7cff";
   const locationAccent = player.accent_color || "#7ddfff";
   const navStyle = layoutConfig?.page_style?.nav_style ?? "pill";
-  const hasLocationMap = Boolean(
-    player.location
-      && Number.isFinite(player.latitude)
-      && Number.isFinite(player.longitude),
-  );
+  const hasLocationMap = Boolean(player.location && Number.isFinite(player.latitude) && Number.isFinite(player.longitude));
 
   return (
     <PublicShell
@@ -138,13 +134,13 @@ export function PlayerPublicView({
         <div className="absolute inset-0 -z-10 bg-[linear-gradient(90deg,#07060b_0%,rgba(7,6,11,.94)_35%,rgba(7,6,11,.28)_70%,#07060b_100%)]" />
         <div className="absolute inset-0 -z-10 bg-[linear-gradient(0deg,#07060b_0%,transparent_50%)]" />
 
-        <div className="mx-auto grid min-h-[36rem] max-w-7xl gap-8 px-4 py-9 sm:px-6 lg:grid-cols-[minmax(0,1fr)_280px] lg:items-center">
-          <div>
-            <p className="mb-6 text-xs font-semibold uppercase tracking-[0.22em] text-[color:var(--public-accent)]/80">
+        <div className="mx-auto grid max-w-7xl gap-5 px-4 py-7 sm:min-h-[34rem] sm:gap-8 sm:px-6 sm:py-9 lg:grid-cols-[minmax(0,1fr)_280px] lg:items-center">
+          <div className="min-w-0">
+            <p className="mb-4 text-xs font-semibold uppercase tracking-[0.22em] text-[color:var(--public-accent)]/80 sm:mb-6">
               Players <span className="mx-2 text-white/25">›</span> {player.display_name}
             </p>
 
-            <div className="flex flex-col gap-5 sm:flex-row sm:items-center">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:gap-5">
               <div className="relative shrink-0">
                 {player.profile_image_url ? (
                   <img src={player.profile_image_url} alt={player.display_name} className="h-28 w-28 rounded-full border-2 border-[color:var(--public-accent)]/60 object-cover shadow-[0_0_35px_rgba(124,58,237,.35)] sm:h-36 sm:w-36" />
@@ -167,16 +163,16 @@ export function PlayerPublicView({
             </div>
 
             {primaryStudio || hasMerch ? (
-              <div className="mt-6 flex flex-wrap gap-3">
+              <div className="mt-5 flex flex-wrap gap-3 sm:mt-6">
                 {primaryStudio ? (
-                  <Link href={`/studios/${primaryStudio.slug}`} className={`inline-flex min-w-[220px] items-center gap-3 border border-white/12 bg-black/35 px-4 py-3 backdrop-blur transition hover:border-[color:var(--public-accent)]/45 ${radiusClass}`}>
+                  <Link href={`/studios/${primaryStudio.slug}`} className={`inline-flex min-w-[220px] max-w-full items-center gap-3 border border-white/12 bg-black/35 px-4 py-3 backdrop-blur transition hover:border-[color:var(--public-accent)]/45 ${radiusClass}`}>
                     {primaryStudio.logo_url ? <img src={primaryStudio.logo_url} alt="" className="h-10 w-10 rounded-full object-cover" /> : <span className="grid h-10 w-10 place-items-center rounded-full bg-[color:var(--public-accent)]/15"><Building2 size={17} /></span>}
                     <span className="min-w-0 flex-1"><b className="block truncate text-sm">{primaryStudio.name}</b><small className="text-white/40">Estudio principal</small></span>
                     <ArrowRight size={15} className="text-[color:var(--public-accent)]" />
                   </Link>
                 ) : null}
                 {hasMerch ? (
-                  <a href="#merch" className={`inline-flex min-w-[220px] items-center gap-3 border border-white/12 bg-black/35 px-4 py-3 backdrop-blur transition hover:border-[color:var(--public-accent)]/45 ${radiusClass}`}>
+                  <a href="#merch" className={`inline-flex min-w-[220px] max-w-full items-center gap-3 border border-white/12 bg-black/35 px-4 py-3 backdrop-blur transition hover:border-[color:var(--public-accent)]/45 ${radiusClass}`}>
                     <span className="grid h-10 w-10 place-items-center rounded-full bg-[color:var(--public-accent)]/15"><ShoppingBag size={17} /></span>
                     <span className="min-w-0 flex-1"><b className="block text-sm">Mi merch</b><small className="text-white/40">Comprá mis productos</small></span>
                     <ArrowRight size={15} className="text-[color:var(--public-accent)]" />
@@ -187,7 +183,7 @@ export function PlayerPublicView({
 
             <PlayerOwnerActions ownerUserId={player.owner_user_id} />
 
-            <div className="mt-6 flex flex-wrap gap-2">
+            <div className="mt-5 flex flex-wrap gap-2 sm:mt-6">
               {player.spotify_profile_url ? <a href="#musica" className="inline-flex items-center gap-2 rounded-full bg-[color:var(--public-accent)] px-5 py-2.5 text-sm font-semibold transition hover:opacity-90"><Play size={15} fill="currentColor" /> Escuchar música</a> : null}
               {media.length ? <a href="#galeria" className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-black/30 px-5 py-2.5 text-sm font-semibold transition hover:border-[color:var(--public-accent)]/50"><Images size={15} /> Ver contenido</a> : null}
               {player.contact_email ? <a href={`mailto:${player.contact_email}`} className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-black/30 px-5 py-2.5 text-sm font-semibold transition hover:border-[color:var(--public-accent)]/50"><Mail size={15} /> Contactar</a> : null}
@@ -196,10 +192,9 @@ export function PlayerPublicView({
             {socialLinks.length ? <div className="mt-4"><PublicSocialLinks links={socialLinks} playerName={player.display_name} /></div> : null}
           </div>
 
-          <div className="grid self-center justify-items-end gap-3">
+          <div className="grid self-center justify-items-center gap-3 lg:justify-items-end">
             {hasLocationMap ? (
-              <PlayerSessionLocationCard
-                ownerUserId={player.owner_user_id}
+              <PlayerPublicLocationCard
                 latitude={player.latitude}
                 longitude={player.longitude}
                 label={player.location || ""}
