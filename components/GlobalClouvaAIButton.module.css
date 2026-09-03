@@ -6,12 +6,14 @@
 .launcher b { font-size: .62rem; letter-spacing: .04em; }
 .launcher small { margin-top: .04rem; color: #77e8b4; font-size: .52rem; }
 .launcher small::before { display: inline-block; width: .34rem; height: .34rem; margin-right: .28rem; border-radius: 50%; background: #43e6a5; box-shadow: 0 0 6px #43e6a5; content: ""; }
+.agendaDock { cursor: pointer; box-shadow: 0 16px 48px rgba(0,0,0,.62),0 0 30px rgba(139,92,246,.22); }
 .signedOut { position: fixed; z-index: 105; left: 1rem; bottom: 5.3rem; width: min(22rem,calc(100vw - 2rem)); overflow: hidden; border: 1px solid rgba(168,112,255,.32); border-radius: 1.25rem; background: radial-gradient(circle at 20% 0,rgba(124,58,237,.3),transparent 45%),#080611; padding: 1.2rem; color: white; box-shadow: 0 25px 80px rgba(0,0,0,.65); }
+.agendaSignedOut { left: auto; right: 1rem; }
 .signedOut > button { position: absolute; right: .65rem; top: .65rem; display: grid; width: 2rem; height: 2rem; place-items: center; border: 1px solid rgba(255,255,255,.1); border-radius: .65rem; color: rgba(255,255,255,.6); }
 .signedOut img { width: 5rem; height: 5rem; object-fit: contain; filter: drop-shadow(0 0 14px rgba(168,85,247,.5)); }
 .signedOut small { display: block; color: #bc8fff; font-size: .56rem; font-weight: 800; letter-spacing: .1em; }
 .signedOut h2 { margin-top: .25rem; font-size: 1.15rem; }
 .signedOut p { margin-top: .45rem; color: rgba(255,255,255,.56); font-size: .68rem; line-height: 1.55; }
 .signedOut a { display: flex; margin-top: .9rem; align-items: center; justify-content: center; border-radius: .75rem; padding: .65rem; background: linear-gradient(90deg,#7c3aed,#9d65ff); font-size: .67rem; font-weight: 750; }
-@media (max-width: 640px) { .launcher { left: .65rem; bottom: calc(4.9rem + env(safe-area-inset-bottom)); width: 3.25rem; height: 3.25rem; padding: .15rem; place-items: center; } .launcher img { width: 3rem; height: 3rem; } .launcher span { display: none; } .signedOut { left: .5rem; bottom: calc(8.75rem + env(safe-area-inset-bottom)); width: calc(100vw - 1rem); } }
+@media (max-width: 640px) { .launcher { left: .65rem; bottom: calc(4.9rem + env(safe-area-inset-bottom)); width: 3.25rem; height: 3.25rem; padding: .15rem; place-items: center; } .launcher img { width: 3rem; height: 3rem; } .launcher span { display: none; } .signedOut { left: .5rem; bottom: calc(8.75rem + env(safe-area-inset-bottom)); width: calc(100vw - 1rem); } .agendaSignedOut { left: auto; right: .5rem; } }
 @media (prefers-reduced-motion: reduce) { .launcher { transition: none; } }
