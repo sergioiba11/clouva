@@ -1,6 +1,15 @@
 import Link from "next/link";
+import type { CSSProperties, ReactNode } from "react";
 import { ArrowRight, BookOpen, MoonStar, Sparkles } from "lucide-react";
 import type { PublicKnowledgeProfile } from "@/lib/knowledge/player-knowledge";
+
+function zodiacSymbol(sign: string) {
+  const symbols: Record<string, string> = {
+    Aries: "♈", Tauro: "♉", Géminis: "♊", Cáncer: "♋", Leo: "♌", Virgo: "♍",
+    Libra: "♎", Escorpio: "♏", Sagitario: "♐", Capricornio: "♑", Acuario: "♒", Piscis: "♓",
+  };
+  return symbols[sign] || "✦";
+}
 
 export function PublicKnowledgeSection({
   playerName,
@@ -15,7 +24,7 @@ export function PublicKnowledgeSection({
 }) {
   const teach = new Set(knowledge.teachTopics.map((item) => item.toLocaleLowerCase("es")));
   return (
-    <section id="conocimiento" className="border-y border-white/10 bg-[#08070d]" style={{ "--knowledge-accent": accent } as React.CSSProperties}>
+    <section id="conocimiento" className="border-y border-white/10 bg-[#08070d]" style={{ "--knowledge-accent": accent } as CSSProperties}>
       <div className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
@@ -33,7 +42,7 @@ export function PublicKnowledgeSection({
             <KnowledgeCard href={`/${alias}/knowledge/numerologia`} eyebrow="NUMEROLOGÍA" title="Número personal" value={String(knowledge.numerologyNumber)} icon={<Sparkles size={20} />} />
           ) : null}
           {knowledge.zodiacSign ? (
-            <KnowledgeCard href={`/${alias}/knowledge/astrologia`} eyebrow="ASTROLOGÍA" title="Signo" value={knowledge.zodiacSign} icon={<span className="text-xl">♎</span>} />
+            <KnowledgeCard href={`/${alias}/knowledge/astrologia`} eyebrow="ASTROLOGÍA" title="Signo" value={knowledge.zodiacSign} icon={<span className="text-xl">{zodiacSymbol(knowledge.zodiacSign)}</span>} />
           ) : null}
         </div>
 
@@ -55,9 +64,9 @@ export function PublicKnowledgeSection({
   );
 }
 
-function KnowledgeCard({ href, eyebrow, title, value, icon }: { href: string; eyebrow: string; title: string; value: string; icon: React.ReactNode }) {
+function KnowledgeCard({ href, eyebrow, title, value, icon }: { href: string; eyebrow: string; title: string; value: string; icon: ReactNode }) {
   return (
-    <Link href={href} className="group rounded-2xl border border-white/10 bg-[radial-gradient(circle_at_82%_10%,color-mix(in_srgb,var(--knowledge-accent)_18%,transparent),transparent_40%),rgba(255,255,255,.025)] p-5 transition hover:border-[color:var(--knowledge-accent)]/45">
+    <Link href={href} className="group rounded-2xl border border-white/10 bg-white/[0.025] p-5 transition hover:border-[color:var(--knowledge-accent)]/45 hover:bg-white/[0.04]">
       <div className="flex items-start justify-between gap-3">
         <span className="grid h-10 w-10 place-items-center rounded-xl border border-[color:var(--knowledge-accent)]/20 bg-[color:var(--knowledge-accent)]/10 text-[color:var(--knowledge-accent)]">{icon}</span>
         <ArrowRight size={16} className="text-white/25 transition group-hover:translate-x-0.5 group-hover:text-[color:var(--knowledge-accent)]" />
