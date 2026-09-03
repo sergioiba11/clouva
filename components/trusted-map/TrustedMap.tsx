@@ -1,44 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-
-type MapLike = { remove: () => void; resize: () => void; setCenter: (center: [number, number]) => void };
-type MarkerLike = { setLngLat: (coordinates: [number, number]) => MarkerLike; addTo: (map: MapLike) => MarkerLike; remove: () => void };
-type MapLibreNamespace = { Map: new (options: Record<string, unknown>) => MapLike; Marker: new (options: Record<string, unknown>) => MarkerLike };
-type MapLibreWindow = Window & { maplibregl?: MapLibreNamespace };
-
-const VERSION = "5.7.1";
-const STYLE_URL = "https://tiles.openfreemap.org/styles/dark";
-let loader: Promise<MapLibreNamespace> | null = null;
-
-function loadMapLibre() {
-  if (typeof window === "undefined") return Promise.reject(new Error("browser required"));
-  const browserWindow = window as MapLibreWindow;
-  if (browserWindow.maplibregl) return Promise.resolve(browserWindow.maplibregl);
-  if (loader) return loader;
-  loader = new Promise<MapLibreNamespace>((resolve, reject) => {
-    if (!document.querySelector(`link[data-clouva-trusted-map="${VERSION}"]`)) {
-      const link = document.createElement("link");
-      link.rel = "stylesheet";
-      link.href = `https://unpkg.com/maplibre-gl@${VERSION}/dist/maplibre-gl.css`;
-      link.dataset.clouvaTrustedMap = VERSION;
-      document.head.appendChild(link);
-    }
-    const existing = document.querySelector<HTMLScriptElement>(`script[data-clouva-maplibre="${VERSION}"]`);
-    const script = existing || document.createElement("script");
-    const finish = () => browserWindow.maplibregl ? resolve(browserWindow.maplibregl) : reject(new Error("MapLibre unavailable"));
-    script.addEventListener("load", finish, { once: true });
-    script.addEventListener("error", () => reject(new Error("MapLibre load failed")), { once: true });
-    if (!existing) {
-      script.src = `https://unpkg.com/maplibre-gl@${VERSION}/dist/maplibre-gl.js`;
-      script.async = true;
-      script.crossOrigin = "anonymous";
-      script.dataset.clouvaMaplibre = VERSION;
-      document.head.appendChild(script);
-    }
-  }).catch((error) => { loader = null; throw error; });
-  return loader;
-}
+import {
+  CLOUVA_MAP_STYLE_URL,
+  getLoadedMapLibre,
+  loadMapLibre,
+  type ClouvaMap,
+  type ClouvaMapMarker,
+} from "@/lib/maplibre-browser";
 
 export type TrustedMapLocation = {
   userId: string;
@@ -69,21 +38,25 @@ function makeMarker(location: TrustedMapLocation) {
 
 export function TrustedMap({ locations }: { locations: TrustedMapLocation[] }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<MapLike | null>(null);
-  const markerRefs = useRef<MarkerLike[]>([]);
+  const mapRef = useRef<ClouvaMap | null>(null);
+  const markerRefs = useRef<ClouvaMapMarker[]>([]);
   const [ready, setReady] = useState(false);
-  const visible = useMemo(() => locations.filter((item) => Number.isFinite(item.latitude) && Number.isFinite(item.longitude)), [locations]);
+  const visible = useMemo(
+    () => locations.filter((item) => Number.isFinite(item.latitude) && Number.isFinite(item.longitude)),
+    [locations],
+  );
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
     let cancelled = false;
     let observer: ResizeObserver | null = null;
+
     void loadMapLibre().then((maplibre) => {
       if (cancelled || !containerRef.current) return;
       const first = visible[0];
       mapRef.current = new maplibre.Map({
         container: containerRef.current,
-        style: process.env.NEXT_PUBLIC_CLOUVA_MAP_STYLE_URL || STYLE_URL,
+        style: process.env.NEXT_PUBLIC_CLOUVA_MAP_STYLE_URL || CLOUVA_MAP_STYLE_URL,
         center: first ? [Number(first.longitude), Number(first.latitude)] : [-58.3816, -34.6037],
         zoom: first ? 12.5 : 3.5,
         pitch: 20,
@@ -96,6 +69,7 @@ export function TrustedMap({ locations }: { locations: TrustedMapLocation[] }) {
       observer = new ResizeObserver(() => mapRef.current?.resize());
       observer.observe(containerRef.current);
     }).catch(() => setReady(false));
+
     return () => {
       cancelled = true;
       observer?.disconnect();
@@ -107,7 +81,7 @@ export function TrustedMap({ locations }: { locations: TrustedMapLocation[] }) {
   }, []);
 
   useEffect(() => {
-    const maplibre = (window as MapLibreWindow).maplibregl;
+    const maplibre = getLoadedMapLibre();
     if (!ready || !mapRef.current || !maplibre) return;
     markerRefs.current.forEach((marker) => marker.remove());
     markerRefs.current = visible.map((location) => new maplibre.Marker({ element: makeMarker(location), anchor: "center" })
