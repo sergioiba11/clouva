@@ -15,8 +15,9 @@ export const metadata: Metadata = {
   title: "Clouva Vida de Flows",
   description: "Vida de flows. Directamente desde el southside.",
   icons: {
-    icon: "/icon.svg",
-    shortcut: "/icon.svg",
+    icon: [{ url: "/icon.svg?v=official-20260903", type: "image/svg+xml" }],
+    shortcut: "/icon.svg?v=official-20260903",
+    apple: "/assets/clouva/brand/logo-official-dark.png",
   },
   openGraph: {
     title: "Clouva Vida de Flows",
