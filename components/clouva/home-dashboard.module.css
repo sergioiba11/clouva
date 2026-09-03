@@ -49,14 +49,20 @@
 
 .brandIcon {
   display: grid;
-  width: 2rem;
-  height: 2rem;
+  width: 2.15rem;
+  height: 2.15rem;
+  flex: 0 0 auto;
   place-items: center;
-  border: 1px solid rgba(153, 102, 255, 0.48);
-  border-radius: 0.72rem;
-  color: #aa72ff;
-  background: rgba(112, 48, 246, 0.15);
-  box-shadow: 0 0 24px rgba(117, 52, 255, 0.22);
+  overflow: hidden;
+  border-radius: 50%;
+  filter: drop-shadow(0 0 10px rgba(165, 84, 255, 0.52));
+}
+
+.brandIcon img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scale(1.55);
 }
 
 .topnav {
@@ -263,8 +269,10 @@
   overflow: hidden;
   border: 1px solid rgba(157, 101, 255, 0.18);
   border-radius: 1.35rem;
-  background-position: center;
-  background-size: cover;
+  background-color: #080613;
+  background-position: right center;
+  background-repeat: no-repeat;
+  background-size: contain;
   box-shadow: 0 25px 90px rgba(0, 0, 0, 0.36);
   isolation: isolate;
 }
