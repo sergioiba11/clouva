@@ -121,7 +121,13 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
 
   function renderHero() {
     return (
-      <section key="hero" className={styles.hero} aria-labelledby="mobile-home-title" data-clouva-block="hero">
+      <section
+        key="hero"
+        className={styles.hero}
+        aria-labelledby="mobile-home-title"
+        data-clouva-block="hero"
+        style={{ minHeight: 368 }}
+      >
         <div className={styles.heroAtmosphere} aria-hidden="true">
           <span className={styles.heroHalo} />
           <span className={styles.heroOrbitOne} />
@@ -156,16 +162,6 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
               <Sparkles size={16} />
               {config.hero.secondaryLabel}
             </Link>
-          </div>
-        </div>
-
-        <div className={styles.flowPanel} data-clouva-block="wallet">
-          <div className={styles.flowCopy}>
-            <small>MI FLOW</small>
-            <strong>Tu moneda dentro de CLOUVA</strong>
-          </div>
-          <div className="min-w-0">
-            {!previewMode ? <GlobalFlowBalance variant="inline" /> : <span className={styles.flowPreview}>FLOWS</span>}
           </div>
         </div>
       </section>
@@ -298,6 +294,7 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
         </Link>
 
         <div className={styles.headerActions}>
+          {!previewMode ? <GlobalFlowBalance variant="header" /> : null}
           <button
             type="button"
             className={styles.notificationButton}
