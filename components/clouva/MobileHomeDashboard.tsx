@@ -164,7 +164,7 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
             <small>MI FLOW</small>
             <strong>Tu moneda dentro de CLOUVA</strong>
           </div>
-          <div className={styles.flowBalance}>
+          <div className="min-w-0">
             {!previewMode ? <GlobalFlowBalance variant="inline" /> : <span className={styles.flowPreview}>FLOWS</span>}
           </div>
         </div>
