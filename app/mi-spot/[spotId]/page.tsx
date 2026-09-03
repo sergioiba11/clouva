@@ -92,6 +92,7 @@ export default function SpotHomePage() {
   const canSettings = data?.capabilities.includes("settings") ?? false;
   const canTeam = data?.capabilities.includes("team") ?? false;
   const canContent = data?.capabilities.includes("content") ?? false;
+  const canBusiness = data?.capabilities.includes("operations") ?? false;
   const canAgenda = Boolean(data?.space && modules.includes("agenda"));
 
   async function saveSettings() {
@@ -134,8 +135,9 @@ export default function SpotHomePage() {
                 <p className="mt-3 max-w-2xl text-sm leading-6 text-white/52">{data.spot.description || "Este espacio todavía no tiene descripción."}</p>
               </div>
               <div className="flex flex-wrap gap-2">
+                {canBusiness ? <Link href={`/mi-spot/${spotId}/business`} className="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white" style={{ backgroundColor: accent }}><Sparkles size={15} /> Business Player</Link> : null}
                 {canAgenda ? <Link href="/agenda" className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm"><CalendarDays size={15} /> Agenda</Link> : null}
-                {data.canOpenCommerce ? <Link href={`/mi-spot/${spotId}/commerce`} className="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold text-white" style={{ backgroundColor: accent }}>Abrir operaciones <ArrowRight size={16} /></Link> : null}
+                {data.canOpenCommerce ? <Link href={`/mi-spot/${spotId}/commerce`} className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm">Operaciones <ArrowRight size={16} /></Link> : null}
                 {canContent && data.space ? <Link href={`/mi-spot/${spotId}/publicaciones`} className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm"><Megaphone size={15} /> Publicaciones</Link> : null}
                 {canTeam ? <Link href={`/mi-spot/${spotId}/team`} className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm"><Users size={15} /> Equipo</Link> : null}
                 {canSettings ? <button type="button" onClick={() => setEditing((value) => !value)} className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm"><Settings2 size={15} /> Estilo</button> : null}
@@ -157,7 +159,8 @@ export default function SpotHomePage() {
           <section className="mt-6 grid gap-4 lg:grid-cols-[1.25fr_.75fr]">
             <article className="rounded-[24px] border border-white/[0.08] bg-[#0b0912] p-5 sm:p-6">
               <p className="text-xs uppercase tracking-[0.15em] text-white/32">Herramientas activas</p><h2 className="mt-1 text-xl font-semibold">Este espacio se adapta a tu operación</h2>
-              {canAgenda ? <Link href="/agenda" className="mt-5 flex items-center justify-between rounded-2xl border border-violet-300/15 bg-violet-300/[0.055] p-4 transition hover:border-violet-300/30"><span className="flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-xl bg-violet-300/10 text-violet-200"><CalendarDays size={18} /></span><span><strong className="block text-sm">Agenda</strong><small className="text-white/38">Turnos, reservas, reuniones, entregas y eventos del Space.</small></span></span><ArrowRight size={16} className="text-violet-200" /></Link> : null}
+              {canBusiness ? <Link href={`/mi-spot/${spotId}/business`} className="mt-5 flex items-center justify-between rounded-2xl border p-4 transition hover:bg-white/[0.025]" style={{ borderColor: `${accent}36`, backgroundColor: `${accent}0d` }}><span className="flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-xl" style={{ backgroundColor: `${accent}1f`, color: accent }}><Sparkles size={18} /></span><span><strong className="block text-sm">Business Player</strong><small className="text-white/38">Texto o foto → entender → buscar → comparar → decidir → ejecutar dentro del Spot.</small></span></span><ArrowRight size={16} style={{ color: accent }} /></Link> : null}
+              {canAgenda ? <Link href="/agenda" className="mt-3 flex items-center justify-between rounded-2xl border border-violet-300/15 bg-violet-300/[0.055] p-4 transition hover:border-violet-300/30"><span className="flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-xl bg-violet-300/10 text-violet-200"><CalendarDays size={18} /></span><span><strong className="block text-sm">Agenda</strong><small className="text-white/38">Turnos, reservas, reuniones, entregas y eventos del Space.</small></span></span><ArrowRight size={16} className="text-violet-200" /></Link> : null}
               <div className="mt-5 grid gap-3 sm:grid-cols-2">{operationModules.map((module) => <div key={module} className="rounded-2xl border border-white/[0.07] bg-black/20 p-4"><div className="flex items-center gap-2"><ChartNoAxesCombined size={16} className="text-violet-300" /><strong className="text-sm capitalize">{module}</strong></div><p className="mt-2 text-xs leading-5 text-white/35">Disponible dentro del Core comercial compartido.</p></div>)}</div>
               {data.canOpenCommerce ? <Link href={`/mi-spot/${spotId}/commerce`} className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-violet-300">Entrar al Core comercial <ArrowRight size={15} /></Link> : <p className="mt-5 text-xs text-white/35">Tu rol es específico. Las operaciones de escritura se limitan por permisos server-side.</p>}
             </article>
