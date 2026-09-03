@@ -7,6 +7,7 @@ import {
   type CommerceShippingAddress,
   type CommerceShippingMethod,
 } from "@/core/commerce/shipping/service";
+import { requirePhysicalPurchaseEligibility } from "@/lib/server/purchase-eligibility";
 import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
 
 export const runtime = "nodejs";
@@ -161,21 +162,10 @@ export async function POST(request: NextRequest) {
         : "";
       const title = variantLabel ? `${product.name} — ${variantLabel}` : product.name;
       const variantSnapshot = selectedVariant
-        ? {
-            id: selectedVariant.id,
-            sku: selectedVariant.sku,
-            title: selectedVariant.title,
-            size: selectedVariant.size,
-            color: selectedVariant.color,
-          }
+        ? { id: selectedVariant.id, sku: selectedVariant.sku, title: selectedVariant.title, size: selectedVariant.size, color: selectedVariant.color }
         : {};
 
-      mercadoPagoItems.push({
-        title,
-        quantity: requestedLine.quantity,
-        unitPrice: price,
-        currency: product.currency,
-      });
+      mercadoPagoItems.push({ title, quantity: requestedLine.quantity, unitPrice: price, currency: product.currency });
       orderItems.push({
         product_id: product.id,
         variant_id: selectedVariant?.id ?? null,
@@ -193,29 +183,16 @@ export async function POST(request: NextRequest) {
     const selectedProducts = productIds
       .map((productId) => products?.find((product) => product.id === productId))
       .filter((product): product is NonNullable<typeof product> => Boolean(product));
-    const sellerCandidates = new Set(
-      selectedProducts.map((product) => {
-        const ownerId =
-          product.owner_type === "player"
-            ? product.player_id
-            : product.owner_type === "studio"
-              ? product.studio_id
-              : "clouva";
-        return `${product.owner_type}:${ownerId}`;
-      }),
-    );
-    if (sellerCandidates.size !== 1) {
-      return NextResponse.json({ error: "Todos los productos de una orden deben pertenecer al mismo vendedor." }, { status: 400 });
-    }
+    const sellerCandidates = new Set(selectedProducts.map((product) => {
+      const ownerId = product.owner_type === "player" ? product.player_id : product.owner_type === "studio" ? product.studio_id : "clouva";
+      return `${product.owner_type}:${ownerId}`;
+    }));
+    if (sellerCandidates.size !== 1) return NextResponse.json({ error: "Todos los productos de una orden deben pertenecer al mismo vendedor." }, { status: 400 });
     const spotCandidates = new Set(selectedProducts.map((product) => product.spot_id ?? "none"));
-    if (spotCandidates.size !== 1) {
-      return NextResponse.json({ error: "Todos los productos de una orden deben pertenecer al mismo Spot." }, { status: 400 });
-    }
+    if (spotCandidates.size !== 1) return NextResponse.json({ error: "Todos los productos de una orden deben pertenecer al mismo Spot." }, { status: 400 });
 
     const currencies = new Set(mercadoPagoItems.map((item) => item.currency));
-    if (currencies.size !== 1) {
-      return NextResponse.json({ error: "Todos los productos de una orden deben usar la misma moneda." }, { status: 400 });
-    }
+    if (currencies.size !== 1) return NextResponse.json({ error: "Todos los productos de una orden deben usar la misma moneda." }, { status: 400 });
 
     const firstProduct = selectedProducts[0];
     if (!firstProduct) throw new Error("No pudimos resolver el vendedor de la orden.");
@@ -232,11 +209,11 @@ export async function POST(request: NextRequest) {
     } = null;
 
     if (hasPhysical) {
+      const eligibility = await requirePhysicalPurchaseEligibility(admin, user.id);
+      const savedAddress = eligibility.defaultAddress!;
       const shipping = body.shipping ?? {};
       const methodId = cleanText(shipping.methodId, 80);
-      if (!methodId) {
-        return NextResponse.json({ error: "Elegí un método de entrega." }, { status: 400 });
-      }
+      if (!methodId) return NextResponse.json({ error: "Elegí un método de entrega." }, { status: 400 });
 
       const { data: methodRow, error: methodError } = await admin
         .from("commerce_shipping_methods")
@@ -245,44 +222,35 @@ export async function POST(request: NextRequest) {
         .eq("active", true)
         .maybeSingle();
       if (methodError) throw new Error(methodError.message);
-      if (!methodRow) {
-        return NextResponse.json({ error: "El método de entrega ya no está disponible." }, { status: 409 });
-      }
+      if (!methodRow) return NextResponse.json({ error: "El método de entrega ya no está disponible." }, { status: 409 });
 
       const method = methodRow as CommerceShippingMethod;
-      if (!shippingMethodMatchesSeller(method, firstProduct)) {
-        return NextResponse.json({ error: "El método de entrega no pertenece al vendedor de esta orden." }, { status: 400 });
-      }
-      if (method.currency !== currency) {
-        return NextResponse.json({ error: "El método de entrega usa una moneda distinta a la orden." }, { status: 400 });
-      }
+      if (!shippingMethodMatchesSeller(method, firstProduct)) return NextResponse.json({ error: "El método de entrega no pertenece al vendedor de esta orden." }, { status: 400 });
+      if (method.currency !== currency) return NextResponse.json({ error: "El método de entrega usa una moneda distinta a la orden." }, { status: 400 });
 
+      // Physical checkout always snapshots the user's private saved address.
+      // Player.location is deliberately not referenced here.
       const address: CommerceShippingAddress = {
-        recipientName: cleanText(shipping.recipientName, 160),
-        recipientPhone: cleanText(shipping.recipientPhone, 60),
-        recipientEmail: cleanText(shipping.recipientEmail, 320).toLowerCase() || user.email.toLowerCase(),
-        addressLine1: cleanText(shipping.addressLine1, 240),
-        addressLine2: cleanText(shipping.addressLine2, 240),
-        city: cleanText(shipping.city, 120),
-        province: cleanText(shipping.province, 120),
-        postalCode: cleanText(shipping.postalCode, 30),
-        country: cleanText(shipping.country, 2).toUpperCase() || "AR",
+        recipientName: savedAddress.recipient_name,
+        recipientPhone: savedAddress.recipient_phone || "",
+        recipientEmail: savedAddress.recipient_email || user.email.toLowerCase(),
+        addressLine1: savedAddress.address_line_1,
+        addressLine2: savedAddress.address_line_2 || "",
+        city: savedAddress.city,
+        province: savedAddress.province,
+        postalCode: savedAddress.postal_code,
+        country: savedAddress.country,
       };
 
       if (!address.recipientName || !address.recipientPhone || !validEmail(address.recipientEmail)) {
-        return NextResponse.json({ error: "Completá destinatario, teléfono y email válidos." }, { status: 400 });
+        return NextResponse.json({ error: "Actualizá el destinatario, teléfono y email de tu dirección privada.", code: "PURCHASE_ADDRESS_INCOMPLETE" }, { status: 422 });
       }
-      if (
-        method.delivery_method === "shipping" &&
-        (!address.addressLine1 || !address.city || !address.province || !address.postalCode || !address.country)
-      ) {
-        return NextResponse.json({ error: "Completá calle, localidad, provincia y código postal." }, { status: 400 });
+      if (method.delivery_method === "shipping" && (!address.addressLine1 || !address.city || !address.province || !address.postalCode || !address.country)) {
+        return NextResponse.json({ error: "Tu dirección privada de entrega está incompleta.", code: "PURCHASE_ADDRESS_INCOMPLETE" }, { status: 422 });
       }
 
       const shippableItems = orderItems.filter((item) => item.product_type === "physical" || item.product_type === "bundle");
-      const knownWeights = shippableItems
-        .map((item) => Number(item.metadata.weight_grams))
-        .filter((weight) => Number.isFinite(weight) && weight >= 0);
+      const knownWeights = shippableItems.map((item) => Number(item.metadata.weight_grams)).filter((weight) => Number.isFinite(weight) && weight >= 0);
       const totalWeightGrams = knownWeights.length === shippableItems.length
         ? shippableItems.reduce((sum, item) => sum + Number(item.metadata.weight_grams) * item.quantity, 0)
         : null;
@@ -296,20 +264,10 @@ export async function POST(request: NextRequest) {
         method,
         address,
         carrier: quote.carrier,
-        quoteMetadata: {
-          service_code: quote.serviceCode,
-          ...(quote.metadata ?? {}),
-        },
+        quoteMetadata: { service_code: quote.serviceCode, ...(quote.metadata ?? {}) },
       };
 
-      if (shippingSubtotal > 0) {
-        mercadoPagoItems.push({
-          title: `Entrega — ${method.name}`,
-          quantity: 1,
-          unitPrice: shippingSubtotal,
-          currency,
-        });
-      }
+      if (shippingSubtotal > 0) mercadoPagoItems.push({ title: `Entrega — ${method.name}`, quantity: 1, unitPrice: shippingSubtotal, currency });
     }
 
     const total = subtotal + shippingSubtotal;
@@ -338,14 +296,9 @@ export async function POST(request: NextRequest) {
       .single();
     if (orderError) throw new Error(orderError.message);
 
-    const { error: itemsError } = await admin.from("commerce_order_items").insert(
-      orderItems.map((item) => ({ ...item, order_id: order.id })),
-    );
+    const { error: itemsError } = await admin.from("commerce_order_items").insert(orderItems.map((item) => ({ ...item, order_id: order.id })));
     if (itemsError) {
-      await admin
-        .from("commerce_orders")
-        .update({ status: "cancelled", fulfillment_status: "cancelled" })
-        .eq("id", order.id);
+      await admin.from("commerce_orders").update({ status: "cancelled", fulfillment_status: "cancelled" }).eq("id", order.id);
       throw new Error(itemsError.message);
     }
 
@@ -380,10 +333,7 @@ export async function POST(request: NextRequest) {
         metadata: { quote: quoteMetadata },
       });
       if (shipmentError) {
-        await admin
-          .from("commerce_orders")
-          .update({ status: "cancelled", fulfillment_status: "cancelled" })
-          .eq("id", order.id);
+        await admin.from("commerce_orders").update({ status: "cancelled", fulfillment_status: "cancelled" }).eq("id", order.id);
         throw new Error(shipmentError.message);
       }
     }
@@ -393,11 +343,7 @@ export async function POST(request: NextRequest) {
       p_event_type: "checkout_started",
       p_note: "La orden fue creada y está lista para abrir Mercado Pago.",
       p_dedupe_key: `checkout:${externalReference}:started`,
-      p_metadata: {
-        external_reference: externalReference,
-        shipping_subtotal: shippingSubtotal,
-        shipping_method_id: shipment?.method.id ?? null,
-      },
+      p_metadata: { external_reference: externalReference, shipping_subtotal: shippingSubtotal, shipping_method_id: shipment?.method.id ?? null },
     });
 
     const appBase = (process.env.APP_BASE_URL?.trim() || "https://clouva.com.ar").replace(/\/$/, "");
@@ -408,26 +354,14 @@ export async function POST(request: NextRequest) {
         items: mercadoPagoItems,
         payer: { email: user.email },
         externalReference,
-        backUrls: {
-          success: `${orderUrl}&return=success`,
-          failure: `${orderUrl}&return=failure`,
-          pending: `${orderUrl}&return=pending`,
-        },
+        backUrls: { success: `${orderUrl}&return=success`, failure: `${orderUrl}&return=failure`, pending: `${orderUrl}&return=pending` },
         notificationUrl: `${appBase}/api/webhooks/mercadopago/commerce-orders`,
       });
       const initPoint = typeof preference.init_point === "string" ? preference.init_point : null;
       if (!initPoint) throw new Error("Mercado Pago no devolvió el checkout.");
-
-      return NextResponse.json({
-        orderId: order.id,
-        checkoutToken: order.checkout_token,
-        initPoint,
-      });
+      return NextResponse.json({ orderId: order.id, checkoutToken: order.checkout_token, initPoint });
     } catch (preferenceError) {
-      await admin
-        .from("commerce_orders")
-        .update({ status: "cancelled", fulfillment_status: "cancelled" })
-        .eq("id", order.id);
+      await admin.from("commerce_orders").update({ status: "cancelled", fulfillment_status: "cancelled" }).eq("id", order.id);
       await admin.from("commerce_shipments").update({ status: "cancelled" }).eq("order_id", order.id);
       await admin.rpc("record_commerce_order_event", {
         p_order_id: order.id,
@@ -439,8 +373,9 @@ export async function POST(request: NextRequest) {
       throw preferenceError;
     }
   } catch (error) {
-    const status = (error as Error & { status?: number })?.status ?? (isAuthError(error) ? 401 : 500);
+    const typed = error as Error & { status?: number; code?: string };
+    const status = typed.status ?? (isAuthError(error) ? 401 : 500);
     const message = error instanceof Error ? error.message : "No se pudo iniciar el pago.";
-    return NextResponse.json({ error: message }, { status });
+    return NextResponse.json({ error: message, ...(typed.code ? { code: typed.code, action: "/cuenta/compras" } : {}) }, { status });
   }
 }
