@@ -59,43 +59,56 @@ export async function POST(request: NextRequest) {
     if (!Number.isFinite(amount) || Math.abs(amount - Number(operation.amount)) > 0.01) {
       throw new Error("El importe del pago no coincide con la compra de FLOWS.");
     }
-    if (text(payment.currency_id) !== operation.currency) throw new Error("La moneda del pago no coincide con la compra de FLOWS.");
+    const currency = text(payment.currency_id).toUpperCase();
+    if (currency !== operation.currency.toUpperCase()) throw new Error("La moneda del pago no coincide con la compra de FLOWS.");
 
     const paymentStatus = text(payment.status).trim().toLowerCase();
     const approvedAtRaw = text(payment.date_approved || payment.date_created);
     const approvedAt = approvedAtRaw && !Number.isNaN(Date.parse(approvedAtRaw)) ? approvedAtRaw : new Date().toISOString();
 
     if (paymentStatus === "approved") {
-      const { error: updateError } = await admin
-        .from("flow_purchase_operations")
-        .update({
-          status: "confirmed",
-          provider_payment_id: resourceId,
-          confirmed_at: approvedAt,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", operation.id)
-        .in("status", ["pending", "confirmed"]);
-      if (updateError) throw new Error(updateError.message);
-
-      const { data: issued, error: issueError } = await admin.rpc("issue_flows_for_operation", {
+      const { data: issued, error: confirmationError } = await admin.rpc("confirm_flow_external_payment", {
         p_operation_id: operation.id,
-        p_confirmed_by: null,
+        p_provider: "mercadopago",
+        p_provider_payment_id: resourceId,
+        p_confirmed_at: approvedAt,
+        p_amount: amount,
+        p_currency: currency,
+        p_idempotency_key: `mercadopago-payment:${resourceId}`,
+        p_metadata: {
+          paymentStatus,
+          paymentMethodId: text(payment.payment_method_id) || null,
+          paymentTypeId: text(payment.payment_type_id) || null,
+        },
       });
-      if (issueError) throw new Error(issueError.message);
+      if (confirmationError) throw new Error(confirmationError.message);
       return NextResponse.json({ received: true, processed: true, operationId: operation.id, issued });
+    }
+
+    if (["refunded", "charged_back"].includes(paymentStatus)) {
+      const { data: refund, error: refundError } = await admin.rpc("record_flow_refund", {
+        p_operation_id: operation.id,
+        p_provider_payment_id: resourceId,
+        p_amount: amount,
+        p_currency: currency,
+        p_reason: paymentStatus,
+        p_idempotency_key: `mercadopago-refund:${resourceId}:${paymentStatus}`,
+        p_metadata: { paymentStatus },
+      });
+      if (refundError) throw new Error(refundError.message);
+      return NextResponse.json({ received: true, processed: true, operationId: operation.id, refund });
     }
 
     const nextStatus = paymentStatus === "rejected" ? "failed"
       : paymentStatus === "cancelled" ? "cancelled"
-      : ["refunded", "charged_back"].includes(paymentStatus) ? "refunded"
       : "pending";
 
     if (!operation.issued_at || nextStatus === "pending") {
       const { error: updateError } = await admin
         .from("flow_purchase_operations")
         .update({ status: nextStatus, provider_payment_id: resourceId, updated_at: new Date().toISOString() })
-        .eq("id", operation.id);
+        .eq("id", operation.id)
+        .in("status", ["pending", nextStatus]);
       if (updateError) throw new Error(updateError.message);
     }
 

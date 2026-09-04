@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, Loader2, RefreshCw, ShoppingBag } from "lucide-react";
+import { ArrowLeft, ChevronDown, ChevronUp, Loader2, RefreshCw, ShoppingBag } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
@@ -8,99 +8,28 @@ import { CloverIcon } from "@/components/clover-icon";
 import { MainNav } from "@/components/layout";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
 
-type PlayerRef = { id:string; display_name:string; slug:string } | null;
-type OperationRef = { id:string; provider:string; payment_method:string; amount:number; currency:string; confirmed_at:string|null; created_at:string } | null;
-type FlowAsset = {
-  id:string;
-  flow_number:number;
-  status:"pending_payment"|"available"|"activated"|"transferred";
-  issued_at:string;
-  activated_at:string|null;
-  owner:PlayerRef;
-  originalBuyer:PlayerRef;
-  operation:OperationRef;
-};
-
-const STATUS:Record<FlowAsset["status"],string> = {
-  pending_payment:"Pendiente de pago",
-  available:"Disponible",
-  activated:"Activado",
-  transferred:"Transferido",
-};
-
-function when(value:string){return new Date(value).toLocaleString("es-AR",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"})}
+type PlayerRef={id:string;display_name:string;slug:string}|null;
+type FundingRef={id:string;entry_type:string;amount:number;currency:string;status:string;external_payment_id:string|null;occurred_at:string};
+type DocumentRef={id:string;kind:"internal_receipt"|"fiscal_document";status:string;document_number:string|null;external_document_id:string|null;issued_at:string|null};
+type MovementRef={id:string;action:string;created_at:string};
+type OperationRef={id:string;provider:string;provider_payment_id:string|null;payment_method:string;amount:number;currency:string;status:string;backing_status:string;confirmed_at:string|null;refund_status:string|null;funding:FundingRef[];documents:DocumentRef[]}|null;
+type FlowAsset={id:string;flow_number:number;status:"pending_payment"|"available"|"activated"|"transferred"|"legacy_unverified"|"reversed";issued_at:string;owner:PlayerRef;originalBuyer:PlayerRef;operation:OperationRef;history:MovementRef[]};
+type Pricing={flowUsdValue:number;currency:string};
+const statusLabel:Record<FlowAsset["status"],string>={pending_payment:"Pendiente de pago",available:"Disponible",activated:"Activado",transferred:"Transferido",legacy_unverified:"Pendiente de conciliación",reversed:"Revertido"};
+const when=(v:string|null|undefined)=>v?new Date(v).toLocaleString("es-AR",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"}):"—";
+const money=(v:number,c:string)=>new Intl.NumberFormat("es-AR",{style:"currency",currency:c,maximumFractionDigits:2}).format(v);
+const origin=(o:OperationRef)=>o?.provider==="cash"?"Pago en efectivo":o?.provider==="mercadopago"?"Mercado Pago":o?.provider||"Sin operación";
 
 export default function FlowWalletAssetsPage(){
-  const {user,loading:authLoading}=useAuth();
-  const [assets,setAssets]=useState<FlowAsset[]>([]);
-  const [loading,setLoading]=useState(true);
-  const [buying,setBuying]=useState(false);
-  const [quantity,setQuantity]=useState(1);
-  const [error,setError]=useState<string|null>(null);
-
-  const load=useCallback(async()=>{
-    if(!user)return;
-    setLoading(true);setError(null);
-    try{
-      const response=await authenticatedFetch("/api/flows/assets");
-      const payload=await readApiJson<{assets:FlowAsset[]}>(response);
-      setAssets(payload.assets);
-    }catch(cause){setError(cause instanceof Error?cause.message:"No se pudieron cargar tus FLOWS.");}
-    finally{setLoading(false);}
-  },[user]);
-
-  useEffect(()=>{if(authLoading)return;if(!user){setLoading(false);return}void load();},[authLoading,load,user]);
-
-  async function buy(){
-    setBuying(true);setError(null);
-    try{
-      const response=await authenticatedFetch("/api/flows/purchase",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({quantity})});
-      const payload=await readApiJson<{initPoint:string}>(response);
-      window.location.assign(payload.initPoint);
-    }catch(cause){setError(cause instanceof Error?cause.message:"No se pudo iniciar la compra.");setBuying(false);}
-  }
-
-  return <main className="min-h-screen bg-[#07060d] text-white">
-    <MainNav/>
-    <div className="mx-auto max-w-5xl space-y-5 px-4 py-8 md:px-8">
-      <Link href="/mi-flow/billetera" className="inline-flex items-center gap-2 text-sm text-white/50 hover:text-white"><ArrowLeft size={15}/>Volver a Billetera</Link>
-
-      <section className="rounded-[30px] border border-cyan-300/15 bg-gradient-to-br from-[#111b21] via-[#0b1118] to-[#08090d] p-6 md:p-8">
-        <div className="flex flex-col gap-6 md:flex-row md:items-end md:justify-between">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-cyan-200/60">Billetera · Activos CLOUVA</p>
-            <h1 className="mt-2 flex items-center gap-3 text-4xl font-semibold"><CloverIcon className="text-cyan-200" size={34}/>Mis FLOWS</h1>
-            <p className="mt-3 max-w-xl text-sm leading-6 text-white/45">Cada FLOW es un activo individual, con número único, comprador original, propietario y origen de emisión.</p>
-          </div>
-          <button type="button" onClick={()=>void load()} disabled={loading} className="inline-flex items-center justify-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-xs text-white/60"><RefreshCw size={14} className={loading?"animate-spin":""}/>Actualizar</button>
-        </div>
-      </section>
-
-      <section className="rounded-[24px] border border-white/[0.08] bg-[#0c0a13]/95 p-5">
-        <div className="flex flex-wrap items-end gap-3">
-          <div className="mr-auto"><p className="font-semibold">Comprar FLOWS</p><p className="mt-1 text-xs text-white/40">1 FLOW = USD 1. La acreditación ocurre únicamente después de la confirmación del pago.</p></div>
-          <label className="text-xs text-white/45">Cantidad<input value={quantity} onChange={event=>setQuantity(Math.max(1,Math.min(50,Math.trunc(Number(event.target.value)||1))))} type="number" min={1} max={50} className="ml-2 w-20 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-white outline-none"/></label>
-          <button type="button" onClick={()=>void buy()} disabled={buying} className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-black disabled:opacity-50">{buying?<Loader2 size={15} className="animate-spin"/>:<ShoppingBag size={15}/>}Comprar · USD {quantity}</button>
-        </div>
-      </section>
-
-      {error?<div className="rounded-2xl border border-rose-300/15 bg-rose-300/[0.06] p-4 text-sm text-rose-200">{error}</div>:null}
-      {loading?<div className="grid min-h-32 place-items-center rounded-[24px] border border-white/[0.08] bg-[#0c0a13]/95 text-sm text-white/45"><Loader2 size={17} className="animate-spin"/></div>:null}
-
-      {!loading&&!assets.length?<div className="rounded-[24px] border border-white/[0.08] bg-[#0c0a13]/95 p-7 text-sm text-white/45">Todavía no tenés FLOWS emitidos en esta billetera.</div>:null}
-
-      <section className="grid gap-4 md:grid-cols-2">{assets.map(asset=>{
-        const source=asset.operation?.provider==="manual"?"Pago físico/manual":"Compra CLOUVA";
-        return <article key={asset.id} className="rounded-[24px] border border-cyan-300/10 bg-[#0c0f14] p-5">
-          <div className="flex items-start justify-between gap-3"><div><p className="text-[10px] uppercase tracking-[0.18em] text-white/30">Activo CLOUVA</p><h2 className="mt-1 text-2xl font-semibold">FLOW #{String(asset.flow_number).padStart(6,"0")}</h2></div><span className="rounded-full border border-cyan-200/15 bg-cyan-200/[0.06] px-3 py-1 text-xs text-cyan-100">{STATUS[asset.status]}</span></div>
-          <dl className="mt-5 grid gap-3 text-sm">
-            <div className="flex justify-between gap-4"><dt className="text-white/35">Comprado por</dt><dd>{asset.originalBuyer?`@${asset.originalBuyer.slug}`:"CLOUVA / sin Player"}</dd></div>
-            <div className="flex justify-between gap-4"><dt className="text-white/35">Propietario</dt><dd>{asset.owner?`@${asset.owner.slug}`:"Mi cuenta"}</dd></div>
-            <div className="flex justify-between gap-4"><dt className="text-white/35">Fecha</dt><dd className="text-right">{when(asset.issued_at)}</dd></div>
-            <div className="flex justify-between gap-4"><dt className="text-white/35">Origen</dt><dd>{source}</dd></div>
-          </dl>
-        </article>;
-      })}</section>
-    </div>
-  </main>;
+ const {user,loading:authLoading}=useAuth();const [assets,setAssets]=useState<FlowAsset[]>([]),[pricing,setPricing]=useState<Pricing>({flowUsdValue:1,currency:"USD"}),[open,setOpen]=useState<string|null>(null),[loading,setLoading]=useState(true),[buying,setBuying]=useState(false),[quantity,setQuantity]=useState(1),[error,setError]=useState<string|null>(null);
+ const load=useCallback(async()=>{if(!user)return;setLoading(true);setError(null);try{const r=await authenticatedFetch("/api/flows/assets");const p=await readApiJson<{assets:FlowAsset[];pricing:Pricing}>(r);setAssets(p.assets);setPricing(p.pricing)}catch(e){setError(e instanceof Error?e.message:"No se pudieron cargar tus FLOWS.")}finally{setLoading(false)}},[user]);
+ useEffect(()=>{if(authLoading)return;if(!user){setLoading(false);return}void load()},[authLoading,load,user]);
+ async function buy(){setBuying(true);setError(null);try{const r=await authenticatedFetch("/api/flows/purchase",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({quantity})});const p=await readApiJson<{initPoint:string}>(r);window.location.assign(p.initPoint)}catch(e){setError(e instanceof Error?e.message:"No se pudo iniciar la compra.");setBuying(false)}}
+ return <main className="min-h-screen bg-[#07060d] text-white"><MainNav/><div className="mx-auto max-w-5xl space-y-5 px-4 py-8 md:px-8"><Link href="/mi-flow/billetera" className="inline-flex items-center gap-2 text-sm text-white/50"><ArrowLeft size={15}/>Volver a Billetera</Link>
+ <section className="rounded-[30px] border border-cyan-300/15 bg-gradient-to-br from-[#111b21] via-[#0b1118] to-[#08090d] p-6 md:p-8"><div className="flex items-end justify-between gap-4"><div><p className="text-[11px] uppercase tracking-[0.2em] text-cyan-200/60">Billetera · Activos CLOUVA</p><h1 className="mt-2 flex items-center gap-3 text-4xl font-semibold"><CloverIcon className="text-cyan-200" size={34}/>Mis FLOWS</h1><p className="mt-3 text-sm text-white/45">Cada FLOW es individual y rastreable hasta el dinero real que originó su emisión.</p></div><button onClick={()=>void load()} disabled={loading} className="rounded-xl border border-white/10 p-2 text-white/50"><RefreshCw size={15} className={loading?"animate-spin":""}/></button></div></section>
+ <section className="rounded-[24px] border border-white/[0.08] bg-[#0c0a13]/95 p-5"><div className="flex flex-wrap items-end gap-3"><div className="mr-auto"><p className="font-semibold">Comprar FLOWS</p><p className="mt-1 text-xs text-white/40">1 FLOW = {money(pricing.flowUsdValue,pricing.currency)} · se acredita solo con pago confirmado.</p></div><input type="number" min={1} max={50} value={quantity} onChange={e=>setQuantity(Math.max(1,Math.min(50,Math.trunc(Number(e.target.value)||1))))} className="w-20 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2"/><button onClick={()=>void buy()} disabled={buying} className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-black">{buying?<Loader2 size={15} className="animate-spin"/>:<ShoppingBag size={15}/>}Comprar · {money(quantity*pricing.flowUsdValue,pricing.currency)}</button></div></section>
+ {error?<p className="rounded-2xl border border-rose-300/15 bg-rose-300/[0.06] p-4 text-sm text-rose-200">{error}</p>:null}{loading?<div className="grid min-h-32 place-items-center"><Loader2 className="animate-spin"/></div>:null}
+ <section className="grid gap-4 md:grid-cols-2">{assets.map(a=>{const o=a.operation,receipt=o?.documents.find(d=>d.kind==="internal_receipt"),fiscal=o?.documents.find(d=>d.kind==="fiscal_document"),fund=o?.funding.find(f=>f.entry_type==="funding"&&f.status==="confirmed"),expanded=open===a.id;return <article key={a.id} className="rounded-[24px] border border-cyan-300/10 bg-[#0c0f14] p-5"><button onClick={()=>setOpen(expanded?null:a.id)} className="w-full text-left"><div className="flex justify-between gap-3"><div><p className="text-[10px] uppercase tracking-[0.18em] text-white/30">Activo CLOUVA</p><h2 className="mt-1 text-2xl font-semibold">FLOW #{String(a.flow_number).padStart(6,"0")}</h2></div><div className="flex items-center gap-2"><span className="rounded-full border border-cyan-200/15 px-3 py-1 text-xs text-cyan-100">{statusLabel[a.status]}</span>{expanded?<ChevronUp size={16}/>:<ChevronDown size={16}/>}</div></div><div className="mt-4 grid gap-2 text-sm"><Row label="Comprador original" value={a.originalBuyer?`@${a.originalBuyer.slug}`:"—"}/><Row label="Propietario" value={a.owner?`@${a.owner.slug}`:"—"}/><Row label="Origen" value={origin(o)}/><Row label="Respaldo" value={o?.backing_status==="verified"?"Pago verificado":o?.backing_status==="reversed"?"Pago revertido":"Pendiente"}/></div></button>
+ {expanded?<div className="mt-5 space-y-5 border-t border-white/[0.07] pt-5"><div><p className="text-[10px] uppercase tracking-[0.16em] text-white/30">Operación de origen</p><div className="mt-3 grid gap-2 text-sm"><Row label="Valor recibido" value={o?money(Number(o.amount),o.currency):"—"}/><Row label="Pago confirmado" value={when(o?.confirmed_at)}/><Row label="FLOW emitido" value={when(a.issued_at)}/><Row label="Operación" value={o?.id||"—"} mono/>{o?.provider==="mercadopago"?<Row label="Pago Mercado Pago" value={o.provider_payment_id||"—"} mono/>:null}{fund?<Row label="Ingreso registrado" value={`${money(Number(fund.amount),fund.currency)} · ${when(fund.occurred_at)}`}/>:null}</div></div><div><p className="text-[10px] uppercase tracking-[0.16em] text-white/30">Comprobantes</p><div className="mt-3 grid gap-2 text-sm"><Row label="Registro interno" value={receipt?.document_number||"—"} mono/><Row label="Comprobante fiscal oficial" value={fiscal?.document_number||"No asociado todavía"}/></div></div><div><p className="text-[10px] uppercase tracking-[0.16em] text-white/30">Historial</p><div className="mt-2 space-y-2">{a.history.map(h=><div key={h.id} className="flex justify-between rounded-xl bg-white/[0.035] px-3 py-2 text-xs"><span>{h.action}</span><span className="text-white/35">{when(h.created_at)}</span></div>)}</div></div>{o?.refund_status?<p className="rounded-xl border border-amber-300/15 bg-amber-300/[0.06] p-3 text-xs text-amber-100">Reembolso en revisión auditable; los FLOWS afectados no se borran.</p>:null}</div>:null}</article>})}</section></div></main>;
 }
+function Row({label,value,mono=false}:{label:string;value:string;mono?:boolean}){return <div className="flex justify-between gap-4"><span className="text-white/35">{label}</span><span className={`break-all text-right ${mono?"font-mono text-[11px] text-white/65":""}`}>{value}</span></div>}
