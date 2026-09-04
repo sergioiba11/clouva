@@ -71,7 +71,7 @@ test("master navigation contract is shared and keeps product concepts separate",
   assert.equal(CLOUVA_NAVIGATION.MI_FLOW.href, "/mi-flow");
   assert.equal(CLOUVA_NAVIGATION.CREATE.href, "/crear");
   assert.equal(CLOUVA_NAVIGATION.MI_SPOT.href, "/mi-spot");
-  assert.equal(CLOUVA_NAVIGATION.MARKET.href, "/tienda");
+  assert.equal(CLOUVA_NAVIGATION.MARKET.href, "/market");
   assert.equal(CLOUVA_NAVIGATION.MATRIX.href, "/matrix");
   assert.equal(CLOUVA_NAVIGATION.STUDIOS.href, "/studios");
 
