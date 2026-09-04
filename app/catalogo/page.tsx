@@ -17,7 +17,9 @@ export default function CatalogPage() {
   const [sort, setSort] = useState("recent");
 
   useEffect(() => {
-    setCategory(new URLSearchParams(window.location.search).get("category") ?? "");
+    const params = new URLSearchParams(window.location.search);
+    setQuery(params.get("q") ?? "");
+    setCategory(params.get("category") ?? "");
     void (async () => {
       const { data } = await supabase
         .from("commerce_products")
