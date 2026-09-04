@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
+import { supabase } from "@/lib/supabase";
 
 type NotificationRow = {
   id: string;
@@ -14,6 +15,8 @@ type NotificationRow = {
   link: string | null;
   read_at: string | null;
   created_at: string;
+  actor: { playerId: string; displayName: string; username: string | null; avatar: string | null } | null;
+  metadata?: Record<string, unknown> | null;
 };
 
 const POLL_INTERVAL_MS = 60_000;
@@ -52,7 +55,11 @@ export function NotificationBell({ className = "" }: { className?: string }) {
     if (!user) return;
     void load();
     const interval = window.setInterval(() => void load(), POLL_INTERVAL_MS);
-    return () => window.clearInterval(interval);
+    const channel = supabase.channel(`notifications:${user.id}`).on("postgres_changes", { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${user.id}` }, () => void load()).subscribe();
+    return () => {
+      window.clearInterval(interval);
+      void supabase.removeChannel(channel);
+    };
   }, [user]);
 
   useEffect(() => {
@@ -103,11 +110,15 @@ export function NotificationBell({ className = "" }: { className?: string }) {
             ) : (
               items.map((item) => {
                 const content = (
-                  <div className="flex items-start gap-2">
-                    {!item.read_at ? <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-violet-400" /> : <span className="mt-1.5 h-2 w-2 shrink-0" />}
-                    <div className="min-w-0">
-                      <p className="text-sm font-semibold text-white">{item.title}</p>
-                      {item.body ? <p className="mt-0.5 text-xs text-white/55">{item.body}</p> : null}
+                  <div className="flex items-start gap-2.5">
+                    <div className="relative grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-full border border-white/10 bg-white/[0.05] text-[11px] font-bold text-white/75">
+                      {item.actor?.avatar ? <img src={item.actor.avatar} alt="" className="h-full w-full object-cover" /> : (item.actor?.displayName || "C").slice(0, 1).toUpperCase()}
+                      {!item.read_at ? <span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full border-2 border-[#0a0810] bg-violet-400" /> : null}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2"><p className="truncate text-sm font-semibold text-white">{item.title}</p>{item.type === "agenda_invitation" ? <span className="shrink-0 rounded-full border border-violet-300/15 bg-violet-300/[0.08] px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-[0.12em] text-violet-200">Agenda</span> : null}</div>
+                      {item.actor?.username ? <p className="mt-0.5 text-[10px] text-white/35">@{item.actor.username}</p> : null}
+                      {item.body ? <p className="mt-1 text-xs text-white/55">{item.body}</p> : null}
                       <p className="mt-1 text-[10px] text-white/35">{timeAgo(item.created_at)}</p>
                     </div>
                   </div>

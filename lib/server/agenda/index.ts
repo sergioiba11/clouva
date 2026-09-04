@@ -1,6 +1,7 @@
 import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { eventProjectionForConnection, isSelectableAgendaMember, shouldDeliverAgendaInvitation } from "@/lib/agenda/participation-policy";
 import { requirePlayerBasics } from "@/lib/server/player-basics";
 import { createAdminSupabase } from "@/lib/server/supabase";
 
@@ -427,6 +428,34 @@ export async function createAgendaEvent(args: {
   const locationType = (["unspecified", "physical", "online", "hybrid"].includes(locationTypeInput) ? locationTypeInput : "unspecified") as AgendaEvent["locationType"];
   const recurrenceRule = cleanText(args.input.recurrenceRule, 1000) || null;
 
+  const requestedParticipantIds = unique(
+    ((Array.isArray(args.input.participantPlayerIds) ? args.input.participantPlayerIds : [])
+      .filter(isUuid) as string[])
+      .filter((playerId) => playerId !== access.playerId),
+  );
+  const participantMembershipStatus = new Map<string, string>();
+  if (requestedParticipantIds.length) {
+    const { data: memberRows, error: memberError } = await args.admin
+      .from("agenda_members")
+      .select("player_id,status")
+      .eq("agenda_id", args.agendaId)
+      .in("player_id", requestedParticipantIds);
+    if (memberError) throw new Error(memberError.message);
+    for (const member of memberRows ?? []) {
+      participantMembershipStatus.set(String(member.player_id), String(member.status));
+    }
+    const invalidPlayerIds = requestedParticipantIds.filter(
+      (playerId) => !isSelectableAgendaMember(participantMembershipStatus.get(playerId)),
+    );
+    if (invalidPlayerIds.length) {
+      throw typedError(
+        "Invitá al Player a conectar esta Agenda antes de compartir el evento.",
+        409,
+        "AGENDA_CONNECTION_REQUIRED",
+      );
+    }
+  }
+
   const { data: event, error } = await args.admin
     .from("agenda_events")
     .insert({
@@ -453,11 +482,7 @@ export async function createAgendaEvent(args: {
   const eventId = String(event.id);
   await args.admin.from("agenda_event_agendas").insert({ event_id: eventId, agenda_id: args.agendaId, relation: "primary" });
 
-  const participantIds = unique([
-    access.playerId,
-    ...((Array.isArray(args.input.participantPlayerIds) ? args.input.participantPlayerIds : [])
-      .filter(isUuid) as string[]),
-  ]);
+  const participantIds = unique([access.playerId, ...requestedParticipantIds]);
 
   if (participantIds.length) {
     const participantRows = participantIds.map((playerId) => ({
@@ -467,20 +492,30 @@ export async function createAgendaEvent(args: {
       rsvp_status: playerId === access.playerId ? "accepted" : "pending",
       invited_by_player_id: access.playerId,
     }));
-    const { error: participantError } = await args.admin.from("agenda_event_participants").upsert(participantRows, { onConflict: "event_id,player_id" });
+    const { error: participantError } = await args.admin
+      .from("agenda_event_participants")
+      .upsert(participantRows, { onConflict: "event_id,player_id" });
     if (participantError) throw new Error(participantError.message);
 
-    const { data: playerAgendas, error: playerAgendaError } = await args.admin
-      .from("agendas")
-      .select("id,owner_player_id")
-      .in("owner_player_id", participantIds)
-      .eq("is_default", true);
+    const projectedParticipantIds = unique([
+      access.playerId,
+      ...requestedParticipantIds.filter((playerId) => participantMembershipStatus.get(playerId) === "active"),
+    ]);
+    const { data: playerAgendas, error: playerAgendaError } = projectedParticipantIds.length
+      ? await args.admin
+          .from("agendas")
+          .select("id,owner_player_id")
+          .in("owner_player_id", projectedParticipantIds)
+          .eq("is_default", true)
+      : { data: [], error: null };
     if (playerAgendaError) throw new Error(playerAgendaError.message);
     const links = (playerAgendas ?? [])
       .filter((agenda) => String(agenda.id) !== args.agendaId)
       .map((agenda) => ({ event_id: eventId, agenda_id: agenda.id, relation: "invited" }));
     if (links.length) {
-      const { error: linksError } = await args.admin.from("agenda_event_agendas").upsert(links, { onConflict: "event_id,agenda_id" });
+      const { error: linksError } = await args.admin
+        .from("agenda_event_agendas")
+        .upsert(links, { onConflict: "event_id,agenda_id" });
       if (linksError) throw new Error(linksError.message);
     }
   }
@@ -592,18 +627,72 @@ export async function inviteAgendaMember(args: {
   role: "viewer" | "participant" | "editor";
 }) {
   const access = await resolveAgendaAccess({ admin: args.admin, userId: args.userId, agendaId: args.agendaId });
-  if (access.role !== "owner" && access.role !== "editor") throw typedError("No podés compartir esta Agenda.", 403, "AGENDA_SHARE_FORBIDDEN");
-  if (!isUuid(args.playerId) || !["viewer", "participant", "editor"].includes(args.role)) throw typedError("Invitación inválida.");
+  if (access.role !== "owner" && access.role !== "editor") {
+    throw typedError("No podés compartir esta Agenda.", 403, "AGENDA_SHARE_FORBIDDEN");
+  }
+  if (!isUuid(args.playerId) || !["viewer", "participant", "editor"].includes(args.role)) {
+    throw typedError("Invitación inválida.");
+  }
   if (args.playerId === access.playerId) throw typedError("Tu Player ya tiene acceso a esta Agenda.");
-  const { error } = await args.admin.from("agenda_members").upsert({
-    agenda_id: args.agendaId,
-    player_id: args.playerId,
+
+  const { data: existing, error: existingError } = await args.admin
+    .from("agenda_members")
+    .select("status,role,invitation_token")
+    .eq("agenda_id", args.agendaId)
+    .eq("player_id", args.playerId)
+    .maybeSingle();
+  if (existingError) throw new Error(existingError.message);
+
+  if (existing && !shouldDeliverAgendaInvitation(String(existing.status))) {
+    return {
+      agendaId: args.agendaId,
+      playerId: args.playerId,
+      status: String(existing.status),
+      role: String(existing.role),
+      invitationToken: existing.invitation_token ? String(existing.invitation_token) : null,
+      invitedByPlayerId: access.playerId,
+      shouldDeliver: false as const,
+    };
+  }
+
+  const resetDelivery = {
     role: args.role,
     status: "pending",
     invited_by_player_id: access.playerId,
-  }, { onConflict: "agenda_id,player_id" });
+    accepted_at: null,
+    declined_at: null,
+    cancelled_at: null,
+    email_delivery_status: "queued",
+    email_provider_message_id: null,
+    whatsapp_delivery_status: "queued",
+    whatsapp_provider_message_id: null,
+    notification_id: null,
+  };
+
+  const mutation = existing
+    ? args.admin
+        .from("agenda_members")
+        .update({ ...resetDelivery, invitation_token: crypto.randomUUID() })
+        .eq("agenda_id", args.agendaId)
+        .eq("player_id", args.playerId)
+    : args.admin
+        .from("agenda_members")
+        .insert({ agenda_id: args.agendaId, player_id: args.playerId, ...resetDelivery });
+
+  const { data: invitation, error } = await mutation
+    .select("status,role,invitation_token")
+    .single();
   if (error) throw new Error(error.message);
-  return { agendaId: args.agendaId, playerId: args.playerId, status: "pending" as const };
+
+  return {
+    agendaId: args.agendaId,
+    playerId: args.playerId,
+    status: "pending" as const,
+    role: String(invitation.role),
+    invitationToken: invitation.invitation_token ? String(invitation.invitation_token) : null,
+    invitedByPlayerId: access.playerId,
+    shouldDeliver: true as const,
+  };
 }
 
 export async function respondAgendaInvite(args: {
@@ -614,17 +703,105 @@ export async function respondAgendaInvite(args: {
 }) {
   const player = await loadActor(args.admin, args.userId);
   const nextStatus = args.accept ? "active" : "declined";
-  const { data, error } = await args.admin
+  const projection = eventProjectionForConnection(nextStatus);
+
+  const { data: membership, error: membershipError } = await args.admin
     .from("agenda_members")
-    .update({ status: nextStatus })
+    .select("status")
     .eq("agenda_id", args.agendaId)
     .eq("player_id", player.id)
-    .eq("status", "pending")
-    .select("agenda_id")
     .maybeSingle();
-  if (error) throw new Error(error.message);
-  if (!data) throw typedError("No hay una invitación pendiente para esta Agenda.", 404, "AGENDA_INVITE_NOT_FOUND");
-  return { agendaId: args.agendaId, status: nextStatus };
+  if (membershipError) throw new Error(membershipError.message);
+  if (!membership) throw typedError("No hay una invitación para esta Agenda.", 404, "AGENDA_INVITE_NOT_FOUND");
+
+  if (String(membership.status) !== nextStatus) {
+    if (String(membership.status) !== "pending") {
+      throw typedError("La invitación ya fue resuelta.", 409, "AGENDA_INVITE_ALREADY_RESOLVED");
+    }
+    const now = new Date().toISOString();
+    const { data: updated, error } = await args.admin
+      .from("agenda_members")
+      .update({
+        status: nextStatus,
+        accepted_at: args.accept ? now : null,
+        declined_at: args.accept ? null : now,
+      })
+      .eq("agenda_id", args.agendaId)
+      .eq("player_id", player.id)
+      .eq("status", "pending")
+      .select("status")
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!updated) {
+      const { data: current, error: currentError } = await args.admin
+        .from("agenda_members")
+        .select("status")
+        .eq("agenda_id", args.agendaId)
+        .eq("player_id", player.id)
+        .maybeSingle();
+      if (currentError) throw new Error(currentError.message);
+      if (String(current?.status || "") !== nextStatus) {
+        throw typedError("La invitación cambió mientras la estabas respondiendo.", 409, "AGENDA_INVITE_RACE");
+      }
+    }
+  }
+
+  const { data: ownedEvents, error: eventError } = await args.admin
+    .from("agenda_events")
+    .select("id")
+    .eq("primary_agenda_id", args.agendaId);
+  if (eventError) throw new Error(eventError.message);
+  const eventIds = (ownedEvents ?? []).map((event) => String(event.id));
+
+  let participantEventIds: string[] = [];
+  if (eventIds.length) {
+    const { data: participantRows, error: participantError } = await args.admin
+      .from("agenda_event_participants")
+      .select("event_id")
+      .eq("player_id", player.id)
+      .in("event_id", eventIds);
+    if (participantError) throw new Error(participantError.message);
+    participantEventIds = (participantRows ?? []).map((row) => String(row.event_id));
+
+    if (participantEventIds.length) {
+      const { error: rsvpError } = await args.admin
+        .from("agenda_event_participants")
+        .update({ rsvp_status: projection.rsvpStatus })
+        .eq("player_id", player.id)
+        .in("event_id", participantEventIds);
+      if (rsvpError) throw new Error(rsvpError.message);
+    }
+  }
+
+  const { data: playerAgenda, error: playerAgendaError } = await args.admin
+    .from("agendas")
+    .select("id")
+    .eq("owner_player_id", player.id)
+    .eq("is_default", true)
+    .maybeSingle();
+  if (playerAgendaError) throw new Error(playerAgendaError.message);
+
+  if (playerAgenda && participantEventIds.length) {
+    if (projection.projectToAgenda) {
+      const { error: linkError } = await args.admin
+        .from("agenda_event_agendas")
+        .upsert(
+          participantEventIds.map((eventId) => ({ event_id: eventId, agenda_id: playerAgenda.id, relation: "invited" })),
+          { onConflict: "event_id,agenda_id" },
+        );
+      if (linkError) throw new Error(linkError.message);
+    } else {
+      const { error: unlinkError } = await args.admin
+        .from("agenda_event_agendas")
+        .delete()
+        .eq("agenda_id", playerAgenda.id)
+        .eq("relation", "invited")
+        .in("event_id", participantEventIds);
+      if (unlinkError) throw new Error(unlinkError.message);
+    }
+  }
+
+  return { agendaId: args.agendaId, status: nextStatus, synchronizedEvents: participantEventIds.length };
 }
 
 export async function getAgendaAvailability(args: {

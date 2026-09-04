@@ -133,7 +133,7 @@ export function GlobalFlowBalance({ variant = "global" }: GlobalFlowBalanceProps
     );
   }
 
-  const rootMobileVisibility = pathname === "/" ? "hidden md:flex" : "flex";
+  const rootMobileVisibility = pathname.startsWith("/agenda") ? "hidden" : pathname === "/" ? "hidden md:flex" : "flex";
 
   return (
     <Link

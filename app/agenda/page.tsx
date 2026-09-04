@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
+import { GlobalFlowBalance } from "@/components/GlobalFlowBalance";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
 import { supabase } from "@/lib/supabase";
 
@@ -72,7 +73,21 @@ type AgendaEvent = {
 };
 
 type PlayerResult = { id: string; displayName: string; username: string | null; avatar: string | null };
+type SelectablePlayer = PlayerResult & { status: "active" | "pending" };
 type AgendaConnection = PlayerResult & { playerId: string; status: string };
+type AgendaTimelineItem = {
+  id: string;
+  type: "financial" | "flow" | "diamond";
+  occurredAt: string;
+  source: string;
+  title: string;
+  amount: number;
+  currency: string;
+  direction: "credit" | "debit";
+  referenceId: string | null;
+  metadata: Record<string, unknown>;
+};
+type ContentFilter = "all" | "agenda" | "economy" | "flows" | "knowledge";
 
 type LunarPhase = {
   name: string;
@@ -283,6 +298,23 @@ function EventCard({ event, onOpen }: { event: AgendaEvent; onOpen: (event: Agen
   );
 }
 
+function timelineAmount(item: AgendaTimelineItem) {
+  const sign = item.amount > 0 ? "+" : item.amount < 0 ? "−" : "";
+  const absolute = Math.abs(item.amount);
+  if (item.currency === "FLOW") return `${sign}${absolute.toLocaleString("es-AR")} FLOWS`;
+  if (item.currency === "DIAMOND") return `${sign}${absolute.toLocaleString("es-AR")} Diamonds`;
+  try {
+    const value = new Intl.NumberFormat("es-AR", { style: "currency", currency: item.currency, maximumFractionDigits: 2 }).format(absolute);
+    return `${sign}${value}`;
+  } catch { return `${sign}${absolute.toLocaleString("es-AR")} ${item.currency}`; }
+}
+
+function TimelineCard({ item }: { item: AgendaTimelineItem }) {
+  const isFlow = item.type === "flow";
+  const amountClass = item.direction === "debit" ? "text-rose-200" : isFlow ? "text-violet-200" : "text-emerald-200";
+  return <article className="w-full rounded-2xl border border-white/10 bg-black/25 p-4"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.15em] text-white/35"><span>{isFlow ? "FLOWS" : item.type === "diamond" ? "DIAMONDS" : "ECONOMÍA"}</span><span>·</span><span className="truncate normal-case tracking-normal text-white/45">{item.source}</span></div><p className="mt-2 truncate text-sm font-semibold text-white">{item.title}</p><p className="mt-1 flex items-center gap-1.5 text-xs text-white/40"><Clock3 size={13} /> {formatDateTime(item.occurredAt)}</p></div><strong className={`shrink-0 text-sm font-semibold tabular-nums ${amountClass}`}>{timelineAmount(item)}</strong></div></article>;
+}
+
 export default function AgendaPage() {
   const router = useRouter();
   const { user, loading: authLoading } = useAuth();
@@ -296,11 +328,14 @@ export default function AgendaPage() {
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [relation, setRelation] = useState<"all" | AgendaEvent["relation"]>("all");
+  const [contentFilter, setContentFilter] = useState<ContentFilter>("all");
+  const [timelineItems, setTimelineItems] = useState<AgendaTimelineItem[]>([]);
+  const [timelineLoading, setTimelineLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [quickCreateDay, setQuickCreateDay] = useState<Date | null>(null);
   const [quickHour, setQuickHour] = useState(9);
   const [quickShareOpen, setQuickShareOpen] = useState(false);
-  const [connectedPlayers, setConnectedPlayers] = useState<PlayerResult[]>([]);
+  const [connectedPlayers, setConnectedPlayers] = useState<SelectablePlayer[]>([]);
   const [connectionsLoading, setConnectionsLoading] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState<AgendaEvent | null>(null);
   const [saving, setSaving] = useState(false);
@@ -342,7 +377,7 @@ export default function AgendaPage() {
           quickCreateDay?: string | null;
           quickHour?: number;
           quickShareOpen?: boolean;
-          connectedPlayers?: PlayerResult[];
+          connectedPlayers?: SelectablePlayer[];
           selectedPlayers?: PlayerResult[];
           shareAgendaIds?: string[];
           playerQuery?: string;
@@ -471,6 +506,21 @@ export default function AgendaPage() {
 
   useEffect(() => { if (activeAgendaId) void loadEvents(); }, [activeAgendaId, loadEvents]);
 
+  const loadTimeline = useCallback(async () => {
+    if (!user) { setTimelineItems([]); return; }
+    setTimelineLoading(true);
+    try {
+      const params = new URLSearchParams({ from: range.from.toISOString(), to: range.to.toISOString() });
+      const response = await authenticatedFetch(`/api/agenda/timeline?${params.toString()}`);
+      const payload = await readApiJson<{ items: AgendaTimelineItem[] }>(response);
+      setTimelineItems(payload.items || []);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "No se pudo cargar la economía de Agenda.");
+    } finally { setTimelineLoading(false); }
+  }, [range.from, range.to, user]);
+
+  useEffect(() => { if (user) void loadTimeline(); }, [loadTimeline, user]);
+
   useEffect(() => {
     if (!user || !activeAgendaId) return;
     const refresh = () => void loadEvents();
@@ -483,14 +533,37 @@ export default function AgendaPage() {
     return () => { void supabase.removeChannel(channel); };
   }, [activeAgendaId, loadEvents, user]);
 
+  useEffect(() => {
+    if (!user) return;
+    const refresh = () => void loadTimeline();
+    const channel = supabase.channel(`agenda-finance:${user.id}`)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "flows_wallet_ledger", filter: `user_id=eq.${user.id}` }, refresh)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "diamond_wallet_ledger", filter: `user_id=eq.${user.id}` }, refresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "mi_flow_money_ledger", filter: `beneficiary_user_id=eq.${user.id}` }, refresh)
+      .subscribe();
+    return () => { void supabase.removeChannel(channel); };
+  }, [loadTimeline, user]);
+
   const filteredEvents = useMemo(() => {
     const normalized = query.trim().toLowerCase();
+    if (contentFilter !== "all" && contentFilter !== "agenda") return [];
     return events.filter((event) => {
       if (relation !== "all" && event.relation !== relation) return false;
       if (!normalized) return true;
       return `${event.title} ${event.description || ""} ${event.locationText || ""} ${event.participants.map((p) => p.displayName).join(" ")}`.toLowerCase().includes(normalized);
     });
-  }, [events, query, relation]);
+  }, [contentFilter, events, query, relation]);
+
+  const filteredTimeline = useMemo(() => {
+    if (contentFilter === "agenda" || contentFilter === "knowledge") return [];
+    const normalized = query.trim().toLowerCase();
+    return timelineItems.filter((item) => {
+      if (contentFilter === "flows" && item.type !== "flow") return false;
+      if (contentFilter === "economy" && item.type === "flow") return false;
+      if (!normalized) return true;
+      return `${item.title} ${item.source} ${item.currency}`.toLowerCase().includes(normalized);
+    });
+  }, [contentFilter, query, timelineItems]);
 
   function resetCreateForm(day = new Date()) {
     const start = new Date(day);
@@ -522,15 +595,11 @@ export default function AgendaPage() {
     try {
       const response = await authenticatedFetch(`/api/agenda/connections?agendaId=${encodeURIComponent(active.agendaId)}`);
       const payload = await readApiJson<{ connections: AgendaConnection[] }>(response);
-      setConnectedPlayers((payload.connections || [])
-        .filter((connection) => connection.status === "active")
-        .map((connection) => ({ id: connection.playerId, displayName: connection.displayName, username: connection.username, avatar: connection.avatar })));
+      setConnectedPlayers((payload.connections || []).filter((connection) => connection.status === "active" || connection.status === "pending").map((connection) => ({ id: connection.playerId, displayName: connection.displayName, username: connection.username, avatar: connection.avatar, status: connection.status as "active" | "pending" })));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "No se pudieron cargar los Players conectados.");
       setConnectedPlayers([]);
-    } finally {
-      setConnectionsLoading(false);
-    }
+    } finally { setConnectionsLoading(false); }
   }
 
   function openQuickCreate(day: Date) {
@@ -691,7 +760,7 @@ export default function AgendaPage() {
                 ) : null}
               </div>
             </div>
-            {canEdit ? <button type="button" onClick={() => { resetCreateForm(cursor); setCreateOpen(true); }} className="inline-flex items-center gap-2 rounded-full px-5 py-3 text-sm font-semibold text-white shadow-lg transition hover:brightness-110" style={{ background: accent }}><Plus size={17} /> Crear evento</button> : null}
+            <div className="flex items-center gap-2"><GlobalFlowBalance variant="header" />{canEdit ? <button type="button" onClick={() => { resetCreateForm(cursor); setCreateOpen(true); }} className="inline-flex h-[38px] items-center gap-2 rounded-full px-3.5 text-xs font-semibold text-white shadow-lg transition hover:brightness-110 sm:h-auto sm:px-5 sm:py-3 sm:text-sm" style={{ background: accent }}><Plus size={16} /> <span className="hidden sm:inline">Crear evento</span></button> : null}</div>
           </div>
         </div>
       </div>
@@ -726,18 +795,19 @@ export default function AgendaPage() {
         </section>
 
         <div className="mt-4 flex flex-col gap-3 sm:flex-row">
-          <label className="flex flex-1 items-center rounded-xl border border-white/10 bg-white/[0.025] px-3"><Search size={15} className="text-white/30" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar evento, lugar o Player…" className="min-w-0 flex-1 bg-transparent px-2 py-2.5 text-sm outline-none placeholder:text-white/25" /></label>
-          <select value={relation} onChange={(event) => setRelation(event.target.value as typeof relation)} className="rounded-xl border border-white/10 bg-[#101017] px-3 py-2.5 text-sm text-white/70 outline-none"><option value="all">Todos</option><option value="primary">Propios</option><option value="shared">Compartidos</option><option value="invited">Invitaciones</option></select>
+          <label className="flex flex-1 items-center rounded-xl border border-white/10 bg-white/[0.025] px-3"><Search size={15} className="text-white/30" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Buscar en tu línea temporal…" className="min-w-0 flex-1 bg-transparent px-2 py-2.5 text-sm outline-none placeholder:text-white/25" /></label>
+          <select value={contentFilter} onChange={(event) => setContentFilter(event.target.value as ContentFilter)} className="rounded-xl border border-white/10 bg-[#101017] px-3 py-2.5 text-sm text-white/70 outline-none"><option value="all">Todos</option><option value="agenda">Agenda</option><option value="economy">Economía</option><option value="flows">Flows</option><option value="knowledge">Conocimiento</option></select>
+          {(contentFilter === "all" || contentFilter === "agenda") ? <select value={relation} onChange={(event) => setRelation(event.target.value as typeof relation)} className="rounded-xl border border-white/10 bg-[#101017] px-3 py-2.5 text-sm text-white/70 outline-none"><option value="all">Todos los eventos</option><option value="primary">Propios</option><option value="shared">Compartidos</option><option value="invited">Invitaciones</option></select> : null}
         </div>
 
         {error ? <div className="mt-4 flex items-start justify-between gap-3 rounded-2xl border border-red-400/20 bg-red-400/10 p-3 text-sm text-red-100"><span>{error}</span><button type="button" onClick={() => setError(null)}><X size={16} /></button></div> : null}
-        {loading ? <div className="mt-10 flex items-center justify-center gap-2 text-sm text-white/35"><Loader2 size={16} className="animate-spin" /> Actualizando Agenda…</div> : null}
+        {(loading || timelineLoading) ? <div className="mt-10 flex items-center justify-center gap-2 text-sm text-white/35"><Loader2 size={16} className="animate-spin" /> Actualizando línea temporal…</div> : null}
 
-        {!loading && view === "day" ? (
+        {!loading && !timelineLoading && view === "day" ? (
           <section className="mt-5 space-y-3">
             <h3 className="text-sm font-semibold capitalize text-white/70">{formatDayTitle(cursor)}</h3>
-            {filteredEvents.filter((event) => sameDay(new Date(event.startAt), cursor)).map((event) => <EventCard key={event.id} event={event} onOpen={setSelectedEvent} />)}
-            {!filteredEvents.some((event) => sameDay(new Date(event.startAt), cursor)) ? <EmptyDay canEdit={canEdit} onCreate={() => { resetCreateForm(cursor); setCreateOpen(true); }} /> : null}
+            {[...filteredEvents.filter((event) => sameDay(new Date(event.startAt), cursor)).map((event) => ({ key: `event:${event.id}`, at: event.startAt, node: <EventCard key={event.id} event={event} onOpen={setSelectedEvent} /> })), ...filteredTimeline.filter((item) => sameDay(new Date(item.occurredAt), cursor)).map((item) => ({ key: item.id, at: item.occurredAt, node: <TimelineCard key={item.id} item={item} /> }))].sort((a, b) => a.at.localeCompare(b.at)).map((entry) => <div key={entry.key}>{entry.node}</div>)}
+            {!filteredEvents.some((event) => sameDay(new Date(event.startAt), cursor)) && !filteredTimeline.some((item) => sameDay(new Date(item.occurredAt), cursor)) ? <EmptyDay canEdit={canEdit && (contentFilter === "all" || contentFilter === "agenda")} onCreate={() => { resetCreateForm(cursor); setCreateOpen(true); }} /> : null}
           </section>
         ) : null}
 
@@ -758,6 +828,7 @@ export default function AgendaPage() {
             <div className="grid grid-cols-7">
               {monthDays.map((day) => {
                 const dayEvents = filteredEvents.filter((event) => sameDay(new Date(event.startAt), day));
+                const dayTimelineItems = filteredTimeline.filter((item) => sameDay(new Date(item.occurredAt), day));
                 const outside = day.getMonth() !== cursor.getMonth();
                 const dayMoon = lunarData(day);
                 return (
@@ -766,7 +837,7 @@ export default function AgendaPage() {
                       <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-full text-xs ${sameDay(day, new Date()) ? "text-white" : "text-white/55"}`} style={sameDay(day, new Date()) ? { background: accent } : undefined}>{day.getDate()}</span>
                       {!outside ? <span className={`flex items-center gap-0.5 text-[8px] text-violet-200/45 sm:gap-1 sm:text-[9px] ${dayEvents.length ? "opacity-45" : "opacity-80"}`}><MoonGlyph phase={dayMoon} size={16} quiet={dayEvents.length > 0} /><span className="hidden sm:inline">{dayMoon.illumination}%</span></span> : null}
                     </div>
-                    <div className="mt-1 space-y-1">{dayEvents.slice(0, 3).map((event) => <span key={event.id} className="block truncate rounded-md border border-white/8 bg-black/35 px-1 py-1 text-[8px] text-white/75 sm:px-1.5 sm:text-[10px]">{formatTime(event.startAt)} {event.title}</span>)}{dayEvents.length > 3 ? <span className="block text-[9px] text-white/30">+{dayEvents.length - 3}</span> : null}</div>
+                    <div className="mt-1 space-y-1">{dayTimelineItems.length ? <span className="flex items-center gap-1 text-[8px] font-medium text-emerald-200/65 sm:text-[9px]"><span className="h-1.5 w-1.5 rounded-full bg-emerald-300 shadow-[0_0_7px_rgba(110,231,183,.7)]" />{dayTimelineItems.length} mov.</span> : null}{dayEvents.slice(0, dayTimelineItems.length ? 2 : 3).map((event) => <span key={event.id} className="block truncate rounded-md border border-white/8 bg-black/35 px-1 py-1 text-[8px] text-white/75 sm:px-1.5 sm:text-[10px]">{formatTime(event.startAt)} {event.title}</span>)}{dayEvents.length > (dayTimelineItems.length ? 2 : 3) ? <span className="block text-[9px] text-white/30">+{dayEvents.length - (dayTimelineItems.length ? 2 : 3)}</span> : null}</div>
                   </button>
                 );
               })}
@@ -774,14 +845,16 @@ export default function AgendaPage() {
           </section>
         ) : null}
 
-        {!loading && view === "list" ? (
+        {!loading && !timelineLoading && view === "list" ? (
           <section className="mt-5 space-y-5">
-            {Array.from(new Set(filteredEvents.map((event) => startOfDay(new Date(event.startAt)).toISOString()))).map((dayKey) => {
+            {Array.from(new Set([...filteredEvents.map((event) => startOfDay(new Date(event.startAt)).toISOString()), ...filteredTimeline.map((item) => startOfDay(new Date(item.occurredAt)).toISOString())])).sort().map((dayKey) => {
               const day = new Date(dayKey);
               const dayEvents = filteredEvents.filter((event) => sameDay(new Date(event.startAt), day));
-              return <div key={dayKey}><h3 className="mb-2 text-xs font-bold uppercase tracking-[0.16em] text-white/35">{formatDayTitle(day)}</h3><div className="grid gap-3 lg:grid-cols-2">{dayEvents.map((event) => <EventCard key={event.id} event={event} onOpen={setSelectedEvent} />)}</div></div>;
+              const dayTimelineItems = filteredTimeline.filter((item) => sameDay(new Date(item.occurredAt), day));
+              const entries = [...dayEvents.map((event) => ({ key: `event:${event.id}`, at: event.startAt, node: <EventCard key={event.id} event={event} onOpen={setSelectedEvent} /> })), ...dayTimelineItems.map((item) => ({ key: item.id, at: item.occurredAt, node: <TimelineCard key={item.id} item={item} /> }))].sort((a, b) => a.at.localeCompare(b.at));
+              return <div key={dayKey}><h3 className="mb-2 text-xs font-bold uppercase tracking-[0.16em] text-white/35">{formatDayTitle(day)}</h3><div className="grid gap-3 lg:grid-cols-2">{entries.map((entry) => <div key={entry.key}>{entry.node}</div>)}</div></div>;
             })}
-            {!filteredEvents.length ? <EmptyDay canEdit={canEdit} onCreate={() => { resetCreateForm(cursor); setCreateOpen(true); }} /> : null}
+            {!filteredEvents.length && !filteredTimeline.length ? <EmptyDay canEdit={canEdit && (contentFilter === "all" || contentFilter === "agenda")} onCreate={() => { resetCreateForm(cursor); setCreateOpen(true); }} /> : null}
           </section>
         ) : null}
       </div>
@@ -807,7 +880,7 @@ export default function AgendaPage() {
             <div id="quick-share-players" className="mt-4 rounded-2xl border border-white/10 bg-white/[0.025] p-4">
               <button type="button" onClick={() => setQuickShareOpen((value) => !value)} className="flex w-full items-center gap-3 text-left">
                 <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-white/10 bg-white/[0.035]" style={{ color: accent }}><Users size={17} /></span>
-                <span className="min-w-0 flex-1"><span className="block text-sm font-semibold">Compartir esta tarea con otro Player</span><span className="mt-0.5 block text-xs text-white/35">El evento aparecerá también en su Agenda.</span></span>
+                <span className="min-w-0 flex-1"><span className="block text-sm font-semibold">Compartir esta tarea con otro Player</span><span className="mt-0.5 block text-xs text-white/35">Conectado: aparece al instante. Pendiente: se activa cuando acepte.</span></span>
                 <ChevronDown size={17} className={`text-white/35 transition ${quickShareOpen ? "rotate-180" : ""}`} />
               </button>
               {selectedPlayers.length ? <div className="mt-3 flex flex-wrap gap-2">{selectedPlayers.map((player) => <button key={player.id} type="button" onClick={() => setSelectedPlayers((list) => list.filter((item) => item.id !== player.id))} className="flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.05] py-1 pl-1 pr-3 text-xs"><Avatar src={player.avatar} label={player.displayName} size="sm" /><span>{player.displayName}</span><X size={12} /></button>)}</div> : null}
@@ -815,8 +888,8 @@ export default function AgendaPage() {
                 <div className="mt-4">
                   {connectionsLoading ? <div className="flex items-center gap-2 py-4 text-xs text-white/40"><Loader2 size={14} className="animate-spin" /> Cargando Players conectados…</div> : connectedPlayers.length ? <div className="grid gap-2 sm:grid-cols-2">{connectedPlayers.map((player) => {
                     const selected = selectedPlayers.some((item) => item.id === player.id);
-                    return <button key={player.id} type="button" onClick={() => setSelectedPlayers((list) => selected ? list.filter((item) => item.id !== player.id) : [...list, player])} className={`flex items-center gap-3 rounded-xl border p-2.5 text-left transition ${selected ? "border-white/25 bg-white/[0.08]" : "border-white/8 bg-black/20 hover:border-white/20"}`}><Avatar src={player.avatar} label={player.displayName} size="sm" /><span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium">{player.displayName}</span>{player.username ? <span className="block truncate text-[10px] text-white/35">@{player.username}</span> : null}</span>{selected ? <span className="text-xs font-bold" style={{ color: accent }}>✓</span> : null}</button>;
-                  })}</div> : <div className="rounded-xl border border-dashed border-white/10 p-4 text-center"><p className="text-xs text-white/40">No hay Players conectados activos en esta Agenda.</p><Link href="/agenda/conexiones" className="mt-2 inline-block text-xs font-medium" style={{ color: accent }}>Ir a Conexiones</Link></div>}
+                    return <button key={player.id} type="button" onClick={() => setSelectedPlayers((list) => selected ? list.filter((item) => item.id !== player.id) : [...list, player])} className={`flex items-center gap-3 rounded-xl border p-2.5 text-left transition ${selected ? "border-white/25 bg-white/[0.08]" : "border-white/8 bg-black/20 hover:border-white/20"}`}><Avatar src={player.avatar} label={player.displayName} size="sm" /><span className="min-w-0 flex-1"><span className="flex items-center gap-2"><span className="block truncate text-xs font-medium">{player.displayName}</span>{player.status === "pending" ? <span className="rounded-full border border-amber-200/15 bg-amber-200/[0.07] px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-[0.1em] text-amber-100/75">Pendiente</span> : null}</span>{player.username ? <span className="block truncate text-[10px] text-white/35">@{player.username}</span> : null}</span>{selected ? <span className="text-xs font-bold" style={{ color: accent }}>✓</span> : null}</button>;
+                  })}</div> : <div className="rounded-xl border border-dashed border-white/10 p-4 text-center"><p className="text-xs text-white/40">No hay Players conectados ni pendientes en esta Agenda.</p><Link href="/agenda/conexiones" className="mt-2 inline-block text-xs font-medium" style={{ color: accent }}>Ir a Conexiones</Link></div>}
                 </div>
               ) : null}
             </div>

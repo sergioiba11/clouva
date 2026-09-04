@@ -11,7 +11,8 @@ type Context = {
   role: "owner" | "editor" | "participant" | "viewer";
   presentation: { displayName: string; avatar: string | null; identityType: string };
 };
-type Player = { id: string; displayName: string; username: string | null; avatar: string | null };
+type Player = { id: string; displayName: string; username: string | null; avatar: string | null; status?: "active" | "pending" };
+const AGENDA_DRAFT_STORAGE_KEY = "clouva:agenda-draft:v1";
 type Connection = {
   agendaId: string;
   playerId: string;
@@ -103,16 +104,29 @@ export default function AgendaConnectionsPage() {
 
   async function invite(playerId: string) {
     if (!agendaId) return;
+    const invitedPlayer = players.find((player) => player.id === playerId) || null;
     setBusy(true);
     setError(null);
     try {
-      const response = await authenticatedFetch("/api/agenda/connections", {
-        method: "POST",
-        body: JSON.stringify({ agendaId, playerId, role }),
-      });
+      const response = await authenticatedFetch("/api/agenda/connections", { method: "POST", body: JSON.stringify({ agendaId, playerId, role }) });
       await readApiJson(response);
       setPlayers((current) => current.filter((player) => player.id !== playerId));
       await loadConnections(agendaId);
+      if (invitedPlayer) {
+        const rawDraft = window.sessionStorage.getItem(AGENDA_DRAFT_STORAGE_KEY);
+        if (rawDraft) {
+          try {
+            const draft = JSON.parse(rawDraft) as Record<string, unknown> & { connectedPlayers?: Player[] };
+            const connectedPlayers = Array.isArray(draft.connectedPlayers) ? draft.connectedPlayers : [];
+            draft.connectedPlayers = [...connectedPlayers.filter((player) => player.id !== invitedPlayer.id), { ...invitedPlayer, status: "pending" }];
+            draft.quickShareOpen = true;
+            window.sessionStorage.setItem(AGENDA_DRAFT_STORAGE_KEY, JSON.stringify(draft));
+            router.push("/agenda");
+          } catch {
+            // La conexión persiste aunque un draft local viejo sea inválido.
+          }
+        }
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "No se pudo enviar la conexión.");
     } finally { setBusy(false); }
