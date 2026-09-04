@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - "scripts/apply-agenda-life-timeline.py"
+      - "scripts/apply-agenda-life-timeline.trigger"
   workflow_dispatch:
 
 permissions:
@@ -58,7 +59,7 @@ jobs:
         run: npm run build
       - name: Commit implementation
         run: |
-          rm scripts/apply-agenda-life-timeline.py .github/workflows/apply-agenda-life-timeline.yml
+          rm -f scripts/apply-agenda-life-timeline.py scripts/apply-agenda-life-timeline.trigger .github/workflows/apply-agenda-life-timeline.yml
           git restore --source=HEAD --worktree --staged public/assets/clouva/landing-bg-v6.webp 2>/dev/null || rm -f public/assets/clouva/landing-bg-v6.webp
           git config user.name "CLOUVA Automation"
           git config user.email "actions@users.noreply.github.com"
