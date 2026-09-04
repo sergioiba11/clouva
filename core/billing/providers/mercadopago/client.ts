@@ -95,6 +95,10 @@ export class MercadoPagoProvider implements BillingProvider {
     return this.request(`/authorized_payments/${encodeURIComponent(id)}`);
   }
 
+  getCurrentUser() {
+    return this.request("/users/me");
+  }
+
   // Checkout Pro: one-time payments, separate from /preapproval subscriptions.
   // The payer completes the payment on Mercado Pago's hosted checkout and
   // returns to CLOUVA through the configured back_urls.

@@ -12,6 +12,31 @@ function text(value: unknown) {
   return value == null ? "" : String(value);
 }
 
+function finiteNumber(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function paymentEconomics(payment: Record<string, unknown>, grossAmount: number) {
+  const transactionDetails = payment.transaction_details && typeof payment.transaction_details === "object" && !Array.isArray(payment.transaction_details)
+    ? (payment.transaction_details as Record<string, unknown>)
+    : null;
+  const reportedNet = finiteNumber(transactionDetails?.net_received_amount);
+
+  const feeDetails = Array.isArray(payment.fee_details) ? payment.fee_details : [];
+  const feeSum = feeDetails.reduce((sum, entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return sum;
+    const amount = finiteNumber((entry as Record<string, unknown>).amount);
+    return sum + Math.max(amount ?? 0, 0);
+  }, 0);
+
+  const netAmount = reportedNet != null && reportedNet >= 0
+    ? Math.min(reportedNet, grossAmount)
+    : Math.max(grossAmount - feeSum, 0);
+  const providerFee = Math.max(grossAmount - netAmount, 0);
+  return { providerFee, netAmount };
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = (await request.json().catch(() => ({}))) as {
@@ -67,6 +92,7 @@ export async function POST(request: NextRequest) {
     const approvedAt = approvedAtRaw && !Number.isNaN(Date.parse(approvedAtRaw)) ? approvedAtRaw : new Date().toISOString();
 
     if (paymentStatus === "approved") {
+      const { providerFee, netAmount } = paymentEconomics(payment, amount);
       const { data: issued, error: confirmationError } = await admin.rpc("confirm_flow_external_payment", {
         p_operation_id: operation.id,
         p_provider: "mercadopago",
@@ -79,6 +105,10 @@ export async function POST(request: NextRequest) {
           paymentStatus,
           paymentMethodId: text(payment.payment_method_id) || null,
           paymentTypeId: text(payment.payment_type_id) || null,
+          statusDetail: text(payment.status_detail) || null,
+          providerFee,
+          netAmount,
+          grossAmount: amount,
         },
       });
       if (confirmationError) throw new Error(confirmationError.message);
@@ -93,7 +123,7 @@ export async function POST(request: NextRequest) {
         p_currency: currency,
         p_reason: paymentStatus,
         p_idempotency_key: `mercadopago-refund:${resourceId}:${paymentStatus}`,
-        p_metadata: { paymentStatus },
+        p_metadata: { paymentStatus, statusDetail: text(payment.status_detail) || null },
       });
       if (refundError) throw new Error(refundError.message);
       return NextResponse.json({ received: true, processed: true, operationId: operation.id, refund });
