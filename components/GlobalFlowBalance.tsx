@@ -82,7 +82,7 @@ export function GlobalFlowBalance({ variant = "global" }: GlobalFlowBalanceProps
         title="Abrir Mi Flow"
         className="group flex h-[38px] min-w-0 items-center gap-1.5 rounded-full border border-white/[0.07] bg-white/[0.025] px-1.5 pr-2 text-white backdrop-blur-xl transition hover:bg-white/[0.05]"
       >
-        <FlowCoinIcon size={26} glow={region.glow} edge={region.edge} />
+        <FlowCoinIcon size={26} glow={region.glow} edge={region.edge} imageUrl={region.assetUrl} title={`FLOWS · ${region.label}`} />
         <span className="min-w-0 leading-none">
           <span className="flex items-baseline gap-1 whitespace-nowrap">
             <strong className="text-[11px] font-semibold tabular-nums">{data.balance}</strong>
@@ -105,7 +105,7 @@ export function GlobalFlowBalance({ variant = "global" }: GlobalFlowBalanceProps
         className="group flex min-w-0 items-center gap-2.5 rounded-2xl border border-white/[0.07] bg-white/[0.025] px-2.5 py-2 text-white transition hover:bg-white/[0.045]"
         style={{ boxShadow: `inset 0 1px rgba(255,255,255,.025), 0 0 22px ${region.glowSoft}` }}
       >
-        <FlowCoinIcon size={31} glow={region.glow} edge={region.edge} />
+        <FlowCoinIcon size={31} glow={region.glow} edge={region.edge} imageUrl={region.assetUrl} title={`FLOWS · ${region.label}`} />
         <span className="min-w-0 leading-none">
           <span className="flex items-baseline gap-1.5 whitespace-nowrap">
             <strong className="text-sm font-semibold tabular-nums">{data.balance}</strong>
@@ -133,7 +133,7 @@ export function GlobalFlowBalance({ variant = "global" }: GlobalFlowBalanceProps
         boxShadow: `0 10px 34px rgba(0,0,0,.42), 0 0 24px ${region.glowSoft}`,
       }}
     >
-      <FlowCoinIcon size={34} glow={region.glow} edge={region.edge} />
+      <FlowCoinIcon size={34} glow={region.glow} edge={region.edge} imageUrl={region.assetUrl} title={`FLOWS · ${region.label}`} />
       <span className="min-w-0 leading-none">
         <span className="flex items-baseline gap-1.5 whitespace-nowrap">
           <strong className="text-[15px] font-semibold tabular-nums md:text-base">{data.balance}</strong>
