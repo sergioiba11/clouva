@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, ArrowRight, Loader2, Settings2, Sparkles, Store, Users } from "lucide-react";
+import { ArrowLeft, ArrowRight, Loader2, ScanLine, Settings2, Sparkles, Store, Users } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -16,6 +16,7 @@ type Membership = {
   can_manage: boolean;
   admin_href: string | null;
   team_href: string | null;
+  enabled_modules?: string[];
   space: {
     id: string;
     name: string;
@@ -70,10 +71,13 @@ export default function BusinessHomePage() {
   if (error) return <main className="min-h-screen bg-[#05040a] text-white"><MainNav /><div className="mx-auto max-w-3xl px-4 py-10"><p className="rounded-2xl border border-rose-300/15 bg-rose-300/[0.06] p-4 text-sm text-rose-200">{error}</p></div></main>;
 
   if (!membership || !isBusiness || membership.membership_status !== "active") {
-    return <main className="min-h-screen bg-[#05040a] text-white"><MainNav /><div className="mx-auto max-w-3xl px-4 py-10"><Link href="/businesses" className="inline-flex items-center gap-2 text-sm text-white/45"><ArrowLeft size={15} /> Mis negocios</Link><section className="mt-6 rounded-[26px] border border-white/[0.08] bg-[#0b0912] p-6"><h1 className="text-2xl font-semibold">Este negocio no está disponible para tu Player.</h1><p className="mt-2 text-sm leading-6 text-white/42">Necesitás una relación activa con ese negocio. Los Studios se administran por separado y no activan Business Player.</p></section></div></main>;
+    return <main className="min-h-screen bg-[#05040a] text-white"><MainNav /><div className="mx-auto max-w-3xl px-4 py-10"><Link href="/businesses" className="inline-flex items-center gap-2 text-sm text-white/45"><ArrowLeft size={15} /> Mis negocios</Link><section className="mt-6 rounded-[26px] border border-white/[0.08] bg-[#0b0912] p-6"><h1 className="text-2xl font-semibold">Este negocio no está disponible para tu Player.</h1><p className="mt-2 text-sm leading-6 text-white/42">Necesitás una relación activa con ese negocio.</p></section></div></main>;
   }
 
   const space = membership.space;
+  const commerceHref = membership.admin_href?.startsWith("/mi-spot/") ? `${membership.admin_href}/commerce` : membership.admin_href;
+  const hasScanner = Boolean(commerceHref && membership.enabled_modules?.includes("scanner"));
+
   return (
     <main className="min-h-screen bg-[#05040a] text-white">
       <MainNav />
@@ -90,8 +94,9 @@ export default function BusinessHomePage() {
           </div>
         </section>
 
-        <section className="mt-5 grid gap-4 md:grid-cols-3">
+        <section className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <Link href={`/businesses/${space.id}/ai`} className="rounded-[24px] border border-cyan-300/15 bg-cyan-300/[0.055] p-5 transition hover:bg-cyan-300/[0.08]"><Sparkles size={20} className="text-cyan-200" /><h2 className="mt-4 text-lg font-semibold">Business Player</h2><p className="mt-2 text-sm leading-6 text-white/40">Buscar, comprar, coordinar, resolver y aprender de cada decisión del negocio.</p><span className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-cyan-200">Entrar <ArrowRight size={15} /></span></Link>
+          {hasScanner && commerceHref ? <Link href={commerceHref} className="rounded-[24px] border border-violet-300/15 bg-violet-300/[0.055] p-5 transition hover:bg-violet-300/[0.08]"><ScanLine size={20} className="text-violet-200" /><h2 className="mt-4 text-lg font-semibold">Escanear productos</h2><p className="mt-2 text-sm leading-6 text-white/40">Usá la cámara o un lector para códigos de barras y QR, identificar productos y llevarlos al catálogo e inventario.</p><span className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-violet-200">Abrir operaciones <ArrowRight size={15} /></span></Link> : null}
           <Link href={membership.team_href || `/businesses/${space.id}/team`} className="rounded-[24px] border border-white/[0.08] bg-[#0b0912] p-5 transition hover:border-white/15"><Users size={20} className="text-white/55" /><h2 className="mt-4 text-lg font-semibold">Equipo y accesos</h2><p className="mt-2 text-sm leading-6 text-white/40">Dueño, admins, managers y colaboradores del negocio.</p><span className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-white/60">Administrar <ArrowRight size={15} /></span></Link>
           {membership.admin_href ? <Link href={membership.admin_href} className="rounded-[24px] border border-white/[0.08] bg-[#0b0912] p-5 transition hover:border-white/15"><Settings2 size={20} className="text-white/55" /><h2 className="mt-4 text-lg font-semibold">Operación comercial</h2><p className="mt-2 text-sm leading-6 text-white/40">Inventario, pedidos, publicaciones, logística y herramientas conectadas.</p><span className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-white/60">Abrir herramientas <ArrowRight size={15} /></span></Link> : null}
         </section>
