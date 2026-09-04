@@ -22,6 +22,15 @@ const ALLOWED_MIME = new Set([
   "application/pdf",
 ]);
 
+const FLOWS_ASSET_RENAMES = [
+  ["file_000000003c70820ea2b371171c25df8e.png", "01_flows_sudamerica.png"],
+  ["file_000000003b04820e860ed6a47ebcfaef.png", "02_flows_norteamerica.png"],
+  ["file_0000000073f8820eb69e8634886203d1.png", "03_flows_europa.png"],
+  ["file_000000005cd4820e9a811515e66cf30a.png", "04_flows_africa.png"],
+  ["file_000000000984820eafb72572e630b7c8.png", "05_flows_asia.png"],
+  ["file_000000009098820eac4d055c6bc1ba08.png", "06_flows_oceania.png"],
+] as const;
+
 let storage: Storage | null = null;
 function getStorage() {
   if (!storage) storage = new Storage();
@@ -50,6 +59,36 @@ function publicUrl(objectPath: string) {
   return `https://storage.googleapis.com/${BUCKET_NAME}/${objectPath.split("/").map(encodeURIComponent).join("/")}`;
 }
 
+async function renameCanonicalFlowsAssets(folder: string) {
+  if (folder !== "brand") return;
+
+  const bucket = getStorage().bucket(BUCKET_NAME);
+  for (const [currentName, canonicalName] of FLOWS_ASSET_RENAMES) {
+    const currentPath = `${objectPrefix(folder)}/${currentName}`;
+    const canonicalPath = `${objectPrefix(folder)}/${canonicalName}`;
+    const currentFile = bucket.file(currentPath);
+    const canonicalFile = bucket.file(canonicalPath);
+
+    try {
+      const [currentExists] = await currentFile.exists();
+      if (!currentExists) continue;
+
+      const [canonicalExists] = await canonicalFile.exists();
+      if (canonicalExists) {
+        console.warn(`[admin-assets] canonical FLOWS asset already exists: ${canonicalPath}`);
+        continue;
+      }
+
+      await currentFile.move(canonicalPath);
+      console.info(`[admin-assets] renamed ${currentPath} -> ${canonicalPath}`);
+    } catch (error) {
+      // A rename must never prevent the admin library from loading. The next
+      // refresh retries any asset that still has its generated file_* name.
+      console.error(`[admin-assets] could not rename ${currentPath}`, error);
+    }
+  }
+}
+
 function assetStorageError(error: unknown) {
   if (error instanceof MediaApiError) {
     return { status: error.status, body: { error: error.message, code: error.code } };
@@ -70,6 +109,7 @@ export async function GET(request: NextRequest) {
   try {
     await requireMediaAdmin(request);
     const folder = normalizeFolder(request.nextUrl.searchParams.get("folder") ?? "uploads");
+    await renameCanonicalFlowsAssets(folder);
     const prefix = objectPrefix(folder);
     const [files] = await getStorage().bucket(BUCKET_NAME).getFiles({ prefix: `${prefix}/`, autoPaginate: false, maxResults: 100 });
     const items = files
