@@ -23,11 +23,19 @@ type GlobalFlowBalanceProps = {
 };
 
 const REFRESH_MS = 60_000;
+const HOME_MOBILE_QUERY = "(max-width: 820px)";
+const FLOW_UI_FONT = 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+
+function initialMobileViewport(): boolean | null {
+  if (typeof window === "undefined") return null;
+  return window.matchMedia(HOME_MOBILE_QUERY).matches;
+}
 
 export function GlobalFlowBalance({ variant = "global" }: GlobalFlowBalanceProps = {}) {
   const pathname = usePathname();
   const { user, loading: authLoading } = useAuth();
   const [data, setData] = useState<FlowBalancePayload | null>(null);
+  const [isMobileViewport, setIsMobileViewport] = useState<boolean | null>(initialMobileViewport);
 
   const load = useCallback(async () => {
     if (!user) {
@@ -69,7 +77,24 @@ export function GlobalFlowBalance({ variant = "global" }: GlobalFlowBalanceProps
     };
   }, [authLoading, load, user]);
 
+  useEffect(() => {
+    const media = window.matchMedia(HOME_MOBILE_QUERY);
+    const sync = () => setIsMobileViewport(media.matches);
+    sync();
+    media.addEventListener("change", sync);
+    return () => media.removeEventListener("change", sync);
+  }, []);
+
   if (authLoading || !user || !data) return null;
+
+  // The root layout also mounts a global balance. On mobile Home there is already
+  // a dedicated header balance, so suppress the global copy in React instead of
+  // relying on Tailwind's `hidden md:flex`. This prevents a duplicate raw link
+  // from flashing while route CSS is still arriving on slower connections.
+  if (variant === "global") {
+    if (pathname.startsWith("/agenda")) return null;
+    if (pathname === "/" && isMobileViewport !== false) return null;
+  }
 
   const label = flowLabel(data.balance);
   const region = data.region;
@@ -81,6 +106,23 @@ export function GlobalFlowBalance({ variant = "global" }: GlobalFlowBalanceProps
         aria-label={`${data.balance} ${label}. 1 FLOW equivale a 1 dólar estadounidense.`}
         title="Abrir Mi Flow"
         className="group flex h-[38px] min-w-0 items-center gap-1.5 rounded-full border border-white/[0.07] bg-white/[0.025] px-1.5 pr-2 text-white backdrop-blur-xl transition hover:bg-white/[0.05]"
+        style={{
+          display: "flex",
+          height: 38,
+          minWidth: 0,
+          alignItems: "center",
+          gap: 6,
+          borderRadius: 9999,
+          border: "1px solid rgba(255,255,255,.07)",
+          background: "rgba(255,255,255,.025)",
+          padding: "0 8px 0 6px",
+          color: "#fff",
+          textDecoration: "none",
+          fontFamily: FLOW_UI_FONT,
+          boxSizing: "border-box",
+          flex: "0 0 auto",
+          overflow: "hidden",
+        }}
       >
         <FlowCoinIcon
           size={26}
@@ -90,12 +132,43 @@ export function GlobalFlowBalance({ variant = "global" }: GlobalFlowBalanceProps
           fallbackImageUrl={region.assetFallbackUrl}
           title={`FLOWS · ${region.label}`}
         />
-        <span className="min-w-0 leading-none">
-          <span className="flex items-baseline gap-1 whitespace-nowrap">
-            <strong className="text-[11px] font-semibold tabular-nums">{data.balance}</strong>
-            <span className="text-[7px] font-bold uppercase tracking-[0.11em] text-white/58">{label}</span>
+        <span className="min-w-0 leading-none" style={{ display: "block", minWidth: 0, lineHeight: 1 }}>
+          <span
+            className="flex items-baseline gap-1 whitespace-nowrap"
+            style={{ display: "flex", alignItems: "baseline", gap: 4, whiteSpace: "nowrap", lineHeight: 1 }}
+          >
+            <strong
+              className="text-[11px] font-semibold tabular-nums"
+              style={{ fontSize: 11, fontWeight: 600, lineHeight: 1, fontVariantNumeric: "tabular-nums" }}
+            >
+              {data.balance}
+            </strong>
+            <span
+              className="text-[7px] font-bold uppercase tracking-[0.11em] text-white/58"
+              style={{
+                fontSize: 7,
+                fontWeight: 700,
+                lineHeight: 1,
+                textTransform: "uppercase",
+                letterSpacing: "0.11em",
+                color: "rgba(255,255,255,.58)",
+              }}
+            >
+              {label}
+            </span>
           </span>
-          <span className="mt-1 block whitespace-nowrap text-[7px] font-medium text-white/34">
+          <span
+            className="mt-1 block whitespace-nowrap text-[7px] font-medium text-white/34"
+            style={{
+              display: "block",
+              marginTop: 4,
+              whiteSpace: "nowrap",
+              fontSize: 7,
+              fontWeight: 500,
+              lineHeight: 1,
+              color: "rgba(255,255,255,.34)",
+            }}
+          >
             US$ {data.usdValue}
           </span>
         </span>
@@ -110,7 +183,14 @@ export function GlobalFlowBalance({ variant = "global" }: GlobalFlowBalanceProps
         aria-label={`${data.balance} ${label}. 1 FLOW equivale a 1 dólar estadounidense.`}
         title={`1 FLOW = US$ 1 · ${region.label}`}
         className="group flex min-w-0 items-center gap-2.5 rounded-2xl border border-white/[0.07] bg-white/[0.025] px-2.5 py-2 text-white transition hover:bg-white/[0.045]"
-        style={{ boxShadow: `inset 0 1px rgba(255,255,255,.025), 0 0 22px ${region.glowSoft}` }}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          minWidth: 0,
+          textDecoration: "none",
+          fontFamily: FLOW_UI_FONT,
+          boxShadow: `inset 0 1px rgba(255,255,255,.025), 0 0 22px ${region.glowSoft}`,
+        }}
       >
         <FlowCoinIcon
           size={31}
@@ -133,15 +213,17 @@ export function GlobalFlowBalance({ variant = "global" }: GlobalFlowBalanceProps
     );
   }
 
-  const rootMobileVisibility = pathname.startsWith("/agenda") ? "hidden" : pathname === "/" ? "hidden md:flex" : "flex";
-
   return (
     <Link
       href="/mi-flow/billetera?asset=flows"
       aria-label={`${data.balance} ${label}. 1 FLOW equivale a 1 dólar estadounidense.`}
       title={`1 FLOW = US$ 1 · ${region.label}`}
-      className={`group fixed right-3 z-[80] ${rootMobileVisibility} min-h-12 items-center gap-2.5 rounded-2xl border bg-[#09080d]/92 px-2.5 py-2 text-white shadow-2xl backdrop-blur-xl transition hover:-translate-y-0.5 hover:bg-[#0d0b12]/96 md:right-5 md:gap-3 md:px-3`}
+      className="group fixed right-3 z-[80] flex min-h-12 items-center gap-2.5 rounded-2xl border bg-[#09080d]/92 px-2.5 py-2 text-white shadow-2xl backdrop-blur-xl transition hover:-translate-y-0.5 hover:bg-[#0d0b12]/96 md:right-5 md:gap-3 md:px-3"
       style={{
+        display: "flex",
+        alignItems: "center",
+        textDecoration: "none",
+        fontFamily: FLOW_UI_FONT,
         top: "calc(env(safe-area-inset-top, 0px) + 10px)",
         borderColor: `${region.glow}55`,
         boxShadow: `0 10px 34px rgba(0,0,0,.42), 0 0 24px ${region.glowSoft}`,

@@ -1,6 +1,6 @@
 "use client";
 
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/components/auth-provider";
@@ -15,6 +15,19 @@ const BYPASS_PREFIXES = [
   "/debug-auth",
   "/onboarding/player-basics",
 ] as const;
+
+const VISUALLY_HIDDEN_STYLE: CSSProperties = {
+  position: "absolute",
+  width: 1,
+  height: 1,
+  padding: 0,
+  margin: -1,
+  overflow: "hidden",
+  clip: "rect(0, 0, 0, 0)",
+  clipPath: "inset(50%)",
+  whiteSpace: "nowrap",
+  border: 0,
+};
 
 function bypass(pathname: string) {
   return BYPASS_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
@@ -87,12 +100,16 @@ export function PlayerBasicsGate({ children }: { children: ReactNode }) {
 
   // The onboarding check is routing logic, not a security boundary. Keep the
   // current UI mounted while it runs so reloads and token refreshes never flash
-  // a full black page. If onboarding is incomplete, the redirect still happens
-  // as soon as the check resolves.
+  // a full black page. The inline visually-hidden style also keeps this status
+  // invisible during the brief window before utility CSS is available.
   return (
     <>
       {children}
-      {checking ? <span className="sr-only" aria-live="polite">Verificando tu Player</span> : null}
+      {checking ? (
+        <span className="sr-only" style={VISUALLY_HIDDEN_STYLE} aria-live="polite">
+          Verificando tu Player
+        </span>
+      ) : null}
     </>
   );
 }
