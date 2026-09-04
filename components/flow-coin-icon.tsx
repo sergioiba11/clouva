@@ -39,6 +39,8 @@ export function FlowCoinIcon({
         alt={title}
         title={title}
         className={className}
+        draggable={false}
+        decoding="async"
         onError={() => {
           if (fallbackImageUrl && activeImageUrl !== fallbackImageUrl) {
             setActiveImageUrl(fallbackImageUrl);
@@ -53,6 +55,7 @@ export function FlowCoinIcon({
           flex: "0 0 auto",
           borderRadius: "9999px",
           objectFit: "contain",
+          userSelect: "none",
           filter: `drop-shadow(0 0 ${Math.max(5, size * 0.22)}px ${glow})`,
         }}
       />
