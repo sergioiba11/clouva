@@ -18,6 +18,7 @@ export type FlowRegion = {
   glowSoft: string;
   edge: string;
   assetUrl: string | null;
+  assetFallbackUrl: string | null;
 };
 
 const FLOW_COIN_ASSET_BASE_URL = (
@@ -29,7 +30,32 @@ function flowCoinAsset(fileName: string) {
   return `${FLOW_COIN_ASSET_BASE_URL}/${fileName}`;
 }
 
-const SOUTH_AMERICA_ASSET = flowCoinAsset("01_flows_sudamerica.png");
+const FLOW_ASSETS = {
+  southAmerica: {
+    canonical: flowCoinAsset("01_flows_sudamerica.png"),
+    uploaded: flowCoinAsset("file_000000003c70820ea2b371171c25df8e.png"),
+  },
+  northAmerica: {
+    canonical: flowCoinAsset("02_flows_norteamerica.png"),
+    uploaded: flowCoinAsset("file_000000003b04820e860ed6a47ebcfaef.png"),
+  },
+  europe: {
+    canonical: flowCoinAsset("03_flows_europa.png"),
+    uploaded: flowCoinAsset("file_0000000073f8820eb69e8634886203d1.png"),
+  },
+  africa: {
+    canonical: flowCoinAsset("04_flows_africa.png"),
+    uploaded: flowCoinAsset("file_000000005cd4820e9a811515e66cf30a.png"),
+  },
+  asia: {
+    canonical: flowCoinAsset("05_flows_asia.png"),
+    uploaded: flowCoinAsset("file_000000000984820eafb72572e630b7c8.png"),
+  },
+  oceania: {
+    canonical: flowCoinAsset("06_flows_oceania.png"),
+    uploaded: flowCoinAsset("file_000000009098820eac4d055c6bc1ba08.png"),
+  },
+} as const;
 
 const FLOW_REGIONS: Record<FlowRegionKey, FlowRegion> = {
   patagonia: {
@@ -38,7 +64,8 @@ const FLOW_REGIONS: Record<FlowRegionKey, FlowRegion> = {
     glow: "#8de9ff",
     glowSoft: "rgba(141, 233, 255, 0.28)",
     edge: "#d7f8ff",
-    assetUrl: SOUTH_AMERICA_ASSET,
+    assetUrl: FLOW_ASSETS.southAmerica.canonical,
+    assetFallbackUrl: FLOW_ASSETS.southAmerica.uploaded,
   },
   argentina: {
     key: "argentina",
@@ -46,7 +73,8 @@ const FLOW_REGIONS: Record<FlowRegionKey, FlowRegion> = {
     glow: "#7ed7ff",
     glowSoft: "rgba(126, 215, 255, 0.24)",
     edge: "#d7f3ff",
-    assetUrl: SOUTH_AMERICA_ASSET,
+    assetUrl: FLOW_ASSETS.southAmerica.canonical,
+    assetFallbackUrl: FLOW_ASSETS.southAmerica.uploaded,
   },
   latam: {
     key: "latam",
@@ -54,7 +82,8 @@ const FLOW_REGIONS: Record<FlowRegionKey, FlowRegion> = {
     glow: "#7ed7ff",
     glowSoft: "rgba(126, 215, 255, 0.24)",
     edge: "#d7f3ff",
-    assetUrl: SOUTH_AMERICA_ASSET,
+    assetUrl: FLOW_ASSETS.southAmerica.canonical,
+    assetFallbackUrl: FLOW_ASSETS.southAmerica.uploaded,
   },
   "north-america": {
     key: "north-america",
@@ -62,7 +91,8 @@ const FLOW_REGIONS: Record<FlowRegionKey, FlowRegion> = {
     glow: "#55b8ff",
     glowSoft: "rgba(85, 184, 255, 0.24)",
     edge: "#d6efff",
-    assetUrl: flowCoinAsset("02_flows_norteamerica.png"),
+    assetUrl: FLOW_ASSETS.northAmerica.canonical,
+    assetFallbackUrl: FLOW_ASSETS.northAmerica.uploaded,
   },
   europe: {
     key: "europe",
@@ -70,7 +100,8 @@ const FLOW_REGIONS: Record<FlowRegionKey, FlowRegion> = {
     glow: "#d65cff",
     glowSoft: "rgba(214, 92, 255, 0.22)",
     edge: "#f3d7ff",
-    assetUrl: flowCoinAsset("03_flows_europa.png"),
+    assetUrl: FLOW_ASSETS.europe.canonical,
+    assetFallbackUrl: FLOW_ASSETS.europe.uploaded,
   },
   "asia-pacific": {
     key: "asia-pacific",
@@ -78,7 +109,8 @@ const FLOW_REGIONS: Record<FlowRegionKey, FlowRegion> = {
     glow: "#ff5dc8",
     glowSoft: "rgba(255, 93, 200, 0.23)",
     edge: "#ffd7f1",
-    assetUrl: flowCoinAsset("05_flows_asia.png"),
+    assetUrl: FLOW_ASSETS.asia.canonical,
+    assetFallbackUrl: FLOW_ASSETS.asia.uploaded,
   },
   africa: {
     key: "africa",
@@ -86,7 +118,8 @@ const FLOW_REGIONS: Record<FlowRegionKey, FlowRegion> = {
     glow: "#ffb13b",
     glowSoft: "rgba(255, 177, 59, 0.23)",
     edge: "#ffe4b5",
-    assetUrl: flowCoinAsset("04_flows_africa.png"),
+    assetUrl: FLOW_ASSETS.africa.canonical,
+    assetFallbackUrl: FLOW_ASSETS.africa.uploaded,
   },
   oceania: {
     key: "oceania",
@@ -94,7 +127,8 @@ const FLOW_REGIONS: Record<FlowRegionKey, FlowRegion> = {
     glow: "#48e6ef",
     glowSoft: "rgba(72, 230, 239, 0.23)",
     edge: "#d3fbff",
-    assetUrl: flowCoinAsset("06_flows_oceania.png"),
+    assetUrl: FLOW_ASSETS.oceania.canonical,
+    assetFallbackUrl: FLOW_ASSETS.oceania.uploaded,
   },
   global: {
     key: "global",
@@ -103,6 +137,7 @@ const FLOW_REGIONS: Record<FlowRegionKey, FlowRegion> = {
     glowSoft: "rgba(165, 139, 255, 0.24)",
     edge: "#e3dcff",
     assetUrl: null,
+    assetFallbackUrl: null,
   },
 };
 
