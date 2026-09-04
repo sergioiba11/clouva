@@ -1,99 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { inviteAgendaMember, respondAgendaInvite } from "@/lib/server/agenda";
 import { sendAgendaInvitationEmail } from "@/lib/server/agenda-invitation-email";
+import { sendAgendaInvitationWhatsApp } from "@/lib/server/agenda-invitation-whatsapp";
 import { listAgendaConnections, listPendingAgendaInvites } from "@/lib/server/agenda/settings";
 import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
-
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
-
-function apiError(error: unknown, fallback: string) {
-  const typed = error as Error & { status?: number; code?: string };
-  return NextResponse.json(
-    { error: error instanceof Error ? error.message : fallback, ...(typed.code ? { code: typed.code } : {}) },
-    { status: typed.status ?? (isAuthError(error) ? 401 : 500) },
-  );
-}
-
-export async function GET(request: NextRequest) {
-  try {
-    const { user } = await requireUser(request);
-    const admin = createAdminSupabase();
-    const agendaId = request.nextUrl.searchParams.get("agendaId") || "";
-    const [invitations, connections] = await Promise.all([
-      listPendingAgendaInvites({ admin, userId: user.id }),
-      agendaId ? listAgendaConnections({ admin, userId: user.id, agendaId }) : Promise.resolve([]),
-    ]);
-    return NextResponse.json({ invitations, connections });
-  } catch (error) {
-    return apiError(error, "No se pudieron cargar las conexiones.");
-  }
-}
-
-export async function POST(request: NextRequest) {
-  try {
-    const { user } = await requireUser(request);
-    const body = (await request.json().catch(() => ({}))) as {
-      agendaId?: string;
-      playerId?: string;
-      role?: "viewer" | "participant" | "editor";
-    };
-    if (!body.agendaId || !body.playerId || !body.role) {
-      return NextResponse.json({ error: "agendaId, playerId y role son obligatorios." }, { status: 400 });
-    }
-
-    const admin = createAdminSupabase();
-    const result = await inviteAgendaMember({
-      admin,
-      userId: user.id,
-      agendaId: body.agendaId,
-      playerId: body.playerId,
-      role: body.role,
-    });
-
-    const emailDelivery = await sendAgendaInvitationEmail({
-      admin,
-      agendaId: body.agendaId,
-      playerId: body.playerId,
-    }).catch((error) => {
-      console.error("[agenda-invite-email] Delivery failed", {
-        agendaId: body.agendaId,
-        playerId: body.playerId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return { status: "failed" as const, reason: "EMAIL_DELIVERY_ERROR" };
-    });
-
-    return NextResponse.json(
-      {
-        ...result,
-        emailDelivery: {
-          status: emailDelivery.status,
-          ...(emailDelivery.reason ? { reason: emailDelivery.reason } : {}),
-        },
-      },
-      { status: 201 },
-    );
-  } catch (error) {
-    return apiError(error, "No se pudo conectar la Agenda.");
-  }
-}
-
-export async function PATCH(request: NextRequest) {
-  try {
-    const { user } = await requireUser(request);
-    const body = (await request.json().catch(() => ({}))) as { agendaId?: string; accept?: boolean };
-    if (!body.agendaId || typeof body.accept !== "boolean") {
-      return NextResponse.json({ error: "agendaId y accept son obligatorios." }, { status: 400 });
-    }
-    const result = await respondAgendaInvite({
-      admin: createAdminSupabase(),
-      userId: user.id,
-      agendaId: body.agendaId,
-      accept: body.accept,
-    });
-    return NextResponse.json(result);
-  } catch (error) {
-    return apiError(error, "No se pudo responder la conexión.");
-  }
-}
+export const runtime = "nodejs"; export const dynamic = "force-dynamic";
+function apiError(error: unknown, fallback: string) { const typed = error as Error & { status?: number; code?: string }; return NextResponse.json({ error: error instanceof Error ? error.message : fallback, ...(typed.code ? { code: typed.code } : {}) }, { status: typed.status ?? (isAuthError(error) ? 401 : 500) }); }
+async function saveDelivery(admin: ReturnType<typeof createAdminSupabase>, agendaId: string, playerId: string, channel: "email"|"whatsapp"|"notification", result: {status:string;reason?:string;providerMessageId?:string}) { await admin.from("agenda_invitation_deliveries").upsert({ agenda_id: agendaId, player_id: playerId, channel, status: result.status, provider_message_id: result.providerMessageId || null, failure_reason: result.reason || null, attempts: 1, last_attempt_at: new Date().toISOString(), updated_at: new Date().toISOString() }, { onConflict: "agenda_id,player_id,channel" }); }
+export async function GET(request: NextRequest) { try { const { user } = await requireUser(request); const admin = createAdminSupabase(); const agendaId = request.nextUrl.searchParams.get("agendaId") || ""; const [invitations, connections] = await Promise.all([listPendingAgendaInvites({ admin, userId: user.id }), agendaId ? listAgendaConnections({ admin, userId: user.id, agendaId }) : Promise.resolve([])]); return NextResponse.json({ invitations, connections }); } catch (e) { return apiError(e,"No se pudieron cargar las conexiones."); } }
+export async function POST(request: NextRequest) { try { const { user } = await requireUser(request); const body = await request.json().catch(()=>({})) as {agendaId?:string;playerId?:string;role?:"viewer"|"participant"|"editor"}; if(!body.agendaId||!body.playerId||!body.role) return NextResponse.json({error:"agendaId, playerId y role son obligatorios."},{status:400}); const admin=createAdminSupabase(); const result=await inviteAgendaMember({admin,userId:user.id,agendaId:body.agendaId,playerId:body.playerId,role:body.role});
+ const { data: recipient }=await admin.from("players").select("owner_user_id").eq("id",body.playerId).maybeSingle(); const { data: inviter }=await admin.from("players").select("display_name").eq("owner_user_id",user.id).maybeSingle(); let notificationId:string|undefined;
+ if(recipient?.owner_user_id){ const {data:n}=await admin.from("notifications").insert({user_id:recipient.owner_user_id,type:"agenda_invitation",title:`${inviter?.display_name||"Un Player"} te invitó a conectar agendas`,body:"CLOUVA Agenda",link:"/agenda/conexiones"}).select("id").single(); notificationId=n?.id; if(notificationId){await admin.from("agenda_members").update({notification_id:notificationId}).eq("agenda_id",body.agendaId).eq("player_id",body.playerId); await saveDelivery(admin,body.agendaId,body.playerId,"notification",{status:"sent",providerMessageId:notificationId});}}
+ const [email,whatsapp]=await Promise.all([sendAgendaInvitationEmail({admin,agendaId:body.agendaId,playerId:body.playerId}).catch(()=>({status:"failed" as const,reason:"EMAIL_DELIVERY_ERROR"})),sendAgendaInvitationWhatsApp({admin,agendaId:body.agendaId,playerId:body.playerId}).catch(()=>({status:"failed" as const,reason:"WHATSAPP_DELIVERY_ERROR"}))]); await Promise.all([saveDelivery(admin,body.agendaId,body.playerId,"email",email),saveDelivery(admin,body.agendaId,body.playerId,"whatsapp",whatsapp),admin.from("agenda_members").update({email_delivery_status:email.status,email_provider_message_id:email.providerMessageId||null,whatsapp_delivery_status:whatsapp.status,whatsapp_provider_message_id:whatsapp.providerMessageId||null}).eq("agenda_id",body.agendaId).eq("player_id",body.playerId)]); return NextResponse.json({...result,emailDelivery:email,whatsappDelivery:whatsapp},{status:201}); } catch(e){return apiError(e,"No se pudo conectar la Agenda.");}}
+export async function PATCH(request: NextRequest){try{const{user}=await requireUser(request);const body=await request.json().catch(()=>({})) as {agendaId?:string;accept?:boolean};if(!body.agendaId||typeof body.accept!=="boolean")return NextResponse.json({error:"agendaId y accept son obligatorios."},{status:400});return NextResponse.json(await respondAgendaInvite({admin:createAdminSupabase(),userId:user.id,agendaId:body.agendaId,accept:body.accept}));}catch(e){return apiError(e,"No se pudo responder la conexión.");}}
