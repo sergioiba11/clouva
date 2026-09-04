@@ -8,6 +8,7 @@ type FlowCoinIconProps = {
   edge?: string;
   className?: string;
   title?: string;
+  imageUrl?: string | null;
 };
 
 export function FlowCoinIcon({
@@ -16,12 +17,36 @@ export function FlowCoinIcon({
   edge = "#e3dcff",
   className,
   title = "FLOW",
+  imageUrl = null,
 }: FlowCoinIconProps) {
   const rawId = useId().replace(/:/g, "");
   const metalId = `flow-metal-${rawId}`;
   const coreId = `flow-core-${rawId}`;
   const rimId = `flow-rim-${rawId}`;
   const shineId = `flow-shine-${rawId}`;
+
+  if (imageUrl) {
+    return (
+      <span
+        role="img"
+        aria-label={title}
+        title={title}
+        className={className}
+        style={{
+          display: "block",
+          width: size,
+          height: size,
+          flex: "0 0 auto",
+          borderRadius: "9999px",
+          backgroundImage: `url(${JSON.stringify(imageUrl)})`,
+          backgroundPosition: "center",
+          backgroundRepeat: "no-repeat",
+          backgroundSize: "contain",
+          filter: `drop-shadow(0 0 ${Math.max(5, size * 0.22)}px ${glow})`,
+        }}
+      />
+    );
+  }
 
   return (
     <svg
