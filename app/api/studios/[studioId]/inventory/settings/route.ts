@@ -51,104 +51,13 @@ async function assertCategory(admin: ReturnType<typeof createAdminSupabase>, spa
   return data.id;
 }
 
-async function ensureReorderRequest(args: {
-  admin: ReturnType<typeof createAdminSupabase>;
-  spaceId: string;
-  item: Record<string, unknown>;
-  actorUserId: string;
-  actorPlayerId: string | null;
-}) {
-  const minimum = numeric(args.item.minimum_quantity);
-  let quantity = numeric(args.item.quantity);
-  const source = String(args.item.stock_source || "managed");
-
-  if (source === "commerce_variant" && args.item.commerce_variant_id) {
-    const { data, error } = await args.admin
-      .from("commerce_product_variants")
-      .select("stock")
-      .eq("id", String(args.item.commerce_variant_id))
-      .maybeSingle();
-    if (error) throw new Error(error.message);
-    quantity = numeric(data?.stock);
-  } else if (source === "commerce_product" && args.item.commerce_product_id) {
-    const { data, error } = await args.admin
-      .from("commerce_products")
-      .select("stock")
-      .eq("id", String(args.item.commerce_product_id))
-      .maybeSingle();
-    if (error) throw new Error(error.message);
-    quantity = numeric(data?.stock);
-  }
-
-  const { data: openRequests, error: openError } = await args.admin
-    .from("space_inventory_purchase_requests")
-    .select("id,status")
-    .eq("space_id", args.spaceId)
-    .eq("item_id", String(args.item.id))
-    .eq("source", "stock_minimum")
-    .in("status", ["pendiente", "comprado"])
-    .order("created_at", { ascending: false })
-    .limit(1);
-  if (openError) throw new Error(openError.message);
-  const open = openRequests?.[0] ?? null;
-
-  if (minimum <= 0 || quantity > minimum) {
-    if (open?.status === "pendiente") {
-      const { error } = await args.admin
-        .from("space_inventory_purchase_requests")
-        .update({ status: "cancelado", notes: "Cancelado automáticamente: el stock volvió a estar por encima del mínimo.", updated_at: new Date().toISOString() })
-        .eq("id", open.id);
-      if (error) throw new Error(error.message);
-    }
-    return;
-  }
-
-  const ideal = nullableNumeric(args.item.ideal_quantity) ?? minimum;
-  const needed = Math.max(0.0001, ideal - quantity);
-  const replacementCost = nullableNumeric(args.item.replacement_cost);
-  const requestPatch = {
-    quantity_needed: needed,
-    unit: String(args.item.unit || "unidad"),
-    estimated_price: replacementCost == null ? null : replacementCost * needed,
-    supplier: args.item.supplier ? String(args.item.supplier) : null,
-    updated_at: new Date().toISOString(),
-  };
-
-  if (open) {
-    if (open.status === "pendiente") {
-      const { error } = await args.admin
-        .from("space_inventory_purchase_requests")
-        .update(requestPatch)
-        .eq("id", open.id);
-      if (error) throw new Error(error.message);
-    }
-    return;
-  }
-
-  const { error } = await args.admin.from("space_inventory_purchase_requests").insert({
-    space_id: args.spaceId,
-    item_id: String(args.item.id),
-    name: String(args.item.name),
-    ...requestPatch,
-    priority: "normal",
-    status: "pendiente",
-    source: "stock_minimum",
-    added_by_player_id: args.actorPlayerId,
-    added_by_user_id: args.actorUserId,
-    notes: "Generado automáticamente por stock mínimo.",
-  });
-  // Concurrent stock/config updates may race to create the same open automatic request.
-  // The partial unique index is the final idempotency barrier.
-  if (error && error.code !== "23505") throw new Error(error.message);
-}
-
 export async function POST(request: NextRequest, { params }: { params: Promise<{ studioId: string }> }) {
   try {
     const { user } = await requireUser(request);
     const { studioId } = await params;
     const admin = createAdminSupabase();
     const space = await resolveSpaceForStudio({ admin, studioId });
-    const access = await requireSpaceInventoryAccess({ admin, userId: user.id, spaceId: space.id, capability: "inventory" });
+    await requireSpaceInventoryAccess({ admin, userId: user.id, spaceId: space.id, capability: "inventory" });
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     const action = text(body.action, 60);
 
@@ -208,7 +117,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       if (!itemId || !name) return NextResponse.json({ error: "Ítem inválido." }, { status: 400 });
 
       const categoryId = await assertCategory(admin, space.id, text(body.categoryId, 80) || null);
-      const minimum = Math.max(0, numeric(body.minimumQuantity));
       const ideal = nullableNumeric(body.idealQuantity);
       const unitCost = nullableNumeric(body.unitCost);
       const replacementCost = nullableNumeric(body.replacementCost);
@@ -218,7 +126,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         description: text(body.description, 1200) || null,
         image_url: text(body.imageUrl, 1400) || null,
         unit: text(body.unit, 40) || "unidad",
-        minimum_quantity: minimum,
+        minimum_quantity: Math.max(0, numeric(body.minimumQuantity)),
         ideal_quantity: ideal == null ? null : Math.max(0, ideal),
         unit_cost: unitCost == null ? null : Math.max(0, unitCost),
         replacement_cost: replacementCost == null ? null : Math.max(0, replacementCost),
@@ -237,8 +145,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         .select("*")
         .single();
       if (error) throw new Error(error.message);
-      await ensureReorderRequest({ admin, spaceId: space.id, item: data as Record<string, unknown>, actorUserId: user.id, actorPlayerId: access.playerId });
-      return NextResponse.json({ item: data });
+
+      const reorder = await admin.rpc("sync_space_inventory_reorder", { p_item_id: itemId, p_actor_user_id: user.id });
+      if (reorder.error) throw new Error(reorder.error.message);
+      return NextResponse.json({ item: data, reorder: reorder.data });
     }
 
     if (action === "archive_item") {
