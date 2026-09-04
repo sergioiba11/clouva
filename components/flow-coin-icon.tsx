@@ -1,6 +1,6 @@
 "use client";
 
-import { useId } from "react";
+import { useEffect, useId, useState } from "react";
 
 type FlowCoinIconProps = {
   size?: number;
@@ -9,6 +9,7 @@ type FlowCoinIconProps = {
   className?: string;
   title?: string;
   imageUrl?: string | null;
+  fallbackImageUrl?: string | null;
 };
 
 export function FlowCoinIcon({
@@ -18,30 +19,40 @@ export function FlowCoinIcon({
   className,
   title = "FLOW",
   imageUrl = null,
+  fallbackImageUrl = null,
 }: FlowCoinIconProps) {
   const rawId = useId().replace(/:/g, "");
   const metalId = `flow-metal-${rawId}`;
   const coreId = `flow-core-${rawId}`;
   const rimId = `flow-rim-${rawId}`;
   const shineId = `flow-shine-${rawId}`;
+  const [activeImageUrl, setActiveImageUrl] = useState<string | null>(imageUrl);
 
-  if (imageUrl) {
+  useEffect(() => {
+    setActiveImageUrl(imageUrl);
+  }, [imageUrl, fallbackImageUrl]);
+
+  if (activeImageUrl) {
     return (
-      <span
-        role="img"
-        aria-label={title}
+      <img
+        src={activeImageUrl}
+        alt={title}
         title={title}
         className={className}
+        onError={() => {
+          if (fallbackImageUrl && activeImageUrl !== fallbackImageUrl) {
+            setActiveImageUrl(fallbackImageUrl);
+            return;
+          }
+          setActiveImageUrl(null);
+        }}
         style={{
           display: "block",
           width: size,
           height: size,
           flex: "0 0 auto",
           borderRadius: "9999px",
-          backgroundImage: `url(${JSON.stringify(imageUrl)})`,
-          backgroundPosition: "center",
-          backgroundRepeat: "no-repeat",
-          backgroundSize: "contain",
+          objectFit: "contain",
           filter: `drop-shadow(0 0 ${Math.max(5, size * 0.22)}px ${glow})`,
         }}
       />
