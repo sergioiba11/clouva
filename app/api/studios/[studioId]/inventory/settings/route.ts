@@ -59,10 +59,9 @@ async function ensureReorderRequest(args: {
   actorPlayerId: string | null;
 }) {
   const minimum = numeric(args.item.minimum_quantity);
-  if (minimum <= 0) return;
-
   let quantity = numeric(args.item.quantity);
   const source = String(args.item.stock_source || "managed");
+
   if (source === "commerce_variant" && args.item.commerce_variant_id) {
     const { data, error } = await args.admin
       .from("commerce_product_variants")
@@ -81,29 +80,65 @@ async function ensureReorderRequest(args: {
     quantity = numeric(data?.stock);
   }
 
-  if (quantity > minimum) return;
+  const { data: openRequests, error: openError } = await args.admin
+    .from("space_inventory_purchase_requests")
+    .select("id,status")
+    .eq("space_id", args.spaceId)
+    .eq("item_id", String(args.item.id))
+    .eq("source", "stock_minimum")
+    .in("status", ["pendiente", "comprado"])
+    .order("created_at", { ascending: false })
+    .limit(1);
+  if (openError) throw new Error(openError.message);
+  const open = openRequests?.[0] ?? null;
+
+  if (minimum <= 0 || quantity > minimum) {
+    if (open?.status === "pendiente") {
+      const { error } = await args.admin
+        .from("space_inventory_purchase_requests")
+        .update({ status: "cancelado", notes: "Cancelado automáticamente: el stock volvió a estar por encima del mínimo.", updated_at: new Date().toISOString() })
+        .eq("id", open.id);
+      if (error) throw new Error(error.message);
+    }
+    return;
+  }
+
   const ideal = nullableNumeric(args.item.ideal_quantity) ?? minimum;
   const needed = Math.max(0.0001, ideal - quantity);
   const replacementCost = nullableNumeric(args.item.replacement_cost);
-  const { error } = await args.admin.from("space_inventory_purchase_requests").upsert({
+  const requestPatch = {
+    quantity_needed: needed,
+    unit: String(args.item.unit || "unidad"),
+    estimated_price: replacementCost == null ? null : replacementCost * needed,
+    supplier: args.item.supplier ? String(args.item.supplier) : null,
+    updated_at: new Date().toISOString(),
+  };
+
+  if (open) {
+    if (open.status === "pendiente") {
+      const { error } = await args.admin
+        .from("space_inventory_purchase_requests")
+        .update(requestPatch)
+        .eq("id", open.id);
+      if (error) throw new Error(error.message);
+    }
+    return;
+  }
+
+  const { error } = await args.admin.from("space_inventory_purchase_requests").insert({
     space_id: args.spaceId,
     item_id: String(args.item.id),
     name: String(args.item.name),
-    quantity_needed: needed,
-    unit: String(args.item.unit || "unidad"),
+    ...requestPatch,
     priority: "normal",
-    estimated_price: replacementCost == null ? null : replacementCost * needed,
-    supplier: args.item.supplier ? String(args.item.supplier) : null,
     status: "pendiente",
     source: "stock_minimum",
     added_by_player_id: args.actorPlayerId,
     added_by_user_id: args.actorUserId,
     notes: "Generado automáticamente por stock mínimo.",
-    updated_at: new Date().toISOString(),
-  }, { onConflict: "space_id,item_id", ignoreDuplicates: true });
-  // The partial unique index is the final idempotency barrier. Supabase cannot target
-  // a partial index through onConflict reliably in every PostgREST version, so duplicate
-  // violations are harmless if an open automatic request already exists.
+  });
+  // Concurrent stock/config updates may race to create the same open automatic request.
+  // The partial unique index is the final idempotency barrier.
   if (error && error.code !== "23505") throw new Error(error.message);
 }
 
