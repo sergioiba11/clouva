@@ -59,8 +59,11 @@ jobs:
       - name: Commit implementation
         run: |
           rm scripts/apply-agenda-life-timeline.py .github/workflows/apply-agenda-life-timeline.yml
+          git restore --source=HEAD --worktree --staged public/assets/clouva/landing-bg-v6.webp 2>/dev/null || rm -f public/assets/clouva/landing-bg-v6.webp
           git config user.name "CLOUVA Automation"
           git config user.email "actions@users.noreply.github.com"
           git add -A
           git commit -m "feat(agenda): add pending participants and life timeline"
+          git fetch origin main
+          git rebase origin/main
           git push origin HEAD:main
