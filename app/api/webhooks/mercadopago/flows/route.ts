@@ -109,6 +109,9 @@ export async function POST(request: NextRequest) {
           providerFee,
           netAmount,
           grossAmount: amount,
+          collectorId: text(payment.collector_id || config.userId),
+          applicationId: text(payment.application_id || config.applicationId),
+          reserveCustodyVerifiedByWebhook: true,
         },
       });
       if (confirmationError) throw new Error(confirmationError.message);
@@ -123,7 +126,11 @@ export async function POST(request: NextRequest) {
         p_currency: currency,
         p_reason: paymentStatus,
         p_idempotency_key: `mercadopago-refund:${resourceId}:${paymentStatus}`,
-        p_metadata: { paymentStatus, statusDetail: text(payment.status_detail) || null },
+        p_metadata: {
+          paymentStatus,
+          statusDetail: text(payment.status_detail) || null,
+          collectorId: text(payment.collector_id || config.userId),
+        },
       });
       if (refundError) throw new Error(refundError.message);
       return NextResponse.json({ received: true, processed: true, operationId: operation.id, refund });
