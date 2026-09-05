@@ -31,6 +31,12 @@ function initialMobileViewport(): boolean | null {
   return window.matchMedia(HOME_MOBILE_QUERY).matches;
 }
 
+function isCommerceWorkspacePath(pathname: string) {
+  return /^\/businesses\/[^/]+\/?$/.test(pathname)
+    || /^\/studio-dashboard\/[^/]+\/commerce(?:\/|$)/.test(pathname)
+    || /^\/mi-spot\/[^/]+\/commerce(?:\/|$)/.test(pathname);
+}
+
 export function GlobalFlowBalance({ variant = "global" }: GlobalFlowBalanceProps = {}) {
   const pathname = usePathname();
   const { user, loading: authLoading } = useAuth();
@@ -87,13 +93,13 @@ export function GlobalFlowBalance({ variant = "global" }: GlobalFlowBalanceProps
 
   if (authLoading || !user || !data) return null;
 
-  // The root layout also mounts a global balance. On mobile Home there is already
-  // a dedicated header balance, so suppress the global copy in React instead of
-  // relying on Tailwind's `hidden md:flex`. This prevents a duplicate raw link
-  // from flashing while route CSS is still arriving on slower connections.
+  // The root layout also mounts a global balance. Some surfaces own their
+  // balance in a real header; suppress the floating copy there so FLOW remains
+  // visually connected to CLOUVA instead of covering page controls.
   if (variant === "global") {
     if (pathname.startsWith("/agenda")) return null;
     if (pathname === "/" && isMobileViewport !== false) return null;
+    if (isCommerceWorkspacePath(pathname)) return null;
   }
 
   const label = flowLabel(data.balance);
