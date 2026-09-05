@@ -36,7 +36,8 @@ export default function FlowLayoutClient({ children }: { children: React.ReactNo
     "/mi-flow/armario",
     "/mi-flow/music",
   ];
-  if (fullScreenPages.includes(pathname)) return <>{children}</>;
+  const usesOwnShell = fullScreenPages.includes(pathname) || pathname === "/mi-flow/billetera" || pathname.startsWith("/mi-flow/billetera/");
+  if (usesOwnShell) return <>{children}</>;
 
   return (
     <main className="pb-24 md:pb-0">
