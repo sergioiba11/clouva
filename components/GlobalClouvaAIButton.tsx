@@ -15,6 +15,7 @@ const MASCOT_SRC = "/assets/clouva-ai/trebol-mascot.png";
 const POSITION_STORAGE_KEY = "clouva-ai-launcher-position";
 const VIEWPORT_PADDING = 10;
 const DRAG_THRESHOLD = 5;
+const MOBILE_QUERY = "(max-width: 640px)";
 
 type LauncherPosition = { x: number; y: number };
 
@@ -27,6 +28,11 @@ type DragState = {
   moved: boolean;
 };
 
+function initialMobileViewport(): boolean | null {
+  if (typeof window === "undefined") return null;
+  return window.matchMedia(MOBILE_QUERY).matches;
+}
+
 export function GlobalClouvaAIButton() {
   const pathname = usePathname();
   const { user, loading } = useAuth();
@@ -37,6 +43,7 @@ export function GlobalClouvaAIButton() {
   const suppressClickRef = useRef(false);
   const [position, setPosition] = useState<LauncherPosition | null>(null);
   const [dragging, setDragging] = useState(false);
+  const [isMobileViewport, setIsMobileViewport] = useState<boolean | null>(initialMobileViewport);
   const isAgendaRoute = pathname === "/agenda" || pathname.startsWith("/agenda/");
 
   const clampPosition = (x: number, y: number): LauncherPosition => {
@@ -68,10 +75,29 @@ export function GlobalClouvaAIButton() {
   };
 
   useEffect(() => {
+    const media = window.matchMedia(MOBILE_QUERY);
+    const sync = () => setIsMobileViewport(media.matches);
+    sync();
+    media.addEventListener("change", sync);
+    return () => media.removeEventListener("change", sync);
+  }, []);
+
+  useEffect(() => {
     if (loading) return;
 
     const launcher = launcherRef.current;
     if (!launcher) return;
+
+    // On phones the launcher has a canonical safe dock above the bottom UI.
+    // Ignore any old dragged coordinates there: they are what made the button
+    // collide with headers and could turn a drag into an accidental close.
+    if (isMobileViewport) {
+      dragRef.current = null;
+      positionRef.current = null;
+      setPosition(null);
+      setDragging(false);
+      return;
+    }
 
     let nextPosition: LauncherPosition | null = null;
 
@@ -99,6 +125,7 @@ export function GlobalClouvaAIButton() {
     applyPosition(nextPosition);
 
     const handleResize = () => {
+      if (window.matchMedia(MOBILE_QUERY).matches) return;
       if (isAgendaRoute) {
         applyPosition(agendaDockPosition());
         return;
@@ -112,7 +139,7 @@ export function GlobalClouvaAIButton() {
 
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
-  }, [isAgendaRoute, loading]);
+  }, [isAgendaRoute, isMobileViewport, loading]);
 
   useEffect(() => {
     if (!open) return;
@@ -127,7 +154,7 @@ export function GlobalClouvaAIButton() {
   }, [closeAssistant, open]);
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    if (isAgendaRoute) return;
+    if (isAgendaRoute || isMobileViewport) return;
     if (event.pointerType === "mouse" && event.button !== 0) return;
 
     const launcher = launcherRef.current;
@@ -209,7 +236,7 @@ export function GlobalClouvaAIButton() {
         type="button"
         data-trebol-ui
         className={`${styles.launcher} ${dragging ? styles.dragging : ""} ${isAgendaRoute ? styles.agendaDock : ""}`}
-        style={position ? { left: position.x, top: position.y, bottom: "auto" } : undefined}
+        style={!isMobileViewport && position ? { left: position.x, top: position.y, bottom: "auto" } : undefined}
         onClick={handleClick}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}

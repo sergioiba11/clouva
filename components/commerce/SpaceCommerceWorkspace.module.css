@@ -1,0 +1,132 @@
+.workspace {
+  min-height: 100vh;
+  background: #050507;
+}
+
+.clouvaBar {
+  position: sticky;
+  top: 0;
+  z-index: 70;
+  display: flex;
+  min-height: 54px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, .075);
+  background:
+    radial-gradient(circle at 12% 0, rgba(124, 58, 237, .16), transparent 42%),
+    rgba(5, 5, 7, .94);
+  padding: 8px 14px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .24);
+  backdrop-filter: blur(22px);
+}
+
+.brand {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 9px;
+  color: #fff;
+  text-decoration: none;
+}
+
+.mark {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  flex: 0 0 auto;
+  place-items: center;
+  overflow: hidden;
+}
+
+.brandCopy {
+  display: grid;
+  min-width: 0;
+  line-height: 1;
+}
+
+.brandCopy strong {
+  font-size: 13px;
+  font-weight: 850;
+  letter-spacing: .11em;
+}
+
+.brandCopy small {
+  margin-top: 4px;
+  color: rgba(255, 255, 255, .38);
+  font-size: 8px;
+  font-weight: 650;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+/* The commerce dashboard has its own sticky Space header. Keep it immediately
+   under the canonical CLOUVA bar instead of letting both headers overlap. */
+.workspace main > header {
+  top: 54px;
+}
+
+@media (max-width: 640px) {
+  .clouvaBar {
+    min-height: 50px;
+    gap: 8px;
+    padding: 6px 10px;
+  }
+
+  .mark {
+    width: 34px;
+    height: 34px;
+  }
+
+  .brandCopy strong {
+    font-size: 12px;
+  }
+
+  .brandCopy small {
+    display: none;
+  }
+
+  .workspace main > header {
+    top: 50px;
+  }
+
+  .workspace main > header > div {
+    gap: 8px;
+    padding: 8px 12px;
+  }
+
+  /* The official CLOUVA mark now owns the global identity. The secondary
+     header only needs to identify the current Space. */
+  .workspace main > header > div > div:first-child {
+    gap: 8px;
+  }
+
+  .workspace main > header > div > div:first-child > div:first-child {
+    display: none;
+  }
+
+  .workspace main > header > div > div:first-child p:first-child {
+    font-size: 12px;
+    line-height: 1.15;
+  }
+
+  .workspace main > header > div > div:first-child p:last-child {
+    margin-top: 2px;
+    font-size: 9px;
+  }
+
+  /* "Ver tienda" is available from the manager itself. Removing this icon
+     from the narrow header gives the Space name, FLOW and account real room. */
+  .workspace main > header > div > div:last-child > a {
+    display: none;
+  }
+
+  .workspace main > header button[aria-label="Abrir Mi cuenta"] {
+    gap: 0;
+    padding: 3px;
+  }
+
+  .workspace main > header button[aria-label="Abrir Mi cuenta"] > span:last-child {
+    display: none;
+  }
+}
