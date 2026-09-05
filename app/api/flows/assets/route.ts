@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 
 type FundingRow = {
   id: string;
-  operation_id: string;
+  operation_id: string | null;
   entry_type: string;
   provider: string | null;
   payment_method: string | null;
@@ -18,6 +18,11 @@ type FundingRow = {
   provider_fee: number | null;
   net_amount: number | null;
   occurred_at: string;
+  reserve_account_id: string | null;
+  custody_status: string;
+  custody_reference: string | null;
+  custody_confirmed_at: string | null;
+  reference_usd_amount: number | null;
 };
 
 type PaymentDocumentRow = {
@@ -41,6 +46,17 @@ type AssetMovementRow = {
   to_player_id: string | null;
   operation_id: string | null;
   created_at: string;
+};
+
+type BackingAllocationRow = {
+  id: string;
+  flow_asset_id: string;
+  reserve_account_id: string;
+  funding_entry_id: string | null;
+  reference_usd_value: number;
+  status: string;
+  allocated_at: string;
+  released_at: string | null;
 };
 
 const operationSelect = "id,buyer_player_id,recipient_player_id,provider,provider_payment_id,provider_reference,payment_method,quantity,unit_usd,amount,currency,status,backing_status,confirmed_at,issued_at,created_at,fx_rate_original_per_usd,fx_pair,fx_source,fx_quoted_at,provider_fee,net_amount,refund_status,operation_type,target_asset_id";
@@ -80,7 +96,7 @@ export async function GET(request: NextRequest) {
       ...recentOperations.flatMap((row) => [row.buyer_player_id, row.recipient_player_id].filter(Boolean) as string[]),
     ])];
 
-    const [operationsResult, playersResult, fundingResult, documentsResult, movementsResult] = await Promise.all([
+    const [operationsResult, playersResult, fundingResult, documentsResult, movementsResult, allocationsResult] = await Promise.all([
       operationIds.length
         ? admin.from("flow_purchase_operations").select(operationSelect).in("id", operationIds)
         : Promise.resolve({ data: [], error: null }),
@@ -90,7 +106,7 @@ export async function GET(request: NextRequest) {
       operationIds.length
         ? admin
             .from("flow_funding_ledger")
-            .select("id,operation_id,entry_type,provider,payment_method,amount,currency,status,external_payment_id,provider_fee,net_amount,occurred_at")
+            .select("id,operation_id,entry_type,provider,payment_method,amount,currency,status,external_payment_id,provider_fee,net_amount,occurred_at,reserve_account_id,custody_status,custody_reference,custody_confirmed_at,reference_usd_amount")
             .in("operation_id", operationIds)
             .order("occurred_at", { ascending: true })
         : Promise.resolve({ data: [] as FundingRow[], error: null }),
@@ -108,15 +124,30 @@ export async function GET(request: NextRequest) {
             .in("flow_asset_id", assetIds)
             .order("created_at", { ascending: true })
         : Promise.resolve({ data: [] as AssetMovementRow[], error: null }),
+      assetIds.length
+        ? admin
+            .from("flow_backing_allocations")
+            .select("id,flow_asset_id,reserve_account_id,funding_entry_id,reference_usd_value,status,allocated_at,released_at")
+            .in("flow_asset_id", assetIds)
+            .order("allocated_at", { ascending: false })
+        : Promise.resolve({ data: [] as BackingAllocationRow[], error: null }),
     ]);
-    for (const result of [operationsResult, playersResult, fundingResult, documentsResult, movementsResult]) {
+    for (const result of [operationsResult, playersResult, fundingResult, documentsResult, movementsResult, allocationsResult]) {
       if (result.error) throw new Error(result.error.message);
     }
 
+    const reserveAccountIds = [...new Set(((allocationsResult.data ?? []) as BackingAllocationRow[]).map((row) => row.reserve_account_id))];
+    const reserveAccountsResult = reserveAccountIds.length
+      ? await admin.from("flow_reserve_accounts").select("id,name,provider,account_type,currency,status,is_active").in("id", reserveAccountIds)
+      : { data: [], error: null };
+    if (reserveAccountsResult.error) throw new Error(reserveAccountsResult.error.message);
+
     const operations = new Map((operationsResult.data ?? []).map((row) => [row.id, row]));
     const players = new Map((playersResult.data ?? []).map((row) => [row.id, row]));
+    const reserveAccounts = new Map((reserveAccountsResult.data ?? []).map((row) => [row.id, row]));
     const fundingByOperation = new Map<string, FundingRow[]>();
     for (const row of (fundingResult.data ?? []) as FundingRow[]) {
+      if (!row.operation_id) continue;
       const rows = fundingByOperation.get(row.operation_id) ?? [];
       rows.push(row);
       fundingByOperation.set(row.operation_id, rows);
@@ -132,6 +163,11 @@ export async function GET(request: NextRequest) {
       const rows = movementsByAsset.get(row.flow_asset_id) ?? [];
       rows.push(row);
       movementsByAsset.set(row.flow_asset_id, rows);
+    }
+    const allocationByAsset = new Map<string, BackingAllocationRow>();
+    for (const row of (allocationsResult.data ?? []) as BackingAllocationRow[]) {
+      if (allocationByAsset.has(row.flow_asset_id)) continue;
+      allocationByAsset.set(row.flow_asset_id, row);
     }
 
     const withFinancialDetails = (operationId: string | null | undefined) => {
@@ -181,6 +217,8 @@ export async function GET(request: NextRequest) {
       assets: assets.map((asset) => {
         const originOperation = withFinancialDetails(asset.operation_id);
         const backingOperation = withFinancialDetails(asset.backing_operation_id);
+        const allocation = allocationByAsset.get(asset.id) ?? null;
+        const reserveAccount = allocation ? reserveAccounts.get(allocation.reserve_account_id) ?? null : null;
         return {
           ...asset,
           owner: asset.owner_player_id ? players.get(asset.owner_player_id) ?? null : null,
@@ -188,6 +226,22 @@ export async function GET(request: NextRequest) {
           operation: backingOperation ?? originOperation,
           originOperation,
           backingOperation,
+          backingAllocation: allocation ? {
+            id: allocation.id,
+            status: allocation.status,
+            referenceUsdValue: Number(allocation.reference_usd_value),
+            allocatedAt: allocation.allocated_at,
+            releasedAt: allocation.released_at,
+            reserveAccount: reserveAccount ? {
+              id: reserveAccount.id,
+              name: reserveAccount.name,
+              provider: reserveAccount.provider,
+              accountType: reserveAccount.account_type,
+              currency: reserveAccount.currency,
+              status: reserveAccount.status,
+              isActive: reserveAccount.is_active,
+            } : null,
+          } : null,
           history: movementsByAsset.get(asset.id) ?? [],
         };
       }),
