@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 
 export const metadata: Metadata = {
   title: "Rapafernalia — CLOUVA",
@@ -31,7 +32,7 @@ export default function RapafernaliaPage() {
           fontFamily: "Arial, Helvetica, sans-serif",
         }}
       >
-        <a
+        <Link
           href="/"
           style={{
             color: "#fff",
@@ -42,7 +43,7 @@ export default function RapafernaliaPage() {
           }}
         >
           CLOUVA
-        </a>
+        </Link>
         <span
           style={{
             color: "rgba(255,255,255,.55)",
