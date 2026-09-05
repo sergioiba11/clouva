@@ -90,8 +90,8 @@ export const DEFAULT_MOBILE_HOME_CONFIG: MobileHomeConfig = {
     height: 310,
     textWidth: 58,
     contentPaddingLeft: 22,
-    primaryLabel: "Entrar a mi Avatar",
-    primaryHref: "/mi-flow/avatar",
+    primaryLabel: "Entrar a mi perfil",
+    primaryHref: "/perfil",
     secondaryLabel: "Explorar Mundos",
     secondaryHref: "/matrix",
   },
@@ -139,6 +139,11 @@ const ALLOWED_ROUTES = new Set([
   "/tienda",
   "/perfil",
   "/studios/iglu",
+  "/vip",
+  "/mi-spot",
+  "/clouva-ai",
+  "/market",
+  "/crear",
 ]);
 
 const SECTION_KEYS = new Set<MobileHomeSectionKey>(["hero", "music", "features"]);
@@ -220,6 +225,10 @@ export function sanitizeMobileHomeConfig(value: unknown): MobileHomeConfig {
   const heroTitle = sanitizedHeroTitle === "Crea. Personaliza.\nConecta."
     ? DEFAULT_MOBILE_HOME_CONFIG.hero.title
     : sanitizedHeroTitle;
+  const rawPrimaryLabel = text(hero.primaryLabel, DEFAULT_MOBILE_HOME_CONFIG.hero.primaryLabel, 48);
+  const primaryLabel = rawPrimaryLabel === "Entrar a mi Avatar"
+    ? DEFAULT_MOBILE_HOME_CONFIG.hero.primaryLabel
+    : rawPrimaryLabel;
 
   return {
     schemaVersion: 1,
@@ -248,7 +257,7 @@ export function sanitizeMobileHomeConfig(value: unknown): MobileHomeConfig {
       height: numberInRange(hero.height, DEFAULT_MOBILE_HOME_CONFIG.hero.height, 240, 620),
       textWidth: numberInRange(hero.textWidth, DEFAULT_MOBILE_HOME_CONFIG.hero.textWidth, 38, 75),
       contentPaddingLeft: numberInRange(hero.contentPaddingLeft, DEFAULT_MOBILE_HOME_CONFIG.hero.contentPaddingLeft, 8, 48),
-      primaryLabel: text(hero.primaryLabel, DEFAULT_MOBILE_HOME_CONFIG.hero.primaryLabel, 48),
+      primaryLabel,
       primaryHref: route(hero.primaryHref, DEFAULT_MOBILE_HOME_CONFIG.hero.primaryHref),
       secondaryLabel: text(hero.secondaryLabel, DEFAULT_MOBILE_HOME_CONFIG.hero.secondaryLabel, 48),
       secondaryHref: route(hero.secondaryHref, DEFAULT_MOBILE_HOME_CONFIG.hero.secondaryHref),

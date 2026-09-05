@@ -5,19 +5,24 @@ import { useRouter } from "next/navigation";
 import type { CSSProperties, MouseEvent } from "react";
 import {
   ArrowRight,
+  BarChart3,
   Bell,
   CircleUserRound,
   Crown,
+  Diamond,
   Home,
+  Music2,
   Pause,
   Plus,
   ShoppingBag,
   SkipForward,
   Sparkles,
+  Star,
+  Users,
   WalletCards,
   X,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
 import { useCurrentPlayer } from "@/components/current-player-provider";
 import { AccountMenu } from "@/components/account/AccountMenu";
@@ -25,6 +30,7 @@ import { useSpotifyPlayback } from "@/components/music/SpotifyPlaybackProvider";
 import { OfficialClouvaMark } from "@/components/clouva/OfficialClouvaMark";
 import { GlobalFlowBalance } from "@/components/GlobalFlowBalance";
 import { resolveAccountDisplayName } from "@/lib/identity-names";
+import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
 import {
   CLOUVA_NAVIGATION,
   getNavigationItems,
@@ -45,6 +51,13 @@ import labStyles from "./mobile-home-lab.module.css";
 
 const [homeNav, , createNav, marketNav, miFlowNav] = getNavigationItems(MOBILE_PRIMARY_NAV_KEYS);
 
+type VipState = {
+  entitlement: null | {
+    tier: string;
+    status: string;
+  };
+};
+
 function initials(value: string) {
   return value
     .split(/\s+/)
@@ -52,15 +65,6 @@ function initials(value: string) {
     .slice(0, 2)
     .map((part) => part.charAt(0).toUpperCase())
     .join("");
-}
-
-function multiline(value: string) {
-  return value.split("\n").map((line, index, lines) => (
-    <span key={`${line}-${index}`}>
-      {line}
-      {index < lines.length - 1 ? <br /> : null}
-    </span>
-  ));
 }
 
 function formatTime(milliseconds: number) {
@@ -77,7 +81,7 @@ type MobileHomeDashboardProps = {
 
 export function MobileHomeDashboard({ configOverride, previewMode = false }: MobileHomeDashboardProps = {}) {
   const router = useRouter();
-  const { user, profile } = useAuth();
+  const { user, profile, session, loading: authLoading } = useAuth();
   const { currentPlayer } = useCurrentPlayer();
   const { playback, scopesReady, busyAction, controlPlayback } = useSpotifyPlayback();
   const { config, version } = usePublishedUiPage(
@@ -87,6 +91,7 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
     configOverride,
   );
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [vipActive, setVipActive] = useState(false);
 
   const accountName = resolveAccountDisplayName({ profile, user });
   const playerImage = currentPlayer?.profile_image_url
@@ -99,9 +104,31 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
   const profileFallback = useMemo(() => initials(playerDisplayName) || "C", [playerDisplayName]);
   const publicProfileHref = getPlayerDestination(currentPlayer);
   const cssVariables = useMemo(
-    () => ({ ...configCssVariables(config), backgroundColor: "#050507" }) as CSSProperties,
+    () => ({ ...configCssVariables(config), backgroundColor: "#030207" }) as CSSProperties,
     [config],
   );
+
+  useEffect(() => {
+    if (previewMode || authLoading) return;
+    let cancelled = false;
+
+    const loadVip = async () => {
+      try {
+        const response = session
+          ? await authenticatedFetch("/api/billing/vip")
+          : await fetch("/api/billing/vip", { cache: "no-store" });
+        const state = await readApiJson<VipState>(response);
+        if (!cancelled) {
+          setVipActive(state.entitlement?.tier === "vip" && state.entitlement.status === "active");
+        }
+      } catch {
+        if (!cancelled) setVipActive(false);
+      }
+    };
+
+    void loadVip();
+    return () => { cancelled = true; };
+  }, [authLoading, previewMode, session?.access_token]);
 
   const preventPreviewNavigation = (event: MouseEvent<HTMLElement>) => {
     if (previewMode) event.preventDefault();
@@ -126,22 +153,50 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
         className={styles.hero}
         aria-labelledby="mobile-home-title"
         data-clouva-block="hero"
-        style={{ minHeight: 368 }}
       >
+        <div
+          className={styles.heroBackdrop}
+          style={{ backgroundImage: `url(${config.hero.imageUrl})` }}
+          aria-hidden="true"
+        />
         <div className={styles.heroAtmosphere} aria-hidden="true">
+          <span className={styles.heroPlanet} />
+          <span className={styles.heroHorizon} />
           <span className={styles.heroHalo} />
           <span className={styles.heroOrbitOne} />
           <span className={styles.heroOrbitTwo} />
+          <span className={styles.heroOrbitThree} />
           <span className={styles.heroStarOne} />
           <span className={styles.heroStarTwo} />
           <span className={styles.heroStarThree} />
+          <span className={styles.heroStarFour} />
         </div>
 
-        <div className={styles.heroIdentity} aria-hidden="true">
-          <span className={styles.identityRing} />
+        <div className={styles.heroSideWords} aria-hidden="true">
+          <span>GENTE</span>
+          <span>MÚSICA</span>
+          <span>MUNDOS</span>
+          <span>IDEAS</span>
+          <span>VOS</span>
+        </div>
+
+        <Link
+          href="/clouva-ai"
+          className={styles.aiPortal}
+          onClick={preventPreviewNavigation}
+          aria-label="Abrir CLOUVA AI"
+        >
+          <span className={styles.aiOrb}><Sparkles size={21} /></span>
+          <small>CLOUVA AI</small>
+          <b>SIEMPRE<br />CON VOS <ArrowRight size={10} /></b>
+        </Link>
+
+        <div className={styles.heroIdentity}>
+          <span className={styles.identityRing} aria-hidden="true" />
+          <span className={styles.identityOrbitDot} aria-hidden="true" />
           <span className={styles.identityCore}>
             {playerImage ? (
-              <img src={playerImage} alt="" />
+              <img src={playerImage} alt={`Foto de ${playerDisplayName}`} />
             ) : (
               <OfficialClouvaMark tone="light" className={styles.identityMark} />
             )}
@@ -149,19 +204,28 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
         </div>
 
         <div className={styles.heroContent}>
-          <span className={styles.eyebrow}>{config.hero.eyebrow}</span>
-          <h1 id="mobile-home-title">{multiline(config.hero.title)}</h1>
-          <p>{config.hero.subtitle}</p>
+          <span className={styles.eyebrow}>BIENVENIDO DE NUEVO</span>
+          <h1 id="mobile-home-title">VIDA DE FLOWS</h1>
+          <p>Viví tu propio mundo.</p>
 
           <div className={styles.heroActions}>
-            <Link href={config.hero.primaryHref} className={styles.primaryAction} onClick={preventPreviewNavigation}>
-              <CircleUserRound size={17} />
-              {config.hero.primaryLabel}
+            <Link href={publicProfileHref} className={styles.primaryAction} onClick={preventPreviewNavigation}>
+              <CircleUserRound size={19} />
+              <span>Entrar a mi perfil</span>
+              <ArrowRight size={17} />
             </Link>
             <Link href={config.hero.secondaryHref} className={styles.secondaryAction} onClick={preventPreviewNavigation}>
-              <Sparkles size={16} />
-              {config.hero.secondaryLabel}
+              <Sparkles size={18} />
+              <span>Explorar Mundos</span>
+              <ArrowRight size={17} />
             </Link>
+          </div>
+
+          <div className={styles.heroMantra} aria-hidden="true">
+            <span>CREÁ</span><i />
+            <span>CONECTÁ</span><i />
+            <span>EXPLORÁ</span><i />
+            <span>VIVÍ</span>
           </div>
         </div>
       </section>
@@ -226,32 +290,71 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
 
     const isVip = id === "continue";
     const href = isVip ? "/vip" : CLOUVA_NAVIGATION.MI_SPOT.href;
-    const title = isVip ? "Desbloqueá funciones VIP" : "Entrar a mi Spot";
-    const body = isVip
-      ? "Más herramientas, identidad y experiencias dentro de CLOUVA."
-      : "Tu espacio. Tu música. Tu universo.";
+
+    if (isVip) {
+      return (
+        <Link
+          key={id}
+          href={href}
+          className={`${styles.featureCard} ${styles.vipCard}`}
+          onClick={preventPreviewNavigation}
+          data-clouva-block={id}
+        >
+          <span className={styles.featureSurface} aria-hidden="true" />
+          <div className={styles.featureTop}>
+            <span className={`${styles.featureIcon} ${styles.vipIcon}`}><Crown size={21} /></span>
+            <strong>CLOUVA VIP</strong>
+            {vipActive ? <em className={styles.vipActive}><i /> VIP ACTIVO <i /></em> : null}
+          </div>
+
+          <div className={styles.vipBody}>
+            <h2>Potenciá<br />tu experiencia</h2>
+            <p>Más herramientas, identidad y experiencias exclusivas dentro de CLOUVA.</p>
+          </div>
+
+          <div className={styles.vipVisual} aria-hidden="true">
+            <span className={styles.vipBeam} />
+            <span className={styles.vipPedestal} />
+            <Crown size={44} />
+          </div>
+
+          <span className={styles.vipCta}>Ver beneficios VIP <ArrowRight size={16} /></span>
+
+          <div className={styles.featureBenefits} aria-hidden="true">
+            <span><Diamond size={15} /><small>MÁS<br />HERRAMIENTAS</small></span>
+            <span><Users size={15} /><small>EXPERIENCIAS<br />EXCLUSIVAS</small></span>
+            <span><Star size={15} /><small>IDENTIDAD<br />ÚNICA</small></span>
+          </div>
+        </Link>
+      );
+    }
 
     return (
       <Link
         key={id}
         href={href}
-        className={`${styles.featureCard} ${isVip ? styles.vipCard : styles.spotCard}`}
-        style={!isVip ? { backgroundImage: `url(${card.imageUrl})` } : undefined}
+        className={`${styles.featureCard} ${styles.spotCard}`}
+        style={{ backgroundImage: `url(${card.imageUrl})` }}
         onClick={preventPreviewNavigation}
         data-clouva-block={id}
       >
         <span className={styles.featureSurface} aria-hidden="true" />
         <div className={styles.featureTop}>
           <span className={styles.featureIcon}>
-            {isVip ? <Crown size={17} /> : <OfficialClouvaMark tone="light" className={styles.spotMark} />}
+            <OfficialClouvaMark tone="light" className={styles.spotMark} />
           </span>
-          <small>{isVip ? "CLOUVA VIP" : "MI SPOT"}</small>
+          <strong>MI SPOT</strong>
         </div>
-        <div className={styles.featureBody}>
-          <h2>{title}</h2>
-          <p>{body}</p>
+        <span className={styles.featureArrow} aria-hidden="true"><ArrowRight size={18} /></span>
+        <div className={styles.spotBody}>
+          <h2>Entrar a mi Spot</h2>
+          <p>Tu espacio. Tu música. Tu universo.</p>
         </div>
-        <b className={styles.featureArrow} aria-hidden="true"><ArrowRight size={17} /></b>
+        <div className={styles.featureBenefits} aria-hidden="true">
+          <span><Music2 size={15} /><small>CREÁ</small></span>
+          <span><BarChart3 size={15} /><small>COMPARTÍ</small></span>
+          <span><Users size={15} /><small>CONECTÁ</small></span>
+        </div>
       </Link>
     );
   }
@@ -302,14 +405,11 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
             aria-label="Abrir notificaciones"
             aria-expanded={notificationsOpen}
           >
-            <Bell size={20} />
+            <Bell size={21} />
             {config.header.showNotificationDot ? <span aria-hidden="true" /> : null}
           </button>
           {!previewMode ? (
-            <AccountMenu
-              variant="home"
-              triggerImageUrl={playerImage ?? undefined}
-            />
+            <AccountMenu variant="home" triggerImageUrl={playerImage ?? undefined} />
           ) : playerImage ? (
             <span className={styles.brandAvatar} aria-hidden="true"><img src={playerImage} alt="" /></span>
           ) : config.header.showBrandAvatar ? (
@@ -318,17 +418,23 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
         </div>
       </header>
 
-      <section className={styles.playerLine} aria-label="Player activo">
-        <Link href={publicProfileHref} onClick={preventPreviewNavigation}>
+      <section className={styles.playerStatus} aria-label="Player activo">
+        <Link href={publicProfileHref} className={styles.playerLine} onClick={preventPreviewNavigation}>
           <span className={styles.playerMiniAvatar}>
             {playerImage ? <img src={String(playerImage)} alt="" /> : <b>{profileFallback}</b>}
           </span>
-          <span>
+          <span className={styles.playerLineCopy}>
             <small>PLAYER ACTIVO</small>
             <strong>{playerDisplayName}</strong>
           </span>
-          <ArrowRight size={15} />
+          <ArrowRight size={18} />
         </Link>
+
+        <div className={styles.playerState} aria-label="Estado del Player: activo">
+          <i aria-hidden="true" />
+          <span><small>PLAYER</small><strong>Activo</strong></span>
+        </div>
+        <p className={styles.playerTagline}>Más música.<br />Más mundos.<br />Más vos.</p>
       </section>
 
       <div className={styles.sections}>
@@ -337,7 +443,7 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
 
       <nav className={styles.bottomNav} aria-label="Navegación principal móvil" data-clouva-block="navigation">
         <Link href={homeNav.href} className={styles.activeNav} onClick={preventPreviewNavigation}>
-          <Home size={20} fill="currentColor" />
+          <Home size={21} fill="currentColor" />
           <span>{homeNav.label}</span>
         </Link>
         <Link href={publicProfileHref} className={styles.profileNav} aria-label={`Abrir Player de ${playerDisplayName}`} onClick={preventPreviewNavigation}>
@@ -345,15 +451,15 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
           <span>Player</span>
         </Link>
         <Link href={createNav.href} className={styles.createNav} aria-label="Crear en CLOUVA" onClick={preventPreviewNavigation}>
-          <b><Plus size={27} /></b>
+          <b><Plus size={31} /></b>
           <small>{createNav.label}</small>
         </Link>
         <Link href={marketNav.href} onClick={preventPreviewNavigation}>
-          <ShoppingBag size={20} />
+          <ShoppingBag size={21} />
           <span>{marketNav.label}</span>
         </Link>
         <Link href={miFlowNav.href} aria-label="Abrir Mi Flow" onClick={preventPreviewNavigation}>
-          <WalletCards size={20} />
+          <WalletCards size={21} />
           <span>{miFlowNav.label}</span>
         </Link>
       </nav>
