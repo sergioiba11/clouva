@@ -50,6 +50,8 @@ import styles from "./mobile-home-premium.module.css";
 import labStyles from "./mobile-home-lab.module.css";
 
 const [homeNav, , createNav, marketNav, miFlowNav] = getNavigationItems(MOBILE_PRIMARY_NAV_KEYS);
+const MOBILE_HOME_ORBITS_ASSET_URL =
+  "https://storage.googleapis.com/clouva-generated-media/admin-assets/brand/02_home_mobile_orbits.png";
 
 type VipState = {
   entitlement: null | {
@@ -160,12 +162,7 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
           aria-hidden="true"
         />
         <div className={styles.heroAtmosphere} aria-hidden="true">
-          <span className={styles.heroPlanet} />
-          <span className={styles.heroHorizon} />
           <span className={styles.heroHalo} />
-          <span className={styles.heroOrbitOne} />
-          <span className={styles.heroOrbitTwo} />
-          <span className={styles.heroOrbitThree} />
           <span className={styles.heroStarOne} />
           <span className={styles.heroStarTwo} />
           <span className={styles.heroStarThree} />
@@ -192,9 +189,27 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
         </Link>
 
         <div className={styles.heroIdentity}>
-          <span className={styles.identityRing} aria-hidden="true" />
-          <span className={styles.identityOrbitDot} aria-hidden="true" />
-          <span className={styles.identityCore}>
+          <img
+            src={MOBILE_HOME_ORBITS_ASSET_URL}
+            alt=""
+            aria-hidden="true"
+            style={{
+              position: "absolute",
+              top: "50%",
+              left: "50%",
+              zIndex: 0,
+              width: "300px",
+              height: "300px",
+              maxWidth: "none",
+              objectFit: "contain",
+              pointerEvents: "none",
+              userSelect: "none",
+              transform: "translate(-50%, -50%)",
+              filter: "drop-shadow(0 0 18px rgba(184, 71, 255, 0.42))",
+            }}
+          />
+          <span className={styles.identityRing} aria-hidden="true" style={{ zIndex: 1 }} />
+          <span className={styles.identityCore} style={{ position: "relative", zIndex: 2 }}>
             {playerImage ? (
               <img src={playerImage} alt={`Foto de ${playerDisplayName}`} />
             ) : (
