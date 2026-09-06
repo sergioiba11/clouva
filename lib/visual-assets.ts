@@ -5,6 +5,10 @@
 export const VISUAL_ASSETS = {
   "home-avatar-atmosphere-01":
     "https://storage.googleapis.com/clouva-generated-media/visual-system/backgrounds/home/home-avatar-atmosphere-01/7a62767a-1899-417e-85d9-605a0dacc3b6.jpg",
+  "home-mobile-hero-01":
+    "https://storage.googleapis.com/clouva-generated-media/admin-assets/brand/01_home_mobile_hero.png",
+  "home-mobile-player-orbits-01":
+    "https://storage.googleapis.com/clouva-generated-media/admin-assets/brand/02_home_mobile_orbits.png",
   "matrix-network-master-01":
     "https://storage.googleapis.com/clouva-generated-media/visual-system/backgrounds/matrix/matrix-network-master-01/ef0eecea-42cd-4330-a260-b1fbbd7b7cd4.jpg",
   "players-directory-hero-01":
