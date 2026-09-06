@@ -5,6 +5,7 @@ import test from "node:test";
 const schemaPath = "supabase/migrations/20260905234547_flow_reserve_custody_schema.sql";
 const functionsPath = "supabase/migrations/20260905234752_flow_reserve_custody_functions.sql";
 const hardeningPath = "supabase/migrations/20260906000513_flow_real_money_checkout_hardening.sql";
+const transferPath = "supabase/migrations/20260906002500_flow_backed_transfer_qr.sql";
 
 async function source(path) {
   return readFile(new URL(path, `file://${process.cwd()}/`), "utf8");
@@ -228,7 +229,7 @@ test("reserve authorization verifies Mercado Pago identity and updates an existi
 
 test("Mercado Pago webhook records actual net and provider fees from provider data", async () => {
   const webhook = await source("app/api/webhooks/mercadopago/flows/route.ts");
-  assert.match(webhook, /transaction_details\?\.net_received_amount/);
+  assert.match(webhook, /transactionDetails\?\.net_received_amount/);
   assert.match(webhook, /fee_details/);
   assert.match(webhook, /providerFee/);
   assert.match(webhook, /netAmount/);
@@ -264,4 +265,38 @@ test("treasury exposes reserve deficit, authorization and actual fee/net state",
   assert.match(route, /reserveAuthorized/);
   assert.match(route, /required_backing_usd/);
   assert.match(route, /processing_fee_amount/);
+});
+
+test("backed FLOW transfer changes ownership and wallet projection without moving backing", async () => {
+  const sql = await source(transferPath);
+  const transfer = section(sql, "create or replace function public.transfer_backed_flows", "revoke all on function public.transfer_backed_flows");
+  assert.match(sql, /'transfer_out','transfer_in'/i);
+  assert.match(sql, /flows_wallet_ledger_transfer_reference_unique/i);
+  assert.match(transfer, /pg_advisory_xact_lock/i);
+  assert.match(transfer, /flow_backing_allocations/i);
+  assert.match(transfer, /flow_reserve_accounts/i);
+  assert.match(transfer, /f\.custody_status='confirmed'/i);
+  assert.match(transfer, /set owner_user_id=p_recipient_user_id/i);
+  assert.match(transfer, /'transferred'/i);
+  assert.match(transfer, /'transfer_out'/i);
+  assert.match(transfer, /'transfer_in'/i);
+  assert.match(transfer, /'backingMoved',false/i);
+  assert.doesNotMatch(transfer, /update public\.flow_backing_allocations/i);
+  assert.doesNotMatch(transfer, /insert into public\.flow_backing_allocations/i);
+});
+
+test("QR payment resolves the recipient from the canonical registry server-side", async () => {
+  const route = await source("app/api/flows/transfer/route.ts");
+  const resolver = await source("app/q/[identifierId]/page.tsx");
+  const card = await source("components/flows/FlowQrPaymentCard.tsx");
+  assert.match(route, /from\("clouva_qr_registry"\)/);
+  assert.match(route, /\.eq\("is_canonical", true\)/);
+  assert.match(route, /registry\.entity_type !== "USER"/);
+  assert.match(route, /p_recipient_user_id: recipientUserId/);
+  assert.match(route, /idempotency-key/);
+  assert.doesNotMatch(route, /body\?\.recipientUserId/);
+  assert.doesNotMatch(route, /body\?\.recipientPlayerId/);
+  assert.match(resolver, /FlowQrPaymentCard/);
+  assert.match(card, /\/api\/flows\/transfer/);
+  assert.match(card, /crypto\.randomUUID\(\)/);
 });
