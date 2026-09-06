@@ -59,7 +59,7 @@ type BackingAllocationRow = {
   released_at: string | null;
 };
 
-const operationSelect = "id,buyer_player_id,recipient_player_id,provider,provider_payment_id,provider_reference,payment_method,quantity,unit_usd,amount,currency,status,backing_status,confirmed_at,issued_at,created_at,fx_rate_original_per_usd,fx_pair,fx_source,fx_quoted_at,provider_fee,net_amount,refund_status,operation_type,target_asset_id";
+const operationSelect = "id,buyer_player_id,recipient_player_id,provider,provider_payment_id,provider_reference,payment_method,quantity,unit_usd,amount,required_backing_usd,backing_amount,processing_fee_amount,processing_fee_policy,currency,status,backing_status,confirmed_at,issued_at,created_at,fx_rate_original_per_usd,fx_pair,fx_source,fx_quoted_at,provider_fee,net_amount,refund_status,operation_type,target_asset_id";
 
 export async function GET(request: NextRequest) {
   try {
@@ -72,7 +72,11 @@ export async function GET(request: NextRequest) {
         .select("id,flow_number,status,issued_at,activated_at,backed_at,owner_player_id,original_buyer_player_id,operation_id,backing_operation_id")
         .eq("owner_user_id", user.id)
         .order("flow_number", { ascending: true }),
-      admin.from("flow_issuance_settings").select("flow_usd_value").eq("id", "canonical").single(),
+      admin
+        .from("flow_issuance_settings")
+        .select("flow_usd_value,processing_fee_policy,processing_fee_bps,processing_fee_fixed_usd")
+        .eq("id", "canonical")
+        .single(),
       admin
         .from("flow_purchase_operations")
         .select(operationSelect)
@@ -138,7 +142,10 @@ export async function GET(request: NextRequest) {
 
     const reserveAccountIds = [...new Set(((allocationsResult.data ?? []) as BackingAllocationRow[]).map((row) => row.reserve_account_id))];
     const reserveAccountsResult = reserveAccountIds.length
-      ? await admin.from("flow_reserve_accounts").select("id,name,provider,account_type,currency,status,is_active").in("id", reserveAccountIds)
+      ? await admin
+          .from("flow_reserve_accounts")
+          .select("id,name,provider,account_type,currency,status,is_active,authorized_for_flow")
+          .in("id", reserveAccountIds)
       : { data: [], error: null };
     if (reserveAccountsResult.error) throw new Error(reserveAccountsResult.error.message);
 
@@ -184,6 +191,9 @@ export async function GET(request: NextRequest) {
     };
 
     const flowUsdValue = Number(pricingResult.data.flow_usd_value);
+    const processingFeePolicy = String(pricingResult.data.processing_fee_policy || "clouva_absorbs");
+    const processingFeeBps = Number(pricingResult.data.processing_fee_bps || 0);
+    const processingFeeFixedUsd = Number(pricingResult.data.processing_fee_fixed_usd || 0);
     let checkoutPricing: Record<string, unknown> = {
       flowUsdValue,
       referenceCurrency: "USD",
@@ -193,6 +203,9 @@ export async function GET(request: NextRequest) {
       fxSource: null,
       fxQuotedAt: null,
       checkoutUnitAmount: null,
+      processingFeePolicy,
+      processingFeeBps,
+      processingFeeFixedUsd,
     };
     try {
       const quote = await getFlowCheckoutQuote();
@@ -206,6 +219,9 @@ export async function GET(request: NextRequest) {
         fxQuotedAt: quote.fxQuotedAt,
         quoteSourceDate: quote.sourceDate,
         checkoutUnitAmount: roundMoney(flowUsdValue * quote.fxRateOriginalPerUsd),
+        processingFeePolicy,
+        processingFeeBps,
+        processingFeeFixedUsd,
       };
     } catch (quoteError) {
       console.error("flow_checkout_quote_unavailable", { message: quoteError instanceof Error ? quoteError.message : "unknown" });
@@ -240,6 +256,7 @@ export async function GET(request: NextRequest) {
               currency: reserveAccount.currency,
               status: reserveAccount.status,
               isActive: reserveAccount.is_active,
+              authorizedForFlow: reserveAccount.authorized_for_flow,
             } : null,
           } : null,
           history: movementsByAsset.get(asset.id) ?? [],
