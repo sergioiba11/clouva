@@ -31,6 +31,7 @@ import { OfficialClouvaMark } from "@/components/clouva/OfficialClouvaMark";
 import { GlobalFlowBalance } from "@/components/GlobalFlowBalance";
 import { resolveAccountDisplayName } from "@/lib/identity-names";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
+import { VISUAL_ASSETS } from "@/lib/visual-assets";
 import {
   CLOUVA_NAVIGATION,
   getNavigationItems,
@@ -50,8 +51,7 @@ import styles from "./mobile-home-premium.module.css";
 import labStyles from "./mobile-home-lab.module.css";
 
 const [homeNav, , createNav, marketNav, miFlowNav] = getNavigationItems(MOBILE_PRIMARY_NAV_KEYS);
-const MOBILE_HOME_ORBITS_ASSET_URL =
-  "https://storage.googleapis.com/clouva-generated-media/admin-assets/brand/02_home_mobile_orbits.png";
+const MOBILE_HOME_ORBITS_ASSET_URL = VISUAL_ASSETS["home-mobile-player-orbits-01"];
 
 type VipState = {
   entitlement: null | {
