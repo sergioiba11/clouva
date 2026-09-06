@@ -27,22 +27,14 @@ function stringUrls(value: unknown, limit = 24) {
   return Array.from(new Set(urls)).slice(0, limit);
 }
 
-function generatedImageUrls(metadata: Record<string, unknown>) {
-  const productImages = record(metadata.product_images);
-  const generated = Array.isArray(productImages.generated_images) ? productImages.generated_images : [];
-  return stringUrls(generated.map((item) => record(item).url));
-}
-
 function canonicalListingGallery(args: {
   explicitGallery: unknown;
-  metadata: Record<string, unknown>;
   coverUrl: string;
 }) {
   const explicit = stringUrls(args.explicitGallery);
-  const generated = generatedImageUrls(args.metadata);
   return Array.from(new Set([
     ...(args.coverUrl ? [args.coverUrl] : []),
-    ...(explicit.length ? explicit : generated),
+    ...explicit,
   ])).slice(0, 24);
 }
 
@@ -202,17 +194,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     });
     if (error) throw new Error(error.message);
 
-    // El RPC canónico conserva la creación/resolución del producto. Portada,
-    // galería y metadata pertenecen a la publicación del Spot, así que se
-    // consolidan sobre commerce_products una vez conocido el listing final.
-    // Las fuentes y variantes generadas siguen separadas dentro de metadata;
-    // gallery contiene únicamente el master seleccionado para publicación.
+    // El RPC canónico conserva la creación/resolución del producto. Las fotos
+    // fuente y todas las variantes generadas siguen en metadata como linaje.
+    // Solo cover_url y una gallery elegida explícitamente forman el master
+    // público: generar una imagen no equivale a aprobarla para publicación.
     const listingId = resultListingId(data);
     const requestedCover = typeof body.listing?.cover_url === "string" ? body.listing.cover_url.trim() : "";
     const requestedMetadata = record(body.listing?.metadata);
     const requestedGallery = canonicalListingGallery({
       explicitGallery: body.listing?.gallery,
-      metadata: requestedMetadata,
       coverUrl: requestedCover,
     });
 
