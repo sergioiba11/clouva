@@ -1,23 +1,6 @@
-// Esquema fijo de "página custom" generada por CLOUVA AI Profile -- Gemini
-// nunca produce HTML/JSX, solo esta estructura JSON (guardada en
-// player_profile_versions.layout_config), interpretada por un renderer React
-// fijo (components/public/StudioLayoutRenderer.tsx). Deliberadamente NO
-// incluye URLs de imagen que Gemini pueda inventar: las imágenes reales
-// (portada/logo/galería) siguen viniendo de asset_references/los datos del
-// Estudio ya existentes, nunca del JSON que Gemini devuelve -- así
-// layout_config solo puede describir texto, modo, variante de sección y
-// color de ese lado. La única excepción es `PillarItem.image`: esa URL nunca
-// la propone Gemini (no forma parte de lo que se le pide en el prompt), la
-// escribe nuestro propio servidor después de generar una foto real por
-// pillar -- igual se valida como URL https bien formada al sanitizar, nunca
-// se confía en el string a ciegas.
-//
-// `mode` distingue las dos formas en que se llega a este layout:
-// - "reference_layout": el usuario subió una o más imágenes que son mockups/
-//   referencias de una web real, y este layout intenta reconstruirlas fiel.
-// - "adaptive_layout": no había mockup claro (fotos del estudio, moodboard,
-//   branding, o directamente nada) -- este layout es una composición
-//   original armada a partir de esas referencias más los datos del Estudio.
+// Canonical structured layout contract for CLOUVA public Player/Studio pages.
+// Gemini never returns HTML/CSS/JSX. It only returns this closed JSON shape,
+// which is sanitized before it reaches the renderer or persistence layer.
 
 export const LAYOUT_SECTION_TYPES = [
   "hero",
@@ -36,22 +19,8 @@ export type LayoutSectionType = (typeof LAYOUT_SECTION_TYPES)[number];
 export const LAYOUT_MODES = ["reference_layout", "adaptive_layout"] as const;
 export type LayoutMode = (typeof LAYOUT_MODES)[number];
 
-// Único subconjunto de tipos que PreciseStudioLayoutRenderer.tsx sabe pintar
-// a partir de un `styleHint` solo (sin `elements`) -- son los que muestran
-// datos reales de cantidad variable (Players/servicios/planes/galería/
-// lanzamientos), donde Gemini no puede saber de antemano cuántas tarjetas
-// va a haber. Cualquier otro tipo (ej. "pillars") con `styleHint` pero sin
-// `elements` reales se descarta en sanitizePreciseSection en vez de quedar
-// como una sección fantasma que el renderer no sabe pintar y desaparece en
-// silencio -- ver bug real encontrado 2026-08-06 en El Iglú (6/6 intentos
-// precise con "pillars" vacío).
 export const PRECISE_DYNAMIC_SECTION_TYPES = ["roster", "services", "membership", "gallery", "music"] as const;
 
-// Catálogo fijo de variantes por tipo de sección. El renderer no tiene por
-// qué diferenciar visualmente cada una desde el día uno -- las que todavía
-// no tienen un tratamiento propio caen al default (primera de la lista) sin
-// romper nada -- pero el esquema ya las acepta todas para no tener que migrar
-// datos cuando se sumen.
 export const SECTION_VARIANTS = {
   hero: ["centered", "split", "editorial", "full-bleed", "overlay"],
   about: ["simple", "editorial", "image-left", "image-right"],
@@ -66,9 +35,6 @@ export const SECTION_VARIANTS = {
 
 export type SectionVariant<T extends LayoutSectionType> = (typeof SECTION_VARIANTS)[T][number];
 
-// Catálogo cerrado de íconos para los botones del hero y los pillars -- nunca
-// un nombre arbitrario de ícono, siempre uno de estos (mapeados a
-// lucide-react en el renderer).
 export const LAYOUT_ICONS = ["sparkles", "play", "users", "music", "heart", "arrow-right", "mic", "calendar", "headphones", "star"] as const;
 export type LayoutIconName = (typeof LAYOUT_ICONS)[number];
 
@@ -104,17 +70,7 @@ export type RosterSection = { type: "roster"; variant: SectionVariant<"roster">;
 export type ServicesSection = { type: "services"; variant: SectionVariant<"services">; heading?: string | null };
 export type MembershipSection = { type: "membership"; variant: SectionVariant<"membership">; heading?: string | null };
 export type ContactSection = { type: "contact"; variant: SectionVariant<"contact">; heading?: string | null };
-
-// "Música y lanzamientos" -- deliberadamente sin URLs propias en el JSON.
-// El renderer alimenta esta sección con community_projects (datos reales ya
-// cargados por el Estudio, con sus propios spotify_url/youtube_url), nunca
-// con un embed que la IA haya inventado -- más simple y sin superficie para
-// que Gemini proponga una URL arbitraria.
-export type MusicSection = {
-  type: "music";
-  variant: SectionVariant<"music">;
-  heading?: string | null;
-};
+export type MusicSection = { type: "music"; variant: SectionVariant<"music">; heading?: string | null };
 
 export type LayoutSection =
   | HeroSection
@@ -127,24 +83,12 @@ export type LayoutSection =
   | MusicSection
   | ContactSection;
 
-// "precise": modo paralelo al de sections/variant de arriba, usado solo para
-// reference_layout, cuando Gemini extrae geometría real (posición/tamaño/
-// estilo por elemento) de la imagen subida en vez de elegir una variante fija
-// -- el objetivo es replicar el mockup lo más fiel posible, no aproximarlo.
-// Sigue siendo 100% datos estructurados y sanitizados acá abajo (números
-// clamped, enums cerrados) -- Gemini nunca produce HTML/CSS/JSX, ni acá ni en
-// el modo viejo.
 export const LAYOUT_KINDS = ["template", "precise"] as const;
 export type LayoutKind = (typeof LAYOUT_KINDS)[number];
 
 export const IMAGE_SLOTS = ["cover", "logo", "pillar-0", "pillar-1", "pillar-2", "pillar-3"] as const;
 export type ImageSlot = (typeof IMAGE_SLOTS)[number];
 
-// El destino real de un botón nunca lo decide Gemini (sería una superficie
-// para href arbitrarios) -- solo clasifica CUÁL de estas acciones reales es
-// la más probable dado lo que muestra el mockup; el renderer resuelve cada
-// una a la lógica real de siempre (join/roster/anchors), igual que ya hace
-// hoy con primaryAction/secondaryAction del hero clásico.
 export type RealAction = "join" | "share" | `scroll:${LayoutSectionType}`;
 
 export const POSITIONED_ELEMENT_TYPES = ["eyebrow", "heading", "subheading", "paragraph", "button", "badge", "image"] as const;
@@ -159,10 +103,6 @@ export type TextAlign = (typeof TEXT_ALIGNS)[number];
 export const CARD_STYLES = ["bordered", "flat", "image-bg"] as const;
 export type CardStyle = (typeof CARD_STYLES)[number];
 
-// Cada variante es una combinación de clases YA diseñada por nosotros
-// (gradient/glow usan page_style.palette.accent, que ya es un hex validado)
-// -- Gemini solo elige cuál se parece más al botón del mockup, nunca describe
-// el estilo libremente.
 export const BUTTON_STYLES = ["solid", "outline", "gradient", "glow"] as const;
 export type ButtonStyle = (typeof BUTTON_STYLES)[number];
 
@@ -172,61 +112,94 @@ export type ImageFit = (typeof IMAGE_FITS)[number];
 export const IMAGE_POSITIONS = ["center", "top", "bottom", "left", "right"] as const;
 export type ImagePosition = (typeof IMAGE_POSITIONS)[number];
 
-// Elementos decorativos puramente visuales -- cada tipo lo dibujamos nosotros
-// (SVG/CSS fijo en el renderer), Gemini solo elige cuáles usar y dónde
-// posicionarlos. Nunca un SVG o markup libre generado por la IA.
+export const SHADOW_PRESETS = ["none", "soft", "medium", "strong", "glow"] as const;
+export type ShadowPreset = (typeof SHADOW_PRESETS)[number];
+
+export const BLUR_PRESETS = ["none", "soft", "medium", "strong"] as const;
+export type BlurPreset = (typeof BLUR_PRESETS)[number];
+
 export const DECORATION_TYPES = ["waveform", "scroll-indicator", "vertical-label", "divider-line"] as const;
 export type DecorationType = (typeof DECORATION_TYPES)[number];
 
+export type MobileElementLayout = {
+  hidden?: boolean;
+  order?: number | null;
+  w?: number | null;
+  align?: TextAlign | null;
+};
+
 export type Decoration = {
+  id?: string | null;
   type: DecorationType;
   x: number;
   y: number;
   w?: number | null;
+  h?: number | null;
+  zIndex?: number | null;
+  opacity?: number | null;
   text?: string | null;
 };
 
-// x/y/w son porcentajes (0-100) relativos a la sección que los contiene, no
-// a la página entera -- así el renderer puede posicionar con `style={{ left,
-// top, width }}` sin depender de un ancho de pantalla fijo.
+// x/y/w/h are percentages relative to the section that contains the element.
+// V1 layouts without h remain valid; V2 reference layouts should always carry h.
 export type PositionedElement = {
+  id?: string | null;
   type: PositionedElementType;
   text?: string | null;
   x: number;
   y: number;
   w: number;
+  h?: number | null;
+  zIndex?: number | null;
   fontSizePx?: number | null;
   fontWeight?: FontWeight | null;
   color?: string | null;
   align?: TextAlign | null;
+  letterSpacingPx?: number | null;
+  lineHeight?: number | null;
+  opacity?: number | null;
+  backgroundColor?: string | null;
+  borderColor?: string | null;
+  borderWidthPx?: number | null;
+  radiusPx?: number | null;
+  shadow?: ShadowPreset | null;
+  blur?: BlurPreset | null;
   action?: RealAction | null;
   imageSlot?: ImageSlot | null;
+  imageFit?: ImageFit | null;
+  imagePosition?: ImagePosition | null;
   icon?: LayoutIconName | null;
   buttonStyle?: ButtonStyle | null;
+  mobile?: MobileElementLayout | null;
 };
 
 export type PreciseSectionStyleHint = {
   heading?: string | null;
   cardStyle?: CardStyle | null;
+  columns?: number | null;
+  gapPx?: number | null;
+  paddingPx?: number | null;
+  radiusPx?: number | null;
+  borderColor?: string | null;
+  backgroundColor?: string | null;
+  cardRadiusPx?: number | null;
+  cardBorderColor?: string | null;
+  cardBackgroundColor?: string | null;
 };
 
-// Las secciones con datos reales de longitud variable (roster/services/
-// membership/gallery/music) no llevan `elements` posicionados uno por uno --
-// Gemini no puede saber cuántos Players/servicios reales hay -- llevan
-// `styleHint` en cambio, y el renderer sigue usando el componente real de
-// siempre (grid de Players, StudioServicesCart, etc.) pero con el
-// accent/heading/estilo de tarjeta extraídos del mockup.
-//
-// `columns`: cuando el mockup combina varios bloques en una sola composición
-// horizontal (ej. "about" + pilares + reproductor lado a lado), la sección
-// se pinta como fila en vez de bloque único -- cada columna es una
-// mini-sección normal (mismo tipo, un solo nivel de anidamiento: una columna
-// nunca puede tener sus propias `columns`, se ignora si Gemini lo intenta).
 export type PreciseSection = {
+  id?: string | null;
   type: LayoutSectionType;
   heightVh: number;
   widthPct?: number | null;
-  background?: { color?: string | null; imageSlot?: ImageSlot | null; fit?: ImageFit | null; position?: ImagePosition | null } | null;
+  xPct?: number | null;
+  background?: {
+    color?: string | null;
+    imageSlot?: ImageSlot | null;
+    fit?: ImageFit | null;
+    position?: ImagePosition | null;
+    overlayOpacity?: number | null;
+  } | null;
   elements?: PositionedElement[];
   styleHint?: PreciseSectionStyleHint | null;
   decorations?: Decoration[];
@@ -253,23 +226,17 @@ export type PageStyle = {
   palette?: PagePalette | null;
   radius?: RadiusValue;
   nav_style?: NavStyle;
-  // Solo tiene efecto en layout_kind "precise" -- el modo "template" nunca lo
-  // lee, así que no cambia nada de lo ya publicado.
   header_overlay?: boolean;
 };
 
 export type LayoutNavItem = { label: string; section: LayoutSectionType };
-
 export type LayoutFooter = { heading: string; cta_label: string; cta_section: LayoutSectionType };
-
-// Resuelve cada ImageSlot a su URL real -- lo escribe nuestro propio server
-// después de generar/ubicar cada asset (cover_url/logo_url del Estudio,
-// fotos de pillar generadas), nunca Gemini. Mismo principio que
-// PillarItem.image en el esquema viejo: se re-sanitiza como URL https en
-// cada lectura, nunca se confía en el string a ciegas.
 export type ImageSlotMap = Partial<Record<ImageSlot, string>>;
 
 export type LayoutConfig = {
+  // Optional so all existing literal layouts stay source-compatible. The
+  // sanitizer marks new precise contracts as V2 while accepting V1 forever.
+  schema_version?: 1 | 2;
   mode: LayoutMode;
   layout_kind: LayoutKind;
   sections: LayoutSection[];
@@ -283,9 +250,10 @@ export type LayoutConfig = {
 const MAX_SECTIONS = 9;
 const MAX_PILLAR_ITEMS = 4;
 const MAX_NAV_ITEMS = 6;
-const MAX_ELEMENTS_PER_SECTION = 12;
-
+const MAX_PRECISE_ELEMENTS_PER_SECTION = 32;
+const MAX_COLUMNS = 4;
 const HEX_COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+const STABLE_ID_RE = /^[a-z][a-z0-9-]{0,63}$/;
 
 function text(value: unknown, maxLength: number): string {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
@@ -294,6 +262,10 @@ function text(value: unknown, maxLength: number): string {
 function optionalText(value: unknown, maxLength: number): string | null {
   const cleaned = text(value, maxLength);
   return cleaned || null;
+}
+
+function stableIdOrNull(value: unknown): string | null {
+  return typeof value === "string" && STABLE_ID_RE.test(value) ? value : null;
 }
 
 function sanitizeVariant<T extends LayoutSectionType>(type: T, raw: unknown): SectionVariant<T> {
@@ -305,10 +277,6 @@ function sanitizeLayoutIcon(raw: unknown): LayoutIconName | null {
   return typeof raw === "string" && (LAYOUT_ICONS as readonly string[]).includes(raw) ? (raw as LayoutIconName) : null;
 }
 
-// Solo para PillarItem.image -- ese campo lo escribe nuestro propio server
-// (nunca Gemini), pero igual se re-sanitiza en cada request (ver
-// sanitizeLayoutConfig), así que valida que sea una URL https bien formada
-// antes de dejarla pasar, nunca confía en el string a ciegas.
 function httpsUrlOrNull(value: unknown, maxLength: number): string | null {
   const cleaned = text(value, maxLength);
   if (!cleaned) return null;
@@ -351,11 +319,16 @@ function sanitizeSection(raw: unknown): LayoutSection | null {
         ? value.items
             .map((item): PillarItem | null => {
               if (!item || typeof item !== "object") return null;
-              const title = text((item as Record<string, unknown>).title, 60);
-              const description = text((item as Record<string, unknown>).description, 240);
-              const image = httpsUrlOrNull((item as Record<string, unknown>).image, 500);
-              const icon = sanitizeLayoutIcon((item as Record<string, unknown>).icon);
-              return title && description ? { title, description, image, icon } : null;
+              const row = item as Record<string, unknown>;
+              const title = text(row.title, 60);
+              const description = text(row.description, 240);
+              if (!title || !description) return null;
+              return {
+                title,
+                description,
+                image: httpsUrlOrNull(row.image, 500),
+                icon: sanitizeLayoutIcon(row.icon),
+              };
             })
             .filter((item): item is PillarItem => item !== null)
             .slice(0, MAX_PILLAR_ITEMS)
@@ -428,8 +401,28 @@ function sanitizeImagePosition(raw: unknown): ImagePosition | null {
   return typeof raw === "string" && (IMAGE_POSITIONS as readonly string[]).includes(raw) ? (raw as ImagePosition) : null;
 }
 
+function sanitizeShadow(raw: unknown): ShadowPreset | null {
+  return typeof raw === "string" && (SHADOW_PRESETS as readonly string[]).includes(raw) ? (raw as ShadowPreset) : null;
+}
+
+function sanitizeBlur(raw: unknown): BlurPreset | null {
+  return typeof raw === "string" && (BLUR_PRESETS as readonly string[]).includes(raw) ? (raw as BlurPreset) : null;
+}
+
 function sanitizeDecorationType(raw: unknown): DecorationType | null {
   return typeof raw === "string" && (DECORATION_TYPES as readonly string[]).includes(raw) ? (raw as DecorationType) : null;
+}
+
+function sanitizeMobileLayout(raw: unknown): MobileElementLayout | null {
+  if (!raw || typeof raw !== "object") return null;
+  const value = raw as Record<string, unknown>;
+  const mobile: MobileElementLayout = {
+    hidden: value.hidden === true,
+    order: optionalClampNumber(value.order, -20, 100),
+    w: optionalClampNumber(value.w, 10, 100),
+    align: sanitizeTextAlign(value.align),
+  };
+  return mobile.hidden || mobile.order !== null || mobile.w !== null || mobile.align !== null ? mobile : null;
 }
 
 function sanitizeDecoration(raw: unknown): Decoration | null {
@@ -437,14 +430,22 @@ function sanitizeDecoration(raw: unknown): Decoration | null {
   const value = raw as Record<string, unknown>;
   const type = sanitizeDecorationType(value.type);
   if (!type) return null;
-  const x = optionalClampNumber(value.x, 0, 100);
-  const y = optionalClampNumber(value.y, 0, 100);
-  if (x === null || y === null) return null;
+  const rawX = optionalClampNumber(value.x, 0, 100);
+  const rawY = optionalClampNumber(value.y, 0, 100);
+  if (rawX === null || rawY === null) return null;
+  const w = optionalClampNumber(value.w, 0.5, 100);
+  const h = optionalClampNumber(value.h, 0.5, 100);
+  const x = w === null ? rawX : Math.min(rawX, 100 - w);
+  const y = h === null ? rawY : Math.min(rawY, 100 - h);
   return {
+    id: stableIdOrNull(value.id),
     type,
     x,
     y,
-    w: optionalClampNumber(value.w, 1, 100),
+    w,
+    h,
+    zIndex: optionalClampNumber(value.zIndex, -10, 50),
+    opacity: optionalClampNumber(value.opacity, 0, 1),
     text: type === "vertical-label" ? optionalText(value.text, 60) : null,
   };
 }
@@ -456,55 +457,56 @@ function sanitizePositionedElement(raw: unknown): PositionedElement | null {
     ? (value.type as PositionedElementType)
     : null;
   if (!type) return null;
+
   const rawX = optionalClampNumber(value.x, 0, 100);
   const rawY = optionalClampNumber(value.y, 0, 100);
   const w = optionalClampNumber(value.w, 1, 100);
+  const h = optionalClampNumber(value.h, 1, 100);
   if (rawX === null || rawY === null || w === null) return null;
-  // Defensivo, más allá de qué tan bien Gemini haya estimado las cajas: un
-  // elemento nunca puede quedar posicionado de forma que se salga de su
-  // sección -- se corrige la esquina en vez de dejarlo desbordar la pantalla.
+
   const x = Math.min(rawX, 100 - w);
-  const y = Math.min(rawY, 92);
+  const y = h === null ? Math.min(rawY, 92) : Math.min(rawY, 100 - h);
+
   return {
+    id: stableIdOrNull(value.id),
     type,
-    text: optionalText(value.text, type === "paragraph" ? 600 : 120),
+    text: optionalText(value.text, type === "paragraph" ? 600 : 160),
     x,
     y,
     w,
-    fontSizePx: optionalClampNumber(value.fontSizePx, 10, 96),
+    h,
+    zIndex: optionalClampNumber(value.zIndex, -10, 50),
+    fontSizePx: optionalClampNumber(value.fontSizePx, 8, 160),
     fontWeight: sanitizeFontWeight(value.fontWeight),
     color: hexColorOrNull(value.color),
     align: sanitizeTextAlign(value.align),
+    letterSpacingPx: optionalClampNumber(value.letterSpacingPx, -2, 24),
+    lineHeight: optionalClampNumber(value.lineHeight, 0.8, 2.5),
+    opacity: optionalClampNumber(value.opacity, 0, 1),
+    backgroundColor: hexColorOrNull(value.backgroundColor),
+    borderColor: hexColorOrNull(value.borderColor),
+    borderWidthPx: optionalClampNumber(value.borderWidthPx, 0, 8),
+    radiusPx: optionalClampNumber(value.radiusPx, 0, 999),
+    shadow: sanitizeShadow(value.shadow),
+    blur: sanitizeBlur(value.blur),
     action: type === "button" ? sanitizeRealAction(value.action) : null,
     imageSlot: type === "image" ? sanitizeImageSlot(value.imageSlot) : null,
+    imageFit: type === "image" ? sanitizeImageFit(value.imageFit) : null,
+    imagePosition: type === "image" ? sanitizeImagePosition(value.imagePosition) : null,
     icon: type === "button" ? sanitizeLayoutIcon(value.icon) : null,
     buttonStyle: type === "button" ? sanitizeButtonStyle(value.buttonStyle) : null,
+    mobile: sanitizeMobileLayout(value.mobile),
   };
 }
 
-const MAX_COLUMNS = 4;
-
-// `allowColumns` evita más de un nivel de anidamiento -- una columna nunca
-// puede tener sus propias columnas, se ignora silenciosamente si Gemini lo
-// intenta (en vez de fallar toda la sección).
-// Estimación aproximada (sin medir DOM real, esto corre en el server) de
-// cuánto alto real va a ocupar un elemento de texto una vez renderizado --
-// Gemini estima el gap entre elementos mirando el mockup, pero el texto real
-// (nuestro copy, no el del mockup) puede envolver a más líneas de las que
-// estimó. Devuelve el alto como porcentaje de la altura de la sección, con
-// las mismas dimensiones "de diseño" asumidas en toda la estimación (no el
-// viewport real del visitante -- fontSizePx tampoco es responsive hoy).
 const ASSUMED_DESIGN_WIDTH_PX = 1280;
 const ASSUMED_DESIGN_HEIGHT_PX = 800;
 
 function estimateElementHeightPct(element: PositionedElement, sectionHeightVh: number): number {
+  if (element.h !== null && element.h !== undefined) return element.h;
   if (element.type === "button" || element.type === "badge" || element.type === "image" || !element.text) return 8;
   const fontSizePx = element.fontSizePx ?? 16;
   const widthPx = (element.w / 100) * ASSUMED_DESIGN_WIDTH_PX;
-  // Deliberadamente conservador: mejor reservar de más (un poco de aire de
-  // sobra) que de menos (texto real pisándose) -- probado en vivo, un
-  // heading en mayúsculas/negrita necesitó bastante más alto del que un
-  // promedio de ancho de caracter más ajustado hubiera estimado.
   const avgCharPx = fontSizePx * (element.type === "heading" || element.type === "subheading" ? 0.72 : 0.52);
   const charsPerLine = Math.max(1, Math.floor(widthPx / avgCharPx));
   const lines = Math.max(1, Math.ceil(element.text.length / charsPerLine));
@@ -517,14 +519,11 @@ function rangesOverlap(aStart: number, aEnd: number, bStart: number, bEnd: numbe
   return aStart < bEnd && bStart < aEnd;
 }
 
-// Defensivo, más allá de qué tan bien Gemini haya elegido el gap vertical
-// entre elementos: si dos elementos comparten franja horizontal (están
-// apilados en la misma "columna" visual) y el texto real del de arriba
-// necesita más alto del que el gap deja, el de abajo se empuja hacia abajo
-// lo justo y necesario -- nunca hacia arriba, nunca reordena, solo evita que
-// se pisen. Bug real encontrado en vivo: "MÚSICA. CULTURA. FAMILIA." (2
-// líneas reales a 42px) con solo 23% de gap antes del párrafo siguiente.
 function enforceMinimumVerticalGaps(elements: PositionedElement[], sectionHeightVh: number): PositionedElement[] {
+  // Reference Fidelity V2 trusts measured bounding boxes. The legacy safety
+  // pass remains only for old precise layouts that have no explicit heights.
+  if (elements.some((element) => element.h !== null && element.h !== undefined)) return elements;
+
   const order = elements.map((element, index) => ({ element, index }));
   const sortedByY = [...order].sort((a, b) => a.element.y - b.element.y);
   const placed: Array<{ x0: number; x1: number; bottom: number }> = [];
@@ -552,8 +551,10 @@ function sanitizePreciseSection(raw: unknown, allowColumns = true): PreciseSecti
     ? (value.type as LayoutSectionType)
     : null;
   if (!type) return null;
+
   const heightVh = clampNumber(value.heightVh, 20, 150, 60);
   const widthPct = optionalClampNumber(value.widthPct, 5, 100);
+  const xPct = optionalClampNumber(value.xPct, 0, 95);
 
   const rawBackground = value.background && typeof value.background === "object" ? (value.background as Record<string, unknown>) : null;
   const background = rawBackground
@@ -562,21 +563,40 @@ function sanitizePreciseSection(raw: unknown, allowColumns = true): PreciseSecti
         imageSlot: sanitizeImageSlot(rawBackground.imageSlot),
         fit: sanitizeImageFit(rawBackground.fit),
         position: sanitizeImagePosition(rawBackground.position),
+        overlayOpacity: optionalClampNumber(rawBackground.overlayOpacity, 0, 0.9),
       }
     : null;
 
   const rawElements = Array.isArray(value.elements)
-    ? value.elements.map(sanitizePositionedElement).filter((element): element is PositionedElement => element !== null).slice(0, MAX_ELEMENTS_PER_SECTION)
+    ? value.elements
+        .map(sanitizePositionedElement)
+        .filter((element): element is PositionedElement => element !== null)
+        .slice(0, MAX_PRECISE_ELEMENTS_PER_SECTION)
     : [];
   const elements = enforceMinimumVerticalGaps(rawElements, heightVh);
 
   const rawStyleHint = value.styleHint && typeof value.styleHint === "object" ? (value.styleHint as Record<string, unknown>) : null;
   const styleHint = rawStyleHint
-    ? { heading: optionalText(rawStyleHint.heading, 60), cardStyle: sanitizeCardStyle(rawStyleHint.cardStyle) }
+    ? {
+        heading: optionalText(rawStyleHint.heading, 60),
+        cardStyle: sanitizeCardStyle(rawStyleHint.cardStyle),
+        columns: optionalClampNumber(rawStyleHint.columns, 1, 6),
+        gapPx: optionalClampNumber(rawStyleHint.gapPx, 0, 80),
+        paddingPx: optionalClampNumber(rawStyleHint.paddingPx, 0, 120),
+        radiusPx: optionalClampNumber(rawStyleHint.radiusPx, 0, 80),
+        borderColor: hexColorOrNull(rawStyleHint.borderColor),
+        backgroundColor: hexColorOrNull(rawStyleHint.backgroundColor),
+        cardRadiusPx: optionalClampNumber(rawStyleHint.cardRadiusPx, 0, 80),
+        cardBorderColor: hexColorOrNull(rawStyleHint.cardBorderColor),
+        cardBackgroundColor: hexColorOrNull(rawStyleHint.cardBackgroundColor),
+      }
     : null;
 
   const decorations = Array.isArray(value.decorations)
-    ? value.decorations.map(sanitizeDecoration).filter((decoration): decoration is Decoration => decoration !== null).slice(0, MAX_ELEMENTS_PER_SECTION)
+    ? value.decorations
+        .map(sanitizeDecoration)
+        .filter((decoration): decoration is Decoration => decoration !== null)
+        .slice(0, MAX_PRECISE_ELEMENTS_PER_SECTION)
     : [];
 
   const columns = allowColumns && Array.isArray(value.columns)
@@ -586,24 +606,23 @@ function sanitizePreciseSection(raw: unknown, allowColumns = true): PreciseSecti
         .slice(0, MAX_COLUMNS)
     : [];
 
-  // Una sección sin ningún elemento posicionado, sin styleHint y sin columnas
-  // no aporta nada -- se descarta en vez de dejar un bloque vacío en la
-  // página.
   if (elements.length === 0 && !styleHint && columns.length === 0) return null;
-
-  // Un `styleHint` solo (sin `elements` ni `columns`) únicamente lo sabe
-  // pintar el renderer para los tipos "dinámicos" reales (ver
-  // PRECISE_DYNAMIC_SECTION_TYPES). Para cualquier otro tipo -- típicamente
-  // "pillars", cuando Gemini se salteó los `elements` posicionados que le
-  // pedimos -- esto antes sobrevivía la sanitización y quedaba como sección
-  // fantasma que el renderer no sabe pintar (desaparece en silencio, sin
-  // error). Se descarta acá en su lugar: mejor sin esa sección que con una
-  // rota que nadie nota.
   if (elements.length === 0 && columns.length === 0 && styleHint && !(PRECISE_DYNAMIC_SECTION_TYPES as readonly string[]).includes(type)) {
     return null;
   }
 
-  return { type, heightVh, widthPct, background, elements, styleHint, decorations, columns };
+  return {
+    id: stableIdOrNull(value.id),
+    type,
+    heightVh,
+    widthPct,
+    xPct,
+    background,
+    elements,
+    styleHint,
+    decorations,
+    columns,
+  };
 }
 
 function sanitizeImageSlotMap(raw: unknown): ImageSlotMap {
@@ -665,21 +684,6 @@ function sanitizeNavItems(raw: unknown, validSections: Set<LayoutSectionType>): 
   return items.length > 0 ? items : null;
 }
 
-// Nunca confía ciegamente en lo que viene de la base (podría ser legacy/
-// corrupto) ni en lo que devuelve Gemini -- todo campo se revalida acá antes
-// de llegar al renderer. Devuelve null si no queda ninguna sección válida
-// (el caller debe caer al template fijo existente en ese caso).
-// Respaldo real cuando Gemini no devuelve page_style.palette (pasa siempre
-// en modo "precise" -- el prompt de geometría es tan pesado que en la
-// práctica el modelo lo omite; confirmado en 6/6 generaciones reales de un
-// mismo Estudio). Sin esto, el renderer cae al violeta genérico de Clouva
-// (`#8f7cff`) en vez de la identidad real -- así que en vez de inventar un
-// color nuevo, reusamos `copy.palette` (mismo array ya aprobado que se ve en
-// el panel "Identidad del Estudio", generado por separado y confiable).
-// El array viene documentado "de oscuro a claro" (ver vip-profile-gemini.ts)
-// -- evitamos los dos extremos (el más oscuro se pierde contra el fondo
-// oscuro del sitio, el más claro queda lavado como botón sólido) y elegimos
-// un tono intermedio real.
 export function pickAccentFromPalette(rawPalette: unknown): string | null {
   if (!Array.isArray(rawPalette)) return null;
   const valid = rawPalette.filter((color): color is string => typeof color === "string" && HEX_COLOR_RE.test(color));
@@ -702,8 +706,6 @@ export function sanitizeLayoutConfig(raw: unknown): LayoutConfig | null {
     ? value.precise_sections.map((section) => sanitizePreciseSection(section)).filter((section): section is PreciseSection => section !== null).slice(0, MAX_SECTIONS)
     : [];
 
-  // "precise" y "template" son mutuamente excluyentes -- cada uno valida y
-  // requiere solo su propio array de secciones, nunca mezcla ambos esquemas.
   if (layoutKind === "precise") {
     if (preciseSections.length === 0) return null;
   } else if (sections.length === 0) {
@@ -711,8 +713,14 @@ export function sanitizeLayoutConfig(raw: unknown): LayoutConfig | null {
   }
 
   const sectionTypes = new Set((layoutKind === "precise" ? preciseSections : sections).map((section) => section.type));
+  const requestedSchemaVersion = value.schema_version === 2 ? 2 : value.schema_version === 1 ? 1 : undefined;
+  const hasV2Fields = preciseSections.some((section) =>
+    section.elements?.some((element) => element.h !== null && element.h !== undefined || Boolean(element.id)) ||
+    section.decorations?.some((decoration) => decoration.h !== null && decoration.h !== undefined || Boolean(decoration.id)),
+  );
 
   return {
+    schema_version: layoutKind === "precise" && (requestedSchemaVersion === 2 || hasV2Fields) ? 2 : requestedSchemaVersion,
     mode,
     layout_kind: layoutKind,
     sections,
