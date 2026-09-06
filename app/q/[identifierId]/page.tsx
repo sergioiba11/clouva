@@ -11,6 +11,10 @@ type RegistryRow = {
   entity_id: string;
   source_identifier_id: string | null;
   destination_path: string | null;
+  status: string;
+  is_canonical: boolean;
+  revoked_at: string | null;
+  metadata: Record<string, unknown> | null;
 };
 
 function safeInternalPath(value: string | null | undefined) {
@@ -37,15 +41,20 @@ export default async function ClouvaQrPage({ params }: { params: Promise<{ ident
   const { identifierId: publicToken } = await params;
   const admin = createAdminSupabase();
 
-  // The registry is the canonical resolver. Query errors are intentionally
-  // tolerated so old product QR links keep working during migration rollout.
-  const { data: registryData } = await admin
+  // Resolve the exact registry token first, regardless of state. This prevents
+  // a revoked CLOUVA token from falling through to an older identifier with the
+  // same value and becoming public again.
+  const { data: registryData, error: registryError } = await admin
     .from("clouva_qr_registry")
-    .select("entity_type,entity_id,source_identifier_id,destination_path")
+    .select("entity_type,entity_id,source_identifier_id,destination_path,status,is_canonical,revoked_at,metadata")
     .eq("public_token", publicToken)
-    .eq("status", "ACTIVE")
     .maybeSingle();
+  if (registryError) throw new Error(registryError.message);
   const registry = registryData as RegistryRow | null;
+
+  if (registry && (registry.status !== "ACTIVE" || !registry.is_canonical || registry.revoked_at)) {
+    return <QrState title="QR no disponible" detail="Este código CLOUVA fue revocado o dejó de ser el identificador canónico del destino." />;
+  }
 
   if (registry?.entity_type === "USER") {
     const { data: player } = await admin
@@ -61,7 +70,8 @@ export default async function ClouvaQrPage({ params }: { params: Promise<{ ident
     }
 
     const isPublic = player.is_published && player.publication_status === "published" && player.privacy_status !== "private";
-    let profileHref = safeInternalPath(registry.destination_path) ? registry.destination_path : null;
+    let profileHref: string | null = null;
+    if (isPublic && safeInternalPath(registry.destination_path)) profileHref = registry.destination_path;
     if (!profileHref && isPublic) {
       const { data: alias } = await admin
         .from("public_slug_aliases")
@@ -92,7 +102,6 @@ export default async function ClouvaQrPage({ params }: { params: Promise<{ ident
   }
 
   if (registry?.entity_type === "SPACE") {
-    if (safeInternalPath(registry.destination_path)) redirect(registry.destination_path!);
     const { data: space } = await admin
       .from("spaces")
       .select("slug,public_enabled,status,legacy_studio_id")
@@ -101,6 +110,8 @@ export default async function ClouvaQrPage({ params }: { params: Promise<{ ident
     if (!space || !space.public_enabled || space.status !== "active") {
       return <QrState title="Espacio no disponible" detail="Este QR es válido y permanente, pero el espacio no está publicado en este momento." />;
     }
+    // Custom destinations are considered only after publication was validated.
+    if (safeInternalPath(registry.destination_path)) redirect(registry.destination_path!);
     if (space.legacy_studio_id) {
       const { data: studio } = await admin.from("studios").select("slug").eq("id", space.legacy_studio_id).maybeSingle();
       if (studio?.slug) redirect(`/studios/${encodeURIComponent(studio.slug)}`);
@@ -109,8 +120,11 @@ export default async function ClouvaQrPage({ params }: { params: Promise<{ ident
   }
 
   if (registry?.entity_type === "ITEM") {
-    if (safeInternalPath(registry.destination_path)) redirect(registry.destination_path!);
-    return <QrState title="Prenda CLOUVA identificada" detail="La unidad física tiene una identidad QR válida. Todavía no tiene una experiencia pública adicional asignada." />;
+    // ITEM identity is permanent, but an arbitrary destination is not public by
+    // default. Issuers must explicitly mark a public destination in metadata.
+    const publicDestination = registry.metadata?.public_destination === true;
+    if (publicDestination && safeInternalPath(registry.destination_path)) redirect(registry.destination_path!);
+    return <QrState title="Prenda CLOUVA identificada" detail="La unidad física tiene una identidad QR válida. Su información privada no se expone desde el resolver público." />;
   }
 
   const identifierFields = "id,catalog_product_id,catalog_variant_id,spot_id,identifier_type,value,status,public_token,destination_type,destination_path,destination_metadata";
@@ -123,7 +137,10 @@ export default async function ClouvaQrPage({ params }: { params: Promise<{ ident
         .eq("status", "active")
         .maybeSingle()
     : { data: null };
-  const { data: tokenIdentifier } = !registryIdentifier
+
+  // Legacy fallbacks are allowed only if no registry row exists for the token.
+  // An existing revoked/non-canonical registry row already returned above.
+  const { data: tokenIdentifier } = !registry && !registryIdentifier
     ? await admin
         .from("commerce_product_identifiers")
         .select(identifierFields)
@@ -132,7 +149,7 @@ export default async function ClouvaQrPage({ params }: { params: Promise<{ ident
         .eq("status", "active")
         .maybeSingle()
     : { data: null };
-  const { data: legacyIdentifier } = !registryIdentifier && !tokenIdentifier && /^[0-9a-f-]{36}$/i.test(publicToken)
+  const { data: legacyIdentifier } = !registry && !registryIdentifier && !tokenIdentifier && /^[0-9a-f-]{36}$/i.test(publicToken)
     ? await admin
         .from("commerce_product_identifiers")
         .select(identifierFields)
@@ -143,26 +160,33 @@ export default async function ClouvaQrPage({ params }: { params: Promise<{ ident
     : { data: null };
   const identifier = registryIdentifier ?? tokenIdentifier ?? legacyIdentifier;
   if (!identifier) notFound();
-  if (safeInternalPath(identifier.destination_path)) redirect(identifier.destination_path!);
 
   const [{ data: catalog }, { data: listing }, variantResult, spotResult] = await Promise.all([
     admin.from("commerce_catalog_products").select("name,description,brand,product_kind,avatar_asset_id").eq("id", identifier.catalog_product_id).maybeSingle(),
     identifier.spot_id
-      ? admin.from("commerce_products").select("name,slug,description,price,currency,status,cover_url,spot_id").eq("catalog_product_id", identifier.catalog_product_id).eq("spot_id", identifier.spot_id).eq("status", "published").limit(1).maybeSingle()
-      : admin.from("commerce_products").select("name,slug,description,price,currency,status,cover_url,spot_id").eq("catalog_product_id", identifier.catalog_product_id).eq("status", "published").limit(1).maybeSingle(),
+      ? admin.from("commerce_products").select("id,name,slug,description,price,currency,status,cover_url,spot_id").eq("catalog_product_id", identifier.catalog_product_id).eq("spot_id", identifier.spot_id).eq("status", "published").limit(1).maybeSingle()
+      : admin.from("commerce_products").select("id,name,slug,description,price,currency,status,cover_url,spot_id").eq("catalog_product_id", identifier.catalog_product_id).eq("status", "published").limit(1).maybeSingle(),
     identifier.catalog_variant_id
       ? admin.from("commerce_catalog_variants").select("title,size,color,presentation").eq("id", identifier.catalog_variant_id).maybeSingle()
       : Promise.resolve({ data: null }),
     identifier.spot_id
-      ? admin.from("commerce_spots").select("studio_id,name").eq("id", identifier.spot_id).maybeSingle()
+      ? admin.from("commerce_spots").select("studio_id,name,status").eq("id", identifier.spot_id).eq("status", "active").maybeSingle()
       : Promise.resolve({ data: null }),
   ]);
-  if (!catalog) notFound();
+  if (!catalog || !listing) {
+    return <QrState title="Producto no disponible" detail="El código es válido, pero la publicación asociada no está disponible públicamente en este momento." />;
+  }
+
   const variant = variantResult.data;
   const { data: studio } = spotResult.data?.studio_id
     ? await admin.from("studios").select("slug").eq("id", spotResult.data.studio_id).maybeSingle()
     : { data: null };
-  const storeUrl = listing && studio?.slug ? `/studios/${studio.slug}/tienda/${listing.slug}` : null;
+  const storeUrl = studio?.slug ? `/studios/${studio.slug}/tienda/${listing.slug}` : null;
+
+  // Custom destinations are honored only after the product, listing and Spot
+  // visibility checks above have succeeded.
+  const customDestination = registry?.destination_path || identifier.destination_path;
+  if (safeInternalPath(customDestination)) redirect(customDestination!);
 
   return (
     <main className="min-h-screen bg-black text-white">
@@ -171,11 +195,11 @@ export default async function ClouvaQrPage({ params }: { params: Promise<{ ident
         <div className="rounded-[2rem] border border-violet-400/30 bg-[radial-gradient(circle_at_top_right,rgba(124,58,237,.25),transparent_42%),#09070f] p-7 shadow-[0_30px_100px_rgba(91,33,182,.18)] sm:p-10">
           <p className="text-xs uppercase tracking-[0.24em] text-violet-300">{identifier.destination_type === "authenticity" ? "Autenticidad" : "Producto identificado"} CLOUVA · {spotResult.data?.name || "El Iglú"}</p>
           <div className="mt-6 grid gap-8 sm:grid-cols-[160px_1fr]">
-            {listing?.cover_url ? <img src={listing.cover_url} alt={catalog.name} className="aspect-square w-full rounded-3xl object-cover" /> : <div className="aspect-square rounded-3xl border border-white/10 bg-white/5" />}
+            {listing.cover_url ? <img src={listing.cover_url} alt={catalog.name} className="aspect-square w-full rounded-3xl object-cover" /> : <div className="aspect-square rounded-3xl border border-white/10 bg-white/5" />}
             <div>
               <h1 className="text-3xl font-semibold">{catalog.name}</h1>
               <p className="mt-2 text-white/55">{[catalog.brand, variant?.color, variant?.size, variant?.presentation].filter(Boolean).join(" · ")}</p>
-              <p className="mt-5 leading-7 text-white/65">{catalog.description || listing?.description || "Producto identificado dentro del catálogo de El Iglú."}</p>
+              <p className="mt-5 leading-7 text-white/65">{catalog.description || listing.description || "Producto identificado dentro del catálogo de El Iglú."}</p>
               <div className="mt-6 flex flex-wrap gap-2 text-xs">
                 <span className="rounded-full border border-emerald-400/25 bg-emerald-400/10 px-3 py-1 text-emerald-200">Código válido</span>
                 {catalog.avatar_asset_id ? <span className="rounded-full border border-violet-400/25 bg-violet-400/10 px-3 py-1 text-violet-200">Experiencia 3D vinculada</span> : null}
