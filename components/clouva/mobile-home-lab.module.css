@@ -1,62 +1,284 @@
 .configurablePage {
+  --mobile-nav-height: 72px;
   background: var(--lab-background) !important;
   padding-left: var(--lab-page-padding) !important;
   padding-right: var(--lab-page-padding) !important;
 }
 
-.configurablePage > [data-clouva-block="hero"] {
+/* MobileHomeDashboard wraps the configurable sections in .sections. Keep the
+   Lab variables attached to the real rendered blocks instead of assuming they
+   are direct children of <main>. */
+.configurablePage > div:has(> [data-clouva-block="hero"]) {
+  gap: var(--lab-section-gap) !important;
+  margin-top: var(--lab-section-gap) !important;
+}
+
+.configurablePage [data-clouva-block="hero"] {
   height: var(--lab-hero-height) !important;
+  min-height: var(--lab-hero-height) !important;
   aspect-ratio: auto !important;
+  container-type: size;
   border-color: var(--lab-border) !important;
   border-radius: var(--lab-radius) !important;
 }
 
-.configurablePage > [data-clouva-block="hero"] > div:last-child {
-  width: var(--lab-hero-text-width) !important;
-  padding-left: var(--lab-hero-padding-left) !important;
+/* Preserve the selected Lab image while framing the existing vertical cosmic
+   asset for the compact premium hero. */
+.configurablePage [data-clouva-block="hero"] > div:first-child {
+  background-position: center 56% !important;
+  opacity: 0.76 !important;
+  filter: saturate(1.26) contrast(1.08) brightness(0.78) !important;
+  transform: scale(1.02) !important;
 }
 
-.configurablePage > [data-clouva-block="hero"] a:first-child {
+/* Player/orbits: scale from the configured hero height instead of the old
+   590px composition. The image remains the canonical GCS asset rendered by
+   MobileHomeDashboard; only presentation changes here. */
+.configurablePage [data-clouva-block="hero"] > div:has(> img[aria-hidden="true"]) {
+  top: clamp(22px, 8.5cqh, 34px) !important;
+  width: clamp(122px, 42cqh, 140px) !important;
+  height: clamp(122px, 42cqh, 140px) !important;
+}
+
+.configurablePage [data-clouva-block="hero"] > div:has(> img[aria-hidden="true"]) > img[aria-hidden="true"] {
+  width: clamp(232px, 81cqh, 268px) !important;
+  height: clamp(232px, 81cqh, 268px) !important;
+  filter: drop-shadow(0 0 14px rgba(184, 71, 255, 0.38)) !important;
+}
+
+.configurablePage [data-clouva-block="hero"] > div:has(> img[aria-hidden="true"]) > span:first-of-type {
+  inset: 8px !important;
+}
+
+.configurablePage [data-clouva-block="hero"] > div:has(> img[aria-hidden="true"]) > span:last-of-type {
+  width: clamp(88px, 30cqh, 100px) !important;
+  height: clamp(88px, 30cqh, 100px) !important;
+}
+
+/* Side labels and CLOUVA AI stay clear of the tighter Player composition. */
+.configurablePage [data-clouva-block="hero"] > div:nth-of-type(3) {
+  top: clamp(45px, 17cqh, 58px) !important;
+  left: 14px !important;
+  gap: 6px !important;
+  font-size: 5.5px !important;
+}
+
+.configurablePage [data-clouva-block="hero"] > a[aria-label="Abrir CLOUVA AI"] {
+  top: clamp(42px, 16cqh, 55px) !important;
+  right: 9px !important;
+  width: 58px !important;
+  gap: 3px !important;
+  transform: scale(0.84) !important;
+  transform-origin: top right !important;
+}
+
+/* The premium component still contains the original 590px inner canvas. Tie
+   that canvas to the Lab height so VIDA DE FLOWS and both CTAs live inside the
+   same 300-330px hero shown in the target reference. */
+.configurablePage [data-clouva-block="hero"] > div:has(> h1) {
+  width: 100% !important;
+  min-height: 100% !important;
+  height: 100% !important;
+  justify-content: flex-start !important;
+  padding:
+    clamp(154px, 52cqh, 176px)
+    max(12px, var(--lab-hero-padding-left))
+    9px !important;
+}
+
+.configurablePage [data-clouva-block="hero"] > div:has(> h1) > span:first-child {
+  font-size: 6.5px !important;
+  letter-spacing: 0.27em !important;
+}
+
+.configurablePage [data-clouva-block="hero"] h1 {
+  margin-top: 5px !important;
+  font-size: clamp(30px, 8.8vw, 38px) !important;
+  line-height: 0.92 !important;
+}
+
+.configurablePage [data-clouva-block="hero"] h1 + p {
+  margin-top: 4px !important;
+  font-size: clamp(10px, 3vw, 12px) !important;
+  line-height: 1.1 !important;
+}
+
+.configurablePage [data-clouva-block="hero"] > div:has(> h1) > div:first-of-type {
+  gap: 6px !important;
+  margin-top: 9px !important;
+}
+
+.configurablePage [data-clouva-block="hero"] > div:has(> h1) > div:first-of-type > a {
+  min-height: 38px !important;
+  gap: 5px !important;
+  padding: 7px 9px !important;
+  font-size: clamp(8.5px, 2.6vw, 10px) !important;
+}
+
+.configurablePage [data-clouva-block="hero"] > div:has(> h1) > div:first-of-type > a > svg:first-child {
+  width: 15px !important;
+  height: 15px !important;
+}
+
+.configurablePage [data-clouva-block="hero"] > div:has(> h1) > div:last-of-type {
+  gap: 5px !important;
+  margin-top: 7px !important;
+  font-size: 5px !important;
+  letter-spacing: 0.2em !important;
+}
+
+.configurablePage [data-clouva-block="hero"] a:first-child {
   border-color: color-mix(in srgb, var(--lab-accent-secondary) 70%, white 30%) !important;
   background: linear-gradient(90deg, var(--lab-accent), var(--lab-accent-secondary)) !important;
   box-shadow: 0 0 var(--lab-glow-size) color-mix(in srgb, var(--lab-accent) 58%, transparent) !important;
 }
 
-.configurablePage > [data-clouva-block="hero"] a:last-child {
+.configurablePage [data-clouva-block="hero"] a:last-child {
   border-color: var(--lab-accent) !important;
 }
 
-.configurablePage > [data-clouva-block="music"],
-.configurablePage > [data-clouva-block="features"] {
-  margin-top: var(--lab-section-gap) !important;
+/* .sections already owns vertical rhythm. Apply the Lab gap there and avoid
+   the old extra margins that doubled the distance between hero and cards. */
+.configurablePage [data-clouva-block="music"],
+.configurablePage [data-clouva-block="features"] {
+  margin-top: 0 !important;
 }
 
-.configurablePage > [data-clouva-block="music"],
+.configurablePage [data-clouva-block="music"],
 .configurablePage [data-clouva-block="continue"],
 .configurablePage [data-clouva-block="iglu"] {
   border-color: var(--lab-border) !important;
   border-radius: var(--lab-radius) !important;
 }
 
-.configurablePage [data-clouva-block="music"] button[aria-label="Abrir reproductor musical"] i {
+/* Target density for VIP + Mi Spot while preserving their existing markup,
+   routes, entitlement state and imagery. */
+.configurablePage [data-clouva-block="continue"],
+.configurablePage [data-clouva-block="iglu"] {
+  min-height: clamp(214px, 55vw, 232px) !important;
+}
+
+.configurablePage [data-clouva-block="continue"] {
+  padding: 11px 10px 8px !important;
+}
+
+.configurablePage [data-clouva-block="iglu"] {
+  padding: 11px 10px 8px !important;
+  background-position: 52% 35% !important;
+}
+
+.configurablePage [data-clouva-block="continue"] > div:first-of-type,
+.configurablePage [data-clouva-block="iglu"] > div:first-of-type {
+  min-height: 30px !important;
+  gap: 6px !important;
+}
+
+.configurablePage [data-clouva-block="continue"] > div:first-of-type > span:first-child,
+.configurablePage [data-clouva-block="iglu"] > div:first-of-type > span:first-child {
+  width: 30px !important;
+  height: 30px !important;
+  flex-basis: 30px !important;
+}
+
+.configurablePage [data-clouva-block="continue"] > div:first-of-type > strong,
+.configurablePage [data-clouva-block="iglu"] > div:first-of-type > strong {
+  font-size: 8px !important;
+}
+
+.configurablePage [data-clouva-block="continue"] > div:has(> h2) {
+  width: 70% !important;
+  margin-top: 8px !important;
+}
+
+.configurablePage [data-clouva-block="continue"] > div:has(> h2) h2,
+.configurablePage [data-clouva-block="iglu"] > div:has(> h2) h2 {
+  font-size: clamp(16px, 4.5vw, 20px) !important;
+  line-height: 0.98 !important;
+}
+
+.configurablePage [data-clouva-block="continue"] > div:has(> h2) p,
+.configurablePage [data-clouva-block="iglu"] > div:has(> h2) p {
+  margin-top: 5px !important;
+  font-size: 7px !important;
+  line-height: 1.3 !important;
+}
+
+.configurablePage [data-clouva-block="continue"] > div:nth-of-type(3) {
+  top: 52px !important;
+  right: -8px !important;
+  width: 82px !important;
+  height: 94px !important;
+  transform: scale(0.82) !important;
+  transform-origin: top right !important;
+}
+
+.configurablePage [data-clouva-block="continue"] > span:has(> svg) {
+  right: 9px !important;
+  bottom: 48px !important;
+  left: 9px !important;
+  min-height: 31px !important;
+  padding: 0 9px !important;
+  font-size: 7.5px !important;
+}
+
+.configurablePage [data-clouva-block="iglu"] > span:has(> svg) {
+  top: 9px !important;
+  right: 9px !important;
+  width: 32px !important;
+  height: 32px !important;
+}
+
+.configurablePage [data-clouva-block="iglu"] > div:has(> h2) {
+  right: 10px !important;
+  bottom: 50px !important;
+  left: 10px !important;
+}
+
+.configurablePage [data-clouva-block="continue"] > div:last-child,
+.configurablePage [data-clouva-block="iglu"] > div:last-child {
+  right: 5px !important;
+  bottom: 4px !important;
+  left: 5px !important;
+}
+
+.configurablePage [data-clouva-block="continue"] > div:last-child > span,
+.configurablePage [data-clouva-block="iglu"] > div:last-child > span {
+  min-height: 34px !important;
+  gap: 3px !important;
+}
+
+.configurablePage [data-clouva-block="continue"] > div:last-child small,
+.configurablePage [data-clouva-block="iglu"] > div:last-child small {
+  font-size: 4.3px !important;
+  letter-spacing: 0.07em !important;
+  line-height: 1.2 !important;
+}
+
+.configurablePage [data-clouva-block="music"] button[aria-label="Abrir música"] i {
   width: var(--lab-music-progress) !important;
   background: linear-gradient(90deg, var(--lab-accent), var(--lab-accent-secondary)) !important;
 }
 
-.configurablePage [data-clouva-block="music"] button[aria-label="Abrir reproductor"] {
+.configurablePage [data-clouva-block="continue"] b,
+.configurablePage [data-clouva-block="iglu"] b,
+.configurablePage [data-clouva-block="navigation"] a[aria-label="Crear en CLOUVA"] > b {
   background: linear-gradient(145deg, var(--lab-accent), var(--lab-accent-secondary)) !important;
   box-shadow: 0 0 var(--lab-glow-size) color-mix(in srgb, var(--lab-accent) 58%, transparent) !important;
 }
 
-.configurablePage [data-clouva-block="continue"] b,
-.configurablePage [data-clouva-block="iglu"] b,
-.configurablePage [data-clouva-block="navigation"] a[aria-label="Crear en Creator Studio"] > b {
-  background: linear-gradient(145deg, var(--lab-accent), var(--lab-accent-secondary)) !important;
-  box-shadow: 0 0 var(--lab-glow-size) color-mix(in srgb, var(--lab-accent) 58%, transparent) !important;
+.configurablePage [data-clouva-block="navigation"] {
+  height: var(--mobile-nav-height) !important;
+  padding-top: 7px !important;
+  padding-bottom: 6px !important;
 }
 
 .configurablePage [data-clouva-block="navigation"] > a:first-child {
   color: var(--lab-accent) !important;
+}
+
+.configurablePage [data-clouva-block="navigation"] > a:nth-child(3) > b {
+  width: 56px !important;
+  height: 56px !important;
 }
 
 .previewPage {
@@ -83,4 +305,30 @@
 
 .previewPage > [role="presentation"] {
   position: absolute !important;
+}
+
+@media (max-width: 374px) {
+  .configurablePage {
+    --mobile-nav-height: 68px;
+  }
+
+  .configurablePage [data-clouva-block="hero"] > div:has(> h1) {
+    padding-right: 10px !important;
+    padding-left: 10px !important;
+  }
+
+  .configurablePage [data-clouva-block="hero"] h1 {
+    font-size: 29px !important;
+  }
+
+  .configurablePage [data-clouva-block="hero"] > div:has(> h1) > div:first-of-type > a {
+    padding-right: 7px !important;
+    padding-left: 7px !important;
+    font-size: 8px !important;
+  }
+
+  .configurablePage [data-clouva-block="continue"],
+  .configurablePage [data-clouva-block="iglu"] {
+    min-height: 210px !important;
+  }
 }
