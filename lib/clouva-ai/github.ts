@@ -13,8 +13,8 @@ type RepositoryFile = {
 };
 
 type RepositoryTreeChange =
-  | { path: string; delete: true }
-  | { path: string; content: string; encoding: "utf-8" | "base64" };
+  | { path: string; delete: true; content?: never; encoding?: never }
+  | { path: string; delete?: false; content: string; encoding: "utf-8" | "base64" };
 
 const TEXT_FILE_EXTENSIONS = new Set([
   "ts", "tsx", "js", "jsx", "mjs", "cjs", "json", "css", "scss", "md", "mdx", "html", "txt", "yml", "yaml", "sql", "py", "sh", "toml", "xml",
