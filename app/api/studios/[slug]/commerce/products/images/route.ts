@@ -347,7 +347,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const now = new Date().toISOString();
     const next = removeImage(listing.metadata, storagePath);
     let nextGallery = currentGallery.filter((candidate) => candidate !== target.url);
-    let currentCover = listing.cover_url === target.url ? (nextGallery[0] ?? null) : listing.cover_url;
+    const currentCover = listing.cover_url === target.url ? (nextGallery[0] ?? null) : listing.cover_url;
     if (currentCover) nextGallery = [currentCover, ...nextGallery.filter((candidate) => candidate !== currentCover)];
     const synced = syncPublicationMetadata(next.metadata, currentCover, nextGallery);
     const { error: updateError } = await admin
