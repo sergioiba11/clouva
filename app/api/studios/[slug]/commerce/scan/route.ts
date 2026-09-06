@@ -18,6 +18,34 @@ function record(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function stringUrls(value: unknown, limit = 24) {
+  if (!Array.isArray(value)) return [];
+  const urls = value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter((item) => /^https?:\/\//i.test(item));
+  return Array.from(new Set(urls)).slice(0, limit);
+}
+
+function generatedImageUrls(metadata: Record<string, unknown>) {
+  const productImages = record(metadata.product_images);
+  const generated = Array.isArray(productImages.generated_images) ? productImages.generated_images : [];
+  return stringUrls(generated.map((item) => record(item).url));
+}
+
+function canonicalListingGallery(args: {
+  explicitGallery: unknown;
+  metadata: Record<string, unknown>;
+  coverUrl: string;
+}) {
+  const explicit = stringUrls(args.explicitGallery);
+  const generated = generatedImageUrls(args.metadata);
+  return Array.from(new Set([
+    ...(args.coverUrl ? [args.coverUrl] : []),
+    ...(explicit.length ? explicit : generated),
+  ])).slice(0, 24);
+}
+
 function resultListingId(value: unknown) {
   const root = record(value);
   const listing = record(root.listing);
@@ -174,14 +202,36 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     });
     if (error) throw new Error(error.message);
 
-    // El RPC canónico conserva la creación/resolución del producto. La portada
-    // es una propiedad de la publicación del Spot, así que la persistimos sobre
-    // commerce_products una vez que conocemos el listing resultante. De esta
-    // forma no hace falta cambiar la firma del RPC ni duplicar su lógica.
+    // El RPC canónico conserva la creación/resolución del producto. Portada,
+    // galería y metadata pertenecen a la publicación del Spot, así que se
+    // consolidan sobre commerce_products una vez conocido el listing final.
+    // Las fuentes y variantes generadas siguen separadas dentro de metadata;
+    // gallery contiene únicamente el master seleccionado para publicación.
     const listingId = resultListingId(data);
     const requestedCover = typeof body.listing?.cover_url === "string" ? body.listing.cover_url.trim() : "";
     const requestedMetadata = record(body.listing?.metadata);
-    if (listingId && (requestedCover || Object.keys(requestedMetadata).length)) {
+    const requestedGallery = canonicalListingGallery({
+      explicitGallery: body.listing?.gallery,
+      metadata: requestedMetadata,
+      coverUrl: requestedCover,
+    });
+
+    if (requestedGallery.length) {
+      const productImages = record(requestedMetadata.product_images);
+      if (Object.keys(productImages).length) {
+        requestedMetadata.product_images = {
+          ...productImages,
+          cover_image: requestedCover || requestedGallery[0] || null,
+          publication_master: {
+            cover_url: requestedCover || requestedGallery[0] || null,
+            gallery: requestedGallery,
+            selected_at: new Date().toISOString(),
+          },
+        };
+      }
+    }
+
+    if (listingId && (requestedCover || requestedGallery.length || Object.keys(requestedMetadata).length)) {
       const { data: existing, error: existingError } = await admin
         .from("commerce_products")
         .select("metadata")
@@ -192,6 +242,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
       const patch: Record<string, unknown> = {};
       if (requestedCover) patch.cover_url = requestedCover;
+      if (requestedGallery.length) patch.gallery = requestedGallery;
       if (Object.keys(requestedMetadata).length) {
         patch.metadata = { ...record(existing?.metadata), ...requestedMetadata };
       }
@@ -207,6 +258,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       root.listing = {
         ...listing,
         ...(requestedCover ? { cover_url: requestedCover } : {}),
+        ...(requestedGallery.length ? { gallery: requestedGallery } : {}),
         ...(Object.keys(requestedMetadata).length ? { metadata: patch.metadata } : {}),
       };
     }
