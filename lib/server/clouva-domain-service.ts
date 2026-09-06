@@ -80,6 +80,7 @@ export interface ClouvaDomainService {
   updateStudioIdentityDraft(versionId: string, patch: StudioIdentityDraftPatch): Promise<unknown>;
   updatePlayer(playerId: string, changes: StudioPlayerChanges): Promise<unknown>;
   startPlayerProfileGeneration(playerId: string): Promise<unknown>;
+  startStudioProfileGeneration(): Promise<unknown>;
 }
 
 const IDENTITY_COPY_FIELDS = [
@@ -352,6 +353,15 @@ export function createClouvaDomainService(args: {
         admin: args.admin,
         userId: args.userId,
         playerId,
+      });
+    },
+
+    async startStudioProfileGeneration() {
+      await authorize();
+      return dependencies.startProfileGeneration({
+        admin: args.admin,
+        userId: args.userId,
+        studioId: args.studioId,
       });
     },
   };
