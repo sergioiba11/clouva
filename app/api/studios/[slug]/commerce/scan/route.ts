@@ -72,12 +72,22 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     const token = type === "clouva_qr" ? clouvaQrToken(code) : null;
 
     if (token) {
-      const { data: registry } = await admin
+      // Resolve exact token first. A revoked/non-canonical QR must not fall
+      // through to a generic product identifier resolution.
+      const { data: registry, error: registryError } = await admin
         .from("clouva_qr_registry")
-        .select("entity_type,entity_id,source_identifier_id,status")
+        .select("entity_type,entity_id,studio_id,source_identifier_id,status,is_canonical,revoked_at,metadata")
         .eq("public_token", token)
-        .eq("status", "ACTIVE")
         .maybeSingle();
+      if (registryError) throw new Error(registryError.message);
+
+      if (registry && (registry.status !== "ACTIVE" || registry.is_canonical !== true || registry.revoked_at)) {
+        return NextResponse.json({
+          type: "clouva_qr",
+          code: code.trim(),
+          result: { exists: false, exists_in_spot: false, revoked: true },
+        });
+      }
 
       if (registry?.entity_type === "USER") {
         const { data: player, error: playerError } = await admin
@@ -98,25 +108,49 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
             clouva_qr: {
               entity_type: "USER",
               public_url: `${siteUrl.replace(/\/$/, "")}/q/${encodeURIComponent(token)}`,
-              player: player ? {
+              // Private Players remain valid FLOW recipients, but scanner users
+              // do not receive name, slug, username or profile image.
+              player: player ? (isPublic ? {
                 slug: player.slug,
                 username: player.username,
                 display_name: player.display_name,
                 profile_image_url: player.profile_image_url,
-                public: isPublic,
-              } : null,
+                public: true,
+              } : { public: false }) : null,
             },
           },
         });
       }
 
       if (registry?.entity_type === "ITEM") {
+        const metadata = record(registry.metadata);
+        const metadataSpotId = typeof metadata.spot_id === "string" ? metadata.spot_id : null;
+        let identifierSpotId: string | null = null;
+
+        if (registry.source_identifier_id) {
+          const { data: sourceIdentifier, error: sourceError } = await admin
+            .from("commerce_product_identifiers")
+            .select("spot_id,status")
+            .eq("id", registry.source_identifier_id)
+            .maybeSingle();
+          if (sourceError) throw new Error(sourceError.message);
+          if (sourceIdentifier?.status === "active" && sourceIdentifier.spot_id) identifierSpotId = sourceIdentifier.spot_id;
+        }
+
+        // Use only like-for-like relationships. A source identifier's spot is
+        // strongest; metadata spot is next; Studio ownership is the fallback.
+        const existsInSpot = identifierSpotId
+          ? identifierSpotId === spot.id
+          : metadataSpotId
+            ? metadataSpotId === spot.id
+            : Boolean(registry.studio_id && spot.studio_id && registry.studio_id === spot.studio_id);
+
         return NextResponse.json({
           type: "clouva_qr",
           code: code.trim(),
           result: {
             exists: true,
-            exists_in_spot: true,
+            exists_in_spot: existsInSpot,
             clouva_qr: {
               entity_type: "ITEM",
               public_url: `${siteUrl.replace(/\/$/, "")}/q/${encodeURIComponent(token)}`,
@@ -146,6 +180,10 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
           };
           return NextResponse.json({ type: "clouva_qr", code: code.trim(), result });
         }
+      }
+
+      if (registry) {
+        return NextResponse.json({ type: "clouva_qr", code: code.trim(), result: { exists: true, exists_in_spot: false } });
       }
     }
 
@@ -194,10 +232,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     });
     if (error) throw new Error(error.message);
 
-    // El RPC canónico conserva la creación/resolución del producto. Las fotos
-    // fuente y todas las variantes generadas siguen en metadata como linaje.
-    // Solo cover_url y una gallery elegida explícitamente forman el master
-    // público: generar una imagen no equivale a aprobarla para publicación.
     const listingId = resultListingId(data);
     const requestedCover = typeof body.listing?.cover_url === "string" ? body.listing.cover_url.trim() : "";
     const requestedMetadata = record(body.listing?.metadata);
@@ -233,9 +267,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       const patch: Record<string, unknown> = {};
       if (requestedCover) patch.cover_url = requestedCover;
       if (requestedGallery.length) patch.gallery = requestedGallery;
-      if (Object.keys(requestedMetadata).length) {
-        patch.metadata = { ...record(existing?.metadata), ...requestedMetadata };
-      }
+      if (Object.keys(requestedMetadata).length) patch.metadata = { ...record(existing?.metadata), ...requestedMetadata };
       const { error: updateError } = await admin
         .from("commerce_products")
         .update(patch)
