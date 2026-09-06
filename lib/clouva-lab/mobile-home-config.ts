@@ -1,3 +1,5 @@
+import { VISUAL_ASSETS } from "@/lib/visual-assets";
+
 export type MobileHomeSectionKey = "hero" | "music" | "features";
 
 export type MobileHomeCardConfig = {
@@ -64,8 +66,7 @@ export type MobileHomeConfig = {
 };
 
 const LEGACY_MOBILE_HOME_HERO_URL = "/assets/home-mobile/hero.webp";
-export const MOBILE_HOME_HERO_ASSET_URL =
-  "https://storage.googleapis.com/clouva-generated-media/admin-assets/brand/01_home_mobile_hero.png";
+export const MOBILE_HOME_HERO_ASSET_URL = VISUAL_ASSETS["home-mobile-hero-01"];
 
 export const DEFAULT_MOBILE_HOME_CONFIG: MobileHomeConfig = {
   schemaVersion: 1,
