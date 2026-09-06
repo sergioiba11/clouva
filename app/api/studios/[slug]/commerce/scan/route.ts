@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
+import { detectExternalPaymentQr } from "@/lib/commerce/external-qr";
 import {
   detectCommerceIdentifierType,
   type CommerceIdentifierType,
@@ -69,11 +70,23 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
     const admin = createAdminSupabase();
     const { spot } = await requireManagedSpot({ admin, userId: user.id, studioId });
+
+    const externalQr = detectExternalPaymentQr(code);
+    if (externalQr) {
+      return NextResponse.json({
+        type: "external_qr",
+        code: code.trim(),
+        result: {
+          exists: false,
+          exists_in_spot: false,
+          external_payment_qr: externalQr,
+        },
+      });
+    }
+
     const token = type === "clouva_qr" ? clouvaQrToken(code) : null;
 
     if (token) {
-      // Resolve exact token first. A revoked/non-canonical QR must not fall
-      // through to a generic product identifier resolution.
       const { data: registry, error: registryError } = await admin
         .from("clouva_qr_registry")
         .select("entity_type,entity_id,studio_id,source_identifier_id,status,is_canonical,revoked_at,metadata")
@@ -108,8 +121,6 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
             clouva_qr: {
               entity_type: "USER",
               public_url: `${siteUrl.replace(/\/$/, "")}/q/${encodeURIComponent(token)}`,
-              // Private Players remain valid FLOW recipients, but scanner users
-              // do not receive name, slug, username or profile image.
               player: player ? (isPublic ? {
                 slug: player.slug,
                 username: player.username,
@@ -137,8 +148,6 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
           if (sourceIdentifier?.status === "active" && sourceIdentifier.spot_id) identifierSpotId = sourceIdentifier.spot_id;
         }
 
-        // Use only like-for-like relationships. A source identifier's spot is
-        // strongest; metadata spot is next; Studio ownership is the fallback.
         const existsInSpot = identifierSpotId
           ? identifierSpotId === spot.id
           : metadataSpotId
@@ -214,6 +223,14 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       idempotencyKey?: string;
     };
     const code = body.code ?? "";
+
+    if (detectExternalPaymentQr(code)) {
+      return NextResponse.json({
+        error: "Un QR de pago externo no se importa como producto. CLOUVA puede detectarlo, pero no ejecuta ese pago sin un rail interoperable autorizado.",
+        dependency: "ARGENTINA_INTEROPERABLE_WALLET_OR_PSP_RAIL",
+      }, { status: 400 });
+    }
+
     const identifierType = body.identifierType ?? detectCommerceIdentifierType(code);
     const validation = validateCommerceIdentifier(identifierType, code);
     if (!validation.valid) return NextResponse.json({ error: validation.error }, { status: 400 });
