@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
-import { CloverIcon } from "@/components/clover-icon";
+import { ClouvaLogoMark } from "@/components/brand/clouva-logo";
 import { DiamondIcon } from "@/components/diamond-icon";
 
 export function WalletBalanceChip() {
@@ -31,7 +31,7 @@ export function WalletBalanceChip() {
   return (
     <div className="flex items-center gap-1 rounded-full border border-[var(--line)] bg-white/[0.03] p-1 text-xs font-medium">
       <Link href="/mi-flow/billetera?asset=flows" className="flex items-center gap-1 rounded-full px-2 py-1 transition hover:bg-white/[0.06]" title="Abrir FLOWS en tu billetera">
-        <CloverIcon className="text-[#8f7cff]" size={14} />
+        <ClouvaLogoMark className="text-[#8f7cff]" size={14} />
         {balances.flows}
       </Link>
       <span className="h-3 w-px bg-[var(--line)]" />
