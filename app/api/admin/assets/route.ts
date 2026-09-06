@@ -2,12 +2,17 @@ import { NextRequest, NextResponse } from "next/server";
 import { Storage } from "@google-cloud/storage";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { MediaApiError, requireMediaAdmin } from "@/lib/server/media-auth";
+import {
+  deletePublicRepositoryAsset,
+  listPublicRepositoryAssets,
+  renamePublicRepositoryAsset,
+} from "@/lib/clouva-ai/github";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-type AssetSource = "gcs" | "supabase";
+type AssetSource = "gcs" | "supabase" | "github";
 
 type UnifiedAsset = {
   source: AssetSource;
@@ -27,11 +32,25 @@ type StorageBucket = {
   public: boolean | null;
 };
 
+type SourceWarning = {
+  source: AssetSource;
+  message: string;
+};
+
+type CreatorReferenceRow = Record<string, unknown> & {
+  id: string;
+  storage_path: string | null;
+  rigged_storage_path: string | null;
+  file_name: string | null;
+};
+
 const BUCKET_NAME = process.env.CLOUVA_ADMIN_ASSETS_BUCKET ?? process.env.CLOUVA_GENERATED_MEDIA_BUCKET ?? "clouva-generated-media";
 const ROOT_PREFIX = "admin-assets";
 const MAX_BYTES = 50 * 1024 * 1024;
 const LIST_PAGE_SIZE = 1000;
 const SIGNED_URL_TTL_SECONDS = 60 * 60;
+const CREATOR_REFERENCE_BUCKET = "creator-reference-assets";
+const CREATOR_REFERENCE_TABLE = "creator_reference_assets";
 const ALLOWED_MIME = new Set([
   "image/png",
   "image/jpeg",
@@ -107,13 +126,45 @@ function folderOf(path: string) {
 }
 
 function normalizeSource(value: string | null): AssetSource | "all" {
-  return value === "gcs" || value === "supabase" ? value : "all";
+  return value === "gcs" || value === "supabase" || value === "github" ? value : "all";
+}
+
+function contentTypeFromName(name: string) {
+  const extension = name.split(".").pop()?.toLowerCase() ?? "";
+  const byExtension: Record<string, string> = {
+    png: "image/png",
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    webp: "image/webp",
+    gif: "image/gif",
+    svg: "image/svg+xml",
+    mp4: "video/mp4",
+    webm: "video/webm",
+    mp3: "audio/mpeg",
+    wav: "audio/wav",
+    ogg: "audio/ogg",
+    glb: "model/gltf-binary",
+    gltf: "model/gltf+json",
+    pdf: "application/pdf",
+    json: "application/json",
+    txt: "text/plain",
+    css: "text/css",
+    ttf: "font/ttf",
+    otf: "font/otf",
+    woff: "font/woff",
+    woff2: "font/woff2",
+  };
+  return byExtension[extension] ?? null;
 }
 
 function matchesQuery(asset: UnifiedAsset, query: string) {
   if (!query) return true;
   const haystack = `${asset.name} ${asset.path} ${asset.bucket} ${asset.contentType ?? ""} ${asset.source}`.toLowerCase();
   return haystack.includes(query.toLowerCase());
+}
+
+function messageOf(error: unknown) {
+  return error instanceof Error ? error.message : "No se pudo leer esta fuente de assets.";
 }
 
 async function renameCanonicalBrandAssets(folder: string) {
@@ -154,6 +205,26 @@ async function listGcsAssets(query: string): Promise<UnifiedAsset[]> {
       contentType: file.metadata.contentType ?? null,
       updatedAt: file.metadata.updated ?? null,
     }))
+    .filter((asset) => matchesQuery(asset, query));
+}
+
+async function listGitHubAssets(query: string): Promise<UnifiedAsset[]> {
+  const { files } = await listPublicRepositoryAssets();
+  return files
+    .map((file) => {
+      const name = file.path.split("/").at(-1) ?? file.path;
+      return {
+        source: "github" as const,
+        bucket: "public",
+        name,
+        path: file.path,
+        folder: folderOf(file.path),
+        url: file.path.startsWith("public/") ? `/${file.path.slice("public/".length)}` : null,
+        size: file.size,
+        contentType: contentTypeFromName(name),
+        updatedAt: null,
+      };
+    })
     .filter((asset) => matchesQuery(asset, query));
 }
 
@@ -261,9 +332,96 @@ async function assertSupabaseBucket(admin: SupabaseClient, bucketName: string) {
   return data;
 }
 
+async function getCreatorReferenceRows(admin: SupabaseClient, path: string): Promise<CreatorReferenceRow[]> {
+  const [stored, rigged] = await Promise.all([
+    admin.from(CREATOR_REFERENCE_TABLE).select("*").eq("storage_path", path),
+    admin.from(CREATOR_REFERENCE_TABLE).select("*").eq("rigged_storage_path", path),
+  ]);
+  if (stored.error || rigged.error) {
+    throw new MediaApiError(
+      `No se pudieron comprobar las referencias de Creator Studio: ${stored.error?.message ?? rigged.error?.message ?? "error desconocido"}`,
+      502,
+      "creator_reference_lookup_failed",
+    );
+  }
+
+  const rows = new Map<string, CreatorReferenceRow>();
+  for (const row of [...(stored.data ?? []), ...(rigged.data ?? [])]) {
+    if (row?.id) rows.set(String(row.id), row as CreatorReferenceRow);
+  }
+  return [...rows.values()];
+}
+
+async function restoreCreatorReferenceRows(admin: SupabaseClient, rows: CreatorReferenceRow[]) {
+  if (!rows.length) return;
+  const { error } = await admin.from(CREATOR_REFERENCE_TABLE).upsert(rows);
+  if (error) console.error("[admin-assets] could not rollback creator reference rows", error);
+}
+
+async function syncCreatorReferenceRename(
+  admin: SupabaseClient,
+  rows: CreatorReferenceRow[],
+  currentPath: string,
+  nextPath: string,
+  finalName: string,
+) {
+  if (!rows.length) return;
+
+  try {
+    for (const row of rows) {
+      const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
+      if (row.storage_path === currentPath) {
+        updates.storage_path = nextPath;
+        updates.file_name = finalName;
+      }
+      if (row.rigged_storage_path === currentPath) updates.rigged_storage_path = nextPath;
+      const { error } = await admin.from(CREATOR_REFERENCE_TABLE).update(updates).eq("id", row.id);
+      if (error) throw error;
+    }
+  } catch (error) {
+    await restoreCreatorReferenceRows(admin, rows);
+    throw new MediaApiError(
+      `El archivo se movió, pero no se pudieron sincronizar sus referencias de Creator Studio: ${messageOf(error)}`,
+      502,
+      "creator_reference_rename_failed",
+    );
+  }
+}
+
+async function syncCreatorReferenceDelete(admin: SupabaseClient, rows: CreatorReferenceRow[], path: string) {
+  if (!rows.length) return;
+
+  try {
+    for (const row of rows) {
+      if (row.storage_path === path) {
+        const { error } = await admin.from(CREATOR_REFERENCE_TABLE).delete().eq("id", row.id);
+        if (error) throw error;
+        continue;
+      }
+
+      if (row.rigged_storage_path === path) {
+        const { error } = await admin.from(CREATOR_REFERENCE_TABLE).update({
+          rigged_storage_path: null,
+          status: "reference",
+          preview_settings: {},
+          updated_at: new Date().toISOString(),
+        }).eq("id", row.id);
+        if (error) throw error;
+      }
+    }
+  } catch (error) {
+    await restoreCreatorReferenceRows(admin, rows);
+    throw new MediaApiError(
+      `No se pudieron sincronizar las referencias de Creator Studio: ${messageOf(error)}`,
+      502,
+      "creator_reference_delete_failed",
+    );
+  }
+}
+
 function parseMutationBody(value: unknown) {
   const body = value && typeof value === "object" ? value as Record<string, unknown> : {};
-  const source = body.source === "gcs" || body.source === "supabase" ? body.source : null;
+  const source = body.source === "gcs" || body.source === "supabase" || body.source === "github" ? body.source : null;
   const bucket = typeof body.bucket === "string" ? body.bucket : "";
   const path = typeof body.path === "string" ? body.path : "";
   if (!source || !path) throw new MediaApiError("Asset inválido.", 400, "invalid_asset");
@@ -283,7 +441,7 @@ function assetStorageError(error: unknown) {
     return { status: 503, body: { error: "No se encontró el bucket configurado para assets.", code: "storage_bucket_not_found" } };
   }
   console.error("[admin-assets] storage error", error);
-  return { status: 500, body: { error: "No se pudo acceder al almacenamiento de assets.", code: "asset_storage_failed" } };
+  return { status: 500, body: { error: message.slice(0, 400), code: "asset_storage_failed" } };
 }
 
 export async function GET(request: NextRequest) {
@@ -295,16 +453,37 @@ export async function GET(request: NextRequest) {
 
     const items: UnifiedAsset[] = [];
     const buckets: StorageBucket[] = [];
+    const warnings: SourceWarning[] = [];
 
     if (source === "all" || source === "gcs") {
-      items.push(...await listGcsAssets(query));
-      buckets.push({ source: "gcs", name: BUCKET_NAME, public: true });
+      try {
+        items.push(...await listGcsAssets(query));
+        buckets.push({ source: "gcs", name: BUCKET_NAME, public: true });
+      } catch (error) {
+        if (source === "gcs") throw error;
+        warnings.push({ source: "gcs", message: messageOf(error) });
+      }
     }
 
     if (source === "all" || source === "supabase") {
-      const supabase = await listSupabaseAssets(admin, source === "supabase" ? requestedBucket : "", query);
-      items.push(...supabase.items);
-      buckets.push(...supabase.buckets);
+      try {
+        const supabase = await listSupabaseAssets(admin, source === "supabase" ? requestedBucket : "", query);
+        items.push(...supabase.items);
+        buckets.push(...supabase.buckets);
+      } catch (error) {
+        if (source === "supabase") throw error;
+        warnings.push({ source: "supabase", message: messageOf(error) });
+      }
+    }
+
+    if (source === "all" || source === "github") {
+      try {
+        items.push(...await listGitHubAssets(query));
+        buckets.push({ source: "github", name: "public", public: true });
+      } catch (error) {
+        if (source === "github") throw error;
+        warnings.push({ source: "github", message: messageOf(error) });
+      }
     }
 
     items.sort((a, b) => String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? "")) || a.path.localeCompare(b.path));
@@ -312,6 +491,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       items,
       buckets,
+      warnings,
       total: items.length,
       gcsBucket: BUCKET_NAME,
     });
@@ -386,16 +566,36 @@ export async function PATCH(request: NextRequest) {
       const [targetExists] = await gcsBucket.file(nextPath).exists();
       if (targetExists) throw new MediaApiError("Ya existe un asset con ese nombre en esta carpeta.", 409, "asset_name_conflict");
       await gcsBucket.file(path).move(nextPath);
-    } else {
+    } else if (source === "supabase") {
       await assertSupabaseBucket(admin, bucket);
       const folderPath = folderOf(nextPath);
-      const { data: siblings, error: siblingError } = await admin.storage.from(bucket).list(folderPath, { search: finalName, limit: 100 });
+      const storageBucket = admin.storage.from(bucket);
+      const { data: siblings, error: siblingError } = await storageBucket.list(folderPath, { search: finalName, limit: 100 });
       if (siblingError) throw new MediaApiError(`No se pudo validar el nombre: ${siblingError.message}`, 502, "supabase_storage_list_failed");
       if ((siblings ?? []).some((item) => item.name === finalName && item.id)) {
         throw new MediaApiError("Ya existe un asset con ese nombre en esta carpeta.", 409, "asset_name_conflict");
       }
-      const { error } = await admin.storage.from(bucket).move(path, nextPath);
+
+      const referenceRows = bucket === CREATOR_REFERENCE_BUCKET ? await getCreatorReferenceRows(admin, path) : [];
+      const { error } = await storageBucket.move(path, nextPath);
       if (error) throw new MediaApiError(`No se pudo renombrar: ${error.message}`, 502, "asset_rename_failed");
+
+      try {
+        await syncCreatorReferenceRename(admin, referenceRows, path, nextPath, finalName);
+      } catch (error) {
+        const rollback = await storageBucket.move(nextPath, path);
+        if (rollback.error) console.error("[admin-assets] could not rollback storage rename", rollback.error);
+        throw error;
+      }
+    } else {
+      try {
+        const renamed = await renamePublicRepositoryAsset(path, finalName);
+        return NextResponse.json({ ok: true, path: renamed.path, name: renamed.name, updatedReferences: renamed.updatedReferences, commitSha: renamed.commitSha });
+      } catch (error) {
+        const message = messageOf(error);
+        const status = /ya existe/i.test(message) ? 409 : /no encontró|no existe/i.test(message) ? 404 : 502;
+        throw new MediaApiError(message, status, "github_asset_rename_failed");
+      }
     }
 
     return NextResponse.json({ ok: true, path: nextPath, name: finalName });
@@ -413,10 +613,53 @@ export async function DELETE(request: NextRequest) {
     if (source === "gcs") {
       if (bucket && bucket !== BUCKET_NAME) throw new MediaApiError("Bucket de Cloud Storage inválido.", 400, "invalid_bucket");
       await getStorage().bucket(BUCKET_NAME).file(path).delete();
-    } else {
+    } else if (source === "supabase") {
       await assertSupabaseBucket(admin, bucket);
-      const { error } = await admin.storage.from(bucket).remove([path]);
+      const storageBucket = admin.storage.from(bucket);
+      const referenceRows = bucket === CREATOR_REFERENCE_BUCKET ? await getCreatorReferenceRows(admin, path) : [];
+      let backup: Blob | null = null;
+
+      if (referenceRows.length) {
+        const downloaded = await storageBucket.download(path);
+        if (downloaded.error || !downloaded.data) {
+          throw new MediaApiError(`No se pudo preparar una copia de seguridad antes de eliminar: ${downloaded.error?.message ?? "archivo no disponible"}`, 502, "asset_backup_failed");
+        }
+        backup = downloaded.data;
+      }
+
+      const { error } = await storageBucket.remove([path]);
       if (error) throw new MediaApiError(`No se pudo eliminar: ${error.message}`, 502, "asset_delete_failed");
+
+      try {
+        await syncCreatorReferenceDelete(admin, referenceRows, path);
+      } catch (error) {
+        if (backup) {
+          const restored = await storageBucket.upload(path, backup, {
+            upsert: true,
+            ...(backup.type ? { contentType: backup.type } : {}),
+          });
+          if (restored.error) console.error("[admin-assets] could not restore deleted storage object", restored.error);
+        }
+        throw error;
+      }
+    } else {
+      try {
+        const result = await deletePublicRepositoryAsset(path);
+        if (!result.deleted) {
+          const detail = result.references.slice(0, 4).join(", ");
+          throw new MediaApiError(
+            `Este asset está usado por ${result.totalReferences} archivo${result.totalReferences === 1 ? "" : "s"} del repo (${detail}). Renombralo para actualizar las referencias automáticamente o quitá esos usos antes de eliminarlo.`,
+            409,
+            "github_asset_in_use",
+          );
+        }
+        return NextResponse.json({ ok: true, path: result.path, commitSha: result.commitSha });
+      } catch (error) {
+        if (error instanceof MediaApiError) throw error;
+        const message = messageOf(error);
+        const status = /no encontró|no existe/i.test(message) ? 404 : 502;
+        throw new MediaApiError(message, status, "github_asset_delete_failed");
+      }
     }
 
     return NextResponse.json({ ok: true, path });
