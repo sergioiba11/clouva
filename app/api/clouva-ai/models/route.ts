@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getGeminiLayoutModelPolicy } from "@/lib/server/gemini-layout-model-policy";
 
 export const runtime = "nodejs";
 export const revalidate = 300;
@@ -12,6 +13,8 @@ type GeminiModel = {
   outputTokenLimit?: number;
 };
 
+const preciseModel = getGeminiLayoutModelPolicy("reference_precise").model;
+
 const CLOUVA_MODELS: Record<
   string,
   {
@@ -20,13 +23,18 @@ const CLOUVA_MODELS: Record<
     tier: "principal" | "respaldo";
   }
 > = {
-  "gemini-3.5-flash": {
+  [preciseModel]: {
     order: 0,
+    tier: "principal",
+    recommendedFor: "Diseño visual de alta fidelidad, referencias multimodales y tareas complejas",
+  },
+  "gemini-3.5-flash": {
+    order: 1,
     tier: "principal",
     recommendedFor: "Arquitectura, código, investigación y tareas complejas",
   },
   "gemini-3.1-flash-lite": {
-    order: 1,
+    order: 2,
     tier: "respaldo",
     recommendedFor: "Chat rápido, tareas livianas y menor costo",
   },
@@ -66,9 +74,7 @@ export async function GET() {
     };
 
     if (!response.ok) {
-      throw new Error(
-        payload.error?.message ?? `Gemini respondió HTTP ${response.status}`,
-      );
+      throw new Error(payload.error?.message ?? `Gemini respondió HTTP ${response.status}`);
     }
 
     const available = (payload.models ?? [])
@@ -99,16 +105,13 @@ export async function GET() {
       ok: true,
       models: available,
       defaultModel,
-      fallbackModel:
-        process.env.GEMINI_FALLBACK_MODEL ?? "gemini-3.1-flash-lite",
+      fallbackModel: process.env.GEMINI_FALLBACK_MODEL ?? "gemini-3.1-flash-lite",
+      preciseLayoutModel: preciseModel,
     });
   } catch (error) {
     return NextResponse.json(
       {
-        error:
-          error instanceof Error
-            ? error.message
-            : "No se pudieron cargar los modelos Gemini.",
+        error: error instanceof Error ? error.message : "No se pudieron cargar los modelos Gemini.",
       },
       { status: 500 },
     );
