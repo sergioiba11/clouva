@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, Columns2, ExternalLink, RefreshCw } from "lucide-react";
+import { ArrowLeft, Columns2, ExternalLink, RefreshCw, Sparkles, X } from "lucide-react";
 import { StudioIdentityRenderer } from "@/components/public/StudioIdentityRenderer";
+import { StudioGeminiDesignerPanel } from "@/components/studio/StudioGeminiDesignerPanel";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
 import type { StudioIdentityData } from "@/lib/server/public-identity-data";
 import type { StudioVersionSnapshot } from "@/lib/server/studio-version-preview";
@@ -40,6 +41,7 @@ function VersionBadge({ label, version, tone }: {
 export function StudioVersionPreview({ studioId }: { studioId: string }) {
   const [payload, setPayload] = useState<PreviewPayload | null>(null);
   const [mode, setMode] = useState<PreviewMode>("proposal");
+  const [designerOpen, setDesignerOpen] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -113,6 +115,22 @@ export function StudioVersionPreview({ studioId }: { studioId: string }) {
   }
 
   const visibleProposal = payload.proposal ?? payload.current;
+  const preview = mode === "compare" ? (
+    <div className="grid min-h-[calc(100vh-56px)] grid-cols-1 bg-[#111018] xl:grid-cols-2" data-clouva-component="StudioVersionComparison">
+      <section className="min-w-0 border-b border-white/10 xl:border-b-0 xl:border-r" data-clouva-version="published">
+        <div className="sticky top-14 z-[90] border-b border-emerald-400/15 bg-[#09110f]/95 px-4 py-2 text-xs font-semibold text-emerald-200">ANTERIOR · ACTUAL</div>
+        <StudioIdentityRenderer data={payload.current} />
+      </section>
+      <section className="min-w-0" data-clouva-version="draft">
+        <div className="sticky top-14 z-[90] border-b border-violet-400/15 bg-[#100b18]/95 px-4 py-2 text-xs font-semibold text-violet-200">NUEVA PROPUESTA · BORRADOR</div>
+        <StudioIdentityRenderer data={visibleProposal} />
+      </section>
+    </div>
+  ) : (
+    <section className="min-h-[calc(100vh-56px)]" data-clouva-version={mode === "actual" ? "published" : "draft"} data-clouva-component={mode === "actual" ? "PublishedStudioIdentity" : "DraftStudioIdentity"}>
+      <StudioIdentityRenderer data={mode === "actual" ? payload.current : visibleProposal} />
+    </section>
+  );
 
   return (
     <main className="min-h-screen bg-[#050509] text-white" data-clouva-component="StudioVersionPreview" data-clouva-studio-id={studioId} data-clouva-preview-mode={mode}>
@@ -138,6 +156,15 @@ export function StudioVersionPreview({ studioId }: { studioId: string }) {
             </button>
           ))}
         </div>
+        <button
+          type="button"
+          title={designerOpen ? "Cerrar Gemini Designer" : "Diseñar con Gemini"}
+          onClick={() => setDesignerOpen((current) => !current)}
+          className={`inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-2 text-xs font-semibold transition ${designerOpen ? "border-violet-400/35 bg-violet-500/15 text-violet-100" : "border-white/10 text-white/55 hover:border-violet-400/30 hover:text-violet-100"}`}
+        >
+          {designerOpen ? <X size={14} /> : <Sparkles size={14} />}
+          <span className="hidden sm:inline">{designerOpen ? "Cerrar Gemini" : "Gemini"}</span>
+        </button>
         <button title="Actualizar desde el draft" onClick={() => void load()} className="rounded-lg border border-white/10 p-2 text-white/55 hover:text-white"><RefreshCw size={14} /></button>
         <Link title="Abrir versión publicada" href={payload.canonicalPath} className="rounded-lg border border-white/10 p-2 text-white/55 hover:text-white"><ExternalLink size={14} /></Link>
       </header>
@@ -145,22 +172,14 @@ export function StudioVersionPreview({ studioId }: { studioId: string }) {
       {error ? <div className="border-b border-amber-400/20 bg-amber-400/10 px-5 py-2 text-xs text-amber-100">{error}</div> : null}
       {!payload.proposal ? <div className="border-b border-white/10 bg-white/[0.03] px-5 py-2 text-xs text-white/55">Todavía no hay un draft. Creá una nueva versión y elegí una variante para habilitar PROPUESTA.</div> : null}
 
-      {mode === "compare" ? (
-        <div className="grid min-h-[calc(100vh-56px)] grid-cols-1 bg-[#111018] xl:grid-cols-2" data-clouva-component="StudioVersionComparison">
-          <section className="min-w-0 border-b border-white/10 xl:border-b-0 xl:border-r" data-clouva-version="published">
-            <div className="sticky top-14 z-[90] border-b border-emerald-400/15 bg-[#09110f]/95 px-4 py-2 text-xs font-semibold text-emerald-200">ANTERIOR · ACTUAL</div>
-            <StudioIdentityRenderer data={payload.current} />
-          </section>
-          <section className="min-w-0" data-clouva-version="draft">
-            <div className="sticky top-14 z-[90] border-b border-violet-400/15 bg-[#100b18]/95 px-4 py-2 text-xs font-semibold text-violet-200">NUEVA PROPUESTA · BORRADOR</div>
-            <StudioIdentityRenderer data={visibleProposal} />
-          </section>
-        </div>
-      ) : (
-        <section className="min-h-[calc(100vh-56px)]" data-clouva-version={mode === "actual" ? "published" : "draft"} data-clouva-component={mode === "actual" ? "PublishedStudioIdentity" : "DraftStudioIdentity"}>
-          <StudioIdentityRenderer data={mode === "actual" ? payload.current : visibleProposal} />
-        </section>
-      )}
+      <div className={designerOpen ? "grid min-h-[calc(100vh-56px)] grid-cols-1 xl:grid-cols-[minmax(0,1fr)_390px]" : "min-h-[calc(100vh-56px)]"}>
+        <div className="min-w-0">{preview}</div>
+        {designerOpen ? (
+          <div className="h-[70vh] min-h-[520px] border-t border-violet-300/15 xl:sticky xl:top-14 xl:h-[calc(100vh-56px)] xl:min-h-0 xl:border-t-0">
+            <StudioGeminiDesignerPanel studioId={studioId} studioName={payload.current.studio.name} />
+          </div>
+        ) : null}
+      </div>
     </main>
   );
 }
