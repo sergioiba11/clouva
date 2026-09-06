@@ -17,6 +17,7 @@ type ImageActionBody = {
   url?: unknown;
   dataUrl?: unknown;
   label?: unknown;
+  approved?: unknown;
 };
 
 type CatalogImage = {
@@ -28,6 +29,15 @@ type CatalogImage = {
 
 function record(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : {};
+}
+
+function stringUrls(value: unknown, limit = 24) {
+  if (!Array.isArray(value)) return [];
+  const urls = value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter((item) => /^https?:\/\//i.test(item));
+  return Array.from(new Set(urls)).slice(0, limit);
 }
 
 function productImages(metadata: unknown) {
@@ -59,15 +69,44 @@ function catalogImages(metadata: unknown): CatalogImage[] {
   return [...generated, ...source].filter((item) => item.url && item.storagePath);
 }
 
-function galleryFromMetadata(metadata: unknown, coverUrl: string | null) {
-  const urls = [coverUrl, ...catalogImages(metadata).map((image) => image.url)].filter((value): value is string => Boolean(value));
-  return [...new Set(urls)];
+function publicationMasterGallery(metadata: unknown) {
+  const master = record(productImages(metadata).publication_master);
+  return stringUrls(master.gallery);
+}
+
+function approvedGallery(args: { gallery: unknown; metadata: unknown; coverUrl: string | null }) {
+  const canonical = stringUrls(args.gallery);
+  const fromMaster = publicationMasterGallery(args.metadata);
+  const base = canonical.length ? canonical : fromMaster;
+  return Array.from(new Set([
+    ...(args.coverUrl ? [args.coverUrl] : []),
+    ...base,
+  ])).slice(0, 24);
+}
+
+function syncPublicationMetadata(metadata: unknown, coverUrl: string | null, gallery: string[]) {
+  const root = { ...record(metadata) };
+  const current = productImages(root);
+  const normalizedGallery = Array.from(new Set([
+    ...(coverUrl ? [coverUrl] : []),
+    ...gallery.filter(Boolean),
+  ])).slice(0, 24);
+  root.product_images = {
+    ...current,
+    cover_image: coverUrl,
+    publication_master: {
+      cover_url: coverUrl,
+      gallery: normalizedGallery,
+      selected_at: new Date().toISOString(),
+    },
+  };
+  return { metadata: root, gallery: normalizedGallery };
 }
 
 function removeImage(metadata: unknown, storagePath: string) {
   const root = { ...record(metadata) };
   const current = productImages(root);
-  if (!Object.keys(current).length) return { metadata: root, removedUrl: null as string | null, coverUrl: null as string | null };
+  if (!Object.keys(current).length) return { metadata: root, removedUrl: null as string | null };
 
   let removedUrl: string | null = null;
   const filter = (value: unknown) => (Array.isArray(value) ? value : []).filter((raw) => {
@@ -79,38 +118,13 @@ function removeImage(metadata: unknown, storagePath: string) {
     return true;
   });
 
-  const sourcePhotos = filter(current.source_photos);
-  const generatedImages = filter(current.generated_images);
-  const generatedRecords = generatedImages.map(record);
-  const sourceRecords = sourcePhotos.map(record);
-  const oldCover = typeof current.cover_image === "string" ? current.cover_image : null;
-  const coverUrl = oldCover && oldCover !== removedUrl
-    ? oldCover
-    : (generatedRecords.find((item) => item.kind === "front_catalog")?.url
-      ?? generatedRecords[0]?.url
-      ?? sourceRecords.find((item) => item.label === "Frente")?.url
-      ?? sourceRecords[0]?.url
-      ?? null);
-
   root.product_images = {
     ...current,
-    source_photos: sourcePhotos,
-    generated_images: generatedImages,
-    cover_image: typeof coverUrl === "string" ? coverUrl : null,
+    source_photos: filter(current.source_photos),
+    generated_images: filter(current.generated_images),
   };
 
-  return {
-    metadata: root,
-    removedUrl,
-    coverUrl: typeof coverUrl === "string" ? coverUrl : null,
-  };
-}
-
-function setCover(metadata: unknown, coverUrl: string) {
-  const root = { ...record(metadata) };
-  const current = productImages(root);
-  root.product_images = { ...current, cover_image: coverUrl };
-  return root;
+  return { metadata: root, removedUrl };
 }
 
 function addManualImage(metadata: unknown, image: { url: string; storagePath: string; mimeType: string }, label: string) {
@@ -189,14 +203,20 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const { slug: studioId } = await params;
     const body = (await request.json().catch(() => ({}))) as ImageActionBody;
     const listingId = typeof body.listingId === "string" ? body.listingId.trim() : "";
-    const action = body.action === "delete" || body.action === "set_cover" || body.action === "add" || body.action === "replace" ? body.action : "";
+    const action = body.action === "delete"
+      || body.action === "set_cover"
+      || body.action === "set_publication"
+      || body.action === "add"
+      || body.action === "replace"
+      ? body.action
+      : "";
     if (!listingId || !action) return NextResponse.json({ error: "Faltan datos para administrar la imagen." }, { status: 400 });
 
     const admin = createAdminSupabase();
     const { spot } = await requireManagedSpot({ admin, userId: user.id, studioId });
     const { data: listing, error: listingError } = await admin
       .from("commerce_products")
-      .select("id,spot_id,catalog_product_id,cover_url,metadata")
+      .select("id,spot_id,catalog_product_id,cover_url,gallery,metadata")
       .eq("id", listingId)
       .eq("spot_id", spot.id)
       .maybeSingle();
@@ -204,20 +224,47 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (!listing) return NextResponse.json({ error: "Ese producto no pertenece a este MI SPOT." }, { status: 404 });
 
     const images = catalogImages(listing.metadata);
+    const currentGallery = approvedGallery({ gallery: listing.gallery, metadata: listing.metadata, coverUrl: listing.cover_url });
 
     if (action === "set_cover") {
       const url = typeof body.url === "string" ? body.url.trim() : "";
       if (!url || !images.some((image) => image.url === url)) {
         return NextResponse.json({ error: "La portada debe ser una imagen guardada en este producto." }, { status: 400 });
       }
-      const metadata = setCover(listing.metadata, url);
+      const nextGallery = [url, ...currentGallery.filter((candidate) => candidate !== url)];
+      const synced = syncPublicationMetadata(listing.metadata, url, nextGallery);
       const { error: updateError } = await admin
         .from("commerce_products")
-        .update({ cover_url: url, gallery: galleryFromMetadata(metadata, url), metadata, updated_at: new Date().toISOString() })
+        .update({ cover_url: url, gallery: synced.gallery, metadata: synced.metadata, updated_at: new Date().toISOString() })
         .eq("id", listing.id)
         .eq("spot_id", spot.id);
       if (updateError) throw new Error(updateError.message);
-      return NextResponse.json({ ok: true, action, listingId: listing.id, coverUrl: url });
+      return NextResponse.json({ ok: true, action, listingId: listing.id, coverUrl: url, gallery: synced.gallery });
+    }
+
+    if (action === "set_publication") {
+      const url = typeof body.url === "string" ? body.url.trim() : "";
+      const approved = body.approved === true;
+      if (!url || !images.some((image) => image.url === url)) {
+        return NextResponse.json({ error: "La imagen debe pertenecer a este producto." }, { status: 400 });
+      }
+
+      let nextGallery = approved
+        ? Array.from(new Set([...currentGallery, url]))
+        : currentGallery.filter((candidate) => candidate !== url);
+      let nextCover = listing.cover_url;
+      if (approved && !nextCover) nextCover = url;
+      if (!approved && nextCover === url) nextCover = nextGallery[0] ?? null;
+      if (nextCover) nextGallery = [nextCover, ...nextGallery.filter((candidate) => candidate !== nextCover)];
+
+      const synced = syncPublicationMetadata(listing.metadata, nextCover, nextGallery);
+      const { error: updateError } = await admin
+        .from("commerce_products")
+        .update({ cover_url: nextCover, gallery: synced.gallery, metadata: synced.metadata, updated_at: new Date().toISOString() })
+        .eq("id", listing.id)
+        .eq("spot_id", spot.id);
+      if (updateError) throw new Error(updateError.message);
+      return NextResponse.json({ ok: true, action, approved, listingId: listing.id, coverUrl: nextCover, gallery: synced.gallery });
     }
 
     if (action === "add" || action === "replace") {
@@ -231,26 +278,46 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
       let metadata = listing.metadata;
       let coverUrl = listing.cover_url;
+      let nextGallery = [...currentGallery];
       let replaced: CatalogImage | null = null;
+      let replacedWasApproved = false;
+      let replacedWasCover = false;
+
       if (action === "replace") {
         const storagePath = typeof body.storagePath === "string" ? body.storagePath.trim() : "";
         replaced = images.find((image) => image.storagePath === storagePath) ?? null;
-        if (!replaced) return NextResponse.json({ error: "La imagen a reemplazar no pertenece al producto." }, { status: 404 });
+        if (!replaced) {
+          await deleteGeneratedMedia(stored.objectPath);
+          return NextResponse.json({ error: "La imagen a reemplazar no pertenece al producto." }, { status: 404 });
+        }
+        replacedWasApproved = currentGallery.includes(replaced.url);
+        replacedWasCover = coverUrl === replaced.url;
         const removed = removeImage(metadata, replaced.storagePath);
         metadata = removed.metadata;
-        if (coverUrl === replaced.url) coverUrl = stored.url;
+        if (replacedWasApproved) {
+          nextGallery = nextGallery.map((candidate) => candidate === replaced!.url ? stored.url : candidate);
+        }
+        if (replacedWasCover) coverUrl = stored.url;
       }
 
       metadata = addManualImage(metadata, { url: stored.url, storagePath: stored.objectPath, mimeType: parsed.mimeType }, replaced?.label || label);
-      if (!coverUrl) coverUrl = stored.url;
-      if (coverUrl === stored.url) metadata = setCover(metadata, stored.url);
+      if (!coverUrl) {
+        coverUrl = stored.url;
+        nextGallery = [stored.url, ...nextGallery];
+      } else if (replacedWasCover && !nextGallery.includes(stored.url)) {
+        nextGallery = [stored.url, ...nextGallery];
+      }
 
+      const synced = syncPublicationMetadata(metadata, coverUrl, nextGallery);
       const { error: updateError } = await admin
         .from("commerce_products")
-        .update({ cover_url: coverUrl, gallery: galleryFromMetadata(metadata, coverUrl), metadata, updated_at: new Date().toISOString() })
+        .update({ cover_url: coverUrl, gallery: synced.gallery, metadata: synced.metadata, updated_at: new Date().toISOString() })
         .eq("id", listing.id)
         .eq("spot_id", spot.id);
-      if (updateError) throw new Error(updateError.message);
+      if (updateError) {
+        await deleteGeneratedMedia(stored.objectPath);
+        throw new Error(updateError.message);
+      }
 
       if (replaced) {
         const sharedElsewhere = await removeSharedCatalogReference({
@@ -263,7 +330,14 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         if (!sharedElsewhere) await deleteGeneratedMedia(replaced.storagePath);
       }
 
-      return NextResponse.json({ ok: true, action, listingId: listing.id, coverUrl, image: { url: stored.url, storagePath: stored.objectPath, mimeType: parsed.mimeType } });
+      return NextResponse.json({
+        ok: true,
+        action,
+        listingId: listing.id,
+        coverUrl,
+        gallery: synced.gallery,
+        image: { url: stored.url, storagePath: stored.objectPath, mimeType: parsed.mimeType, approved: synced.gallery.includes(stored.url) },
+      });
     }
 
     const storagePath = typeof body.storagePath === "string" ? body.storagePath.trim() : "";
@@ -272,10 +346,13 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     const now = new Date().toISOString();
     const next = removeImage(listing.metadata, storagePath);
-    const currentCover = listing.cover_url === target.url ? next.coverUrl : listing.cover_url;
+    let nextGallery = currentGallery.filter((candidate) => candidate !== target.url);
+    let currentCover = listing.cover_url === target.url ? (nextGallery[0] ?? null) : listing.cover_url;
+    if (currentCover) nextGallery = [currentCover, ...nextGallery.filter((candidate) => candidate !== currentCover)];
+    const synced = syncPublicationMetadata(next.metadata, currentCover, nextGallery);
     const { error: updateError } = await admin
       .from("commerce_products")
-      .update({ cover_url: currentCover, gallery: galleryFromMetadata(next.metadata, currentCover), metadata: next.metadata, updated_at: now })
+      .update({ cover_url: currentCover, gallery: synced.gallery, metadata: synced.metadata, updated_at: now })
       .eq("id", listing.id)
       .eq("spot_id", spot.id);
     if (updateError) throw new Error(updateError.message);
@@ -295,6 +372,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       listingId: listing.id,
       deletedStoragePath: storagePath,
       coverUrl: currentCover,
+      gallery: synced.gallery,
       mediaDeleted: !sharedElsewhere,
     });
   } catch (error) {
