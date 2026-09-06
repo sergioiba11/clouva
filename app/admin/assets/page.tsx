@@ -10,6 +10,7 @@ import {
   Eye,
   File,
   FileText,
+  GitBranch,
   Grid2X2,
   HardDrive,
   Image as ImageIcon,
@@ -20,13 +21,14 @@ import {
   RefreshCw,
   Search,
   Trash2,
+  TriangleAlert,
   Upload,
   Video,
   X,
 } from "lucide-react";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
 
-type AssetSource = "gcs" | "supabase";
+type AssetSource = "gcs" | "supabase" | "github";
 type Asset = {
   source: AssetSource;
   bucket: string;
@@ -45,15 +47,27 @@ type StorageBucket = {
   public: boolean | null;
 };
 
+type SourceWarning = {
+  source: AssetSource;
+  message: string;
+};
+
 type AssetList = {
   items: Asset[];
   buckets: StorageBucket[];
+  warnings?: SourceWarning[];
   total: number;
   gcsBucket: string;
 };
 
 type UploadResult = { asset: Asset };
-type MutationResult = { ok: true; path: string; name?: string };
+type MutationResult = {
+  ok: true;
+  path: string;
+  name?: string;
+  updatedReferences?: number;
+  commitSha?: string;
+};
 type AssetKind = "image" | "video" | "audio" | "3d" | "document" | "other";
 type SortMode = "updated-desc" | "name-asc" | "size-desc" | "size-asc";
 
@@ -101,15 +115,33 @@ function KindIcon({ asset, className = "h-5 w-5" }: { asset: Asset; className?: 
 }
 
 function SourceBadge({ source }: { source: AssetSource }) {
-  return source === "gcs" ? (
-    <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-400/20 bg-sky-400/10 px-2.5 py-1 text-[11px] font-medium text-sky-200">
-      <HardDrive className="h-3 w-3" /> Google Cloud
-    </span>
-  ) : (
+  if (source === "gcs") {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-sky-400/20 bg-sky-400/10 px-2.5 py-1 text-[11px] font-medium text-sky-200">
+        <HardDrive className="h-3 w-3" /> Google Cloud
+      </span>
+    );
+  }
+
+  if (source === "github") {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full border border-violet-400/20 bg-violet-400/10 px-2.5 py-1 text-[11px] font-medium text-violet-200">
+        <GitBranch className="h-3 w-3" /> Repo / public
+      </span>
+    );
+  }
+
+  return (
     <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/20 bg-emerald-400/10 px-2.5 py-1 text-[11px] font-medium text-emerald-200">
       <Database className="h-3 w-3" /> Supabase
     </span>
   );
+}
+
+function sourceLabel(source: AssetSource) {
+  if (source === "gcs") return "Google Cloud";
+  if (source === "github") return "Repo / public";
+  return "Supabase";
 }
 
 function ModalShell({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
@@ -125,6 +157,7 @@ function ModalShell({ children, onClose }: { children: React.ReactNode; onClose:
 export default function AdminAssetsPage() {
   const [items, setItems] = useState<Asset[]>([]);
   const [buckets, setBuckets] = useState<StorageBucket[]>([]);
+  const [warnings, setWarnings] = useState<SourceWarning[]>([]);
   const [gcsBucket, setGcsBucket] = useState("clouva-generated-media");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -156,6 +189,7 @@ export default function AdminAssetsPage() {
       const data = await readApiJson<AssetList>(response);
       setItems(data.items);
       setBuckets(data.buckets);
+      setWarnings(data.warnings ?? []);
       setGcsBucket(data.gcsBucket);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudieron cargar los assets.");
@@ -218,10 +252,14 @@ export default function AdminAssetsPage() {
           name: renameValue.trim(),
         }),
       });
-      await readApiJson<MutationResult>(response);
+      const result = await readApiJson<MutationResult>(response);
       setRenameAsset(null);
       setRenameValue("");
-      setMessage("Asset renombrado.");
+      setMessage(
+        result.updatedReferences
+          ? `Asset renombrado y ${result.updatedReferences} referencia${result.updatedReferences === 1 ? "" : "s"} del repo actualizada${result.updatedReferences === 1 ? "" : "s"}.`
+          : "Asset renombrado.",
+      );
       await load();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudo renombrar el asset.");
@@ -303,7 +341,7 @@ export default function AdminAssetsPage() {
               <span className="text-xs text-white/35">Admin · Storage real</span>
             </div>
             <h1 className="mt-4 text-3xl font-semibold tracking-tight md:text-4xl">Todos los assets</h1>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-white/50">Inventario unificado de Google Cloud Storage y Supabase Storage. Ver, buscar, abrir, copiar, renombrar y eliminar desde un solo lugar.</p>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-white/50">Inventario unificado de Google Cloud Storage, Supabase Storage y los assets estáticos de <code className="text-violet-200">public/</code> en el repo. Ver, buscar, abrir, copiar, renombrar y eliminar desde un solo lugar.</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <button type="button" onClick={() => void load()} disabled={loading || busy} className="inline-flex min-h-11 items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-4 text-sm text-white/75 hover:bg-white/[0.08] disabled:opacity-40">
@@ -329,6 +367,20 @@ export default function AdminAssetsPage() {
           </div>
         ))}
       </section>
+
+      {warnings.length ? (
+        <section className="rounded-2xl border border-amber-300/15 bg-amber-300/[0.06] p-4">
+          <div className="flex items-start gap-3">
+            <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-200" />
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-amber-100">El inventario cargó parcialmente</p>
+              <div className="mt-1 space-y-1 text-xs text-amber-100/60">
+                {warnings.map((warning) => <p key={`${warning.source}:${warning.message}`}><strong>{sourceLabel(warning.source)}:</strong> {warning.message}</p>)}
+              </div>
+            </div>
+          </div>
+        </section>
+      ) : null}
 
       {uploadOpen ? (
         <section className="rounded-[2rem] border border-violet-400/20 bg-violet-400/[0.055] p-5">
@@ -369,6 +421,7 @@ export default function AdminAssetsPage() {
             <option value="all">Todos los storages</option>
             <option value="gcs">Google Cloud</option>
             <option value="supabase">Supabase</option>
+            <option value="github">Repo / public</option>
           </select>
           <select value={bucketFilter} onChange={(event) => setBucketFilter(event.target.value)} className="h-11 rounded-xl border border-white/10 bg-black/30 px-3 text-sm text-white/80 outline-none">
             <option value="all">Todos los buckets</option>
@@ -396,7 +449,7 @@ export default function AdminAssetsPage() {
         </div>
         <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-white/35">
           <span>Mostrando {filtered.length.toLocaleString("es-AR")} de {items.length.toLocaleString("es-AR")} assets</span>
-          <span>{buckets.length} bucket{buckets.length === 1 ? "" : "s"} detectado{buckets.length === 1 ? "" : "s"}</span>
+          <span>{buckets.length} fuente{buckets.length === 1 ? "" : "s"}/bucket{buckets.length === 1 ? "" : "s"} detectado{buckets.length === 1 ? "" : "s"}</span>
         </div>
       </section>
 
@@ -408,7 +461,7 @@ export default function AdminAssetsPage() {
 
       {loading ? (
         <div className="grid min-h-64 place-items-center rounded-[2rem] border border-white/10 bg-white/[0.02]">
-          <div className="text-center text-sm text-white/45"><Loader2 className="mx-auto mb-3 h-6 w-6 animate-spin text-violet-300" />Leyendo storages de CLOUVA…</div>
+          <div className="text-center text-sm text-white/45"><Loader2 className="mx-auto mb-3 h-6 w-6 animate-spin text-violet-300" />Leyendo todos los assets de CLOUVA…</div>
         </div>
       ) : filtered.length === 0 ? (
         <div className="grid min-h-64 place-items-center rounded-[2rem] border border-dashed border-white/10 bg-white/[0.02] p-8 text-center">
@@ -496,9 +549,9 @@ export default function AdminAssetsPage() {
       {renameAsset ? (
         <ModalShell onClose={() => !busy && setRenameAsset(null)}>
           <div className="flex items-start justify-between gap-4"><div><p className="text-xs uppercase tracking-[0.16em] text-violet-300">Renombrar asset</p><h2 className="mt-2 text-xl font-semibold">{renameAsset.name}</h2></div><button type="button" disabled={busy} onClick={() => setRenameAsset(null)} className="rounded-full border border-white/10 p-2 text-white/55"><X className="h-4 w-4" /></button></div>
-          <p className="mt-4 text-xs text-white/40">{renameAsset.bucket} · {renameAsset.folder || "/"}</p>
+          <p className="mt-4 text-xs text-white/40">{sourceLabel(renameAsset.source)} · {renameAsset.bucket} · {renameAsset.folder || "/"}</p>
           <input autoFocus value={renameValue} onChange={(event) => setRenameValue(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void submitRename(); }} className="mt-4 h-12 w-full rounded-xl border border-white/10 bg-black/35 px-4 text-sm outline-none focus:border-violet-400/60" />
-          <p className="mt-2 text-xs text-white/35">Se conserva la carpeta actual y cambia el nombre del objeto en Storage.</p>
+          <p className="mt-2 text-xs text-white/35">{renameAsset.source === "github" ? "En public/ se crea un único commit y las referencias encontradas en el código se actualizan en el mismo cambio." : "Se conserva la carpeta actual y cambia el nombre del objeto en Storage."}</p>
           <div className="mt-5 flex justify-end gap-2"><button type="button" disabled={busy} onClick={() => setRenameAsset(null)} className="rounded-full border border-white/10 px-4 py-2 text-sm text-white/60">Cancelar</button><button type="button" disabled={!renameValue.trim() || busy} onClick={() => void submitRename()} className="inline-flex min-w-28 items-center justify-center gap-2 rounded-full bg-violet-500 px-5 py-2 text-sm font-semibold disabled:opacity-40">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />} Guardar</button></div>
         </ModalShell>
       ) : null}
@@ -507,8 +560,9 @@ export default function AdminAssetsPage() {
         <ModalShell onClose={() => !busy && setDeleteAsset(null)}>
           <div className="grid h-12 w-12 place-items-center rounded-2xl border border-red-400/20 bg-red-400/10 text-red-300"><Trash2 className="h-5 w-5" /></div>
           <h2 className="mt-4 text-xl font-semibold">Eliminar asset</h2>
-          <p className="mt-2 text-sm leading-6 text-white/50">Se va a eliminar <strong className="text-white/80">{deleteAsset.name}</strong> de <strong className="text-white/70">{deleteAsset.bucket}</strong>.</p>
-          <p className="mt-2 break-all rounded-xl border border-white/10 bg-black/30 p-3 text-xs text-white/35">{deleteAsset.path}</p>
+          <p className="mt-2 text-sm leading-6 text-white/50">Se va a eliminar <strong className="text-white/80">{deleteAsset.name}</strong> de <strong className="text-white/70">{sourceLabel(deleteAsset.source)} · {deleteAsset.bucket}</strong>.</p>
+          {deleteAsset.source === "github" ? <p className="mt-2 text-xs leading-5 text-white/40">Si el asset todavía está referenciado por código, CLOUVA no lo borra y te muestra qué archivos lo están usando.</p> : null}
+          <p className="mt-3 break-all rounded-xl border border-white/10 bg-black/30 p-3 text-xs text-white/35">{deleteAsset.path}</p>
           <div className="mt-5 flex justify-end gap-2"><button type="button" disabled={busy} onClick={() => setDeleteAsset(null)} className="rounded-full border border-white/10 px-4 py-2 text-sm text-white/60">Cancelar</button><button type="button" disabled={busy} onClick={() => void submitDelete()} className="inline-flex min-w-28 items-center justify-center gap-2 rounded-full bg-red-500 px-5 py-2 text-sm font-semibold text-white disabled:opacity-40">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />} Eliminar</button></div>
         </ModalShell>
       ) : null}
