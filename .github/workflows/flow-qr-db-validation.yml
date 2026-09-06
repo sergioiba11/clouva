@@ -1,0 +1,94 @@
+name: Validate FLOW QR database
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "app/api/flows/**"
+      - "app/api/commerce/flow-qr/**"
+      - "app/api/studios/**/commerce/scan/**"
+      - "app/q/**"
+      - "components/flows/**"
+      - "lib/commerce/**"
+      - "supabase/migrations/**"
+      - "supabase/tests/database/flow_qr_payments_test.sql"
+      - "scripts/test-flow-qr-concurrency-setup.sql"
+      - ".github/workflows/flow-qr-db-validation.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: flow-qr-db-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  flow-qr-db:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: 2.116.0
+
+      - name: Start isolated Supabase
+        run: supabase start
+
+      - name: Rebuild schema from migrations
+        run: supabase db reset
+
+      - name: Functional pgTAP suite
+        run: supabase test db
+
+      - name: Prepare concurrency fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          supabase status --output env > /tmp/supabase-env
+          set -a
+          source /tmp/supabase-env
+          set +a
+          test -n "${DB_URL:-}"
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -f scripts/test-flow-qr-concurrency-setup.sql
+
+      - name: Prove concurrent double-spend is impossible
+        shell: bash
+        run: |
+          set -euo pipefail
+          supabase status --output env > /tmp/supabase-env
+          set -a
+          source /tmp/supabase-env
+          set +a
+
+          set +e
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -c "select public.execute_flow_qr_transfer('51515151-1111-4111-8111-111111111111','flow-concurrency-recipient',1,'5fffffff-0000-4000-8000-000000000001','51515151-1111-4111-8111-111111111111');" > /tmp/flow-concurrent-a.log 2>&1 &
+          PID_A=$!
+          psql "$DB_URL" -v ON_ERROR_STOP=1 -c "select public.execute_flow_qr_transfer('51515151-1111-4111-8111-111111111111','flow-concurrency-recipient',1,'5fffffff-0000-4000-8000-000000000002','51515151-1111-4111-8111-111111111111');" > /tmp/flow-concurrent-b.log 2>&1 &
+          PID_B=$!
+          wait "$PID_A"; STATUS_A=$?
+          wait "$PID_B"; STATUS_B=$?
+          set -e
+
+          cat /tmp/flow-concurrent-a.log
+          cat /tmp/flow-concurrent-b.log
+
+          SUCCESS_COUNT=0
+          if [ "$STATUS_A" -eq 0 ]; then SUCCESS_COUNT=$((SUCCESS_COUNT + 1)); fi
+          if [ "$STATUS_B" -eq 0 ]; then SUCCESS_COUNT=$((SUCCESS_COUNT + 1)); fi
+          if [ "$SUCCESS_COUNT" -ne 1 ]; then
+            echo "Expected exactly one concurrent payment to succeed; got $SUCCESS_COUNT"
+            exit 1
+          fi
+
+          test "$(psql "$DB_URL" -Atc "select balance from public.flows_wallets where user_id='51515151-1111-4111-8111-111111111111';")" = "0"
+          test "$(psql "$DB_URL" -Atc "select balance from public.flows_wallets where user_id='52525252-2222-4222-8222-222222222222';")" = "1"
+          test "$(psql "$DB_URL" -Atc "select count(*) from public.flow_asset_movements where action='transferred' and from_user_id='51515151-1111-4111-8111-111111111111';")" = "1"
+          test "$(psql "$DB_URL" -Atc "select count(*) from public.flow_transfer_operations where sender_user_id='51515151-1111-4111-8111-111111111111' and status='COMPLETED';")" = "1"
+
+      - name: Stop isolated Supabase
+        if: always()
+        run: supabase stop --no-backup
