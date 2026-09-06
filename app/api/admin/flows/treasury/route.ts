@@ -23,6 +23,10 @@ function text(value: unknown) {
   return value == null ? null : String(value);
 }
 
+function maskReference(value: string | null | undefined) {
+  return value ? `••••${value.slice(-6)}` : null;
+}
+
 export async function GET(request: NextRequest) {
   try {
     const { admin } = await requireAdmin(request);
@@ -31,12 +35,12 @@ export async function GET(request: NextRequest) {
       admin.rpc("flow_reconciliation_report"),
       admin
         .from("flow_purchase_operations")
-        .select("id,buyer_user_id,buyer_player_id,recipient_user_id,recipient_player_id,provider,provider_payment_id,provider_reference,payment_method,quantity,unit_usd,amount,currency,status,backing_status,operation_type,target_asset_id,fx_rate_original_per_usd,fx_pair,fx_source,fx_quoted_at,provider_fee,net_amount,confirmed_at,issued_at,refund_status,created_at,metadata")
+        .select("id,buyer_user_id,buyer_player_id,recipient_user_id,recipient_player_id,provider,provider_payment_id,provider_reference,payment_method,quantity,unit_usd,amount,required_backing_usd,backing_amount,processing_fee_amount,processing_fee_policy,currency,status,backing_status,operation_type,target_asset_id,fx_rate_original_per_usd,fx_pair,fx_source,fx_quoted_at,provider_fee,net_amount,confirmed_at,issued_at,refund_status,created_at,metadata")
         .order("created_at", { ascending: false })
         .limit(100),
       admin
         .from("flow_reserve_accounts")
-        .select("id,name,provider,account_type,currency,account_reference,status,is_active,metadata,created_at,updated_at")
+        .select("id,name,provider,account_type,currency,account_reference,status,is_active,authorized_for_flow,authorized_at,authorized_by,metadata,created_at,updated_at")
         .order("created_at", { ascending: true }),
       admin
         .from("flow_funding_ledger")
@@ -113,7 +117,7 @@ export async function GET(request: NextRequest) {
       const allocatedUsd = activeAllocations.reduce((sum, row) => sum + Number(row.reference_usd_value ?? 0), 0);
       return {
         ...account,
-        account_reference: account.account_reference ? `••••${account.account_reference.slice(-6)}` : null,
+        account_reference: maskReference(account.account_reference),
         reserveUsd: creditsUsd - debitsUsd,
         allocatedUsd,
         freeUsd: creditsUsd - debitsUsd - allocatedUsd,
@@ -129,6 +133,8 @@ export async function GET(request: NextRequest) {
       configuredCollectorId: null,
       reportedCollectorId: null,
       matchesConfiguredCollector: null,
+      reserveAuthorized: false,
+      reserveAccountId: null,
       nickname: null,
       countryId: null,
       siteStatus: null,
@@ -140,13 +146,23 @@ export async function GET(request: NextRequest) {
         const config = getMercadoPagoConfig();
         const merchant = await new MercadoPagoProvider(config).getCurrentUser();
         const reportedCollectorId = text(merchant.id);
+        const matchingReserve = (reserveAccountsResult.data ?? []).find((account) =>
+          account.provider === "mercadopago"
+          && account.currency === "ARS"
+          && account.account_reference === config.userId
+          && account.authorized_for_flow
+          && account.is_active
+          && account.status === "active",
+        );
         mercadoPago = {
           enabled: true,
           connected: Boolean(reportedCollectorId),
           environment: config.environment,
-          configuredCollectorId: config.userId,
-          reportedCollectorId,
+          configuredCollectorId: maskReference(config.userId),
+          reportedCollectorId: maskReference(reportedCollectorId),
           matchesConfiguredCollector: reportedCollectorId === config.userId,
+          reserveAuthorized: Boolean(matchingReserve),
+          reserveAccountId: matchingReserve?.id ?? null,
           nickname: text(merchant.nickname),
           countryId: text(merchant.country_id),
           siteStatus: text(merchant.site_status),
