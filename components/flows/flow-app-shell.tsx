@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState, type ComponentType, type ReactNode } from "react";
@@ -15,10 +16,11 @@ import {
   X,
 } from "lucide-react";
 import { AccountMenu } from "@/components/account/AccountMenu";
-import { ClouvaBrand, ClouvaLogoMark } from "@/components/brand/clouva-logo";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
 import { WalletBalanceChip } from "@/components/wallet/WalletBalanceChip";
 import { CLOUVA_NAVIGATION } from "@/lib/navigation/clouva-navigation";
+
+const CLOUVA_LOGO = "/assets/clouva/brand/logo-official-light.png";
 
 type NavItem = {
   label: string;
@@ -39,6 +41,20 @@ const NAV_ITEMS: NavItem[] = [
 function isActivePath(pathname: string, href: string) {
   if (href === "/") return pathname === "/";
   return pathname === href || pathname.startsWith(`${href}/`);
+}
+
+function OfficialLogo({ size = 46, priority = false }: { size?: number; priority?: boolean }) {
+  return (
+    <Image
+      src={CLOUVA_LOGO}
+      alt="CLOUVA"
+      width={size}
+      height={size}
+      className="shrink-0 object-contain"
+      style={{ width: size, height: size }}
+      priority={priority}
+    />
+  );
 }
 
 function NavigationLinks({
@@ -112,9 +128,10 @@ export function FlowAppShell({ children }: { children: ReactNode }) {
       <aside className="fixed inset-y-0 left-0 z-40 hidden w-[248px] border-r border-white/[0.07] bg-[#070711]/96 px-4 py-5 backdrop-blur-2xl lg:flex lg:flex-col">
         <Link
           href="/"
-          className="rounded-2xl px-2 py-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/80"
+          aria-label="CLOUVA Inicio"
+          className="flex w-fit items-center rounded-2xl px-2 py-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/80"
         >
-          <ClouvaBrand />
+          <OfficialLogo size={58} priority />
         </Link>
 
         <div className="mt-8">
@@ -124,7 +141,7 @@ export function FlowAppShell({ children }: { children: ReactNode }) {
         <div className="mt-auto px-2 pb-2">
           <div className="rounded-2xl border border-white/[0.06] bg-white/[0.025] p-3.5">
             <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-violet-300/75">
-              <ClouvaLogoMark size={14} />
+              <OfficialLogo size={20} />
               Ecosistema CLOUVA
             </div>
             <p className="mt-2 text-[11px] leading-5 text-white/35">
@@ -150,14 +167,14 @@ export function FlowAppShell({ children }: { children: ReactNode }) {
               </button>
               <Link
                 href="/"
-                className="shrink-0 text-violet-300 lg:hidden"
+                className="shrink-0 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/80 lg:hidden"
                 aria-label="CLOUVA Inicio"
               >
-                <ClouvaLogoMark size={27} />
+                <OfficialLogo size={30} priority />
               </Link>
               <div className="min-w-0">
                 <p className="truncate text-[9px] font-semibold uppercase tracking-[0.22em] text-white/30">
-                  Mi Flow / Activos
+                  Mi Flow / FLOWS
                 </p>
                 <p className="truncate text-sm font-semibold text-white/85">MIS FLOWS</p>
               </div>
@@ -173,7 +190,7 @@ export function FlowAppShell({ children }: { children: ReactNode }) {
           </div>
         </header>
 
-        {children}
+        <div className="mx-auto w-full max-w-[1320px]">{children}</div>
       </div>
 
       {mobileOpen ? (
@@ -191,7 +208,14 @@ export function FlowAppShell({ children }: { children: ReactNode }) {
             className="absolute inset-y-0 left-0 flex w-[86vw] max-w-[320px] flex-col border-r border-violet-300/10 bg-[#070711] p-4 shadow-[30px_0_80px_rgba(0,0,0,0.45)]"
           >
             <div className="flex items-center justify-between gap-4 px-1 py-1">
-              <ClouvaBrand />
+              <Link
+                href="/"
+                onClick={() => setMobileOpen(false)}
+                aria-label="CLOUVA Inicio"
+                className="rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/80"
+              >
+                <OfficialLogo size={54} />
+              </Link>
               <button
                 type="button"
                 onClick={() => setMobileOpen(false)}
