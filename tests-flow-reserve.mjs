@@ -76,8 +76,9 @@ test("Mercado Pago payment confirmation records processor money but cannot issue
   assert.match(external, /flow_account_role='collection_rail'/i);
   assert.match(external, /authorized_for_collection/i);
   assert.match(external, /'received_by_processor'/i);
-  assert.match(external, /reserve_account_id,null/i);
-  assert.match(external, /reference_usd_amount,0/i);
+  assert.match(external, /provider_fee,net_amount,reserve_account_id,custody_status,custody_reference,custody_confirmed_at,reference_usd_amount,custody_stage,metadata/i);
+  assert.match(external, /v_fee,v_net,null,'pending',null,null,0,'received_by_processor'/i);
+  assert.match(external, /reserve_account_id=null/i);
   assert.match(external, /processorIsNotReserve/i);
   assert.doesNotMatch(external, /select public\.issue_flows_for_operation/i);
   assert.doesNotMatch(external, /perform public\.issue_flows_for_operation/i);
@@ -220,7 +221,7 @@ test("Player wallet exposes payment -> reserve -> available stages", async () =>
   assert.match(wallet, /MOVIENDO A RESERVA/);
   assert.match(wallet, /RESPALDO CONFIRMADO/);
   assert.match(wallet, /FLOW DISPONIBLE/);
-  assert.match(wallet, /Mercado Pago procesa el cobro; no es la Reserva CLOUVA/);
+  assert.match(wallet, /Mercado Pago procesa el cobro; Reserva CLOUVA confirma el respaldo/);
   assert.match(assets, /custody_stage/);
   assert.match(assets, /accountRole/);
 });
