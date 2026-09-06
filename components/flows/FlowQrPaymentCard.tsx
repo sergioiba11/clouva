@@ -13,6 +13,19 @@ type TransferResult = {
   backingMoved?: boolean;
 };
 
+type TransferIntent = {
+  id: string;
+  status: string;
+  requiredQuantity: number;
+  availableAtCreation: number;
+  missingQuantity: number;
+  transferId: string;
+  purchaseOperationId?: string | null;
+  expiresAt?: string | null;
+  completedAt?: string | null;
+  message?: string | null;
+};
+
 type Props = {
   publicToken: string;
   recipientLabel: string;
@@ -26,12 +39,14 @@ export function FlowQrPaymentCard({ publicToken, recipientLabel, profileHref, pr
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<TransferResult | null>(null);
+  const [intent, setIntent] = useState<TransferIntent | null>(null);
   const idempotencyKey = useRef<string | null>(null);
 
   useEffect(() => {
     idempotencyKey.current = null;
     setError(null);
     setResult(null);
+    setIntent(null);
   }, [quantity, publicToken]);
 
   async function pay() {
@@ -39,6 +54,7 @@ export function FlowQrPaymentCard({ publicToken, recipientLabel, profileHref, pr
     setBusy(true);
     setError(null);
     setResult(null);
+    setIntent(null);
     if (!idempotencyKey.current) idempotencyKey.current = crypto.randomUUID();
 
     try {
@@ -52,11 +68,58 @@ export function FlowQrPaymentCard({ publicToken, recipientLabel, profileHref, pr
         body: JSON.stringify({ publicToken, quantity }),
       });
       const body = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(body.error || "No se pudo completar el pago en FLOW.");
+      if (!response.ok) {
+        if (response.status === 409 && body.code === "FLOW_INSUFFICIENT" && body.intent?.id) {
+          setIntent(body.intent as TransferIntent);
+          setError(null);
+          return;
+        }
+        throw new Error(body.error || "No se pudo completar el pago en FLOW.");
+      }
       setResult((body.transfer || {}) as TransferResult);
       idempotencyKey.current = null;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "No se pudo completar el pago en FLOW.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function fundMissing() {
+    if (!session?.access_token || !intent?.id || busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/flows/purchase", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${session.access_token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ transferIntentId: intent.id }),
+      });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body.error || "No se pudo iniciar la compra del faltante.");
+
+      if (body.intentResolved) {
+        const resumedTransfer = body.resumed?.transfer as TransferResult | undefined;
+        if (resumedTransfer) {
+          setResult(resumedTransfer);
+          setIntent(null);
+          idempotencyKey.current = null;
+        } else {
+          setError("La intención fue actualizada. Volvé a intentar el pago si todavía aparece pendiente.");
+        }
+        return;
+      }
+
+      if (typeof body.initPoint === "string" && body.initPoint.startsWith("https://")) {
+        window.location.assign(body.initPoint);
+        return;
+      }
+      throw new Error("El proveedor no devolvió un checkout válido.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "No se pudo iniciar la compra del faltante.");
     } finally {
       setBusy(false);
     }
@@ -68,9 +131,7 @@ export function FlowQrPaymentCard({ publicToken, recipientLabel, profileHref, pr
         {profileImageUrl ? (
           <img src={profileImageUrl} alt="" className="h-12 w-12 rounded-full border border-white/10 object-cover" />
         ) : (
-          <div className="grid h-12 w-12 place-items-center rounded-full border border-violet-300/20 bg-violet-500/10 text-lg font-black text-violet-200">
-            C
-          </div>
+          <div className="grid h-12 w-12 place-items-center rounded-full border border-violet-300/20 bg-violet-500/10 text-lg font-black text-violet-200">C</div>
         )}
         <div className="min-w-0">
           <p className="text-[11px] font-bold uppercase tracking-[.2em] text-violet-300">Pagar con FLOW</p>
@@ -85,15 +146,7 @@ export function FlowQrPaymentCard({ publicToken, recipientLabel, profileHref, pr
             <p className="mt-1 text-sm text-white/55">1 FLOW = US$ 1 de referencia</p>
           </div>
           <div className="flex items-center rounded-xl border border-white/10 bg-black/40 p-1">
-            <button
-              type="button"
-              onClick={() => setQuantity((value) => Math.max(1, value - 1))}
-              disabled={busy || quantity <= 1}
-              className="h-10 w-10 rounded-lg text-xl text-white/70 disabled:opacity-25"
-              aria-label="Restar un FLOW"
-            >
-              −
-            </button>
+            <button type="button" onClick={() => setQuantity((value) => Math.max(1, value - 1))} disabled={busy || quantity <= 1} className="h-10 w-10 rounded-lg text-xl text-white/70 disabled:opacity-25" aria-label="Restar un FLOW">−</button>
             <input
               value={quantity}
               onChange={(event) => {
@@ -105,15 +158,7 @@ export function FlowQrPaymentCard({ publicToken, recipientLabel, profileHref, pr
               aria-label="Cantidad de FLOW"
               className="w-12 bg-transparent text-center text-lg font-bold text-white outline-none"
             />
-            <button
-              type="button"
-              onClick={() => setQuantity((value) => Math.min(50, value + 1))}
-              disabled={busy || quantity >= 50}
-              className="h-10 w-10 rounded-lg text-xl text-white/70 disabled:opacity-25"
-              aria-label="Sumar un FLOW"
-            >
-              +
-            </button>
+            <button type="button" onClick={() => setQuantity((value) => Math.min(50, value + 1))} disabled={busy || quantity >= 50} className="h-10 w-10 rounded-lg text-xl text-white/70 disabled:opacity-25" aria-label="Sumar un FLOW">+</button>
           </div>
         </div>
       </div>
@@ -126,24 +171,29 @@ export function FlowQrPaymentCard({ publicToken, recipientLabel, profileHref, pr
       {loading ? <p className="mt-5 text-center text-sm text-white/45">Verificando tu sesión…</p> : null}
 
       {!loading && !session?.access_token ? (
-        <Link
-          href={`/login?next=${encodeURIComponent(`/q/${publicToken}`)}`}
-          className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-violet-600 px-5 py-3.5 font-semibold text-white"
-        >
+        <Link href={`/login?next=${encodeURIComponent(`/q/${publicToken}`)}`} className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-violet-600 px-5 py-3.5 font-semibold text-white">
           Iniciar sesión para pagar <ArrowRight className="h-4 w-4" />
         </Link>
       ) : null}
 
-      {!loading && session?.access_token ? (
-        <button
-          type="button"
-          onClick={pay}
-          disabled={busy}
-          className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-violet-600 px-5 py-3.5 font-semibold text-white disabled:cursor-wait disabled:opacity-55"
-        >
+      {!loading && session?.access_token && !intent ? (
+        <button type="button" onClick={pay} disabled={busy} className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-violet-600 px-5 py-3.5 font-semibold text-white disabled:cursor-wait disabled:opacity-55">
           {busy ? "Confirmando…" : `Pagar ${quantity} FLOW${quantity === 1 ? "" : "S"}`}
           {!busy ? <ArrowRight className="h-4 w-4" /> : null}
         </button>
+      ) : null}
+
+      {intent ? (
+        <div className="mt-5 rounded-2xl border border-violet-400/20 bg-violet-400/[.07] p-4">
+          <p className="text-sm font-semibold text-white">Te faltan {intent.missingQuantity} FLOW</p>
+          <p className="mt-1 text-xs leading-5 text-white/55">
+            Tenés {intent.availableAtCreation} y querés enviar {intent.requiredQuantity}. Comprá sólo {intent.missingQuantity}; cuando queden respaldados en Reserva, CLOUVA completa este mismo pago automáticamente.
+          </p>
+          <button type="button" onClick={fundMissing} disabled={busy} className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-violet-600 px-5 py-3.5 font-semibold text-white disabled:cursor-wait disabled:opacity-55">
+            {busy ? "Preparando checkout…" : `Comprar ${intent.missingQuantity} FLOW${intent.missingQuantity === 1 ? "" : "S"} y completar pago`}
+            {!busy ? <ArrowRight className="h-4 w-4" /> : null}
+          </button>
+        </div>
       ) : null}
 
       {error ? <p className="mt-4 rounded-xl border border-red-400/20 bg-red-400/[.06] p-3 text-sm text-red-200">{error}</p> : null}
@@ -158,11 +208,7 @@ export function FlowQrPaymentCard({ publicToken, recipientLabel, profileHref, pr
         </div>
       ) : null}
 
-      {profileHref ? (
-        <Link href={profileHref} className="mt-5 block text-center text-sm text-violet-200/70 hover:text-violet-100">
-          Ver perfil Player
-        </Link>
-      ) : null}
+      {profileHref ? <Link href={profileHref} className="mt-5 block text-center text-sm text-violet-200/70 hover:text-violet-100">Ver perfil Player</Link> : null}
     </section>
   );
 }
