@@ -104,6 +104,8 @@ export default function SpotPublicationsPage() {
     void load();
   }, [authLoading, load, user]);
 
+  const canonicalSpace = spot?.space ?? null;
+
   return (
     <main className="min-h-screen bg-[#05040a] text-white">
       <MainNav />
@@ -118,7 +120,7 @@ export default function SpotPublicationsPage() {
         {loading ? <div className="mt-5 grid min-h-48 place-items-center rounded-3xl border border-white/[0.08] bg-[#0b0912]"><span className="inline-flex items-center gap-2 text-sm text-white/40"><Loader2 size={16} className="animate-spin" /> Cargando productos canónicos…</span></div> : null}
         {error ? <p className="mt-5 rounded-2xl border border-rose-300/15 bg-rose-300/[0.06] p-4 text-sm text-rose-200">{error}</p> : null}
 
-        {!loading && !error && spot?.space ? (
+        {!loading && !error && canonicalSpace ? (
           <section className="mt-6 space-y-4">
             {products.map((product) => (
               <article key={product.id} className="rounded-[24px] border border-white/[0.08] bg-[#0b0912] p-4 sm:p-5">
@@ -140,7 +142,7 @@ export default function SpotPublicationsPage() {
                 <ProductPublicationControls
                   productId={product.id}
                   player={player ? { id: player.id, name: player.display_name } : null}
-                  space={{ id: spot.space.id, name: spot.space.name }}
+                  space={{ id: canonicalSpace.id, name: canonicalSpace.name }}
                   product={product}
                 />
               </article>
