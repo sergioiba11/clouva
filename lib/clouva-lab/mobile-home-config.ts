@@ -63,6 +63,10 @@ export type MobileHomeConfig = {
   sections: MobileHomeSectionKey[];
 };
 
+const LEGACY_MOBILE_HOME_HERO_URL = "/assets/home-mobile/hero.webp";
+export const MOBILE_HOME_HERO_ASSET_URL =
+  "https://storage.googleapis.com/clouva-generated-media/admin-assets/brand/01_home_mobile_hero.png";
+
 export const DEFAULT_MOBILE_HOME_CONFIG: MobileHomeConfig = {
   schemaVersion: 1,
   page: "mobile-home",
@@ -86,7 +90,7 @@ export const DEFAULT_MOBILE_HOME_CONFIG: MobileHomeConfig = {
     eyebrow: "Bienvenido de nuevo",
     title: "VIDA DE FLOWS",
     subtitle: "Viví tu propio mundo.",
-    imageUrl: "/assets/home-mobile/hero.webp",
+    imageUrl: MOBILE_HOME_HERO_ASSET_URL,
     height: 310,
     textWidth: 58,
     contentPaddingLeft: 22,
@@ -225,6 +229,10 @@ export function sanitizeMobileHomeConfig(value: unknown): MobileHomeConfig {
   const heroTitle = sanitizedHeroTitle === "Crea. Personaliza.\nConecta."
     ? DEFAULT_MOBILE_HOME_CONFIG.hero.title
     : sanitizedHeroTitle;
+  const sanitizedHeroImageUrl = imageUrl(hero.imageUrl, DEFAULT_MOBILE_HOME_CONFIG.hero.imageUrl);
+  const heroImageUrl = sanitizedHeroImageUrl === LEGACY_MOBILE_HOME_HERO_URL
+    ? MOBILE_HOME_HERO_ASSET_URL
+    : sanitizedHeroImageUrl;
   const rawPrimaryLabel = text(hero.primaryLabel, DEFAULT_MOBILE_HOME_CONFIG.hero.primaryLabel, 48);
   const primaryLabel = rawPrimaryLabel === "Entrar a mi Avatar"
     ? DEFAULT_MOBILE_HOME_CONFIG.hero.primaryLabel
@@ -253,7 +261,7 @@ export function sanitizeMobileHomeConfig(value: unknown): MobileHomeConfig {
       eyebrow: text(hero.eyebrow, DEFAULT_MOBILE_HOME_CONFIG.hero.eyebrow, 60),
       title: heroTitle,
       subtitle: text(hero.subtitle, DEFAULT_MOBILE_HOME_CONFIG.hero.subtitle, 80),
-      imageUrl: imageUrl(hero.imageUrl, DEFAULT_MOBILE_HOME_CONFIG.hero.imageUrl),
+      imageUrl: heroImageUrl,
       height: numberInRange(hero.height, DEFAULT_MOBILE_HOME_CONFIG.hero.height, 240, 620),
       textWidth: numberInRange(hero.textWidth, DEFAULT_MOBILE_HOME_CONFIG.hero.textWidth, 38, 75),
       contentPaddingLeft: numberInRange(hero.contentPaddingLeft, DEFAULT_MOBILE_HOME_CONFIG.hero.contentPaddingLeft, 8, 48),
