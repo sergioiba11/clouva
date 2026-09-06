@@ -1,4 +1,4 @@
-import { createPublicSupabase } from "./public-supabase";
+import { createAdminSupabase } from "./supabase";
 
 export type PublicSpaceProduct = {
   id: string;
@@ -54,7 +54,10 @@ export async function resolvePublicSpaceAlias(alias: string): Promise<PublicSpac
   const normalized = alias.trim().toLowerCase();
   if (!normalized) return null;
 
-  const supabase = createPublicSupabase();
+  // This is server-only and uses explicit public/status filters. `spaces` RLS
+  // also supports member reads, so the public resolver must not rely on viewer
+  // membership or accidentally expose a private Space.
+  const supabase = createAdminSupabase();
   const { data: rawSpace, error: spaceError } = await supabase
     .from("spaces")
     .select("id,type,slug,name,description,logo_url,cover_url,accent_color,palette,business_kind,category,subcategory,location_label,legacy_commerce_spot_id")
