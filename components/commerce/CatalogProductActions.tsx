@@ -25,6 +25,7 @@ type CatalogImage = {
   storagePath: string;
   label: string;
   generated: boolean;
+  approved: boolean;
 };
 
 type EditDraft = {
@@ -40,22 +41,32 @@ function record(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : {};
 }
 
-function readImages(metadata: unknown): CatalogImage[] {
+function publicationUrls(metadata: unknown, coverUrl: string | null) {
   const images = record(record(metadata).product_images);
+  const master = record(images.publication_master);
+  const gallery = Array.isArray(master.gallery)
+    ? master.gallery.filter((value): value is string => typeof value === "string" && Boolean(value.trim())).map((value) => value.trim())
+    : [];
+  return new Set([...(coverUrl ? [coverUrl] : []), ...gallery]);
+}
+
+function readImages(metadata: unknown, coverUrl: string | null): CatalogImage[] {
+  const images = record(record(metadata).product_images);
+  const approvedUrls = publicationUrls(metadata, coverUrl);
   const generated = (Array.isArray(images.generated_images) ? images.generated_images : []).map((raw, index) => {
     const item = record(raw);
     const source = typeof item.source_label === "string" ? item.source_label : "Gemini";
     const detailIndex = typeof item.detail_index === "number" ? ` ${item.detail_index}` : "";
     const url = typeof item.url === "string" ? item.url : "";
     const storagePath = typeof item.storage_path === "string" ? item.storage_path : "";
-    return { key: `generated:${storagePath || url || index}`, url, storagePath, label: `${source}${detailIndex}`, generated: true };
+    return { key: `generated:${storagePath || url || index}`, url, storagePath, label: `${source}${detailIndex}`, generated: true, approved: approvedUrls.has(url) };
   });
   const sources = (Array.isArray(images.source_photos) ? images.source_photos : []).map((raw, index) => {
     const item = record(raw);
     const url = typeof item.url === "string" ? item.url : "";
     const storagePath = typeof item.storage_path === "string" ? item.storage_path : "";
     const label = typeof item.display_label === "string" ? item.display_label : typeof item.label === "string" ? item.label : "Original";
-    return { key: `source:${storagePath || url || index}`, url, storagePath, label, generated: false };
+    return { key: `source:${storagePath || url || index}`, url, storagePath, label, generated: false, approved: approvedUrls.has(url) };
   });
   return [...generated, ...sources].filter((image) => image.url && image.storagePath);
 }
@@ -98,7 +109,7 @@ export function CatalogProductActions({
   const [busyKey, setBusyKey] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<EditDraft>(() => draftFromListing(listing));
-  const images = useMemo(() => readImages(listing.metadata), [listing.metadata]);
+  const images = useMemo(() => readImages(listing.metadata, listing.cover_url), [listing.cover_url, listing.metadata]);
 
   useEffect(() => {
     setEditDraft(draftFromListing(listing));
@@ -191,6 +202,24 @@ export function CatalogProductActions({
     }
   };
 
+  const setPublication = async (image: CatalogImage, approved: boolean) => {
+    setBusyKey(`publication:${image.key}`);
+    setLocalError(null);
+    try {
+      await call(`/api/studios/${encodeURIComponent(studioId)}/commerce/products/images`, {
+        action: "set_publication",
+        listingId: listing.id,
+        url: image.url,
+        approved,
+      });
+      await onChanged();
+    } catch (cause) {
+      setLocalError(cause instanceof Error ? cause.message : "No se pudo actualizar la publicación de la imagen.");
+    } finally {
+      setBusyKey("");
+    }
+  };
+
   const addImages = async (files: FileList | null) => {
     if (!files?.length) return;
     setBusyKey("add-images");
@@ -276,13 +305,14 @@ export function CatalogProductActions({
     </div> : null}
 
     {imagesOpen ? <div className="mt-3 rounded-xl border border-violet-400/15 bg-violet-500/[0.035] p-3">
-      <div className="flex items-center justify-between gap-3"><div><p className="text-[10px] font-semibold uppercase tracking-[.16em] text-violet-300">Imágenes del producto</p><p className="mt-1 text-[10px] text-white/35">Agregá, reemplazá, eliminá o elegí la portada que verá la tienda.</p></div><div className="flex items-center gap-2"><label className="flex cursor-pointer items-center gap-2 rounded-lg border border-violet-400/25 bg-violet-500/10 px-3 py-2 text-[10px] font-semibold text-violet-100"><Upload className="h-3.5 w-3.5" />{busyKey === "add-images" ? "Subiendo…" : "Agregar"}<input type="file" accept="image/jpeg,image/png,image/webp" multiple className="hidden" disabled={anyBusy} onChange={(event) => { void addImages(event.target.files); event.currentTarget.value = ""; }} /></label><button type="button" onClick={() => setImagesOpen(false)} className="rounded-lg border border-white/10 p-1.5 text-white/40 hover:text-white"><X className="h-3.5 w-3.5" /></button></div></div>
+      <div className="flex items-center justify-between gap-3"><div><p className="text-[10px] font-semibold uppercase tracking-[.16em] text-violet-300">Imágenes del producto</p><p className="mt-1 text-[10px] text-white/35">Las fuentes y versiones de Gemini se conservan acá. Elegí explícitamente cuáles forman parte de la publicación.</p></div><div className="flex items-center gap-2"><label className="flex cursor-pointer items-center gap-2 rounded-lg border border-violet-400/25 bg-violet-500/10 px-3 py-2 text-[10px] font-semibold text-violet-100"><Upload className="h-3.5 w-3.5" />{busyKey === "add-images" ? "Subiendo…" : "Agregar"}<input type="file" accept="image/jpeg,image/png,image/webp" multiple className="hidden" disabled={anyBusy} onChange={(event) => { void addImages(event.target.files); event.currentTarget.value = ""; }} /></label><button type="button" onClick={() => setImagesOpen(false)} className="rounded-lg border border-white/10 p-1.5 text-white/40 hover:text-white"><X className="h-3.5 w-3.5" /></button></div></div>
       {images.length ? <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">{images.map((image) => {
         const isCover = image.url === listing.cover_url;
-        const imageBusy = busyKey === image.key || busyKey === `cover:${image.key}` || busyKey === `replace:${image.key}`;
-        return <div key={image.key} className={`group relative overflow-hidden rounded-xl border bg-black/35 ${isCover ? "border-violet-300/55" : "border-white/10"}`}>
+        const imageBusy = busyKey === image.key || busyKey === `cover:${image.key}` || busyKey === `replace:${image.key}` || busyKey === `publication:${image.key}`;
+        return <div key={image.key} className={`group relative overflow-hidden rounded-xl border bg-black/35 ${isCover ? "border-violet-300/55" : image.approved ? "border-emerald-400/30" : "border-white/10"}`}>
           <img src={image.url} alt={image.label} className="aspect-square w-full object-cover" />
-          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black via-black/80 to-transparent px-2 pb-2 pt-10"><div className="flex items-end justify-between gap-2"><div className="min-w-0"><p className="truncate text-[9px] font-medium text-white/80">{image.label}</p><p className="mt-0.5 text-[8px] text-white/35">{image.generated ? "Gemini" : "Original / manual"}</p></div>{isCover ? <span className="flex shrink-0 items-center gap-1 rounded-md bg-violet-600 px-1.5 py-1 text-[8px] font-bold"><CheckCircle2 className="h-2.5 w-2.5" />Portada</span> : null}</div><div className="mt-2 flex gap-1"><label className="cursor-pointer rounded-md bg-white/10 px-2 py-1 text-[8px] font-semibold text-white/70 hover:bg-white/15">{busyKey === `replace:${image.key}` ? "Reemplazando…" : "Reemplazar"}<input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" disabled={anyBusy} onChange={(event) => { void replaceImage(image, event.target.files?.[0]); event.currentTarget.value = ""; }} /></label>{!isCover ? <button type="button" disabled={anyBusy} onClick={() => void setCover(image)} className="rounded-md bg-white/10 px-2 py-1 text-[8px] font-semibold text-white/70 hover:bg-white/15 disabled:opacity-40">{imageBusy ? "Guardando…" : "Portada"}</button> : null}</div></div>
+          <div className="absolute left-1.5 top-1.5 flex gap-1">{image.approved ? <span className="rounded-md bg-emerald-500/90 px-1.5 py-1 text-[8px] font-bold text-black">PUBLICADA</span> : <span className="rounded-md bg-black/80 px-1.5 py-1 text-[8px] font-bold text-white/55">PRIVADA</span>}</div>
+          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black via-black/80 to-transparent px-2 pb-2 pt-10"><div className="flex items-end justify-between gap-2"><div className="min-w-0"><p className="truncate text-[9px] font-medium text-white/80">{image.label}</p><p className="mt-0.5 text-[8px] text-white/35">{image.generated ? "Gemini" : "Original / manual"}</p></div>{isCover ? <span className="flex shrink-0 items-center gap-1 rounded-md bg-violet-600 px-1.5 py-1 text-[8px] font-bold"><CheckCircle2 className="h-2.5 w-2.5" />Portada</span> : null}</div><div className="mt-2 flex flex-wrap gap-1"><button type="button" disabled={anyBusy} onClick={() => void setPublication(image, !image.approved)} className={`rounded-md px-2 py-1 text-[8px] font-semibold disabled:opacity-40 ${image.approved ? "bg-amber-500/20 text-amber-100" : "bg-emerald-500/20 text-emerald-100"}`}>{busyKey === `publication:${image.key}` ? "Guardando…" : image.approved ? "Ocultar" : "Publicar"}</button><label className="cursor-pointer rounded-md bg-white/10 px-2 py-1 text-[8px] font-semibold text-white/70 hover:bg-white/15">{busyKey === `replace:${image.key}` ? "Reemplazando…" : "Reemplazar"}<input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" disabled={anyBusy} onChange={(event) => { void replaceImage(image, event.target.files?.[0]); event.currentTarget.value = ""; }} /></label>{!isCover ? <button type="button" disabled={anyBusy} onClick={() => void setCover(image)} className="rounded-md bg-white/10 px-2 py-1 text-[8px] font-semibold text-white/70 hover:bg-white/15 disabled:opacity-40">{imageBusy ? "Guardando…" : "Portada"}</button> : null}</div></div>
           <button type="button" disabled={anyBusy} aria-label={`Eliminar ${image.label}`} onClick={() => void deleteImage(image)} className="absolute right-1.5 top-1.5 grid h-8 w-8 place-items-center rounded-lg bg-black/80 text-red-200 shadow-lg transition hover:bg-red-500 hover:text-white disabled:opacity-40">{busyKey === image.key ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}</button>
         </div>;
       })}</div> : <div className="mt-3 rounded-xl border border-dashed border-white/10 py-8 text-center text-xs text-white/30">Este producto no tiene imágenes guardadas. Usá “Agregar” para cargar la primera.</div>}
