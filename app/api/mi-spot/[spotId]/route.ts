@@ -30,7 +30,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
       admin.from("commerce_orders").select("id", { count: "exact", head: true }).eq("spot_id", spotId),
       admin.from("commerce_inventory_movements").select("id", { count: "exact", head: true }).eq("spot_id", spotId),
       admin.from("commerce_spot_members").select("id", { count: "exact", head: true }).eq("spot_id", spotId).eq("status", "active"),
-      admin.from("spaces").select("id,slug,name,type,public_enabled,status,owner_player_id,legacy_studio_id,legacy_commerce_spot_id").eq("legacy_commerce_spot_id", spotId).maybeSingle(),
+      admin.from("spaces").select("id,slug,name,type,description,logo_url,cover_url,accent_color,palette,public_enabled,status,owner_player_id,legacy_studio_id,legacy_commerce_spot_id,business_kind").eq("legacy_commerce_spot_id", spotId).maybeSingle(),
     ]);
     for (const result of [productCount, orderCount, inventoryCount, memberCount, spaceResult]) {
       if (result.error) throw new Error(result.error.message);
@@ -105,9 +105,39 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     if (body.palette !== undefined) patch.palette = stringArray(body.palette, 8).map((item) => item.slice(0, 32));
     if (typeof body.publicEnabled === "boolean") patch.public_enabled = body.publicEnabled;
 
+    const linkedSpaceResult = await admin
+      .from("spaces")
+      .select("id,type,slug,name,description,logo_url,cover_url,accent_color,palette,public_enabled,status,business_kind,legacy_commerce_spot_id")
+      .eq("legacy_commerce_spot_id", spotId)
+      .maybeSingle();
+    if (linkedSpaceResult.error) throw new Error(linkedSpaceResult.error.message);
+
     const { data, error } = await admin.from("commerce_spots").update(patch).eq("id", spotId).select("*").single();
     if (error) throw new Error(error.message);
-    return NextResponse.json({ spot: data });
+
+    let canonicalSpace = linkedSpaceResult.data ?? null;
+    if (canonicalSpace && canonicalSpace.type !== "studio") {
+      // The commerce Spot owns operations; the canonical Space owns the public
+      // Matrix identity. Shared public identity fields stay synchronized so a
+      // business never forks into a separate hand-built public page.
+      const spacePatch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+      if (body.name !== undefined) spacePatch.name = data.name;
+      if (body.description !== undefined) spacePatch.description = data.description;
+      if (body.logoUrl !== undefined) spacePatch.logo_url = data.logo_url;
+      if (body.coverUrl !== undefined) spacePatch.cover_url = data.cover_url;
+      if (body.accentColor !== undefined) spacePatch.accent_color = data.accent_color;
+      if (body.palette !== undefined) spacePatch.palette = data.palette;
+      if (typeof body.publicEnabled === "boolean") spacePatch.public_enabled = data.public_enabled;
+      if (body.businessType !== undefined && ["digital_business", "physical_business", "studio"].includes(data.business_type ?? "")) {
+        spacePatch.business_kind = data.business_type;
+      }
+
+      const updatedSpace = await admin.from("spaces").update(spacePatch).eq("id", canonicalSpace.id).select("id,type,slug,name,description,logo_url,cover_url,accent_color,palette,public_enabled,status,business_kind,legacy_commerce_spot_id").single();
+      if (updatedSpace.error) throw new Error(updatedSpace.error.message);
+      canonicalSpace = updatedSpace.data;
+    }
+
+    return NextResponse.json({ spot: data, space: canonicalSpace });
   } catch (error) {
     const status = (error as Error & { status?: number })?.status ?? (isAuthError(error) ? 401 : 500);
     return NextResponse.json({ error: error instanceof Error ? error.message : "No se pudo actualizar el Spot." }, { status });
