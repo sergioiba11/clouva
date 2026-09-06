@@ -1,11 +1,12 @@
 "use client";
 
-import { Building2, CircleDollarSign, Crown, History, Loader2, RefreshCw, WalletCards } from "lucide-react";
+import { Building2, CircleDollarSign, Crown, History, Loader2, QrCode, RefreshCw, WalletCards } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
 import { CloverIcon } from "@/components/clover-icon";
 import { DiamondIcon } from "@/components/diamond-icon";
+import { UniversalQrPayment } from "@/components/flows/UniversalQrPayment";
 import { MainNav } from "@/components/layout";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
 
@@ -43,6 +44,7 @@ export default function MiFlowWalletPage(){
   const [data,setData]=useState<SummaryPayload|null>(null);
   const [loading,setLoading]=useState(true);
   const [error,setError]=useState<string|null>(null);
+  const [qrOpen,setQrOpen]=useState(false);
 
   const load=useCallback(async()=>{
     if(!user)return;
@@ -52,8 +54,29 @@ export default function MiFlowWalletPage(){
     finally{setLoading(false);}
   },[user]);
 
+  const setQrUrl=useCallback((open:boolean)=>{
+    if(typeof window==="undefined")return;
+    const url=new URL(window.location.href);
+    url.searchParams.set("asset","flows");
+    if(open)url.searchParams.set("action","pay-qr");
+    else url.searchParams.delete("action");
+    window.history.replaceState(window.history.state,"",`${url.pathname}${url.search}${url.hash}`);
+  },[]);
+
+  const openQrPayment=useCallback(()=>{setQrOpen(true);setQrUrl(true)},[setQrUrl]);
+  const closeQrPayment=useCallback(()=>{setQrOpen(false);setQrUrl(false);requestAnimationFrame(()=>document.getElementById("flows")?.scrollIntoView({behavior:"smooth",block:"center"}))},[setQrUrl]);
+
   useEffect(()=>{if(authLoading)return;if(!user){setLoading(false);return}void load();},[authLoading,load,user]);
-  useEffect(()=>{if(!data||typeof window==="undefined")return;const asset=new URLSearchParams(window.location.search).get("asset");if(asset!=="flows"&&asset!=="diamonds")return;requestAnimationFrame(()=>document.getElementById(asset)?.scrollIntoView({behavior:"smooth",block:"center"}));},[data]);
+  useEffect(()=>{
+    if(!data||typeof window==="undefined")return;
+    const params=new URLSearchParams(window.location.search);
+    const asset=params.get("asset");
+    const action=params.get("action");
+    if(action==="pay-qr"&&asset==="flows"){setQrOpen(true);return}
+    if(asset!=="flows"&&asset!=="diamonds")return;
+    requestAnimationFrame(()=>document.getElementById(asset)?.scrollIntoView({behavior:"smooth",block:"center"}));
+  },[data]);
+  useEffect(()=>{if(!qrOpen)return;requestAnimationFrame(()=>document.getElementById("flow-qr-payment")?.scrollIntoView({behavior:"smooth",block:"start"}))},[qrOpen]);
   const activity=useMemo(()=>data?.money.personalActivity??[],[data]);
 
   return <main className="min-h-screen bg-[#07060d] text-white">
@@ -83,9 +106,18 @@ export default function MiFlowWalletPage(){
         </section>
 
         <section className="grid gap-4 lg:grid-cols-2">
-          <article id="flows" className={`${CARD} scroll-mt-24 p-6`}><div className="flex items-center justify-between"><div><p className="text-xs uppercase tracking-[0.16em] text-white/35">Moneda CLOUVA</p><h2 className="mt-1 flex items-center gap-2 text-xl font-semibold"><CloverIcon className="text-[#8f7cff]" size={22}/> FLOWS</h2></div><strong className="text-3xl">{data.wallets.flows}</strong></div><CreditRows rows={data.walletActivity.flows}/></article>
+          <article id="flows" className={`${CARD} scroll-mt-24 p-6`}>
+            <div className="flex items-center justify-between gap-4"><div><p className="text-xs uppercase tracking-[0.16em] text-white/35">Moneda CLOUVA</p><h2 className="mt-1 flex items-center gap-2 text-xl font-semibold"><CloverIcon className="text-[#8f7cff]" size={22}/> FLOWS</h2></div><strong className="text-3xl">{data.wallets.flows}</strong></div>
+            <button type="button" onClick={qrOpen?closeQrPayment:openQrPayment} className={`mt-5 flex w-full items-center justify-between rounded-2xl border px-4 py-3.5 text-left transition ${qrOpen?"border-violet-300/30 bg-violet-400/[0.12] text-violet-100":"border-violet-400/20 bg-violet-400/[0.07] text-white hover:border-violet-300/35 hover:bg-violet-400/[0.11]"}`}>
+              <span className="flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-xl bg-violet-500/15 text-violet-200"><QrCode size={19}/></span><span><b className="block text-sm">Pagar QR</b><span className="mt-0.5 block text-xs text-white/40">Escaneá el QR de un comercio y pagá desde tus FLOW.</span></span></span>
+              <span className="text-xs font-semibold text-violet-300">{qrOpen?"Cerrar":"Abrir"}</span>
+            </button>
+            <CreditRows rows={data.walletActivity.flows}/>
+          </article>
           <article id="diamonds" className={`${CARD} scroll-mt-24 p-6`}><div className="flex items-center justify-between"><div><p className="text-xs uppercase tracking-[0.16em] text-white/35">Crédito premium</p><h2 className="mt-1 flex items-center gap-2 text-xl font-semibold"><DiamondIcon className="text-cyan-300" size={22}/> Diamantes</h2></div><strong className="text-3xl">{data.wallets.diamonds}</strong></div><CreditRows rows={data.walletActivity.diamonds}/></article>
         </section>
+
+        {qrOpen?<section id="flow-qr-payment" className="scroll-mt-24 rounded-[28px] border border-violet-400/10 bg-[#08070d] p-3 sm:p-5"><UniversalQrPayment embedded onClose={closeQrPayment} onPaymentConfirmed={load}/></section>:null}
 
         <section className={`${CARD} overflow-hidden`}>
           <div className="border-b border-white/[0.07] px-5 py-4"><h2 className="flex items-center gap-2 font-semibold"><History size={17}/>Movimientos de mi dinero</h2></div>
