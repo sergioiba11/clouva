@@ -102,7 +102,7 @@ export function MyQrCard() {
       <div className="text-center">
         <p className="text-xs font-bold uppercase tracking-[.24em] text-violet-300">QR CLOUVA</p>
         <h1 className="mt-3 text-3xl font-semibold">Mi QR</h1>
-        <p className="mt-2 text-white/50">Tu identidad permanente dentro de La Matrix.</p>
+        <p className="mt-2 text-white/50">Tu identidad permanente dentro de La Matrix y tu QR para recibir FLOW.</p>
       </div>
       <div className="mx-auto mt-7 max-w-sm rounded-[2rem] bg-white p-5 text-black">
         {pngUrl ? <img src={pngUrl} alt={`QR CLOUVA de ${handle}`} className="aspect-square w-full" /> : <div className="grid aspect-square place-items-center"><QrCode className="h-16 w-16" /></div>}
@@ -115,7 +115,7 @@ export function MyQrCard() {
         <button disabled={!svg} onClick={downloadSvg} className="rounded-xl bg-violet-600 px-3 py-3 text-sm font-semibold disabled:opacity-35"><Download className="mr-2 inline h-4 w-4" />SVG</button>
       </div>
       {message ? <p className="mt-4 text-center text-xs text-emerald-300">{message}</p> : null}
-      <p className="mt-5 text-center text-xs text-white/35">El QR conserva el mismo token. Al escanearlo abre tu perfil público Player.</p>
+      <p className="mt-5 text-center text-xs text-white/35">El QR conserva el mismo token. Al escanearlo permite pagarte con FLOW y mantiene acceso a tu perfil Player.</p>
     </section>
   );
 }
