@@ -1,5 +1,5 @@
 name: Deploy CLOUVA web to Cloud Run
-# Release marker: canonical Player + Space + Commerce + Mi Flow final validation 2026-08-25.
+# Release marker: FLOW reserve CI contract synced for production 2026-09-06.
 # Deploy trigger: Agenda life timeline + pending participants 2026-09-04.
 # Canonical production target: Google Cloud Run only; do not add parallel web deployment workflows.
 
