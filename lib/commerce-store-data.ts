@@ -62,36 +62,47 @@ export function commerceProductCategory(product: CommerceProduct) {
   return typeof value === "string" && value.trim() ? value.trim() : "Merch";
 }
 
-function metadataImageUrls(metadata: Record<string, unknown> | null) {
-  const root = metadata && typeof metadata === "object" ? metadata : {};
-  const productImages = root.product_images && typeof root.product_images === "object" && !Array.isArray(root.product_images)
-    ? root.product_images as Record<string, unknown>
+function addImageValue(images: string[], value: unknown) {
+  if (typeof value === "string" && value.trim()) {
+    images.push(value.trim());
+    return;
+  }
+  if (value && typeof value === "object" && !Array.isArray(value) && "url" in value) {
+    const url = (value as { url?: unknown }).url;
+    if (typeof url === "string" && url.trim()) images.push(url.trim());
+  }
+}
+
+function publicationMasterImages(metadata: Record<string, unknown> | null) {
+  if (!metadata || typeof metadata !== "object") return [];
+  const productImages = metadata.product_images && typeof metadata.product_images === "object" && !Array.isArray(metadata.product_images)
+    ? metadata.product_images as Record<string, unknown>
     : {};
-  const rows = [
-    ...(Array.isArray(productImages.generated_images) ? productImages.generated_images : []),
-    ...(Array.isArray(productImages.source_photos) ? productImages.source_photos : []),
-  ];
-  return rows.flatMap((entry) => {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
-    const url = (entry as Record<string, unknown>).url;
-    return typeof url === "string" && url.trim() ? [url.trim()] : [];
-  });
+  const master = productImages.publication_master && typeof productImages.publication_master === "object" && !Array.isArray(productImages.publication_master)
+    ? productImages.publication_master as Record<string, unknown>
+    : {};
+
+  const images: string[] = [];
+  addImageValue(images, master.cover_url);
+  if (Array.isArray(master.gallery)) {
+    for (const entry of master.gallery) addImageValue(images, entry);
+  }
+  return [...new Set(images)];
 }
 
 export function commerceProductImages(product: CommerceProduct) {
   const images: string[] = [];
-  if (product.cover_url) images.push(product.cover_url);
+  addImageValue(images, product.cover_url);
 
   if (Array.isArray(product.gallery)) {
-    for (const entry of product.gallery) {
-      if (typeof entry === "string" && entry.trim()) images.push(entry.trim());
-      if (entry && typeof entry === "object" && "url" in entry && typeof entry.url === "string" && entry.url.trim()) {
-        images.push(entry.url.trim());
-      }
-    }
+    for (const entry of product.gallery) addImageValue(images, entry);
   }
 
-  images.push(...metadataImageUrls(product.metadata));
+  // Publication surfaces must never fall back to raw source_photos or to
+  // unapproved generated_images. Those remain private workflow/lineage assets
+  // inside product_images metadata. Only the explicit publication master may
+  // supplement cover_url/gallery during migration or legacy compatibility.
+  images.push(...publicationMasterImages(product.metadata));
   return [...new Set(images)];
 }
 
