@@ -17,6 +17,7 @@ export type ClouvaDomainServicePort = {
     areaLabel?: string;
   }): Promise<unknown>;
   startPlayerProfileGeneration(playerId: string): Promise<unknown>;
+  startStudioProfileGeneration(): Promise<unknown>;
 };
 
 function requireConfirmed(args: Record<string, unknown>) {
@@ -119,6 +120,16 @@ export class ClouvaDomainExecutor extends BaseToolExecutor {
         execute: async (args) => {
           requireConfirmed(args);
           return this.service.startPlayerProfileGeneration(String(args.playerId));
+        },
+      },
+      {
+        name: "startStudioProfileGeneration",
+        description: "Inicia el pipeline canónico CLOUVA AI Profile para el Estudio activo y crea una nueva propuesta visual; nunca publica automáticamente.",
+        risk: "sensitive",
+        parameters: { type: "OBJECT", properties: {} },
+        execute: async (args) => {
+          requireConfirmed(args);
+          return this.service.startStudioProfileGeneration();
         },
       },
     ];
