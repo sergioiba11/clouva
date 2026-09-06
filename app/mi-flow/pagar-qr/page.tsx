@@ -1,11 +1,5 @@
-import { MainNav } from "@/components/layout";
-import { UniversalQrPayment } from "@/components/flows/UniversalQrPayment";
+import { redirect } from "next/navigation";
 
 export default function PagarQrPage() {
-  return (
-    <main className="min-h-screen bg-[#050409] text-white">
-      <MainNav />
-      <UniversalQrPayment />
-    </main>
-  );
+  redirect("/mi-flow/billetera?asset=flows&action=pay-qr");
 }
