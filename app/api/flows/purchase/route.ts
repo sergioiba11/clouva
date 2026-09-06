@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { MercadoPagoProvider } from "@/core/billing/providers/mercadopago/client";
-import { isBillingEnabled } from "@/core/billing/providers/mercadopago/config";
+import { getMercadoPagoConfig, isBillingEnabled } from "@/core/billing/providers/mercadopago/config";
 import { getFlowCheckoutQuote, roundMoney } from "@/lib/server/flow-pricing";
 import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
 
@@ -15,10 +15,17 @@ type PlayerRow = {
   slug: string | null;
 };
 
+type ProcessingFeePolicy = "clouva_absorbs" | "customer_buffer";
+
 function checkoutFromMetadata(metadata: unknown) {
   if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return null;
   const value = (metadata as Record<string, unknown>).checkoutInitPoint;
   return typeof value === "string" && value.startsWith("https://") ? value : null;
+}
+
+function positiveNumber(value: unknown, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 export async function POST(request: NextRequest) {
@@ -38,9 +45,18 @@ export async function POST(request: NextRequest) {
     const recipientPlayerId = typeof body.recipientPlayerId === "string" ? body.recipientPlayerId.trim() : "";
     const backExistingAssetId = typeof body.backExistingAssetId === "string" ? body.backExistingAssetId.trim() : "";
     const admin = createAdminSupabase();
+    const mpConfig = getMercadoPagoConfig();
 
-    const [{ data: pricing, error: pricingError }, { data: buyerPlayer, error: buyerError }] = await Promise.all([
-      admin.from("flow_issuance_settings").select("flow_usd_value").eq("id", "canonical").single(),
+    const [
+      { data: pricing, error: pricingError },
+      { data: buyerPlayer, error: buyerError },
+      { data: reserveAccount, error: reserveError },
+    ] = await Promise.all([
+      admin
+        .from("flow_issuance_settings")
+        .select("flow_usd_value,processing_fee_policy,processing_fee_bps,processing_fee_fixed_usd")
+        .eq("id", "canonical")
+        .single(),
       admin
         .from("players")
         .select("id,owner_user_id,display_name,slug")
@@ -48,12 +64,35 @@ export async function POST(request: NextRequest) {
         .order("updated_at", { ascending: false })
         .limit(1)
         .maybeSingle(),
+      admin
+        .from("flow_reserve_accounts")
+        .select("id")
+        .eq("provider", "mercadopago")
+        .eq("currency", "ARS")
+        .eq("account_reference", mpConfig.userId)
+        .eq("authorized_for_flow", true)
+        .eq("is_active", true)
+        .eq("status", "active")
+        .maybeSingle(),
     ]);
     if (pricingError) throw new Error(pricingError.message);
     if (buyerError) throw new Error(buyerError.message);
+    if (reserveError) throw new Error(reserveError.message);
+    if (!reserveAccount) {
+      return NextResponse.json(
+        { error: "La Cuenta de Reserva FLOW de Mercado Pago todavía no está autorizada. No se puede recibir dinero hasta completar esa validación." },
+        { status: 503 },
+      );
+    }
 
     const unitUsd = Number(pricing.flow_usd_value);
     if (!Number.isFinite(unitUsd) || unitUsd <= 0) throw new Error("La configuración canónica de FLOW es inválida.");
+    const processingFeePolicy = pricing.processing_fee_policy as ProcessingFeePolicy;
+    if (processingFeePolicy !== "clouva_absorbs" && processingFeePolicy !== "customer_buffer") {
+      throw new Error("La política de procesamiento FLOW es inválida.");
+    }
+    const processingFeeBps = positiveNumber(pricing.processing_fee_bps);
+    const processingFeeFixedUsd = positiveNumber(pricing.processing_fee_fixed_usd);
 
     let quantity = requestedQuantity;
     let recipient = buyerPlayer as PlayerRow | null;
@@ -81,7 +120,7 @@ export async function POST(request: NextRequest) {
         admin.from("players").select("id,owner_user_id,display_name,slug").eq("id", asset.owner_player_id).maybeSingle(),
         admin
           .from("flow_purchase_operations")
-          .select("id,status,amount,currency,metadata")
+          .select("id,status,amount,currency,required_backing_usd,backing_amount,processing_fee_amount,processing_fee_policy,metadata")
           .eq("operation_type", "back_existing")
           .eq("target_asset_id", asset.id)
           .in("status", ["pending", "confirmed"])
@@ -102,6 +141,10 @@ export async function POST(request: NextRequest) {
             quantity: 1,
             unitUsd,
             amount: Number(activeBacking.amount),
+            backingAmount: Number(activeBacking.backing_amount),
+            requiredBackingUsd: Number(activeBacking.required_backing_usd),
+            processingFeeAmount: Number(activeBacking.processing_fee_amount),
+            processingFeePolicy: activeBacking.processing_fee_policy,
             currency: activeBacking.currency,
             initPoint: existingCheckout,
             reused: true,
@@ -137,17 +180,34 @@ export async function POST(request: NextRequest) {
     }
 
     const quote = await getFlowCheckoutQuote();
+    const requiredBackingUsd = roundMoney(unitUsd * quantity);
     const checkoutUnitAmount = roundMoney(unitUsd * quote.fxRateOriginalPerUsd);
-    const amount = roundMoney(checkoutUnitAmount * quantity);
+    const backingAmount = roundMoney(requiredBackingUsd * quote.fxRateOriginalPerUsd);
+    const processingFeeUsd = processingFeePolicy === "customer_buffer"
+      ? roundMoney((requiredBackingUsd * processingFeeBps) / 10_000 + processingFeeFixedUsd)
+      : 0;
+    const processingFeeAmount = processingFeePolicy === "customer_buffer"
+      ? roundMoney(processingFeeUsd * quote.fxRateOriginalPerUsd)
+      : 0;
+    const amount = roundMoney(backingAmount + processingFeeAmount);
     const externalReference = `flow:${randomUUID()}`;
     const initialMetadata = {
       recipientSlug: recipient.slug,
       recipientName: recipient.display_name,
       flowUsdUnitValue: unitUsd,
+      requiredBackingUsd,
       checkoutUnitAmount,
+      backingAmount,
+      processingFeeAmount,
+      processingFeeUsd,
+      processingFeePolicy,
+      processingFeeBps,
+      processingFeeFixedUsd,
       quoteSourceDate: quote.sourceDate,
       operationType,
       targetAssetId,
+      reserveAccountId: reserveAccount.id,
+      reserveCollectorId: mpConfig.userId,
     };
 
     const { data: operation, error: operationError } = await admin
@@ -163,6 +223,10 @@ export async function POST(request: NextRequest) {
         quantity,
         unit_usd: unitUsd,
         amount,
+        backing_amount: backingAmount,
+        required_backing_usd: requiredBackingUsd,
+        processing_fee_amount: processingFeeAmount,
+        processing_fee_policy: processingFeePolicy,
         currency: quote.checkoutCurrency,
         status: "pending",
         backing_status: "pending",
@@ -184,8 +248,14 @@ export async function POST(request: NextRequest) {
 
     const appBase = (process.env.APP_BASE_URL?.trim() || "https://clouva.com.ar").replace(/\/$/, "");
     const returnUrl = `${appBase}/mi-flow/billetera/flows?operation=${encodeURIComponent(operation.id)}`;
-    const preference = await new MercadoPagoProvider().createPreference({
-      items: [{ title, quantity, unitPrice: checkoutUnitAmount, currency: quote.checkoutCurrency }],
+    const items = [
+      { title, quantity: 1, unitPrice: backingAmount, currency: quote.checkoutCurrency },
+      ...(processingFeeAmount > 0
+        ? [{ title: "Procesamiento de pago FLOW", quantity: 1, unitPrice: processingFeeAmount, currency: quote.checkoutCurrency }]
+        : []),
+    ];
+    const preference = await new MercadoPagoProvider(mpConfig).createPreference({
+      items,
       payer: user.email ? { email: user.email } : undefined,
       externalReference,
       backUrls: {
@@ -215,6 +285,10 @@ export async function POST(request: NextRequest) {
       targetAssetId,
       quantity,
       unitUsd,
+      requiredBackingUsd,
+      backingAmount,
+      processingFeeAmount,
+      processingFeePolicy,
       amount,
       currency: quote.checkoutCurrency,
       fxRate: quote.fxRateOriginalPerUsd,
