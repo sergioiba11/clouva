@@ -1,25 +1,57 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Storage } from "@google-cloud/storage";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { MediaApiError, requireMediaAdmin } from "@/lib/server/media-auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-// clouva-generated-media is the canonical media bucket already used by the
-// production Cloud Run runtime. Keep admin assets isolated under this prefix.
+type AssetSource = "gcs" | "supabase";
+
+type UnifiedAsset = {
+  source: AssetSource;
+  bucket: string;
+  name: string;
+  path: string;
+  folder: string;
+  url: string | null;
+  size: number;
+  contentType: string | null;
+  updatedAt: string | null;
+};
+
+type StorageBucket = {
+  source: AssetSource;
+  name: string;
+  public: boolean | null;
+};
+
 const BUCKET_NAME = process.env.CLOUVA_ADMIN_ASSETS_BUCKET ?? process.env.CLOUVA_GENERATED_MEDIA_BUCKET ?? "clouva-generated-media";
 const ROOT_PREFIX = "admin-assets";
 const MAX_BYTES = 50 * 1024 * 1024;
+const LIST_PAGE_SIZE = 1000;
+const SIGNED_URL_TTL_SECONDS = 60 * 60;
 const ALLOWED_MIME = new Set([
   "image/png",
   "image/jpeg",
   "image/webp",
   "image/svg+xml",
+  "image/gif",
+  "video/mp4",
+  "video/webm",
+  "audio/mpeg",
+  "audio/wav",
+  "audio/ogg",
   "model/gltf-binary",
   "model/gltf+json",
   "application/octet-stream",
   "application/pdf",
+  "application/json",
+  "font/ttf",
+  "font/otf",
+  "font/woff",
+  "font/woff2",
 ]);
 
 const FLOWS_ASSET_RENAMES = [
@@ -31,8 +63,6 @@ const FLOWS_ASSET_RENAMES = [
   ["file_000000009098820eac4d055c6bc1ba08.png", "06_flows_oceania.png"],
 ] as const;
 
-// Assets generated for the premium Mobile Home. Keep the generated IDs only as
-// migration aliases; the canonical names describe their real role in CLOUVA.
 const HOME_ASSET_RENAMES = [
   ["file_000000004938820e8f838ddf57895198.png", "01_home_mobile_hero.png"],
   ["file_000000004348820ebe4774ceb8daa79a.png", "02_home_mobile_orbits.png"],
@@ -55,7 +85,7 @@ function safeSegment(value: string) {
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^a-zA-Z0-9._-]+/g, "-")
     .replace(/^-+|-+$/g, "")
-    .slice(0, 120) || "asset";
+    .slice(0, 160) || "asset";
 }
 
 function normalizeFolder(value: string) {
@@ -67,8 +97,23 @@ function objectPrefix(folder: string) {
   return `${ROOT_PREFIX}/${folder}`;
 }
 
-function publicUrl(objectPath: string) {
-  return `https://storage.googleapis.com/${BUCKET_NAME}/${objectPath.split("/").map(encodeURIComponent).join("/")}`;
+function publicGcsUrl(bucket: string, objectPath: string) {
+  return `https://storage.googleapis.com/${bucket}/${objectPath.split("/").map(encodeURIComponent).join("/")}`;
+}
+
+function folderOf(path: string) {
+  const index = path.lastIndexOf("/");
+  return index >= 0 ? path.slice(0, index) : "";
+}
+
+function normalizeSource(value: string | null): AssetSource | "all" {
+  return value === "gcs" || value === "supabase" ? value : "all";
+}
+
+function matchesQuery(asset: UnifiedAsset, query: string) {
+  if (!query) return true;
+  const haystack = `${asset.name} ${asset.path} ${asset.bucket} ${asset.contentType ?? ""} ${asset.source}`.toLowerCase();
+  return haystack.includes(query.toLowerCase());
 }
 
 async function renameCanonicalBrandAssets(folder: string) {
@@ -86,19 +131,143 @@ async function renameCanonicalBrandAssets(folder: string) {
       if (!currentExists) continue;
 
       const [canonicalExists] = await canonicalFile.exists();
-      if (canonicalExists) {
-        console.warn(`[admin-assets] canonical asset already exists: ${canonicalPath}`);
-        continue;
-      }
-
+      if (canonicalExists) continue;
       await currentFile.move(canonicalPath);
-      console.info(`[admin-assets] renamed ${currentPath} -> ${canonicalPath}`);
     } catch (error) {
-      // A rename must never prevent the admin library from loading. The next
-      // refresh retries any asset that still has its generated file_* name.
       console.error(`[admin-assets] could not rename ${currentPath}`, error);
     }
   }
+}
+
+async function listGcsAssets(query: string): Promise<UnifiedAsset[]> {
+  const [files] = await getStorage().bucket(BUCKET_NAME).getFiles({ autoPaginate: true });
+  return files
+    .filter((file) => file.name && !file.name.endsWith("/"))
+    .map((file) => ({
+      source: "gcs" as const,
+      bucket: BUCKET_NAME,
+      name: file.name.split("/").at(-1) ?? file.name,
+      path: file.name,
+      folder: folderOf(file.name),
+      url: publicGcsUrl(BUCKET_NAME, file.name),
+      size: Number(file.metadata.size ?? 0),
+      contentType: file.metadata.contentType ?? null,
+      updatedAt: file.metadata.updated ?? null,
+    }))
+    .filter((asset) => matchesQuery(asset, query));
+}
+
+function isSupabaseFolder(item: { id?: string | null; metadata?: unknown }) {
+  return !item.id && !item.metadata;
+}
+
+async function listSupabaseObjects(admin: SupabaseClient, bucketName: string): Promise<UnifiedAsset[]> {
+  const bucket = admin.storage.from(bucketName);
+  const stack = [""];
+  const assets: UnifiedAsset[] = [];
+
+  while (stack.length) {
+    const folder = stack.pop() ?? "";
+    let offset = 0;
+
+    for (;;) {
+      const { data, error } = await bucket.list(folder, {
+        limit: LIST_PAGE_SIZE,
+        offset,
+        sortBy: { column: "name", order: "asc" },
+      });
+      if (error) throw new MediaApiError(`No se pudo leer ${bucketName}: ${error.message}`, 502, "supabase_storage_list_failed");
+
+      const entries = data ?? [];
+      for (const item of entries) {
+        const path = folder ? `${folder}/${item.name}` : item.name;
+        if (isSupabaseFolder(item)) {
+          stack.push(path);
+          continue;
+        }
+
+        const metadata = item.metadata && typeof item.metadata === "object" ? item.metadata as Record<string, unknown> : {};
+        assets.push({
+          source: "supabase",
+          bucket: bucketName,
+          name: item.name,
+          path,
+          folder,
+          url: null,
+          size: Number(metadata.size ?? 0),
+          contentType: typeof metadata.mimetype === "string" ? metadata.mimetype : null,
+          updatedAt: item.updated_at ?? item.created_at ?? null,
+        });
+      }
+
+      if (entries.length < LIST_PAGE_SIZE) break;
+      offset += entries.length;
+    }
+  }
+
+  return assets;
+}
+
+async function attachSupabaseUrls(admin: SupabaseClient, bucketInfo: { id: string; public: boolean }, assets: UnifiedAsset[]) {
+  if (!assets.length) return assets;
+  const bucket = admin.storage.from(bucketInfo.id);
+
+  if (bucketInfo.public) {
+    return assets.map((asset) => ({ ...asset, url: bucket.getPublicUrl(asset.path).data.publicUrl }));
+  }
+
+  const byPath = new Map<string, string>();
+  for (let index = 0; index < assets.length; index += 100) {
+    const paths = assets.slice(index, index + 100).map((asset) => asset.path);
+    const { data, error } = await bucket.createSignedUrls(paths, SIGNED_URL_TTL_SECONDS);
+    if (error) {
+      console.error(`[admin-assets] could not sign ${bucketInfo.id}`, error);
+      continue;
+    }
+    for (const signed of data ?? []) {
+      if (signed.path && signed.signedUrl) byPath.set(signed.path, signed.signedUrl);
+    }
+  }
+
+  return assets.map((asset) => ({ ...asset, url: byPath.get(asset.path) ?? null }));
+}
+
+async function listSupabaseAssets(admin: SupabaseClient, requestedBucket: string, query: string) {
+  const { data: buckets, error } = await admin.storage.listBuckets();
+  if (error) throw new MediaApiError(`No se pudieron listar los buckets de Supabase: ${error.message}`, 502, "supabase_bucket_list_failed");
+
+  const selected = (buckets ?? []).filter((bucket) => !requestedBucket || bucket.id === requestedBucket || bucket.name === requestedBucket);
+  const all: UnifiedAsset[] = [];
+
+  for (const bucketInfo of selected) {
+    const objects = await listSupabaseObjects(admin, bucketInfo.id);
+    const filtered = objects.filter((asset) => matchesQuery(asset, query));
+    all.push(...await attachSupabaseUrls(admin, { id: bucketInfo.id, public: Boolean(bucketInfo.public) }, filtered));
+  }
+
+  const bucketList: StorageBucket[] = (buckets ?? []).map((bucket) => ({
+    source: "supabase",
+    name: bucket.id,
+    public: Boolean(bucket.public),
+  }));
+
+  return { items: all, buckets: bucketList };
+}
+
+async function assertSupabaseBucket(admin: SupabaseClient, bucketName: string) {
+  if (!bucketName) throw new MediaApiError("Falta el bucket del asset.", 400, "bucket_required");
+  const { data, error } = await admin.storage.getBucket(bucketName);
+  if (error || !data) throw new MediaApiError("El bucket de Supabase no existe.", 404, "bucket_not_found");
+  return data;
+}
+
+function parseMutationBody(value: unknown) {
+  const body = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const source = body.source === "gcs" || body.source === "supabase" ? body.source : null;
+  const bucket = typeof body.bucket === "string" ? body.bucket : "";
+  const path = typeof body.path === "string" ? body.path : "";
+  if (!source || !path) throw new MediaApiError("Asset inválido.", 400, "invalid_asset");
+  return { source, bucket, path } as { source: AssetSource; bucket: string; path: string };
 }
 
 function assetStorageError(error: unknown) {
@@ -119,23 +288,33 @@ function assetStorageError(error: unknown) {
 
 export async function GET(request: NextRequest) {
   try {
-    await requireMediaAdmin(request);
-    const folder = normalizeFolder(request.nextUrl.searchParams.get("folder") ?? "uploads");
-    await renameCanonicalBrandAssets(folder);
-    const prefix = objectPrefix(folder);
-    const [files] = await getStorage().bucket(BUCKET_NAME).getFiles({ prefix: `${prefix}/`, autoPaginate: false, maxResults: 100 });
-    const items = files
-      .filter((file) => file.name && !file.name.endsWith("/"))
-      .map((file) => ({
-        name: file.name.split("/").at(-1) ?? file.name,
-        path: file.name,
-        url: publicUrl(file.name),
-        size: Number(file.metadata.size ?? 0),
-        contentType: file.metadata.contentType ?? null,
-        updatedAt: file.metadata.updated ?? null,
-      }))
-      .sort((a, b) => String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? "")));
-    return NextResponse.json({ bucket: BUCKET_NAME, folder, items });
+    const { admin } = await requireMediaAdmin(request);
+    const source = normalizeSource(request.nextUrl.searchParams.get("source"));
+    const requestedBucket = request.nextUrl.searchParams.get("bucket")?.trim() ?? "";
+    const query = request.nextUrl.searchParams.get("q")?.trim() ?? "";
+
+    const items: UnifiedAsset[] = [];
+    const buckets: StorageBucket[] = [];
+
+    if (source === "all" || source === "gcs") {
+      items.push(...await listGcsAssets(query));
+      buckets.push({ source: "gcs", name: BUCKET_NAME, public: true });
+    }
+
+    if (source === "all" || source === "supabase") {
+      const supabase = await listSupabaseAssets(admin, source === "supabase" ? requestedBucket : "", query);
+      items.push(...supabase.items);
+      buckets.push(...supabase.buckets);
+    }
+
+    items.sort((a, b) => String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? "")) || a.path.localeCompare(b.path));
+
+    return NextResponse.json({
+      items,
+      buckets,
+      total: items.length,
+      gcsBucket: BUCKET_NAME,
+    });
   } catch (error) {
     const mapped = assetStorageError(error);
     return NextResponse.json(mapped.body, { status: mapped.status });
@@ -153,6 +332,7 @@ export async function POST(request: NextRequest) {
     if (!ALLOWED_MIME.has(mimeType)) throw new MediaApiError("Formato no permitido.", 415, "invalid_file_type");
 
     const folder = normalizeFolder(String(form.get("folder") ?? "uploads"));
+    await renameCanonicalBrandAssets(folder);
     const requestedName = String(form.get("name") ?? "").trim();
     const originalName = safeSegment(file.name);
     const finalName = requestedName ? safeSegment(requestedName) : originalName;
@@ -165,7 +345,81 @@ export async function POST(request: NextRequest) {
       metadata: { cacheControl: "public, max-age=300" },
     });
 
-    return NextResponse.json({ ok: true, asset: { name: finalName, path: objectPath, url: publicUrl(objectPath), size: bytes.length, contentType: mimeType } });
+    return NextResponse.json({
+      ok: true,
+      asset: {
+        source: "gcs",
+        bucket: BUCKET_NAME,
+        name: finalName,
+        path: objectPath,
+        folder: folderOf(objectPath),
+        url: publicGcsUrl(BUCKET_NAME, objectPath),
+        size: bytes.length,
+        contentType: mimeType,
+        updatedAt: new Date().toISOString(),
+      },
+    });
+  } catch (error) {
+    const mapped = assetStorageError(error);
+    return NextResponse.json(mapped.body, { status: mapped.status });
+  }
+}
+
+export async function PATCH(request: NextRequest) {
+  try {
+    const { admin } = await requireMediaAdmin(request);
+    const raw = await request.json();
+    const { source, bucket, path } = parseMutationBody(raw);
+    const requestedName = typeof raw?.name === "string" ? raw.name.trim() : "";
+    if (!requestedName) throw new MediaApiError("Escribí el nuevo nombre.", 400, "name_required");
+
+    const finalName = safeSegment(requestedName);
+    const folder = folderOf(path);
+    const nextPath = folder ? `${folder}/${finalName}` : finalName;
+    if (nextPath === path) return NextResponse.json({ ok: true, path, name: finalName });
+
+    if (source === "gcs") {
+      if (bucket && bucket !== BUCKET_NAME) throw new MediaApiError("Bucket de Cloud Storage inválido.", 400, "invalid_bucket");
+      const gcsBucket = getStorage().bucket(BUCKET_NAME);
+      const [sourceExists] = await gcsBucket.file(path).exists();
+      if (!sourceExists) throw new MediaApiError("El asset ya no existe.", 404, "asset_not_found");
+      const [targetExists] = await gcsBucket.file(nextPath).exists();
+      if (targetExists) throw new MediaApiError("Ya existe un asset con ese nombre en esta carpeta.", 409, "asset_name_conflict");
+      await gcsBucket.file(path).move(nextPath);
+    } else {
+      await assertSupabaseBucket(admin, bucket);
+      const folderPath = folderOf(nextPath);
+      const { data: siblings, error: siblingError } = await admin.storage.from(bucket).list(folderPath, { search: finalName, limit: 100 });
+      if (siblingError) throw new MediaApiError(`No se pudo validar el nombre: ${siblingError.message}`, 502, "supabase_storage_list_failed");
+      if ((siblings ?? []).some((item) => item.name === finalName && item.id)) {
+        throw new MediaApiError("Ya existe un asset con ese nombre en esta carpeta.", 409, "asset_name_conflict");
+      }
+      const { error } = await admin.storage.from(bucket).move(path, nextPath);
+      if (error) throw new MediaApiError(`No se pudo renombrar: ${error.message}`, 502, "asset_rename_failed");
+    }
+
+    return NextResponse.json({ ok: true, path: nextPath, name: finalName });
+  } catch (error) {
+    const mapped = assetStorageError(error);
+    return NextResponse.json(mapped.body, { status: mapped.status });
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  try {
+    const { admin } = await requireMediaAdmin(request);
+    const { source, bucket, path } = parseMutationBody(await request.json());
+
+    if (source === "gcs") {
+      if (bucket && bucket !== BUCKET_NAME) throw new MediaApiError("Bucket de Cloud Storage inválido.", 400, "invalid_bucket");
+      await getStorage().bucket(BUCKET_NAME).file(path).delete();
+    } else {
+      await assertSupabaseBucket(admin, bucket);
+      const { error } = await admin.storage.from(bucket).remove([path]);
+      if (error) throw new MediaApiError(`No se pudo eliminar: ${error.message}`, 502, "asset_delete_failed");
+    }
+
+    return NextResponse.json({ ok: true, path });
   } catch (error) {
     const mapped = assetStorageError(error);
     return NextResponse.json(mapped.body, { status: mapped.status });
