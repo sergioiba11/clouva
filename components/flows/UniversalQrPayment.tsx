@@ -52,6 +52,12 @@ type PaymentOperation = {
   sandbox?: boolean;
 };
 
+type UniversalQrPaymentProps = {
+  embedded?: boolean;
+  onClose?: () => void;
+  onPaymentConfirmed?: () => void;
+};
+
 function money(value: string | number | null | undefined, currency = "ARS") {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return "—";
@@ -63,10 +69,11 @@ function when(value: string | null | undefined) {
   return new Date(value).toLocaleString("es-AR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
-export function UniversalQrPayment() {
+export function UniversalQrPayment({ embedded = false, onClose, onPaymentConfirmed }: UniversalQrPaymentProps = {}) {
   const { session, loading: authLoading } = useAuth();
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const scannerControls = useRef<{ stop(): void } | null>(null);
+  const confirmedNotifiedRef = useRef<string | null>(null);
   const [cameraBusy, setCameraBusy] = useState(false);
   const [cameraOn, setCameraOn] = useState(false);
   const [rawQr, setRawQr] = useState("");
@@ -129,6 +136,7 @@ export function UniversalQrPayment() {
 
   function reset() {
     stopCamera();
+    confirmedNotifiedRef.current = null;
     setRawQr("");
     setOperationId(null);
     setResolution(null);
@@ -213,11 +221,25 @@ export function UniversalQrPayment() {
   const pending = payment && ["flow_held", "payment_submitted", "payment_pending"].includes(payment.status);
   const unsupported = resolution && resolution.capability !== "PAYABLE";
 
+  useEffect(() => {
+    if (!confirmed || !payment?.id || confirmedNotifiedRef.current === payment.id) return;
+    confirmedNotifiedRef.current = payment.id;
+    window.dispatchEvent(new Event("clouva:flows-changed"));
+    onPaymentConfirmed?.();
+  }, [confirmed, onPaymentConfirmed, payment?.id]);
+
   return (
-    <div className="mx-auto w-full max-w-lg px-4 pb-24 pt-4 sm:pt-8">
-      <div className="mb-5 flex items-center justify-between">
-        <Link href="/mi-flow/billetera" className="inline-flex items-center gap-2 text-sm text-white/55 hover:text-white"><ArrowLeft size={16}/>Mi Flow</Link>
-        {operationId || resolution ? <button type="button" onClick={reset} className="inline-flex items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-xs text-white/55"><RefreshCw size={14}/>Nuevo QR</button> : null}
+    <div className={embedded ? "w-full" : "mx-auto w-full max-w-lg px-4 pb-24 pt-4 sm:pt-8"}>
+      <div className={`flex items-center justify-between ${embedded ? "mb-3" : "mb-5"}`}>
+        {embedded ? (
+          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[.16em] text-violet-300/65"><QrCode size={15}/>Pago desde Mi Flow</div>
+        ) : (
+          <Link href="/mi-flow/billetera?asset=flows" className="inline-flex items-center gap-2 text-sm text-white/55 hover:text-white"><ArrowLeft size={16}/>Mi Flow</Link>
+        )}
+        <div className="flex items-center gap-2">
+          {operationId || resolution ? <button type="button" onClick={reset} className="inline-flex items-center gap-2 rounded-xl border border-white/10 px-3 py-2 text-xs text-white/55"><RefreshCw size={14}/>Nuevo QR</button> : null}
+          {embedded && onClose ? <button type="button" onClick={()=>{stopCamera();onClose();}} aria-label="Cerrar pago QR" className="grid h-9 w-9 place-items-center rounded-xl border border-white/10 text-white/45 hover:text-white"><X size={16}/></button> : null}
+        </div>
       </div>
 
       <section className="overflow-hidden rounded-[30px] border border-violet-400/20 bg-[radial-gradient(circle_at_50%_-10%,rgba(124,58,237,.3),transparent_42%),#09070e] shadow-[0_30px_120px_rgba(91,33,182,.22)]">
@@ -239,7 +261,7 @@ export function UniversalQrPayment() {
             <textarea value={rawQr} onChange={(event)=>setRawQr(event.target.value)} rows={4} placeholder="Pegá el contenido RAW del QR" className="w-full resize-none rounded-2xl border border-white/10 bg-black/30 p-4 text-sm text-white outline-none placeholder:text-white/25 focus:border-violet-400/40"/>
             {process.env.NODE_ENV !== "production" ? <button type="button" onClick={()=>setRawQr("CLOUVA-SANDBOX:KIOSK:KIOSCO_PEPE:ARS:8500.00")} className="mt-2 text-xs text-violet-300/65">Cargar fixture Kiosco Pepe · $8.500</button> : null}
             <button type="button" onClick={resolveQr} disabled={!rawQr.trim()||busy||authLoading||!session?.access_token} className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl border border-violet-400/25 bg-violet-400/[.08] px-5 py-3.5 font-semibold text-violet-100 disabled:opacity-35">{busy?<Loader2 size={18} className="animate-spin"/>:<ScanLine size={18}/>}Resolver QR</button>
-            {!authLoading&&!session?.access_token?<Link href="/login?next=%2Fmi-flow%2Fpagar-qr" className="mt-3 block text-center text-sm text-violet-300">Iniciar sesión para continuar</Link>:null}
+            {!authLoading&&!session?.access_token?<Link href={embedded?"/login?next=%2Fmi-flow%2Fbilletera%3Fasset%3Dflows%26action%3Dpay-qr":"/login?next=%2Fmi-flow%2Fpagar-qr"} className="mt-3 block text-center text-sm text-violet-300">Iniciar sesión para continuar</Link>:null}
           </div>
         ) : null}
 
@@ -259,7 +281,7 @@ export function UniversalQrPayment() {
 
             {quote && !confirmed ? <div className="rounded-[24px] border border-violet-300/20 bg-violet-400/[.07] p-5"><p className="text-[10px] font-bold uppercase tracking-[.18em] text-violet-200/65">Confirmación</p><div className="mt-3 flex items-baseline justify-between gap-4"><span className="text-sm text-white/45">Comercio</span><b>{money(quote.merchantAmount,quote.merchantCurrency)}</b></div><div className="mt-2 flex items-baseline justify-between gap-4"><span className="text-sm text-white/45">Se usarán</span><b className="text-2xl">{quote.totalFlow} FLOW</b></div><div className="mt-2 flex items-baseline justify-between gap-4 text-xs"><span className="text-white/35">FX</span><span className="text-white/55">1 USD = {quote.fxRate} ARS · {quote.fxSource}</span></div><div className="mt-4 flex gap-2 rounded-xl border border-emerald-300/10 bg-emerald-300/[.04] p-3 text-xs leading-5 text-emerald-100/70"><ShieldCheck className="mt-0.5 shrink-0" size={16}/><p>Al confirmar, CLOUVA hace hold exacto de tus unidades FLOW. Solo se redimen si el provider confirma el pago.</p></div><button type="button" onClick={pay} disabled={busy||Boolean(pending)} className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-violet-600 px-5 py-3.5 font-semibold disabled:opacity-45">{busy||pending?<Loader2 size={18} className="animate-spin"/>:null}{pending?"Esperando confirmación…":"Confirmar pago"}</button><p className="mt-2 text-center text-[10px] text-white/25">Cotización hasta {when(quote.expiresAt)}</p></div> : null}
 
-            {confirmed ? <div className="rounded-[24px] border border-emerald-300/20 bg-emerald-300/[.07] p-5"><div className="flex items-center gap-2 text-lg font-semibold text-emerald-100"><CheckCircle2 size={22}/>PAGO CONFIRMADO</div><dl className="mt-4 space-y-2 text-sm"><ReceiptRow label="Comercio" value={payment?.merchant_name||resolution.merchant?.name||"Comercio"}/><ReceiptRow label="Pagó el comercio" value={money(payment?.merchant_amount, payment?.merchant_currency||"ARS")}/><ReceiptRow label="FLOW usados" value={`${payment?.totalFlow||quote.totalFlow} FLOW`}/><ReceiptRow label="Provider" value={payment?.provider||resolution.provider||"—"}/><ReceiptRow label="Provider payment" value={payment?.provider_payment_id||"—"}/><ReceiptRow label="QR transaction" value={payment?.qr_transaction_id||"—"}/><ReceiptRow label="Fecha" value={when(payment?.confirmed_at)}/><ReceiptRow label="Operation ID" value={payment?.id||operationId||"—"}/></dl><Link href="/mi-flow/billetera?asset=flows" className="mt-5 flex w-full items-center justify-center rounded-xl border border-emerald-300/20 px-4 py-3 text-sm font-semibold text-emerald-100">Ver en Mi Flow</Link></div> : null}
+            {confirmed ? <div className="rounded-[24px] border border-emerald-300/20 bg-emerald-300/[.07] p-5"><div className="flex items-center gap-2 text-lg font-semibold text-emerald-100"><CheckCircle2 size={22}/>PAGO CONFIRMADO</div><dl className="mt-4 space-y-2 text-sm"><ReceiptRow label="Comercio" value={payment?.merchant_name||resolution.merchant?.name||"Comercio"}/><ReceiptRow label="Pagó el comercio" value={money(payment?.merchant_amount, payment?.merchant_currency||"ARS")}/><ReceiptRow label="FLOW usados" value={`${payment?.totalFlow||quote.totalFlow} FLOW`}/><ReceiptRow label="Provider" value={payment?.provider||resolution.provider||"—"}/><ReceiptRow label="Provider payment" value={payment?.provider_payment_id||"—"}/><ReceiptRow label="QR transaction" value={payment?.qr_transaction_id||"—"}/><ReceiptRow label="Fecha" value={when(payment?.confirmed_at)}/><ReceiptRow label="Operation ID" value={payment?.id||operationId||"—"}/></dl>{embedded?<button type="button" onClick={()=>{reset();onClose?.();}} className="mt-5 flex w-full items-center justify-center rounded-xl border border-emerald-300/20 px-4 py-3 text-sm font-semibold text-emerald-100">Volver a Mi Flow</button>:<Link href="/mi-flow/billetera?asset=flows" className="mt-5 flex w-full items-center justify-center rounded-xl border border-emerald-300/20 px-4 py-3 text-sm font-semibold text-emerald-100">Ver en Mi Flow</Link>}</div> : null}
 
             {payment?.sandbox&&pending&&process.env.NODE_ENV!=="production" ? <div className="grid grid-cols-2 gap-2"><button type="button" onClick={async()=>{setBusy(true);try{await api("/api/flows/qr/sandbox/settle",{method:"POST",body:JSON.stringify({operationId,outcome:"confirmed"})});await recover(operationId!)}catch(cause){setError(cause instanceof Error?cause.message:"Sandbox error")}finally{setBusy(false)}}} className="rounded-xl border border-emerald-300/20 px-3 py-2 text-xs text-emerald-200">Sandbox: confirmar</button><button type="button" onClick={async()=>{setBusy(true);try{await api("/api/flows/qr/sandbox/settle",{method:"POST",body:JSON.stringify({operationId,outcome:"failed"})});await recover(operationId!)}catch(cause){setError(cause instanceof Error?cause.message:"Sandbox error")}finally{setBusy(false)}}} className="rounded-xl border border-rose-300/20 px-3 py-2 text-xs text-rose-200">Sandbox: rechazar</button></div>:null}
           </div>
