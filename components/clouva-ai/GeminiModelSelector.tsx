@@ -25,7 +25,7 @@ function saveModel(model: string) {
   document.cookie = `${COOKIE_NAME}=${encodeURIComponent(model)}; path=/; max-age=31536000; samesite=lax`;
 }
 
-export function GeminiModelSelector() {
+export function GeminiModelSelector({ preferredModel }: { preferredModel?: string } = {}) {
   const [models, setModels] = useState<ModelOption[]>([]);
   const [selected, setSelected] = useState("");
   const [defaultModel, setDefaultModel] = useState("gemini-3.5-flash");
@@ -45,11 +45,13 @@ export function GeminiModelSelector() {
       const configuredDefault = payload.defaultModel ?? "gemini-3.5-flash";
       const saved = window.localStorage.getItem(STORAGE_KEY);
       const next =
-        saved && available.some((model) => model.id === saved)
-          ? saved
-          : available.some((model) => model.id === configuredDefault)
-            ? configuredDefault
-            : available[0]?.id ?? configuredDefault;
+        preferredModel && available.some((model) => model.id === preferredModel)
+          ? preferredModel
+          : saved && available.some((model) => model.id === saved)
+            ? saved
+            : available.some((model) => model.id === configuredDefault)
+              ? configuredDefault
+              : available[0]?.id ?? configuredDefault;
 
       setModels(available);
       setDefaultModel(configuredDefault);
@@ -64,7 +66,10 @@ export function GeminiModelSelector() {
 
   useEffect(() => {
     void loadModels();
-  }, []);
+    // `preferredModel` is a surface-level preference (Studio Designer uses
+    // Pro); if the caller changes surfaces, resolve availability again.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preferredModel]);
 
   const current = useMemo(
     () => models.find((model) => model.id === selected),
