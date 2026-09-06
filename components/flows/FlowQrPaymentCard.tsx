@@ -31,12 +31,13 @@ type Props = {
   profileImageUrl?: string | null;
 };
 
-function storageKey(publicToken: string) {
-  return `clouva:flow-qr-payment:${publicToken}`;
+function storageKey(publicToken: string, userId: string) {
+  return `clouva:flow-qr-payment:${userId}:${publicToken}`;
 }
 
 export function FlowQrPaymentCard({ publicToken, recipientLabel, profileHref, profileImageUrl }: Props) {
   const { session, loading } = useAuth();
+  const userId = session?.user.id ?? null;
   const [quantity, setQuantity] = useState(1);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -46,22 +47,29 @@ export function FlowQrPaymentCard({ publicToken, recipientLabel, profileHref, pr
   const recoveryStarted = useRef(false);
 
   function persist(operation: StoredOperation | null) {
-    if (typeof window === "undefined") return;
-    const key = storageKey(publicToken);
+    if (typeof window === "undefined" || !userId) return;
+    const key = storageKey(publicToken, userId);
     if (!operation) window.localStorage.removeItem(key);
     else window.localStorage.setItem(key, JSON.stringify(operation));
   }
 
   useEffect(() => {
     recoveryStarted.current = false;
+    setHydrated(false);
     setBusy(false);
     setError(null);
     setResult(null);
     setOperationId(null);
     setQuantity(1);
 
+    if (loading) return;
+    if (!userId) {
+      setHydrated(true);
+      return;
+    }
+
     try {
-      const raw = window.localStorage.getItem(storageKey(publicToken));
+      const raw = window.localStorage.getItem(storageKey(publicToken, userId));
       if (raw) {
         const stored = JSON.parse(raw) as StoredOperation;
         if (
@@ -77,11 +85,11 @@ export function FlowQrPaymentCard({ publicToken, recipientLabel, profileHref, pr
         }
       }
     } catch {
-      window.localStorage.removeItem(storageKey(publicToken));
+      window.localStorage.removeItem(storageKey(publicToken, userId));
     } finally {
       setHydrated(true);
     }
-  }, [publicToken]);
+  }, [loading, publicToken, userId]);
 
   async function postPayment(id: string, amount: number) {
     if (!session?.access_token) return;
@@ -120,8 +128,6 @@ export function FlowQrPaymentCard({ publicToken, recipientLabel, profileHref, pr
       }
       if (response.status !== 404) throw new Error(body.error || "No se pudo recuperar la operación FLOW.");
 
-      // No committed operation was found. Re-submit the exact same immutable
-      // intent: transfer_backed_flows + execute_flow_qr_transfer are idempotent.
       await postPayment(id, amount);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "No se pudo recuperar la operación FLOW.");
@@ -152,8 +158,6 @@ export function FlowQrPaymentCard({ publicToken, recipientLabel, profileHref, pr
     try {
       await postPayment(id, quantity);
     } catch (cause) {
-      // Keep operationId + quantity intact. A timeout, reload or retry must use
-      // the same identity so a committed response can be recovered safely.
       setError(cause instanceof Error ? cause.message : "No se pudo completar el pago en FLOW.");
     } finally {
       setBusy(false);
@@ -243,7 +247,10 @@ export function FlowQrPaymentCard({ publicToken, recipientLabel, profileHref, pr
             {paidQuantity} FLOW{paidQuantity === 1 ? "" : "S"} transferido{paidQuantity === 1 ? "" : "s"}.
             {Array.isArray(result.flowNumbers) && result.flowNumbers.length ? ` FLOW ${result.flowNumbers.map((value) => `#${String(value).padStart(6, "0")}`).join(", ")}.` : ""}
           </p>
-          <p className="mt-2 break-all font-mono text-[10px] text-emerald-100/45">Operación {result.operationId || operationId}</p>
+          <div className="mt-2 space-y-1 break-all font-mono text-[10px] text-emerald-100/45">
+            <p>Operación {result.operationId || operationId}</p>
+            {result.transferId ? <p>Transferencia {result.transferId}</p> : null}
+          </div>
           <Link href="/mi-flow" className="mt-3 inline-block text-sm font-semibold text-emerald-100/80 hover:text-emerald-50">Ver movimientos en Mi Flow</Link>
         </div>
       ) : null}
