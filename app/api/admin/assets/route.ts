@@ -31,6 +31,18 @@ const FLOWS_ASSET_RENAMES = [
   ["file_000000009098820eac4d055c6bc1ba08.png", "06_flows_oceania.png"],
 ] as const;
 
+// Assets generated for the premium Mobile Home. Keep the generated IDs only as
+// migration aliases; the canonical names describe their real role in CLOUVA.
+const HOME_ASSET_RENAMES = [
+  ["file_000000004938820e8f838ddf57895198.png", "01_home_mobile_hero.png"],
+  ["file_000000004348820ebe4774ceb8daa79a.png", "02_home_mobile_orbits.png"],
+  ["file_000000005524820eb958f10903989146.png", "01_home_mobile_hero_alt_01.png"],
+  ["file_00000000a81c820ebd05ed72c7f70012.png", "01_home_mobile_hero_alt_02.png"],
+  ["file_0000000064d8820eb014cdc3ef3f66a8.png", "01_home_mobile_hero_alt_03.png"],
+] as const;
+
+const BRAND_ASSET_RENAMES = [...FLOWS_ASSET_RENAMES, ...HOME_ASSET_RENAMES] as const;
+
 let storage: Storage | null = null;
 function getStorage() {
   if (!storage) storage = new Storage();
@@ -59,11 +71,11 @@ function publicUrl(objectPath: string) {
   return `https://storage.googleapis.com/${BUCKET_NAME}/${objectPath.split("/").map(encodeURIComponent).join("/")}`;
 }
 
-async function renameCanonicalFlowsAssets(folder: string) {
+async function renameCanonicalBrandAssets(folder: string) {
   if (folder !== "brand") return;
 
   const bucket = getStorage().bucket(BUCKET_NAME);
-  for (const [currentName, canonicalName] of FLOWS_ASSET_RENAMES) {
+  for (const [currentName, canonicalName] of BRAND_ASSET_RENAMES) {
     const currentPath = `${objectPrefix(folder)}/${currentName}`;
     const canonicalPath = `${objectPrefix(folder)}/${canonicalName}`;
     const currentFile = bucket.file(currentPath);
@@ -75,7 +87,7 @@ async function renameCanonicalFlowsAssets(folder: string) {
 
       const [canonicalExists] = await canonicalFile.exists();
       if (canonicalExists) {
-        console.warn(`[admin-assets] canonical FLOWS asset already exists: ${canonicalPath}`);
+        console.warn(`[admin-assets] canonical asset already exists: ${canonicalPath}`);
         continue;
       }
 
@@ -109,7 +121,7 @@ export async function GET(request: NextRequest) {
   try {
     await requireMediaAdmin(request);
     const folder = normalizeFolder(request.nextUrl.searchParams.get("folder") ?? "uploads");
-    await renameCanonicalFlowsAssets(folder);
+    await renameCanonicalBrandAssets(folder);
     const prefix = objectPrefix(folder);
     const [files] = await getStorage().bucket(BUCKET_NAME).getFiles({ prefix: `${prefix}/`, autoPaginate: false, maxResults: 100 });
     const items = files
