@@ -23,6 +23,77 @@ function statusForMessage(message: string) {
   return 500;
 }
 
+async function getOrCreateTransferIntent(args: {
+  admin: ReturnType<typeof createAdminSupabase>;
+  senderUserId: string;
+  recipientUserId: string;
+  recipientPlayerId: string;
+  publicToken: string;
+  quantity: number;
+  transferId: string;
+}) {
+  const { data: existing, error: existingError } = await args.admin
+    .from("flow_transfer_intents")
+    .select("id,sender_user_id,recipient_user_id,recipient_player_id,required_quantity,available_at_creation,missing_quantity,transfer_id,status,purchase_operation_id,expires_at,completed_at,last_safe_message")
+    .eq("transfer_id", args.transferId)
+    .maybeSingle();
+  if (existingError) throw new Error(existingError.message);
+
+  if (existing) {
+    if (
+      existing.sender_user_id !== args.senderUserId ||
+      existing.recipient_user_id !== args.recipientUserId ||
+      existing.recipient_player_id !== args.recipientPlayerId ||
+      Number(existing.required_quantity) !== args.quantity
+    ) {
+      throw new Error("La clave de idempotencia ya pertenece a otra transferencia FLOW.");
+    }
+    return existing;
+  }
+
+  const [{ data: wallet, error: walletError }, { data: senderPlayer, error: senderPlayerError }] = await Promise.all([
+    args.admin.from("flows_wallets").select("balance").eq("user_id", args.senderUserId).maybeSingle(),
+    args.admin.from("players").select("id").eq("owner_user_id", args.senderUserId).maybeSingle(),
+  ]);
+  if (walletError) throw new Error(walletError.message);
+  if (senderPlayerError) throw new Error(senderPlayerError.message);
+
+  const available = Math.max(0, Math.trunc(Number(wallet?.balance) || 0));
+  const missing = Math.max(args.quantity - available, 0);
+  if (missing <= 0) return null;
+
+  const { data: created, error: createError } = await args.admin
+    .from("flow_transfer_intents")
+    .insert({
+      sender_user_id: args.senderUserId,
+      sender_player_id: senderPlayer?.id ?? null,
+      recipient_user_id: args.recipientUserId,
+      recipient_player_id: args.recipientPlayerId,
+      public_token: args.publicToken,
+      required_quantity: args.quantity,
+      available_at_creation: available,
+      missing_quantity: missing,
+      transfer_id: args.transferId,
+      status: "awaiting_funding",
+      metadata: { origin: "player_qr", buyOnlyMissing: true },
+    })
+    .select("id,required_quantity,available_at_creation,missing_quantity,transfer_id,status,purchase_operation_id,expires_at,completed_at,last_safe_message")
+    .single();
+  if (createError) {
+    if (createError.code === "23505") {
+      const retry = await args.admin
+        .from("flow_transfer_intents")
+        .select("id,required_quantity,available_at_creation,missing_quantity,transfer_id,status,purchase_operation_id,expires_at,completed_at,last_safe_message")
+        .eq("transfer_id", args.transferId)
+        .maybeSingle();
+      if (retry.error) throw new Error(retry.error.message);
+      return retry.data;
+    }
+    throw new Error(createError.message);
+  }
+  return created;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const { user } = await requireUser(request);
@@ -77,6 +148,35 @@ export async function POST(request: NextRequest) {
     });
     if (error) {
       const message = error.message || "No se pudo completar el pago en FLOW.";
+      if (/Saldo de Flows insuficiente|No hay suficientes FLOWS/i.test(message)) {
+        const intent = await getOrCreateTransferIntent({
+          admin,
+          senderUserId: user.id,
+          recipientUserId,
+          recipientPlayerId: recipientPlayer.id,
+          publicToken,
+          quantity,
+          transferId,
+        });
+        if (intent) {
+          return NextResponse.json({
+            error: `Te faltan ${intent.missing_quantity} FLOW para completar este pago.`,
+            code: "FLOW_INSUFFICIENT",
+            intent: {
+              id: intent.id,
+              status: intent.status,
+              requiredQuantity: intent.required_quantity,
+              availableAtCreation: intent.available_at_creation,
+              missingQuantity: intent.missing_quantity,
+              transferId: intent.transfer_id,
+              purchaseOperationId: intent.purchase_operation_id,
+              expiresAt: intent.expires_at,
+              completedAt: intent.completed_at,
+              message: intent.last_safe_message,
+            },
+          }, { status: 409 });
+        }
+      }
       return NextResponse.json({ error: message }, { status: statusForMessage(message) });
     }
 
