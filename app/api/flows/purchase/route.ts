@@ -8,6 +8,8 @@ import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supa
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 type PlayerRow = {
   id: string;
   owner_user_id: string | null;
@@ -30,6 +32,7 @@ function positiveNumber(value: unknown, fallback = 0) {
 
 export async function POST(request: NextRequest) {
   let operationId: string | null = null;
+  let linkedTransferIntentId: string | null = null;
   try {
     if (!isBillingEnabled()) {
       return NextResponse.json({ error: "Los pagos todavía no están habilitados." }, { status: 503 });
@@ -40,10 +43,19 @@ export async function POST(request: NextRequest) {
       quantity?: unknown;
       recipientPlayerId?: unknown;
       backExistingAssetId?: unknown;
+      transferIntentId?: unknown;
     };
     const requestedQuantity = Math.max(1, Math.min(50, Math.trunc(Number(body.quantity) || 1)));
     const recipientPlayerId = typeof body.recipientPlayerId === "string" ? body.recipientPlayerId.trim() : "";
     const backExistingAssetId = typeof body.backExistingAssetId === "string" ? body.backExistingAssetId.trim() : "";
+    const transferIntentId = typeof body.transferIntentId === "string" ? body.transferIntentId.trim() : "";
+    if (transferIntentId && !UUID_RE.test(transferIntentId)) {
+      return NextResponse.json({ error: "La intención de transferencia es inválida." }, { status: 400 });
+    }
+    if (transferIntentId && backExistingAssetId) {
+      return NextResponse.json({ error: "Una compra para completar un pago QR no puede respaldar un FLOW legacy." }, { status: 400 });
+    }
+
     const admin = createAdminSupabase();
     const mpConfig = getMercadoPagoConfig();
 
@@ -101,7 +113,84 @@ export async function POST(request: NextRequest) {
     let targetAssetId: string | null = null;
     let title: string;
 
-    if (backExistingAssetId) {
+    if (transferIntentId) {
+      const { data: intent, error: intentError } = await admin
+        .from("flow_transfer_intents")
+        .select("id,sender_user_id,recipient_user_id,recipient_player_id,required_quantity,missing_quantity,status,expires_at,purchase_operation_id,transfer_id")
+        .eq("id", transferIntentId)
+        .eq("sender_user_id", user.id)
+        .maybeSingle();
+      if (intentError) throw new Error(intentError.message);
+      if (!intent) return NextResponse.json({ error: "La intención de transferencia no existe." }, { status: 404 });
+      if (["completed", "cancelled", "expired", "failed"].includes(intent.status)) {
+        return NextResponse.json({ error: `La intención de transferencia está ${intent.status}.` }, { status: 409 });
+      }
+      if (Date.parse(intent.expires_at) <= Date.now()) {
+        await admin.from("flow_transfer_intents").update({ status: "expired", updated_at: new Date().toISOString() }).eq("id", intent.id);
+        return NextResponse.json({ error: "La intención de transferencia venció." }, { status: 409 });
+      }
+      if (recipientPlayerId && recipientPlayerId !== intent.recipient_player_id) {
+        return NextResponse.json({ error: "El receptor no coincide con la intención de transferencia." }, { status: 409 });
+      }
+
+      if (intent.purchase_operation_id) {
+        const { data: existingOperation, error: existingOperationError } = await admin
+          .from("flow_purchase_operations")
+          .select("id,status,amount,currency,required_backing_usd,backing_amount,processing_fee_amount,processing_fee_policy,quantity,unit_usd,metadata")
+          .eq("id", intent.purchase_operation_id)
+          .maybeSingle();
+        if (existingOperationError) throw new Error(existingOperationError.message);
+        if (existingOperation) {
+          const existingCheckout = checkoutFromMetadata(existingOperation.metadata);
+          if (existingOperation.status === "pending" && existingCheckout) {
+            return NextResponse.json({
+              operationId: existingOperation.id,
+              transferIntentId: intent.id,
+              quantity: existingOperation.quantity,
+              unitUsd: Number(existingOperation.unit_usd),
+              amount: Number(existingOperation.amount),
+              backingAmount: Number(existingOperation.backing_amount),
+              requiredBackingUsd: Number(existingOperation.required_backing_usd),
+              processingFeeAmount: Number(existingOperation.processing_fee_amount),
+              processingFeePolicy: existingOperation.processing_fee_policy,
+              currency: existingOperation.currency,
+              initPoint: existingCheckout,
+              reused: true,
+              operationType: "purchase_new",
+            });
+          }
+          return NextResponse.json({ error: "La intención ya tiene una operación de compra asociada." }, { status: 409 });
+        }
+      }
+
+      const [{ data: wallet, error: walletError }, { data: intentRecipient, error: intentRecipientError }] = await Promise.all([
+        admin.from("flows_wallets").select("balance").eq("user_id", user.id).maybeSingle(),
+        admin.from("players").select("id,owner_user_id,display_name,slug").eq("id", intent.recipient_player_id).maybeSingle(),
+      ]);
+      if (walletError) throw new Error(walletError.message);
+      if (intentRecipientError) throw new Error(intentRecipientError.message);
+      if (!intentRecipient || intentRecipient.owner_user_id !== intent.recipient_user_id) {
+        return NextResponse.json({ error: "El receptor de la intención ya no es válido." }, { status: 409 });
+      }
+
+      const availableNow = Math.max(0, Math.trunc(Number(wallet?.balance) || 0));
+      const missingNow = Math.max(Number(intent.required_quantity) - availableNow, 0);
+      if (missingNow === 0) {
+        const { data: resumed, error: resumeError } = await admin.rpc("resume_flow_transfer_intent", { p_intent_id: intent.id });
+        if (resumeError) throw new Error(resumeError.message);
+        return NextResponse.json({ transferIntentId: intent.id, intentResolved: true, resumed });
+      }
+
+      quantity = missingNow;
+      recipient = buyerPlayer as PlayerRow | null;
+      linkedTransferIntentId = intent.id;
+      await admin
+        .from("flow_transfer_intents")
+        .update({ missing_quantity: missingNow, updated_at: new Date().toISOString(), metadata: { buyOnlyMissing: true, recalculatedAvailable: availableNow } })
+        .eq("id", intent.id)
+        .eq("sender_user_id", user.id);
+      title = quantity === 1 ? "CLOUVA FLOW · completar pago QR" : `CLOUVA FLOWS × ${quantity} · completar pago QR`;
+    } else if (backExistingAssetId) {
       const { data: asset, error: assetError } = await admin
         .from("flow_assets")
         .select("id,flow_number,status,owner_user_id,owner_player_id,backing_operation_id")
@@ -177,7 +266,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (!recipient?.owner_user_id) {
-      return NextResponse.json({ error: "El Player receptor debe tener una cuenta CLOUVA vinculada." }, { status: 422 });
+      return NextResponse.json({ error: "Tu cuenta debe tener un Player para recibir los FLOW comprados." }, { status: 422 });
     }
 
     const quote = await getFlowCheckoutQuote();
@@ -207,6 +296,7 @@ export async function POST(request: NextRequest) {
       quoteSourceDate: quote.sourceDate,
       operationType,
       targetAssetId,
+      transferIntentId: linkedTransferIntentId,
       collectionRailAccountId: collectionRail.id,
       collectionCollectorId: mpConfig.userId,
       paymentStage: "pending",
@@ -249,6 +339,16 @@ export async function POST(request: NextRequest) {
     if (operationError) throw new Error(operationError.message);
     operationId = operation.id;
 
+    if (linkedTransferIntentId) {
+      const { error: linkError } = await admin
+        .from("flow_transfer_intents")
+        .update({ purchase_operation_id: operation.id, status: "awaiting_funding", updated_at: new Date().toISOString() })
+        .eq("id", linkedTransferIntentId)
+        .eq("sender_user_id", user.id)
+        .is("purchase_operation_id", null);
+      if (linkError) throw new Error(linkError.message);
+    }
+
     const appBase = (process.env.APP_BASE_URL?.trim() || "https://clouva.com.ar").replace(/\/$/, "");
     const returnUrl = `${appBase}/mi-flow/billetera/flows?operation=${encodeURIComponent(operation.id)}`;
     const items = [
@@ -284,6 +384,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       operationId: operation.id,
+      transferIntentId: linkedTransferIntentId,
       operationType,
       targetAssetId,
       quantity,
@@ -308,6 +409,13 @@ export async function POST(request: NextRequest) {
         .update({ status: "failed", updated_at: new Date().toISOString() })
         .eq("id", operationId)
         .eq("status", "pending");
+      if (linkedTransferIntentId) {
+        await admin
+          .from("flow_transfer_intents")
+          .update({ purchase_operation_id: null, status: "awaiting_funding", updated_at: new Date().toISOString(), last_error_code: "checkout_failed", last_safe_message: "No se pudo iniciar la compra del faltante." })
+          .eq("id", linkedTransferIntentId)
+          .eq("purchase_operation_id", operationId);
+      }
     }
     const status = (error as Error & { status?: number })?.status ?? (isAuthError(error) ? 401 : 500);
     const message = error instanceof Error ? error.message : "No se pudo iniciar la compra de FLOWS.";
