@@ -19,10 +19,10 @@ set gallery = (
     group by image ->> 'url'
   ) as deduped
 )
-where (
-    jsonb_typeof(product.gallery) is distinct from 'array'
-    or jsonb_array_length(product.gallery) = 0
-  )
+where case
+    when jsonb_typeof(product.gallery) = 'array' then jsonb_array_length(product.gallery) = 0
+    else true
+  end
   and jsonb_typeof(product.metadata -> 'product_images' -> 'generated_images') = 'array'
   and jsonb_array_length(product.metadata -> 'product_images' -> 'generated_images') > 0;
 
@@ -40,8 +40,10 @@ set metadata = jsonb_set(
   true
 )
 where jsonb_typeof(product.metadata -> 'product_images') = 'object'
-  and jsonb_typeof(product.gallery) = 'array'
-  and jsonb_array_length(product.gallery) > 0
+  and case
+    when jsonb_typeof(product.gallery) = 'array' then jsonb_array_length(product.gallery) > 0
+    else false
+  end
   and not (product.metadata -> 'product_images' ? 'publication_master');
 
 commit;
