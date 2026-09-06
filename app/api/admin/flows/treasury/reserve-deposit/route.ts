@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getFlowCheckoutQuote } from "@/lib/server/flow-pricing";
 import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
 
 export const runtime = "nodejs";
@@ -40,33 +39,59 @@ export async function POST(request: NextRequest) {
     const occurredAtRaw = typeof body.occurredAt === "string" ? body.occurredAt.trim() : "";
     const occurredAt = occurredAtRaw && !Number.isNaN(Date.parse(occurredAtRaw)) ? new Date(occurredAtRaw).toISOString() : new Date().toISOString();
 
-    if (!operationId || !reserveAccountId || !Number.isFinite(amount) || amount <= 0 || !/^[A-Z]{3}$/.test(currency) || !idempotencyKey) {
-      return NextResponse.json({ error: "Faltan operación, cuenta, importe, moneda o clave de depósito." }, { status: 400 });
+    if (!operationId || !reserveAccountId || !Number.isFinite(amount) || amount <= 0 || !/^[A-Z]{3}$/.test(currency) || !custodyReference || !idempotencyKey) {
+      return NextResponse.json({ error: "Faltan operación, Reserva, importe, moneda, referencia real o clave de depósito." }, { status: 400 });
     }
 
     const [{ data: account, error: accountError }, { data: operation, error: operationError }] = await Promise.all([
-      admin.from("flow_reserve_accounts").select("id,name,provider,currency,status,is_active").eq("id", reserveAccountId).maybeSingle(),
-      admin.from("flow_purchase_operations").select("id,status,backing_status,recipient_user_id").eq("id", operationId).maybeSingle(),
+      admin
+        .from("flow_reserve_accounts")
+        .select("id,name,provider,currency,status,is_active,flow_account_role,authorized_for_flow,account_reference")
+        .eq("id", reserveAccountId)
+        .maybeSingle(),
+      admin
+        .from("flow_purchase_operations")
+        .select("id,status,backing_status,provider,currency,required_backing_usd,recipient_user_id,fx_rate_original_per_usd,fx_source,fx_quoted_at")
+        .eq("id", operationId)
+        .maybeSingle(),
     ]);
     if (accountError) throw new Error(accountError.message);
     if (operationError) throw new Error(operationError.message);
-    if (!account || !account.is_active || account.status !== "active") return NextResponse.json({ error: "Cuenta de reserva inválida." }, { status: 422 });
-    if (!operation || operation.status !== "confirmed") return NextResponse.json({ error: "La operación no está confirmada para recibir respaldo." }, { status: 422 });
-    if (account.currency.toUpperCase() !== currency) return NextResponse.json({ error: `La cuenta de reserva recibe ${account.currency}.` }, { status: 422 });
+    if (
+      !account
+      || account.flow_account_role !== "reserve"
+      || !account.authorized_for_flow
+      || !account.account_reference
+      || !account.is_active
+      || account.status !== "active"
+    ) {
+      return NextResponse.json({ error: "La cuenta elegida no es una Reserva CLOUVA autorizada." }, { status: 422 });
+    }
+    if (!operation || operation.status !== "confirmed") {
+      return NextResponse.json({ error: "La operación no está confirmada para recibir respaldo." }, { status: 422 });
+    }
+    if (account.currency.toUpperCase() !== currency) {
+      return NextResponse.json({ error: `La Reserva recibe ${account.currency}.` }, { status: 422 });
+    }
 
     let referenceUsdAmount: number;
     if (currency === "USD") {
       referenceUsdAmount = amount;
+    } else if (
+      operation.currency?.toUpperCase() === currency
+      && Number.isFinite(Number(operation.fx_rate_original_per_usd))
+      && Number(operation.fx_rate_original_per_usd) > 0
+    ) {
+      referenceUsdAmount = amount / Number(operation.fx_rate_original_per_usd);
     } else {
-      const quote = await getFlowCheckoutQuote();
-      if (quote.checkoutCurrency.toUpperCase() !== currency || !Number.isFinite(quote.fxRateOriginalPerUsd) || quote.fxRateOriginalPerUsd <= 0) {
-        return NextResponse.json({ error: `No hay cotización canónica disponible para ${currency}.` }, { status: 422 });
-      }
-      referenceUsdAmount = amount / quote.fxRateOriginalPerUsd;
+      return NextResponse.json(
+        { error: `No existe un FX histórico verificable de esta operación para valorar un ingreso en ${currency}.` },
+        { status: 422 },
+      );
     }
 
     if (!Number.isFinite(referenceUsdAmount) || referenceUsdAmount <= 0) {
-      return NextResponse.json({ error: "El equivalente USD del depósito es inválido." }, { status: 422 });
+      return NextResponse.json({ error: "El equivalente USD histórico del depósito es inválido." }, { status: 422 });
     }
 
     const { data, error } = await admin.rpc("confirm_flow_reserve_deposit", {
@@ -75,13 +100,17 @@ export async function POST(request: NextRequest) {
       p_amount: amount,
       p_currency: currency,
       p_reference_usd_amount: referenceUsdAmount,
-      p_custody_reference: custodyReference || null,
+      p_custody_reference: custodyReference,
       p_occurred_at: occurredAt,
       p_idempotency_key: idempotencyKey,
       p_confirmed_by: adminUser.id,
       p_metadata: {
-        quoteSource: currency === "USD" ? "identity" : "clouva_canonical_fx",
+        quoteSource: currency === "USD" ? "identity" : "operation_historical_fx",
         referenceUsdAmount,
+        historicalFxRate: operation.fx_rate_original_per_usd,
+        historicalFxSource: operation.fx_source,
+        historicalFxQuotedAt: operation.fx_quoted_at,
+        externalCustodyDeclaredByAdmin: true,
       },
     });
     if (error) throw new Error(error.message);
@@ -89,6 +118,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(data, { headers: { "cache-control": "private, no-store, max-age=0" } });
   } catch (error) {
     const status = (error as Error & { status?: number })?.status ?? (isAuthError(error) ? 401 : 500);
-    return NextResponse.json({ error: error instanceof Error ? error.message : "No se pudo confirmar el depósito de respaldo." }, { status });
+    return NextResponse.json({ error: error instanceof Error ? error.message : "No se pudo confirmar el ingreso en la Reserva." }, { status });
   }
 }

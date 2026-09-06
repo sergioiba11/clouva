@@ -5,58 +5,346 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { PremiumCard, StatCard } from "@/components/os-ui";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
 
-type MoneyRow={currency:string;grossConfirmed:number;providerFees:number;netConfirmed:number;refunds:number};
-type Snapshot={flowUsdValue:number;processingFeePolicy:string;processingFeeBps:number;processingFeeFixedUsd:number;backedAssets:number;circulation:number;unbackedAssets:number;backingDifferenceFlows:number;pendingBackingFlows:number;totalReserveUsd:number;allocatedReserveUsd:number;freeReserveUsd:number;reserveDeficit:boolean;pendingPurchases:number;confirmedPurchases:number;failedPurchases:number;emissions:number;refundCases:number;refundReviews:number;fundingByCurrency:MoneyRow[]};
-type Issue={type:string;severity:string;entityId:string;details:Record<string,unknown>};
-type PlayerRef={id:string;display_name:string|null;slug:string|null}|null;
-type Funding={id:string;entry_type:string;provider:string;payment_method:string;amount:number;currency:string;status:string;external_payment_id:string|null;provider_fee:number|null;net_amount:number|null;occurred_at:string;reserve_account_id:string|null;custody_status:string;custody_reference:string|null;custody_confirmed_at:string|null;reference_usd_amount:number|null};
-type WalletEntry={id:string;transaction_type:string;amount:number;balance_after:number;source:string|null;reference_id:string|null;created_at:string};
-type Operation={id:string;provider:string;provider_payment_id:string|null;provider_reference:string;payment_method:string;quantity:number;unit_usd:number;amount:number;required_backing_usd:number;backing_amount:number;processing_fee_amount:number;processing_fee_policy:string;currency:string;status:string;backing_status:string;operation_type:string;target_asset_id:string|null;fx_rate_original_per_usd:number|null;fx_pair:string|null;fx_source:string|null;fx_quoted_at:string|null;provider_fee:number|null;net_amount:number|null;confirmed_at:string|null;issued_at:string|null;refund_status:string|null;created_at:string;metadata?:Record<string,unknown>|null;buyerPlayer:PlayerRef;recipientPlayer:PlayerRef;funding:Funding[];walletLedger:WalletEntry[]};
-type MercadoPagoInfo={enabled:boolean;connected:boolean;environment:string|null;configuredCollectorId:string|null;reportedCollectorId:string|null;matchesConfiguredCollector:boolean|null;reserveAuthorized:boolean;reserveAccountId:string|null;nickname:string|null;countryId:string|null;siteStatus:string|null;accountBalance:null;accountBalanceAvailable:false;lookupError?:string};
-type ReserveAccount={id:string;name:string;provider:string;account_type:string;currency:string;account_reference:string|null;status:string;is_active:boolean;authorized_for_flow:boolean;authorized_at:string|null;authorized_by:string|null;reserveUsd:number;allocatedUsd:number;freeUsd:number;activeAllocations:number;lastMovementAt:string|null};
-type Payload={snapshot:Snapshot;reconciliation:Issue[];mercadoPago:MercadoPagoInfo;reserveAccounts:ReserveAccount[];operations:Operation[]};
+type MoneyRow = { currency: string; grossConfirmed: number; providerFees: number; netConfirmed: number; refunds: number };
+type Snapshot = {
+  flowUsdValue: number;
+  processingFeePolicy: string;
+  processingFeeBps: number;
+  processingFeeFixedUsd: number;
+  backedAssets: number;
+  circulation: number;
+  unbackedAssets: number;
+  backingDifferenceFlows: number;
+  pendingBackingFlows: number;
+  paymentsAwaitingReserve?: number;
+  totalReserveUsd: number;
+  allocatedReserveUsd: number;
+  freeReserveUsd: number;
+  reserveDeficit: boolean;
+  fundingByCurrency: MoneyRow[];
+};
+type Issue = { type: string; severity: string; entityId: string; details: Record<string, unknown> };
+type PlayerRef = { id: string; display_name: string | null; slug: string | null } | null;
+type ReserveAccount = {
+  id: string;
+  name: string;
+  provider: string;
+  account_type: string;
+  currency: string;
+  account_reference: string | null;
+  flow_account_role: "reserve" | "collection_rail";
+  status: string;
+  is_active: boolean;
+  authorized_for_flow: boolean;
+  authorized_at: string | null;
+  reserveUsd: number;
+  allocatedUsd: number;
+  freeUsd: number;
+  activeAllocations: number;
+  lastMovementAt: string | null;
+};
+type CollectionRail = ReserveAccount & {
+  authorized_for_collection?: boolean;
+  collection_authorized_at?: string | null;
+};
+type MercadoPagoInfo = {
+  enabled: boolean;
+  connected: boolean;
+  environment: string | null;
+  configuredCollectorId: string | null;
+  reportedCollectorId: string | null;
+  matchesConfiguredCollector: boolean | null;
+  collectionAuthorized: boolean;
+  collectionRailAccountId: string | null;
+  nickname: string | null;
+  countryId: string | null;
+  siteStatus: string | null;
+  lookupError?: string;
+};
+type FundsToMove = {
+  operationId: string;
+  quantity: number;
+  currency: string;
+  grossAmount: number;
+  providerFee: number;
+  netAmount: number;
+  requiredBackingUsd: number;
+  processorNetReferenceUsd: number | null;
+  reserveDepositsUsd: number;
+  requiredTransferUsd: number;
+  remainingTransferUsd: number;
+  paymentStage: string;
+  confirmedAt: string | null;
+  recipientPlayer: PlayerRef;
+};
+type Operation = {
+  id: string;
+  provider: string;
+  quantity: number;
+  unit_usd: number;
+  amount: number;
+  currency: string;
+  status: string;
+  backing_status: string;
+  required_backing_usd: number;
+  operation_type: string;
+  confirmed_at: string | null;
+  created_at: string;
+  recipientPlayer: PlayerRef;
+};
+type Payload = {
+  snapshot: Snapshot;
+  reconciliation: Issue[];
+  mercadoPago: MercadoPagoInfo;
+  collectionRails: CollectionRail[];
+  reserveAccounts: ReserveAccount[];
+  fundsToMove: FundsToMove[];
+  operations: Operation[];
+};
 
-const money=(value:number,currency:string)=>new Intl.NumberFormat("es-AR",{style:"currency",currency,maximumFractionDigits:2}).format(Number(value)||0);
-const usd=(value:number|undefined)=>`US$ ${Number(value||0).toLocaleString("es-AR",{minimumFractionDigits:2,maximumFractionDigits:2})}`;
-const when=(value:string|null)=>value?new Date(value).toLocaleString("es-AR",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit"}):"—";
-const player=(value:PlayerRef)=>value?.slug?`@${value.slug}`:value?.display_name||"—";
-const idempotencyKey=()=>typeof crypto!=="undefined"&&"randomUUID" in crypto?`reserve:${crypto.randomUUID()}`:`reserve:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+const money = (value: number, currency: string) => new Intl.NumberFormat("es-AR", { style: "currency", currency, maximumFractionDigits: 2 }).format(Number(value) || 0);
+const usd = (value: number | undefined) => `US$ ${Number(value || 0).toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const when = (value: string | null | undefined) => value ? new Date(value).toLocaleString("es-AR", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
+const player = (value: PlayerRef) => value?.slug ? `@${value.slug}` : value?.display_name || "—";
+const idempotencyKey = () => typeof crypto !== "undefined" && "randomUUID" in crypto ? `reserve:${crypto.randomUUID()}` : `reserve:${Date.now()}:${Math.random().toString(36).slice(2)}`;
 
-export default function FlowTreasuryPage(){
- const [data,setData]=useState<Payload|null>(null),[loading,setLoading]=useState(true),[error,setError]=useState<string|null>(null),[open,setOpen]=useState<string|null>(null);
- const [backingOperation,setBackingOperation]=useState<string|null>(null),[reserveAccountId,setReserveAccountId]=useState(""),[depositAmount,setDepositAmount]=useState(""),[custodyReference,setCustodyReference]=useState(""),[depositBusy,setDepositBusy]=useState(false),[depositMessage,setDepositMessage]=useState<string|null>(null);
- const [authorizeBusy,setAuthorizeBusy]=useState(false),[authorizeMessage,setAuthorizeMessage]=useState<string|null>(null);
- const load=useCallback(async()=>{setLoading(true);setError(null);try{const response=await authenticatedFetch("/api/admin/flows/treasury");setData(await readApiJson<Payload>(response))}catch(e){setError(e instanceof Error?e.message:"No se pudo cargar Tesorería FLOW.")}finally{setLoading(false)}},[]);
- useEffect(()=>{void load()},[load]);
- const s=data?.snapshot;
- const activeAccounts=useMemo(()=>data?.reserveAccounts.filter(account=>account.is_active&&account.status==="active"&&account.authorized_for_flow&&Boolean(account.account_reference))??[],[data]);
- const pendingBacking=useMemo(()=>data?.operations.filter(operation=>operation.status==="confirmed"&&operation.backing_status!=="verified"&&operation.backing_status!=="reversed")??[],[data]);
- const selectedAccount=activeAccounts.find(account=>account.id===reserveAccountId)??null;
+export default function FlowTreasuryPage() {
+  const [data, setData] = useState<Payload | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [authorizeBusy, setAuthorizeBusy] = useState(false);
+  const [authorizeMessage, setAuthorizeMessage] = useState<string | null>(null);
 
- function beginBacking(operation:Operation){setBackingOperation(operation.id);const account=activeAccounts[0];setReserveAccountId(account?.id??"");setDepositAmount("");setCustodyReference("");setDepositMessage(null)}
- async function confirmDeposit(e:React.FormEvent){e.preventDefault();if(!backingOperation||!selectedAccount)return;const amount=Number(depositAmount);if(!Number.isFinite(amount)||amount<=0){setDepositMessage("Ingresá el importe realmente depositado.");return}setDepositBusy(true);setDepositMessage(null);try{const response=await authenticatedFetch("/api/admin/flows/treasury/reserve-deposit",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({operationId:backingOperation,reserveAccountId:selectedAccount.id,amount,currency:selectedAccount.currency,custodyReference,idempotencyKey:idempotencyKey()})});const result=await readApiJson<{issued?:{issued?:number;backingStatus?:string;backingShortfallUsd?:number}}>(response);const issued=result.issued?.issued??0;setDepositMessage(issued>0?`Reserva confirmada · ${issued} FLOW emitido${issued===1?"":"s"}.`:result.issued?.backingShortfallUsd?`Depósito confirmado. Todavía falta ${usd(result.issued.backingShortfallUsd)} de reserva para emitir.`:"Depósito confirmado. La operación sigue pendiente de respaldo.");await load();if(issued>0){setBackingOperation(null);setDepositAmount("");setCustodyReference("")}}catch(e){setDepositMessage(e instanceof Error?e.message:"No se pudo confirmar el depósito.")}finally{setDepositBusy(false)}}
- async function authorizeMercadoPago(){setAuthorizeBusy(true);setAuthorizeMessage(null);try{const response=await authenticatedFetch("/api/admin/flows/treasury/authorize-mercadopago",{method:"POST"});const result=await readApiJson<{alreadyAuthorized?:boolean;collectorId?:string}>(response);setAuthorizeMessage(result.alreadyAuthorized?"La Cuenta de Reserva Mercado Pago ya estaba autorizada.":`Cuenta de Reserva autorizada${result.collectorId?` · collector ${result.collectorId}`:""}.`);await load()}catch(e){setAuthorizeMessage(e instanceof Error?e.message:"No se pudo autorizar la reserva Mercado Pago.")}finally{setAuthorizeBusy(false)}}
+  const [registerOpen, setRegisterOpen] = useState(false);
+  const [reserveName, setReserveName] = useState("");
+  const [reserveProvider, setReserveProvider] = useState("bank");
+  const [reserveType, setReserveType] = useState("bank_account");
+  const [reserveCurrency, setReserveCurrency] = useState("USD");
+  const [reserveReference, setReserveReference] = useState("");
+  const [registerBusy, setRegisterBusy] = useState(false);
+  const [registerMessage, setRegisterMessage] = useState<string | null>(null);
 
- return <div className="space-y-4">
-  <PremiumCard className="p-6"><div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-xs uppercase tracking-[0.18em] text-white/40">Admin · FLOW</p><h1 className="mt-1 text-2xl font-bold">Tesorería / Reserva FLOW</h1><p className="mt-2 max-w-3xl text-sm leading-6 text-white/50">Dinero real → cuenta de reserva autorizada → custodia confirmada → asignación 1:1 → emisión. Recibir un pago por sí solo no crea saldo FLOW.</p></div><div className="flex gap-2"><Link href="/admin/flows" className="rounded-xl border border-white/10 px-4 py-2.5 text-sm">Volver</Link><button onClick={()=>void load()} disabled={loading} className="rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-black disabled:opacity-50">{loading?"Actualizando…":"Actualizar"}</button></div></div></PremiumCard>
-  {error?<p className="rounded-xl border border-red-400/20 bg-red-400/10 p-3 text-sm text-red-200">{error}</p>:null}
-  {s?.reserveDeficit?<p className="rounded-2xl border border-red-400/30 bg-red-400/10 p-4 text-sm font-semibold text-red-100">CRÍTICO · La reserva confirmada es menor que el respaldo asignado. La emisión debe permanecer bloqueada hasta reconciliar el déficit.</p>:null}
+  const [depositOperationId, setDepositOperationId] = useState<string | null>(null);
+  const [reserveAccountId, setReserveAccountId] = useState("");
+  const [depositAmount, setDepositAmount] = useState("");
+  const [custodyReference, setCustodyReference] = useState("");
+  const [depositBusy, setDepositBusy] = useState(false);
+  const [depositMessage, setDepositMessage] = useState<string | null>(null);
 
-  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><StatCard label="Reserva total USD" value={s?usd(s.totalReserveUsd):"…"}/><StatCard label="Reserva asignada" value={s?usd(s.allocatedReserveUsd):"…"}/><StatCard label="Reserva libre" value={s?usd(s.freeReserveUsd):"…"}/><StatCard label="FLOW PENDING_BACKING" value={s?.pendingBackingFlows??"…"}/></div>
-  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><StatCard label="FLOW respaldados" value={s?.backedAssets??"…"}/><StatCard label="En circulación" value={s?.circulation??"…"}/><StatCard label="Sin respaldo" value={s?.unbackedAssets??"…"}/><StatCard label="Diferencia" value={s?.backingDifferenceFlows??"…"}/></div>
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await authenticatedFetch("/api/admin/flows/treasury");
+      setData(await readApiJson<Payload>(response));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "No se pudo cargar Tesorería FLOW.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-  <PremiumCard className="p-5"><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-semibold">Política económica de checkout</h2><p className="mt-1 text-xs text-white/40">El backing requerido nunca incluye la comisión del procesador.</p></div><span className="rounded-full border border-white/10 px-3 py-1 text-xs text-white/60">{s?.processingFeePolicy==="customer_buffer"?"CUSTOMER BUFFER":"CLOUVA ABSORBE FEES"}</span></div><div className="mt-4 grid gap-2 text-sm"><Row label="Valor canónico" value={s?`1 FLOW = ${usd(s.flowUsdValue)}`:"—"}/><Row label="Buffer variable" value={s?`${Number(s.processingFeeBps||0)/100}%`:"—"}/><Row label="Buffer fijo" value={s?usd(s.processingFeeFixedUsd):"—"}/><Row label="Regla" value="Emisión solo si la reserva libre permite asignar USD 1 por FLOW"/></div></PremiumCard>
+  useEffect(() => { void load(); }, [load]);
 
-  <PremiumCard className="p-5"><div className="flex items-center justify-between gap-3"><div><h2 className="font-semibold">Cuentas de respaldo CLOUVA</h2><p className="mt-1 text-xs text-white/40">Solo una cuenta explícitamente autorizada y ligada al collector real puede custodiar backing FLOW.</p></div><span className="text-xs text-white/40">{activeAccounts.length} autorizada{activeAccounts.length===1?"":"s"}</span></div><div className="mt-4 grid gap-3 md:grid-cols-2">{data?.reserveAccounts.map(account=><div key={account.id} className="rounded-2xl border border-white/[0.08] bg-black/20 p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-semibold">{account.name}</p><p className="mt-1 text-xs text-white/35">{account.provider} · {account.currency}{account.account_reference?` · ${account.account_reference}`:" · collector sin vincular"}</p></div><span className={`rounded-full border px-2.5 py-1 text-[10px] ${account.authorized_for_flow&&account.is_active&&account.status==="active"?"border-emerald-300/20 text-emerald-200":"border-amber-300/20 text-amber-100"}`}>{account.authorized_for_flow?"AUTORIZADA":"NO AUTORIZADA"}</span></div><div className="mt-4 grid gap-2 text-sm"><Row label="Reserva confirmada" value={usd(account.reserveUsd)}/><Row label="Asignada" value={usd(account.allocatedUsd)}/><Row label="Libre" value={usd(account.freeUsd)}/><Row label="FLOWS asignados" value={String(account.activeAllocations)}/><Row label="Autorizada" value={when(account.authorized_at)}/><Row label="Último movimiento" value={when(account.lastMovementAt)}/></div></div>)}{data&&data.reserveAccounts.length===0?<p className="text-sm text-white/40">No hay cuentas de reserva configuradas.</p>:null}</div></PremiumCard>
+  const snapshot = data?.snapshot;
+  const activeReserves = useMemo(
+    () => data?.reserveAccounts.filter((account) => account.flow_account_role === "reserve" && account.is_active && account.status === "active" && account.authorized_for_flow && Boolean(account.account_reference)) ?? [],
+    [data],
+  );
+  const selectedReserve = activeReserves.find((account) => account.id === reserveAccountId) ?? null;
+  const legacyPending = useMemo(
+    () => data?.operations.filter((operation) => operation.provider !== "mercadopago" && operation.status === "confirmed" && operation.backing_status !== "verified" && operation.backing_status !== "reversed") ?? [],
+    [data],
+  );
 
-  <div className="grid gap-4 lg:grid-cols-2"><PremiumCard className="p-5"><h2 className="font-semibold">Mercado Pago receptor</h2>{data?.mercadoPago?<div className="mt-4 grid gap-2 text-sm"><Row label="Proveedor" value="Mercado Pago"/><Row label="Entorno" value={data.mercadoPago.environment||"—"}/><Row label="Cuenta conectada" value={data.mercadoPago.connected?"Sí":"No"}/><Row label="Collector configurado" value={data.mercadoPago.configuredCollectorId||"—"} mono/><Row label="Collector verificado" value={data.mercadoPago.reportedCollectorId||"—"} mono/><Row label="Coincide con configuración" value={data.mercadoPago.matchesConfiguredCollector===true?"Sí":data.mercadoPago.matchesConfiguredCollector===false?"No":"—"}/><Row label="Autorizado como reserva FLOW" value={data.mercadoPago.reserveAuthorized?"Sí":"No"}/>{data.mercadoPago.nickname?<Row label="Nickname" value={data.mercadoPago.nickname}/>:null}<Row label="Saldo bancario actual" value="No consultado por esta integración"/>{!data.mercadoPago.reserveAuthorized?<button onClick={()=>void authorizeMercadoPago()} disabled={authorizeBusy||data.mercadoPago.matchesConfiguredCollector!==true} className="mt-2 rounded-xl bg-white px-4 py-2.5 text-xs font-semibold text-black disabled:opacity-40">{authorizeBusy?"Verificando…":"Verificar y autorizar como Reserva FLOW"}</button>:null}{authorizeMessage?<p className="mt-2 rounded-xl border border-white/10 bg-black/25 p-3 text-xs text-white/70">{authorizeMessage}</p>:null}{data.mercadoPago.lookupError?<p className="mt-2 rounded-xl border border-amber-300/15 bg-amber-300/[0.06] p-3 text-xs text-amber-100">{data.mercadoPago.lookupError}</p>:null}</div>:<p className="mt-3 text-sm text-white/40">Cargando…</p>}</PremiumCard><PremiumCard className="p-5"><h2 className="font-semibold">Pagos FLOW registrados</h2><div className="mt-4 space-y-3">{s?.fundingByCurrency?.length?s.fundingByCurrency.map(row=><div key={row.currency} className="rounded-xl border border-white/[0.07] bg-black/20 p-3 text-sm"><div className="mb-2 font-semibold">{row.currency}</div><Row label="Bruto confirmado" value={money(row.grossConfirmed,row.currency)}/><Row label="Fees proveedor reales" value={money(row.providerFees,row.currency)}/><Row label="Neto registrado" value={money(row.netConfirmed,row.currency)}/><Row label="Refunds" value={money(row.refunds,row.currency)}/></div>):<p className="text-sm text-white/40">Sin movimientos confirmados.</p>}</div></PremiumCard></div>
+  async function authorizeMercadoPago() {
+    setAuthorizeBusy(true);
+    setAuthorizeMessage(null);
+    try {
+      const response = await authenticatedFetch("/api/admin/flows/treasury/authorize-mercadopago", { method: "POST" });
+      const result = await readApiJson<{ alreadyAuthorized?: boolean; collectorId?: string }>(response);
+      setAuthorizeMessage(result.alreadyAuthorized ? "El rail de cobro Mercado Pago ya estaba verificado." : `Rail de cobro verificado${result.collectorId ? ` · collector ${result.collectorId}` : ""}.`);
+      await load();
+    } catch (cause) {
+      setAuthorizeMessage(cause instanceof Error ? cause.message : "No se pudo verificar Mercado Pago.");
+    } finally {
+      setAuthorizeBusy(false);
+    }
+  }
 
-  <PremiumCard className="p-5"><div><h2 className="font-semibold">Pagos confirmados / falta respaldar</h2><p className="mt-1 text-xs text-white/40">Un pago confirmado puede seguir PENDING_BACKING si falta custodia autorizada o reserva neta suficiente.</p></div><div className="mt-4 space-y-3">{pendingBacking.map(operation=><div key={operation.id} className="rounded-2xl border border-amber-300/10 bg-amber-300/[0.035] p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="font-medium">{operation.provider==="cash"?"CASH_RECEIVED":"Pago confirmado"} · {operation.quantity} FLOW</p><p className="mt-1 text-xs text-white/40">{player(operation.recipientPlayer)} · {when(operation.confirmed_at||operation.created_at)}</p></div><div className="text-right"><p className="text-sm">{money(operation.amount,operation.currency)}</p><p className="text-xs text-amber-200">{operation.backing_status.toUpperCase()}</p></div></div><div className="mt-3 grid gap-2 text-xs text-white/50 sm:grid-cols-3"><Row label="Backing requerido" value={usd(Number(operation.required_backing_usd||operation.quantity*operation.unit_usd))}/><Row label="Monto backing" value={money(Number(operation.backing_amount||operation.amount),operation.currency)}/><Row label="Procesamiento" value={money(Number(operation.processing_fee_amount||0),operation.currency)}/></div><button onClick={()=>beginBacking(operation)} disabled={!activeAccounts.length} className="mt-3 rounded-xl bg-white px-3.5 py-2 text-xs font-semibold text-black disabled:opacity-40">Respaldar en cuenta</button>{backingOperation===operation.id?<form onSubmit={confirmDeposit} className="mt-4 grid gap-3 rounded-2xl border border-white/[0.08] bg-black/25 p-4 sm:grid-cols-2"><label className="text-xs text-white/50">Cuenta<select value={reserveAccountId} onChange={e=>setReserveAccountId(e.target.value)} className="mt-1.5 w-full rounded-xl border border-white/10 bg-black/50 px-3 py-2 text-sm text-white">{activeAccounts.map(account=><option key={account.id} value={account.id}>{account.name} · {account.currency}</option>)}</select></label><label className="text-xs text-white/50">Importe realmente depositado<input inputMode="decimal" value={depositAmount} onChange={e=>setDepositAmount(e.target.value)} placeholder={`0,00 ${selectedAccount?.currency??""}`} className="mt-1.5 w-full rounded-xl border border-white/10 bg-black/50 px-3 py-2 text-sm text-white"/></label><label className="text-xs text-white/50 sm:col-span-2">Referencia de depósito / transferencia<input value={custodyReference} onChange={e=>setCustodyReference(e.target.value)} placeholder="Ej: transferencia MP / comprobante" className="mt-1.5 w-full rounded-xl border border-white/10 bg-black/50 px-3 py-2 text-sm text-white"/></label><div className="flex flex-wrap gap-2 sm:col-span-2"><button disabled={depositBusy||!selectedAccount} className="rounded-xl bg-emerald-200 px-4 py-2 text-xs font-semibold text-black disabled:opacity-40">{depositBusy?"Confirmando…":"Confirmar depósito de respaldo"}</button><button type="button" onClick={()=>setBackingOperation(null)} className="rounded-xl border border-white/10 px-4 py-2 text-xs">Cancelar</button></div>{depositMessage?<p className="rounded-xl border border-white/10 bg-black/30 p-3 text-xs text-white/70 sm:col-span-2">{depositMessage}</p>:null}</form>:null}</div>)}{data&&pendingBacking.length===0?<p className="text-sm text-emerald-200">No hay operaciones esperando respaldo.</p>:null}</div></PremiumCard>
+  async function registerReserve(event: React.FormEvent) {
+    event.preventDefault();
+    setRegisterBusy(true);
+    setRegisterMessage(null);
+    try {
+      const response = await authenticatedFetch("/api/admin/flows/treasury/reserve-account", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ name: reserveName, provider: reserveProvider, accountType: reserveType, currency: reserveCurrency, accountReference: reserveReference }),
+      });
+      const result = await readApiJson<{ reserveAccount?: { name?: string } }>(response);
+      setRegisterMessage(`Reserva registrada${result.reserveAccount?.name ? ` · ${result.reserveAccount.name}` : ""}.`);
+      setReserveName("");
+      setReserveReference("");
+      setRegisterOpen(false);
+      await load();
+    } catch (cause) {
+      setRegisterMessage(cause instanceof Error ? cause.message : "No se pudo registrar la Reserva.");
+    } finally {
+      setRegisterBusy(false);
+    }
+  }
 
-  <PremiumCard className="p-5"><div className="flex items-center justify-between gap-3"><div><h2 className="font-semibold">Reconciliación automática</h2><p className="mt-1 text-xs text-white/40">Las inconsistencias se detectan; no se corrigen silenciosamente.</p></div><span className={`rounded-full border px-3 py-1 text-xs ${data?.reconciliation?.some(issue=>issue.severity==="critical")?"border-red-300/20 text-red-100":data?.reconciliation?.length?"border-amber-300/20 text-amber-100":"border-emerald-300/20 text-emerald-100"}`}>{data?.reconciliation?.length??"…"} incidencias</span></div><div className="mt-4 space-y-2">{data?.reconciliation?.map(issue=><div key={`${issue.type}:${issue.entityId}`} className="rounded-xl border border-white/[0.07] bg-black/20 p-3 text-xs"><div className="flex justify-between gap-3"><b>{issue.type}</b><span>{issue.severity}</span></div><p className="mt-1 break-all font-mono text-white/40">{issue.entityId}</p></div>)}{data&&data.reconciliation.length===0?<p className="text-sm text-emerald-200">Cadena financiera consistente.</p>:null}</div></PremiumCard>
+  function beginDeposit(operationId: string) {
+    setDepositOperationId(operationId);
+    setReserveAccountId(activeReserves[0]?.id ?? "");
+    setDepositAmount("");
+    setCustodyReference("");
+    setDepositMessage(null);
+  }
 
-  <PremiumCard className="p-5"><h2 className="font-semibold">Operaciones</h2><div className="mt-4 space-y-2">{data?.operations.map(operation=>{const expanded=open===operation.id;const funding=operation.funding.find(row=>row.entry_type==="funding"&&row.status==="confirmed");const reserveDeposit=operation.funding.find(row=>row.entry_type==="reserve_deposit"&&row.status==="confirmed");return <div key={operation.id} className="rounded-2xl border border-white/[0.07] bg-black/20"><button onClick={()=>setOpen(expanded?null:operation.id)} className="grid w-full gap-2 p-4 text-left sm:grid-cols-[1fr_auto_auto] sm:items-center"><div><div className="font-medium">{operation.operation_type==="back_existing"?"Respaldar FLOW existente":operation.provider==="cash"?"Compra FLOW · efectivo":"Compra FLOW · Mercado Pago"}</div><div className="mt-1 text-xs text-white/40">{player(operation.recipientPlayer)} · {when(operation.created_at)}</div></div><span className="text-sm">{operation.quantity} FLOW</span><span className={`text-sm ${operation.backing_status==="verified"?"text-emerald-200":operation.backing_status==="reversed"?"text-red-200":"text-amber-200"}`}>{operation.status} / {operation.backing_status}</span></button>{expanded?<div className="grid gap-5 border-t border-white/[0.07] p-4 text-sm lg:grid-cols-2"><div className="grid gap-2"><Row label="Player" value={player(operation.recipientPlayer)}/><Row label="Purchase" value={operation.id} mono/><Row label="Provider" value={operation.provider}/><Row label="Método" value={operation.payment_method}/><Row label="Payment ID" value={operation.provider_payment_id||"—"} mono/><Row label="Target asset" value={operation.target_asset_id||"—"} mono/></div><div className="grid gap-2"><Row label="Valor FLOW" value={`US$ ${Number(operation.unit_usd).toFixed(2)}`}/><Row label="Backing requerido" value={usd(Number(operation.required_backing_usd||operation.quantity*operation.unit_usd))}/><Row label="Monto backing" value={money(Number(operation.backing_amount||operation.amount),operation.currency)}/><Row label="Procesamiento cobrado" value={money(Number(operation.processing_fee_amount||0),operation.currency)}/><Row label="Importe total" value={money(operation.amount,operation.currency)}/><Row label="Fee proveedor real" value={money(Number(operation.provider_fee||0),operation.currency)}/><Row label="Neto" value={money(Number(operation.net_amount??operation.amount),operation.currency)}/><Row label="Pago confirmado" value={when(operation.confirmed_at)}/><Row label="Emisión" value={when(operation.issued_at)}/><Row label="Pago / funding" value={funding?`${money(funding.amount,funding.currency)} · custodia ${funding.custody_status} · ${usd(Number(funding.reference_usd_amount||0))}`:"—"}/><Row label="Depósito de reserva" value={reserveDeposit?`${money(reserveDeposit.amount,reserveDeposit.currency)} · ${usd(Number(reserveDeposit.reference_usd_amount||0))}`:"—"}/><Row label="Ledger" value={operation.walletLedger.length?operation.walletLedger.map(row=>`${row.transaction_type} ${row.amount>0?"+":""}${row.amount}`).join(" · "):"—"}/></div></div>:null}</div>})}{data&&data.operations.length===0?<p className="text-sm text-white/40">Todavía no hay operaciones FLOW.</p>:null}</div></PremiumCard>
- </div>;
+  async function confirmDeposit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!depositOperationId || !selectedReserve) return;
+    const amount = Number(depositAmount);
+    if (!Number.isFinite(amount) || amount <= 0 || !custodyReference.trim()) {
+      setDepositMessage("Ingresá el importe real y la referencia de transferencia/depósito.");
+      return;
+    }
+    setDepositBusy(true);
+    setDepositMessage(null);
+    try {
+      const response = await authenticatedFetch("/api/admin/flows/treasury/reserve-deposit", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          operationId: depositOperationId,
+          reserveAccountId: selectedReserve.id,
+          amount,
+          currency: selectedReserve.currency,
+          custodyReference: custodyReference.trim(),
+          idempotencyKey: idempotencyKey(),
+        }),
+      });
+      const result = await readApiJson<{ issued?: { issued?: number; backingStatus?: string; backingShortfallUsd?: number; reserveTransferShortfallUsd?: number } }>(response);
+      const issued = Number(result.issued?.issued ?? 0);
+      setDepositMessage(
+        issued > 0
+          ? `Reserva confirmada · ${issued} FLOW disponible${issued === 1 ? "" : "s"}.`
+          : result.issued?.backingShortfallUsd
+            ? `Ingreso confirmado. Todavía falta ${usd(result.issued.backingShortfallUsd)} de capacidad real en Reserva.`
+            : result.issued?.reserveTransferShortfallUsd
+              ? `Ingreso parcial confirmado. Falta mover ${usd(result.issued.reserveTransferShortfallUsd)} desde el rail.`
+              : "Ingreso confirmado. La operación sigue PENDING_BACKING.",
+      );
+      await load();
+      if (issued > 0) setDepositOperationId(null);
+    } catch (cause) {
+      setDepositMessage(cause instanceof Error ? cause.message : "No se pudo confirmar el ingreso en Reserva.");
+    } finally {
+      setDepositBusy(false);
+    }
+  }
+
+  return <div className="space-y-4">
+    <PremiumCard className="p-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="text-xs uppercase tracking-[0.18em] text-white/40">Admin · FLOW</p>
+          <h1 className="mt-1 text-2xl font-bold">Tesorería / Reserva FLOW</h1>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-white/50">Mercado Pago cobra → el dinero neto se mueve → la Reserva CLOUVA confirma custodia → backing 1:1 → FLOW disponible.</p>
+        </div>
+        <div className="flex gap-2"><Link href="/admin/flows" className="rounded-xl border border-white/10 px-4 py-2.5 text-sm">Volver</Link><button onClick={() => void load()} disabled={loading} className="rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-black disabled:opacity-50">{loading ? "Actualizando…" : "Actualizar"}</button></div>
+      </div>
+    </PremiumCard>
+
+    {error ? <p className="rounded-xl border border-red-400/20 bg-red-400/10 p-3 text-sm text-red-200">{error}</p> : null}
+    {snapshot?.reserveDeficit ? <p className="rounded-2xl border border-red-400/30 bg-red-400/10 p-4 text-sm font-semibold text-red-100">CRÍTICO · La Reserva confirmada es menor que el backing asignado. La emisión queda bloqueada.</p> : null}
+
+    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      <StatCard label="Reserva total USD" value={snapshot ? usd(snapshot.totalReserveUsd) : "…"}/>
+      <StatCard label="Reserva asignada" value={snapshot ? usd(snapshot.allocatedReserveUsd) : "…"}/>
+      <StatCard label="Reserva libre" value={snapshot ? usd(snapshot.freeReserveUsd) : "…"}/>
+      <StatCard label="FLOW PENDING_BACKING" value={snapshot?.pendingBackingFlows ?? "…"}/>
+      <StatCard label="Pagos esperando Reserva" value={snapshot?.paymentsAwaitingReserve ?? "…"}/>
+    </div>
+
+    <div className="grid gap-4 lg:grid-cols-2">
+      <PremiumCard className="p-5">
+        <h2 className="font-semibold">Mercado Pago · rail de cobro</h2>
+        <p className="mt-1 text-xs text-white/40">Procesa el pago y reporta bruto, fees y neto. No es la Reserva FLOW.</p>
+        {data?.mercadoPago ? <div className="mt-4 grid gap-2 text-sm">
+          <Row label="Entorno" value={data.mercadoPago.environment || "—"}/>
+          <Row label="Cuenta conectada" value={data.mercadoPago.connected ? "Sí" : "No"}/>
+          <Row label="Collector configurado" value={data.mercadoPago.configuredCollectorId || "—"} mono/>
+          <Row label="Collector verificado" value={data.mercadoPago.reportedCollectorId || "—"} mono/>
+          <Row label="Coincide" value={data.mercadoPago.matchesConfiguredCollector === true ? "Sí" : data.mercadoPago.matchesConfiguredCollector === false ? "No" : "—"}/>
+          <Row label="Autorizado para cobrar" value={data.mercadoPago.collectionAuthorized ? "Sí" : "No"}/>
+          {data.mercadoPago.nickname ? <Row label="Nickname" value={data.mercadoPago.nickname}/> : null}
+          {!data.mercadoPago.collectionAuthorized ? <button onClick={() => void authorizeMercadoPago()} disabled={authorizeBusy || data.mercadoPago.matchesConfiguredCollector !== true} className="mt-2 rounded-xl bg-white px-4 py-2.5 text-xs font-semibold text-black disabled:opacity-40">{authorizeBusy ? "Verificando…" : "Verificar rail de cobro Mercado Pago"}</button> : null}
+          {authorizeMessage ? <p className="mt-2 rounded-xl border border-white/10 bg-black/25 p-3 text-xs text-white/70">{authorizeMessage}</p> : null}
+          {data.mercadoPago.lookupError ? <p className="mt-2 rounded-xl border border-amber-300/15 bg-amber-300/[0.06] p-3 text-xs text-amber-100">{data.mercadoPago.lookupError}</p> : null}
+        </div> : null}
+      </PremiumCard>
+
+      <PremiumCard className="p-5">
+        <h2 className="font-semibold">Pagos recibidos por el rail</h2>
+        <p className="mt-1 text-xs text-white/40">Estos importes no cuentan como backing hasta entrar en una Reserva separada.</p>
+        <div className="mt-4 space-y-3">{snapshot?.fundingByCurrency?.length ? snapshot.fundingByCurrency.map((row) => <div key={row.currency} className="rounded-xl border border-white/[0.07] bg-black/20 p-3 text-sm"><div className="mb-2 font-semibold">{row.currency}</div><Row label="Bruto confirmado" value={money(row.grossConfirmed, row.currency)}/><Row label="Fees proveedor reales" value={money(row.providerFees, row.currency)}/><Row label="Neto registrado" value={money(row.netConfirmed, row.currency)}/><Row label="Refunds" value={money(row.refunds, row.currency)}/></div>) : <p className="text-sm text-white/40">Sin pagos confirmados.</p>}</div>
+      </PremiumCard>
+    </div>
+
+    <PremiumCard className="p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div><h2 className="font-semibold">Reserva CLOUVA · custodia</h2><p className="mt-1 text-xs text-white/40">Solo cuentas externas reales, separadas del rail de cobro, pueden respaldar FLOW.</p></div>
+        <button onClick={() => setRegisterOpen((value) => !value)} className="rounded-xl border border-white/10 px-3 py-2 text-xs">{registerOpen ? "Cancelar" : "Registrar Reserva real"}</button>
+      </div>
+      {!activeReserves.length ? <p className="mt-4 rounded-2xl border border-amber-300/20 bg-amber-300/[0.06] p-4 text-sm text-amber-100">No hay una Reserva CLOUVA separada registrada. Mercado Pago puede cobrar, pero ningún pago puede convertirse en FLOW disponible todavía.</p> : null}
+      {registerOpen ? <form onSubmit={registerReserve} className="mt-4 grid gap-3 rounded-2xl border border-white/[0.08] bg-black/25 p-4 sm:grid-cols-2">
+        <p className="sm:col-span-2 text-xs text-white/45">Registrá únicamente una cuenta externa real que ya exista. CLOUVA no crea la cuenta ni mueve dinero por este formulario.</p>
+        <Field label="Nombre" value={reserveName} onChange={setReserveName} placeholder="Ej: Reserva FLOW USD"/>
+        <Field label="Proveedor" value={reserveProvider} onChange={setReserveProvider} placeholder="bank"/>
+        <Field label="Tipo de cuenta" value={reserveType} onChange={setReserveType} placeholder="bank_account"/>
+        <Field label="Moneda" value={reserveCurrency} onChange={(value) => setReserveCurrency(value.toUpperCase().slice(0, 3))} placeholder="USD"/>
+        <div className="sm:col-span-2"><Field label="Referencia real / alias / identificador" value={reserveReference} onChange={setReserveReference} placeholder="Referencia verificable de la cuenta externa"/></div>
+        <button disabled={registerBusy} className="sm:col-span-2 rounded-xl bg-white px-4 py-2.5 text-xs font-semibold text-black disabled:opacity-40">{registerBusy ? "Registrando…" : "Registrar como Reserva CLOUVA"}</button>
+      </form> : null}
+      {registerMessage ? <p className="mt-3 text-xs text-white/60">{registerMessage}</p> : null}
+      <div className="mt-4 grid gap-3 md:grid-cols-2">{data?.reserveAccounts.map((account) => <div key={account.id} className="rounded-2xl border border-white/[0.08] bg-black/20 p-4"><div className="flex items-start justify-between gap-3"><div><p className="font-semibold">{account.name}</p><p className="mt-1 text-xs text-white/35">{account.provider} · {account.currency} · {account.account_reference || "sin referencia"}</p></div><span className={`rounded-full border px-2.5 py-1 text-[10px] ${account.authorized_for_flow ? "border-emerald-300/20 text-emerald-200" : "border-amber-300/20 text-amber-100"}`}>{account.authorized_for_flow ? "RESERVA AUTORIZADA" : "NO AUTORIZADA"}</span></div><div className="mt-4 grid gap-2 text-sm"><Row label="Custodia confirmada" value={usd(account.reserveUsd)}/><Row label="Asignada" value={usd(account.allocatedUsd)}/><Row label="Libre" value={usd(account.freeUsd)}/><Row label="FLOWS asignados" value={String(account.activeAllocations)}/><Row label="Autorizada" value={when(account.authorized_at)}/><Row label="Último movimiento" value={when(account.lastMovementAt)}/></div></div>)}</div>
+    </PremiumCard>
+
+    <PremiumCard className="p-5">
+      <div><h2 className="font-semibold">Fondos por mover a Reserva</h2><p className="mt-1 text-xs text-white/40">Pago aprobado ≠ FLOW. Primero el dinero neto debe salir del rail y quedar confirmado en la Reserva.</p></div>
+      <div className="mt-4 space-y-3">{data?.fundsToMove.length ? data.fundsToMove.map((item) => <div key={item.operationId} className="rounded-2xl border border-violet-300/10 bg-violet-300/[0.035] p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-medium">Mercado Pago · {item.quantity} FLOW</p><p className="mt-1 text-xs text-white/40">{player(item.recipientPlayer)} · {when(item.confirmedAt)} · {item.paymentStage}</p></div><div className="text-right"><p className="text-sm">Neto {money(item.netAmount, item.currency)}</p><p className="text-xs text-violet-200">Falta mover {usd(item.remainingTransferUsd)}</p></div></div><div className="mt-3 grid gap-2 text-xs sm:grid-cols-3"><Row label="Backing requerido" value={usd(item.requiredBackingUsd)}/><Row label="Ya confirmado en Reserva" value={usd(item.reserveDepositsUsd)}/><Row label="Neto rail ref. USD" value={item.processorNetReferenceUsd == null ? "—" : usd(item.processorNetReferenceUsd)}/></div><button onClick={() => beginDeposit(item.operationId)} disabled={!activeReserves.length} className="mt-3 rounded-xl bg-white px-3.5 py-2 text-xs font-semibold text-black disabled:opacity-40">Confirmar ingreso en Reserva</button>{depositOperationId === item.operationId ? <DepositForm reserves={activeReserves} reserveAccountId={reserveAccountId} setReserveAccountId={setReserveAccountId} selectedReserve={selectedReserve} depositAmount={depositAmount} setDepositAmount={setDepositAmount} custodyReference={custodyReference} setCustodyReference={setCustodyReference} depositBusy={depositBusy} depositMessage={depositMessage} onSubmit={confirmDeposit} onCancel={() => setDepositOperationId(null)}/> : null}</div>) : <p className="text-sm text-white/40">No hay pagos de Mercado Pago confirmados esperando traslado.</p>}</div>
+    </PremiumCard>
+
+    {legacyPending.length ? <PremiumCard className="p-5"><h2 className="font-semibold">Legacy / custodia pendiente</h2><p className="mt-1 text-xs text-white/40">No se convierten automáticamente. Solo pueden respaldarse si existe dinero real comprobado en Reserva.</p><div className="mt-4 space-y-3">{legacyPending.map((operation) => <div key={operation.id} className="rounded-2xl border border-amber-300/10 bg-amber-300/[0.035] p-4"><div className="flex justify-between gap-3"><div><p className="font-medium">{operation.provider.toUpperCase()} · {operation.quantity} FLOW</p><p className="mt-1 text-xs text-white/40">{player(operation.recipientPlayer)} · {when(operation.confirmed_at || operation.created_at)}</p></div><span className="text-xs text-amber-200">{operation.backing_status.toUpperCase()}</span></div><button onClick={() => beginDeposit(operation.id)} disabled={!activeReserves.length} className="mt-3 rounded-xl border border-white/10 px-3.5 py-2 text-xs disabled:opacity-40">Confirmar ingreso real en Reserva</button>{depositOperationId === operation.id ? <DepositForm reserves={activeReserves} reserveAccountId={reserveAccountId} setReserveAccountId={setReserveAccountId} selectedReserve={selectedReserve} depositAmount={depositAmount} setDepositAmount={setDepositAmount} custodyReference={custodyReference} setCustodyReference={setCustodyReference} depositBusy={depositBusy} depositMessage={depositMessage} onSubmit={confirmDeposit} onCancel={() => setDepositOperationId(null)}/> : null}</div>)}</div></PremiumCard> : null}
+
+    <PremiumCard className="p-5"><h2 className="font-semibold">Reconciliación</h2><div className="mt-4 space-y-2">{data?.reconciliation.length ? data.reconciliation.map((issue) => <div key={`${issue.type}:${issue.entityId}`} className={`rounded-xl border p-3 text-xs ${issue.severity === "critical" ? "border-red-400/20 bg-red-400/[0.06] text-red-100" : "border-amber-300/15 bg-amber-300/[0.05] text-amber-100"}`}><b>{issue.severity.toUpperCase()} · {issue.type}</b><p className="mt-1 break-all opacity-60">{issue.entityId}</p></div>) : <p className="text-sm text-emerald-200/70">Sin diferencias críticas.</p>}</div></PremiumCard>
+  </div>;
 }
 
-function Row({label,value,mono=false}:{label:string;value:string;mono?:boolean}){return <div className="flex justify-between gap-4"><span className="text-white/40">{label}</span><span className={`break-all text-right ${mono?"font-mono text-[11px]":""}`}>{value}</span></div>}
+function DepositForm({ reserves, reserveAccountId, setReserveAccountId, selectedReserve, depositAmount, setDepositAmount, custodyReference, setCustodyReference, depositBusy, depositMessage, onSubmit, onCancel }: {
+  reserves: ReserveAccount[];
+  reserveAccountId: string;
+  setReserveAccountId: (value: string) => void;
+  selectedReserve: ReserveAccount | null;
+  depositAmount: string;
+  setDepositAmount: (value: string) => void;
+  custodyReference: string;
+  setCustodyReference: (value: string) => void;
+  depositBusy: boolean;
+  depositMessage: string | null;
+  onSubmit: (event: React.FormEvent) => void;
+  onCancel: () => void;
+}) {
+  return <form onSubmit={onSubmit} className="mt-4 grid gap-3 rounded-2xl border border-white/[0.08] bg-black/25 p-4 sm:grid-cols-2"><label className="text-xs text-white/50">Reserva<select value={reserveAccountId} onChange={(event) => setReserveAccountId(event.target.value)} className="mt-1.5 w-full rounded-xl border border-white/10 bg-black/50 px-3 py-2 text-sm text-white">{reserves.map((account) => <option key={account.id} value={account.id}>{account.name} · {account.currency}</option>)}</select></label><label className="text-xs text-white/50">Importe realmente ingresado<input inputMode="decimal" value={depositAmount} onChange={(event) => setDepositAmount(event.target.value)} placeholder={`0,00 ${selectedReserve?.currency ?? ""}`} className="mt-1.5 w-full rounded-xl border border-white/10 bg-black/50 px-3 py-2 text-sm text-white"/></label><label className="text-xs text-white/50 sm:col-span-2">Referencia real de transferencia / depósito<input value={custodyReference} onChange={(event) => setCustodyReference(event.target.value)} placeholder="Comprobante / transferencia / referencia bancaria" className="mt-1.5 w-full rounded-xl border border-white/10 bg-black/50 px-3 py-2 text-sm text-white"/></label><p className="sm:col-span-2 text-[11px] text-white/35">El equivalente USD se calcula con el FX histórico de la operación, nunca con una cotización futura.</p><div className="flex flex-wrap gap-2 sm:col-span-2"><button disabled={depositBusy || !selectedReserve} className="rounded-xl bg-emerald-200 px-4 py-2 text-xs font-semibold text-black disabled:opacity-40">{depositBusy ? "Confirmando…" : "Confirmar ingreso en Reserva"}</button><button type="button" onClick={onCancel} className="rounded-xl border border-white/10 px-4 py-2 text-xs">Cancelar</button></div>{depositMessage ? <p className="sm:col-span-2 text-xs text-white/65">{depositMessage}</p> : null}</form>;
+}
+
+function Field({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (value: string) => void; placeholder: string }) {
+  return <label className="text-xs text-white/50">{label}<input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} className="mt-1.5 w-full rounded-xl border border-white/10 bg-black/50 px-3 py-2 text-sm text-white"/></label>;
+}
+
+function Row({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+  return <div className="flex justify-between gap-4"><span className="text-white/35">{label}</span><span className={`break-all text-right ${mono ? "font-mono text-[11px] text-white/65" : ""}`}>{value}</span></div>;
+}

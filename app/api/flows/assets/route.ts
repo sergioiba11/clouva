@@ -20,6 +20,7 @@ type FundingRow = {
   occurred_at: string;
   reserve_account_id: string | null;
   custody_status: string;
+  custody_stage: string;
   custody_reference: string | null;
   custody_confirmed_at: string | null;
   reference_usd_amount: number | null;
@@ -59,7 +60,7 @@ type BackingAllocationRow = {
   released_at: string | null;
 };
 
-const operationSelect = "id,buyer_player_id,recipient_player_id,provider,provider_payment_id,provider_reference,payment_method,quantity,unit_usd,amount,required_backing_usd,backing_amount,processing_fee_amount,processing_fee_policy,currency,status,backing_status,confirmed_at,issued_at,created_at,fx_rate_original_per_usd,fx_pair,fx_source,fx_quoted_at,provider_fee,net_amount,refund_status,operation_type,target_asset_id";
+const operationSelect = "id,buyer_player_id,recipient_player_id,provider,provider_payment_id,provider_reference,payment_method,quantity,unit_usd,amount,required_backing_usd,backing_amount,processing_fee_amount,processing_fee_policy,currency,status,backing_status,confirmed_at,issued_at,created_at,fx_rate_original_per_usd,fx_pair,fx_source,fx_quoted_at,provider_fee,net_amount,refund_status,operation_type,target_asset_id,metadata";
 
 export async function GET(request: NextRequest) {
   try {
@@ -110,7 +111,7 @@ export async function GET(request: NextRequest) {
       operationIds.length
         ? admin
             .from("flow_funding_ledger")
-            .select("id,operation_id,entry_type,provider,payment_method,amount,currency,status,external_payment_id,provider_fee,net_amount,occurred_at,reserve_account_id,custody_status,custody_reference,custody_confirmed_at,reference_usd_amount")
+            .select("id,operation_id,entry_type,provider,payment_method,amount,currency,status,external_payment_id,provider_fee,net_amount,occurred_at,reserve_account_id,custody_status,custody_stage,custody_reference,custody_confirmed_at,reference_usd_amount")
             .in("operation_id", operationIds)
             .order("occurred_at", { ascending: true })
         : Promise.resolve({ data: [] as FundingRow[], error: null }),
@@ -144,7 +145,7 @@ export async function GET(request: NextRequest) {
     const reserveAccountsResult = reserveAccountIds.length
       ? await admin
           .from("flow_reserve_accounts")
-          .select("id,name,provider,account_type,currency,status,is_active,authorized_for_flow")
+          .select("id,name,provider,account_type,currency,flow_account_role,status,is_active,authorized_for_flow")
           .in("id", reserveAccountIds)
       : { data: [], error: null };
     if (reserveAccountsResult.error) throw new Error(reserveAccountsResult.error.message);
@@ -253,6 +254,7 @@ export async function GET(request: NextRequest) {
               name: reserveAccount.name,
               provider: reserveAccount.provider,
               accountType: reserveAccount.account_type,
+              accountRole: reserveAccount.flow_account_role,
               currency: reserveAccount.currency,
               status: reserveAccount.status,
               isActive: reserveAccount.is_active,

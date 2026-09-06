@@ -6,11 +6,12 @@ import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supa
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type ReserveAccount = {
+type CollectionRailAccount = {
   id: string;
   name: string;
   account_reference: string | null;
-  authorized_for_flow: boolean;
+  flow_account_role: string;
+  authorized_for_collection: boolean;
   metadata: Record<string, unknown> | null;
 };
 
@@ -46,7 +47,7 @@ export async function POST(request: NextRequest) {
     if (!reportedCollectorId || reportedCollectorId !== config.userId) {
       return NextResponse.json(
         {
-          error: "La cuenta autenticada en Mercado Pago no coincide con el collector configurado para CLOUVA. No se autorizó ninguna reserva.",
+          error: "La cuenta autenticada en Mercado Pago no coincide con el collector configurado para CLOUVA. No se autorizó el rail de cobro.",
           configuredCollectorId: collectorLabel(config.userId),
           reportedCollectorId: reportedCollectorId ? collectorLabel(reportedCollectorId) : null,
         },
@@ -54,32 +55,36 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { data: rows, error: reserveError } = await admin
+    const { data: rows, error: railError } = await admin
       .from("flow_reserve_accounts")
-      .select("id,name,account_reference,authorized_for_flow,metadata")
+      .select("id,name,account_reference,flow_account_role,authorized_for_collection,metadata")
       .eq("provider", "mercadopago")
       .eq("currency", "ARS")
       .eq("is_active", true)
       .eq("status", "active")
       .order("created_at", { ascending: true });
-    if (reserveError) throw new Error(reserveError.message);
+    if (railError) throw new Error(railError.message);
 
-    const accounts = (rows ?? []) as ReserveAccount[];
+    const accounts = (rows ?? []) as CollectionRailAccount[];
     const exact = accounts.find((account) => account.account_reference === config.userId);
     const candidate = exact ?? accounts.find((account) => account.account_reference == null);
     if (!candidate) {
       return NextResponse.json(
-        { error: "No existe una Cuenta de Reserva CLOUVA disponible para autorizar este collector. No se creó una cuenta automáticamente." },
+        { error: "No existe una cuenta CLOUVA disponible para vincular este collector como rail de cobro. No se creó una cuenta automáticamente." },
         { status: 409 },
       );
     }
 
-    if (candidate.authorized_for_flow && candidate.account_reference === config.userId) {
+    if (
+      candidate.flow_account_role === "collection_rail"
+      && candidate.authorized_for_collection
+      && candidate.account_reference === config.userId
+    ) {
       return NextResponse.json({
         ok: true,
         alreadyAuthorized: true,
-        reserveAccountId: candidate.id,
-        reserveName: candidate.name,
+        collectionRailAccountId: candidate.id,
+        collectionRailName: candidate.name,
         collectorId: collectorLabel(config.userId),
       });
     }
@@ -92,42 +97,51 @@ export async function POST(request: NextRequest) {
       .from("flow_reserve_accounts")
       .update({
         account_reference: config.userId,
-        authorized_for_flow: true,
-        authorized_at: authorizedAt,
-        authorized_by: user.id,
+        flow_account_role: "collection_rail",
+        authorized_for_collection: true,
+        collection_authorized_at: authorizedAt,
+        collection_authorized_by: user.id,
+        authorized_for_flow: false,
+        authorized_at: null,
+        authorized_by: null,
         metadata: {
           ...existingMetadata,
-          purpose: "flow_reserve",
+          purpose: "flow_collection_rail",
           authorizationMode: "explicit_admin_verified_provider",
           authorizedAt,
           mercadoPagoEnvironment: config.environment,
           mercadoPagoApplicationId: config.applicationId,
           providerIdentityVerified: true,
+          processorIsNotReserve: true,
         },
         updated_at: authorizedAt,
       })
       .eq("id", candidate.id)
       .eq("is_active", true)
       .eq("status", "active")
-      .select("id,name,account_reference,authorized_for_flow,authorized_at")
+      .select("id,name,account_reference,flow_account_role,authorized_for_collection,collection_authorized_at")
       .single();
     if (updateError) throw new Error(updateError.message);
-    if (!updated?.authorized_for_flow || updated.account_reference !== config.userId) {
-      throw new Error("La Cuenta de Reserva no quedó autorizada correctamente.");
+    if (
+      !updated?.authorized_for_collection
+      || updated.flow_account_role !== "collection_rail"
+      || updated.account_reference !== config.userId
+    ) {
+      throw new Error("El rail de cobro Mercado Pago no quedó autorizado correctamente.");
     }
 
     return NextResponse.json({
       ok: true,
       alreadyAuthorized: false,
-      reserveAccountId: updated.id,
-      reserveName: updated.name,
+      collectionRailAccountId: updated.id,
+      collectionRailName: updated.name,
       collectorId: collectorLabel(config.userId),
-      authorizedAt: updated.authorized_at,
+      authorizedAt: updated.collection_authorized_at,
     });
   } catch (error) {
     const status = (error as Error & { status?: number })?.status ?? (isAuthError(error) ? 401 : 500);
-    const message = error instanceof Error ? error.message : "No se pudo autorizar la Cuenta de Reserva FLOW.";
-    console.error("flow_reserve_authorization_failed", { message });
+    const message = error instanceof Error ? error.message : "No se pudo autorizar el rail de cobro Mercado Pago.";
+    console.error("flow_collection_rail_authorization_failed", { message });
     return NextResponse.json({ error: message }, { status });
   }
 }

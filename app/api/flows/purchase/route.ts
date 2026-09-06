@@ -50,7 +50,7 @@ export async function POST(request: NextRequest) {
     const [
       { data: pricing, error: pricingError },
       { data: buyerPlayer, error: buyerError },
-      { data: reserveAccount, error: reserveError },
+      { data: collectionRail, error: collectionRailError },
     ] = await Promise.all([
       admin
         .from("flow_issuance_settings")
@@ -70,17 +70,18 @@ export async function POST(request: NextRequest) {
         .eq("provider", "mercadopago")
         .eq("currency", "ARS")
         .eq("account_reference", mpConfig.userId)
-        .eq("authorized_for_flow", true)
+        .eq("flow_account_role", "collection_rail")
+        .eq("authorized_for_collection", true)
         .eq("is_active", true)
         .eq("status", "active")
         .maybeSingle(),
     ]);
     if (pricingError) throw new Error(pricingError.message);
     if (buyerError) throw new Error(buyerError.message);
-    if (reserveError) throw new Error(reserveError.message);
-    if (!reserveAccount) {
+    if (collectionRailError) throw new Error(collectionRailError.message);
+    if (!collectionRail) {
       return NextResponse.json(
-        { error: "La Cuenta de Reserva FLOW de Mercado Pago todavía no está autorizada. No se puede recibir dinero hasta completar esa validación." },
+        { error: "El rail de cobro Mercado Pago todavía no está verificado para CLOUVA. No se puede iniciar el cobro." },
         { status: 503 },
       );
     }
@@ -206,8 +207,10 @@ export async function POST(request: NextRequest) {
       quoteSourceDate: quote.sourceDate,
       operationType,
       targetAssetId,
-      reserveAccountId: reserveAccount.id,
-      reserveCollectorId: mpConfig.userId,
+      collectionRailAccountId: collectionRail.id,
+      collectionCollectorId: mpConfig.userId,
+      paymentStage: "pending",
+      processorIsNotReserve: true,
     };
 
     const { data: operation, error: operationError } = await admin
