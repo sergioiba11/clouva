@@ -7,26 +7,24 @@
 begin;
 
 update public.commerce_products as product
-set gallery = generated.gallery
-from lateral (
-  select coalesce(jsonb_agg(to_jsonb(image_url) order by ordinal), '[]'::jsonb) as gallery
+set gallery = (
+  select coalesce(jsonb_agg(to_jsonb(deduped.image_url) order by deduped.first_ordinal), '[]'::jsonb)
   from (
-    select distinct on (image_url)
+    select
       image ->> 'url' as image_url,
-      ordinal
-    from jsonb_array_elements(
-      case
-        when jsonb_typeof(product.metadata -> 'product_images' -> 'generated_images') = 'array'
-          then product.metadata -> 'product_images' -> 'generated_images'
-        else '[]'::jsonb
-      end
-    ) with ordinality as images(image, ordinal)
+      min(ordinal) as first_ordinal
+    from jsonb_array_elements(product.metadata -> 'product_images' -> 'generated_images')
+      with ordinality as images(image, ordinal)
     where nullif(btrim(image ->> 'url'), '') is not null
-    order by image_url, ordinal
-  ) deduped
-) as generated
-where coalesce(jsonb_array_length(product.gallery), 0) = 0
-  and jsonb_array_length(generated.gallery) > 0;
+    group by image ->> 'url'
+  ) as deduped
+)
+where (
+    jsonb_typeof(product.gallery) is distinct from 'array'
+    or jsonb_array_length(product.gallery) = 0
+  )
+  and jsonb_typeof(product.metadata -> 'product_images' -> 'generated_images') = 'array'
+  and jsonb_array_length(product.metadata -> 'product_images' -> 'generated_images') > 0;
 
 -- Record the same master selection inside metadata so lineage is explicit:
 -- source_photos -> generated_images -> publication_master -> gallery/cover_url.
@@ -42,6 +40,7 @@ set metadata = jsonb_set(
   true
 )
 where jsonb_typeof(product.metadata -> 'product_images') = 'object'
+  and jsonb_typeof(product.gallery) = 'array'
   and jsonb_array_length(product.gallery) > 0
   and not (product.metadata -> 'product_images' ? 'publication_master');
 
