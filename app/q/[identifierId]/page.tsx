@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
+import { FlowQrPaymentCard } from "@/components/flows/FlowQrPaymentCard";
 import { MainFooter, MainNav } from "@/components/layout";
 import { createAdminSupabase } from "@/lib/server/supabase";
 
@@ -47,26 +48,47 @@ export default async function ClouvaQrPage({ params }: { params: Promise<{ ident
   const registry = registryData as RegistryRow | null;
 
   if (registry?.entity_type === "USER") {
-    if (safeInternalPath(registry.destination_path)) redirect(registry.destination_path!);
     const { data: player } = await admin
       .from("players")
-      .select("id,slug,is_published,publication_status,privacy_status")
+      .select("id,slug,username,display_name,profile_image_url,is_published,publication_status,privacy_status")
       .eq("owner_user_id", registry.entity_id)
-      .eq("is_published", true)
-      .eq("publication_status", "published")
-      .neq("privacy_status", "private")
       .order("created_at", { ascending: true })
       .limit(1)
       .maybeSingle();
-    if (!player) return <QrState title="Perfil no disponible" detail="Este QR es válido, pero su Player no está publicado en este momento." />;
-    const { data: alias } = await admin
-      .from("public_slug_aliases")
-      .select("alias")
-      .eq("entity_type", "player")
-      .eq("entity_id", player.id)
-      .eq("is_primary", true)
-      .maybeSingle();
-    redirect(`/${encodeURIComponent(alias?.alias || player.slug)}`);
+
+    if (!player) {
+      return <QrState title="Player no disponible" detail="Este QR es válido, pero todavía no tiene un Player receptor asociado." />;
+    }
+
+    const isPublic = player.is_published && player.publication_status === "published" && player.privacy_status !== "private";
+    let profileHref = safeInternalPath(registry.destination_path) ? registry.destination_path : null;
+    if (!profileHref && isPublic) {
+      const { data: alias } = await admin
+        .from("public_slug_aliases")
+        .select("alias")
+        .eq("entity_type", "player")
+        .eq("entity_id", player.id)
+        .eq("is_primary", true)
+        .maybeSingle();
+      profileHref = `/${encodeURIComponent(alias?.alias || player.slug)}`;
+    }
+
+    const publicLabel = isPublic ? player.display_name || (player.username ? `@${player.username}` : player.slug) : "Player CLOUVA";
+
+    return (
+      <main className="min-h-screen bg-black text-white">
+        <MainNav />
+        <section className="mx-auto max-w-2xl px-4 py-12 sm:px-6 sm:py-16">
+          <FlowQrPaymentCard
+            publicToken={publicToken}
+            recipientLabel={publicLabel}
+            profileHref={profileHref}
+            profileImageUrl={isPublic ? player.profile_image_url : null}
+          />
+        </section>
+        <MainFooter />
+      </main>
+    );
   }
 
   if (registry?.entity_type === "SPACE") {
