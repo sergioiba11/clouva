@@ -20,13 +20,18 @@ const CLOUVA_MODELS: Record<
     tier: "principal" | "respaldo";
   }
 > = {
-  "gemini-3.5-flash": {
+  "gemini-3.1-pro-preview": {
     order: 0,
+    tier: "principal",
+    recommendedFor: "Diseño visual multimodal, razonamiento complejo, arquitectura y análisis de referencias",
+  },
+  "gemini-3.5-flash": {
+    order: 1,
     tier: "principal",
     recommendedFor: "Arquitectura, código, investigación y tareas complejas",
   },
   "gemini-3.1-flash-lite": {
-    order: 1,
+    order: 2,
     tier: "respaldo",
     recommendedFor: "Chat rápido, tareas livianas y menor costo",
   },
