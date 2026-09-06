@@ -56,8 +56,9 @@ export default function MiFlowWalletPage(){
   useEffect(()=>{
     if(!data||typeof window==="undefined")return;
     const asset=new URLSearchParams(window.location.search).get("asset");
-    if(asset!=="diamonds")return;
-    requestAnimationFrame(()=>document.getElementById(asset)?.scrollIntoView({behavior:"smooth",block:"center"}));
+    const target=asset==="flows"?"flows":asset==="diamonds"?"diamonds":null;
+    if(!target)return;
+    requestAnimationFrame(()=>document.getElementById(target)?.scrollIntoView({behavior:"smooth",block:"center"}));
   },[data]);
   const activity=useMemo(()=>data?.money.personalActivity??[],[data]);
   const playerIdentity=data?.player?{
@@ -87,12 +88,15 @@ export default function MiFlowWalletPage(){
       {loading?<div className={`${CARD} grid min-h-52 place-items-center text-sm text-white/45`}><span className="inline-flex items-center gap-2"><Loader2 size={16} className="animate-spin"/>Cargando tu billetera…</span></div>:null}
 
       {!loading&&data?<>
-        <PlayerFlowWallet
-          player={playerIdentity}
-          balance={data.wallets.flows}
-          activity={data.walletActivity.flows}
-          isAdmin={role==="admin"}
-        />
+        <section id="flows" className="scroll-mt-24">
+          <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.2em] text-violet-300/45"> FLOWS</p>
+          <PlayerFlowWallet
+            player={playerIdentity}
+            balance={data.wallets.flows}
+            activity={data.walletActivity.flows}
+            isAdmin={role==="admin"}
+          />
+        </section>
 
         <section>
           <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
