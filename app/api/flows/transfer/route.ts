@@ -18,9 +18,38 @@ function cleanQuantity(value: unknown) {
 
 function statusForMessage(message: string) {
   if (/Saldo de Flows insuficiente|No hay suficientes FLOWS/i.test(message)) return 409;
-  if (/reconciliad|respalda|reserva|custodia/i.test(message)) return 409;
+  if (/reconciliad|respalda|reserva|custodia|otra operación/i.test(message)) return 409;
+  if (/QR.*activo|QR.*Player|no corresponde/i.test(message)) return 404;
   if (/otro Player|vos mismo|cantidad|incompleta|inválida/i.test(message)) return 400;
   return 500;
+}
+
+export async function GET(request: NextRequest) {
+  try {
+    const { user } = await requireUser(request);
+    const operationId = request.nextUrl.searchParams.get("operationId")?.trim() || "";
+    if (!UUID_RE.test(operationId)) {
+      return NextResponse.json({ error: "Falta un id de operación FLOW válido." }, { status: 400 });
+    }
+
+    const admin = createAdminSupabase();
+    const { data, error } = await admin
+      .from("flow_transfer_operations")
+      .select("id,status,quantity,recipient_user_id,qr_registry_id,spot_id,order_id,payment_id,result,created_at,completed_at")
+      .eq("id", operationId)
+      .eq("sender_user_id", user.id)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!data) return NextResponse.json({ error: "La operación FLOW todavía no fue registrada." }, { status: 404 });
+
+    return NextResponse.json({ operation: data, transfer: data.result ?? null });
+  } catch (error) {
+    const status = (error as Error & { status?: number })?.status ?? (isAuthError(error) ? 401 : 500);
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "No se pudo recuperar la operación FLOW." },
+      { status },
+    );
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -38,49 +67,19 @@ export async function POST(request: NextRequest) {
     }
 
     const admin = createAdminSupabase();
-    const { data: registry, error: registryError } = await admin
-      .from("clouva_qr_registry")
-      .select("entity_type,entity_id,status,is_canonical")
-      .eq("public_token", publicToken)
-      .eq("status", "ACTIVE")
-      .eq("is_canonical", true)
-      .maybeSingle();
-
-    if (registryError) throw new Error(registryError.message);
-    if (!registry || registry.entity_type !== "USER") {
-      return NextResponse.json({ error: "Este QR no corresponde a un Player que pueda recibir FLOW." }, { status: 404 });
-    }
-
-    const recipientUserId = String(registry.entity_id || "");
-    if (!recipientUserId || recipientUserId === user.id) {
-      return NextResponse.json({ error: "No podés pagarte FLOW a vos mismo." }, { status: 400 });
-    }
-
-    const { data: recipientPlayer, error: playerError } = await admin
-      .from("players")
-      .select("id")
-      .eq("owner_user_id", recipientUserId)
-      .order("created_at", { ascending: true })
-      .limit(1)
-      .maybeSingle();
-    if (playerError) throw new Error(playerError.message);
-    if (!recipientPlayer) {
-      return NextResponse.json({ error: "El QR existe, pero su Player receptor no está disponible." }, { status: 404 });
-    }
-
-    const { data, error } = await admin.rpc("transfer_backed_flows", {
+    const { data, error } = await admin.rpc("execute_flow_qr_transfer", {
       p_sender_user_id: user.id,
-      p_recipient_user_id: recipientUserId,
+      p_public_token: publicToken,
       p_quantity: quantity,
       p_transfer_id: transferId,
       p_actor_id: user.id,
     });
     if (error) {
       const message = error.message || "No se pudo completar el pago en FLOW.";
-      return NextResponse.json({ error: message }, { status: statusForMessage(message) });
+      return NextResponse.json({ error: message, operationId: transferId }, { status: statusForMessage(message) });
     }
 
-    return NextResponse.json({ transfer: data });
+    return NextResponse.json({ operationId: transferId, operation: data, transfer: data });
   } catch (error) {
     const status = (error as Error & { status?: number })?.status ?? (isAuthError(error) ? 401 : 500);
     return NextResponse.json(
