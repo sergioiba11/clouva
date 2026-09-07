@@ -4,10 +4,21 @@ import Image from "next/image";
 import type { ReactNode } from "react";
 import { RefreshCw } from "lucide-react";
 import { FlowLogo } from "@/components/flows/flow-logo";
+import type { FlowRegion } from "@/lib/flows/flow-region";
 
 const CLOUVA_LOGO = "/assets/clouva/brand/logo-official-light.png";
 
-export function FlowCoin({ compact = false, className = "" }: { compact?: boolean; className?: string }) {
+export function FlowCoin({
+  compact = false,
+  className = "",
+  countryCode,
+  region = null,
+}: {
+  compact?: boolean;
+  className?: string;
+  countryCode?: string | null;
+  region?: FlowRegion | null;
+}) {
   const size = compact ? 54 : 176;
 
   return (
@@ -23,7 +34,13 @@ export function FlowCoin({ compact = false, className = "" }: { compact?: boolea
           compact ? "inset-[18%] blur-xl" : "inset-[12%] blur-3xl"
         }`}
       />
-      <FlowLogo size={size} priority className="relative z-10" />
+      <FlowLogo
+        size={size}
+        priority
+        className="relative z-10"
+        countryCode={countryCode}
+        region={region}
+      />
     </div>
   );
 }
