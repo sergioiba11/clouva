@@ -5,10 +5,12 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
 import { OnboardingShell } from "@/components/onboarding/OnboardingShell";
+import { CountrySelect } from "@/components/profile/country-select";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
 
 type BasicsPayload = {
   complete: boolean;
+  countryCode?: string | null;
   player: { display_name?: string | null; username?: string | null } | null;
 };
 
@@ -22,9 +24,10 @@ function safeNext(value: string | null) {
 function PlayerBasicsForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { user, loading: authLoading } = useAuth();
+  const { user, loading: authLoading, refreshProfile } = useAuth();
   const [displayName, setDisplayName] = useState("");
   const [username, setUsername] = useState("");
+  const [countryCode, setCountryCode] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -49,6 +52,7 @@ function PlayerBasicsForm() {
         }
         setDisplayName(payload.player?.display_name?.trim() || "");
         setUsername(payload.player?.username?.trim() || "");
+        setCountryCode(payload.countryCode?.trim().toUpperCase() || "");
       } catch (cause) {
         if (alive) setError(cause instanceof Error ? cause.message : "No se pudo cargar tu identidad.");
       } finally {
@@ -65,9 +69,10 @@ function PlayerBasicsForm() {
     try {
       const response = await authenticatedFetch("/api/onboarding/player-basics", {
         method: "POST",
-        body: JSON.stringify({ displayName, username }),
+        body: JSON.stringify({ displayName, username, countryCode }),
       });
       await readApiJson(response);
+      await refreshProfile();
       router.replace(next);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "No se pudo guardar tu identidad.");
@@ -79,7 +84,7 @@ function PlayerBasicsForm() {
     <OnboardingShell
       step={1}
       title="Tu identidad"
-      description="Antes de entrar a CLOUVA, definí tu nombre público y tu @ único. Este es tu Player base; después podés personalizarlo y crear o administrar espacios."
+      description="Antes de entrar a CLOUVA, definí tu nombre público, tu @ único y tu país. El país define tu identidad regional de FLOW; no se toma de tu GPS ni de una ubicación temporal."
     >
       {loading ? (
         <div className="flex min-h-40 items-center justify-center gap-2 text-sm text-white/45">
@@ -117,12 +122,19 @@ function PlayerBasicsForm() {
             <span className="mt-2 block text-[11px] leading-5 text-white/30">3–30 caracteres: letras, números, punto, guion o guion bajo.</span>
           </label>
 
+          <CountrySelect
+            value={countryCode}
+            onChange={setCountryCode}
+            required
+            className="rounded-2xl border border-white/10 bg-black/15 p-3.5"
+          />
+
           {error ? <p className="rounded-xl border border-red-400/20 bg-red-400/10 p-3 text-sm text-red-200">{error}</p> : null}
 
           <button
             type="button"
             onClick={() => void save()}
-            disabled={saving || !displayName.trim() || !username.trim()}
+            disabled={saving || !displayName.trim() || !username.trim() || !countryCode}
             className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-violet-600 px-5 py-3.5 text-sm font-semibold transition hover:bg-violet-500 disabled:opacity-45"
           >
             {saving ? <Loader2 size={17} className="animate-spin" /> : null}
