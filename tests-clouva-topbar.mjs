@@ -49,12 +49,16 @@ test("internal surfaces receive the global bar while public identity experiences
     "/agenda",
     "/studio-dashboard/abc/inventario",
     "/businesses/manage",
+    "/auto/vehicle-1",
+    "/mapa-de-confianza",
+    "/player/businesses",
   ]) {
     assert.equal(shouldShowClouvaSystemTopBar(pathname), true, pathname);
   }
 
   for (const pathname of [
     "/clouva.nlb",
+    "/clouva.nlb/store",
     "/u/clouva",
     "/players/clouva",
     "/perfil-publico/123",
