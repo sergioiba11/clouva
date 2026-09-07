@@ -1,13 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import { BarChart3, Boxes, Settings2, Store } from "lucide-react";
 import { isImmersiveClouvaPreviewPath } from "@/lib/navigation/clouva-topbar-routes";
 
 export function StudioDashboardDock({ studioId }: { studioId: string }) {
   const pathname = usePathname() || "/";
-  if (isImmersiveClouvaPreviewPath(pathname)) return null;
+  const searchParams = useSearchParams();
+  const identityDesignerActive = searchParams.get("tab") === "ai-profile";
+  if (isImmersiveClouvaPreviewPath(pathname) || identityDesignerActive) return null;
 
   const root = `/studio-dashboard/${encodeURIComponent(studioId)}/inventario`;
 
