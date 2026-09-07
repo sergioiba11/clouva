@@ -76,13 +76,19 @@ test("Home and account surfaces consume the centralized identity and Player navi
   const topBar = read("./components/clouva/system/ClouvaTopBar.tsx");
   const accountMenu = read("./components/account/AccountMenu.tsx");
   const profilePage = read("./app/perfil/page.tsx");
+  const playerEdit = read("./app/profile/edit/page.tsx");
 
   assert.match(home, /useCurrentPlayer\(\)/);
   assert.match(home, /resolveHomeDisplayName/);
   assert.match(home, /getPlayerDestination\(currentPlayer\)/);
-  assert.match(home, /<AccountMenu[\s\S]*?variant="home"[\s\S]*?preferUsername[\s\S]*?triggerImageUrl=/);
-  assert.doesNotMatch(home, /<h2>Tu identidad<\/h2>/);
+  assert.match(home, /data-home-rail-player-identity/);
+  assert.doesNotMatch(home, /Progreso creativo/);
+  assert.doesNotMatch(home, /<AccountMenu\b/);
+  assert.match(topBar, /data-clouva-official-brand/);
+  assert.match(topBar, /<OfficialClouvaMark/);
   assert.match(topBar, /<AccountMenu\s+variant="home"/);
+  assert.match(playerEdit, /data-player-creative-progress/);
+  assert.match(playerEdit, /Progreso creativo/);
   assert.match(nav, /export function MainNav\(\)[\s\S]*?return null/);
   assert.match(accountMenu, /resolveAccountDisplayName/);
   assert.match(accountMenu, /getPlayerDestination\(currentPlayer\)/);
