@@ -5,20 +5,15 @@ import { useRouter } from "next/navigation";
 import type { CSSProperties, MouseEvent } from "react";
 import {
   ArrowRight,
-  BarChart3,
   Bell,
   CircleUserRound,
   Crown,
-  Diamond,
   Home,
-  Music2,
   Pause,
   Plus,
   ShoppingBag,
   SkipForward,
   Sparkles,
-  Star,
-  Users,
   WalletCards,
   X,
 } from "lucide-react";
@@ -470,12 +465,6 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
           </div>
 
           <span className={styles.vipCta}>Ver beneficios VIP <ArrowRight size={16} /></span>
-
-          <div className={styles.featureBenefits} aria-hidden="true">
-            <span><Diamond size={15} /><small>MÁS<br />HERRAMIENTAS</small></span>
-            <span><Users size={15} /><small>EXPERIENCIAS<br />EXCLUSIVAS</small></span>
-            <span><Star size={15} /><small>IDENTIDAD<br />ÚNICA</small></span>
-          </div>
         </Link>
       );
     }
@@ -500,11 +489,6 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
         <div className={styles.spotBody}>
           <h2>Entrar a mi Spot</h2>
           <p>Tu espacio. Tu música. Tu universo.</p>
-        </div>
-        <div className={styles.featureBenefits} aria-hidden="true">
-          <span><Music2 size={15} /><small>CREÁ</small></span>
-          <span><BarChart3 size={15} /><small>COMPARTÍ</small></span>
-          <span><Users size={15} /><small>CONECTÁ</small></span>
         </div>
       </Link>
     );
