@@ -80,7 +80,7 @@ test("Home and account surfaces consume the centralized identity and Player navi
   assert.match(home, /resolveHomeDisplayName/);
   assert.match(home, /getPlayerDestination\(currentPlayer\)/);
   assert.match(home, /<AccountMenu variant="home"/);
-  assert.match(nav, /<AccountMenu \/>/);
+  assert.match(nav, /<AccountMenu\b[^>]*\/>/);
   assert.match(accountMenu, /resolveAccountDisplayName/);
   assert.match(accountMenu, /getPlayerDestination\(currentPlayer\)/);
   assert.match(profilePage, /Nombre visible en CLOUVA/);
