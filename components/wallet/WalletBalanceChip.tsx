@@ -7,7 +7,15 @@ import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
 import { ClouvaLogoMark } from "@/components/brand/clouva-logo";
 import { DiamondIcon } from "@/components/diamond-icon";
 
-export function WalletBalanceChip() {
+type WalletBalanceChipProps = {
+  showFlows?: boolean;
+  showDiamonds?: boolean;
+};
+
+export function WalletBalanceChip({
+  showFlows = true,
+  showDiamonds = true,
+}: WalletBalanceChipProps = {}) {
   const { user, loading } = useAuth();
   const [balances, setBalances] = useState<{ flows: number; diamonds: number } | null>(null);
 
@@ -26,19 +34,34 @@ export function WalletBalanceChip() {
     return () => { cancelled = true; };
   }, [loading, user]);
 
-  if (loading || !user || !balances) return null;
+  if (loading || !user || !balances || (!showFlows && !showDiamonds)) return null;
 
   return (
-    <div className="flex items-center gap-1 rounded-full border border-[var(--line)] bg-white/[0.03] p-1 text-xs font-medium">
-      <Link href="/mi-flow/billetera?asset=flows" className="flex items-center gap-1.5 rounded-full px-2 py-1 transition hover:bg-white/[0.06]" title="Abrir tu billetera Mi Flow">
-        <ClouvaLogoMark className="text-[#8f7cff]" size={14} label="FLOW" />
-        <span>{balances.flows} FLOWS</span>
-      </Link>
-      <span className="h-3 w-px bg-[var(--line)]" />
-      <Link href="/mi-flow/billetera?asset=diamonds" className="flex items-center gap-1 rounded-full px-2 py-1 transition hover:bg-white/[0.06]" title="Abrir Diamantes en tu billetera">
-        <DiamondIcon className="text-cyan-300" size={14} />
-        {balances.diamonds}
-      </Link>
+    <div className="flex h-[38px] items-center gap-1 rounded-full border border-white/[0.07] bg-white/[0.025] p-1 text-xs font-medium text-white backdrop-blur-xl">
+      {showFlows ? (
+        <Link
+          href="/mi-flow/billetera?asset=flows"
+          className="flex h-7 items-center gap-1.5 rounded-full px-2 transition hover:bg-white/[0.06]"
+          title="Abrir tu billetera Mi Flow"
+        >
+          <ClouvaLogoMark className="text-[#9f86ff]" size={14} label="FLOW" />
+          <span className="whitespace-nowrap tabular-nums">{balances.flows} FLOWS</span>
+        </Link>
+      ) : null}
+
+      {showFlows && showDiamonds ? <span className="h-3 w-px bg-white/[0.08]" /> : null}
+
+      {showDiamonds ? (
+        <Link
+          href="/mi-flow/billetera?asset=diamonds"
+          className="flex h-7 items-center gap-1.5 rounded-full px-2 transition hover:bg-white/[0.06]"
+          title="Abrir Diamantes en tu billetera"
+          aria-label={`${balances.diamonds} Diamantes`}
+        >
+          <DiamondIcon className="text-cyan-300" size={14} />
+          <span className="tabular-nums">{balances.diamonds}</span>
+        </Link>
+      ) : null}
     </div>
   );
 }
