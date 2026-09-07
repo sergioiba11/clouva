@@ -164,11 +164,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const resolveSession = async (nextSession: Session | null, event: AuthChangeEvent | "INITIAL_SESSION") => {
       if (!alive) return;
 
+      const nextUser = nextSession?.user ?? null;
       setSession(nextSession);
-      setUser(nextSession?.user ?? null);
+      setUser((current) => {
+        if (!nextUser) return null;
+        if (event === "USER_UPDATED") return nextUser;
+        return current?.id === nextUser.id ? current : nextUser;
+      });
       setHydrationReady(true);
 
-      const nextUser = nextSession?.user;
       if (!nextUser) {
         clearAuth();
         setHydrationReady(true);
