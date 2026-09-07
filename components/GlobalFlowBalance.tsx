@@ -25,6 +25,7 @@ type GlobalFlowBalanceProps = {
 const REFRESH_MS = 60_000;
 const HOME_MOBILE_QUERY = "(max-width: 820px)";
 const FLOW_UI_FONT = 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+const TOP_BAR_REGION_LABEL = "LATAM";
 
 function initialMobileViewport(): boolean | null {
   if (typeof window === "undefined") return null;
@@ -93,10 +94,10 @@ export function GlobalFlowBalance({ variant = "global" }: GlobalFlowBalanceProps
 
   if (authLoading || !user || !data) return null;
 
-  // The root layout also mounts a global balance. Some surfaces own their
-  // balance in a real header; suppress the floating copy there so FLOW remains
-  // visually connected to CLOUVA instead of covering page controls.
+  // Some surfaces own their FLOW balance inside a real top bar. Suppress the
+  // floating copy there so the wallet never appears twice or overlaps controls.
   if (variant === "global") {
+    if (pathname.startsWith("/admin")) return null;
     if (pathname.startsWith("/agenda")) return null;
     if (pathname === "/" && isMobileViewport !== false) return null;
     if (isCommerceWorkspacePath(pathname)) return null;
@@ -109,9 +110,9 @@ export function GlobalFlowBalance({ variant = "global" }: GlobalFlowBalanceProps
     return (
       <Link
         href="/mi-flow/billetera?asset=flows"
-        aria-label={`${data.balance} ${label}. 1 FLOW equivale a 1 dólar estadounidense.`}
-        title="Abrir Mi Flow"
-        className="group flex h-[38px] min-w-0 items-center gap-1.5 rounded-full border border-white/[0.07] bg-white/[0.025] px-1.5 pr-2 text-white backdrop-blur-xl transition hover:bg-white/[0.05]"
+        aria-label={`${data.balance} ${label}. US$ ${data.usdValue}. Región ${TOP_BAR_REGION_LABEL}.`}
+        title={`1 FLOW = US$ 1 · ${TOP_BAR_REGION_LABEL}`}
+        className="group flex h-[38px] min-w-0 items-center gap-1.5 rounded-full border border-white/[0.07] bg-white/[0.025] px-1.5 pr-2.5 text-white backdrop-blur-xl transition hover:border-violet-300/15 hover:bg-white/[0.05]"
         style={{
           display: "flex",
           height: 38,
@@ -121,7 +122,7 @@ export function GlobalFlowBalance({ variant = "global" }: GlobalFlowBalanceProps
           borderRadius: 9999,
           border: "1px solid rgba(255,255,255,.07)",
           background: "rgba(255,255,255,.025)",
-          padding: "0 8px 0 6px",
+          padding: "0 10px 0 6px",
           color: "#fff",
           textDecoration: "none",
           fontFamily: FLOW_UI_FONT,
@@ -131,12 +132,12 @@ export function GlobalFlowBalance({ variant = "global" }: GlobalFlowBalanceProps
         }}
       >
         <FlowCoinIcon
-          size={26}
+          size={27}
           glow={region.glow}
           edge={region.edge}
           imageUrl={region.assetUrl}
           fallbackImageUrl={region.assetFallbackUrl}
-          title={`FLOWS · ${region.label}`}
+          title={`FLOWS · ${TOP_BAR_REGION_LABEL}`}
         />
         <span className="min-w-0 leading-none" style={{ display: "block", minWidth: 0, lineHeight: 1 }}>
           <span
@@ -172,10 +173,10 @@ export function GlobalFlowBalance({ variant = "global" }: GlobalFlowBalanceProps
               fontSize: 7,
               fontWeight: 500,
               lineHeight: 1,
-              color: "rgba(255,255,255,.34)",
+              color: "rgba(255,255,255,.36)",
             }}
           >
-            US$ {data.usdValue}
+            US$ {data.usdValue} · <span style={{ color: "#b9a5ff" }}>{TOP_BAR_REGION_LABEL}</span>
           </span>
         </span>
       </Link>
