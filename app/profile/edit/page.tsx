@@ -10,7 +10,7 @@ import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
 import { shouldRedirectMissingPlayerToOnboarding } from "@/lib/onboarding-state";
 import type { Player, SocialLink } from "@/lib/players-data";
 
-const SECTIONS = ["Identidad", "Presentación", "Imagen", "Redes y plataformas", "Instagram", "YouTube", "CLOUVA AI Profile", "Privacidad y SEO"] as const;
+const SECTIONS = ["Identidad", "Presentación", "Imagen", "Redes y plataformas", "Instagram", "YouTube", "CLOUVA AI Profile", "Configurar perfil"] as const;
 type Section = (typeof SECTIONS)[number];
 
 const SECTION_SLUGS: Record<string, Section> = {
@@ -22,7 +22,9 @@ const SECTION_SLUGS: Record<string, Section> = {
   redes: "Redes y plataformas",
   instagram: "Instagram",
   youtube: "YouTube",
-  seo: "Privacidad y SEO",
+  seo: "Configurar perfil",
+  configuracion: "Configurar perfil",
+  "configurar-perfil": "Configurar perfil",
 };
 
 type InstagramConnection = {
@@ -199,6 +201,12 @@ function PlayerEditorContent() {
       && Number.isFinite(player.longitude),
   );
   const resolvedLocationParts = locationIsResolved ? savedLocation.split(",").map((part) => part.trim()).filter(Boolean) : [];
+  const privacyStatus = String(draft.privacy_status || "public");
+  const visibilityCopy = privacyStatus === "private"
+    ? "Solo vos podés acceder a tu Player mientras esté privado."
+    : privacyStatus === "unlisted"
+      ? "Tu Player funciona con enlace directo, pero no se indexa públicamente."
+      : "Cualquiera puede encontrar y visitar tu Player público.";
 
   return (
     <main className="min-h-screen bg-[#05040a] text-white">
@@ -222,7 +230,6 @@ function PlayerEditorContent() {
           {activeSection === "Identidad" ? <div className="space-y-4">
             <Field label="Nombre artístico" value={String(draft.display_name || "")} onChange={(value) => update("display_name", value)} />
             <Field label="Usuario" value={String(draft.username || "")} onChange={(value) => update("username", value.replace(/^@/, ""))} prefix="@" />
-            <Field label="URL pública" value={String(draft.slug || "")} onChange={(value) => update("slug", value)} prefix="clouva.com.ar/" />
             <div><Label>Categorías profesionales</Label><div className="flex flex-wrap gap-2">{categories.map((category) => <button key={category} onClick={() => update("professional_categories", categories.filter((item) => item !== category))} className="rounded-full border border-violet-400/30 bg-violet-500/10 px-3 py-1.5 text-xs">{category} ×</button>)}<button onClick={() => { const value = window.prompt("Nueva categoría"); if (value?.trim()) update("professional_categories", [...categories, value.trim()]); }} className="rounded-full border border-dashed border-white/20 px-3 py-1.5 text-xs text-white/45">+ Agregar</button></div></div>
             <div>
               <Field label="Ubicación" value={String(draft.location || "")} onChange={(value) => update("location", value)} />
@@ -263,12 +270,41 @@ function PlayerEditorContent() {
             </div>
           ) : null}
 
-          {activeSection === "Privacidad y SEO" ? <div className="space-y-4">
-            <div><Label>Visibilidad</Label><select value={String(draft.privacy_status || "public")} onChange={(event) => update("privacy_status", event.target.value)} className="w-full rounded-xl border border-white/10 bg-black/30 px-4 py-3"><option value="public">Público e indexable</option><option value="unlisted">Público sin indexar</option><option value="private">Privado</option></select></div>
-            <Field label="Título SEO" value={String(draft.seo_title || "")} onChange={(value) => update("seo_title", value)} />
-            <TextArea label="Descripción SEO" value={String(draft.seo_description || "")} onChange={(value) => update("seo_description", value)} rows={4} />
-            <Field label="Título al compartir" value={String(draft.share_title || "")} onChange={(value) => update("share_title", value)} />
-            <TextArea label="Descripción al compartir" value={String(draft.share_description || "")} onChange={(value) => update("share_description", value)} rows={3} />
+          {activeSection === "Configurar perfil" ? <div className="space-y-5">
+            <div className="rounded-2xl border border-white/10 bg-white/[0.025] p-5">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <Label>Estado del perfil</Label>
+                  <p className="text-base font-semibold">{player.is_published ? "Publicado" : "Borrador"}</p>
+                </div>
+                <span className={`rounded-full border px-3 py-1.5 text-xs font-medium ${privacyStatus === "private" ? "border-amber-300/20 bg-amber-300/10 text-amber-100" : "border-emerald-300/20 bg-emerald-300/10 text-emerald-100"}`}>
+                  {privacyStatus === "private" ? "Privado" : privacyStatus === "unlisted" ? "Sin indexar" : "Público"}
+                </span>
+              </div>
+              <p className="mt-3 text-sm leading-6 text-white/45">{player.is_published ? "Tu Player está publicado. Usá Despublicar arriba si querés retirarlo de circulación sin borrar tu identidad." : "Tu Player está guardado como borrador. Publicalo cuando quieras desde la acción superior."}</p>
+            </div>
+
+            <Field label="URL pública" value={String(draft.slug || "")} onChange={(value) => update("slug", value)} prefix="clouva.com.ar/" />
+
+            <div>
+              <Label>Quién puede ver tu Player</Label>
+              <select value={privacyStatus} onChange={(event) => update("privacy_status", event.target.value)} className="w-full rounded-xl border border-white/10 bg-black/30 px-4 py-3 outline-none focus:border-violet-400/60">
+                <option value="public">Público e indexable — cualquiera puede encontrarlo</option>
+                <option value="unlisted">Público sin indexar — solo con el enlace</option>
+                <option value="private">Privado — solo vos</option>
+              </select>
+              <p className="mt-2 text-xs leading-5 text-white/40">{visibilityCopy}</p>
+            </div>
+
+            <div className="border-t border-white/10 pt-5">
+              <p className="mb-4 text-xs uppercase tracking-[0.18em] text-violet-300/70">SEO y compartir</p>
+              <div className="space-y-4">
+                <Field label="Título SEO" value={String(draft.seo_title || "")} onChange={(value) => update("seo_title", value)} />
+                <TextArea label="Descripción SEO" value={String(draft.seo_description || "")} onChange={(value) => update("seo_description", value)} rows={4} />
+                <Field label="Título al compartir" value={String(draft.share_title || "")} onChange={(value) => update("share_title", value)} />
+                <TextArea label="Descripción al compartir" value={String(draft.share_description || "")} onChange={(value) => update("share_description", value)} rows={3} />
+              </div>
+            </div>
           </div> : null}
 
           {error ? <p className="mt-5 rounded-xl border border-red-400/20 bg-red-400/10 p-3 text-sm text-red-200">{error}</p> : null}
