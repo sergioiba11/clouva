@@ -25,7 +25,6 @@ type GlobalFlowBalanceProps = {
 const REFRESH_MS = 60_000;
 const HOME_MOBILE_QUERY = "(max-width: 820px)";
 const FLOW_UI_FONT = 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
-const TOP_BAR_REGION_LABEL = "LATAM";
 
 function initialMobileViewport(): boolean | null {
   if (typeof window === "undefined") return null;
@@ -110,8 +109,8 @@ export function GlobalFlowBalance({ variant = "global" }: GlobalFlowBalanceProps
     return (
       <Link
         href="/mi-flow/billetera?asset=flows"
-        aria-label={`${data.balance} ${label}. US$ ${data.usdValue}. Región ${TOP_BAR_REGION_LABEL}.`}
-        title={`1 FLOW = US$ 1 · ${TOP_BAR_REGION_LABEL}`}
+        aria-label={`${data.balance} ${label}. US$ ${data.usdValue}. Región ${region.label}.`}
+        title={`1 FLOW = US$ 1 · ${region.label}`}
         className="group flex h-[38px] min-w-0 items-center gap-1.5 rounded-full border border-white/[0.07] bg-white/[0.025] px-1.5 pr-2.5 text-white backdrop-blur-xl transition hover:border-violet-300/15 hover:bg-white/[0.05]"
         style={{
           display: "flex",
@@ -137,7 +136,7 @@ export function GlobalFlowBalance({ variant = "global" }: GlobalFlowBalanceProps
           edge={region.edge}
           imageUrl={region.assetUrl}
           fallbackImageUrl={region.assetFallbackUrl}
-          title={`FLOWS · ${TOP_BAR_REGION_LABEL}`}
+          title={`FLOWS · ${region.label}`}
         />
         <span className="min-w-0 leading-none" style={{ display: "block", minWidth: 0, lineHeight: 1 }}>
           <span
@@ -176,7 +175,7 @@ export function GlobalFlowBalance({ variant = "global" }: GlobalFlowBalanceProps
               color: "rgba(255,255,255,.36)",
             }}
           >
-            US$ {data.usdValue} · <span style={{ color: "#b9a5ff" }}>{TOP_BAR_REGION_LABEL}</span>
+            US$ {data.usdValue} · <span style={{ color: region.glow }}>{region.label}</span>
           </span>
         </span>
       </Link>
