@@ -45,7 +45,6 @@ test("internal surfaces receive the global bar while public identity experiences
     "/market",
     "/mi-spot",
     "/clouva-ai",
-    "/matrix",
     "/agenda",
     "/studio-dashboard/abc/inventario",
     "/businesses/manage",
@@ -57,6 +56,10 @@ test("internal surfaces receive the global bar while public identity experiences
   }
 
   for (const pathname of [
+    "/matrix",
+    "/matrix/",
+    "/players",
+    "/studios",
     "/clouva.nlb",
     "/clouva.nlb/store",
     "/u/clouva",
@@ -72,6 +75,7 @@ test("internal surfaces receive the global bar while public identity experiences
     "/onboarding/identity",
   ]) {
     assert.equal(isPublicClouvaExperiencePath(pathname), true, pathname);
+    assert.equal(shouldShowClouvaSystemTopBar(pathname), false, pathname);
   }
 });
 
