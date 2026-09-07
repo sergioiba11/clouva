@@ -411,7 +411,6 @@ export function HomeDashboard() {
         <section className={styles.railCard}>
           <div className={styles.railHeading}>
             <h2>Tu identidad</h2>
-            <Link href="/perfil">Ver perfil privado</Link>
           </div>
           <div className={styles.checkList}>
             <div>
