@@ -1,5 +1,6 @@
 "use client";
 
+import { useAuth } from "@/components/auth-provider";
 import { ClouvaLogoMark } from "@/components/brand/clouva-logo";
 import {
   flowRegionLabel,
@@ -29,12 +30,14 @@ export function FlowLogo({
   size = 48,
   className = "",
   priority = false,
-  countryCode = null,
+  countryCode,
   region = null,
   alt,
   glow = true,
 }: FlowLogoProps) {
-  const resolvedRegion = region ?? resolveFlowRegion(countryCode);
+  const { profile } = useAuth();
+  const effectiveCountryCode = countryCode === undefined ? profile?.country_code : countryCode;
+  const resolvedRegion = region ?? resolveFlowRegion(effectiveCountryCode);
   const assetPath = resolvedRegion ? resolveFlowLogoAsset(resolvedRegion) : null;
   const label = resolvedRegion ? `FLOW ${flowRegionLabel(resolvedRegion)}` : "FLOW";
 
