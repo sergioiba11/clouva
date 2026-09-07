@@ -73,14 +73,16 @@ test("CurrentPlayerProvider reuses the canonical endpoint and clears state by au
 test("Home and account surfaces consume the centralized identity and Player navigation helpers", () => {
   const home = read("./components/clouva/HomeDashboard.tsx");
   const nav = read("./components/layout.tsx");
+  const topBar = read("./components/clouva/system/ClouvaTopBar.tsx");
   const accountMenu = read("./components/account/AccountMenu.tsx");
   const profilePage = read("./app/perfil/page.tsx");
 
   assert.match(home, /useCurrentPlayer\(\)/);
   assert.match(home, /resolveHomeDisplayName/);
   assert.match(home, /getPlayerDestination\(currentPlayer\)/);
-  assert.match(home, /<AccountMenu variant="home"/);
-  assert.match(nav, /<AccountMenu\b[^>]*\/>/);
+  assert.doesNotMatch(home, /<AccountMenu\b/);
+  assert.match(topBar, /<AccountMenu\s+variant="home"/);
+  assert.match(nav, /export function MainNav\(\)[\s\S]*?return null/);
   assert.match(accountMenu, /resolveAccountDisplayName/);
   assert.match(accountMenu, /getPlayerDestination\(currentPlayer\)/);
   assert.match(profilePage, /Nombre visible en CLOUVA/);
