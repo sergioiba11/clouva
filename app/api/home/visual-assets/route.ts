@@ -7,7 +7,8 @@ export const dynamic = "force-dynamic";
 const BUCKET_NAME = process.env.CLOUVA_ADMIN_ASSETS_BUCKET
   ?? process.env.CLOUVA_GENERATED_MEDIA_BUCKET
   ?? "clouva-generated-media";
-const BRAND_PREFIX = "admin-assets/brand/";
+const ADMIN_ASSETS_PREFIX = "admin-assets/";
+const INTERNAL_CACHE_TTL_MS = 60 * 1000;
 
 type HomeAssetMatcher = {
   exactNames?: readonly string[];
@@ -52,12 +53,29 @@ function emptyAssets(): HomeVisualAssets {
   ) as HomeVisualAssets;
 }
 
-function matchRank(name: string, matcher: HomeAssetMatcher) {
-  const exactRank = matcher.exactNames?.indexOf(name) ?? -1;
-  if (exactRank >= 0) return exactRank;
+function matchRank(path: string, name: string, matcher: HomeAssetMatcher) {
+  const normalizedName = name.toLowerCase();
+  const normalizedPath = path.toLowerCase();
 
-  const prefixRank = matcher.prefixes?.findIndex((prefix) => name.startsWith(prefix)) ?? -1;
-  if (prefixRank >= 0) return 100 + prefixRank;
+  for (const [index, candidate] of (matcher.exactNames ?? []).entries()) {
+    const normalizedCandidate = candidate.toLowerCase();
+    if (normalizedName === normalizedCandidate) return index;
+
+    // Keep resolving assets if the Admin Assets workflow ever prefixes a
+    // canonical filename while preserving the original basename.
+    if (
+      normalizedName.endsWith(`-${normalizedCandidate}`)
+      || normalizedName.endsWith(`_${normalizedCandidate}`)
+    ) {
+      return 20 + index;
+    }
+
+    if (normalizedPath.includes(`/${normalizedCandidate}`)) return 40 + index;
+  }
+
+  for (const [index, prefix] of (matcher.prefixes ?? []).entries()) {
+    if (normalizedName.startsWith(prefix.toLowerCase())) return 100 + index;
+  }
 
   return Number.POSITIVE_INFINITY;
 }
@@ -70,15 +88,18 @@ async function resolveHomeAssets() {
     Object.keys(HOME_ASSET_MATCHERS).map((key) => [key, Number.POSITIVE_INFINITY]),
   ) as Record<HomeAssetKey, number>;
 
+  // Admin Assets is a unified registry. Home artwork may live in brand,
+  // backgrounds, uploads, or a future canonical Home folder, so resolve from
+  // the full admin-assets namespace instead of assuming one classification.
   const [files] = await getStorage().bucket(BUCKET_NAME).getFiles({
-    prefix: BRAND_PREFIX,
+    prefix: ADMIN_ASSETS_PREFIX,
     autoPaginate: true,
   });
 
   for (const file of files) {
     const name = file.name.split("/").at(-1) ?? "";
     for (const [key, matcher] of Object.entries(HOME_ASSET_MATCHERS) as Array<[HomeAssetKey, HomeAssetMatcher]>) {
-      const rank = matchRank(name, matcher);
+      const rank = matchRank(file.name, name, matcher);
       if (rank < ranks[key]) {
         ranks[key] = rank;
         assets[key] = publicGcsUrl(BUCKET_NAME, file.name);
@@ -88,7 +109,7 @@ async function resolveHomeAssets() {
 
   cached = {
     assets,
-    expiresAt: Date.now() + 60 * 60 * 1000,
+    expiresAt: Date.now() + INTERNAL_CACHE_TTL_MS,
   };
 
   return assets;
@@ -101,7 +122,9 @@ export async function GET() {
       { assets },
       {
         headers: {
-          "Cache-Control": "public, max-age=300, s-maxage=3600, stale-while-revalidate=86400",
+          // These assets are editable from /admin/assets. Do not let a browser
+          // or intermediary keep an old asset schema after a Home deploy.
+          "Cache-Control": "no-store, max-age=0",
         },
       },
     );
@@ -111,7 +134,7 @@ export async function GET() {
       { assets: emptyAssets() },
       {
         headers: {
-          "Cache-Control": "public, max-age=60, s-maxage=300",
+          "Cache-Control": "no-store, max-age=0",
         },
       },
     );
