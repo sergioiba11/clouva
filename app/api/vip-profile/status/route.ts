@@ -10,6 +10,14 @@ type VersionRow = {
   status: string;
 } & Record<string, unknown>;
 
+const FIDELITY_STATUSES = new Set([
+  "rendering_reference_preview",
+  "capturing_reference_render",
+  "comparing_reference",
+  "applying_visual_corrections",
+  "validating_visual_fidelity",
+]);
+
 function resolveVersionState(versions: VersionRow[]) {
   const publishedVersion = versions.find((version) => version.status === "published") ?? null;
   const publishedNumber = publishedVersion?.version_number ?? 0;
@@ -21,9 +29,6 @@ function resolveVersionState(versions: VersionRow[]) {
   };
 }
 
-// Read-only, ownership-gated but NOT VIP-gated -- a subject whose VIP lapsed
-// must still be able to see their last published version. Works for either a
-// Player or an Estudio, playerId XOR studioId in the query.
 export async function GET(request: NextRequest) {
   try {
     const { user } = await requireUser(request);
@@ -40,9 +45,7 @@ export async function GET(request: NextRequest) {
       if (playerError) throw new Error(playerError.message);
       if (membershipError) throw new Error(membershipError.message);
       if (!player) return NextResponse.json({ error: "El Player no existe." }, { status: 404 });
-      if (player.owner_user_id !== user.id && !membership) {
-        return NextResponse.json({ error: "No tenés permiso para ver este Player." }, { status: 403 });
-      }
+      if (player.owner_user_id !== user.id && !membership) return NextResponse.json({ error: "No tenés permiso para ver este Player." }, { status: 403 });
     } else {
       const [{ data: studio, error: studioError }, { data: membership, error: membershipError }] = await Promise.all([
         admin.from("studios").select("id,owner_id").eq("id", studioId).maybeSingle(),
@@ -51,9 +54,7 @@ export async function GET(request: NextRequest) {
       if (studioError) throw new Error(studioError.message);
       if (membershipError) throw new Error(membershipError.message);
       if (!studio) return NextResponse.json({ error: "El Estudio no existe." }, { status: 404 });
-      if (studio.owner_id !== user.id && !membership) {
-        return NextResponse.json({ error: "No tenés permiso para ver este Estudio." }, { status: 403 });
-      }
+      if (studio.owner_id !== user.id && !membership) return NextResponse.json({ error: "No tenés permiso para ver este Estudio." }, { status: 403 });
     }
 
     const subjectColumn = playerId ? "player_id" : "studio_id";
@@ -61,7 +62,7 @@ export async function GET(request: NextRequest) {
     const [{ data: job, error: jobError }, { data: versions, error: versionsError }] = await Promise.all([
       admin
         .from("vip_profile_generation_jobs")
-        .select("id,status,generated_copy,generated_assets,layout_variants,error_message,actual_cost_usd,created_at,completed_at")
+        .select("id,status,generated_copy,generated_assets,layout_variants,layout_analysis,error_message,actual_cost_usd,created_at,completed_at")
         .eq(subjectColumn, subjectId)
         .order("created_at", { ascending: false })
         .limit(1)
@@ -77,8 +78,18 @@ export async function GET(request: NextRequest) {
 
     const normalizedVersions = (versions ?? []) as VersionRow[];
     const versionState = resolveVersionState(normalizedVersions);
+    const rawStatus = job?.status as string | undefined;
+    const referenceFidelity = job?.layout_analysis && typeof job.layout_analysis === "object"
+      ? (job.layout_analysis as Record<string, unknown>).referenceFidelity ?? null
+      : null;
+    // Older clients only know assembling_profile. Keep them polling while also
+    // exposing the exact V3 phase/score for the Studio designer UI.
+    const clientJob = job && rawStatus && FIDELITY_STATUSES.has(rawStatus)
+      ? { ...job, status: "assembling_profile", fidelity_status: rawStatus, reference_fidelity: referenceFidelity }
+      : job ? { ...job, fidelity_status: null, reference_fidelity: referenceFidelity } : null;
+
     return NextResponse.json({
-      job,
+      job: clientJob,
       versions: normalizedVersions,
       publishedVersion: versionState.publishedVersion,
       draftVersion: versionState.draftVersion,
