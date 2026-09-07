@@ -60,6 +60,28 @@ type VipState = {
   };
 };
 
+type HomeVisualAssets = {
+  vipComplete: string | null;
+  vipPedestal: string | null;
+  playerRing: string | null;
+  vipCrown: string | null;
+  vipCompleteAlt: string | null;
+  playerOrbits: string | null;
+};
+
+type HomeVisualAssetsResponse = {
+  assets: HomeVisualAssets;
+};
+
+const EMPTY_HOME_VISUAL_ASSETS: HomeVisualAssets = {
+  vipComplete: null,
+  vipPedestal: null,
+  playerRing: null,
+  vipCrown: null,
+  vipCompleteAlt: null,
+  playerOrbits: null,
+};
+
 function initials(value: string) {
   return value
     .split(/\s+/)
@@ -94,6 +116,7 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
   );
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [vipActive, setVipActive] = useState(false);
+  const [homeVisualAssets, setHomeVisualAssets] = useState<HomeVisualAssets>(EMPTY_HOME_VISUAL_ASSETS);
 
   const accountName = resolveAccountDisplayName({ profile, user });
   const playerImage = currentPlayer?.profile_image_url
@@ -109,6 +132,7 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
     () => ({ ...configCssVariables(config), backgroundColor: "#030207" }) as CSSProperties,
     [config],
   );
+  const playerOrbitsAsset = homeVisualAssets.playerOrbits || MOBILE_HOME_ORBITS_ASSET_URL;
 
   useEffect(() => {
     if (previewMode || authLoading) return;
@@ -131,6 +155,26 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
     void loadVip();
     return () => { cancelled = true; };
   }, [authLoading, previewMode, session?.access_token]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadHomeVisualAssets = async () => {
+      try {
+        const response = await fetch("/api/home/visual-assets", { cache: "force-cache" });
+        if (!response.ok) return;
+        const payload = await response.json() as HomeVisualAssetsResponse;
+        if (!cancelled && payload?.assets) {
+          setHomeVisualAssets({ ...EMPTY_HOME_VISUAL_ASSETS, ...payload.assets });
+        }
+      } catch {
+        // Keep the current visual fallbacks if the generated-asset resolver is unavailable.
+      }
+    };
+
+    void loadHomeVisualAssets();
+    return () => { cancelled = true; };
+  }, []);
 
   const preventPreviewNavigation = (event: MouseEvent<HTMLElement>) => {
     if (previewMode) event.preventDefault();
@@ -190,7 +234,7 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
 
         <div className={styles.heroIdentity}>
           <img
-            src={MOBILE_HOME_ORBITS_ASSET_URL}
+            src={playerOrbitsAsset}
             alt=""
             aria-hidden="true"
             style={{
@@ -208,7 +252,29 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
               filter: "drop-shadow(0 0 18px rgba(184, 71, 255, 0.42))",
             }}
           />
-          <span className={styles.identityRing} aria-hidden="true" style={{ zIndex: 1 }} />
+          {homeVisualAssets.playerRing ? (
+            <img
+              src={homeVisualAssets.playerRing}
+              alt=""
+              aria-hidden="true"
+              style={{
+                position: "absolute",
+                top: "50%",
+                left: "50%",
+                zIndex: 1,
+                width: "205px",
+                height: "205px",
+                maxWidth: "none",
+                objectFit: "contain",
+                pointerEvents: "none",
+                userSelect: "none",
+                transform: "translate(-50%, -50%)",
+                filter: "drop-shadow(0 0 22px rgba(191, 75, 255, 0.68))",
+              }}
+            />
+          ) : (
+            <span className={styles.identityRing} aria-hidden="true" style={{ zIndex: 1 }} />
+          )}
           <span className={styles.identityCore} style={{ position: "relative", zIndex: 2 }}>
             {playerImage ? (
               <img src={playerImage} alt={`Foto de ${playerDisplayName}`} />
@@ -307,6 +373,9 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
     const href = isVip ? "/vip" : CLOUVA_NAVIGATION.MI_SPOT.href;
 
     if (isVip) {
+      const hasVipPieces = Boolean(homeVisualAssets.vipCrown && homeVisualAssets.vipPedestal);
+      const vipCompleteAsset = homeVisualAssets.vipComplete || homeVisualAssets.vipCompleteAlt;
+
       return (
         <Link
           key={id}
@@ -316,8 +385,40 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
           data-clouva-block={id}
         >
           <span className={styles.featureSurface} aria-hidden="true" />
+          {homeVisualAssets.vipCompleteAlt ? (
+            <img
+              src={homeVisualAssets.vipCompleteAlt}
+              alt=""
+              aria-hidden="true"
+              style={{
+                position: "absolute",
+                top: "72px",
+                right: "-46px",
+                zIndex: 1,
+                width: "188px",
+                height: "188px",
+                maxWidth: "none",
+                objectFit: "contain",
+                opacity: 0.11,
+                pointerEvents: "none",
+                userSelect: "none",
+                filter: "blur(0.2px) drop-shadow(0 0 28px rgba(177, 62, 255, 0.46))",
+              }}
+            />
+          ) : null}
           <div className={styles.featureTop}>
-            <span className={`${styles.featureIcon} ${styles.vipIcon}`}><Crown size={21} /></span>
+            <span className={`${styles.featureIcon} ${styles.vipIcon}`}>
+              {homeVisualAssets.vipCrown ? (
+                <img
+                  src={homeVisualAssets.vipCrown}
+                  alt=""
+                  aria-hidden="true"
+                  style={{ width: "30px", height: "30px", objectFit: "contain" }}
+                />
+              ) : (
+                <Crown size={21} />
+              )}
+            </span>
             <strong>CLOUVA VIP</strong>
             {vipActive ? <em className={styles.vipActive}><i /> VIP ACTIVO <i /></em> : null}
           </div>
@@ -328,9 +429,56 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
           </div>
 
           <div className={styles.vipVisual} aria-hidden="true">
-            <span className={styles.vipBeam} />
-            <span className={styles.vipPedestal} />
-            <Crown size={44} />
+            {hasVipPieces ? (
+              <>
+                <img
+                  src={homeVisualAssets.vipPedestal!}
+                  alt=""
+                  style={{
+                    position: "absolute",
+                    right: "-10px",
+                    bottom: "0px",
+                    width: "122px",
+                    height: "122px",
+                    maxWidth: "none",
+                    objectFit: "contain",
+                    filter: "drop-shadow(0 0 14px rgba(215, 62, 255, 0.62))",
+                  }}
+                />
+                <img
+                  src={homeVisualAssets.vipCrown!}
+                  alt=""
+                  style={{
+                    position: "absolute",
+                    top: "-3px",
+                    right: "16px",
+                    width: "72px",
+                    height: "72px",
+                    maxWidth: "none",
+                    objectFit: "contain",
+                    filter: "drop-shadow(0 0 11px rgba(255, 178, 47, 0.72))",
+                  }}
+                />
+              </>
+            ) : vipCompleteAsset ? (
+              <img
+                src={vipCompleteAsset}
+                alt=""
+                style={{
+                  width: "132px",
+                  height: "145px",
+                  maxWidth: "none",
+                  objectFit: "contain",
+                  filter: "drop-shadow(0 0 14px rgba(200, 69, 255, 0.58))",
+                }}
+              />
+            ) : (
+              <>
+                <span className={styles.vipBeam} />
+                <span className={styles.vipPedestal} />
+                <Crown size={44} />
+              </>
+            )}
           </div>
 
           <span className={styles.vipCta}>Ver beneficios VIP <ArrowRight size={16} /></span>
