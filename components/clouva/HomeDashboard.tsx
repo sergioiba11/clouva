@@ -5,7 +5,6 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import {
   ArrowRight,
-  Box,
   CircleUserRound,
   Compass,
   DollarSign,
@@ -20,7 +19,6 @@ import {
   Sparkles,
   Store,
 } from "lucide-react";
-import { AccountMenu } from "@/components/account/AccountMenu";
 import { useAuth } from "@/components/auth-provider";
 import { useCurrentPlayer } from "@/components/current-player-provider";
 import { useClouvaAIAssistant } from "@/components/clouva-ai/ClouvaAIAssistantProvider";
@@ -36,6 +34,8 @@ import {
 } from "@/lib/navigation/clouva-navigation";
 import { VISUAL_ASSETS } from "@/lib/visual-assets";
 import styles from "./home-dashboard.module.css";
+
+const PLAYER_ORBITS_ASSET = VISUAL_ASSETS["home-mobile-player-orbits-01"];
 
 const navigationIcons: Partial<Record<ClouvaSurfaceKey, typeof Home>> = {
   HOME: Home,
@@ -167,11 +167,13 @@ export function HomeDashboard() {
         ? "Tu identidad CLOUVA"
         : "Explorá tu propio mundo";
   const identityAvatarImage = currentPlayer?.profile_image_url || profile?.avatar_url || user?.user_metadata?.avatar_url || null;
+  const railIdentityImage = currentPlayer?.profile_image_url
+    || currentPlayer?.logo_url
+    || profile?.avatar_url
+    || user?.user_metadata?.avatar_url
+    || null;
   const fallbackHeroImage = currentPlayer?.cover_url || currentPlayer?.hero_image_url || VISUAL_ASSETS["player-public-profile-cover-01"];
   const isSignedIn = Boolean(user);
-  const hasAvatar = Boolean(profile?.avatar_3d_url);
-  const completedSteps = [isSignedIn, Boolean(profile?.username), hasAvatar].filter(Boolean).length;
-  const progress = Math.round((completedSteps / 3) * 100);
   const playerHref = getPlayerDestination(currentPlayer);
   const heroBackground = homeVisualAssets.heroStudio || (homeVisualAssetsResolved ? fallbackHeroImage : null);
   const desktopVipArtwork = homeVisualAssets.vipCompleteAlt || homeVisualAssets.vipComplete;
@@ -228,17 +230,6 @@ export function HomeDashboard() {
       <div className={styles.ambient} aria-hidden="true" />
 
       <aside className={styles.sidebar}>
-        <section className={styles.identityCard}>
-          <div className={styles.identityAvatar}>
-            {identityAvatarImage ? <img src={String(identityAvatarImage)} alt={displayName} /> : <span>{initials(displayName) || "C"}</span>}
-          </div>
-          <div className={styles.identityCopy}>
-            <strong>{displayName}</strong>
-            <p>{username}</p>
-          </div>
-          <p className={styles.identityLine}>Vida de flows. Del Sur para el mundo.</p>
-        </section>
-
         <nav className={styles.sideNav} aria-label="Secciones principales de CLOUVA">
           {primaryNav.map((item) => {
             const Icon = item.icon;
@@ -408,24 +399,35 @@ export function HomeDashboard() {
       </section>
 
       <aside className={styles.rail}>
-        <AccountMenu
-          variant="home"
-          preferUsername
-          triggerImageUrl={identityAvatarImage ? String(identityAvatarImage) : undefined}
-        />
+        <Link
+          href={playerHref}
+          aria-label={`Abrir Player de ${displayName}`}
+          className="flex w-full min-w-0 items-center gap-3 rounded-xl px-1 py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/70"
+          data-home-rail-player-identity
+        >
+          <span className="relative grid h-11 w-11 shrink-0 place-items-center">
+            <span className="absolute inset-[7px] rounded-full bg-violet-500/20 blur-[8px]" aria-hidden="true" />
+            <img
+              src={PLAYER_ORBITS_ASSET}
+              alt=""
+              aria-hidden="true"
+              draggable={false}
+              className="pointer-events-none absolute left-1/2 top-1/2 h-[58px] w-[58px] max-w-none -translate-x-1/2 -translate-y-1/2 select-none object-contain drop-shadow-[0_0_8px_rgba(184,71,255,0.55)]"
+            />
+            <span className="relative z-[1] grid h-[34px] w-[34px] place-items-center overflow-hidden rounded-full border border-white/20 bg-[#100a17] shadow-[0_0_14px_rgba(142,61,236,0.3)]">
+              {railIdentityImage ? (
+                <img src={String(railIdentityImage)} alt="" className="h-full w-full object-cover" />
+              ) : (
+                <b className="text-[12px] font-extrabold text-white">{displayName.trim().charAt(0).toUpperCase() || "C"}</b>
+              )}
+            </span>
+          </span>
 
-        <section className={styles.railCard}>
-          <div className={styles.railHeading}>
-            <h2>Progreso creativo</h2>
-            <span>{progress}%</span>
-          </div>
-          <div className={styles.progress}><span style={{ width: `${progress}%` }} /></div>
-          <p className={styles.progressCopy}>{completedSteps} de 3 pasos principales completos</p>
-          <div className={styles.progressStats}>
-            <div><CircleUserRound size={17} /><b>{currentPlayer ? "Activo" : "Pendiente"}</b><small>Player</small></div>
-            <div><Box size={17} /><b>{hasAvatar ? "Listo" : "Pendiente"}</b><small>Avatar</small></div>
-          </div>
-        </section>
+          <span className="min-w-0 leading-none">
+            <strong className="block truncate text-[11px] font-extrabold text-white">{displayName}</strong>
+            <small className="mt-1 block truncate text-[9px] font-medium text-violet-200/60">{username}</small>
+          </span>
+        </Link>
 
         <Link href="/vip" className={styles.vipCard}>
           <span className={styles.vipLabel}>CLOUVA VIP</span>
