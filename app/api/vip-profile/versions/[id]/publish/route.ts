@@ -18,13 +18,33 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     const { data: version, error: versionError } = await admin
       .from("player_profile_versions")
-      .select("id,player_id,studio_id,status")
+      .select("id,player_id,studio_id,version_number,status")
       .eq("id", id)
       .maybeSingle();
     if (versionError) throw new Error(versionError.message);
     if (!version) return NextResponse.json({ error: "La versión no existe." }, { status: 404 });
     if (version.status === "archived") {
       return NextResponse.json({ error: "No se puede publicar una versión archivada." }, { status: 409 });
+    }
+
+    if (version.status !== "published") {
+      const subjectColumn = version.player_id ? "player_id" : "studio_id";
+      const subjectId = version.player_id ?? version.studio_id;
+      const { data: currentPublished, error: currentPublishedError } = await admin
+        .from("player_profile_versions")
+        .select("id,version_number")
+        .eq(subjectColumn, subjectId)
+        .eq("status", "published")
+        .order("version_number", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (currentPublishedError) throw new Error(currentPublishedError.message);
+      if (currentPublished && Number(version.version_number) <= Number(currentPublished.version_number)) {
+        return NextResponse.json(
+          { error: `La propuesta v${version.version_number} es anterior a la versión publicada v${currentPublished.version_number}. Creá una nueva versión antes de publicar.` },
+          { status: 409 },
+        );
+      }
     }
 
     await requireActiveVipEntitlement({
