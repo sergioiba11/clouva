@@ -1,16 +1,30 @@
 import { NextRequest, NextResponse } from "next/server";
 import { listPublishedPlayers, listPublishedStudios } from "@/lib/server/public-identity-data";
+import { createAdminSupabase } from "@/lib/server/supabase";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 type SearchResult = {
   id: string;
-  kind: "player" | "studio";
+  kind: "player" | "studio" | "business";
   label: string;
   secondary: string | null;
   imageUrl: string | null;
   href: string;
+};
+
+type PublicSpaceRow = {
+  id: string;
+  slug: string;
+  name: string;
+  type: string | null;
+  description: string | null;
+  logo_url: string | null;
+  cover_url: string | null;
+  public_enabled: boolean | null;
+  status: string | null;
+  legacy_studio_id: string | null;
 };
 
 function normalize(value: unknown) {
@@ -28,14 +42,28 @@ function includesQuery(query: string, values: unknown[]) {
   });
 }
 
+async function listPublicBusinessSpaces() {
+  const { data, error } = await createAdminSupabase()
+    .from("spaces")
+    .select("id,slug,name,type,description,logo_url,cover_url,public_enabled,status,legacy_studio_id")
+    .eq("public_enabled", true)
+    .eq("status", "active")
+    .order("name")
+    .limit(250);
+
+  if (error) throw new Error(error.message);
+  return ((data ?? []) as PublicSpaceRow[]).filter((space) => !space.legacy_studio_id);
+}
+
 export async function GET(request: NextRequest) {
   const query = normalize(request.nextUrl.searchParams.get("q"));
   if (query.length < 2) return NextResponse.json({ results: [] satisfies SearchResult[] });
 
   try {
-    const [players, studios] = await Promise.all([
+    const [players, studios, spaces] = await Promise.all([
       listPublishedPlayers(),
       listPublishedStudios(),
+      listPublicBusinessSpaces(),
     ]);
 
     const playerResults: SearchResult[] = players
@@ -79,13 +107,25 @@ export async function GET(request: NextRequest) {
         href: `/studios/${studio.slug}`,
       }));
 
-    const results = [...playerResults, ...studioResults]
+    const businessResults: SearchResult[] = spaces
+      .filter((space) => includesQuery(query, [space.name, space.slug, space.type, space.description]))
+      .slice(0, 6)
+      .map((space) => ({
+        id: space.id,
+        kind: "business",
+        label: space.name,
+        secondary: space.type === "business" ? "Negocio CLOUVA" : "Espacio CLOUVA",
+        imageUrl: space.logo_url || space.cover_url || null,
+        href: `/spaces/${space.slug}`,
+      }));
+
+    const results = [...playerResults, ...businessResults, ...studioResults]
       .sort((a, b) => {
         const aStarts = normalize(a.label).startsWith(query) ? 0 : 1;
         const bStarts = normalize(b.label).startsWith(query) ? 0 : 1;
         return aStarts - bStarts || a.label.localeCompare(b.label, "es");
       })
-      .slice(0, 10);
+      .slice(0, 12);
 
     return NextResponse.json(
       { results },
