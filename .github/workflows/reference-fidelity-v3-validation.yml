@@ -7,6 +7,8 @@ on:
       - "app/api/vip-profile/**"
       - "app/reference-fidelity/**"
       - "components/identity/**"
+      - "components/studio/**"
+      - "components/public/**"
       - "lib/server/**"
       - "Dockerfile"
       - "tests-reference-fidelity-v2.mjs"
@@ -20,7 +22,7 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     env:
       NEXT_PUBLIC_SUPABASE_URL: ${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
       NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
@@ -31,8 +33,17 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci
-      - run: npm run typecheck
-      - run: npm run test:reference-fidelity
-      - run: npm run lint
-      - run: npm run build
+      - name: Install
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Reference Fidelity tests
+        run: npm run test:reference-fidelity
+      - name: Lint
+        run: npm run lint
+      - name: Full test suite
+        run: npm test
+      - name: CLOUVA AI suite
+        run: npm run test:clouva-ai
+      - name: Production build
+        run: npm run build
