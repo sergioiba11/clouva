@@ -5,7 +5,7 @@ import { AuthProvider } from "@/components/auth-provider";
 import { CurrentPlayerProvider } from "@/components/current-player-provider";
 import { ActiveAvatarHydrator } from "@/components/avatar-engine/ActiveAvatarHydrator";
 import { GlobalSpotifyPlayer } from "@/components/GlobalSpotifyPlayer";
-import { GlobalClouvaAIButton } from "@/components/GlobalClouvaAIButton";
+import { GlobalClouvaAIButtonGate } from "@/components/GlobalClouvaAIButtonGate";
 import { ClouvaSystemTopBarGate } from "@/components/clouva/system/ClouvaSystemTopBarGate";
 import { ClouvaAIAssistantProvider } from "@/components/clouva-ai/ClouvaAIAssistantProvider";
 import { SpotifyPlaybackProvider } from "@/components/music/SpotifyPlaybackProvider";
@@ -56,7 +56,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
                     <ActiveAvatarHydrator />
                     <ClouvaSystemTopBarGate />
                     {children}
-                    <GlobalClouvaAIButton />
+                    <GlobalClouvaAIButtonGate />
                     <GlobalSpotifyPlayer />
                   </ClouvaAIAssistantProvider>
                 </SpotifyPlaybackProvider>
