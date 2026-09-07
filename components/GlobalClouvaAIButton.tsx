@@ -246,7 +246,6 @@ export function GlobalClouvaAIButton() {
         aria-label={open ? "Cerrar CLOUVA AI" : "Abrir CLOUVA AI"}
       >
         <Image src={MASCOT_SRC} alt="" width={48} height={48} priority draggable={false} />
-        <span><b>CLOUVA AI</b><small>Lista para ayudarte</small></span>
       </button>
     </>
   );
