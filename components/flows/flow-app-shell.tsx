@@ -15,9 +15,6 @@ import {
   WalletCards,
   X,
 } from "lucide-react";
-import { AccountMenu } from "@/components/account/AccountMenu";
-import { NotificationBell } from "@/components/notifications/NotificationBell";
-import { WalletBalanceChip } from "@/components/wallet/WalletBalanceChip";
 import { CLOUVA_NAVIGATION } from "@/lib/navigation/clouva-navigation";
 
 const CLOUVA_LOGO = "/assets/clouva/brand/logo-official-light.png";
@@ -133,7 +130,7 @@ export function FlowAppShell({
 
   return (
     <div className="min-h-screen overflow-x-clip bg-[#05050b] text-white">
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-[248px] border-r border-white/[0.07] bg-[#070711]/96 px-4 py-5 backdrop-blur-2xl lg:flex lg:flex-col">
+      <aside className="fixed bottom-0 left-0 top-16 z-40 hidden w-[248px] border-r border-white/[0.07] bg-[#070711]/96 px-4 py-5 backdrop-blur-2xl lg:flex lg:flex-col">
         <Link
           href="/"
           aria-label="CLOUVA Inicio"
@@ -161,42 +158,21 @@ export function FlowAppShell({
       </aside>
 
       <div className="min-h-screen lg:pl-[248px]">
-        <header className="sticky top-0 z-30 h-[66px] border-b border-white/[0.07] bg-[#06060d]/82 backdrop-blur-2xl">
-          <div className="flex h-full items-center justify-between gap-3 px-4 sm:px-6 lg:px-8 xl:px-10">
-            <div className="flex min-w-0 items-center gap-3">
-              <button
-                type="button"
-                onClick={() => setMobileOpen(true)}
-                className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-white/[0.08] bg-white/[0.035] text-white/70 transition hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/80 lg:hidden"
-                aria-label="Abrir navegación"
-                aria-expanded={mobileOpen}
-              >
-                <Menu size={18} />
-              </button>
-              <Link
-                href="/"
-                className="shrink-0 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/80 lg:hidden"
-                aria-label="CLOUVA Inicio"
-              >
-                <OfficialLogo size={30} priority />
-              </Link>
-              <div className="min-w-0">
-                <p className="truncate text-[9px] font-semibold uppercase tracking-[0.22em] text-white/30">
-                  {headerEyebrow}
-                </p>
-                <p className="truncate text-sm font-semibold text-white/85">{headerTitle}</p>
-              </div>
-            </div>
-
-            <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
-              <div className="hidden sm:block">
-                <WalletBalanceChip />
-              </div>
-              <NotificationBell />
-              <AccountMenu triggerClassName="max-w-[170px]" />
-            </div>
+        <div className="flex min-h-[58px] items-center gap-3 border-b border-white/[0.07] bg-[#06060d]/70 px-4 backdrop-blur-xl sm:px-6 lg:hidden">
+          <button
+            type="button"
+            onClick={() => setMobileOpen(true)}
+            className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-white/[0.08] bg-white/[0.035] text-white/70 transition hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/80"
+            aria-label="Abrir navegación de Mi Flow"
+            aria-expanded={mobileOpen}
+          >
+            <Menu size={18} />
+          </button>
+          <div className="min-w-0">
+            <p className="truncate text-[9px] font-semibold uppercase tracking-[0.22em] text-white/30">{headerEyebrow}</p>
+            <p className="truncate text-sm font-semibold text-white/85">{headerTitle}</p>
           </div>
-        </header>
+        </div>
 
         <div className="mx-auto w-full max-w-[1320px]">{children}</div>
       </div>
