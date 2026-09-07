@@ -2,6 +2,7 @@
 
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { Box, CircleUserRound } from "lucide-react";
 import { useAuth } from "@/components/auth-provider";
 import { SocialLinksEditor } from "@/components/profile/SocialLinksEditor";
 import { YouTubeConnectionPanel } from "@/components/profile/YouTubeConnectionPanel";
@@ -207,6 +208,9 @@ function PlayerEditorContent() {
     : privacyStatus === "unlisted"
       ? "Tu Player funciona con enlace directo, pero no se indexa públicamente."
       : "Cualquiera puede encontrar y visitar tu Player público.";
+  const creativeHasAvatar = Boolean(profile?.avatar_3d_url);
+  const creativeCompletedSteps = [Boolean(user), Boolean(profile?.username), creativeHasAvatar].filter(Boolean).length;
+  const creativeProgress = Math.round((creativeCompletedSteps / 3) * 100);
 
   return (
     <main className="min-h-screen bg-[#05040a] text-white">
@@ -271,6 +275,29 @@ function PlayerEditorContent() {
           ) : null}
 
           {activeSection === "Configurar perfil" ? <div className="space-y-5">
+            <div className="rounded-2xl border border-violet-400/15 bg-[#0c0b1c]/80 p-5" data-player-creative-progress>
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="text-sm font-semibold">Progreso creativo</h2>
+                <span className="text-xs font-semibold text-violet-300">{creativeProgress}%</span>
+              </div>
+              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/[0.07]">
+                <span className="block h-full rounded-full bg-gradient-to-r from-violet-600 to-fuchsia-300 shadow-[0_0_14px_rgba(141,78,255,.5)]" style={{ width: `${creativeProgress}%` }} />
+              </div>
+              <p className="mt-2 text-xs text-white/45">{creativeCompletedSteps} de 3 pasos principales completos</p>
+              <div className="mt-4 grid grid-cols-2 gap-3">
+                <div className="grid gap-1 rounded-xl border border-white/[0.075] p-3 text-violet-300">
+                  <CircleUserRound size={17} />
+                  <b className="text-xs text-white">{player ? "Activo" : "Pendiente"}</b>
+                  <small className="text-[11px] text-white/45">Player</small>
+                </div>
+                <div className="grid gap-1 rounded-xl border border-white/[0.075] p-3 text-violet-300">
+                  <Box size={17} />
+                  <b className="text-xs text-white">{creativeHasAvatar ? "Listo" : "Pendiente"}</b>
+                  <small className="text-[11px] text-white/45">Avatar</small>
+                </div>
+              </div>
+            </div>
+
             <div className="rounded-2xl border border-white/10 bg-white/[0.025] p-5">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
