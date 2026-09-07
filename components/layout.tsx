@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useAuth } from "@/components/auth-provider";
 import { AccountMenu } from "@/components/account/AccountMenu";
-import { ClouvaLogoMark } from "@/components/brand/clouva-logo";
+import { OfficialClouvaMark } from "@/components/clouva/OfficialClouvaMark";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { NotificationBell } from "@/components/notifications/NotificationBell";
 import { WalletBalanceChip } from "@/components/wallet/WalletBalanceChip";
@@ -14,8 +14,10 @@ export function MainNav() {
   return (
     <header className="sticky top-0 z-50 border-b border-[var(--line)] bg-[var(--card)]/80 backdrop-blur-2xl">
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 md:px-8">
-        <Link href="/" className="flex items-center gap-2 text-sm font-semibold tracking-[0.3em]">
-          <ClouvaLogoMark className="text-[#8f7cff]" size={18} />
+        <Link href="/" className="flex items-center gap-2.5 text-sm font-semibold tracking-[0.3em]">
+          <span className="grid h-8 w-8 shrink-0 place-items-center">
+            <OfficialClouvaMark tone="light" width={32} height={32} alt="CLOUVA" />
+          </span>
           <span className="font-stencil text-base tracking-[0.15em]">CLOUVA</span>
         </Link>
         <div className="flex items-center gap-2">
