@@ -7,12 +7,18 @@ const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 test("Inicio abre un menú de cuenta compartido y separa MI FLOW de MI SPOT", () => {
   const home = read("./components/clouva/HomeDashboard.tsx");
   const mobileHome = read("./components/clouva/MobileHomeDashboard.tsx");
+  const topBar = read("./components/clouva/system/ClouvaTopBar.tsx");
+  const gate = read("./components/clouva/system/ClouvaSystemTopBarGate.tsx");
   const layout = read("./components/layout.tsx");
   const menu = read("./components/account/AccountMenu.tsx");
 
-  assert.match(home, /<AccountMenu\s+variant="home"/);
+  assert.doesNotMatch(home, /<AccountMenu\b/);
   assert.match(mobileHome, /<AccountMenu\s+variant="home"/);
-  assert.match(layout, /<AccountMenu\b[^>]*\/>/);
+  assert.match(topBar, /<AccountMenu\s+variant="home"/);
+  assert.match(topBar, /data-ui-page="mobile-home"/);
+  assert.match(topBar, /data-ui-preview="false"/);
+  assert.match(gate, /return <ClouvaTopBar \/>/);
+  assert.match(layout, /export function MainNav\(\)[\s\S]*?return null/);
   assert.match(menu, /aria-expanded=\{openMenu\}/);
   assert.match(menu, /event\.key === "Escape"/);
   assert.match(menu, /href=\{CLOUVA_NAVIGATION\.MI_FLOW\.href\}[\s\S]*?label="MI FLOW"/);
