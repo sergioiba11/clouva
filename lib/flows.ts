@@ -1,3 +1,9 @@
+import {
+  FLOW_REGION_ASSETS,
+  resolveFlowRegion as resolveCanonicalFlowRegion,
+  type FlowRegion as CanonicalFlowRegion,
+} from "./flows/flow-region";
+
 export const FLOW_USD_VALUE = 1 as const;
 
 export type FlowRegionKey =
@@ -21,39 +27,56 @@ export type FlowRegion = {
   assetFallbackUrl: string | null;
 };
 
-const FLOW_COIN_ASSET_BASE_URL = (
-  process.env.NEXT_PUBLIC_CLOUVA_FLOW_ASSET_BASE_URL ??
-  "https://storage.googleapis.com/clouva-generated-media/admin-assets/brand"
+const DEFAULT_ADMIN_ASSETS_BASE_URL =
+  "https://storage.googleapis.com/clouva-generated-media/admin-assets";
+
+const configuredLegacyFlowBase = (
+  process.env.NEXT_PUBLIC_CLOUVA_FLOW_ASSET_BASE_URL ?? `${DEFAULT_ADMIN_ASSETS_BASE_URL}/brand`
 ).replace(/\/+$/, "");
 
-function flowCoinAsset(fileName: string) {
-  return `${FLOW_COIN_ASSET_BASE_URL}/${fileName}`;
+const ADMIN_ASSETS_BASE_URL = (
+  process.env.NEXT_PUBLIC_CLOUVA_ADMIN_ASSETS_BASE_URL ??
+  (configuredLegacyFlowBase.endsWith("/brand")
+    ? configuredLegacyFlowBase.slice(0, -"/brand".length)
+    : configuredLegacyFlowBase)
+).replace(/\/+$/, "");
+
+const LEGACY_BRAND_ASSETS_BASE_URL = configuredLegacyFlowBase.endsWith("/brand")
+  ? configuredLegacyFlowBase
+  : `${configuredLegacyFlowBase}/brand`;
+
+function flowCoinAsset(assetPath: string) {
+  return `${ADMIN_ASSETS_BASE_URL}/${assetPath.replace(/^\/+/, "")}`;
+}
+
+function legacyFlowCoinAsset(fileName: string) {
+  return `${LEGACY_BRAND_ASSETS_BASE_URL}/${fileName}`;
 }
 
 const FLOW_ASSETS = {
   southAmerica: {
-    canonical: flowCoinAsset("01_flows_sudamerica.png"),
-    uploaded: flowCoinAsset("file_000000003c70820ea2b371171c25df8e.png"),
+    canonical: flowCoinAsset(FLOW_REGION_ASSETS["south-america"]),
+    uploaded: legacyFlowCoinAsset("file_000000003c70820ea2b371171c25df8e.png"),
   },
   northAmerica: {
-    canonical: flowCoinAsset("02_flows_norteamerica.png"),
-    uploaded: flowCoinAsset("file_000000003b04820e860ed6a47ebcfaef.png"),
+    canonical: flowCoinAsset(FLOW_REGION_ASSETS["north-america"]),
+    uploaded: legacyFlowCoinAsset("file_000000003b04820e860ed6a47ebcfaef.png"),
   },
   europe: {
-    canonical: flowCoinAsset("03_flows_europa.png"),
-    uploaded: flowCoinAsset("file_0000000073f8820eb69e8634886203d1.png"),
+    canonical: flowCoinAsset(FLOW_REGION_ASSETS.europe),
+    uploaded: legacyFlowCoinAsset("file_0000000073f8820eb69e8634886203d1.png"),
   },
   africa: {
-    canonical: flowCoinAsset("04_flows_africa.png"),
-    uploaded: flowCoinAsset("file_000000005cd4820e9a811515e66cf30a.png"),
+    canonical: flowCoinAsset(FLOW_REGION_ASSETS.africa),
+    uploaded: legacyFlowCoinAsset("file_000000005cd4820e9a811515e66cf30a.png"),
   },
   asia: {
-    canonical: flowCoinAsset("05_flows_asia.png"),
-    uploaded: flowCoinAsset("file_000000000984820eafb72572e630b7c8.png"),
+    canonical: flowCoinAsset(FLOW_REGION_ASSETS.asia),
+    uploaded: legacyFlowCoinAsset("file_000000000984820eafb72572e630b7c8.png"),
   },
   oceania: {
-    canonical: flowCoinAsset("06_flows_oceania.png"),
-    uploaded: flowCoinAsset("file_000000009098820eac4d055c6bc1ba08.png"),
+    canonical: flowCoinAsset(FLOW_REGION_ASSETS.oceania),
+    uploaded: legacyFlowCoinAsset("file_000000009098820eac4d055c6bc1ba08.png"),
   },
 } as const;
 
@@ -141,11 +164,25 @@ const FLOW_REGIONS: Record<FlowRegionKey, FlowRegion> = {
   },
 };
 
+const CANONICAL_REGION_TO_FLOW_KEY: Record<CanonicalFlowRegion, FlowRegionKey> = {
+  "south-america": "latam",
+  "north-america": "north-america",
+  europe: "europe",
+  africa: "africa",
+  asia: "asia-pacific",
+  oceania: "oceania",
+};
+
 function clean(value: string) {
   return value
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase();
+}
+
+export function getFlowRegionByCountryCode(countryCode: string | null | undefined): FlowRegion | null {
+  const canonicalRegion = resolveCanonicalFlowRegion(countryCode);
+  return canonicalRegion ? FLOW_REGIONS[CANONICAL_REGION_TO_FLOW_KEY[canonicalRegion]] : null;
 }
 
 export function getFlowRegion(...locationParts: Array<string | null | undefined>): FlowRegion {
