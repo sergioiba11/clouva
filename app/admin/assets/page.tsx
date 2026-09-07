@@ -72,6 +72,26 @@ type AssetKind = "image" | "video" | "audio" | "3d" | "document" | "other";
 type SortMode = "updated-desc" | "name-asc" | "size-desc" | "size-asc";
 
 const UPLOAD_FOLDERS = ["brand", "backgrounds", "players", "products", "3d", "uploads"];
+const FORMAT_PRIORITY = [
+  "GLB",
+  "PNG",
+  "WEBP",
+  "JPG",
+  "JPEG",
+  "SVG",
+  "GLTF",
+  "FBX",
+  "OBJ",
+  "MP4",
+  "MOV",
+  "WEBM",
+  "MP3",
+  "WAV",
+  "OGG",
+  "M4A",
+  "PDF",
+  "JSON",
+];
 
 function formatBytes(bytes: number) {
   if (!bytes) return "0 B";
@@ -91,6 +111,37 @@ function formatDate(value: string | null) {
     hour: "2-digit",
     minute: "2-digit",
   }).format(date);
+}
+
+function assetExtension(asset: Asset) {
+  const extension = asset.name.split(".").pop()?.trim().toUpperCase() ?? "";
+  if (!extension || extension === asset.name.toUpperCase()) return "SIN EXT";
+  return extension;
+}
+
+function assetCategory(asset: Asset) {
+  const folder = (asset.folder || "")
+    .replace(/^\/+|\/+$/g, "")
+    .split("/")
+    .filter(Boolean)[0];
+  return folder || "sin-categoria";
+}
+
+function categoryLabel(category: string) {
+  const labels: Record<string, string> = {
+    brand: "Marca / Logos",
+    backgrounds: "Fondos",
+    players: "Players / Avatares",
+    products: "Productos",
+    "3d": "3D",
+    uploads: "Uploads",
+    audio: "Audio",
+    video: "Video",
+    icons: "Iconos",
+    ui: "UI",
+    "sin-categoria": "Sin categoría",
+  };
+  return labels[category] ?? category.replace(/[-_]+/g, " ").replace(/^./, (letter) => letter.toUpperCase());
 }
 
 function assetKind(asset: Asset): AssetKind {
@@ -167,6 +218,8 @@ export default function AdminAssetsPage() {
   const [source, setSource] = useState<AssetSource | "all">("all");
   const [bucketFilter, setBucketFilter] = useState("all");
   const [kindFilter, setKindFilter] = useState<AssetKind | "all">("all");
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [formatFilter, setFormatFilter] = useState("all");
   const [sortMode, setSortMode] = useState<SortMode>("updated-desc");
   const [view, setView] = useState<"grid" | "list">("grid");
 
@@ -207,14 +260,43 @@ export default function AdminAssetsPage() {
     return Array.from(new Set(names)).sort((a, b) => a.localeCompare(b));
   }, [buckets, source]);
 
+  const categoryOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const asset of items) {
+      const category = assetCategory(asset);
+      counts.set(category, (counts.get(category) ?? 0) + 1);
+    }
+    return Array.from(counts.entries()).sort(([a], [b]) => categoryLabel(a).localeCompare(categoryLabel(b), "es"));
+  }, [items]);
+
+  const formatOptions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const asset of items) {
+      const format = assetExtension(asset);
+      counts.set(format, (counts.get(format) ?? 0) + 1);
+    }
+    return Array.from(counts.entries()).sort(([a], [b]) => {
+      const aPriority = FORMAT_PRIORITY.indexOf(a);
+      const bPriority = FORMAT_PRIORITY.indexOf(b);
+      if (aPriority !== -1 || bPriority !== -1) {
+        if (aPriority === -1) return 1;
+        if (bPriority === -1) return -1;
+        return aPriority - bPriority;
+      }
+      return a.localeCompare(b);
+    });
+  }, [items]);
+
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
     const result = items.filter((asset) => {
       if (source !== "all" && asset.source !== source) return false;
       if (bucketFilter !== "all" && asset.bucket !== bucketFilter) return false;
       if (kindFilter !== "all" && assetKind(asset) !== kindFilter) return false;
+      if (categoryFilter !== "all" && assetCategory(asset) !== categoryFilter) return false;
+      if (formatFilter !== "all" && assetExtension(asset) !== formatFilter) return false;
       if (query) {
-        const haystack = `${asset.name} ${asset.path} ${asset.folder} ${asset.bucket} ${asset.contentType ?? ""}`.toLowerCase();
+        const haystack = `${asset.name} ${asset.path} ${asset.folder} ${asset.bucket} ${asset.contentType ?? ""} ${assetExtension(asset)} ${categoryLabel(assetCategory(asset))}`.toLowerCase();
         if (!haystack.includes(query)) return false;
       }
       return true;
@@ -226,11 +308,24 @@ export default function AdminAssetsPage() {
       if (sortMode === "size-asc") return a.size - b.size;
       return String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? ""));
     });
-  }, [items, search, source, bucketFilter, kindFilter, sortMode]);
+  }, [items, search, source, bucketFilter, kindFilter, categoryFilter, formatFilter, sortMode]);
 
   const totalSize = useMemo(() => items.reduce((sum, asset) => sum + asset.size, 0), [items]);
   const images = useMemo(() => items.filter((asset) => assetKind(asset) === "image").length, [items]);
   const models = useMemo(() => items.filter((asset) => assetKind(asset) === "3d").length, [items]);
+  const pngCount = useMemo(() => items.filter((asset) => assetExtension(asset) === "PNG").length, [items]);
+  const glbCount = useMemo(() => items.filter((asset) => assetExtension(asset) === "GLB").length, [items]);
+
+  const hasLibraryFilters = categoryFilter !== "all" || formatFilter !== "all" || kindFilter !== "all" || source !== "all" || bucketFilter !== "all" || search.trim();
+
+  const clearFilters = () => {
+    setSearch("");
+    setSource("all");
+    setBucketFilter("all");
+    setKindFilter("all");
+    setCategoryFilter("all");
+    setFormatFilter("all");
+  };
 
   const copy = async (value: string) => {
     await navigator.clipboard.writeText(value);
@@ -338,10 +433,10 @@ export default function AdminAssetsPage() {
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <span className="rounded-full border border-violet-300/20 bg-violet-400/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.2em] text-violet-200">CLOUVA OS</span>
-              <span className="text-xs text-white/35">Admin · Storage real</span>
+              <span className="text-xs text-white/35">Admin · Biblioteca de assets</span>
             </div>
             <h1 className="mt-4 text-3xl font-semibold tracking-tight md:text-4xl">Todos los assets</h1>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-white/50">Inventario unificado de Google Cloud Storage, Supabase Storage y los assets estáticos de <code className="text-violet-200">public/</code> en el repo. Ver, buscar, abrir, copiar, renombrar y eliminar desde un solo lugar.</p>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-white/50">Inventario unificado de Google Cloud Storage, Supabase Storage y los assets estáticos de <code className="text-violet-200">public/</code>. Navegá por categoría, formato, tipo, storage y bucket sin cambiar la arquitectura actual.</p>
           </div>
           <div className="flex flex-wrap gap-2">
             <button type="button" onClick={() => void load()} disabled={loading || busy} className="inline-flex min-h-11 items-center gap-2 rounded-full border border-white/10 bg-white/[0.04] px-4 text-sm text-white/75 hover:bg-white/[0.08] disabled:opacity-40">
@@ -354,12 +449,14 @@ export default function AdminAssetsPage() {
         </div>
       </header>
 
-      <section className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <section className="grid grid-cols-2 gap-3 lg:grid-cols-3 2xl:grid-cols-6">
         {[
           ["Assets", items.length.toLocaleString("es-AR"), <HardDrive key="assets" className="h-4 w-4" />],
           ["Peso total", formatBytes(totalSize), <Database key="size" className="h-4 w-4" />],
           ["Imágenes", images.toLocaleString("es-AR"), <ImageIcon key="images" className="h-4 w-4" />],
           ["Modelos 3D", models.toLocaleString("es-AR"), <Box key="models" className="h-4 w-4" />],
+          ["PNG", pngCount.toLocaleString("es-AR"), <ImageIcon key="png" className="h-4 w-4" />],
+          ["GLB", glbCount.toLocaleString("es-AR"), <Box key="glb" className="h-4 w-4" />],
         ].map(([label, value, icon]) => (
           <div key={String(label)} className="rounded-2xl border border-white/10 bg-white/[0.035] p-4">
             <div className="flex items-center gap-2 text-xs uppercase tracking-[0.15em] text-white/35">{icon}{label}</div>
@@ -393,9 +490,9 @@ export default function AdminAssetsPage() {
             <button type="button" onClick={() => setUploadOpen(false)} className="rounded-full border border-white/10 p-2 text-white/55"><X className="h-4 w-4" /></button>
           </div>
           <div className="mt-5 grid gap-4 lg:grid-cols-[0.8fr_1fr_1.2fr_auto] lg:items-end">
-            <label className="block text-xs text-white/50">Carpeta
+            <label className="block text-xs text-white/50">Categoría / carpeta
               <select value={uploadFolder} onChange={(event) => setUploadFolder(event.target.value)} className="mt-2 h-12 w-full rounded-xl border border-white/10 bg-black/35 px-3 text-sm outline-none">
-                {UPLOAD_FOLDERS.map((folder) => <option key={folder} value={folder}>{folder}</option>)}
+                {UPLOAD_FOLDERS.map((folder) => <option key={folder} value={folder}>{categoryLabel(folder)}</option>)}
               </select>
             </label>
             <label className="block text-xs text-white/50">Nombre opcional
@@ -412,10 +509,10 @@ export default function AdminAssetsPage() {
       ) : null}
 
       <section className="rounded-[2rem] border border-white/10 bg-white/[0.025] p-4 md:p-5">
-        <div className="grid gap-3 xl:grid-cols-[minmax(260px,1fr)_180px_220px_170px_190px_auto]">
+        <div className="grid gap-3 xl:grid-cols-[minmax(280px,1fr)_180px_220px_170px_190px_auto]">
           <label className="relative block">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/35" />
-            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar por nombre, ruta, bucket o tipo…" className="h-11 w-full rounded-xl border border-white/10 bg-black/30 pl-10 pr-3 text-sm outline-none focus:border-violet-400/50" />
+            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar nombre, ruta, categoría o formato…" className="h-11 w-full rounded-xl border border-white/10 bg-black/30 pl-10 pr-3 text-sm outline-none focus:border-violet-400/50" />
           </label>
           <select value={source} onChange={(event) => { setSource(event.target.value as AssetSource | "all"); setBucketFilter("all"); }} className="h-11 rounded-xl border border-white/10 bg-black/30 px-3 text-sm text-white/80 outline-none">
             <option value="all">Todos los storages</option>
@@ -447,7 +544,35 @@ export default function AdminAssetsPage() {
             <button type="button" onClick={() => setView("list")} className={`grid flex-1 place-items-center rounded-lg px-3 ${view === "list" ? "bg-violet-500/20 text-violet-200" : "text-white/35"}`} aria-label="Vista en lista"><List className="h-4 w-4" /></button>
           </div>
         </div>
-        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-white/35">
+
+        <div className="mt-5 border-t border-white/[0.07] pt-4">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/35">Categorías</p>
+            {hasLibraryFilters ? <button type="button" onClick={clearFilters} className="text-xs text-violet-200/80 hover:text-violet-100">Limpiar filtros</button> : null}
+          </div>
+          <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
+            <button type="button" onClick={() => setCategoryFilter("all")} className={`shrink-0 rounded-full border px-3 py-2 text-xs transition ${categoryFilter === "all" ? "border-violet-400/40 bg-violet-500/20 text-violet-100" : "border-white/10 bg-black/25 text-white/50 hover:bg-white/[0.05]"}`}>Todas <span className="ml-1 text-white/35">{items.length}</span></button>
+            {categoryOptions.map(([category, count]) => (
+              <button key={category} type="button" onClick={() => setCategoryFilter(category)} className={`shrink-0 rounded-full border px-3 py-2 text-xs transition ${categoryFilter === category ? "border-violet-400/40 bg-violet-500/20 text-violet-100" : "border-white/10 bg-black/25 text-white/50 hover:bg-white/[0.05]"}`}>
+                {categoryLabel(category)} <span className="ml-1 text-white/35">{count}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="mt-4">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-white/35">Formatos</p>
+          <div className="mt-2 flex gap-2 overflow-x-auto pb-1">
+            <button type="button" onClick={() => setFormatFilter("all")} className={`shrink-0 rounded-full border px-3 py-2 text-xs font-semibold transition ${formatFilter === "all" ? "border-violet-400/40 bg-violet-500/20 text-violet-100" : "border-white/10 bg-black/25 text-white/50 hover:bg-white/[0.05]"}`}>TODOS</button>
+            {formatOptions.map(([format, count]) => (
+              <button key={format} type="button" onClick={() => setFormatFilter(format)} className={`shrink-0 rounded-full border px-3 py-2 text-xs font-semibold transition ${formatFilter === format ? "border-violet-400/40 bg-violet-500/20 text-violet-100" : "border-white/10 bg-black/25 text-white/55 hover:bg-white/[0.05]"}`}>
+                {format} <span className="ml-1 font-normal text-white/35">{count}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-xs text-white/35">
           <span>Mostrando {filtered.length.toLocaleString("es-AR")} de {items.length.toLocaleString("es-AR")} assets</span>
           <span>{buckets.length} fuente{buckets.length === 1 ? "" : "s"}/bucket{buckets.length === 1 ? "" : "s"} detectado{buckets.length === 1 ? "" : "s"}</span>
         </div>
@@ -465,7 +590,7 @@ export default function AdminAssetsPage() {
         </div>
       ) : filtered.length === 0 ? (
         <div className="grid min-h-64 place-items-center rounded-[2rem] border border-dashed border-white/10 bg-white/[0.02] p-8 text-center">
-          <div><Search className="mx-auto h-7 w-7 text-white/20" /><p className="mt-3 font-medium">No hay assets con esos filtros.</p><p className="mt-1 text-sm text-white/35">Probá otra búsqueda o storage.</p></div>
+          <div><Search className="mx-auto h-7 w-7 text-white/20" /><p className="mt-3 font-medium">No hay assets con esos filtros.</p><p className="mt-1 text-sm text-white/35">Probá otra categoría, formato o storage.</p></div>
         </div>
       ) : view === "grid" ? (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
@@ -479,6 +604,10 @@ export default function AdminAssetsPage() {
                 ) : (
                   <div className="grid h-full place-items-center text-white/25"><KindIcon asset={asset} className="h-10 w-10" /></div>
                 )}
+                <div className="absolute left-2 top-2 flex flex-wrap gap-1.5">
+                  <span className="rounded-full border border-white/10 bg-black/70 px-2.5 py-1 text-[10px] font-bold tracking-[0.08em] text-white/80 backdrop-blur">{assetExtension(asset)}</span>
+                  <span className="max-w-40 truncate rounded-full border border-violet-400/20 bg-violet-500/15 px-2.5 py-1 text-[10px] text-violet-100/80 backdrop-blur">{categoryLabel(assetCategory(asset))}</span>
+                </div>
                 <span className="absolute right-2 top-2 rounded-full bg-black/65 p-2 text-white/65 opacity-0 backdrop-blur transition group-hover:opacity-100"><Eye className="h-4 w-4" /></span>
               </button>
               <div className="p-4">
@@ -498,21 +627,22 @@ export default function AdminAssetsPage() {
         </div>
       ) : (
         <div className="overflow-hidden rounded-[2rem] border border-white/10 bg-black/20">
-          <div className="hidden grid-cols-[minmax(260px,1.4fr)_130px_minmax(150px,0.8fr)_100px_160px_150px] gap-3 border-b border-white/10 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/30 lg:grid">
-            <span>Asset</span><span>Storage</span><span>Bucket</span><span>Tamaño</span><span>Modificado</span><span className="text-right">Acciones</span>
+          <div className="hidden grid-cols-[minmax(260px,1.4fr)_90px_150px_130px_minmax(150px,0.8fr)_100px_150px] gap-3 border-b border-white/10 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/30 xl:grid">
+            <span>Asset</span><span>Formato</span><span>Categoría</span><span>Storage</span><span>Bucket</span><span>Tamaño</span><span className="text-right">Acciones</span>
           </div>
           {filtered.map((asset) => (
-            <div key={`${asset.source}:${asset.bucket}:${asset.path}`} className="grid gap-3 border-b border-white/[0.07] p-4 last:border-0 lg:grid-cols-[minmax(260px,1.4fr)_130px_minmax(150px,0.8fr)_100px_160px_150px] lg:items-center">
+            <div key={`${asset.source}:${asset.bucket}:${asset.path}`} className="grid gap-3 border-b border-white/[0.07] p-4 last:border-0 xl:grid-cols-[minmax(260px,1.4fr)_90px_150px_130px_minmax(150px,0.8fr)_100px_150px] xl:items-center">
               <button type="button" onClick={() => setPreviewAsset(asset)} className="flex min-w-0 items-center gap-3 text-left">
                 <span className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-lg border border-white/10 bg-white/[0.035] text-white/35">
                   {assetKind(asset) === "image" && asset.url ? <img src={asset.url} alt="" loading="lazy" className="h-full w-full object-cover" /> : <KindIcon asset={asset} className="h-4 w-4" />}
                 </span>
                 <span className="min-w-0"><span className="block truncate text-sm font-medium">{asset.name}</span><span className="mt-0.5 block truncate text-[11px] text-white/35">{asset.path}</span></span>
               </button>
+              <span className="w-fit rounded-full border border-white/10 bg-white/[0.035] px-2.5 py-1 text-[10px] font-bold text-white/70">{assetExtension(asset)}</span>
+              <span className="truncate text-xs text-violet-100/65">{categoryLabel(assetCategory(asset))}</span>
               <div><SourceBadge source={asset.source} /></div>
               <span className="truncate text-xs text-white/50" title={asset.bucket}>{asset.bucket}</span>
               <span className="text-xs text-white/50">{formatBytes(asset.size)}</span>
-              <span className="text-xs text-white/40">{formatDate(asset.updatedAt)}</span>
               <div className="flex justify-end gap-1.5">
                 <button type="button" onClick={() => setPreviewAsset(asset)} className="rounded-lg border border-white/10 p-2 text-white/55" title="Ver"><Eye className="h-3.5 w-3.5" /></button>
                 <button type="button" onClick={() => openRename(asset)} className="rounded-lg border border-white/10 p-2 text-white/55" title="Renombrar"><Pencil className="h-3.5 w-3.5" /></button>
@@ -526,7 +656,7 @@ export default function AdminAssetsPage() {
       {previewAsset ? (
         <ModalShell onClose={() => setPreviewAsset(null)}>
           <div className="flex items-start justify-between gap-4">
-            <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><SourceBadge source={previewAsset.source} /><span className="text-xs text-white/35">{previewAsset.bucket}</span></div><h2 className="mt-3 truncate text-xl font-semibold">{previewAsset.name}</h2><p className="mt-1 break-all text-xs text-white/35">{previewAsset.path}</p></div>
+            <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><SourceBadge source={previewAsset.source} /><span className="rounded-full border border-white/10 px-2.5 py-1 text-[10px] font-bold text-white/70">{assetExtension(previewAsset)}</span><span className="rounded-full border border-violet-400/20 bg-violet-500/10 px-2.5 py-1 text-[10px] text-violet-100/75">{categoryLabel(assetCategory(previewAsset))}</span><span className="text-xs text-white/35">{previewAsset.bucket}</span></div><h2 className="mt-3 truncate text-xl font-semibold">{previewAsset.name}</h2><p className="mt-1 break-all text-xs text-white/35">{previewAsset.path}</p></div>
             <button type="button" onClick={() => setPreviewAsset(null)} className="shrink-0 rounded-full border border-white/10 p-2 text-white/55"><X className="h-4 w-4" /></button>
           </div>
           <div className="mt-5 overflow-hidden rounded-2xl border border-white/10 bg-black/35">
@@ -536,7 +666,7 @@ export default function AdminAssetsPage() {
             {assetKind(previewAsset) === "document" && previewAsset.contentType?.includes("pdf") && previewAsset.url ? <iframe src={previewAsset.url} title={previewAsset.name} className="h-[55vh] w-full" /> : null}
             {!previewAsset.url || ["3d", "other"].includes(assetKind(previewAsset)) || (assetKind(previewAsset) === "document" && !previewAsset.contentType?.includes("pdf")) ? <div className="grid min-h-64 place-items-center p-8 text-center text-white/30"><div><KindIcon asset={previewAsset} className="mx-auto h-12 w-12" /><p className="mt-3 text-sm">{previewAsset.contentType ?? "Archivo"}</p></div></div> : null}
           </div>
-          <div className="mt-4 grid gap-3 rounded-2xl border border-white/10 bg-white/[0.025] p-4 text-xs sm:grid-cols-3"><div><span className="text-white/30">Tamaño</span><p className="mt-1 text-white/70">{formatBytes(previewAsset.size)}</p></div><div><span className="text-white/30">Carpeta</span><p className="mt-1 truncate text-white/70">{previewAsset.folder || "/"}</p></div><div><span className="text-white/30">Modificado</span><p className="mt-1 text-white/70">{formatDate(previewAsset.updatedAt)}</p></div></div>
+          <div className="mt-4 grid gap-3 rounded-2xl border border-white/10 bg-white/[0.025] p-4 text-xs sm:grid-cols-2 lg:grid-cols-4"><div><span className="text-white/30">Formato</span><p className="mt-1 font-semibold text-white/75">{assetExtension(previewAsset)}</p></div><div><span className="text-white/30">Categoría</span><p className="mt-1 truncate text-white/70">{categoryLabel(assetCategory(previewAsset))}</p></div><div><span className="text-white/30">Tamaño</span><p className="mt-1 text-white/70">{formatBytes(previewAsset.size)}</p></div><div><span className="text-white/30">Modificado</span><p className="mt-1 text-white/70">{formatDate(previewAsset.updatedAt)}</p></div></div>
           <div className="mt-4 flex flex-wrap gap-2">
             <button type="button" onClick={() => void copy(previewAsset.path)} className="inline-flex items-center gap-2 rounded-full border border-white/10 px-4 py-2 text-xs text-white/70"><Copy className="h-3.5 w-3.5" /> Copiar ruta</button>
             {previewAsset.url ? <><button type="button" onClick={() => void copy(previewAsset.url!)} className="inline-flex items-center gap-2 rounded-full border border-white/10 px-4 py-2 text-xs text-white/70"><Copy className="h-3.5 w-3.5" /> Copiar URL</button><a href={previewAsset.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full border border-violet-400/20 px-4 py-2 text-xs text-violet-200"><ExternalLink className="h-3.5 w-3.5" /> Abrir original</a></> : null}
