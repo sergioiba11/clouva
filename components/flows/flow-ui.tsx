@@ -3,23 +3,27 @@
 import Image from "next/image";
 import type { ReactNode } from "react";
 import { RefreshCw } from "lucide-react";
-import { FlowCoinIcon } from "@/components/flow-coin-icon";
+import { FlowLogo } from "@/components/flows/flow-logo";
 
 const CLOUVA_LOGO = "/assets/clouva/brand/logo-official-light.png";
 
 export function FlowCoin({ compact = false, className = "" }: { compact?: boolean; className?: string }) {
-  const size = compact ? 68 : 176;
+  const size = compact ? 54 : 176;
 
   return (
     <div
-      className={`relative grid shrink-0 place-items-center ${compact ? "h-[72px] w-[72px]" : "h-[188px] w-[188px] sm:h-[210px] sm:w-[210px]"} ${className}`}
+      className={`${className} relative shrink-0 place-items-center ${
+        compact
+          ? "!grid h-[60px] w-[60px]"
+          : "grid h-[188px] w-[188px] sm:h-[210px] sm:w-[210px]"
+      }`}
     >
-      <div className="pointer-events-none absolute inset-[12%] rounded-full bg-violet-500/12 blur-3xl" />
-      <FlowCoinIcon
-        size={size}
-        title="FLOW"
-        className="relative z-10"
+      <div
+        className={`pointer-events-none absolute rounded-full bg-violet-500/10 ${
+          compact ? "inset-[18%] blur-xl" : "inset-[12%] blur-3xl"
+        }`}
       />
+      <FlowLogo size={size} priority className="relative z-10" />
     </div>
   );
 }
@@ -118,25 +122,50 @@ export function FlowMetricCard({
     emerald: "border-emerald-300/12 bg-emerald-300/[0.035] text-emerald-200",
     neutral: "border-white/[0.075] bg-white/[0.025] text-white/65",
   };
+  const isFlowIdentity = label.trim().toUpperCase() === "FLOW DISPONIBLE";
 
   return (
-    <article className={`min-h-[118px] rounded-[22px] border p-4 sm:p-5 ${tones[tone]}`}>
+    <article
+      className={`relative min-h-[118px] overflow-hidden rounded-[22px] border p-4 sm:p-5 ${
+        isFlowIdentity
+          ? "border-violet-300/30 bg-[linear-gradient(135deg,rgba(124,58,237,0.10),rgba(8,7,16,0.96)_62%)] shadow-[inset_0_0_30px_rgba(124,58,237,0.045),0_14px_36px_rgba(0,0,0,0.16)] text-violet-100"
+          : tones[tone]
+      }`}
+    >
+      {isFlowIdentity ? (
+        <div className="pointer-events-none absolute inset-x-5 top-0 h-px bg-gradient-to-r from-transparent via-violet-300/35 to-transparent" />
+      ) : null}
       <div className="flex items-start justify-between gap-4">
-        <div>
+        <div className="min-w-0">
           <p className="text-[10px] font-semibold uppercase tracking-[0.17em] text-white/38">{label}</p>
-          <strong className="mt-2 block text-2xl font-semibold tracking-[-0.03em] text-white">{value}</strong>
+          <strong
+            className={`mt-2 block font-semibold tracking-[-0.035em] text-white ${
+              isFlowIdentity ? "text-[27px] sm:text-[29px]" : "text-2xl"
+            }`}
+          >
+            {value}
+          </strong>
         </div>
-        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[14px] border border-current/15 bg-current/[0.06]">
-          {icon}
-        </span>
+        {isFlowIdentity ? (
+          <FlowLogo size={42} priority className="mt-0.5" />
+        ) : (
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[14px] border border-current/15 bg-current/[0.06]">
+            {icon}
+          </span>
+        )}
       </div>
-      <p className="mt-2 text-[11px] leading-4 text-white/32">{detail}</p>
+      <p className={`mt-2 text-[11px] leading-4 ${isFlowIdentity ? "text-white/38" : "text-white/32"}`}>
+        {detail}
+      </p>
     </article>
   );
 }
 
 function statusTone(label: string) {
   const normalized = label.toUpperCase();
+  if (normalized === "PENDING_BACKING") {
+    return "border-amber-300/28 bg-[#171208] text-amber-100 shadow-[inset_0_0_0_1px_rgba(251,191,36,0.025)]";
+  }
   if (normalized.includes("FLOW DISPONIBLE") || normalized.includes("CONFIRMADO") || normalized === "DISPONIBLE") {
     return "border-emerald-300/20 bg-emerald-300/[0.07] text-emerald-100";
   }
@@ -186,20 +215,32 @@ export function FlowPanel({
   className?: string;
 }) {
   const purchasePanel = title === "Cargar FLOW";
+  const assetsPanel = title === "Tus FLOWS";
 
   return (
     <section
       id={purchasePanel ? "cargar-flow" : undefined}
-      className={`overflow-hidden rounded-[26px] border border-white/[0.075] bg-[#0a0912]/92 ${
-        purchasePanel ? "order-first scroll-mt-24 xl:order-none" : ""
+      className={`overflow-hidden rounded-[26px] border ${
+        purchasePanel
+          ? "order-first scroll-mt-24 border-violet-300/14 bg-[linear-gradient(155deg,rgba(124,58,237,0.055),rgba(10,9,18,0.96)_36%)] shadow-[0_18px_50px_rgba(0,0,0,0.16)] xl:order-none"
+          : assetsPanel
+            ? "border-violet-300/14 bg-[#090811]/95 shadow-[0_20px_60px_rgba(0,0,0,0.16)] [&>div>article]:bg-[linear-gradient(105deg,rgba(124,58,237,0.035),transparent_42%)]"
+            : "border-white/[0.075] bg-[#0a0912]/92"
       } ${className}`}
     >
-      <header className="flex min-h-[70px] items-center justify-between gap-4 border-b border-white/[0.06] px-5 py-4 sm:px-6">
-        <div>
-          {eyebrow ? (
-            <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-violet-300/60">{eyebrow}</p>
-          ) : null}
-          <h2 className="mt-1 text-lg font-semibold tracking-[-0.02em] text-white/90">{title}</h2>
+      <header
+        className={`flex min-h-[70px] items-center justify-between gap-4 border-b px-5 py-4 sm:px-6 ${
+          assetsPanel ? "border-violet-300/[0.075]" : "border-white/[0.06]"
+        }`}
+      >
+        <div className="flex min-w-0 items-center gap-3">
+          {purchasePanel ? <FlowLogo size={36} className="shrink-0" /> : null}
+          <div className="min-w-0">
+            {eyebrow ? (
+              <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-violet-300/60">{eyebrow}</p>
+            ) : null}
+            <h2 className="mt-1 text-lg font-semibold tracking-[-0.02em] text-white/90">{title}</h2>
+          </div>
         </div>
         {action}
       </header>
