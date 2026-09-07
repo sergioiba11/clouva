@@ -15,7 +15,6 @@ const PUBLIC_EXACT_PATHS = new Set([
   "/producto",
   "/q",
   "/mobile-preview",
-  "/matrix",
   "/players",
   "/studios",
 ]);
