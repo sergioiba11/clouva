@@ -19,6 +19,7 @@ const LOCAL_SIGNATURE = 0x04034b50;
 const MAX_ENTRIES = 600;
 const MAX_ENTRY_BYTES = 50 * 1024 * 1024;
 const MAX_EXPANDED_BYTES = 250 * 1024 * 1024;
+// ZIP packs are expanded server-side and stored as individual categorized assets.
 const KNOWN_PLATFORM_SEGMENTS: Array<[string, AssetPackPlatform]> = [
   ["canonical", "canonical"],
   ["png-transparent", "png"],
