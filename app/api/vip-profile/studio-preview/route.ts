@@ -30,7 +30,10 @@ export async function GET(request: NextRequest) {
 
     const versions = (versionsResult.data ?? []) as StudioVersionSnapshot[];
     const publishedVersion = versions.find((item) => item.status === "published") ?? null;
-    const draftVersion = versions.find((item) => item.status === "draft") ?? null;
+    const publishedNumber = publishedVersion?.version_number ?? 0;
+    const draftVersion = versions.find(
+      (item) => item.status === "draft" && item.version_number > publishedNumber,
+    ) ?? null;
 
     return NextResponse.json({
       studioId,
