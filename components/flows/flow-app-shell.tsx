@@ -101,7 +101,15 @@ function NavigationLinks({
   );
 }
 
-export function FlowAppShell({ children }: { children: ReactNode }) {
+export function FlowAppShell({
+  children,
+  headerEyebrow = "Mi Flow / FLOWS",
+  headerTitle = "MIS FLOWS",
+}: {
+  children: ReactNode;
+  headerEyebrow?: string;
+  headerTitle?: string;
+}) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -174,9 +182,9 @@ export function FlowAppShell({ children }: { children: ReactNode }) {
               </Link>
               <div className="min-w-0">
                 <p className="truncate text-[9px] font-semibold uppercase tracking-[0.22em] text-white/30">
-                  Mi Flow / FLOWS
+                  {headerEyebrow}
                 </p>
-                <p className="truncate text-sm font-semibold text-white/85">MIS FLOWS</p>
+                <p className="truncate text-sm font-semibold text-white/85">{headerTitle}</p>
               </div>
             </div>
 
