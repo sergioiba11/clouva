@@ -17,6 +17,7 @@ type Profile = {
   spotify_url?: string | null;
   username?: string | null;
   onboarding_status?: string | null;
+  country_code?: string | null;
 };
 
 type AuthContextType = {
@@ -34,7 +35,7 @@ type AuthContextType = {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 const AUTH_TIMEOUT_MS = 10000;
-const PROFILE_COLUMNS = "id, role, display_name, full_name, avatar_url, avatar_3d_url, spotify_url, username, onboarding_status";
+const PROFILE_COLUMNS = "id, role, display_name, full_name, avatar_url, avatar_3d_url, spotify_url, username, onboarding_status, country_code";
 const PREVIEW_PERSONA_KEY = "clouva-control-preview-persona";
 const PREVIEW_PERSONA_IDS = new Set(PREVIEW_PERSONAS.map((persona) => persona.id));
 
