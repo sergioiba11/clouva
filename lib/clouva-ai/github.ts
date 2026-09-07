@@ -6,6 +6,20 @@ type GitHubFileResponse = {
   html_url?: string;
 };
 
+type RepositoryFile = {
+  path: string;
+  size: number;
+  sha: string;
+};
+
+type RepositoryTreeChange =
+  | { path: string; delete: true; content?: never; encoding?: never }
+  | { path: string; delete?: false; content: string; encoding: "utf-8" | "base64" };
+
+const TEXT_FILE_EXTENSIONS = new Set([
+  "ts", "tsx", "js", "jsx", "mjs", "cjs", "json", "css", "scss", "md", "mdx", "html", "txt", "yml", "yaml", "sql", "py", "sh", "toml", "xml",
+]);
+
 function githubConfig() {
   const token = process.env.GITHUB_TOKEN;
   const owner = process.env.GITHUB_OWNER ?? "sergioiba11";
@@ -108,14 +122,23 @@ export async function listRepositoryFiles() {
     `/repos/${owner}/${repo}/git/trees/${encodeURIComponent(branch)}?recursive=1`,
   )) as {
     truncated?: boolean;
-    tree?: Array<{ path?: string; type?: string; size?: number }>;
+    tree?: Array<{ path?: string; type?: string; size?: number; sha?: string }>;
   };
 
-  const files = (data.tree ?? [])
+  const files: RepositoryFile[] = (data.tree ?? [])
     .filter((item) => item.type === "blob" && item.path)
-    .map((item) => ({ path: item.path as string, size: item.size ?? 0 }));
+    .map((item) => ({ path: item.path as string, size: item.size ?? 0, sha: item.sha ?? "" }));
 
   return { files, truncated: Boolean(data.truncated), branch };
+}
+
+export async function listPublicRepositoryAssets() {
+  const { files, truncated, branch } = await listRepositoryFiles();
+  return {
+    files: files.filter((file) => file.path.startsWith("public/")),
+    truncated,
+    branch,
+  };
 }
 
 export async function readRepositoryFile(path: string) {
@@ -134,6 +157,28 @@ export async function readRepositoryFile(path: string) {
     sha: data.sha ?? "",
     content: Buffer.from(data.content.replace(/\n/g, ""), "base64").toString("utf8"),
     url: data.html_url,
+  };
+}
+
+async function readRepositoryBlob(path: string) {
+  const normalizedPath = path.replace(/^\/+/, "");
+  const { owner, repo } = githubConfig();
+  const { files } = await listRepositoryFiles();
+  const file = files.find((item) => item.path === normalizedPath);
+  if (!file?.sha) throw new Error("GitHub no encontró el asset solicitado.");
+
+  const data = (await githubFetch(`/repos/${owner}/${repo}/git/blobs/${file.sha}`)) as {
+    content?: string;
+    encoding?: string;
+    size?: number;
+  };
+  if (!data.content || data.encoding !== "base64") throw new Error("GitHub no pudo leer el contenido binario del asset.");
+
+  return {
+    path: normalizedPath,
+    sha: file.sha,
+    size: data.size ?? file.size,
+    contentBase64: data.content.replace(/\n/g, ""),
   };
 }
 
@@ -163,6 +208,150 @@ export async function searchRepositoryCode(args: { query: string; path?: string;
       score: item.score ?? null,
     })),
   };
+}
+
+function publicRuntimePath(repositoryPath: string) {
+  const normalized = repositoryPath.replace(/^\/+/, "");
+  if (!normalized.startsWith("public/")) throw new Error("Solo se pueden administrar assets dentro de public/.");
+  return `/${normalized.slice("public/".length)}`;
+}
+
+function isTextFile(path: string) {
+  const extension = path.split(".").pop()?.toLowerCase() ?? "";
+  return TEXT_FILE_EXTENSIONS.has(extension);
+}
+
+async function findReferenceFiles(needles: string[]) {
+  const { owner, repo } = githubConfig();
+  const paths = new Set<string>();
+
+  for (const needle of [...new Set(needles.filter((value) => value.length >= 2))]) {
+    const data = (await githubFetch(
+      `/search/code?q=${encodeURIComponent(`\"${needle}\" repo:${owner}/${repo}`)}&per_page=100`,
+    )) as { items?: Array<{ path?: string }> };
+    for (const item of data.items ?? []) {
+      if (item.path && isTextFile(item.path)) paths.add(item.path);
+    }
+  }
+
+  return [...paths];
+}
+
+async function commitRepositoryChanges(changes: RepositoryTreeChange[], message: string) {
+  if (!changes.length) throw new Error("No hay cambios para guardar en GitHub.");
+  const { owner, repo, branch } = githubConfig();
+
+  const ref = (await githubFetch(`/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(branch)}`)) as {
+    object?: { sha?: string };
+  };
+  const headSha = ref.object?.sha;
+  if (!headSha) throw new Error("GitHub no pudo resolver la rama configurada.");
+
+  const headCommit = (await githubFetch(`/repos/${owner}/${repo}/git/commits/${headSha}`)) as {
+    tree?: { sha?: string };
+  };
+  const baseTreeSha = headCommit.tree?.sha;
+  if (!baseTreeSha) throw new Error("GitHub no pudo resolver el árbol actual del repositorio.");
+
+  const tree: Array<{ path: string; mode: "100644"; type: "blob"; sha: string | null }> = [];
+  for (const change of changes) {
+    if (change.delete) {
+      tree.push({ path: change.path, mode: "100644", type: "blob", sha: null });
+      continue;
+    }
+
+    const content = change.encoding === "base64"
+      ? change.content
+      : Buffer.from(change.content, "utf8").toString("base64");
+    const blob = (await githubFetch(`/repos/${owner}/${repo}/git/blobs`, {
+      method: "POST",
+      body: JSON.stringify({ content, encoding: "base64" }),
+    })) as { sha?: string };
+    if (!blob.sha) throw new Error(`GitHub no pudo preparar ${change.path}.`);
+    tree.push({ path: change.path, mode: "100644", type: "blob", sha: blob.sha });
+  }
+
+  const newTree = (await githubFetch(`/repos/${owner}/${repo}/git/trees`, {
+    method: "POST",
+    body: JSON.stringify({ base_tree: baseTreeSha, tree }),
+  })) as { sha?: string };
+  if (!newTree.sha) throw new Error("GitHub no pudo preparar el árbol del cambio.");
+
+  const commit = (await githubFetch(`/repos/${owner}/${repo}/git/commits`, {
+    method: "POST",
+    body: JSON.stringify({ message, tree: newTree.sha, parents: [headSha] }),
+  })) as { sha?: string; html_url?: string };
+  if (!commit.sha) throw new Error("GitHub no pudo crear el commit del cambio.");
+
+  await githubFetch(`/repos/${owner}/${repo}/git/refs/heads/${encodeURIComponent(branch)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ sha: commit.sha, force: false }),
+  });
+
+  return { commitSha: commit.sha, commitUrl: commit.html_url, branch };
+}
+
+export async function renamePublicRepositoryAsset(path: string, requestedName: string) {
+  const normalizedPath = path.replace(/^\/+/, "");
+  if (!normalizedPath.startsWith("public/")) throw new Error("Solo se pueden renombrar assets dentro de public/.");
+  const safeName = requestedName.replace(/[\\/]/g, "-").trim();
+  if (!safeName || safeName === "." || safeName === "..") throw new Error("El nuevo nombre no es válido.");
+
+  const slash = normalizedPath.lastIndexOf("/");
+  const folder = slash >= 0 ? normalizedPath.slice(0, slash) : "public";
+  const nextPath = `${folder}/${safeName}`;
+  if (nextPath === normalizedPath) return { path: normalizedPath, name: safeName, updatedReferences: 0, commitSha: "" };
+
+  const { files } = await listRepositoryFiles();
+  if (files.some((file) => file.path === nextPath)) throw new Error("Ya existe un asset con ese nombre en esa carpeta.");
+
+  const sourceBlob = await readRepositoryBlob(normalizedPath);
+  const oldRuntime = publicRuntimePath(normalizedPath);
+  const nextRuntime = publicRuntimePath(nextPath);
+  const referenceNeedles = [normalizedPath, oldRuntime, oldRuntime.slice(1)];
+  const referencePaths = (await findReferenceFiles(referenceNeedles)).filter((candidate) => candidate !== normalizedPath);
+
+  const changes: RepositoryTreeChange[] = [
+    { path: nextPath, content: sourceBlob.contentBase64, encoding: "base64" },
+    { path: normalizedPath, delete: true },
+  ];
+  let updatedReferences = 0;
+
+  for (const referencePath of referencePaths) {
+    const current = await readRepositoryFile(referencePath);
+    let nextContent = current.content;
+    nextContent = nextContent.split(normalizedPath).join(nextPath);
+    nextContent = nextContent.split(oldRuntime).join(nextRuntime);
+    nextContent = nextContent.split(oldRuntime.slice(1)).join(nextRuntime.slice(1));
+    if (nextContent !== current.content) {
+      changes.push({ path: referencePath, content: nextContent, encoding: "utf-8" });
+      updatedReferences += 1;
+    }
+  }
+
+  const commit = await commitRepositoryChanges(changes, `admin assets: rename ${normalizedPath} to ${nextPath}`);
+  return { path: nextPath, name: safeName, updatedReferences, ...commit };
+}
+
+export async function deletePublicRepositoryAsset(path: string) {
+  const normalizedPath = path.replace(/^\/+/, "");
+  if (!normalizedPath.startsWith("public/")) throw new Error("Solo se pueden eliminar assets dentro de public/.");
+
+  const { files } = await listRepositoryFiles();
+  if (!files.some((file) => file.path === normalizedPath)) throw new Error("El asset ya no existe en el repositorio.");
+
+  const runtimePath = publicRuntimePath(normalizedPath);
+  const referencePaths = (await findReferenceFiles([normalizedPath, runtimePath, runtimePath.slice(1)]))
+    .filter((candidate) => candidate !== normalizedPath);
+  if (referencePaths.length) {
+    return { deleted: false as const, references: referencePaths.slice(0, 20), totalReferences: referencePaths.length };
+  }
+
+  const commit = await commitRepositoryChanges(
+    [{ path: normalizedPath, delete: true }],
+    `admin assets: delete ${normalizedPath}`,
+  );
+  return { deleted: true as const, path: normalizedPath, ...commit };
 }
 
 export async function writeRepositoryFile(args: {
