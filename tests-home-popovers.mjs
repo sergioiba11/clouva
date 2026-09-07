@@ -12,7 +12,8 @@ test("Inicio abre un menú de cuenta compartido y separa MI FLOW de MI SPOT", ()
   const layout = read("./components/layout.tsx");
   const menu = read("./components/account/AccountMenu.tsx");
 
-  assert.doesNotMatch(home, /<AccountMenu\b/);
+  assert.match(home, /<AccountMenu[\s\S]*?variant="home"[\s\S]*?preferUsername/);
+  assert.doesNotMatch(home, /<h2>Tu identidad<\/h2>/);
   assert.match(mobileHome, /<AccountMenu\s+variant="home"/);
   assert.match(topBar, /<AccountMenu\s+variant="home"/);
   assert.match(topBar, /data-ui-page="mobile-home"/);
