@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { ClouvaAIChat } from "@/components/clouva-ai/ClouvaAIChat";
 import { useTrebolContextRegistration } from "@/components/clouva-ai/ClouvaAIAssistantProvider";
@@ -17,6 +17,10 @@ const EMPTY_STATE: StudioIdentityState = {
   jobStatus: null,
   canPublish: false,
 };
+
+const EMBEDDED_DESKTOP_WIDTH = 1440;
+const EMBEDDED_DESKTOP_HEIGHT = 800;
+const EMBEDDED_COMPACT_HEIGHT = 640;
 
 export function StudioIdentityWorkspace({
   studioId,
@@ -155,13 +159,65 @@ function StudioDesignerGemini({ studioId, studioSlug, studioName, active }: { st
 }
 
 function EmbeddedPreview({ studioId, previewPath }: { studioId: string; previewPath: string }) {
+  const hostRef = useRef<HTMLDivElement | null>(null);
+  const [viewport, setViewport] = useState({ width: EMBEDDED_DESKTOP_WIDTH, height: EMBEDDED_DESKTOP_HEIGHT, scale: 1, compact: false });
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+
+    const updateViewport = () => {
+      const availableWidth = Math.max(host.clientWidth, 1);
+      const compact = availableWidth < 768;
+      if (compact) {
+        setViewport({ width: availableWidth, height: EMBEDDED_COMPACT_HEIGHT, scale: 1, compact: true });
+        return;
+      }
+      setViewport({
+        width: EMBEDDED_DESKTOP_WIDTH,
+        height: EMBEDDED_DESKTOP_HEIGHT,
+        scale: Math.min(1, availableWidth / EMBEDDED_DESKTOP_WIDTH),
+        compact: false,
+      });
+    };
+
+    updateViewport();
+    const observer = new ResizeObserver(updateViewport);
+    observer.observe(host);
+    return () => observer.disconnect();
+  }, []);
+
+  const displayedHeight = viewport.compact ? viewport.height : Math.round(viewport.height * viewport.scale);
+
   return (
     <section className="overflow-hidden rounded-2xl border border-white/10 bg-[#08070d]" data-clouva-component="StudioIdentityEmbeddedPreview">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-3 sm:px-5">
-        <div><p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-violet-200/50">Preview real</p><p className="mt-0.5 text-sm text-white/55">Actual · Propuesta · Comparar</p></div>
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-violet-200/50">Preview real</p>
+          <p className="mt-0.5 text-sm text-white/55">Actual · Propuesta · Comparar</p>
+          <p className="mt-1 hidden text-[10px] text-white/30 md:block">Vista desktop 1440 px · escalada sin deformar el diseño</p>
+        </div>
         <Link href={previewPath} target="_blank" className="rounded-xl border border-white/15 px-3 py-2 text-xs font-semibold text-white/70 hover:text-white">Abrir pantalla completa</Link>
       </div>
-      <iframe key={studioId} title="Preview real de la identidad del Studio" src={previewPath} className="h-[720px] w-full bg-[#050509]" loading="lazy" />
+      <div ref={hostRef} className="relative w-full overflow-hidden bg-[#050509]" style={{ height: displayedHeight }}>
+        <div
+          className={viewport.compact ? "relative h-full w-full" : "absolute left-0 top-0"}
+          style={viewport.compact ? undefined : {
+            width: viewport.width,
+            height: viewport.height,
+            transform: `scale(${viewport.scale})`,
+            transformOrigin: "top left",
+          }}
+        >
+          <iframe
+            key={studioId}
+            title="Preview real de la identidad del Studio"
+            src={previewPath}
+            className="h-full w-full border-0 bg-[#050509]"
+            loading="lazy"
+          />
+        </div>
+      </div>
     </section>
   );
 }
