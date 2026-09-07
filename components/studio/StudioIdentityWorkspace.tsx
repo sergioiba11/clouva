@@ -22,10 +22,12 @@ export function StudioIdentityWorkspace({
   studioId,
   studioSlug,
   studioName,
+  active,
 }: {
   studioId: string;
   studioSlug: string;
   studioName: string;
+  active: boolean;
 }) {
   const [mobileView, setMobileView] = useState<MobileView>("edit");
   const [identityState, setIdentityState] = useState<StudioIdentityState>(EMPTY_STATE);
@@ -36,7 +38,7 @@ export function StudioIdentityWorkspace({
   ].includes(identityState.jobStatus));
 
   return (
-    <div className="pb-28" data-clouva-component="StudioIdentityWorkspace" data-studio-designer="true">
+    <div className="pb-28" data-clouva-component="StudioIdentityWorkspace" data-studio-designer={active ? "true" : "false"}>
       <div className="mb-4 flex flex-col gap-3 border-b border-white/10 pb-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
           <p className="text-[10px] font-semibold uppercase tracking-[0.22em] text-violet-200/55">Identidad · {studioName}</p>
@@ -64,7 +66,7 @@ export function StudioIdentityWorkspace({
           <StudioAiProfilePanel studioId={studioId} onStateChange={setIdentityState} />
         </section>
         <aside className={`${mobileView === "gemini" ? "block" : "hidden"} min-w-0 self-start overflow-hidden rounded-2xl border border-violet-400/15 bg-[#09070f] xl:sticky xl:top-[92px] xl:block xl:h-[calc(100vh-118px)]`}>
-          <StudioDesignerGemini studioId={studioId} studioSlug={studioSlug} studioName={studioName} />
+          <StudioDesignerGemini studioId={studioId} studioSlug={studioSlug} studioName={studioName} active={active} />
         </aside>
       </div>
 
@@ -75,7 +77,7 @@ export function StudioIdentityWorkspace({
   );
 }
 
-function StudioDesignerGemini({ studioId, studioSlug, studioName }: { studioId: string; studioSlug: string; studioName: string }) {
+function StudioDesignerGemini({ studioId, studioSlug, studioName, active }: { studioId: string; studioSlug: string; studioName: string; active: boolean }) {
   const [referenceImageUrls, setReferenceImageUrls] = useState<string[]>([]);
   const [uploading, setUploading] = useState(false);
   const [modelLabel, setModelLabel] = useState("Modelo de diseño");
@@ -84,14 +86,18 @@ function StudioDesignerGemini({ studioId, studioSlug, studioName }: { studioId: 
   useTrebolContextRegistration({
     scope: "studio-identity-designer",
     id: studioId,
-    data: {
-      studioDesigner: true,
-      studioDesignerReferenceImageUrls: referenceImageUrls,
-      instruction: "Trabajá sobre la identidad draft del Studio. Si el usuario pide una nueva propuesta, usá startStudioProfileGeneration con estas referencias después de la confirmación humana.",
-    },
+    data: active
+      ? {
+          studioDesigner: true,
+          studioDesignerReferenceImageUrls: referenceImageUrls,
+          instruction: "Trabajá sobre la identidad draft del Studio. Si el usuario pide una nueva propuesta, usá startStudioProfileGeneration con estas referencias después de la confirmación humana.",
+        }
+      : { studioDesigner: false },
   });
 
   useEffect(() => {
+    if (!active) return;
+
     let cancelled = false;
     const cookieName = "clouva_gemini_model";
     const previous = readCookie(cookieName);
@@ -110,7 +116,7 @@ function StudioDesignerGemini({ studioId, studioSlug, studioName }: { studioId: 
       if (previous) document.cookie = `${cookieName}=${encodeURIComponent(previous)}; path=/; SameSite=Lax`;
       else document.cookie = `${cookieName}=; path=/; Max-Age=0; SameSite=Lax`;
     };
-  }, []);
+  }, [active]);
 
   const uploadReference = async (files: FileList | null) => {
     if (!files?.length) return;
