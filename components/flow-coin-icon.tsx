@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { FlowLogo } from "@/components/flows/flow-logo";
 import type { FlowRegion } from "@/lib/flows/flow-region";
 
@@ -19,6 +18,7 @@ type FlowCoinIconProps = {
 export function FlowCoinIcon({
   size = 34,
   glow = "#a58bff",
+  edge = "#e3dcff",
   className,
   title = "FLOW",
   imageUrl = null,
@@ -26,63 +26,6 @@ export function FlowCoinIcon({
   countryCode,
   region = null,
 }: FlowCoinIconProps) {
-  const [activeImageUrl, setActiveImageUrl] = useState<string | null>(imageUrl);
-
-  useEffect(() => {
-    setActiveImageUrl(imageUrl);
-  }, [imageUrl, fallbackImageUrl]);
-
-  const wrapperStyle = {
-    width: size,
-    height: size,
-    minWidth: size,
-    minHeight: size,
-    maxWidth: size,
-    maxHeight: size,
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    overflow: "hidden",
-    flex: "0 0 auto",
-    lineHeight: 0,
-  } as const;
-
-  if (activeImageUrl) {
-    return (
-      <span className={className} style={wrapperStyle}>
-        <img
-          src={activeImageUrl}
-          alt={title}
-          title={title}
-          width={size}
-          height={size}
-          draggable={false}
-          decoding="async"
-          loading="eager"
-          fetchPriority="high"
-          onError={() => {
-            if (fallbackImageUrl && activeImageUrl !== fallbackImageUrl) {
-              setActiveImageUrl(fallbackImageUrl);
-              return;
-            }
-            setActiveImageUrl(null);
-          }}
-          style={{
-            display: "block",
-            width: "100%",
-            height: "100%",
-            maxWidth: "100%",
-            maxHeight: "100%",
-            objectFit: "contain",
-            userSelect: "none",
-            flex: "0 0 auto",
-            filter: `drop-shadow(0 0 ${Math.max(5, size * 0.18)}px ${glow})`,
-          }}
-        />
-      </span>
-    );
-  }
-
   return (
     <FlowLogo
       size={size}
@@ -91,6 +34,10 @@ export function FlowCoinIcon({
       alt={title}
       countryCode={countryCode}
       region={region}
+      imageUrl={imageUrl}
+      fallbackImageUrl={fallbackImageUrl}
+      glowColor={glow}
+      edgeColor={edge}
     />
   );
 }
