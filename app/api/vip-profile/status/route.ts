@@ -4,6 +4,23 @@ import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supa
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+type VersionRow = {
+  id: string;
+  version_number: number;
+  status: string;
+} & Record<string, unknown>;
+
+function resolveVersionState(versions: VersionRow[]) {
+  const publishedVersion = versions.find((version) => version.status === "published") ?? null;
+  const publishedNumber = publishedVersion?.version_number ?? 0;
+  const drafts = versions.filter((version) => version.status === "draft");
+  return {
+    publishedVersion,
+    draftVersion: drafts.find((version) => version.version_number > publishedNumber) ?? null,
+    staleDrafts: drafts.filter((version) => version.version_number <= publishedNumber),
+  };
+}
+
 // Read-only, ownership-gated but NOT VIP-gated -- a subject whose VIP lapsed
 // must still be able to see their last published version. Works for either a
 // Player or an Estudio, playerId XOR studioId in the query.
@@ -58,7 +75,15 @@ export async function GET(request: NextRequest) {
     if (jobError) throw new Error(jobError.message);
     if (versionsError) throw new Error(versionsError.message);
 
-    return NextResponse.json({ job, versions: versions ?? [] });
+    const normalizedVersions = (versions ?? []) as VersionRow[];
+    const versionState = resolveVersionState(normalizedVersions);
+    return NextResponse.json({
+      job,
+      versions: normalizedVersions,
+      publishedVersion: versionState.publishedVersion,
+      draftVersion: versionState.draftVersion,
+      staleDrafts: versionState.staleDrafts,
+    });
   } catch (error) {
     const status = (error as Error & { status?: number })?.status ?? (isAuthError(error) ? 401 : 500);
     const message = error instanceof Error ? error.message : "No se pudo cargar el estado.";

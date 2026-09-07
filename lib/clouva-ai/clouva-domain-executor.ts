@@ -17,12 +17,27 @@ export type ClouvaDomainServicePort = {
     areaLabel?: string;
   }): Promise<unknown>;
   startPlayerProfileGeneration(playerId: string): Promise<unknown>;
+  startStudioProfileGeneration(referenceImageUrls?: string[]): Promise<unknown>;
 };
 
 function requireConfirmed(args: Record<string, unknown>) {
   if (args.confirm !== true) {
     throw new Error("Esta operación requiere confirmación humana desde CLOUVA AI.");
   }
+}
+
+function parseReferenceImageUrlsJson(value: unknown): string[] | undefined {
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    throw new Error("referenceImageUrlsJson debe ser un array JSON válido.");
+  }
+  if (!Array.isArray(parsed) || !parsed.every((item) => typeof item === "string")) {
+    throw new Error("referenceImageUrlsJson debe contener únicamente URLs de referencia.");
+  }
+  return parsed.slice(0, 3);
 }
 
 /** Gemini sees domain verbs only. Supabase and table names never cross this
@@ -50,19 +65,19 @@ export class ClouvaDomainExecutor extends BaseToolExecutor {
       },
       {
         name: "getStudioIdentityVersions",
-        description: "Obtiene la versión publicada inmutable y el draft activo de identidad del Estudio, con sus configuraciones canónicas.",
+        description: "Obtiene la versión publicada inmutable, el draft activo de identidad del Estudio y cualquier draft histórico obsoleto que deba ignorarse.",
         risk: "read",
         parameters: { type: "OBJECT", properties: {} },
         execute: async () => this.service.getStudioIdentityVersions(),
       },
       {
         name: "updateStudioIdentityDraft",
-        description: "Modifica exclusivamente el draft activo del Preview de identidad. Nunca cambia la versión publicada ni publica el draft.",
+        description: "Modifica exclusivamente el draft ACTIVO del Preview de identidad. Nunca cambia la versión publicada ni acepta drafts anteriores a la publicada.",
         risk: "write",
         parameters: {
           type: "OBJECT",
           properties: {
-            versionId: { type: "STRING", description: "UUID exacto del draft obtenido con getStudioIdentityVersions." },
+            versionId: { type: "STRING", description: "UUID exacto del draft activo obtenido con getStudioIdentityVersions." },
             copyConfigJson: { type: "STRING", description: "Objeto JSON parcial con textos canónicos: tagline, short_bio, seo_title, seo_description, share_title o share_description." },
             layoutConfigJson: { type: "STRING", description: "Objeto JSON completo del layout canónico modificado; debe preservar los assets vinculados al draft." },
             visualConfigJson: { type: "STRING", description: "Objeto JSON parcial con palette, visual_energy o visual_tone." },
@@ -76,6 +91,21 @@ export class ClouvaDomainExecutor extends BaseToolExecutor {
             layoutConfigJson: typeof args.layoutConfigJson === "string" ? args.layoutConfigJson : undefined,
             visualConfigJson: typeof args.visualConfigJson === "string" ? args.visualConfigJson : undefined,
           });
+        },
+      },
+      {
+        name: "startStudioProfileGeneration",
+        description: "Inicia una nueva generación real de identidad para el Estudio activo usando el pipeline canónico. Puede reutilizar hasta 3 URLs de referencia previamente subidas por CLOUVA. Nunca publica automáticamente.",
+        risk: "sensitive",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            referenceImageUrlsJson: { type: "STRING", description: "Opcional. Array JSON con hasta 3 URLs exactas de referencia que CLOUVA ya subió para este Studio." },
+          },
+        },
+        execute: async (args) => {
+          requireConfirmed(args);
+          return this.service.startStudioProfileGeneration(parseReferenceImageUrlsJson(args.referenceImageUrlsJson));
         },
       },
       {
