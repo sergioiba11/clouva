@@ -94,12 +94,30 @@ test("global FLOW balance bridge uses the same canonical regional assets", () =>
   }
 });
 
-test("global FLOW surfaces prefer canonical Player country and never hardcode LATAM", async () => {
+test("official FLOW topbar keeps canonical Player region, cycles FLOW/USD and does not invent local currency", async () => {
   const balanceRoute = await readFile(new URL("./app/api/flows/balance/route.ts", import.meta.url), "utf8");
   const globalBalance = await readFile(new URL("./components/GlobalFlowBalance.tsx", import.meta.url), "utf8");
 
   assert.match(balanceRoute, /select\("country_code,city"\)/);
   assert.match(balanceRoute, /getFlowRegionByCountryCode\(profileResult\.data\?\.country_code/);
-  assert.doesNotMatch(globalBalance, /TOP_BAR_REGION_LABEL/);
-  assert.match(globalBalance, /Región \$\{region\.label\}/);
+
+  // The header must keep using the same canonical regional coin returned by
+  // the FLOW balance bridge instead of hardcoding a separate topbar asset.
+  assert.match(globalBalance, /imageUrl=\{region\.assetUrl\}/);
+  assert.match(globalBalance, /fallbackImageUrl=\{region\.assetFallbackUrl\}/);
+
+  // Current official topbar rotates only between the real FLOW balance and its
+  // US$ reference. Local-currency presentation stays absent until its actual
+  // conversion and official asset exist.
+  assert.match(globalBalance, /HEADER_VALUE_ROTATION_MS/);
+  assert.match(globalBalance, /headerValue === "flow"/);
+  assert.match(globalBalance, /headerValue === "usd"/);
+  assert.match(globalBalance, /US\$ \{data\.usdValue\}/);
+  assert.doesNotMatch(globalBalance, /\bARS\b/);
+
+  // Clicking the chip opens the official value popover and the CTA keeps the
+  // existing Mi Flow wallet route rather than creating a second wallet flow.
+  assert.match(globalBalance, /Precios del mismo valor/);
+  assert.match(globalBalance, /Ver mi Flow/);
+  assert.match(globalBalance, /href="\/mi-flow\/billetera\?asset=flows"/);
 });
