@@ -40,6 +40,9 @@ export function OfficialClouvaMark({
         maxWidth: "100%",
         maxHeight: "100%",
         objectFit: "contain",
+        // Never inherit generic navbar image transforms: scaling this mark
+        // inside an overflow-hidden brand box crops the outer C.
+        transform: "none",
         ...style,
       }}
     />
