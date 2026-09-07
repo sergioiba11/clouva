@@ -101,23 +101,53 @@ test("official FLOW topbar keeps canonical Player region, cycles FLOW/USD and do
   assert.match(balanceRoute, /select\("country_code,city"\)/);
   assert.match(balanceRoute, /getFlowRegionByCountryCode\(profileResult\.data\?\.country_code/);
 
-  // The header must keep using the same canonical regional coin returned by
-  // the FLOW balance bridge instead of hardcoding a separate topbar asset.
+  assert.match(globalBalance, /<FlowCoinIcon/);
   assert.match(globalBalance, /imageUrl=\{region\.assetUrl\}/);
   assert.match(globalBalance, /fallbackImageUrl=\{region\.assetFallbackUrl\}/);
+  assert.doesNotMatch(globalBalance, /TOP_BAR_REGION_LABEL/);
 
-  // Current official topbar rotates only between the real FLOW balance and its
-  // US$ reference. Local-currency presentation stays absent until its actual
-  // conversion and official asset exist.
   assert.match(globalBalance, /HEADER_VALUE_ROTATION_MS/);
   assert.match(globalBalance, /headerValue === "flow"/);
   assert.match(globalBalance, /headerValue === "usd"/);
   assert.match(globalBalance, /US\$ \{data\.usdValue\}/);
   assert.doesNotMatch(globalBalance, /\bARS\b/);
 
-  // Clicking the chip opens the official value popover and the CTA keeps the
-  // existing Mi Flow wallet route rather than creating a second wallet flow.
   assert.match(globalBalance, /Precios del mismo valor/);
   assert.match(globalBalance, /Ver mi Flow/);
   assert.match(globalBalance, /href="\/mi-flow\/billetera\?asset=flows"/);
+});
+
+test("FLOW visual identity uses one circular renderer and never falls back to the CLOUVA logo", async () => {
+  const flowLogo = await readFile(new URL("./components/flows/flow-logo.tsx", import.meta.url), "utf8");
+  const flowCoinIcon = await readFile(new URL("./components/flow-coin-icon.tsx", import.meta.url), "utf8");
+  const playerWallet = await readFile(new URL("./components/wallet/PlayerFlowWallet.tsx", import.meta.url), "utf8");
+  const walletChip = await readFile(new URL("./components/wallet/WalletBalanceChip.tsx", import.meta.url), "utf8");
+  const flowUi = await readFile(new URL("./components/flows/flow-ui.tsx", import.meta.url), "utf8");
+
+  // The canonical renderer owns crop, fallback and regional recovery. It must
+  // not use the CLOUVA brand mark as a currency fallback.
+  assert.doesNotMatch(flowLogo, /ClouvaLogoMark/);
+  assert.match(flowLogo, /borderRadius: "9999px"/);
+  assert.match(flowLogo, /overflow: "hidden"/);
+  assert.match(flowLogo, /objectFit: "cover"/);
+  assert.match(flowLogo, />\s*FLOW\s*<\/span>/);
+  assert.match(flowLogo, /authenticatedFetch\("\/api\/flows\/balance"/);
+
+  // FlowCoinIcon is now only an adapter over the same FlowLogo renderer, so
+  // the header cannot render a raw square PNG independently anymore.
+  assert.match(flowCoinIcon, /return \(\s*<FlowLogo/);
+  assert.doesNotMatch(flowCoinIcon, /<img/);
+  assert.match(flowCoinIcon, /imageUrl=\{imageUrl\}/);
+  assert.match(flowCoinIcon, /fallbackImageUrl=\{fallbackImageUrl\}/);
+
+  // The main wallet already points its currency identity at FlowLogo. With the
+  // canonical renderer fixed, this surface no longer falls back to CLOUVA.
+  assert.match(playerWallet, /<FlowLogo size=\{64\} priority \/>/);
+
+  // Other FLOW surfaces keep consuming that same canonical renderer rather
+  // than maintaining their own regional asset tables.
+  assert.match(walletChip, /<FlowLogo size=\{16\}/);
+  assert.match(flowUi, /<FlowLogo/);
+  assert.doesNotMatch(walletChip, /flows-region-/);
+  assert.doesNotMatch(flowUi, /flows-region-/);
 });
