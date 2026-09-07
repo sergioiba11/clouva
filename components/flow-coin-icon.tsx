@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { FlowLogo } from "@/components/flows/flow-logo";
+import type { FlowRegion } from "@/lib/flows/flow-region";
 
 type FlowCoinIconProps = {
   size?: number;
@@ -11,6 +12,8 @@ type FlowCoinIconProps = {
   title?: string;
   imageUrl?: string | null;
   fallbackImageUrl?: string | null;
+  countryCode?: string | null;
+  region?: FlowRegion | null;
 };
 
 export function FlowCoinIcon({
@@ -20,6 +23,8 @@ export function FlowCoinIcon({
   title = "FLOW",
   imageUrl = null,
   fallbackImageUrl = null,
+  countryCode,
+  region = null,
 }: FlowCoinIconProps) {
   const [activeImageUrl, setActiveImageUrl] = useState<string | null>(imageUrl);
 
@@ -78,5 +83,14 @@ export function FlowCoinIcon({
     );
   }
 
-  return <FlowLogo size={size} className={className} priority alt={title} />;
+  return (
+    <FlowLogo
+      size={size}
+      className={className}
+      priority
+      alt={title}
+      countryCode={countryCode}
+      region={region}
+    />
+  );
 }
