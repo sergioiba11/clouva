@@ -8,12 +8,10 @@ import { requireActiveVipEntitlement } from "@/lib/server/vip-profile-permission
 const ACTIVE_STATUSES = [
   "queued", "preparing_identity", "analyzing_identity", "generating_copy",
   "classifying_reference", "generating_assets", "generating_variants", "generating_variant_assets",
-  "assembling_profile", "awaiting_variant_selection", "needs_user_input",
+  "assembling_profile", "rendering_reference_preview", "capturing_reference_render", "comparing_reference",
+  "applying_visual_corrections", "validating_visual_fidelity", "awaiting_variant_selection", "needs_user_input",
 ];
 
-// Only URLs produced by /api/vip-profile/reference-images are accepted. The
-// background worker fetches these server-side, so arbitrary URLs would turn
-// this pipeline into an SSRF primitive.
 const REFERENCE_IMAGE_URL_RE = /^https:\/\/storage\.googleapis\.com\/[a-z0-9._-]+\/reference-images\/(players|studios)\/[0-9a-f-]{36}\/[0-9a-f-]{36}\.(png|jpe?g|webp)$/;
 const MAX_REFERENCE_IMAGES = 3;
 
@@ -44,12 +42,6 @@ function badRequest(message: string): Error {
   return error;
 }
 
-/**
- * Canonical entry point for the existing CLOUVA AI Profile pipeline. Both
- * the HTTP route and Orchestrator domain tools call this function, so the
- * entitlement check, job reuse, identity snapshot and Cloud Tasks dispatch
- * cannot drift into separate implementations.
- */
 export async function startVipProfileGeneration(args: {
   admin: SupabaseClient;
   userId: string;
