@@ -4,17 +4,24 @@ import test from "node:test";
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 
-test("Inicio abre un menú de cuenta compartido y separa MI FLOW de MI SPOT", () => {
+test("Inicio conserva el branding oficial y ubica la identidad Player en el rail", () => {
   const home = read("./components/clouva/HomeDashboard.tsx");
   const mobileHome = read("./components/clouva/MobileHomeDashboard.tsx");
   const topBar = read("./components/clouva/system/ClouvaTopBar.tsx");
   const gate = read("./components/clouva/system/ClouvaSystemTopBarGate.tsx");
   const layout = read("./components/layout.tsx");
   const menu = read("./components/account/AccountMenu.tsx");
+  const playerEditor = read("./app/profile/edit/page.tsx");
 
-  assert.match(home, /<AccountMenu[\s\S]*?variant="home"[\s\S]*?preferUsername/);
+  assert.doesNotMatch(home, /<AccountMenu\b/);
+  assert.match(home, /data-home-rail-player-identity/);
+  assert.doesNotMatch(home, /Progreso creativo/);
   assert.doesNotMatch(home, /<h2>Tu identidad<\/h2>/);
+  assert.match(playerEditor, /data-player-creative-progress/);
+  assert.match(playerEditor, /Progreso creativo/);
   assert.match(mobileHome, /<AccountMenu\s+variant="home"/);
+  assert.match(topBar, /<OfficialClouvaMark/);
+  assert.match(topBar, />CLOUVA<\/strong>/);
   assert.match(topBar, /<AccountMenu\s+variant="home"/);
   assert.match(topBar, /data-ui-page="mobile-home"/);
   assert.match(topBar, /data-ui-preview="false"/);
