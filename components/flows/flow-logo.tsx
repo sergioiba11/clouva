@@ -44,11 +44,12 @@ type FlowLogoProps = {
   edgeColor?: string;
 };
 
-const balanceRegionCache = new Map<string, BalanceRegion | null>();
+const balanceRegionCache = new Map<string, BalanceRegion>();
 const balanceRegionRequests = new Map<string, Promise<BalanceRegion | null>>();
 
 async function loadBalanceRegion(userId: string) {
-  if (balanceRegionCache.has(userId)) return balanceRegionCache.get(userId) ?? null;
+  const cached = balanceRegionCache.get(userId);
+  if (cached) return cached;
 
   const inFlight = balanceRegionRequests.get(userId);
   if (inFlight) return inFlight;
@@ -58,10 +59,9 @@ async function loadBalanceRegion(userId: string) {
       const response = await authenticatedFetch("/api/flows/balance", { cache: "no-store" });
       const payload = await readApiJson<FlowBalanceVisualPayload>(response);
       const resolved = payload?.region ?? null;
-      balanceRegionCache.set(userId, resolved);
+      if (resolved) balanceRegionCache.set(userId, resolved);
       return resolved;
     } catch {
-      balanceRegionCache.set(userId, null);
       return null;
     } finally {
       balanceRegionRequests.delete(userId);
@@ -134,7 +134,7 @@ export function FlowLogo({
   }, [candidateKey]);
 
   const activeImageUrl = imageCandidates[candidateIndex] ?? null;
-  const visualLabel = alt ?? balanceRegion?.label ?? canonicalLabel;
+  const visualLabel = alt ?? (balanceRegion ? `FLOW ${balanceRegion.label}` : canonicalLabel);
   const visualGlow = glowColor ?? balanceRegion?.glow ?? "#8b5cf6";
   const visualEdge = edgeColor ?? balanceRegion?.edge ?? "#e3dcff";
   const neutralFontSize = Math.max(4, Math.round(size * 0.18));
