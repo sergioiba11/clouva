@@ -2,6 +2,7 @@
 
 import { MainNav } from "@/components/layout";
 import { useAuth } from "@/components/auth-provider";
+import { CountrySelect } from "@/components/profile/country-select";
 import { useCurrentPlayer } from "@/components/current-player-provider";
 import { useActiveAvatarStore } from "@/lib/avatar-engine/active-avatar-store";
 import { getPlayerDestination } from "@/lib/navigation/clouva-navigation";
@@ -18,10 +19,11 @@ const EMPTY_FORM = {
   full_name: "",
   phone: "",
   spotify_url: "",
+  country_code: "",
 };
 
 export default function PerfilPage() {
-  const { user, profile, role, loading: authLoading, hydrationReady, profileReady } = useAuth();
+  const { user, profile, role, loading: authLoading, hydrationReady, profileReady, refreshProfile } = useAuth();
   const { currentPlayer } = useCurrentPlayer();
   const router = useRouter();
   const activeAvatar = useActiveAvatarStore((state) => state.avatar);
@@ -49,7 +51,7 @@ export default function PerfilPage() {
         const { supabase } = await import("@/lib/supabase");
         const { data, error } = await supabase
           .from("profiles")
-          .select("clouva_id,username,bio,accent_color,display_name,full_name,phone,spotify_url")
+          .select("clouva_id,username,bio,accent_color,display_name,full_name,phone,spotify_url,country_code")
           .eq("id", user.id)
           .maybeSingle();
 
@@ -65,6 +67,7 @@ export default function PerfilPage() {
           full_name: data?.full_name ?? profile?.full_name ?? "",
           phone: data?.phone ?? "",
           spotify_url: data?.spotify_url ?? "",
+          country_code: data?.country_code ?? "",
         });
       } catch (error) {
         if (!cancelled) setProfileError(error instanceof Error ? error.message : "No se pudo cargar el perfil.");
@@ -83,11 +86,15 @@ export default function PerfilPage() {
     setSaved(false);
     setProfileError(null);
     const { supabase } = await import("@/lib/supabase");
-    const { error } = await supabase.from("profiles").update(form).eq("id", user.id);
+    const { error } = await supabase
+      .from("profiles")
+      .update({ ...form, country_code: form.country_code || null })
+      .eq("id", user.id);
     if (error) {
       setProfileError(error.message);
       return;
     }
+    await refreshProfile();
     setSaved(true);
   };
 
@@ -188,6 +195,11 @@ export default function PerfilPage() {
                 Teléfono
                 <input className="mt-1 w-full rounded-xl border border-white/20 bg-transparent px-3 py-2" value={form.phone} onChange={(event) => setForm((value) => ({ ...value, phone: event.target.value }))} />
               </label>
+              <CountrySelect
+                value={form.country_code}
+                onChange={(countryCode) => setForm((value) => ({ ...value, country_code: countryCode }))}
+                className="sm:col-span-2"
+              />
               <label className="text-sm sm:col-span-2">
                 Bio corta
                 <input className="mt-1 w-full rounded-xl border border-white/20 bg-transparent px-3 py-2" value={form.bio} onChange={(event) => setForm((value) => ({ ...value, bio: event.target.value }))} />
