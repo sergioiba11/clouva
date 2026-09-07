@@ -155,7 +155,7 @@ test("Trébol es un asistente global activo con chat rápido contextual", () => 
 
   assert.match(layout, /<ClouvaAIAssistantProvider>/);
   assert.match(globalButton, /trebol-mascot\.png/);
-  assert.match(globalButton, /Lista para ayudarte/);
+  assert.match(globalButton, /aria-label=\{open \? "Cerrar CLOUVA AI" : "Abrir CLOUVA AI"\}/);
   assert.match(globalButton, /data-trebol-ui/);
   assert.doesNotMatch(globalButton, /Próximamente/);
   assert.match(compact, /Chat rápido de Trébol/);
