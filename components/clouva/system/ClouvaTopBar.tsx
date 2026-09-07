@@ -152,6 +152,45 @@ export function ClouvaTopBar() {
           display: none !important;
         }
 
+        /* On the real Mobile Home, discovery gets its own row. This keeps
+           FLOWS, notifications and account identity readable without changing
+           the canonical bar on the rest of CLOUVA or on desktop. */
+        @media (max-width: 820px) {
+          [data-clouva-system-topbar="official"]:has(+ main[data-ui-page="mobile-home"][data-ui-preview="false"]) > div {
+            display: grid;
+            height: auto;
+            min-height: 106px;
+            grid-template-columns: auto minmax(0, 1fr) auto;
+            grid-template-areas:
+              "brand spacer actions"
+              "search search search";
+            align-items: center;
+            gap: 8px 10px;
+            padding: 10px 14px 12px;
+          }
+
+          [data-clouva-system-topbar="official"]:has(+ main[data-ui-page="mobile-home"][data-ui-preview="false"]) > div > [data-clouva-mobile-brand] {
+            grid-area: brand;
+          }
+
+          [data-clouva-system-topbar="official"]:has(+ main[data-ui-page="mobile-home"][data-ui-preview="false"]) > div > [data-clouva-desktop-player-brand] {
+            display: none !important;
+          }
+
+          [data-clouva-system-topbar="official"]:has(+ main[data-ui-page="mobile-home"][data-ui-preview="false"]) > div > div:first-of-type {
+            grid-area: search;
+            width: 100%;
+            max-width: none;
+            margin: 0;
+          }
+
+          [data-clouva-system-topbar="official"]:has(+ main[data-ui-page="mobile-home"][data-ui-preview="false"]) > div > div:last-of-type {
+            grid-area: actions;
+            margin: 0;
+            justify-self: end;
+          }
+        }
+
         /* The existing mobile top-left identity stays exactly as it is. The
            Player/orbit identity only replaces the generic CLOUVA brand on the
            desktop side of the same 820px Home breakpoint. */
