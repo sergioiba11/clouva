@@ -31,6 +31,7 @@ type AuthContextType = {
   hydrationReady: boolean;
   profileReady: boolean;
   refreshSession: () => Promise<void>;
+  refreshProfile: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -290,9 +291,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(refreshed.data.session?.user ?? null);
   };
 
+  const refreshProfile = async () => {
+    if (!user) {
+      profileRef.current = null;
+      setProfile(null);
+      return;
+    }
+    const profileData = await withTimeout(loadOrCreateProfile(user), "Actualizar el perfil de CLOUVA");
+    profileRef.current = profileData;
+    resolvedUserIdRef.current = user.id;
+    setProfile(profileData);
+    setRole(normalizeRole(profileData.role));
+  };
+
   const effectiveRole = previewPersonaRole(previewPersona) ?? role;
   const value = useMemo(
-    () => ({ session, user, profile, role: effectiveRole, realRole: role, previewPersona, loading, hydrationReady, profileReady, refreshSession }),
+    () => ({
+      session,
+      user,
+      profile,
+      role: effectiveRole,
+      realRole: role,
+      previewPersona,
+      loading,
+      hydrationReady,
+      profileReady,
+      refreshSession,
+      refreshProfile,
+    }),
     [session, user, profile, effectiveRole, role, previewPersona, loading, hydrationReady, profileReady],
   );
 
