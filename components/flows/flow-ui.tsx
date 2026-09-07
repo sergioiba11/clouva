@@ -3,23 +3,19 @@
 import Image from "next/image";
 import type { ReactNode } from "react";
 import { RefreshCw } from "lucide-react";
-import { FlowCoinIcon } from "@/components/flow-coin-icon";
+import { FlowLogo } from "@/components/flows/flow-logo";
 
 const CLOUVA_LOGO = "/assets/clouva/brand/logo-official-light.png";
 
 export function FlowCoin({ compact = false, className = "" }: { compact?: boolean; className?: string }) {
-  const size = compact ? 68 : 176;
+  const size = compact ? 54 : 176;
 
   return (
     <div
-      className={`relative grid shrink-0 place-items-center ${compact ? "h-[72px] w-[72px]" : "h-[188px] w-[188px] sm:h-[210px] sm:w-[210px]"} ${className}`}
+      className={`relative shrink-0 place-items-center ${compact ? "!grid h-[60px] w-[60px] rounded-full border border-violet-300/20 bg-violet-400/[0.055] shadow-[inset_0_0_22px_rgba(124,58,237,0.08)]" : "grid h-[188px] w-[188px] sm:h-[210px] sm:w-[210px]"} ${className}`}
     >
-      <div className="pointer-events-none absolute inset-[12%] rounded-full bg-violet-500/12 blur-3xl" />
-      <FlowCoinIcon
-        size={size}
-        title="FLOW"
-        className="relative z-10"
-      />
+      <div className={`pointer-events-none absolute rounded-full bg-violet-500/10 blur-2xl ${compact ? "inset-[8%]" : "inset-[12%] blur-3xl"}`} />
+      <FlowLogo size={size} priority={!compact} className="relative z-10" />
     </div>
   );
 }
@@ -112,6 +108,7 @@ export function FlowMetricCard({
   detail: string;
   tone?: "violet" | "cyan" | "emerald" | "neutral";
 }) {
+  const isFlowBalance = label.trim().toUpperCase() === "FLOW DISPONIBLE";
   const tones = {
     violet: "border-violet-300/14 bg-violet-400/[0.045] text-violet-200",
     cyan: "border-cyan-300/12 bg-cyan-300/[0.035] text-cyan-200",
@@ -120,17 +117,38 @@ export function FlowMetricCard({
   };
 
   return (
-    <article className={`min-h-[118px] rounded-[22px] border p-4 sm:p-5 ${tones[tone]}`}>
-      <div className="flex items-start justify-between gap-4">
+    <article
+      className={`relative min-h-[118px] overflow-hidden rounded-[22px] border p-4 sm:p-5 ${tones[tone]} ${
+        isFlowBalance
+          ? "border-violet-300/28 bg-violet-400/[0.07] shadow-[inset_0_0_34px_rgba(124,58,237,0.055),0_12px_34px_rgba(76,29,149,0.08)]"
+          : ""
+      }`}
+    >
+      {isFlowBalance ? (
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_88%_18%,rgba(139,92,246,0.13),transparent_34%)]" />
+      ) : null}
+      <div className="relative flex items-start justify-between gap-4">
         <div>
-          <p className="text-[10px] font-semibold uppercase tracking-[0.17em] text-white/38">{label}</p>
-          <strong className="mt-2 block text-2xl font-semibold tracking-[-0.03em] text-white">{value}</strong>
+          <p className={`text-[10px] font-semibold uppercase tracking-[0.17em] ${isFlowBalance ? "text-violet-200/80" : "text-white/38"}`}>
+            {label}
+          </p>
+          <strong className={`mt-2 block font-semibold tracking-[-0.035em] text-white ${isFlowBalance ? "text-[26px]" : "text-2xl"}`}>
+            {value}
+          </strong>
         </div>
-        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[14px] border border-current/15 bg-current/[0.06]">
-          {icon}
-        </span>
+        {isFlowBalance ? (
+          <span className="relative grid h-12 w-12 shrink-0 place-items-center rounded-full border border-violet-300/16 bg-black/20">
+            <FlowLogo size={42} priority />
+          </span>
+        ) : (
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-[14px] border border-current/15 bg-current/[0.06]">
+            {icon}
+          </span>
+        )}
       </div>
-      <p className="mt-2 text-[11px] leading-4 text-white/32">{detail}</p>
+      <p className={`relative mt-2 text-[11px] leading-4 ${isFlowBalance ? "text-violet-100/48" : "text-white/32"}`}>
+        {detail}
+      </p>
     </article>
   );
 }
@@ -186,24 +204,43 @@ export function FlowPanel({
   className?: string;
 }) {
   const purchasePanel = title === "Cargar FLOW";
+  const assetsPanel = title === "Tus FLOWS";
+  const headerAction = action ?? (purchasePanel ? <FlowLogo size={36} priority /> : null);
 
   return (
     <section
       id={purchasePanel ? "cargar-flow" : undefined}
-      className={`overflow-hidden rounded-[26px] border border-white/[0.075] bg-[#0a0912]/92 ${
-        purchasePanel ? "order-first scroll-mt-24 xl:order-none" : ""
+      className={`relative overflow-hidden rounded-[26px] border bg-[#0a0912]/92 ${
+        purchasePanel
+          ? "order-first scroll-mt-24 border-violet-300/12 shadow-[0_18px_55px_rgba(28,15,55,0.16)] xl:order-none"
+          : assetsPanel
+            ? "border-violet-300/10 shadow-[0_18px_55px_rgba(0,0,0,0.16)]"
+            : "border-white/[0.075]"
       } ${className}`}
     >
-      <header className="flex min-h-[70px] items-center justify-between gap-4 border-b border-white/[0.06] px-5 py-4 sm:px-6">
+      {purchasePanel ? (
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_94%_4%,rgba(139,92,246,0.11),transparent_28%)]" />
+      ) : null}
+      <header
+        className={`relative flex min-h-[70px] items-center justify-between gap-4 border-b px-5 py-4 sm:px-6 ${
+          assetsPanel ? "border-violet-300/[0.075] bg-violet-400/[0.018]" : "border-white/[0.06]"
+        }`}
+      >
         <div>
           {eyebrow ? (
             <p className="text-[9px] font-semibold uppercase tracking-[0.18em] text-violet-300/60">{eyebrow}</p>
           ) : null}
-          <h2 className="mt-1 text-lg font-semibold tracking-[-0.02em] text-white/90">{title}</h2>
+          <h2 className={`mt-1 font-semibold tracking-[-0.02em] text-white/90 ${assetsPanel ? "text-xl" : "text-lg"}`}>
+            {title}
+          </h2>
         </div>
-        {action}
+        {headerAction ? (
+          <div className={purchasePanel ? "grid h-11 w-11 place-items-center rounded-full border border-violet-300/14 bg-black/20" : ""}>
+            {headerAction}
+          </div>
+        ) : null}
       </header>
-      {children}
+      <div className="relative">{children}</div>
     </section>
   );
 }
