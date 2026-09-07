@@ -7,14 +7,17 @@ import { sanitizeVisualCorrectionPatch, type VisualCorrectionPatch } from "./vis
 
 export type VisualCorrectionComparison = {
   patch: VisualCorrectionPatch;
+  visualScore: number;
+  summary: string | null;
+  structuralMismatch: boolean;
   costUsd: number;
   model: string;
 };
 
-// Pure comparison stage for the Reference Fidelity loop. Screenshot capture is
-// intentionally outside this module: any canonical browser/preview runner can
-// provide TARGET + RENDER images without coupling the layout engine to
-// Playwright or a second rendering stack.
+function sanitizeScore(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0;
+}
+
 export async function compareReferenceRender(args: {
   apiKey: string;
   target: GeminiReferenceImage;
@@ -22,7 +25,7 @@ export async function compareReferenceRender(args: {
   layout: LayoutConfig;
 }): Promise<VisualCorrectionComparison> {
   if (args.layout.layout_kind !== "precise") {
-    return { patch: { changes: [] }, costUsd: 0, model: "none" };
+    return { patch: { changes: [] }, visualScore: 0, summary: "El layout no es precise.", structuralMismatch: true, costUsd: 0, model: "none" };
   }
 
   const editableScene = args.layout.precise_sections.map((section) => ({
@@ -57,19 +60,21 @@ export async function compareReferenceRender(args: {
   }));
 
   const promptText = [
-    "Sos el comparador visual de Reference Fidelity V2 de CLOUVA.",
+    "Sos el comparador visual de Reference Fidelity V3 de CLOUVA.",
     "Se adjuntan DOS imágenes en este orden: 0=TARGET ORIGINAL, 1=RENDER ACTUAL DE CLOUVA.",
-    "Comparalas visualmente. No rediseñes la página y no generes HTML/CSS/JSX. Tu única salida es un parche DELTA pequeño sobre IDs existentes del layout estructurado.",
-    "Priorizá las diferencias perceptuales grandes: posición, tamaño, proporción, tipografía, radio, color, overlay y escala. No cambies contenido real.",
+    "Comparalas visualmente. No rediseñes la página y no generes HTML/CSS/JSX. Solo podés devolver un parche DELTA pequeño sobre IDs existentes del layout estructurado.",
+    "Evaluá fidelidad perceptual real: composición, posición, tamaño, proporción, tipografía, radio, color, overlay, escala y jerarquía.",
+    "visualScore debe ser un número 0..1 donde 1 significa coincidencia visual excelente. No lo infles.",
+    "structuralMismatch=true solo cuando la estructura principal no puede corregirse razonablemente con deltas pequeños.",
     "No propongas cambios a un ID que no exista en la escena entregada.",
-    "Usá `delta` cuando sea una corrección relativa pequeña y `set` cuando la propiedad objetivo sea clara. Máximo 24 cambios por pasada.",
-    "Valores permitidos para element.set: x,y,w,h,zIndex,fontSizePx,letterSpacingPx,lineHeight,opacity,borderWidthPx,radiusPx,color,backgroundColor,borderColor,shadow,blur,imageFit,imagePosition,align,buttonStyle.",
-    "Valores permitidos para element.delta: x,y,w,h,zIndex,fontSizePx,letterSpacingPx,lineHeight,opacity,borderWidthPx,radiusPx.",
-    "Valores permitidos para section.set/delta: heightVh,widthPct,xPct; section.set también puede usar overlayOpacity.",
+    "Usá delta para correcciones relativas pequeñas y set cuando la propiedad objetivo sea clara. Máximo 24 cambios.",
+    "Valores element.set: x,y,w,h,zIndex,fontSizePx,letterSpacingPx,lineHeight,opacity,borderWidthPx,radiusPx,color,backgroundColor,borderColor,shadow,blur,imageFit,imagePosition,align,buttonStyle.",
+    "Valores element.delta: x,y,w,h,zIndex,fontSizePx,letterSpacingPx,lineHeight,opacity,borderWidthPx,radiusPx.",
+    "Valores section.set/delta: heightVh,widthPct,xPct; section.set también overlayOpacity.",
     `ESCENA EDITABLE ACTUAL: ${JSON.stringify(editableScene)}`,
     "Devolvé exactamente JSON válido sin texto alrededor:",
-    '{"changes":[{"target":"element"|"section","id":string,"set":{"prop":number|string|null},"delta":{"prop":number}}]}',
-    "Si el render ya coincide razonablemente con el target, devolvé {\"changes\":[]}.",
+    '{"visualScore":number,"summary":string,"structuralMismatch":boolean,"changes":[{"target":"element"|"section","id":string,"set":{"prop":number|string|null},"delta":{"prop":number}}]}',
+    "Si el render ya coincide razonablemente, devolvé changes vacío pero igualmente puntuá con precisión.",
   ].join("\n");
 
   const { parsed, costUsd, model } = await callGeminiJson({
@@ -78,9 +83,13 @@ export async function compareReferenceRender(args: {
     images: [args.target, args.render],
     workload: "reference_precise",
   });
+  const raw = parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : {};
 
   return {
-    patch: sanitizeVisualCorrectionPatch(parsed),
+    patch: sanitizeVisualCorrectionPatch(raw),
+    visualScore: sanitizeScore(raw.visualScore),
+    summary: typeof raw.summary === "string" ? raw.summary.trim().slice(0, 500) : null,
+    structuralMismatch: raw.structuralMismatch === true,
     costUsd,
     model,
   };
