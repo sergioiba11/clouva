@@ -1,6 +1,5 @@
 "use client";
 
-import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useId, useRef, useState } from "react";
@@ -78,7 +77,8 @@ export function AccountMenu({ variant = "nav", triggerClassName = "", preferUser
   useEffect(() => { if (openSwitch) setAccounts(getAccounts()); }, [openSwitch]);
   useEffect(() => { if (typeof window !== "undefined" && user && new URLSearchParams(window.location.search).get("openAccountSwitcher") === "1") setOpenSwitch(true); }, [user]);
   useEffect(() => { setOpenMenu(false); }, [pathname]);
-  useEffect(() => { setTriggerAvatarBroken(false); }, [triggerImageUrl]);
+  useEffect(() => { setAvatarBroken(false); }, [avatar]);
+  useEffect(() => { setTriggerAvatarBroken(false); }, [triggerAvatar]);
   useEffect(() => {
     if (!openMenu) return;
     const handlePointer = (event: MouseEvent) => { if (!rootRef.current?.contains(event.target as Node)) setOpenMenu(false); };
@@ -96,12 +96,10 @@ export function AccountMenu({ variant = "nav", triggerClassName = "", preferUser
   return (
     <div ref={rootRef} className={`${styles.root} ${variant === "home" ? styles.homeRoot : ""}`}>
       <button ref={triggerRef} type="button" className={`${styles.trigger} ${variant === "home" ? styles.homeTrigger : ""} ${triggerClassName}`} onClick={() => setOpenMenu((value) => !value)} aria-expanded={openMenu} aria-controls={menuId} aria-haspopup="menu" aria-label="Abrir Mi cuenta">
-        {triggerImageUrl && !triggerAvatarBroken ? (
-          <img src={triggerImageUrl} alt="" className={styles.avatar} onError={() => setTriggerAvatarBroken(true)} />
-        ) : triggerAvatar && !avatarBroken ? (
-          <Image src={String(triggerAvatar)} alt="" width={32} height={32} className={styles.avatar} onError={() => setAvatarBroken(true)} />
+        {triggerAvatar && !triggerAvatarBroken ? (
+          <img src={String(triggerAvatar)} alt="" className={styles.avatar} onError={() => setTriggerAvatarBroken(true)} />
         ) : (
-          <span className={styles.avatarFallback}>{primaryName.charAt(0).toUpperCase() || "C"}</span>
+          <span className={styles.avatarFallback}>{variant === "home" ? "C" : primaryName.charAt(0).toUpperCase() || "C"}</span>
         )}
         <span className={styles.triggerCopy}><b>{primaryName}</b><small>{variant === "home" ? "Tu cuenta CLOUVA" : accountDetail}</small></span>
       </button>
@@ -109,7 +107,7 @@ export function AccountMenu({ variant = "nav", triggerClassName = "", preferUser
       {openMenu ? (
         <section id={menuId} role="menu" aria-label="Tu cuenta CLOUVA" className={styles.popover}>
           <header className={styles.identity}>
-            {avatar && !avatarBroken ? <Image src={String(avatar)} alt="" width={48} height={48} className={styles.identityAvatar} /> : <span className={styles.identityFallback}>{primaryName.charAt(0).toUpperCase() || "C"}</span>}
+            {avatar && !avatarBroken ? <img src={String(avatar)} alt="" className={styles.identityAvatar} onError={() => setAvatarBroken(true)} /> : <span className={styles.identityFallback}>{primaryName.charAt(0).toUpperCase() || "C"}</span>}
             <div><strong>{primaryName}</strong><span>{accountDetail}</span><small><i /> Conectado</small></div>
           </header>
 
