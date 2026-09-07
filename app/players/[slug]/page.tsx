@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
-import { PlayerPublicView } from "@/components/public/PlayerPublicView";
+import { PlayerIdentityRenderer } from "@/components/public/PlayerIdentityRenderer";
 import { resolvePlayerAlias } from "@/lib/server/public-identity-data";
 
 export const dynamic = "force-dynamic";
@@ -21,16 +21,6 @@ export default async function LegacyPlayerProfilePage({ params }: { params: Prom
   const { slug } = await params;
   const result = await resolvePlayerAlias(slug);
   if (!result) notFound();
-
   if (result.canonicalAlias) redirect(`/${result.canonicalAlias}`);
-
-  return (
-    <PlayerPublicView
-      player={result.player}
-      affiliations={result.affiliations}
-      media={result.media}
-      isVip={result.isVip}
-      layoutConfig={result.layoutConfig}
-    />
-  );
+  return <PlayerIdentityRenderer player={result.player} affiliations={result.affiliations} media={result.media} isVip={result.isVip} layoutConfig={result.layoutConfig} />;
 }
