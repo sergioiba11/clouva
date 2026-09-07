@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
 import { IdentityConfigPanel, type IdentityLayoutConfig } from "@/components/identity/IdentityConfigPanel";
@@ -94,33 +94,68 @@ export function VipAiProfilePanel({ playerId, vipActive }: { playerId: string; v
   const [uploadingReference, setUploadingReference] = useState(false);
   const [selectingVariant, setSelectingVariant] = useState<number | null>(null);
   const pollRef = useRef<number | null>(null);
+  const mountedRef = useRef(false);
+  const loadAbortRef = useRef<AbortController | null>(null);
 
-  const load = async () => {
+  const load = useCallback(async () => {
+    const controller = new AbortController();
+    loadAbortRef.current?.abort();
+    loadAbortRef.current = controller;
+
     try {
-      const response = await authenticatedFetch(`/api/vip-profile/status?playerId=${encodeURIComponent(playerId)}`);
+      const response = await authenticatedFetch(
+        `/api/vip-profile/status?playerId=${encodeURIComponent(playerId)}`,
+        { signal: controller.signal },
+      );
       const payload = await readApiJson<{ job: Job; versions: Version[] }>(response);
+      if (!mountedRef.current || loadAbortRef.current !== controller) return;
       setJob(payload.job);
       setVersions(payload.versions);
       setError(null);
     } catch (loadError) {
+      if (!mountedRef.current || loadAbortRef.current !== controller) return;
+      if (loadError instanceof DOMException && loadError.name === "AbortError") return;
       setError(loadError instanceof Error ? loadError.message : "No se pudo cargar CLOUVA AI Profile.");
     } finally {
-      setLoading(false);
+      if (loadAbortRef.current === controller) {
+        loadAbortRef.current = null;
+        if (mountedRef.current) setLoading(false);
+      }
     }
-  };
-
-  useEffect(() => {
-    void load();
-    return () => { if (pollRef.current) window.clearInterval(pollRef.current); };
   }, [playerId]);
 
   useEffect(() => {
-    if (pollRef.current) { window.clearInterval(pollRef.current); pollRef.current = null; }
+    mountedRef.current = true;
+    setLoading(true);
+    void load();
+
+    return () => {
+      mountedRef.current = false;
+      const controller = loadAbortRef.current;
+      loadAbortRef.current = null;
+      controller?.abort();
+      if (pollRef.current) {
+        window.clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    };
+  }, [load]);
+
+  useEffect(() => {
+    if (pollRef.current) {
+      window.clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
     if (job && IN_PROGRESS_STATUSES.has(job.status)) {
       pollRef.current = window.setInterval(() => { void load(); }, 4000);
     }
-    return () => { if (pollRef.current) window.clearInterval(pollRef.current); };
-  }, [job?.status]);
+    return () => {
+      if (pollRef.current) {
+        window.clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    };
+  }, [job?.status, load]);
 
   const draftVersion = versions.find((v) => v.status === "draft");
   const publishedVipVersion = versions.find((v) => v.status === "published" && v.profile_level === "vip");
@@ -229,7 +264,9 @@ export function VipAiProfilePanel({ playerId, vipActive }: { playerId: string; v
     }
   };
 
-  if (loading) return <div className="h-40 animate-pulse rounded-2xl bg-white/[0.04]" />;
+  if (loading) {
+    return <div className="h-40 rounded-2xl border border-white/10 bg-white/[0.04]" aria-busy="true" />;
+  }
 
   if (!vipActive && !publishedVipVersion) {
     return (
