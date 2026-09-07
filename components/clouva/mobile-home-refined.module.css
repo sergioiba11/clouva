@@ -228,13 +228,13 @@
   -webkit-tap-highlight-color: transparent;
 }
 
-.page [data-clouva-block="continue"] :global(.vipCta),
-.page [data-clouva-block="continue"] span[class*="vipCta"] {
+/* With the six footer benefit items removed from JSX, the CTA/body become
+   the visual endings of the two cards instead of reserving an empty footer. */
+.page [data-clouva-block="continue"] > span:last-child {
   bottom: 16px;
 }
 
-.page [data-clouva-block="iglu"] :global(.spotBody),
-.page [data-clouva-block="iglu"] div[class*="spotBody"] {
+.page [data-clouva-block="iglu"] > div:last-child {
   bottom: 18px;
 }
 
