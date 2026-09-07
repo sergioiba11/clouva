@@ -408,14 +408,11 @@ export function HomeDashboard() {
       </section>
 
       <aside className={styles.rail}>
-        <section className={styles.railCard} aria-label="Cuenta CLOUVA">
-          <AccountMenu
-            variant="home"
-            preferUsername
-            triggerImageUrl={identityAvatarImage ? String(identityAvatarImage) : undefined}
-            triggerClassName="w-full justify-start"
-          />
-        </section>
+        <AccountMenu
+          variant="home"
+          preferUsername
+          triggerImageUrl={identityAvatarImage ? String(identityAvatarImage) : undefined}
+        />
 
         <section className={styles.railCard}>
           <div className={styles.railHeading}>
