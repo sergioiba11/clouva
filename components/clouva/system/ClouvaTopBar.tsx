@@ -81,47 +81,63 @@ export function ClouvaTopBar() {
   const { user, loading } = useAuth();
 
   return (
-    <header
-      className="sticky top-0 z-50 w-full border-b text-white"
-      style={{
-        background: "rgba(8,7,19,.94)",
-        borderBottomColor: "rgba(255,255,255,.06)",
-        backdropFilter: "blur(22px)",
-        WebkitBackdropFilter: "blur(22px)",
-      }}
-      data-clouva-system-topbar="official"
-    >
-      <div className="mx-auto flex h-16 w-full max-w-[1800px] items-center gap-2 px-2 sm:gap-3 sm:px-4 md:gap-4 md:px-6 lg:px-8">
-        <Link
-          href="/"
-          aria-label="CLOUVA · Inicio"
-          className="flex w-fit shrink-0 items-center gap-2.5 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/70"
-        >
-          <span className="grid h-8 w-8 shrink-0 place-items-center">
-            <OfficialClouvaMark tone="light" width={30} height={30} alt="CLOUVA" />
-          </span>
-          <strong className="hidden text-[14px] font-extrabold tracking-[0.13em] text-white sm:block">CLOUVA</strong>
-        </Link>
+    <>
+      <style>{`
+        /* Home Desktop previously reserved its own 64px header row. The old
+           JSX is gone; this negative sibling margin lets the canonical root
+           bar occupy that exact row without changing Home's responsive grid. */
+        [data-clouva-system-topbar="official"]:has(+ main > nav[aria-label="Navegación móvil"]) {
+          margin-bottom: -64px;
+        }
 
-        <div className="min-w-[44px] flex-1 sm:min-w-[160px] md:ml-2 lg:mx-auto lg:max-w-[620px]">
-          <ClouvaGlobalSearch />
+        /* Mobile Home keeps its header only inside CLOUVA Lab preview. In the
+           real authenticated app the root system bar is the only visible one. */
+        [data-ui-page="mobile-home"][data-ui-preview="false"] > [data-clouva-block="header"] {
+          display: none !important;
+        }
+      `}</style>
+      <header
+        className="sticky top-0 z-50 w-full border-b text-white"
+        style={{
+          background: "rgba(8,7,19,.94)",
+          borderBottomColor: "rgba(255,255,255,.06)",
+          backdropFilter: "blur(22px)",
+          WebkitBackdropFilter: "blur(22px)",
+        }}
+        data-clouva-system-topbar="official"
+      >
+        <div className="mx-auto flex h-16 w-full max-w-[1800px] items-center gap-2 px-2 sm:gap-3 sm:px-4 md:gap-4 md:px-6 lg:px-8">
+          <Link
+            href="/"
+            aria-label="CLOUVA · Inicio"
+            className="flex w-fit shrink-0 items-center gap-2.5 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/70"
+          >
+            <span className="grid h-8 w-8 shrink-0 place-items-center">
+              <OfficialClouvaMark tone="light" width={30} height={30} alt="CLOUVA" />
+            </span>
+            <strong className="hidden text-[14px] font-extrabold tracking-[0.13em] text-white sm:block">CLOUVA</strong>
+          </Link>
+
+          <div className="min-w-[44px] flex-1 sm:min-w-[160px] md:ml-2 lg:mx-auto lg:max-w-[620px]">
+            <ClouvaGlobalSearch />
+          </div>
+
+          <div className="ml-auto flex min-w-0 shrink-0 items-center justify-end gap-1 sm:gap-2">
+            {!loading && user ? <GlobalFlowBalance variant="header" /> : null}
+            {!loading && user ? <TopBarRegionLabel /> : null}
+
+            {!loading && user ? (
+              <div className="hidden md:block">
+                <WalletBalanceChip showFlows={false} showDiamonds />
+              </div>
+            ) : null}
+
+            {!loading && user ? <NotificationBell /> : null}
+
+            <AccountMenu variant="home" triggerClassName="max-w-[168px]" />
+          </div>
         </div>
-
-        <div className="ml-auto flex min-w-0 shrink-0 items-center justify-end gap-1 sm:gap-2">
-          {!loading && user ? <GlobalFlowBalance variant="header" /> : null}
-          {!loading && user ? <TopBarRegionLabel /> : null}
-
-          {!loading && user ? (
-            <div className="hidden md:block">
-              <WalletBalanceChip showFlows={false} showDiamonds />
-            </div>
-          ) : null}
-
-          {!loading && user ? <NotificationBell /> : null}
-
-          <AccountMenu variant="home" triggerClassName="max-w-[168px]" />
-        </div>
-      </div>
-    </header>
+      </header>
+    </>
   );
 }
