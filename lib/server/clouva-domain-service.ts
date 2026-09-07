@@ -42,6 +42,12 @@ type StudioPlayerRelation = Record<string, unknown> & {
   source_membership_id: string | null;
 };
 
+type IdentityVersionRow = Record<string, unknown> & {
+  id: string;
+  version_number: number;
+  status: string;
+};
+
 function statusError(message: string, status: number): Error {
   const error = new Error(message) as Error & { status?: number };
   error.status = status;
@@ -53,6 +59,17 @@ function normalizedString(value: unknown, maxLength: number, nullable = true): s
   const normalized = value.trim().slice(0, maxLength);
   if (normalized) return normalized;
   return nullable ? null : undefined;
+}
+
+function splitActiveIdentityVersions(rows: IdentityVersionRow[]) {
+  const published = rows.find((item) => item.status === "published") ?? null;
+  const publishedNumber = published?.version_number ?? 0;
+  const drafts = rows.filter((item) => item.status === "draft");
+  return {
+    published,
+    draft: drafts.find((item) => item.version_number > publishedNumber) ?? null,
+    staleDrafts: drafts.filter((item) => item.version_number <= publishedNumber),
+  };
 }
 
 /** Converts Gemini-facing camelCase fields into the canonical relation
@@ -80,6 +97,7 @@ export interface ClouvaDomainService {
   updateStudioIdentityDraft(versionId: string, patch: StudioIdentityDraftPatch): Promise<unknown>;
   updatePlayer(playerId: string, changes: StudioPlayerChanges): Promise<unknown>;
   startPlayerProfileGeneration(playerId: string): Promise<unknown>;
+  startStudioProfileGeneration(referenceImageUrls?: string[]): Promise<unknown>;
 }
 
 const IDENTITY_COPY_FIELDS = [
@@ -188,6 +206,19 @@ export function createClouvaDomainService(args: {
     return data as unknown as StudioPlayerRelation;
   }
 
+  async function latestPublishedVersionNumber() {
+    const { data, error } = await args.admin
+      .from("player_profile_versions")
+      .select("version_number")
+      .eq("studio_id", args.studioId)
+      .eq("status", "published")
+      .order("version_number", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    return Number(data?.version_number ?? 0);
+  }
+
   return {
     async getStudio() {
       const permission = await authorize();
@@ -220,10 +251,12 @@ export function createClouvaDomainService(args: {
         .in("status", ["published", "draft"])
         .order("version_number", { ascending: false });
       if (error) throw new Error(error.message);
+      const state = splitActiveIdentityVersions((data ?? []) as IdentityVersionRow[]);
       return {
         studioId: args.studioId,
-        published: (data ?? []).find((item) => item.status === "published") ?? null,
-        draft: (data ?? []).find((item) => item.status === "draft") ?? null,
+        published: state.published,
+        draft: state.draft,
+        staleDrafts: state.staleDrafts,
       };
     },
 
@@ -232,13 +265,17 @@ export function createClouvaDomainService(args: {
       await authorize();
       const { data: current, error: currentError } = await args.admin
         .from("player_profile_versions")
-        .select("id,studio_id,status,copy_config,visual_config,layout_config,asset_references")
+        .select("id,studio_id,version_number,status,copy_config,visual_config,layout_config,asset_references")
         .eq("id", versionId)
         .eq("studio_id", args.studioId)
         .maybeSingle();
       if (currentError) throw new Error(currentError.message);
       if (!current) throw statusError("El draft no existe en este Estudio.", 404);
       if (current.status !== "draft") throw statusError("La versión publicada es inmutable; sólo se puede modificar el draft.", 409);
+      const publishedVersionNumber = await latestPublishedVersionNumber();
+      if (Number(current.version_number) <= publishedVersionNumber) {
+        throw statusError("Ese borrador es anterior a la versión publicada. Creá una nueva versión antes de editar.", 409);
+      }
 
       const copyInput = parseJsonObject(input.copyConfigJson, "copyConfigJson");
       const layoutInput = parseJsonObject(input.layoutConfigJson, "layoutConfigJson");
@@ -352,6 +389,16 @@ export function createClouvaDomainService(args: {
         admin: args.admin,
         userId: args.userId,
         playerId,
+      });
+    },
+
+    async startStudioProfileGeneration(referenceImageUrls) {
+      await authorize();
+      return dependencies.startProfileGeneration({
+        admin: args.admin,
+        userId: args.userId,
+        studioId: args.studioId,
+        referenceImageUrls,
       });
     },
   };
