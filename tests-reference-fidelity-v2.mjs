@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { sanitizeLayoutConfig } from "./lib/server/layout-config.ts";
 import { applyVisualCorrectionPatch, sanitizeVisualCorrectionPatch } from "./lib/server/visual-correction-patch.ts";
+import { createReferenceFidelityState, inferReferenceViewport } from "./lib/server/reference-fidelity-v3.ts";
 
 function makeElement(index) {
   return {
@@ -72,14 +73,7 @@ test("visual correction patch updates stable element ids and re-sanitizes", () =
   const layout = sanitizeLayoutConfig(makeLayout());
   assert.ok(layout);
   const corrected = applyVisualCorrectionPatch(layout, {
-    changes: [
-      {
-        target: "element",
-        id: "hero-item-0",
-        delta: { x: 2, y: -3, w: 5 },
-        set: { fontSizePx: 96, radiusPx: 2 },
-      },
-    ],
+    changes: [{ target: "element", id: "hero-item-0", delta: { x: 2, y: -3, w: 5 }, set: { fontSizePx: 96, radiusPx: 2 } }],
   });
   assert.ok(corrected);
   const element = corrected.precise_sections[0].elements[0];
@@ -92,18 +86,24 @@ test("visual correction patch updates stable element ids and re-sanitizes", () =
 
 test("correction patches reject arbitrary CSS/object paths", () => {
   const patch = sanitizeVisualCorrectionPatch({
-    changes: [
-      {
-        target: "element",
-        id: "hero-item-0",
-        set: {
-          fontSizePx: 88,
-          className: "fixed inset-0",
-          style: "position:fixed",
-          onclick: "alert(1)",
-        },
-      },
-    ],
+    changes: [{ target: "element", id: "hero-item-0", set: { fontSizePx: 88, className: "fixed inset-0", style: "position:fixed", onclick: "alert(1)" } }],
   });
   assert.deepEqual(patch.changes[0].set, { fontSizePx: 88 });
+});
+
+test("Reference Fidelity V3 reads the real 1536x1024 viewport instead of a square canvas", () => {
+  const png = Buffer.alloc(24);
+  png[0] = 0x89;
+  png.write("PNG", 1, "ascii");
+  png.writeUInt32BE(1536, 16);
+  png.writeUInt32BE(1024, 20);
+  const viewport = inferReferenceViewport({ mimeType: "image/png", data: png.toString("base64") });
+  assert.deepEqual(viewport, { width: 1536, height: 1024, aspectRatio: 1.5 });
+});
+
+test("Reference Fidelity V3 starts with a bounded three-pass correction budget", () => {
+  const state = createReferenceFidelityState({ width: 1536, height: 1024, aspectRatio: 1.5 }, "version-1");
+  assert.equal(state.maxIterations, 3);
+  assert.equal(state.iteration, 0);
+  assert.equal(state.stage, "rendering_reference_preview");
 });
