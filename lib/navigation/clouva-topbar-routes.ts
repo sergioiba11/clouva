@@ -49,11 +49,11 @@ export function isPublicClouvaExperiencePath(pathname: string) {
   if (PUBLIC_EXACT_PATHS.has(normalized)) return true;
   if (PUBLIC_PREFIXES.some((prefix) => normalized.startsWith(prefix))) return true;
 
-  // The canonical Player profile lives at /[publicAlias]. Static system routes
-  // are already protected by RESERVED_PUBLIC_ALIASES, so an unknown single
-  // segment is a public Player identity and must keep its own header.
+  // Every internal root surface is reserved from Player aliases by the same
+  // canonical navigation contract. Therefore an unreserved first segment —
+  // whether it is /artist or /brand/store — belongs to public chrome.
   const segments = normalized.split("/").filter(Boolean);
-  if (segments.length === 1 && !isReservedPublicAlias(segments[0])) return true;
+  if (segments.length > 0 && !isReservedPublicAlias(segments[0])) return true;
 
   return false;
 }
