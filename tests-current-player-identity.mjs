@@ -80,7 +80,8 @@ test("Home and account surfaces consume the centralized identity and Player navi
   assert.match(home, /useCurrentPlayer\(\)/);
   assert.match(home, /resolveHomeDisplayName/);
   assert.match(home, /getPlayerDestination\(currentPlayer\)/);
-  assert.doesNotMatch(home, /<AccountMenu\b/);
+  assert.match(home, /<AccountMenu[\s\S]*?variant="home"[\s\S]*?preferUsername[\s\S]*?triggerImageUrl=/);
+  assert.doesNotMatch(home, /<h2>Tu identidad<\/h2>/);
   assert.match(topBar, /<AccountMenu\s+variant="home"/);
   assert.match(nav, /export function MainNav\(\)[\s\S]*?return null/);
   assert.match(accountMenu, /resolveAccountDisplayName/);
