@@ -1,12 +1,11 @@
-.launcher { position: fixed; z-index: 104; left: 1rem; bottom: 1rem; display: grid; grid-template-columns: auto 1fr; align-items: center; gap: .45rem; border: 1px solid rgba(168,112,255,.32); border-radius: 999px; background: rgba(10,7,20,.93); padding: .3rem .75rem .3rem .28rem; color: white; box-shadow: 0 14px 42px rgba(0,0,0,.55),0 0 25px rgba(124,58,237,.14); backdrop-filter: blur(18px); touch-action: none; user-select: none; -webkit-user-select: none; cursor: grab; transition: border-color 160ms ease; }
-.launcher:hover,.launcher[aria-expanded="true"] { border-color: rgba(198,157,255,.65); }
+.launcher { position: fixed; z-index: 104; left: 1rem; bottom: 1rem; display: grid; width: 3rem; height: 3rem; place-items: center; border: 1px solid transparent; border-radius: 50%; background: rgba(10,7,20,.16); padding: 0; color: white; box-shadow: 0 0 16px rgba(124,58,237,.12); backdrop-filter: blur(8px); touch-action: none; user-select: none; -webkit-user-select: none; cursor: grab; transition: border-color 160ms ease, background 160ms ease, box-shadow 160ms ease, transform 160ms ease; }
+.launcher:hover { background: rgba(16,10,30,.24); box-shadow: 0 0 20px rgba(139,92,246,.2); }
+.launcher:hover img { transform: scale(1.045); filter: drop-shadow(0 0 11px rgba(168,85,247,.55)); }
+.launcher[aria-expanded="true"] { border-color: rgba(190,145,255,.48); background: rgba(20,12,38,.24); box-shadow: 0 0 22px rgba(139,92,246,.26); }
+.launcher:focus-visible { outline: 2px solid rgba(198,157,255,.72); outline-offset: 3px; }
 .launcher.dragging { cursor: grabbing; }
-.launcher img { width: 2.65rem; height: 2.65rem; object-fit: contain; filter: drop-shadow(0 0 9px rgba(168,85,247,.5)); pointer-events: none; }
-.launcher span { display: grid; min-width: 0; text-align: left; pointer-events: none; }
-.launcher b { font-size: .62rem; letter-spacing: .04em; }
-.launcher small { margin-top: .04rem; color: #77e8b4; font-size: .52rem; }
-.launcher small::before { display: inline-block; width: .34rem; height: .34rem; margin-right: .28rem; border-radius: 50%; background: #43e6a5; box-shadow: 0 0 6px #43e6a5; content: ""; }
-.agendaDock { cursor: pointer; box-shadow: 0 16px 48px rgba(0,0,0,.62),0 0 30px rgba(139,92,246,.22); }
+.launcher img { width: 2.8rem; height: 2.8rem; object-fit: contain; filter: drop-shadow(0 0 7px rgba(168,85,247,.34)); pointer-events: none; transition: transform 160ms ease, filter 160ms ease; }
+.agendaDock { cursor: pointer; box-shadow: 0 0 20px rgba(139,92,246,.18); }
 .signedOut { position: fixed; z-index: 105; left: 1rem; bottom: 5.3rem; width: min(22rem,calc(100vw - 2rem)); overflow: hidden; border: 1px solid rgba(168,112,255,.32); border-radius: 1.25rem; background: radial-gradient(circle at 20% 0,rgba(124,58,237,.3),transparent 45%),#080611; padding: 1.2rem; color: white; box-shadow: 0 25px 80px rgba(0,0,0,.65); }
 .agendaSignedOut { left: auto; right: 1rem; }
 .signedOut > button { position: absolute; right: .65rem; top: .65rem; display: grid; width: 2rem; height: 2rem; place-items: center; border: 1px solid rgba(255,255,255,.1); border-radius: .65rem; color: rgba(255,255,255,.6); }
@@ -15,5 +14,5 @@
 .signedOut h2 { margin-top: .25rem; font-size: 1.15rem; }
 .signedOut p { margin-top: .45rem; color: rgba(255,255,255,.56); font-size: .68rem; line-height: 1.55; }
 .signedOut a { display: flex; margin-top: .9rem; align-items: center; justify-content: center; border-radius: .75rem; padding: .65rem; background: linear-gradient(90deg,#7c3aed,#9d65ff); font-size: .67rem; font-weight: 750; }
-@media (max-width: 640px) { .launcher { left: .65rem; bottom: calc(4.9rem + env(safe-area-inset-bottom)); width: 3.25rem; height: 3.25rem; padding: .15rem; place-items: center; } .launcher img { width: 3rem; height: 3rem; } .launcher span { display: none; } .signedOut { left: .5rem; bottom: calc(8.75rem + env(safe-area-inset-bottom)); width: calc(100vw - 1rem); } .agendaSignedOut { left: auto; right: .5rem; } }
-@media (prefers-reduced-motion: reduce) { .launcher { transition: none; } }
+@media (max-width: 640px) { .launcher { left: .65rem; bottom: calc(4.9rem + env(safe-area-inset-bottom)); width: 3.25rem; height: 3.25rem; background: rgba(10,7,20,.14); } .launcher img { width: 3rem; height: 3rem; } .signedOut { left: .5rem; bottom: calc(8.75rem + env(safe-area-inset-bottom)); width: calc(100vw - 1rem); } .agendaSignedOut { left: auto; right: .5rem; } }
+@media (prefers-reduced-motion: reduce) { .launcher,.launcher img { transition: none; } }
