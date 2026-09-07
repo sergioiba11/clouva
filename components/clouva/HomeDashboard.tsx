@@ -5,25 +5,20 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import {
   ArrowRight,
-  Bell,
   Box,
   CircleUserRound,
   Compass,
   DollarSign,
   Home,
   LayoutGrid,
-  Menu,
   Music2,
-  Search,
   ShoppingBag,
   Sparkles,
   Store,
   UsersRound,
 } from "lucide-react";
-import { OfficialClouvaMark } from "@/components/clouva/OfficialClouvaMark";
 import { useAuth } from "@/components/auth-provider";
 import { useCurrentPlayer } from "@/components/current-player-provider";
-import { AccountMenu } from "@/components/account/AccountMenu";
 import { useClouvaAIAssistant } from "@/components/clouva-ai/ClouvaAIAssistantProvider";
 import { SpotifyHomeStatus } from "@/components/music/SpotifyHomeStatus";
 import { useSpotifyPlayback } from "@/components/music/SpotifyPlaybackProvider";
@@ -173,26 +168,6 @@ export function HomeDashboard() {
   return (
     <main className={styles.page}>
       <div className={styles.ambient} aria-hidden="true" />
-
-      <header className={styles.topbar}>
-        <Link href={CLOUVA_NAVIGATION.HOME.href} className={styles.wordmark}>
-          <span className={styles.brandIcon}><OfficialClouvaMark tone="light" /></span>
-          <span>CLOUVA</span>
-        </Link>
-
-        <nav className={styles.topnav} aria-label="Navegación principal">
-          {primaryNav.map((item) => (
-            <Link key={item.href} href={item.href} className={item.key === "HOME" ? styles.topnavActive : undefined}>{item.label}</Link>
-          ))}
-        </nav>
-
-        <div className={styles.topActions}>
-          <button type="button" aria-label="Buscar"><Search size={18} /></button>
-          <button type="button" aria-label="Notificaciones"><Bell size={18} /></button>
-          <AccountMenu variant="home" triggerClassName={styles.accountPill} />
-          <button type="button" className={styles.mobileMenu} aria-label="Abrir menú"><Menu size={20} /></button>
-        </div>
-      </header>
 
       <aside className={styles.sidebar}>
         <section className={styles.identityCard}>
