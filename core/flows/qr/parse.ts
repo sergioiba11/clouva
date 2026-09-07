@@ -108,7 +108,7 @@ export function classifyParsedQr(parsed: ParsedUniversalQr, options?: { sandboxE
   let capability: UniversalQrCapability = "DETECTED";
   let safeMessage: string | null = null;
   let provider = parsed.providerHint ?? null;
-  let amountEditable = !parsed.amount;
+  const amountEditable = !parsed.amount;
 
   if (!parsed.valid) {
     capability = "UNSUPPORTED";
