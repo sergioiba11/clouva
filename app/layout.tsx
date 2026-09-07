@@ -16,9 +16,20 @@ export const metadata: Metadata = {
   title: "Clouva Vida de Flows",
   description: "Vida de flows. Directamente desde el southside.",
   icons: {
-    icon: [{ url: "/icon.svg?v=official-20260903", type: "image/svg+xml" }],
-    shortcut: "/icon.svg?v=official-20260903",
-    apple: "/assets/clouva/brand/logo-official-dark.png",
+    icon: [
+      {
+        url: "/assets/clouva/brand/logo-official-dark.png?v=official-20260907",
+        type: "image/png",
+        media: "(prefers-color-scheme: light)",
+      },
+      {
+        url: "/assets/clouva/brand/logo-official-light.png?v=official-20260907",
+        type: "image/png",
+        media: "(prefers-color-scheme: dark)",
+      },
+    ],
+    shortcut: "/assets/clouva/brand/logo-official-light.png?v=official-20260907",
+    apple: "/assets/clouva/brand/logo-official-dark.png?v=official-20260907",
   },
   openGraph: {
     title: "Clouva Vida de Flows",
