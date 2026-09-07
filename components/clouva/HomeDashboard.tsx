@@ -12,7 +12,11 @@ import {
   Home,
   LayoutGrid,
   Music2,
+  Pause,
+  Play,
   ShoppingBag,
+  SkipBack,
+  SkipForward,
   Sparkles,
   Store,
   UsersRound,
@@ -52,7 +56,17 @@ type HomeVisualAssets = {
   vipCrown: string | null;
   vipCompleteAlt: string | null;
   playerOrbits: string | null;
+  heroStudio: string | null;
+  cardPlayer: string | null;
+  cardFlow: string | null;
+  cardCreator: string | null;
+  cardSpot: string | null;
+  cardMarket: string | null;
+  matrixBackground: string | null;
+  flowCoin: string | null;
 };
+
+type HomeCardAssetKey = "cardPlayer" | "cardFlow" | "cardCreator" | "cardSpot" | "cardMarket";
 
 const EMPTY_HOME_VISUAL_ASSETS: HomeVisualAssets = {
   vipComplete: null,
@@ -61,11 +75,20 @@ const EMPTY_HOME_VISUAL_ASSETS: HomeVisualAssets = {
   vipCrown: null,
   vipCompleteAlt: null,
   playerOrbits: null,
+  heroStudio: null,
+  cardPlayer: null,
+  cardFlow: null,
+  cardCreator: null,
+  cardSpot: null,
+  cardMarket: null,
+  matrixBackground: null,
+  flowCoin: null,
 };
 
 const homeModules = [
   {
     key: "PLAYER" as const,
+    assetKey: "cardPlayer" as HomeCardAssetKey,
     title: "Mi Player",
     description: "Tu identidad pública, tu página y tu presencia dentro de CLOUVA.",
     cta: "Abrir Player",
@@ -73,13 +96,15 @@ const homeModules = [
   },
   {
     key: "MI_FLOW" as const,
+    assetKey: "cardFlow" as HomeCardAssetKey,
     title: "Mi Flow",
-    description: "Billetera, FLOWS, ingresos, balances, objetivos y movimientos.",
+    description: "Billetera, FLOWs, ingresos, balances, objetivos y movimientos.",
     cta: "Abrir Mi Flow",
     icon: DollarSign,
   },
   {
     key: "CREATE" as const,
+    assetKey: "cardCreator" as HomeCardAssetKey,
     title: "Crear",
     description: "Imagen, video, Trébol, Creator Studio 3D, avatar, ropa y herramientas creativas.",
     cta: "Crear",
@@ -87,6 +112,7 @@ const homeModules = [
   },
   {
     key: "MI_SPOT" as const,
+    assetKey: "cardSpot" as HomeCardAssetKey,
     title: "Mi Spot",
     description: "Los negocios, Spots, marcas, clubes y Studios que manejás.",
     cta: "Abrir Mi Spot",
@@ -94,17 +120,11 @@ const homeModules = [
   },
   {
     key: "MARKET" as const,
+    assetKey: "cardMarket" as HomeCardAssetKey,
     title: "Market",
-    description: "Descubrí productos, servicios, merch físico y comercio dentro de CLOUVA.",
+    description: "Descubrí productos, servicios, merch físico y digital dentro de CLOUVA.",
     cta: "Ir al Market",
     icon: ShoppingBag,
-  },
-  {
-    key: "MATRIX" as const,
-    title: "Explorá La Matrix",
-    description: "Players, Studios y proyectos que forman el ecosistema CLOUVA.",
-    cta: "Explorar",
-    icon: Compass,
   },
 ];
 
@@ -117,11 +137,24 @@ function initials(value: string) {
     .join("");
 }
 
+function formatTime(milliseconds: number) {
+  const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
 export function HomeDashboard() {
   const { user, profile } = useAuth();
   const { currentPlayer } = useCurrentPlayer();
   const { openAssistant } = useClouvaAIAssistant();
-  const { playback } = useSpotifyPlayback();
+  const {
+    playback,
+    connected: spotifyConnected,
+    scopesReady: spotifyScopesReady,
+    busyAction,
+    controlPlayback,
+  } = useSpotifyPlayback();
   const [homeVisualAssets, setHomeVisualAssets] = useState<HomeVisualAssets>(EMPTY_HOME_VISUAL_ASSETS);
 
   const displayName = resolveHomeDisplayName({ currentPlayer, profile, user });
@@ -133,17 +166,35 @@ export function HomeDashboard() {
         ? "Tu identidad CLOUVA"
         : "Explorá tu propio mundo";
   const identityAvatarImage = currentPlayer?.profile_image_url || profile?.avatar_url || user?.user_metadata?.avatar_url || null;
-  const heroPlayerImage = currentPlayer?.cover_url || currentPlayer?.hero_image_url || VISUAL_ASSETS["player-public-profile-cover-01"];
+  const fallbackHeroImage = currentPlayer?.cover_url || currentPlayer?.hero_image_url || VISUAL_ASSETS["player-public-profile-cover-01"];
   const isSignedIn = Boolean(user);
   const hasAvatar = Boolean(profile?.avatar_3d_url);
   const completedSteps = [isSignedIn, Boolean(profile?.username), hasAvatar].filter(Boolean).length;
   const progress = Math.round((completedSteps / 3) * 100);
   const playerHref = getPlayerDestination(currentPlayer);
+  const heroBackground = homeVisualAssets.heroStudio || fallbackHeroImage;
+  const desktopVipArtwork = homeVisualAssets.vipCompleteAlt || homeVisualAssets.vipComplete;
+  const spotifyControlsReady = Boolean(spotifyConnected && spotifyScopesReady && playback);
+  const playbackProgress = playback?.durationMs
+    ? Math.min(100, Math.max(0, (playback.progressMs / playback.durationMs) * 100))
+    : 0;
+
+  const workspaceNav = [
+    { label: "Mi Player", href: playerHref, icon: CircleUserRound },
+    { label: "Mi Flow", href: CLOUVA_NAVIGATION.MI_FLOW.href, icon: DollarSign },
+    { label: "Mi Spot", href: CLOUVA_NAVIGATION.MI_SPOT.href, icon: Store },
+  ];
+
   const effectiveModules = homeModules.map((item) => ({
     ...item,
     href: item.key === "PLAYER" ? playerHref : CLOUVA_NAVIGATION[item.key].href,
+    artwork: homeVisualAssets[item.assetKey],
   }));
-  const desktopVipArtwork = homeVisualAssets.vipCompleteAlt || homeVisualAssets.vipComplete;
+
+  const runPlaybackAction = (action: "play" | "pause" | "next" | "previous") => {
+    if (!spotifyControlsReady || busyAction) return;
+    void controlPlayback(action).catch(() => undefined);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -157,7 +208,7 @@ export function HomeDashboard() {
           setHomeVisualAssets({ ...EMPTY_HOME_VISUAL_ASSETS, ...payload.assets });
         }
       } catch {
-        // Keep the existing Home visuals if the generated-asset resolver is unavailable.
+        // Preserve the existing application fallbacks if asset storage is temporarily unavailable.
       }
     };
 
@@ -174,7 +225,7 @@ export function HomeDashboard() {
           <div className={styles.identityAvatar}>
             {identityAvatarImage ? <img src={String(identityAvatarImage)} alt={displayName} /> : <span>{initials(displayName) || "C"}</span>}
           </div>
-          <div>
+          <div className={styles.identityCopy}>
             <strong>{displayName}</strong>
             <p>{username}</p>
           </div>
@@ -193,107 +244,72 @@ export function HomeDashboard() {
           })}
         </nav>
 
+        <section className={styles.workspaceSection}>
+          <span className={styles.workspaceLabel}>TU ESPACIO</span>
+          <nav className={styles.workspaceNav} aria-label="Tu espacio en CLOUVA">
+            {workspaceNav.map((item) => {
+              const Icon = item.icon;
+              return (
+                <Link key={item.href} href={item.href}>
+                  <Icon size={17} />
+                  <span>{item.label}</span>
+                </Link>
+              );
+            })}
+          </nav>
+        </section>
+
         <button type="button" className={styles.aiStatus} onClick={() => openAssistant()}>
-          <span className={styles.aiMascot}><Image src="/assets/clouva-ai/trebol-mascot.png" alt="" width={36} height={36} /></span>
-          <div>
+          <span className={styles.aiMascot}><Image src="/assets/clouva-ai/trebol-mascot.png" alt="" width={40} height={40} /></span>
+          <span className={styles.aiStatusCopy}>
             <b>CLOUVA AI</b>
-            <small>Lista para ayudarte</small>
-          </div>
-          <i />
+            <small><i /> Lista para ayudarte</small>
+            <em>¿Qué hacemos hoy?</em>
+          </span>
+          <ArrowRight size={14} />
         </button>
       </aside>
 
       <section className={styles.content}>
         <section
           className={styles.hero}
-          data-visual-asset="player-public-profile-cover-01"
-          style={{ backgroundImage: `url(${heroPlayerImage})` }}
+          data-visual-asset="home-hero-studio-clean"
+          style={{ backgroundImage: `url(${heroBackground})` }}
         >
           <div className={styles.heroShade} aria-hidden="true" />
           <div className={styles.heroCopy}>
-            <span className={styles.eyebrow}>{isSignedIn ? "Bienvenido de nuevo" : "Bienvenido a tu universo"}</span>
-            <h1>{displayName}</h1>
+            <span className={styles.eyebrow}>{isSignedIn ? "BIENVENIDO DE NUEVO" : "BIENVENIDO A TU UNIVERSO"}</span>
+            <h1>CLOUVA</h1>
             <p>Tu casa dentro de CLOUVA.<br />Creá, administrá y explorá desde acá.</p>
             <div className={styles.heroActions}>
               <Link href={playerHref}>
                 <CircleUserRound size={17} />
                 Mi Player
+                <ArrowRight size={15} />
               </Link>
               <Link href={CLOUVA_NAVIGATION.MATRIX.href} className={styles.secondaryAction}>
                 <Compass size={17} />
                 Explorar La Matrix
               </Link>
             </div>
+            <span className={styles.heroQuote}>“Del Sur para el mundo.”</span>
           </div>
 
           <div className={styles.heroPlayer} aria-label={`Player ${displayName}`}>
             <span className={styles.heroPlayerGlow} aria-hidden="true" />
-            <div
-              style={{
-                position: "absolute",
-                top: "50%",
-                left: "50%",
-                width: "100%",
-                aspectRatio: "1 / 1",
-                transform: "translate(-50%, -50%)",
-                display: "grid",
-                placeItems: "center",
-              }}
-            >
-              {homeVisualAssets.playerOrbits ? (
-                <img
-                  src={homeVisualAssets.playerOrbits}
-                  alt=""
-                  aria-hidden="true"
-                  style={{
-                    position: "absolute",
-                    width: "132%",
-                    height: "132%",
-                    maxWidth: "none",
-                    objectFit: "contain",
-                    pointerEvents: "none",
-                    filter: "drop-shadow(0 0 22px rgba(181, 70, 255, 0.48))",
-                  }}
-                />
-              ) : null}
-              {homeVisualAssets.playerRing ? (
-                <img
-                  src={homeVisualAssets.playerRing}
-                  alt=""
-                  aria-hidden="true"
-                  style={{
-                    position: "absolute",
-                    width: "88%",
-                    height: "88%",
-                    maxWidth: "none",
-                    objectFit: "contain",
-                    pointerEvents: "none",
-                    filter: "drop-shadow(0 0 24px rgba(192, 78, 255, 0.62))",
-                  }}
-                />
-              ) : null}
-              <span
-                style={{
-                  position: "relative",
-                  zIndex: 2,
-                  display: "grid",
-                  width: "55%",
-                  aspectRatio: "1 / 1",
-                  overflow: "hidden",
-                  placeItems: "center",
-                  border: "2px solid rgba(255,255,255,.22)",
-                  borderRadius: "50%",
-                  background: "#100a17",
-                  boxShadow: "0 18px 44px rgba(0,0,0,.5), 0 0 28px rgba(142,61,236,.28)",
-                }}
-              >
-                {identityAvatarImage ? (
-                  <img src={String(identityAvatarImage)} alt={displayName} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                ) : (
-                  <b style={{ fontSize: "clamp(2.2rem, 4vw, 4rem)" }}>{initials(displayName) || "C"}</b>
-                )}
-              </span>
-            </div>
+            {homeVisualAssets.playerOrbits ? <img className={styles.heroPlayerOrbits} src={homeVisualAssets.playerOrbits} alt="" aria-hidden="true" /> : null}
+            {homeVisualAssets.playerRing ? <img className={styles.heroPlayerRing} src={homeVisualAssets.playerRing} alt="" aria-hidden="true" /> : null}
+            <span className={styles.heroPlayerPortrait}>
+              {identityAvatarImage ? (
+                <img src={String(identityAvatarImage)} alt={displayName} />
+              ) : (
+                <b>{initials(displayName) || "C"}</b>
+              )}
+            </span>
+            <span className={styles.heroPlayerIdentity}>
+              <b>{displayName}</b>
+              <small>{username}</small>
+            </span>
           </div>
 
           <button
@@ -303,35 +319,80 @@ export function HomeDashboard() {
             aria-label="Abrir CLOUVA AI"
           >
             <span className={styles.heroAISpeech}>¿Qué hacemos hoy, {displayName}?</span>
-            <span className={styles.heroAIGlow} aria-hidden="true" />
             <span className={styles.heroAIMascot}>
-              <Image src="/assets/clouva-ai/trebol-mascot.png" alt="" width={150} height={150} />
+              <Image src="/assets/clouva-ai/trebol-mascot.png" alt="" width={72} height={72} />
             </span>
           </button>
+        </section>
 
-          <div className={styles.nowPlaying}>
-            <div className={styles.cover}>
-              {playback?.track.coverUrl ? (
-                <img src={playback.track.coverUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: "inherit" }} />
-              ) : (
-                <Music2 size={20} />
-              )}
-            </div>
-            <SpotifyHomeStatus />
-            <Link href="/mi-flow/music" aria-label="Abrir música"><ArrowRight size={17} /></Link>
+        <section className={styles.musicBar} aria-label="Spotify en CLOUVA">
+          <div className={styles.cover}>
+            {playback?.track.coverUrl ? (
+              <img src={playback.track.coverUrl} alt="" />
+            ) : (
+              <Music2 size={21} />
+            )}
           </div>
+
+          <div className={styles.spotifyStatus}>
+            <SpotifyHomeStatus />
+          </div>
+
+          <div className={styles.musicControls} aria-label="Controles de Spotify">
+            <button
+              type="button"
+              onClick={() => runPlaybackAction("previous")}
+              disabled={!spotifyControlsReady || Boolean(busyAction)}
+              aria-label="Anterior"
+            >
+              <SkipBack size={16} />
+            </button>
+            <button
+              type="button"
+              className={styles.playButton}
+              onClick={() => runPlaybackAction(playback?.isPlaying ? "pause" : "play")}
+              disabled={!spotifyControlsReady || Boolean(busyAction)}
+              aria-label={playback?.isPlaying ? "Pausar" : "Reproducir"}
+            >
+              {playback?.isPlaying ? <Pause size={18} /> : <Play size={18} />}
+            </button>
+            <button
+              type="button"
+              onClick={() => runPlaybackAction("next")}
+              disabled={!spotifyControlsReady || Boolean(busyAction)}
+              aria-label="Siguiente"
+            >
+              <SkipForward size={16} />
+            </button>
+          </div>
+
+          <div className={styles.musicProgress}>
+            <div className={styles.musicProgressTrack} aria-hidden="true">
+              <span style={{ width: `${playbackProgress}%` }} />
+            </div>
+            <span>
+              {playback ? formatTime(playback.progressMs) : "0:00"}
+              <i>·</i>
+              {playback ? formatTime(playback.durationMs) : "0:00"}
+            </span>
+          </div>
+
+          <div className={styles.musicPhrase}>Misma esencia,<br />más universo.</div>
+          <Link className={styles.musicOpen} href="/mi-flow/music" aria-label="Abrir música"><ArrowRight size={17} /></Link>
         </section>
 
         <section className={styles.moduleGrid} aria-label="Puertas principales de CLOUVA">
           {effectiveModules.map((module) => {
             const Icon = module.icon;
             return (
-              <Link key={module.key} href={module.href} className={styles.moduleCard}>
-                <span className={styles.moduleIcon}><Icon size={21} /></span>
-                <div>
+              <Link key={module.key} href={module.href} className={styles.moduleCard} data-module={module.key}>
+                {module.artwork ? <img className={styles.moduleArtwork} src={module.artwork} alt="" aria-hidden="true" /> : null}
+                <span className={styles.moduleShade} aria-hidden="true" />
+                <div className={styles.moduleCardContent}>
+                  <span className={styles.moduleIcon}><Icon size={20} /></span>
                   <h2>{module.title}</h2>
                   <p>{module.description}</p>
-                  <span>{module.cta} <ArrowRight size={13} /></span>
+                  <span className={styles.moduleCta}>{module.cta} <ArrowRight size={13} /></span>
                 </div>
               </Link>
             );
@@ -374,56 +435,30 @@ export function HomeDashboard() {
           </div>
         </section>
 
-        <Link
-          href="/vip"
-          className={styles.railCard}
-          style={{
-            position: "relative",
-            display: "block",
-            minHeight: "9.8rem",
-            overflow: "hidden",
-            borderColor: "rgba(188, 83, 255, .34)",
-            background: "radial-gradient(circle at 78% 54%, rgba(177, 43, 255, .2), transparent 36%), linear-gradient(155deg, rgba(25,10,39,.96), rgba(8,5,15,.96))",
-            textDecoration: "none",
-          }}
-        >
-          <span style={{ color: "#f0bd5c", fontSize: ".58rem", fontWeight: 850, letterSpacing: ".12em" }}>CLOUVA VIP</span>
-          <h2 style={{ position: "relative", zIndex: 2, width: "58%", marginTop: ".42rem", fontSize: "1.02rem", lineHeight: 1.03 }}>Potenciá tu experiencia.</h2>
-          <p style={{ position: "relative", zIndex: 2, width: "58%", marginTop: ".42rem", color: "rgba(237,233,254,.58)", fontSize: ".54rem", lineHeight: 1.4 }}>Más herramientas, identidad y experiencias exclusivas.</p>
-          <b style={{ position: "absolute", left: ".85rem", bottom: ".8rem", zIndex: 2, display: "flex", alignItems: "center", gap: ".3rem", fontSize: ".56rem" }}>Ver VIP <ArrowRight size={13} /></b>
+        <Link href="/vip" className={styles.vipCard}>
+          <span className={styles.vipLabel}>CLOUVA VIP</span>
+          <h2>Potenciá tu experiencia.</h2>
+          <p>Más herramientas, identidad y experiencias exclusivas.</p>
+          <b>Ver VIP <ArrowRight size={13} /></b>
           {desktopVipArtwork ? (
-            <img
-              src={desktopVipArtwork}
-              alt=""
-              aria-hidden="true"
-              style={{
-                position: "absolute",
-                top: "50%",
-                right: "-1.15rem",
-                width: "9.4rem",
-                height: "9.4rem",
-                maxWidth: "none",
-                objectFit: "contain",
-                transform: "translateY(-50%)",
-                pointerEvents: "none",
-                filter: "drop-shadow(0 0 18px rgba(197, 70, 255, .48))",
-              }}
-            />
+            <img className={styles.vipArtwork} src={desktopVipArtwork} alt="" aria-hidden="true" />
           ) : homeVisualAssets.vipCrown ? (
-            <img
-              src={homeVisualAssets.vipCrown}
-              alt=""
-              aria-hidden="true"
-              style={{ position: "absolute", right: ".3rem", top: "2.3rem", width: "5.3rem", height: "5.3rem", objectFit: "contain" }}
-            />
+            <img className={styles.vipCrown} src={homeVisualAssets.vipCrown} alt="" aria-hidden="true" />
           ) : null}
         </Link>
 
-        <Link href={CLOUVA_NAVIGATION.MATRIX.href} className={styles.matrixTeaser}>
-          <span>LA MATRIX</span>
-          <h2>Tu red creativa empieza acá.</h2>
-          <p>Descubrí Players, Estudios y proyectos conectados.</p>
-          <b>Explorar ahora <ArrowRight size={14} /></b>
+        <Link
+          href={CLOUVA_NAVIGATION.MATRIX.href}
+          className={styles.matrixTeaser}
+          style={homeVisualAssets.matrixBackground ? { backgroundImage: `url(${homeVisualAssets.matrixBackground})` } : undefined}
+        >
+          <span className={styles.matrixShade} aria-hidden="true" />
+          <div className={styles.matrixContent}>
+            <span>LA MATRIX</span>
+            <h2>Tu red creativa empieza acá.</h2>
+            <p>Descubrí Players, Estudios y proyectos conectados.</p>
+            <b>Explorar ahora <ArrowRight size={14} /></b>
+          </div>
         </Link>
 
         <Link href={CLOUVA_NAVIGATION.MARKET.href} className={styles.quickLink}>
@@ -432,13 +467,6 @@ export function HomeDashboard() {
           <ArrowRight size={15} />
         </Link>
       </aside>
-
-      <nav className={styles.mobileNav} aria-label="Navegación móvil">
-        {primaryNav.map((item) => {
-          const Icon = item.icon;
-          return <Link key={item.href} href={item.href} className={item.key === "HOME" ? styles.mobileActive : undefined}><Icon size={18} /><span>{item.label}</span></Link>;
-        })}
-      </nav>
     </main>
   );
 }
