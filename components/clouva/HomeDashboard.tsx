@@ -201,7 +201,7 @@ export function HomeDashboard() {
 
     const loadHomeVisualAssets = async () => {
       try {
-        const response = await fetch("/api/home/visual-assets", { cache: "force-cache" });
+        const response = await fetch("/api/home/visual-assets?schema=home-desktop-v2", { cache: "no-store" });
         if (!response.ok) return;
         const payload = await response.json() as { assets?: Partial<HomeVisualAssets> };
         if (!cancelled && payload.assets) {
