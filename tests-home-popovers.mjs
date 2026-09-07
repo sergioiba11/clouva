@@ -43,8 +43,10 @@ test("MI FLOW abre la billetera del Player y mantiene el admin de espacios separ
   assert.match(miFlow, /\.\/billetera\/page/);
   assert.doesNotMatch(miFlow, /MiFlowSpotEntry|SpotCommerceDashboard/);
   assert.match(wallet, /\/api\/mi-flow\/summary/);
-  assert.match(wallet, /> FLOWS</);
-  assert.match(wallet, /> Diamantes</);
+  assert.match(wallet, /\/api\/flows\/assets/);
+  assert.match(wallet, /<FlowAppShell[\s\S]*?headerTitle="MI BILLETERA"/);
+  assert.match(wallet, /<PlayerFlowWallet/);
+  assert.match(wallet, /title="Diamantes"/);
   assert.match(summary, /flows_wallets/);
   assert.match(summary, /flows_wallet_ledger/);
   assert.match(summary, /diamond_wallets/);
