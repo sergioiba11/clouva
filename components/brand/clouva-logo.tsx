@@ -8,7 +8,9 @@ type ClouvaLogoMarkProps = {
   label?: string;
 };
 
-const MASK_URL = 'url("/assets/clouva/logo-official.svg")';
+// Use the same canonical transparent artwork as OfficialClouvaMark so every
+// masked/tinted logo keeps the exact official silhouette.
+const MASK_URL = 'url("/assets/clouva/brand/logo-official-light.png")';
 
 export function ClouvaLogoMark({ size = 24, className = "", label }: ClouvaLogoMarkProps) {
   const style: CSSProperties = {
