@@ -19,8 +19,8 @@ import {
   SkipForward,
   Sparkles,
   Store,
-  UsersRound,
 } from "lucide-react";
+import { AccountMenu } from "@/components/account/AccountMenu";
 import { useAuth } from "@/components/auth-provider";
 import { useCurrentPlayer } from "@/components/current-player-provider";
 import { useClouvaAIAssistant } from "@/components/clouva-ai/ClouvaAIAssistantProvider";
@@ -408,24 +408,13 @@ export function HomeDashboard() {
       </section>
 
       <aside className={styles.rail}>
-        <section className={styles.railCard}>
-          <div className={styles.railHeading}>
-            <h2>Tu identidad</h2>
-          </div>
-          <div className={styles.checkList}>
-            <div>
-              <span className={isSignedIn ? styles.done : undefined}><CircleUserRound size={16} /></span>
-              <p><b>Cuenta CLOUVA</b><small>{isSignedIn ? "Conectada" : "Iniciá sesión para guardar tu mundo"}</small></p>
-            </div>
-            <div>
-              <span className={currentPlayer ? styles.done : undefined}><UsersRound size={16} /></span>
-              <p><b>Player público</b><small>{currentPlayer ? username : "Creá tu identidad dentro de La Matrix"}</small></p>
-            </div>
-            <div>
-              <span className={hasAvatar ? styles.done : undefined}><Box size={16} /></span>
-              <p><b>Avatar 3D</b><small>{hasAvatar ? "Listo para personalizar" : "Creá o elegí tu personaje"}</small></p>
-            </div>
-          </div>
+        <section className={styles.railCard} aria-label="Cuenta CLOUVA">
+          <AccountMenu
+            variant="home"
+            preferUsername
+            triggerImageUrl={identityAvatarImage ? String(identityAvatarImage) : undefined}
+            triggerClassName="w-full justify-start"
+          />
         </section>
 
         <section className={styles.railCard}>
