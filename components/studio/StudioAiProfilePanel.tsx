@@ -332,7 +332,7 @@ export function StudioAiProfilePanel({
     }
   };
 
-  if (loading) return <div className="h-40 animate-pulse rounded-2xl bg-white/[0.04]" />;
+  if (loading) return <div className="h-40 rounded-2xl border border-white/10 bg-white/[0.04]" aria-busy="true" />;
 
   const cover = draftVersion?.asset_references.find((asset) => asset.kind === "cover")
     ?? job?.generated_assets?.find((asset) => asset.kind === "cover");
