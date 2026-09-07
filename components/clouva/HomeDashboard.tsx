@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import {
   ArrowRight,
   Bell,
@@ -48,6 +49,24 @@ const primaryNav = getNavigationItems(DESKTOP_PRIMARY_NAV_KEYS).map((item) => ({
   ...item,
   icon: navigationIcons[item.key] ?? Home,
 }));
+
+type HomeVisualAssets = {
+  vipComplete: string | null;
+  vipPedestal: string | null;
+  playerRing: string | null;
+  vipCrown: string | null;
+  vipCompleteAlt: string | null;
+  playerOrbits: string | null;
+};
+
+const EMPTY_HOME_VISUAL_ASSETS: HomeVisualAssets = {
+  vipComplete: null,
+  vipPedestal: null,
+  playerRing: null,
+  vipCrown: null,
+  vipCompleteAlt: null,
+  playerOrbits: null,
+};
 
 const homeModules = [
   {
@@ -108,6 +127,7 @@ export function HomeDashboard() {
   const { currentPlayer } = useCurrentPlayer();
   const { openAssistant } = useClouvaAIAssistant();
   const { playback } = useSpotifyPlayback();
+  const [homeVisualAssets, setHomeVisualAssets] = useState<HomeVisualAssets>(EMPTY_HOME_VISUAL_ASSETS);
 
   const displayName = resolveHomeDisplayName({ currentPlayer, profile, user });
   const username = currentPlayer?.username
@@ -128,6 +148,27 @@ export function HomeDashboard() {
     ...item,
     href: item.key === "PLAYER" ? playerHref : CLOUVA_NAVIGATION[item.key].href,
   }));
+  const desktopVipArtwork = homeVisualAssets.vipCompleteAlt || homeVisualAssets.vipComplete;
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadHomeVisualAssets = async () => {
+      try {
+        const response = await fetch("/api/home/visual-assets", { cache: "force-cache" });
+        if (!response.ok) return;
+        const payload = await response.json() as { assets?: Partial<HomeVisualAssets> };
+        if (!cancelled && payload.assets) {
+          setHomeVisualAssets({ ...EMPTY_HOME_VISUAL_ASSETS, ...payload.assets });
+        }
+      } catch {
+        // Keep the existing Home visuals if the generated-asset resolver is unavailable.
+      }
+    };
+
+    void loadHomeVisualAssets();
+    return () => { cancelled = true; };
+  }, []);
 
   return (
     <main className={styles.page}>
@@ -210,6 +251,76 @@ export function HomeDashboard() {
             </div>
           </div>
 
+          <div className={styles.heroPlayer} aria-label={`Player ${displayName}`}>
+            <span className={styles.heroPlayerGlow} aria-hidden="true" />
+            <div
+              style={{
+                position: "absolute",
+                top: "50%",
+                left: "50%",
+                width: "100%",
+                aspectRatio: "1 / 1",
+                transform: "translate(-50%, -50%)",
+                display: "grid",
+                placeItems: "center",
+              }}
+            >
+              {homeVisualAssets.playerOrbits ? (
+                <img
+                  src={homeVisualAssets.playerOrbits}
+                  alt=""
+                  aria-hidden="true"
+                  style={{
+                    position: "absolute",
+                    width: "132%",
+                    height: "132%",
+                    maxWidth: "none",
+                    objectFit: "contain",
+                    pointerEvents: "none",
+                    filter: "drop-shadow(0 0 22px rgba(181, 70, 255, 0.48))",
+                  }}
+                />
+              ) : null}
+              {homeVisualAssets.playerRing ? (
+                <img
+                  src={homeVisualAssets.playerRing}
+                  alt=""
+                  aria-hidden="true"
+                  style={{
+                    position: "absolute",
+                    width: "88%",
+                    height: "88%",
+                    maxWidth: "none",
+                    objectFit: "contain",
+                    pointerEvents: "none",
+                    filter: "drop-shadow(0 0 24px rgba(192, 78, 255, 0.62))",
+                  }}
+                />
+              ) : null}
+              <span
+                style={{
+                  position: "relative",
+                  zIndex: 2,
+                  display: "grid",
+                  width: "55%",
+                  aspectRatio: "1 / 1",
+                  overflow: "hidden",
+                  placeItems: "center",
+                  border: "2px solid rgba(255,255,255,.22)",
+                  borderRadius: "50%",
+                  background: "#100a17",
+                  boxShadow: "0 18px 44px rgba(0,0,0,.5), 0 0 28px rgba(142,61,236,.28)",
+                }}
+              >
+                {identityAvatarImage ? (
+                  <img src={String(identityAvatarImage)} alt={displayName} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                ) : (
+                  <b style={{ fontSize: "clamp(2.2rem, 4vw, 4rem)" }}>{initials(displayName) || "C"}</b>
+                )}
+              </span>
+            </div>
+          </div>
+
           <button
             type="button"
             className={styles.heroAICompanion}
@@ -287,6 +398,51 @@ export function HomeDashboard() {
             <div><Box size={17} /><b>{hasAvatar ? "Listo" : "Pendiente"}</b><small>Avatar</small></div>
           </div>
         </section>
+
+        <Link
+          href="/vip"
+          className={styles.railCard}
+          style={{
+            position: "relative",
+            display: "block",
+            minHeight: "9.8rem",
+            overflow: "hidden",
+            borderColor: "rgba(188, 83, 255, .34)",
+            background: "radial-gradient(circle at 78% 54%, rgba(177, 43, 255, .2), transparent 36%), linear-gradient(155deg, rgba(25,10,39,.96), rgba(8,5,15,.96))",
+            textDecoration: "none",
+          }}
+        >
+          <span style={{ color: "#f0bd5c", fontSize: ".58rem", fontWeight: 850, letterSpacing: ".12em" }}>CLOUVA VIP</span>
+          <h2 style={{ position: "relative", zIndex: 2, width: "58%", marginTop: ".42rem", fontSize: "1.02rem", lineHeight: 1.03 }}>Potenciá tu experiencia.</h2>
+          <p style={{ position: "relative", zIndex: 2, width: "58%", marginTop: ".42rem", color: "rgba(237,233,254,.58)", fontSize: ".54rem", lineHeight: 1.4 }}>Más herramientas, identidad y experiencias exclusivas.</p>
+          <b style={{ position: "absolute", left: ".85rem", bottom: ".8rem", zIndex: 2, display: "flex", alignItems: "center", gap: ".3rem", fontSize: ".56rem" }}>Ver VIP <ArrowRight size={13} /></b>
+          {desktopVipArtwork ? (
+            <img
+              src={desktopVipArtwork}
+              alt=""
+              aria-hidden="true"
+              style={{
+                position: "absolute",
+                top: "50%",
+                right: "-1.15rem",
+                width: "9.4rem",
+                height: "9.4rem",
+                maxWidth: "none",
+                objectFit: "contain",
+                transform: "translateY(-50%)",
+                pointerEvents: "none",
+                filter: "drop-shadow(0 0 18px rgba(197, 70, 255, .48))",
+              }}
+            />
+          ) : homeVisualAssets.vipCrown ? (
+            <img
+              src={homeVisualAssets.vipCrown}
+              alt=""
+              aria-hidden="true"
+              style={{ position: "absolute", right: ".3rem", top: "2.3rem", width: "5.3rem", height: "5.3rem", objectFit: "contain" }}
+            />
+          ) : null}
+        </Link>
 
         <Link href={CLOUVA_NAVIGATION.MATRIX.href} className={styles.matrixTeaser}>
           <span>LA MATRIX</span>
