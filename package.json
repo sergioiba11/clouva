@@ -22,7 +22,7 @@
     "test:media": "node --test tests-media-creator.mjs tests-gemini-image.mjs",
     "test:reference-fidelity": "node --require ./scripts/stub-server-only.cjs --import tsx --test tests-reference-fidelity-v2.mjs",
     "test": "npm run test:legacy && npm run test:avatar-analyzer && npm run test:identity-revenue && npm run test:flow-reserve && npm run test:flow-region && npm run test:brand-engine && npm run test:media && npm run test:reference-fidelity && npm run test:navigation",
-    "test:navigation": "node --import tsx --test tests-canonical-navigation.mjs tests-onboarding-state.mjs"
+    "test:navigation": "node --import tsx --test tests-canonical-navigation.mjs tests-onboarding-state.mjs tests-clouva-topbar.mjs"
   },
   "overrides": {
     "three": "$three"
@@ -60,9 +60,6 @@
     "@types/three": "^0.185.1",
     "@types/ws": "^8.18.1",
     "autoprefixer": "^10.4.20",
-    "eslint": "^9.14.0",
-    "eslint-config-next": "15.1.0",
-    "postcss": "^8.4.49",
     "tailwindcss": "^3.4.14",
     "tsx": "^4.23.1",
     "typescript": "^5.6.3"
