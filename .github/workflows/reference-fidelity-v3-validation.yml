@@ -1,0 +1,38 @@
+name: Reference Fidelity V3 validation
+
+on:
+  pull_request:
+    paths:
+      - "app/api/internal/vip-profile/**"
+      - "app/api/vip-profile/**"
+      - "app/reference-fidelity/**"
+      - "components/identity/**"
+      - "lib/server/**"
+      - "Dockerfile"
+      - "tests-reference-fidelity-v2.mjs"
+      - "supabase/migrations/**"
+      - ".github/workflows/reference-fidelity-v3-validation.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: ${{ vars.NEXT_PUBLIC_SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+      NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${{ vars.NEXT_PUBLIC_GOOGLE_CLIENT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run test:reference-fidelity
+      - run: npm run lint
+      - run: npm run build
