@@ -7,12 +7,12 @@ export type FlowRegion =
   | "oceania";
 
 export const FLOW_REGION_ASSETS: Record<FlowRegion, string> = {
-  "south-america": "brand/01_flows_sudamerica.png",
-  "north-america": "brand/02_flows_norteamerica.png",
-  europe: "brand/03_flows_europa.png",
-  africa: "brand/04_flows_africa.png",
-  asia: "brand/05_flows_asia.png",
-  oceania: "brand/06_flows_oceania.png",
+  "south-america": "brand/clouva-logo/shared/other/flows-region-south-america-es.png",
+  "north-america": "brand/clouva-logo/shared/other/flows-region-north-america-en.png",
+  europe: "brand/clouva-logo/shared/other/flows-region-europe-fr.png",
+  africa: "brand/clouva-logo/shared/other/flows-region-africa-sw.png",
+  asia: "brand/clouva-logo/shared/other/flows-region-asia-ja.png",
+  oceania: "brand/clouva-logo/shared/other/flows-region-oceania-en.png",
 };
 
 export const FLOW_REGION_LABELS: Record<FlowRegion, string> = {

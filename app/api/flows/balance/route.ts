@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
-import { FLOW_USD_VALUE, flowsToUsd, getFlowRegion, normalizeFlowBalance } from "@/lib/flows";
+import {
+  FLOW_USD_VALUE,
+  flowsToUsd,
+  getFlowRegion,
+  getFlowRegionByCountryCode,
+  normalizeFlowBalance,
+} from "@/lib/flows";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,7 +18,7 @@ export async function GET(request: NextRequest) {
 
     const [walletResult, profileResult, playerResult] = await Promise.all([
       admin.from("flows_wallets").select("balance,updated_at").eq("user_id", user.id).maybeSingle(),
-      admin.from("profiles").select("city").eq("id", user.id).maybeSingle(),
+      admin.from("profiles").select("country_code,city").eq("id", user.id).maybeSingle(),
       admin
         .from("players")
         .select("location,origin")
@@ -27,11 +33,13 @@ export async function GET(request: NextRequest) {
     }
 
     const balance = normalizeFlowBalance(walletResult.data?.balance ?? 0);
-    const region = getFlowRegion(
-      playerResult.data?.location ?? null,
-      playerResult.data?.origin ?? null,
-      profileResult.data?.city ?? null,
-    );
+    const region =
+      getFlowRegionByCountryCode(profileResult.data?.country_code ?? null) ??
+      getFlowRegion(
+        playerResult.data?.location ?? null,
+        playerResult.data?.origin ?? null,
+        profileResult.data?.city ?? null,
+      );
 
     return NextResponse.json(
       {
