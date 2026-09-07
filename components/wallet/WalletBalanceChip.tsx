@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
+import { FlowLogo } from "@/components/flows/flow-logo";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
-import { ClouvaLogoMark } from "@/components/brand/clouva-logo";
 import { DiamondIcon } from "@/components/diamond-icon";
 
 type WalletBalanceChipProps = {
@@ -44,7 +44,7 @@ export function WalletBalanceChip({
           className="flex h-7 items-center gap-1.5 rounded-full px-2 transition hover:bg-white/[0.06]"
           title="Abrir tu billetera Mi Flow"
         >
-          <ClouvaLogoMark className="text-[#9f86ff]" size={14} label="FLOW" />
+          <FlowLogo size={16} glow={false} />
           <span className="whitespace-nowrap tabular-nums">{balances.flows} FLOWS</span>
         </Link>
       ) : null}
