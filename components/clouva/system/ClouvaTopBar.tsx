@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
 import { AccountMenu } from "@/components/account/AccountMenu";
-import { useCurrentPlayer } from "@/components/current-player-provider";
 import { ClouvaGlobalSearch } from "@/components/clouva/ClouvaGlobalSearch";
 import { OfficialClouvaMark } from "@/components/clouva/OfficialClouvaMark";
 import { GlobalFlowBalance } from "@/components/GlobalFlowBalance";
@@ -12,12 +11,8 @@ import { NotificationBell } from "@/components/notifications/NotificationBell";
 import { WalletBalanceChip } from "@/components/wallet/WalletBalanceChip";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
 import type { FlowRegion } from "@/lib/flows";
-import { resolveHomeDisplayName } from "@/lib/identity-names";
-import { getPlayerDestination } from "@/lib/navigation/clouva-navigation";
-import { VISUAL_ASSETS } from "@/lib/visual-assets";
 
 const REGION_REFRESH_MS = 60_000;
-const PLAYER_ORBITS_ASSET = VISUAL_ASSETS["home-mobile-player-orbits-01"];
 
 type FlowRegionPayload = {
   region: FlowRegion;
@@ -76,57 +71,6 @@ function TopBarRegionLabel() {
   );
 }
 
-function DesktopTopBarPlayerIdentity() {
-  const { user, profile } = useAuth();
-  const { currentPlayer } = useCurrentPlayer();
-
-  const displayName = resolveHomeDisplayName({ currentPlayer, profile, user });
-  const username = currentPlayer?.username
-    ? `@${currentPlayer.username.replace(/^@/, "")}`
-    : profile?.username
-      ? `@${profile.username.replace(/^@/, "")}`
-      : "Tu Player";
-  const playerImage = currentPlayer?.profile_image_url
-    || currentPlayer?.logo_url
-    || profile?.avatar_url
-    || user?.user_metadata?.avatar_url
-    || null;
-  const playerHref = getPlayerDestination(currentPlayer);
-  const playerInitial = displayName.trim().charAt(0).toUpperCase() || "C";
-
-  return (
-    <Link
-      href={playerHref}
-      aria-label={`Abrir Player de ${displayName}`}
-      className="w-[188px] shrink-0 items-center gap-2.5 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/70"
-      data-clouva-desktop-player-brand
-    >
-      <span className="relative grid h-11 w-11 shrink-0 place-items-center">
-        <span className="absolute inset-[7px] rounded-full bg-violet-500/20 blur-[8px]" aria-hidden="true" />
-        <img
-          src={PLAYER_ORBITS_ASSET}
-          alt=""
-          aria-hidden="true"
-          draggable={false}
-          className="pointer-events-none absolute left-1/2 top-1/2 h-[58px] w-[58px] max-w-none -translate-x-1/2 -translate-y-1/2 select-none object-contain drop-shadow-[0_0_8px_rgba(184,71,255,0.55)]"
-        />
-        <span className="relative z-[1] grid h-[34px] w-[34px] place-items-center overflow-hidden rounded-full border border-white/20 bg-[#100a17] shadow-[0_0_14px_rgba(142,61,236,0.3)]">
-          {playerImage ? (
-            <img src={String(playerImage)} alt="" className="h-full w-full object-cover" />
-          ) : (
-            <b className="text-[12px] font-extrabold text-white">{playerInitial}</b>
-          )}
-        </span>
-      </span>
-
-      <span className="min-w-0 leading-none">
-        <strong className="block truncate text-[11px] font-extrabold text-white">{displayName}</strong>
-        <small className="mt-1 block truncate text-[9px] font-medium text-violet-200/60">{username}</small>
-      </span>
-    </Link>
-  );
-}
-
 /**
  * The single canonical authenticated CLOUVA system bar.
  *
@@ -169,12 +113,8 @@ export function ClouvaTopBar() {
             padding: 10px 14px 12px;
           }
 
-          [data-clouva-system-topbar="official"]:has(+ main[data-ui-page="mobile-home"][data-ui-preview="false"]) > div > [data-clouva-mobile-brand] {
+          [data-clouva-system-topbar="official"]:has(+ main[data-ui-page="mobile-home"][data-ui-preview="false"]) > div > [data-clouva-official-brand] {
             grid-area: brand;
-          }
-
-          [data-clouva-system-topbar="official"]:has(+ main[data-ui-page="mobile-home"][data-ui-preview="false"]) > div > [data-clouva-desktop-player-brand] {
-            display: none !important;
           }
 
           [data-clouva-system-topbar="official"]:has(+ main[data-ui-page="mobile-home"][data-ui-preview="false"]) > div > div:first-of-type {
@@ -188,30 +128,6 @@ export function ClouvaTopBar() {
             grid-area: actions;
             margin: 0;
             justify-self: end;
-          }
-        }
-
-        /* The existing mobile top-left identity stays exactly as it is. The
-           Player/orbit identity only replaces the generic CLOUVA brand on the
-           desktop side of the same 820px Home breakpoint. */
-        [data-clouva-desktop-player-brand] {
-          display: none;
-        }
-
-        @media (min-width: 821px) {
-          [data-clouva-mobile-brand] {
-            display: none !important;
-          }
-
-          [data-clouva-desktop-player-brand] {
-            display: flex;
-          }
-
-          /* The desktop Home Player float has moved into the system bar, so it
-             must not remain duplicated inside the hero. This selector is scoped
-             to that exact Home hero and does not touch MobileHomeDashboard. */
-          [data-visual-asset="home-hero-studio-clean"] > [aria-label^="Player "] {
-            display: none !important;
           }
         }
       `}</style>
@@ -230,15 +146,13 @@ export function ClouvaTopBar() {
             href="/"
             aria-label="CLOUVA · Inicio"
             className="flex w-fit shrink-0 items-center gap-2.5 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/70"
-            data-clouva-mobile-brand
+            data-clouva-official-brand
           >
             <span className="grid h-8 w-8 shrink-0 place-items-center">
               <OfficialClouvaMark tone="light" width={30} height={30} alt="CLOUVA" />
             </span>
             <strong className="hidden text-[14px] font-extrabold tracking-[0.13em] text-white sm:block">CLOUVA</strong>
           </Link>
-
-          <DesktopTopBarPlayerIdentity />
 
           <div className="min-w-[44px] flex-1 sm:min-w-[160px] md:ml-2 lg:mx-auto lg:max-w-[620px]">
             <ClouvaGlobalSearch />
