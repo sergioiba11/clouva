@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 
 type SearchResult = {
   id: string;
-  kind: "player" | "studio";
+  kind: "player" | "studio" | "business";
   label: string;
   secondary: string | null;
   imageUrl: string | null;
@@ -19,6 +19,12 @@ function SearchGlyph() {
       <path d="m16 16 4 4" strokeLinecap="round" />
     </svg>
   );
+}
+
+function kindLabel(kind: SearchResult["kind"]) {
+  if (kind === "player") return "Player";
+  if (kind === "business") return "Negocio";
+  return "Estudio";
 }
 
 export function ClouvaGlobalSearch() {
@@ -128,19 +134,19 @@ export function ClouvaGlobalSearch() {
                   </span>
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-[12px] font-semibold text-white/90">{result.label}</span>
-                    <span className="mt-1 block truncate text-[9px] text-white/36">{result.secondary || (result.kind === "player" ? "Player" : "Estudio")}</span>
+                    <span className="mt-1 block truncate text-[9px] text-white/36">{result.secondary || kindLabel(result.kind)}</span>
                   </span>
                   <span className="rounded-full border border-white/[0.07] px-2 py-1 text-[7px] font-bold uppercase tracking-[0.14em] text-violet-200/65">
-                    {result.kind === "player" ? "Player" : "Estudio"}
+                    {kindLabel(result.kind)}
                   </span>
                 </Link>
               ))}
             </div>
           ) : (
-            <div className="rounded-xl px-3 py-4 text-[11px] text-white/38">No encontramos Players o Estudios publicados con ese nombre.</div>
+            <div className="rounded-xl px-3 py-4 text-[11px] text-white/38">No encontramos Players, Negocios o Estudios públicos con ese nombre.</div>
           )}
           <div className="mt-1 border-t border-white/[0.05] px-2.5 py-2 text-[8px] leading-4 text-white/24">
-            Players y Estudios públicos están conectados. Negocios se suman cuando tengan publicación pública verificable; no mostramos espacios privados.
+            Busca identidades y espacios públicos de CLOUVA. Los espacios privados nunca aparecen en estos resultados.
           </div>
         </div>
       ) : null}
