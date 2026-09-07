@@ -128,15 +128,6 @@ const homeModules = [
   },
 ];
 
-function initials(value: string) {
-  return value
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((part) => part.charAt(0).toUpperCase())
-    .join("");
-}
-
 function formatTime(milliseconds: number) {
   const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
   const minutes = Math.floor(totalSeconds / 60);
@@ -166,7 +157,6 @@ export function HomeDashboard() {
       : user
         ? "Tu identidad CLOUVA"
         : "Explorá tu propio mundo";
-  const identityAvatarImage = currentPlayer?.profile_image_url || profile?.avatar_url || user?.user_metadata?.avatar_url || null;
   const railIdentityImage = currentPlayer?.profile_image_url
     || currentPlayer?.logo_url
     || profile?.avatar_url
@@ -291,23 +281,6 @@ export function HomeDashboard() {
               </Link>
             </div>
             <span className={styles.heroQuote}>“Del Sur para el mundo.”</span>
-          </div>
-
-          <div className={styles.heroPlayer} aria-label={`Player ${displayName}`}>
-            <span className={styles.heroPlayerGlow} aria-hidden="true" />
-            {homeVisualAssets.playerOrbits ? <img className={styles.heroPlayerOrbits} src={homeVisualAssets.playerOrbits} alt="" aria-hidden="true" /> : null}
-            {homeVisualAssets.playerRing ? <img className={styles.heroPlayerRing} src={homeVisualAssets.playerRing} alt="" aria-hidden="true" /> : null}
-            <span className={styles.heroPlayerPortrait}>
-              {identityAvatarImage ? (
-                <img src={String(identityAvatarImage)} alt={displayName} />
-              ) : (
-                <b>{initials(displayName) || "C"}</b>
-              )}
-            </span>
-            <span className={styles.heroPlayerIdentity}>
-              <b>{displayName}</b>
-              <small>{username}</small>
-            </span>
           </div>
 
           <button
