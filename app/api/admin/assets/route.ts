@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { Storage } from "@google-cloud/storage";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { MediaApiError, requireMediaAdmin } from "@/lib/server/media-auth";
+import { extractAssetPack } from "@/lib/admin-assets/zip-pack";
 import {
   deletePublicRepositoryAsset,
   listPublicRepositoryAssets,
@@ -51,22 +52,33 @@ const LIST_PAGE_SIZE = 1000;
 const SIGNED_URL_TTL_SECONDS = 60 * 60;
 const CREATOR_REFERENCE_BUCKET = "creator-reference-assets";
 const CREATOR_REFERENCE_TABLE = "creator_reference_assets";
+const ZIP_MIME = new Set(["application/zip", "application/x-zip-compressed", "application/x-zip"]);
 const ALLOWED_MIME = new Set([
   "image/png",
   "image/jpeg",
   "image/webp",
   "image/svg+xml",
   "image/gif",
+  "image/x-icon",
+  "image/vnd.microsoft.icon",
+  "image/icns",
   "video/mp4",
   "video/webm",
+  "video/quicktime",
   "audio/mpeg",
   "audio/wav",
   "audio/ogg",
+  "audio/mp4",
   "model/gltf-binary",
   "model/gltf+json",
   "application/octet-stream",
   "application/pdf",
   "application/json",
+  "application/manifest+json",
+  "application/xml",
+  "text/xml",
+  "text/plain",
+  "text/css",
   "font/ttf",
   "font/otf",
   "font/woff",
@@ -125,6 +137,13 @@ function folderOf(path: string) {
   return index >= 0 ? path.slice(0, index) : "";
 }
 
+function relativeAdminFolder(path: string) {
+  const folder = folderOf(path);
+  if (folder === ROOT_PREFIX) return "";
+  if (folder.startsWith(`${ROOT_PREFIX}/`)) return folder.slice(ROOT_PREFIX.length + 1);
+  return folder;
+}
+
 function normalizeSource(value: string | null): AssetSource | "all" {
   return value === "gcs" || value === "supabase" || value === "github" ? value : "all";
 }
@@ -138,15 +157,21 @@ function contentTypeFromName(name: string) {
     webp: "image/webp",
     gif: "image/gif",
     svg: "image/svg+xml",
+    ico: "image/x-icon",
+    icns: "image/icns",
     mp4: "video/mp4",
     webm: "video/webm",
+    mov: "video/quicktime",
     mp3: "audio/mpeg",
     wav: "audio/wav",
     ogg: "audio/ogg",
+    m4a: "audio/mp4",
     glb: "model/gltf-binary",
     gltf: "model/gltf+json",
     pdf: "application/pdf",
     json: "application/json",
+    webmanifest: "application/manifest+json",
+    xml: "application/xml",
     txt: "text/plain",
     css: "text/css",
     ttf: "font/ttf",
@@ -199,7 +224,7 @@ async function listGcsAssets(query: string): Promise<UnifiedAsset[]> {
       bucket: BUCKET_NAME,
       name: file.name.split("/").at(-1) ?? file.name,
       path: file.name,
-      folder: folderOf(file.name),
+      folder: relativeAdminFolder(file.name),
       url: publicGcsUrl(BUCKET_NAME, file.name),
       size: Number(file.metadata.size ?? 0),
       contentType: file.metadata.contentType ?? null,
@@ -444,6 +469,66 @@ function assetStorageError(error: unknown) {
   return { status: 500, body: { error: message.slice(0, 400), code: "asset_storage_failed" } };
 }
 
+async function importZipPack(file: File, bytes: Buffer) {
+  let entries;
+  try {
+    entries = extractAssetPack(bytes);
+  } catch (error) {
+    throw new MediaApiError(messageOf(error), 400, "invalid_asset_pack");
+  }
+
+  const bucket = getStorage().bucket(BUCKET_NAME);
+  const imported: UnifiedAsset[] = [];
+  const variantCounts: Record<string, number> = {};
+  const platformCounts: Record<string, number> = {};
+  const sourcePack = safeSegment(file.name);
+  const concurrency = 10;
+
+  for (let start = 0; start < entries.length; start += concurrency) {
+    const batch = entries.slice(start, start + concurrency);
+    const results = await Promise.all(batch.map(async (entry) => {
+      const objectPath = `${objectPrefix(entry.destinationFolder)}/${entry.fileName}`;
+      await bucket.file(objectPath).save(entry.bytes, {
+        resumable: false,
+        contentType: entry.contentType,
+        metadata: {
+          cacheControl: "public, max-age=300",
+          metadata: {
+            sourcePack,
+            assetVariant: entry.variant,
+            assetPlatform: entry.platform,
+            originalArchivePath: entry.originalPath.slice(0, 1024),
+          },
+        },
+      });
+      const asset: UnifiedAsset = {
+        source: "gcs",
+        bucket: BUCKET_NAME,
+        name: entry.fileName,
+        path: objectPath,
+        folder: entry.destinationFolder,
+        url: publicGcsUrl(BUCKET_NAME, objectPath),
+        size: entry.bytes.length,
+        contentType: entry.contentType,
+        updatedAt: new Date().toISOString(),
+      };
+      return { asset, variant: entry.variant, platform: entry.platform };
+    }));
+
+    for (const result of results) {
+      imported.push(result.asset);
+      variantCounts[result.variant] = (variantCounts[result.variant] ?? 0) + 1;
+      platformCounts[result.platform] = (platformCounts[result.platform] ?? 0) + 1;
+    }
+  }
+
+  return {
+    imported,
+    variantCounts,
+    platformCounts,
+  };
+}
+
 export async function GET(request: NextRequest) {
   try {
     const { admin } = await requireMediaAdmin(request);
@@ -508,7 +593,23 @@ export async function POST(request: NextRequest) {
     const file = form.get("file");
     if (!(file instanceof File)) throw new MediaApiError("Elegí un archivo.", 400, "file_required");
     if (file.size <= 0 || file.size > MAX_BYTES) throw new MediaApiError("El archivo debe pesar hasta 50 MB.", 413, "file_too_large");
+
     const mimeType = file.type || "application/octet-stream";
+    const isZip = file.name.toLowerCase().endsWith(".zip") || ZIP_MIME.has(mimeType);
+    const bytes = Buffer.from(await file.arrayBuffer());
+
+    if (isZip) {
+      const result = await importZipPack(file, bytes);
+      return NextResponse.json({
+        ok: true,
+        kind: "asset-pack",
+        imported: result.imported.length,
+        variants: result.variantCounts,
+        platforms: result.platformCounts,
+        asset: result.imported[0] ?? null,
+      });
+    }
+
     if (!ALLOWED_MIME.has(mimeType)) throw new MediaApiError("Formato no permitido.", 415, "invalid_file_type");
 
     const folder = normalizeFolder(String(form.get("folder") ?? "uploads"));
@@ -517,7 +618,6 @@ export async function POST(request: NextRequest) {
     const originalName = safeSegment(file.name);
     const finalName = requestedName ? safeSegment(requestedName) : originalName;
     const objectPath = `${objectPrefix(folder)}/${finalName}`;
-    const bytes = Buffer.from(await file.arrayBuffer());
 
     await getStorage().bucket(BUCKET_NAME).file(objectPath).save(bytes, {
       resumable: false,
@@ -532,7 +632,7 @@ export async function POST(request: NextRequest) {
         bucket: BUCKET_NAME,
         name: finalName,
         path: objectPath,
-        folder: folderOf(objectPath),
+        folder,
         url: publicGcsUrl(BUCKET_NAME, objectPath),
         size: bytes.length,
         contentType: mimeType,
