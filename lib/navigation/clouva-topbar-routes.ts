@@ -3,6 +3,8 @@ import { isReservedPublicAlias } from "@/lib/navigation/reserved-public-aliases"
 const PUBLIC_EXACT_PATHS = new Set([
   "/login",
   "/registro",
+  "/auth",
+  "/onboarding",
   "/gracias",
   "/privacidad",
   "/terminos",
@@ -10,6 +12,9 @@ const PUBLIC_EXACT_PATHS = new Set([
   "/lookbook",
   "/tienda",
   "/catalogo",
+  "/producto",
+  "/q",
+  "/mobile-preview",
 ]);
 
 const PUBLIC_PREFIXES = [
