@@ -48,6 +48,7 @@ function PlayerEditorContent() {
   const [connection, setConnection] = useState<InstagramConnection | null>(null);
   const [vipActive, setVipActive] = useState(false);
   const [activeSection, setActiveSection] = useState<Section>(() => SECTION_SLUGS[searchParams.get("section") || ""] || "Identidad");
+  const [aiProfileMounted, setAiProfileMounted] = useState(activeSection === "CLOUVA AI Profile");
   const [draft, setDraft] = useState<Record<string, unknown>>({});
   const [links, setLinks] = useState<SocialLink[]>([]);
   const [loading, setLoading] = useState(true);
@@ -105,6 +106,10 @@ function PlayerEditorContent() {
 
   const categories = useMemo(() => Array.isArray(draft.professional_categories) ? draft.professional_categories as string[] : [], [draft.professional_categories]);
   const update = (key: string, value: unknown) => setDraft((current) => ({ ...current, [key]: value }));
+  const selectSection = (section: Section) => {
+    if (section === "CLOUVA AI Profile") setAiProfileMounted(true);
+    setActiveSection(section);
+  };
 
   const save = async (publicationAction?: "publish" | "unpublish") => {
     setSaving(true);
@@ -210,7 +215,7 @@ function PlayerEditorContent() {
 
       <div className="mx-auto grid max-w-7xl gap-6 px-4 py-6 sm:px-6 lg:grid-cols-[220px_minmax(0,1fr)_340px]">
         <nav className="flex gap-2 overflow-x-auto lg:flex-col">
-          {SECTIONS.map((section) => <button key={section} onClick={() => setActiveSection(section)} className={`relative shrink-0 rounded-xl px-4 py-3 text-left text-sm transition ${activeSection === section ? "bg-violet-600 text-white" : "border border-white/10 bg-white/[0.025] text-white/55 hover:text-white"}`}>{section}{section === "CLOUVA AI Profile" && vipActive && activeSection !== section ? <span className="ml-2 inline-block h-1.5 w-1.5 rounded-full bg-violet-400 align-middle" /> : null}</button>)}
+          {SECTIONS.map((section) => <button key={section} onClick={() => selectSection(section)} className={`relative shrink-0 rounded-xl px-4 py-3 text-left text-sm transition ${activeSection === section ? "bg-violet-600 text-white" : "border border-white/10 bg-white/[0.025] text-white/55 hover:text-white"}`}>{section}{section === "CLOUVA AI Profile" && vipActive && activeSection !== section ? <span className="ml-2 inline-block h-1.5 w-1.5 rounded-full bg-violet-400 align-middle" /> : null}</button>)}
         </nav>
 
         <section className="rounded-[2rem] border border-white/10 bg-[#0b0913] p-5 sm:p-7">
@@ -252,7 +257,11 @@ function PlayerEditorContent() {
 
           {activeSection === "YouTube" ? <YouTubeConnectionPanel onChannelUrl={(url) => update("youtube_channel_url", url)} /> : null}
 
-          {activeSection === "CLOUVA AI Profile" ? <VipAiProfilePanel playerId={player.id} vipActive={vipActive} /> : null}
+          {aiProfileMounted ? (
+            <div className={activeSection === "CLOUVA AI Profile" ? "block" : "hidden"}>
+              <VipAiProfilePanel playerId={player.id} vipActive={vipActive} />
+            </div>
+          ) : null}
 
           {activeSection === "Privacidad y SEO" ? <div className="space-y-4">
             <div><Label>Visibilidad</Label><select value={String(draft.privacy_status || "public")} onChange={(event) => update("privacy_status", event.target.value)} className="w-full rounded-xl border border-white/10 bg-black/30 px-4 py-3"><option value="public">Público e indexable</option><option value="unlisted">Público sin indexar</option><option value="private">Privado</option></select></div>
