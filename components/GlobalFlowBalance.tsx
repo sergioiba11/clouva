@@ -204,10 +204,12 @@ export function GlobalFlowBalance({ variant = "global" }: GlobalFlowBalanceProps
         {headerOpen ? (
           <div
             role="menu"
-            className="absolute right-0 top-[calc(100%+10px)] z-[100] w-[286px] overflow-hidden rounded-[20px] border bg-[#0a0816]/98 p-3 text-white backdrop-blur-2xl sm:w-[310px]"
+            className="absolute right-0 top-[calc(100%+10px)] z-[100] w-[286px] overflow-hidden rounded-[20px] border p-3 text-white sm:w-[310px]"
             style={{
+              background: "linear-gradient(180deg, #100a1f 0%, #090612 52%, #06040d 100%)",
               borderColor: `${region.glow}55`,
               boxShadow: `0 28px 80px rgba(0,0,0,.62), 0 0 34px ${region.glowSoft}`,
+              isolation: "isolate",
             }}
           >
             <div className="flex items-center gap-3 px-1 pb-3 pt-1">
