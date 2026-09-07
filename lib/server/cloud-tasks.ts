@@ -1,8 +1,5 @@
 import "server-only";
 
-// Mirrors the metadata-server token pattern in lib/cloud-run-jobs.ts (raw
-// REST, no @google-cloud/* client) -- kept as its own small copy rather than
-// a shared helper since each caller only needs this ~15-line function once.
 const METADATA_TOKEN_URL =
   "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token";
 
@@ -27,17 +24,16 @@ function queueConfig() {
   return { project, location, queue };
 }
 
-// Enqueues one step of the CLOUVA AI Profile pipeline. The handler
-// (app/api/internal/vip-profile/process-job) re-enqueues itself for the next
-// step after each one completes, so a job survives a Cloud Run restart or a
-// single failed step without the caller having to keep a connection open.
+// Every queued step now enters the V3 orchestrator. It delegates all legacy
+// stages to the canonical processor and only intercepts Reference Fidelity
+// stages, so adaptive layouts keep exactly the existing state machine.
 export async function enqueueVipProfileJobStep(jobId: string) {
   const { project, location, queue } = queueConfig();
   const secret = process.env.VIP_PROFILE_TASK_SECRET?.trim();
   if (!secret) throw new Error("VIP_PROFILE_TASK_SECRET no está configurada.");
 
   const baseUrl = process.env.APP_BASE_URL?.trim() || "https://clouva.com.ar";
-  const targetUrl = `${baseUrl}/api/internal/vip-profile/process-job`;
+  const targetUrl = `${baseUrl}/api/internal/vip-profile/process-job-v3`;
   const token = await getAccessToken();
 
   const response = await fetch(
