@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ClouvaLogoMark } from "@/components/brand/clouva-logo";
+import { FlowLogo } from "@/components/flows/flow-logo";
 
 type FlowCoinIconProps = {
   size?: number;
@@ -78,20 +78,5 @@ export function FlowCoinIcon({
     );
   }
 
-  return (
-    <span
-      className={className}
-      style={{
-        ...wrapperStyle,
-        filter: `drop-shadow(0 0 ${Math.max(5, size * 0.18)}px ${glow})`,
-      }}
-      title={title}
-    >
-      <ClouvaLogoMark
-        size={Math.max(12, Math.round(size * 0.82))}
-        className="text-[#8f7cff]"
-        label={title}
-      />
-    </span>
-  );
+  return <FlowLogo size={size} className={className} priority alt={title} />;
 }
