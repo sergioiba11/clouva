@@ -38,6 +38,19 @@ function normalizePathname(pathname: string) {
 }
 
 /**
+ * Internal preview tools own their own chrome. They still require an
+ * authenticated Studio manager, but must not inherit the global CLOUVA bar,
+ * floating assistant or Studio dashboard dock when rendered in an iframe.
+ */
+export function isImmersiveClouvaPreviewPath(pathname: string) {
+  const normalized = normalizePathname(pathname);
+  const segments = normalized.split("/").filter(Boolean);
+  return segments.length === 3
+    && segments[0] === "studio-dashboard"
+    && segments[2] === "identity-preview";
+}
+
+/**
  * Public identity/storefront experiences own their visual chrome and must never
  * inherit the authenticated CLOUVA system bar. Internal surfaces are the
  * inverse: once the user is authenticated, the canonical top bar is mounted
@@ -59,5 +72,5 @@ export function isPublicClouvaExperiencePath(pathname: string) {
 }
 
 export function shouldShowClouvaSystemTopBar(pathname: string) {
-  return !isPublicClouvaExperiencePath(pathname);
+  return !isImmersiveClouvaPreviewPath(pathname) && !isPublicClouvaExperiencePath(pathname);
 }
