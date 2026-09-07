@@ -48,6 +48,7 @@ import {
 } from "@/lib/clouva-lab/mobile-home-config";
 import { usePublishedUiPage } from "@/lib/clouva-lab/use-published-ui-page";
 import styles from "./mobile-home-premium.module.css";
+import refinedStyles from "./mobile-home-refined.module.css";
 import labStyles from "./mobile-home-lab.module.css";
 
 const [homeNav, , createNav, marketNav, miFlowNav] = getNavigationItems(MOBILE_PRIMARY_NAV_KEYS);
@@ -203,6 +204,7 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
         <div
           className={styles.heroBackdrop}
           style={{ backgroundImage: `url(${config.hero.imageUrl})` }}
+          data-clouva-hero-backdrop
           aria-hidden="true"
         />
         <div className={styles.heroAtmosphere} aria-hidden="true">
@@ -213,30 +215,12 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
           <span className={styles.heroStarFour} />
         </div>
 
-        <div className={styles.heroSideWords} aria-hidden="true">
-          <span>GENTE</span>
-          <span>MÚSICA</span>
-          <span>MUNDOS</span>
-          <span>IDEAS</span>
-          <span>VOS</span>
-        </div>
-
-        <Link
-          href="/clouva-ai"
-          className={styles.aiPortal}
-          onClick={preventPreviewNavigation}
-          aria-label="Abrir CLOUVA AI"
-        >
-          <span className={styles.aiOrb}><Sparkles size={21} /></span>
-          <small>CLOUVA AI</small>
-          <b>SIEMPRE<br />CON VOS <ArrowRight size={10} /></b>
-        </Link>
-
-        <div className={styles.heroIdentity}>
+        <div className={styles.heroIdentity} data-clouva-player-portal>
           <img
             src={playerOrbitsAsset}
             alt=""
             aria-hidden="true"
+            data-clouva-player-orbits
             style={{
               position: "absolute",
               top: "50%",
@@ -257,6 +241,7 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
               src={homeVisualAssets.playerRing}
               alt=""
               aria-hidden="true"
+              data-clouva-player-ring
               style={{
                 position: "absolute",
                 top: "50%",
@@ -275,7 +260,7 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
           ) : (
             <span className={styles.identityRing} aria-hidden="true" style={{ zIndex: 1 }} />
           )}
-          <span className={styles.identityCore} style={{ position: "relative", zIndex: 2 }}>
+          <span className={styles.identityCore} data-clouva-player-core style={{ position: "relative", zIndex: 2 }}>
             {playerImage ? (
               <img src={playerImage} alt={`Foto de ${playerDisplayName}`} />
             ) : (
@@ -284,29 +269,32 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
           </span>
         </div>
 
-        <div className={styles.heroContent}>
+        <div className={styles.heroContent} data-clouva-hero-content>
           <span className={styles.eyebrow}>BIENVENIDO DE NUEVO</span>
           <h1 id="mobile-home-title">VIDA DE FLOWS</h1>
           <p>Viví tu propio mundo.</p>
 
-          <div className={styles.heroActions}>
-            <Link href={publicProfileHref} className={styles.primaryAction} onClick={preventPreviewNavigation}>
+          <div className={styles.heroActions} data-clouva-hero-actions>
+            <Link
+              href={publicProfileHref}
+              className={styles.primaryAction}
+              data-clouva-primary-action
+              onClick={preventPreviewNavigation}
+            >
               <CircleUserRound size={19} />
               <span>Entrar a mi perfil</span>
               <ArrowRight size={17} />
             </Link>
-            <Link href={config.hero.secondaryHref} className={styles.secondaryAction} onClick={preventPreviewNavigation}>
+            <Link
+              href={config.hero.secondaryHref}
+              className={styles.secondaryAction}
+              data-clouva-secondary-action
+              onClick={preventPreviewNavigation}
+            >
               <Sparkles size={18} />
               <span>Explorar Mundos</span>
               <ArrowRight size={17} />
             </Link>
-          </div>
-
-          <div className={styles.heroMantra} aria-hidden="true">
-            <span>CREÁ</span><i />
-            <span>CONECTÁ</span><i />
-            <span>EXPLORÁ</span><i />
-            <span>VIVÍ</span>
           </div>
         </div>
       </section>
@@ -540,7 +528,7 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
 
   return (
     <main
-      className={`${styles.page} ${labStyles.configurablePage} ${previewMode ? labStyles.previewPage : ""}`}
+      className={`${styles.page} ${refinedStyles.page} ${labStyles.configurablePage} ${previewMode ? labStyles.previewPage : ""}`}
       style={cssVariables}
       data-ui-page="mobile-home"
       data-ui-version={version ?? "draft-preview"}
@@ -581,7 +569,7 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
         </div>
       </header>
 
-      <section className={styles.playerStatus} aria-label="Player activo">
+      <section className={styles.playerStatus} aria-label="Player activo" data-clouva-player-status>
         <Link href={publicProfileHref} className={styles.playerLine} onClick={preventPreviewNavigation}>
           <span className={styles.playerMiniAvatar}>
             {playerImage ? <img src={String(playerImage)} alt="" /> : <b>{profileFallback}</b>}
@@ -590,14 +578,9 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
             <small>PLAYER ACTIVO</small>
             <strong>{playerDisplayName}</strong>
           </span>
+          <span data-clouva-player-active><i aria-hidden="true" /> Activo</span>
           <ArrowRight size={18} />
         </Link>
-
-        <div className={styles.playerState} aria-label="Estado del Player: activo">
-          <i aria-hidden="true" />
-          <span><small>PLAYER</small><strong>Activo</strong></span>
-        </div>
-        <p className={styles.playerTagline}>Más música.<br />Más mundos.<br />Más vos.</p>
       </section>
 
       <div className={styles.sections}>
