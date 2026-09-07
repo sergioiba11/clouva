@@ -19,6 +19,8 @@ type RepositoryTreeChange =
 const TEXT_FILE_EXTENSIONS = new Set([
   "ts", "tsx", "js", "jsx", "mjs", "cjs", "json", "css", "scss", "md", "mdx", "html", "txt", "yml", "yaml", "sql", "py", "sh", "toml", "xml",
 ]);
+const TRANSIENT_GITHUB_STATUSES = new Set([403, 429, 502, 503, 504]);
+const GITHUB_MAX_ATTEMPTS = 2;
 
 function githubConfig() {
   const token = process.env.GITHUB_TOKEN;
@@ -35,12 +37,12 @@ function friendlyGitHubError(status: number, raw: string, data: unknown) {
   const contentTypeLooksHtml = /<!doctype html|<html|<head|<body/i.test(raw);
 
   if (status === 401) return "GitHub rechazó el token configurado. Revisá GITHUB_TOKEN en Cloud Run.";
-  if (status === 403) return "GitHub bloqueó temporalmente la solicitud o se alcanzó un límite. Esperá unos segundos y reintentá.";
+  if (status === 403 || status === 429) return "GitHub limitó temporalmente esta operación. CLOUVA no modificó ningún archivo.";
   if (status === 404) return "GitHub no encontró el repositorio o archivo solicitado.";
   if (status === 409) return "GitHub detectó un conflicto al actualizar el archivo. Volvé a leerlo y reintentá.";
   if (status === 422) return "GitHub rechazó el cambio porque los datos o la versión del archivo ya no coinciden.";
   if (status >= 500 || contentTypeLooksHtml) {
-    return "GitHub está temporalmente fuera de servicio. No se modificó ningún archivo. Reintentá en unos minutos.";
+    return "GitHub está temporalmente fuera de servicio. CLOUVA no modificó ningún archivo.";
   }
 
   if (typeof data === "object" && data && "message" in data) {
@@ -50,50 +52,68 @@ function friendlyGitHubError(status: number, raw: string, data: unknown) {
   return `GitHub respondió HTTP ${status}`;
 }
 
+function retryDelayMs(response: Response, attempt: number) {
+  const retryAfter = Number(response.headers.get("retry-after") ?? "");
+  if (Number.isFinite(retryAfter) && retryAfter > 0) {
+    return Math.min(retryAfter * 1000, 2_500);
+  }
+  return 500 * (attempt + 1);
+}
+
 async function githubFetch(path: string, init?: RequestInit) {
   const { token } = githubConfig();
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 20_000);
 
-  try {
-    const response = await fetch(`https://api.github.com${path}`, {
-      ...init,
-      headers: {
-        Accept: "application/vnd.github+json",
-        Authorization: `Bearer ${token}`,
-        "X-GitHub-Api-Version": "2022-11-28",
-        "Content-Type": "application/json",
-        ...(init?.headers ?? {}),
-      },
-      cache: "no-store",
-      signal: controller.signal,
-    });
+  for (let attempt = 0; attempt < GITHUB_MAX_ATTEMPTS; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20_000);
 
-    const raw = await response.text();
-    let data: unknown = null;
     try {
-      data = raw ? JSON.parse(raw) : null;
-    } catch {
-      data = null;
-    }
+      const response = await fetch(`https://api.github.com${path}`, {
+        ...init,
+        headers: {
+          Accept: "application/vnd.github+json",
+          Authorization: `Bearer ${token}`,
+          "X-GitHub-Api-Version": "2022-11-28",
+          "Content-Type": "application/json",
+          ...(init?.headers ?? {}),
+        },
+        cache: "no-store",
+        signal: controller.signal,
+      });
 
-    if (!response.ok) {
-      throw new Error(friendlyGitHubError(response.status, raw, data));
-    }
+      const raw = await response.text();
+      let data: unknown = null;
+      try {
+        data = raw ? JSON.parse(raw) : null;
+      } catch {
+        data = null;
+      }
 
-    if (raw && data === null) {
-      throw new Error("GitHub devolvió una respuesta inválida. Reintentá en unos minutos.");
-    }
+      if (!response.ok) {
+        if (TRANSIENT_GITHUB_STATUSES.has(response.status) && attempt + 1 < GITHUB_MAX_ATTEMPTS) {
+          await new Promise((resolve) => setTimeout(resolve, retryDelayMs(response, attempt)));
+          continue;
+        }
+        throw new Error(friendlyGitHubError(response.status, raw, data));
+      }
 
-    return data;
-  } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
-      throw new Error("GitHub tardó demasiado en responder. No se modificó ningún archivo.");
+      if (raw && data === null) {
+        throw new Error("GitHub devolvió una respuesta inválida. CLOUVA no modificó ningún archivo.");
+      }
+
+      return data;
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        if (attempt + 1 < GITHUB_MAX_ATTEMPTS) continue;
+        throw new Error("GitHub tardó demasiado en responder. CLOUVA no modificó ningún archivo.");
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
     }
-    throw error;
-  } finally {
-    clearTimeout(timeout);
   }
+
+  throw new Error("GitHub no pudo completar la operación. CLOUVA no modificó ningún archivo.");
 }
 
 export async function getRepositoryStatus() {
@@ -223,17 +243,19 @@ function isTextFile(path: string) {
 
 async function findReferenceFiles(needles: string[]) {
   const { owner, repo } = githubConfig();
+  const uniqueNeedles = [...new Set(needles.filter((value) => value.length >= 2))]
+    .sort((a, b) => a.length - b.length);
+  const needle = uniqueNeedles[0];
+  if (!needle) return [];
+
+  const data = (await githubFetch(
+    `/search/code?q=${encodeURIComponent(`\"${needle}\" repo:${owner}/${repo}`)}&per_page=100`,
+  )) as { items?: Array<{ path?: string }> };
+
   const paths = new Set<string>();
-
-  for (const needle of [...new Set(needles.filter((value) => value.length >= 2))]) {
-    const data = (await githubFetch(
-      `/search/code?q=${encodeURIComponent(`\"${needle}\" repo:${owner}/${repo}`)}&per_page=100`,
-    )) as { items?: Array<{ path?: string }> };
-    for (const item of data.items ?? []) {
-      if (item.path && isTextFile(item.path)) paths.add(item.path);
-    }
+  for (const item of data.items ?? []) {
+    if (item.path && isTextFile(item.path)) paths.add(item.path);
   }
-
   return [...paths];
 }
 
