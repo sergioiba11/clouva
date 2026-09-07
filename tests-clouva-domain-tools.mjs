@@ -29,6 +29,7 @@ function fakeAdmin(plans = {}) {
         eq(...args) { call.operations.push(["eq", ...args]); return builder; },
         in(...args) { call.operations.push(["in", ...args]); return builder; },
         order(...args) { call.operations.push(["order", ...args]); return builder; },
+        limit(...args) { call.operations.push(["limit", ...args]); return builder; },
         update(...args) { call.operations.push(["update", ...args]); return builder; },
         insert(...args) { call.operations.push(["insert", ...args]); return builder; },
         maybeSingle() { call.operations.push(["maybeSingle"]); return Promise.resolve(response); },
@@ -48,6 +49,7 @@ function fakeDomainService() {
     async getStudioPlayers() { calls.push(["getStudioPlayers"]); return { players: [] }; },
     async getStudioIdentityVersions() { calls.push(["getStudioIdentityVersions"]); return { published: { id: "published-1" }, draft: { id: "draft-1" } }; },
     async updateStudioIdentityDraft(versionId, patch) { calls.push(["updateStudioIdentityDraft", versionId, patch]); return { version: { id: versionId, status: "draft" } }; },
+    async startStudioProfileGeneration(referenceImageUrls) { calls.push(["startStudioProfileGeneration", referenceImageUrls]); return { jobId: "studio-job-1", status: "queued" }; },
     async updatePlayer(playerId, changes) { calls.push(["updatePlayer", playerId, changes]); return { player: { player_id: playerId, ...changes } }; },
     async startPlayerProfileGeneration(playerId) { calls.push(["startPlayerProfileGeneration", playerId]); return { jobId: "job-1", status: "queued" }; },
   };
@@ -58,11 +60,20 @@ test("ClouvaDomainExecutor exposes only scoped domain verbs with correct risks",
   const tools = Object.fromEntries(executor.tools().map((tool) => [tool.name, tool]));
 
   assert.equal(executor.target, "clouva");
-  assert.deepEqual(Object.keys(tools), ["getStudio", "getStudioPlayers", "getStudioIdentityVersions", "updateStudioIdentityDraft", "updatePlayer", "startPlayerProfileGeneration"]);
+  assert.deepEqual(Object.keys(tools), [
+    "getStudio",
+    "getStudioPlayers",
+    "getStudioIdentityVersions",
+    "updateStudioIdentityDraft",
+    "startStudioProfileGeneration",
+    "updatePlayer",
+    "startPlayerProfileGeneration",
+  ]);
   assert.equal(tools.getStudio.risk, "read");
   assert.equal(tools.getStudioPlayers.risk, "read");
   assert.equal(tools.getStudioIdentityVersions.risk, "read");
   assert.equal(tools.updateStudioIdentityDraft.risk, "write");
+  assert.equal(tools.startStudioProfileGeneration.risk, "sensitive");
   assert.equal(tools.updatePlayer.risk, "write");
   assert.equal(tools.startPlayerProfileGeneration.risk, "sensitive");
   assert.equal("table" in tools.updatePlayer.parameters.properties, false);
@@ -95,10 +106,27 @@ test("Studio identity changes target the draft and cannot use client confirmatio
   }]]);
 });
 
+test("Studio generation waits for explicit confirmation and forwards trusted references", async () => {
+  const service = fakeDomainService();
+  const router = new ToolRouter([new ClouvaDomainExecutor(service)]);
+  const gate = new ToolConfirmationGate();
+  const routed = router.resolve("startStudioProfileGeneration");
+  const references = ["https://storage.googleapis.com/clouva-media/reference-images/studios/studio-1/reference.webp"];
+  const proposal = await gate.evaluate(routed, router.normalizeArguments(routed, {
+    referenceImageUrlsJson: JSON.stringify(references),
+  }));
+
+  assert.equal(proposal.kind, "confirmation_required");
+  assert.equal(proposal.action.confirmation, "explicit");
+  assert.equal(service.calls.length, 0);
+  await gate.confirm(router, { ...proposal.action, status: "executing" });
+  assert.deepEqual(service.calls, [["startStudioProfileGeneration", references]]);
+});
+
 test("domain service refuses to mutate a published Studio identity version", async () => {
   const admin = fakeAdmin({
     player_profile_versions: [{ data: {
-      id: "published-1", studio_id: "studio-1", status: "published",
+      id: "published-1", studio_id: "studio-1", version_number: 13, status: "published",
       copy_config: {}, visual_config: {}, layout_config: {}, asset_references: [],
     }, error: null }],
   });
@@ -116,7 +144,7 @@ test("domain service refuses to mutate a published Studio identity version", asy
   assert.equal(admin.calls.some((call) => call.operations.some(([operation]) => operation === "update")), false);
 });
 
-test("confirmed Studio identity write updates only the authorized draft and reuses its assets", async () => {
+test("confirmed Studio identity write updates only the authorized active draft and reuses its assets", async () => {
   const layout = {
     mode: "adaptive_layout",
     layout_kind: "template",
@@ -125,14 +153,18 @@ test("confirmed Studio identity write updates only the authorized draft and reus
     image_slots: { cover: "https://storage.googleapis.com/clouva-media/cover.webp" },
   };
   const current = {
-    id: "draft-1", studio_id: "studio-1", status: "draft",
+    id: "draft-1", studio_id: "studio-1", version_number: 14, status: "draft",
     copy_config: { tagline: "Actual" }, visual_config: { palette: ["#111111"] },
     layout_config: layout,
     asset_references: [{ kind: "cover", url: "https://storage.googleapis.com/clouva-media/cover.webp" }],
   };
   const updated = { ...current, copy_config: { tagline: "Propuesta" } };
   const admin = fakeAdmin({
-    player_profile_versions: [{ data: current, error: null }, { data: updated, error: null }],
+    player_profile_versions: [
+      { data: current, error: null },
+      { data: { version_number: 13 }, error: null },
+      { data: updated, error: null },
+    ],
     admin_audit_log: [{ data: null, error: null }],
   });
   const service = createClouvaDomainService({
@@ -160,10 +192,15 @@ test("confirmed Studio identity write updates only the authorized draft and reus
 
 test("Studio identity draft rejects invented external assets", async () => {
   const current = {
-    id: "draft-1", studio_id: "studio-1", status: "draft", copy_config: {}, visual_config: {},
+    id: "draft-1", studio_id: "studio-1", version_number: 14, status: "draft", copy_config: {}, visual_config: {},
     layout_config: {}, asset_references: [],
   };
-  const admin = fakeAdmin({ player_profile_versions: [{ data: current, error: null }] });
+  const admin = fakeAdmin({
+    player_profile_versions: [
+      { data: current, error: null },
+      { data: { version_number: 13 }, error: null },
+    ],
+  });
   const service = createClouvaDomainService({
     admin,
     userId: "user-1",
@@ -179,6 +216,31 @@ test("Studio identity draft rejects invented external assets", async () => {
     service.updateStudioIdentityDraft("draft-1", { layoutConfigJson: JSON.stringify(layout) }),
     /assets ya vinculados/i,
   );
+});
+
+test("Studio identity service rejects a stale draft older than the published version", async () => {
+  const stale = {
+    id: "draft-8", studio_id: "studio-1", version_number: 8, status: "draft",
+    copy_config: {}, visual_config: {}, layout_config: {}, asset_references: [],
+  };
+  const admin = fakeAdmin({
+    player_profile_versions: [
+      { data: stale, error: null },
+      { data: { version_number: 13 }, error: null },
+    ],
+  });
+  const service = createClouvaDomainService({
+    admin,
+    userId: "user-1",
+    studioId: "studio-1",
+    dependencies: { authorizeStudio: async () => ({ role: "owner", studioOsActive: true, studio: { id: "studio-1" } }) },
+  });
+
+  await assert.rejects(
+    service.updateStudioIdentityDraft("draft-8", { copyConfigJson: JSON.stringify({ tagline: "No" }) }),
+    /anterior a la versión publicada/i,
+  );
+  assert.equal(admin.calls.some((call) => call.operations.some(([operation]) => operation === "update")), false);
 });
 
 test("domain reads execute immediately while Player updates wait for review", async () => {
@@ -260,19 +322,14 @@ test("membership-backed role updates change the canonical membership source", as
     admin,
     userId: "user-1",
     studioId: "studio-1",
-    dependencies: {
-      authorizeStudio: async () => ({ role: "owner", studioOsActive: true, studio: { id: "studio-1" } }),
-    },
+    dependencies: { authorizeStudio: async () => ({ role: "owner", studioOsActive: true, studio: { id: "studio-1" } }) },
   });
 
   const result = await service.updatePlayer("player-1", { role: "Productor" });
   assert.equal(result.player.role, "Productor");
   const membershipCall = admin.calls.find((call) => call.table === "studio_memberships");
   assert.deepEqual(membershipCall.operations[0][1].public_role_label, "Productor");
-  const directWrites = admin.calls
-    .filter((call) => call.table === "player_studios")
-    .flatMap((call) => call.operations)
-    .filter(([operation]) => operation === "update");
+  const directWrites = admin.calls.filter((call) => call.table === "player_studios").flatMap((call) => call.operations).filter(([operation]) => operation === "update");
   assert.equal(directWrites.length, 0);
 });
 
@@ -295,6 +352,26 @@ test("domain generation verifies Studio linkage then delegates to the canonical 
   assert.equal(starts[0].userId, "user-1");
   assert.equal(starts[0].playerId, "player-1");
   assert.equal("studioId" in starts[0], false);
+});
+
+test("Studio generation delegates to the same canonical pipeline with Studio scope", async () => {
+  const starts = [];
+  const service = createClouvaDomainService({
+    admin: fakeAdmin(),
+    userId: "user-1",
+    studioId: "studio-1",
+    dependencies: {
+      authorizeStudio: async () => ({ role: "owner", studioOsActive: true, studio: { id: "studio-1" } }),
+      startProfileGeneration: async (args) => { starts.push(args); return { jobId: "studio-job", status: "queued", reused: false }; },
+    },
+  });
+  const references = ["https://storage.googleapis.com/clouva-media/reference-images/studios/studio-1/reference.webp"];
+  const result = await service.startStudioProfileGeneration(references);
+  assert.equal(result.jobId, "studio-job");
+  assert.equal(starts[0].userId, "user-1");
+  assert.equal(starts[0].studioId, "studio-1");
+  assert.deepEqual(starts[0].referenceImageUrls, references);
+  assert.equal("playerId" in starts[0], false);
 });
 
 test("reference-image sanitizer keeps only CLOUVA-owned upload URLs", () => {
@@ -344,9 +421,7 @@ test("canonical generation service snapshots identity, inserts once and dispatch
 
   assert.deepEqual(result, { jobId: "job-new", status: "queued", reused: false });
   assert.deepEqual(enqueued, ["job-new"]);
-  const insert = admin.calls
-    .flatMap((call) => call.operations)
-    .find(([operation]) => operation === "insert");
+  const insert = admin.calls.flatMap((call) => call.operations).find(([operation]) => operation === "insert");
   assert.equal(insert[1].player_id, "player-1");
   assert.deepEqual(insert[1].reference_image_urls, []);
 });
