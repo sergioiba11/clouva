@@ -156,6 +156,7 @@ export function HomeDashboard() {
     controlPlayback,
   } = useSpotifyPlayback();
   const [homeVisualAssets, setHomeVisualAssets] = useState<HomeVisualAssets>(EMPTY_HOME_VISUAL_ASSETS);
+  const [homeVisualAssetsResolved, setHomeVisualAssetsResolved] = useState(false);
 
   const displayName = resolveHomeDisplayName({ currentPlayer, profile, user });
   const username = currentPlayer?.username
@@ -172,7 +173,7 @@ export function HomeDashboard() {
   const completedSteps = [isSignedIn, Boolean(profile?.username), hasAvatar].filter(Boolean).length;
   const progress = Math.round((completedSteps / 3) * 100);
   const playerHref = getPlayerDestination(currentPlayer);
-  const heroBackground = homeVisualAssets.heroStudio || fallbackHeroImage;
+  const heroBackground = homeVisualAssets.heroStudio || (homeVisualAssetsResolved ? fallbackHeroImage : null);
   const desktopVipArtwork = homeVisualAssets.vipCompleteAlt || homeVisualAssets.vipComplete;
   const spotifyControlsReady = Boolean(spotifyConnected && spotifyScopesReady && playback);
   const playbackProgress = playback?.durationMs
@@ -202,13 +203,19 @@ export function HomeDashboard() {
     const loadHomeVisualAssets = async () => {
       try {
         const response = await fetch("/api/home/visual-assets?schema=home-desktop-v2", { cache: "no-store" });
-        if (!response.ok) return;
+        if (!response.ok) {
+          if (!cancelled) setHomeVisualAssetsResolved(true);
+          return;
+        }
         const payload = await response.json() as { assets?: Partial<HomeVisualAssets> };
-        if (!cancelled && payload.assets) {
-          setHomeVisualAssets({ ...EMPTY_HOME_VISUAL_ASSETS, ...payload.assets });
+        if (!cancelled) {
+          if (payload.assets) {
+            setHomeVisualAssets({ ...EMPTY_HOME_VISUAL_ASSETS, ...payload.assets });
+          }
+          setHomeVisualAssetsResolved(true);
         }
       } catch {
-        // Preserve the existing application fallbacks if asset storage is temporarily unavailable.
+        if (!cancelled) setHomeVisualAssetsResolved(true);
       }
     };
 
@@ -274,7 +281,7 @@ export function HomeDashboard() {
         <section
           className={styles.hero}
           data-visual-asset="home-hero-studio-clean"
-          style={{ backgroundImage: `url(${heroBackground})` }}
+          style={heroBackground ? { backgroundImage: `url(${heroBackground})` } : undefined}
         >
           <div className={styles.heroShade} aria-hidden="true" />
           <div className={styles.heroCopy}>
