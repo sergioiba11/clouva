@@ -314,7 +314,7 @@ export default function StudioDashboardPage({ params }: { params: Promise<{ stud
 
           {identityWorkspaceMounted ? (
             <div className={section === "Identidad IA" ? "block" : "hidden"}>
-              <StudioIdentityWorkspace studioId={studioId} studioSlug={studioSlug} studioName={studioName} />
+              <StudioIdentityWorkspace studioId={studioId} studioSlug={studioSlug} studioName={studioName} active={section === "Identidad IA"} />
             </div>
           ) : null}
           {section === "CLOUVA AI" ? <div className="min-h-[68vh] overflow-hidden rounded-2xl border border-violet-400/15 bg-[#0a0810]"><ClouvaAIChat studioId={studioId} studioSlug={studioSlug} studioName={studioName} /></div> : null}
