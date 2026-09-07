@@ -83,8 +83,10 @@ function contentTypeFromPath(path: string) {
 
 function detectVariant(path: string): AssetPackVariant {
   const value = path.toLowerCase();
-  if (/(^|[\/_-])black([\/_\-.]|$)|black-on-white/.test(value)) return "black";
-  if (/(^|[\/_-])light([\/_\-.]|$)|light-on-black/.test(value)) return "light";
+  if (/light-on-black/.test(value)) return "light";
+  if (/black-on-white/.test(value)) return "black";
+  if (/(^|[\/_-])light([\/_\-.]|$)/.test(value)) return "light";
+  if (/(^|[\/_-])black([\/_\-.]|$)/.test(value)) return "black";
   if (/currentcolor|adaptive/.test(value) || /(^|\/)favicon\.(svg|ico)$/.test(value)) return "adaptive";
   return "shared";
 }
