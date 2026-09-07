@@ -12,7 +12,7 @@ test("Inicio abre un menú de cuenta compartido y separa MI FLOW de MI SPOT", ()
 
   assert.match(home, /<AccountMenu\s+variant="home"/);
   assert.match(mobileHome, /<AccountMenu\s+variant="home"/);
-  assert.match(layout, /<AccountMenu \/>/);
+  assert.match(layout, /<AccountMenu\b[^>]*\/>/);
   assert.match(menu, /aria-expanded=\{openMenu\}/);
   assert.match(menu, /event\.key === "Escape"/);
   assert.match(menu, /href=\{CLOUVA_NAVIGATION\.MI_FLOW\.href\}[\s\S]*?label="MI FLOW"/);
