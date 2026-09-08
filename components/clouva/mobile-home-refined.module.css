@@ -58,9 +58,9 @@
 }
 
 .page [data-clouva-block="hero"] {
-  --player-portal-size: clamp(184px, 62cqh, 214px);
-  --player-ring-size: clamp(136px, 46cqh, 158px);
-  --player-core-size: clamp(88px, 30cqh, 102px);
+  --player-portal-size: clamp(148px, 62cqh, 214px);
+  --player-ring-size: clamp(112px, 46cqh, 158px);
+  --player-core-size: clamp(72px, 30cqh, 102px);
   --player-portal-top: clamp(8px, 3cqh, 13px);
   --player-portal-left: clamp(8px, 2.8vw, 14px);
   min-height: 610px;
@@ -140,7 +140,7 @@
 }
 
 .page [data-clouva-player-ring-fallback] {
-  inset: auto !important;
+  bottom: auto !important;
 }
 
 .page [data-clouva-player-core] {
