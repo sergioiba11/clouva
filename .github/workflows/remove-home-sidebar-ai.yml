@@ -1,0 +1,55 @@
+name: Remove isolated Home sidebar AI card
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/remove-home-sidebar-ai.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Remove bottom-left CLOUVA AI card from Home sidebar
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("components/clouva/HomeDashboard.tsx")
+          text = path.read_text(encoding="utf-8")
+
+          block = '''
+        <button type="button" className={styles.aiStatus} onClick={() => openAssistant()}>
+          <span className={styles.aiMascot}><Image src="/assets/clouva-ai/trebol-mascot.png" alt="" width={40} height={40} /></span>
+          <span className={styles.aiStatusCopy}>
+            <b>CLOUVA AI</b>
+            <small><i /> Lista para ayudarte</small>
+            <em>¿Qué hacemos hoy?</em>
+          </span>
+          <ArrowRight size={14} />
+        </button>
+'''
+          if block not in text:
+              raise SystemExit("Expected isolated Home sidebar AI card was not found")
+
+          text = text.replace(block, "", 1)
+          path.write_text(text, encoding="utf-8")
+          PY
+
+      - name: Commit definitive removal
+        run: |
+          rm .github/workflows/remove-home-sidebar-ai.yml
+          git config user.name "Clouva"
+          git config user.email "sergio.iba.11@gmail.com"
+          git add components/clouva/HomeDashboard.tsx .github/workflows/remove-home-sidebar-ai.yml
+          git commit -m "fix(home): remove isolated sidebar CLOUVA AI card"
+          git push origin main
