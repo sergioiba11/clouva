@@ -2,19 +2,12 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
 import { AuthProvider } from "@/components/auth-provider";
-import { CurrentPlayerProvider } from "@/components/current-player-provider";
-import { ActiveAvatarHydrator } from "@/components/avatar-engine/ActiveAvatarHydrator";
-import { GlobalSpotifyPlayer } from "@/components/GlobalSpotifyPlayer";
-import { GlobalClouvaAIButtonGate } from "@/components/GlobalClouvaAIButtonGate";
-import { ClouvaSystemTopBarGate } from "@/components/clouva/system/ClouvaSystemTopBarGate";
-import { ClouvaAIAssistantProvider } from "@/components/clouva-ai/ClouvaAIAssistantProvider";
-import { SpotifyPlaybackProvider } from "@/components/music/SpotifyPlaybackProvider";
-import { PlayerBasicsGate } from "@/components/onboarding/PlayerBasicsGate";
+import { ClouvaAppShell } from "@/components/clouva/ClouvaAppShell";
 
 // Browser identity is global: the tab always carries the official CLOUVA mark.
 export const metadata: Metadata = {
   title: "Clouva Vida de Flows",
-  description: "Vida de flows. Directamente desde el southside.",
+  description: "CLOUVA — Vida de flows. Player, Creator, Market, Mi Spot, música, moda, 3D y AI en un mismo universo creativo.",
   icons: {
     icon: [
       {
@@ -33,9 +26,9 @@ export const metadata: Metadata = {
   },
   openGraph: {
     title: "Clouva Vida de Flows",
-    description: "Premium underground fashion desde Zapala",
-    url: "https://clouva.com.ar"
-  }
+    description: "CLOUVA — Vida de flows. Un universo creativo para Player, música, moda, 3D, Market, Mi Spot y AI.",
+    url: "https://clouva.com.ar",
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -44,24 +37,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link href="https://fonts.googleapis.com/css2?family=Anton&display=swap" rel="stylesheet" />
-        <script type="module" src="https://unpkg.com/@google/model-viewer@3.5.0/dist/model-viewer.min.js" async />
       </head>
       <body>
         <ThemeProvider>
           <AuthProvider>
-            <PlayerBasicsGate>
-              <CurrentPlayerProvider>
-                <SpotifyPlaybackProvider>
-                  <ClouvaAIAssistantProvider>
-                    <ActiveAvatarHydrator />
-                    <ClouvaSystemTopBarGate />
-                    {children}
-                    <GlobalClouvaAIButtonGate />
-                    <GlobalSpotifyPlayer />
-                  </ClouvaAIAssistantProvider>
-                </SpotifyPlaybackProvider>
-              </CurrentPlayerProvider>
-            </PlayerBasicsGate>
+            <ClouvaAppShell>{children}</ClouvaAppShell>
           </AuthProvider>
         </ThemeProvider>
       </body>

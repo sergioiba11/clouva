@@ -1,12 +1,10 @@
 "use client";
 
 import type { CSSProperties, ReactNode } from "react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/components/auth-provider";
-import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
-
-type BasicsPayload = { complete: boolean };
+import { useCurrentPlayer } from "@/components/current-player-provider";
 
 const BYPASS_PREFIXES = [
   "/login",
@@ -35,73 +33,40 @@ function bypass(pathname: string) {
 
 export function PlayerBasicsGate({ children }: { children: ReactNode }) {
   const { user, loading, hydrationReady } = useAuth();
+  const { bootstrapReady, playerBasicsComplete } = useCurrentPlayer();
   const pathname = usePathname();
   const router = useRouter();
-  const [checking, setChecking] = useState(false);
 
   const userId = user?.id ?? null;
   const bypassed = bypass(pathname);
   const pathnameRef = useRef(pathname);
   const checkedUserIdRef = useRef<string | null>(null);
-  const checkingUserIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     pathnameRef.current = pathname;
   }, [pathname]);
 
   useEffect(() => {
-    let alive = true;
-
     if (!userId) {
       checkedUserIdRef.current = null;
-      checkingUserIdRef.current = null;
+      return;
     }
 
-    if (loading || !hydrationReady || !userId || bypassed) {
-      setChecking(false);
-      return () => {
-        alive = false;
-      };
+    if (loading || !hydrationReady || bypassed || !bootstrapReady) return;
+    if (checkedUserIdRef.current === userId) return;
+
+    checkedUserIdRef.current = userId;
+    if (playerBasicsComplete === false) {
+      const nextPath = pathnameRef.current || "/";
+      router.replace(`/onboarding/player-basics?next=${encodeURIComponent(nextPath)}`);
     }
+  }, [bootstrapReady, bypassed, hydrationReady, loading, playerBasicsComplete, router, userId]);
 
-    if (checkedUserIdRef.current === userId || checkingUserIdRef.current === userId) {
-      setChecking(false);
-      return () => {
-        alive = false;
-      };
-    }
-
-    checkingUserIdRef.current = userId;
-    setChecking(true);
-
-    void (async () => {
-      try {
-        const response = await authenticatedFetch("/api/onboarding/player-basics");
-        const payload = await readApiJson<BasicsPayload>(response);
-        if (!alive) return;
-
-        checkedUserIdRef.current = userId;
-        if (!payload.complete) {
-          const nextPath = pathnameRef.current || "/";
-          router.replace(`/onboarding/player-basics?next=${encodeURIComponent(nextPath)}`);
-        }
-      } catch (error) {
-        console.error("Player basics gate failed", error);
-      } finally {
-        if (checkingUserIdRef.current === userId) checkingUserIdRef.current = null;
-        if (alive) setChecking(false);
-      }
-    })();
-
-    return () => {
-      alive = false;
-    };
-  }, [bypassed, hydrationReady, loading, router, userId]);
+  const checking = Boolean(userId && !bypassed && hydrationReady && !loading && !bootstrapReady);
 
   // The onboarding check is routing logic, not a security boundary. Keep the
-  // current UI mounted while it runs so reloads and token refreshes never flash
-  // a full black page. The inline visually-hidden style also keeps this status
-  // invisible during the brief window before utility CSS is available.
+  // current UI mounted while bootstrap resolves so reloads and token refreshes
+  // never flash a full black page.
   return (
     <>
       {children}

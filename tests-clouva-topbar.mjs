@@ -10,11 +10,14 @@ const read = (path) => fs.readFileSync(new URL(path, import.meta.url), "utf8");
 
 test("one canonical CLOUVA system top bar owns the global authenticated chrome", () => {
   const rootLayout = read("./app/layout.tsx");
+  const appShell = read("./components/clouva/ClouvaAppShell.tsx");
   const canonical = read("./components/clouva/system/ClouvaTopBar.tsx");
   const gate = read("./components/clouva/system/ClouvaSystemTopBarGate.tsx");
   const legacyLayout = read("./components/layout.tsx");
 
-  assert.match(rootLayout, /<ClouvaSystemTopBarGate \/>/);
+  assert.match(rootLayout, /<ClouvaAppShell>\{children\}<\/ClouvaAppShell>/);
+  assert.doesNotMatch(rootLayout, /<ClouvaSystemTopBarGate \/>/);
+  assert.match(appShell, /<ClouvaSystemTopBarGate \/>/);
   assert.doesNotMatch(rootLayout, /<GlobalFlowBalance \/>/);
   assert.match(gate, /shouldShowClouvaSystemTopBar\(pathname\)/);
   assert.match(gate, /return <ClouvaTopBar \/>/);
