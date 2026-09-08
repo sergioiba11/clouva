@@ -288,9 +288,9 @@ export function createClouvaDomainService(args: {
         update.copy_config = { ...(current.copy_config as Record<string, unknown> ?? {}), ...copyPatch };
       }
       if (layoutInput) {
+        validateExistingDraftAssets(layoutInput, current as Record<string, unknown>);
         const layout = sanitizeLayoutConfig(layoutInput);
         if (!layout) throw statusError("El layout propuesto no cumple el contrato canónico.", 400);
-        validateExistingDraftAssets(layout, current as Record<string, unknown>);
         update.layout_config = layout;
       }
       if (visualInput) {
