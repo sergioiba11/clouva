@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { assertCreatorSellerAccess } from "@/lib/creator-commerce/server";
 import { isAuthError, requireUser } from "@/lib/server/supabase";
 
 export const runtime = "nodejs";
@@ -35,9 +36,17 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
-    const { supabase } = await requireUser(request);
+    const { user, supabase } = await requireUser(request);
     const { id } = await params;
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+    const current = await supabase
+      .from("commerce_creator_projects")
+      .select("id,owner_type,player_id,studio_id,spot_id")
+      .eq("id", id)
+      .maybeSingle();
+    if (current.error) throw new Error(current.error.message);
+    if (!current.data) return NextResponse.json({ error: "El proyecto no existe." }, { status: 404 });
+
     const changes: Record<string, unknown> = { updated_at: new Date().toISOString() };
 
     for (const field of TEXT_FIELDS) {
@@ -52,15 +61,33 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       else changes[field] = value && typeof value === "object" && !Array.isArray(value) ? value : {};
     }
 
+    let ownerType = String(current.data.owner_type);
+    let playerId = current.data.player_id as string | null;
+    let studioId = current.data.studio_id as string | null;
+    let spotId = current.data.spot_id as string | null;
+    let sellerChanged = false;
+
     if (typeof body.owner_type === "string" && OWNER_TYPES.has(body.owner_type)) {
-      const ownerType = body.owner_type;
+      sellerChanged = true;
+      ownerType = body.owner_type;
+      playerId = ownerType === "player" ? short(body.player_id, 80) || null : null;
+      studioId = ownerType === "studio" ? short(body.studio_id, 80) || null : null;
+      if (ownerType === "player" && !playerId) return NextResponse.json({ error: "Falta el Player vendedor." }, { status: 400 });
+      if (ownerType === "studio" && !studioId) return NextResponse.json({ error: "Falta el Studio vendedor." }, { status: 400 });
       changes.owner_type = ownerType;
-      changes.player_id = ownerType === "player" ? short(body.player_id, 80) || null : null;
-      changes.studio_id = ownerType === "studio" ? short(body.studio_id, 80) || null : null;
-      if (ownerType === "player" && !changes.player_id) return NextResponse.json({ error: "Falta el Player vendedor." }, { status: 400 });
-      if (ownerType === "studio" && !changes.studio_id) return NextResponse.json({ error: "Falta el Studio vendedor." }, { status: 400 });
+      changes.player_id = playerId;
+      changes.studio_id = studioId;
     }
-    if ("spot_id" in body) changes.spot_id = short(body.spot_id, 80) || null;
+    if ("spot_id" in body) {
+      sellerChanged = true;
+      spotId = short(body.spot_id, 80) || null;
+      changes.spot_id = spotId;
+    }
+
+    if (sellerChanged) {
+      await assertCreatorSellerAccess(supabase, user.id, { ownerType, playerId, studioId, spotId });
+    }
+
     if (typeof body.creative_mode === "string" && CREATIVE_MODES.has(body.creative_mode)) changes.creative_mode = body.creative_mode;
     if (typeof body.status === "string" && STATUSES.has(body.status)) changes.status = body.status;
 
