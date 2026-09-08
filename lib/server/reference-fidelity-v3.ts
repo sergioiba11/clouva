@@ -41,12 +41,26 @@ export function withReferenceFidelityState(layoutAnalysis:unknown,state:Referenc
 export function shouldStopReferenceFidelity(state:ReferenceFidelityState,score:number,correctionCount:number){return score>=REFERENCE_FIDELITY_TARGET_SCORE||state.iteration+1>=state.maxIterations||correctionCount===0;}
 
 function previewSecret(){const secret=process.env.VIP_PROFILE_TASK_SECRET?.trim();if(!secret)throw new Error("VIP_PROFILE_TASK_SECRET no está configurada.");return secret;}
-export function signReferencePreview(versionId:string){return createHmac("sha256",previewSecret()).update(`reference-fidelity:${versionId}`).digest("hex");}
-export function verifyReferencePreview(versionId:string,token:string){if(!/^[0-9a-f]{64}$/i.test(token))return false;const expected=signReferencePreview(versionId);return timingSafeEqual(Buffer.from(expected,"hex"),Buffer.from(token,"hex"));}
+function signPreviewPayload(payload:string){return createHmac("sha256",previewSecret()).update(payload).digest("hex");}
+function verifyPreviewPayload(payload:string,token:string){if(!/^[0-9a-f]{64}$/i.test(token))return false;const expected=signPreviewPayload(payload);return timingSafeEqual(Buffer.from(expected,"hex"),Buffer.from(token,"hex"));}
+export function signReferencePreview(versionId:string){return signPreviewPayload(`reference-fidelity:${versionId}`);}
+export function verifyReferencePreview(versionId:string,token:string){return verifyPreviewPayload(`reference-fidelity:${versionId}`,token);}
+export function signAdaptiveVariantPreview(jobId:string,index:number){return signPreviewPayload(`adaptive-variant:${jobId}:${index}`);}
+export function verifyAdaptiveVariantPreview(jobId:string,index:number,token:string){return verifyPreviewPayload(`adaptive-variant:${jobId}:${index}`,token);}
 function chromiumCommand(){return process.env.CLOUVA_CHROMIUM_PATH?.trim()||"/usr/bin/chromium";}
 async function runChromium(args:string[],timeoutMs:number){await new Promise<void>((resolve,reject)=>{const child=spawn(chromiumCommand(),args,{stdio:["ignore","ignore","pipe"]});let stderr="",settled=false;const finish=(error?:Error)=>{if(settled)return;settled=true;clearTimeout(timer);if(error){reject(error);}else{resolve();}};const timer=setTimeout(()=>{child.kill("SIGKILL");finish(new Error("Chromium excedió el tiempo máximo de captura."));},timeoutMs);child.stderr.on("data",(chunk)=>{stderr=(stderr+String(chunk)).slice(-3000);});child.once("error",(error)=>finish(error));child.once("exit",(code)=>finish(code===0?undefined:new Error(`Chromium no pudo capturar el preview (${code??"sin código"})${stderr?`: ${stderr.slice(-800)}`:""}`)));});}
 
+async function capturePreviewUrl(url:string,viewport:ReferenceViewport,prefix:string):Promise<GeminiReferenceImage>{
+  const directory=await mkdtemp(join(tmpdir(),prefix)),screenshotPath=join(directory,"render.png");
+  try{await runChromium(["--headless=new","--no-sandbox","--disable-dev-shm-usage","--disable-gpu","--hide-scrollbars",`--window-size=${viewport.width},${viewport.height}`,"--force-device-scale-factor=1","--run-all-compositor-stages-before-draw","--virtual-time-budget=5000",`--screenshot=${screenshotPath}`,url],30_000);const bytes=await readFile(screenshotPath);if(!bytes.length)throw new Error("Chromium devolvió una captura vacía.");return{mimeType:"image/png",data:bytes.toString("base64")};}finally{await rm(directory,{recursive:true,force:true}).catch(()=>undefined);}
+}
+
 export async function captureReferencePreview(args:{versionId:string;viewport:ReferenceViewport}):Promise<GeminiReferenceImage>{
-  const baseUrl=process.env.APP_BASE_URL?.trim()||"https://clouva.com.ar",token=signReferencePreview(args.versionId),url=`${baseUrl}/reference-fidelity/preview/${encodeURIComponent(args.versionId)}?token=${token}&capture=1`,directory=await mkdtemp(join(tmpdir(),"clouva-reference-fidelity-")),screenshotPath=join(directory,"render.png");
-  try{await runChromium(["--headless=new","--no-sandbox","--disable-dev-shm-usage","--disable-gpu","--hide-scrollbars",`--window-size=${args.viewport.width},${args.viewport.height}`,"--force-device-scale-factor=1","--run-all-compositor-stages-before-draw","--virtual-time-budget=5000",`--screenshot=${screenshotPath}`,url],30_000);const bytes=await readFile(screenshotPath);if(!bytes.length)throw new Error("Chromium devolvió una captura vacía.");return{mimeType:"image/png",data:bytes.toString("base64")};}finally{await rm(directory,{recursive:true,force:true}).catch(()=>undefined);}
+  const baseUrl=process.env.APP_BASE_URL?.trim()||"https://clouva.com.ar",token=signReferencePreview(args.versionId),url=`${baseUrl}/reference-fidelity/preview/${encodeURIComponent(args.versionId)}?token=${token}&capture=1`;
+  return capturePreviewUrl(url,args.viewport,"clouva-reference-fidelity-");
+}
+
+export async function captureAdaptiveVariantPreview(args:{jobId:string;index:number;viewport?:ReferenceViewport}):Promise<GeminiReferenceImage>{
+  const viewport=args.viewport??{width:1440,height:900,aspectRatio:1.6},baseUrl=process.env.APP_BASE_URL?.trim()||"https://clouva.com.ar",token=signAdaptiveVariantPreview(args.jobId,args.index),url=`${baseUrl}/reference-fidelity/variant/${encodeURIComponent(args.jobId)}/${args.index}?token=${token}&capture=1`;
+  return capturePreviewUrl(url,viewport,"clouva-adaptive-variant-");
 }
