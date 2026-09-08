@@ -247,15 +247,6 @@ export function HomeDashboard() {
           </nav>
         </section>
 
-        <button type="button" className={styles.aiStatus} onClick={() => openAssistant()}>
-          <span className={styles.aiMascot}><Image src="/assets/clouva-ai/trebol-mascot.png" alt="" width={40} height={40} /></span>
-          <span className={styles.aiStatusCopy}>
-            <b>CLOUVA AI</b>
-            <small><i /> Lista para ayudarte</small>
-            <em>¿Qué hacemos hoy?</em>
-          </span>
-          <ArrowRight size={14} />
-        </button>
       </aside>
 
       <section className={styles.content}>
