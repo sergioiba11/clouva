@@ -6,6 +6,7 @@ import {
   CircleUserRound,
   ImagePlay,
   Palette,
+  ShoppingBag,
   Shirt,
   Sparkles,
 } from "lucide-react";
@@ -16,6 +17,12 @@ export const metadata: Metadata = {
 };
 
 const creativeTools = [
+  {
+    title: "Crear Merch",
+    description: "Convertí una idea o referencia en producto físico, imágenes, variantes y publicación real en CLOUVA Market.",
+    href: "/crear/merch",
+    icon: ShoppingBag,
+  },
   {
     title: "Imagen / Video",
     description: "Abrí el Media Creator actual para generar y trabajar contenido visual.",
