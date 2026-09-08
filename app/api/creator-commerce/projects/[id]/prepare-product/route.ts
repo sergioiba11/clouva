@@ -18,6 +18,7 @@ type VariantInput = {
   active?: unknown;
   metadata?: unknown;
 };
+type NormalizedVariant = ReturnType<typeof normalizeVariant>;
 
 function short(value: unknown, max: number) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
@@ -68,6 +69,15 @@ function normalizeVariant(input: VariantInput) {
   };
 }
 
+function creatorScopedSku(productId: string, row: NormalizedVariant) {
+  if (!row.sku) return null;
+  if (typeof row.metadata.creator_project_id !== "string") return row.sku;
+  const suffix = productId.replace(/[^a-z0-9]/gi, "").slice(0, 8).toUpperCase();
+  if (!suffix || row.sku.toUpperCase().endsWith(`-${suffix}`)) return row.sku;
+  const maxBase = Math.max(1, 120 - suffix.length - 1);
+  return `${row.sku.slice(0, maxBase).replace(/-+$/g, "")}-${suffix}`;
+}
+
 function variantSignature(input: { title?: string | null; size?: string | null; color?: string | null }) {
   return [input.title || "", input.size || "", input.color || ""].map((value) => value.trim().toLocaleLowerCase("es")).join("|");
 }
@@ -83,7 +93,7 @@ async function syncVariants(
     .eq("product_id", productId);
   if (existingError) throw new Error(existingError.message);
 
-  const rows = variants.slice(0, 50).map(normalizeVariant);
+  const rows = variants.slice(0, 50).map(normalizeVariant).map((row) => ({ ...row, sku: creatorScopedSku(productId, row) }));
   const retained = new Set<string>();
   const result: Array<Record<string, unknown>> = [];
 
@@ -91,7 +101,7 @@ async function syncVariants(
     const match = (existing ?? []).find((current) =>
       (row.id && current.id === row.id)
       || (row.sku && current.sku === row.sku)
-      || (!row.id && !row.sku && variantSignature(current) === variantSignature(row)),
+      || (variantSignature(current) === variantSignature(row)),
     );
     if (match) {
       const { data, error } = await supabase
