@@ -91,18 +91,20 @@ function catalogPrompt(kind: "front_catalog" | "back_catalog", mode: string, dra
       ? "MODO DISEÑO EXACTO: preservá estrictamente logos, ilustraciones, texto, colores, geometría, materiales y ubicación del diseño. No reinterpretés ni inventes contenido."
       : mode === "reference"
         ? "MODO REFERENCIA: mantené el producto y la identidad definida por el brief, usando las referencias como guía estética sin copiar elementos ajenos que no pertenezcan al proyecto."
-        : "MODO DESDE CERO: respetá el brief y la identidad del producto sin agregar marcas o texto no solicitado.",
+        : "MODO DESDE CERO: diseñá el producto desde el brief. Respetá la identidad solicitada y no agregues marcas, logos o texto que el usuario no haya pedido.",
     "No muestres personas, manos, props ni objetos ajenos al producto.",
     kind === "front_catalog" ? "Mantené una vista frontal clara." : "Mantené una vista trasera clara y no mezcles el frente.",
   ].filter(Boolean).join("\n");
 }
 
-function lifestylePrompt(mode: string, draftFacts: string) {
+function lifestylePrompt(mode: string, draftFacts: string, hasReferences: boolean) {
   return [
     "Sos el generador de campaña de CLOUVA Commerce Creator.",
-    "Generá una imagen vertical 4:5 de lifestyle con una persona ADULTA completamente ficticia usando o presentando el producto de las referencias.",
+    `Generá una imagen vertical 4:5 de lifestyle con una persona ADULTA completamente ficticia usando o presentando el producto ${hasReferences ? "de las referencias" : "descripto en el brief"}.`,
     draftFacts,
-    "El producto debe seguir siendo el protagonista y conservar su diseño, colores, logos, textos y materiales visibles.",
+    hasReferences
+      ? "El producto debe seguir siendo el protagonista y conservar su diseño, colores, logos, textos y materiales visibles."
+      : "El producto debe coincidir con el diseño de catálogo solicitado en el mismo brief y mantener la misma identidad visual.",
     mode === "exact_design" ? "No alteres el arte ni su ubicación. Fidelidad máxima al diseño entregado." : "Mantené coherencia con el universo visual del brief.",
     "No imites a una celebridad ni a una persona real identificable. No agregues marcas externas ni texto promocional sobre la imagen.",
   ].filter(Boolean).join("\n");
@@ -131,23 +133,26 @@ export async function POST(request: NextRequest) {
       productDraft?: Draft;
       includeLifestyle?: unknown;
     };
-    if (!Array.isArray(body.captures) || body.captures.length < 1) throw new CreatorImageError("Subí al menos una vista Frente.");
-    if (body.captures.length > MAX_PRODUCT_REFERENCE_IMAGES) throw new CreatorImageError(`Podés usar hasta ${MAX_PRODUCT_REFERENCE_IMAGES} referencias.`);
+    const mode = ["from_scratch", "exact_design", "reference"].includes(String(body.creativeMode)) ? String(body.creativeMode) : "from_scratch";
+    const captureInputs = Array.isArray(body.captures) ? body.captures : [];
+    if (captureInputs.length > MAX_PRODUCT_REFERENCE_IMAGES) throw new CreatorImageError(`Podés usar hasta ${MAX_PRODUCT_REFERENCE_IMAGES} referencias.`);
 
-    const parsed = indexed(body.captures.map(parseCapture));
+    const parsed = indexed(captureInputs.map(parseCapture));
     const counts = countProductCaptureLabels(parsed.map((capture) => capture.label));
-    if (counts.front !== 1) throw new CreatorImageError("Necesitás exactamente un Frente.");
+    if (mode !== "from_scratch" && counts.front !== 1) throw new CreatorImageError("Diseño exacto y Referencia requieren exactamente una vista Frente.");
+    if (counts.front > 1) throw new CreatorImageError("Podés usar como máximo una vista Frente.");
     if (counts.back > 1) throw new CreatorImageError("Podés usar como máximo una vista Atrás.");
     if (counts.detail > MAX_PRODUCT_DETAIL_IMAGES) throw new CreatorImageError(`Podés usar hasta ${MAX_PRODUCT_DETAIL_IMAGES} Detalles.`);
     if (parsed.reduce((sum, capture) => sum + capture.bytes.length, 0) > MAX_PRODUCT_TOTAL_BYTES) throw new CreatorImageError("Las referencias superan el máximo total de 24 MB.", 413);
+
+    const draftFacts = facts(body.productDraft);
+    if (mode === "from_scratch" && !draftFacts) throw new CreatorImageError("Describí el producto que querés crear.");
 
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) throw new CreatorImageError("GEMINI_API_KEY no está configurada.", 500);
     const configuredModel = process.env.GEMINI_COMMERCE_IMAGE_MODEL ?? process.env.GEMINI_IMAGE_MODEL ?? "gemini-3.1-flash-image";
     const model: GeminiImageModel = IMAGE_MODELS.has(configuredModel as GeminiImageModel) ? configuredModel as GeminiImageModel : "gemini-3.1-flash-image";
     const projectId = short(body.projectId, 80) || "draft";
-    const mode = ["from_scratch", "exact_design", "reference"].includes(String(body.creativeMode)) ? String(body.creativeMode) : "from_scratch";
-    const draftFacts = facts(body.productDraft);
     const prefix = `creator-commerce/${user.id}/${projectId}`;
 
     const sourcePhotos = await Promise.all(parsed.map(async (capture) => {
@@ -160,7 +165,7 @@ export async function POST(request: NextRequest) {
     const targets: Array<{ kind: GeneratedKind; prompt: string; aspectRatio: "1:1" | "4:5" }> = [
       { kind: "front_catalog", prompt: catalogPrompt("front_catalog", mode, draftFacts, refNames), aspectRatio: "1:1" },
       ...(counts.back ? [{ kind: "back_catalog" as const, prompt: catalogPrompt("back_catalog", mode, draftFacts, refNames), aspectRatio: "1:1" as const }] : []),
-      ...(body.includeLifestyle === true ? [{ kind: "lifestyle_model" as const, prompt: lifestylePrompt(mode, draftFacts), aspectRatio: "4:5" as const }] : []),
+      ...(body.includeLifestyle === true ? [{ kind: "lifestyle_model" as const, prompt: lifestylePrompt(mode, draftFacts, references.length > 0), aspectRatio: "4:5" as const }] : []),
     ];
 
     const generatedImages = [] as Array<{ kind: GeneratedKind; url: string; storagePath: string; mimeType: string; model: GeminiImageModel }>;
