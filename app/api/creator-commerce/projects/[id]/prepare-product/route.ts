@@ -117,7 +117,17 @@ async function syncVariants(
     } else {
       const { data, error } = await supabase
         .from("commerce_product_variants")
-        .insert({ product_id: productId, ...row, id: undefined })
+        .insert({
+          product_id: productId,
+          sku: row.sku,
+          title: row.title,
+          size: row.size,
+          color: row.color,
+          price_override: row.price_override,
+          stock: row.stock,
+          active: row.active,
+          metadata: row.metadata,
+        })
         .select("*")
         .single();
       if (error) throw new Error(error.message);
@@ -159,9 +169,26 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (projectError) throw new Error(projectError.message);
     if (!project) return NextResponse.json({ error: "El proyecto no existe." }, { status: 404 });
 
-    const existingProductId = typeof project.commerce_product_id === "string" ? project.commerce_product_id : null;
+    let existingProductId = typeof project.commerce_product_id === "string" ? project.commerce_product_id : null;
     let existingProduct: Record<string, unknown> | null = null;
-    if (existingProductId) {
+
+    // The DB also has a unique commerce_products.creator_project_id. This
+    // lookup closes the small window where a previous/concurrent request may
+    // have created the canonical product before the project row stored its id.
+    if (!existingProductId) {
+      const byProject = await supabase
+        .from("commerce_products")
+        .select("*")
+        .eq("creator_project_id", project.id)
+        .maybeSingle();
+      if (byProject.error) throw new Error(byProject.error.message);
+      if (byProject.data) {
+        existingProduct = byProject.data as Record<string, unknown>;
+        existingProductId = String(byProject.data.id);
+      }
+    }
+
+    if (existingProductId && !existingProduct) {
       const current = await supabase.from("commerce_products").select("*").eq("id", existingProductId).maybeSingle();
       if (current.error) throw new Error(current.error.message);
       if (!current.data) return NextResponse.json({ error: "El producto vinculado ya no existe o no tenés permiso." }, { status: 409 });
@@ -236,6 +263,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           gallery,
           metadata,
           listing_kind: listingKind,
+          creator_project_id: project.id,
           updated_at: new Date().toISOString(),
         })
         .eq("id", existingProductId)
@@ -261,6 +289,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         cover_url: coverUrl,
         gallery,
         metadata,
+        creator_project_id: project.id,
         status: "draft",
         created_by: user.id,
       };
@@ -273,6 +302,19 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           break;
         }
         if (!/duplicate key|unique constraint/i.test(result.error.message)) throw new Error(result.error.message);
+
+        const concurrent = await supabase
+          .from("commerce_products")
+          .select("*")
+          .eq("creator_project_id", project.id)
+          .maybeSingle();
+        if (concurrent.error) throw new Error(concurrent.error.message);
+        if (concurrent.data) {
+          created = concurrent.data as Record<string, unknown>;
+          break;
+        }
+        // If no product exists for this Creator project, the duplicate was a
+        // slug collision. Try the next deterministic suffix.
       }
       if (!created) throw new Error("No pudimos generar una URL disponible para este producto.");
       product = created;
