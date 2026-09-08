@@ -58,6 +58,11 @@
 }
 
 .page [data-clouva-block="hero"] {
+  --player-portal-size: clamp(184px, 62cqh, 214px);
+  --player-ring-size: clamp(136px, 46cqh, 158px);
+  --player-core-size: clamp(88px, 30cqh, 102px);
+  --player-portal-top: clamp(8px, 3cqh, 13px);
+  --player-portal-left: clamp(8px, 2.8vw, 14px);
   min-height: 610px;
   border-color: rgba(176, 66, 255, .36);
   border-radius: 30px;
@@ -81,45 +86,68 @@
     linear-gradient(180deg, rgba(4,2,9,.02) 0%, rgba(4,2,9,.12) 45%, rgba(4,2,8,.82) 76%, #050208 100%);
 }
 
+/* The refined layer owns the complete Player portal geometry. Keep all four
+   pieces on the same center point and inside the hero at every mobile width. */
 .page [data-clouva-block="hero"] > [data-clouva-player-portal] {
   position: absolute !important;
-  top: 50px;
-  left: 50% !important;
+  top: var(--player-portal-top) !important;
+  left: var(--player-portal-left) !important;
   right: auto !important;
-  width: 190px;
-  height: 190px;
+  z-index: 5;
+  display: grid;
+  width: var(--player-portal-size) !important;
+  height: var(--player-portal-size) !important;
   margin: 0 !important;
-  transform: translateX(-50%) !important;
-  transform-origin: center center;
   place-items: center;
+  transform: none !important;
+  transform-origin: center center;
 }
 
 .page [data-clouva-player-orbits],
-.page [data-clouva-player-ring] {
+.page [data-clouva-player-ring],
+.page [data-clouva-player-ring-fallback] {
+  position: absolute !important;
   top: 50% !important;
   left: 50% !important;
   right: auto !important;
   margin: 0 !important;
+  pointer-events: none;
+  user-select: none;
   transform: translate(-50%, -50%) !important;
   transform-origin: center center;
 }
 
 .page [data-clouva-player-orbits] {
-  width: 292px !important;
-  height: 292px !important;
-  filter: drop-shadow(0 0 22px rgba(184, 71, 255, .56)) !important;
+  z-index: 0;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none;
+  object-fit: contain;
+  filter: drop-shadow(0 0 18px rgba(184, 71, 255, .5));
+}
+
+.page [data-clouva-player-ring],
+.page [data-clouva-player-ring-fallback] {
+  z-index: 1;
+  width: var(--player-ring-size) !important;
+  height: var(--player-ring-size) !important;
+  max-width: none;
 }
 
 .page [data-clouva-player-ring] {
-  width: 216px !important;
-  height: 216px !important;
-  filter: drop-shadow(0 0 26px rgba(191, 75, 255, .76)) !important;
+  object-fit: contain;
+  filter: drop-shadow(0 0 22px rgba(191, 75, 255, .7));
+}
+
+.page [data-clouva-player-ring-fallback] {
+  inset: auto !important;
 }
 
 .page [data-clouva-player-core] {
   position: relative !important;
-  width: 140px;
-  height: 140px;
+  z-index: 2;
+  width: var(--player-core-size) !important;
+  height: var(--player-core-size) !important;
   justify-self: center;
   align-self: center;
   transform: none !important;
@@ -209,7 +237,15 @@
 }
 
 .page [data-clouva-block="iglu"] {
-  background-position: 52% 31%;
+  background-position: 50% 48%;
+  background-repeat: no-repeat;
+  background-size: cover;
+}
+
+.page [data-clouva-block="iglu"]::before {
+  background:
+    linear-gradient(180deg, rgba(6,3,12,.08) 0%, rgba(6,3,12,.16) 42%, rgba(5,3,9,.82) 76%, #050208 100%),
+    linear-gradient(90deg, rgba(12,5,20,.16) 0%, transparent 58%);
 }
 
 .page [data-clouva-block="continue"] h2,
@@ -291,30 +327,6 @@
     border-radius: 27px;
   }
 
-  .page [data-clouva-block="hero"] > [data-clouva-player-portal] {
-    top: 52px;
-    left: 50% !important;
-    right: auto !important;
-    width: 180px;
-    height: 180px;
-    transform: translateX(-50%) !important;
-  }
-
-  .page [data-clouva-player-orbits] {
-    width: 278px !important;
-    height: 278px !important;
-  }
-
-  .page [data-clouva-player-ring] {
-    width: 208px !important;
-    height: 208px !important;
-  }
-
-  .page [data-clouva-player-core] {
-    width: 132px;
-    height: 132px;
-  }
-
   .page [data-clouva-hero-content] {
     min-height: 585px;
     padding: 312px 17px 24px;
@@ -355,26 +367,6 @@
   .page [data-clouva-player-active] {
     padding: 4px 6px;
     font-size: 7px;
-  }
-
-  .page [data-clouva-block="hero"] > [data-clouva-player-portal] {
-    width: 174px;
-    height: 174px;
-  }
-
-  .page [data-clouva-player-orbits] {
-    width: 266px !important;
-    height: 266px !important;
-  }
-
-  .page [data-clouva-player-ring] {
-    width: 200px !important;
-    height: 200px !important;
-  }
-
-  .page [data-clouva-player-core] {
-    width: 126px;
-    height: 126px;
   }
 
   .page [data-clouva-hero-content] {
