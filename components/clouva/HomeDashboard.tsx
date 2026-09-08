@@ -247,15 +247,6 @@ export function HomeDashboard() {
           </nav>
         </section>
 
-        <button type="button" className={styles.aiStatus} onClick={() => openAssistant()}>
-          <span className={styles.aiMascot}><Image src="/assets/clouva-ai/trebol-mascot.png" alt="" width={40} height={40} /></span>
-          <span className={styles.aiStatusCopy}>
-            <b>CLOUVA AI</b>
-            <small><i /> Lista para ayudarte</small>
-            <em>¿Qué hacemos hoy?</em>
-          </span>
-          <ArrowRight size={14} />
-        </button>
       </aside>
 
       <section className={styles.content}>
@@ -375,19 +366,19 @@ export function HomeDashboard() {
         <Link
           href={playerHref}
           aria-label={`Abrir Player de ${displayName}`}
-          className="flex w-full min-w-0 items-center gap-3 rounded-xl px-1 py-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/70"
+          className="flex min-h-[100px] w-full min-w-0 flex-col items-center justify-center gap-2 rounded-xl px-1 py-3 text-center focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/70"
           data-home-rail-player-identity
         >
-          <span className="relative grid h-11 w-11 shrink-0 place-items-center">
+          <span className="relative grid h-[52px] w-[52px] shrink-0 place-items-center">
             <span className="absolute inset-[7px] rounded-full bg-violet-500/20 blur-[8px]" aria-hidden="true" />
             <img
               src={PLAYER_ORBITS_ASSET}
               alt=""
               aria-hidden="true"
               draggable={false}
-              className="pointer-events-none absolute left-1/2 top-1/2 h-[58px] w-[58px] max-w-none -translate-x-1/2 -translate-y-1/2 select-none object-contain drop-shadow-[0_0_8px_rgba(184,71,255,0.55)]"
+              className="pointer-events-none absolute left-1/2 top-1/2 h-[68px] w-[68px] max-w-none -translate-x-1/2 -translate-y-1/2 select-none object-contain drop-shadow-[0_0_10px_rgba(184,71,255,0.58)]"
             />
-            <span className="relative z-[1] grid h-[34px] w-[34px] place-items-center overflow-hidden rounded-full border border-white/20 bg-[#100a17] shadow-[0_0_14px_rgba(142,61,236,0.3)]">
+            <span className="relative z-[1] grid h-[40px] w-[40px] place-items-center overflow-hidden rounded-full border border-white/20 bg-[#100a17] shadow-[0_0_16px_rgba(142,61,236,0.34)]">
               {railIdentityImage ? (
                 <img src={String(railIdentityImage)} alt="" className="h-full w-full object-cover" />
               ) : (
@@ -396,9 +387,9 @@ export function HomeDashboard() {
             </span>
           </span>
 
-          <span className="min-w-0 leading-none">
-            <strong className="block truncate text-[11px] font-extrabold text-white">{displayName}</strong>
-            <small className="mt-1 block truncate text-[9px] font-medium text-violet-200/60">{username}</small>
+          <span className="w-full min-w-0 text-center leading-none">
+            <strong className="block truncate text-[12px] font-extrabold text-white">{displayName}</strong>
+            <small className="mt-1 block truncate text-[9.5px] font-medium text-violet-200/60">{username}</small>
           </span>
         </Link>
 
