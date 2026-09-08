@@ -38,11 +38,15 @@ type ParsedCapture = {
   displayLabel: string;
 };
 type GeneratedKind = "front_catalog" | "back_catalog" | "lifestyle_model" | "hero_product";
+type StoredReference = { url?: unknown; label?: unknown; kind?: unknown };
 
 const ALLOWED_MIME = new Set(["image/jpeg", "image/png", "image/webp"]);
 const IMAGE_MODELS = new Set<GeminiImageModel>(["gemini-3.1-flash-lite-image", "gemini-3.1-flash-image", "gemini-3-pro-image"]);
 const GENERATION_TIMEOUT_MS = 150_000;
 const BACK_VIEW_TEMPLATES = new Set(["shirt", "hoodie", "sweatshirt", "jacket", "tote_bag", "backpack", "custom"]);
+const IDENTITY_REFERENCE_LIMIT = 6;
+const IDENTITY_REFERENCE_MAX_BYTES = 8 * 1024 * 1024;
+const GENERATED_BUCKET = process.env.CLOUVA_GENERATED_MEDIA_BUCKET ?? "clouva-generated-media";
 
 class CreatorImageError extends Error {
   status: number;
@@ -157,6 +161,45 @@ function heroPrompt(mode: string, draftFacts: string, identity: string) {
   ].filter(Boolean).join("\n");
 }
 
+function trustedIdentityUrl(value: unknown) {
+  const raw = short(value, 2000);
+  if (!raw) return null;
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== "https:" || parsed.hostname !== "storage.googleapis.com") return null;
+    if (!parsed.pathname.startsWith(`/${GENERATED_BUCKET}/creator-commerce/`)) return null;
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+}
+
+async function loadStoredReferences(value: unknown) {
+  if (!Array.isArray(value)) return { references: [] as GeminiReferenceImage[], names: [] as string[] };
+  const assets = value.slice(0, IDENTITY_REFERENCE_LIMIT) as StoredReference[];
+  const references: GeminiReferenceImage[] = [];
+  const names: string[] = [];
+  for (const asset of assets) {
+    const url = trustedIdentityUrl(asset?.url);
+    if (!url) continue;
+    try {
+      const response = await fetch(url, { cache: "force-cache", signal: AbortSignal.timeout(20_000) });
+      if (!response.ok) continue;
+      const mimeType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() || "";
+      if (!ALLOWED_MIME.has(mimeType)) continue;
+      const declared = Number(response.headers.get("content-length") || "0");
+      if (declared > IDENTITY_REFERENCE_MAX_BYTES) continue;
+      const bytes = Buffer.from(await response.arrayBuffer());
+      if (!bytes.length || bytes.length > IDENTITY_REFERENCE_MAX_BYTES) continue;
+      references.push({ mimeType, data: bytes.toString("base64") });
+      names.push(short(asset.label, 100) || short(asset.kind, 60) || "Identidad del drop");
+    } catch {
+      // A missing project reference should not kill the whole product generation.
+    }
+  }
+  return { references, names };
+}
+
 function publicError(error: unknown) {
   if (error instanceof CreatorImageError) return { status: error.status, message: error.message };
   if (error instanceof GeminiImageError) {
@@ -192,10 +235,11 @@ export async function POST(request: NextRequest) {
     let storedDesignSystem: unknown = {};
     let storedOverrides: unknown = {};
     let storedTemplate = short(body.productDraft?.productTemplate, 80) || "custom";
+    let storedProjectReferences: unknown = [];
     if (projectId) {
       const project = await supabase
         .from("commerce_creator_projects")
-        .select("id,name,collection_name,design_system")
+        .select("id,name,collection_name,design_system,reference_assets")
         .eq("id", projectId)
         .maybeSingle();
       if (project.error) throw new CreatorImageError(project.error.message, 500);
@@ -203,6 +247,7 @@ export async function POST(request: NextRequest) {
       projectName = project.data.name;
       collectionName = project.data.collection_name || "";
       storedDesignSystem = project.data.design_system;
+      storedProjectReferences = project.data.reference_assets;
 
       if (conceptId) {
         const concept = await supabase
@@ -222,11 +267,15 @@ export async function POST(request: NextRequest) {
     if (captureInputs.length > MAX_PRODUCT_REFERENCE_IMAGES) throw new CreatorImageError(`Podés usar hasta ${MAX_PRODUCT_REFERENCE_IMAGES} referencias.`);
     const parsed = indexed(captureInputs.map(parseCapture));
     const counts = countProductCaptureLabels(parsed.map((capture) => capture.label));
-    if (mode !== "from_scratch" && counts.front !== 1) throw new CreatorImageError("Diseño exacto y Referencia requieren exactamente una vista Frente.");
     if (counts.front > 1) throw new CreatorImageError("Podés usar como máximo una vista Frente.");
     if (counts.back > 1) throw new CreatorImageError("Podés usar como máximo una vista Atrás.");
     if (counts.detail > MAX_PRODUCT_DETAIL_IMAGES) throw new CreatorImageError(`Podés usar hasta ${MAX_PRODUCT_DETAIL_IMAGES} Detalles.`);
     if (parsed.reduce((sum, capture) => sum + capture.bytes.length, 0) > MAX_PRODUCT_TOTAL_BYTES) throw new CreatorImageError("Las referencias superan el máximo total de 24 MB.", 413);
+
+    const storedRefs = await loadStoredReferences(storedProjectReferences);
+    if (mode !== "from_scratch" && counts.front !== 1 && storedRefs.references.length < 1) {
+      throw new CreatorImageError("Diseño exacto y Referencia requieren una vista Frente o un asset de identidad guardado en el drop.");
+    }
 
     const draftFacts = facts({ ...body.productDraft, productTemplate: storedTemplate });
     if (mode === "from_scratch" && !draftFacts) throw new CreatorImageError("Describí el producto que querés crear.");
@@ -243,8 +292,9 @@ export async function POST(request: NextRequest) {
       return { label: capture.label, detailIndex: capture.detailIndex, displayLabel: capture.displayLabel, url: stored.url, storagePath: stored.objectPath, mimeType: capture.mimeType };
     }));
 
-    const references: GeminiReferenceImage[] = parsed.map((capture) => ({ mimeType: capture.mimeType, data: capture.base64 }));
-    const refNames = parsed.map((capture) => capture.displayLabel);
+    const localReferences: GeminiReferenceImage[] = parsed.map((capture) => ({ mimeType: capture.mimeType, data: capture.base64 }));
+    const references = [...storedRefs.references, ...localReferences].slice(0, MAX_PRODUCT_REFERENCE_IMAGES);
+    const refNames = [...storedRefs.names, ...parsed.map((capture) => capture.displayLabel)].slice(0, MAX_PRODUCT_REFERENCE_IMAGES);
     const needsBack = counts.back > 0 || (mode === "from_scratch" && BACK_VIEW_TEMPLATES.has(storedTemplate));
     const campaignStyle = short(body.campaignStyle, 80);
     const targets: Array<{ kind: GeneratedKind; prompt: string; aspectRatio: "1:1" | "4:5" }> = [
