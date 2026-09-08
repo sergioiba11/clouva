@@ -18,7 +18,17 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 type CaptureInput = { label?: unknown; dataUrl?: unknown };
-type Draft = { name?: unknown; brand?: unknown; category?: unknown; description?: unknown; color?: unknown; size?: unknown };
+type Draft = {
+  name?: unknown;
+  brand?: unknown;
+  category?: unknown;
+  description?: unknown;
+  color?: unknown;
+  size?: unknown;
+  productTemplate?: unknown;
+  placement?: unknown;
+  material?: unknown;
+};
 type ParsedCapture = {
   label: ProductCaptureLabel;
   mimeType: "image/jpeg" | "image/png" | "image/webp";
@@ -27,11 +37,12 @@ type ParsedCapture = {
   detailIndex: number | null;
   displayLabel: string;
 };
-type GeneratedKind = "front_catalog" | "back_catalog" | "lifestyle_model";
+type GeneratedKind = "front_catalog" | "back_catalog" | "lifestyle_model" | "hero_product";
 
 const ALLOWED_MIME = new Set(["image/jpeg", "image/png", "image/webp"]);
 const IMAGE_MODELS = new Set<GeminiImageModel>(["gemini-3.1-flash-lite-image", "gemini-3.1-flash-image", "gemini-3-pro-image"]);
 const GENERATION_TIMEOUT_MS = 150_000;
+const BACK_VIEW_TEMPLATES = new Set(["shirt", "hoodie", "sweatshirt", "jacket", "tote_bag", "backpack", "custom"]);
 
 class CreatorImageError extends Error {
   status: number;
@@ -43,6 +54,15 @@ class CreatorImageError extends Error {
 
 function short(value: unknown, max: number) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
+}
+
+function asRecord(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function compactJson(value: unknown, max = 1800) {
+  const text = JSON.stringify(asRecord(value));
+  return text === "{}" ? "" : text.slice(0, max);
 }
 
 function parseCapture(input: CaptureInput, index: number) {
@@ -73,40 +93,67 @@ function facts(draft: Draft | undefined) {
     ["nombre", short(draft?.name, 180)],
     ["marca", short(draft?.brand, 120)],
     ["categoría", short(draft?.category, 120)],
+    ["template", short(draft?.productTemplate, 80)],
     ["color", short(draft?.color, 80)],
     ["talle", short(draft?.size, 80)],
+    ["placement", short(draft?.placement, 220)],
+    ["material", short(draft?.material, 160)],
   ].filter(([, value]) => value);
-  const description = short(draft?.description, 1000);
+  const description = short(draft?.description, 1400);
   return [rows.length ? `Ficha: ${rows.map(([key, value]) => `${key}: ${value}`).join("; ")}.` : "", description ? `Brief: ${description}.` : ""].filter(Boolean).join("\n");
 }
 
-function catalogPrompt(kind: "front_catalog" | "back_catalog", mode: string, draftFacts: string, refs: string[]) {
+function sharedIdentity(projectName: string, collectionName: string, designSystem: string, overrides: string) {
+  return [
+    `DROP: ${projectName}${collectionName ? ` · ${collectionName}` : ""}.`,
+    designSystem ? `DESIGN SYSTEM DEL DROP (heredado): ${designSystem}` : "",
+    overrides ? `OVERRIDES DE ESTE PRODUCTO: ${overrides}` : "",
+    "Este producto pertenece a una colección. Mantené coherencia de paleta, símbolos, lenguaje gráfico, materiales y mood con el mismo drop; no inventes otra identidad visual.",
+  ].filter(Boolean).join("\n");
+}
+
+function modeInstruction(mode: string) {
+  if (mode === "exact_design") return "MODO DISEÑO EXACTO: preservá estrictamente el artwork master, logos, ilustraciones, texto, colores y geometría. Podés adaptar escala/posición al soporte, pero NO reinterpretar el diseño.";
+  if (mode === "reference") return "MODO REFERENCIA: usá las referencias como guía estética y estructural, sin copiar elementos ajenos que no pertenezcan al proyecto.";
+  return "MODO DESDE CERO: diseñá el producto desde el brief y el Design System. No agregues marcas, logos o texto que el usuario no haya pedido.";
+}
+
+function catalogPrompt(kind: "front_catalog" | "back_catalog", mode: string, draftFacts: string, refs: string[], identity: string) {
   const side = kind === "front_catalog" ? "Frente" : "Atrás";
   return [
-    "Sos el generador de imágenes de producto de CLOUVA Commerce Creator.",
+    "Sos el generador de producto de CLOUVA Commerce Creator.",
     `Salida requerida: ${side} de catálogo, producto solo, fondo blanco o neutro, composición profesional 1:1.`,
+    identity,
     draftFacts,
-    refs.length ? `Referencias disponibles: ${refs.join(", ")}.` : "",
-    mode === "exact_design"
-      ? "MODO DISEÑO EXACTO: preservá estrictamente logos, ilustraciones, texto, colores, geometría, materiales y ubicación del diseño. No reinterpretés ni inventes contenido."
-      : mode === "reference"
-        ? "MODO REFERENCIA: mantené el producto y la identidad definida por el brief, usando las referencias como guía estética sin copiar elementos ajenos que no pertenezcan al proyecto."
-        : "MODO DESDE CERO: diseñá el producto desde el brief. Respetá la identidad solicitada y no agregues marcas, logos o texto que el usuario no haya pedido.",
+    refs.length ? `Referencias visuales cargadas: ${refs.join(", ")}.` : "",
+    modeInstruction(mode),
+    "Separá ARTWORK MASTER de MOCKUP: no deformes el arte para hacerlo más llamativo.",
     "No muestres personas, manos, props ni objetos ajenos al producto.",
     kind === "front_catalog" ? "Mantené una vista frontal clara." : "Mantené una vista trasera clara y no mezcles el frente.",
   ].filter(Boolean).join("\n");
 }
 
-function lifestylePrompt(mode: string, draftFacts: string, hasReferences: boolean) {
+function lifestylePrompt(mode: string, draftFacts: string, identity: string, hasReferences: boolean, campaignStyle: string) {
   return [
     "Sos el generador de campaña de CLOUVA Commerce Creator.",
     `Generá una imagen vertical 4:5 de lifestyle con una persona ADULTA completamente ficticia usando o presentando el producto ${hasReferences ? "de las referencias" : "descripto en el brief"}.`,
+    identity,
     draftFacts,
-    hasReferences
-      ? "El producto debe seguir siendo el protagonista y conservar su diseño, colores, logos, textos y materiales visibles."
-      : "El producto debe coincidir con el diseño de catálogo solicitado en el mismo brief y mantener la misma identidad visual.",
-    mode === "exact_design" ? "No alteres el arte ni su ubicación. Fidelidad máxima al diseño entregado." : "Mantené coherencia con el universo visual del brief.",
-    "No imites a una celebridad ni a una persona real identificable. No agregues marcas externas ni texto promocional sobre la imagen.",
+    campaignStyle ? `Estilo de campaña: ${campaignStyle}.` : "Estilo de campaña: premium urbano futurista.",
+    hasReferences ? "Conservá el diseño, colores, logos, textos y materiales visibles del producto." : "El producto debe coincidir con la dirección de catálogo del mismo brief.",
+    modeInstruction(mode),
+    "No imites celebridades ni personas reales identificables. No agregues marcas externas ni texto promocional flotando sobre la imagen.",
+  ].filter(Boolean).join("\n");
+}
+
+function heroPrompt(mode: string, draftFacts: string, identity: string) {
+  return [
+    "Sos el director de arte de CLOUVA Commerce Creator.",
+    "Generá un hero comercial 1:1 del producto, cinematográfico pero usable en ecommerce. Producto protagonista, fondo coherente con el drop, sin texto agregado.",
+    identity,
+    draftFacts,
+    modeInstruction(mode),
+    "No reemplaces ni deformes el artwork aprobado.",
   ].filter(Boolean).join("\n");
 }
 
@@ -125,18 +172,54 @@ function publicError(error: unknown) {
 
 export async function POST(request: NextRequest) {
   try {
-    const { user } = await requireUser(request);
+    const { user, supabase } = await requireUser(request);
     const body = (await request.json().catch(() => ({}))) as {
       projectId?: unknown;
+      conceptId?: unknown;
       creativeMode?: unknown;
       captures?: CaptureInput[];
       productDraft?: Draft;
       includeLifestyle?: unknown;
+      includeHero?: unknown;
+      campaignStyle?: unknown;
     };
     const mode = ["from_scratch", "exact_design", "reference"].includes(String(body.creativeMode)) ? String(body.creativeMode) : "from_scratch";
+    const projectId = short(body.projectId, 80);
+    const conceptId = short(body.conceptId, 80);
+
+    let projectName = "CLOUVA Drop";
+    let collectionName = "";
+    let storedDesignSystem: unknown = {};
+    let storedOverrides: unknown = {};
+    let storedTemplate = short(body.productDraft?.productTemplate, 80) || "custom";
+    if (projectId) {
+      const project = await supabase
+        .from("commerce_creator_projects")
+        .select("id,name,collection_name,design_system")
+        .eq("id", projectId)
+        .maybeSingle();
+      if (project.error) throw new CreatorImageError(project.error.message, 500);
+      if (!project.data) throw new CreatorImageError("El proyecto no existe o no tenés permiso.", 404);
+      projectName = project.data.name;
+      collectionName = project.data.collection_name || "";
+      storedDesignSystem = project.data.design_system;
+
+      if (conceptId) {
+        const concept = await supabase
+          .from("commerce_creator_product_concepts")
+          .select("id,product_template,design_overrides")
+          .eq("id", conceptId)
+          .eq("project_id", projectId)
+          .maybeSingle();
+        if (concept.error) throw new CreatorImageError(concept.error.message, 500);
+        if (!concept.data) throw new CreatorImageError("El producto creativo no existe o no tenés permiso.", 404);
+        storedOverrides = concept.data.design_overrides;
+        storedTemplate = concept.data.product_template || storedTemplate;
+      }
+    }
+
     const captureInputs = Array.isArray(body.captures) ? body.captures : [];
     if (captureInputs.length > MAX_PRODUCT_REFERENCE_IMAGES) throw new CreatorImageError(`Podés usar hasta ${MAX_PRODUCT_REFERENCE_IMAGES} referencias.`);
-
     const parsed = indexed(captureInputs.map(parseCapture));
     const counts = countProductCaptureLabels(parsed.map((capture) => capture.label));
     if (mode !== "from_scratch" && counts.front !== 1) throw new CreatorImageError("Diseño exacto y Referencia requieren exactamente una vista Frente.");
@@ -145,15 +228,15 @@ export async function POST(request: NextRequest) {
     if (counts.detail > MAX_PRODUCT_DETAIL_IMAGES) throw new CreatorImageError(`Podés usar hasta ${MAX_PRODUCT_DETAIL_IMAGES} Detalles.`);
     if (parsed.reduce((sum, capture) => sum + capture.bytes.length, 0) > MAX_PRODUCT_TOTAL_BYTES) throw new CreatorImageError("Las referencias superan el máximo total de 24 MB.", 413);
 
-    const draftFacts = facts(body.productDraft);
+    const draftFacts = facts({ ...body.productDraft, productTemplate: storedTemplate });
     if (mode === "from_scratch" && !draftFacts) throw new CreatorImageError("Describí el producto que querés crear.");
 
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) throw new CreatorImageError("GEMINI_API_KEY no está configurada.", 500);
     const configuredModel = process.env.GEMINI_COMMERCE_IMAGE_MODEL ?? process.env.GEMINI_IMAGE_MODEL ?? "gemini-3.1-flash-image";
     const model: GeminiImageModel = IMAGE_MODELS.has(configuredModel as GeminiImageModel) ? configuredModel as GeminiImageModel : "gemini-3.1-flash-image";
-    const projectId = short(body.projectId, 80) || "draft";
-    const prefix = `creator-commerce/${user.id}/${projectId}`;
+    const prefix = `creator-commerce/${user.id}/${projectId || "draft"}/${conceptId || "project"}`;
+    const identity = sharedIdentity(projectName, collectionName, compactJson(storedDesignSystem), compactJson(storedOverrides));
 
     const sourcePhotos = await Promise.all(parsed.map(async (capture) => {
       const stored = await uploadGeneratedMediaObject({ bytes: capture.bytes, mimeType: capture.mimeType, pathPrefix: `${prefix}/sources` });
@@ -162,13 +245,16 @@ export async function POST(request: NextRequest) {
 
     const references: GeminiReferenceImage[] = parsed.map((capture) => ({ mimeType: capture.mimeType, data: capture.base64 }));
     const refNames = parsed.map((capture) => capture.displayLabel);
+    const needsBack = counts.back > 0 || (mode === "from_scratch" && BACK_VIEW_TEMPLATES.has(storedTemplate));
+    const campaignStyle = short(body.campaignStyle, 80);
     const targets: Array<{ kind: GeneratedKind; prompt: string; aspectRatio: "1:1" | "4:5" }> = [
-      { kind: "front_catalog", prompt: catalogPrompt("front_catalog", mode, draftFacts, refNames), aspectRatio: "1:1" },
-      ...(counts.back ? [{ kind: "back_catalog" as const, prompt: catalogPrompt("back_catalog", mode, draftFacts, refNames), aspectRatio: "1:1" as const }] : []),
-      ...(body.includeLifestyle === true ? [{ kind: "lifestyle_model" as const, prompt: lifestylePrompt(mode, draftFacts, references.length > 0), aspectRatio: "4:5" as const }] : []),
+      { kind: "front_catalog", prompt: catalogPrompt("front_catalog", mode, draftFacts, refNames, identity), aspectRatio: "1:1" },
+      ...(needsBack ? [{ kind: "back_catalog" as const, prompt: catalogPrompt("back_catalog", mode, draftFacts, refNames, identity), aspectRatio: "1:1" as const }] : []),
+      ...(body.includeLifestyle === true ? [{ kind: "lifestyle_model" as const, prompt: lifestylePrompt(mode, draftFacts, identity, references.length > 0, campaignStyle), aspectRatio: "4:5" as const }] : []),
+      ...(body.includeHero === true ? [{ kind: "hero_product" as const, prompt: heroPrompt(mode, draftFacts, identity), aspectRatio: "1:1" as const }] : []),
     ];
 
-    const generatedImages = [] as Array<{ kind: GeneratedKind; url: string; storagePath: string; mimeType: string; model: GeminiImageModel }>;
+    const generatedImages: Array<{ kind: GeneratedKind; url: string; storagePath: string; mimeType: string; model: GeminiImageModel }> = [];
     for (const target of targets) {
       const generated = await generateImage({ apiKey, model, prompt: target.prompt, referenceImages: references, aspectRatio: target.aspectRatio, imageSize: "1K", timeoutMs: GENERATION_TIMEOUT_MS });
       const stored = await uploadGeneratedMediaObject({ bytes: generated.bytes, mimeType: generated.mimeType, pathPrefix: `${prefix}/generated` });
