@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { assertCreatorSellerAccess } from "@/lib/creator-commerce/server";
 import { isAuthError, requireUser } from "@/lib/server/supabase";
 
 export const runtime = "nodejs";
@@ -45,19 +46,25 @@ export async function POST(request: NextRequest) {
     const creativeMode = CREATIVE_MODES.has(body.creative_mode as CreativeMode) ? body.creative_mode as CreativeMode : "from_scratch";
     const playerId = ownerType === "player" ? short(body.player_id, 80) : "";
     const studioId = ownerType === "studio" ? short(body.studio_id, 80) : "";
-    if (ownerType === "player" && !playerId) return NextResponse.json({ error: "Falta el Player vendedor." }, { status: 400 });
-    if (ownerType === "studio" && !studioId) return NextResponse.json({ error: "Falta el Studio vendedor." }, { status: 400 });
+    const spotId = short(body.spot_id, 80) || null;
+
+    await assertCreatorSellerAccess(supabase, user.id, {
+      ownerType,
+      playerId: playerId || null,
+      studioId: studioId || null,
+      spotId,
+    });
 
     const row = {
       user_id: user.id,
       owner_type: ownerType,
       player_id: playerId || null,
       studio_id: studioId || null,
-      spot_id: short(body.spot_id, 80) || null,
+      spot_id: spotId,
       name,
       collection_name: short(body.collection_name, 180) || null,
       category: short(body.category, 120) || "Merch",
-      product_template: short(body.product_template, 120) || "shirt",
+      product_template: short(body.product_template, 120) || null,
       creative_mode: creativeMode,
       brief: short(body.brief, 4000) || null,
       source_type: short(body.source_type, 80) || null,
