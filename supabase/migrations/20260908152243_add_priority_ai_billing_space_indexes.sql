@@ -1,0 +1,19 @@
+-- Second targeted FK/index batch for user-facing AI, billing, studio join and inventory paths.
+create index if not exists ai_conversations_user_id_idx on public.ai_conversations(user_id);
+create index if not exists ai_messages_user_id_idx on public.ai_messages(user_id);
+create index if not exists billing_payments_subscription_idx on public.billing_payments(subscription_id);
+create index if not exists billing_payments_user_idx on public.billing_payments(user_id);
+create index if not exists billing_subscriptions_product_idx on public.billing_subscriptions(product_id);
+create index if not exists billing_subscriptions_price_idx on public.billing_subscriptions(price_id);
+create index if not exists pending_studio_joins_studio_idx on public.pending_studio_joins(studio_id);
+create index if not exists pending_studio_joins_plan_idx on public.pending_studio_joins(plan_id);
+create index if not exists pending_studio_joins_membership_idx on public.pending_studio_joins(membership_id);
+create index if not exists project_memory_source_conversation_idx on public.project_memory(source_conversation_id);
+create index if not exists space_inventory_items_category_idx on public.space_inventory_items(category_id);
+create index if not exists space_inventory_items_commerce_variant_idx on public.space_inventory_items(commerce_variant_id);
+create index if not exists space_inventory_purchase_requests_item_idx on public.space_inventory_purchase_requests(item_id);
+create index if not exists studio_applications_player_idx on public.studio_applications(player_id);
+create index if not exists studio_follows_studio_idx on public.studio_follows(studio_id);
+create index if not exists player_members_invited_by_idx on public.player_members(invited_by);
+create index if not exists player_profile_versions_created_by_idx on public.player_profile_versions(created_by);
+create index if not exists player_profile_versions_brand_asset_version_idx on public.player_profile_versions(brand_asset_version_id);
