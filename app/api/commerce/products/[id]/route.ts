@@ -6,8 +6,9 @@ export const dynamic = "force-dynamic";
 
 const EDITABLE_FIELDS = new Set([
   "name", "description", "price", "currency", "stock", "cover_url", "gallery",
-  "digital_asset_url", "avatar_asset_id",
+  "digital_asset_url", "avatar_asset_id", "metadata", "listing_kind",
 ]);
+const LISTING_KINDS = new Set(["standard", "resale", "owned_design", "avatar", "combo"]);
 // Owners can only move between these three -- pending_review/approved/
 // rejected/sold_out/archived are moderation/system states, set elsewhere.
 const OWNER_STATUSES = new Set(["draft", "published", "paused"]);
@@ -27,9 +28,7 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
   }
 }
 
-// Same RLS-is-the-authorization-boundary approach as POST /api/commerce/products
-// -- this runs on the caller's own session, commerce_products_write_owner_or_admin
-// rejects anyone who isn't the Player/Estudio owner/manager or an admin.
+// The caller's own RLS-scoped session remains the authorization boundary.
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { supabase } = await requireUser(request);
@@ -47,6 +46,12 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         changes.stock = value == null ? null : Math.max(0, Math.floor(Number(value) || 0));
       } else if (key === "gallery") {
         changes.gallery = Array.isArray(value) ? value.slice(0, 20) : [];
+      } else if (key === "metadata") {
+        if (!value || typeof value !== "object" || Array.isArray(value)) return NextResponse.json({ error: "metadata inválida." }, { status: 400 });
+        changes.metadata = value;
+      } else if (key === "listing_kind") {
+        if (typeof value !== "string" || !LISTING_KINDS.has(value)) return NextResponse.json({ error: "listing_kind inválido." }, { status: 400 });
+        changes.listing_kind = value;
       } else if (typeof value === "string") {
         changes[key] = value.trim() || null;
       } else if (value === null) {
@@ -71,6 +76,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     }
 
     if (Object.keys(changes).length === 0) return NextResponse.json({ error: "Nada para actualizar." }, { status: 400 });
+    changes.updated_at = new Date().toISOString();
 
     const { data, error } = await supabase.from("commerce_products").update(changes).eq("id", id).select("*").maybeSingle();
     if (error) throw new Error(error.message);
