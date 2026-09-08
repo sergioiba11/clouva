@@ -24,69 +24,32 @@
 
 /* Preserve the selected Lab image while framing the existing vertical cosmic
    asset for the compact premium hero. */
-.configurablePage [data-clouva-block="hero"] > div:first-child {
+.configurablePage [data-clouva-hero-backdrop] {
   background-position: center 56% !important;
   opacity: 0.76 !important;
   filter: saturate(1.26) contrast(1.08) brightness(0.78) !important;
   transform: scale(1.02) !important;
 }
 
-/* Player/orbits: scale from the configured hero height instead of the old
-   590px composition. The image remains the canonical GCS asset rendered by
-   MobileHomeDashboard; only presentation changes here. */
-.configurablePage [data-clouva-block="hero"] > div:has(> img[aria-hidden="true"]) {
-  top: clamp(22px, 8.5cqh, 34px) !important;
-  width: clamp(122px, 42cqh, 140px) !important;
-  height: clamp(122px, 42cqh, 140px) !important;
-}
-
-.configurablePage [data-clouva-block="hero"] > div:has(> img[aria-hidden="true"]) > img[aria-hidden="true"] {
-  width: clamp(232px, 81cqh, 268px) !important;
-  height: clamp(232px, 81cqh, 268px) !important;
-  filter: drop-shadow(0 0 14px rgba(184, 71, 255, 0.38)) !important;
-}
-
-.configurablePage [data-clouva-block="hero"] > div:has(> img[aria-hidden="true"]) > span:first-of-type {
-  inset: 8px !important;
-}
-
-.configurablePage [data-clouva-block="hero"] > div:has(> img[aria-hidden="true"]) > span:last-of-type {
-  width: clamp(88px, 30cqh, 100px) !important;
-  height: clamp(88px, 30cqh, 100px) !important;
-}
-
-/* Side labels and CLOUVA AI stay clear of the tighter Player composition. */
-.configurablePage [data-clouva-block="hero"] > div:nth-of-type(3) {
-  top: clamp(45px, 17cqh, 58px) !important;
-  left: 14px !important;
-  gap: 6px !important;
-  font-size: 5.5px !important;
-}
-
-.configurablePage [data-clouva-block="hero"] > a[aria-label="Abrir CLOUVA AI"] {
-  top: clamp(42px, 16cqh, 55px) !important;
-  right: 9px !important;
-  width: 58px !important;
-  gap: 3px !important;
-  transform: scale(0.84) !important;
-  transform-origin: top right !important;
-}
+/* Player portal geometry is intentionally owned by mobile-home-refined via
+   data-clouva-player-* hooks. CLOUVA Lab only controls the hero canvas size,
+   so changing Lab height cannot move the portal to a different anchor. */
 
 /* The premium component still contains the original 590px inner canvas. Tie
    that canvas to the Lab height so VIDA DE FLOWS and both CTAs live inside the
-   same 300-330px hero shown in the target reference. */
-.configurablePage [data-clouva-block="hero"] > div:has(> h1) {
+   same configurable hero without colliding with the Player portal. */
+.configurablePage [data-clouva-hero-content] {
   width: 100% !important;
   min-height: 100% !important;
   height: 100% !important;
   justify-content: flex-start !important;
   padding:
-    clamp(154px, 52cqh, 176px)
+    clamp(154px, 58cqh, 194px)
     max(12px, var(--lab-hero-padding-left))
     9px !important;
 }
 
-.configurablePage [data-clouva-block="hero"] > div:has(> h1) > span:first-child {
+.configurablePage [data-clouva-hero-content] > span:first-child {
   font-size: 6.5px !important;
   letter-spacing: 0.27em !important;
 }
@@ -103,37 +66,30 @@
   line-height: 1.1 !important;
 }
 
-.configurablePage [data-clouva-block="hero"] > div:has(> h1) > div:first-of-type {
+.configurablePage [data-clouva-hero-actions] {
   gap: 6px !important;
   margin-top: 9px !important;
 }
 
-.configurablePage [data-clouva-block="hero"] > div:has(> h1) > div:first-of-type > a {
+.configurablePage [data-clouva-hero-actions] > a {
   min-height: 38px !important;
   gap: 5px !important;
   padding: 7px 9px !important;
   font-size: clamp(8.5px, 2.6vw, 10px) !important;
 }
 
-.configurablePage [data-clouva-block="hero"] > div:has(> h1) > div:first-of-type > a > svg:first-child {
+.configurablePage [data-clouva-hero-actions] > a > svg:first-child {
   width: 15px !important;
   height: 15px !important;
 }
 
-.configurablePage [data-clouva-block="hero"] > div:has(> h1) > div:last-of-type {
-  gap: 5px !important;
-  margin-top: 7px !important;
-  font-size: 5px !important;
-  letter-spacing: 0.2em !important;
-}
-
-.configurablePage [data-clouva-block="hero"] a:first-child {
+.configurablePage [data-clouva-primary-action] {
   border-color: color-mix(in srgb, var(--lab-accent-secondary) 70%, white 30%) !important;
   background: linear-gradient(90deg, var(--lab-accent), var(--lab-accent-secondary)) !important;
   box-shadow: 0 0 var(--lab-glow-size) color-mix(in srgb, var(--lab-accent) 58%, transparent) !important;
 }
 
-.configurablePage [data-clouva-block="hero"] a:last-child {
+.configurablePage [data-clouva-secondary-action] {
   border-color: var(--lab-accent) !important;
 }
 
@@ -164,7 +120,6 @@
 
 .configurablePage [data-clouva-block="iglu"] {
   padding: 11px 10px 8px !important;
-  background-position: 52% 35% !important;
 }
 
 .configurablePage [data-clouva-block="continue"] > div:first-of-type,
@@ -312,7 +267,7 @@
     --mobile-nav-height: 68px;
   }
 
-  .configurablePage [data-clouva-block="hero"] > div:has(> h1) {
+  .configurablePage [data-clouva-hero-content] {
     padding-right: 10px !important;
     padding-left: 10px !important;
   }
@@ -321,7 +276,7 @@
     font-size: 29px !important;
   }
 
-  .configurablePage [data-clouva-block="hero"] > div:has(> h1) > div:first-of-type > a {
+  .configurablePage [data-clouva-hero-actions] > a {
     padding-right: 7px !important;
     padding-left: 7px !important;
     font-size: 8px !important;

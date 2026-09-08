@@ -8,8 +8,6 @@ import {
   CircleUserRound,
   Compass,
   DollarSign,
-  Home,
-  LayoutGrid,
   Music2,
   Pause,
   Play,
@@ -21,33 +19,16 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/components/auth-provider";
 import { useCurrentPlayer } from "@/components/current-player-provider";
+import { ClouvaDesktopSidebar } from "@/components/clouva/ClouvaDesktopSidebar";
 import { useClouvaAIAssistant } from "@/components/clouva-ai/ClouvaAIAssistantProvider";
 import { SpotifyHomeStatus } from "@/components/music/SpotifyHomeStatus";
 import { useSpotifyPlayback } from "@/components/music/SpotifyPlaybackProvider";
 import { resolveHomeDisplayName } from "@/lib/identity-names";
-import {
-  CLOUVA_NAVIGATION,
-  DESKTOP_PRIMARY_NAV_KEYS,
-  getNavigationItems,
-  getPlayerDestination,
-  type ClouvaSurfaceKey,
-} from "@/lib/navigation/clouva-navigation";
+import { CLOUVA_NAVIGATION, getPlayerDestination } from "@/lib/navigation/clouva-navigation";
 import { VISUAL_ASSETS } from "@/lib/visual-assets";
 import styles from "./home-dashboard.module.css";
 
 const PLAYER_ORBITS_ASSET = VISUAL_ASSETS["home-mobile-player-orbits-01"];
-
-const navigationIcons: Partial<Record<ClouvaSurfaceKey, typeof Home>> = {
-  HOME: Home,
-  CREATE: Sparkles,
-  MARKET: ShoppingBag,
-  MATRIX: LayoutGrid,
-};
-
-const primaryNav = getNavigationItems(DESKTOP_PRIMARY_NAV_KEYS).map((item) => ({
-  ...item,
-  icon: navigationIcons[item.key] ?? Home,
-}));
 
 type HomeVisualAssets = {
   vipComplete: string | null;
@@ -172,12 +153,6 @@ export function HomeDashboard() {
     ? Math.min(100, Math.max(0, (playback.progressMs / playback.durationMs) * 100))
     : 0;
 
-  const workspaceNav = [
-    { label: "Mi Player", href: playerHref, icon: CircleUserRound },
-    { label: "Mi Flow", href: CLOUVA_NAVIGATION.MI_FLOW.href, icon: DollarSign },
-    { label: "Mi Spot", href: CLOUVA_NAVIGATION.MI_SPOT.href, icon: Store },
-  ];
-
   const effectiveModules = homeModules.map((item) => ({
     ...item,
     href: item.key === "PLAYER" ? playerHref : CLOUVA_NAVIGATION[item.key].href,
@@ -219,35 +194,7 @@ export function HomeDashboard() {
     <main className={styles.page}>
       <div className={styles.ambient} aria-hidden="true" />
 
-      <aside className={styles.sidebar}>
-        <nav className={styles.sideNav} aria-label="Secciones principales de CLOUVA">
-          {primaryNav.map((item) => {
-            const Icon = item.icon;
-            return (
-              <Link key={item.href} href={item.href} className={item.key === "HOME" ? styles.sideNavActive : undefined}>
-                <Icon size={17} />
-                <span>{item.label}</span>
-              </Link>
-            );
-          })}
-        </nav>
-
-        <section className={styles.workspaceSection}>
-          <span className={styles.workspaceLabel}>TU ESPACIO</span>
-          <nav className={styles.workspaceNav} aria-label="Tu espacio en CLOUVA">
-            {workspaceNav.map((item) => {
-              const Icon = item.icon;
-              return (
-                <Link key={item.href} href={item.href}>
-                  <Icon size={17} />
-                  <span>{item.label}</span>
-                </Link>
-              );
-            })}
-          </nav>
-        </section>
-
-      </aside>
+      <ClouvaDesktopSidebar />
 
       <section className={styles.content}>
         <section

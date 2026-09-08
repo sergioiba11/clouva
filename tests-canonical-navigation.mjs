@@ -176,13 +176,18 @@ test("Crear is a hub over real existing tools and Media Creator lives below it",
   assert.match(media, /MediaCreatorPage/);
 });
 
-test("desktop and mobile consume the same navigation contract and Player resolver", () => {
+test("desktop Home and Mi Flow share the canonical sidebar while mobile keeps the same navigation contract", () => {
   const desktop = read("./components/clouva/HomeDashboard.tsx");
+  const desktopSidebar = read("./components/clouva/ClouvaDesktopSidebar.tsx");
+  const flowShell = read("./components/flows/flow-app-shell.tsx");
   const mobile = read("./components/clouva/MobileHomeDashboard.tsx");
 
-  assert.match(desktop, /DESKTOP_PRIMARY_NAV_KEYS/);
-  assert.match(desktop, /getNavigationItems/);
-  assert.match(desktop, /getPlayerDestination\(currentPlayer\)/);
+  assert.match(desktop, /ClouvaDesktopSidebar/);
+  assert.match(desktopSidebar, /DESKTOP_PRIMARY_NAV_KEYS/);
+  assert.match(desktopSidebar, /getNavigationItems/);
+  assert.match(desktopSidebar, /getPlayerDestination\(currentPlayer\)/);
+  assert.match(flowShell, /ClouvaDesktopSidebar/);
+  assert.match(flowShell, /useClouvaSidebarNavigation/);
   assert.match(mobile, /MOBILE_PRIMARY_NAV_KEYS/);
   assert.match(mobile, /getNavigationItems/);
   assert.match(mobile, /getPlayerDestination\(currentPlayer\)/);
