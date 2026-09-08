@@ -23,26 +23,22 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
-
           path = Path("components/clouva/HomeDashboard.tsx")
           text = path.read_text(encoding="utf-8")
-
-          block = '''
-        <button type="button" className={styles.aiStatus} onClick={() => openAssistant()}>
-          <span className={styles.aiMascot}><Image src="/assets/clouva-ai/trebol-mascot.png" alt="" width={40} height={40} /></span>
-          <span className={styles.aiStatusCopy}>
-            <b>CLOUVA AI</b>
-            <small><i /> Lista para ayudarte</small>
-            <em>¿Qué hacemos hoy?</em>
-          </span>
-          <ArrowRight size={14} />
-        </button>
-'''
-          if block not in text:
+          marker = '<button type="button" className={styles.aiStatus} onClick={() => openAssistant()}>'
+          start = text.find(marker)
+          if start < 0:
               raise SystemExit("Expected isolated Home sidebar AI card was not found")
-
-          text = text.replace(block, "", 1)
-          path.write_text(text, encoding="utf-8")
+          line_start = text.rfind("\n", 0, start) + 1
+          end = text.find("</button>", start)
+          if end < 0:
+              raise SystemExit("Sidebar AI card closing tag was not found")
+          end = text.find("\n", end)
+          if end < 0:
+              end = len(text)
+          else:
+              end += 1
+          path.write_text(text[:line_start] + text[end:], encoding="utf-8")
           PY
 
       - name: Commit definitive removal
