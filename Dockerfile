@@ -33,6 +33,13 @@ ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY
 ENV CLOUVA_DEPLOYED_COMMIT=$CLOUVA_DEPLOYED_COMMIT
 ENV CLOUVA_DEPLOYED_REF=$CLOUVA_DEPLOYED_REF
 ENV CLOUVA_BUILD_DATE=$CLOUVA_BUILD_DATE
+ENV CLOUVA_CHROMIUM_PATH=/usr/bin/chromium
+
+# Reference Fidelity captura el MISMO renderer público mediante Chromium CLI.
+# No agrega un segundo renderer ni una dependencia JS de browser automation.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends chromium fonts-liberation \
+    && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd --system --gid 1001 nodejs \
     && useradd --system --uid 1001 --gid nodejs nextjs
@@ -40,9 +47,6 @@ RUN groupadd --system --gid 1001 nodejs \
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-# Next compila compose-logo-lockups dentro de .next/server/chunks y __dirname
-# apunta ahí en producción. La fuente no entra sola al bundle standalone, así
-# que la copiamos explícitamente donde el módulo la busca en Cloud Run.
 COPY --from=builder --chown=nextjs:nodejs /app/lib/server/brand-engine/fonts ./.next/server/chunks/fonts
 
 USER nextjs

@@ -21,9 +21,25 @@ type GeneratedAsset = { kind: string; url: string };
 type LayoutSectionSummary = { type: string };
 type LayoutVariant = { layout: { sections?: LayoutSectionSummary[] } | null; assets: GeneratedAsset[] };
 
+type ReferenceFidelityClientState = {
+  enabled?: boolean;
+  stage?: string;
+  versionId?: string | null;
+  referenceViewport?: { width?: number; height?: number; aspectRatio?: number } | null;
+  iteration?: number;
+  maxIterations?: number;
+  visualScore?: number | null;
+  summary?: string | null;
+  structuralMismatch?: boolean;
+  structuralRegenerationUsed?: boolean;
+  lastError?: string | null;
+};
+
 type Job = {
   id: string;
   status: string;
+  fidelity_status?: string | null;
+  reference_fidelity?: ReferenceFidelityClientState | null;
   generated_copy: ProfileCopy | null;
   generated_assets: GeneratedAsset[] | null;
   layout_variants: LayoutVariant[] | null;
@@ -64,6 +80,11 @@ export type StudioIdentityState = {
   staleDraftCount: number;
   hasUnsavedDraftEdits: boolean;
   jobStatus: string | null;
+  fidelityStatus: string | null;
+  fidelityScore: number | null;
+  fidelityIteration: number | null;
+  fidelityMaxIterations: number | null;
+  fidelityStructuralMismatch: boolean;
   canPublish: boolean;
 };
 
@@ -78,10 +99,16 @@ const STATUS_LABEL: Record<string, string> = {
   analyzing_identity: "Analizando el Studio…",
   generating_copy: "Escribiendo la presentación…",
   classifying_reference: "Analizando la referencia visual…",
-  generating_assets: "Creando assets…",
+  generating_assets: "Reconstruyendo composición y assets…",
   generating_variants: "Armando propuestas de diseño…",
   generating_variant_assets: "Preparando assets de las propuestas…",
-  assembling_profile: "Armando la identidad…",
+  assembling_profile: "Armando el borrador real…",
+  rendering_reference_preview: "Renderizando la propuesta real…",
+  capturing_reference_render: "Capturando el render al viewport de referencia…",
+  comparing_reference: "Comparando TARGET contra RENDER…",
+  applying_visual_corrections: "Corrigiendo geometría y estilo…",
+  regenerating_structure: "Ajustando la estructura de la composición…",
+  validating_visual_fidelity: "Validando fidelidad visual…",
   review_ready: "Listo para revisar.",
   failed: "La generación falló.",
   blocked_budget: "El presupuesto compartido de Gemini no está disponible ahora mismo.",
@@ -93,9 +120,7 @@ const SECTION_LABEL: Record<string, string> = {
   hero: "Portada", about: "Sobre", pillars: "Pilares", gallery: "Galería", roster: "Players",
   services: "Servicios", membership: "Membresías", music: "Música", contact: "Contacto",
 };
-
 const MAX_REFERENCE_IMAGES = 3;
-
 const EDITABLE_FIELDS: Array<{ key: keyof ProfileCopy; label: string; multiline?: boolean }> = [
   { key: "tagline", label: "Frase institucional" },
   { key: "short_bio", label: "Presentación", multiline: true },
@@ -105,13 +130,7 @@ const EDITABLE_FIELDS: Array<{ key: keyof ProfileCopy; label: string; multiline?
   { key: "share_description", label: "Descripción al compartir", multiline: true },
 ];
 
-export function StudioAiProfilePanel({
-  studioId,
-  onStateChange,
-}: {
-  studioId: string;
-  onStateChange?: (state: StudioIdentityState) => void;
-}) {
+export function StudioAiProfilePanel({ studioId, onStateChange }: { studioId: string; onStateChange?: (state: StudioIdentityState) => void }) {
   const [job, setJob] = useState<Job>(null);
   const [versions, setVersions] = useState<Version[]>([]);
   const [draftVersion, setDraftVersion] = useState<Version | null>(null);
@@ -174,12 +193,12 @@ export function StudioAiProfilePanel({
 
   useEffect(() => {
     if (pollRef.current) { window.clearInterval(pollRef.current); pollRef.current = null; }
-    if (job && IN_PROGRESS_STATUSES.has(job.status)) {
-      pollRef.current = window.setInterval(() => { void load(); }, 4000);
-    }
+    if (job && IN_PROGRESS_STATUSES.has(job.status)) pollRef.current = window.setInterval(() => { void load(); }, 4000);
     return () => { if (pollRef.current) window.clearInterval(pollRef.current); };
-  }, [job?.status]);
+  }, [job?.status, job?.fidelity_status]);
 
+  const fidelity = job?.reference_fidelity ?? null;
+  const effectiveStatus = job?.fidelity_status || job?.status || null;
   useEffect(() => {
     onStateChange?.({
       publishedVersionNumber: publishedVersion?.version_number ?? null,
@@ -187,160 +206,82 @@ export function StudioAiProfilePanel({
       staleDraftCount: staleDrafts.length,
       hasUnsavedDraftEdits: Object.keys(draftEdits).length > 0,
       jobStatus: job?.status ?? null,
+      fidelityStatus: job?.fidelity_status ?? null,
+      fidelityScore: typeof fidelity?.visualScore === "number" ? fidelity.visualScore : null,
+      fidelityIteration: typeof fidelity?.iteration === "number" ? fidelity.iteration : null,
+      fidelityMaxIterations: typeof fidelity?.maxIterations === "number" ? fidelity.maxIterations : null,
+      fidelityStructuralMismatch: fidelity?.structuralMismatch === true,
       canPublish: Boolean(draftVersion) && !starting,
     });
-  }, [draftEdits, draftVersion, job?.status, onStateChange, publishedVersion, staleDrafts.length, starting]);
+  }, [draftEdits, draftVersion, fidelity?.iteration, fidelity?.maxIterations, fidelity?.structuralMismatch, fidelity?.visualScore, job?.fidelity_status, job?.status, onStateChange, publishedVersion, staleDrafts.length, starting]);
 
   const connectInstagram = async () => {
-    setConnectingInstagram(true);
-    setError(null);
+    setConnectingInstagram(true); setError(null);
     try {
-      const response = await authenticatedFetch("/api/integrations/instagram/connect", {
-        method: "POST",
-        body: JSON.stringify({ studioId }),
-      });
+      const response = await authenticatedFetch("/api/integrations/instagram/connect", { method: "POST", body: JSON.stringify({ studioId }) });
       const payload = await readApiJson<{ authorizeUrl: string }>(response);
       window.location.assign(payload.authorizeUrl);
     } catch (connectError) {
-      setError(connectError instanceof Error ? connectError.message : "No se pudo abrir Instagram.");
-      setConnectingInstagram(false);
+      setError(connectError instanceof Error ? connectError.message : "No se pudo abrir Instagram."); setConnectingInstagram(false);
     }
   };
-
   const disconnectInstagram = async () => {
-    setConnectingInstagram(true);
-    setError(null);
-    try {
-      const response = await authenticatedFetch(`/api/integrations/instagram/disconnect?studioId=${encodeURIComponent(studioId)}`, { method: "DELETE" });
-      await readApiJson(response);
-      await loadInstagram();
-    } catch (disconnectError) {
-      setError(disconnectError instanceof Error ? disconnectError.message : "No se pudo desconectar Instagram.");
-    } finally {
-      setConnectingInstagram(false);
-    }
+    setConnectingInstagram(true); setError(null);
+    try { const response = await authenticatedFetch(`/api/integrations/instagram/disconnect?studioId=${encodeURIComponent(studioId)}`, { method: "DELETE" }); await readApiJson(response); await loadInstagram(); }
+    catch (disconnectError) { setError(disconnectError instanceof Error ? disconnectError.message : "No se pudo desconectar Instagram."); }
+    finally { setConnectingInstagram(false); }
   };
 
   const combinedReferenceUrls = [...designReferenceUrls, ...realPhotoUrls].slice(0, MAX_REFERENCE_IMAGES);
-
   const startGeneration = async () => {
-    setStarting(true);
-    setError(null);
-    setMessage(null);
+    setStarting(true); setError(null); setMessage(null);
     try {
-      const response = await authenticatedFetch("/api/vip-profile/generate", {
-        method: "POST",
-        body: JSON.stringify({ studioId, referenceImageUrls: combinedReferenceUrls }),
-      });
-      await readApiJson(response);
-      setDesignReferenceUrls([]);
-      setRealPhotoUrls([]);
-      await load();
-    } catch (startError) {
-      setError(startError instanceof Error ? startError.message : "No se pudo iniciar la generación.");
-    } finally {
-      setStarting(false);
-    }
+      const response = await authenticatedFetch("/api/vip-profile/generate", { method: "POST", body: JSON.stringify({ studioId, referenceImageUrls: combinedReferenceUrls }) });
+      await readApiJson(response); setDesignReferenceUrls([]); setRealPhotoUrls([]); await load();
+    } catch (startError) { setError(startError instanceof Error ? startError.message : "No se pudo iniciar la generación."); }
+    finally { setStarting(false); }
   };
-
   const uploadReferenceImages = async (files: FileList | null, target: "design" | "photos") => {
-    if (!files || files.length === 0) return;
-    const remaining = MAX_REFERENCE_IMAGES - combinedReferenceUrls.length;
-    if (remaining <= 0) return;
-    setUploadingReference(target);
-    setError(null);
+    if (!files?.length) return; const remaining = MAX_REFERENCE_IMAGES - combinedReferenceUrls.length; if (remaining <= 0) return;
+    setUploadingReference(target); setError(null);
     try {
-      const form = new FormData();
-      form.append("studioId", studioId);
-      Array.from(files).slice(0, remaining).forEach((file) => form.append("images", file));
+      const form = new FormData(); form.append("studioId", studioId); Array.from(files).slice(0, remaining).forEach((file) => form.append("images", file));
       const response = await authenticatedFetch("/api/vip-profile/reference-images", { method: "POST", body: form });
       const payload = await readApiJson<{ urls: string[] }>(response);
-      if (target === "design") {
-        setDesignReferenceUrls((current) => [...current, ...payload.urls].slice(0, MAX_REFERENCE_IMAGES));
-      } else {
-        setRealPhotoUrls((current) => [...current, ...payload.urls].slice(0, MAX_REFERENCE_IMAGES));
-      }
-    } catch (uploadError) {
-      setError(uploadError instanceof Error ? uploadError.message : "No se pudo subir la imagen.");
-    } finally {
-      setUploadingReference(null);
-    }
+      if (target === "design") setDesignReferenceUrls((current) => [...current, ...payload.urls].slice(0, MAX_REFERENCE_IMAGES));
+      else setRealPhotoUrls((current) => [...current, ...payload.urls].slice(0, MAX_REFERENCE_IMAGES));
+    } catch (uploadError) { setError(uploadError instanceof Error ? uploadError.message : "No se pudo subir la imagen."); }
+    finally { setUploadingReference(null); }
   };
-
   const selectVariant = async (index: number) => {
-    if (!job) return;
-    setSelectingVariant(index);
-    setError(null);
-    try {
-      const response = await authenticatedFetch(`/api/vip-profile/jobs/${job.id}/select-variant`, {
-        method: "POST",
-        body: JSON.stringify({ variantIndex: index }),
-      });
-      await readApiJson(response);
-      setMessage("Diseño elegido. Revisalo en el preview antes de publicar.");
-      await load();
-    } catch (selectError) {
-      setError(selectError instanceof Error ? selectError.message : "No se pudo elegir esa propuesta.");
-    } finally {
-      setSelectingVariant(null);
-    }
+    if (!job) return; setSelectingVariant(index); setError(null);
+    try { const response = await authenticatedFetch(`/api/vip-profile/jobs/${job.id}/select-variant`, { method: "POST", body: JSON.stringify({ variantIndex: index }) }); await readApiJson(response); setMessage("Diseño elegido. Revisalo en el preview antes de publicar."); await load(); }
+    catch (selectError) { setError(selectError instanceof Error ? selectError.message : "No se pudo elegir esa propuesta."); }
+    finally { setSelectingVariant(null); }
   };
-
   const saveEdits = async () => {
-    if (!draftVersion || Object.keys(draftEdits).length === 0) return;
-    setStarting(true);
-    setError(null);
-    try {
-      const response = await authenticatedFetch(`/api/vip-profile/versions/${draftVersion.id}`, {
-        method: "PATCH",
-        body: JSON.stringify(draftEdits),
-      });
-      await readApiJson(response);
-      setDraftEdits({});
-      setMessage(`Borrador v${draftVersion.version_number} guardado.`);
-      await load();
-    } catch (saveError) {
-      setError(saveError instanceof Error ? saveError.message : "No se pudo guardar el borrador.");
-    } finally {
-      setStarting(false);
-    }
+    if (!draftVersion || Object.keys(draftEdits).length === 0) return; setStarting(true); setError(null);
+    try { const response = await authenticatedFetch(`/api/vip-profile/versions/${draftVersion.id}`, { method: "PATCH", body: JSON.stringify(draftEdits) }); await readApiJson(response); setDraftEdits({}); setMessage(`Borrador v${draftVersion.version_number} guardado.`); await load(); }
+    catch (saveError) { setError(saveError instanceof Error ? saveError.message : "No se pudo guardar el borrador."); }
+    finally { setStarting(false); }
   };
-
   const publish = async () => {
-    if (!draftVersion) return;
-    let publishLogoToo = false;
-    if (draftVersion.brand_asset_version_id) {
-      publishLogoToo = window.confirm(
-        "Esta página incluye una nueva identidad visual.\n¿Querés publicar también este logo como identidad oficial?",
-      );
-    }
-    if (Object.keys(draftEdits).length > 0) await saveEdits();
-    setStarting(true);
-    setError(null);
-    try {
-      const response = await authenticatedFetch(`/api/vip-profile/versions/${draftVersion.id}/publish`, {
-        method: "POST",
-        body: JSON.stringify({ publishLogoToo }),
-      });
-      await readApiJson(response);
-      setMessage(`Identidad v${draftVersion.version_number} publicada.`);
-      await load();
-    } catch (publishError) {
-      setError(publishError instanceof Error ? publishError.message : "No se pudo publicar.");
-    } finally {
-      setStarting(false);
-    }
+    if (!draftVersion) return; let publishLogoToo = false;
+    if (draftVersion.brand_asset_version_id) publishLogoToo = window.confirm("Esta página incluye una nueva identidad visual.\n¿Querés publicar también este logo como identidad oficial?");
+    if (Object.keys(draftEdits).length > 0) await saveEdits(); setStarting(true); setError(null);
+    try { const response = await authenticatedFetch(`/api/vip-profile/versions/${draftVersion.id}/publish`, { method: "POST", body: JSON.stringify({ publishLogoToo }) }); await readApiJson(response); setMessage(`Identidad v${draftVersion.version_number} publicada.`); await load(); }
+    catch (publishError) { setError(publishError instanceof Error ? publishError.message : "No se pudo publicar."); }
+    finally { setStarting(false); }
   };
 
   if (loading) return <div className="h-40 rounded-2xl border border-white/10 bg-white/[0.04]" aria-busy="true" />;
-
-  const cover = draftVersion?.asset_references.find((asset) => asset.kind === "cover")
-    ?? job?.generated_assets?.find((asset) => asset.kind === "cover");
-  const logo = draftVersion?.asset_references.find((asset) => asset.kind === "logo")
-    ?? job?.generated_assets?.find((asset) => asset.kind === "logo");
+  const cover = draftVersion?.asset_references.find((asset) => asset.kind === "cover") ?? job?.generated_assets?.find((asset) => asset.kind === "cover");
+  const logo = draftVersion?.asset_references.find((asset) => asset.kind === "logo") ?? job?.generated_assets?.find((asset) => asset.kind === "logo");
   const copy = draftVersion?.copy_config ?? job?.generated_copy;
   const palette = copy?.palette ?? [];
   const generationInProgress = Boolean(job && IN_PROGRESS_STATUSES.has(job.status));
+  const scorePercent = typeof fidelity?.visualScore === "number" ? Math.round(fidelity.visualScore * 100) : null;
+  const viewportLabel = fidelity?.referenceViewport?.width && fidelity.referenceViewport.height ? `${fidelity.referenceViewport.width} × ${fidelity.referenceViewport.height}` : null;
 
   return (
     <div className="space-y-5" data-clouva-component="StudioAiProfilePanel">
@@ -350,132 +291,44 @@ export function StudioAiProfilePanel({
           <VersionBadge label="BORRADOR" value={draftVersion ? `v${draftVersion.version_number}` : "SIN BORRADOR"} tone={draftVersion ? "violet" : "neutral"} />
           {staleDrafts.length ? <span className="text-xs text-amber-200/65">{staleDrafts.length} borrador histórico ignorado</span> : null}
         </div>
-        {!generationInProgress ? (
-          <button disabled={starting} onClick={() => void startGeneration()} className="shrink-0 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold transition hover:bg-violet-500 disabled:opacity-50">
-            {publishedVersion ? "Crear nueva versión" : "Crear identidad"}
-          </button>
-        ) : null}
+        {!generationInProgress ? <button disabled={starting} onClick={() => void startGeneration()} className="shrink-0 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold transition hover:bg-violet-500 disabled:opacity-50">{publishedVersion ? "Crear nueva versión" : "Crear identidad"}</button> : null}
       </div>
 
       {!generationInProgress ? (
         <div className="grid gap-4 lg:grid-cols-2">
           <section className="rounded-2xl border border-white/10 bg-black/20 p-4">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-white/35">Fuentes del Studio</p>
-            <h3 className="mt-1 text-sm font-semibold">Datos y fotos reales</h3>
-            {!instagramLoaded ? (
-              <p className="mt-3 text-xs text-white/45">Cargando Instagram…</p>
-            ) : instagramConnection ? (
-              <div className="mt-3 flex items-center justify-between gap-3">
-                <p className="min-w-0 truncate text-sm text-white/65">Instagram · <strong>@{instagramConnection.external_username || instagramConnection.display_name}</strong></p>
-                <button disabled={connectingInstagram} onClick={() => void disconnectInstagram()} className="shrink-0 rounded-lg border border-white/15 px-3 py-1.5 text-xs">Desconectar</button>
-              </div>
-            ) : (
-              <button disabled={connectingInstagram} onClick={() => void connectInstagram()} className="mt-3 rounded-xl border border-violet-400/25 bg-violet-500/10 px-4 py-2 text-xs font-semibold text-violet-100">Conectar Instagram</button>
-            )}
-            <div className="mt-4 border-t border-white/8 pt-4">
-              <p className="text-xs leading-5 text-white/45">También podés sumar fotos reales del espacio. Se usan como fuente del Studio, no como una página a copiar.</p>
-              <ImageTray urls={realPhotoUrls} onRemove={(url) => setRealPhotoUrls((current) => current.filter((item) => item !== url))}>
-                {combinedReferenceUrls.length < MAX_REFERENCE_IMAGES ? (
-                  <UploadTile label={uploadingReference === "photos" ? "…" : "+ Fotos"} disabled={Boolean(uploadingReference)} onFiles={(files) => void uploadReferenceImages(files, "photos")} />
-                ) : null}
-              </ImageTray>
-            </div>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-white/35">Fuentes del Studio</p><h3 className="mt-1 text-sm font-semibold">Datos y fotos reales</h3>
+            {!instagramLoaded ? <p className="mt-3 text-xs text-white/45">Cargando Instagram…</p> : instagramConnection ? <div className="mt-3 flex items-center justify-between gap-3"><p className="min-w-0 truncate text-sm text-white/65">Instagram · <strong>@{instagramConnection.external_username || instagramConnection.display_name}</strong></p><button disabled={connectingInstagram} onClick={() => void disconnectInstagram()} className="shrink-0 rounded-lg border border-white/15 px-3 py-1.5 text-xs">Desconectar</button></div> : <button disabled={connectingInstagram} onClick={() => void connectInstagram()} className="mt-3 rounded-xl border border-violet-400/25 bg-violet-500/10 px-4 py-2 text-xs font-semibold text-violet-100">Conectar Instagram</button>}
+            <div className="mt-4 border-t border-white/8 pt-4"><p className="text-xs leading-5 text-white/45">También podés sumar fotos reales del espacio. Se usan como fuente del Studio, no como una página a copiar.</p><ImageTray urls={realPhotoUrls} onRemove={(url) => setRealPhotoUrls((current) => current.filter((item) => item !== url))}>{combinedReferenceUrls.length < MAX_REFERENCE_IMAGES ? <UploadTile label={uploadingReference === "photos" ? "…" : "+ Fotos"} disabled={Boolean(uploadingReference)} onFiles={(files) => void uploadReferenceImages(files, "photos")} /> : null}</ImageTray></div>
           </section>
-
           <section className="rounded-2xl border border-violet-400/20 bg-violet-500/[0.045] p-4">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-violet-200/55">Referencia visual</p>
-            <h3 className="mt-1 text-sm font-semibold">Screenshot / mockup / web</h3>
-            <p className="mt-2 text-xs leading-5 text-white/50">CLOUVA usa esta imagen como referencia de composición. Los textos, Players, música y datos siguen siendo los reales del Studio.</p>
-            <ImageTray urls={designReferenceUrls} onRemove={(url) => setDesignReferenceUrls((current) => current.filter((item) => item !== url))}>
-              {combinedReferenceUrls.length < MAX_REFERENCE_IMAGES ? (
-                <UploadTile label={uploadingReference === "design" ? "…" : "+ Screenshot"} disabled={Boolean(uploadingReference)} onFiles={(files) => void uploadReferenceImages(files, "design")} />
-              ) : null}
-            </ImageTray>
-            <p className="mt-3 text-[11px] text-white/35">Máximo {MAX_REFERENCE_IMAGES} imágenes entre fotos y referencias.</p>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-violet-200/55">Referencia visual</p><h3 className="mt-1 text-sm font-semibold">Screenshot / mockup / web</h3><p className="mt-2 text-xs leading-5 text-white/50">CLOUVA usa esta imagen como TARGET de composición. Los textos, Players, música y datos siguen siendo los reales del Studio.</p>
+            <ImageTray urls={designReferenceUrls} onRemove={(url) => setDesignReferenceUrls((current) => current.filter((item) => item !== url))}>{combinedReferenceUrls.length < MAX_REFERENCE_IMAGES ? <UploadTile label={uploadingReference === "design" ? "…" : "+ Screenshot"} disabled={Boolean(uploadingReference)} onFiles={(files) => void uploadReferenceImages(files, "design")} /> : null}</ImageTray><p className="mt-3 text-[11px] text-white/35">Máximo {MAX_REFERENCE_IMAGES} imágenes entre fotos y referencias.</p>
           </section>
         </div>
       ) : null}
 
       {generationInProgress ? (
-        <div className="flex items-center gap-3 rounded-2xl border border-violet-400/20 bg-violet-500/[0.06] p-5">
-          <div className="h-5 w-5 shrink-0 animate-spin rounded-full border-2 border-white/20 border-t-violet-400" />
-          <div><p className="text-sm font-semibold text-white/80">Generando nueva versión</p><p className="mt-1 text-xs text-white/50">{STATUS_LABEL[job?.status ?? ""] ?? job?.status}</p></div>
+        <div className="rounded-2xl border border-violet-400/20 bg-violet-500/[0.06] p-5" data-reference-fidelity-status={effectiveStatus ?? undefined}>
+          <div className="flex items-start gap-3"><div className="mt-0.5 h-5 w-5 shrink-0 animate-spin rounded-full border-2 border-white/20 border-t-violet-400" /><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center justify-between gap-2"><p className="text-sm font-semibold text-white/80">{job?.fidelity_status ? "Reference Fidelity" : "Generando nueva versión"}</p>{scorePercent !== null ? <span className="rounded-full border border-violet-300/25 bg-violet-400/10 px-2.5 py-1 text-xs font-semibold text-violet-100">Fidelidad {scorePercent}%</span> : null}</div><p className="mt-1 text-xs text-white/50">{STATUS_LABEL[effectiveStatus ?? ""] ?? effectiveStatus}</p>{viewportLabel ? <p className="mt-1 text-[11px] text-white/35">Target {viewportLabel}{typeof fidelity?.iteration === "number" ? ` · Iteración ${Math.min(fidelity.iteration + 1, fidelity.maxIterations ?? 3)}/${fidelity.maxIterations ?? 3}` : ""}</p> : null}{effectiveStatus === "regenerating_structure" || fidelity?.structuralMismatch ? <p className="mt-2 text-xs text-amber-200/75">Se detectó una diferencia estructural. CLOUVA está ajustando la composición sin tocar los datos reales.</p> : null}{fidelity?.summary ? <p className="mt-2 text-xs leading-5 text-white/40">{fidelity.summary}</p> : null}</div></div>
         </div>
       ) : null}
 
-      {job && job.status === "awaiting_variant_selection" && job.layout_variants?.length ? (
-        <section className="space-y-3">
-          <div><p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-violet-200/50">Propuestas</p><h3 className="mt-1 text-lg font-semibold">Elegí una composición</h3></div>
-          <div className="grid gap-4 sm:grid-cols-3">
-            {job.layout_variants.map((variant, index) => {
-              const variantCover = variant.assets.find((asset) => asset.kind === "cover");
-              const sections = variant.layout?.sections ?? [];
-              return (
-                <div key={index} className="flex flex-col overflow-hidden rounded-2xl border border-white/10 bg-black/20">
-                  {variantCover ? <img src={variantCover.url} alt="" className="h-32 w-full object-cover" /> : <div className="h-32 w-full bg-white/5" />}
-                  <div className="flex flex-1 flex-col gap-2 p-4">
-                    <p className="text-xs text-white/50">{sections.map((section) => SECTION_LABEL[section.type] ?? section.type).join(" · ")}</p>
-                    <button disabled={selectingVariant !== null} onClick={() => void selectVariant(index)} className="mt-auto rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold disabled:opacity-60">
-                      {selectingVariant === index ? "Eligiendo…" : "Usar esta"}
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      ) : null}
-
-      {job && (job.status === "failed" || job.status === "blocked_budget" || job.status === "needs_user_input") ? (
-        <p className="rounded-xl border border-amber-400/20 bg-amber-400/10 p-4 text-sm text-amber-200">{STATUS_LABEL[job.status]}{job.error_message ? ` — ${job.error_message}` : ""}</p>
-      ) : null}
+      {job && job.status === "awaiting_variant_selection" && job.layout_variants?.length ? <section className="space-y-3"><div><p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-violet-200/50">Propuestas</p><h3 className="mt-1 text-lg font-semibold">Elegí una composición</h3></div><div className="grid gap-4 sm:grid-cols-3">{job.layout_variants.map((variant, index) => { const variantCover = variant.assets.find((asset) => asset.kind === "cover"); const sections = variant.layout?.sections ?? []; return <div key={index} className="flex flex-col overflow-hidden rounded-2xl border border-white/10 bg-black/20">{variantCover ? <img src={variantCover.url} alt="" className="h-32 w-full object-cover" /> : <div className="h-32 w-full bg-white/5" />}<div className="flex flex-1 flex-col gap-2 p-4"><p className="text-xs text-white/50">{sections.map((section) => SECTION_LABEL[section.type] ?? section.type).join(" · ")}</p><button disabled={selectingVariant !== null} onClick={() => void selectVariant(index)} className="mt-auto rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold disabled:opacity-60">{selectingVariant === index ? "Eligiendo…" : "Usar esta"}</button></div></div>; })}</div></section> : null}
+      {job && (job.status === "failed" || job.status === "blocked_budget" || job.status === "needs_user_input") ? <p className="rounded-xl border border-amber-400/20 bg-amber-400/10 p-4 text-sm text-amber-200">{STATUS_LABEL[job.status]}{job.error_message ? ` — ${job.error_message}` : ""}</p> : null}
 
       {draftVersion && copy ? (
         <section className="space-y-5 rounded-2xl border border-white/10 bg-black/20 p-4 sm:p-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div><p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-violet-200/50">Borrador activo · v{draftVersion.version_number}</p><h3 className="mt-1 text-lg font-semibold">Revisá y corregí</h3></div>
-            <Link href={`/studio-dashboard/${studioId}/identity-preview`} target="_blank" className="rounded-xl border border-violet-400/25 bg-violet-500/10 px-4 py-2 text-xs font-semibold text-violet-100">Actual / Propuesta</Link>
-          </div>
-
+          <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-violet-200/50">Borrador activo · v{draftVersion.version_number}</p><h3 className="mt-1 text-lg font-semibold">Revisá y corregí</h3></div><Link href={`/studio-dashboard/${studioId}/identity-preview`} target="_blank" className="rounded-xl border border-violet-400/25 bg-violet-500/10 px-4 py-2 text-xs font-semibold text-violet-100">Actual / Propuesta</Link></div>
+          {scorePercent !== null && !generationInProgress ? <div className="flex flex-wrap items-center gap-3 rounded-xl border border-violet-400/15 bg-violet-500/[0.04] px-4 py-3"><span className="text-xs uppercase tracking-[.16em] text-white/35">Reference Fidelity</span><strong className="text-sm text-violet-100">{scorePercent}%</strong>{typeof fidelity?.iteration === "number" ? <span className="text-xs text-white/45">{fidelity.iteration}/{fidelity.maxIterations ?? 3} iteraciones</span> : null}{fidelity?.lastError ? <span className="text-xs text-amber-200/70">Última comparación: {fidelity.lastError}</span> : null}</div> : null}
           {cover ? <img src={cover.url} alt="" className="h-44 w-full rounded-xl object-cover" /> : null}
-          {logo || palette.length > 0 ? (
-            <div className="flex items-center gap-4 rounded-xl border border-white/10 bg-black/20 p-4">
-              {logo ? <img src={logo.url} alt="" className="h-16 w-16 shrink-0 rounded-lg bg-black/30 object-contain" /> : null}
-              {palette.length > 0 ? <div><p className="mb-1.5 text-xs uppercase tracking-[0.16em] text-white/40">Paleta</p><div className="flex gap-2">{palette.map((hex) => <span key={hex} title={hex} className="h-7 w-7 rounded-full border border-white/20" style={{ backgroundColor: hex }} />)}</div></div> : null}
-            </div>
-          ) : null}
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            {EDITABLE_FIELDS.map(({ key, label, multiline }) => {
-              const value = String((draftEdits[key] ?? copy[key]) ?? "");
-              const onChange = (next: string) => setDraftEdits((current) => ({ ...current, [key]: next }));
-              return (
-                <div key={key} className={multiline ? "sm:col-span-2" : ""}>
-                  <label className="mb-1.5 block text-xs font-medium text-white/55">{label}</label>
-                  {multiline ? (
-                    <textarea rows={3} value={value} onChange={(event) => onChange(event.target.value)} className="w-full resize-y rounded-xl border border-white/10 bg-black/30 px-3 py-3 text-sm outline-none focus:border-violet-400/60" />
-                  ) : (
-                    <input value={value} onChange={(event) => onChange(event.target.value)} className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-3 text-sm outline-none focus:border-violet-400/60" />
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
+          {logo || palette.length > 0 ? <div className="flex items-center gap-4 rounded-xl border border-white/10 bg-black/20 p-4">{logo ? <img src={logo.url} alt="" className="h-16 w-16 shrink-0 rounded-lg bg-black/30 object-contain" /> : null}{palette.length > 0 ? <div><p className="mb-1.5 text-xs uppercase tracking-[0.16em] text-white/40">Paleta</p><div className="flex gap-2">{palette.map((hex) => <span key={hex} title={hex} className="h-7 w-7 rounded-full border border-white/20" style={{ backgroundColor: hex }} />)}</div></div> : null}</div> : null}
+          <div className="grid gap-4 sm:grid-cols-2">{EDITABLE_FIELDS.map(({ key, label, multiline }) => { const value = String((draftEdits[key] ?? copy[key]) ?? ""); const onChange = (next: string) => setDraftEdits((current) => ({ ...current, [key]: next })); return <div key={key} className={multiline ? "sm:col-span-2" : ""}><label className="mb-1.5 block text-xs font-medium text-white/55">{label}</label>{multiline ? <textarea rows={3} value={value} onChange={(event) => onChange(event.target.value)} className="w-full resize-y rounded-xl border border-white/10 bg-black/30 px-3 py-3 text-sm outline-none focus:border-violet-400/60" /> : <input value={value} onChange={(event) => onChange(event.target.value)} className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-3 text-sm outline-none focus:border-violet-400/60" />}</div>; })}</div>
           {draftVersion.layout_config ? <IdentityConfigPanel versionId={draftVersion.id} kind="studio" layoutConfig={draftVersion.layout_config} onSaved={load} /> : null}
-
-          <div className="flex flex-wrap items-center gap-2 border-t border-white/8 pt-4">
-            <button disabled={starting || Object.keys(draftEdits).length === 0} onClick={() => void saveEdits()} className="rounded-xl border border-white/15 px-4 py-2.5 text-sm font-semibold disabled:opacity-35">Guardar borrador</button>
-            <button disabled={starting} onClick={() => void publish()} className="rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold disabled:opacity-50">Publicar v{draftVersion.version_number}</button>
-            {Object.keys(draftEdits).length > 0 ? <span className="text-xs text-amber-200/65">Cambios de texto sin guardar</span> : <span className="text-xs text-emerald-200/55">Borrador guardado</span>}
-          </div>
+          <div className="flex flex-wrap items-center gap-2 border-t border-white/8 pt-4"><button disabled={starting || Object.keys(draftEdits).length === 0} onClick={() => void saveEdits()} className="rounded-xl border border-white/15 px-4 py-2.5 text-sm font-semibold disabled:opacity-35">Guardar borrador</button><button disabled={starting || generationInProgress} onClick={() => void publish()} className="rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold disabled:opacity-50">Publicar v{draftVersion.version_number}</button>{Object.keys(draftEdits).length > 0 ? <span className="text-xs text-amber-200/65">Cambios de texto sin guardar</span> : <span className="text-xs text-emerald-200/55">Borrador guardado</span>}</div>
         </section>
       ) : null}
-
-      {!draftVersion && publishedVersion && !generationInProgress ? (
-        <div className="rounded-2xl border border-white/8 bg-white/[0.02] p-5 text-sm text-white/50">No hay una propuesta activa. Creá una nueva versión o pedísela a Gemini para trabajar sobre algo posterior a v{publishedVersion.version_number}.</div>
-      ) : null}
-
+      {!draftVersion && publishedVersion && !generationInProgress ? <div className="rounded-2xl border border-white/8 bg-white/[0.02] p-5 text-sm text-white/50">No hay una propuesta activa. Creá una nueva versión o pedísela a Gemini para trabajar sobre algo posterior a v{publishedVersion.version_number}.</div> : null}
       {error ? <p className="rounded-xl border border-red-400/20 bg-red-400/10 p-3 text-sm text-red-200">{error}</p> : null}
       {message ? <p className="rounded-xl border border-emerald-400/20 bg-emerald-400/10 p-3 text-sm text-emerald-200">{message}</p> : null}
       <span className="hidden">{versions.length}</span>
@@ -487,11 +340,5 @@ function VersionBadge({ label, value, tone }: { label: string; value: string; to
   const style = tone === "green" ? "border-emerald-400/20 bg-emerald-400/10 text-emerald-100" : tone === "violet" ? "border-violet-400/25 bg-violet-500/10 text-violet-100" : "border-white/10 bg-white/[0.035] text-white/50";
   return <span className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[10px] font-semibold tracking-[0.12em] ${style}`}><span>{label}</span><strong>{value}</strong></span>;
 }
-
-function ImageTray({ urls, onRemove, children }: { urls: string[]; onRemove: (url: string) => void; children: React.ReactNode }) {
-  return <div className="mt-3 flex flex-wrap items-center gap-2">{urls.map((url) => <div key={url} className="relative h-16 w-20 shrink-0 overflow-hidden rounded-xl border border-white/10"><img src={url} alt="" className="h-full w-full object-cover" /><button type="button" onClick={() => onRemove(url)} className="absolute right-1 top-1 grid h-5 w-5 place-items-center rounded-full bg-black/75 text-xs text-white">×</button></div>)}{children}</div>;
-}
-
-function UploadTile({ label, disabled, onFiles }: { label: string; disabled: boolean; onFiles: (files: FileList | null) => void }) {
-  return <label className={`grid h-16 min-w-20 shrink-0 place-items-center rounded-xl border border-dashed border-white/15 px-3 text-xs text-white/50 transition hover:border-violet-400/40 ${disabled ? "cursor-not-allowed opacity-40" : "cursor-pointer"}`}>{label}<input type="file" accept="image/png,image/jpeg,image/webp" multiple className="hidden" disabled={disabled} onChange={(event) => onFiles(event.target.files)} /></label>;
-}
+function ImageTray({ urls, onRemove, children }: { urls: string[]; onRemove: (url: string) => void; children: React.ReactNode }) { return <div className="mt-3 flex flex-wrap items-center gap-2">{urls.map((url) => <div key={url} className="relative h-16 w-20 shrink-0 overflow-hidden rounded-xl border border-white/10"><img src={url} alt="" className="h-full w-full object-cover" /><button type="button" onClick={() => onRemove(url)} className="absolute right-1 top-1 grid h-5 w-5 place-items-center rounded-full bg-black/75 text-xs text-white">×</button></div>)}{children}</div>; }
+function UploadTile({ label, disabled, onFiles }: { label: string; disabled: boolean; onFiles: (files: FileList | null) => void }) { return <label className={`grid h-16 min-w-20 shrink-0 place-items-center rounded-xl border border-dashed border-white/15 px-3 text-xs text-white/50 transition hover:border-violet-400/40 ${disabled ? "cursor-not-allowed opacity-40" : "cursor-pointer"}`}>{label}<input type="file" accept="image/png,image/jpeg,image/webp" multiple className="hidden" disabled={disabled} onChange={(event) => onFiles(event.target.files)} /></label>; }
