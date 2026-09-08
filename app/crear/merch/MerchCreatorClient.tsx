@@ -2,7 +2,25 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Box, CheckCircle2, ImagePlus, Loader2, PackagePlus, RefreshCw, Send, Shirt, Sparkles } from "lucide-react";
+import {
+  ArrowLeft,
+  Box,
+  Check,
+  CheckCircle2,
+  ChevronRight,
+  ImagePlus,
+  Layers3,
+  Loader2,
+  PackagePlus,
+  Plus,
+  RefreshCw,
+  Save,
+  Send,
+  Shirt,
+  Sparkles,
+  Trash2,
+  UploadCloud,
+} from "lucide-react";
 import { useAuth } from "@/components/auth-provider";
 
 type SellerContext = {
@@ -12,7 +30,15 @@ type SellerContext = {
   spots: Array<{ id: string; name: string; slug: string; studio_id: string | null; owner_type: string; owner_user_id: string | null; currency: string }>;
 };
 
-type CreatorAsset = { kind?: string; label?: string; url: string; storagePath?: string; status?: string };
+type CreatorAsset = {
+  kind?: string;
+  label?: string;
+  url: string;
+  storagePath?: string;
+  mimeType?: string;
+  status?: string;
+};
+
 type CreatorProject = {
   id: string;
   owner_type: "player" | "studio" | "user" | "clouva";
@@ -26,29 +52,91 @@ type CreatorProject = {
   creative_mode: "from_scratch" | "exact_design" | "reference";
   brief: string | null;
   status: string;
+  design_system: Record<string, unknown>;
+  reference_assets: CreatorAsset[];
+  generated_assets: CreatorAsset[];
+  approved_assets: CreatorAsset[];
+  commerce_product_id: string | null;
+  metadata: Record<string, unknown>;
+  updated_at: string;
+};
+
+type CommerceProductSummary = {
+  id: string;
+  slug: string;
+  status: string;
+  name: string;
+  price: number | string;
+  currency: string;
+  stock: number | null;
+  cover_url: string | null;
+};
+
+type ProductConcept = {
+  id: string;
+  project_id: string;
+  name: string;
+  product_template: string;
+  role: "primary" | "secondary";
+  position: number;
+  status: "draft" | "pending" | "generating" | "review" | "approved" | "commerce_ready" | "published" | "failed";
+  creative_config: Record<string, unknown>;
+  design_overrides: Record<string, unknown>;
   reference_assets: CreatorAsset[];
   generated_assets: CreatorAsset[];
   approved_assets: CreatorAsset[];
   commerce_draft: Record<string, unknown>;
   variants_draft: Array<Record<string, unknown>>;
-  commerce_product_id: string | null;
+  listing_copy: Record<string, unknown>;
   clothing_item_id: string | null;
   creator_3d_asset_id: string | null;
-  updated_at: string;
+  production_status: string;
+  production_data: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  commerce_product: CommerceProductSummary | null;
 };
 
 type Capture = { label: "Frente" | "Atrás" | "Detalle"; dataUrl: string; name: string };
 
 type GeneratedPayload = {
-  sourcePhotos: Array<{ label: string; displayLabel: string; url: string; storagePath: string }>;
-  generatedImages: Array<{ kind: string; url: string; storagePath: string }>;
+  sourcePhotos: Array<{ label: string; displayLabel: string; url: string; storagePath: string; mimeType?: string }>;
+  generatedImages: Array<{ kind: string; url: string; storagePath: string; mimeType?: string }>;
   coverImage: string | null;
 };
 
-type PreparedProduct = { id: string; slug: string; status: string; name: string };
+type ConceptDraft = {
+  name: string;
+  color: string;
+  placement: string;
+  material: string;
+  notes: string;
+  overrideNotes: string;
+  price: string;
+  currency: string;
+  stock: string;
+  variants: string;
+};
 
 const INPUT = "w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2.5 text-sm text-white outline-none transition focus:border-violet-400/60";
 const CARD = "rounded-[1.5rem] border border-white/10 bg-white/[0.035]";
+const GARMENT_TEMPLATES = new Set(["shirt", "hoodie", "sweatshirt", "jacket"]);
+
+const PRODUCT_TEMPLATES = [
+  { key: "shirt", label: "Remera", group: "Ropa", variants: "S,M,L,XL" },
+  { key: "hoodie", label: "Hoodie", group: "Ropa", variants: "S,M,L,XL" },
+  { key: "sweatshirt", label: "Buzo", group: "Ropa", variants: "S,M,L,XL" },
+  { key: "jacket", label: "Campera", group: "Ropa", variants: "S,M,L,XL" },
+  { key: "cap", label: "Gorra", group: "Ropa", variants: "Único" },
+  { key: "tote_bag", label: "Tote bag", group: "Accesorios", variants: "Único" },
+  { key: "backpack", label: "Mochila", group: "Accesorios", variants: "Único" },
+  { key: "phone_case", label: "Funda", group: "Accesorios", variants: "Único" },
+  { key: "sticker_pack", label: "Sticker pack", group: "Accesorios", variants: "Pack" },
+  { key: "poster", label: "Poster", group: "Print", variants: "A3,A2" },
+  { key: "print", label: "Lámina", group: "Print", variants: "A3,A2" },
+  { key: "custom", label: "Personalizado", group: "Otro", variants: "Único" },
+] as const;
+
+const STEPS = ["Proyecto", "Identidad", "Productos", "Generación", "Revisión", "Commerce", "Publicación"];
 
 function fileToDataUrl(file: File) {
   return new Promise<string>((resolve, reject) => {
@@ -59,14 +147,40 @@ function fileToDataUrl(file: File) {
   });
 }
 
-function assetUrl(value: unknown) {
-  if (typeof value === "string") return value;
-  if (value && typeof value === "object" && "url" in value && typeof (value as { url?: unknown }).url === "string") return String((value as { url: string }).url);
-  return "";
+function stringValue(value: unknown, fallback = "") {
+  return typeof value === "string" ? value : fallback;
+}
+
+function numberString(value: unknown, fallback: string) {
+  return typeof value === "number" || typeof value === "string" ? String(value) : fallback;
+}
+
+function templateInfo(key: string) {
+  return PRODUCT_TEMPLATES.find((item) => item.key === key) ?? PRODUCT_TEMPLATES[PRODUCT_TEMPLATES.length - 1];
 }
 
 function skuPart(value: string) {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase().replace(/[^A-Z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 18) || "CLU";
+}
+
+function defaultConceptDraft(concept: ProductConcept): ConceptDraft {
+  const creative = concept.creative_config ?? {};
+  const commerce = concept.commerce_draft ?? {};
+  const variantLabels = Array.isArray(concept.variants_draft) && concept.variants_draft.length
+    ? concept.variants_draft.map((item) => stringValue(item.size ?? item.title)).filter(Boolean).join(",")
+    : templateInfo(concept.product_template).variants;
+  return {
+    name: concept.name,
+    color: stringValue(creative.color, "Negro"),
+    placement: stringValue(creative.placement, ""),
+    material: stringValue(creative.material, ""),
+    notes: stringValue(creative.notes, ""),
+    overrideNotes: stringValue(concept.design_overrides?.notes, ""),
+    price: numberString(commerce.price, ""),
+    currency: stringValue(commerce.currency, "ARS"),
+    stock: numberString(commerce.stock, "1"),
+    variants: stringValue(commerce.variant_labels, variantLabels),
+  };
 }
 
 export function MerchCreatorClient() {
@@ -74,23 +188,38 @@ export function MerchCreatorClient() {
   const [context, setContext] = useState<SellerContext | null>(null);
   const [projects, setProjects] = useState<CreatorProject[]>([]);
   const [active, setActive] = useState<CreatorProject | null>(null);
-  const [captures, setCaptures] = useState<Capture[]>([]);
-  const [approved, setApproved] = useState<string[]>([]);
+  const [concepts, setConcepts] = useState<ProductConcept[]>([]);
+  const [selectedConceptId, setSelectedConceptId] = useState<string | null>(null);
+  const [captures, setCaptures] = useState<Record<string, Capture[]>>({});
+  const [approved, setApproved] = useState<Record<string, string[]>>({});
+  const [conceptDrafts, setConceptDrafts] = useState<Record<string, ConceptDraft>>({});
+  const [selectedTemplates, setSelectedTemplates] = useState<Set<string>>(new Set(["shirt", "hoodie", "cap", "poster"]));
+  const [busyConcepts, setBusyConcepts] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [preparedProduct, setPreparedProduct] = useState<PreparedProduct | null>(null);
+  const [queryHandled, setQueryHandled] = useState(false);
 
-  const [draft, setDraft] = useState({
+  const [projectDraft, setProjectDraft] = useState({
     name: "",
+    collection: "Drop 01",
     seller: "user",
-    collection: "",
-    category: "Merch",
-    productTemplate: "shirt",
     creativeMode: "from_scratch",
     brief: "",
   });
-  const [commerce, setCommerce] = useState({ price: "", currency: "ARS", stock: "1", sizes: "S,M,L,XL", color: "Negro" });
+  const [design, setDesign] = useState({
+    primaryColor: "#7c3aed",
+    secondaryColor: "#111111",
+    accentColor: "#2563eb",
+    backgroundColor: "#05030a",
+    typographyDirection: "",
+    graphicLanguage: "",
+    textures: "",
+    mood: "premium, urbano, futurista",
+    compositionRules: "",
+    prohibitedElements: "",
+    campaignStyle: "urbano",
+  });
 
   const authFetch = useCallback(async (url: string, init?: RequestInit) => {
     if (!session?.access_token) throw new Error("Iniciá sesión para usar Commerce Creator.");
@@ -107,22 +236,6 @@ export function MerchCreatorClient() {
     return payload;
   }, [session?.access_token]);
 
-  const load = useCallback(async () => {
-    if (!session?.access_token) return;
-    setError(null);
-    const [contextPayload, projectPayload] = await Promise.all([
-      authFetch("/api/creator-commerce/context"),
-      authFetch("/api/creator-commerce/projects"),
-    ]);
-    setContext(contextPayload as SellerContext);
-    setProjects(projectPayload.projects ?? []);
-  }, [authFetch, session?.access_token]);
-
-  useEffect(() => {
-    if (authLoading || !user || !session?.access_token) return;
-    void load().catch((cause) => setError(cause instanceof Error ? cause.message : "No se pudo cargar Crear Merch."));
-  }, [authLoading, load, session?.access_token, user]);
-
   const sellerOptions = useMemo(() => {
     const options = [{ value: "user", label: "Mi cuenta" }];
     for (const player of context?.players ?? []) options.push({ value: `player:${player.id}`, label: `Player · ${player.name}` });
@@ -131,166 +244,442 @@ export function MerchCreatorClient() {
     return options;
   }, [context]);
 
+  const selectedConcept = useMemo(
+    () => concepts.find((concept) => concept.id === selectedConceptId) ?? concepts[0] ?? null,
+    [concepts, selectedConceptId],
+  );
+
+  const loadConcepts = useCallback(async (projectId: string) => {
+    const payload = await authFetch(`/api/creator-commerce/projects/${projectId}/concepts`);
+    const next = (payload.concepts ?? []) as ProductConcept[];
+    setConcepts(next);
+    setApproved(Object.fromEntries(next.map((concept) => [concept.id, (concept.approved_assets ?? []).map((asset) => asset.url).filter(Boolean)])));
+    setConceptDrafts(Object.fromEntries(next.map((concept) => [concept.id, defaultConceptDraft(concept)])));
+    setSelectedConceptId((current) => current && next.some((concept) => concept.id === current) ? current : next[0]?.id ?? null);
+    return next;
+  }, [authFetch]);
+
+  const applyProjectDesign = useCallback((project: CreatorProject) => {
+    const value = project.design_system ?? {};
+    setDesign((current) => ({
+      ...current,
+      primaryColor: stringValue(value.primaryColor, current.primaryColor),
+      secondaryColor: stringValue(value.secondaryColor, current.secondaryColor),
+      accentColor: stringValue(value.accentColor, current.accentColor),
+      backgroundColor: stringValue(value.backgroundColor, current.backgroundColor),
+      typographyDirection: stringValue(value.typographyDirection),
+      graphicLanguage: stringValue(value.graphicLanguage),
+      textures: stringValue(value.textures),
+      mood: stringValue(value.mood, current.mood),
+      compositionRules: stringValue(value.compositionRules),
+      prohibitedElements: stringValue(value.prohibitedElements),
+      campaignStyle: stringValue(value.campaignStyle, current.campaignStyle),
+    }));
+  }, []);
+
+  const openProject = useCallback(async (project: CreatorProject) => {
+    setActive(project);
+    applyProjectDesign(project);
+    setError(null);
+    setMessage(null);
+    await loadConcepts(project.id);
+  }, [applyProjectDesign, loadConcepts]);
+
+  const load = useCallback(async () => {
+    if (!session?.access_token) return;
+    setError(null);
+    const [contextPayload, projectPayload] = await Promise.all([
+      authFetch("/api/creator-commerce/context"),
+      authFetch("/api/creator-commerce/projects"),
+    ]);
+    setContext(contextPayload as SellerContext);
+    const nextProjects = (projectPayload.projects ?? []) as CreatorProject[];
+    setProjects(nextProjects);
+
+    if (!queryHandled && typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const projectId = params.get("project");
+      const conceptId = params.get("concept");
+      const clothingItemId = params.get("clothingItemId");
+      const project = nextProjects.find((item) => item.id === projectId);
+      if (project) {
+        setActive(project);
+        applyProjectDesign(project);
+        if (conceptId && clothingItemId) {
+          await authFetch(`/api/creator-commerce/projects/${project.id}/concepts/${conceptId}`, {
+            method: "PATCH",
+            body: JSON.stringify({ clothing_item_id: clothingItemId }),
+          });
+          setMessage("Gemelo 3D asociado al producto correcto del drop.");
+        }
+        const nextConcepts = await loadConcepts(project.id);
+        if (conceptId && nextConcepts.some((item) => item.id === conceptId)) setSelectedConceptId(conceptId);
+        window.history.replaceState({}, "", "/crear/merch");
+      }
+      setQueryHandled(true);
+    }
+  }, [applyProjectDesign, authFetch, loadConcepts, queryHandled, session?.access_token]);
+
+  useEffect(() => {
+    if (authLoading || !user || !session?.access_token) return;
+    void load().catch((cause) => setError(cause instanceof Error ? cause.message : "No se pudo cargar Crear Merch."));
+  }, [authLoading, load, session?.access_token, user]);
+
   async function createProject() {
-    if (!draft.name.trim()) return setError("Poné un nombre al proyecto.");
+    if (!projectDraft.name.trim()) return setError("Poné un nombre al proyecto.");
     setBusy(true); setError(null); setMessage(null);
     try {
-      const [kind, id] = draft.seller.split(":");
+      const [kind, id] = projectDraft.seller.split(":");
       const selectedSpot = kind === "spot" ? context?.spots.find((spot) => spot.id === id) : null;
       const selectedStudio = selectedSpot?.studio_id || (kind === "studio" ? id : null);
       const ownerType = selectedSpot ? (selectedStudio ? "studio" : "user") : kind === "player" || kind === "studio" ? kind : "user";
       const payload = await authFetch("/api/creator-commerce/projects", {
         method: "POST",
         body: JSON.stringify({
-          name: draft.name,
+          name: projectDraft.name,
           owner_type: ownerType,
           player_id: kind === "player" ? id : null,
           studio_id: selectedStudio,
           spot_id: selectedSpot?.id ?? null,
-          collection_name: draft.collection,
-          category: draft.category,
-          product_template: draft.productTemplate,
-          creative_mode: draft.creativeMode,
-          brief: draft.brief,
+          collection_name: projectDraft.collection,
+          category: "Merch",
+          creative_mode: projectDraft.creativeMode,
+          brief: projectDraft.brief,
+          design_system: design,
         }),
       });
       const project = payload.project as CreatorProject;
       setProjects((current) => [project, ...current]);
-      openProject(project);
-      setMessage("Proyecto creado. Ahora podés generar desde el brief o sumar referencias.");
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo crear el proyecto."); }
+      await openProject(project);
+      setMessage("Proyecto creado. Definí la identidad y agregá los productos del drop.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "No se pudo crear el proyecto.");
+    } finally { setBusy(false); }
+  }
+
+  async function saveDesignSystem() {
+    if (!active) return;
+    setBusy(true); setError(null);
+    try {
+      const payload = await authFetch(`/api/creator-commerce/projects/${active.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ design_system: design }),
+      });
+      setActive(payload.project as CreatorProject);
+      setProjects((current) => current.map((project) => project.id === active.id ? payload.project : project));
+      setMessage("Identidad del drop guardada. Todos los productos la heredan.");
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo guardar la identidad."); }
     finally { setBusy(false); }
   }
 
-  function openProject(project: CreatorProject) {
-    setActive(project);
-    setCaptures([]);
-    setApproved((project.approved_assets ?? []).map(assetUrl).filter(Boolean));
-    setPreparedProduct(project.commerce_product_id ? { id: project.commerce_product_id, slug: "", status: "draft", name: project.name } : null);
-    const commerceDraft = project.commerce_draft ?? {};
-    setCommerce((current) => ({
-      ...current,
-      price: commerceDraft.price == null ? current.price : String(commerceDraft.price),
-      currency: typeof commerceDraft.currency === "string" ? commerceDraft.currency : current.currency,
-      stock: commerceDraft.stock == null ? current.stock : String(commerceDraft.stock),
-    }));
-    setError(null); setMessage(null);
+  async function uploadProjectAsset(kind: string, file: File | undefined) {
+    if (!active || !file) return;
+    if (!new Set(["image/jpeg", "image/png", "image/webp"]).has(file.type)) return setError("Usá JPG, PNG o WEBP.");
+    if (file.size > 8 * 1024 * 1024) return setError("El asset puede pesar hasta 8 MB.");
+    setBusy(true); setError(null);
+    try {
+      const dataUrl = await fileToDataUrl(file);
+      const uploaded = await authFetch("/api/creator-commerce/project-assets", {
+        method: "POST",
+        body: JSON.stringify({ projectId: active.id, kind, label: file.name, dataUrl }),
+      });
+      const nextAssets = [...(active.reference_assets ?? []), uploaded.asset as CreatorAsset];
+      const payload = await authFetch(`/api/creator-commerce/projects/${active.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ reference_assets: nextAssets }),
+      });
+      setActive(payload.project as CreatorProject);
+      setProjects((current) => current.map((project) => project.id === active.id ? payload.project : project));
+      setMessage("Asset de identidad guardado en el proyecto.");
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo subir el asset."); }
+    finally { setBusy(false); }
   }
 
-  async function addCapture(label: Capture["label"], file: File | undefined) {
+  async function addSelectedProducts() {
+    if (!active || !selectedTemplates.size) return setError("Elegí al menos un producto.");
+    setBusy(true); setError(null); setMessage(null);
+    try {
+      const existingCount = concepts.length;
+      const rows = [...selectedTemplates].map((key, index) => {
+        const template = templateInfo(key);
+        return {
+          name: `${template.label} ${active.name}`,
+          product_template: key,
+          position: existingCount + index,
+          creative_config: {
+            color: "Negro",
+            placement: "",
+            material: "",
+            notes: active.brief || "",
+          },
+        };
+      });
+      await authFetch(`/api/creator-commerce/projects/${active.id}/concepts`, {
+        method: "POST",
+        body: JSON.stringify({ concepts: rows }),
+      });
+      const next = await loadConcepts(active.id);
+      setSelectedConceptId(next[Math.max(0, existingCount)]?.id ?? next[0]?.id ?? null);
+      setMessage(`${rows.length} producto${rows.length === 1 ? "" : "s"} agregado${rows.length === 1 ? "" : "s"} al drop. Todavía no son productos Commerce.`);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudieron agregar los productos."); }
+    finally { setBusy(false); }
+  }
+
+  async function deleteConcept(concept: ProductConcept) {
+    if (!active) return;
+    setBusy(true); setError(null);
+    try {
+      await authFetch(`/api/creator-commerce/projects/${active.id}/concepts/${concept.id}`, { method: "DELETE" });
+      await loadConcepts(active.id);
+      setMessage("Producto creativo eliminado del drop.");
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo eliminar el producto."); }
+    finally { setBusy(false); }
+  }
+
+  function updateConceptDraft(conceptId: string, patch: Partial<ConceptDraft>) {
+    setConceptDrafts((current) => ({
+      ...current,
+      [conceptId]: { ...(current[conceptId] ?? defaultConceptDraft(concepts.find((item) => item.id === conceptId)!)), ...patch },
+    }));
+  }
+
+  function buildVariants(concept: ProductConcept, draftValue: ConceptDraft) {
+    const labels = draftValue.variants.split(",").map((value) => value.trim()).filter(Boolean);
+    const normalized = labels.length ? labels : ["Único"];
+    const totalStock = Math.max(0, Math.floor(Number(draftValue.stock) || 0));
+    const base = Math.floor(totalStock / normalized.length);
+    let remainder = totalStock % normalized.length;
+    return normalized.map((label) => ({
+      sku: `${skuPart(active?.name || "CLOUVA")}-${skuPart(concept.name)}-${skuPart(draftValue.color)}-${skuPart(label)}`,
+      title: `${label} · ${draftValue.color}`,
+      size: label,
+      color: draftValue.color,
+      stock: base + (remainder-- > 0 ? 1 : 0),
+      active: true,
+      metadata: { creator_project_id: active?.id, creator_concept_id: concept.id },
+    }));
+  }
+
+  async function saveConceptDetails(concept: ProductConcept) {
+    if (!active) return;
+    const draftValue = conceptDrafts[concept.id] ?? defaultConceptDraft(concept);
+    setBusyConcepts((current) => new Set(current).add(concept.id));
+    setError(null);
+    try {
+      const payload = await authFetch(`/api/creator-commerce/projects/${active.id}/concepts/${concept.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: draftValue.name,
+          creative_config: {
+            ...concept.creative_config,
+            color: draftValue.color,
+            placement: draftValue.placement,
+            material: draftValue.material,
+            notes: draftValue.notes,
+            description: draftValue.notes || active.brief || "",
+          },
+          design_overrides: { ...concept.design_overrides, notes: draftValue.overrideNotes },
+          commerce_draft: {
+            ...concept.commerce_draft,
+            price: draftValue.price === "" ? null : Number(draftValue.price),
+            currency: draftValue.currency,
+            stock: Number(draftValue.stock || 0),
+            variant_labels: draftValue.variants,
+          },
+          variants_draft: buildVariants(concept, draftValue),
+        }),
+      });
+      setConcepts((current) => current.map((item) => item.id === concept.id ? { ...item, ...payload.concept } : item));
+      setMessage(`${draftValue.name} guardado.`);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo guardar el producto."); }
+    finally {
+      setBusyConcepts((current) => { const next = new Set(current); next.delete(concept.id); return next; });
+    }
+  }
+
+  async function addConceptCapture(conceptId: string, label: Capture["label"], file: File | undefined) {
     if (!file) return;
     if (!new Set(["image/jpeg", "image/png", "image/webp"]).has(file.type)) return setError("Usá JPG, PNG o WEBP.");
     if (file.size > 5 * 1024 * 1024) return setError("Cada referencia puede pesar hasta 5 MB.");
     try {
       const dataUrl = await fileToDataUrl(file);
-      setCaptures((current) => label === "Detalle"
-        ? [...current, { label, dataUrl, name: file.name }]
-        : [...current.filter((capture) => capture.label !== label), { label, dataUrl, name: file.name }]);
+      setCaptures((current) => {
+        const list = current[conceptId] ?? [];
+        const next = label === "Detalle"
+          ? [...list, { label, dataUrl, name: file.name }]
+          : [...list.filter((capture) => capture.label !== label), { label, dataUrl, name: file.name }];
+        return { ...current, [conceptId]: next };
+      });
       setError(null);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo cargar la imagen."); }
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo cargar la referencia."); }
   }
 
-  async function generateImages() {
-    if (!active) return;
-    const hasFront = captures.some((capture) => capture.label === "Frente");
-    if (active.creative_mode !== "from_scratch" && !hasFront) return setError("Para Diseño exacto o Referencia, subí una imagen de Frente.");
-    setBusy(true); setError(null); setMessage(null);
+  async function generateConcept(concept: ProductConcept, quiet = false) {
+    if (!active) return false;
+    const draftValue = conceptDrafts[concept.id] ?? defaultConceptDraft(concept);
+    const conceptCaptures = captures[concept.id] ?? [];
+    const hasFront = conceptCaptures.some((capture) => capture.label === "Frente");
+    if (active.creative_mode !== "from_scratch" && !hasFront) {
+      if (!quiet) setError(`${concept.name}: Diseño exacto/Referencia requiere una vista Frente del producto.`);
+      return false;
+    }
+
+    setBusyConcepts((current) => new Set(current).add(concept.id));
+    if (!quiet) { setError(null); setMessage(null); }
     try {
-      await authFetch(`/api/creator-commerce/projects/${active.id}`, { method: "PATCH", body: JSON.stringify({ status: "generating" }) });
+      await authFetch(`/api/creator-commerce/projects/${active.id}/concepts/${concept.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "generating" }),
+      });
       const payload = await authFetch("/api/creator-commerce/product-images", {
         method: "POST",
         body: JSON.stringify({
           projectId: active.id,
+          conceptId: concept.id,
           creativeMode: active.creative_mode,
           includeLifestyle: true,
-          captures: captures.map(({ label, dataUrl }) => ({ label, dataUrl })),
-          productDraft: { name: active.name, category: active.category, description: active.brief, color: commerce.color },
+          includeHero: true,
+          campaignStyle: design.campaignStyle,
+          captures: conceptCaptures.map(({ label, dataUrl }) => ({ label, dataUrl })),
+          productDraft: {
+            name: draftValue.name,
+            category: active.category,
+            description: [active.brief, draftValue.notes].filter(Boolean).join("\n"),
+            color: draftValue.color,
+            productTemplate: concept.product_template,
+            placement: draftValue.placement,
+            material: draftValue.material,
+          },
         }),
       }) as GeneratedPayload;
       const references = payload.sourcePhotos.map((asset) => ({ ...asset, kind: "source", status: "reference" }));
       const generated = payload.generatedImages.map((asset) => ({ ...asset, status: "generated" }));
-      const approvedNow = payload.coverImage ? [payload.coverImage] : generated.slice(0, 1).map((asset) => asset.url);
-      const saved = await authFetch(`/api/creator-commerce/projects/${active.id}`, {
+      const saved = await authFetch(`/api/creator-commerce/projects/${active.id}/concepts/${concept.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ reference_assets: references, generated_assets: generated, approved_assets: approvedNow.map((url) => ({ url, status: "approved" })), status: "review" }),
+        body: JSON.stringify({
+          reference_assets: references,
+          generated_assets: generated,
+          approved_assets: [],
+          status: "review",
+        }),
       });
-      setActive(saved.project as CreatorProject);
-      setProjects((current) => current.map((project) => project.id === active.id ? saved.project : project));
-      setApproved(approvedNow);
-      setMessage(`Listo: ${generated.length} imágenes generadas. Elegí cuáles serán públicas.`);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudieron generar las imágenes."); }
-    finally { setBusy(false); }
+      setConcepts((current) => current.map((item) => item.id === concept.id ? { ...item, ...saved.concept, commerce_product: item.commerce_product } : item));
+      setApproved((current) => ({ ...current, [concept.id]: [] }));
+      if (!quiet) setMessage(`${concept.name}: generación lista para revisar.`);
+      return true;
+    } catch (cause) {
+      await authFetch(`/api/creator-commerce/projects/${active.id}/concepts/${concept.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "failed", metadata: { ...concept.metadata, last_generation_error: cause instanceof Error ? cause.message : "Error de generación" } }),
+      }).catch(() => undefined);
+      setConcepts((current) => current.map((item) => item.id === concept.id ? { ...item, status: "failed" } : item));
+      if (!quiet) setError(cause instanceof Error ? cause.message : `No se pudo generar ${concept.name}.`);
+      return false;
+    } finally {
+      setBusyConcepts((current) => { const next = new Set(current); next.delete(concept.id); return next; });
+    }
   }
 
-  async function saveApproved() {
-    if (!active) return;
-    if (!approved.length) return setError("Elegí al menos una imagen aprobada.");
-    setBusy(true); setError(null);
-    try {
-      const payload = await authFetch(`/api/creator-commerce/projects/${active.id}`, {
-        method: "PATCH",
-        body: JSON.stringify({ approved_assets: approved.map((url) => ({ url, status: "approved" })), status: "approved" }),
-      });
-      setActive(payload.project as CreatorProject);
-      setProjects((current) => current.map((project) => project.id === active.id ? payload.project : project));
-      setMessage("Imágenes aprobadas. Las referencias privadas siguen separadas de la publicación.");
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudieron aprobar las imágenes."); }
-    finally { setBusy(false); }
+  async function generateDrop() {
+    if (!active || !concepts.length) return setError("Agregá productos al drop primero.");
+    setBusy(true); setError(null); setMessage("Generando el drop producto por producto…");
+    let success = 0;
+    let failed = 0;
+    for (const concept of concepts) {
+      const ok = await generateConcept(concept, true);
+      if (ok) success += 1; else failed += 1;
+    }
+    await loadConcepts(active.id);
+    setBusy(false);
+    setMessage(`Drop generado: ${success} listo${success === 1 ? "" : "s"}${failed ? ` · ${failed} falló${failed === 1 ? "" : "n"} y puede${failed === 1 ? "" : "n"} reintentarse.` : "."}`);
   }
 
-  function buildVariants() {
-    const sizes = commerce.sizes.split(",").map((size) => size.trim()).filter(Boolean);
-    if (!sizes.length) return [];
-    const totalStock = Math.max(0, Math.floor(Number(commerce.stock) || 0));
-    const base = Math.floor(totalStock / sizes.length);
-    let remainder = totalStock % sizes.length;
-    return sizes.map((size) => {
-      const stock = base + (remainder-- > 0 ? 1 : 0);
-      return {
-        sku: `${skuPart(active?.name || "CLOUVA")}-${skuPart(commerce.color)}-${skuPart(size)}`,
-        title: `${size} · ${commerce.color}`,
-        size,
-        color: commerce.color,
-        stock,
-        active: true,
-        metadata: { creator_project_id: active?.id },
-      };
+  function toggleApproved(concept: ProductConcept, url: string) {
+    setApproved((current) => {
+      const list = current[concept.id] ?? [];
+      return { ...current, [concept.id]: list.includes(url) ? list.filter((item) => item !== url) : [...list, url] };
     });
   }
 
-  async function prepareProduct() {
+  async function approveConcept(concept: ProductConcept) {
     if (!active) return;
-    if (!commerce.price || Number(commerce.price) < 0) return setError("Definí un precio válido.");
-    setBusy(true); setError(null); setMessage(null);
+    const urls = approved[concept.id] ?? [];
+    if (!urls.length) return setError("Elegí al menos una imagen para aprobar.");
+    setBusyConcepts((current) => new Set(current).add(concept.id));
+    setError(null);
     try {
-      const payload = await authFetch(`/api/creator-commerce/projects/${active.id}/prepare-product`, {
-        method: "POST",
-        body: JSON.stringify({
-          name: active.name,
-          description: active.brief,
-          price: Number(commerce.price),
-          currency: commerce.currency,
-          stock: Number(commerce.stock || 0),
-          approved_images: approved,
-          cover_url: approved[0] || null,
-          listing_kind: "owned_design",
-          variants: buildVariants(),
-        }),
+      const payload = await authFetch(`/api/creator-commerce/projects/${active.id}/concepts/${concept.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ approved_assets: urls.map((url) => ({ url, status: "approved" })), status: "approved" }),
       });
-      setActive(payload.project as CreatorProject);
-      setProjects((current) => current.map((project) => project.id === active.id ? payload.project : project));
-      setPreparedProduct(payload.product as PreparedProduct);
-      setMessage(`Producto preparado: ${payload.product.name}. El productId queda fijo desde ahora.`);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo preparar el producto."); }
-    finally { setBusy(false); }
+      setConcepts((current) => current.map((item) => item.id === concept.id ? { ...item, ...payload.concept, commerce_product: item.commerce_product } : item));
+      setMessage(`${concept.name} aprobado para Commerce.`);
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo aprobar el producto."); }
+    finally { setBusyConcepts((current) => { const next = new Set(current); next.delete(concept.id); return next; }); }
   }
 
-  async function publishMarket() {
-    const productId = active?.commerce_product_id || preparedProduct?.id;
-    if (!active || !productId) return setError("Primero prepará el producto comercial.");
-    setBusy(true); setError(null); setMessage(null);
+  async function prepareConcept(concept: ProductConcept, quiet = false) {
+    if (!active) return false;
+    const draftValue = conceptDrafts[concept.id] ?? defaultConceptDraft(concept);
+    if (!draftValue.price || Number(draftValue.price) < 0) {
+      if (!quiet) setError(`${concept.name}: definí un precio válido.`);
+      return false;
+    }
+    if (!concept.approved_assets?.length && !(approved[concept.id] ?? []).length) {
+      if (!quiet) setError(`${concept.name}: aprobá al menos una imagen primero.`);
+      return false;
+    }
+    setBusyConcepts((current) => new Set(current).add(concept.id));
     try {
-      await authFetch(`/api/commerce/products/${productId}/publications`, {
+      const payload = await authFetch(`/api/creator-commerce/projects/${active.id}/concepts/${concept.id}/prepare-product`, {
+        method: "POST",
+        body: JSON.stringify({
+          name: draftValue.name,
+          description: draftValue.notes || active.brief,
+          price: Number(draftValue.price),
+          currency: draftValue.currency,
+          stock: Number(draftValue.stock || 0),
+          approved_images: (approved[concept.id]?.length ? approved[concept.id] : concept.approved_assets.map((asset) => asset.url)),
+          cover_url: (approved[concept.id]?.[0] ?? concept.approved_assets?.[0]?.url ?? null),
+          listing_kind: "owned_design",
+          variants: buildVariants(concept, draftValue),
+          metadata: { creator_collection: active.collection_name },
+        }),
+      });
+      setConcepts((current) => current.map((item) => item.id === concept.id ? { ...item, ...payload.concept, commerce_product: payload.product } : item));
+      if (!quiet) setMessage(`${concept.name}: producto Commerce preparado. El productId queda fijo.`);
+      return true;
+    } catch (cause) {
+      if (!quiet) setError(cause instanceof Error ? cause.message : `No se pudo preparar ${concept.name}.`);
+      return false;
+    } finally { setBusyConcepts((current) => { const next = new Set(current); next.delete(concept.id); return next; }); }
+  }
+
+  async function prepareDrop() {
+    if (!active) return;
+    const targets = concepts.filter((concept) => ["approved", "commerce_ready", "published"].includes(concept.status));
+    if (!targets.length) return setError("Aprobá al menos un producto antes de preparar Commerce.");
+    setBusy(true); setError(null);
+    let success = 0;
+    let failed = 0;
+    for (const concept of targets) {
+      const ok = await prepareConcept(concept, true);
+      if (ok) success += 1; else failed += 1;
+    }
+    await loadConcepts(active.id);
+    setBusy(false);
+    setMessage(`Commerce: ${success} producto${success === 1 ? "" : "s"} preparado${success === 1 ? "" : "s"}${failed ? ` · ${failed} pendiente${failed === 1 ? "" : "s"}.` : "."}`);
+  }
+
+  async function publishConcept(concept: ProductConcept, quiet = false) {
+    if (!active || !concept.commerce_product?.id) {
+      if (!quiet) setError(`${concept.name}: primero prepará el producto en Commerce.`);
+      return false;
+    }
+    setBusyConcepts((current) => new Set(current).add(concept.id));
+    try {
+      const product = concept.commerce_product;
+      await authFetch(`/api/commerce/products/${product.id}/publications`, {
         method: "PUT",
         body: JSON.stringify({
           targetType: "marketplace",
@@ -300,18 +689,41 @@ export function MerchCreatorClient() {
           publicationMode: "automatic",
           status: "published",
           isVisible: true,
-          channelTitle: active.name,
-          channelDescription: active.brief || "",
-          priceSnapshot: Number(commerce.price),
-          currencySnapshot: commerce.currency,
-          stockSnapshot: Number(commerce.stock || 0),
-          metadata: { creator_project_id: active.id },
+          channelTitle: concept.name,
+          channelDescription: stringValue(concept.listing_copy?.description, stringValue(concept.creative_config?.notes, active.brief || "")),
+          priceSnapshot: Number(product.price),
+          currencySnapshot: product.currency,
+          stockSnapshot: product.stock,
+          metadata: { creator_project_id: active.id, creator_concept_id: concept.id, collection_name: active.collection_name },
         }),
       });
-      setMessage("Publicado en CLOUVA Market usando el mismo producto canónico.");
-      setPreparedProduct((current) => current ? { ...current, status: "published" } : current);
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo publicar en Market."); }
-    finally { setBusy(false); }
+      await authFetch(`/api/creator-commerce/projects/${active.id}/concepts/${concept.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "published" }),
+      });
+      setConcepts((current) => current.map((item) => item.id === concept.id ? { ...item, status: "published", commerce_product: { ...product, status: "published" } } : item));
+      if (!quiet) setMessage(`${concept.name} publicado en CLOUVA Market.`);
+      return true;
+    } catch (cause) {
+      if (!quiet) setError(cause instanceof Error ? cause.message : `No se pudo publicar ${concept.name}.`);
+      return false;
+    } finally { setBusyConcepts((current) => { const next = new Set(current); next.delete(concept.id); return next; }); }
+  }
+
+  async function publishDrop() {
+    if (!active) return;
+    const targets = concepts.filter((concept) => concept.commerce_product?.id);
+    if (!targets.length) return setError("Prepará productos Commerce antes de publicar el drop.");
+    setBusy(true); setError(null);
+    let success = 0;
+    let failed = 0;
+    for (const concept of targets) {
+      const ok = await publishConcept(concept, true);
+      if (ok) success += 1; else failed += 1;
+    }
+    await loadConcepts(active.id);
+    setBusy(false);
+    setMessage(`Publicación: ${success} producto${success === 1 ? "" : "s"} en Market${failed ? ` · ${failed} requiere${failed === 1 ? "" : "n"} revisión.` : "."}`);
   }
 
   if (!user && !authLoading) {
@@ -319,70 +731,129 @@ export function MerchCreatorClient() {
   }
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_50%_-10%,rgba(124,58,237,.18),transparent_32%),#05030a] px-4 py-7 text-white sm:px-6 lg:px-8">
+    <main className="min-h-screen bg-[radial-gradient(circle_at_50%_-10%,rgba(124,58,237,.20),transparent_32%),radial-gradient(circle_at_92%_18%,rgba(37,99,235,.12),transparent_24%),#05030a] px-4 py-7 text-white sm:px-6 lg:px-8">
       <div className="mx-auto max-w-7xl">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+        <header className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <Link href="/crear" className="inline-flex items-center gap-2 text-xs text-white/45 hover:text-white"><ArrowLeft size={14} /> Crear</Link>
             <p className="mt-5 text-[10px] font-bold uppercase tracking-[.28em] text-violet-300">CLOUVA Commerce Creator</p>
             <h1 className="mt-2 text-4xl font-semibold tracking-tight sm:text-5xl">Crear Merch</h1>
-            <p className="mt-3 max-w-2xl text-sm leading-6 text-white/50">Idea → referencias → imágenes → producto canónico → Market. El Creator crea; Commerce vende.</p>
+            <p className="mt-3 max-w-3xl text-sm leading-6 text-white/50">Idea → identidad → colección → productos → Commerce → Market. Un drop comparte universo; cada artículo conserva su propio productId.</p>
           </div>
-          <Link href="/market" className="rounded-full border border-white/10 bg-white/[.04] px-4 py-2 text-sm text-white/70">Ver Market</Link>
-        </div>
+          <div className="flex gap-2"><Link href="/market" className="rounded-full border border-white/10 bg-white/[.04] px-4 py-2 text-sm text-white/70">Market</Link>{active ? <button onClick={() => { setActive(null); setConcepts([]); setSelectedConceptId(null); }} className="rounded-full border border-white/10 px-4 py-2 text-sm text-white/55">Mis proyectos</button> : null}</div>
+        </header>
 
-        {error ? <div className="mt-6 rounded-2xl border border-rose-400/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">{error}</div> : null}
-        {message ? <div className="mt-6 rounded-2xl border border-emerald-400/20 bg-emerald-400/10 px-4 py-3 text-sm text-emerald-200">{message}</div> : null}
+        {active ? <div className="mt-6 flex gap-2 overflow-x-auto pb-2">{STEPS.map((step, index) => <span key={step} className="shrink-0 rounded-full border border-white/10 bg-white/[.035] px-3 py-1.5 text-[11px] text-white/55"><strong className="mr-1 text-violet-300">{index + 1}</strong>{step}</span>)}</div> : null}
+        {error ? <div className="mt-5 rounded-2xl border border-rose-400/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">{error}</div> : null}
+        {message ? <div className="mt-5 rounded-2xl border border-emerald-400/20 bg-emerald-400/10 px-4 py-3 text-sm text-emerald-200">{message}</div> : null}
 
         {!active ? (
           <div className="mt-8 grid gap-6 lg:grid-cols-[1.05fr_.95fr]">
             <section className={`${CARD} p-5 sm:p-7`}>
-              <div className="flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-2xl bg-violet-500/15 text-violet-200"><Sparkles size={18} /></span><div><h2 className="font-semibold">Nuevo proyecto</h2><p className="text-xs text-white/40">La madre del drop y sus productos.</p></div></div>
+              <div className="flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-2xl bg-violet-500/15 text-violet-200"><Layers3 size={18} /></span><div><h2 className="font-semibold">Nuevo drop</h2><p className="text-xs text-white/40">El proyecto es la identidad madre, no un producto.</p></div></div>
               <div className="mt-6 grid gap-4 sm:grid-cols-2">
-                <label className="text-xs text-white/50">Nombre<input className={`${INPUT} mt-2`} value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="Vida de Flows Drop 01" /></label>
-                <label className="text-xs text-white/50">Vendedor<select className={`${INPUT} mt-2`} value={draft.seller} onChange={(e) => setDraft({ ...draft, seller: e.target.value })}>{sellerOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
-                <label className="text-xs text-white/50">Colección<input className={`${INPUT} mt-2`} value={draft.collection} onChange={(e) => setDraft({ ...draft, collection: e.target.value })} placeholder="Drop 01" /></label>
-                <label className="text-xs text-white/50">Producto<select className={`${INPUT} mt-2`} value={draft.productTemplate} onChange={(e) => setDraft({ ...draft, productTemplate: e.target.value })}><option value="shirt">Remera</option><option value="hoodie">Hoodie</option><option value="cap">Gorra</option><option value="poster">Poster</option><option value="custom">Objeto personalizado</option></select></label>
-                <label className="text-xs text-white/50">Método<select className={`${INPUT} mt-2`} value={draft.creativeMode} onChange={(e) => setDraft({ ...draft, creativeMode: e.target.value })}><option value="from_scratch">Desde cero</option><option value="exact_design">Diseño exacto</option><option value="reference">Referencia / inspiración</option></select></label>
-                <label className="text-xs text-white/50">Categoría<input className={`${INPUT} mt-2`} value={draft.category} onChange={(e) => setDraft({ ...draft, category: e.target.value })} /></label>
+                <label className="text-xs text-white/50">Proyecto<input className={`${INPUT} mt-2`} value={projectDraft.name} onChange={(event) => setProjectDraft({ ...projectDraft, name: event.target.value })} placeholder="Buenos Genes" /></label>
+                <label className="text-xs text-white/50">Drop / cápsula<input className={`${INPUT} mt-2`} value={projectDraft.collection} onChange={(event) => setProjectDraft({ ...projectDraft, collection: event.target.value })} placeholder="Drop 01" /></label>
+                <label className="text-xs text-white/50">Vendedor<select className={`${INPUT} mt-2`} value={projectDraft.seller} onChange={(event) => setProjectDraft({ ...projectDraft, seller: event.target.value })}>{sellerOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+                <label className="text-xs text-white/50">Método<select className={`${INPUT} mt-2`} value={projectDraft.creativeMode} onChange={(event) => setProjectDraft({ ...projectDraft, creativeMode: event.target.value })}><option value="from_scratch">Desde cero</option><option value="exact_design">Diseño exacto</option><option value="reference">Referencia / inspiración</option></select></label>
               </div>
-              <label className="mt-4 block text-xs text-white/50">Contame la idea<textarea className={`${INPUT} mt-2 min-h-32 resize-y`} value={draft.brief} onChange={(e) => setDraft({ ...draft, brief: e.target.value })} placeholder="Remera negra oversize, identidad violeta y azul, arte adelante y detalle atrás..." /></label>
-              <button onClick={() => void createProject()} disabled={busy} className="mt-5 inline-flex items-center gap-2 rounded-xl bg-violet-500 px-5 py-3 text-sm font-bold disabled:opacity-50">{busy ? <Loader2 className="animate-spin" size={17} /> : <PackagePlus size={17} />} Crear proyecto</button>
+              <label className="mt-4 block text-xs text-white/50">Descripción / brief<textarea className={`${INPUT} mt-2 min-h-32 resize-y`} value={projectDraft.brief} onChange={(event) => setProjectDraft({ ...projectDraft, brief: event.target.value })} placeholder="Colección callejera premium, negro, violeta, cromado, genética, ADN, lujo futurista…" /></label>
+              <button onClick={() => void createProject()} disabled={busy} className="mt-5 inline-flex items-center gap-2 rounded-xl bg-violet-500 px-5 py-3 text-sm font-bold disabled:opacity-50">{busy ? <Loader2 className="animate-spin" size={17} /> : <Plus size={17} />} Crear proyecto</button>
             </section>
 
             <section className={`${CARD} p-5 sm:p-7`}>
-              <div className="flex items-center justify-between"><div><h2 className="font-semibold">Mis proyectos</h2><p className="mt-1 text-xs text-white/40">Salí y volvé cuando quieras.</p></div><button onClick={() => void load()} className="rounded-xl border border-white/10 p-2 text-white/50"><RefreshCw size={16} /></button></div>
-              <div className="mt-5 space-y-3">{projects.length ? projects.map((project) => <button key={project.id} onClick={() => openProject(project)} className="w-full rounded-2xl border border-white/10 bg-black/25 p-4 text-left hover:border-violet-400/35"><div className="flex items-center justify-between gap-3"><strong>{project.name}</strong><span className="text-[10px] uppercase tracking-wider text-violet-300">{project.status}</span></div><p className="mt-2 text-xs text-white/40">{project.category || "Merch"} · {project.product_template || "Producto"}</p>{project.commerce_product_id ? <p className="mt-2 text-[11px] text-emerald-300">Producto conectado · {project.commerce_product_id.slice(0, 8)}</p> : null}</button>) : <div className="rounded-2xl border border-dashed border-white/10 p-8 text-center text-sm text-white/35">Todavía no hay proyectos.</div>}</div>
+              <div className="flex items-center justify-between"><div><h2 className="font-semibold">Mis proyectos</h2><p className="mt-1 text-xs text-white/40">Persistentes: cerrá CLOUVA y seguí después.</p></div><button onClick={() => void load()} className="rounded-xl border border-white/10 p-2 text-white/50"><RefreshCw size={16} /></button></div>
+              <div className="mt-5 space-y-3">{projects.length ? projects.map((project) => <button key={project.id} onClick={() => void openProject(project)} className="w-full rounded-2xl border border-white/10 bg-black/25 p-4 text-left hover:border-violet-400/35"><div className="flex items-center justify-between gap-3"><strong>{project.name}</strong><span className="text-[10px] uppercase tracking-wider text-violet-300">{project.status}</span></div><p className="mt-2 text-xs text-white/40">{project.collection_name || "Sin nombre de drop"} · {project.creative_mode.replaceAll("_", " ")}</p></button>) : <div className="rounded-2xl border border-dashed border-white/10 p-8 text-center text-sm text-white/35">Todavía no hay proyectos.</div>}</div>
             </section>
           </div>
         ) : (
-          <div className="mt-8 space-y-6">
-            <section className={`${CARD} p-5 sm:p-7`}>
-              <div className="flex flex-wrap items-start justify-between gap-4"><div><button onClick={() => setActive(null)} className="text-xs text-white/40 hover:text-white">← Mis proyectos</button><h2 className="mt-3 text-2xl font-semibold">{active.name}</h2><p className="mt-2 text-sm text-white/45">{active.brief || "Sin brief todavía."}</p></div><span className="rounded-full border border-violet-400/20 bg-violet-500/10 px-3 py-1.5 text-xs text-violet-200">{active.creative_mode.replaceAll("_", " ")}</span></div>
+          <div className="mt-7 space-y-6">
+            <section className={`${CARD} overflow-hidden p-5 sm:p-7`}>
+              <div className="flex flex-wrap items-start justify-between gap-4"><div><p className="text-[10px] font-bold uppercase tracking-[.25em] text-violet-300">Proyecto / Drop</p><h2 className="mt-2 text-2xl font-semibold">{active.name} <span className="text-white/30">·</span> {active.collection_name || "Drop"}</h2><p className="mt-2 max-w-3xl text-sm text-white/45">{active.brief || "Sin brief."}</p></div><span className="rounded-full border border-violet-400/20 bg-violet-500/10 px-3 py-1.5 text-xs text-violet-200">{concepts.length} producto{concepts.length === 1 ? "" : "s"}</span></div>
             </section>
 
-            <div className="grid gap-6 xl:grid-cols-2">
-              <section className={`${CARD} p-5 sm:p-7`}>
-                <div className="flex items-center gap-3"><ImagePlus size={19} className="text-violet-300" /><div><h3 className="font-semibold">Referencias</h3><p className="text-xs text-white/40">Desde cero puede generar solo con el brief. Diseño exacto y Referencia requieren Frente.</p></div></div>
-                <div className="mt-5 grid gap-3 sm:grid-cols-3">{(["Frente", "Atrás", "Detalle"] as const).map((label) => <label key={label} className="cursor-pointer rounded-2xl border border-dashed border-white/15 bg-black/25 p-4 text-center text-sm hover:border-violet-400/40"><strong>{label}</strong><span className="mt-2 block text-xs text-white/35">Subir imagen</span><input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(e) => void addCapture(label, e.target.files?.[0])} /></label>)}</div>
-                {captures.length ? <div className="mt-4 flex flex-wrap gap-2">{captures.map((capture, index) => <span key={`${capture.label}-${index}`} className="rounded-full border border-white/10 px-3 py-1.5 text-xs text-white/55">{capture.label}: {capture.name}</span>)}</div> : null}
-                <button onClick={() => void generateImages()} disabled={busy || (active.creative_mode !== "from_scratch" && !captures.some((capture) => capture.label === "Frente"))} className="mt-5 inline-flex items-center gap-2 rounded-xl bg-violet-500 px-4 py-2.5 text-sm font-bold disabled:opacity-40">{busy ? <Loader2 className="animate-spin" size={16} /> : <Sparkles size={16} />} Generar imágenes</button>
-              </section>
-
-              <section className={`${CARD} p-5 sm:p-7`}>
-                <div className="flex items-center gap-3"><CheckCircle2 size={19} className="text-emerald-300" /><div><h3 className="font-semibold">Aprobados para Commerce</h3><p className="text-xs text-white/40">Solo lo que marques acá puede volverse público.</p></div></div>
-                <div className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-3">{(active.generated_assets ?? []).map((asset) => { const selected = approved.includes(asset.url); return <button key={asset.url} onClick={() => setApproved((current) => selected ? current.filter((url) => url !== asset.url) : [...current, asset.url])} className={`overflow-hidden rounded-2xl border text-left ${selected ? "border-emerald-400/60" : "border-white/10"}`}><img src={asset.url} alt={asset.kind || "Generado"} className="aspect-square w-full object-cover" /><span className="block px-3 py-2 text-[11px] text-white/55">{asset.kind || "generated"}{selected ? " · aprobado" : ""}</span></button>; })}</div>
-                {!active.generated_assets?.length ? <div className="mt-5 rounded-2xl border border-dashed border-white/10 p-8 text-center text-xs text-white/35">Generá imágenes para revisarlas acá.</div> : null}
-                <button onClick={() => void saveApproved()} disabled={busy || !approved.length} className="mt-5 rounded-xl border border-emerald-400/25 bg-emerald-400/10 px-4 py-2.5 text-sm font-semibold text-emerald-200 disabled:opacity-40">Guardar selección pública</button>
-              </section>
-            </div>
+            <section className={`${CARD} p-5 sm:p-7`}>
+              <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-[10px] font-bold uppercase tracking-[.2em] text-blue-300">02 · Identidad</p><h3 className="mt-1 text-xl font-semibold">Design System del drop</h3><p className="mt-1 text-xs text-white/40">Esta identidad se inyecta en cada generación; cada producto puede tener overrides.</p></div><button onClick={() => void saveDesignSystem()} disabled={busy} className="inline-flex items-center gap-2 rounded-xl border border-violet-400/25 bg-violet-500/10 px-4 py-2.5 text-sm font-semibold text-violet-200"><Save size={15} /> Guardar identidad</button></div>
+              <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <label className="text-xs text-white/50">Primario<input className={`${INPUT} mt-2`} value={design.primaryColor} onChange={(event) => setDesign({ ...design, primaryColor: event.target.value })} /></label>
+                <label className="text-xs text-white/50">Secundario<input className={`${INPUT} mt-2`} value={design.secondaryColor} onChange={(event) => setDesign({ ...design, secondaryColor: event.target.value })} /></label>
+                <label className="text-xs text-white/50">Acento<input className={`${INPUT} mt-2`} value={design.accentColor} onChange={(event) => setDesign({ ...design, accentColor: event.target.value })} /></label>
+                <label className="text-xs text-white/50">Fondo<input className={`${INPUT} mt-2`} value={design.backgroundColor} onChange={(event) => setDesign({ ...design, backgroundColor: event.target.value })} /></label>
+                <label className="text-xs text-white/50 sm:col-span-2">Dirección tipográfica<input className={`${INPUT} mt-2`} value={design.typographyDirection} onChange={(event) => setDesign({ ...design, typographyDirection: event.target.value })} placeholder="Chrome Y2K, condensada, técnica…" /></label>
+                <label className="text-xs text-white/50 sm:col-span-2">Lenguaje gráfico<input className={`${INPUT} mt-2`} value={design.graphicLanguage} onChange={(event) => setDesign({ ...design, graphicLanguage: event.target.value })} placeholder="ADN, cromosomas, símbolos…" /></label>
+                <label className="text-xs text-white/50">Texturas<input className={`${INPUT} mt-2`} value={design.textures} onChange={(event) => setDesign({ ...design, textures: event.target.value })} /></label>
+                <label className="text-xs text-white/50">Mood<input className={`${INPUT} mt-2`} value={design.mood} onChange={(event) => setDesign({ ...design, mood: event.target.value })} /></label>
+                <label className="text-xs text-white/50">Campaña<select className={`${INPUT} mt-2`} value={design.campaignStyle} onChange={(event) => setDesign({ ...design, campaignStyle: event.target.value })}><option>urbano</option><option>estudio</option><option>editorial</option><option>minimal</option><option>premium</option><option>futurista</option></select></label>
+                <label className="text-xs text-white/50">No usar<input className={`${INPUT} mt-2`} value={design.prohibitedElements} onChange={(event) => setDesign({ ...design, prohibitedElements: event.target.value })} /></label>
+                <label className="text-xs text-white/50 sm:col-span-2">Reglas de composición<input className={`${INPUT} mt-2`} value={design.compositionRules} onChange={(event) => setDesign({ ...design, compositionRules: event.target.value })} /></label>
+              </div>
+              <div className="mt-5 grid gap-3 sm:grid-cols-3">
+                {(["cover", "logo", "moodboard"] as const).map((kind) => <label key={kind} className="cursor-pointer rounded-2xl border border-dashed border-white/12 bg-black/20 p-4 text-center text-xs text-white/55 hover:border-violet-400/40"><UploadCloud className="mx-auto mb-2 h-5 w-5 text-violet-300" />Subir {kind === "cover" ? "portada / arte" : kind === "logo" ? "logo" : "moodboard"}<input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(event) => void uploadProjectAsset(kind, event.target.files?.[0])} /></label>)}
+              </div>
+              {active.reference_assets?.length ? <div className="mt-4 flex gap-3 overflow-x-auto pb-1">{active.reference_assets.map((asset, index) => <div key={`${asset.url}-${index}`} className="w-24 shrink-0 overflow-hidden rounded-xl border border-white/10"><img src={asset.url} alt={asset.label || asset.kind || "Referencia"} className="aspect-square w-full object-cover" /><p className="truncate px-2 py-1.5 text-[10px] text-white/45">{asset.kind || "ref"}</p></div>)}</div> : null}
+            </section>
 
             <section className={`${CARD} p-5 sm:p-7`}>
-              <div className="flex items-center gap-3"><Shirt size={19} className="text-violet-300" /><div><h3 className="font-semibold">Producto comercial</h3><p className="text-xs text-white/40">Esto termina en commerce_products. No se crea un merch_product paralelo.</p></div></div>
-              <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-5"><label className="text-xs text-white/50">Precio<input className={`${INPUT} mt-2`} inputMode="decimal" value={commerce.price} onChange={(e) => setCommerce({ ...commerce, price: e.target.value })} placeholder="25000" /></label><label className="text-xs text-white/50">Moneda<select className={`${INPUT} mt-2`} value={commerce.currency} onChange={(e) => setCommerce({ ...commerce, currency: e.target.value })}><option>ARS</option><option>USD</option></select></label><label className="text-xs text-white/50">Stock total<input className={`${INPUT} mt-2`} inputMode="numeric" value={commerce.stock} onChange={(e) => setCommerce({ ...commerce, stock: e.target.value })} /></label><label className="text-xs text-white/50">Talles<input className={`${INPUT} mt-2`} value={commerce.sizes} onChange={(e) => setCommerce({ ...commerce, sizes: e.target.value })} placeholder="S,M,L,XL" /></label><label className="text-xs text-white/50">Color<input className={`${INPUT} mt-2`} value={commerce.color} onChange={(e) => setCommerce({ ...commerce, color: e.target.value })} /></label></div>
-              <div className="mt-5 flex flex-wrap gap-3"><button onClick={() => void prepareProduct()} disabled={busy} className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-bold text-black disabled:opacity-50"><PackagePlus size={16} /> {active.commerce_product_id ? "Actualizar producto" : "Preparar producto"}</button><Link href={`/crear/merch/${encodeURIComponent(active.id)}/3d`} className="inline-flex items-center gap-2 rounded-xl border border-violet-400/25 bg-violet-500/10 px-4 py-2.5 text-sm font-semibold text-violet-200"><Box size={16} /> Gemelo 3D</Link><button onClick={() => void publishMarket()} disabled={busy || !active.commerce_product_id} className="inline-flex items-center gap-2 rounded-xl border border-emerald-400/25 bg-emerald-400/10 px-4 py-2.5 text-sm font-semibold text-emerald-200 disabled:opacity-40"><Send size={16} /> Publicar en Market</button>{preparedProduct?.slug ? <Link href={`/producto/${preparedProduct.slug}`} className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/60">Ver ficha</Link> : null}</div>
-              {active.commerce_product_id ? <p className="mt-4 text-xs text-white/35">productId canónico: <span className="font-mono text-white/60">{active.commerce_product_id}</span></p> : null}
+              <div className="flex flex-wrap items-center justify-between gap-4"><div><p className="text-[10px] font-bold uppercase tracking-[.2em] text-violet-300">03 · Productos</p><h3 className="mt-1 text-xl font-semibold">Productos del drop</h3><p className="mt-1 text-xs text-white/40">Elegir acá crea conceptos creativos. Commerce todavía no existe.</p></div><button onClick={() => void addSelectedProducts()} disabled={busy || !selectedTemplates.size} className="inline-flex items-center gap-2 rounded-xl bg-violet-500 px-4 py-2.5 text-sm font-bold disabled:opacity-40"><PackagePlus size={16} /> Agregar seleccionados</button></div>
+              <div className="mt-5 grid gap-2 grid-cols-2 sm:grid-cols-3 lg:grid-cols-6">{PRODUCT_TEMPLATES.map((template) => { const checked = selectedTemplates.has(template.key); return <button key={template.key} onClick={() => setSelectedTemplates((current) => { const next = new Set(current); if (next.has(template.key)) next.delete(template.key); else next.add(template.key); return next; })} className={`rounded-2xl border p-3 text-left transition ${checked ? "border-violet-400/55 bg-violet-500/12" : "border-white/10 bg-black/20"}`}><div className="flex items-center justify-between"><span className="text-[10px] text-white/35">{template.group}</span>{checked ? <Check size={14} className="text-violet-300" /> : null}</div><strong className="mt-2 block text-sm">{template.label}</strong></button>; })}</div>
             </section>
+
+            {concepts.length ? (
+              <>
+                <section className={`${CARD} p-5 sm:p-7`}>
+                  <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-[10px] font-bold uppercase tracking-[.2em] text-blue-300">04 · Generación</p><h3 className="mt-1 text-xl font-semibold">Review Board</h3><p className="mt-1 text-xs text-white/40">Todos comparten identidad; cada tarjeta conserva assets, estado, variantes y 3D propios.</p></div><button onClick={() => void generateDrop()} disabled={busy} className="inline-flex items-center gap-2 rounded-xl border border-blue-400/25 bg-blue-500/10 px-4 py-2.5 text-sm font-semibold text-blue-200 disabled:opacity-40">{busy ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />} Generar drop</button></div>
+                  <div className="mt-5 flex gap-3 overflow-x-auto pb-3 lg:grid lg:grid-cols-4 lg:overflow-visible">{concepts.map((concept) => { const cover = concept.approved_assets?.[0]?.url || concept.generated_assets?.find((asset) => asset.kind === "front_catalog")?.url || concept.generated_assets?.[0]?.url; const selected = selectedConcept?.id === concept.id; return <button key={concept.id} onClick={() => setSelectedConceptId(concept.id)} className={`min-w-[220px] overflow-hidden rounded-2xl border text-left transition lg:min-w-0 ${selected ? "border-violet-400/60 bg-violet-500/10" : "border-white/10 bg-black/25"}`}><div className="aspect-square bg-white/[.025]">{cover ? <img src={cover} alt={concept.name} className="h-full w-full object-cover" /> : <div className="grid h-full place-items-center text-white/20"><Shirt size={34} /></div>}</div><div className="p-3"><div className="flex items-start justify-between gap-2"><strong className="text-sm">{concept.name}</strong><span className="text-[9px] uppercase tracking-wide text-violet-300">{concept.status}</span></div><p className="mt-2 text-[11px] text-white/35">{templateInfo(concept.product_template).label}{concept.commerce_product ? ` · product ${concept.commerce_product.id.slice(0, 7)}` : " · concepto"}</p></div></button>; })}</div>
+                </section>
+
+                {selectedConcept ? (() => {
+                  const concept = selectedConcept;
+                  const draftValue = conceptDrafts[concept.id] ?? defaultConceptDraft(concept);
+                  const conceptCaptures = captures[concept.id] ?? [];
+                  const selectedApproved = approved[concept.id] ?? [];
+                  const conceptBusy = busyConcepts.has(concept.id);
+                  return <section className={`${CARD} p-5 sm:p-7`}>
+                    <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-[10px] font-bold uppercase tracking-[.2em] text-violet-300">Producto seleccionado</p><h3 className="mt-1 text-2xl font-semibold">{concept.name}</h3><p className="mt-1 text-xs text-white/40">Hereda el Design System del drop. Los campos de abajo son específicos de este artículo.</p></div><div className="flex gap-2">{!concept.commerce_product ? <button onClick={() => void deleteConcept(concept)} disabled={conceptBusy} className="rounded-xl border border-rose-400/20 p-2.5 text-rose-300"><Trash2 size={16} /></button> : null}<span className="rounded-full border border-white/10 px-3 py-2 text-xs text-white/50">{concept.role}</span></div></div>
+
+                    <div className="mt-5 grid gap-4 lg:grid-cols-[1fr_.9fr]">
+                      <div>
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <label className="text-xs text-white/50">Nombre<input className={`${INPUT} mt-2`} value={draftValue.name} onChange={(event) => updateConceptDraft(concept.id, { name: event.target.value })} /></label>
+                          <label className="text-xs text-white/50">Color base<input className={`${INPUT} mt-2`} value={draftValue.color} onChange={(event) => updateConceptDraft(concept.id, { color: event.target.value })} /></label>
+                          <label className="text-xs text-white/50">Placement<input className={`${INPUT} mt-2`} value={draftValue.placement} onChange={(event) => updateConceptDraft(concept.id, { placement: event.target.value })} placeholder="Logo chico frente, gráfica grande atrás…" /></label>
+                          <label className="text-xs text-white/50">Material<input className={`${INPUT} mt-2`} value={draftValue.material} onChange={(event) => updateConceptDraft(concept.id, { material: event.target.value })} placeholder="Algodón pesado / bordado…" /></label>
+                          <label className="text-xs text-white/50 sm:col-span-2">Notas del producto<textarea className={`${INPUT} mt-2 min-h-20`} value={draftValue.notes} onChange={(event) => updateConceptDraft(concept.id, { notes: event.target.value })} /></label>
+                          <label className="text-xs text-white/50 sm:col-span-2">Override del Design System<textarea className={`${INPUT} mt-2 min-h-20`} value={draftValue.overrideNotes} onChange={(event) => updateConceptDraft(concept.id, { overrideNotes: event.target.value })} placeholder="Ej: usar sólo el símbolo, sin texto." /></label>
+                        </div>
+                        <button onClick={() => void saveConceptDetails(concept)} disabled={conceptBusy} className="mt-3 inline-flex items-center gap-2 rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/65"><Save size={15} /> Guardar producto</button>
+
+                        <div className="mt-6"><div className="flex items-center gap-2"><ImagePlus size={17} className="text-violet-300" /><h4 className="font-semibold">Referencias de este producto</h4></div><p className="mt-1 text-xs text-white/35">En Diseño exacto/Referencia, Frente es obligatorio. Desde cero puede generarse sólo con brief + identidad.</p><div className="mt-3 grid grid-cols-3 gap-2">{(["Frente", "Atrás", "Detalle"] as const).map((label) => <label key={label} className="cursor-pointer rounded-xl border border-dashed border-white/12 bg-black/20 p-3 text-center text-xs text-white/50"><UploadCloud className="mx-auto mb-1 h-4 w-4 text-violet-300" />{label}<input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(event) => void addConceptCapture(concept.id, label, event.target.files?.[0])} /></label>)}</div>{conceptCaptures.length ? <div className="mt-2 flex flex-wrap gap-2">{conceptCaptures.map((capture, index) => <span key={`${capture.label}-${index}`} className="rounded-full border border-white/10 px-2 py-1 text-[10px] text-white/45">{capture.label}: {capture.name}</span>)}</div> : null}</div>
+                        <button onClick={() => void generateConcept(concept)} disabled={conceptBusy} className="mt-4 inline-flex items-center gap-2 rounded-xl bg-violet-500 px-4 py-2.5 text-sm font-bold disabled:opacity-40">{conceptBusy ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />} {concept.status === "failed" ? "Reintentar generación" : "Generar este producto"}</button>
+                      </div>
+
+                      <div className="rounded-2xl border border-white/8 bg-black/20 p-4">
+                        <div className="flex items-center gap-2"><CheckCircle2 size={17} className="text-emerald-300" /><h4 className="font-semibold">05 · Revisión</h4></div>
+                        <div className="mt-3 grid grid-cols-2 gap-2">{concept.generated_assets?.map((asset) => { const isApproved = selectedApproved.includes(asset.url); return <button key={asset.url} onClick={() => toggleApproved(concept, asset.url)} className={`overflow-hidden rounded-xl border text-left ${isApproved ? "border-emerald-400/60" : "border-white/10"}`}><img src={asset.url} alt={asset.kind || "Generado"} className="aspect-square w-full object-cover" /><span className="block px-2 py-1.5 text-[10px] text-white/50">{asset.kind}{isApproved ? " · aprobado" : ""}</span></button>; })}</div>
+                        {!concept.generated_assets?.length ? <div className="mt-3 rounded-xl border border-dashed border-white/10 p-8 text-center text-xs text-white/30">Todavía no hay imágenes para revisar.</div> : null}
+                        <button onClick={() => void approveConcept(concept)} disabled={conceptBusy || !selectedApproved.length} className="mt-3 w-full rounded-xl border border-emerald-400/20 bg-emerald-400/10 px-3 py-2.5 text-sm font-semibold text-emerald-200 disabled:opacity-40">Aprobar selección</button>
+                      </div>
+                    </div>
+
+                    <div className="mt-6 rounded-2xl border border-white/8 bg-black/20 p-4 sm:p-5">
+                      <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-[10px] font-bold uppercase tracking-[.2em] text-emerald-300">06 · Commerce</p><h4 className="mt-1 font-semibold">Precio, stock y variantes</h4></div>{concept.commerce_product ? <span className="font-mono text-[10px] text-emerald-300">{concept.commerce_product.id}</span> : null}</div>
+                      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><label className="text-xs text-white/50">Precio<input className={`${INPUT} mt-2`} inputMode="decimal" value={draftValue.price} onChange={(event) => updateConceptDraft(concept.id, { price: event.target.value })} placeholder="25000" /></label><label className="text-xs text-white/50">Moneda<select className={`${INPUT} mt-2`} value={draftValue.currency} onChange={(event) => updateConceptDraft(concept.id, { currency: event.target.value })}><option>ARS</option><option>USD</option></select></label><label className="text-xs text-white/50">Stock total<input className={`${INPUT} mt-2`} inputMode="numeric" value={draftValue.stock} onChange={(event) => updateConceptDraft(concept.id, { stock: event.target.value })} /></label><label className="text-xs text-white/50">Variantes<input className={`${INPUT} mt-2`} value={draftValue.variants} onChange={(event) => updateConceptDraft(concept.id, { variants: event.target.value })} placeholder="S,M,L,XL" /></label></div>
+                      <div className="mt-4 flex flex-wrap gap-2"><button onClick={() => void prepareConcept(concept)} disabled={conceptBusy || !["approved", "commerce_ready", "published"].includes(concept.status)} className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-bold text-black disabled:opacity-40"><PackagePlus size={16} /> {concept.commerce_product ? "Actualizar producto" : "Preparar producto"}</button>{GARMENT_TEMPLATES.has(concept.product_template) ? <Link href={`/mi-flow/crear-prenda?creatorProjectId=${encodeURIComponent(active.id)}&creatorConceptId=${encodeURIComponent(concept.id)}`} className="inline-flex items-center gap-2 rounded-xl border border-violet-400/25 bg-violet-500/10 px-4 py-2.5 text-sm font-semibold text-violet-200"><Box size={16} /> Crear gemelo 3D</Link> : null}{concept.clothing_item_id ? <span className="rounded-xl border border-blue-400/20 bg-blue-400/10 px-3 py-2.5 text-xs text-blue-200">3D vinculado · {concept.clothing_item_id.slice(0, 8)}</span> : null}{concept.commerce_product?.slug ? <Link href={`/producto/${concept.commerce_product.slug}`} className="inline-flex items-center gap-2 rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/60">Ver ficha <ChevronRight size={14} /></Link> : null}</div>
+                    </div>
+
+                    <div className="mt-5 rounded-2xl border border-white/8 bg-black/20 p-4 sm:p-5"><p className="text-[10px] font-bold uppercase tracking-[.2em] text-blue-300">07 · Publicación</p><div className="mt-2 flex flex-wrap items-center justify-between gap-3"><p className="text-sm text-white/45">Publica el mismo `commerce_product` usando `commerce_product_publications`.</p><button onClick={() => void publishConcept(concept)} disabled={conceptBusy || !concept.commerce_product?.id} className="inline-flex items-center gap-2 rounded-xl border border-emerald-400/25 bg-emerald-400/10 px-4 py-2.5 text-sm font-semibold text-emerald-200 disabled:opacity-40"><Send size={16} /> {concept.status === "published" ? "Actualizar publicación" : "Publicar en Market"}</button></div></div>
+                  </section>;
+                })() : null}
+
+                <section className={`${CARD} p-5 sm:p-7`}>
+                  <div className="flex flex-wrap items-center justify-between gap-4"><div><p className="text-[10px] font-bold uppercase tracking-[.22em] text-violet-300">Acciones del drop</p><h3 className="mt-1 text-xl font-semibold">Colección completa</h3><p className="mt-1 text-xs text-white/40">Las operaciones son por producto: si uno falla, los demás continúan.</p></div><div className="flex flex-wrap gap-2"><button onClick={() => void prepareDrop()} disabled={busy} className="rounded-xl border border-white/10 bg-white/[.04] px-4 py-2.5 text-sm font-semibold disabled:opacity-40">Preparar productos</button><button onClick={() => void publishDrop()} disabled={busy} className="inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-2.5 text-sm font-bold disabled:opacity-40"><Send size={15} /> Publicar drop</button></div></div>
+                  <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">{concepts.map((concept) => <div key={concept.id} className="rounded-xl border border-white/8 bg-black/20 p-3"><div className="flex items-center justify-between gap-2"><strong className="truncate text-sm">{concept.name}</strong><span className="text-[9px] uppercase text-violet-300">{concept.status}</span></div><p className="mt-2 text-[10px] text-white/35">{concept.commerce_product ? `Commerce ${concept.commerce_product.id.slice(0, 8)}` : "Sin producto Commerce"}{concept.clothing_item_id ? " · 3D" : ""}</p></div>)}</div>
+                </section>
+              </>
+            ) : <section className={`${CARD} p-10 text-center`}><Shirt className="mx-auto h-8 w-8 text-white/20" /><h3 className="mt-3 font-semibold">El drop todavía está vacío</h3><p className="mt-2 text-sm text-white/35">Seleccioná arriba Remera, Hoodie, Gorra, Poster u otros productos y agregalos al proyecto.</p></section>}
           </div>
         )}
       </div>
