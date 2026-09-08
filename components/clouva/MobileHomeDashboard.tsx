@@ -63,6 +63,7 @@ type HomeVisualAssets = {
   vipCrown: string | null;
   vipCompleteAlt: string | null;
   playerOrbits: string | null;
+  cardSpot: string | null;
 };
 
 type HomeVisualAssetsResponse = {
@@ -76,6 +77,7 @@ const EMPTY_HOME_VISUAL_ASSETS: HomeVisualAssets = {
   vipCrown: null,
   vipCompleteAlt: null,
   playerOrbits: null,
+  cardSpot: null,
 };
 
 function initials(value: string) {
@@ -216,20 +218,6 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
             alt=""
             aria-hidden="true"
             data-clouva-player-orbits
-            style={{
-              position: "absolute",
-              top: "50%",
-              left: "50%",
-              zIndex: 0,
-              width: "300px",
-              height: "300px",
-              maxWidth: "none",
-              objectFit: "contain",
-              pointerEvents: "none",
-              userSelect: "none",
-              transform: "translate(-50%, -50%)",
-              filter: "drop-shadow(0 0 18px rgba(184, 71, 255, 0.42))",
-            }}
           />
           {homeVisualAssets.playerRing ? (
             <img
@@ -237,25 +225,15 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
               alt=""
               aria-hidden="true"
               data-clouva-player-ring
-              style={{
-                position: "absolute",
-                top: "50%",
-                left: "50%",
-                zIndex: 1,
-                width: "205px",
-                height: "205px",
-                maxWidth: "none",
-                objectFit: "contain",
-                pointerEvents: "none",
-                userSelect: "none",
-                transform: "translate(-50%, -50%)",
-                filter: "drop-shadow(0 0 22px rgba(191, 75, 255, 0.68))",
-              }}
             />
           ) : (
-            <span className={styles.identityRing} aria-hidden="true" style={{ zIndex: 1 }} />
+            <span
+              className={styles.identityRing}
+              aria-hidden="true"
+              data-clouva-player-ring-fallback
+            />
           )}
-          <span className={styles.identityCore} data-clouva-player-core style={{ position: "relative", zIndex: 2 }}>
+          <span className={styles.identityCore} data-clouva-player-core>
             {playerImage ? (
               <img src={playerImage} alt={`Foto de ${playerDisplayName}`} />
             ) : (
@@ -469,12 +447,14 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
       );
     }
 
+    const spotArtwork = homeVisualAssets.cardSpot || card.imageUrl;
+
     return (
       <Link
         key={id}
         href={href}
         className={`${styles.featureCard} ${styles.spotCard}`}
-        style={{ backgroundImage: `url(${card.imageUrl})` }}
+        style={{ backgroundImage: `url(${spotArtwork})` }}
         onClick={preventPreviewNavigation}
         data-clouva-block={id}
       >
