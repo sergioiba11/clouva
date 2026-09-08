@@ -19,7 +19,12 @@ type ProfileCopy = {
 
 type GeneratedAsset = { kind: string; url: string };
 type LayoutSectionSummary = { type: string };
-type LayoutVariant = { layout: { sections?: LayoutSectionSummary[] } | null; assets: GeneratedAsset[] };
+type LayoutVariant = {
+  layout: { sections?: LayoutSectionSummary[] } | null;
+  assets: GeneratedAsset[];
+  previewUrl?: string | null;
+  selected?: boolean;
+};
 
 type ReferenceFidelityClientState = {
   enabled?: boolean;
@@ -74,6 +79,8 @@ type InstagramConnection = {
   status: string;
 } | null;
 
+type UploadTarget = "mockup" | "theme" | "logo" | "photos";
+
 export type StudioIdentityState = {
   publishedVersionNumber: number | null;
   draftVersionNumber: number | null;
@@ -98,10 +105,10 @@ const STATUS_LABEL: Record<string, string> = {
   preparing_identity: "Preparando la identidad…",
   analyzing_identity: "Analizando el Studio…",
   generating_copy: "Escribiendo la presentación…",
-  classifying_reference: "Analizando la referencia visual…",
-  generating_assets: "Reconstruyendo composición y assets…",
-  generating_variants: "Armando propuestas de diseño…",
-  generating_variant_assets: "Preparando assets de las propuestas…",
+  classifying_reference: "Analizando tu referencia y la intención de cada imagen…",
+  generating_assets: "Reconstruyendo composición y preparando branding final…",
+  generating_variants: "Creando 3 estilos para el mismo Studio…",
+  generating_variant_assets: "Renderizando ejemplos reales para elegir…",
   assembling_profile: "Armando el borrador real…",
   rendering_reference_preview: "Renderizando la propuesta real…",
   capturing_reference_render: "Capturando el render al viewport de referencia…",
@@ -120,7 +127,7 @@ const SECTION_LABEL: Record<string, string> = {
   hero: "Portada", about: "Sobre", pillars: "Pilares", gallery: "Galería", roster: "Players",
   services: "Servicios", membership: "Membresías", music: "Música", contact: "Contacto",
 };
-const MAX_REFERENCE_IMAGES = 3;
+const MAX_ROLE_IMAGES = 3;
 const EDITABLE_FIELDS: Array<{ key: keyof ProfileCopy; label: string; multiline?: boolean }> = [
   { key: "tagline", label: "Frase institucional" },
   { key: "short_bio", label: "Presentación", multiline: true },
@@ -141,9 +148,13 @@ export function StudioAiProfilePanel({ studioId, onStateChange }: { studioId: st
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [draftEdits, setDraftEdits] = useState<Partial<ProfileCopy>>({});
-  const [designReferenceUrls, setDesignReferenceUrls] = useState<string[]>([]);
+  const [mockupUrls, setMockupUrls] = useState<string[]>([]);
+  const [themeUrls, setThemeUrls] = useState<string[]>([]);
+  const [logoUrls, setLogoUrls] = useState<string[]>([]);
   const [realPhotoUrls, setRealPhotoUrls] = useState<string[]>([]);
-  const [uploadingReference, setUploadingReference] = useState<"design" | "photos" | null>(null);
+  const [creativeDirection, setCreativeDirection] = useState("");
+  const [logoOwnershipConfirmed, setLogoOwnershipConfirmed] = useState(false);
+  const [uploadingReference, setUploadingReference] = useState<UploadTarget | null>(null);
   const [instagramConnection, setInstagramConnection] = useState<InstagramConnection>(null);
   const [instagramLoaded, setInstagramLoaded] = useState(false);
   const [connectingInstagram, setConnectingInstagram] = useState(false);
@@ -232,30 +243,67 @@ export function StudioAiProfilePanel({ studioId, onStateChange }: { studioId: st
     finally { setConnectingInstagram(false); }
   };
 
-  const combinedReferenceUrls = [...designReferenceUrls, ...realPhotoUrls].slice(0, MAX_REFERENCE_IMAGES);
+  const hasCreativeSource = Boolean(mockupUrls.length || themeUrls.length || logoUrls.length || creativeDirection.trim());
   const startGeneration = async () => {
-    setStarting(true); setError(null); setMessage(null);
+    setError(null); setMessage(null);
+    if (!hasCreativeSource) {
+      setError("Agregá un mockup, un logo, una imagen de inspiración o escribí al menos una palabra sobre el estilo que querés.");
+      return;
+    }
+    if (logoUrls.length && !logoOwnershipConfirmed) {
+      setError("Confirmá que el logo pertenece a tu Studio o que estás autorizado a usarlo.");
+      return;
+    }
+    setStarting(true);
     try {
-      const response = await authenticatedFetch("/api/vip-profile/generate", { method: "POST", body: JSON.stringify({ studioId, referenceImageUrls: combinedReferenceUrls }) });
-      await readApiJson(response); setDesignReferenceUrls([]); setRealPhotoUrls([]); await load();
+      const response = await authenticatedFetch("/api/vip-profile/generate", {
+        method: "POST",
+        body: JSON.stringify({
+          studioId,
+          designInput: {
+            mockupImages: mockupUrls,
+            themeImages: themeUrls,
+            realPhotos: realPhotoUrls,
+            logoImages: logoUrls,
+            creativeDirection: creativeDirection.trim() || null,
+            logoOwnershipConfirmed,
+          },
+        }),
+      });
+      await readApiJson(response);
+      setMockupUrls([]); setThemeUrls([]); setLogoUrls([]); setRealPhotoUrls([]); setCreativeDirection(""); setLogoOwnershipConfirmed(false);
+      await load();
     } catch (startError) { setError(startError instanceof Error ? startError.message : "No se pudo iniciar la generación."); }
     finally { setStarting(false); }
   };
-  const uploadReferenceImages = async (files: FileList | null, target: "design" | "photos") => {
-    if (!files?.length) return; const remaining = MAX_REFERENCE_IMAGES - combinedReferenceUrls.length; if (remaining <= 0) return;
+
+  const uploadReferenceImages = async (files: FileList | null, target: UploadTarget) => {
+    if (!files?.length) return;
+    const currentCount = target === "mockup" ? mockupUrls.length : target === "theme" ? themeUrls.length : target === "logo" ? logoUrls.length : realPhotoUrls.length;
+    const max = target === "logo" ? 1 : MAX_ROLE_IMAGES;
+    const remaining = max - currentCount;
+    if (remaining <= 0) return;
     setUploadingReference(target); setError(null);
     try {
       const form = new FormData(); form.append("studioId", studioId); Array.from(files).slice(0, remaining).forEach((file) => form.append("images", file));
       const response = await authenticatedFetch("/api/vip-profile/reference-images", { method: "POST", body: form });
       const payload = await readApiJson<{ urls: string[] }>(response);
-      if (target === "design") setDesignReferenceUrls((current) => [...current, ...payload.urls].slice(0, MAX_REFERENCE_IMAGES));
-      else setRealPhotoUrls((current) => [...current, ...payload.urls].slice(0, MAX_REFERENCE_IMAGES));
+      if (target === "mockup") setMockupUrls((current) => [...current, ...payload.urls].slice(0, MAX_ROLE_IMAGES));
+      else if (target === "theme") setThemeUrls((current) => [...current, ...payload.urls].slice(0, MAX_ROLE_IMAGES));
+      else if (target === "logo") setLogoUrls(payload.urls.slice(0, 1));
+      else setRealPhotoUrls((current) => [...current, ...payload.urls].slice(0, MAX_ROLE_IMAGES));
     } catch (uploadError) { setError(uploadError instanceof Error ? uploadError.message : "No se pudo subir la imagen."); }
     finally { setUploadingReference(null); }
   };
+
   const selectVariant = async (index: number) => {
     if (!job) return; setSelectingVariant(index); setError(null);
-    try { const response = await authenticatedFetch(`/api/vip-profile/jobs/${job.id}/select-variant`, { method: "POST", body: JSON.stringify({ variantIndex: index }) }); await readApiJson(response); setMessage("Diseño elegido. Revisalo en el preview antes de publicar."); await load(); }
+    try {
+      const response = await authenticatedFetch(`/api/vip-profile/jobs/${job.id}/select-variant`, { method: "POST", body: JSON.stringify({ variantIndex: index }) });
+      await readApiJson(response);
+      setMessage("Diseño elegido. CLOUVA está preparando el branding y los assets finales de esa opción.");
+      await load();
+    }
     catch (selectError) { setError(selectError instanceof Error ? selectError.message : "No se pudo elegir esa propuesta."); }
     finally { setSelectingVariant(null); }
   };
@@ -280,6 +328,8 @@ export function StudioAiProfilePanel({ studioId, onStateChange }: { studioId: st
   const copy = draftVersion?.copy_config ?? job?.generated_copy;
   const palette = copy?.palette ?? [];
   const generationInProgress = Boolean(job && IN_PROGRESS_STATUSES.has(job.status));
+  const awaitingVariantSelection = job?.status === "awaiting_variant_selection";
+  const flowBusy = generationInProgress || awaitingVariantSelection;
   const scorePercent = typeof fidelity?.visualScore === "number" ? Math.round(fidelity.visualScore * 100) : null;
   const viewportLabel = fidelity?.referenceViewport?.width && fidelity.referenceViewport.height ? `${fidelity.referenceViewport.width} × ${fidelity.referenceViewport.height}` : null;
 
@@ -291,19 +341,45 @@ export function StudioAiProfilePanel({ studioId, onStateChange }: { studioId: st
           <VersionBadge label="BORRADOR" value={draftVersion ? `v${draftVersion.version_number}` : "SIN BORRADOR"} tone={draftVersion ? "violet" : "neutral"} />
           {staleDrafts.length ? <span className="text-xs text-amber-200/65">{staleDrafts.length} borrador histórico ignorado</span> : null}
         </div>
-        {!generationInProgress ? <button disabled={starting} onClick={() => void startGeneration()} className="shrink-0 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold transition hover:bg-violet-500 disabled:opacity-50">{publishedVersion ? "Crear nueva versión" : "Crear identidad"}</button> : null}
+        {!flowBusy ? <button disabled={starting} onClick={() => void startGeneration()} className="shrink-0 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold transition hover:bg-violet-500 disabled:opacity-50">{publishedVersion ? "Crear nueva versión" : "Crear identidad"}</button> : null}
       </div>
 
-      {!generationInProgress ? (
-        <div className="grid gap-4 lg:grid-cols-2">
+      {!flowBusy ? (
+        <div className="space-y-4">
+          <div className="grid gap-4 lg:grid-cols-2">
+            <InputCard eyebrow="Referencia exacta" title="Mockup / web" description="Quiero que mi web se vea así. Si cargás un mockup, CLOUVA usa Reference Fidelity y no te muestra 3 plantillas distintas." accent>
+              <ImageTray urls={mockupUrls} onRemove={(url) => setMockupUrls((current) => current.filter((item) => item !== url))}>
+                {mockupUrls.length < MAX_ROLE_IMAGES ? <UploadTile label={uploadingReference === "mockup" ? "…" : "+ Mockup"} disabled={Boolean(uploadingReference)} onFiles={(files) => void uploadReferenceImages(files, "mockup")} /> : null}
+              </ImageTray>
+            </InputCard>
+
+            <InputCard eyebrow="Identidad oficial" title="Logo del Studio" description="Este es mi logo. CLOUVA lo usa como identidad y completa las variantes web que hagan falta.">
+              <ImageTray urls={logoUrls} onRemove={(url) => { setLogoUrls((current) => current.filter((item) => item !== url)); setLogoOwnershipConfirmed(false); }}>
+                {logoUrls.length < 1 ? <UploadTile label={uploadingReference === "logo" ? "…" : "+ Logo"} disabled={Boolean(uploadingReference)} multiple={false} onFiles={(files) => void uploadReferenceImages(files, "logo")} /> : null}
+              </ImageTray>
+              {logoUrls.length ? <label className="mt-3 flex items-start gap-2 rounded-xl border border-white/10 bg-black/20 p-3 text-xs leading-5 text-white/55"><input type="checkbox" className="mt-1" checked={logoOwnershipConfirmed} onChange={(event) => setLogoOwnershipConfirmed(event.target.checked)} /><span>Confirmo que este logo pertenece al Studio o que estoy autorizado a usarlo.</span></label> : null}
+            </InputCard>
+
+            <InputCard eyebrow="Dirección visual" title="Tema / inspiración" description="Quiero que mi web tenga esta energía. Una foto de un árbol, hielo, arquitectura o una textura se interpreta como temática, no como página a copiar.">
+              <ImageTray urls={themeUrls} onRemove={(url) => setThemeUrls((current) => current.filter((item) => item !== url))}>
+                {themeUrls.length < MAX_ROLE_IMAGES ? <UploadTile label={uploadingReference === "theme" ? "…" : "+ Tema"} disabled={Boolean(uploadingReference)} onFiles={(files) => void uploadReferenceImages(files, "theme")} /> : null}
+              </ImageTray>
+            </InputCard>
+
+            <InputCard eyebrow="Contenido real" title="Fotos del Studio" description="Estas fotos se usan como media real del Studio. No definen por sí solas una dirección visual.">
+              {!instagramLoaded ? <p className="mt-3 text-xs text-white/45">Cargando Instagram…</p> : instagramConnection ? <div className="mt-3 flex items-center justify-between gap-3"><p className="min-w-0 truncate text-sm text-white/65">Instagram · <strong>@{instagramConnection.external_username || instagramConnection.display_name}</strong></p><button disabled={connectingInstagram} onClick={() => void disconnectInstagram()} className="shrink-0 rounded-lg border border-white/15 px-3 py-1.5 text-xs">Desconectar</button></div> : <button disabled={connectingInstagram} onClick={() => void connectInstagram()} className="mt-3 rounded-xl border border-violet-400/25 bg-violet-500/10 px-4 py-2 text-xs font-semibold text-violet-100">Conectar Instagram</button>}
+              <ImageTray urls={realPhotoUrls} onRemove={(url) => setRealPhotoUrls((current) => current.filter((item) => item !== url))}>
+                {realPhotoUrls.length < MAX_ROLE_IMAGES ? <UploadTile label={uploadingReference === "photos" ? "…" : "+ Fotos"} disabled={Boolean(uploadingReference)} onFiles={(files) => void uploadReferenceImages(files, "photos")} /> : null}
+              </ImageTray>
+            </InputCard>
+          </div>
+
           <section className="rounded-2xl border border-white/10 bg-black/20 p-4">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-white/35">Fuentes del Studio</p><h3 className="mt-1 text-sm font-semibold">Datos y fotos reales</h3>
-            {!instagramLoaded ? <p className="mt-3 text-xs text-white/45">Cargando Instagram…</p> : instagramConnection ? <div className="mt-3 flex items-center justify-between gap-3"><p className="min-w-0 truncate text-sm text-white/65">Instagram · <strong>@{instagramConnection.external_username || instagramConnection.display_name}</strong></p><button disabled={connectingInstagram} onClick={() => void disconnectInstagram()} className="shrink-0 rounded-lg border border-white/15 px-3 py-1.5 text-xs">Desconectar</button></div> : <button disabled={connectingInstagram} onClick={() => void connectInstagram()} className="mt-3 rounded-xl border border-violet-400/25 bg-violet-500/10 px-4 py-2 text-xs font-semibold text-violet-100">Conectar Instagram</button>}
-            <div className="mt-4 border-t border-white/8 pt-4"><p className="text-xs leading-5 text-white/45">También podés sumar fotos reales del espacio. Se usan como fuente del Studio, no como una página a copiar.</p><ImageTray urls={realPhotoUrls} onRemove={(url) => setRealPhotoUrls((current) => current.filter((item) => item !== url))}>{combinedReferenceUrls.length < MAX_REFERENCE_IMAGES ? <UploadTile label={uploadingReference === "photos" ? "…" : "+ Fotos"} disabled={Boolean(uploadingReference)} onFiles={(files) => void uploadReferenceImages(files, "photos")} /> : null}</ImageTray></div>
-          </section>
-          <section className="rounded-2xl border border-violet-400/20 bg-violet-500/[0.045] p-4">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-violet-200/55">Referencia visual</p><h3 className="mt-1 text-sm font-semibold">Screenshot / mockup / web</h3><p className="mt-2 text-xs leading-5 text-white/50">CLOUVA usa esta imagen como TARGET de composición. Los textos, Players, música y datos siguen siendo los reales del Studio.</p>
-            <ImageTray urls={designReferenceUrls} onRemove={(url) => setDesignReferenceUrls((current) => current.filter((item) => item !== url))}>{combinedReferenceUrls.length < MAX_REFERENCE_IMAGES ? <UploadTile label={uploadingReference === "design" ? "…" : "+ Screenshot"} disabled={Boolean(uploadingReference)} onFiles={(files) => void uploadReferenceImages(files, "design")} /> : null}</ImageTray><p className="mt-3 text-[11px] text-white/35">Máximo {MAX_REFERENCE_IMAGES} imágenes entre fotos y referencias.</p>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-white/35">Idea / dirección creativa</p>
+            <h3 className="mt-1 text-sm font-semibold">¿Cómo querés que se sienta tu Studio?</h3>
+            <p className="mt-2 text-xs leading-5 text-white/45">Si no subís una referencia exacta, esto guía las 3 propuestas. Puede ser una sola palabra: bosque, hielo, premium, underground, futurista.</p>
+            <textarea value={creativeDirection} onChange={(event) => setCreativeDirection(event.target.value.slice(0, 280))} rows={3} placeholder="Ej: bosque nocturno, orgánico, premium" className="mt-3 w-full resize-y rounded-xl border border-white/10 bg-black/30 px-3 py-3 text-sm outline-none placeholder:text-white/20 focus:border-violet-400/60" />
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-3"><p className="text-[11px] text-white/30">{creativeDirection.trim() ? "Dirección creativa lista." : "Necesitás mockup, logo, tema o al menos una palabra."}</p><button type="button" disabled={starting || !hasCreativeSource || Boolean(logoUrls.length && !logoOwnershipConfirmed)} onClick={() => void startGeneration()} className="rounded-xl bg-violet-600 px-5 py-2.5 text-sm font-semibold transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-35">{starting ? "Iniciando…" : "Generar propuesta"}</button></div>
           </section>
         </div>
       ) : null}
@@ -314,7 +390,12 @@ export function StudioAiProfilePanel({ studioId, onStateChange }: { studioId: st
         </div>
       ) : null}
 
-      {job && job.status === "awaiting_variant_selection" && job.layout_variants?.length ? <section className="space-y-3"><div><p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-violet-200/50">Propuestas</p><h3 className="mt-1 text-lg font-semibold">Elegí una composición</h3></div><div className="grid gap-4 sm:grid-cols-3">{job.layout_variants.map((variant, index) => { const variantCover = variant.assets.find((asset) => asset.kind === "cover"); const sections = variant.layout?.sections ?? []; return <div key={index} className="flex flex-col overflow-hidden rounded-2xl border border-white/10 bg-black/20">{variantCover ? <img src={variantCover.url} alt="" className="h-32 w-full object-cover" /> : <div className="h-32 w-full bg-white/5" />}<div className="flex flex-1 flex-col gap-2 p-4"><p className="text-xs text-white/50">{sections.map((section) => SECTION_LABEL[section.type] ?? section.type).join(" · ")}</p><button disabled={selectingVariant !== null} onClick={() => void selectVariant(index)} className="mt-auto rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold disabled:opacity-60">{selectingVariant === index ? "Eligiendo…" : "Usar esta"}</button></div></div>; })}</div></section> : null}
+      {job && job.status === "awaiting_variant_selection" && job.layout_variants?.length ? (
+        <section className="space-y-4 rounded-2xl border border-violet-400/15 bg-violet-500/[0.035] p-4 sm:p-5">
+          <div><p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-violet-200/50">Tres previews reales · mismo Studio</p><h3 className="mt-1 text-lg font-semibold">Elegí una dirección</h3><p className="mt-1 text-xs text-white/45">Todavía no se generaron tres kits finales. Estas previews usan layouts estructurados + renderer real para que elijas antes de gastar los assets pesados.</p></div>
+          <div className="grid gap-4 xl:grid-cols-3">{job.layout_variants.map((variant, index) => { const sections = variant.layout?.sections ?? []; return <article key={index} className="flex min-w-0 flex-col overflow-hidden rounded-2xl border border-white/10 bg-black/25"><div className="relative aspect-[16/10] overflow-hidden border-b border-white/10 bg-[#050509]">{variant.previewUrl ? <img src={variant.previewUrl} alt={`Preview real propuesta ${index + 1}`} className="h-full w-full object-cover object-top" /> : <div className="grid h-full place-items-center px-4 text-center text-xs text-white/35">La captura de esta alternativa no estuvo disponible. El layout sigue siendo seleccionable.</div>}</div><div className="flex flex-1 flex-col gap-3 p-4"><div><p className="text-xs font-semibold text-white/80">Propuesta {index + 1}</p><p className="mt-1 line-clamp-2 text-[11px] leading-4 text-white/40">{sections.map((section) => SECTION_LABEL[section.type] ?? section.type).join(" · ") || "Composición adaptativa"}</p></div><div className="mt-auto flex flex-wrap gap-2">{variant.previewUrl ? <Link href={variant.previewUrl} target="_blank" className="rounded-xl border border-white/15 px-3 py-2 text-xs font-semibold text-white/60 hover:text-white">Ver grande</Link> : null}<button disabled={selectingVariant !== null} onClick={() => void selectVariant(index)} className="flex-1 rounded-xl bg-violet-600 px-4 py-2 text-sm font-semibold disabled:opacity-60">{selectingVariant === index ? "Eligiendo…" : "Usar esta"}</button></div></div></article>; })}</div>
+        </section>
+      ) : null}
       {job && (job.status === "failed" || job.status === "blocked_budget" || job.status === "needs_user_input") ? <p className="rounded-xl border border-amber-400/20 bg-amber-400/10 p-4 text-sm text-amber-200">{STATUS_LABEL[job.status]}{job.error_message ? ` — ${job.error_message}` : ""}</p> : null}
 
       {draftVersion && copy ? (
@@ -328,7 +409,7 @@ export function StudioAiProfilePanel({ studioId, onStateChange }: { studioId: st
           <div className="flex flex-wrap items-center gap-2 border-t border-white/8 pt-4"><button disabled={starting || Object.keys(draftEdits).length === 0} onClick={() => void saveEdits()} className="rounded-xl border border-white/15 px-4 py-2.5 text-sm font-semibold disabled:opacity-35">Guardar borrador</button><button disabled={starting || generationInProgress} onClick={() => void publish()} className="rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold disabled:opacity-50">Publicar v{draftVersion.version_number}</button>{Object.keys(draftEdits).length > 0 ? <span className="text-xs text-amber-200/65">Cambios de texto sin guardar</span> : <span className="text-xs text-emerald-200/55">Borrador guardado</span>}</div>
         </section>
       ) : null}
-      {!draftVersion && publishedVersion && !generationInProgress ? <div className="rounded-2xl border border-white/8 bg-white/[0.02] p-5 text-sm text-white/50">No hay una propuesta activa. Creá una nueva versión o pedísela a Gemini para trabajar sobre algo posterior a v{publishedVersion.version_number}.</div> : null}
+      {!draftVersion && publishedVersion && !flowBusy ? <div className="rounded-2xl border border-white/8 bg-white/[0.02] p-5 text-sm text-white/50">No hay una propuesta activa. Creá una nueva versión o pedísela a Gemini para trabajar sobre algo posterior a v{publishedVersion.version_number}.</div> : null}
       {error ? <p className="rounded-xl border border-red-400/20 bg-red-400/10 p-3 text-sm text-red-200">{error}</p> : null}
       {message ? <p className="rounded-xl border border-emerald-400/20 bg-emerald-400/10 p-3 text-sm text-emerald-200">{message}</p> : null}
       <span className="hidden">{versions.length}</span>
@@ -336,9 +417,12 @@ export function StudioAiProfilePanel({ studioId, onStateChange }: { studioId: st
   );
 }
 
+function InputCard({ eyebrow, title, description, accent = false, children }: { eyebrow: string; title: string; description: string; accent?: boolean; children: React.ReactNode }) {
+  return <section className={`rounded-2xl border p-4 ${accent ? "border-violet-400/20 bg-violet-500/[0.045]" : "border-white/10 bg-black/20"}`}><p className={`text-[10px] font-semibold uppercase tracking-[0.2em] ${accent ? "text-violet-200/55" : "text-white/35"}`}>{eyebrow}</p><h3 className="mt-1 text-sm font-semibold">{title}</h3><p className="mt-2 text-xs leading-5 text-white/45">{description}</p>{children}</section>;
+}
 function VersionBadge({ label, value, tone }: { label: string; value: string; tone: "green" | "violet" | "neutral" }) {
   const style = tone === "green" ? "border-emerald-400/20 bg-emerald-400/10 text-emerald-100" : tone === "violet" ? "border-violet-400/25 bg-violet-500/10 text-violet-100" : "border-white/10 bg-white/[0.035] text-white/50";
   return <span className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[10px] font-semibold tracking-[0.12em] ${style}`}><span>{label}</span><strong>{value}</strong></span>;
 }
 function ImageTray({ urls, onRemove, children }: { urls: string[]; onRemove: (url: string) => void; children: React.ReactNode }) { return <div className="mt-3 flex flex-wrap items-center gap-2">{urls.map((url) => <div key={url} className="relative h-16 w-20 shrink-0 overflow-hidden rounded-xl border border-white/10"><img src={url} alt="" className="h-full w-full object-cover" /><button type="button" onClick={() => onRemove(url)} className="absolute right-1 top-1 grid h-5 w-5 place-items-center rounded-full bg-black/75 text-xs text-white">×</button></div>)}{children}</div>; }
-function UploadTile({ label, disabled, onFiles }: { label: string; disabled: boolean; onFiles: (files: FileList | null) => void }) { return <label className={`grid h-16 min-w-20 shrink-0 place-items-center rounded-xl border border-dashed border-white/15 px-3 text-xs text-white/50 transition hover:border-violet-400/40 ${disabled ? "cursor-not-allowed opacity-40" : "cursor-pointer"}`}>{label}<input type="file" accept="image/png,image/jpeg,image/webp" multiple className="hidden" disabled={disabled} onChange={(event) => onFiles(event.target.files)} /></label>; }
+function UploadTile({ label, disabled, onFiles, multiple = true }: { label: string; disabled: boolean; onFiles: (files: FileList | null) => void; multiple?: boolean }) { return <label className={`grid h-16 min-w-20 shrink-0 place-items-center rounded-xl border border-dashed border-white/15 px-3 text-xs text-white/50 transition hover:border-violet-400/40 ${disabled ? "cursor-not-allowed opacity-40" : "cursor-pointer"}`}>{label}<input type="file" accept="image/png,image/jpeg,image/webp" multiple={multiple} className="hidden" disabled={disabled} onChange={(event) => onFiles(event.target.files)} /></label>; }
