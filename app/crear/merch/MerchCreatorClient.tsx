@@ -157,7 +157,7 @@ export function MerchCreatorClient() {
       const project = payload.project as CreatorProject;
       setProjects((current) => [project, ...current]);
       openProject(project);
-      setMessage("Proyecto creado. Ahora sumá referencias o generá el producto.");
+      setMessage("Proyecto creado. Ahora podés generar desde el brief o sumar referencias.");
     } catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo crear el proyecto."); }
     finally { setBusy(false); }
   }
@@ -192,7 +192,8 @@ export function MerchCreatorClient() {
 
   async function generateImages() {
     if (!active) return;
-    if (!captures.some((capture) => capture.label === "Frente")) return setError("Subí una referencia de Frente.");
+    const hasFront = captures.some((capture) => capture.label === "Frente");
+    if (active.creative_mode !== "from_scratch" && !hasFront) return setError("Para Diseño exacto o Referencia, subí una imagen de Frente.");
     setBusy(true); setError(null); setMessage(null);
     try {
       await authFetch(`/api/creator-commerce/projects/${active.id}`, { method: "PATCH", body: JSON.stringify({ status: "generating" }) });
@@ -362,10 +363,10 @@ export function MerchCreatorClient() {
 
             <div className="grid gap-6 xl:grid-cols-2">
               <section className={`${CARD} p-5 sm:p-7`}>
-                <div className="flex items-center gap-3"><ImagePlus size={19} className="text-violet-300" /><div><h3 className="font-semibold">Referencias</h3><p className="text-xs text-white/40">Frente obligatorio. Atrás y detalles suman fidelidad.</p></div></div>
+                <div className="flex items-center gap-3"><ImagePlus size={19} className="text-violet-300" /><div><h3 className="font-semibold">Referencias</h3><p className="text-xs text-white/40">Desde cero puede generar solo con el brief. Diseño exacto y Referencia requieren Frente.</p></div></div>
                 <div className="mt-5 grid gap-3 sm:grid-cols-3">{(["Frente", "Atrás", "Detalle"] as const).map((label) => <label key={label} className="cursor-pointer rounded-2xl border border-dashed border-white/15 bg-black/25 p-4 text-center text-sm hover:border-violet-400/40"><strong>{label}</strong><span className="mt-2 block text-xs text-white/35">Subir imagen</span><input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(e) => void addCapture(label, e.target.files?.[0])} /></label>)}</div>
                 {captures.length ? <div className="mt-4 flex flex-wrap gap-2">{captures.map((capture, index) => <span key={`${capture.label}-${index}`} className="rounded-full border border-white/10 px-3 py-1.5 text-xs text-white/55">{capture.label}: {capture.name}</span>)}</div> : null}
-                <button onClick={() => void generateImages()} disabled={busy || !captures.length} className="mt-5 inline-flex items-center gap-2 rounded-xl bg-violet-500 px-4 py-2.5 text-sm font-bold disabled:opacity-40">{busy ? <Loader2 className="animate-spin" size={16} /> : <Sparkles size={16} />} Generar imágenes</button>
+                <button onClick={() => void generateImages()} disabled={busy || (active.creative_mode !== "from_scratch" && !captures.some((capture) => capture.label === "Frente"))} className="mt-5 inline-flex items-center gap-2 rounded-xl bg-violet-500 px-4 py-2.5 text-sm font-bold disabled:opacity-40">{busy ? <Loader2 className="animate-spin" size={16} /> : <Sparkles size={16} />} Generar imágenes</button>
               </section>
 
               <section className={`${CARD} p-5 sm:p-7`}>
@@ -379,7 +380,7 @@ export function MerchCreatorClient() {
             <section className={`${CARD} p-5 sm:p-7`}>
               <div className="flex items-center gap-3"><Shirt size={19} className="text-violet-300" /><div><h3 className="font-semibold">Producto comercial</h3><p className="text-xs text-white/40">Esto termina en commerce_products. No se crea un merch_product paralelo.</p></div></div>
               <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-5"><label className="text-xs text-white/50">Precio<input className={`${INPUT} mt-2`} inputMode="decimal" value={commerce.price} onChange={(e) => setCommerce({ ...commerce, price: e.target.value })} placeholder="25000" /></label><label className="text-xs text-white/50">Moneda<select className={`${INPUT} mt-2`} value={commerce.currency} onChange={(e) => setCommerce({ ...commerce, currency: e.target.value })}><option>ARS</option><option>USD</option></select></label><label className="text-xs text-white/50">Stock total<input className={`${INPUT} mt-2`} inputMode="numeric" value={commerce.stock} onChange={(e) => setCommerce({ ...commerce, stock: e.target.value })} /></label><label className="text-xs text-white/50">Talles<input className={`${INPUT} mt-2`} value={commerce.sizes} onChange={(e) => setCommerce({ ...commerce, sizes: e.target.value })} placeholder="S,M,L,XL" /></label><label className="text-xs text-white/50">Color<input className={`${INPUT} mt-2`} value={commerce.color} onChange={(e) => setCommerce({ ...commerce, color: e.target.value })} /></label></div>
-              <div className="mt-5 flex flex-wrap gap-3"><button onClick={() => void prepareProduct()} disabled={busy} className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-bold text-black disabled:opacity-50"><PackagePlus size={16} /> {active.commerce_product_id ? "Actualizar producto" : "Preparar producto"}</button><Link href={`/mi-flow/crear-prenda?creatorProjectId=${encodeURIComponent(active.id)}`} className="inline-flex items-center gap-2 rounded-xl border border-violet-400/25 bg-violet-500/10 px-4 py-2.5 text-sm font-semibold text-violet-200"><Box size={16} /> Crear gemelo 3D</Link><button onClick={() => void publishMarket()} disabled={busy || !active.commerce_product_id} className="inline-flex items-center gap-2 rounded-xl border border-emerald-400/25 bg-emerald-400/10 px-4 py-2.5 text-sm font-semibold text-emerald-200 disabled:opacity-40"><Send size={16} /> Publicar en Market</button>{preparedProduct?.slug ? <Link href={`/producto/${preparedProduct.slug}`} className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/60">Ver ficha</Link> : null}</div>
+              <div className="mt-5 flex flex-wrap gap-3"><button onClick={() => void prepareProduct()} disabled={busy} className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-bold text-black disabled:opacity-50"><PackagePlus size={16} /> {active.commerce_product_id ? "Actualizar producto" : "Preparar producto"}</button><Link href={`/crear/merch/${encodeURIComponent(active.id)}/3d`} className="inline-flex items-center gap-2 rounded-xl border border-violet-400/25 bg-violet-500/10 px-4 py-2.5 text-sm font-semibold text-violet-200"><Box size={16} /> Gemelo 3D</Link><button onClick={() => void publishMarket()} disabled={busy || !active.commerce_product_id} className="inline-flex items-center gap-2 rounded-xl border border-emerald-400/25 bg-emerald-400/10 px-4 py-2.5 text-sm font-semibold text-emerald-200 disabled:opacity-40"><Send size={16} /> Publicar en Market</button>{preparedProduct?.slug ? <Link href={`/producto/${preparedProduct.slug}`} className="rounded-xl border border-white/10 px-4 py-2.5 text-sm text-white/60">Ver ficha</Link> : null}</div>
               {active.commerce_product_id ? <p className="mt-4 text-xs text-white/35">productId canónico: <span className="font-mono text-white/60">{active.commerce_product_id}</span></p> : null}
             </section>
           </div>
