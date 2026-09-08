@@ -160,8 +160,11 @@ test("Trébol es un asistente global activo con chat rápido contextual", () => 
   const compact = read("./components/clouva-ai/ClouvaAICompactPanel.tsx");
   const quick = read("./components/clouva-ai/ClouvaAIQuickChat.tsx");
   const layout = read("./app/layout.tsx");
+  const appShell = read("./components/clouva/ClouvaAppShell.tsx");
 
-  assert.match(layout, /<ClouvaAIAssistantProvider>/);
+  assert.match(layout, /<ClouvaAppShell>\{children\}<\/ClouvaAppShell>/);
+  assert.match(appShell, /<ClouvaAIAssistantProvider>/);
+  assert.match(appShell, /<GlobalClouvaAIButtonGate \/>/);
   assert.match(globalButton, /trebol-mascot\.png/);
   assert.match(globalButton, /aria-label=\{open \? "Cerrar CLOUVA AI" : "Abrir CLOUVA AI"\}/);
   assert.match(globalButton, /data-trebol-ui/);
