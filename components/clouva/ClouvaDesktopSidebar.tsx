@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import type { ComponentType } from "react";
 import {
   CircleUserRound,
   DollarSign,
@@ -22,14 +21,16 @@ import {
 } from "@/lib/navigation/clouva-navigation";
 import styles from "./ClouvaDesktopSidebar.module.css";
 
+type ClouvaSidebarIcon = typeof Home;
+
 export type ClouvaSidebarItem = {
   key: ClouvaSurfaceKey;
   label: string;
   href: string;
-  icon: ComponentType<{ size?: number; className?: string }>;
+  icon: ClouvaSidebarIcon;
 };
 
-const navigationIcons: Partial<Record<ClouvaSurfaceKey, ClouvaSidebarItem["icon"]>> = {
+const navigationIcons: Partial<Record<ClouvaSurfaceKey, ClouvaSidebarIcon>> = {
   HOME: Home,
   CREATE: Sparkles,
   MARKET: ShoppingBag,
