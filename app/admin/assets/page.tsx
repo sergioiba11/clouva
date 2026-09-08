@@ -127,6 +127,10 @@ function assetCategory(asset: Asset) {
   return folder || "sin-categoria";
 }
 
+function assetKey(asset: Asset) {
+  return `${asset.source}:${asset.bucket}:${asset.path}`;
+}
+
 function categoryLabel(category: string) {
   const labels: Record<string, string> = {
     brand: "Marca / Logos",
@@ -227,6 +231,9 @@ export default function AdminAssetsPage() {
   const [renameAsset, setRenameAsset] = useState<Asset | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [deleteAsset, setDeleteAsset] = useState<Asset | null>(null);
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set());
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [bulkProgress, setBulkProgress] = useState<{ done: number; total: number } | null>(null);
 
   const [uploadOpen, setUploadOpen] = useState(false);
   const [uploadFolder, setUploadFolder] = useState("uploads");
@@ -244,6 +251,8 @@ export default function AdminAssetsPage() {
       setBuckets(data.buckets);
       setWarnings(data.warnings ?? []);
       setGcsBucket(data.gcsBucket);
+      const availableKeys = new Set(data.items.map(assetKey));
+      setSelectedKeys((current) => new Set(Array.from(current).filter((key) => availableKeys.has(key))));
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudieron cargar los assets.");
     } finally {
@@ -310,6 +319,9 @@ export default function AdminAssetsPage() {
     });
   }, [items, search, source, bucketFilter, kindFilter, categoryFilter, formatFilter, sortMode]);
 
+  const selectedAssets = useMemo(() => items.filter((asset) => selectedKeys.has(assetKey(asset))), [items, selectedKeys]);
+  const allVisibleSelected = filtered.length > 0 && filtered.every((asset) => selectedKeys.has(assetKey(asset)));
+
   const totalSize = useMemo(() => items.reduce((sum, asset) => sum + asset.size, 0), [items]);
   const images = useMemo(() => items.filter((asset) => assetKind(asset) === "image").length, [items]);
   const models = useMemo(() => items.filter((asset) => assetKind(asset) === "3d").length, [items]);
@@ -325,6 +337,34 @@ export default function AdminAssetsPage() {
     setKindFilter("all");
     setCategoryFilter("all");
     setFormatFilter("all");
+  };
+
+  const toggleSelection = (asset: Asset) => {
+    const key = assetKey(asset);
+    setSelectedKeys((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const toggleVisibleSelection = () => {
+    const visibleKeys = filtered.map(assetKey);
+    setSelectedKeys((current) => {
+      const next = new Set(current);
+      const shouldClear = visibleKeys.length > 0 && visibleKeys.every((key) => next.has(key));
+      for (const key of visibleKeys) {
+        if (shouldClear) next.delete(key);
+        else next.add(key);
+      }
+      return next;
+    });
+  };
+
+  const clearSelection = () => {
+    setSelectedKeys(new Set());
+    setBulkDeleteOpen(false);
   };
 
   const copy = async (value: string) => {
@@ -348,6 +388,11 @@ export default function AdminAssetsPage() {
         }),
       });
       const result = await readApiJson<MutationResult>(response);
+      setSelectedKeys((current) => {
+        const next = new Set(current);
+        next.delete(assetKey(renameAsset));
+        return next;
+      });
       setRenameAsset(null);
       setRenameValue("");
       setMessage(
@@ -378,13 +423,74 @@ export default function AdminAssetsPage() {
         }),
       });
       await readApiJson<MutationResult>(response);
+      const deletedKey = assetKey(deleteAsset);
+      setSelectedKeys((current) => {
+        const next = new Set(current);
+        next.delete(deletedKey);
+        return next;
+      });
       setDeleteAsset(null);
-      setPreviewAsset((current) => current?.path === deleteAsset.path && current.bucket === deleteAsset.bucket ? null : current);
-      setMessage("Asset eliminado.");
+      setPreviewAsset((current) => current && assetKey(current) === deletedKey ? null : current);
       await load();
+      setMessage("Asset eliminado.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudo eliminar el asset.");
     } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitBulkDelete = async () => {
+    if (!selectedAssets.length || busy) return;
+    const targets = [...selectedAssets];
+    const failed: Array<{ asset: Asset; message: string }> = [];
+    const deletedKeys = new Set<string>();
+
+    setBusy(true);
+    setMessage(null);
+    setBulkProgress({ done: 0, total: targets.length });
+
+    try {
+      for (let index = 0; index < targets.length; index += 1) {
+        const asset = targets[index];
+        try {
+          const response = await authenticatedFetch("/api/admin/assets", {
+            method: "DELETE",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              source: asset.source,
+              bucket: asset.bucket,
+              path: asset.path,
+            }),
+          });
+          await readApiJson<MutationResult>(response);
+          deletedKeys.add(assetKey(asset));
+        } catch (error) {
+          failed.push({
+            asset,
+            message: error instanceof Error ? error.message : "No se pudo eliminar.",
+          });
+        } finally {
+          setBulkProgress({ done: index + 1, total: targets.length });
+        }
+      }
+
+      const failedKeys = new Set(failed.map(({ asset }) => assetKey(asset)));
+      setSelectedKeys(failedKeys);
+      setPreviewAsset((current) => current && deletedKeys.has(assetKey(current)) ? null : current);
+      setBulkDeleteOpen(false);
+      await load();
+
+      const deletedCount = deletedKeys.size;
+      if (!failed.length) {
+        setMessage(`${deletedCount} asset${deletedCount === 1 ? "" : "s"} eliminado${deletedCount === 1 ? "" : "s"}.`);
+      } else {
+        const first = failed[0];
+        const extra = failed.length > 1 ? ` y ${failed.length - 1} más` : "";
+        setMessage(`${deletedCount} eliminado${deletedCount === 1 ? "" : "s"}. ${failed.length} no se pudo${failed.length === 1 ? "" : "ieron"} eliminar: ${first.asset.name} — ${first.message}${extra}.`);
+      }
+    } finally {
+      setBulkProgress(null);
       setBusy(false);
     }
   };
@@ -572,11 +678,33 @@ export default function AdminAssetsPage() {
           </div>
         </div>
 
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-xs text-white/35">
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-xs text-white/35">
           <span>Mostrando {filtered.length.toLocaleString("es-AR")} de {items.length.toLocaleString("es-AR")} assets</span>
-          <span>{buckets.length} fuente{buckets.length === 1 ? "" : "s"}/bucket{buckets.length === 1 ? "" : "s"} detectado{buckets.length === 1 ? "" : "s"}</span>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <button type="button" onClick={toggleVisibleSelection} disabled={!filtered.length || busy} className="rounded-full border border-white/10 px-3 py-1.5 text-white/60 transition hover:bg-white/[0.05] disabled:opacity-35">
+              {allVisibleSelected ? "Quitar selección visible" : `Seleccionar visibles (${filtered.length.toLocaleString("es-AR")})`}
+            </button>
+            <span>{buckets.length} fuente{buckets.length === 1 ? "" : "s"}/bucket{buckets.length === 1 ? "" : "s"} detectado{buckets.length === 1 ? "" : "s"}</span>
+          </div>
         </div>
       </section>
+
+      {selectedAssets.length ? (
+        <section className="sticky top-3 z-40 flex flex-col gap-3 rounded-2xl border border-violet-400/30 bg-[#120d20]/95 px-4 py-3 shadow-2xl shadow-black/30 backdrop-blur-xl sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3">
+            <span className="grid h-9 w-9 place-items-center rounded-xl border border-violet-400/30 bg-violet-500/15 text-violet-200"><Check className="h-4 w-4" /></span>
+            <div>
+              <p className="text-sm font-semibold">{selectedAssets.length.toLocaleString("es-AR")} asset{selectedAssets.length === 1 ? "" : "s"} seleccionado{selectedAssets.length === 1 ? "" : "s"}</p>
+              <p className="text-xs text-white/35">Podés seguir seleccionando en la grilla o en la lista.</p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={toggleVisibleSelection} disabled={busy} className="rounded-full border border-white/10 px-4 py-2 text-xs text-white/65 hover:bg-white/[0.06] disabled:opacity-40">{allVisibleSelected ? "Quitar visibles" : "Sumar visibles"}</button>
+            <button type="button" onClick={clearSelection} disabled={busy} className="rounded-full border border-white/10 px-4 py-2 text-xs text-white/65 hover:bg-white/[0.06] disabled:opacity-40">Limpiar</button>
+            <button type="button" onClick={() => setBulkDeleteOpen(true)} disabled={busy} className="inline-flex items-center gap-2 rounded-full bg-red-500 px-4 py-2 text-xs font-semibold text-white hover:bg-red-400 disabled:opacity-40"><Trash2 className="h-3.5 w-3.5" /> Eliminar {selectedAssets.length.toLocaleString("es-AR")}</button>
+          </div>
+        </section>
+      ) : null}
 
       {message ? (
         <div className="flex items-center justify-between gap-3 rounded-2xl border border-violet-400/20 bg-violet-400/10 px-4 py-3 text-sm text-violet-100">
@@ -594,62 +722,75 @@ export default function AdminAssetsPage() {
         </div>
       ) : view === "grid" ? (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-          {filtered.map((asset) => (
-            <article key={`${asset.source}:${asset.bucket}:${asset.path}`} className="group overflow-hidden rounded-2xl border border-white/10 bg-black/25 transition hover:border-violet-400/25 hover:bg-white/[0.045]">
-              <button type="button" onClick={() => setPreviewAsset(asset)} className="relative block aspect-[16/9] w-full overflow-hidden bg-[radial-gradient(circle_at_center,rgba(139,92,246,0.12),transparent_60%)]">
-                {assetKind(asset) === "image" && asset.url ? (
-                  <img src={asset.url} alt={asset.name} loading="lazy" className="h-full w-full object-contain transition duration-300 group-hover:scale-[1.02]" />
-                ) : assetKind(asset) === "video" && asset.url ? (
-                  <video src={asset.url} muted preload="metadata" className="h-full w-full object-contain" />
-                ) : (
-                  <div className="grid h-full place-items-center text-white/25"><KindIcon asset={asset} className="h-10 w-10" /></div>
-                )}
-                <div className="absolute left-2 top-2 flex flex-wrap gap-1.5">
-                  <span className="rounded-full border border-white/10 bg-black/70 px-2.5 py-1 text-[10px] font-bold tracking-[0.08em] text-white/80 backdrop-blur">{assetExtension(asset)}</span>
-                  <span className="max-w-40 truncate rounded-full border border-violet-400/20 bg-violet-500/15 px-2.5 py-1 text-[10px] text-violet-100/80 backdrop-blur">{categoryLabel(assetCategory(asset))}</span>
+          {filtered.map((asset) => {
+            const selected = selectedKeys.has(assetKey(asset));
+            return (
+              <article key={assetKey(asset)} className={`group overflow-hidden rounded-2xl border bg-black/25 transition hover:border-violet-400/25 hover:bg-white/[0.045] ${selected ? "border-violet-400/55 bg-violet-500/[0.08] ring-1 ring-violet-400/20" : "border-white/10"}`}>
+                <div className="relative">
+                  <button type="button" onClick={() => setPreviewAsset(asset)} className="relative block aspect-[16/9] w-full overflow-hidden bg-[radial-gradient(circle_at_center,rgba(139,92,246,0.12),transparent_60%)]">
+                    {assetKind(asset) === "image" && asset.url ? (
+                      <img src={asset.url} alt={asset.name} loading="lazy" className="h-full w-full object-contain transition duration-300 group-hover:scale-[1.02]" />
+                    ) : assetKind(asset) === "video" && asset.url ? (
+                      <video src={asset.url} muted preload="metadata" className="h-full w-full object-contain" />
+                    ) : (
+                      <div className="grid h-full place-items-center text-white/25"><KindIcon asset={asset} className="h-10 w-10" /></div>
+                    )}
+                    <div className="absolute left-2 top-2 flex flex-wrap gap-1.5">
+                      <span className="rounded-full border border-white/10 bg-black/70 px-2.5 py-1 text-[10px] font-bold tracking-[0.08em] text-white/80 backdrop-blur">{assetExtension(asset)}</span>
+                      <span className="max-w-40 truncate rounded-full border border-violet-400/20 bg-violet-500/15 px-2.5 py-1 text-[10px] text-violet-100/80 backdrop-blur">{categoryLabel(assetCategory(asset))}</span>
+                    </div>
+                    <span className="absolute right-12 top-2 rounded-full bg-black/65 p-2 text-white/65 opacity-0 backdrop-blur transition group-hover:opacity-100"><Eye className="h-4 w-4" /></span>
+                  </button>
+                  <button type="button" onClick={() => toggleSelection(asset)} aria-pressed={selected} aria-label={selected ? `Quitar ${asset.name} de la selección` : `Seleccionar ${asset.name}`} className={`absolute right-2 top-2 z-10 grid h-9 w-9 place-items-center rounded-xl border backdrop-blur transition ${selected ? "border-violet-300/70 bg-violet-500 text-white" : "border-white/20 bg-black/70 text-white/40 hover:border-violet-300/50 hover:text-white"}`}>
+                    {selected ? <Check className="h-4 w-4" /> : <span className="h-3.5 w-3.5 rounded-[4px] border border-current" />}
+                  </button>
                 </div>
-                <span className="absolute right-2 top-2 rounded-full bg-black/65 p-2 text-white/65 opacity-0 backdrop-blur transition group-hover:opacity-100"><Eye className="h-4 w-4" /></span>
-              </button>
-              <div className="p-4">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0"><p className="truncate text-sm font-semibold" title={asset.name}>{asset.name}</p><p className="mt-1 truncate text-[11px] text-white/35" title={asset.path}>{asset.path}</p></div>
-                  <SourceBadge source={asset.source} />
+                <div className="p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0"><p className="truncate text-sm font-semibold" title={asset.name}>{asset.name}</p><p className="mt-1 truncate text-[11px] text-white/35" title={asset.path}>{asset.path}</p></div>
+                    <SourceBadge source={asset.source} />
+                  </div>
+                  <div className="mt-3 flex items-center justify-between gap-3 text-xs text-white/40"><span>{formatBytes(asset.size)}</span><span className="truncate">{asset.bucket}</span></div>
+                  <div className="mt-4 grid grid-cols-3 gap-2">
+                    <button type="button" onClick={() => setPreviewAsset(asset)} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-white/10 text-xs text-white/70 hover:bg-white/[0.06]"><Eye className="h-3.5 w-3.5" /> Ver</button>
+                    <button type="button" onClick={() => openRename(asset)} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-white/10 text-xs text-white/70 hover:bg-white/[0.06]"><Pencil className="h-3.5 w-3.5" /> Renombrar</button>
+                    <button type="button" onClick={() => setDeleteAsset(asset)} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-red-400/15 text-xs text-red-300/80 hover:bg-red-400/10"><Trash2 className="h-3.5 w-3.5" /> Eliminar</button>
+                  </div>
                 </div>
-                <div className="mt-3 flex items-center justify-between gap-3 text-xs text-white/40"><span>{formatBytes(asset.size)}</span><span className="truncate">{asset.bucket}</span></div>
-                <div className="mt-4 grid grid-cols-3 gap-2">
-                  <button type="button" onClick={() => setPreviewAsset(asset)} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-white/10 text-xs text-white/70 hover:bg-white/[0.06]"><Eye className="h-3.5 w-3.5" /> Ver</button>
-                  <button type="button" onClick={() => openRename(asset)} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-white/10 text-xs text-white/70 hover:bg-white/[0.06]"><Pencil className="h-3.5 w-3.5" /> Renombrar</button>
-                  <button type="button" onClick={() => setDeleteAsset(asset)} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-lg border border-red-400/15 text-xs text-red-300/80 hover:bg-red-400/10"><Trash2 className="h-3.5 w-3.5" /> Eliminar</button>
-                </div>
-              </div>
-            </article>
-          ))}
+              </article>
+            );
+          })}
         </div>
       ) : (
         <div className="overflow-hidden rounded-[2rem] border border-white/10 bg-black/20">
-          <div className="hidden grid-cols-[minmax(260px,1.4fr)_90px_150px_130px_minmax(150px,0.8fr)_100px_150px] gap-3 border-b border-white/10 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/30 xl:grid">
+          <div className="hidden grid-cols-[44px_minmax(260px,1.4fr)_90px_150px_130px_minmax(150px,0.8fr)_100px_150px] gap-3 border-b border-white/10 px-4 py-3 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/30 xl:grid">
+            <button type="button" onClick={toggleVisibleSelection} disabled={!filtered.length || busy} className={`grid h-7 w-7 place-items-center rounded-lg border ${allVisibleSelected ? "border-violet-300/60 bg-violet-500 text-white" : "border-white/15 text-white/35"}`} aria-label={allVisibleSelected ? "Quitar selección visible" : "Seleccionar todo lo visible"}>{allVisibleSelected ? <Check className="h-3.5 w-3.5" /> : null}</button>
             <span>Asset</span><span>Formato</span><span>Categoría</span><span>Storage</span><span>Bucket</span><span>Tamaño</span><span className="text-right">Acciones</span>
           </div>
-          {filtered.map((asset) => (
-            <div key={`${asset.source}:${asset.bucket}:${asset.path}`} className="grid gap-3 border-b border-white/[0.07] p-4 last:border-0 xl:grid-cols-[minmax(260px,1.4fr)_90px_150px_130px_minmax(150px,0.8fr)_100px_150px] xl:items-center">
-              <button type="button" onClick={() => setPreviewAsset(asset)} className="flex min-w-0 items-center gap-3 text-left">
-                <span className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-lg border border-white/10 bg-white/[0.035] text-white/35">
-                  {assetKind(asset) === "image" && asset.url ? <img src={asset.url} alt="" loading="lazy" className="h-full w-full object-cover" /> : <KindIcon asset={asset} className="h-4 w-4" />}
-                </span>
-                <span className="min-w-0"><span className="block truncate text-sm font-medium">{asset.name}</span><span className="mt-0.5 block truncate text-[11px] text-white/35">{asset.path}</span></span>
-              </button>
-              <span className="w-fit rounded-full border border-white/10 bg-white/[0.035] px-2.5 py-1 text-[10px] font-bold text-white/70">{assetExtension(asset)}</span>
-              <span className="truncate text-xs text-violet-100/65">{categoryLabel(assetCategory(asset))}</span>
-              <div><SourceBadge source={asset.source} /></div>
-              <span className="truncate text-xs text-white/50" title={asset.bucket}>{asset.bucket}</span>
-              <span className="text-xs text-white/50">{formatBytes(asset.size)}</span>
-              <div className="flex justify-end gap-1.5">
-                <button type="button" onClick={() => setPreviewAsset(asset)} className="rounded-lg border border-white/10 p-2 text-white/55" title="Ver"><Eye className="h-3.5 w-3.5" /></button>
-                <button type="button" onClick={() => openRename(asset)} className="rounded-lg border border-white/10 p-2 text-white/55" title="Renombrar"><Pencil className="h-3.5 w-3.5" /></button>
-                <button type="button" onClick={() => setDeleteAsset(asset)} className="rounded-lg border border-red-400/15 p-2 text-red-300/70" title="Eliminar"><Trash2 className="h-3.5 w-3.5" /></button>
+          {filtered.map((asset) => {
+            const selected = selectedKeys.has(assetKey(asset));
+            return (
+              <div key={assetKey(asset)} className={`grid gap-3 border-b p-4 last:border-0 xl:grid-cols-[44px_minmax(260px,1.4fr)_90px_150px_130px_minmax(150px,0.8fr)_100px_150px] xl:items-center ${selected ? "border-violet-400/20 bg-violet-500/[0.07]" : "border-white/[0.07]"}`}>
+                <button type="button" onClick={() => toggleSelection(asset)} aria-pressed={selected} className={`grid h-9 w-9 place-items-center rounded-xl border transition ${selected ? "border-violet-300/60 bg-violet-500 text-white" : "border-white/15 bg-black/20 text-white/35 hover:border-violet-300/40"}`} aria-label={selected ? `Quitar ${asset.name} de la selección` : `Seleccionar ${asset.name}`}>{selected ? <Check className="h-4 w-4" /> : <span className="h-3.5 w-3.5 rounded-[4px] border border-current" />}</button>
+                <button type="button" onClick={() => setPreviewAsset(asset)} className="flex min-w-0 items-center gap-3 text-left">
+                  <span className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-lg border border-white/10 bg-white/[0.035] text-white/35">
+                    {assetKind(asset) === "image" && asset.url ? <img src={asset.url} alt="" loading="lazy" className="h-full w-full object-cover" /> : <KindIcon asset={asset} className="h-4 w-4" />}
+                  </span>
+                  <span className="min-w-0"><span className="block truncate text-sm font-medium">{asset.name}</span><span className="mt-0.5 block truncate text-[11px] text-white/35">{asset.path}</span></span>
+                </button>
+                <span className="w-fit rounded-full border border-white/10 bg-white/[0.035] px-2.5 py-1 text-[10px] font-bold text-white/70">{assetExtension(asset)}</span>
+                <span className="truncate text-xs text-violet-100/65">{categoryLabel(assetCategory(asset))}</span>
+                <div><SourceBadge source={asset.source} /></div>
+                <span className="truncate text-xs text-white/50" title={asset.bucket}>{asset.bucket}</span>
+                <span className="text-xs text-white/50">{formatBytes(asset.size)}</span>
+                <div className="flex justify-end gap-1.5">
+                  <button type="button" onClick={() => setPreviewAsset(asset)} className="rounded-lg border border-white/10 p-2 text-white/55" title="Ver"><Eye className="h-3.5 w-3.5" /></button>
+                  <button type="button" onClick={() => openRename(asset)} className="rounded-lg border border-white/10 p-2 text-white/55" title="Renombrar"><Pencil className="h-3.5 w-3.5" /></button>
+                  <button type="button" onClick={() => setDeleteAsset(asset)} className="rounded-lg border border-red-400/15 p-2 text-red-300/70" title="Eliminar"><Trash2 className="h-3.5 w-3.5" /></button>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -694,6 +835,21 @@ export default function AdminAssetsPage() {
           {deleteAsset.source === "github" ? <p className="mt-2 text-xs leading-5 text-white/40">Si el asset todavía está referenciado por código, CLOUVA no lo borra y te muestra qué archivos lo están usando.</p> : null}
           <p className="mt-3 break-all rounded-xl border border-white/10 bg-black/30 p-3 text-xs text-white/35">{deleteAsset.path}</p>
           <div className="mt-5 flex justify-end gap-2"><button type="button" disabled={busy} onClick={() => setDeleteAsset(null)} className="rounded-full border border-white/10 px-4 py-2 text-sm text-white/60">Cancelar</button><button type="button" disabled={busy} onClick={() => void submitDelete()} className="inline-flex min-w-28 items-center justify-center gap-2 rounded-full bg-red-500 px-5 py-2 text-sm font-semibold text-white disabled:opacity-40">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />} Eliminar</button></div>
+        </ModalShell>
+      ) : null}
+
+      {bulkDeleteOpen && selectedAssets.length ? (
+        <ModalShell onClose={() => !busy && setBulkDeleteOpen(false)}>
+          <div className="grid h-12 w-12 place-items-center rounded-2xl border border-red-400/20 bg-red-400/10 text-red-300"><Trash2 className="h-5 w-5" /></div>
+          <h2 className="mt-4 text-xl font-semibold">Eliminar {selectedAssets.length.toLocaleString("es-AR")} assets</h2>
+          <p className="mt-2 text-sm leading-6 text-white/50">Se van a eliminar todos los assets seleccionados, respetando las validaciones actuales de cada storage.</p>
+          {selectedAssets.some((asset) => asset.source === "github") ? <p className="mt-2 text-xs leading-5 text-white/40">Los assets de <code className="text-violet-200">public/</code> que sigan referenciados por el código no se eliminan. El resto continúa procesándose y los que fallen quedan seleccionados.</p> : null}
+          <div className="mt-4 max-h-56 space-y-2 overflow-y-auto rounded-2xl border border-white/10 bg-black/30 p-3">
+            {selectedAssets.slice(0, 12).map((asset) => <div key={assetKey(asset)} className="flex items-center justify-between gap-3 text-xs"><span className="min-w-0 truncate text-white/70">{asset.name}</span><span className="shrink-0 text-white/30">{sourceLabel(asset.source)}</span></div>)}
+            {selectedAssets.length > 12 ? <p className="pt-1 text-xs text-white/35">+ {selectedAssets.length - 12} assets más</p> : null}
+          </div>
+          {bulkProgress ? <div className="mt-4"><div className="flex items-center justify-between text-xs text-white/45"><span>Eliminando…</span><span>{bulkProgress.done}/{bulkProgress.total}</span></div><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-red-400 transition-all" style={{ width: `${bulkProgress.total ? (bulkProgress.done / bulkProgress.total) * 100 : 0}%` }} /></div></div> : null}
+          <div className="mt-5 flex justify-end gap-2"><button type="button" disabled={busy} onClick={() => setBulkDeleteOpen(false)} className="rounded-full border border-white/10 px-4 py-2 text-sm text-white/60">Cancelar</button><button type="button" disabled={busy} onClick={() => void submitBulkDelete()} className="inline-flex min-w-36 items-center justify-center gap-2 rounded-full bg-red-500 px-5 py-2 text-sm font-semibold text-white disabled:opacity-40">{busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />} Eliminar {selectedAssets.length.toLocaleString("es-AR")}</button></div>
         </ModalShell>
       ) : null}
     </div>
