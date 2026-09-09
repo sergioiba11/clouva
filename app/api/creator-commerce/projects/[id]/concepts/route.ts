@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { syncCreatorProjectStatus } from "@/lib/creator-commerce/project-status";
 import { asRecord, short } from "@/lib/creator-commerce/server";
 import { isAuthError, requireUser } from "@/lib/server/supabase";
 
@@ -97,7 +98,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       .insert(rows)
       .select("*");
     if (error) throw new Error(error.message);
-    return NextResponse.json({ concepts: data ?? [] }, { status: 201 });
+    const projectStatus = await syncCreatorProjectStatus(supabase, id);
+    return NextResponse.json({ concepts: data ?? [], projectStatus }, { status: 201 });
   } catch (error) {
     const status = (error as Error & { status?: number })?.status ?? (isAuthError(error) ? 401 : 500);
     return NextResponse.json({ error: error instanceof Error ? error.message : "No se pudieron agregar productos al drop." }, { status });
