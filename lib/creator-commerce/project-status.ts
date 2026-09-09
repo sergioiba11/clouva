@@ -7,10 +7,12 @@ export type CreatorProjectStatus = "draft" | "generating" | "review" | "approved
 export function deriveCreatorProjectStatus(statuses: string[]): CreatorProjectStatus {
   if (!statuses.length) return "draft";
   if (statuses.some((status) => status === "generating" || status === "pending")) return "generating";
-  if (statuses.some((status) => status === "commerce_ready" || status === "published")) return "commerce_ready";
   if (statuses.some((status) => status === "review" || status === "failed")) return "review";
-  if (statuses.every((status) => status === "approved")) return "approved";
-  if (statuses.some((status) => status === "approved")) return "review";
+  if (statuses.every((status) => ["commerce_ready", "published"].includes(status))) return "commerce_ready";
+  if (statuses.every((status) => ["approved", "commerce_ready", "published"].includes(status))) {
+    return statuses.some((status) => status === "commerce_ready" || status === "published") ? "commerce_ready" : "approved";
+  }
+  if (statuses.some((status) => status === "approved" || status === "commerce_ready" || status === "published")) return "review";
   return "draft";
 }
 
