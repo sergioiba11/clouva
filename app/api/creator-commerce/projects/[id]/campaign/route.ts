@@ -12,8 +12,15 @@ const IMAGE_MODELS = new Set<GeminiImageModel>(["gemini-3.1-flash-lite-image", "
 const GENERATED_BUCKET = process.env.CLOUVA_GENERATED_MEDIA_BUCKET ?? "clouva-generated-media";
 const MAX_REFERENCE_BYTES = 8 * 1024 * 1024;
 const MAX_REFERENCES = 6;
+const TARGETS = {
+  collection_cover: "1:1",
+  campaign_group: "16:9",
+  campaign_story: "9:16",
+  campaign_social_square: "1:1",
+} as const;
 
-type AssetLike = { url?: unknown; kind?: unknown; status?: unknown };
+type CampaignKind = keyof typeof TARGETS;
+type AssetLike = { url?: unknown; kind?: unknown; status?: unknown; storagePath?: unknown };
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
@@ -21,6 +28,17 @@ function record(value: unknown): Record<string, unknown> {
 
 function text(value: unknown, max: number) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
+}
+
+function campaignKinds(body: { target?: unknown; kinds?: unknown }): CampaignKind[] {
+  const allowed = new Set(Object.keys(TARGETS) as CampaignKind[]);
+  if (Array.isArray(body.kinds)) {
+    const values = body.kinds.map((value) => String(value) as CampaignKind).filter((value) => allowed.has(value));
+    if (values.length) return [...new Set(values)];
+  }
+  const target = String(body.target || "") as CampaignKind;
+  if (allowed.has(target)) return [target];
+  return Object.keys(TARGETS) as CampaignKind[];
 }
 
 function trustedUrl(value: unknown) {
@@ -58,7 +76,7 @@ function campaignPrompt(args: {
   brief: string;
   designSystem: Record<string, unknown>;
   productNames: string[];
-  kind: string;
+  kind: CampaignKind;
   campaignStyle: string;
 }) {
   const formatInstruction = args.kind === "campaign_story"
@@ -99,7 +117,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   try {
     const { user, supabase } = await requireUser(request);
     const { id } = await params;
-    const body = (await request.json().catch(() => ({}))) as { campaignStyle?: unknown };
+    const body = (await request.json().catch(() => ({}))) as { campaignStyle?: unknown; target?: unknown; kinds?: unknown };
+    const requestedKinds = campaignKinds(body);
 
     const [projectResult, conceptsResult] = await Promise.all([
       supabase.from("commerce_creator_projects").select("id,name,collection_name,brief,design_system,reference_assets,generated_assets").eq("id", id).maybeSingle(),
@@ -141,49 +160,54 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       productNames,
       campaignStyle,
     };
-    const targets = [
-      { kind: "collection_cover", aspectRatio: "1:1" as const },
-      { kind: "campaign_group", aspectRatio: "16:9" as const },
-      { kind: "campaign_story", aspectRatio: "9:16" as const },
-      { kind: "campaign_social_square", aspectRatio: "1:1" as const },
-    ];
 
+    let currentAssets = Array.isArray(projectResult.data.generated_assets) ? projectResult.data.generated_assets as AssetLike[] : [];
     const generated: AssetLike[] = [];
-    for (const target of targets) {
-      const image = await generateImage({
-        apiKey,
-        model,
-        prompt: campaignPrompt({ ...common, kind: target.kind }),
-        referenceImages: refs,
-        aspectRatio: target.aspectRatio,
-        imageSize: "1K",
-        timeoutMs: 150_000,
-      });
-      const stored = await uploadGeneratedMediaObject({
-        bytes: image.bytes,
-        mimeType: image.mimeType,
-        pathPrefix: `creator-commerce/${user.id}/${id}/campaign/${target.kind}`,
-      });
-      generated.push({
-        kind: target.kind,
-        url: stored.url,
-        storagePath: stored.objectPath,
-        status: "generated",
-      } as AssetLike & { storagePath: string });
+    const failures: Array<{ kind: CampaignKind; error: string }> = [];
+
+    for (const kind of requestedKinds) {
+      try {
+        const image = await generateImage({
+          apiKey,
+          model,
+          prompt: campaignPrompt({ ...common, kind }),
+          referenceImages: refs,
+          aspectRatio: TARGETS[kind],
+          imageSize: "1K",
+          timeoutMs: 150_000,
+        });
+        const stored = await uploadGeneratedMediaObject({
+          bytes: image.bytes,
+          mimeType: image.mimeType,
+          pathPrefix: `creator-commerce/${user.id}/${id}/campaign/${kind}`,
+        });
+        const asset: AssetLike = {
+          kind,
+          url: stored.url,
+          storagePath: stored.objectPath,
+          status: "generated",
+        };
+        currentAssets = [...currentAssets.filter((item) => String(record(item).kind) !== kind), asset];
+        const saved = await supabase
+          .from("commerce_creator_projects")
+          .update({ generated_assets: currentAssets, updated_at: new Date().toISOString() })
+          .eq("id", id)
+          .select("id")
+          .maybeSingle();
+        if (saved.error) throw new Error(saved.error.message);
+        if (!saved.data) throw new Error("No se pudo persistir el asset de campaña.");
+        generated.push(asset);
+      } catch (error) {
+        const mapped = publicError(error);
+        failures.push({ kind, error: mapped.message });
+      }
     }
 
-    const existing = Array.isArray(projectResult.data.generated_assets) ? projectResult.data.generated_assets : [];
-    const oldCampaignKinds = new Set(targets.map((target) => target.kind));
-    const retained = existing.filter((asset) => !oldCampaignKinds.has(String(record(asset).kind)));
-    const saved = await supabase
-      .from("commerce_creator_projects")
-      .update({ generated_assets: [...retained, ...generated], updated_at: new Date().toISOString() })
-      .eq("id", id)
-      .select("generated_assets")
-      .single();
-    if (saved.error) throw new Error(saved.error.message);
+    if (!generated.length && failures.length) {
+      return NextResponse.json({ error: "No se pudo generar ningún asset de campaña.", failures }, { status: 502 });
+    }
 
-    return NextResponse.json({ assets: generated, provider: "gemini", model, persisted: true });
+    return NextResponse.json({ assets: generated, failures, provider: "gemini", model, persisted: true, partial: failures.length > 0 });
   } catch (error) {
     const mapped = publicError(error);
     return NextResponse.json({ error: mapped.message }, { status: mapped.status });
