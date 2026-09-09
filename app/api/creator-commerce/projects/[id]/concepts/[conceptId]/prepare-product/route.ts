@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { syncCreatorProjectStatus } from "@/lib/creator-commerce/project-status";
 import {
   prepareCreatorConceptProduct,
   type CreatorConceptRow,
@@ -38,7 +39,8 @@ export async function POST(
       concept: conceptResult.data as CreatorConceptRow,
       body,
     });
-    return NextResponse.json(prepared);
+    const projectStatus = await syncCreatorProjectStatus(supabase, id);
+    return NextResponse.json({ ...prepared, projectStatus });
   } catch (error) {
     const status = (error as Error & { status?: number })?.status ?? (isAuthError(error) ? 401 : 500);
     return NextResponse.json({ error: error instanceof Error ? error.message : "No se pudo preparar el producto." }, { status });
