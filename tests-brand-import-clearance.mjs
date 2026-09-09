@@ -100,13 +100,32 @@ test("normalización de nombre genera variantes IGLÚ/IGLU/descriptor", () => {
   assert.ok(variants.includes("IGLÚ")); assert.ok(variants.includes("IGLU")); assert.ok(variants.includes("IGLU RECORDS"));
 });
 
-function internalAdmin(rows) {
-  return { from(table) { assert.equal(table, "brand_asset_versions"); const chain = { select() { return chain; }, async in() { return { data: rows, error: null }; } }; return chain; } };
+function internalAdmin(versionRows, ownerRows = []) {
+  return {
+    from(table) {
+      assert.ok(table === "brand_asset_versions" || table === "brand_assets");
+      const rows = table === "brand_asset_versions" ? versionRows : ownerRows;
+      const chain = {
+        select() { return chain; },
+        async in() { return { data: rows, error: null }; },
+      };
+      return chain;
+    },
+  };
 }
 
 test("clearance interno bloquea hash idéntico de otro propietario", async () => {
   const fingerprint = await fingerprintLogo(await igluMockup());
-  const result = await runInternalClearance({ admin: internalAdmin([{ id: "version-2", fingerprint, generation_metadata: { naming: { displayName: "OTRA", descriptor: null } }, brand_assets: { owner_type: "studio", owner_id: "otro" } }]), ownerType: "studio", ownerId: "iglu", fingerprint, naming: { entityName: "El Iglú", displayName: "IGLÚ", descriptor: "RECORDS", source: "user_confirmed" } });
+  const result = await runInternalClearance({
+    admin: internalAdmin(
+      [{ id: "version-2", brand_asset_id: "asset-2", fingerprint, generation_metadata: { naming: { displayName: "OTRA", descriptor: null } } }],
+      [{ id: "asset-2", owner_type: "studio", owner_id: "otro" }],
+    ),
+    ownerType: "studio",
+    ownerId: "iglu",
+    fingerprint,
+    naming: { entityName: "El Iglú", displayName: "IGLÚ", descriptor: "RECORDS", source: "user_confirmed" },
+  });
   assert.equal(result.status, "internal_blocked_duplicate");
 });
 

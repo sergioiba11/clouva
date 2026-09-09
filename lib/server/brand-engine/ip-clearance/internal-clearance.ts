@@ -9,14 +9,16 @@ const REVIEW_DISTANCE = 12;
 
 type StoredVersion = {
   id: string;
+  brand_asset_id: string;
   fingerprint: Partial<LogoFingerprint> | null;
   generation_metadata: { naming?: BrandNaming } | null;
-  brand_assets: { owner_type: BrandOwnerType; owner_id: string } | Array<{ owner_type: BrandOwnerType; owner_id: string }> | null;
 };
 
-function ownerFromRow(row: StoredVersion) {
-  return Array.isArray(row.brand_assets) ? row.brand_assets[0] ?? null : row.brand_assets;
-}
+type StoredOwner = {
+  id: string;
+  owner_type: BrandOwnerType;
+  owner_id: string;
+};
 
 function fingerprintDistance(a: LogoFingerprint, b: Partial<LogoFingerprint>): number | null {
   const left = a.dhash ?? a.phash;
@@ -39,20 +41,36 @@ export async function runInternalClearance(args: {
   conflictingVersionId: string | null;
   matches: InternalBrandMatch[];
 }> {
-  const { data, error } = await args.admin
+  // Do not embed brand_assets from brand_asset_versions here. The schema has
+  // two legitimate relationships between these tables (version.brand_asset_id
+  // and asset.active_version_id), so PostgREST cannot infer a unique join.
+  // Resolve owners in two explicit queries keyed by brand_asset_id instead.
+  const { data: versionData, error: versionError } = await args.admin
     .from("brand_asset_versions")
-    .select("id,fingerprint,generation_metadata,brand_assets!inner(owner_type,owner_id)")
+    .select("id,brand_asset_id,fingerprint,generation_metadata")
     .in("status", ["approved", "published"]);
-  if (error) throw new Error(`No se pudo ejecutar el clearance interno: ${error.message}`);
+  if (versionError) throw new Error(`No se pudo ejecutar el clearance interno: ${versionError.message}`);
+
+  const versions = (versionData ?? []) as unknown as StoredVersion[];
+  const brandAssetIds = Array.from(new Set(versions.map((row) => row.brand_asset_id).filter(Boolean)));
+  const ownersByAssetId = new Map<string, StoredOwner>();
+
+  if (brandAssetIds.length) {
+    const { data: ownerData, error: ownerError } = await args.admin
+      .from("brand_assets")
+      .select("id,owner_type,owner_id")
+      .in("id", brandAssetIds);
+    if (ownerError) throw new Error(`No se pudo ejecutar el clearance interno: ${ownerError.message}`);
+    for (const owner of (ownerData ?? []) as unknown as StoredOwner[]) ownersByAssetId.set(owner.id, owner);
+  }
 
   const candidateName = normalizeBrandText(args.naming.displayName);
   const candidateDescriptor = normalizeBrandText(args.naming.descriptor);
   const matches: InternalBrandMatch[] = [];
   let status: InternalClearanceStatus = "internal_clear";
 
-  for (const raw of data ?? []) {
-    const row = raw as unknown as StoredVersion;
-    const owner = ownerFromRow(row);
+  for (const row of versions) {
+    const owner = ownersByAssetId.get(row.brand_asset_id);
     if (!owner) continue;
     if (owner.owner_type === args.ownerType && owner.owner_id === args.ownerId) continue;
 

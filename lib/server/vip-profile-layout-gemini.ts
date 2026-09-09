@@ -182,8 +182,28 @@ export async function regeneratePreciseLayoutStructure(args: { apiKey:string; ta
   return {layout:sanitizeLayoutConfig(normalizePreciseOutput(parsed,viewport)),costUsd,model};
 }
 
-export async function generateLayoutVariants(args: { apiKey:string; images:GeminiReferenceImage[]; analysis:ReferenceAnalysis; facts:Record<string,unknown>; copy:{tagline:string|null;short_bio:string|null}; subjectLabel:"Player"|"Estudio" }):Promise<{layouts:LayoutConfig[];costUsd:number}> {
-  const promptText=["Sos un generador de 3 layouts estructurados distintos para CLOUVA. Nunca HTML/CSS/JSX.",`Datos: ${JSON.stringify(args.facts)}`,`Copy: ${JSON.stringify(args.copy)}`,"No hay target web preciso: proponé 3 variantes template válidas, máximo 9 secciones, datos reales, sin URLs.",'{"variants":[{"mode":"adaptive_layout","layout_kind":"template","sections":[],"page_style":{},"nav_items":[]}]}'].join("\n");
+export async function generateLayoutVariants(args: {
+  apiKey:string;
+  images:GeminiReferenceImage[];
+  analysis:ReferenceAnalysis;
+  facts:Record<string,unknown>;
+  copy:{tagline:string|null;short_bio:string|null};
+  subjectLabel:"Player"|"Estudio";
+  creativeDirection?:string|null;
+}):Promise<{layouts:LayoutConfig[];costUsd:number}> {
+  const direction=args.creativeDirection?.trim().slice(0,280)||null;
+  const promptText=[
+    "Sos un generador de 3 layouts estructurados distintos para CLOUVA. Nunca HTML/CSS/JSX.",
+    `Datos reales del ${args.subjectLabel}: ${JSON.stringify(args.facts)}.`,
+    `Copy real: ${JSON.stringify(args.copy)}.`,
+    direction ? `Dirección creativa explícita del usuario: ${JSON.stringify(direction)}.` : "No hay texto creativo explícito; inferí la atmósfera únicamente de las imágenes provistas y del branding real.",
+    args.images.length ? "Las imágenes adjuntas son inspiración/branding/fotos reales, NO un mockup web. Extraé paleta, contraste, temperatura, energía, formas y textura sin copiarlas como fondo literal." : "No hay imagen temática; construí la dirección desde el texto y los datos reales.",
+    "No hay target web preciso: proponé EXACTAMENTE 3 variantes de la MISMA web del MISMO Studio/Player. No cambies datos, nombre, Players, servicios, releases ni membresías entre variantes.",
+    "Las tres deben diferir de verdad en composición, jerarquía, ritmo, tratamiento gráfico, radius/nav_style y distribución de secciones, pero seguir la misma temática solicitada.",
+    "Pensalas como tres direcciones: 1) cinematográfica/expresiva, 2) editorial/premium, 3) contemporánea/experimental, adaptadas al input real. No uses esas etiquetas si contradicen la dirección del usuario.",
+    "Máximo 9 secciones. No inventes URLs. No generes imágenes. Solo layout_config seguro.",
+    '{"variants":[{"mode":"adaptive_layout","layout_kind":"template","sections":[],"page_style":{},"nav_items":[]}]}',
+  ].join("\n");
   const {parsed,costUsd}=await callGeminiJson({apiKey:args.apiKey,promptText,images:args.images,workload:"adaptive_layout"});
   const raw=parsed&&typeof parsed==="object"&&Array.isArray((parsed as Record<string,unknown>).variants)?(parsed as Record<string,unknown>).variants as unknown[]:[];
   return {layouts:raw.map((v)=>sanitizeLayoutConfig({...v as Record<string,unknown>,mode:"adaptive_layout",layout_kind:"template"})).filter((v):v is LayoutConfig=>v!==null).slice(0,3),costUsd};
