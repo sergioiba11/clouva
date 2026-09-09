@@ -7,7 +7,16 @@ export const dynamic = "force-dynamic";
 
 const ALLOWED_MIME = new Set(["image/jpeg", "image/png", "image/webp"]);
 const MAX_BYTES = 8 * 1024 * 1024;
-const KINDS = new Set(["cover", "logo", "artwork", "moodboard", "reference"]);
+const KINDS = new Set([
+  "cover",
+  "logo",
+  "artwork",
+  "artwork_master",
+  "moodboard",
+  "reference",
+  "product_reference",
+  "inspiration_reference",
+]);
 
 function short(value: unknown, max: number) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
