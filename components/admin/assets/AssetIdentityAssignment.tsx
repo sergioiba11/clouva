@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, Check, Loader2, Link2 } from "lucide-react";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
@@ -108,7 +109,7 @@ export function AssetIdentityAssignment({ source, bucket, path, name }: Props) {
 
   return (
     <div className="space-y-4 pb-24 text-white">
-      <a href="/admin/assets" className="inline-flex items-center gap-2 text-sm text-white/55 hover:text-white"><ArrowLeft className="h-4 w-4" />Volver a Assets</a>
+      <Link href="/admin/assets" className="inline-flex items-center gap-2 text-sm text-white/55 hover:text-white"><ArrowLeft className="h-4 w-4" />Volver a Assets</Link>
 
       <header className="rounded-[1.5rem] border border-violet-400/20 bg-[radial-gradient(circle_at_top_right,rgba(139,92,246,0.18),transparent_38%),rgba(0,0,0,0.32)] p-5">
         <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em] text-violet-200"><Link2 className="h-4 w-4" />Asignar a identidad</div>
@@ -133,7 +134,7 @@ export function AssetIdentityAssignment({ source, bucket, path, name }: Props) {
 
       {message ? <div className={`rounded-xl border px-4 py-3 text-sm ${result ? "border-emerald-300/20 bg-emerald-300/[0.06] text-emerald-100" : "border-violet-400/20 bg-violet-400/[0.07] text-violet-100"}`}>{message}</div> : null}
 
-      <div className="flex flex-wrap justify-end gap-2"><a href="/admin/assets" className="rounded-xl border border-white/10 px-4 py-3 text-sm text-white/55">Cancelar</a><button type="button" onClick={() => void submit()} disabled={!hasInput || !ownerId || busy || loadingOwners} className="inline-flex min-w-44 items-center justify-center gap-2 rounded-xl bg-violet-500 px-5 py-3 text-sm font-semibold disabled:opacity-40">{busy || loadingOwners ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}{publish ? "Asignar y publicar" : "Asignar a identidad"}</button></div>
+      <div className="flex flex-wrap justify-end gap-2"><Link href="/admin/assets" className="rounded-xl border border-white/10 px-4 py-3 text-sm text-white/55">Cancelar</Link><button type="button" onClick={() => void submit()} disabled={!hasInput || !ownerId || busy || loadingOwners} className="inline-flex min-w-44 items-center justify-center gap-2 rounded-xl bg-violet-500 px-5 py-3 text-sm font-semibold disabled:opacity-40">{busy || loadingOwners ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}{publish ? "Asignar y publicar" : "Asignar a identidad"}</button></div>
     </div>
   );
 }
