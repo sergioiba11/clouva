@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { syncCreatorProjectStatus } from "@/lib/creator-commerce/project-status";
 import { asRecord, short } from "@/lib/creator-commerce/server";
 import { isAuthError, requireUser } from "@/lib/server/supabase";
 
@@ -76,7 +77,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       .maybeSingle();
     if (error) throw new Error(error.message);
     if (!data) return NextResponse.json({ error: "No encontramos ese producto creativo o no tenés permiso." }, { status: 404 });
-    return NextResponse.json({ concept: data });
+    const projectStatus = await syncCreatorProjectStatus(supabase, id);
+    return NextResponse.json({ concept: data, projectStatus });
   } catch (error) {
     const status = (error as Error & { status?: number })?.status ?? (isAuthError(error) ? 401 : 500);
     return NextResponse.json({ error: error instanceof Error ? error.message : "No se pudo actualizar el producto creativo." }, { status });
@@ -102,7 +104,8 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
       .maybeSingle();
     if (error) throw new Error(error.message);
     if (!data) return NextResponse.json({ error: "No encontramos ese producto creativo o no tenés permiso." }, { status: 404 });
-    return NextResponse.json({ ok: true });
+    const projectStatus = await syncCreatorProjectStatus(supabase, id);
+    return NextResponse.json({ ok: true, projectStatus });
   } catch (error) {
     const status = (error as Error & { status?: number })?.status ?? (isAuthError(error) ? 401 : 500);
     return NextResponse.json({ error: error instanceof Error ? error.message : "No se pudo eliminar el producto creativo." }, { status });
