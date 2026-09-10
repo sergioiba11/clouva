@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } fro
 import {
   ArrowLeft,
   Box,
+  Building2,
   Check,
   ChevronRight,
   Coffee,
@@ -23,6 +24,7 @@ import {
   Sparkles,
   Trash2,
   UploadCloud,
+  UserRound,
   X,
 } from "lucide-react";
 import { useAuth } from "@/components/auth-provider";
@@ -36,6 +38,7 @@ import {
 } from "@/lib/creator-commerce/merch-product-types";
 
 type CreativeMode = "from_scratch" | "reference" | "exact_design";
+type MerchScope = "personal" | "organization";
 type CreationStage = "idle" | "creating" | "uploading" | "products" | "identity" | "error";
 
 type SellerContext = {
@@ -88,7 +91,6 @@ type PendingReference = {
 
 type ProjectDraft = {
   name: string;
-  collection: string;
   seller: string;
   creativeMode: CreativeMode;
   brief: string;
@@ -108,32 +110,23 @@ type ExistingConcept = {
   creative_config?: Record<string, unknown>;
 };
 
+type SellerOption = {
+  value: string;
+  label: string;
+  kind: "user" | "player" | "studio" | "spot";
+};
+
 const CARD = "rounded-[1.4rem] border border-white/[0.09] bg-[#0a0910]/72 shadow-[0_18px_70px_rgba(0,0,0,.22)] backdrop-blur-sm";
-const SECTION = "rounded-[1.35rem] border border-white/[0.08] bg-white/[0.025] p-4 sm:p-5";
 const INPUT = "w-full rounded-xl border border-white/10 bg-black/30 px-3 py-2.5 text-sm text-white outline-none transition placeholder:text-white/20 focus:border-violet-400/60 disabled:cursor-not-allowed disabled:opacity-50";
 const ALLOWED_MIME = new Set(["image/jpeg", "image/png", "image/webp"]);
 const MAX_BYTES = 8 * 1024 * 1024;
 const MAX_REFERENCES = 12;
+const INITIAL_DROP_NAME = "Drop 01";
 
 const METHODS: Array<{ value: CreativeMode; title: string; kicker: string; description: string }> = [
-  {
-    value: "from_scratch",
-    title: "Desde cero",
-    kicker: "Tengo una idea",
-    description: "CLOUVA desarrolla el universo visual desde tu brief.",
-  },
-  {
-    value: "reference",
-    title: "Referencia / inspiración",
-    kicker: "Tengo referencias",
-    description: "Usá portadas, fotos, prendas o diseños como inspiración.",
-  },
-  {
-    value: "exact_design",
-    title: "Diseño exacto",
-    kicker: "Tengo el diseño",
-    description: "Usá este material como diseño principal del drop.",
-  },
+  { value: "from_scratch", title: "Desde cero", kicker: "Tengo una idea", description: "CLOUVA desarrolla el universo visual desde tu brief." },
+  { value: "reference", title: "Referencia / inspiración", kicker: "Tengo referencias", description: "Usá portadas, fotos, prendas o diseños como inspiración." },
+  { value: "exact_design", title: "Diseño exacto", kicker: "Tengo el diseño", description: "Usá este material como diseño principal del drop." },
 ];
 
 const PLACEHOLDERS: Record<CreativeMode, string> = {
@@ -195,6 +188,10 @@ function displayMode(mode: CreativeMode) {
   return "Referencia / inspiración";
 }
 
+function displayScope(scope: MerchScope) {
+  return scope === "personal" ? "Artista / Marca personal" : "Estudio / Empresa";
+}
+
 function newAccessory(): CustomAccessoryDraft {
   return {
     id: typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `accessory-${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -211,9 +208,9 @@ export function MerchCreatorStart() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [context, setContext] = useState<SellerContext | null>(null);
   const [projects, setProjects] = useState<CreatorProject[]>([]);
+  const [merchScope, setMerchScope] = useState<MerchScope>("personal");
   const [projectDraft, setProjectDraft] = useState<ProjectDraft>({
     name: "",
-    collection: "Drop 01",
     seller: "user",
     creativeMode: "from_scratch",
     brief: "",
@@ -261,28 +258,44 @@ export function MerchCreatorStart() {
     void load().catch((cause) => setError(cause instanceof Error ? cause.message : "No se pudo cargar Crear Merch."));
   }, [authLoading, load, session?.access_token, user]);
 
-  const sellerOptions = useMemo(() => {
-    const options = [{ value: "user", label: "Mi cuenta" }];
-    for (const player of context?.players ?? []) options.push({ value: `player:${player.id}`, label: `Player · ${player.name}` });
-    for (const studio of context?.studios ?? []) options.push({ value: `studio:${studio.id}`, label: `Studio · ${studio.name}` });
-    for (const spot of context?.spots ?? []) options.push({ value: `spot:${spot.id}`, label: `Business / Spot · ${spot.name}` });
+  const personalSellerOptions = useMemo<SellerOption[]>(() => {
+    const options: SellerOption[] = [{ value: "user", label: "Mi cuenta", kind: "user" }];
+    for (const player of context?.players ?? []) options.push({ value: `player:${player.id}`, label: `Player · ${player.name}`, kind: "player" });
     return options;
   }, [context]);
 
-  const sellerLabel = useMemo(
-    () => sellerOptions.find((option) => option.value === projectDraft.seller)?.label ?? "Mi cuenta",
-    [projectDraft.seller, sellerOptions],
-  );
+  const organizationSellerOptions = useMemo<SellerOption[]>(() => {
+    const options: SellerOption[] = [];
+    for (const studio of context?.studios ?? []) options.push({ value: `studio:${studio.id}`, label: `Studio · ${studio.name}`, kind: "studio" });
+    for (const spot of context?.spots ?? []) options.push({ value: `spot:${spot.id}`, label: `Business / Spot · ${spot.name}`, kind: "spot" });
+    return options;
+  }, [context]);
+
+  const sellerOptions = merchScope === "personal" ? personalSellerOptions : organizationSellerOptions;
+  const sellerLabel = sellerOptions.find((option) => option.value === projectDraft.seller)?.label ?? (merchScope === "personal" ? "Mi cuenta" : "Elegí una organización");
   const referenceCopy = REFERENCE_COPY[projectDraft.creativeMode];
   const uploadedCount = pendingReferences.filter((item) => item.status === "uploaded").length;
   const pendingCount = pendingReferences.length - uploadedCount;
   const selectedProductList = MERCH_PRODUCT_TYPES.filter((product) => selectedProducts.has(product.key));
   const selectedCount = selectedProductList.filter((product) => product.key !== "custom").length + (selectedProducts.has("custom") ? customAccessories.length : 0);
 
+  function switchScope(nextScope: MerchScope) {
+    if (createdProject || busy || nextScope === merchScope) return;
+    setMerchScope(nextScope);
+    setError(null);
+    if (nextScope === "personal") {
+      setProjectDraft((current) => ({ ...current, seller: "user" }));
+      return;
+    }
+    const organizationOptions = organizationSellerOptions;
+    setProjectDraft((current) => ({ ...current, seller: organizationOptions.length === 1 ? organizationOptions[0].value : "" }));
+  }
+
   function collectionBlueprint() {
     return {
-      version: 1,
+      version: 2,
       format: "product",
+      merch_scope: merchScope,
       selected_product_keys: [...selectedProducts],
       custom_accessories: selectedProducts.has("custom")
         ? customAccessories.map((accessory) => ({
@@ -316,12 +329,7 @@ export function MerchCreatorStart() {
         continue;
       }
       try {
-        next.push({
-          id: `${file.name}-${file.lastModified}-${Math.random().toString(36).slice(2)}`,
-          file,
-          preview: await fileToDataUrl(file),
-          status: "pending",
-        });
+        next.push({ id: `${file.name}-${file.lastModified}-${Math.random().toString(36).slice(2)}`, file, preview: await fileToDataUrl(file), status: "pending" });
       } catch {
         rejected.push(`${file.name}: no se pudo leer`);
       }
@@ -345,9 +353,7 @@ export function MerchCreatorStart() {
       if (next.has(key)) next.delete(key); else next.add(key);
       return next;
     });
-    if (key === "custom" && !selectedProducts.has("custom") && customAccessories.length === 0) {
-      setCustomAccessories([newAccessory()]);
-    }
+    if (key === "custom" && !selectedProducts.has("custom") && customAccessories.length === 0) setCustomAccessories([newAccessory()]);
   }
 
   function updateAccessory(id: string, patch: Partial<CustomAccessoryDraft>) {
@@ -365,12 +371,7 @@ export function MerchCreatorStart() {
       try {
         const uploaded = await authFetch("/api/creator-commerce/project-assets", {
           method: "POST",
-          body: JSON.stringify({
-            projectId: currentProject.id,
-            kind: referenceKind(projectDraft.creativeMode, Math.max(0, index)),
-            label: item.file.name,
-            dataUrl: item.preview,
-          }),
+          body: JSON.stringify({ projectId: currentProject.id, kind: referenceKind(projectDraft.creativeMode, Math.max(0, index)), label: item.file.name, dataUrl: item.preview }),
         });
         assets.push(uploaded.asset as CreatorAsset);
         const patched = await authFetch(`/api/creator-commerce/projects/${currentProject.id}`, {
@@ -387,19 +388,13 @@ export function MerchCreatorStart() {
         throw new Error(`${item.file.name}: ${reason}`);
       }
     }
-
     return currentProject;
   }
 
   async function saveCollectionBlueprint(project: CreatorProject) {
     const payload = await authFetch(`/api/creator-commerce/projects/${project.id}`, {
       method: "PATCH",
-      body: JSON.stringify({
-        metadata: {
-          ...(project.metadata ?? {}),
-          merch_preflight: collectionBlueprint(),
-        },
-      }),
+      body: JSON.stringify({ metadata: { ...(project.metadata ?? {}), merch_preflight: collectionBlueprint() } }),
     });
     const currentProject = payload.project as CreatorProject;
     setCreatedProject(currentProject);
@@ -439,9 +434,7 @@ export function MerchCreatorStart() {
         const preflightKey = `accessory:${accessory.id}`;
         if (existingKeys.has(preflightKey)) continue;
         const pendingReference = pendingReferences.find((item) => item.id === accessory.referenceId);
-        const storedReference = pendingReference
-          ? (project.reference_assets ?? []).find((asset) => asset.label === pendingReference.file.name)
-          : undefined;
+        const storedReference = pendingReference ? (project.reference_assets ?? []).find((asset) => asset.label === pendingReference.file.name) : undefined;
         rows.push({
           name: `${accessory.type === "Otro" ? "Accesorio personalizado" : accessory.type} · ${project.name}`,
           product_template: "custom",
@@ -458,19 +451,13 @@ export function MerchCreatorStart() {
             collection_intent: accessory.designUse === "graphic" ? "graphic_on_product" : accessory.designUse === "shape" ? "custom_physical_shape" : "custom_shape_and_finish",
             preflight_key: preflightKey,
           },
-          design_overrides: {
-            notes: accessory.description.trim(),
-            design_use: accessory.designUse,
-          },
+          design_overrides: { notes: accessory.description.trim(), design_use: accessory.designUse },
         });
       }
     }
 
     if (!rows.length) return;
-    await authFetch(`/api/creator-commerce/projects/${project.id}/concepts`, {
-      method: "POST",
-      body: JSON.stringify({ concepts: rows }),
-    });
+    await authFetch(`/api/creator-commerce/projects/${project.id}/concepts`, { method: "POST", body: JSON.stringify({ concepts: rows }) });
   }
 
   function openProject(projectId: string) {
@@ -479,6 +466,8 @@ export function MerchCreatorStart() {
 
   async function createOrContinueProject() {
     if (!projectDraft.name.trim() && !createdProject) return setError("Poné un nombre al proyecto.");
+    if (!createdProject && merchScope === "organization" && !projectDraft.seller) return setError("Elegí el estudio o empresa que representa este merch.");
+
     setBusy(true);
     setError(null);
     setMessage(null);
@@ -489,6 +478,10 @@ export function MerchCreatorStart() {
       if (!project) {
         setStage("creating");
         const [kind, id] = projectDraft.seller.split(":");
+        const validPersonalSeller = merchScope === "personal" && (kind === "user" || kind === "player");
+        const validOrganizationSeller = merchScope === "organization" && (kind === "studio" || kind === "spot");
+        if (!validPersonalSeller && !validOrganizationSeller) throw new Error("La identidad elegida no corresponde al tipo de merch seleccionado.");
+
         const selectedSpot = kind === "spot" ? context?.spots.find((spot) => spot.id === id) : null;
         const selectedStudio = selectedSpot?.studio_id || (kind === "studio" ? id : null);
         const ownerType = selectedSpot ? (selectedStudio ? "studio" : "user") : kind === "player" || kind === "studio" ? kind : "user";
@@ -500,7 +493,7 @@ export function MerchCreatorStart() {
             player_id: kind === "player" ? id : null,
             studio_id: selectedStudio,
             spot_id: selectedSpot?.id ?? null,
-            collection_name: projectDraft.collection,
+            collection_name: INITIAL_DROP_NAME,
             category: "Merch",
             creative_mode: projectDraft.creativeMode,
             brief: projectDraft.brief,
@@ -521,18 +514,13 @@ export function MerchCreatorStart() {
       setStage("products");
       project = await saveCollectionBlueprint(project);
       await createSelectedConcepts(project);
-
       setStage("identity");
       setMessage("Drop preparado. Abriendo Identidad…");
       openProject(project.id);
     } catch (cause) {
       setStage("error");
       const reason = cause instanceof Error ? cause.message : "No se pudo preparar el proyecto.";
-      if (projectPersisted) {
-        setError(`El proyecto quedó guardado, pero no se completó la preparación. ${reason} Podés reintentar sin crear otro proyecto.`);
-      } else {
-        setError(reason);
-      }
+      setError(projectPersisted ? `El proyecto quedó guardado, pero no se completó la preparación. ${reason} Podés reintentar sin crear otro proyecto.` : reason);
     } finally {
       setBusy(false);
     }
@@ -586,14 +574,38 @@ export function MerchCreatorStart() {
                   <div>
                     <p className="text-[10px] font-bold uppercase tracking-[.22em] text-violet-300">01 · Tu drop</p>
                     <h2 className="mt-1 text-lg font-semibold">Armá la base de la colección</h2>
-                    <p className="mt-1 text-xs text-white/38">Definí quién vende, de dónde nace la idea y qué querés que CLOUVA mantenga entre todos los productos.</p>
+                    <p className="mt-1 text-xs text-white/38">Primero elegí a quién representa el merch. CLOUVA resuelve por debajo la identidad, organización y vendedor real.</p>
                   </div>
                 </div>
 
-                <div className="mt-5 grid gap-3 md:grid-cols-3">
-                  <label className="text-[11px] text-white/45">Nombre del proyecto<input disabled={Boolean(createdProject)} className={`${INPUT} mt-1.5`} value={projectDraft.name} onChange={(event) => setProjectDraft({ ...projectDraft, name: event.target.value })} placeholder="Buenos Genes" /></label>
-                  <label className="text-[11px] text-white/45">Drop / cápsula<input disabled={Boolean(createdProject)} className={`${INPUT} mt-1.5`} value={projectDraft.collection} onChange={(event) => setProjectDraft({ ...projectDraft, collection: event.target.value })} placeholder="Drop 01" /></label>
-                  <label className="text-[11px] text-white/45">Vendedor<select disabled={Boolean(createdProject)} className={`${INPUT} mt-1.5`} value={projectDraft.seller} onChange={(event) => setProjectDraft({ ...projectDraft, seller: event.target.value })}>{sellerOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+                <div className="mt-5">
+                  <p className="text-[10px] font-bold uppercase tracking-[.18em] text-white/35">¿Para quién es este merch?</p>
+                  <div className="mt-3 grid gap-3 md:grid-cols-2">
+                    <button type="button" disabled={Boolean(createdProject)} onClick={() => switchScope("personal")} className={`relative min-h-32 rounded-2xl border p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-55 ${merchScope === "personal" ? "border-violet-400/70 bg-violet-500/[.10] shadow-[0_0_28px_rgba(124,58,237,.10)]" : "border-white/[0.08] bg-black/20 hover:border-white/18"}`}>
+                      {merchScope === "personal" ? <span className="absolute right-3 top-3 grid h-5 w-5 place-items-center rounded-full bg-violet-500 text-white"><Check size={12} /></span> : null}
+                      <span className={`grid h-10 w-10 place-items-center rounded-xl border ${merchScope === "personal" ? "border-violet-400/25 bg-violet-500/15 text-violet-200" : "border-white/[0.08] bg-white/[0.025] text-white/35"}`}><UserRound size={19} /></span>
+                      <strong className="mt-3 block pr-7 text-sm">Artista / Marca personal</strong>
+                      <p className="mt-1.5 max-w-lg text-[11px] leading-4 text-white/38">Merch oficial de tu identidad, artista, proyecto creativo o marca personal.</p>
+                    </button>
+                    <button type="button" disabled={Boolean(createdProject)} onClick={() => switchScope("organization")} className={`relative min-h-32 rounded-2xl border p-4 text-left transition disabled:cursor-not-allowed disabled:opacity-55 ${merchScope === "organization" ? "border-violet-400/70 bg-violet-500/[.10] shadow-[0_0_28px_rgba(124,58,237,.10)]" : "border-white/[0.08] bg-black/20 hover:border-white/18"}`}>
+                      {merchScope === "organization" ? <span className="absolute right-3 top-3 grid h-5 w-5 place-items-center rounded-full bg-violet-500 text-white"><Check size={12} /></span> : null}
+                      <span className={`grid h-10 w-10 place-items-center rounded-xl border ${merchScope === "organization" ? "border-violet-400/25 bg-violet-500/15 text-violet-200" : "border-white/[0.08] bg-white/[0.025] text-white/35"}`}><Building2 size={19} /></span>
+                      <strong className="mt-3 block pr-7 text-sm">Estudio / Empresa</strong>
+                      <p className="mt-1.5 max-w-lg text-[11px] leading-4 text-white/38">Merch de un estudio, sello, colectivo, negocio o empresa.</p>
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mt-5 grid gap-3 md:grid-cols-[minmax(0,1.2fr)_minmax(0,1fr)_180px]">
+                  <label className="text-[11px] text-white/45">Nombre del proyecto<input disabled={Boolean(createdProject)} className={`${INPUT} mt-1.5`} value={projectDraft.name} onChange={(event) => setProjectDraft({ ...projectDraft, name: event.target.value })} placeholder={merchScope === "personal" ? "CLOUVA Oficial / Vida de Flows" : "Iglú Records Merch / 223 Official"} /></label>
+
+                  {merchScope === "organization" && organizationSellerOptions.length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-white/10 bg-black/20 px-3 py-3 text-[11px] leading-5 text-white/38"><strong className="block text-white/65">Sin organización disponible</strong>Todavía no tenés un estudio o empresa disponible para crear merch.</div>
+                  ) : (
+                    <label className="text-[11px] text-white/45">{merchScope === "personal" ? "Identidad oficial" : "Estudio / Empresa"}<select disabled={Boolean(createdProject)} className={`${INPUT} mt-1.5`} value={projectDraft.seller} onChange={(event) => setProjectDraft({ ...projectDraft, seller: event.target.value })}>{merchScope === "organization" && organizationSellerOptions.length > 1 ? <option value="">Elegí un estudio o empresa</option> : null}{sellerOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select><span className="mt-1.5 block text-[9px] text-white/25">{merchScope === "personal" ? "Elegí qué identidad representa este merch." : "Elegí qué organización va a crear y vender este merch."}</span></label>
+                  )}
+
+                  <div className="text-[11px] text-white/45">Drop<div className="mt-1.5 flex min-h-[42px] items-center justify-between rounded-xl border border-violet-400/20 bg-violet-500/[.055] px-3"><strong className="text-sm text-white/80">{INITIAL_DROP_NAME}</strong><span className="rounded-full border border-violet-400/20 bg-violet-500/10 px-2 py-1 text-[8px] font-bold uppercase tracking-[.12em] text-violet-200">Automático</span></div><span className="mt-1.5 block text-[9px] text-white/25">Primer drop de este proyecto.</span></div>
                 </div>
 
                 <div className="mt-5 border-t border-white/[0.07] pt-5">
@@ -613,61 +625,21 @@ export function MerchCreatorStart() {
                   </div>
                 </div>
 
-                <label className="mt-5 block text-xs font-semibold text-white/72">¿Qué querés crear?
-                  <textarea disabled={Boolean(createdProject)} className={`${INPUT} mt-2 min-h-28 resize-y text-sm leading-6`} value={projectDraft.brief} onChange={(event) => setProjectDraft({ ...projectDraft, brief: event.target.value })} placeholder={PLACEHOLDERS[projectDraft.creativeMode]} />
-                  <span className="mt-2 block text-[10px] font-normal text-white/28">Mientras más contexto le des a CLOUVA, mejor puede mantener el universo de la colección.</span>
-                </label>
+                <label className="mt-5 block text-xs font-semibold text-white/72">¿Qué querés crear?<textarea disabled={Boolean(createdProject)} className={`${INPUT} mt-2 min-h-28 resize-y text-sm leading-6`} value={projectDraft.brief} onChange={(event) => setProjectDraft({ ...projectDraft, brief: event.target.value })} placeholder={PLACEHOLDERS[projectDraft.creativeMode]} /><span className="mt-2 block text-[10px] font-normal text-white/28">Mientras más contexto le des a CLOUVA, mejor puede mantener el universo de la colección.</span></label>
               </div>
             </section>
 
             <section className={CARD}>
               <div className="p-4 sm:p-5">
                 <p className="text-[10px] font-bold uppercase tracking-[.22em] text-violet-300">{referenceCopy.eyebrow}</p>
-                <div className="mt-1 flex flex-wrap items-start justify-between gap-3">
-                  <div className="max-w-3xl">
-                    <h2 className="text-lg font-semibold">{referenceCopy.title}</h2>
-                    <p className="mt-1.5 text-xs leading-5 text-white/38">{referenceCopy.description}</p>
-                  </div>
-                  {pendingReferences.length ? <span className="rounded-full border border-white/10 bg-black/25 px-3 py-1 text-[9px] text-white/40">{uploadedCount}/{pendingReferences.length} guardadas</span> : null}
-                </div>
+                <div className="mt-1 flex flex-wrap items-start justify-between gap-3"><div className="max-w-3xl"><h2 className="text-lg font-semibold">{referenceCopy.title}</h2><p className="mt-1.5 text-xs leading-5 text-white/38">{referenceCopy.description}</p></div>{pendingReferences.length ? <span className="rounded-full border border-white/10 bg-black/25 px-3 py-1 text-[9px] text-white/40">{uploadedCount}/{pendingReferences.length} guardadas</span> : null}</div>
 
                 {pendingReferences.length === 0 ? (
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    onDragEnter={(event) => { event.preventDefault(); setDragging(true); }}
-                    onDragOver={(event: DragEvent<HTMLButtonElement>) => { event.preventDefault(); setDragging(true); }}
-                    onDragLeave={(event) => { event.preventDefault(); setDragging(false); }}
-                    onDrop={(event: DragEvent<HTMLButtonElement>) => { event.preventDefault(); setDragging(false); void addReferenceFiles(Array.from(event.dataTransfer.files)); }}
-                    className={`mt-4 flex min-h-36 w-full flex-col items-center justify-center rounded-2xl border border-dashed px-5 py-6 text-center transition ${dragging ? "border-violet-300 bg-violet-500/10" : "border-white/15 bg-black/20 hover:border-violet-400/45 hover:bg-violet-500/[.035]"}`}
-                  >
-                    <UploadCloud size={25} className="text-violet-300" />
-                    <strong className="mt-3 text-sm">Subí tu referencia</strong>
-                    <span className="mt-1 text-xs text-white/35">Arrastrá imágenes acá o elegilas desde tu dispositivo</span>
-                    <span className="mt-4 rounded-lg bg-violet-500 px-4 py-2 text-xs font-bold text-white">+ Elegir imágenes</span>
+                  <button type="button" onClick={() => fileInputRef.current?.click()} onDragEnter={(event) => { event.preventDefault(); setDragging(true); }} onDragOver={(event: DragEvent<HTMLButtonElement>) => { event.preventDefault(); setDragging(true); }} onDragLeave={(event) => { event.preventDefault(); setDragging(false); }} onDrop={(event: DragEvent<HTMLButtonElement>) => { event.preventDefault(); setDragging(false); void addReferenceFiles(Array.from(event.dataTransfer.files)); }} className={`mt-4 flex min-h-36 w-full flex-col items-center justify-center rounded-2xl border border-dashed px-5 py-6 text-center transition ${dragging ? "border-violet-300 bg-violet-500/10" : "border-white/15 bg-black/20 hover:border-violet-400/45 hover:bg-violet-500/[.035]"}`}>
+                    <UploadCloud size={25} className="text-violet-300" /><strong className="mt-3 text-sm">Subí tu referencia</strong><span className="mt-1 text-xs text-white/35">Arrastrá imágenes acá o elegilas desde tu dispositivo</span><span className="mt-4 rounded-lg bg-violet-500 px-4 py-2 text-xs font-bold text-white">+ Elegir imágenes</span>
                   </button>
                 ) : (
-                  <div className="mt-4">
-                    <div className="flex items-center justify-between gap-3">
-                      <button type="button" onClick={() => fileInputRef.current?.click()} className="inline-flex items-center gap-2 rounded-xl border border-violet-400/25 bg-violet-500/[.08] px-3 py-2 text-xs font-semibold text-violet-200 transition hover:bg-violet-500/[.14]"><Plus size={14} /> Agregar referencia</button>
-                      <span className="text-[10px] text-white/25">JPG · PNG · WEBP · hasta 8 MB</span>
-                    </div>
-                    <div className="mt-3 flex gap-3 overflow-x-auto pb-2 sm:grid sm:grid-cols-3 sm:overflow-visible lg:grid-cols-4 xl:grid-cols-5">
-                      {pendingReferences.map((item, index) => (
-                        <div key={item.id} className={`relative w-36 shrink-0 overflow-hidden rounded-2xl border bg-black/30 sm:w-auto ${item.status === "error" ? "border-rose-400/35" : item.status === "uploaded" ? "border-emerald-400/25" : "border-white/10"}`}>
-                          <button type="button" onClick={() => setPreviewReference(item)} className="group relative block aspect-[4/3] w-full overflow-hidden bg-black/40">
-                            <Image src={item.preview} alt={item.file.name} fill unoptimized sizes="180px" className="object-cover transition duration-300 group-hover:scale-[1.03]" />
-                            <span className="absolute left-2 top-2 rounded-md bg-black/75 px-1.5 py-1 text-[8px] font-bold tracking-wide text-white/70 backdrop-blur">{referenceTypeLabel(projectDraft.creativeMode, index)}</span>
-                            <span className="absolute inset-0 grid place-items-center bg-black/0 opacity-0 transition group-hover:bg-black/45 group-hover:opacity-100"><Eye size={18} /></span>
-                          </button>
-                          <div className="flex items-center gap-2 p-2.5">
-                            <p className="min-w-0 flex-1 truncate text-[10px] text-white/55" title={item.file.name}>{item.file.name}</p>
-                            <button type="button" disabled={item.status === "uploaded" || item.status === "uploading"} onClick={() => removePendingReference(item.id)} className="rounded-md p-1 text-white/30 hover:bg-white/5 hover:text-rose-300 disabled:cursor-not-allowed disabled:opacity-20" aria-label={`Eliminar ${item.file.name}`}><Trash2 size={12} /></button>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+                  <div className="mt-4"><div className="flex items-center justify-between gap-3"><button type="button" onClick={() => fileInputRef.current?.click()} className="inline-flex items-center gap-2 rounded-xl border border-violet-400/25 bg-violet-500/[.08] px-3 py-2 text-xs font-semibold text-violet-200 transition hover:bg-violet-500/[.14]"><Plus size={14} /> Agregar referencia</button><span className="text-[10px] text-white/25">JPG · PNG · WEBP · hasta 8 MB</span></div><div className="mt-3 flex gap-3 overflow-x-auto pb-2 sm:grid sm:grid-cols-3 sm:overflow-visible lg:grid-cols-4 xl:grid-cols-5">{pendingReferences.map((item, index) => <div key={item.id} className={`relative w-36 shrink-0 overflow-hidden rounded-2xl border bg-black/30 sm:w-auto ${item.status === "error" ? "border-rose-400/35" : item.status === "uploaded" ? "border-emerald-400/25" : "border-white/10"}`}><button type="button" onClick={() => setPreviewReference(item)} className="group relative block aspect-[4/3] w-full overflow-hidden bg-black/40"><Image src={item.preview} alt={item.file.name} fill unoptimized sizes="180px" className="object-cover transition duration-300 group-hover:scale-[1.03]" /><span className="absolute left-2 top-2 rounded-md bg-black/75 px-1.5 py-1 text-[8px] font-bold tracking-wide text-white/70 backdrop-blur">{referenceTypeLabel(projectDraft.creativeMode, index)}</span><span className="absolute inset-0 grid place-items-center bg-black/0 opacity-0 transition group-hover:bg-black/45 group-hover:opacity-100"><Eye size={18} /></span></button><div className="flex items-center gap-2 p-2.5"><p className="min-w-0 flex-1 truncate text-[10px] text-white/55" title={item.file.name}>{item.file.name}</p><button type="button" disabled={item.status === "uploaded" || item.status === "uploading"} onClick={() => removePendingReference(item.id)} className="rounded-md p-1 text-white/30 hover:bg-white/5 hover:text-rose-300 disabled:cursor-not-allowed disabled:opacity-20" aria-label={`Eliminar ${item.file.name}`}><Trash2 size={12} /></button></div></div>)}</div></div>
                 )}
                 <input ref={fileInputRef} type="file" multiple accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(event) => { void addReferenceFiles(Array.from(event.target.files ?? [])); event.currentTarget.value = ""; }} />
               </div>
@@ -675,124 +647,28 @@ export function MerchCreatorStart() {
 
             <section className={CARD}>
               <div className="p-4 sm:p-5">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <p className="text-[10px] font-bold uppercase tracking-[.22em] text-violet-300">03 · Productos</p>
-                    <h2 className="mt-1 text-lg font-semibold">Elegí qué artículos forman el merch</h2>
-                    <p className="mt-1.5 text-xs text-white/38">La selección define la colección. Todavía no genera imágenes ni publica nada.</p>
-                  </div>
-                  <span className="rounded-full border border-white/10 bg-black/25 px-3 py-1.5 text-[10px] font-semibold text-white/55">{selectedCount} seleccionado{selectedCount === 1 ? "" : "s"}</span>
-                </div>
+                <div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-[10px] font-bold uppercase tracking-[.22em] text-violet-300">03 · Productos</p><h2 className="mt-1 text-lg font-semibold">Elegí qué artículos forman el merch</h2><p className="mt-1.5 text-xs text-white/38">La selección define la colección. Todavía no genera imágenes ni publica nada.</p></div><span className="rounded-full border border-white/10 bg-black/25 px-3 py-1.5 text-[10px] font-semibold text-white/55">{selectedCount} seleccionado{selectedCount === 1 ? "" : "s"}</span></div>
+                <div className="mt-4 flex items-center gap-2"><span className="text-[10px] font-bold uppercase tracking-[.16em] text-white/30">Formato</span><span className="inline-flex min-h-9 items-center gap-2 rounded-xl border border-violet-400/35 bg-violet-500/[.10] px-3 py-2 text-xs font-semibold text-violet-100"><Check size={13} /> Producto</span><button type="button" onClick={() => setShow3dInfo(true)} className="inline-flex min-h-9 items-center gap-2 rounded-xl border border-white/[0.08] bg-white/[0.025] px-3 py-2 text-xs font-semibold text-white/28 transition hover:border-white/15 hover:text-white/45">3D <span className="rounded bg-white/[0.05] px-1.5 py-0.5 text-[8px] uppercase tracking-wider">Próximamente</span></button></div>
+                <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">{MERCH_PRODUCT_TYPES.map((product) => { const selected = selectedProducts.has(product.key); const Icon = PRODUCT_ICONS[product.icon]; return <button key={product.key} type="button" disabled={Boolean(createdProject) || busy} onClick={() => toggleProduct(product.key)} className={`group relative min-h-36 overflow-hidden rounded-2xl border p-3.5 text-left transition disabled:cursor-not-allowed disabled:opacity-55 ${selected ? "border-violet-400/70 bg-violet-500/[.11] shadow-[0_0_25px_rgba(124,58,237,.09)]" : "border-white/[0.08] bg-black/20 hover:border-white/18 hover:bg-white/[.035]"}`}><span className={`grid h-11 w-11 place-items-center rounded-xl border transition ${selected ? "border-violet-400/25 bg-violet-500/15 text-violet-200" : "border-white/[0.07] bg-white/[.025] text-white/35 group-hover:text-white/55"}`}><Icon size={20} /></span><span className={`absolute right-3 top-3 grid h-5 w-5 place-items-center rounded-full border ${selected ? "border-violet-400 bg-violet-500 text-white" : "border-white/15 bg-black/35 text-transparent"}`}><Check size={11} /></span><span className="mt-3 block text-[9px] font-bold uppercase tracking-[.12em] text-white/25">{product.group}</span><strong className="mt-1 block text-xs leading-4 text-white/78">{product.label}</strong><span className="mt-1.5 line-clamp-2 block text-[9px] leading-4 text-white/28">{product.description}</span></button>; })}</div>
 
-                <div className="mt-4 flex items-center gap-2">
-                  <span className="text-[10px] font-bold uppercase tracking-[.16em] text-white/30">Formato</span>
-                  <span className="inline-flex min-h-9 items-center gap-2 rounded-xl border border-violet-400/35 bg-violet-500/[.10] px-3 py-2 text-xs font-semibold text-violet-100"><Check size={13} /> Producto</span>
-                  <button type="button" onClick={() => setShow3dInfo(true)} className="inline-flex min-h-9 items-center gap-2 rounded-xl border border-white/[0.08] bg-white/[0.025] px-3 py-2 text-xs font-semibold text-white/28 transition hover:border-white/15 hover:text-white/45">3D <span className="rounded bg-white/[0.05] px-1.5 py-0.5 text-[8px] uppercase tracking-wider">Próximamente</span></button>
-                </div>
-
-                <div className="mt-4 grid grid-cols-2 gap-2.5 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
-                  {MERCH_PRODUCT_TYPES.map((product) => {
-                    const selected = selectedProducts.has(product.key);
-                    const Icon = PRODUCT_ICONS[product.icon];
-                    return (
-                      <button key={product.key} type="button" disabled={Boolean(createdProject) || busy} onClick={() => toggleProduct(product.key)} className={`group relative min-h-36 overflow-hidden rounded-2xl border p-3.5 text-left transition disabled:cursor-not-allowed disabled:opacity-55 ${selected ? "border-violet-400/70 bg-violet-500/[.11] shadow-[0_0_25px_rgba(124,58,237,.09)]" : "border-white/[0.08] bg-black/20 hover:border-white/18 hover:bg-white/[.035]"}`}>
-                        <span className={`grid h-11 w-11 place-items-center rounded-xl border transition ${selected ? "border-violet-400/25 bg-violet-500/15 text-violet-200" : "border-white/[0.07] bg-white/[.025] text-white/35 group-hover:text-white/55"}`}><Icon size={20} /></span>
-                        <span className={`absolute right-3 top-3 grid h-5 w-5 place-items-center rounded-full border ${selected ? "border-violet-400 bg-violet-500 text-white" : "border-white/15 bg-black/35 text-transparent"}`}><Check size={11} /></span>
-                        <span className="mt-3 block text-[9px] font-bold uppercase tracking-[.12em] text-white/25">{product.group}</span>
-                        <strong className="mt-1 block text-xs leading-4 text-white/78">{product.label}</strong>
-                        <span className="mt-1.5 line-clamp-2 block text-[9px] leading-4 text-white/28">{product.description}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-
-                {selectedProducts.has("custom") ? (
-                  <div className="mt-4 rounded-2xl border border-violet-400/20 bg-violet-500/[.045] p-4">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div>
-                        <h3 className="text-sm font-semibold">Accesorios personalizados</h3>
-                        <p className="mt-1 text-[10px] text-white/35">Acá el diseño puede ser la gráfica, la forma física del objeto o ambas.</p>
-                      </div>
-                      <button type="button" disabled={Boolean(createdProject) || busy} onClick={() => setCustomAccessories((current) => [...current, newAccessory()])} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-2 text-[10px] font-semibold text-white/55 hover:text-white disabled:opacity-40"><Plus size={12} /> Otro accesorio</button>
-                    </div>
-
-                    <div className="mt-4 space-y-3">
-                      {customAccessories.map((accessory, index) => (
-                        <div key={accessory.id} className="rounded-xl border border-white/[0.08] bg-black/25 p-3.5">
-                          <div className="flex items-center justify-between gap-3">
-                            <p className="text-[10px] font-bold uppercase tracking-[.14em] text-violet-300/75">Accesorio {index + 1}</p>
-                            {customAccessories.length > 1 ? <button type="button" disabled={Boolean(createdProject) || busy} onClick={() => setCustomAccessories((current) => current.filter((item) => item.id !== accessory.id))} className="rounded-md p-1.5 text-white/25 hover:bg-white/5 hover:text-rose-300 disabled:opacity-30" aria-label="Eliminar accesorio"><Trash2 size={13} /></button> : null}
-                          </div>
-                          <div className="mt-3 grid gap-3 md:grid-cols-2">
-                            <label className="text-[10px] text-white/40">Tipo de accesorio<select disabled={Boolean(createdProject)} className={`${INPUT} mt-1.5`} value={accessory.type} onChange={(event) => updateAccessory(accessory.id, { type: event.target.value as CustomAccessoryType })}>{CUSTOM_ACCESSORY_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}</select></label>
-                            <label className="text-[10px] text-white/40">Referencia para forma / silueta<select disabled={Boolean(createdProject)} className={`${INPUT} mt-1.5`} value={accessory.referenceId} onChange={(event) => updateAccessory(accessory.id, { referenceId: event.target.value })}><option value="">Sin referencia específica</option>{pendingReferences.map((item) => <option key={item.id} value={item.id}>{item.file.name}</option>)}</select></label>
-                          </div>
-
-                          <div className="mt-3">
-                            <p className="text-[10px] text-white/40">Uso del diseño</p>
-                            <div className="mt-1.5 grid gap-2 sm:grid-cols-3">
-                              {DESIGN_USE_OPTIONS.map((option) => {
-                                const active = accessory.designUse === option.value;
-                                return <button key={option.value} type="button" disabled={Boolean(createdProject)} onClick={() => updateAccessory(accessory.id, { designUse: option.value })} className={`rounded-xl border p-2.5 text-left transition disabled:opacity-50 ${active ? "border-violet-400/55 bg-violet-500/[.10]" : "border-white/[0.08] bg-black/20"}`}><span className="flex items-center justify-between gap-2 text-[11px] font-semibold"><span>{option.label}</span>{active ? <Check size={12} className="text-violet-300" /> : null}</span><span className="mt-1 block text-[9px] leading-4 text-white/30">{option.description}</span></button>;
-                              })}
-                            </div>
-                          </div>
-
-                          <label className="mt-3 block text-[10px] text-white/40">¿Cómo debería ser?<textarea disabled={Boolean(createdProject)} className={`${INPUT} mt-1.5 min-h-20 resize-y text-xs leading-5`} value={accessory.description} onChange={(event) => updateAccessory(accessory.id, { description: event.target.value })} placeholder="Ej: Quiero un aro metálico cuya forma completa sea el símbolo CLOUVA." /></label>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ) : null}
+                {selectedProducts.has("custom") ? <div className="mt-4 rounded-2xl border border-violet-400/20 bg-violet-500/[.045] p-4"><div className="flex flex-wrap items-center justify-between gap-3"><div><h3 className="text-sm font-semibold">Accesorios personalizados</h3><p className="mt-1 text-[10px] text-white/35">Acá el diseño puede ser la gráfica, la forma física del objeto o ambas.</p></div><button type="button" disabled={Boolean(createdProject) || busy} onClick={() => setCustomAccessories((current) => [...current, newAccessory()])} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-2 text-[10px] font-semibold text-white/55 hover:text-white disabled:opacity-40"><Plus size={12} /> Otro accesorio</button></div><div className="mt-4 space-y-3">{customAccessories.map((accessory, index) => <div key={accessory.id} className="rounded-xl border border-white/[0.08] bg-black/25 p-3.5"><div className="flex items-center justify-between gap-3"><p className="text-[10px] font-bold uppercase tracking-[.14em] text-violet-300/75">Accesorio {index + 1}</p>{customAccessories.length > 1 ? <button type="button" disabled={Boolean(createdProject) || busy} onClick={() => setCustomAccessories((current) => current.filter((item) => item.id !== accessory.id))} className="rounded-md p-1.5 text-white/25 hover:bg-white/5 hover:text-rose-300 disabled:opacity-30" aria-label="Eliminar accesorio"><Trash2 size={13} /></button> : null}</div><div className="mt-3 grid gap-3 md:grid-cols-2"><label className="text-[10px] text-white/40">Tipo de accesorio<select disabled={Boolean(createdProject)} className={`${INPUT} mt-1.5`} value={accessory.type} onChange={(event) => updateAccessory(accessory.id, { type: event.target.value as CustomAccessoryType })}>{CUSTOM_ACCESSORY_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}</select></label><label className="text-[10px] text-white/40">Referencia para forma / silueta<select disabled={Boolean(createdProject)} className={`${INPUT} mt-1.5`} value={accessory.referenceId} onChange={(event) => updateAccessory(accessory.id, { referenceId: event.target.value })}><option value="">Sin referencia específica</option>{pendingReferences.map((item) => <option key={item.id} value={item.id}>{item.file.name}</option>)}</select></label></div><div className="mt-3"><p className="text-[10px] text-white/40">Uso del diseño</p><div className="mt-1.5 grid gap-2 sm:grid-cols-3">{DESIGN_USE_OPTIONS.map((option) => { const active = accessory.designUse === option.value; return <button key={option.value} type="button" disabled={Boolean(createdProject)} onClick={() => updateAccessory(accessory.id, { designUse: option.value })} className={`rounded-xl border p-2.5 text-left transition disabled:opacity-50 ${active ? "border-violet-400/55 bg-violet-500/[.10]" : "border-white/[0.08] bg-black/20"}`}><span className="flex items-center justify-between gap-2 text-[11px] font-semibold"><span>{option.label}</span>{active ? <Check size={12} className="text-violet-300" /> : null}</span><span className="mt-1 block text-[9px] leading-4 text-white/30">{option.description}</span></button>; })}</div></div><label className="mt-3 block text-[10px] text-white/40">¿Cómo debería ser?<textarea disabled={Boolean(createdProject)} className={`${INPUT} mt-1.5 min-h-20 resize-y text-xs leading-5`} value={accessory.description} onChange={(event) => updateAccessory(accessory.id, { description: event.target.value })} placeholder="Ej: Quiero un aro metálico cuya forma completa sea el símbolo CLOUVA." /></label></div>)}</div></div> : null}
               </div>
             </section>
 
             {createdProject ? <div className="rounded-xl border border-amber-300/15 bg-amber-300/[.045] p-4 text-xs leading-5 text-amber-100/70"><strong>El proyecto ya existe.</strong> Si una referencia o la preparación de productos falló, el botón reintenta solamente lo pendiente y evita duplicar conceptos creados desde este preflight.</div> : null}
 
-            <div className="xl:hidden">
-              <div className="rounded-xl border border-white/[0.08] bg-black/30 px-4 py-3 text-xs text-white/50"><strong className="text-white/75">{projectDraft.name || "Nuevo drop"}</strong> · {selectedCount} producto{selectedCount === 1 ? "" : "s"} · {pendingReferences.length} referencia{pendingReferences.length === 1 ? "" : "s"}</div>
-              <button onClick={() => void createOrContinueProject()} disabled={busy || authLoading} className="mt-3 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-violet-500 px-5 py-3 text-sm font-bold shadow-[0_12px_35px_rgba(124,58,237,.18)] transition hover:bg-violet-400 disabled:cursor-not-allowed disabled:opacity-50">{busy ? <Loader2 className="animate-spin" size={17} /> : <Sparkles size={16} />}{buttonLabel}</button>
-            </div>
+            <div className="xl:hidden"><div className="rounded-xl border border-white/[0.08] bg-black/30 px-4 py-3 text-xs text-white/50"><strong className="text-white/75">{projectDraft.name || "Nuevo drop"}</strong> · {displayScope(merchScope)} · {selectedCount} producto{selectedCount === 1 ? "" : "s"} · {pendingReferences.length} referencia{pendingReferences.length === 1 ? "" : "s"}</div><button onClick={() => void createOrContinueProject()} disabled={busy || authLoading || (merchScope === "organization" && !projectDraft.seller)} className="mt-3 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-violet-500 px-5 py-3 text-sm font-bold shadow-[0_12px_35px_rgba(124,58,237,.18)] transition hover:bg-violet-400 disabled:cursor-not-allowed disabled:opacity-50">{busy ? <Loader2 className="animate-spin" size={17} /> : <Sparkles size={16} />}{buttonLabel}</button></div>
           </div>
 
           <aside className="hidden space-y-4 xl:sticky xl:top-20 xl:block">
-            <section className={CARD}>
-              <div className="p-5">
-                <p className="text-[9px] font-bold uppercase tracking-[.22em] text-violet-300">Tu drop</p>
-                <h2 className="mt-2 truncate text-xl font-semibold">{projectDraft.name || "Nuevo drop"}</h2>
-                <p className="mt-1 text-xs text-white/32">{projectDraft.collection || "Sin cápsula"}</p>
+            <section className={CARD}><div className="p-5"><p className="text-[9px] font-bold uppercase tracking-[.22em] text-violet-300">Tu drop</p><h2 className="mt-2 truncate text-xl font-semibold">{projectDraft.name || "Nuevo drop"}</h2><p className="mt-1 text-[10px] font-bold uppercase tracking-[.13em] text-white/32">{displayScope(merchScope)}</p>
+              <div className="mt-4 space-y-2"><div className="rounded-xl border border-white/[0.07] bg-black/25 p-3"><p className="text-[9px] uppercase tracking-wider text-white/25">{merchScope === "personal" ? "Identidad" : "Organización"}</p><p className="mt-1 truncate text-[11px] font-semibold text-white/65">{sellerLabel}</p></div><div className="grid grid-cols-2 gap-2"><div className="rounded-xl border border-white/[0.07] bg-black/25 p-3"><p className="text-[9px] uppercase tracking-wider text-white/25">Drop</p><p className="mt-1 text-[11px] font-semibold text-white/65">{INITIAL_DROP_NAME}</p></div><div className="rounded-xl border border-white/[0.07] bg-black/25 p-3"><p className="text-[9px] uppercase tracking-wider text-white/25">Método</p><p className="mt-1 text-[11px] font-semibold text-white/65">{displayMode(projectDraft.creativeMode)}</p></div></div></div>
+              <div className="mt-4 flex items-center justify-between text-[10px]"><span className="text-white/32">Referencias</span><strong className="text-white/70">{pendingReferences.length}</strong></div>{pendingReferences.length ? <div className="mt-2 flex gap-2 overflow-hidden">{pendingReferences.slice(0, 4).map((item) => <div key={item.id} className="relative aspect-square w-12 overflow-hidden rounded-lg border border-white/10 bg-black"><Image src={item.preview} alt="" fill unoptimized sizes="48px" className="object-cover" /></div>)}</div> : <p className="mt-2 text-[10px] text-white/20">Sin referencias cargadas.</p>}
+              <div className="mt-5 border-t border-white/[0.07] pt-4"><div className="flex items-center justify-between"><p className="text-[10px] font-bold uppercase tracking-[.14em] text-white/40">Productos</p><span className="text-[10px] text-violet-300">{selectedCount}</span></div><div className="mt-2 space-y-1.5">{selectedCount ? <>{selectedProductList.filter((product) => product.key !== "custom").slice(0, 7).map((product) => <div key={product.key} className="flex items-center gap-2 text-[11px] text-white/52"><Check size={11} className="text-violet-300" /> {product.label}</div>)}{selectedProducts.has("custom") ? customAccessories.slice(0, 4).map((accessory) => <div key={accessory.id} className="flex items-center gap-2 text-[11px] text-white/52"><Check size={11} className="text-violet-300" /> {accessory.type === "Otro" ? "Accesorio personalizado" : accessory.type} · {accessory.designUse === "shape" ? "forma" : accessory.designUse === "graphic" ? "gráfico" : "ambos"}</div>) : null}</> : <p className="text-[10px] leading-4 text-white/24">Todavía no elegiste productos. Podés crear el drop igual y decidirlos después.</p>}</div></div>
+              <button onClick={() => void createOrContinueProject()} disabled={busy || authLoading || (merchScope === "organization" && !projectDraft.seller)} className="mt-5 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-violet-500 px-5 py-3 text-sm font-bold shadow-[0_12px_35px_rgba(124,58,237,.18)] transition hover:bg-violet-400 disabled:cursor-not-allowed disabled:opacity-50">{busy ? <Loader2 className="animate-spin" size={17} /> : <Sparkles size={16} />}{buttonLabel}</button>{pendingReferences.length ? <p className="mt-2 text-center text-[9px] text-white/25">{pendingCount ? `${pendingCount} referencia${pendingCount === 1 ? "" : "s"} pendiente${pendingCount === 1 ? "" : "s"}` : "Referencias listas"}</p> : null}
+            </div></section>
 
-                <div className="mt-4 grid grid-cols-2 gap-2">
-                  <div className="rounded-xl border border-white/[0.07] bg-black/25 p-3"><p className="text-[9px] uppercase tracking-wider text-white/25">Método</p><p className="mt-1 text-[11px] font-semibold text-white/65">{displayMode(projectDraft.creativeMode)}</p></div>
-                  <div className="rounded-xl border border-white/[0.07] bg-black/25 p-3"><p className="text-[9px] uppercase tracking-wider text-white/25">Vendedor</p><p className="mt-1 truncate text-[11px] font-semibold text-white/65">{sellerLabel}</p></div>
-                </div>
-
-                <div className="mt-4 flex items-center justify-between text-[10px]"><span className="text-white/32">Referencias</span><strong className="text-white/70">{pendingReferences.length}</strong></div>
-                {pendingReferences.length ? <div className="mt-2 flex gap-2 overflow-hidden">{pendingReferences.slice(0, 4).map((item) => <div key={item.id} className="relative aspect-square w-12 overflow-hidden rounded-lg border border-white/10 bg-black"><Image src={item.preview} alt="" fill unoptimized sizes="48px" className="object-cover" /></div>)}</div> : <p className="mt-2 text-[10px] text-white/20">Sin referencias cargadas.</p>}
-
-                <div className="mt-5 border-t border-white/[0.07] pt-4">
-                  <div className="flex items-center justify-between"><p className="text-[10px] font-bold uppercase tracking-[.14em] text-white/40">Productos</p><span className="text-[10px] text-violet-300">{selectedCount}</span></div>
-                  <div className="mt-2 space-y-1.5">
-                    {selectedCount ? (
-                      <>
-                        {selectedProductList.filter((product) => product.key !== "custom").slice(0, 7).map((product) => <div key={product.key} className="flex items-center gap-2 text-[11px] text-white/52"><Check size={11} className="text-violet-300" /> {product.label}</div>)}
-                        {selectedProducts.has("custom") ? customAccessories.slice(0, 4).map((accessory) => <div key={accessory.id} className="flex items-center gap-2 text-[11px] text-white/52"><Check size={11} className="text-violet-300" /> {accessory.type === "Otro" ? "Accesorio personalizado" : accessory.type} · {accessory.designUse === "shape" ? "forma" : accessory.designUse === "graphic" ? "gráfico" : "ambos"}</div>) : null}
-                      </>
-                    ) : <p className="text-[10px] leading-4 text-white/24">Todavía no elegiste productos. Podés crear el drop igual y decidirlos después.</p>}
-                  </div>
-                </div>
-
-                <button onClick={() => void createOrContinueProject()} disabled={busy || authLoading} className="mt-5 inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-violet-500 px-5 py-3 text-sm font-bold shadow-[0_12px_35px_rgba(124,58,237,.18)] transition hover:bg-violet-400 disabled:cursor-not-allowed disabled:opacity-50">{busy ? <Loader2 className="animate-spin" size={17} /> : <Sparkles size={16} />}{buttonLabel}</button>
-                {pendingReferences.length ? <p className="mt-2 text-center text-[9px] text-white/25">{pendingCount ? `${pendingCount} referencia${pendingCount === 1 ? "" : "s"} pendiente${pendingCount === 1 ? "" : "s"}` : "Referencias listas"}</p> : null}
-              </div>
-            </section>
-
-            <section className={`${CARD} p-4`}>
-              <div className="flex items-center justify-between gap-3"><div><h3 className="text-sm font-semibold">Mis proyectos</h3><p className="mt-0.5 text-[9px] text-white/28">Continuá un drop existente.</p></div><button onClick={() => void load()} disabled={busy} className="rounded-lg border border-white/10 p-2 text-white/35 hover:text-white disabled:opacity-40" aria-label="Actualizar proyectos"><RefreshCw size={14} /></button></div>
-              <div className="mt-3 space-y-2">
-                {projects.length ? projects.slice(0, 4).map((project) => <button key={project.id} onClick={() => openProject(project.id)} className="w-full rounded-xl border border-white/[0.07] bg-black/25 p-3 text-left transition hover:border-violet-400/30"><div className="flex items-center justify-between gap-2"><strong className="min-w-0 truncate text-[11px] text-white/70">{project.name}</strong><span className="shrink-0 text-[8px] uppercase text-violet-300/70">{project.status}</span></div><p className="mt-1 text-[9px] text-white/25">{project.collection_name || "Sin nombre de drop"} · {project.reference_assets?.length || 0} ref.</p></button>) : <div className="rounded-xl border border-dashed border-white/[0.08] p-5 text-center"><ImagePlus className="mx-auto h-5 w-5 text-white/12" /><p className="mt-2 text-[10px] text-white/25">Todavía no hay proyectos.</p></div>}
-              </div>
-            </section>
+            <section className={`${CARD} p-4`}><div className="flex items-center justify-between gap-3"><div><h3 className="text-sm font-semibold">Mis proyectos</h3><p className="mt-0.5 text-[9px] text-white/28">Continuá un drop existente.</p></div><button onClick={() => void load()} disabled={busy} className="rounded-lg border border-white/10 p-2 text-white/35 hover:text-white disabled:opacity-40" aria-label="Actualizar proyectos"><RefreshCw size={14} /></button></div><div className="mt-3 space-y-2">{projects.length ? projects.slice(0, 4).map((project) => <button key={project.id} onClick={() => openProject(project.id)} className="w-full rounded-xl border border-white/[0.07] bg-black/25 p-3 text-left transition hover:border-violet-400/30"><div className="flex items-center justify-between gap-2"><strong className="min-w-0 truncate text-[11px] text-white/70">{project.name}</strong><span className="shrink-0 text-[8px] uppercase text-violet-300/70">{project.status}</span></div><p className="mt-1 text-[9px] text-white/25">{project.collection_name || "Sin nombre de drop"} · {project.reference_assets?.length || 0} ref.</p></button>) : <div className="rounded-xl border border-dashed border-white/[0.08] p-5 text-center"><ImagePlus className="mx-auto h-5 w-5 text-white/12" /><p className="mt-2 text-[10px] text-white/25">Todavía no hay proyectos.</p></div>}</div></section>
           </aside>
         </div>
       </div>
