@@ -13,7 +13,7 @@ export async function GET(request: NextRequest) {
     const { user, supabase } = await requireUser(request);
 
     const [ownedPlayers, playerMemberships, ownedStudios, studioMemberships, ownedSpots, spotMemberships] = await Promise.all([
-      supabase.from("players").select("id,name,slug").eq("owner_user_id", user.id),
+      supabase.from("players").select("id,name:display_name,slug").eq("owner_user_id", user.id),
       supabase.from("player_members").select("player_id,role").eq("user_id", user.id).eq("status", "active").in("role", ["owner", "manager", "editor"]),
       supabase.from("studios").select("id,name,slug").eq("owner_id", user.id),
       supabase.from("studio_members").select("studio_id,role").eq("profile_id", user.id).eq("status", "active").in("role", ["owner", "admin", "manager", "editor"]),
@@ -30,7 +30,7 @@ export async function GET(request: NextRequest) {
     const memberSpotIds = [...new Set((spotMemberships.data ?? []).map((row) => row.spot_id).filter(Boolean))];
 
     const [memberPlayers, memberStudios, memberSpots] = await Promise.all([
-      memberPlayerIds.length ? supabase.from("players").select("id,name,slug").in("id", memberPlayerIds) : Promise.resolve({ data: [], error: null }),
+      memberPlayerIds.length ? supabase.from("players").select("id,name:display_name,slug").in("id", memberPlayerIds) : Promise.resolve({ data: [], error: null }),
       memberStudioIds.length ? supabase.from("studios").select("id,name,slug").in("id", memberStudioIds) : Promise.resolve({ data: [], error: null }),
       memberSpotIds.length ? supabase.from("commerce_spots").select("id,name,slug,studio_id,owner_type,owner_user_id,currency").in("id", memberSpotIds) : Promise.resolve({ data: [], error: null }),
     ]);
