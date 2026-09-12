@@ -2,11 +2,13 @@ import type { Metadata } from "next";
 import { PortfolioExperience } from "@/components/portfolio/PortfolioExperience";
 import { PORTFOLIO_ASSETS } from "@/lib/portfolio/portfolio-data";
 
+const description =
+  "AI-native product builder based in Buenos Aires, building digital products across frontend, product design, cloud, AI systems and creative technology.";
+
 export const metadata: Metadata = {
   metadataBase: new URL("https://clouva.com.ar"),
   title: "Sergio Ibañez — AI-Native Product Builder",
-  description:
-    "Product builder focused on AI, frontend, product design, creative technology and digital experiences.",
+  description,
   alternates: {
     canonical: "/portafolio",
   },
@@ -14,8 +16,7 @@ export const metadata: Metadata = {
     type: "website",
     url: "https://clouva.com.ar/portafolio",
     title: "Sergio Ibañez — AI-Native Product Builder",
-    description:
-      "Product builder focused on AI, frontend, product design, creative technology and digital experiences.",
+    description,
     siteName: "CLOUVA",
     images: [
       {
@@ -29,8 +30,7 @@ export const metadata: Metadata = {
   twitter: {
     card: "summary_large_image",
     title: "Sergio Ibañez — AI-Native Product Builder",
-    description:
-      "Product builder focused on AI, frontend, product design, creative technology and digital experiences.",
+    description,
     images: [PORTFOLIO_ASSETS.hero],
   },
 };
