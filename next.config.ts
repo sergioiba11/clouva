@@ -10,6 +10,8 @@ const nextConfig: NextConfig = {
       // Google OAuth profile photos. Keep this scoped to the exact HTTPS host
       // and avatar path instead of allowing every googleusercontent tenant.
       { protocol: "https", hostname: "lh3.googleusercontent.com", pathname: "/a/**" },
+      // Canonical CLOUVA visual assets used by the public portfolio and product.
+      { protocol: "https", hostname: "storage.googleapis.com", pathname: "/clouva-generated-media/**" },
     ],
   },
   // Cloud Build compiles and typechecks the production app here. ESLint remains a
