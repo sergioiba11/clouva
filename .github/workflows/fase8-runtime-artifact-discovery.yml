@@ -1,0 +1,70 @@
+name: Fase 8 Runtime artifact discovery
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feat/workspace-cloud-web
+    paths:
+      - ".github/workflows/fase8-runtime-artifact-discovery.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: gen-lang-client-0737053175
+  REGION: us-central1
+
+jobs:
+  discover-runtime-artifacts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA_EMAIL }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Inspect Artifact Registry and build metadata for existing runtime agent
+        shell: bash
+        run: |
+          set -u
+          mkdir -p fase8-runtime-artifact-discovery
+          out=fase8-runtime-artifact-discovery/discovery.txt
+          : > "$out"
+          section(){ printf '\n## %s\n' "$1" | tee -a "$out"; }
+          safe(){ "$@" 2>&1 | tee -a "$out" || true; }
+
+          section "Docker images in clouva repository"
+          safe gcloud artifacts docker images list \
+            "$REGION-docker.pkg.dev/$PROJECT_ID/clouva" \
+            --include-tags --format='table(package,version,tags,updateTime)' --limit=500
+
+          section "Docker images in cloud-run-source-deploy"
+          safe gcloud artifacts docker images list \
+            "$REGION-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy" \
+            --include-tags --format='table(package,version,tags,updateTime)' --limit=500
+
+          section "Image/package names matching workspace/runtime/agent/control/gateway"
+          {
+            gcloud artifacts docker images list "$REGION-docker.pkg.dev/$PROJECT_ID/clouva" --include-tags --format=json --limit=500 || true
+            gcloud artifacts docker images list "$REGION-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy" --include-tags --format=json --limit=500 || true
+          } | python3 -c 'import sys,re; s=sys.stdin.read(); print("\n".join(line for line in s.splitlines() if re.search(r"workspace|runtime|agent|control|gateway", line, re.I)))' | tee -a "$out"
+
+          section "Recent builds mentioning workspace/runtime/agent/control/gateway"
+          safe gcloud builds list --project "$PROJECT_ID" --limit=100 --format=json
+
+          section "Enabled APIs potentially relevant"
+          safe gcloud services list --enabled --project "$PROJECT_ID" --format='value(config.name)'
+
+      - name: Upload runtime artifact evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fase8-runtime-artifact-discovery-${{ github.sha }}
+          path: fase8-runtime-artifact-discovery/
+          if-no-files-found: warn
+          retention-days: 7
