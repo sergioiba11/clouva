@@ -291,7 +291,7 @@ export default function LoginContent() {
 
     window.google.accounts.id.renderButton(container, {
       type: "standard",
-      theme: "filled_black",
+      theme: "outline",
       size: "large",
       shape: "pill",
       text: "continue_with",
@@ -372,9 +372,7 @@ export default function LoginContent() {
         </div>
 
         <div className="mt-7 space-y-4">
-          <div className="rounded-full border border-white/10 bg-black/25 p-1 shadow-[0_0_28px_rgba(121,43,255,.08)]">
-            <div ref={googleButtonRef} className="flex min-h-[44px] w-full justify-center overflow-hidden rounded-full [&>div]:!w-full" />
-          </div>
+          <div ref={googleButtonRef} className="flex min-h-[44px] w-full justify-center overflow-hidden rounded-full [&>div]:!w-full" />
 
           <div className="flex items-center gap-3 py-1 text-[9px] uppercase tracking-[0.24em] text-white/30">
             <span className="h-px flex-1 bg-white/10" />
