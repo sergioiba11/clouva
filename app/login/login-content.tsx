@@ -4,6 +4,9 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import Script from "next/script";
 import { useRouter, useSearchParams } from "next/navigation";
+import { ClouvaBoot } from "@/components/clouva/ClouvaBoot";
+import { ClouvaUniverseBackground } from "@/components/clouva/ClouvaUniverseBackground";
+import { OfficialClouvaMark } from "@/components/clouva/OfficialClouvaMark";
 import { getRedirectByRole } from "@/lib/auth";
 import { useAuth } from "@/components/auth-provider";
 import { readApiJson } from "@/lib/authenticated-fetch";
@@ -77,6 +80,10 @@ function userDisplayName(user: User) {
   );
 }
 
+function firstName(user: User) {
+  return userDisplayName(user).trim().split(/\s+/)[0] || "Usuario";
+}
+
 async function resolvePostLoginDestination(user: User) {
   const { supabase } = await import("@/lib/supabase");
   const { data: loadedProfile, error: profileError } = await supabase
@@ -126,10 +133,12 @@ async function resolvePostLoginDestination(user: User) {
 export default function LoginContent() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [googleScriptReady, setGoogleScriptReady] = useState(false);
+  const [postAuthName, setPostAuthName] = useState<string | null>(null);
   const googleButtonRef = useRef<HTMLDivElement>(null);
   const handleGoogleCredentialRef = useRef<(response: { credential?: string }) => void>(() => {});
   const router = useRouter();
@@ -185,9 +194,6 @@ export default function LoginContent() {
 
       localStorage.removeItem("clouva.switch_target");
       try {
-        // Always await resolvePostLoginDestination() for its profile-bootstrap
-        // side effect, even when a studio override below wins -- a brand-new
-        // account still needs its profiles row created.
         const defaultDestination = await resolvePostLoginDestination(user);
         const destination = studioRedirectOverride(searchParams) ?? defaultDestination;
         if (!cancelled) router.replace(destination);
@@ -227,6 +233,7 @@ export default function LoginContent() {
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError(null);
+    setPostAuthName(null);
     setLoading(true);
 
     try {
@@ -234,8 +241,10 @@ export default function LoginContent() {
       const { data, error: signInError } = await supabase.auth.signInWithPassword({ email, password });
       if (signInError || !data.user || !data.session) throw signInError ?? new Error("No se pudo iniciar sesión.");
       localStorage.removeItem("clouva.switch_target");
+      setPostAuthName(firstName(data.user));
       await redirectAfterLogin(data.user, data.session.access_token, isAddAccountMode);
     } catch (signInError) {
+      setPostAuthName(null);
       setError(signInError instanceof Error ? signInError.message : "No se pudo iniciar sesión.");
       setLoading(false);
     }
@@ -243,6 +252,7 @@ export default function LoginContent() {
 
   const handleGoogleCredential = async (response: { credential?: string }) => {
     setError(null);
+    setPostAuthName(null);
     if (!response.credential) {
       setError("Google no devolvió una credencial válida.");
       return;
@@ -256,8 +266,10 @@ export default function LoginContent() {
       });
       if (signInError || !data.user || !data.session) throw signInError ?? new Error("No se pudo iniciar sesión con Google.");
       localStorage.removeItem("clouva.switch_target");
+      setPostAuthName(firstName(data.user));
       await redirectAfterLogin(data.user, data.session.access_token, isAddAccountMode);
     } catch (googleError) {
+      setPostAuthName(null);
       setError(googleError instanceof Error ? googleError.message : "No se pudo iniciar sesión con Google.");
       setLoading(false);
     }
@@ -306,8 +318,30 @@ export default function LoginContent() {
     }
   };
 
+  if (postAuthName) {
+    return (
+      <ClouvaBoot
+        showWorld
+        prominentTitle
+        title={`Bienvenido, ${postAuthName}`}
+        subtitle="Preparando tu universo..."
+      />
+    );
+  }
+
+  if (checkingSession) {
+    return (
+      <ClouvaBoot
+        showWorld
+        prominentTitle={Boolean(user)}
+        title={user ? `Bienvenido, ${firstName(user)}` : "CLOUVA"}
+        subtitle={user ? "Preparando tu universo..." : "Comprobando tu acceso..."}
+      />
+    );
+  }
+
   return (
-    <main className="relative flex min-h-screen items-center justify-center overflow-hidden bg-[#05040a] px-4 py-10 text-white">
+    <main className="relative flex min-h-[100dvh] items-center justify-center overflow-hidden bg-[#020106] px-4 py-8 text-white sm:px-6 sm:py-10">
       {GOOGLE_CLIENT_ID ? (
         <Script
           src="https://accounts.google.com/gsi/client"
@@ -315,44 +349,134 @@ export default function LoginContent() {
           onLoad={() => setGoogleScriptReady(true)}
         />
       ) : null}
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_5%,rgba(124,58,237,.32),transparent_38%),radial-gradient(circle_at_15%_80%,rgba(76,29,149,.22),transparent_35%)]" />
-      <div className="absolute inset-0 opacity-30 [background-image:linear-gradient(rgba(255,255,255,.025)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,.025)_1px,transparent_1px)] [background-size:44px_44px]" />
 
-      <section className="relative w-full max-w-md rounded-[2rem] border border-white/10 bg-[#0b0913]/90 p-6 shadow-2xl shadow-violet-950/30 backdrop-blur-xl sm:p-8">
-        <Link href="/" className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-violet-400/25 bg-violet-500/10 text-2xl font-bold text-violet-300">C</Link>
-        <div className="mt-6 text-center">
-          <h1 className="text-4xl font-bold tracking-[0.16em]">CLOUVA</h1>
-          <p className="mt-3 text-sm text-white/55">Tu identidad. Tu perfil. Tu mundo.</p>
+      <ClouvaUniverseBackground variant="access" />
+
+      <section className="relative z-10 my-auto w-full max-w-[480px] animate-[clouvaPortalIn_.42s_ease-out] rounded-[1.75rem] border border-violet-200/15 bg-[linear-gradient(180deg,rgba(12,8,24,.88),rgba(5,3,12,.93))] p-5 shadow-[0_28px_90px_rgba(0,0,0,.62),0_0_70px_rgba(113,43,255,.12)] backdrop-blur-2xl motion-reduce:animate-none sm:p-7">
+        <div className="pointer-events-none absolute inset-x-14 -top-px h-px bg-gradient-to-r from-transparent via-violet-300/55 to-transparent" aria-hidden="true" />
+
+        <Link href="/" className="mx-auto grid h-[68px] w-[68px] place-items-center" aria-label="Volver a CLOUVA">
+          <OfficialClouvaMark
+            tone="light"
+            alt="CLOUVA"
+            width={64}
+            height={64}
+            className="h-16 w-16 drop-shadow-[0_0_22px_rgba(180,110,255,.62)] transition hover:brightness-125"
+          />
+        </Link>
+
+        <div className="mt-4 text-center">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.42em] text-violet-200/75">CLOUVA</p>
+          <h1 className="mt-3 text-[clamp(1.75rem,7vw,2.35rem)] font-semibold tracking-[-0.035em]">Entrá a tu universo</h1>
+          <p className="mt-2 text-sm text-white/55">Tu identidad. Tu Player. Tu mundo.</p>
         </div>
 
-        {checkingSession ? (
-          <div className="mt-8 space-y-3">
-            <div className="h-12 animate-pulse rounded-xl bg-white/10" />
-            <div className="h-12 animate-pulse rounded-xl bg-white/10" />
-            <div className="h-12 animate-pulse rounded-xl bg-white/10" />
+        <div className="mt-7 space-y-4">
+          <div className="rounded-full border border-white/10 bg-black/25 p-1 shadow-[0_0_28px_rgba(121,43,255,.08)]">
+            <div ref={googleButtonRef} className="flex min-h-[44px] w-full justify-center overflow-hidden rounded-full [&>div]:!w-full" />
           </div>
-        ) : (
-          <div className="mt-8 space-y-3">
-            <div ref={googleButtonRef} className="flex min-h-[44px] w-full justify-center overflow-hidden rounded-xl [&>div]:!w-full" />
-            <button disabled={loading} type="button" onClick={() => void onInstagram()} className="w-full rounded-xl bg-gradient-to-r from-fuchsia-600 via-violet-600 to-indigo-600 px-4 py-3.5 font-semibold text-white transition hover:brightness-110 disabled:opacity-60">Crear mi perfil con Instagram</button>
-            <p className="text-center text-xs leading-5 text-white/40">Disponible para cuentas Creator y Business.</p>
 
-            <div className="flex items-center gap-3 py-2 text-[10px] uppercase tracking-[0.2em] text-white/25"><span className="h-px flex-1 bg-white/10" />o con correo<span className="h-px flex-1 bg-white/10" /></div>
-            <form onSubmit={onSubmit} className="space-y-3">
-              <input type="email" required value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Correo" className="w-full rounded-xl border border-white/15 bg-black/30 px-4 py-3 outline-none transition focus:border-violet-400/60" />
-              <input type="password" required value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Contraseña" className="w-full rounded-xl border border-white/15 bg-black/30 px-4 py-3 outline-none transition focus:border-violet-400/60" />
-              <button disabled={loading} className="w-full rounded-xl border border-white/15 px-4 py-3 font-medium transition hover:border-violet-400/60 disabled:opacity-60">{loading ? "Procesando..." : "Continuar con correo"}</button>
-            </form>
+          <div className="flex items-center gap-3 py-1 text-[9px] uppercase tracking-[0.24em] text-white/30">
+            <span className="h-px flex-1 bg-white/10" />
+            o con correo
+            <span className="h-px flex-1 bg-white/10" />
+          </div>
 
-            {error ? <p className="rounded-xl border border-red-400/20 bg-red-400/10 p-3 text-sm text-red-200">{error}</p> : null}
-            <div className="flex justify-center gap-4 pt-2 text-xs text-white/40">
-              <Link href={searchParams.toString() ? `/registro?${searchParams.toString()}` : "/registro"} className="hover:text-white">Crear cuenta</Link>
-              <Link href="/legal/privacy" className="hover:text-white">Privacidad</Link>
-              <Link href="/legal/terms" className="hover:text-white">Términos</Link>
+          <form onSubmit={onSubmit} className="space-y-3">
+            <label className="sr-only" htmlFor="clouva-login-email">Correo</label>
+            <input
+              id="clouva-login-email"
+              type="email"
+              autoComplete="email"
+              required
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              placeholder="Correo"
+              className="min-h-12 w-full rounded-2xl border border-white/10 bg-black/35 px-4 text-[15px] text-white outline-none transition placeholder:text-white/35 hover:border-white/20 focus:border-violet-300/60 focus:shadow-[0_0_0_3px_rgba(139,92,246,.10)]"
+            />
+
+            <div className="relative">
+              <label className="sr-only" htmlFor="clouva-login-password">Contraseña</label>
+              <input
+                id="clouva-login-password"
+                type={showPassword ? "text" : "password"}
+                autoComplete="current-password"
+                required
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                placeholder="Contraseña"
+                className="min-h-12 w-full rounded-2xl border border-white/10 bg-black/35 px-4 pr-16 text-[15px] text-white outline-none transition placeholder:text-white/35 hover:border-white/20 focus:border-violet-300/60 focus:shadow-[0_0_0_3px_rgba(139,92,246,.10)]"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((visible) => !visible)}
+                className="absolute inset-y-0 right-3 my-auto h-9 rounded-lg px-2 text-xs font-medium text-violet-200/70 transition hover:text-violet-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/60"
+                aria-label={showPassword ? "Ocultar contraseña" : "Mostrar contraseña"}
+              >
+                {showPassword ? "Ocultar" : "Ver"}
+              </button>
+            </div>
+
+            <button
+              disabled={loading}
+              className="min-h-12 w-full rounded-2xl border border-violet-200/25 bg-[linear-gradient(135deg,rgba(106,42,216,.96),rgba(130,55,246,.96),rgba(89,40,194,.96))] px-4 font-semibold text-white shadow-[0_12px_36px_rgba(87,34,184,.25)] transition hover:-translate-y-0.5 hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-300/70 disabled:translate-y-0 disabled:cursor-wait disabled:opacity-60"
+            >
+              {loading ? "Procesando..." : "Entrar"}
+            </button>
+          </form>
+
+          <p className="text-center text-xs text-white/45">
+            ¿No tenés cuenta?{" "}
+            <Link
+              href={searchParams.toString() ? `/registro?${searchParams.toString()}` : "/registro"}
+              className="font-medium text-violet-200 transition hover:text-white"
+            >
+              Crear cuenta
+            </Link>
+          </p>
+
+          {error ? (
+            <p role="alert" className="rounded-2xl border border-red-300/20 bg-red-400/[.08] px-4 py-3 text-sm leading-5 text-red-100">
+              {error}
+            </p>
+          ) : null}
+
+          <div className="border-t border-white/[.08] pt-5">
+            <div className="rounded-2xl border border-violet-300/10 bg-violet-300/[.035] p-4">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-violet-200/70">Creá tu Player desde Instagram</p>
+              <p className="mt-2 text-xs leading-5 text-white/45">Importá tu identidad y contenido para empezar.</p>
+              <button
+                disabled={loading}
+                type="button"
+                onClick={() => void onInstagram()}
+                className="mt-3 min-h-11 w-full rounded-xl border border-violet-200/20 bg-black/25 px-4 text-sm font-semibold text-violet-100 transition hover:border-violet-200/40 hover:bg-violet-400/[.08] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-300/60 disabled:cursor-wait disabled:opacity-50"
+              >
+                Importar desde Instagram
+              </button>
+              <p className="mt-2 text-center text-[10px] leading-4 text-white/30">Disponible para cuentas Creator y Business.</p>
             </div>
           </div>
-        )}
+
+          <div className="flex items-center justify-center gap-4 pt-1 text-[11px] text-white/35">
+            <Link href="/legal/privacy" className="transition hover:text-white">Privacidad</Link>
+            <span aria-hidden="true">·</span>
+            <Link href="/legal/terms" className="transition hover:text-white">Términos</Link>
+          </div>
+        </div>
       </section>
+
+      <style jsx global>{`
+        @keyframes clouvaPortalIn {
+          from {
+            opacity: 0;
+            transform: scale(0.98) translateY(8px);
+          }
+          to {
+            opacity: 1;
+            transform: scale(1) translateY(0);
+          }
+        }
+      `}</style>
     </main>
   );
 }
