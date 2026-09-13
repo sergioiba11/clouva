@@ -36,6 +36,7 @@ const RESERVED_PUBLIC_ALIAS_VALUES = [
   "perfil-publico",
   "player",
   "players",
+  "portafolio",
   "privacidad",
   "producto",
   "profile",

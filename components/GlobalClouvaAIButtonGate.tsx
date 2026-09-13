@@ -6,6 +6,8 @@ import { isImmersiveClouvaPreviewPath } from "@/lib/navigation/clouva-topbar-rou
 
 export function GlobalClouvaAIButtonGate() {
   const pathname = usePathname() || "/";
-  if (isImmersiveClouvaPreviewPath(pathname)) return null;
+  const isPortfolioRoute = pathname === "/portafolio" || pathname.startsWith("/portafolio/");
+
+  if (isPortfolioRoute || isImmersiveClouvaPreviewPath(pathname)) return null;
   return <GlobalClouvaAIButton />;
 }

@@ -168,7 +168,7 @@ export const portfolioCopy = {
     gallery: {
       index: "03 / REAL EVIDENCE",
       title: "Real assets, not invented mockups.",
-      intro: "The repository does not currently contain a canonical screenshot library, so this portfolio uses registered CLOUVA visual assets and direct live-product links instead of fabricating UI screenshots.",
+      intro: "Product surfaces and assets from the current CLOUVA system.",
       items: [
         { title: "CLOUVA public visual system", src: PORTFOLIO_ASSETS.hero, alt: "CLOUVA public landing visual system asset" },
         { title: "Player identity visual", src: PORTFOLIO_ASSETS.player, alt: "CLOUVA Player canonical cover asset" },
@@ -180,7 +180,7 @@ export const portfolioCopy = {
     stack: {
       index: "04 / TECH STACK",
       title: "Technology chosen by product needs.",
-      intro: "No skill percentages and no invented years. These are technologies that are present in the actual CLOUVA repository or architecture.",
+      intro: "Technologies currently used across CLOUVA's product and infrastructure.",
       labels: { frontend: "Frontend", backend: "Backend / Data", cloud: "Cloud", ai: "AI", threeD: "3D", integrations: "Integrations", tools: "Tools" },
     },
     thinking: {
@@ -236,7 +236,7 @@ export const portfolioCopy = {
       body: "Open to product, frontend, AI-assisted development, creative technology and digital product opportunities.",
       github: "GitHub",
       clouva: "Open CLOUVA",
-      note: "Public email and LinkedIn are intentionally not exposed until explicitly configured.",
+      note: "",
     },
     footer: "Built inside CLOUVA · Buenos Aires, Argentina",
   },
@@ -289,7 +289,7 @@ export const portfolioCopy = {
     gallery: {
       index: "03 / EVIDENCIA REAL",
       title: "Assets reales, no mockups inventados.",
-      intro: "El repositorio no tiene actualmente una biblioteca canónica de screenshots, así que el portfolio usa assets visuales registrados de CLOUVA y links directos al producto real en lugar de fabricar capturas de interfaz.",
+      intro: "Superficies y assets del producto actual de CLOUVA.",
       items: [
         { title: "Sistema visual público de CLOUVA", src: PORTFOLIO_ASSETS.hero, alt: "Asset visual del landing público de CLOUVA" },
         { title: "Visual de identidad Player", src: PORTFOLIO_ASSETS.player, alt: "Asset canónico de portada del Player CLOUVA" },
@@ -301,7 +301,7 @@ export const portfolioCopy = {
     stack: {
       index: "04 / TECH STACK",
       title: "Tecnología elegida por necesidades del producto.",
-      intro: "Sin porcentajes falsos de skills y sin años inventados. Son tecnologías presentes en el repositorio o arquitectura real de CLOUVA.",
+      intro: "Tecnologías utilizadas actualmente en el producto y la infraestructura de CLOUVA.",
       labels: { frontend: "Frontend", backend: "Backend / Data", cloud: "Cloud", ai: "IA", threeD: "3D", integrations: "Integraciones", tools: "Herramientas" },
     },
     thinking: {
@@ -357,7 +357,7 @@ export const portfolioCopy = {
       body: "Disponible para oportunidades de producto, frontend, desarrollo asistido por IA, creative technology y productos digitales.",
       github: "GitHub",
       clouva: "Abrir CLOUVA",
-      note: "Email público y LinkedIn no se exponen hasta que estén configurados explícitamente.",
+      note: "",
     },
     footer: "Construido dentro de CLOUVA · Buenos Aires, Argentina",
   },

@@ -1,0 +1,308 @@
+.portfolio-page-v31 #contact > small:empty {
+  display: none !important;
+}
+
+@media (max-width: 760px) {
+  /* Never leave a whole recruiter-facing section invisible while waiting for
+     an IntersectionObserver threshold. Desktop motion remains unchanged. */
+  .portfolio-page-v31 #portfolio-content > section {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+
+  /* Keep section rhythm editorial, but remove inherited V1/V2/V3 spacing
+     that produced near-empty mobile viewports. */
+  .portfolio-page-v31 #flagship,
+  .portfolio-page-v31 #about,
+  .portfolio-page-v31 #work,
+  .portfolio-page-v31 #stack,
+  .portfolio-page-v31 #system,
+  .portfolio-page-v31 #process,
+  .portfolio-page-v31 section[aria-labelledby="thinking-title"],
+  .portfolio-page-v31 section[aria-labelledby="journey-title"],
+  .portfolio-page-v31 section[aria-labelledby="source-title"] {
+    scroll-margin-top: 72px;
+  }
+
+  .portfolio-page-v31 #flagship {
+    padding-top: 42px !important;
+    padding-bottom: 50px !important;
+  }
+
+  .portfolio-page-v31 section[aria-labelledby="statement-title"],
+  .portfolio-page-v31 section[aria-labelledby="featured-title"],
+  .portfolio-page-v31 #about,
+  .portfolio-page-v31 #work,
+  .portfolio-page-v31 #stack,
+  .portfolio-page-v31 section[aria-labelledby="thinking-title"],
+  .portfolio-page-v31 #system,
+  .portfolio-page-v31 #process,
+  .portfolio-page-v31 section[aria-labelledby="journey-title"],
+  .portfolio-page-v31 section[aria-labelledby="source-title"] {
+    padding-top: 48px !important;
+    padding-bottom: 48px !important;
+  }
+
+  .portfolio-page-v31 #about {
+    gap: 18px !important;
+  }
+
+  .portfolio-page-v31 #work > div:first-child,
+  .portfolio-page-v31 #stack > div:first-child,
+  .portfolio-page-v31 section[aria-labelledby="thinking-title"] > div:first-child,
+  .portfolio-page-v31 #system > div:first-child,
+  .portfolio-page-v31 #process > div:first-child,
+  .portfolio-page-v31 section[aria-labelledby="journey-title"] > div:first-child {
+    margin-bottom: 24px !important;
+  }
+
+  /* System architecture and featured pipelines keep their real order while
+     exposing horizontal continuation instead of silently clipping it. */
+  .portfolio-page-v31 #flagship [class*="architectureFlow"],
+  .portfolio-page-v31 section[aria-labelledby="featured-title"] article > div:last-child > div:last-child {
+    scroll-snap-type: x proximity;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+    padding-bottom: 14px !important;
+  }
+
+  .portfolio-page-v31 #flagship [class*="architectureFlow"] > *,
+  .portfolio-page-v31 section[aria-labelledby="featured-title"] article > div:last-child > div:last-child > span {
+    scroll-snap-align: start;
+  }
+
+  .portfolio-page-v31 section[aria-labelledby="featured-title"] article > div:last-child {
+    min-height: 270px !important;
+  }
+
+  /* Product thinking: keep the editorial rows, but reduce scroll cost. */
+  .portfolio-page-v31 section[aria-labelledby="thinking-title"] > div:last-child {
+    grid-template-columns: 1fr !important;
+  }
+
+  .portfolio-page-v31 section[aria-labelledby="thinking-title"] > div:last-child > article {
+    min-height: 0 !important;
+    grid-template-columns: 30px minmax(0, 1fr) !important;
+    gap: 8px !important;
+    align-content: start !important;
+    padding: 14px 0 !important;
+    border-right: 0 !important;
+  }
+
+  .portfolio-page-v31 section[aria-labelledby="thinking-title"] > div:last-child > article h3 {
+    font-size: 13px !important;
+  }
+
+  .portfolio-page-v31 section[aria-labelledby="thinking-title"] > div:last-child > article p {
+    margin-top: 5px !important;
+    font-size: 9.5px !important;
+    line-height: 1.48 !important;
+  }
+
+  /* How I build with AI: compact two-line mobile rows. */
+  .portfolio-page-v31 #process > div:last-child > article {
+    min-height: 0 !important;
+    grid-template-columns: 32px minmax(0, 1fr) !important;
+    gap: 5px 10px !important;
+    padding: 12px 0 !important;
+    align-items: start !important;
+  }
+
+  .portfolio-page-v31 #process > div:last-child > article > span {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+    padding-top: 2px;
+  }
+
+  .portfolio-page-v31 #process > div:last-child > article > strong {
+    grid-column: 2;
+    grid-row: 1;
+    font-size: 10px !important;
+  }
+
+  .portfolio-page-v31 #process > div:last-child > article > p {
+    grid-column: 2;
+    grid-row: 2;
+    margin: 0 !important;
+    font-size: 9.5px !important;
+    line-height: 1.45 !important;
+  }
+
+  /* Build Log becomes a real vertical timeline on phones. */
+  .portfolio-page-v31 section[aria-labelledby="journey-title"] > div:last-child {
+    display: grid !important;
+    grid-template-columns: 1fr !important;
+    overflow: visible !important;
+    gap: 0 !important;
+    padding: 6px 0 !important;
+  }
+
+  .portfolio-page-v31 section[aria-labelledby="journey-title"] > div:last-child > div {
+    position: relative;
+    min-width: 0 !important;
+    min-height: 0 !important;
+    display: grid !important;
+    grid-template-columns: 36px 18px minmax(0, 1fr) !important;
+    grid-template-rows: 1fr !important;
+    gap: 0 10px !important;
+    align-items: center !important;
+    padding: 10px 0 !important;
+  }
+
+  .portfolio-page-v31 section[aria-labelledby="journey-title"] > div:last-child > div::after {
+    left: 44px !important;
+    right: auto !important;
+    top: 0 !important;
+    bottom: 0 !important;
+    width: 1px !important;
+    height: auto !important;
+  }
+
+  .portfolio-page-v31 section[aria-labelledby="journey-title"] > div:last-child > div:first-child::after {
+    top: 50% !important;
+  }
+
+  .portfolio-page-v31 section[aria-labelledby="journey-title"] > div:last-child > div:last-child::after {
+    bottom: 50% !important;
+  }
+
+  .portfolio-page-v31 section[aria-labelledby="journey-title"] > div:last-child > div > span {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .portfolio-page-v31 section[aria-labelledby="journey-title"] > div:last-child > div > i {
+    grid-column: 2;
+    grid-row: 1;
+    margin: 0 !important;
+  }
+
+  .portfolio-page-v31 section[aria-labelledby="journey-title"] > div:last-child > div > strong {
+    grid-column: 3;
+    grid-row: 1;
+    max-width: none !important;
+    font-size: 9px !important;
+  }
+
+  /* Interactive System Map: same information, roughly 20% less vertical
+     space, with labels retained on narrow screens. */
+  .portfolio-page-v31 #system > div:last-child {
+    gap: 10px !important;
+  }
+
+  .portfolio-page-v31 #system > div:last-child > div:first-child {
+    min-height: 400px !important;
+    border-radius: 20px !important;
+  }
+
+  .portfolio-page-v31 #system > div:last-child > div:first-child::before {
+    width: 220px !important;
+    height: 220px !important;
+  }
+
+  .portfolio-page-v31 #system > div:last-child > div:first-child::after {
+    width: 330px !important;
+    height: 330px !important;
+  }
+
+  .portfolio-page-v31 #system > div:last-child > div:first-child > div:first-child {
+    width: 112px !important;
+    height: 112px !important;
+  }
+
+  .portfolio-page-v31 #system > div:last-child > div:first-child > div:first-child > span {
+    width: 34px !important;
+    height: 34px !important;
+  }
+
+  .portfolio-page-v31 #system > div:last-child > div:first-child > div:first-child > strong {
+    font-size: 11px !important;
+  }
+
+  .portfolio-page-v31 #system > div:last-child > div:first-child > button {
+    min-width: 82px !important;
+    min-height: 38px !important;
+    padding-inline: 8px !important;
+  }
+
+  .portfolio-page-v31 #system > div:last-child > div:first-child > button span {
+    display: inline !important;
+    font-size: 6.5px !important;
+  }
+
+  .portfolio-page-v31 #system > div:last-child > div:first-child > button:nth-of-type(1) {
+    left: 3% !important;
+    top: 20% !important;
+  }
+
+  .portfolio-page-v31 #system > div:last-child > div:first-child > button:nth-of-type(2) {
+    right: 3% !important;
+    top: 20% !important;
+  }
+
+  .portfolio-page-v31 #system > div:last-child > div:first-child > button:nth-of-type(3) {
+    top: 7% !important;
+  }
+
+  .portfolio-page-v31 #system > div:last-child > div:first-child > button:nth-of-type(4) {
+    left: 4% !important;
+    bottom: 13% !important;
+  }
+
+  .portfolio-page-v31 #system > div:last-child > div:first-child > button:nth-of-type(5) {
+    right: 4% !important;
+    bottom: 13% !important;
+  }
+
+  .portfolio-page-v31 #system > div:last-child > aside {
+    padding: 18px !important;
+    border-radius: 18px !important;
+  }
+
+  .portfolio-page-v31 #system > div:last-child > aside h3 {
+    margin-bottom: 18px !important;
+    font-size: 25px !important;
+  }
+
+  .portfolio-page-v31 #system > div:last-child > aside > div > div {
+    padding: 10px !important;
+  }
+
+  /* Recruiter-facing contact does not expose internal configuration state. */
+  .portfolio-page-v31 #contact > small {
+    display: none !important;
+  }
+
+  .portfolio-page-v31 #contact {
+    padding-top: 56px !important;
+    padding-bottom: 54px !important;
+  }
+
+  .portfolio-page-v31 #contact > p {
+    margin-top: 16px !important;
+  }
+
+  .portfolio-page-v31 #contact > div {
+    margin-top: 24px !important;
+  }
+}
+
+@media (max-width: 430px) {
+  .portfolio-page-v31 #portfolio-title {
+    font-size: 54px !important;
+  }
+
+  .portfolio-page-v31 #portfolio-title + h2 {
+    font-size: 29px !important;
+  }
+
+  .portfolio-page-v31 #system > div:last-child > div:first-child {
+    min-height: 380px !important;
+  }
+
+  .portfolio-page-v31 #system > div:last-child > div:first-child::after {
+    width: 310px !important;
+    height: 310px !important;
+  }
+}

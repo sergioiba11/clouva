@@ -5,7 +5,6 @@ import Script from "next/script";
 import { usePathname } from "next/navigation";
 import { CurrentPlayerProvider } from "@/components/current-player-provider";
 import { ActiveAvatarHydrator } from "@/components/avatar-engine/ActiveAvatarHydrator";
-import { GlobalSpotifyPlayer } from "@/components/GlobalSpotifyPlayer";
 import { GlobalClouvaAIButtonGate } from "@/components/GlobalClouvaAIButtonGate";
 import { ClouvaSystemTopBarGate } from "@/components/clouva/system/ClouvaSystemTopBarGate";
 import { ClouvaAIAssistantProvider } from "@/components/clouva-ai/ClouvaAIAssistantProvider";
@@ -45,7 +44,6 @@ export function ClouvaAppShell({ children }: { children: ReactNode }) {
               <ClouvaSystemTopBarGate />
               {children}
               <GlobalClouvaAIButtonGate />
-              <GlobalSpotifyPlayer />
             </ClouvaAIAssistantProvider>
           </SpotifyPlaybackProvider>
         </PlayerBasicsGate>

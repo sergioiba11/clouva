@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { PortfolioExperience } from "@/components/portfolio/PortfolioExperience";
 import { PORTFOLIO_ASSETS } from "@/lib/portfolio/portfolio-data";
+import "./portfolio-v3-1.css";
 
 const description =
   "AI-native product builder based in Buenos Aires, building connected digital products across frontend, product design, cloud, AI systems and creative technology.";
@@ -36,5 +37,9 @@ export const metadata: Metadata = {
 };
 
 export default function PortfolioPage() {
-  return <PortfolioExperience />;
+  return (
+    <div className="portfolio-page-v31">
+      <PortfolioExperience />
+    </div>
+  );
 }
