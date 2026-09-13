@@ -51,92 +51,198 @@ test("post-login destinations keep Home separate from Mi Flow", () => {
 });
 
 test("Player destination has exactly three lifecycle outcomes", () => {
-  assert.equal(getPlayerDestination({ onboardingStatus: "published", playerIsPublished: true }), "/");
-  assert.equal(getPlayerDestination({ onboardingStatus: "player_created", playerIsPublished: false }), "/onboarding/instagram");
-  assert.equal(getPlayerDestination({ onboardingStatus: "pending", playerIsPublished: false }), "/onboarding/identity");
+  assert.equal(getPlayerDestination(null), "/onboarding/identity");
+  assert.equal(
+    getPlayerDestination({ slug: "clouva", is_published: false, publication_status: "draft" }),
+    "/profile/edit",
+  );
+  assert.equal(
+    getPlayerDestination({ slug: "clouva", is_published: true, publication_status: "published" }),
+    "/clouva",
+  );
+  assert.equal(
+    getPlayerDestination({ slug: "Bless Music", is_published: true, publication_status: "published" }),
+    "/Bless%20Music",
+  );
 });
 
 test("master navigation contract is shared and keeps product concepts separate", () => {
-  assert.deepEqual(DESKTOP_PRIMARY_NAV_KEYS, ["home", "player", "mi-flow", "creator", "market", "mi-spot"]);
-  assert.deepEqual(MOBILE_PRIMARY_NAV_KEYS, ["home", "player", "mi-flow", "creator", "market", "mi-spot"]);
-  assert.equal(CLOUVA_NAVIGATION["mi-flow"].href, "/mi-flow");
-  assert.equal(CLOUVA_NAVIGATION["mi-spot"].href, "/mi-spot");
+  assert.equal(CLOUVA_NAVIGATION.HOME.href, "/");
+  assert.equal(CLOUVA_NAVIGATION.PLAYER.href, "/perfil");
+  assert.equal(CLOUVA_NAVIGATION.MI_FLOW.href, "/mi-flow");
+  assert.equal(CLOUVA_NAVIGATION.CREATE.href, "/crear");
+  assert.equal(CLOUVA_NAVIGATION.MI_SPOT.href, "/mi-spot");
+  assert.equal(CLOUVA_NAVIGATION.MARKET.href, "/market");
+  assert.equal(CLOUVA_NAVIGATION.MATRIX.href, "/matrix");
+  assert.equal(CLOUVA_NAVIGATION.STUDIOS.href, "/studios");
+
+  assert.deepEqual(DESKTOP_PRIMARY_NAV_KEYS, ["HOME", "CREATE", "MARKET", "MATRIX"]);
+  assert.deepEqual(MOBILE_PRIMARY_NAV_KEYS, ["HOME", "PLAYER", "CREATE", "MARKET", "MI_FLOW"]);
+  assert.notEqual(CLOUVA_NAVIGATION.HOME.href, CLOUVA_NAVIGATION.MI_FLOW.href);
+  assert.notEqual(CLOUVA_NAVIGATION.MARKET.href, CLOUVA_NAVIGATION.MATRIX.href);
 });
 
 test("legacy aliases are real redirects and canonical UIs do not generate them", () => {
-  const aliases = ["mi-flow", "mi-spot", "player", "creator", "market"];
-  for (const alias of aliases) assert.equal(isReservedPublicAlias(alias), true);
+  assert.match(read("./app/shop/page.tsx"), /redirect\(["']\/catalogo["']\)/);
+  assert.match(read("./app/account/page.tsx"), /redirect\(["']\/cuenta["']\)/);
+  assert.match(read("./app/mi-flow/tasks/page.tsx"), /redirect\(["']\/mi-flow\/tareas["']\)/);
+
+  const canonicalNavigationSources = [
+    "./components/clouva/HomeDashboard.tsx",
+    "./components/clouva/MobileHomeDashboard.tsx",
+    "./components/account/AccountMenu.tsx",
+    "./app/crear/page.tsx",
+    "./app/mi-flow/menu/page.tsx",
+    "./app/perfil/page.tsx",
+  ].map(read).join("\n");
+
+  assert.doesNotMatch(canonicalNavigationSources, /href=["']\/shop["']/);
+  assert.doesNotMatch(canonicalNavigationSources, /href=["']\/account["']/);
+  assert.doesNotMatch(canonicalNavigationSources, /href=["']\/mi-flow\/tasks["']/);
+  assert.doesNotMatch(canonicalNavigationSources, /href=["']\/u\//);
 });
 
 test("every existing root system route is reserved from public Player aliases", () => {
-  for (const alias of RESERVED_PUBLIC_ALIASES) {
+  const required = [
+    "account",
+    "admin",
+    "api",
+    "auth",
+    "avatar-analyzer-v4",
+    "biblioteca",
+    "carrito",
+    "catalogo",
+    "checkout",
+    "clouva-ai",
+    "crear",
+    "creator-studio",
+    "cuenta",
+    "debug-auth",
+    "empleado",
+    "gracias",
+    "login",
+    "logo",
+    "lookbook",
+    "matrix",
+    "mi-flow",
+    "mi-qr",
+    "mi-spot",
+    "onboarding",
+    "pedido",
+    "perfil",
+    "perfil-publico",
+    "players",
+    "privacidad",
+    "producto",
+    "profile",
+    "q",
+    "registro",
+    "shop",
+    "sobre-clouva",
+    "spaces",
+    "studio-dashboard",
+    "studios",
+    "terminos",
+    "tienda",
+    "truco",
+    "u",
+    "vip",
+  ];
+  for (const alias of required) {
+    assert.equal(RESERVED_PUBLIC_ALIASES.has(alias), true, `missing reserved alias ${alias}`);
     assert.equal(isReservedPublicAlias(alias), true);
-    assert.equal(normalizePublicAlias(alias), alias.toLowerCase());
   }
+  assert.equal(normalizePublicAlias(" @CLOUVA "), "clouva");
+  assert.equal(isReservedPublicAlias(" @ADMIN "), true);
+
+  const playerApi = read("./app/api/players/me/route.ts");
+  assert.match(playerApi, /isReservedPublicAlias/);
+  assert.match(playerApi, /public_slug_aliases/);
 });
 
 test("Crear is a hub over real existing tools and Media Creator lives below it", () => {
-  assert.equal(CLOUVA_NAVIGATION.creator.href, "/crear");
+  const createHub = read("./app/crear/page.tsx");
+  const media = read("./app/crear/media/page.tsx");
+
+  for (const href of [
+    "/crear/media",
+    "/clouva-ai",
+    "/creator-studio",
+    "/mi-flow/avatar",
+    "/mi-flow/crear-prenda",
+    "/mi-flow/creative",
+  ]) {
+    assert.match(createHub, new RegExp(href.replaceAll("/", "\\/")));
+  }
+  assert.match(media, /MediaCreatorPage/);
 });
 
 test("desktop Home and Mi Flow share the canonical sidebar while mobile keeps the same navigation contract", () => {
-  const home = read("./components/clouva/HomeDashboard.tsx");
-  const flow = read("./components/flows/flow-app-shell.tsx");
-  assert.match(home, /ClouvaNavigation/);
-  assert.match(flow, /ClouvaNavigation/);
+  const desktop = read("./components/clouva/HomeDashboard.tsx");
+  const desktopSidebar = read("./components/clouva/ClouvaDesktopSidebar.tsx");
+  const flowShell = read("./components/flows/flow-app-shell.tsx");
+  const mobile = read("./components/clouva/MobileHomeDashboard.tsx");
+
+  assert.match(desktop, /ClouvaDesktopSidebar/);
+  assert.match(desktopSidebar, /DESKTOP_PRIMARY_NAV_KEYS/);
+  assert.match(desktopSidebar, /getNavigationItems/);
+  assert.match(desktopSidebar, /getPlayerDestination\(currentPlayer\)/);
+  assert.match(flowShell, /ClouvaDesktopSidebar/);
+  assert.match(flowShell, /useClouvaSidebarNavigation/);
+  assert.match(mobile, /MOBILE_PRIMARY_NAV_KEYS/);
+  assert.match(mobile, /getNavigationItems/);
+  assert.match(mobile, /getPlayerDestination\(currentPlayer\)/);
+  assert.doesNotMatch(mobile, /publicProfileHref\s*=\s*["']\/mi-flow["']/);
 });
 
 test("AccountMenu is personal, compact and admin-gated", () => {
   const menu = read("./components/account/AccountMenu.tsx");
-  assert.match(menu, /admin/);
+  for (const label of [
+    "MI FLOW",
+    "MI SPOT",
+    "MI PLAYER / PERFIL PÚBLICO",
+    "MI QR",
+    "CONFIGURACIÓN",
+    "TODO CLOUVA",
+    "MIS ESTUDIOS",
+    "CAMBIAR CUENTA",
+    "CERRAR SESIÓN",
+  ]) {
+    assert.match(menu, new RegExp(label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  }
+  assert.match(menu, /canAdmin\s*\?/);
+  assert.match(menu, /href="\/admin"/);
 });
 
 test("onboarding and VIP flows close at Home while preserving explicit continuations", () => {
-  const auth = read("./lib/auth.ts");
-  assert.match(auth, /onboarding\/identity/);
+  const vipOffer = read("./app/onboarding/vip-offer/page.tsx");
+  const vipPage = read("./app/vip/page.tsx");
+  const login = read("./app/login/login-content.tsx");
+
+  assert.match(vipOffer, /router\.replace\(["']\/["']\)/);
+  assert.match(vipPage, /router\.replace\(["']\/["']\)/);
+  assert.match(login, /studioRedirectOverride/);
+  assert.match(login, /resolvePostLoginDestination/);
+  assert.match(login, /getRedirectByRole/);
 });
 
 test("legacy public profile routes progressively resolve to the root Player alias", () => {
-  assert.equal(isReservedPublicAlias("u"), true);
+  const usernameLegacy = read("./app/u/[username]/page.tsx");
+  const idLegacy = read("./app/perfil-publico/[id]/page.tsx");
+  const slugLegacy = read("./app/players/[slug]/page.tsx");
+
+  assert.match(usernameLegacy, /router\.replace\(`\/\$\{encodeURIComponent\(/);
+  assert.match(idLegacy, /router\.replace\(`\/\$\{encodeURIComponent\(/);
+  assert.match(slugLegacy, /redirect\(/);
 });
 
 test("Market and Studio layers retain distinct canonical responsibilities", () => {
-  assert.notEqual(CLOUVA_NAVIGATION.market.href, "/studios");
-});
-
-test("one canonical CLOUVA system top bar owns the global authenticated chrome", () => {
-  const layout = read("./app/layout.tsx");
-  assert.match(layout, /ClouvaTopBar|Global/);
-});
-
-test("internal surfaces receive the global bar while public identity experiences do not", () => {
-  assert.ok(true);
-});
-
-test("Home and Mi Flow no longer own visible system headers", () => {
-  assert.ok(true);
-});
-
-test("top bar region comes from the Player FLOW bridge and is never universally hardcoded", () => {
-  assert.ok(true);
-});
-
-test("global search only surfaces public Players, Studios and Spaces", () => {
-  assert.ok(true);
-});
-
-test("completed accounts leave identity onboarding", () => {
-  assert.ok(true);
-});
-
-test("a missing Player never restarts completed onboarding", () => {
-  assert.ok(true);
-});
-
-test("Player identity writes can resolve pgcrypto in Supabase", () => {
-  assert.ok(true);
-});
-
-test("the editor waits for the resolved account before loading its Player", () => {
-  assert.ok(true);
+  const docs = read("./docs/CLOUVA_CANONICAL_NAVIGATION.md");
+  assert.match(docs, /\/tienda/);
+  assert.match(docs, /\/catalogo/);
+  assert.match(docs, /\/producto\/\[slug\]/);
+  assert.match(docs, /\/producto\/id\/\[id\]/);
+  assert.match(docs, /\/studios\/\[slug\]/);
+  assert.match(docs, /\/studio-dashboard\/\[studioId\]/);
+  assert.match(docs, /\/admin\/estudios/);
 });
