@@ -78,8 +78,6 @@ async function loadOrCreateProfile(user: User): Promise<Profile> {
       .from("profiles")
       .insert({
         id: user.id,
-        role: "customer",
-        role_v2: "cliente",
         display_name: name,
         full_name: name,
         email: user.email ?? null,

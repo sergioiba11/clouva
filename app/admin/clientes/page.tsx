@@ -88,9 +88,11 @@ export default function Page() {
     setBusyId(id);
     setError(null);
     try {
-      const { supabase } = await import("@/lib/supabase");
-      const { error: updateError } = await supabase.from("profiles").update(fields).eq("id", id);
-      if (updateError) throw updateError;
+      const response = await authenticatedFetch("/api/admin/users", {
+        method: "PATCH",
+        body: JSON.stringify({ id, ...fields }),
+      });
+      await readApiJson(response);
       await load();
     } catch (updateError) {
       setError(updateError instanceof Error ? updateError.message : "No se pudo actualizar la cuenta.");

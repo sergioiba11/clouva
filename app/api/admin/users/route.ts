@@ -18,12 +18,12 @@ async function requireAdmin(request: NextRequest) {
     (forbidden as Error & { status?: number }).status = 403;
     throw forbidden;
   }
-  return admin;
+  return { admin, user };
 }
 
 export async function GET(request: NextRequest) {
   try {
-    const admin = await requireAdmin(request);
+    const { admin } = await requireAdmin(request);
     const authUsers = [];
     const perPage = 1000;
 
@@ -92,10 +92,50 @@ export async function GET(request: NextRequest) {
       })
       .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
 
-    return NextResponse.json({ users, total: users.length });
+    return NextResponse.json({ users, total: users.length }, { headers: { "cache-control": "no-store" } });
   } catch (error) {
     const status = (error as Error & { status?: number })?.status ?? (isAuthError(error) ? 401 : 500);
     const message = error instanceof Error ? error.message : "No se pudieron cargar los usuarios.";
+    return NextResponse.json({ error: message }, { status });
+  }
+}
+
+export async function PATCH(request: NextRequest) {
+  try {
+    const { admin } = await requireAdmin(request);
+    const body = (await request.json().catch(() => null)) as
+      | { id?: unknown; is_vip?: unknown; is_blocked?: unknown }
+      | null;
+
+    const id = typeof body?.id === "string" ? body.id.trim() : "";
+    if (!id) return NextResponse.json({ error: "Falta el usuario a actualizar." }, { status: 400 });
+
+    const patch: { is_vip?: boolean; is_blocked?: boolean } = {};
+    if (body && "is_vip" in body) {
+      if (typeof body.is_vip !== "boolean") return NextResponse.json({ error: "is_vip debe ser booleano." }, { status: 400 });
+      patch.is_vip = body.is_vip;
+    }
+    if (body && "is_blocked" in body) {
+      if (typeof body.is_blocked !== "boolean") return NextResponse.json({ error: "is_blocked debe ser booleano." }, { status: 400 });
+      patch.is_blocked = body.is_blocked;
+    }
+    if (!Object.keys(patch).length) {
+      return NextResponse.json({ error: "No hay cambios administrativos permitidos." }, { status: 400 });
+    }
+
+    const { data: profile, error } = await admin
+      .from("profiles")
+      .update(patch)
+      .eq("id", id)
+      .select("id,is_vip,is_blocked")
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!profile) return NextResponse.json({ error: "El perfil no existe." }, { status: 404 });
+
+    return NextResponse.json({ profile }, { headers: { "cache-control": "no-store" } });
+  } catch (error) {
+    const status = (error as Error & { status?: number })?.status ?? (isAuthError(error) ? 401 : 500);
+    const message = error instanceof Error ? error.message : "No se pudo actualizar la cuenta.";
     return NextResponse.json({ error: message }, { status });
   }
 }

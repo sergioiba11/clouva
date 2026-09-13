@@ -1,7 +1,12 @@
 node_modules/
 .next/
 tsconfig.tsbuildinfo
-.env*.local
+
+# Local/private environment files. Keep the documented template versioned.
+.env
+.env.*
+!.env.example
+
 __pycache__/
 *.py[cod]
 /work/
