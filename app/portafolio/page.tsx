@@ -3,7 +3,7 @@ import { PortfolioExperience } from "@/components/portfolio/PortfolioExperience"
 import { PORTFOLIO_ASSETS } from "@/lib/portfolio/portfolio-data";
 
 const description =
-  "AI-native product builder based in Buenos Aires, building digital products across frontend, product design, cloud, AI systems and creative technology.";
+  "AI-native product builder based in Buenos Aires, building connected digital products across frontend, product design, cloud, AI systems and creative technology.";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://clouva.com.ar"),

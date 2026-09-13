@@ -24,6 +24,7 @@ import {
 } from "@/lib/portfolio/portfolio-v2-data";
 import styles from "@/app/portafolio/portfolio.module.css";
 import v2 from "@/app/portafolio/portfolio-v2.module.css";
+import v3 from "@/app/portafolio/portfolio-v3.module.css";
 
 const projectIcons = {
   clouva: Sparkles,
@@ -36,6 +37,18 @@ const projectIcons = {
   commerce: ShoppingBag,
   brand: CloudCog,
 } as const;
+
+const projectLayoutClass: Record<string, string> = {
+  clouva: v3.projectCardClouvaV3,
+  home: v3.projectCardHomeV3,
+  player: v3.projectCardPlayerV3,
+  flow: v3.projectCardFlowV3,
+  creator: v3.projectCardCreatorV3,
+  ai: v3.projectCardAiV3,
+  assets: v3.projectCardAssetsV3,
+  commerce: v3.projectCardCommerceV3,
+  brand: v3.projectCardBrandV3,
+};
 
 type ProjectView = {
   readonly id: string;
@@ -67,7 +80,7 @@ type Props = {
 function StatusLegend({ locale }: { locale: PortfolioLocale }) {
   const copy = PORTFOLIO_V2_COPY[locale];
   return (
-    <div className={v2.statusLegend} aria-label={copy.status.title}>
+    <div className={`${v2.statusLegend} ${v3.statusLegendV3}`} aria-label={copy.status.title}>
       <span className={v2.statusLegendTitle}>{copy.status.title}</span>
       <div className={v2.statusLegendItems}>
         {copy.status.items.map(([status, description]) => (
@@ -113,6 +126,8 @@ function ProjectCard({
       className={[
         styles.projectCard,
         v2.projectCardV2,
+        v3.projectCardV3,
+        projectLayoutClass[project.id] ?? "",
         primary ? v2.projectCardPrimary : v2.projectCardSecondary,
         project.status === "LIVE" ? v2.projectCardLive : "",
         project.id === "clouva" ? v2.projectCardFlagship : "",
@@ -129,7 +144,7 @@ function ProjectCard({
         <>
           <button
             type="button"
-            className={`${styles.projectMedia} ${v2.projectMediaV2} ${mediaOverride?.mode === "contain" ? v2.projectMediaContain : ""}`}
+            className={`${styles.projectMedia} ${v2.projectMediaV2} ${v3.projectMediaV3} ${mediaOverride?.mode === "contain" ? v2.projectMediaContain : ""}`}
             onClick={() => onOpenMedia(mediaSrc, mediaAlt)}
             aria-label={`${labels.evidence}: ${project.title}`}
           >
@@ -137,7 +152,7 @@ function ProjectCard({
               src={mediaSrc}
               alt={mediaAlt}
               fill
-              sizes={project.id === "clouva" ? "(max-width: 760px) 100vw, 80vw" : "(max-width: 760px) 100vw, 50vw"}
+              sizes={project.id === "clouva" || project.id === "ai" ? "(max-width: 760px) 100vw, 80vw" : "(max-width: 760px) 100vw, 50vw"}
             />
             <span className={styles.mediaBadge}>{project.id === "creator" ? copy.evidenceNote : labels.evidence}</span>
           </button>
@@ -172,14 +187,14 @@ function ProjectCard({
         </div>
       )}
 
-      <div className={`${styles.projectBody} ${v2.projectBodyV2}`}>
+      <div className={`${styles.projectBody} ${v2.projectBodyV2} ${v3.projectBodyV3}`}>
         <span className={styles.eyebrow}>{project.eyebrow}</span>
         <div className={styles.projectTitleRow}>
           <h3>{project.title}</h3>
           <Icon size={20} strokeWidth={1.5} aria-hidden="true" />
         </div>
 
-        <div className={v2.contextGrid}>
+        <div className={`${v2.contextGrid} ${v3.contextGridV3}`}>
           <div>
             <span>{copy.context.problem}</span>
             <p>{detail?.problem ?? project.summary}</p>
@@ -188,7 +203,7 @@ function ProjectCard({
             <span>{copy.context.built}</span>
             <p>{detail?.built ?? project.result}</p>
           </div>
-          <div className={v2.contextSystem}>
+          <div className={`${v2.contextSystem} ${v3.contextSystemV3}`}>
             <span>{copy.context.system}</span>
             <p>{detail?.system ?? project.tags.join(" · ")}</p>
           </div>
@@ -219,15 +234,15 @@ export function PortfolioProjectExplorer({ locale, projects, labels, onOpenMedia
   const secondary = projects.filter((project) => !PROJECT_PRIMARY_IDS.has(project.id));
 
   return (
-    <div className={v2.explorer}>
+    <div className={`${v2.explorer} ${v3.explorerV3}`}>
       <StatusLegend locale={locale} />
 
-      <div className={v2.groupHeader}>
+      <div className={`${v2.groupHeader} ${v3.groupHeaderV3}`}>
         <span>01</span>
         <strong>{copy.groups.primary}</strong>
         <i />
       </div>
-      <div className={`${styles.projectGrid} ${v2.projectGridPrimary}`}>
+      <div className={`${styles.projectGrid} ${v2.projectGridPrimary} ${v3.projectGridPrimaryV3}`}>
         {primary.map((project, index) => (
           <ProjectCard
             key={project.id}
@@ -241,12 +256,12 @@ export function PortfolioProjectExplorer({ locale, projects, labels, onOpenMedia
         ))}
       </div>
 
-      <div className={v2.groupHeader}>
+      <div className={`${v2.groupHeader} ${v3.groupHeaderV3}`}>
         <span>02</span>
         <strong>{copy.groups.secondary}</strong>
         <i />
       </div>
-      <div className={`${styles.projectGrid} ${v2.projectGridSecondary}`}>
+      <div className={`${styles.projectGrid} ${v2.projectGridSecondary} ${v3.projectGridSecondaryV3}`}>
         {secondary.map((project, index) => (
           <ProjectCard
             key={project.id}
