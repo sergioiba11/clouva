@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { ClouvaBoot } from "@/components/clouva/ClouvaBoot";
 import LoginContent from "./login-content";
 
 export default function LoginPage() {
@@ -7,7 +8,7 @@ export default function LoginPage() {
       className="fixed inset-0 h-[100dvh] overflow-y-auto overscroll-y-contain bg-[#05040a] touch-pan-y [-webkit-overflow-scrolling:touch]"
       data-login-scroll-root
     >
-      <Suspense fallback={<div className="mx-auto w-full max-w-md px-4 py-16 text-white/80">Cargando...</div>}>
+      <Suspense fallback={<ClouvaBoot showWorld subtitle="Abriendo tu acceso..." />}>
         <LoginContent />
       </Suspense>
     </div>
