@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { ClouvaUniverseBackground } from "@/components/clouva/ClouvaUniverseBackground";
 import { OfficialClouvaMark } from "@/components/clouva/OfficialClouvaMark";
 
+// Keep the public landing and access flow inside the same CLOUVA visual universe.
 export function PublicLanding() {
   const router = useRouter();
   const [entering, setEntering] = useState(false);
