@@ -18,6 +18,7 @@ const PUBLIC_EXACT_PATHS = new Set([
   "/matrix",
   "/players",
   "/studios",
+  "/geneticas",
 ]);
 
 const PUBLIC_PREFIXES = [
@@ -32,6 +33,7 @@ const PUBLIC_PREFIXES = [
   "/q/",
   "/tienda/",
   "/mobile-preview/",
+  "/geneticas/",
 ] as const;
 
 function normalizePathname(pathname: string) {
@@ -54,10 +56,11 @@ export function isImmersiveClouvaPreviewPath(pathname: string) {
 }
 
 /**
- * Public identity/storefront experiences own their visual chrome and must never
- * inherit the authenticated CLOUVA system bar. Internal surfaces are the
- * inverse: once the user is authenticated, the canonical top bar is mounted
- * globally by RootLayout instead of being copied into every page.
+ * Public identity/storefront experiences and immersive product surfaces own
+ * their visual chrome and must never inherit the authenticated CLOUVA system
+ * bar. Internal surfaces are the inverse: once the user is authenticated, the
+ * canonical top bar is mounted globally by RootLayout instead of being copied
+ * into every page.
  */
 export function isPublicClouvaExperiencePath(pathname: string) {
   const normalized = normalizePathname(pathname);

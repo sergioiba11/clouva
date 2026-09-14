@@ -8,6 +8,7 @@ export type ClouvaSurfaceKey =
   | "MI_SPOT"
   | "MARKET"
   | "MATRIX"
+  | "GENETICS"
   | "STUDIOS";
 
 export type ClouvaSurface = {
@@ -25,6 +26,7 @@ export const CLOUVA_NAVIGATION: Record<ClouvaSurfaceKey, ClouvaSurface> = {
   MI_SPOT: { key: "MI_SPOT", label: "Mi Spot", href: "/mi-spot", description: "Los espacios, negocios y organizaciones que manejás." },
   MARKET: { key: "MARKET", label: "Market", href: "/market", description: "Marketplace de Players, Studios, productos físicos y assets digitales 3D." },
   MATRIX: { key: "MATRIX", label: "La Matrix", href: "/matrix", description: "Descubrimiento de Players, Studios y ecosistema CLOUVA." },
+  GENETICS: { key: "GENETICS", label: "Genéticas", href: "/geneticas", description: "Descubrimiento visual, fichas, aromas, terpenos e historial de genéticas." },
   STUDIOS: { key: "STUDIOS", label: "Studios", href: "/studios", description: "Directorio público de Studios CLOUVA." },
 };
 

@@ -7,7 +7,8 @@ import { isImmersiveClouvaPreviewPath } from "@/lib/navigation/clouva-topbar-rou
 export function GlobalClouvaAIButtonGate() {
   const pathname = usePathname() || "/";
   const isPortfolioRoute = pathname === "/portafolio" || pathname.startsWith("/portafolio/");
+  const isGeneticsRoute = pathname === "/geneticas" || pathname.startsWith("/geneticas/");
 
-  if (isPortfolioRoute || isImmersiveClouvaPreviewPath(pathname)) return null;
+  if (isPortfolioRoute || isGeneticsRoute || isImmersiveClouvaPreviewPath(pathname)) return null;
   return <GlobalClouvaAIButton />;
 }

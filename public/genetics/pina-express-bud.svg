@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 900" role="img" aria-labelledby="title desc">
+  <title id="title">Piña Express</title>
+  <desc id="desc">Ilustración botánica verde y dorada para la ficha de demostración.</desc>
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="38%" r="72%"><stop offset="0" stop-color="#315f35"/><stop offset=".38" stop-color="#14371f"/><stop offset="1" stop-color="#04110b"/></radialGradient>
+    <radialGradient id="bud" cx="42%" cy="28%" r="75%"><stop offset="0" stop-color="#d5dfbb"/><stop offset=".16" stop-color="#7baa62"/><stop offset=".58" stop-color="#2f6438"/><stop offset="1" stop-color="#133820"/></radialGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#ffd36f"/><stop offset=".5" stop-color="#f19f26"/><stop offset="1" stop-color="#b76516"/></linearGradient>
+    <filter id="glow"><feGaussianBlur stdDeviation="13"/></filter>
+    <filter id="soft"><feGaussianBlur stdDeviation="2.5"/></filter>
+  </defs>
+  <rect width="900" height="900" fill="url(#bg)"/>
+  <g opacity=".48" fill="#5e9b58">
+    <ellipse cx="90" cy="430" rx="58" ry="250" transform="rotate(-38 90 430)"/>
+    <ellipse cx="810" cy="390" rx="62" ry="280" transform="rotate(35 810 390)"/>
+    <ellipse cx="145" cy="690" rx="54" ry="260" transform="rotate(-58 145 690)"/>
+    <ellipse cx="770" cy="700" rx="56" ry="260" transform="rotate(58 770 700)"/>
+  </g>
+  <ellipse cx="450" cy="430" rx="285" ry="320" fill="#f5b442" opacity=".15" filter="url(#glow)"/>
+  <g fill="url(#bud)" stroke="#9fc47a" stroke-opacity=".45" stroke-width="3">
+    <ellipse cx="450" cy="180" rx="86" ry="112"/>
+    <ellipse cx="390" cy="250" rx="118" ry="135" transform="rotate(-20 390 250)"/>
+    <ellipse cx="520" cy="258" rx="116" ry="138" transform="rotate(20 520 258)"/>
+    <ellipse cx="350" cy="360" rx="132" ry="148" transform="rotate(-28 350 360)"/>
+    <ellipse cx="548" cy="366" rx="136" ry="152" transform="rotate(26 548 366)"/>
+    <ellipse cx="430" cy="430" rx="178" ry="198"/>
+    <ellipse cx="330" cy="500" rx="118" ry="142" transform="rotate(-32 330 500)"/>
+    <ellipse cx="570" cy="505" rx="120" ry="145" transform="rotate(30 570 505)"/>
+    <ellipse cx="445" cy="585" rx="160" ry="180"/>
+    <ellipse cx="415" cy="690" rx="120" ry="150"/>
+  </g>
+  <g fill="#d6e4c4" opacity=".72">
+    <circle cx="405" cy="190" r="8"/><circle cx="475" cy="205" r="7"/><circle cx="354" cy="288" r="8"/><circle cx="518" cy="300" r="9"/>
+    <circle cx="428" cy="324" r="7"/><circle cx="585" cy="390" r="8"/><circle cx="311" cy="410" r="7"/><circle cx="454" cy="430" r="9"/>
+    <circle cx="386" cy="492" r="8"/><circle cx="520" cy="510" r="7"/><circle cx="348" cy="574" r="8"/><circle cx="469" cy="596" r="8"/>
+    <circle cx="415" cy="665" r="7"/><circle cx="485" cy="680" r="8"/>
+  </g>
+  <g fill="none" stroke="url(#gold)" stroke-width="9" stroke-linecap="round" opacity=".88">
+    <path d="M380 150c-34 34-12 73 19 96s8 58-28 75"/><path d="M485 138c40 42 15 74-15 102s-7 58 32 78"/>
+    <path d="M300 322c55 12 64 48 45 79s4 55 46 61"/><path d="M594 324c-50 16-58 49-38 78s0 58-44 66"/>
+    <path d="M309 503c38-7 60 17 57 48s25 47 59 32"/><path d="M576 500c-40-8-63 18-59 51s-24 47-57 33"/>
+    <path d="M382 628c-22 30-10 57 20 72"/><path d="M503 625c24 30 12 60-18 75"/>
+  </g>
+  <g fill="#355f35" opacity=".86">
+    <path d="M440 754c-95 22-166 79-207 142 85-20 159-64 218-126Z"/>
+    <path d="M465 756c98 23 170 78 208 140-82-20-160-62-220-124Z"/>
+  </g>
+  <ellipse cx="450" cy="770" rx="190" ry="30" fill="#000" opacity=".35" filter="url(#soft)"/>
+</svg>
