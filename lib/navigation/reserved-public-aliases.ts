@@ -19,6 +19,7 @@ const RESERVED_PUBLIC_ALIAS_VALUES = [
   "cuenta",
   "debug-auth",
   "empleado",
+  "geneticas",
   "gracias",
   "iglu",
   "login",
