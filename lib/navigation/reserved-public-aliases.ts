@@ -20,6 +20,7 @@ const RESERVED_PUBLIC_ALIAS_VALUES = [
   "debug-auth",
   "empleado",
   "gracias",
+  "iglu",
   "login",
   "logo",
   "lookbook",
