@@ -69,6 +69,15 @@
   bottom: max(16px, calc(env(safe-area-inset-bottom) + 10px));
 }
 
+.workspace [data-commerce-scanner-camera],
+.workspace [data-commerce-capture-preview] {
+  min-width: 0;
+}
+
+.workspace [data-commerce-capture-preview] {
+  overflow: hidden;
+}
+
 @media (max-width: 640px) {
   .clouvaBar {
     min-height: 50px;
@@ -137,7 +146,6 @@
     display: none;
   }
 
-  /* Keep every commerce/scanner child shrinkable on narrow screens. */
   .workspace main section,
   .workspace main section > div,
   .workspace main form,
@@ -145,46 +153,6 @@
     min-width: 0;
   }
 
-  /* The existing camera remains untouched functionally; only its viewport is
-     compacted so it behaves as an input tool rather than a full-screen hero. */
-  .workspace div:has(> video[playsinline]) {
-    aspect-ratio: 16 / 10;
-    min-height: 200px;
-    max-height: min(42svh, 340px);
-    overflow: hidden;
-  }
-
-  .workspace video[playsinline] {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-  }
-
-  /* Captured references are evidence thumbnails. Override the square utility
-     used by the desktop cards without changing capture data or handlers. */
-  .workspace div:has(> img[src^="data:image/"]) {
-    height: 112px;
-    max-height: 112px;
-    min-height: 0;
-    overflow: hidden;
-  }
-
-  .workspace div:has(> img[src^="data:image/"]) > img {
-    width: 100%;
-    height: 112px;
-    aspect-ratio: auto;
-    object-fit: cover;
-  }
-
-  /* Empty front/back slots should communicate state without reserving the
-     footprint of a full photograph. */
-  .workspace div[class*="border-dashed"][class*="aspect-square"] {
-    aspect-ratio: auto;
-    min-height: 76px;
-    max-height: 112px;
-  }
-
-  /* Scanner controls stay finger-friendly while becoming visually tighter. */
   .workspace button,
   .workspace label {
     -webkit-tap-highlight-color: transparent;
@@ -195,7 +163,6 @@
     max-width: 100%;
   }
 
-  /* Increase only the very dim supporting copy enough for real phone use. */
   .workspace main .text-white\/25,
   .workspace main .text-white\/30,
   .workspace main .text-white\/35,
@@ -203,8 +170,6 @@
     color: rgba(255, 255, 255, .52);
   }
 
-  /* QR stays globally available but becomes a compact utility that cannot sit
-     on top of the scanner's final actions. */
   .workspace > button {
     right: 12px;
     bottom: max(12px, calc(env(safe-area-inset-bottom) + 8px));
@@ -221,33 +186,8 @@
 }
 
 @media (max-width: 380px) {
-  .workspace div:has(> video[playsinline]) {
-    min-height: 188px;
-    max-height: 300px;
-  }
-
-  .workspace div:has(> img[src^="data:image/"]) {
-    height: 96px;
-    max-height: 96px;
-  }
-
-  .workspace div:has(> img[src^="data:image/"]) > img {
-    height: 96px;
-  }
-
-  .workspace div[class*="border-dashed"][class*="aspect-square"] {
-    min-height: 68px;
-    max-height: 96px;
-  }
-
   .workspace > button {
     max-width: 112px;
     font-size: 10px;
-  }
-}
-
-@media (min-width: 641px) and (max-width: 1023px) {
-  .workspace div:has(> video[playsinline]) {
-    max-height: 520px;
   }
 }
