@@ -8,6 +8,7 @@ type ClouvaBootProps = {
   prominentTitle?: boolean;
 };
 
+// Shared transition used by access and post-auth flows.
 export function ClouvaBoot({
   title = "CLOUVA",
   subtitle = "Preparando tu universo...",
