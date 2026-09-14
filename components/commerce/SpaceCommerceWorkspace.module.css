@@ -61,14 +61,10 @@
   text-transform: uppercase;
 }
 
-/* The commerce dashboard has its own sticky Space header. Keep it immediately
-   under the canonical CLOUVA bar instead of letting both headers overlap. */
 .workspace main > header {
   top: 54px;
 }
 
-/* QR Engine is a workspace-level action. Reserve the device safe area instead
-   of pinning it to a magic bottom offset. */
 .workspace > button {
   bottom: max(16px, calc(env(safe-area-inset-bottom) + 10px));
 }
@@ -98,13 +94,13 @@
   }
 
   .workspace main > header > div {
+    min-width: 0;
     gap: 8px;
     padding: 8px 12px;
   }
 
-  /* The official CLOUVA mark now owns the global identity. The secondary
-     header only needs to identify the current Space. */
   .workspace main > header > div > div:first-child {
+    min-width: 0;
     gap: 8px;
   }
 
@@ -113,17 +109,21 @@
   }
 
   .workspace main > header > div > div:first-child p:first-child {
+    overflow: hidden;
     font-size: 12px;
     line-height: 1.15;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .workspace main > header > div > div:first-child p:last-child {
     margin-top: 2px;
+    overflow: hidden;
     font-size: 9px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  /* "Ver tienda" is available from the manager itself. Removing this icon
-     from the narrow header gives the Space name, FLOW and account real room. */
   .workspace main > header > div > div:last-child > a {
     display: none;
   }
@@ -137,12 +137,21 @@
     display: none;
   }
 
-  /* Scanner camera: the functional scanner keeps its stream and overlay, but
-     the viewport becomes a compact tool instead of consuming most of mobile. */
+  /* Keep every commerce/scanner child shrinkable on narrow screens. */
+  .workspace main section,
+  .workspace main section > div,
+  .workspace main form,
+  .workspace main label {
+    min-width: 0;
+  }
+
+  /* The existing camera remains untouched functionally; only its viewport is
+     compacted so it behaves as an input tool rather than a full-screen hero. */
   .workspace div:has(> video[playsinline]) {
     aspect-ratio: 16 / 10;
-    min-height: 220px;
-    max-height: min(48svh, 390px);
+    min-height: 200px;
+    max-height: min(42svh, 340px);
+    overflow: hidden;
   }
 
   .workspace video[playsinline] {
@@ -151,53 +160,94 @@
     object-fit: cover;
   }
 
-  /* Capture thumbnails stay evidence-sized. A tap target remains large enough
-     while a photo no longer pushes the rest of the workflow several screens. */
+  /* Captured references are evidence thumbnails. Override the square utility
+     used by the desktop cards without changing capture data or handlers. */
   .workspace div:has(> img[src^="data:image/"]) {
-    max-height: 156px;
+    height: 112px;
+    max-height: 112px;
+    min-height: 0;
+    overflow: hidden;
   }
 
   .workspace div:has(> img[src^="data:image/"]) > img {
-    height: 156px;
-    aspect-ratio: 4 / 3;
+    width: 100%;
+    height: 112px;
+    aspect-ratio: auto;
     object-fit: cover;
   }
 
-  /* Keep the global QR action reachable without covering the scanner's primary
-     CTAs. On narrow screens it becomes a compact utility button. */
+  /* Empty front/back slots should communicate state without reserving the
+     footprint of a full photograph. */
+  .workspace div[class*="border-dashed"][class*="aspect-square"] {
+    aspect-ratio: auto;
+    min-height: 76px;
+    max-height: 112px;
+  }
+
+  /* Scanner controls stay finger-friendly while becoming visually tighter. */
+  .workspace button,
+  .workspace label {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .workspace select,
+  .workspace input {
+    max-width: 100%;
+  }
+
+  /* Increase only the very dim supporting copy enough for real phone use. */
+  .workspace main .text-white\/25,
+  .workspace main .text-white\/30,
+  .workspace main .text-white\/35,
+  .workspace main .text-white\/40 {
+    color: rgba(255, 255, 255, .52);
+  }
+
+  /* QR stays globally available but becomes a compact utility that cannot sit
+     on top of the scanner's final actions. */
   .workspace > button {
     right: 12px;
     bottom: max(12px, calc(env(safe-area-inset-bottom) + 8px));
     min-height: 44px;
-    max-width: 132px;
-    padding: 10px 12px;
+    max-width: 124px;
+    padding: 9px 11px;
     border-radius: 14px;
-    font-size: 12px;
+    font-size: 11px;
   }
 
-  /* Give the last interactive area breathing room above Android/iOS gesture
-     navigation and the workspace-level QR utility. */
   .workspace main {
-    padding-bottom: calc(78px + env(safe-area-inset-bottom));
+    padding-bottom: calc(88px + env(safe-area-inset-bottom));
   }
 }
 
 @media (max-width: 380px) {
   .workspace div:has(> video[playsinline]) {
-    min-height: 200px;
-    max-height: 320px;
+    min-height: 188px;
+    max-height: 300px;
   }
 
   .workspace div:has(> img[src^="data:image/"]) {
-    max-height: 136px;
+    height: 96px;
+    max-height: 96px;
   }
 
   .workspace div:has(> img[src^="data:image/"]) > img {
-    height: 136px;
+    height: 96px;
+  }
+
+  .workspace div[class*="border-dashed"][class*="aspect-square"] {
+    min-height: 68px;
+    max-height: 96px;
   }
 
   .workspace > button {
-    max-width: 118px;
-    font-size: 11px;
+    max-width: 112px;
+    font-size: 10px;
+  }
+}
+
+@media (min-width: 641px) and (max-width: 1023px) {
+  .workspace div:has(> video[playsinline]) {
+    max-height: 520px;
   }
 }
