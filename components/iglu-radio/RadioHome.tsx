@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { ArrowRight, CalendarDays, Mic2, Pause, Play, Radio, Users, Waves } from "lucide-react";
 import { useIgluRadio } from "@/components/iglu-radio/RadioProvider";
+import { igluRadioRoute } from "@/lib/iglu-radio/routes";
 
 function humanStatus(status: ReturnType<typeof useIgluRadio>["status"]) {
   if (status === "LIVE") return "LIVE";
@@ -54,7 +55,7 @@ export function RadioHome() {
             {radio.isPlaying ? <Pause size={21} fill="currentColor" /> : <Play size={21} fill="currentColor" />}
             {radio.status === "ERROR" ? "REINTENTAR" : radio.isPlaying ? "PAUSAR RADIO" : radio.status === "CONNECTING" ? "CONECTANDO..." : "ESCUCHAR EN VIVO"}
           </button>
-          <Link href="/iglu/radio/schedule" className="iglu-radio-secondary-cta">
+          <Link href={igluRadioRoute("schedule")} className="iglu-radio-secondary-cta">
             <CalendarDays size={18} /> VER PROGRAMACIÓN
           </Link>
         </div>
@@ -81,24 +82,24 @@ export function RadioHome() {
         <div className="iglu-radio-up-next">
           <div><span>UP NEXT</span><strong>PROGRAMACIÓN</strong></div>
           <p>La grilla todavía no fue publicada. Cuando exista programación real, aparecerá acá sin inventar horarios ni emisiones.</p>
-          <Link href="/iglu/radio/schedule">VER SCHEDULE <ArrowRight size={16} /></Link>
+          <Link href={igluRadioRoute("schedule")}>VER SCHEDULE <ArrowRight size={16} /></Link>
         </div>
       </section>
 
       <section className="iglu-radio-editorial iglu-radio-editorial--grid">
-        <Link href="/iglu/radio/sesiones" className="iglu-radio-feature-card iglu-radio-feature-card--sessions">
+        <Link href={igluRadioRoute("sesiones")} className="iglu-radio-feature-card iglu-radio-feature-card--sessions">
           <span><Mic2 size={17} /> IGLÚ SESSIONS</span>
           <h3>LA CABINA<br />SE ABRE.</h3>
           <p>Live sessions, freestyles, entrevistas y sets nacidos dentro del universo IGLÚ.</p>
           <small>ARCHIVO EN PREPARACIÓN <ArrowRight size={14} /></small>
         </Link>
-        <Link href="/iglu/radio/artistas" className="iglu-radio-feature-card iglu-radio-feature-card--artists">
+        <Link href={igluRadioRoute("artistas")} className="iglu-radio-feature-card iglu-radio-feature-card--artists">
           <span><Users size={17} /> ARTIST SPOTLIGHT</span>
           <h3>DEL SUR<br />AL MUNDO.</h3>
           <p>Un espacio editorial para los artistas, voces y escenas que pasan por IGLÚ.</p>
           <small>VER ARTISTAS <ArrowRight size={14} /></small>
         </Link>
-        <Link href="/iglu/radio/programas" className="iglu-radio-feature-card iglu-radio-feature-card--culture">
+        <Link href={igluRadioRoute("programas")} className="iglu-radio-feature-card iglu-radio-feature-card--culture">
           <span><Radio size={17} /> CULTURA</span>
           <h3>MÁS QUE<br />RADIO.</h3>
           <p>Programas, historias y conversaciones conectando música, personas y cultura.</p>

@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { StudioIdentityRenderer } from "@/components/public/StudioIdentityRenderer";
 import { TrebolContextRegistration } from "@/components/clouva-ai/TrebolContextRegistration";
@@ -7,6 +8,7 @@ import { PublicMerchSection } from "@/components/public/PublicMerchSection";
 import { loadPublicAgendaByStudio } from "@/lib/server/agenda/public";
 import { resolveStudioAlias } from "@/lib/server/public-identity-data";
 import { createAdminSupabase } from "@/lib/server/supabase";
+import { IGLU_RADIO_PATH, IGLU_STUDIO_SLUG } from "@/lib/iglu-radio/routes";
 
 export const dynamic = "force-dynamic";
 
@@ -47,6 +49,7 @@ export default async function StudioProfilePage({
 
   const publicAgenda = await loadPublicAgendaByStudio({ admin: createAdminSupabase(), studioId: result.studio.id }).catch(() => null);
   const accent = result.layoutConfig?.page_style?.palette?.accent || result.studio.accent_color || "#8f7cff";
+  const isIglu = result.canonicalAlias.toLowerCase() === IGLU_STUDIO_SLUG;
   const merch = (
     <PublicMerchSection
       studioId={result.studio.id}
@@ -70,6 +73,24 @@ export default async function StudioProfilePage({
         }}
       />
       <StudioIdentityRenderer data={result} joined={query.joined === "1"} />
+      {isIglu ? (
+        <section className="border-y border-white/10 bg-[#03070b] px-4 py-8 sm:px-6">
+          <div className="mx-auto flex max-w-6xl flex-col gap-6 rounded-[28px] border border-white/10 bg-white/[0.025] p-6 sm:flex-row sm:items-center sm:justify-between sm:p-8">
+            <div className="max-w-2xl">
+              <p className="text-[10px] font-bold uppercase tracking-[0.2em]" style={{ color: accent }}>IGLÚ RADIO · EL IGLÚ</p>
+              <h2 className="mt-2 text-2xl font-semibold tracking-tight sm:text-3xl">La radio vive dentro de este Studio.</h2>
+              <p className="mt-3 text-sm leading-6 text-white/55">Entrá a la señal, sesiones, artistas, programas y programación de IGLÚ RADIO sin salir de la identidad oficial de El Iglú.</p>
+            </div>
+            <Link
+              href={IGLU_RADIO_PATH}
+              className="inline-flex min-h-12 shrink-0 items-center justify-center rounded-full border border-white/15 px-6 text-xs font-bold tracking-[0.12em] text-white shadow-lg transition hover:brightness-125"
+              style={{ backgroundColor: accent }}
+            >
+              ENTRAR A IGLÚ RADIO
+            </Link>
+          </div>
+        </section>
+      ) : null}
       {publicAgenda ? (
         <PublicAgendaSection
           identityName={result.studio.name}

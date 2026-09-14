@@ -65,6 +65,8 @@ const nextConfig: NextConfig = {
   // content lives at the old paths, per the Players/Estudios spec.
   async redirects() {
     return [
+      { source: "/iglu/radio", destination: "/studios/el-iglu/radio", permanent: true },
+      { source: "/iglu/radio/:path*", destination: "/studios/el-iglu/radio/:path*", permanent: true },
       { source: "/comunidad", destination: "/matrix", permanent: true },
       { source: "/comunidad/players", destination: "/players", permanent: true },
       { source: "/comunidad/estudios/nuevo", destination: "/studios/nuevo", permanent: true },
