@@ -40,42 +40,59 @@ test("Instagram import reuses the canonical Player instead of inserting a duplic
   assert.match(source, /const slug = \(player\?\.slug/);
   assert.match(source, /const username = \(player\?\.username/);
   assert.match(source, /from\("players"\)\.update\(playerValues\)\.eq\("id", player\.id\)/);
-  assert.match(source, /from\("players"\)\.insert\(/);
-  assert.match(migration, /claim_existing_instagram_player/);
+  assert.match(source, /body\.publish === true \|\| Boolean\(player\?\.is_published\)/);
+  assert.match(source, /Este usuario ya está registrado\./);
+
+  assert.match(migration, /auth\.role\(\) is distinct from 'service_role'/);
+  assert.match(migration, /for update/);
+  assert.match(migration, /delete from public\.players/);
+  assert.match(migration, /grant execute on function public\.claim_existing_instagram_player\(uuid, uuid\) to service_role/);
 });
 
 test("Mercado Pago activates VIP only after verified server-side payment", () => {
-  const checkout = read("./app/api/billing/vip/checkout/route.ts");
-  const webhook = read("./app/api/billing/mercadopago/webhook/route.ts");
+  const webhook = read("./core/billing/webhook.ts");
+  const service = read("./core/billing/service.ts");
+  const signature = read("./core/billing/providers/mercadopago/signature.ts");
 
-  assert.match(checkout, /createMercadoPagoPreference/);
-  assert.match(checkout, /external_reference/);
-  assert.doesNotMatch(checkout, /\.update\(\{\s*is_vip:\s*true/);
-  assert.match(webhook, /getMercadoPagoPayment/);
-  assert.match(webhook, /payment\.status\s*!==\s*"approved"/);
-  assert.match(webhook, /activate_vip_from_payment/);
+  assert.match(webhook, /verifyMercadoPagoSignature/);
+  assert.match(webhook, /processApprovedPayment/);
+  assert.match(webhook, /billing_webhook_events/);
+  assert.match(service, /payment\.application_id/);
+  assert.match(service, /payment\.collector_id/);
+  assert.match(service, /transaction_amount/);
+  assert.match(service, /currency_id/);
+  assert.match(service, /duplicate_payment/);
+  assert.match(service, /activateEntitlement/);
+  assert.match(signature, /timingSafeEqual/);
 });
 
 test("Studio administration requires active Studio OS and an authorized internal role", () => {
+  const schema = read("./supabase/migrations/20260802220000_multirol_studio_os_schema.sql");
+  const functions = read("./supabase/migrations/20260802220100_studio_os_permissions_and_creation.sql");
   const permissions = read("./lib/server/studio-permissions.ts");
-  const middleware = read("./middleware.ts");
 
-  assert.match(permissions, /requireStudioManager/);
+  assert.match(schema, /studio_os_status/);
+  assert.match(functions, /is_studio_os_active/);
+  assert.match(functions, /sm\.role in \('owner', 'admin', 'manager', 'editor', 'finance', 'bookings', 'support'\)/);
   assert.match(permissions, /studio_os_status/);
   assert.match(permissions, /studio_members/);
-  assert.match(permissions, /owner|admin|manager/);
-  assert.match(middleware, /studio-dashboard/);
+  assert.doesNotMatch(permissions, /user_entitlements/);
+  assert.doesNotMatch(permissions, /\.eq\("tier",\s*"vip"\)/);
 });
 
 test("Identity migrations are ordered before secure Studio claims", () => {
-  const identity = read("./supabase/migrations/20260801002000_identity_foundation.sql");
-  const claim = read("./supabase/migrations/20260801003000_secure_studio_claim.sql");
-
-  assert.match(identity, /create table if not exists public\.social_connections/);
-  assert.match(claim, /claim_studio/);
+  const files = fs.readdirSync(new URL("./supabase/migrations/", import.meta.url)).sort();
+  const core = files.indexOf("20260729213000_identity_revenue_v2.sql");
+  const repairs = files.indexOf("20260729213050_identity_revenue_v2_schema_repairs.sql");
+  const claims = files.indexOf("20260729213500_claim_studio_access.sql");
+  assert.notEqual(core, -1);
+  assert.notEqual(repairs, -1);
+  assert.notEqual(claims, -1);
+  assert.ok(core < repairs && repairs < claims, "schema repairs must run before claim functions");
 });
 
 test("Next dynamic Studio API uses one segment name", () => {
-  const source = read("./app/api/studios/[studioId]/route.ts");
-  assert.match(source, /studioId/);
+  assert.ok(fs.existsSync(new URL("./app/api/studios/[slug]/applications/route.ts", import.meta.url)));
+  assert.ok(fs.existsSync(new URL("./app/api/studios/[slug]/dashboard/route.ts", import.meta.url)));
+  assert.equal(fs.existsSync(new URL("./app/api/studios/[studioId]/dashboard/route.ts", import.meta.url)), false);
 });
