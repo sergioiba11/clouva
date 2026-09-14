@@ -27,7 +27,6 @@ import {
   ShoppingCart,
   Sparkles,
   Store,
-  Trash2,
   TrendingUp,
   X,
 } from "lucide-react";
@@ -229,6 +228,7 @@ const DEFAULT_LABEL_OPTIONS: LabelOptions = {
   showSku: true,
   showQr: true,
 };
+const reviewedCaptureIds = new Set<string>();
 
 function money(value: unknown, currency = "ARS") {
   return new Intl.NumberFormat("es-AR", { style: "currency", currency, maximumFractionDigits: 2 }).format(Number(value || 0));
@@ -1044,7 +1044,7 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
               <div className="grid gap-2.5 p-3 sm:grid-cols-[1fr_auto] sm:p-4">{cameras.length > 1 ? <select aria-label="Seleccionar cámara" className={INPUT} value={cameraId} onChange={(event) => setCameraId(event.target.value)}>{cameras.map((camera, index) => <option key={camera.deviceId} value={camera.deviceId}>{cameraDisplayLabel(camera, index)}</option>)}</select> : <div className="text-xs leading-5 text-white/50 sm:text-sm">La cámara prioriza el lente trasero.</div>}{cameraId && scanning ? <button type="button" onClick={() => void startScanner()} className="min-h-10 rounded-xl border border-white/10 px-4 py-2 text-sm">Cambiar</button> : null}</div>
               {cameraError ? <p className="mx-3 mb-3 rounded-xl border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100 sm:mx-4 sm:mb-4">{cameraError}</p> : null}
               <section className="border-t border-white/[0.08] bg-[radial-gradient(circle_at_0%_0%,rgba(124,58,237,.12),transparent_48%)] p-3 sm:p-4">
-                <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[.15em] text-violet-300 sm:text-xs sm:tracking-[.18em]"><Sparkles className="h-4 w-4 shrink-0" /> Escanear producto con IA</p><p className="mt-2 text-[11px] leading-5 text-white/50 sm:text-xs">Frente es obligatorio, Atrás es opcional y podés sumar hasta {MAX_PRODUCT_DETAIL_IMAGES} imágenes de Detalle. Gemini usa todas las referencias del mismo objeto para analizarlo y generar imágenes limpias de catálogo.</p></div><span className="shrink-0 rounded-full border border-violet-400/20 bg-violet-500/10 px-2 py-1 text-[9px] font-bold text-violet-200">GEMINI</span></div>
+                <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[.15em] text-violet-300 sm:text-xs sm:tracking-[.18em]"><Sparkles className="h-4 w-4 shrink-0" /> Escanear producto con IA</p><p className="mt-2 text-[11px] leading-5 text-white/50 sm:text-xs">Frente obligatorio · Atrás opcional · hasta {MAX_PRODUCT_DETAIL_IMAGES} detalles. Revisá cada foto y confirmala antes de seguir.</p></div><span className="shrink-0 rounded-full border border-violet-400/20 bg-violet-500/10 px-2 py-1 text-[9px] font-bold text-violet-200">GEMINI</span></div>
                 <div className="mt-3 grid grid-cols-3 gap-1.5 sm:mt-4 sm:gap-2">
                   <div className={`min-w-0 rounded-xl border px-2.5 py-2 ${frontCapture ? "border-emerald-400/25 bg-emerald-400/[0.07]" : "border-amber-400/20 bg-amber-400/[0.04]"}`}><div className="flex items-center justify-between gap-1"><span className="truncate text-[10px] font-semibold">Frente</span>{frontCapture ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-300" /> : null}</div><p className={`mt-1 truncate text-[9px] ${frontCapture ? "text-emerald-200/75" : "text-amber-200/65"}`}>{frontCapture ? "Capturado" : "Obligatorio"}</p></div>
                   <div className={`min-w-0 rounded-xl border px-2.5 py-2 ${backCapture ? "border-emerald-400/25 bg-emerald-400/[0.07]" : "border-white/10 bg-white/[0.02]"}`}><div className="flex items-center justify-between gap-1"><span className="truncate text-[10px] font-semibold">Atrás</span>{backCapture ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-300" /> : null}</div><p className={`mt-1 truncate text-[9px] ${backCapture ? "text-emerald-200/75" : "text-white/45"}`}>{backCapture ? "Capturado" : "Opcional"}</p></div>
@@ -1057,7 +1057,7 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
                   <label className="flex min-h-10 cursor-pointer items-center justify-center rounded-xl border border-white/10 px-2.5 py-2 text-center text-xs transition hover:border-violet-400/25"><ImagePlus className="mr-1.5 inline h-3.5 w-3.5" />{frontCapture ? "Subir detalles" : "Subir"}<input type="file" accept="image/jpeg,image/png,image/webp" multiple className="hidden" onChange={(event) => { void uploadProductPhotos(event.currentTarget.files); event.currentTarget.value = ""; }} /></label>
                 </div>
                 <p className="mt-3 rounded-xl border border-violet-400/10 bg-violet-500/[0.04] px-3 py-2 text-[10px] leading-4 text-violet-100/70">{referenceSummary}</p>
-                {frontCapture || backCapture ? <div className="mt-3 grid grid-cols-2 gap-2">{frontCapture ? <ProductCapturePreview capture={frontCapture} label="Frente" onRemove={() => removeProductCapture(frontCapture.id)} /> : <div className="grid min-h-[72px] place-items-center rounded-xl border border-dashed border-amber-400/20 px-2 text-center text-[10px] text-amber-200/55">Falta Frente</div>}{backCapture ? <ProductCapturePreview capture={backCapture} label="Atrás" onRemove={() => removeProductCapture(backCapture.id)} /> : <div className="grid min-h-[72px] place-items-center rounded-xl border border-dashed border-white/10 px-2 text-center text-[10px] text-white/40">Atrás opcional</div>}</div> : null}
+                {frontCapture || backCapture ? <div className="mt-3 grid grid-cols-2 gap-2">{frontCapture ? <ProductCapturePreview key={frontCapture.id} capture={frontCapture} label="Frente" onRemove={() => removeProductCapture(frontCapture.id)} /> : <div className="grid min-h-[72px] place-items-center rounded-xl border border-dashed border-amber-400/20 px-2 text-center text-[10px] text-amber-200/55">Falta Frente</div>}{backCapture ? <ProductCapturePreview key={backCapture.id} capture={backCapture} label="Atrás" onRemove={() => removeProductCapture(backCapture.id)} /> : <div className="grid min-h-[72px] place-items-center rounded-xl border border-dashed border-white/10 px-2 text-center text-[10px] text-white/40">Atrás opcional</div>}</div> : null}
                 {detailCaptures.length ? <div className="mt-3 rounded-2xl border border-white/[0.07] bg-black/20 p-2.5 sm:mt-4 sm:p-3"><div className="flex items-center justify-between gap-3"><div className="min-w-0"><p className="text-[10px] font-semibold uppercase tracking-[.16em] text-violet-300">Detalles del objeto</p><p className="mt-1 truncate text-[9px] text-white/45">Podés borrar cualquiera individualmente.</p></div><span className="shrink-0 rounded-full border border-violet-400/20 px-2 py-1 text-[9px] text-violet-200">{detailCaptures.length}</span></div><div className="mt-2.5 grid grid-cols-3 gap-2 sm:grid-cols-4">{detailCaptures.map((capture, index) => <ProductCapturePreview key={capture.id} capture={capture} label={`Detalle ${index + 1}`} onRemove={() => removeProductCapture(capture.id)} />)}</div></div> : null}
                 <button type="button" disabled={recognizingProduct || !frontCapture} onClick={() => void analyzeProductWithGemini()} className="mt-3 flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-fuchsia-600 px-4 py-3 text-sm font-semibold shadow-[0_10px_28px_rgba(124,58,237,.22)] disabled:cursor-not-allowed disabled:opacity-40">{recognizingProduct ? <><LoaderCircle className="h-4 w-4 animate-spin" />Analizando producto…</> : <><Sparkles className="h-4 w-4" />Analizar y completar datos</>}</button>
                 <button type="button" disabled={generatingProductImages || !recognitionResult || !frontCapture} onClick={() => void generateProductImagesWithGemini()} className="mt-2 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-violet-400/30 bg-violet-500/[0.08] px-4 py-2.5 text-sm font-semibold text-violet-100 transition hover:bg-violet-500/[0.14] disabled:cursor-not-allowed disabled:opacity-35">{generatingProductImages ? <><LoaderCircle className="h-4 w-4 animate-spin" />Generando imágenes de catálogo…</> : <><ImagePlus className="h-4 w-4" />Generar imágenes del producto</>}</button>
@@ -1102,7 +1102,40 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
 }
 
 function ProductCapturePreview({ capture, label, onRemove }: { capture: ProductCapture; label: string; onRemove: () => void }) {
-  return <div data-commerce-capture-preview className="group relative min-w-0 overflow-hidden rounded-xl border border-white/10 bg-black"><img src={capture.dataUrl} alt={label} className="h-24 w-full object-cover sm:h-32" /><span className="absolute bottom-1.5 left-1.5 max-w-[calc(100%-2.5rem)] truncate rounded-md bg-black/80 px-1.5 py-1 text-[9px]">{label}</span><button type="button" aria-label={`Eliminar ${label}`} onClick={onRemove} className="absolute right-1.5 top-1.5 grid h-7 w-7 place-items-center rounded-lg bg-black/85 text-white/75 transition hover:text-white"><Trash2 className="h-3.5 w-3.5" /></button></div>;
+  const [reviewing, setReviewing] = useState(() => !reviewedCaptureIds.has(capture.id));
+  const accept = () => {
+    reviewedCaptureIds.add(capture.id);
+    setReviewing(false);
+  };
+  const reject = () => {
+    reviewedCaptureIds.delete(capture.id);
+    onRemove();
+  };
+
+  return <>
+    <div data-commerce-capture-preview className="group relative min-w-0 overflow-hidden rounded-xl border border-emerald-400/20 bg-black">
+      <img src={capture.dataUrl} alt={label} className="h-20 w-full object-cover sm:h-28" />
+      <span className="absolute bottom-1.5 left-1.5 max-w-[calc(100%-2.5rem)] truncate rounded-md bg-black/80 px-1.5 py-1 text-[9px]">{label}</span>
+      <span className="absolute left-1.5 top-1.5 grid h-6 w-6 place-items-center rounded-full border border-emerald-300/30 bg-emerald-500/90 text-white shadow-[0_0_16px_rgba(52,211,153,.25)]"><CheckCircle2 className="h-3.5 w-3.5" /></span>
+      <button type="button" aria-label={`Repetir ${label}`} onClick={reject} className="absolute right-1.5 top-1.5 grid h-7 w-7 place-items-center rounded-lg border border-red-300/20 bg-red-500/85 text-white transition hover:bg-red-500"><X className="h-4 w-4" /></button>
+    </div>
+    {reviewing ? <div className="fixed inset-0 z-[95] flex items-end justify-center bg-black/80 p-3 backdrop-blur-md sm:items-center sm:p-6">
+      <div className="w-full max-w-lg overflow-hidden rounded-[1.5rem] border border-violet-300/25 bg-[#09070f] shadow-[0_24px_90px_rgba(0,0,0,.65)]">
+        <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
+          <div><p className="text-[10px] font-bold uppercase tracking-[.18em] text-violet-300">Revisar captura</p><p className="mt-1 text-sm font-semibold text-white">{label}</p></div>
+          <span className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-2.5 py-1 text-[10px] font-semibold text-emerald-200">Foto tomada</span>
+        </div>
+        <div className="bg-black p-2 sm:p-3"><img src={capture.dataUrl} alt={`Vista previa ${label}`} className="mx-auto max-h-[58svh] w-full rounded-xl object-contain" /></div>
+        <div className="p-3 sm:p-4">
+          <p className="text-center text-xs text-white/55">¿La foto está bien? Confirmala o repetila antes de seguir.</p>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <button type="button" onClick={reject} className="flex min-h-12 items-center justify-center gap-2 rounded-xl border border-red-400/25 bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-100"><X className="h-4 w-4" />Repetir</button>
+            <button type="button" onClick={accept} autoFocus className="flex min-h-12 items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-3 text-sm font-bold text-black shadow-[0_10px_28px_rgba(16,185,129,.2)]"><CheckCircle2 className="h-4 w-4" />Usar foto</button>
+          </div>
+        </div>
+      </div>
+    </div> : null}
+  </>;
 }
 
 function SpotDashboard({ data, goal, goalProgress, busy, onNavigate, onRefreshFx }: {
