@@ -17,6 +17,7 @@ const LIGHTWEIGHT_PREFIXES = [
   "/auth",
   "/debug-auth",
   "/onboarding/player-basics",
+  "/iglu/radio",
 ] as const;
 
 function isLightweightRoute(pathname: string) {
