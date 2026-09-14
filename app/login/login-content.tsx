@@ -56,12 +56,6 @@ function clouvaIdForUser(userId: string) {
 
 const SLUG_PARAM_RE = /^[a-z0-9-]{1,80}$/i;
 
-// A visitor who clicked "Unirme gratis"/"Ser socio" on a studio's public page
-// (StudioMembershipCheckoutAction) while logged out lands here with
-// ?studio=&intent=&plan= -- this sends them straight back to that studio's
-// checkout instead of the normal role-home/onboarding destination, without
-// skipping resolvePostLoginDestination()'s profile-bootstrap side effect.
-// Only ever builds an internal /studios/... path, never an arbitrary URL.
 function studioRedirectOverride(searchParams: ReturnType<typeof useSearchParams>) {
   const studio = searchParams.get("studio");
   const intent = searchParams.get("intent");
@@ -130,6 +124,30 @@ async function resolvePostLoginDestination(user: User) {
   return player.is_published ? getRedirectByRole(profile?.role) : "/onboarding/instagram";
 }
 
+function FacebookIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5 fill-current">
+      <path d="M13.7 22v-9h3l.45-3.5H13.7V7.3c0-1.01.28-1.7 1.74-1.7h1.86V2.47c-.32-.04-1.43-.14-2.72-.14-2.7 0-4.55 1.65-4.55 4.68V9.5H7v3.5h3.03v9h3.67Z" />
+    </svg>
+  );
+}
+
+function TikTokIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5 fill-current">
+      <path d="M14.2 2h3.05c.2 1.65 1.12 3.1 2.55 3.96A6.2 6.2 0 0 0 22 6.8v3.12a9.2 9.2 0 0 1-4.74-1.48v7.3A6.26 6.26 0 1 1 11 9.48c.42 0 .84.04 1.24.12v3.18a3.2 3.2 0 1 0 2 2.96L14.2 2Z" />
+    </svg>
+  );
+}
+
+function PhoneIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-5 w-5 fill-none stroke-current stroke-2">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M7.2 2.8 10 7.4 8.3 9.1c1.45 2.85 3.75 5.15 6.6 6.6l1.7-1.7 4.6 2.8v2.25A2.95 2.95 0 0 1 18.25 22C9.28 22 2 14.72 2 5.75A2.95 2.95 0 0 1 4.95 2.8H7.2Z" />
+    </svg>
+  );
+}
+
 export default function LoginContent() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -139,6 +157,10 @@ export default function LoginContent() {
   const [error, setError] = useState<string | null>(null);
   const [googleScriptReady, setGoogleScriptReady] = useState(false);
   const [postAuthName, setPostAuthName] = useState<string | null>(null);
+  const [phoneMode, setPhoneMode] = useState(false);
+  const [phone, setPhone] = useState("");
+  const [phoneCode, setPhoneCode] = useState("");
+  const [phoneCodeSent, setPhoneCodeSent] = useState(false);
   const googleButtonRef = useRef<HTMLDivElement>(null);
   const handleGoogleCredentialRef = useRef<(response: { credential?: string }) => void>(() => {});
   const router = useRouter();
@@ -210,7 +232,7 @@ export default function LoginContent() {
       cancelled = true;
       window.clearTimeout(releaseTimer);
     };
-  }, [authLoading, continueMode, hydrationReady, isAddAccountMode, router, session, user]);
+  }, [authLoading, continueMode, hydrationReady, isAddAccountMode, router, searchParams, session, user]);
 
   const redirectAfterLogin = async (authUser: User, accessToken: string, forceSwitcher = false) => {
     if (continueMode === "instagram") {
@@ -284,36 +306,76 @@ export default function LoginContent() {
     const container = googleButtonRef.current;
     if (!container || !window.google) return;
 
+    container.innerHTML = "";
     window.google.accounts.id.initialize({
       client_id: GOOGLE_CLIENT_ID,
       callback: (response) => handleGoogleCredentialRef.current(response),
     });
 
     window.google.accounts.id.renderButton(container, {
-      type: "standard",
+      type: "icon",
       theme: "outline",
       size: "large",
-      shape: "pill",
-      text: "continue_with",
-      logo_alignment: "left",
+      shape: "square",
       locale: "es",
-      width: Math.min(400, container.offsetWidth || 400),
     });
   }, [googleScriptReady, checkingSession]);
 
-  const onInstagram = async () => {
+  const onFacebook = async () => {
     setError(null);
     setLoading(true);
     try {
-      const response = await fetch("/api/integrations/instagram/connect", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ returnPath: "/onboarding/instagram/select" }),
+      const { supabase } = await import("@/lib/supabase");
+      const redirectTo = `${window.location.origin}/auth/callback`;
+      const { error: oauthError } = await supabase.auth.signInWithOAuth({
+        provider: "facebook",
+        options: { redirectTo },
       });
-      const payload = await readApiJson<{ authorizeUrl: string }>(response);
-      window.location.assign(payload.authorizeUrl);
-    } catch (instagramError) {
-      setError(instagramError instanceof Error ? instagramError.message : "No se pudo abrir Instagram.");
+      if (oauthError) throw oauthError;
+    } catch (facebookError) {
+      setError(facebookError instanceof Error ? facebookError.message : "No se pudo iniciar sesión con Facebook.");
+      setLoading(false);
+    }
+  };
+
+  const onTikTok = () => {
+    setError("TikTok ya está contemplado como acceso, pero falta habilitar sus credenciales OAuth en CLOUVA para activarlo sin simular un login.");
+  };
+
+  const onPhoneStart = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setError(null);
+    setLoading(true);
+    try {
+      const { supabase } = await import("@/lib/supabase");
+      const { error: otpError } = await supabase.auth.signInWithOtp({ phone: phone.trim() });
+      if (otpError) throw otpError;
+      setPhoneCodeSent(true);
+    } catch (phoneError) {
+      setError(phoneError instanceof Error ? phoneError.message : "No se pudo enviar el código por SMS.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const onPhoneVerify = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setError(null);
+    setLoading(true);
+    try {
+      const { supabase } = await import("@/lib/supabase");
+      const { data, error: verifyError } = await supabase.auth.verifyOtp({
+        phone: phone.trim(),
+        token: phoneCode.trim(),
+        type: "sms",
+      });
+      if (verifyError || !data.user || !data.session) throw verifyError ?? new Error("No se pudo verificar el código.");
+      localStorage.removeItem("clouva.switch_target");
+      setPostAuthName(firstName(data.user));
+      await redirectAfterLogin(data.user, data.session.access_token, isAddAccountMode);
+    } catch (phoneError) {
+      setPostAuthName(null);
+      setError(phoneError instanceof Error ? phoneError.message : "No se pudo iniciar sesión con teléfono.");
       setLoading(false);
     }
   };
@@ -368,11 +430,94 @@ export default function LoginContent() {
         <div className="mt-4 text-center">
           <p className="text-[10px] font-semibold uppercase tracking-[0.42em] text-violet-200/75">CLOUVA</p>
           <h1 className="mt-3 text-[clamp(1.75rem,7vw,2.35rem)] font-semibold tracking-[-0.035em]">Entrá a tu universo</h1>
-          <p className="mt-2 text-sm text-white/55">Tu identidad. Tu Player. Tu mundo.</p>
+          <p className="mt-2 text-sm text-white/55">Elegí cómo entrar. Después conectás tu universo.</p>
         </div>
 
         <div className="mt-7 space-y-4">
-          <div ref={googleButtonRef} className="flex min-h-[44px] w-full justify-center overflow-hidden rounded-full [&>div]:!w-full" />
+          <div className="grid grid-cols-4 gap-2" aria-label="Métodos de acceso">
+            <div className="flex min-h-12 items-center justify-center overflow-hidden rounded-xl border border-white/10 bg-white/[.04] transition hover:border-white/20 hover:bg-white/[.07]">
+              <div ref={googleButtonRef} className="grid h-10 w-10 place-items-center overflow-hidden" />
+            </div>
+
+            <button
+              type="button"
+              disabled={loading}
+              onClick={() => void onFacebook()}
+              className="flex min-h-12 items-center justify-center rounded-xl border border-white/10 bg-[#1877F2] text-white transition hover:-translate-y-0.5 hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/70 disabled:translate-y-0 disabled:cursor-wait disabled:opacity-50"
+              aria-label="Continuar con Facebook"
+              title="Facebook"
+            >
+              <FacebookIcon />
+            </button>
+
+            <button
+              type="button"
+              onClick={onTikTok}
+              className="relative flex min-h-12 items-center justify-center rounded-xl border border-white/10 bg-black text-white transition hover:-translate-y-0.5 hover:border-white/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50"
+              aria-label="Continuar con TikTok"
+              title="TikTok"
+            >
+              <TikTokIcon />
+              <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-violet-400" aria-hidden="true" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setPhoneMode((visible) => !visible);
+                setError(null);
+              }}
+              className={`flex min-h-12 items-center justify-center rounded-xl border text-white transition hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-300/70 ${phoneMode ? "border-violet-300/45 bg-violet-500/20" : "border-white/10 bg-white/[.04] hover:border-white/20 hover:bg-white/[.07]"}`}
+              aria-label="Continuar con teléfono"
+              aria-pressed={phoneMode}
+              title="Teléfono"
+            >
+              <PhoneIcon />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-4 gap-2 text-center text-[9px] font-medium uppercase tracking-[0.08em] text-white/35" aria-hidden="true">
+            <span>Google</span>
+            <span>Facebook</span>
+            <span>TikTok</span>
+            <span>Teléfono</span>
+          </div>
+
+          {phoneMode ? (
+            phoneCodeSent ? (
+              <form onSubmit={onPhoneVerify} className="space-y-3 rounded-2xl border border-violet-300/15 bg-violet-400/[.05] p-3">
+                <p className="text-xs leading-5 text-white/55">Ingresá el código que enviamos a <span className="text-white/80">{phone}</span>.</p>
+                <input
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  required
+                  value={phoneCode}
+                  onChange={(event) => setPhoneCode(event.target.value)}
+                  placeholder="Código SMS"
+                  className="min-h-11 w-full rounded-xl border border-white/10 bg-black/35 px-4 text-sm text-white outline-none placeholder:text-white/30 focus:border-violet-300/60"
+                />
+                <button disabled={loading} className="min-h-11 w-full rounded-xl bg-white px-4 text-sm font-semibold text-black transition hover:bg-violet-100 disabled:cursor-wait disabled:opacity-60">
+                  {loading ? "Verificando..." : "Verificar y entrar"}
+                </button>
+              </form>
+            ) : (
+              <form onSubmit={onPhoneStart} className="space-y-3 rounded-2xl border border-violet-300/15 bg-violet-400/[.05] p-3">
+                <p className="text-xs leading-5 text-white/55">Ingresá tu número con código de país. Ejemplo Argentina: +54...</p>
+                <input
+                  type="tel"
+                  autoComplete="tel"
+                  required
+                  value={phone}
+                  onChange={(event) => setPhone(event.target.value)}
+                  placeholder="+54 9 11..."
+                  className="min-h-11 w-full rounded-xl border border-white/10 bg-black/35 px-4 text-sm text-white outline-none placeholder:text-white/30 focus:border-violet-300/60"
+                />
+                <button disabled={loading} className="min-h-11 w-full rounded-xl bg-white px-4 text-sm font-semibold text-black transition hover:bg-violet-100 disabled:cursor-wait disabled:opacity-60">
+                  {loading ? "Enviando..." : "Enviar código"}
+                </button>
+              </form>
+            )
+          ) : null}
 
           <div className="flex items-center gap-3 py-1 text-[9px] uppercase tracking-[0.24em] text-white/30">
             <span className="h-px flex-1 bg-white/10" />
@@ -439,20 +584,9 @@ export default function LoginContent() {
             </p>
           ) : null}
 
-          <div className="border-t border-white/[.08] pt-5">
-            <div className="rounded-2xl border border-violet-300/10 bg-violet-300/[.035] p-4">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-violet-200/70">Creá tu Player desde Instagram</p>
-              <p className="mt-2 text-xs leading-5 text-white/45">Importá tu identidad y contenido para empezar.</p>
-              <button
-                disabled={loading}
-                type="button"
-                onClick={() => void onInstagram()}
-                className="mt-3 min-h-11 w-full rounded-xl border border-violet-200/20 bg-black/25 px-4 text-sm font-semibold text-violet-100 transition hover:border-violet-200/40 hover:bg-violet-400/[.08] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-300/60 disabled:cursor-wait disabled:opacity-50"
-              >
-                Importar desde Instagram
-              </button>
-              <p className="mt-2 text-center text-[10px] leading-4 text-white/30">Disponible para cuentas Creator y Business.</p>
-            </div>
+          <div className="border-t border-white/[.08] pt-4 text-center">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-violet-200/65">Después de entrar</p>
+            <p className="mt-1 text-xs leading-5 text-white/40">Conectá Instagram, TikTok, YouTube, Kick y Spotify a tu identidad CLOUVA.</p>
           </div>
 
           <div className="flex items-center justify-center gap-4 pt-1 text-[11px] text-white/35">
