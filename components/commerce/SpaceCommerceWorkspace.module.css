@@ -1,6 +1,7 @@
 .workspace {
   min-height: 100vh;
   background: #050507;
+  overflow-x: clip;
 }
 
 .clouvaBar {
@@ -66,6 +67,12 @@
   top: 54px;
 }
 
+/* QR Engine is a workspace-level action. Reserve the device safe area instead
+   of pinning it to a magic bottom offset. */
+.workspace > button {
+  bottom: max(16px, calc(env(safe-area-inset-bottom) + 10px));
+}
+
 @media (max-width: 640px) {
   .clouvaBar {
     min-height: 50px;
@@ -128,5 +135,69 @@
 
   .workspace main > header button[aria-label="Abrir Mi cuenta"] > span:last-child {
     display: none;
+  }
+
+  /* Scanner camera: the functional scanner keeps its stream and overlay, but
+     the viewport becomes a compact tool instead of consuming most of mobile. */
+  .workspace div:has(> video[playsinline]) {
+    aspect-ratio: 16 / 10;
+    min-height: 220px;
+    max-height: min(48svh, 390px);
+  }
+
+  .workspace video[playsinline] {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  /* Capture thumbnails stay evidence-sized. A tap target remains large enough
+     while a photo no longer pushes the rest of the workflow several screens. */
+  .workspace div:has(> img[src^="data:image/"]) {
+    max-height: 156px;
+  }
+
+  .workspace div:has(> img[src^="data:image/"]) > img {
+    height: 156px;
+    aspect-ratio: 4 / 3;
+    object-fit: cover;
+  }
+
+  /* Keep the global QR action reachable without covering the scanner's primary
+     CTAs. On narrow screens it becomes a compact utility button. */
+  .workspace > button {
+    right: 12px;
+    bottom: max(12px, calc(env(safe-area-inset-bottom) + 8px));
+    min-height: 44px;
+    max-width: 132px;
+    padding: 10px 12px;
+    border-radius: 14px;
+    font-size: 12px;
+  }
+
+  /* Give the last interactive area breathing room above Android/iOS gesture
+     navigation and the workspace-level QR utility. */
+  .workspace main {
+    padding-bottom: calc(78px + env(safe-area-inset-bottom));
+  }
+}
+
+@media (max-width: 380px) {
+  .workspace div:has(> video[playsinline]) {
+    min-height: 200px;
+    max-height: 320px;
+  }
+
+  .workspace div:has(> img[src^="data:image/"]) {
+    max-height: 136px;
+  }
+
+  .workspace div:has(> img[src^="data:image/"]) > img {
+    height: 136px;
+  }
+
+  .workspace > button {
+    max-width: 118px;
+    font-size: 11px;
   }
 }
