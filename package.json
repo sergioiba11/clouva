@@ -23,7 +23,7 @@
     "test:reference-fidelity": "node --require ./scripts/stub-server-only.cjs --import tsx --test tests-reference-fidelity-v2.mjs",
     "test:security": "node --test tests-security-profiles.mjs tests-admin-authorization.mjs",
     "test": "npm run test:legacy && npm run test:avatar-analyzer && npm run test:identity-revenue && npm run test:flow-reserve && npm run test:flow-region && npm run test:brand-engine && npm run test:media && npm run test:reference-fidelity && npm run test:navigation && npm run test:security",
-    "test:navigation": "node --import tsx --test tests-canonical-navigation.mjs tests-onboarding-state.mjs tests-clouva-topbar.mjs"
+    "test:navigation": "node --import tsx --test tests-canonical-navigation.mjs tests-onboarding-state.mjs tests-clouva-topbar.mjs tests-iglu-radio.mjs"
   },
   "overrides": {
     "three": "$three"
