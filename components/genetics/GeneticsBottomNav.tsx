@@ -5,14 +5,21 @@ import { usePathname } from "next/navigation";
 import { BookOpen, Camera, Compass, Dna, UsersRound, UserRound } from "lucide-react";
 import styles from "./genetics.module.css";
 
-const ITEMS = [
+type GeneticsNavItem = {
+  href: string;
+  label: string;
+  icon: typeof Compass;
+  exact?: boolean;
+};
+
+const ITEMS: readonly GeneticsNavItem[] = [
   { href: "/geneticas", label: "Descubrir", icon: Compass, exact: true },
   { href: "/geneticas/escanear", label: "Escanear", icon: Camera },
   { href: "/geneticas/biblioteca", label: "Genéticas", icon: Dna },
   { href: "/geneticas/aprender", label: "Aprender", icon: BookOpen },
   { href: "/geneticas/comunidad", label: "Comunidad", icon: UsersRound },
   { href: "/geneticas/perfil", label: "Perfil", icon: UserRound },
-] as const;
+];
 
 export function GeneticsBottomNav() {
   const pathname = usePathname() || "/geneticas";
