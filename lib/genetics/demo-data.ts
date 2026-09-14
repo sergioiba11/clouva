@@ -7,7 +7,7 @@ export const PINA_EXPRESS_DEMO: Strain = {
   subtitle: "Híbrida tropical",
   description: "Perfil de demostración para la experiencia de genéticas de CLOUVA.",
   strain_type: "Híbrida",
-  hero_image: "/genetics/pina-express-bud.webp",
+  hero_image: "/genetics/pina-express-bud.svg",
   profile: "Creativa y chill",
   tags: ["Tropical", "Creativa", "Equilibrada"],
   aromas: ["tropical", "cítrico", "pino"],
