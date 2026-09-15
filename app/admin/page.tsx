@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity,
-  BadgeDollarSign,
   BellRing,
   Boxes,
   Building2,
@@ -16,7 +15,6 @@ import {
   Command,
   CreditCard,
   Database,
-  Download,
   ExternalLink,
   FileBox,
   FlaskConical,
@@ -278,7 +276,7 @@ export default function AdminPage() {
         authenticatedFetch("/api/admin/clouva-control/releases", { cache: "no-store" }).then((response) => readApiJson<ReleasesPayload>(response)),
         authenticatedFetch("/api/admin/clouva-lab/pages", { cache: "no-store" }).then((response) => readApiJson<LabPayload>(response)),
         authenticatedFetch("/api/admin/assets", { cache: "no-store" }).then((response) => readApiJson<AssetsPayload>(response)),
-      ]);
+      ] as const);
 
       if (optional[0].status === "fulfilled") setTreasury(optional[0].value);
       if (optional[1].status === "fulfilled") setStudios(optional[1].value.studios ?? []);
