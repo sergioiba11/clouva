@@ -4,15 +4,18 @@ import type {
   ToolParameterSchema,
 } from "./tool-executor";
 
-export interface GeminiFunctionDeclaration {
+export interface ToolFunctionDeclaration {
   name: string;
   description: string;
   parameters: ToolParameterSchema;
 }
 
+/** @deprecated Compatibility alias for provider adapters and older tests. */
+export type GeminiFunctionDeclaration = ToolFunctionDeclaration;
+
 export interface RoutedTool {
-  /** Gemini-compatible name. Workspace's dotted protocol names are exposed
-   * with underscores, then mapped back to the exact Desktop tool name. */
+  /** Provider-safe function name. Dotted protocol names are exposed with
+   * underscores, then mapped back to the exact executor tool name. */
   functionName: string;
   executor: ToolExecutor;
   definition: ToolDefinition;
@@ -20,7 +23,7 @@ export interface RoutedTool {
 
 const MAX_ARGUMENT_BYTES = 250_000;
 
-function geminiFunctionName(target: string, toolName: string): string {
+function providerFunctionName(target: string, toolName: string): string {
   const normalized = toolName.replace(/[^A-Za-z0-9_]/g, "_");
   const safe = /^[A-Za-z_]/.test(normalized) ? normalized : `${target}_${normalized}`;
   return safe.slice(0, 64);
@@ -44,17 +47,17 @@ function matchesType(value: unknown, type: string): boolean {
   return false;
 }
 
-/** The one registry used by Gemini and by the confirmation endpoint. It
- * rejects ambiguous names and strips every argument that is not declared in
- * the tool schema, so model output cannot smuggle server-only flags such as
- * `confirm` or `expectedSha`. */
+/** The one registry used by every AI provider and by the confirmation
+ * endpoint. It rejects ambiguous names and strips every argument that is not
+ * declared in the tool schema, so model output cannot smuggle server-only
+ * flags such as `confirm` or `expectedSha`. */
 export class ToolRouter {
   private readonly routed = new Map<string, RoutedTool>();
 
   constructor(private readonly executors: ToolExecutor[]) {
     for (const executor of executors) {
       for (const definition of executor.tools()) {
-        const functionName = geminiFunctionName(executor.target, definition.name);
+        const functionName = providerFunctionName(executor.target, definition.name);
         if (this.routed.has(functionName)) {
           throw new Error(`Nombre de herramienta ambiguo: ${functionName}.`);
         }
@@ -63,7 +66,7 @@ export class ToolRouter {
     }
   }
 
-  declarations(): GeminiFunctionDeclaration[] {
+  declarations(): ToolFunctionDeclaration[] {
     return Array.from(this.routed.values()).map(({ functionName, executor, definition }) => ({
       name: functionName,
       description: `[${executor.target}] ${definition.description} ${riskInstruction(definition.risk)}`,
