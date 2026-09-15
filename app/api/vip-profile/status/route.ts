@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
-import { resolveIdentityAssetState } from "@/lib/studio-identity-assets";
+import { resolveIdentityAssetState, type BrandLogoVariants } from "@/lib/studio-identity-assets";
 import { isVipProfileFidelityStatus, selectVipProfileJobState } from "@/lib/vip-profile-job-status";
 
 export const runtime = "nodejs";
@@ -118,14 +118,7 @@ export async function GET(request: NextRequest) {
     if (versionsError) throw new Error(versionsError.message);
     if (brandAssetError) throw new Error(brandAssetError.message);
 
-    let officialLogoVariants: {
-      brandAssetId: string;
-      brandAssetVersionId: string;
-      primaryLogoUrl: string | null;
-      whiteLogoUrl: string | null;
-      blackLogoUrl: string | null;
-      transparentLogoUrl: string | null;
-    } | null = null;
+    let officialLogoVariants: BrandLogoVariants | null = null;
 
     const activeBrandAssetId = typeof brandAsset?.id === "string" ? brandAsset.id : null;
     const activeBrandVersionId = typeof brandAsset?.active_version_id === "string" ? brandAsset.active_version_id : null;
@@ -134,7 +127,7 @@ export async function GET(request: NextRequest) {
       // has two legitimate relationships, so do not use an ambiguous PostgREST embed.
       const { data: brandVersion, error: brandVersionError } = await admin
         .from("brand_asset_versions")
-        .select("id,primary_logo_url,white_logo_url,black_logo_url,transparent_logo_url")
+        .select("id,primary_logo_url,white_svg_url,black_svg_url,white_logo_url,black_logo_url,transparent_logo_url")
         .eq("id", activeBrandVersionId)
         .maybeSingle();
       if (brandVersionError) throw new Error(brandVersionError.message);
@@ -143,6 +136,8 @@ export async function GET(request: NextRequest) {
           brandAssetId: activeBrandAssetId,
           brandAssetVersionId: String(brandVersion.id),
           primaryLogoUrl: typeof brandVersion.primary_logo_url === "string" ? brandVersion.primary_logo_url : null,
+          whiteSvgUrl: typeof brandVersion.white_svg_url === "string" ? brandVersion.white_svg_url : null,
+          blackSvgUrl: typeof brandVersion.black_svg_url === "string" ? brandVersion.black_svg_url : null,
           whiteLogoUrl: typeof brandVersion.white_logo_url === "string" ? brandVersion.white_logo_url : null,
           blackLogoUrl: typeof brandVersion.black_logo_url === "string" ? brandVersion.black_logo_url : null,
           transparentLogoUrl: typeof brandVersion.transparent_logo_url === "string" ? brandVersion.transparent_logo_url : null,
@@ -156,6 +151,11 @@ export async function GET(request: NextRequest) {
       publishedVersion: versionState.publishedVersion,
       draftVersion: versionState.draftVersion,
       subjectLogoUrl,
+      officialLogoVariants,
+      // Studio/Player identity workspaces currently render on a dark surface.
+      // The response also exposes darkUrl/lightUrl so light surfaces can use
+      // the same canonical resolver without guessing from loose DB fields.
+      surface: "dark",
     });
     const jobRows = (jobs ?? []) as JobRow[];
     const jobState = selectVipProfileJobState(jobRows);
