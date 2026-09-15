@@ -1,4 +1,8 @@
+"use client";
+
+import { useCurrentPlayer } from "@/components/current-player-provider";
 import { SpotifyHomeConnectAction } from "@/components/music/SpotifyHomeConnectAction";
+import { ProfileRadioSettingsCard } from "@/components/radio/ProfileRadioSettingsCard";
 
 const profileSettings = [
   "tema",
@@ -10,6 +14,8 @@ const profileSettings = [
 ];
 
 export default function Page() {
+  const { currentPlayer, playerLoading } = useCurrentPlayer();
+
   return (
     <section className="panel space-y-5 rounded-3xl p-6">
       <div>
@@ -30,6 +36,23 @@ export default function Page() {
         </div>
         <SpotifyHomeConnectAction returnPath="/perfil/configuracion" />
       </div>
+
+      {playerLoading ? (
+        <div className="rounded-2xl border border-white/10 bg-black/20 p-4 text-sm text-white/45">Cargando herramientas de tu Player…</div>
+      ) : currentPlayer ? (
+        <ProfileRadioSettingsCard
+          ownerKind="player"
+          ownerId={currentPlayer.id}
+          profileName={currentPlayer.display_name}
+          publicAlias={currentPlayer.slug}
+        />
+      ) : (
+        <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+          <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-violet-200/65">Herramientas</p>
+          <h2 className="mt-1 text-base font-semibold">Radio</h2>
+          <p className="mt-1 text-sm text-white/45">Creá tu Player para activar una Radio asociada a esa identidad.</p>
+        </div>
+      )}
 
       <div className="grid gap-3 md:grid-cols-2">
         {profileSettings.map((setting) => (
