@@ -93,6 +93,7 @@ const groups: AdminNavGroup[] = [
     title: "Comercio",
     items: [
       { label: "Marketplace", href: "/admin/marketplace", icon: Store },
+      { label: "Ventas", href: "/admin/ventas", icon: BadgeDollarSign },
       { label: "Pedidos", href: "/admin/pedidos", icon: PackageCheck },
       { label: "Reservas", href: "/admin/reservas", icon: CalendarClock },
       { label: "Envíos", href: "/admin/envios", icon: Truck, status: "no_config" },
