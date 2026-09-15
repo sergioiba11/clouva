@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Activity,
   BadgeDollarSign,
@@ -38,12 +38,15 @@ import {
   Users,
   X,
 } from "lucide-react";
+import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
+
+type BadgeKey = "alerts" | "orders" | "bookings" | "products";
 
 export type AdminNavItem = {
   label: string;
   href: string;
   icon: React.ComponentType<{ className?: string }>;
-  badge?: string;
+  badgeKey?: BadgeKey;
   status?: "no_config";
 };
 
@@ -52,13 +55,24 @@ type AdminNavGroup = {
   items: AdminNavItem[];
 };
 
+type BadgePayload = {
+  attention?: {
+    playersUnpublished?: number;
+    studiosUnpublished?: number;
+    ordersToPrepare?: number;
+    bookingsPending?: number;
+    productsPending?: number;
+    stockCritical?: number;
+  };
+};
+
 const groups: AdminNavGroup[] = [
   {
     title: "Control",
     items: [
       { label: "Dashboard", href: "/admin", icon: LayoutDashboard },
       { label: "Actividad", href: "/admin#actividad", icon: Activity },
-      { label: "Alertas", href: "/admin#alertas", icon: BellRing },
+      { label: "Alertas", href: "/admin#alertas", icon: BellRing, badgeKey: "alerts" },
     ],
   },
   {
@@ -94,8 +108,8 @@ const groups: AdminNavGroup[] = [
     items: [
       { label: "Marketplace", href: "/admin/marketplace", icon: Store },
       { label: "Ventas", href: "/admin/ventas", icon: BadgeDollarSign },
-      { label: "Pedidos", href: "/admin/pedidos", icon: PackageCheck },
-      { label: "Reservas", href: "/admin/reservas", icon: CalendarClock },
+      { label: "Pedidos", href: "/admin/pedidos", icon: PackageCheck, badgeKey: "orders" },
+      { label: "Reservas", href: "/admin/reservas", icon: CalendarClock, badgeKey: "bookings" },
       { label: "Envíos", href: "/admin/envios", icon: Truck, status: "no_config" },
       { label: "Stock", href: "/admin/stock", icon: Boxes, status: "no_config" },
     ],
@@ -103,7 +117,7 @@ const groups: AdminNavGroup[] = [
   {
     title: "Catálogo",
     items: [
-      { label: "Productos", href: "/admin/productos", icon: PackagePlus },
+      { label: "Productos", href: "/admin/productos", icon: PackagePlus, badgeKey: "products" },
       { label: "Categorías", href: "/admin/categorias", icon: Tags },
       { label: "Banners", href: "/admin/banners", icon: ImageIcon },
       { label: "Cupones", href: "/admin/cupones", icon: TicketPercent, status: "no_config" },
@@ -133,7 +147,7 @@ function isActive(pathname: string, href: string) {
   return pathname === cleanHref || pathname.startsWith(`${cleanHref}/`);
 }
 
-function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
+function SidebarContent({ onNavigate, badges }: { onNavigate?: () => void; badges: Record<BadgeKey, number> }) {
   const pathname = usePathname() || "/admin";
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
@@ -162,6 +176,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                 {group.items.map((item) => {
                   const active = isActive(pathname, item.href);
                   const Icon = item.icon;
+                  const badge = item.badgeKey ? badges[item.badgeKey] : 0;
                   return (
                     <Link
                       key={`${group.title}:${item.label}`}
@@ -175,8 +190,8 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                     >
                       <Icon className={`h-4 w-4 shrink-0 ${active ? "text-violet-300" : "text-white/40 group-hover:text-violet-300/80"}`} />
                       <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                      {item.badge ? (
-                        <span className="rounded-full bg-red-500/90 px-1.5 py-0.5 text-[9px] font-bold text-white">{item.badge}</span>
+                      {badge > 0 ? (
+                        <span className="rounded-full bg-red-500/90 px-1.5 py-0.5 text-[9px] font-bold text-white">{badge > 99 ? "99+" : badge}</span>
                       ) : null}
                       {item.status === "no_config" ? (
                         <span className="rounded-full border border-amber-300/15 bg-amber-300/[0.06] px-1.5 py-0.5 text-[7px] font-bold uppercase tracking-[0.08em] text-amber-200/70">No config</span>
@@ -195,11 +210,42 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
 
 export function AdminSidebar() {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [badges, setBadges] = useState<Record<BadgeKey, number>>({ alerts: 0, orders: 0, bookings: 0, products: 0 });
+
+  const loadBadges = useCallback(async () => {
+    try {
+      const response = await authenticatedFetch("/api/admin/control-center", { cache: "no-store" });
+      const payload = await readApiJson<BadgePayload>(response);
+      const attention = payload.attention ?? {};
+      const values = [
+        Number(attention.playersUnpublished ?? 0),
+        Number(attention.studiosUnpublished ?? 0),
+        Number(attention.ordersToPrepare ?? 0),
+        Number(attention.bookingsPending ?? 0),
+        Number(attention.productsPending ?? 0),
+        Number(attention.stockCritical ?? 0),
+      ];
+      setBadges({
+        alerts: values.reduce((sum, value) => sum + Math.max(0, value), 0),
+        orders: Math.max(0, Number(attention.ordersToPrepare ?? 0)),
+        bookings: Math.max(0, Number(attention.bookingsPending ?? 0)),
+        products: Math.max(0, Number(attention.productsPending ?? 0)),
+      });
+    } catch {
+      setBadges({ alerts: 0, orders: 0, bookings: 0, products: 0 });
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadBadges();
+    const interval = window.setInterval(() => void loadBadges(), 60_000);
+    return () => window.clearInterval(interval);
+  }, [loadBadges]);
 
   return (
     <>
       <aside className="sticky top-20 hidden max-h-[calc(100dvh-6rem)] overflow-y-auto rounded-[20px] border border-white/[0.07] bg-[#080914]/88 shadow-[0_18px_60px_rgba(0,0,0,.28)] backdrop-blur-xl md:block">
-        <SidebarContent />
+        <SidebarContent badges={badges} />
       </aside>
 
       <div className="md:hidden">
@@ -221,7 +267,7 @@ export function AdminSidebar() {
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <SidebarContent onNavigate={() => setMobileOpen(false)} />
+            <SidebarContent badges={badges} onNavigate={() => setMobileOpen(false)} />
           </aside>
         </div>
       ) : null}
