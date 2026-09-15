@@ -4,15 +4,19 @@ import test from "node:test";
 
 const read = (path) => fs.readFileSync(new URL(path, import.meta.url), "utf8");
 
-test("Live tokens are user-authenticated, rate-limited, constrained and never return the API key", () => {
-  const source = read("./app/api/clouva-ai/live/token/route.ts");
-  assert.match(source, /authenticateAgentRequest\(request\)/);
-  assert.match(source, /consume_trebol_live_token_limit/);
-  assert.match(source, /liveConnectConstraints/);
-  assert.match(source, /uses:\s*1/);
-  assert.match(source, /responseModalities:\s*\[Modality\.AUDIO\]/);
-  const responseBlock = source.slice(source.indexOf("return NextResponse.json({", source.indexOf("authToken.name")));
-  assert.doesNotMatch(responseBlock.slice(0, responseBlock.indexOf("});") + 3), /apiKey|GEMINI_API_KEY/);
+test("Live tokens are user-authenticated, rate-limited, provider-routed and Gemini sessions remain constrained", () => {
+  const route = read("./app/api/clouva-ai/live/token/route.ts");
+  const geminiProvider = read("./lib/clouva-ai/realtime/gemini-realtime-provider.ts");
+  assert.match(route, /authenticateAgentRequest\(request\)/);
+  assert.match(route, /consume_trebol_live_token_limit/);
+  assert.match(route, /createRealtimeSession/);
+  assert.doesNotMatch(route, /@google\/genai|GoogleGenAI|GEMINI_API_KEY/);
+  assert.match(geminiProvider, /liveConnectConstraints/);
+  assert.match(geminiProvider, /uses:\s*1/);
+  assert.match(geminiProvider, /responseModalities:\s*\[Modality\.AUDIO\]/);
+  const responseStart = route.lastIndexOf("return NextResponse.json({");
+  const responseBlock = route.slice(responseStart, route.indexOf("});", responseStart) + 3);
+  assert.doesNotMatch(responseBlock, /apiKey|GEMINI_API_KEY/);
 });
 
 test("Live tool and transcript endpoints fail closed without a persisted owned run", () => {
