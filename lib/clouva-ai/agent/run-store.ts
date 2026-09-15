@@ -75,6 +75,22 @@ export async function startAgentRun(args: {
   return { id, persisted: false, conversationId: args.conversationId, transport: args.transport };
 }
 
+export async function updateAgentRunDiagnostics(args: {
+  supabase: SupabaseClient;
+  run: AgentRunRecord;
+  diagnosticMetadata: Record<string, unknown>;
+}) {
+  if (!args.run.persisted) return;
+  const { error } = await args.supabase
+    .from("ai_agent_runs")
+    .update({
+      diagnostic_metadata: sanitizeAgentPayload(args.diagnosticMetadata),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", args.run.id);
+  if (error) throw new Error(error.message);
+}
+
 export async function finishAgentRun(args: {
   supabase: SupabaseClient;
   run: AgentRunRecord;
