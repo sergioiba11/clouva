@@ -23,6 +23,7 @@ type VisualUrl = { url: string; kind: string };
 
 const VISUAL_ASSET_RE = /\.(?:avif|gif|jpe?g|png|svg|webp)(?:[?#].*)?$/i;
 const KNOWN_MEDIA_HOST_RE = /^https:\/\/(?:storage\.googleapis\.com\/|[^/]+\.supabase\.co\/storage\/v1\/object\/)/i;
+const IMAGE_SLOT_KEY_RE = /^(?:imageSlot|image_slot|imageSlotKey|image_slot_key)$/;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -55,17 +56,65 @@ function inferKindFromPath(path: string): string {
   return "other";
 }
 
-function collectLayoutVisualUrls(value: unknown, path = "layout", output: VisualUrl[] = []): VisualUrl[] {
+function collectDirectLayoutVisualUrls(value: unknown, path = "layout", output: VisualUrl[] = []): VisualUrl[] {
   if (typeof value === "string") {
     if (isVisualAssetUrl(value)) output.push({ url: value, kind: inferKindFromPath(path) });
     return output;
   }
   if (Array.isArray(value)) {
-    value.forEach((item, index) => collectLayoutVisualUrls(item, `${path}[${index}]`, output));
+    value.forEach((item, index) => collectDirectLayoutVisualUrls(item, `${path}[${index}]`, output));
     return output;
   }
   if (!isRecord(value)) return output;
-  Object.entries(value).forEach(([key, item]) => collectLayoutVisualUrls(item, `${path}.${key}`, output));
+  Object.entries(value).forEach(([key, item]) => {
+    // image_slots is an address book. It is not proof that every slot was
+    // rendered, so slot URLs are added separately only when a section points
+    // at them (or as a compatibility fallback for older template layouts).
+    if (path === "layout" && key === "image_slots") return;
+    collectDirectLayoutVisualUrls(item, `${path}.${key}`, output);
+  });
+  return output;
+}
+
+function readImageSlots(layoutConfig: unknown): Record<string, string> {
+  if (!isRecord(layoutConfig) || !isRecord(layoutConfig.image_slots)) return {};
+  const slots: Record<string, string> = {};
+  for (const [key, value] of Object.entries(layoutConfig.image_slots)) {
+    if (typeof value === "string" && isVisualAssetUrl(value)) slots[key] = value;
+  }
+  return slots;
+}
+
+function collectReferencedImageSlotNames(value: unknown, output = new Set<string>()): Set<string> {
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectReferencedImageSlotNames(item, output));
+    return output;
+  }
+  if (!isRecord(value)) return output;
+  for (const [key, item] of Object.entries(value)) {
+    if (key === "image_slots") continue;
+    if (IMAGE_SLOT_KEY_RE.test(key) && typeof item === "string" && item.trim()) output.add(item.trim());
+    collectReferencedImageSlotNames(item, output);
+  }
+  return output;
+}
+
+function collectLayoutVisualUrls(layoutConfig: unknown): VisualUrl[] {
+  const output = collectDirectLayoutVisualUrls(layoutConfig);
+  const imageSlots = readImageSlots(layoutConfig);
+  const referencedSlots = collectReferencedImageSlotNames(layoutConfig);
+
+  if (referencedSlots.size > 0) {
+    for (const slotName of referencedSlots) {
+      const url = imageSlots[slotName];
+      if (url) output.push({ url, kind: normalizeKind(slotName) });
+    }
+  } else if (output.length === 0) {
+    // Compatibility for older template layouts where the renderer consumes
+    // conventional slots implicitly rather than storing imageSlot references.
+    for (const [slotName, url] of Object.entries(imageSlots)) output.push({ url, kind: normalizeKind(slotName) });
+  }
+
   return output;
 }
 
@@ -88,9 +137,8 @@ function preferKind(current: string, incoming: string): string {
 /**
  * Resolves only assets that are actually used by the renderer configuration.
  * asset_references contributes canonical semantic kinds, while layout_config
- * proves usage. Older identities that predate image_slots are supported by the
- * recursive layout walk. If a legacy version has no visual URLs in its layout,
- * its asset_references remain the fallback source of truth.
+ * proves usage. Older identities that predate explicit imageSlot references are
+ * supported by direct layout URLs and a conservative image_slots fallback.
  */
 export function collectUsedIdentityAssets(version: IdentityVersionLike, source: Exclude<IdentityAssetSource, "subject">): IdentityAsset[] {
   if (!version) return [];
