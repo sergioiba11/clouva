@@ -98,9 +98,8 @@ export function selectedModelFromRequest(
 ) {
   const cookie = request.headers.get("cookie") ?? "";
   const current = cookie.match(/(?:^|;\s*)clouva_ai_model=([^;]+)/);
-  const legacy = options.allowLegacyGeminiCookie === false
-    ? null
-    : cookie.match(/(?:^|;\s*)clouva_gemini_model=([^;]+)/);
+  const allowLegacy = options.allowLegacyGeminiCookie ?? /^gemini-/i.test(configuredModel);
+  const legacy = allowLegacy ? cookie.match(/(?:^|;\s*)clouva_gemini_model=([^;]+)/) : null;
   const selected = current?.[1] ?? legacy?.[1] ?? "";
   if (!selected) return configuredModel;
   try {
