@@ -9,19 +9,19 @@
 do $$
 declare
   studio_row record;
-  brand_asset_id uuid;
-  official_version_id uuid;
+  v_brand_asset_id uuid;
+  v_official_version_id uuid;
 begin
   for studio_row in
     select id, name, owner_id, logo_url
     from public.studios
     where nullif(btrim(logo_url), '') is not null
   loop
-    brand_asset_id := null;
-    official_version_id := null;
+    v_brand_asset_id := null;
+    v_official_version_id := null;
 
     select ba.id
-      into brand_asset_id
+      into v_brand_asset_id
     from public.brand_assets ba
     where ba.owner_type = 'studio'
       and ba.owner_id = studio_row.id
@@ -29,7 +29,7 @@ begin
     order by ba.created_at asc
     limit 1;
 
-    if brand_asset_id is null then
+    if v_brand_asset_id is null then
       insert into public.brand_assets (
         owner_type,
         owner_id,
@@ -43,7 +43,7 @@ begin
         'active',
         studio_row.owner_id
       )
-      returning id into brand_asset_id;
+      returning id into v_brand_asset_id;
     end if;
 
     -- Reuse a previously canonicalized version if the same logical logo is
@@ -51,15 +51,15 @@ begin
     -- the public Studio logo gets its own legacy import record so rejection
     -- history is never rewritten.
     select bav.id
-      into official_version_id
+      into v_official_version_id
     from public.brand_asset_versions bav
-    where bav.brand_asset_id = brand_asset_id
+    where bav.brand_asset_id = v_brand_asset_id
       and bav.primary_logo_url = studio_row.logo_url
       and bav.status = 'published'
     order by bav.created_at desc
     limit 1;
 
-    if official_version_id is null then
+    if v_official_version_id is null then
       insert into public.brand_asset_versions (
         brand_asset_id,
         source_type,
@@ -71,7 +71,7 @@ begin
         source_kind,
         source_note
       ) values (
-        brand_asset_id,
+        v_brand_asset_id,
         'uploaded_logo',
         studio_row.logo_url,
         studio_row.logo_url,
@@ -81,27 +81,27 @@ begin
         'own_logo_file',
         'Migrated from the Studio public logo without duplicating physical storage.'
       )
-      returning id into official_version_id;
+      returning id into v_official_version_id;
     end if;
 
     -- Brand Engine keeps a single active/published version per logical brand
     -- asset. Older versions remain preserved as approved/rejected/draft history.
-    update public.brand_asset_versions
+    update public.brand_asset_versions bav
        set status = 'approved'
-     where brand_asset_id = brand_asset_id
-       and id <> official_version_id
-       and status = 'published';
+     where bav.brand_asset_id = v_brand_asset_id
+       and bav.id <> v_official_version_id
+       and bav.status = 'published';
 
-    update public.brand_assets
-       set active_version_id = official_version_id
-     where id = brand_asset_id
-       and active_version_id is distinct from official_version_id;
+    update public.brand_assets ba
+       set active_version_id = v_official_version_id
+     where ba.id = v_brand_asset_id
+       and ba.active_version_id is distinct from v_official_version_id;
 
     -- Link only the currently published Studio identity when its own canonical
     -- references prove it uses exactly this logo. Historical archived versions
     -- are left untouched.
     update public.player_profile_versions ppv
-       set brand_asset_version_id = official_version_id
+       set brand_asset_version_id = v_official_version_id
      where ppv.studio_id = studio_row.id
        and ppv.status = 'published'
        and ppv.brand_asset_version_id is null
