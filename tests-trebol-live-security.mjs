@@ -30,11 +30,30 @@ test("Live tool and transcript endpoints fail closed without a persisted owned r
 test("audio uses worklets with the documented PCM rates and barge-in clears playback", () => {
   const capture = read("./lib/clouva-ai/live/audio-capture.ts");
   const playback = read("./lib/clouva-ai/live/audio-playback.ts");
+  const client = read("./lib/clouva-ai/live/client.ts");
   const clientHook = read("./components/clouva-ai/useTrebolLiveSession.ts");
   assert.match(capture, /targetSampleRate:\s*16_000/);
   assert.match(playback, /inputSampleRate:\s*24_000/);
+  assert.match(client, /mimeType:\s*"audio\/pcm;rate=16000"/);
+  assert.match(client, /if \(!this\.session \|\| this\.muted \|\| !base64Pcm\) return/);
   assert.doesNotMatch(`${capture}\n${playback}`, /MediaRecorder|ScriptProcessorNode/);
   assert.match(clientHook, /onInterrupted:[\s\S]*playbackRef\.current\?\.clear\(\)/);
+});
+
+test("Live exposes connected state only after Gemini setupComplete and captures close diagnostics", () => {
+  const client = read("./lib/clouva-ai/live/client.ts");
+  const connectStart = client.indexOf("const session = await ai.live.connect");
+  const sessionAssignment = client.indexOf("this.session = session", connectStart);
+  const connectedCallback = client.indexOf("this.options.callbacks?.onConnected?.(identity)", sessionAssignment);
+  assert.ok(connectStart >= 0 && sessionAssignment > connectStart && connectedCallback > sessionAssignment);
+  assert.match(client, /onopen:[\s\S]{0,900}this\.phase = "setup"[\s\S]{0,900}this\.markSent\("setup"\)/);
+  assert.match(client, /message\.setupComplete[\s\S]{0,240}this\.markReceived\("setupComplete"\)/);
+  assert.match(client, /closeCode:\s*typeof event\?\.code === "number" \? event\.code : null/);
+  assert.match(client, /wasClean:\s*typeof event\?\.wasClean === "boolean" \? event\.wasClean : null/);
+  assert.match(client, /socketLifetimeMs:/);
+  assert.match(client, /lastSentEvent:/);
+  assert.match(client, /lastReceivedEvent:/);
+  assert.match(client, /action:\s*"diagnostic"/);
 });
 
 test("assistant transcript persists at semantic model boundaries, not transcription-segment boundaries", () => {
@@ -69,6 +88,20 @@ test("Live run completion requires an explicit semantic finish reason", () => {
     route,
     /body\.action === "end"[\s\S]{0,220}finishAgentRun\(\{\s*supabase,\s*run,\s*status:\s*"completed"/,
   );
+});
+
+test("unexpected Live socket closure keeps the semantic reason and stores provider diagnostics", () => {
+  const route = read("./app/api/clouva-ai/live/turn/route.ts");
+  const runStore = read("./lib/clouva-ai/agent/run-store.ts");
+  const migration = read("./supabase/migrations/20260915232006_trebol_live_diagnostics.sql");
+  assert.match(route, /case "SOCKET_CLOSED_UNEXPECTEDLY"[\s\S]{0,260}errorCode:\s*"GEMINI_LIVE_SOCKET_CLOSED"/);
+  assert.match(route, /closeReason/);
+  assert.match(route, /closeCode/);
+  assert.match(route, /socketLifetimeMs/);
+  assert.match(route, /updateAgentRunDiagnostics/);
+  assert.match(runStore, /diagnostic_metadata/);
+  assert.match(migration, /add column if not exists diagnostic_metadata jsonb not null default '\{\}'::jsonb/i);
+  assert.doesNotMatch(migration, /add column if not exists\s+(?:audio|api_key|access_token|credential)/i);
 });
 
 test("rate-limit storage is service-role only", () => {
