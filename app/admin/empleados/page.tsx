@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
 
 type StaffRow = {
   id: string;
@@ -15,24 +16,24 @@ export default function Page() {
   const [rows, setRows] = useState<StaffRow[]>([]);
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
 
-  const load = async () => {
-    const { supabase } = await import("@/lib/supabase");
-    const { data, error } = await supabase
-      .from("profiles")
-      .select("id,display_name,full_name,email,role,role_v2")
-      .or("role.eq.empleado,role_v2.eq.empleado,role.eq.admin,role_v2.eq.admin")
-      .order("display_name", { ascending: true })
-      .limit(200);
-    if (error) {
-      setMessage(error.message);
-      return;
+  const load = useCallback(async () => {
+    setLoading(true);
+    setMessage(null);
+    try {
+      const response = await authenticatedFetch("/api/admin/employees", { cache: "no-store" });
+      const payload = await readApiJson<{ employees: StaffRow[] }>(response);
+      setRows(payload.employees ?? []);
+    } catch (cause) {
+      setMessage(cause instanceof Error ? cause.message : "No se pudieron cargar los empleados.");
+    } finally {
+      setLoading(false);
     }
-    setRows((data ?? []) as StaffRow[]);
-  };
+  }, []);
 
-  useEffect(() => { void load(); }, []);
+  useEffect(() => { void load(); }, [load]);
 
   const makeEmployee = async () => {
     const cleanEmail = email.trim().toLowerCase();
@@ -40,24 +41,14 @@ export default function Page() {
     setBusy(true);
     setMessage(null);
     try {
-      const { supabase } = await import("@/lib/supabase");
-      const { data: profile, error: findError } = await supabase
-        .from("profiles")
-        .select("id,email,role,role_v2")
-        .eq("email", cleanEmail)
-        .maybeSingle();
-      if (findError) throw new Error(findError.message);
-      if (!profile?.id) throw new Error("No existe un perfil CLOUVA con ese email.");
-      if (profile.role === "admin" || profile.role_v2 === "admin") throw new Error("La cuenta ya es administradora y no se modifica desde Empleados.");
-
-      const { error: updateError } = await supabase
-        .from("profiles")
-        .update({ role: "empleado", role_v2: "empleado" })
-        .eq("id", profile.id);
-      if (updateError) throw new Error(updateError.message);
-
+      const response = await authenticatedFetch("/api/admin/employees", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: cleanEmail }),
+      });
+      const payload = await readApiJson<{ message?: string }>(response);
       setEmail("");
-      setMessage("Empleado habilitado correctamente. No recibió permisos de administrador.");
+      setMessage(payload.message ?? "Empleado habilitado correctamente.");
       await load();
     } catch (cause) {
       setMessage(cause instanceof Error ? cause.message : "No se pudo habilitar el empleado.");
@@ -84,6 +75,8 @@ export default function Page() {
       {message ? <p className="mt-3 rounded-xl border border-white/10 bg-black/25 p-3 text-sm text-white/65">{message}</p> : null}
 
       <div className="mt-5 space-y-2">
+        {loading ? <p className="py-4 text-sm text-white/40">Cargando personal…</p> : null}
+        {!loading && rows.length === 0 ? <p className="py-4 text-sm text-white/40">Todavía no hay empleados ni admins listados.</p> : null}
         {rows.map((row) => (
           <div key={row.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-white/[0.07] bg-black/20 p-3 text-sm">
             <div>
