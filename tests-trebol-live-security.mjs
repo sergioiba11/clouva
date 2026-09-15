@@ -59,7 +59,8 @@ test("Live run completion requires an explicit semantic finish reason", () => {
   const route = read("./app/api/clouva-ai/live/turn/route.ts");
   assert.match(route, /if \(!isTrebolLiveEndReason\(body\.finishReason\)\)/);
   assert.match(route, /finishReason:\s*body\.finishReason/);
-  assert.match(route, /transcriptFinal:\s*isCompletedTranscriptReason\(body\.finishReason\)/);
+  assert.match(route, /const transcriptFinal = isCompletedTranscriptReason\(body\.finishReason\)/);
+  assert.match(route, /metadata:\s*\{[\s\S]{0,220}transcriptFinal,[\s\S]{0,120}finishReason:\s*body\.finishReason/);
   assert.doesNotMatch(
     route,
     /body\.action === "end"[\s\S]{0,220}finishAgentRun\(\{\s*supabase,\s*run,\s*status:\s*"completed"/,
