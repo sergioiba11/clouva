@@ -5,6 +5,12 @@ import {
   requireAgentConversation,
 } from "@/lib/clouva-ai/agent/orchestrator";
 import { finishAgentRun, requireAgentRun } from "@/lib/clouva-ai/agent/run-store";
+import {
+  isCompletedTranscriptReason,
+  isTrebolLiveEndReason,
+  isTrebolLiveTranscriptFinishReason,
+  type TrebolLiveEndReason,
+} from "@/lib/clouva-ai/live/protocol";
 
 export const runtime = "nodejs";
 
@@ -15,9 +21,35 @@ type TurnBody = {
   messageId?: string;
   role?: "user" | "assistant";
   content?: string;
+  finishReason?: string;
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+function runEndState(reason: TrebolLiveEndReason) {
+  switch (reason) {
+    case "MODEL_TURN_COMPLETE":
+      return { status: "completed" as const, errorCode: null, errorMessage: null };
+    case "CLIENT_CANCELLED":
+      return {
+        status: "cancelled" as const,
+        errorCode: "CLIENT_CANCELLED",
+        errorMessage: "La sesión Live fue cerrada por el cliente antes de completar un nuevo turno del modelo.",
+      };
+    case "SOCKET_CLOSED_UNEXPECTEDLY":
+      return {
+        status: "failed" as const,
+        errorCode: "SOCKET_CLOSED_UNEXPECTEDLY",
+        errorMessage: "La conexión Live se cerró sin una finalización limpia.",
+      };
+    case "RECONNECT_EXHAUSTED":
+      return {
+        status: "failed" as const,
+        errorCode: "RECONNECT_EXHAUSTED",
+        errorMessage: "La sesión Live agotó los intentos de reconexión.",
+      };
+  }
+}
 
 export async function POST(request: Request) {
   try {
@@ -42,17 +74,33 @@ export async function POST(request: Request) {
     }
 
     if (body.action === "end") {
-      await finishAgentRun({ supabase, run, status: "completed" });
-      return NextResponse.json({ ok: true });
+      if (!isTrebolLiveEndReason(body.finishReason)) {
+        return NextResponse.json({ error: "La finalización Live no tiene una causa válida." }, { status: 400 });
+      }
+      const end = runEndState(body.finishReason);
+      await finishAgentRun({
+        supabase,
+        run,
+        status: end.status,
+        errorCode: end.errorCode,
+        errorMessage: end.errorMessage,
+      });
+      return NextResponse.json({ ok: true, status: end.status, finishReason: body.finishReason });
     }
 
     const messageId = body.messageId?.trim() ?? "";
     const content = body.content?.trim() ?? "";
-    if (!UUID.test(messageId) || !["user", "assistant"].includes(body.role ?? "") || !content) {
+    if (
+      !UUID.test(messageId)
+      || !["user", "assistant"].includes(body.role ?? "")
+      || !content
+      || !isTrebolLiveTranscriptFinishReason(body.finishReason)
+    ) {
       return NextResponse.json({ error: "La transcripción final no es válida." }, { status: 400 });
     }
     if (content.length > 20_000) return NextResponse.json({ error: "La transcripción es demasiado larga." }, { status: 413 });
 
+    const transcriptFinal = isCompletedTranscriptReason(body.finishReason);
     const { error } = await supabase.from("ai_messages").insert({
       id: messageId,
       conversation_id: conversationId,
@@ -63,14 +111,14 @@ export async function POST(request: Request) {
         provider: "gemini-live",
         mode: "live",
         runId,
-        transcriptFinal: true,
+        transcriptFinal,
+        finishReason: body.finishReason,
       },
     });
     if (error && error.code !== "23505") throw new Error(error.message);
     if (error?.code === "23505") {
-      // The browser can retry a completed transcript after a reconnect.
-      // Its client-generated UUID makes that retry idempotent, including
-      // the surrounding audit event and conversation timestamp.
+      // Retries reuse the browser-generated message UUID, so transcript
+      // persistence remains idempotent across reconnects.
       return NextResponse.json({ ok: true, messageId, duplicate: true });
     }
 
@@ -82,7 +130,14 @@ export async function POST(request: Request) {
         event_type: "TREBOL_LIVE_TRANSCRIPT",
         component: "clouva-ai-live",
         summary: content.slice(0, 240),
-        payload: { conversationId, runId, role: body.role, messageId },
+        payload: {
+          conversationId,
+          runId,
+          role: body.role,
+          messageId,
+          finishReason: body.finishReason,
+          transcriptFinal,
+        },
       }),
     ]);
     return NextResponse.json({ ok: true, messageId, duplicate: false });
