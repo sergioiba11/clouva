@@ -33,9 +33,22 @@ import {
   UserRound,
   Users,
   WalletCards,
+  X,
 } from "lucide-react";
 import { useAuth } from "@/components/auth-provider";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
+
+type RevenuePeriod = "24H" | "7D" | "30D" | "90D";
+
+type RevenuePoint = {
+  label: string;
+  start: string;
+  vip: number;
+  marketplace: number;
+  services: number;
+  bookings: number;
+  total: number;
+};
 
 type ActivityItem = {
   at: string;
@@ -85,14 +98,7 @@ type ControlCenterPayload = {
     stockCritical: number;
   };
   activity: ActivityItem[];
-  revenue7d: Array<{
-    date: string;
-    vip: number;
-    marketplace: number;
-    services: number;
-    bookings: number;
-    total: number;
-  }>;
+  revenueSeries: Record<RevenuePeriod, RevenuePoint[]>;
 };
 
 type TreasuryPayload = {
@@ -150,6 +156,14 @@ type AssetsPayload = {
   warnings?: Array<{ source: string; message: string }>;
 };
 
+type AttentionItem = {
+  label: string;
+  value: number;
+  href: string;
+};
+
+const PERIODS: RevenuePeriod[] = ["24H", "7D", "30D", "90D"];
+
 const money = (value: number, currency = "ARS") => new Intl.NumberFormat("es-AR", {
   style: "currency",
   currency,
@@ -198,6 +212,7 @@ function MetricCard({ href, icon: Icon, label, value, detail, tone = "violet" }:
       : tone === "amber"
         ? "bg-amber-400/10 text-amber-300"
         : "bg-violet-400/10 text-violet-300";
+
   return (
     <Link href={href} className="group rounded-[18px] border border-white/[0.07] bg-[#0a0b13]/90 p-4 transition hover:-translate-y-px hover:border-violet-300/20 hover:bg-[#0c0d17]">
       <div className="flex items-start justify-between gap-3">
@@ -214,6 +229,7 @@ function MetricCard({ href, icon: Icon, label, value, detail, tone = "violet" }:
 function StatusRow({ label, state, detail }: { label: string; state: "online" | "warning" | "unknown"; detail: string }) {
   const dot = state === "online" ? "bg-emerald-400" : state === "warning" ? "bg-amber-400" : "bg-white/25";
   const text = state === "online" ? "text-emerald-300" : state === "warning" ? "text-amber-200" : "text-white/35";
+
   return (
     <div className="flex items-center gap-2 border-b border-white/[0.05] py-2.5 last:border-0">
       <span className={`h-2 w-2 shrink-0 rounded-full ${dot}`} />
@@ -223,30 +239,88 @@ function StatusRow({ label, state, detail }: { label: string; state: "online" | 
   );
 }
 
-function RevenueChart({ rows }: { rows: ControlCenterPayload["revenue7d"] }) {
+function RevenueChart({ rows, period }: { rows: RevenuePoint[]; period: RevenuePeriod }) {
   const max = Math.max(...rows.map((row) => row.total), 1);
   const points = rows.map((row, index) => {
     const x = rows.length <= 1 ? 0 : (index / (rows.length - 1)) * 100;
     const y = 30 - (row.total / max) * 24;
     return `${x},${y}`;
   }).join(" ");
+  const labelEvery = Math.max(1, Math.ceil(rows.length / 7));
 
   return (
     <div className="mt-5">
       <div className="relative h-36 overflow-hidden rounded-2xl border border-white/[0.05] bg-black/20">
         <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,.04)_1px,transparent_1px)] bg-[length:100%_25%]" />
-        <svg viewBox="0 0 100 32" preserveAspectRatio="none" className="absolute inset-3 h-[calc(100%-24px)] w-[calc(100%-24px)] overflow-visible" aria-label="Ingresos de los últimos siete días">
+        <svg viewBox="0 0 100 32" preserveAspectRatio="none" className="absolute inset-3 h-[calc(100%-24px)] w-[calc(100%-24px)] overflow-visible" aria-label={`Ingresos ${period}`}>
           <polyline points={points} fill="none" stroke="rgba(167,139,250,.95)" strokeWidth="0.8" vectorEffect="non-scaling-stroke" />
           {rows.map((row, index) => {
             const x = rows.length <= 1 ? 0 : (index / (rows.length - 1)) * 100;
             const y = 30 - (row.total / max) * 24;
-            return <circle key={row.date} cx={x} cy={y} r="0.75" fill="#c4b5fd" />;
+            return <circle key={`${row.start}:${index}`} cx={x} cy={y} r="0.75" fill="#c4b5fd" />;
           })}
         </svg>
       </div>
-      <div className="mt-2 grid grid-cols-7 gap-1 text-center text-[9px] text-white/28">
-        {rows.map((row) => <span key={row.date}>{new Date(`${row.date}T12:00:00`).toLocaleDateString("es-AR", { weekday: "short" })}</span>)}
+      <div className="mt-2 flex items-center justify-between gap-2 text-[9px] text-white/28">
+        {rows.map((row, index) => (
+          index % labelEvery === 0 || index === rows.length - 1
+            ? <span key={`${row.start}:label`} className="truncate">{row.label}</span>
+            : null
+        ))}
       </div>
+    </div>
+  );
+}
+
+function NotificationCenter({ open, onClose, attention, activity }: {
+  open: boolean;
+  onClose: () => void;
+  attention: AttentionItem[];
+  activity: ActivityItem[];
+}) {
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-[130]">
+      <button type="button" aria-label="Cerrar notificaciones Admin" onClick={onClose} className="absolute inset-0 bg-black/65 backdrop-blur-sm" />
+      <aside className="absolute inset-y-0 right-0 w-[min(92vw,430px)] overflow-y-auto border-l border-white/10 bg-[#080914] shadow-2xl">
+        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-white/[0.07] bg-[#080914]/95 px-5 py-4 backdrop-blur-xl">
+          <div>
+            <p className="text-[9px] font-bold uppercase tracking-[0.2em] text-violet-300/60">Admin</p>
+            <h2 className="mt-1 text-lg font-semibold">Centro de notificaciones</h2>
+          </div>
+          <button type="button" onClick={onClose} className="grid h-10 w-10 place-items-center rounded-xl border border-white/10 text-white/55 hover:bg-white/5"><X className="h-4 w-4" /></button>
+        </div>
+
+        <div className="space-y-6 p-5">
+          <section>
+            <div className="flex items-center justify-between"><h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-white/45">Requiere atención</h3><span className="text-[10px] text-white/25">Operación</span></div>
+            <div className="mt-3 space-y-2">
+              {attention.filter((item) => item.value > 0).map((item) => (
+                <Link key={item.label} href={item.href} onClick={onClose} className="flex items-center gap-3 rounded-xl border border-amber-300/10 bg-amber-300/[0.035] p-3">
+                  <span className="grid h-8 w-8 place-items-center rounded-lg bg-amber-400/10 text-xs font-bold text-amber-200">{item.value}</span>
+                  <span className="min-w-0 flex-1 text-xs text-white/70">{item.label}</span>
+                  <ChevronRight className="h-4 w-4 text-white/25" />
+                </Link>
+              ))}
+              {!attention.some((item) => item.value > 0) ? <div className="rounded-xl border border-emerald-300/10 bg-emerald-300/[0.035] p-3 text-xs text-emerald-200">Todo operativo · sin pendientes detectados.</div> : null}
+            </div>
+          </section>
+
+          <section>
+            <div className="flex items-center justify-between"><h3 className="text-xs font-semibold uppercase tracking-[0.14em] text-white/45">Actividad reciente</h3><span className="text-[10px] text-white/25">Pagos · pedidos · reservas</span></div>
+            <div className="mt-3 space-y-1">
+              {activity.slice(0, 10).map((item, index) => (
+                <Link key={`${item.type}:${item.at}:${index}`} href={item.href} onClick={onClose} className="flex items-start gap-3 rounded-xl px-2 py-3 transition hover:bg-white/[0.035]">
+                  <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-violet-400" />
+                  <span className="min-w-0 flex-1"><span className="block text-xs font-medium text-white/75">{item.label}</span><span className="mt-1 block truncate text-[10px] text-white/32">{item.detail}</span></span>
+                  <span className="text-[9px] text-white/24">{ago(item.at)}</span>
+                </Link>
+              ))}
+            </div>
+          </section>
+        </div>
+      </aside>
     </div>
   );
 }
@@ -259,6 +333,8 @@ export default function AdminPage() {
   const [releases, setReleases] = useState<ReleasesPayload["releases"]>([]);
   const [labPages, setLabPages] = useState<LabPayload["pages"]>([]);
   const [assets, setAssets] = useState<AssetsPayload | null>(null);
+  const [period, setPeriod] = useState<RevenuePeriod>("7D");
+  const [notificationOpen, setNotificationOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -298,8 +374,16 @@ export default function AdminPage() {
   const latestRelease = releases.find((release) => release.is_stable) ?? releases[0] ?? null;
   const mobileHome = labPages.find((page) => page.slug === "mobile-home") ?? labPages[0] ?? null;
   const reserveVerified = Boolean(treasury?.reserveAccounts?.some((account) => account.authorized_for_flow && account.is_active && account.status === "active"));
+  const selectedRevenue = data?.revenueSeries?.[period] ?? [];
+  const periodRevenue = selectedRevenue.reduce((sum, row) => sum + row.total, 0);
+  const periodBreakdown = selectedRevenue.reduce((current, row) => ({
+    vip: current.vip + row.vip,
+    marketplace: current.marketplace + row.marketplace,
+    services: current.services + row.services,
+    bookings: current.bookings + row.bookings,
+  }), { vip: 0, marketplace: 0, services: 0, bookings: 0 });
 
-  const attentionItems = useMemo(() => {
+  const attentionItems = useMemo<AttentionItem[]>(() => {
     if (!attention) return [];
     return [
       { label: "Players sin publicar", value: attention.playersUnpublished, href: "/admin/clientes" },
@@ -314,7 +398,8 @@ export default function AdminPage() {
     ];
   }, [assets?.warnings?.length, attention, treasury?.snapshot?.paymentsAwaitingReserve, treasury?.snapshot?.pendingBackingFlows]);
 
-  const hasCriticalAttention = attentionItems.some((item) => item.value > 0) || Boolean(treasury?.snapshot?.reserveDeficit);
+  const attentionCount = attentionItems.reduce((sum, item) => sum + Math.max(0, item.value), 0);
+  const hasCriticalAttention = attentionCount > 0 || Boolean(treasury?.snapshot?.reserveDeficit);
 
   if (loading && !data) {
     return (
@@ -326,6 +411,8 @@ export default function AdminPage() {
 
   return (
     <div className="space-y-4">
+      <NotificationCenter open={notificationOpen} onClose={() => setNotificationOpen(false)} attention={attentionItems} activity={data?.activity ?? []} />
+
       <header className="flex flex-col gap-4 rounded-[20px] border border-violet-300/10 bg-[radial-gradient(circle_at_78%_0%,rgba(124,58,237,.15),transparent_34%),rgba(9,10,17,.9)] p-5 xl:flex-row xl:items-center xl:justify-between">
         <div>
           <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-violet-300/70">Centro de Control</p>
@@ -337,6 +424,10 @@ export default function AdminPage() {
             <div className="flex items-center gap-2 font-semibold text-emerald-200"><span className="h-2 w-2 rounded-full bg-emerald-400" /> SISTEMA OPERATIVO</div>
             <p className="mt-1 text-[9px] text-white/32">{data ? `Actualizado ${ago(data.generatedAt)}` : "Sin datos"}</p>
           </div>
+          <button type="button" onClick={() => setNotificationOpen(true)} className="relative inline-flex min-h-11 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 text-xs font-semibold text-white/70 hover:bg-white/[0.07]">
+            <BellRing className="h-4 w-4" /> Alertas
+            {attentionCount > 0 ? <span className="rounded-full bg-red-500 px-1.5 py-0.5 text-[9px] font-bold text-white">{attentionCount > 99 ? "99+" : attentionCount}</span> : null}
+          </button>
           <button onClick={() => void load()} disabled={loading} className="inline-flex min-h-11 items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 text-xs font-semibold text-white/75 transition hover:bg-white/[0.07] disabled:opacity-50">
             <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Actualizar
           </button>
@@ -367,25 +458,25 @@ export default function AdminPage() {
             <div>
               <p className="text-[9px] font-bold uppercase tracking-[0.19em] text-white/32">Operación financiera</p>
               <div className="mt-2 flex items-end gap-3">
-                <p className="text-3xl font-semibold tracking-tight">{stats ? money(stats.ingresos) : "…"}</p>
-                <span className="pb-1 text-[10px] text-white/28">registrados</span>
+                <p className="text-3xl font-semibold tracking-tight">{money(periodRevenue)}</p>
+                <span className="pb-1 text-[10px] text-white/28">en {period}</span>
               </div>
             </div>
             <div className="flex gap-1 rounded-xl border border-white/[0.07] bg-black/20 p-1 text-[9px] font-semibold text-white/35">
-              <span className="rounded-lg bg-violet-500/20 px-3 py-1.5 text-violet-200">7D</span>
-              <span className="px-3 py-1.5">30D</span>
-              <span className="px-3 py-1.5">90D</span>
+              {PERIODS.map((value) => (
+                <button key={value} type="button" onClick={() => setPeriod(value)} className={`rounded-lg px-3 py-1.5 transition ${period === value ? "bg-violet-500/20 text-violet-200" : "hover:bg-white/[0.04] hover:text-white/65"}`}>{value}</button>
+              ))}
             </div>
           </div>
 
-          {data?.revenue7d?.length ? <RevenueChart rows={data.revenue7d} /> : <div className="mt-5 grid h-36 place-items-center rounded-2xl border border-dashed border-white/10 text-xs text-white/30">Todavía no hay histórico para graficar.</div>}
+          {selectedRevenue.length ? <RevenueChart rows={selectedRevenue} period={period} /> : <div className="mt-5 grid h-36 place-items-center rounded-2xl border border-dashed border-white/10 text-xs text-white/30">Todavía no hay histórico para este período.</div>}
 
           <div className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
             {[
-              ["CLOUVA VIP", stats?.ingresosVip ?? 0],
-              ["Marketplace", stats?.ingresosMarketplace ?? 0],
-              ["Servicios", stats?.ingresosServicios ?? 0],
-              ["Reservas", stats?.ingresosReservas ?? 0],
+              ["CLOUVA VIP", periodBreakdown.vip],
+              ["Marketplace", periodBreakdown.marketplace],
+              ["Servicios", periodBreakdown.services],
+              ["Reservas", periodBreakdown.bookings],
             ].map(([label, value]) => (
               <div key={String(label)} className="rounded-xl border border-white/[0.06] bg-white/[0.025] px-3 py-3">
                 <p className="text-[9px] uppercase tracking-[0.13em] text-white/32">{label}</p>
