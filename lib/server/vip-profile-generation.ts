@@ -10,13 +10,7 @@ import {
 } from "@/lib/server/studio-design-input";
 import { buildIdentityBrief, buildStudioIdentityBrief } from "@/lib/server/vip-profile-brief";
 import { requireActiveVipEntitlement } from "@/lib/server/vip-profile-permissions";
-
-const ACTIVE_STATUSES = [
-  "queued", "preparing_identity", "analyzing_identity", "generating_copy",
-  "classifying_reference", "generating_assets", "generating_variants", "generating_variant_assets",
-  "assembling_profile", "rendering_reference_preview", "capturing_reference_render", "comparing_reference",
-  "applying_visual_corrections", "regenerating_structure", "validating_visual_fidelity", "awaiting_variant_selection", "needs_user_input",
-];
+import { VIP_PROFILE_ACTIVE_STATUSES } from "@/lib/vip-profile-job-status";
 
 const REFERENCE_IMAGE_URL_RE = /^https:\/\/storage\.googleapis\.com\/[a-z0-9._-]+\/reference-images\/(players|studios)\/[0-9a-f-]{36}\/[0-9a-f-]{36}\.(png|jpe?g|webp)$/;
 const MAX_REFERENCE_IMAGES = 3;
@@ -88,7 +82,7 @@ export async function startVipProfileGeneration(args: {
     .from("vip_profile_generation_jobs")
     .select("id,status")
     .eq(subjectColumn, subjectId)
-    .in("status", ACTIVE_STATUSES)
+    .in("status", Array.from(VIP_PROFILE_ACTIVE_STATUSES))
     .maybeSingle();
   if (existingJobError) throw new Error(existingJobError.message);
   if (existingJob) return { jobId: existingJob.id as string, status: existingJob.status as string, reused: true };

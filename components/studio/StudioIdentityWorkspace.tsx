@@ -6,6 +6,7 @@ import { ClouvaAIChat } from "@/components/clouva-ai/ClouvaAIChat";
 import { useTrebolContextRegistration } from "@/components/clouva-ai/ClouvaAIAssistantProvider";
 import { StudioAiProfilePanel, type StudioIdentityState } from "@/components/studio/StudioAiProfilePanel";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
+import { isVipProfileJobPolling } from "@/lib/vip-profile-job-status";
 
 type MobileView = "edit" | "preview" | "gemini";
 const EMPTY_STATE: StudioIdentityState = {
@@ -25,11 +26,25 @@ const EMBEDDED_DESKTOP_WIDTH = 1440;
 const EMBEDDED_DESKTOP_HEIGHT = 800;
 const EMBEDDED_COMPACT_HEIGHT = 640;
 
+type GenerationJobSummary = {
+  id: string;
+  status: string;
+  error_message?: string | null;
+  created_at?: string | null;
+  completed_at?: string | null;
+};
+
+type GenerationStatusPayload = {
+  activeJob: GenerationJobSummary | null;
+  latestJob: GenerationJobSummary | null;
+  lastFailedJob: GenerationJobSummary | null;
+};
+
 export function StudioIdentityWorkspace({ studioId, studioSlug, studioName, active }: { studioId: string; studioSlug: string; studioName: string; active: boolean }) {
   const [mobileView, setMobileView] = useState<MobileView>("edit");
   const [identityState, setIdentityState] = useState<StudioIdentityState>(EMPTY_STATE);
   const previewPath = `/studio-dashboard/${studioId}/identity-preview`;
-  const generating = Boolean(identityState.jobStatus && ["queued","preparing_identity","analyzing_identity","generating_copy","classifying_reference","generating_assets","generating_variants","generating_variant_assets","assembling_profile"].includes(identityState.jobStatus));
+  const generating = isVipProfileJobPolling(identityState.jobStatus);
   const scoreLabel = identityState.fidelityScore !== null ? `${Math.round(identityState.fidelityScore * 100)}%` : null;
 
   useTrebolContextRegistration({
@@ -73,8 +88,80 @@ export function StudioIdentityWorkspace({ studioId, studioSlug, studioName, acti
         <section className={`${mobileView === "edit" ? "block" : "hidden"} min-w-0 xl:block`}><StudioAiProfilePanel studioId={studioId} onStateChange={setIdentityState} /></section>
         <aside className={`${mobileView === "gemini" ? "block" : "hidden"} min-w-0 self-start overflow-hidden rounded-2xl border border-violet-400/15 bg-[#09070f] xl:sticky xl:top-[92px] xl:block xl:h-[calc(100vh-118px)]`}><StudioDesignerGemini studioId={studioId} studioSlug={studioSlug} studioName={studioName} active={active} identityState={identityState} /></aside>
       </div>
+      <StudioGenerationAttemptNotice studioId={studioId} active={active} jobStatus={identityState.jobStatus} />
       <div className={`${mobileView === "preview" ? "block" : "hidden"} mt-5 xl:block`}><EmbeddedPreview studioId={studioId} previewPath={previewPath} /></div>
     </div>
+  );
+}
+
+function StudioGenerationAttemptNotice({ studioId, active, jobStatus }: { studioId: string; active: boolean; jobStatus: string | null }) {
+  const [statusPayload, setStatusPayload] = useState<GenerationStatusPayload | null>(null);
+  const [currentAttemptFailure, setCurrentAttemptFailure] = useState<GenerationJobSummary | null>(null);
+  const trackedActiveJobId = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!active) return;
+    let cancelled = false;
+
+    const refresh = async () => {
+      try {
+        const response = await authenticatedFetch(`/api/vip-profile/status?studioId=${encodeURIComponent(studioId)}`);
+        const payload = await readApiJson<GenerationStatusPayload>(response);
+        if (cancelled) return;
+
+        if (payload.activeJob) {
+          trackedActiveJobId.current = payload.activeJob.id;
+          setCurrentAttemptFailure(null);
+        } else if (
+          trackedActiveJobId.current &&
+          payload.latestJob?.id === trackedActiveJobId.current &&
+          payload.latestJob.status === "failed"
+        ) {
+          setCurrentAttemptFailure(payload.latestJob);
+          trackedActiveJobId.current = null;
+        }
+        setStatusPayload(payload);
+      } catch {
+        // StudioAiProfilePanel owns request-level errors. This companion notice
+        // must never turn a history lookup into a second global error banner.
+      }
+    };
+
+    void refresh();
+    const interval = jobStatus ? window.setInterval(() => void refresh(), 4000) : null;
+    return () => {
+      cancelled = true;
+      if (interval) window.clearInterval(interval);
+    };
+  }, [active, jobStatus, studioId]);
+
+  if (!statusPayload || statusPayload.activeJob) return null;
+  const historicalTerminal = statusPayload.latestJob && ["failed", "blocked_budget", "cancelled"].includes(statusPayload.latestJob.status)
+    ? statusPayload.latestJob
+    : null;
+  const visibleJob = currentAttemptFailure ?? historicalTerminal;
+  if (!visibleJob) return null;
+
+  const isCurrentAttempt = currentAttemptFailure?.id === visibleJob.id;
+  const dateValue = visibleJob.completed_at || visibleJob.created_at;
+  const dateLabel = dateValue ? formatAttemptDate(dateValue) : null;
+
+  return (
+    <section className={`mt-4 rounded-2xl border px-4 py-3 sm:px-5 ${isCurrentAttempt ? "border-amber-400/20 bg-amber-400/[0.06]" : "border-white/8 bg-white/[0.02]"}`} data-clouva-component="StudioGenerationAttemptNotice">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className={`text-[10px] font-semibold uppercase tracking-[0.2em] ${isCurrentAttempt ? "text-amber-200/65" : "text-white/30"}`}>{isCurrentAttempt ? "ESTE INTENTO" : "ÚLTIMO INTENTO"}</p>
+          <p className="mt-1 text-sm font-semibold text-white/70">{isCurrentAttempt ? "La generación no se completó" : "Generación anterior no completada"}</p>
+          {dateLabel ? <p className="mt-1 text-xs text-white/35">{dateLabel}</p> : null}
+        </div>
+        {visibleJob.error_message ? (
+          <details className="max-w-full text-xs text-white/45 sm:max-w-[62%]">
+            <summary className="cursor-pointer select-none rounded-lg border border-white/10 px-3 py-2 font-semibold text-white/55 hover:text-white/80">Ver detalle técnico</summary>
+            <p className="mt-2 break-words rounded-lg border border-white/8 bg-black/25 p-3 leading-5 text-white/40">{visibleJob.error_message}</p>
+          </details>
+        ) : null}
+      </div>
+    </section>
   );
 }
 
@@ -124,4 +211,5 @@ function EmbeddedPreview({ studioId, previewPath }: { studioId:string; previewPa
   return <section className="overflow-hidden rounded-2xl border border-white/10 bg-[#08070d]" data-clouva-component="StudioIdentityEmbeddedPreview"><div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-3 sm:px-5"><div><p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-violet-200/50">Preview real</p><p className="mt-0.5 text-sm text-white/55">Actual · Propuesta · Comparar</p><p className="mt-1 hidden text-[10px] text-white/30 md:block">Vista desktop 1440 px · escalada sin deformar el diseño</p></div><Link href={previewPath} target="_blank" className="rounded-xl border border-white/15 px-3 py-2 text-xs font-semibold text-white/70 hover:text-white">Abrir pantalla completa</Link></div><div ref={hostRef} className="relative w-full overflow-hidden bg-[#050509]" style={{ height:displayedHeight }}><div className={viewport.compact ? "relative h-full w-full" : "absolute left-0 top-0"} style={viewport.compact ? undefined : { width:viewport.width, height:viewport.height, transform:`scale(${viewport.scale})`, transformOrigin:"top left" }}><iframe key={studioId} title="Preview real de la identidad del Studio" src={previewPath} className="h-full w-full border-0 bg-[#050509]" loading="lazy" /></div></div></section>;
 }
 function VersionPill({ label, value, tone }: { label:string; value:string; tone:"green"|"violet"|"amber"|"neutral" }) { const styles = tone === "green" ? "border-emerald-400/20 bg-emerald-400/[0.08] text-emerald-100" : tone === "violet" ? "border-violet-400/25 bg-violet-500/10 text-violet-100" : tone === "amber" ? "border-amber-400/20 bg-amber-400/[0.08] text-amber-100" : "border-white/10 bg-white/[0.035] text-white/45"; return <span className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-[10px] font-semibold tracking-[0.1em] ${styles}`}><span>{label}</span>{value ? <strong>{value}</strong> : null}</span>; }
+function formatAttemptDate(value:string){try{return new Intl.DateTimeFormat("es-AR",{day:"numeric",month:"short",hour:"2-digit",minute:"2-digit"}).format(new Date(value));}catch{return value;}}
 function readCookie(name:string){if(typeof document==="undefined")return"";const match=document.cookie.split(";").map((item)=>item.trim()).find((item)=>item.startsWith(`${name}=`));return match?decodeURIComponent(match.slice(name.length+1)):"";}
