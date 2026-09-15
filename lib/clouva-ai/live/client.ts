@@ -38,6 +38,21 @@ type PendingTranscript = {
   finishReason: TrebolLiveTranscriptFinishReason;
 };
 
+type LivePhase = "idle" | "token" | "socket_connecting" | "setup" | "ready" | "streaming" | "closing" | "closed";
+
+type LiveCloseDiagnostics = {
+  timestamp: string;
+  sessionId: string | null;
+  readyState: number | null;
+  closeCode: number | null;
+  closeReason: string | null;
+  wasClean: boolean | null;
+  socketLifetimeMs: number | null;
+  lastSentEvent: string | null;
+  lastReceivedEvent: string | null;
+  phase: LivePhase;
+};
+
 export type TrebolLiveClientCallbacks = {
   onConnected?: (identity: { conversationId: string; runId: string }) => void;
   onClosed?: (reason: string) => void;
@@ -91,6 +106,10 @@ export class TrebolLiveClient {
   private modelTurnActive = false;
   private modelTurnInterrupted = false;
   private lastModelTurnCompleted = false;
+  private phase: LivePhase = "idle";
+  private socketOpenedAtMs: number | null = null;
+  private lastSentEvent: string | null = null;
+  private lastReceivedEvent: string | null = null;
 
   constructor(private readonly options: TrebolLiveClientOptions) {}
 
@@ -105,6 +124,34 @@ export class TrebolLiveClient {
     if (!this.modelTurnActive) this.modelTurnInterrupted = false;
     this.modelTurnActive = true;
     this.lastModelTurnCompleted = false;
+    if (this.phase === "ready") this.phase = "streaming";
+  }
+
+  private markSent(event: string) {
+    this.lastSentEvent = event;
+    if (this.phase === "ready" && event !== "audioStreamEnd") this.phase = "streaming";
+  }
+
+  private markReceived(event: string) {
+    this.lastReceivedEvent = event;
+    if (this.phase === "ready" && event !== "setupComplete") this.phase = "streaming";
+  }
+
+  private buildCloseDiagnostics(event?: CloseEvent, fallbackReason?: string): LiveCloseDiagnostics {
+    const target = event?.target as { readyState?: unknown } | null;
+    const readyState = typeof target?.readyState === "number" ? target.readyState : null;
+    return {
+      timestamp: new Date().toISOString(),
+      sessionId: this.identity?.runId ?? null,
+      readyState,
+      closeCode: typeof event?.code === "number" ? event.code : null,
+      closeReason: (event?.reason || fallbackReason || "").slice(0, 300) || null,
+      wasClean: typeof event?.wasClean === "boolean" ? event.wasClean : null,
+      socketLifetimeMs: this.socketOpenedAtMs === null ? null : Math.max(0, Date.now() - this.socketOpenedAtMs),
+      lastSentEvent: this.lastSentEvent,
+      lastReceivedEvent: this.lastReceivedEvent,
+      phase: this.phase,
+    };
   }
 
   async connect() {
@@ -114,7 +161,11 @@ export class TrebolLiveClient {
     this.modelTurnActive = false;
     this.modelTurnInterrupted = false;
     this.lastModelTurnCompleted = false;
-    logTrebolEvent("TREBOL_LIVE_CONNECTING");
+    this.phase = "token";
+    this.socketOpenedAtMs = null;
+    this.lastSentEvent = null;
+    this.lastReceivedEvent = null;
+    logTrebolEvent("TREBOL_LIVE_CONNECTING", { phase: this.phase });
     const response = await fetch("/api/clouva-ai/live/token", {
       method: "POST",
       headers: this.headers(),
@@ -132,12 +183,14 @@ export class TrebolLiveClient {
 
   private async connectSession() {
     if (!this.identity) throw new Error("Trébol Live no tiene una identidad de sesión.");
+    const identity = this.identity;
     const ai = new GoogleGenAI({
-      apiKey: this.identity.token,
+      apiKey: identity.token,
       httpOptions: { apiVersion: "v1beta" },
     });
-    this.session = await ai.live.connect({
-      model: this.identity.model,
+    this.phase = "socket_connecting";
+    const session = await ai.live.connect({
+      model: identity.model,
       config: {
         responseModalities: [Modality.AUDIO],
         inputAudioTranscription: {},
@@ -146,29 +199,70 @@ export class TrebolLiveClient {
       },
       callbacks: {
         onopen: () => {
-          logTrebolEvent("TREBOL_LIVE_CONNECTED");
-          if (this.identity) this.options.callbacks?.onConnected?.(this.identity);
+          this.socketOpenedAtMs = Date.now();
+          this.phase = "setup";
+          // @google/genai sends the setup frame immediately after the socket-open
+          // callback resolves. No realtime audio can be sent yet because
+          // this.session is assigned only after ai.live.connect() resolves on
+          // Gemini's setupComplete message.
+          this.markSent("setup");
+          logTrebolEvent("TREBOL_LIVE_CONNECTING", {
+            runId: identity.runId,
+            conversationId: identity.conversationId,
+            phase: this.phase,
+          });
         },
         onmessage: (message) => this.handleMessage(message),
-        onerror: (event) => this.options.callbacks?.onError?.(new TrebolLiveError("LIVE_CONNECTION_FAILED", event.message || "Falló la conexión con Gemini Live.")),
+        onerror: (event) => {
+          this.lastReceivedEvent = "socket_error";
+          this.options.callbacks?.onError?.(new TrebolLiveError("LIVE_CONNECTION_FAILED", event.message || "Falló la conexión con Gemini Live."));
+        },
         onclose: (event) => {
+          const diagnostics = this.buildCloseDiagnostics(event);
+          this.phase = "closed";
           this.session = null;
+          logTrebolEvent("TREBOL_LIVE_SOCKET_CLOSED", {
+            runId: identity.runId,
+            conversationId: identity.conversationId,
+            closeCode: diagnostics.closeCode,
+            wasClean: diagnostics.wasClean,
+            socketLifetimeMs: diagnostics.socketLifetimeMs,
+            phase: diagnostics.phase,
+            lastSentEvent: diagnostics.lastSentEvent,
+            lastReceivedEvent: diagnostics.lastReceivedEvent,
+          });
+          void this.persistDiagnostic(diagnostics);
           if (this.closing) {
-            this.options.callbacks?.onClosed?.(event.reason || "Conexión Live cerrada.");
+            this.options.callbacks?.onClosed?.(diagnostics.closeReason || "Conexión Live cerrada.");
             return;
           }
           if (this.resumptionHandle) {
             this.scheduleReconnect();
             return;
           }
-          void this.handleUnexpectedClose(event.reason || "Conexión Live cerrada inesperadamente.");
+          void this.handleUnexpectedClose(diagnostics);
         },
       },
     });
+
+    // ai.live.connect() resolves only after Gemini sends setupComplete. Keep the
+    // Session unavailable until this point so sendAudio/sendText cannot race the
+    // handshake.
+    this.session = session;
+    this.phase = "ready";
+    this.lastReceivedEvent = this.lastReceivedEvent ?? "setupComplete";
+    logTrebolEvent("TREBOL_LIVE_CONNECTED", {
+      runId: identity.runId,
+      conversationId: identity.conversationId,
+      phase: this.phase,
+    });
+    this.options.callbacks?.onConnected?.(identity);
   }
 
   private handleMessage(message: LiveServerMessage) {
     if (message.setupComplete) {
+      this.markReceived("setupComplete");
+      this.phase = "ready";
       // A fully configured session proves that the token/handle worked.
       // Reset here (not merely on socket open) so an invalid resume loop
       // still reaches the bounded retry limit.
@@ -177,12 +271,16 @@ export class TrebolLiveClient {
     }
     const content = message.serverContent;
     const modelParts = content?.modelTurn?.parts ?? [];
-    if (modelParts.length) this.markTurnActivity();
+    if (modelParts.length) {
+      this.markReceived("serverContent.modelTurn");
+      this.markTurnActivity();
+    }
     for (const part of modelParts) {
       if (part.inlineData?.data) this.options.callbacks?.onAudio?.(part.inlineData.data);
     }
 
     if (content?.inputTranscription?.text) {
+      this.markReceived("serverContent.inputTranscription");
       this.markTurnActivity();
       this.inputTranscript = appendTranscript(this.inputTranscript, content.inputTranscription.text);
       const final = Boolean(content.inputTranscription.finished);
@@ -191,6 +289,7 @@ export class TrebolLiveClient {
     }
 
     if (content?.outputTranscription?.text) {
+      this.markReceived("serverContent.outputTranscription");
       this.markTurnActivity();
       this.outputTranscript = appendTranscript(this.outputTranscript, content.outputTranscription.text);
       // outputTranscription.finished is a transcription-segment boundary,
@@ -200,6 +299,7 @@ export class TrebolLiveClient {
     }
 
     if (content?.interrupted) {
+      this.markReceived("serverContent.interrupted");
       this.markTurnActivity();
       this.modelTurnInterrupted = true;
       this.lastModelTurnCompleted = false;
@@ -209,6 +309,7 @@ export class TrebolLiveClient {
     }
 
     if (content?.turnComplete) {
+      this.markReceived("serverContent.turnComplete");
       const wasInterrupted = this.modelTurnInterrupted;
       if (this.inputTranscript) void this.flushTranscript("user", "USER_TURN_COMPLETE");
       if (this.outputTranscript) {
@@ -218,21 +319,25 @@ export class TrebolLiveClient {
       this.lastModelTurnCompleted = !wasInterrupted;
       this.modelTurnActive = false;
       this.modelTurnInterrupted = false;
+      this.phase = "ready";
       this.options.callbacks?.onTurnComplete?.();
     }
 
     const update = message.sessionResumptionUpdate;
     if (update?.resumable && update.newHandle) {
+      this.markReceived("sessionResumptionUpdate");
       this.resumptionHandle = update.newHandle;
       this.options.callbacks?.onResumptionHandle?.(update.newHandle);
     }
     if (message.goAway && this.resumptionHandle) {
+      this.markReceived("goAway");
       const previousSession = this.session;
       this.session = null;
       this.scheduleReconnect();
       previousSession?.close();
     }
     if (message.toolCall?.functionCalls?.length) {
+      this.markReceived("toolCall");
       this.markTurnActivity();
       this.toolQueue = this.toolQueue
         .then(() => this.handleToolCalls(message.toolCall?.functionCalls ?? []))
@@ -266,6 +371,7 @@ export class TrebolLiveClient {
         payload = { ok: false, error: error instanceof Error ? error.message : "La herramienta falló." };
       }
 
+      this.markSent("toolResponse");
       this.session?.sendToolResponse({
         functionResponses: {
           id: call.id,
@@ -300,12 +406,16 @@ export class TrebolLiveClient {
 
   sendAudio(base64Pcm: string) {
     if (!this.session || this.muted || !base64Pcm) return;
+    this.markSent("realtimeInput.audio");
     this.session.sendRealtimeInput({ audio: { data: base64Pcm, mimeType: "audio/pcm;rate=16000" } });
   }
 
   sendText(text: string) {
     const normalized = text.trim().slice(0, 12_000);
-    if (this.session && normalized) this.session.sendRealtimeInput({ text: normalized });
+    if (this.session && normalized) {
+      this.markSent("realtimeInput.text");
+      this.session.sendRealtimeInput({ text: normalized });
+    }
   }
 
   syncContext(patch: TrebolContextPatch) {
@@ -318,7 +428,10 @@ export class TrebolLiveClient {
 
   setMuted(muted: boolean) {
     this.muted = muted;
-    if (muted) this.session?.sendRealtimeInput({ audioStreamEnd: true });
+    if (muted && this.session) {
+      this.markSent("audioStreamEnd");
+      this.session.sendRealtimeInput({ audioStreamEnd: true });
+    }
   }
 
   private async flushTranscript(
@@ -377,7 +490,28 @@ export class TrebolLiveClient {
     }
   }
 
-  private async handleUnexpectedClose(reason: string) {
+  private async persistDiagnostic(diagnostics: LiveCloseDiagnostics) {
+    const identity = this.identity;
+    if (!identity) return;
+    try {
+      const response = await fetch("/api/clouva-ai/live/turn", {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify({
+          action: "diagnostic",
+          runId: identity.runId,
+          conversationId: identity.conversationId,
+          diagnostics,
+        }),
+        cache: "no-store",
+      });
+      await responseJson(response, "LIVE_CONNECTION_FAILED");
+    } catch (error) {
+      console.warn("Trébol Live diagnostic persistence failed", error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  private async handleUnexpectedClose(diagnostics: LiveCloseDiagnostics) {
     const cleanAfterCompletedTurn = this.lastModelTurnCompleted && !this.modelTurnActive;
     const finishReason: TrebolLiveEndReason = cleanAfterCompletedTurn
       ? "MODEL_TURN_COMPLETE"
@@ -387,8 +521,8 @@ export class TrebolLiveClient {
       await this.flushTranscript("assistant", "SOCKET_CLOSED_UNEXPECTEDLY");
     }
     await this.transcriptDrain;
-    await this.persistEnd(finishReason);
-    this.options.callbacks?.onClosed?.(reason);
+    await this.persistEnd(finishReason, diagnostics);
+    this.options.callbacks?.onClosed?.(diagnostics.closeReason || "Conexión Live cerrada inesperadamente.");
   }
 
   private async finishAfterTransportLoss(reason: "RECONNECT_EXHAUSTED", message: string) {
@@ -398,12 +532,14 @@ export class TrebolLiveClient {
       await this.flushTranscript("assistant", reason);
     }
     await this.transcriptDrain;
-    await this.persistEnd(cleanAfterCompletedTurn ? "MODEL_TURN_COMPLETE" : reason);
+    const diagnostics = this.buildCloseDiagnostics(undefined, message);
+    await this.persistEnd(cleanAfterCompletedTurn ? "MODEL_TURN_COMPLETE" : reason, diagnostics);
     this.options.callbacks?.onClosed?.(message);
   }
 
   async close() {
     this.closing = true;
+    this.phase = "closing";
     if (this.reconnectTimer !== null) window.clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
 
@@ -413,17 +549,27 @@ export class TrebolLiveClient {
       await this.flushTranscript("assistant", "CLIENT_CANCELLED");
     }
     await this.transcriptDrain;
-    await this.persistEnd(cleanAfterCompletedTurn ? "MODEL_TURN_COMPLETE" : "CLIENT_CANCELLED");
+    const diagnostics = this.buildCloseDiagnostics(undefined, "Cierre solicitado por el cliente.");
+    await this.persistEnd(cleanAfterCompletedTurn ? "MODEL_TURN_COMPLETE" : "CLIENT_CANCELLED", diagnostics);
 
-    this.session?.sendRealtimeInput({ audioStreamEnd: true });
-    this.session?.close();
+    if (this.session) {
+      this.markSent("audioStreamEnd");
+      this.session.sendRealtimeInput({ audioStreamEnd: true });
+      this.markSent("session.close");
+      this.session.close();
+    }
     this.session = null;
   }
 
-  private async persistEnd(finishReason: TrebolLiveEndReason) {
+  private async persistEnd(finishReason: TrebolLiveEndReason, diagnostics?: LiveCloseDiagnostics) {
     if (!this.identity || this.endRunSent) return;
     this.endRunSent = true;
-    logTrebolEvent("TREBOL_LIVE_ENDED", { finishReason });
+    logTrebolEvent("TREBOL_LIVE_ENDED", {
+      finishReason,
+      runId: this.identity.runId,
+      phase: diagnostics?.phase ?? this.phase,
+      closeCode: diagnostics?.closeCode ?? null,
+    });
     try {
       const response = await fetch("/api/clouva-ai/live/turn", {
         method: "POST",
@@ -433,6 +579,7 @@ export class TrebolLiveClient {
           runId: this.identity.runId,
           conversationId: this.identity.conversationId,
           finishReason,
+          diagnostics,
         }),
         cache: "no-store",
       });

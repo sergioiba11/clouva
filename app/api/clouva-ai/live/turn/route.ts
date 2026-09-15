@@ -4,7 +4,11 @@ import {
   authenticateAgentRequest,
   requireAgentConversation,
 } from "@/lib/clouva-ai/agent/orchestrator";
-import { finishAgentRun, requireAgentRun } from "@/lib/clouva-ai/agent/run-store";
+import {
+  finishAgentRun,
+  requireAgentRun,
+  updateAgentRunDiagnostics,
+} from "@/lib/clouva-ai/agent/run-store";
 import {
   isCompletedTranscriptReason,
   isTrebolLiveEndReason,
@@ -15,18 +19,73 @@ import {
 export const runtime = "nodejs";
 
 type TurnBody = {
-  action?: "transcript" | "end";
+  action?: "transcript" | "end" | "diagnostic";
   runId?: string;
   conversationId?: string;
   messageId?: string;
   role?: "user" | "assistant";
   content?: string;
   finishReason?: string;
+  diagnostics?: unknown;
+};
+
+type SafeLiveDiagnostics = {
+  timestamp?: string | null;
+  sessionId: string;
+  readyState?: number | null;
+  closeCode?: number | null;
+  closeReason?: string | null;
+  wasClean?: boolean | null;
+  socketLifetimeMs?: number | null;
+  lastSentEvent?: string | null;
+  lastReceivedEvent?: string | null;
+  phase?: string | null;
 };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
-function runEndState(reason: TrebolLiveEndReason) {
+function boundedString(value: unknown, max: number): string | null {
+  return typeof value === "string" && value.trim() ? value.trim().slice(0, max) : null;
+}
+
+function boundedNumber(value: unknown, min: number, max: number): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= min && value <= max ? value : null;
+}
+
+function safeLiveDiagnostics(value: unknown, runId: string): SafeLiveDiagnostics | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const source = value as Record<string, unknown>;
+  return {
+    timestamp: boundedString(source.timestamp, 40),
+    sessionId: runId,
+    readyState: boundedNumber(source.readyState, 0, 3),
+    closeCode: boundedNumber(source.closeCode, 0, 65_535),
+    closeReason: boundedString(source.closeReason, 300),
+    wasClean: typeof source.wasClean === "boolean" ? source.wasClean : null,
+    socketLifetimeMs: boundedNumber(source.socketLifetimeMs, 0, 24 * 60 * 60 * 1_000),
+    lastSentEvent: boundedString(source.lastSentEvent, 80),
+    lastReceivedEvent: boundedString(source.lastReceivedEvent, 80),
+    phase: boundedString(source.phase, 40),
+  };
+}
+
+function logLiveDiagnostics(
+  runId: string,
+  conversationId: string,
+  diagnostics: SafeLiveDiagnostics,
+  finishReason?: string,
+) {
+  console.info(JSON.stringify({
+    event: "TREBOL_LIVE_DIAGNOSTIC",
+    at: new Date().toISOString(),
+    runId,
+    conversationId,
+    finishReason: finishReason ?? null,
+    ...diagnostics,
+  }));
+}
+
+function runEndState(reason: TrebolLiveEndReason, diagnostics: SafeLiveDiagnostics | null) {
   switch (reason) {
     case "MODEL_TURN_COMPLETE":
       return { status: "completed" as const, errorCode: null, errorMessage: null };
@@ -39,8 +98,10 @@ function runEndState(reason: TrebolLiveEndReason) {
     case "SOCKET_CLOSED_UNEXPECTEDLY":
       return {
         status: "failed" as const,
-        errorCode: "SOCKET_CLOSED_UNEXPECTEDLY",
-        errorMessage: "La conexión Live se cerró sin una finalización limpia.",
+        errorCode: "GEMINI_LIVE_SOCKET_CLOSED",
+        errorMessage: diagnostics?.closeReason
+          ? `Gemini Live cerró el socket: ${diagnostics.closeReason}`
+          : "Gemini Live cerró el socket sin una finalización limpia.",
       };
     case "RECONNECT_EXHAUSTED":
       return {
@@ -73,17 +134,30 @@ export async function POST(request: Request) {
       throw Object.assign(new Error("La auditoría de esta sesión Live no está disponible."), { status: 503 });
     }
 
+    if (body.action === "diagnostic") {
+      const diagnostics = safeLiveDiagnostics(body.diagnostics, runId);
+      if (!diagnostics) {
+        return NextResponse.json({ error: "El diagnóstico Live no es válido." }, { status: 400 });
+      }
+      logLiveDiagnostics(runId, conversationId, diagnostics);
+      await updateAgentRunDiagnostics({ supabase, run, diagnosticMetadata: diagnostics });
+      return NextResponse.json({ ok: true });
+    }
+
     if (body.action === "end") {
       if (!isTrebolLiveEndReason(body.finishReason)) {
         return NextResponse.json({ error: "La finalización Live no tiene una causa válida." }, { status: 400 });
       }
-      const end = runEndState(body.finishReason);
+      const diagnostics = safeLiveDiagnostics(body.diagnostics, runId);
+      const end = runEndState(body.finishReason, diagnostics);
+      if (diagnostics) logLiveDiagnostics(runId, conversationId, diagnostics, body.finishReason);
       await finishAgentRun({
         supabase,
         run,
         status: end.status,
         errorCode: end.errorCode,
         errorMessage: end.errorMessage,
+        diagnosticMetadata: diagnostics,
       });
       return NextResponse.json({ ok: true, status: end.status, finishReason: body.finishReason });
     }
