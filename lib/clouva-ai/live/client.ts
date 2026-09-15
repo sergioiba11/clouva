@@ -10,6 +10,7 @@ import {
 import type { TrebolContextPatch, TrebolRuntimeContext } from "../agent/types";
 import { liveContextUpdateText } from "./context-sync";
 import { TrebolLiveError, type TrebolLiveErrorCode } from "./errors";
+import type { TrebolLiveEndReason, TrebolLiveTranscriptFinishReason } from "./protocol";
 import { logTrebolEvent } from "../telemetry";
 
 type TokenResponse = {
@@ -28,6 +29,13 @@ type ToolResponse = {
   pendingAction?: unknown;
   error?: string;
   code?: TrebolLiveErrorCode;
+};
+
+type PendingTranscript = {
+  messageId: string;
+  role: "user" | "assistant";
+  content: string;
+  finishReason: TrebolLiveTranscriptFinishReason;
 };
 
 export type TrebolLiveClientCallbacks = {
@@ -77,9 +85,12 @@ export class TrebolLiveClient {
   private inputTranscript = "";
   private outputTranscript = "";
   private toolQueue = Promise.resolve();
-  private pendingTranscripts: Array<{ messageId: string; role: "user" | "assistant"; content: string }> = [];
+  private pendingTranscripts: PendingTranscript[] = [];
   private transcriptDrain = Promise.resolve();
   private endRunSent = false;
+  private modelTurnActive = false;
+  private modelTurnInterrupted = false;
+  private lastModelTurnCompleted = false;
 
   constructor(private readonly options: TrebolLiveClientOptions) {}
 
@@ -90,10 +101,19 @@ export class TrebolLiveClient {
     };
   }
 
+  private markTurnActivity() {
+    if (!this.modelTurnActive) this.modelTurnInterrupted = false;
+    this.modelTurnActive = true;
+    this.lastModelTurnCompleted = false;
+  }
+
   async connect() {
     this.closing = false;
     this.reconnectExhausted = false;
     this.endRunSent = false;
+    this.modelTurnActive = false;
+    this.modelTurnInterrupted = false;
+    this.lastModelTurnCompleted = false;
     logTrebolEvent("TREBOL_LIVE_CONNECTING");
     const response = await fetch("/api/clouva-ai/live/token", {
       method: "POST",
@@ -133,12 +153,15 @@ export class TrebolLiveClient {
         onerror: (event) => this.options.callbacks?.onError?.(new TrebolLiveError("LIVE_CONNECTION_FAILED", event.message || "Falló la conexión con Gemini Live.")),
         onclose: (event) => {
           this.session = null;
-          if (!this.closing && this.resumptionHandle) {
-            this.scheduleReconnect();
-          } else {
-            void this.persistEnd();
+          if (this.closing) {
             this.options.callbacks?.onClosed?.(event.reason || "Conexión Live cerrada.");
+            return;
           }
+          if (this.resumptionHandle) {
+            this.scheduleReconnect();
+            return;
+          }
+          void this.handleUnexpectedClose(event.reason || "Conexión Live cerrada inesperadamente.");
         },
       },
     });
@@ -153,28 +176,48 @@ export class TrebolLiveClient {
       this.reconnectExhausted = false;
     }
     const content = message.serverContent;
-    if (content?.interrupted) {
-      logTrebolEvent("TREBOL_LIVE_INTERRUPTED");
-      this.options.callbacks?.onInterrupted?.();
-    }
-
-    for (const part of content?.modelTurn?.parts ?? []) {
+    const modelParts = content?.modelTurn?.parts ?? [];
+    if (modelParts.length) this.markTurnActivity();
+    for (const part of modelParts) {
       if (part.inlineData?.data) this.options.callbacks?.onAudio?.(part.inlineData.data);
     }
 
     if (content?.inputTranscription?.text) {
+      this.markTurnActivity();
       this.inputTranscript = appendTranscript(this.inputTranscript, content.inputTranscription.text);
-      this.options.callbacks?.onTranscript?.("user", this.inputTranscript, Boolean(content.inputTranscription.finished));
-      if (content.inputTranscription.finished) void this.flushTranscript("user");
+      const final = Boolean(content.inputTranscription.finished);
+      this.options.callbacks?.onTranscript?.("user", this.inputTranscript, final);
+      if (final) void this.flushTranscript("user", "USER_TURN_COMPLETE");
     }
+
     if (content?.outputTranscription?.text) {
+      this.markTurnActivity();
       this.outputTranscript = appendTranscript(this.outputTranscript, content.outputTranscription.text);
-      this.options.callbacks?.onTranscript?.("assistant", this.outputTranscript, Boolean(content.outputTranscription.finished));
-      if (content.outputTranscription.finished) void this.flushTranscript("assistant");
+      // outputTranscription.finished is a transcription-segment boundary,
+      // not the persistence boundary for the model turn. Persist only when
+      // Gemini reports interruption or turnComplete.
+      this.options.callbacks?.onTranscript?.("assistant", this.outputTranscript, false);
     }
+
+    if (content?.interrupted) {
+      this.markTurnActivity();
+      this.modelTurnInterrupted = true;
+      this.lastModelTurnCompleted = false;
+      logTrebolEvent("TREBOL_LIVE_INTERRUPTED");
+      if (this.outputTranscript) void this.flushTranscript("assistant", "MODEL_INTERRUPTED");
+      this.options.callbacks?.onInterrupted?.();
+    }
+
     if (content?.turnComplete) {
-      if (this.inputTranscript) void this.flushTranscript("user");
-      if (this.outputTranscript) void this.flushTranscript("assistant");
+      const wasInterrupted = this.modelTurnInterrupted;
+      if (this.inputTranscript) void this.flushTranscript("user", "USER_TURN_COMPLETE");
+      if (this.outputTranscript) {
+        this.options.callbacks?.onTranscript?.("assistant", this.outputTranscript, true);
+        void this.flushTranscript("assistant", wasInterrupted ? "MODEL_INTERRUPTED" : "MODEL_TURN_COMPLETE");
+      }
+      this.lastModelTurnCompleted = !wasInterrupted;
+      this.modelTurnActive = false;
+      this.modelTurnInterrupted = false;
       this.options.callbacks?.onTurnComplete?.();
     }
 
@@ -190,6 +233,7 @@ export class TrebolLiveClient {
       previousSession?.close();
     }
     if (message.toolCall?.functionCalls?.length) {
+      this.markTurnActivity();
       this.toolQueue = this.toolQueue
         .then(() => this.handleToolCalls(message.toolCall?.functionCalls ?? []))
         .catch((error) => this.options.callbacks?.onError?.(error instanceof Error ? error : new Error(String(error))));
@@ -238,8 +282,7 @@ export class TrebolLiveClient {
       this.reconnectExhausted = true;
       const error = new TrebolLiveError("LIVE_SESSION_EXPIRED", "No se pudo retomar la sesión Live después de 3 intentos.");
       this.options.callbacks?.onError?.(error);
-      void this.persistEnd();
-      this.options.callbacks?.onClosed?.(error.message);
+      void this.finishAfterTransportLoss("RECONNECT_EXHAUSTED", error.message);
       return;
     }
     this.reconnectAttempt += 1;
@@ -278,13 +321,21 @@ export class TrebolLiveClient {
     if (muted) this.session?.sendRealtimeInput({ audioStreamEnd: true });
   }
 
-  private async flushTranscript(role: "user" | "assistant") {
+  private async flushTranscript(
+    role: "user" | "assistant",
+    finishReason: TrebolLiveTranscriptFinishReason,
+  ) {
     if (!this.identity) return;
     const content = role === "user" ? this.inputTranscript : this.outputTranscript;
     if (!content) return;
     if (role === "user") this.inputTranscript = "";
     else this.outputTranscript = "";
-    this.pendingTranscripts.push({ messageId: crypto.randomUUID(), role, content });
+    this.pendingTranscripts.push({
+      messageId: crypto.randomUUID(),
+      role,
+      content,
+      finishReason,
+    });
     this.transcriptDrain = this.transcriptDrain.then(() => this.drainTranscripts());
     await this.transcriptDrain;
   }
@@ -304,9 +355,10 @@ export class TrebolLiveClient {
               action: "transcript",
               runId: identity.runId,
               conversationId: identity.conversationId,
-                messageId: transcript.messageId,
-                role: transcript.role,
-                content: transcript.content,
+              messageId: transcript.messageId,
+              role: transcript.role,
+              content: transcript.content,
+              finishReason: transcript.finishReason,
             }),
             cache: "no-store",
           });
@@ -325,30 +377,69 @@ export class TrebolLiveClient {
     }
   }
 
+  private async handleUnexpectedClose(reason: string) {
+    const cleanAfterCompletedTurn = this.lastModelTurnCompleted && !this.modelTurnActive;
+    const finishReason: TrebolLiveEndReason = cleanAfterCompletedTurn
+      ? "MODEL_TURN_COMPLETE"
+      : "SOCKET_CLOSED_UNEXPECTEDLY";
+    if (!cleanAfterCompletedTurn) {
+      await this.flushTranscript("user", "SOCKET_CLOSED_UNEXPECTEDLY");
+      await this.flushTranscript("assistant", "SOCKET_CLOSED_UNEXPECTEDLY");
+    }
+    await this.transcriptDrain;
+    await this.persistEnd(finishReason);
+    this.options.callbacks?.onClosed?.(reason);
+  }
+
+  private async finishAfterTransportLoss(reason: "RECONNECT_EXHAUSTED", message: string) {
+    const cleanAfterCompletedTurn = this.lastModelTurnCompleted && !this.modelTurnActive;
+    if (!cleanAfterCompletedTurn) {
+      await this.flushTranscript("user", reason);
+      await this.flushTranscript("assistant", reason);
+    }
+    await this.transcriptDrain;
+    await this.persistEnd(cleanAfterCompletedTurn ? "MODEL_TURN_COMPLETE" : reason);
+    this.options.callbacks?.onClosed?.(message);
+  }
+
   async close() {
     this.closing = true;
     if (this.reconnectTimer !== null) window.clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
-    await Promise.all([this.flushTranscript("user"), this.flushTranscript("assistant")]);
+
+    const cleanAfterCompletedTurn = this.lastModelTurnCompleted && !this.modelTurnActive;
+    if (!cleanAfterCompletedTurn) {
+      await this.flushTranscript("user", "CLIENT_CANCELLED");
+      await this.flushTranscript("assistant", "CLIENT_CANCELLED");
+    }
+    await this.transcriptDrain;
+    await this.persistEnd(cleanAfterCompletedTurn ? "MODEL_TURN_COMPLETE" : "CLIENT_CANCELLED");
+
     this.session?.sendRealtimeInput({ audioStreamEnd: true });
     this.session?.close();
     this.session = null;
-    await this.persistEnd();
   }
 
-  private async persistEnd() {
+  private async persistEnd(finishReason: TrebolLiveEndReason) {
     if (!this.identity || this.endRunSent) return;
     this.endRunSent = true;
-    logTrebolEvent("TREBOL_LIVE_ENDED");
-    await fetch("/api/clouva-ai/live/turn", {
+    logTrebolEvent("TREBOL_LIVE_ENDED", { finishReason });
+    try {
+      const response = await fetch("/api/clouva-ai/live/turn", {
         method: "POST",
         headers: this.headers(),
         body: JSON.stringify({
           action: "end",
           runId: this.identity.runId,
           conversationId: this.identity.conversationId,
+          finishReason,
         }),
         cache: "no-store",
-    }).catch(() => undefined);
+      });
+      await responseJson(response, "LIVE_CONNECTION_FAILED");
+    } catch (error) {
+      this.endRunSent = false;
+      this.options.callbacks?.onError?.(error instanceof Error ? error : new Error(String(error)));
+    }
   }
 }
