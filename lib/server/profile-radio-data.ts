@@ -1,6 +1,7 @@
 import "server-only";
 
 import { cache } from "react";
+import { IGLU_RADIO_STREAM_URL } from "@/lib/iglu-radio/config";
 import type { RadioOwnerKind, RadioStationConfig } from "@/lib/radio/types";
 import { resolvePlayerAlias, resolveStudioAlias } from "@/lib/server/public-identity-data";
 import { resolvePublicSpaceAlias } from "@/lib/server/public-space-data";
@@ -17,23 +18,15 @@ type RadioIdentity = {
 
 type PublicRadioRow = {
   id: string;
-  profile_type: RadioOwnerKind;
-  profile_id: string;
-  station_slug: string;
-  station_name: string | null;
+  player_id: string | null;
+  space_id: string | null;
+  studio_id: string | null;
+  station_name: string;
   tagline: string | null;
-  cover_url: string | null;
-  artwork_url: string | null;
   stream_url: string | null;
+  artwork_url: string | null;
   is_enabled: boolean;
   is_public: boolean;
-  now_playing_title: string | null;
-  now_playing_artist: string | null;
-  now_playing_program: string | null;
-  now_playing_host: string | null;
-  now_playing_artwork: string | null;
-  now_playing_started_at: string | null;
-  now_playing_ends_at: string | null;
 };
 
 async function resolveIdentity(alias: string): Promise<RadioIdentity | null> {
@@ -76,6 +69,12 @@ async function resolveIdentity(alias: string): Promise<RadioIdentity | null> {
   return null;
 }
 
+function ownerColumn(ownerKind: RadioOwnerKind) {
+  if (ownerKind === "player") return "player_id";
+  if (ownerKind === "studio") return "studio_id";
+  return "space_id";
+}
+
 export const resolvePublicProfileRadio = cache(async (alias: string): Promise<RadioStationConfig | null> => {
   const normalized = alias.trim().toLowerCase();
   if (!normalized) return null;
@@ -85,9 +84,8 @@ export const resolvePublicProfileRadio = cache(async (alias: string): Promise<Ra
 
   const { data, error } = await createPublicSupabase()
     .from("profile_radio_settings")
-    .select("id,profile_type,profile_id,station_slug,station_name,tagline,cover_url,artwork_url,stream_url,is_enabled,is_public,now_playing_title,now_playing_artist,now_playing_program,now_playing_host,now_playing_artwork,now_playing_started_at,now_playing_ends_at")
-    .eq("profile_type", identity.ownerKind)
-    .eq("profile_id", identity.ownerId)
+    .select("id,player_id,space_id,studio_id,station_name,tagline,stream_url,artwork_url,is_enabled,is_public")
+    .eq(ownerColumn(identity.ownerKind), identity.ownerId)
     .eq("is_enabled", true)
     .eq("is_public", true)
     .maybeSingle();
@@ -96,7 +94,10 @@ export const resolvePublicProfileRadio = cache(async (alias: string): Promise<Ra
   if (!data) return null;
 
   const row = data as PublicRadioRow;
-  const stationName = row.station_name?.trim() || identity.name;
+  const stationName = row.station_name.trim() || identity.name;
+  const artworkUrl = row.artwork_url || identity.artworkUrl;
+  const isHistoricalIglu = identity.ownerKind === "studio" && identity.canonicalAlias === "el-iglu";
+  const streamUrl = row.stream_url?.trim() || (isHistoricalIglu ? IGLU_RADIO_STREAM_URL : "");
 
   return {
     id: row.id,
@@ -106,18 +107,18 @@ export const resolvePublicProfileRadio = cache(async (alias: string): Promise<Ra
     profileHref: `/${identity.canonicalAlias}`,
     name: stationName,
     tagline: row.tagline?.trim() || identity.tagline || null,
-    streamUrl: row.stream_url?.trim() || "",
-    artworkUrl: row.artwork_url || row.cover_url || identity.artworkUrl,
+    streamUrl,
+    artworkUrl,
     enabled: row.is_enabled,
     published: row.is_public,
     metadata: {
-      title: row.now_playing_title?.trim() || stationName,
-      artist: row.now_playing_artist?.trim() || identity.name,
-      program: row.now_playing_program?.trim() || "Señal principal",
-      host: row.now_playing_host,
-      artwork: row.now_playing_artwork || row.artwork_url || row.cover_url || identity.artworkUrl,
-      startedAt: row.now_playing_started_at,
-      endsAt: row.now_playing_ends_at,
+      title: stationName,
+      artist: identity.name,
+      program: "",
+      host: null,
+      artwork: artworkUrl,
+      startedAt: null,
+      endsAt: null,
     },
   };
 });
