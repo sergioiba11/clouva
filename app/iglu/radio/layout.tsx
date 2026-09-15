@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 import { IgluRadioShell } from "@/components/iglu-radio/IgluRadioShell";
 import { resolvePublicProfileRadio } from "@/lib/server/profile-radio-data";
@@ -13,8 +14,9 @@ export const metadata: Metadata = {
 };
 
 export default async function IgluRadioLayout({ children }: { children: ReactNode }) {
-  const configuredStation = await resolvePublicProfileRadio("el-iglu").catch(() => null);
-  const station = configuredStation ? { ...configuredStation, alias: "iglu" } : undefined;
+  const configuredStation = await resolvePublicProfileRadio("el-iglu");
+  if (!configuredStation) notFound();
 
+  const station = { ...configuredStation, alias: "iglu" };
   return <IgluRadioShell station={station}>{children}</IgluRadioShell>;
 }
