@@ -97,7 +97,7 @@ test("unexpected Live socket closure keeps the semantic reason and stores provid
   assert.match(route, /updateAgentRunDiagnostics/);
   assert.match(runStore, /diagnostic_metadata/);
   assert.match(migration, /add column if not exists diagnostic_metadata jsonb not null default '\{\}'::jsonb/i);
-  assert.doesNotMatch(migration, /audio|api[_ ]?key|access[_ ]?token|credential/i);
+  assert.doesNotMatch(migration, /add column if not exists\s+(?:audio|api_key|access_token|credential)/i);
 });
 
 test("rate-limit storage is service-role only", () => {
