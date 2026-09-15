@@ -3,17 +3,22 @@
 import { ExternalLink, ImageIcon, Loader2, RefreshCw, Sparkles } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+type Topic = "lunar" | "numerologia" | "astrologia";
 type Insight = {
-  topic: "lunar" | "numerologia" | "astrologia";
+  topic: Topic;
   title: string;
-  content: string;
+  content: string | null;
   sources: Array<{ title: string; url: string }>;
   model: string | null;
-  generatedAt: string;
+  generatedAt: string | null;
+  expiresAt: string | null;
   cached: boolean;
+  stale: boolean;
+  refreshing: boolean;
   grounded: boolean;
+  state: "fresh" | "stale" | "empty";
 };
 
 function RichKnowledgeMarkdown({ content }: { content: string }) {
@@ -53,33 +58,85 @@ function RichKnowledgeMarkdown({ content }: { content: string }) {
   );
 }
 
-export function GroundedKnowledgePanel({ alias, topic, heading, value }: { alias: string; topic: "lunar" | "numerologia" | "astrologia"; heading: string; value?: string | null }) {
-  const [insight, setInsight] = useState<Insight | null>(null);
-  const [loading, setLoading] = useState(true);
+function updatedLabel(value: string | null) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const diffMinutes = Math.max(0, Math.round((Date.now() - date.getTime()) / 60_000));
+  if (diffMinutes < 1) return "Actualizado recién";
+  if (diffMinutes < 60) return `Actualizado hace ${diffMinutes} min`;
+  const diffHours = Math.round(diffMinutes / 60);
+  if (diffHours < 24) return `Actualizado hace ${diffHours} h`;
+  return `Actualizado ${new Intl.DateTimeFormat("es-AR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }).format(date)}`;
+}
+
+export function GroundedKnowledgePanel({
+  alias,
+  topic,
+  heading,
+  value,
+  initialInsight = null,
+}: {
+  alias: string;
+  topic: Topic;
+  heading: string;
+  value?: string | null;
+  initialInsight?: Insight | null;
+}) {
+  const [insight, setInsight] = useState<Insight | null>(initialInsight);
+  const [loading, setLoading] = useState(!initialInsight);
+  const [localRefreshing, setLocalRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [refreshError, setRefreshError] = useState<string | null>(null);
   const [visualUrl, setVisualUrl] = useState<string | null>(null);
   const [visualLoading, setVisualLoading] = useState(false);
   const [visualError, setVisualError] = useState<string | null>(null);
+  const autoRefreshKeyRef = useRef<string | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const fetchInsight = useCallback(async (preserve = false) => {
+    if (!preserve) setLoading(true);
     setError(null);
     try {
       const response = await fetch(`/api/knowledge/insight?alias=${encodeURIComponent(alias)}&topic=${encodeURIComponent(topic)}`, { cache: "no-store" });
       const body = await response.json().catch(() => ({})) as Insight & { error?: string };
       if (!response.ok) throw new Error(body.error || "No se pudo cargar la data.");
       setInsight(body);
-      setVisualUrl(null);
-      setVisualError(null);
+      return body;
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "No se pudo cargar la data.");
+      return null;
     } finally {
-      setLoading(false);
+      if (!preserve) setLoading(false);
+    }
+  }, [alias, topic]);
+
+  const refresh = useCallback(async (force = false) => {
+    setLocalRefreshing(true);
+    setRefreshError(null);
+    try {
+      const response = await fetch("/api/knowledge/insight/refresh", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ alias, topic, force }),
+      });
+      const body = await response.json().catch(() => ({})) as Insight & { error?: string; refreshAccepted?: boolean };
+      if (response.status === 202) {
+        setInsight((current) => current ? { ...current, refreshing: true } : body);
+        return;
+      }
+      if (!response.ok) throw new Error(body.error || "No se pudo actualizar la data.");
+      setInsight(body);
+      setVisualUrl(null);
+      setVisualError(null);
+    } catch (refreshLoadError) {
+      setRefreshError(refreshLoadError instanceof Error ? refreshLoadError.message : "No se pudo actualizar la data.");
+    } finally {
+      setLocalRefreshing(false);
     }
   }, [alias, topic]);
 
   const generateVisual = useCallback(async () => {
-    if (!insight || visualLoading) return;
+    if (!insight?.content || visualLoading) return;
     setVisualLoading(true);
     setVisualError(null);
     try {
@@ -102,9 +159,35 @@ export function GroundedKnowledgePanel({ alias, topic, heading, value }: { alias
     } finally {
       setVisualLoading(false);
     }
-  }, [alias, heading, insight, topic, value, visualLoading]);
+  }, [alias, heading, insight?.content, topic, value, visualLoading]);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    if (initialInsight) {
+      setInsight(initialInsight);
+      setLoading(false);
+      return;
+    }
+    void fetchInsight();
+  }, [fetchInsight, initialInsight]);
+
+  useEffect(() => {
+    if (!insight || localRefreshing || insight.refreshing) return;
+    if (insight.state === "fresh" && !insight.stale) return;
+    const key = `${topic}:${insight.state}:${insight.generatedAt ?? "empty"}`;
+    if (autoRefreshKeyRef.current === key) return;
+    autoRefreshKeyRef.current = key;
+    void refresh(false);
+  }, [insight, localRefreshing, refresh, topic]);
+
+  useEffect(() => {
+    if (!insight?.refreshing || localRefreshing) return;
+    const timer = window.setTimeout(() => { void fetchInsight(true); }, 3_000);
+    return () => window.clearTimeout(timer);
+  }, [fetchInsight, insight?.generatedAt, insight?.refreshing, localRefreshing]);
+
+  const isRefreshing = localRefreshing || Boolean(insight?.refreshing);
+  const hasContent = Boolean(insight?.content);
+  const timestampLabel = useMemo(() => updatedLabel(insight?.generatedAt ?? null), [insight?.generatedAt]);
 
   return (
     <section className="rounded-[2rem] border border-violet-300/15 bg-[radial-gradient(circle_at_85%_5%,rgba(139,92,246,.18),transparent_34%),#0b0913] p-5 sm:p-7">
@@ -113,15 +196,38 @@ export function GroundedKnowledgePanel({ alias, topic, heading, value }: { alias
           <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-violet-300/70">CLOUVA AI · DATA FUNDAMENTADA</p>
           <h1 className="mt-2 text-3xl font-black tracking-tight sm:text-4xl">{heading}</h1>
           {value ? <p className="mt-2 text-5xl font-black text-violet-200">{value}</p> : null}
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-[10px] text-white/35">
+            {timestampLabel ? <span>{timestampLabel}</span> : null}
+            {isRefreshing ? <span className="inline-flex items-center gap-1 text-violet-200/75"><RefreshCw size={11} className="animate-spin" /> Actualizando fuentes…</span> : null}
+          </div>
         </div>
-        <button type="button" onClick={() => void load()} disabled={loading} className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.035] px-3 py-2 text-xs font-semibold text-white/55 transition hover:text-white disabled:opacity-50"><RefreshCw size={14} className={loading ? "animate-spin" : ""} /> Actualizar</button>
+        <button
+          type="button"
+          onClick={() => void refresh(true)}
+          disabled={localRefreshing}
+          className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.035] px-3 py-2 text-xs font-semibold text-white/55 transition hover:text-white disabled:opacity-50"
+        >
+          <RefreshCw size={14} className={localRefreshing ? "animate-spin" : ""} /> Actualizar
+        </button>
       </div>
 
-      {loading ? (
-        <div className="mt-8 flex min-h-48 items-center justify-center gap-3 text-sm text-white/45"><Loader2 size={18} className="animate-spin text-violet-300" /> Buscando y verificando fuentes…</div>
-      ) : error ? (
+      {!hasContent && refreshError && !isRefreshing ? (
+        <div className="mt-7 rounded-2xl border border-amber-300/15 bg-amber-300/[0.06] p-4 text-sm text-amber-100/80">
+          No se pudo preparar la información actual. Podés volver a intentar con “Actualizar”.
+        </div>
+      ) : !hasContent && (loading || isRefreshing || insight?.state === "empty") ? (
+        <div className="mt-7 rounded-2xl border border-white/10 bg-black/25 p-4 sm:p-5">
+          <div className="flex items-center gap-2 text-xs text-white/45"><Loader2 size={14} className="animate-spin text-violet-300" /> Preparando información actual…</div>
+          <div className="mt-5 space-y-3">
+            <div className="h-3 w-4/5 animate-pulse rounded-full bg-white/[0.07]" />
+            <div className="h-3 w-full animate-pulse rounded-full bg-white/[0.06]" />
+            <div className="h-3 w-3/4 animate-pulse rounded-full bg-white/[0.06]" />
+            <div className="h-3 w-5/6 animate-pulse rounded-full bg-white/[0.05]" />
+          </div>
+        </div>
+      ) : error && !hasContent ? (
         <div className="mt-7 rounded-2xl border border-red-400/20 bg-red-500/10 p-4 text-sm text-red-200">{error}</div>
-      ) : insight ? (
+      ) : insight?.content ? (
         <>
           <div className="mt-7 rounded-2xl border border-white/10 bg-black/25 p-4 sm:p-5">
             <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -147,11 +253,12 @@ export function GroundedKnowledgePanel({ alias, topic, heading, value }: { alias
             </figure>
           ) : null}
           {visualError ? <div className="mt-4 rounded-xl border border-amber-300/15 bg-amber-300/[0.06] px-4 py-3 text-xs text-amber-100/75">{visualError}</div> : null}
+          {refreshError ? <div className="mt-4 rounded-xl border border-amber-300/15 bg-amber-300/[0.05] px-4 py-3 text-xs text-amber-100/70">No se pudo actualizar ahora. Seguís viendo la última versión disponible.</div> : null}
 
           <div className="mt-5">
             <div className="flex items-center justify-between gap-3">
               <p className="text-xs font-bold uppercase tracking-[0.2em] text-white/35">Fuentes consultadas</p>
-              <span className="text-[10px] text-white/25">{insight.cached ? "cache verificado" : "búsqueda nueva"}</span>
+              <span className="text-[10px] text-white/25">{insight.stale ? "mostrando cache · revalidando" : insight.cached ? "cache verificado" : "búsqueda nueva"}</span>
             </div>
             {insight.sources.length ? (
               <div className="mt-3 grid gap-2 sm:grid-cols-2">

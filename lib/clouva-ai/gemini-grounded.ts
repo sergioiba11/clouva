@@ -21,9 +21,10 @@ async function callGroundedGemini(args: {
   instruction: string;
   prompt: string;
   maxOutputTokens?: number;
+  timeoutMs?: number;
 }) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 22_000);
+  const timeout = setTimeout(() => controller.abort(), args.timeoutMs ?? 16_000);
   try {
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(args.model)}:generateContent`,
@@ -94,13 +95,21 @@ export async function generateGroundedWithFallback(args: {
   instruction: string;
   prompt: string;
   maxOutputTokens?: number;
+  primaryTimeoutMs?: number;
+  fallbackTimeoutMs?: number;
 }) {
   const fallback = process.env.GEMINI_FALLBACK_MODEL || "gemini-3.1-flash-lite";
   const models = Array.from(new Set([args.selectedModel, fallback]));
   let lastError = "Gemini no respondió.";
-  for (const model of models) {
+
+  for (let index = 0; index < models.length; index += 1) {
+    const model = models[index];
     try {
-      const result = await callGroundedGemini({ ...args, model });
+      const result = await callGroundedGemini({
+        ...args,
+        model,
+        timeoutMs: index === 0 ? args.primaryTimeoutMs ?? 16_000 : args.fallbackTimeoutMs ?? 9_000,
+      });
       return { ...result, model };
     } catch (error) {
       lastError = error instanceof Error ? error.message : lastError;
@@ -108,5 +117,6 @@ export async function generateGroundedWithFallback(args: {
       if (!isTransientGeminiError(status, lastError)) throw error;
     }
   }
+
   throw new Error(`Ningún modelo respondió. Último error: ${lastError}`);
 }

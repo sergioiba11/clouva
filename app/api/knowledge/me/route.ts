@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  buildKnowledgeSpec,
+  knowledgeTopicFrom,
+  readKnowledgeInsight,
+} from "@/lib/knowledge/grounded-knowledge";
+import {
   calculateNumerologyNumber,
   normalizeKnowledgeTopics,
   zodiacSignFromBirthDate,
@@ -53,16 +58,69 @@ function view(profile: PlayerKnowledgeProfile | null, player: { id: string; slug
 }
 
 export async function GET(request: NextRequest) {
+  const startedAt = Date.now();
+  let authMs = 0;
+  let playerMs = 0;
+  let profileMs = 0;
+  let cacheMs = 0;
+
   try {
+    const authStartedAt = Date.now();
     const { user } = await requireUser(request);
+    authMs = Date.now() - authStartedAt;
+
     const admin = createAdminSupabase();
+    const playerStartedAt = Date.now();
     const player = await findEditablePlayer(admin, user.id);
+    playerMs = Date.now() - playerStartedAt;
     if (!player) return NextResponse.json({ error: "No pudimos resolver tu Player." }, { status: 404 });
 
+    const profileStartedAt = Date.now();
     const result = await admin.from("player_knowledge_profiles").select("*").eq("player_id", player.id).maybeSingle();
+    profileMs = Date.now() - profileStartedAt;
     if (result.error) throw new Error(result.error.message);
-    return NextResponse.json(view((result.data as PlayerKnowledgeProfile | null) ?? null, player));
+
+    const profile = (result.data as PlayerKnowledgeProfile | null) ?? null;
+    const topic = knowledgeTopicFrom(request.nextUrl.searchParams.get("topic"));
+    let insight = null;
+
+    if (topic && profile) {
+      try {
+        const spec = buildKnowledgeSpec(topic, profile);
+        const cacheStartedAt = Date.now();
+        insight = await readKnowledgeInsight(admin, player.id, topic, spec);
+        cacheMs = Date.now() - cacheStartedAt;
+      } catch (insightError) {
+        const message = insightError instanceof Error ? insightError.message : "";
+        if (!message.startsWith("Este Player")) throw insightError;
+      }
+    }
+
+    console.info("KNOWLEDGE_PERF", {
+      route: "knowledge:me",
+      topic,
+      authMs,
+      playerMs,
+      profileMs,
+      cacheMs,
+      totalMs: Date.now() - startedAt,
+      state: insight?.state ?? null,
+    });
+
+    return NextResponse.json({
+      ...view(profile, player),
+      ...(topic ? { insight } : {}),
+    });
   } catch (error) {
+    console.error("KNOWLEDGE_PERF", {
+      route: "knowledge:me",
+      authMs,
+      playerMs,
+      profileMs,
+      cacheMs,
+      totalMs: Date.now() - startedAt,
+      error: error instanceof Error ? error.message : "unknown",
+    });
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "No se pudo cargar Conocimiento." },
       { status: isAuthError(error) ? 401 : 500 },
@@ -101,7 +159,7 @@ export async function PATCH(request: NextRequest) {
       .upsert(patch, { onConflict: "player_id" })
       .select("*")
       .single();
-    if (result.error) throw new Error(result.error.message);
+    if (result.error || !result.data) throw result.error ?? new Error("No se pudo guardar Conocimiento.");
 
     return NextResponse.json(view(result.data as PlayerKnowledgeProfile, player));
   } catch (error) {
