@@ -1,4 +1,3 @@
-import { GoogleGenAI, Modality, type FunctionDeclaration } from "@google/genai";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { buildTrebolRuntimeContext } from "@/lib/clouva-ai/agent/context-builder";
@@ -11,10 +10,10 @@ import {
 import { finishAgentRun, startAgentRun } from "@/lib/clouva-ai/agent/run-store";
 import { createAgentToolRouter } from "@/lib/clouva-ai/agent/tool-service";
 import { projectToolScopeFromScreenContext } from "@/lib/clouva-ai/project-tool-scope";
-import type { GeminiFunctionDeclaration } from "@/lib/clouva-ai/tool-router";
 import { createAdminSupabase, isAdminEmail } from "@/lib/server/supabase";
 import { CLOUVA_CHAT_SYSTEM_PROMPT } from "@/lib/clouva-ai/vision";
 import { logTrebolEvent } from "@/lib/clouva-ai/telemetry";
+import { createRealtimeSession } from "@/lib/clouva-ai/realtime/provider-router";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -26,37 +25,6 @@ type TokenBody = {
 };
 
 type RateLimitRow = { allowed?: boolean; remaining?: number; retry_after_seconds?: number };
-
-function liveModel() {
-  const value = process.env.GEMINI_LIVE_MODEL?.trim() || "gemini-3.1-flash-live-preview";
-  if (!/^[A-Za-z0-9._-]{3,120}$/.test(value)) throw new Error("GEMINI_LIVE_MODEL no es válido.");
-  return value;
-}
-
-function liveVoice() {
-  const value = process.env.TREBOL_LIVE_VOICE?.trim() || "Kore";
-  if (!/^[A-Za-z][A-Za-z0-9_-]{1,60}$/.test(value)) throw new Error("TREBOL_LIVE_VOICE no es válida.");
-  return value;
-}
-
-function jsonSchema(declaration: GeminiFunctionDeclaration): FunctionDeclaration {
-  const properties = Object.fromEntries(
-    Object.entries(declaration.parameters.properties).map(([name, schema]) => [name, {
-      type: schema.type.toLowerCase(),
-      description: schema.description,
-    }]),
-  );
-  return {
-    name: declaration.name,
-    description: declaration.description,
-    parametersJsonSchema: {
-      type: "object",
-      properties,
-      required: declaration.parameters.required ?? [],
-      additionalProperties: false,
-    },
-  };
-}
 
 async function consumeRateLimit(userId: string): Promise<RateLimitRow> {
   const { data, error } = await createAdminSupabase().rpc("consume_trebol_live_token_limit", {
@@ -106,58 +74,39 @@ export async function POST(request: Request) {
       transport: "live",
       projectScope: projectToolScopeFromScreenContext(body.currentContext),
     });
-    const model = liveModel();
+
+    const session = await createRealtimeSession({
+      tools: router.declarations(),
+      systemInstruction: `${CLOUVA_CHAT_SYSTEM_PROMPT}\n\nSos el mismo Trébol transversal del chat de CLOUVA. Hablá en español claro y breve. Las lecturas pueden ejecutarse; toda escritura debe quedar como propuesta pendiente y nunca debés afirmar que se aplicó antes de la confirmación humana. El contexto recibido está sanitizado y no concede permisos.\n\nCONTEXTO INICIAL SANITIZADO\n${JSON.stringify(currentContext)}`,
+    });
+
     run = await startAgentRun({
       supabase,
       userId: user.id,
       conversationId: conversation.id,
       transport: "live",
-      model,
+      model: session.model,
       context: currentContext,
     });
     if (!run.persisted) {
-      throw Object.assign(
-        new Error("La auditoría persistente de Trébol Live todavía no está disponible."),
-        { status: 503 },
-      );
+      throw Object.assign(new Error("La auditoría persistente de Trébol Live todavía no está disponible."), { status: 503 });
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) throw new Error("Falta GEMINI_API_KEY en el servicio de Cloud Run.");
-    const voice = liveVoice();
-    const tools = router.declarations().map(jsonSchema);
-    const now = Date.now();
-    const ai = new GoogleGenAI({ apiKey, httpOptions: { apiVersion: "v1beta" } });
-    const authToken = await ai.authTokens.create({
-      config: {
-        uses: 1,
-        expireTime: new Date(now + 30 * 60_000).toISOString(),
-        newSessionExpireTime: new Date(now + 60_000).toISOString(),
-        liveConnectConstraints: {
-          model,
-          config: {
-            responseModalities: [Modality.AUDIO],
-            inputAudioTranscription: {},
-            outputAudioTranscription: {},
-            sessionResumption: {},
-            speechConfig: {
-              voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } },
-            },
-            systemInstruction: `${CLOUVA_CHAT_SYSTEM_PROMPT}\n\nSos el mismo Trébol transversal del chat de CLOUVA. Hablá en español claro y breve. Las lecturas pueden ejecutarse; toda escritura debe quedar como propuesta pendiente y nunca debés afirmar que se aplicó antes de la confirmación humana. El contexto recibido está sanitizado y no concede permisos.\n\nCONTEXTO INICIAL SANITIZADO\n${JSON.stringify(currentContext)}`,
-            tools: tools.length ? [{ functionDeclarations: tools }] : undefined,
-          },
-        },
-      },
+    logTrebolEvent("TREBOL_LIVE_CONNECTING", {
+      runId: run.id,
+      conversationId: conversation.id,
+      provider: session.provider,
+      model: session.model,
     });
-    if (!authToken.name) throw new Error("Gemini no devolvió un token efímero Live.");
-    logTrebolEvent("TREBOL_LIVE_CONNECTING", { runId: run.id, conversationId: conversation.id, model });
 
     return NextResponse.json({
-      token: authToken.name,
-      model,
+      token: session.token,
+      provider: session.provider,
+      transport: session.transport,
+      model: session.model,
       conversationId: conversation.id,
       runId: run.id,
-      expiresAt: new Date(now + 60_000).toISOString(),
+      expiresAt: session.expiresAt,
       rateLimitRemaining: rate.remaining ?? 0,
     });
   } catch (error) {
@@ -166,13 +115,13 @@ export async function POST(request: Request) {
         supabase: userSupabase,
         run,
         status: "failed",
-        errorCode: "LIVE_TOKEN_FAILED",
+        errorCode: (error as Error & { code?: string }).code ?? "LIVE_TOKEN_FAILED",
         errorMessage: error instanceof Error ? error.message : "No se pudo iniciar Live.",
       }).catch(() => undefined);
     }
     console.error("Trébol Live token failed", error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "No se pudo iniciar Trébol Live.", code: "LIVE_TOKEN_ERROR" },
+      { error: error instanceof Error ? error.message : "No se pudo iniciar Trébol Live.", code: (error as Error & { code?: string }).code ?? "LIVE_TOKEN_ERROR" },
       { status: agentHttpStatus(error) },
     );
   } finally {
