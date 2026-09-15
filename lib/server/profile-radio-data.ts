@@ -113,7 +113,7 @@ export const resolvePublicProfileRadio = cache(async (alias: string): Promise<Ra
     published: row.is_public,
     metadata: {
       title: stationName,
-      artist: identity.name,
+      artist: "",
       program: "",
       host: null,
       artwork: artworkUrl,
