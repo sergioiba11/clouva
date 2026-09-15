@@ -12,15 +12,16 @@ import { finishAgentRun, recordAgentToolCall, startAgentRun } from "@/lib/clouva
 import { decidePendingToolAction } from "@/lib/clouva-ai/agent/tool-decision";
 import { createAgentToolRouter } from "@/lib/clouva-ai/agent/tool-service";
 import { resolveStudioContext } from "@/lib/clouva-ai/context-resolver";
-import { selectedModelFromRequest } from "@/lib/clouva-ai/gemini-text";
-import { streamGeminiWithFallback } from "@/lib/clouva-ai/gemini-stream";
-import { runGeminiToolLoop, type ToolCallTrace } from "@/lib/clouva-ai/gemini-tools";
 import {
   createMemoryProposal,
   detectMemoryCandidate,
   pendingMemoryProposalView,
   type MemoryProposal,
 } from "@/lib/clouva-ai/memory-proposals";
+import { runProviderToolLoop, type ToolCallTrace } from "@/lib/clouva-ai/provider-tool-loop";
+import { createAIProviderRouter } from "@/lib/clouva-ai/providers/provider-router";
+import { publicProviderError, ProviderError } from "@/lib/clouva-ai/providers/errors";
+import type { ClouvaAIProviderId, ProviderConversationItem } from "@/lib/clouva-ai/providers/types";
 import {
   pendingToolActionView,
   ToolConfirmationGate,
@@ -30,28 +31,13 @@ import { ToolRouter } from "@/lib/clouva-ai/tool-router";
 import { decideMemoryProposal, loadEffectiveMemory } from "@/lib/server/memory-approval";
 import { createAdminSupabase, isAdminEmail } from "@/lib/server/supabase";
 import { CLOUVA_CHAT_SYSTEM_PROMPT, CLOUVA_PRODUCT_CONTEXT, CLOUVA_REPOSITORY_AGENT_PROMPT } from "@/lib/clouva-ai/vision";
-import { attachmentPart, normalizeAttachments, normalizeScreenContext } from "@/lib/clouva-ai/multimodal";
+import { attachmentContentPart, normalizeAttachments, normalizeScreenContext } from "@/lib/clouva-ai/multimodal";
 import { projectToolScopeFromScreenContext } from "@/lib/clouva-ai/project-tool-scope";
 
-// THE canonical CLOUVA AI Conversation Orchestrator. Single server-side
-// writer of ai_conversations/ai_messages — components/clouva-ai/ClouvaAIChat.tsx
-// no longer inserts into Supabase itself, and no longer calls /api/gemini or
-// /api/clouva-ai/agent directly; both those routes are legacy now (kept
-// working, not deleted, per the approved migration plan).
-//
-// Persistence + auth run under the CALLING USER's own JWT (not a service
-// role) — RLS on ai_conversations/ai_messages is what actually decides who
-// can read/write a conversation, this route doesn't re-implement that
-// decision. See supabase/migrations for is_active_studio_participant()
-// (chat) vs can_manage_studio() (creating a Studio conversation, and every
-// sensitive/structured action layered on top later).
-//
-// Studio-conversation context (studio/members/players/relevant profile
-// versions) comes from lib/clouva-ai/context-resolver.ts — selective, not a
-// full-table dump. Project and Studio domain function-calling are routed only
-// through ToolRouter + ToolConfirmationGate: reads may execute immediately;
-// no write/destructive/sensitive call can bypass the persisted human review.
-
+// THE canonical CLOUVA AI Conversation Orchestrator. Provider choice is a
+// server-side implementation detail below this route; auth, persistence,
+// RLS, memory, tools, confirmations and the NDJSON client contract remain
+// owned by CLOUVA.
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
@@ -150,7 +136,6 @@ async function handleMemoryDecision(args: {
   if (!conversationId || !messageId || !proposalId) {
     return NextResponse.json({ error: "Faltan los identificadores de la propuesta de memoria." }, { status: 400 });
   }
-
   try {
     const approved = args.body.action === "approve_memory";
     const result = await decideMemoryProposal({
@@ -162,13 +147,11 @@ async function handleMemoryDecision(args: {
       proposalId,
       decision: approved ? "approve" : "reject",
     });
-
     const message = approved
       ? result.duplicate
         ? "Memoria aprobada. Ya existía una memoria equivalente, así que no se creó un duplicado."
         : "Memoria aprobada y agregada al contexto futuro."
       : "Propuesta de memoria rechazada. No entrará al contexto futuro.";
-
     await persistDecisionMessage({
       supabase: args.supabase,
       conversationId,
@@ -199,7 +182,6 @@ async function handleMemoryDecision(args: {
         duplicate: "duplicate" in result ? result.duplicate : false,
       },
     });
-
     return NextResponse.json({ ok: true, message, result, pendingMemoryProposal: null });
   } catch (error) {
     const status = (error as Error & { status?: number }).status ?? 500;
@@ -208,6 +190,11 @@ async function handleMemoryDecision(args: {
       { status },
     );
   }
+}
+
+function providerFailure(error: unknown) {
+  if (error instanceof ProviderError) return { code: error.code, message: error.message };
+  return { code: "AGENT_TURN_FAILED", message: error instanceof Error ? error.message : "CLOUVA AI no respondió." };
 }
 
 export async function POST(request: Request) {
@@ -220,12 +207,7 @@ export async function POST(request: Request) {
       return handleToolDecision({ body, supabase, userId, userEmail: user.email });
     }
     if (body.action === "approve_memory" || body.action === "reject_memory") {
-      return handleMemoryDecision({
-        body,
-        supabase,
-        admin: createAdminSupabase(),
-        userId,
-      });
+      return handleMemoryDecision({ body, supabase, admin: createAdminSupabase(), userId });
     }
 
     const message = body.message?.trim();
@@ -233,19 +215,12 @@ export async function POST(request: Request) {
     if (message.length > 20_000) return NextResponse.json({ error: "El mensaje es demasiado largo." }, { status: 413 });
     const screenContext = normalizeScreenContext(body.screenContext);
     const attachments = normalizeAttachments(body.attachments);
-
     const mode: ChatMode = body.mode === "project" ? "project" : "chat";
     const requestedStudioId = body.studioId?.trim() || null;
-
     if (mode === "project" && !isAdminEmail(user.email)) {
       return NextResponse.json({ error: "Tu usuario no está autorizado para el modo Proyecto." }, { status: 403 });
     }
 
-    // Resolve or create the conversation. RLS decides whether this user may
-    // see/reuse an existing one, or create a new Studio-scoped one — this
-    // route never overrides that with a service role. If conversationId is
-    // given but RLS hides it (wrong owner, not a participant of that
-    // Studio), it's treated as if it didn't exist rather than erroring.
     const conversation = await resolveAgentConversation({
       supabase,
       userId,
@@ -255,15 +230,10 @@ export async function POST(request: Request) {
     });
     const activeConversationId = conversation.id;
     const studioId = conversation.studioId;
-
-    // Context and approved memory are available in every mode. Project and
-    // Studio executors are added only when their real scope allows them.
     const toolsEnabled = true;
 
     const [, unresolvedMemoryResult] = await Promise.all([
-      toolsEnabled
-        ? assertNoPendingAgentAction({ supabase, userId, conversationId: activeConversationId })
-        : Promise.resolve(),
+      assertNoPendingAgentAction({ supabase, userId, conversationId: activeConversationId }),
       supabase
         .from("ai_messages")
         .select("id")
@@ -274,10 +244,7 @@ export async function POST(request: Request) {
     ]);
     if (unresolvedMemoryResult.error) throw new Error(unresolvedMemoryResult.error.message);
     if (unresolvedMemoryResult.data?.length) {
-      return NextResponse.json(
-        { error: "Hay una propuesta de memoria pendiente. Aprobala o rechazala antes de continuar." },
-        { status: 409 },
-      );
+      return NextResponse.json({ error: "Hay una propuesta de memoria pendiente. Aprobala o rechazala antes de continuar." }, { status: 409 });
     }
 
     await supabase.from("ai_messages").insert({
@@ -292,7 +259,6 @@ export async function POST(request: Request) {
       },
     });
 
-    // --- Context gathering -------------------------------------------------
     const [{ data: recentMessages }, studioContextResult, memoryRows, eventRows] = await Promise.all([
       supabase
         .from("ai_messages")
@@ -313,9 +279,7 @@ export async function POST(request: Request) {
             .limit(24),
     ]);
 
-    const memoryContext = memoryRows
-      .map((item) => `[${item.memory_type}] ${item.title}: ${item.content}`)
-      .join("\n");
+    const memoryContext = memoryRows.map((item) => `[${item.memory_type}] ${item.title}: ${item.content}`).join("\n");
     const eventContext = (eventRows.data ?? [])
       .map((item) => `[${item.created_at}] ${item.event_type}/${item.component ?? "general"}: ${item.summary}`)
       .join("\n");
@@ -346,30 +310,28 @@ ${CLOUVA_PRODUCT_CONTEXT}`;
       if (studioId) instruction += `\n\n${STUDIO_DOMAIN_TOOL_RULES}`;
     } else {
       instruction = `${CLOUVA_CHAT_SYSTEM_PROMPT}\n\n${studioContext}\n\nMEMORIA CONFIRMADA DEL PROYECTO\n${memoryContext || "Todavía no hay memoria guardada."}\n\nEVENTOS RECIENTES\n${eventContext || "No hay eventos recientes registrados."}\n\nCONTEXTO DE WORKSPACE\n${JSON.stringify(screenContext)}`;
-      if (studioId) {
-        instruction += `\n\n${STUDIO_DOMAIN_TOOL_RULES}\n- updatePlayer sólo cambia la relación pública del Player con este Estudio, nunca su identidad global.`;
-      }
+      if (studioId) instruction += `\n\n${STUDIO_DOMAIN_TOOL_RULES}\n- updatePlayer sólo cambia la relación pública del Player con este Estudio, nunca su identidad global.`;
     }
 
     const history: ChatMessageRow[] = (recentMessages ?? []).slice().reverse() as ChatMessageRow[];
-    const contents: Array<{ role: string; parts: Array<Record<string, unknown>> }> = history.map((item) => ({
-      role: item.role === "assistant" ? "model" : "user",
-      parts: [{ text: item.content.slice(0, 10_000) }],
+    const contents: ProviderConversationItem[] = history.map((item) => ({
+      kind: "message",
+      message: {
+        role: item.role,
+        content: [{ type: "text", text: item.content.slice(0, 10_000) }],
+      },
     }));
     if (attachments.length) {
       for (let index = contents.length - 1; index >= 0; index -= 1) {
-        if (contents[index].role !== "user") continue;
-        contents[index] = {
-          ...contents[index],
-          parts: [...contents[index].parts, ...attachments.map(attachmentPart)],
-        };
+        const item = contents[index];
+        if (item.kind !== "message" || item.message.role !== "user") continue;
+        item.message.content.push(...attachments.map(attachmentContentPart));
         break;
       }
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) throw new Error("Falta GEMINI_API_KEY en el servicio de Cloud Run.");
-    const selectedModel = selectedModelFromRequest(request);
+    const providerRouter = createAIProviderRouter({ request });
+    const selectedModel = providerRouter.selectedModel;
     const runtimeContext = buildTrebolRuntimeContext(screenContext);
     const agentRun = await startAgentRun({
       supabase,
@@ -384,9 +346,6 @@ ${CLOUVA_PRODUCT_CONTEXT}`;
       maxOutputTokens: mode === "project" ? 6000 : 4096,
     };
 
-    // The client keeps one NDJSON protocol for both modes. Chat streams text
-    // directly; project mode first completes the function-calling/gate loop,
-    // then emits the final answer or the persisted proposal as a chunk.
     const encoder = new TextEncoder();
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
@@ -395,17 +354,16 @@ ${CLOUVA_PRODUCT_CONTEXT}`;
         }
 
         let assistantMessage = "";
+        let provider: ClouvaAIProviderId = providerRouter.primaryProvider.id;
+        let primaryProvider: ClouvaAIProviderId = providerRouter.primaryProvider.id;
+        let fallbackUsed = false;
         let model = selectedModel;
         let pendingAction: PendingToolAction | null = null;
         let toolTraces: ToolCallTrace[] = [];
         let usage: Record<string, unknown> | null = null;
         let router: ToolRouter | null = null;
-        // Detection is independent from answer generation and considers only
-        // the user's explicit statement. Run it concurrently so the review
-        // card does not add another full model round trip after streaming.
         const memoryDetectionPromise = detectMemoryCandidate({
-          apiKey,
-          selectedModel,
+          providerRouter,
           userMessage: message,
           assistantMessage: "",
           studioId,
@@ -426,9 +384,8 @@ ${CLOUVA_PRODUCT_CONTEXT}`;
               transport: "text",
               projectScope: projectToolScopeFromScreenContext(screenContext),
             });
-            const result = await runGeminiToolLoop({
-              apiKey,
-              selectedModel,
+            const result = await runProviderToolLoop({
+              providerRouter,
               instruction,
               contents,
               router,
@@ -441,15 +398,16 @@ ${CLOUVA_PRODUCT_CONTEXT}`;
                   routed: event.routed,
                   toolArguments: event.arguments,
                   status: event.status,
-                  confirmation: event.pendingAction
-                    ? { actionId: event.pendingAction.id, status: event.pendingAction.status }
-                    : null,
+                  confirmation: event.pendingAction ? { actionId: event.pendingAction.id, status: event.pendingAction.status } : null,
                   result: event.result,
                   errorMessage: event.error,
                 });
               },
               ...generationOptions,
             });
+            provider = result.provider;
+            primaryProvider = result.primaryProvider;
+            fallbackUsed = result.fallbackUsed;
             model = result.model;
             pendingAction = result.pendingAction;
             toolTraces = result.traces;
@@ -458,15 +416,10 @@ ${CLOUVA_PRODUCT_CONTEXT}`;
             if (pendingAction) {
               assistantMessage = result.text;
             } else {
-              // The function-selection loop is deliberately buffered so a
-              // tool call cannot slip past the gate. Once it has finished,
-              // make a final tools-disabled streaming pass over the exact
-              // model/function history. If that pass fails before emitting
-              // text, the loop's already-valid draft remains a safe fallback.
               try {
-                const finalGenerator = streamGeminiWithFallback({
-                  apiKey,
-                  selectedModel: result.model,
+                const finalGenerator = providerRouter.stream({
+                  preferredProvider: result.provider,
+                  preferredModel: result.model,
                   instruction: `${instruction}\n\nRESPUESTA FINAL\nLas herramientas ya fueron resueltas para este turno. Respondé ahora con la conclusión final basada únicamente en el historial y los resultados de función disponibles.${result.limitReached ? " Se alcanzó el límite seguro del ciclo: no hay una propuesta de escritura pendiente ni un cambio ejecutado. No pidas más herramientas; explicá lo averiguado y el próximo paso concreto sin afirmar que modificaste archivos." : ""}`,
                   contents: result.continuationContents,
                   ...generationOptions,
@@ -474,6 +427,9 @@ ${CLOUVA_PRODUCT_CONTEXT}`;
                 while (true) {
                   const { value, done } = await finalGenerator.next();
                   if (done) {
+                    provider = value.provider;
+                    primaryProvider = value.primaryProvider;
+                    fallbackUsed ||= value.fallbackUsed;
                     model = value.model;
                     usage = value.usage;
                     break;
@@ -486,18 +442,6 @@ ${CLOUVA_PRODUCT_CONTEXT}`;
                 assistantMessage = result.text;
                 send({ type: "chunk", text: assistantMessage });
               }
-            }
-          } else {
-            const generator = streamGeminiWithFallback({ apiKey, selectedModel, instruction, contents, ...generationOptions });
-            while (true) {
-              const { value, done } = await generator.next();
-              if (done) {
-                model = value.model;
-                usage = value.usage;
-                break;
-              }
-              assistantMessage += value;
-              send({ type: "chunk", text: value });
             }
           }
 
@@ -514,6 +458,7 @@ ${CLOUVA_PRODUCT_CONTEXT}`;
                 studioId,
                 conversationId: activeConversationId,
                 sourceMessageId: assistantMessageId,
+                provider: detected.provider,
                 detectorModel: detected.model,
               });
             }
@@ -529,7 +474,9 @@ ${CLOUVA_PRODUCT_CONTEXT}`;
               content: assistantMessage,
               metadata: {
                 model,
-                provider: "gemini",
+                provider,
+                primaryProvider,
+                fallbackUsed,
                 mode,
                 runId: agentRun.id,
                 pendingAction,
@@ -544,20 +491,10 @@ ${CLOUVA_PRODUCT_CONTEXT}`;
           if (assistantError && (pendingAction || memoryProposal)) {
             throw new Error(`No se pudo guardar la propuesta para revisarla: ${assistantError.message}`);
           }
-          if (assistantError) {
-            console.error("CLOUVA AI orchestrator: failed to persist the assistant turn", assistantError);
-          }
+          if (assistantError) console.error("CLOUVA AI orchestrator: failed to persist the assistant turn", assistantError);
 
-          const pendingActionForClient = pendingAction && assistantRow?.id
-            ? pendingToolActionView(pendingAction, assistantRow.id)
-            : null;
-          const pendingMemoryForClient = memoryProposal && assistantRow?.id
-            ? pendingMemoryProposalView(memoryProposal, assistantRow.id)
-            : null;
-
-          // Project/tool turns are buffered until the action proposal is
-          // safely persisted. Ordinary chat already emitted its real token
-          // chunks above.
+          const pendingActionForClient = pendingAction && assistantRow?.id ? pendingToolActionView(pendingAction, assistantRow.id) : null;
+          const pendingMemoryForClient = memoryProposal && assistantRow?.id ? pendingMemoryProposalView(memoryProposal, assistantRow.id) : null;
           if (toolsEnabled && pendingAction) send({ type: "chunk", text: assistantMessage });
 
           await Promise.all([
@@ -571,7 +508,9 @@ ${CLOUVA_PRODUCT_CONTEXT}`;
               payload: {
                 conversationId: activeConversationId,
                 studioId,
-                provider: "gemini",
+                provider,
+                primaryProvider,
+                fallbackUsed,
                 model,
                 mode,
                 toolCalls: toolTraces,
@@ -585,27 +524,32 @@ ${CLOUVA_PRODUCT_CONTEXT}`;
             supabase,
             run: agentRun,
             status: pendingAction ? "waiting_confirmation" : "completed",
+            diagnosticMetadata: { provider, primaryProvider, fallbackUsed, model },
           });
 
           send({
             type: "done",
             conversationId: activeConversationId,
             studioId,
+            provider,
             model,
             mode,
+            fallbackUsed,
             pendingAction: pendingActionForClient,
             pendingMemoryProposal: pendingMemoryForClient,
             toolCalls: toolTraces,
           });
         } catch (error) {
+          const failure = providerFailure(error);
           await finishAgentRun({
             supabase,
             run: agentRun,
             status: "failed",
-            errorCode: "AGENT_TURN_FAILED",
-            errorMessage: error instanceof Error ? error.message : "CLOUVA AI no respondió.",
+            errorCode: failure.code,
+            errorMessage: failure.message,
+            diagnosticMetadata: { provider, primaryProvider, fallbackUsed, model },
           }).catch((auditError) => console.error("CLOUVA AI run finalization failed", auditError));
-          send({ type: "error", error: error instanceof Error ? error.message : "CLOUVA AI no respondió." });
+          send({ type: "error", error: failure.message, code: failure.code });
         } finally {
           if (router) await router.close().catch((error) => console.error("CLOUVA AI: failed to close tool router", error));
           controller.close();
@@ -622,6 +566,10 @@ ${CLOUVA_PRODUCT_CONTEXT}`;
     });
   } catch (error) {
     console.error("CLOUVA AI orchestrator error", error);
+    if (error instanceof ProviderError) {
+      const normalized = publicProviderError(error);
+      return NextResponse.json({ error: normalized.message, code: normalized.code }, { status: normalized.status });
+    }
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Error inesperado en CLOUVA AI." },
       { status: agentHttpStatus(error) },
