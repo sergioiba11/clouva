@@ -4,6 +4,25 @@ import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supa
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+type RevenueValues = {
+  vip: number;
+  marketplace: number;
+  services: number;
+  bookings: number;
+};
+
+type RevenueEvent = {
+  at: string;
+  source: keyof RevenueValues;
+  amount: number;
+};
+
+type RevenuePoint = RevenueValues & {
+  label: string;
+  start: string;
+  total: number;
+};
+
 async function requireAdmin(request: NextRequest) {
   const { user } = await requireUser(request);
   const admin = createAdminSupabase();
@@ -23,11 +42,32 @@ async function requireAdmin(request: NextRequest) {
   return { admin, user };
 }
 
-function dateKey(value: string | null | undefined) {
-  if (!value) return null;
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return null;
-  return parsed.toISOString().slice(0, 10);
+function emptyRevenue(): RevenueValues {
+  return { vip: 0, marketplace: 0, services: 0, bookings: 0 };
+}
+
+function buildRevenueSeries(events: RevenueEvent[], bucketCount: number, bucketMs: number, label: (date: Date, index: number) => string): RevenuePoint[] {
+  const endMs = Date.now();
+  const startMs = endMs - bucketCount * bucketMs;
+  const buckets = Array.from({ length: bucketCount }, (_, index) => {
+    const bucketStart = startMs + index * bucketMs;
+    const values = emptyRevenue();
+    return { bucketStart, values };
+  });
+
+  for (const event of events) {
+    const time = new Date(event.at).getTime();
+    if (!Number.isFinite(time) || time < startMs || time > endMs) continue;
+    const index = Math.min(bucketCount - 1, Math.max(0, Math.floor((time - startMs) / bucketMs)));
+    buckets[index].values[event.source] += Number(event.amount || 0);
+  }
+
+  return buckets.map(({ bucketStart, values }, index) => ({
+    label: label(new Date(bucketStart), index),
+    start: new Date(bucketStart).toISOString(),
+    ...values,
+    total: values.vip + values.marketplace + values.services + values.bookings,
+  }));
 }
 
 export async function GET(request: NextRequest) {
@@ -64,8 +104,8 @@ export async function GET(request: NextRequest) {
       admin.from("user_entitlements").select("user_id,valid_until,status").eq("tier", "vip").eq("status", "active").limit(1000),
       admin.from("billing_payments").select("amount,currency,paid_at,user_id").order("paid_at", { ascending: false }).limit(1000),
       admin.from("service_orders").select("total_amount,currency,updated_at,user_id,studio_id,payment_status").eq("payment_status", "paid").order("updated_at", { ascending: false }).limit(1000),
-      admin.from("commerce_orders").select("id,total,commission,currency,status,payment_status,fulfillment_status,created_at,paid_at,buyer_id").order("created_at", { ascending: false }).limit(500),
-      admin.from("bookings").select("id,price,currency,status,payment_status,created_at,updated_at,scheduled_at,buyer_id").order("created_at", { ascending: false }).limit(500),
+      admin.from("commerce_orders").select("id,total,commission,currency,status,payment_status,fulfillment_status,created_at,paid_at,buyer_id").order("created_at", { ascending: false }).limit(1000),
+      admin.from("bookings").select("id,price,currency,status,payment_status,created_at,updated_at,scheduled_at,buyer_id").order("created_at", { ascending: false }).limit(1000),
       admin.from("commerce_products").select("id,name,status,stock,created_at").order("created_at", { ascending: false }).limit(500),
       admin.from("flows_wallets").select("user_id,balance,updated_at").order("balance", { ascending: false }).limit(500),
       admin.from("studio_memberships").select("id", { count: "exact", head: true }).eq("status", "active"),
@@ -182,46 +222,21 @@ export async function GET(request: NextRequest) {
       .sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime())
       .slice(0, 12);
 
-    const dailyMap = new Map<string, { vip: number; marketplace: number; services: number; bookings: number }>();
-    const ensureDay = (key: string) => {
-      const current = dailyMap.get(key) ?? { vip: 0, marketplace: 0, services: 0, bookings: 0 };
-      dailyMap.set(key, current);
-      return current;
+    const revenueEvents: RevenueEvent[] = [
+      ...paymentRows.filter((row) => row.paid_at).map((row) => ({ at: row.paid_at as string, source: "vip" as const, amount: Number(row.amount || 0) })),
+      ...serviceRows.filter((row) => row.updated_at).map((row) => ({ at: row.updated_at as string, source: "services" as const, amount: Number(row.total_amount || 0) })),
+      ...paidCommerceRows.filter((row) => row.paid_at).map((row) => ({ at: row.paid_at as string, source: "marketplace" as const, amount: Number(row.total || 0) })),
+      ...paidBookingRows.filter((row) => row.updated_at).map((row) => ({ at: row.updated_at as string, source: "bookings" as const, amount: Number(row.price || 0) })),
+    ];
+
+    const hourMs = 60 * 60 * 1000;
+    const dayMs = 24 * hourMs;
+    const revenueSeries = {
+      "24H": buildRevenueSeries(revenueEvents, 12, 2 * hourMs, (date) => date.toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit", hour12: false })),
+      "7D": buildRevenueSeries(revenueEvents, 7, dayMs, (date) => date.toLocaleDateString("es-AR", { weekday: "short", day: "2-digit" })),
+      "30D": buildRevenueSeries(revenueEvents, 15, 2 * dayMs, (date) => date.toLocaleDateString("es-AR", { day: "2-digit", month: "short" })),
+      "90D": buildRevenueSeries(revenueEvents, 13, 7 * dayMs, (date) => date.toLocaleDateString("es-AR", { day: "2-digit", month: "short" })),
     };
-
-    for (let offset = 6; offset >= 0; offset -= 1) {
-      const day = new Date();
-      day.setHours(0, 0, 0, 0);
-      day.setDate(day.getDate() - offset);
-      ensureDay(day.toISOString().slice(0, 10));
-    }
-
-    for (const row of paymentRows) {
-      const key = dateKey(row.paid_at as string);
-      if (!key || !dailyMap.has(key)) continue;
-      ensureDay(key).vip += Number(row.amount || 0);
-    }
-    for (const row of serviceRows) {
-      const key = dateKey(row.updated_at as string);
-      if (!key || !dailyMap.has(key)) continue;
-      ensureDay(key).services += Number(row.total_amount || 0);
-    }
-    for (const row of paidCommerceRows) {
-      const key = dateKey(row.paid_at as string);
-      if (!key || !dailyMap.has(key)) continue;
-      ensureDay(key).marketplace += Number(row.total || 0);
-    }
-    for (const row of paidBookingRows) {
-      const key = dateKey(row.updated_at as string);
-      if (!key || !dailyMap.has(key)) continue;
-      ensureDay(key).bookings += Number(row.price || 0);
-    }
-
-    const revenue7d = Array.from(dailyMap.entries()).map(([date, values]) => ({
-      date,
-      ...values,
-      total: values.vip + values.marketplace + values.services + values.bookings,
-    }));
 
     return NextResponse.json({
       generatedAt: new Date().toISOString(),
@@ -263,7 +278,7 @@ export async function GET(request: NextRequest) {
         stockCritical,
       },
       activity,
-      revenue7d,
+      revenueSeries,
     }, { headers: { "cache-control": "no-store" } });
   } catch (error) {
     const status = (error as Error & { status?: number })?.status ?? (isAuthError(error) ? 401 : 500);
