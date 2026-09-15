@@ -33,8 +33,12 @@ export class ClouvaAIProviderRouter {
   }
 
   private candidates(preferred?: { provider?: ClouvaAIProviderId; model?: string }): Candidate[] {
-    const providers = [this.primaryProvider, this.fallbackProvider].filter((value): value is ClouvaAIProvider => Boolean(value));
-    if (preferred?.provider) providers.sort((left) => left.id === preferred.provider ? -1 : rightScore(left, preferred.provider));
+    const providers = [this.primaryProvider, this.fallbackProvider]
+      .filter((value): value is ClouvaAIProvider => Boolean(value));
+    if (preferred?.provider) {
+      providers.sort((left, right) =>
+        Number(right.id === preferred.provider) - Number(left.id === preferred.provider));
+    }
     const result: Candidate[] = [];
     for (const provider of providers) {
       const selected = provider.id === (preferred?.provider ?? this.primaryProvider.id)
@@ -54,10 +58,11 @@ export class ClouvaAIProviderRouter {
   async generate(
     args: Omit<ProviderGenerateArgs, "model"> & { preferredProvider?: ClouvaAIProviderId; preferredModel?: string },
   ) {
+    const { preferredProvider, preferredModel, ...generation } = args;
     let lastError: ProviderError | null = null;
-    for (const candidate of this.candidates({ provider: args.preferredProvider, model: args.preferredModel })) {
+    for (const candidate of this.candidates({ provider: preferredProvider, model: preferredModel })) {
       try {
-        const result = await candidate.provider.generate({ ...args, model: candidate.model });
+        const result = await candidate.provider.generate({ ...generation, model: candidate.model });
         return {
           ...result,
           provider: candidate.provider.id,
@@ -76,9 +81,10 @@ export class ClouvaAIProviderRouter {
   async *stream(
     args: Omit<ProviderGenerateArgs, "model"> & { preferredProvider?: ClouvaAIProviderId; preferredModel?: string },
   ): AsyncGenerator<string, RoutedProviderResult<{ usage: Record<string, unknown> | null; finishReason?: string | null }>, void> {
+    const { preferredProvider, preferredModel, ...generation } = args;
     let lastError: ProviderError | null = null;
-    for (const candidate of this.candidates({ provider: args.preferredProvider, model: args.preferredModel })) {
-      const generator = candidate.provider.stream({ ...args, model: candidate.model });
+    for (const candidate of this.candidates({ provider: preferredProvider, model: preferredModel })) {
+      const generator = candidate.provider.stream({ ...generation, model: candidate.model });
       let emitted = false;
       try {
         while (true) {
@@ -108,10 +114,11 @@ export class ClouvaAIProviderRouter {
   async toolTurn(
     args: Omit<ProviderToolTurnArgs, "model"> & { preferredProvider?: ClouvaAIProviderId; preferredModel?: string },
   ) {
+    const { preferredProvider, preferredModel, ...generation } = args;
     let lastError: ProviderError | null = null;
-    for (const candidate of this.candidates({ provider: args.preferredProvider, model: args.preferredModel })) {
+    for (const candidate of this.candidates({ provider: preferredProvider, model: preferredModel })) {
       try {
-        const result = await candidate.provider.toolTurn({ ...args, model: candidate.model });
+        const result = await candidate.provider.toolTurn({ ...generation, model: candidate.model });
         return {
           ...result,
           provider: candidate.provider.id,
@@ -140,10 +147,6 @@ export class ClouvaAIProviderRouter {
       capabilities: this.primaryProvider.capabilities,
     };
   }
-}
-
-function rightScore(provider: ClouvaAIProvider, preferred: ClouvaAIProviderId) {
-  return provider.id === preferred ? -1 : 1;
 }
 
 export function createAIProviderRouter(args: { request?: Request; selectedModel?: string } = {}) {
