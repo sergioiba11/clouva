@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
+import { resolveIdentityAssetState } from "@/lib/studio-identity-assets";
 import { isVipProfileFidelityStatus, selectVipProfileJobState } from "@/lib/vip-profile-job-status";
 
 export const runtime = "nodejs";
@@ -56,24 +57,28 @@ export async function GET(request: NextRequest) {
     if (!playerId && !studioId) return NextResponse.json({ error: "Falta playerId o studioId." }, { status: 400 });
 
     const admin = createAdminSupabase();
+    let subjectLogoUrl: string | null = null;
+
     if (playerId) {
       const [{ data: player, error: playerError }, { data: membership, error: membershipError }] = await Promise.all([
-        admin.from("players").select("id,owner_user_id").eq("id", playerId).maybeSingle(),
+        admin.from("players").select("id,owner_user_id,logo_url").eq("id", playerId).maybeSingle(),
         admin.from("player_members").select("role").eq("player_id", playerId).eq("user_id", user.id).eq("status", "active").maybeSingle(),
       ]);
       if (playerError) throw new Error(playerError.message);
       if (membershipError) throw new Error(membershipError.message);
       if (!player) return NextResponse.json({ error: "El Player no existe." }, { status: 404 });
       if (player.owner_user_id !== user.id && !membership) return NextResponse.json({ error: "No tenés permiso para ver este Player." }, { status: 403 });
+      subjectLogoUrl = typeof player.logo_url === "string" ? player.logo_url : null;
     } else {
       const [{ data: studio, error: studioError }, { data: membership, error: membershipError }] = await Promise.all([
-        admin.from("studios").select("id,owner_id").eq("id", studioId).maybeSingle(),
+        admin.from("studios").select("id,owner_id,logo_url").eq("id", studioId).maybeSingle(),
         admin.from("studio_members").select("role").eq("studio_id", studioId).eq("profile_id", user.id).eq("status", "active").maybeSingle(),
       ]);
       if (studioError) throw new Error(studioError.message);
       if (membershipError) throw new Error(membershipError.message);
       if (!studio) return NextResponse.json({ error: "El Estudio no existe." }, { status: 404 });
       if (studio.owner_id !== user.id && !membership) return NextResponse.json({ error: "No tenés permiso para ver este Estudio." }, { status: 403 });
+      subjectLogoUrl = typeof studio.logo_url === "string" ? studio.logo_url : null;
     }
 
     const subjectColumn = playerId ? "player_id" : "studio_id";
@@ -96,6 +101,11 @@ export async function GET(request: NextRequest) {
 
     const normalizedVersions = (versions ?? []) as VersionRow[];
     const versionState = resolveVersionState(normalizedVersions);
+    const identityAssets = resolveIdentityAssetState({
+      publishedVersion: versionState.publishedVersion,
+      draftVersion: versionState.draftVersion,
+      subjectLogoUrl,
+    });
     const jobRows = (jobs ?? []) as JobRow[];
     const jobState = selectVipProfileJobState(jobRows);
     const activeJob = normalizeClientJob(jobState.activeJob);
@@ -113,6 +123,7 @@ export async function GET(request: NextRequest) {
       publishedVersion: versionState.publishedVersion,
       draftVersion: versionState.draftVersion,
       staleDrafts: versionState.staleDrafts,
+      ...identityAssets,
     });
   } catch (error) {
     const status = (error as Error & { status?: number })?.status ?? (isAuthError(error) ? 401 : 500);
