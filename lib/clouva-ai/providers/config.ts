@@ -91,10 +91,16 @@ export function getAIProviderConfig(): AIProviderConfig {
   };
 }
 
-export function selectedModelFromRequest(request: Request, configuredModel: string) {
+export function selectedModelFromRequest(
+  request: Request,
+  configuredModel: string,
+  options: { allowLegacyGeminiCookie?: boolean } = {},
+) {
   const cookie = request.headers.get("cookie") ?? "";
   const current = cookie.match(/(?:^|;\s*)clouva_ai_model=([^;]+)/);
-  const legacy = cookie.match(/(?:^|;\s*)clouva_gemini_model=([^;]+)/);
+  const legacy = options.allowLegacyGeminiCookie === false
+    ? null
+    : cookie.match(/(?:^|;\s*)clouva_gemini_model=([^;]+)/);
   const selected = current?.[1] ?? legacy?.[1] ?? "";
   if (!selected) return configuredModel;
   try {
