@@ -16,15 +16,20 @@ test("published identity exposes only assets actually used by its renderer", () 
       { kind: "background", url: discarded },
     ],
     layout_config: {
-      image_slots: { logo: logoV1, cover },
-      precise_sections: [{ type: "hero", background: { imageSlot: "cover" } }],
+      image_slots: { logo: logoV1, cover, unused_background: discarded },
+      precise_sections: [{
+        type: "hero",
+        background: { imageSlot: "cover" },
+        elements: [{ type: "image", imageSlot: "logo" }],
+      }],
     },
   }, "published");
 
   assert.deepEqual(assets.map((asset) => [asset.kind, asset.url]), [
-    ["logo", logoV1],
     ["cover", cover],
+    ["logo", logoV1],
   ]);
+  assert.equal(assets.some((asset) => asset.url === discarded), false);
 });
 
 test("legacy layouts contribute renderer URLs that predate asset_references", () => {
@@ -37,7 +42,17 @@ test("legacy layouts contribute renderer URLs that predate asset_references", ()
   }, "published");
 
   assert.equal(assets.some((asset) => asset.url === pillar && asset.kind === "gallery"), true);
+  assert.equal(assets.some((asset) => asset.url === cover), false);
+});
+
+test("older template layouts can still use conventional image_slots implicitly", () => {
+  const assets = collectUsedIdentityAssets({
+    asset_references: [{ kind: "cover", url: cover }, { kind: "logo", url: logoV1 }],
+    layout_config: { image_slots: { cover, logo: logoV1 } },
+  }, "published");
+
   assert.equal(assets.some((asset) => asset.url === cover && asset.kind === "cover"), true);
+  assert.equal(assets.some((asset) => asset.url === logoV1 && asset.kind === "logo"), true);
 });
 
 test("same draft logo is reuse, not a replacement proposal", () => {
