@@ -18,6 +18,10 @@ type ProfileCopy = {
 };
 
 type GeneratedAsset = { kind: string; url: string };
+type IdentityAsset = GeneratedAsset & {
+  source: "published" | "draft" | "subject";
+  brandAssetVersionId?: string | null;
+};
 type LayoutSectionSummary = { type: string };
 type LayoutVariant = {
   layout: { sections?: LayoutSectionSummary[] } | null;
@@ -70,6 +74,10 @@ type StatusPayload = {
   publishedVersion?: Version | null;
   draftVersion?: Version | null;
   staleDrafts?: Version[];
+  officialAssets?: IdentityAsset[];
+  draftAssets?: IdentityAsset[];
+  officialLogo?: IdentityAsset | null;
+  draftLogo?: IdentityAsset | null;
 };
 
 type InstagramConnection = {
@@ -143,6 +151,9 @@ export function StudioAiProfilePanel({ studioId, onStateChange }: { studioId: st
   const [draftVersion, setDraftVersion] = useState<Version | null>(null);
   const [publishedVersion, setPublishedVersion] = useState<Version | null>(null);
   const [staleDrafts, setStaleDrafts] = useState<Version[]>([]);
+  const [officialAssets, setOfficialAssets] = useState<IdentityAsset[]>([]);
+  const [officialLogo, setOfficialLogo] = useState<IdentityAsset | null>(null);
+  const [draftLogo, setDraftLogo] = useState<IdentityAsset | null>(null);
   const [loading, setLoading] = useState(true);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -176,6 +187,9 @@ export function StudioAiProfilePanel({ studioId, onStateChange }: { studioId: st
       setPublishedVersion(published);
       setDraftVersion(activeDraft);
       setStaleDrafts(stale);
+      setOfficialAssets(payload.officialAssets ?? []);
+      setOfficialLogo(payload.officialLogo ?? null);
+      setDraftLogo(payload.draftLogo ?? null);
       setError(null);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "No se pudo cargar la identidad del Studio.");
@@ -243,7 +257,13 @@ export function StudioAiProfilePanel({ studioId, onStateChange }: { studioId: st
     finally { setConnectingInstagram(false); }
   };
 
-  const hasCreativeSource = Boolean(mockupUrls.length || themeUrls.length || logoUrls.length || creativeDirection.trim());
+  const manualLogoUrl = logoUrls[0] ?? null;
+  const proposedLogo = manualLogoUrl ? { kind: "logo", url: manualLogoUrl } : draftLogo;
+  const proposedLogoUrl = proposedLogo?.url && proposedLogo.url !== officialLogo?.url ? proposedLogo.url : null;
+  const displayLogoUrl = proposedLogoUrl ?? officialLogo?.url ?? null;
+  const effectiveLogoInputUrls = logoUrls.length ? logoUrls : officialLogo?.url ? [officialLogo.url] : [];
+  const hasCreativeSource = Boolean(mockupUrls.length || themeUrls.length || effectiveLogoInputUrls.length || creativeDirection.trim());
+
   const startGeneration = async () => {
     setError(null); setMessage(null);
     if (!hasCreativeSource) {
@@ -264,9 +284,9 @@ export function StudioAiProfilePanel({ studioId, onStateChange }: { studioId: st
             mockupImages: mockupUrls,
             themeImages: themeUrls,
             realPhotos: realPhotoUrls,
-            logoImages: logoUrls,
+            logoImages: effectiveLogoInputUrls,
             creativeDirection: creativeDirection.trim() || null,
-            logoOwnershipConfirmed,
+            logoOwnershipConfirmed: logoUrls.length ? logoOwnershipConfirmed : Boolean(officialLogo),
           },
         }),
       });
@@ -281,7 +301,7 @@ export function StudioAiProfilePanel({ studioId, onStateChange }: { studioId: st
     if (!files?.length) return;
     const currentCount = target === "mockup" ? mockupUrls.length : target === "theme" ? themeUrls.length : target === "logo" ? logoUrls.length : realPhotoUrls.length;
     const max = target === "logo" ? 1 : MAX_ROLE_IMAGES;
-    const remaining = max - currentCount;
+    const remaining = target === "logo" ? 1 : max - currentCount;
     if (remaining <= 0) return;
     setUploadingReference(target); setError(null);
     try {
@@ -290,7 +310,7 @@ export function StudioAiProfilePanel({ studioId, onStateChange }: { studioId: st
       const payload = await readApiJson<{ urls: string[] }>(response);
       if (target === "mockup") setMockupUrls((current) => [...current, ...payload.urls].slice(0, MAX_ROLE_IMAGES));
       else if (target === "theme") setThemeUrls((current) => [...current, ...payload.urls].slice(0, MAX_ROLE_IMAGES));
-      else if (target === "logo") setLogoUrls(payload.urls.slice(0, 1));
+      else if (target === "logo") { setLogoUrls(payload.urls.slice(0, 1)); setLogoOwnershipConfirmed(false); }
       else setRealPhotoUrls((current) => [...current, ...payload.urls].slice(0, MAX_ROLE_IMAGES));
     } catch (uploadError) { setError(uploadError instanceof Error ? uploadError.message : "No se pudo subir la imagen."); }
     finally { setUploadingReference(null); }
@@ -314,8 +334,12 @@ export function StudioAiProfilePanel({ studioId, onStateChange }: { studioId: st
     finally { setStarting(false); }
   };
   const publish = async () => {
-    if (!draftVersion) return; let publishLogoToo = false;
-    if (draftVersion.brand_asset_version_id) publishLogoToo = window.confirm("Esta página incluye una nueva identidad visual.\n¿Querés publicar también este logo como identidad oficial?");
+    if (!draftVersion) return;
+    let publishLogoToo = false;
+    if (proposedLogoUrl) {
+      publishLogoToo = window.confirm("Esta identidad incluye un nuevo logo.\n¿Querés publicarlo como identidad oficial del Studio?");
+      if (!publishLogoToo) return;
+    }
     if (Object.keys(draftEdits).length > 0) await saveEdits(); setStarting(true); setError(null);
     try { const response = await authenticatedFetch(`/api/vip-profile/versions/${draftVersion.id}/publish`, { method: "POST", body: JSON.stringify({ publishLogoToo }) }); await readApiJson(response); setMessage(`Identidad v${draftVersion.version_number} publicada.`); await load(); }
     catch (publishError) { setError(publishError instanceof Error ? publishError.message : "No se pudo publicar."); }
@@ -353,11 +377,24 @@ export function StudioAiProfilePanel({ studioId, onStateChange }: { studioId: st
               </ImageTray>
             </InputCard>
 
-            <InputCard eyebrow="Identidad oficial" title="Logo del Studio" description="Este es mi logo. CLOUVA lo usa como identidad y completa las variantes web que hagan falta.">
-              <ImageTray urls={logoUrls} onRemove={(url) => { setLogoUrls((current) => current.filter((item) => item !== url)); setLogoOwnershipConfirmed(false); }}>
-                {logoUrls.length < 1 ? <UploadTile label={uploadingReference === "logo" ? "…" : "+ Logo"} disabled={Boolean(uploadingReference)} multiple={false} onFiles={(files) => void uploadReferenceImages(files, "logo")} /> : null}
-              </ImageTray>
+            <InputCard eyebrow="Identidad oficial" title="Logo del Studio" description="CLOUVA recupera el logo publicado. Si subís o generás otro, queda como propuesta hasta publicar esa identidad.">
+              <div className="mt-3 flex flex-wrap items-center gap-3">
+                {displayLogoUrl ? (
+                  <div className="relative flex h-20 w-28 items-center justify-center overflow-hidden rounded-xl border border-white/10 bg-black/30 p-2">
+                    <img src={displayLogoUrl} alt="Logo del Studio" className="max-h-full max-w-full object-contain" />
+                    <span className={`absolute bottom-1.5 left-1.5 rounded-full border px-2 py-0.5 text-[9px] font-bold tracking-[0.12em] ${proposedLogoUrl ? "border-violet-300/25 bg-violet-500/80 text-white" : "border-emerald-300/20 bg-emerald-500/75 text-white"}`}>{proposedLogoUrl ? "PROPUESTA" : "OFICIAL"}</span>
+                  </div>
+                ) : null}
+                <UploadTile label={uploadingReference === "logo" ? "…" : displayLogoUrl ? "Cambiar" : "+ Logo"} disabled={Boolean(uploadingReference)} multiple={false} onFiles={(files) => void uploadReferenceImages(files, "logo")} />
+              </div>
+              {proposedLogoUrl && officialLogo?.url && proposedLogoUrl !== officialLogo.url ? (
+                <div className="mt-3 flex items-center gap-3 rounded-xl border border-white/10 bg-black/20 p-3">
+                  <img src={officialLogo.url} alt="Logo oficial actual" className="h-10 w-12 rounded-lg bg-black/30 object-contain p-1" />
+                  <div className="min-w-0"><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-emerald-200/60">Logo oficial actual</p><p className="mt-0.5 text-[11px] text-white/35">Se conserva hasta que publiques la propuesta.</p></div>
+                </div>
+              ) : null}
               {logoUrls.length ? <label className="mt-3 flex items-start gap-2 rounded-xl border border-white/10 bg-black/20 p-3 text-xs leading-5 text-white/55"><input type="checkbox" className="mt-1" checked={logoOwnershipConfirmed} onChange={(event) => setLogoOwnershipConfirmed(event.target.checked)} /><span>Confirmo que este logo pertenece al Studio o que estoy autorizado a usarlo.</span></label> : null}
+              {logoUrls.length ? <button type="button" onClick={() => { setLogoUrls([]); setLogoOwnershipConfirmed(false); }} className="mt-2 text-xs font-semibold text-white/40 hover:text-white/70">Quitar propuesta subida</button> : null}
             </InputCard>
 
             <InputCard eyebrow="Dirección visual" title="Tema / inspiración" description="Quiero que mi web tenga esta energía. Una foto de un árbol, hielo, arquitectura o una textura se interpreta como temática, no como página a copiar.">
@@ -374,12 +411,19 @@ export function StudioAiProfilePanel({ studioId, onStateChange }: { studioId: st
             </InputCard>
           </div>
 
+          {officialAssets.length ? (
+            <section className="rounded-2xl border border-emerald-400/10 bg-emerald-400/[0.025] p-4">
+              <div className="flex flex-wrap items-end justify-between gap-2"><div><p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-emerald-200/55">Assets oficiales</p><h3 className="mt-1 text-sm font-semibold">Identidad publicada del Studio</h3></div><span className="text-[11px] text-white/35">{officialAssets.length} en uso</span></div>
+              <div className="mt-3 flex flex-wrap gap-2">{officialAssets.slice(0, 12).map((asset) => <div key={`${asset.kind}:${asset.url}`} className="w-24 overflow-hidden rounded-xl border border-white/10 bg-black/25"><div className="grid h-16 place-items-center overflow-hidden p-1.5"><img src={asset.url} alt={asset.kind} className="max-h-full max-w-full object-contain" /></div><p className="truncate border-t border-white/8 px-2 py-1.5 text-[9px] font-semibold uppercase tracking-[0.12em] text-white/35">{asset.kind}</p></div>)}</div>
+            </section>
+          ) : null}
+
           <section className="rounded-2xl border border-white/10 bg-black/20 p-4">
             <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-white/35">Idea / dirección creativa</p>
             <h3 className="mt-1 text-sm font-semibold">¿Cómo querés que se sienta tu Studio?</h3>
             <p className="mt-2 text-xs leading-5 text-white/45">Si no subís una referencia exacta, esto guía las 3 propuestas. Puede ser una sola palabra: bosque, hielo, premium, underground, futurista.</p>
             <textarea value={creativeDirection} onChange={(event) => setCreativeDirection(event.target.value.slice(0, 280))} rows={3} placeholder="Ej: bosque nocturno, orgánico, premium" className="mt-3 w-full resize-y rounded-xl border border-white/10 bg-black/30 px-3 py-3 text-sm outline-none placeholder:text-white/20 focus:border-violet-400/60" />
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-3"><p className="text-[11px] text-white/30">{creativeDirection.trim() ? "Dirección creativa lista." : "Necesitás mockup, logo, tema o al menos una palabra."}</p><button type="button" disabled={starting || !hasCreativeSource || Boolean(logoUrls.length && !logoOwnershipConfirmed)} onClick={() => void startGeneration()} className="rounded-xl bg-violet-600 px-5 py-2.5 text-sm font-semibold transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-35">{starting ? "Iniciando…" : "Generar propuesta"}</button></div>
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-3"><p className="text-[11px] text-white/30">{creativeDirection.trim() ? "Dirección creativa lista." : officialLogo ? "El logo oficial ya está disponible como identidad de base." : "Necesitás mockup, logo, tema o al menos una palabra."}</p><button type="button" disabled={starting || !hasCreativeSource || Boolean(logoUrls.length && !logoOwnershipConfirmed)} onClick={() => void startGeneration()} className="rounded-xl bg-violet-600 px-5 py-2.5 text-sm font-semibold transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-35">{starting ? "Iniciando…" : "Generar propuesta"}</button></div>
           </section>
         </div>
       ) : null}
@@ -403,7 +447,7 @@ export function StudioAiProfilePanel({ studioId, onStateChange }: { studioId: st
           <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-violet-200/50">Borrador activo · v{draftVersion.version_number}</p><h3 className="mt-1 text-lg font-semibold">Revisá y corregí</h3></div><Link href={`/studio-dashboard/${studioId}/identity-preview`} target="_blank" className="rounded-xl border border-violet-400/25 bg-violet-500/10 px-4 py-2 text-xs font-semibold text-violet-100">Actual / Propuesta</Link></div>
           {scorePercent !== null && !generationInProgress ? <div className="flex flex-wrap items-center gap-3 rounded-xl border border-violet-400/15 bg-violet-500/[0.04] px-4 py-3"><span className="text-xs uppercase tracking-[.16em] text-white/35">Reference Fidelity</span><strong className="text-sm text-violet-100">{scorePercent}%</strong>{typeof fidelity?.iteration === "number" ? <span className="text-xs text-white/45">{fidelity.iteration}/{fidelity.maxIterations ?? 3} iteraciones</span> : null}{fidelity?.lastError ? <span className="text-xs text-amber-200/70">Última comparación: {fidelity.lastError}</span> : null}</div> : null}
           {cover ? <img src={cover.url} alt="" className="h-44 w-full rounded-xl object-cover" /> : null}
-          {logo || palette.length > 0 ? <div className="flex items-center gap-4 rounded-xl border border-white/10 bg-black/20 p-4">{logo ? <img src={logo.url} alt="" className="h-16 w-16 shrink-0 rounded-lg bg-black/30 object-contain" /> : null}{palette.length > 0 ? <div><p className="mb-1.5 text-xs uppercase tracking-[0.16em] text-white/40">Paleta</p><div className="flex gap-2">{palette.map((hex) => <span key={hex} title={hex} className="h-7 w-7 rounded-full border border-white/20" style={{ backgroundColor: hex }} />)}</div></div> : null}</div> : null}
+          {logo || palette.length > 0 ? <div className="flex items-center gap-4 rounded-xl border border-white/10 bg-black/20 p-4">{logo ? <div className="relative"><img src={logo.url} alt="" className="h-16 w-16 shrink-0 rounded-lg bg-black/30 object-contain" />{draftLogo?.url === logo.url ? <span className="absolute -bottom-2 left-1/2 -translate-x-1/2 rounded-full border border-violet-300/25 bg-violet-600 px-2 py-0.5 text-[8px] font-bold tracking-[0.1em]">PROPUESTA</span> : null}</div> : null}{palette.length > 0 ? <div><p className="mb-1.5 text-xs uppercase tracking-[0.16em] text-white/40">Paleta</p><div className="flex gap-2">{palette.map((hex) => <span key={hex} title={hex} className="h-7 w-7 rounded-full border border-white/20" style={{ backgroundColor: hex }} />)}</div></div> : null}</div> : null}
           <div className="grid gap-4 sm:grid-cols-2">{EDITABLE_FIELDS.map(({ key, label, multiline }) => { const value = String((draftEdits[key] ?? copy[key]) ?? ""); const onChange = (next: string) => setDraftEdits((current) => ({ ...current, [key]: next })); return <div key={key} className={multiline ? "sm:col-span-2" : ""}><label className="mb-1.5 block text-xs font-medium text-white/55">{label}</label>{multiline ? <textarea rows={3} value={value} onChange={(event) => onChange(event.target.value)} className="w-full resize-y rounded-xl border border-white/10 bg-black/30 px-3 py-3 text-sm outline-none focus:border-violet-400/60" /> : <input value={value} onChange={(event) => onChange(event.target.value)} className="w-full rounded-xl border border-white/10 bg-black/30 px-3 py-3 text-sm outline-none focus:border-violet-400/60" />}</div>; })}</div>
           {draftVersion.layout_config ? <IdentityConfigPanel versionId={draftVersion.id} kind="studio" layoutConfig={draftVersion.layout_config} onSaved={load} /> : null}
           <div className="flex flex-wrap items-center gap-2 border-t border-white/8 pt-4"><button disabled={starting || Object.keys(draftEdits).length === 0} onClick={() => void saveEdits()} className="rounded-xl border border-white/15 px-4 py-2.5 text-sm font-semibold disabled:opacity-35">Guardar borrador</button><button disabled={starting || generationInProgress} onClick={() => void publish()} className="rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold disabled:opacity-50">Publicar v{draftVersion.version_number}</button>{Object.keys(draftEdits).length > 0 ? <span className="text-xs text-amber-200/65">Cambios de texto sin guardar</span> : <span className="text-xs text-emerald-200/55">Borrador guardado</span>}</div>
