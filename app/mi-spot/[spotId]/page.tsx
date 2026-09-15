@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
 import { SpaceQrPanel } from "@/components/commerce/SpaceQrPanel";
 import { MainNav } from "@/components/layout";
+import { ProfileRadioSettingsCard } from "@/components/radio/ProfileRadioSettingsCard";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
 
 type SpotDetail = {
@@ -94,6 +95,11 @@ export default function SpotHomePage() {
   const canContent = data?.capabilities.includes("content") ?? false;
   const canBusiness = data?.capabilities.includes("operations") ?? false;
   const canAgenda = Boolean(data?.space && modules.includes("agenda"));
+  const radioOwner = data?.studio
+    ? { kind: "studio" as const, id: data.studio.id, name: data.studio.name, alias: data.studio.slug }
+    : data?.space
+      ? { kind: "space" as const, id: data.space.id, name: data.space.name, alias: data.space.slug }
+      : null;
 
   async function saveSettings() {
     if (!data) return;
@@ -153,6 +159,16 @@ export default function SpotHomePage() {
           </section>
 
           {data.space && canSettings ? <SpaceQrPanel spaceId={data.space.id} /> : null}
+
+          {canSettings && radioOwner ? (
+            <ProfileRadioSettingsCard
+              ownerKind={radioOwner.kind}
+              ownerId={radioOwner.id}
+              profileName={radioOwner.name}
+              publicAlias={radioOwner.alias}
+              className="mt-5"
+            />
+          ) : null}
 
           {editing && canSettings ? <section className="mt-5 rounded-[24px] border border-white/[0.08] bg-[#0b0912] p-5 sm:p-6"><div className="flex items-center justify-between"><div><p className="text-xs uppercase tracking-[0.15em] text-white/32">Identidad</p><h2 className="mt-1 text-lg font-semibold">Tu estilo</h2></div><Sparkles size={18} className="text-violet-300" /></div><div className="mt-5 grid gap-3 sm:grid-cols-2"><input value={draft.name} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} placeholder="Nombre" className="rounded-xl border border-white/10 bg-black/25 px-3 py-2.5 text-sm outline-none" /><input value={draft.businessType} onChange={(event) => setDraft((current) => ({ ...current, businessType: event.target.value }))} placeholder="Tipo de negocio" className="rounded-xl border border-white/10 bg-black/25 px-3 py-2.5 text-sm outline-none" /><input value={draft.brandTone} onChange={(event) => setDraft((current) => ({ ...current, brandTone: event.target.value }))} placeholder="Tono de marca" className="rounded-xl border border-white/10 bg-black/25 px-3 py-2.5 text-sm outline-none" /><input value={draft.accentColor} onChange={(event) => setDraft((current) => ({ ...current, accentColor: event.target.value }))} placeholder="#8f5cff" className="rounded-xl border border-white/10 bg-black/25 px-3 py-2.5 text-sm outline-none" /><textarea value={draft.description} onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))} placeholder="Descripción" rows={4} className="rounded-xl border border-white/10 bg-black/25 px-3 py-2.5 text-sm outline-none sm:col-span-2" /></div><button type="button" onClick={() => void saveSettings()} disabled={saving} className="mt-4 inline-flex items-center gap-2 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold disabled:opacity-50">{saving ? <Loader2 size={15} className="animate-spin" /> : <Save size={15} />} Guardar</button></section> : null}
 
