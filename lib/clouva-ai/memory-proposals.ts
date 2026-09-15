@@ -84,6 +84,8 @@ function containsSensitiveMaterial(value: string): boolean {
   ].some((pattern) => pattern.test(value));
 }
 
+/** Structured Player/Studio fields belong
+ * to domain services and their confirmation gates, not conversational memory. */
 export function parseMemoryCandidate(rawText: string): MemoryCandidate | null {
   const cleaned = rawText.replace(/^\s*```json\s*/i, "").replace(/```\s*$/i, "").trim();
   let value: RawCandidate;
@@ -158,11 +160,12 @@ export function createMemoryProposal(args: {
   studioId: string | null;
   conversationId: string;
   sourceMessageId: string;
-  provider: string;
+  provider?: string;
   detectorModel: string;
   now?: Date;
   id?: string;
 }): MemoryProposal {
+  const provider = args.provider?.trim() || "gemini";
   return {
     id: args.id ?? randomUUID(),
     status: "pending",
@@ -177,8 +180,8 @@ export function createMemoryProposal(args: {
     importance: args.candidate.importance,
     reason: args.candidate.reason,
     dedupeKey: memoryDedupeKey(args.candidate),
-    proposedBy: "clouva-ai",
-    provider: args.provider,
+    proposedBy: args.provider ? "clouva-ai" : "gemini",
+    provider,
     detectorModel: args.detectorModel,
     proposedAt: (args.now ?? new Date()).toISOString(),
   };
