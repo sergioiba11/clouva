@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import { CalendarDays } from "lucide-react";
 import { useAuth } from "@/components/auth-provider";
 import { AccountMenu } from "@/components/account/AccountMenu";
 import { ClouvaGlobalSearch } from "@/components/clouva/ClouvaGlobalSearch";
@@ -166,6 +167,17 @@ export function ClouvaTopBar() {
               <div className="hidden md:block">
                 <WalletBalanceChip showFlows={false} showDiamonds />
               </div>
+            ) : null}
+
+            {!loading && user ? (
+              <Link
+                href="/agenda"
+                aria-label="Agenda"
+                title="Agenda"
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-white/55 transition hover:bg-white/5 hover:text-violet-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400/70"
+              >
+                <CalendarDays size={17} />
+              </Link>
             ) : null}
 
             {!loading && user ? <NotificationBell /> : null}
