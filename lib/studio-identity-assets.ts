@@ -7,6 +7,25 @@ export type IdentityAsset = {
   brandAssetVersionId?: string | null;
 };
 
+export type BrandLogoVariants = {
+  brandAssetId?: string | null;
+  brandAssetVersionId?: string | null;
+  primaryLogoUrl?: string | null;
+  whiteSvgUrl?: string | null;
+  blackSvgUrl?: string | null;
+  whiteLogoUrl?: string | null;
+  blackLogoUrl?: string | null;
+  transparentLogoUrl?: string | null;
+};
+
+export type OfficialDisplayLogo = {
+  darkUrl: string | null;
+  lightUrl: string | null;
+  preferredUrl: string | null;
+  primaryUrl: string | null;
+  source: "brand_asset_svg" | "brand_asset_variant" | "brand_asset_primary" | null;
+};
+
 type IdentityVersionLike = {
   asset_references?: unknown;
   layout_config?: unknown;
@@ -17,6 +36,8 @@ type ResolveIdentityAssetStateArgs = {
   publishedVersion: IdentityVersionLike;
   draftVersion: IdentityVersionLike;
   subjectLogoUrl?: string | null;
+  officialLogoVariants?: BrandLogoVariants | null;
+  surface?: "dark" | "light";
 };
 
 type VisualUrl = { url: string; kind: string };
@@ -27,6 +48,10 @@ const IMAGE_SLOT_KEY_RE = /^(?:imageSlot|image_slot|imageSlotKey|image_slot_key)
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function cleanUrl(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
 function isVisualAssetUrl(value: string): boolean {
@@ -135,6 +160,41 @@ function preferKind(current: string, incoming: string): string {
 }
 
 /**
+ * Canonical presentation resolver for a published Brand Asset logo.
+ * A dark surface wants the white mark; a light surface wants the black mark.
+ * SVG variants win, then same-tone raster variants, then the legacy primary.
+ * The opposite-tone variant is only a last-resort fallback when no primary
+ * exists, so a black logo is never preferred on a dark surface by accident.
+ */
+export function resolveOfficialDisplayLogo(
+  variants: BrandLogoVariants | null | undefined,
+  surface: "dark" | "light" = "dark",
+): OfficialDisplayLogo {
+  const whiteSvgUrl = cleanUrl(variants?.whiteSvgUrl);
+  const blackSvgUrl = cleanUrl(variants?.blackSvgUrl);
+  const whiteLogoUrl = cleanUrl(variants?.whiteLogoUrl);
+  const blackLogoUrl = cleanUrl(variants?.blackLogoUrl);
+  const primaryUrl = cleanUrl(variants?.primaryLogoUrl);
+
+  const darkUrl = whiteSvgUrl ?? whiteLogoUrl ?? primaryUrl ?? blackSvgUrl ?? blackLogoUrl;
+  const lightUrl = blackSvgUrl ?? blackLogoUrl ?? primaryUrl ?? whiteSvgUrl ?? whiteLogoUrl;
+  const preferredUrl = surface === "dark" ? darkUrl : lightUrl;
+
+  let source: OfficialDisplayLogo["source"] = null;
+  if (preferredUrl && (preferredUrl === whiteSvgUrl || preferredUrl === blackSvgUrl)) source = "brand_asset_svg";
+  else if (preferredUrl && (preferredUrl === whiteLogoUrl || preferredUrl === blackLogoUrl)) source = "brand_asset_variant";
+  else if (preferredUrl && preferredUrl === primaryUrl) source = "brand_asset_primary";
+
+  return {
+    darkUrl: darkUrl ?? null,
+    lightUrl: lightUrl ?? null,
+    preferredUrl: preferredUrl ?? null,
+    primaryUrl,
+    source,
+  };
+}
+
+/**
  * Resolves only assets that are actually used by the renderer configuration.
  * asset_references contributes canonical semantic kinds, while layout_config
  * proves usage. Older identities that predate explicit imageSlot references are
@@ -175,18 +235,80 @@ export function collectUsedIdentityAssets(version: IdentityVersionLike, source: 
   return [...byUrl.values()];
 }
 
-export function resolveIdentityAssetState({ publishedVersion, draftVersion, subjectLogoUrl }: ResolveIdentityAssetStateArgs) {
-  const officialAssets = collectUsedIdentityAssets(publishedVersion, "published");
+export function resolveIdentityAssetState({
+  publishedVersion,
+  draftVersion,
+  subjectLogoUrl,
+  officialLogoVariants,
+  surface = "dark",
+}: ResolveIdentityAssetStateArgs) {
+  const canonicalOfficialAssets = collectUsedIdentityAssets(publishedVersion, "published");
   const draftAssets = collectUsedIdentityAssets(draftVersion, "draft");
 
-  let officialLogo = officialAssets.find((asset) => asset.kind === "logo") ?? null;
-  if (!officialLogo && subjectLogoUrl && isVisualAssetUrl(subjectLogoUrl)) {
-    officialLogo = { kind: "logo", url: subjectLogoUrl, source: "subject" };
-    officialAssets.unshift(officialLogo);
+  let canonicalOfficialLogo = canonicalOfficialAssets.find((asset) => asset.kind === "logo") ?? null;
+  if (!canonicalOfficialLogo && subjectLogoUrl && isVisualAssetUrl(subjectLogoUrl)) {
+    canonicalOfficialLogo = { kind: "logo", url: subjectLogoUrl, source: "subject" };
   }
 
-  const draftLogoCandidate = draftAssets.find((asset) => asset.kind === "logo") ?? null;
-  const draftLogo = draftLogoCandidate && draftLogoCandidate.url !== officialLogo?.url ? draftLogoCandidate : null;
+  // Never let an unrelated active Brand Asset override a published identity.
+  // When both sides are versioned they must point to the same published version.
+  const publishedBrandVersionId = cleanUrl(publishedVersion?.brand_asset_version_id);
+  const activeBrandVersionId = cleanUrl(officialLogoVariants?.brandAssetVersionId);
+  const variantsMatchPublishedIdentity = !publishedBrandVersionId || !activeBrandVersionId || publishedBrandVersionId === activeBrandVersionId;
+  const usableVariants = variantsMatchPublishedIdentity ? officialLogoVariants : null;
+  const officialDisplayLogo = resolveOfficialDisplayLogo(usableVariants, surface);
 
-  return { officialAssets, draftAssets, officialLogo, draftLogo };
+  const officialLogoUrl = officialDisplayLogo.preferredUrl ?? canonicalOfficialLogo?.url ?? null;
+  const officialLogo: IdentityAsset | null = officialLogoUrl
+    ? {
+        kind: "logo",
+        url: officialLogoUrl,
+        source: canonicalOfficialLogo?.source ?? "published",
+        brandAssetVersionId: activeBrandVersionId ?? canonicalOfficialLogo?.brandAssetVersionId ?? null,
+      }
+    : null;
+
+  // The official-assets gallery and the Logo del Studio card share the exact
+  // same presentation resolver. Historical version rows remain untouched.
+  const officialAssets = canonicalOfficialAssets.map((asset) =>
+    asset.kind === "logo" && officialLogo ? officialLogo : asset,
+  );
+  if (officialLogo && !officialAssets.some((asset) => asset.kind === "logo")) officialAssets.unshift(officialLogo);
+
+  const draftLogoCandidate = draftAssets.find((asset) => asset.kind === "logo") ?? null;
+  const officialEquivalentUrls = new Set<string>();
+  const addEquivalentUrl = (value: unknown) => {
+    const url = cleanUrl(value);
+    if (url) officialEquivalentUrls.add(url);
+  };
+  addEquivalentUrl(canonicalOfficialLogo?.url);
+  addEquivalentUrl(subjectLogoUrl);
+  addEquivalentUrl(officialDisplayLogo.darkUrl);
+  addEquivalentUrl(officialDisplayLogo.lightUrl);
+  addEquivalentUrl(officialLogoVariants?.primaryLogoUrl);
+  addEquivalentUrl(officialLogoVariants?.whiteSvgUrl);
+  addEquivalentUrl(officialLogoVariants?.blackSvgUrl);
+  addEquivalentUrl(officialLogoVariants?.whiteLogoUrl);
+  addEquivalentUrl(officialLogoVariants?.blackLogoUrl);
+
+  const sameOfficialBrandVersion = Boolean(
+    draftLogoCandidate?.brandAssetVersionId &&
+      officialLogo?.brandAssetVersionId &&
+      draftLogoCandidate.brandAssetVersionId === officialLogo.brandAssetVersionId,
+  );
+  const draftLogo = draftLogoCandidate &&
+    !sameOfficialBrandVersion &&
+    !officialEquivalentUrls.has(draftLogoCandidate.url)
+    ? draftLogoCandidate
+    : null;
+
+  return {
+    officialAssets,
+    draftAssets,
+    officialLogo,
+    draftLogo,
+    displayLogo: draftLogo ?? officialLogo,
+    hasProposedLogo: Boolean(draftLogo),
+    officialDisplayLogo,
+  };
 }
