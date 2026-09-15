@@ -1,7 +1,10 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { IgluRadioShell } from "@/components/iglu-radio/IgluRadioShell";
+import { resolvePublicProfileRadio } from "@/lib/server/profile-radio-data";
 import "./radio.css";
+
+export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "IGLÚ RADIO — Del Sur para el mundo",
@@ -9,6 +12,9 @@ export const metadata: Metadata = {
   alternates: { canonical: "https://clouva.com.ar/iglu/radio" },
 };
 
-export default function IgluRadioLayout({ children }: { children: ReactNode }) {
-  return <IgluRadioShell>{children}</IgluRadioShell>;
+export default async function IgluRadioLayout({ children }: { children: ReactNode }) {
+  const configuredStation = await resolvePublicProfileRadio("el-iglu").catch(() => null);
+  const station = configuredStation ? { ...configuredStation, alias: "iglu" } : undefined;
+
+  return <IgluRadioShell station={station}>{children}</IgluRadioShell>;
 }
