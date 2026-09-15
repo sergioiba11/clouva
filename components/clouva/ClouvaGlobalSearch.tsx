@@ -1,11 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { authenticatedFetch } from "@/lib/authenticated-fetch";
+
+type SearchKind = "player" | "studio" | "business" | "user" | "product" | "order" | "booking" | "command";
 
 type SearchResult = {
   id: string;
-  kind: "player" | "studio" | "business";
+  kind: SearchKind;
   label: string;
   secondary: string | null;
   imageUrl: string | null;
@@ -21,19 +25,39 @@ function SearchGlyph() {
   );
 }
 
-function kindLabel(kind: SearchResult["kind"]) {
+function kindLabel(kind: SearchKind) {
   if (kind === "player") return "Player";
+  if (kind === "studio") return "Estudio";
   if (kind === "business") return "Negocio";
-  return "Estudio";
+  if (kind === "user") return "Usuario";
+  if (kind === "product") return "Producto";
+  if (kind === "order") return "Pedido";
+  if (kind === "booking") return "Reserva";
+  return "Acción";
 }
 
 export function ClouvaGlobalSearch() {
+  const pathname = usePathname() || "/";
+  const isAdmin = pathname === "/admin" || pathname.startsWith("/admin/");
   const rootRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResult[]>([]);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  const placeholder = useMemo(
+    () => isAdmin
+      ? "Buscar usuarios, Players, Estudios, productos, pedidos, assets..."
+      : "Buscar Players, Negocios, Estudios...",
+    [isAdmin],
+  );
+
+  useEffect(() => {
+    setQuery("");
+    setResults([]);
+    setOpen(false);
+  }, [isAdmin]);
 
   useEffect(() => {
     const handleKey = (event: KeyboardEvent) => {
@@ -70,10 +94,12 @@ export function ClouvaGlobalSearch() {
     const timeout = window.setTimeout(async () => {
       setLoading(true);
       try {
-        const response = await fetch(`/api/search/global?q=${encodeURIComponent(clean)}`, {
-          signal: controller.signal,
-          cache: "no-store",
-        });
+        const endpoint = isAdmin
+          ? `/api/admin/search?q=${encodeURIComponent(clean)}`
+          : `/api/search/global?q=${encodeURIComponent(clean)}`;
+        const response = isAdmin
+          ? await authenticatedFetch(endpoint, { signal: controller.signal, cache: "no-store" })
+          : await fetch(endpoint, { signal: controller.signal, cache: "no-store" });
         if (!response.ok) throw new Error("search failed");
         const payload = await response.json() as { results?: SearchResult[] };
         setResults(Array.isArray(payload.results) ? payload.results : []);
@@ -88,13 +114,13 @@ export function ClouvaGlobalSearch() {
       window.clearTimeout(timeout);
       controller.abort();
     };
-  }, [query]);
+  }, [isAdmin, query]);
 
   return (
     <div ref={rootRef} className="relative min-w-0 flex-1">
       <label
         className="group flex h-[40px] min-w-0 items-center gap-2.5 rounded-[14px] border border-white/[0.08] bg-white/[0.025] px-3 text-white/55 shadow-[inset_0_1px_rgba(255,255,255,.025)] transition focus-within:border-violet-300/25 focus-within:bg-white/[0.04]"
-        aria-label="Buscar en CLOUVA"
+        aria-label={isAdmin ? "Buscar en CLOUVA Admin" : "Buscar en CLOUVA"}
       >
         <span className="shrink-0 text-white/62"><SearchGlyph /></span>
         <input
@@ -106,7 +132,7 @@ export function ClouvaGlobalSearch() {
           }}
           onFocus={() => setOpen(true)}
           className="min-w-0 flex-1 bg-transparent text-[12px] font-medium text-white outline-none placeholder:text-white/34 sm:text-[13px]"
-          placeholder="Buscar Players, Negocios, Estudios..."
+          placeholder={placeholder}
           autoComplete="off"
           spellCheck={false}
         />
@@ -116,12 +142,12 @@ export function ClouvaGlobalSearch() {
       {open && (query.trim().length >= 2 || loading) ? (
         <div className="absolute left-0 right-0 top-[calc(100%+8px)] z-[90] overflow-hidden rounded-[18px] border border-violet-300/15 bg-[#0a0816]/98 p-2 shadow-[0_24px_70px_rgba(0,0,0,.62),0_0_30px_rgba(124,58,237,.12)] backdrop-blur-2xl">
           <div className="px-2.5 pb-2 pt-1.5 text-[8px] font-bold uppercase tracking-[0.24em] text-white/28">
-            Buscar en CLOUVA
+            {isAdmin ? "Command Center · Admin" : "Buscar en CLOUVA"}
           </div>
           {loading ? (
             <div className="rounded-xl px-3 py-4 text-[11px] text-white/38">Buscando…</div>
           ) : results.length ? (
-            <div className="grid gap-1">
+            <div className="grid max-h-[420px] gap-1 overflow-y-auto">
               {results.map((result) => (
                 <Link
                   key={`${result.kind}:${result.id}`}
@@ -143,10 +169,16 @@ export function ClouvaGlobalSearch() {
               ))}
             </div>
           ) : (
-            <div className="rounded-xl px-3 py-4 text-[11px] text-white/38">No encontramos Players, Negocios o Estudios públicos con ese nombre.</div>
+            <div className="rounded-xl px-3 py-4 text-[11px] text-white/38">
+              {isAdmin
+                ? "No encontramos resultados administrativos con ese término."
+                : "No encontramos Players, Negocios o Estudios públicos con ese nombre."}
+            </div>
           )}
           <div className="mt-1 border-t border-white/[0.05] px-2.5 py-2 text-[8px] leading-4 text-white/24">
-            Busca identidades y espacios públicos de CLOUVA. Los espacios privados nunca aparecen en estos resultados.
+            {isAdmin
+              ? "Búsqueda protegida del Admin. Encontrá entidades y acciones sin salir del centro de control."
+              : "Busca identidades y espacios públicos de CLOUVA. Los espacios privados nunca aparecen en estos resultados."}
           </div>
         </div>
       ) : null}
