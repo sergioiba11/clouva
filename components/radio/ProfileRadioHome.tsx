@@ -13,6 +13,7 @@ function statusLabel(status: ReturnType<typeof useRadio>["status"]) {
 
 export function ProfileRadioHome() {
   const { station, status, hasStream, isPlaying, metadata, togglePlay, retry } = useRadio();
+  const isLive = status === "LIVE";
 
   return (
     <section className="mx-auto flex min-h-[72vh] w-full max-w-6xl flex-col justify-center px-4 pb-36 pt-12 sm:px-6 lg:px-8">
@@ -53,7 +54,7 @@ export function ProfileRadioHome() {
 
       <div className="mt-14 grid gap-4 md:grid-cols-2">
         <article className="rounded-[28px] border border-white/10 bg-black/25 p-6 backdrop-blur-xl">
-          <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-cyan-100/45">AHORA AL AIRE</p>
+          <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-cyan-100/45">{isLive ? "AHORA AL AIRE" : "ESTACIÓN"}</p>
           <h2 className="mt-3 text-2xl font-black text-white">{metadata.title || station.name}</h2>
           <p className="mt-2 text-sm text-white/55">
             {[metadata.artist, metadata.program].filter(Boolean).join(" · ")}
