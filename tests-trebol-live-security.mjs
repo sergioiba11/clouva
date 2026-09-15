@@ -33,6 +33,39 @@ test("audio uses worklets with the documented PCM rates and barge-in clears play
   assert.match(clientHook, /onInterrupted:[\s\S]*playbackRef\.current\?\.clear\(\)/);
 });
 
+test("assistant transcript persists at semantic model boundaries, not transcription-segment boundaries", () => {
+  const client = read("./lib/clouva-ai/live/client.ts");
+  assert.doesNotMatch(
+    client,
+    /outputTranscription\.finished\)\s*void this\.flushTranscript\("assistant"/,
+  );
+  assert.match(
+    client,
+    /content\?\.interrupted[\s\S]*flushTranscript\("assistant", "MODEL_INTERRUPTED"\)/,
+  );
+  assert.match(
+    client,
+    /content\?\.turnComplete[\s\S]*flushTranscript\("assistant", wasInterrupted \? "MODEL_INTERRUPTED" : "MODEL_TURN_COMPLETE"\)/,
+  );
+});
+
+test("Live does not inject changing page context as unsolicited realtime user text", () => {
+  const hook = read("./components/clouva-ai/useTrebolLiveSession.ts");
+  assert.doesNotMatch(hook, /syncContext\(assistant\.contextPatch\)/);
+  assert.doesNotMatch(hook, /syncTimerRef/);
+});
+
+test("Live run completion requires an explicit semantic finish reason", () => {
+  const route = read("./app/api/clouva-ai/live/turn/route.ts");
+  assert.match(route, /if \(!isTrebolLiveEndReason\(body\.finishReason\)\)/);
+  assert.match(route, /finishReason:\s*body\.finishReason/);
+  assert.match(route, /transcriptFinal:\s*isCompletedTranscriptReason\(body\.finishReason\)/);
+  assert.doesNotMatch(
+    route,
+    /body\.action === "end"[\s\S]{0,220}finishAgentRun\(\{\s*supabase,\s*run,\s*status:\s*"completed"/,
+  );
+});
+
 test("rate-limit storage is service-role only", () => {
   const migration = read("./supabase/migrations/20260825021000_trebol_live_rate_limit.sql");
   assert.match(migration, /revoke all on public\.trebol_live_token_limits from public, anon, authenticated, service_role/i);
