@@ -4,12 +4,45 @@ import test from "node:test";
 
 import { selectedModelFromRequest } from "./lib/clouva-ai/providers/config.ts";
 import { classifyProviderError } from "./lib/clouva-ai/providers/errors.ts";
+import { createAIProviderRouter } from "./lib/clouva-ai/providers/provider-router.ts";
 import { parseMemoryProposal } from "./lib/clouva-ai/memory-proposals.ts";
 
 const chatSource = fs.readFileSync(new URL("./app/api/clouva-ai/chat/route.ts", import.meta.url), "utf8");
 const providerRouterSource = fs.readFileSync(new URL("./lib/clouva-ai/providers/provider-router.ts", import.meta.url), "utf8");
 const toolLoopSource = fs.readFileSync(new URL("./lib/clouva-ai/provider-tool-loop.ts", import.meta.url), "utf8");
 const liveTokenSource = fs.readFileSync(new URL("./app/api/clouva-ai/live/token/route.ts", import.meta.url), "utf8");
+
+function withEnv(overrides, callback) {
+  const previous = Object.fromEntries(Object.keys(overrides).map((key) => [key, process.env[key]]));
+  try {
+    for (const [key, value] of Object.entries(overrides)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    return callback();
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+test("CLOUVA provider initializes without GEMINI_API_KEY", () => {
+  withEnv({
+    CLOUVA_AI_PROVIDER: "clouva",
+    CLOUVA_AI_FALLBACK_PROVIDER: undefined,
+    CLOUVA_AI_BASE_URL: "http://127.0.0.1:11434/v1",
+    CLOUVA_AI_MODEL: "clouva-local",
+    CLOUVA_AI_FALLBACK_MODEL: "clouva-local-lite",
+    GEMINI_API_KEY: undefined,
+  }, () => {
+    const router = createAIProviderRouter();
+    assert.equal(router.primaryProvider.id, "clouva");
+    assert.equal(router.selectedModel, "clouva-local");
+    assert.equal(router.fallbackProvider, null);
+  });
+});
 
 test("canonical chat has no direct Gemini dependency and keeps NDJSON frames", () => {
   assert.doesNotMatch(chatSource, /gemini-(?:text|stream|tools)/);
@@ -36,11 +69,18 @@ test("Gemini billing depletion is normalized", () => {
   assert.equal(error.retryable, true);
 });
 
-test("legacy Gemini model cookie remains readable", () => {
+test("legacy Gemini model cookie remains readable for Gemini deployments", () => {
   const request = new Request("https://clouva.com.ar/api/clouva-ai/chat", {
     headers: { cookie: "clouva_gemini_model=gemini-legacy-model" },
   });
-  assert.equal(selectedModelFromRequest(request, "clouva-default"), "gemini-legacy-model");
+  assert.equal(selectedModelFromRequest(request, "gemini-default"), "gemini-legacy-model");
+});
+
+test("legacy Gemini cookie cannot select a model for a CLOUVA provider", () => {
+  const request = new Request("https://clouva.com.ar/api/clouva-ai/chat", {
+    headers: { cookie: "clouva_gemini_model=gemini-legacy-model" },
+  });
+  assert.equal(selectedModelFromRequest(request, "clouva-default"), "clouva-default");
 });
 
 test("new provider-neutral model cookie wins over legacy cookie", () => {
