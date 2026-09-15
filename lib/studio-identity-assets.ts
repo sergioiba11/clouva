@@ -50,7 +50,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function cleanUrl(value: unknown): string | null {
+function cleanString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
@@ -170,11 +170,11 @@ export function resolveOfficialDisplayLogo(
   variants: BrandLogoVariants | null | undefined,
   surface: "dark" | "light" = "dark",
 ): OfficialDisplayLogo {
-  const whiteSvgUrl = cleanUrl(variants?.whiteSvgUrl);
-  const blackSvgUrl = cleanUrl(variants?.blackSvgUrl);
-  const whiteLogoUrl = cleanUrl(variants?.whiteLogoUrl);
-  const blackLogoUrl = cleanUrl(variants?.blackLogoUrl);
-  const primaryUrl = cleanUrl(variants?.primaryLogoUrl);
+  const whiteSvgUrl = cleanString(variants?.whiteSvgUrl);
+  const blackSvgUrl = cleanString(variants?.blackSvgUrl);
+  const whiteLogoUrl = cleanString(variants?.whiteLogoUrl);
+  const blackLogoUrl = cleanString(variants?.blackLogoUrl);
+  const primaryUrl = cleanString(variants?.primaryLogoUrl);
 
   const darkUrl = whiteSvgUrl ?? whiteLogoUrl ?? primaryUrl ?? blackSvgUrl ?? blackLogoUrl;
   const lightUrl = blackSvgUrl ?? blackLogoUrl ?? primaryUrl ?? whiteSvgUrl ?? whiteLogoUrl;
@@ -252,10 +252,11 @@ export function resolveIdentityAssetState({
 
   // Never let an unrelated active Brand Asset override a published identity.
   // When both sides are versioned they must point to the same published version.
-  const publishedBrandVersionId = cleanUrl(publishedVersion?.brand_asset_version_id);
-  const activeBrandVersionId = cleanUrl(officialLogoVariants?.brandAssetVersionId);
+  const publishedBrandVersionId = cleanString(publishedVersion?.brand_asset_version_id);
+  const activeBrandVersionId = cleanString(officialLogoVariants?.brandAssetVersionId);
   const variantsMatchPublishedIdentity = !publishedBrandVersionId || !activeBrandVersionId || publishedBrandVersionId === activeBrandVersionId;
   const usableVariants = variantsMatchPublishedIdentity ? officialLogoVariants : null;
+  const usableBrandVersionId = cleanString(usableVariants?.brandAssetVersionId);
   const officialDisplayLogo = resolveOfficialDisplayLogo(usableVariants, surface);
 
   const officialLogoUrl = officialDisplayLogo.preferredUrl ?? canonicalOfficialLogo?.url ?? null;
@@ -264,7 +265,7 @@ export function resolveIdentityAssetState({
         kind: "logo",
         url: officialLogoUrl,
         source: canonicalOfficialLogo?.source ?? "published",
-        brandAssetVersionId: activeBrandVersionId ?? canonicalOfficialLogo?.brandAssetVersionId ?? null,
+        brandAssetVersionId: usableBrandVersionId ?? canonicalOfficialLogo?.brandAssetVersionId ?? null,
       }
     : null;
 
@@ -278,18 +279,18 @@ export function resolveIdentityAssetState({
   const draftLogoCandidate = draftAssets.find((asset) => asset.kind === "logo") ?? null;
   const officialEquivalentUrls = new Set<string>();
   const addEquivalentUrl = (value: unknown) => {
-    const url = cleanUrl(value);
+    const url = cleanString(value);
     if (url) officialEquivalentUrls.add(url);
   };
   addEquivalentUrl(canonicalOfficialLogo?.url);
   addEquivalentUrl(subjectLogoUrl);
   addEquivalentUrl(officialDisplayLogo.darkUrl);
   addEquivalentUrl(officialDisplayLogo.lightUrl);
-  addEquivalentUrl(officialLogoVariants?.primaryLogoUrl);
-  addEquivalentUrl(officialLogoVariants?.whiteSvgUrl);
-  addEquivalentUrl(officialLogoVariants?.blackSvgUrl);
-  addEquivalentUrl(officialLogoVariants?.whiteLogoUrl);
-  addEquivalentUrl(officialLogoVariants?.blackLogoUrl);
+  addEquivalentUrl(usableVariants?.primaryLogoUrl);
+  addEquivalentUrl(usableVariants?.whiteSvgUrl);
+  addEquivalentUrl(usableVariants?.blackSvgUrl);
+  addEquivalentUrl(usableVariants?.whiteLogoUrl);
+  addEquivalentUrl(usableVariants?.blackLogoUrl);
 
   const sameOfficialBrandVersion = Boolean(
     draftLogoCandidate?.brandAssetVersionId &&
