@@ -6,7 +6,14 @@ import { isVipProfileFidelityStatus, selectVipProfileJobState } from "@/lib/vip-
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-type VersionRow = { id: string; version_number: number; status: string } & Record<string, unknown>;
+type VersionRow = {
+  id: string;
+  version_number: number;
+  status: string;
+  asset_references?: unknown;
+  layout_config?: unknown;
+  brand_asset_version_id?: string | null;
+} & Record<string, unknown>;
 type JobRow = {
   id: string;
   status: string;
