@@ -4,7 +4,11 @@ import {
   authenticateAgentRequest,
   requireAgentConversation,
 } from "@/lib/clouva-ai/agent/orchestrator";
-import { finishAgentRun, requireAgentRun } from "@/lib/clouva-ai/agent/run-store";
+import {
+  finishAgentRun,
+  requireAgentRun,
+  updateAgentRunDiagnostics,
+} from "@/lib/clouva-ai/agent/run-store";
 import {
   isCompletedTranscriptReason,
   isTrebolLiveEndReason,
@@ -15,7 +19,7 @@ import {
 export const runtime = "nodejs";
 
 type TurnBody = {
-  action?: "transcript" | "end";
+  action?: "transcript" | "end" | "diagnostic";
   runId?: string;
   conversationId?: string;
   messageId?: string;
@@ -63,6 +67,22 @@ function safeLiveDiagnostics(value: unknown, runId: string): SafeLiveDiagnostics
     lastReceivedEvent: boundedString(source.lastReceivedEvent, 80),
     phase: boundedString(source.phase, 40),
   };
+}
+
+function logLiveDiagnostics(
+  runId: string,
+  conversationId: string,
+  diagnostics: SafeLiveDiagnostics,
+  finishReason?: string,
+) {
+  console.info(JSON.stringify({
+    event: "TREBOL_LIVE_DIAGNOSTIC",
+    at: new Date().toISOString(),
+    runId,
+    conversationId,
+    finishReason: finishReason ?? null,
+    ...diagnostics,
+  }));
 }
 
 function runEndState(reason: TrebolLiveEndReason, diagnostics: SafeLiveDiagnostics | null) {
@@ -114,22 +134,23 @@ export async function POST(request: Request) {
       throw Object.assign(new Error("La auditoría de esta sesión Live no está disponible."), { status: 503 });
     }
 
+    if (body.action === "diagnostic") {
+      const diagnostics = safeLiveDiagnostics(body.diagnostics, runId);
+      if (!diagnostics) {
+        return NextResponse.json({ error: "El diagnóstico Live no es válido." }, { status: 400 });
+      }
+      logLiveDiagnostics(runId, conversationId, diagnostics);
+      await updateAgentRunDiagnostics({ supabase, run, diagnosticMetadata: diagnostics });
+      return NextResponse.json({ ok: true });
+    }
+
     if (body.action === "end") {
       if (!isTrebolLiveEndReason(body.finishReason)) {
         return NextResponse.json({ error: "La finalización Live no tiene una causa válida." }, { status: 400 });
       }
       const diagnostics = safeLiveDiagnostics(body.diagnostics, runId);
       const end = runEndState(body.finishReason, diagnostics);
-      if (diagnostics) {
-        console.info(JSON.stringify({
-          event: "TREBOL_LIVE_END_DIAGNOSTIC",
-          at: new Date().toISOString(),
-          runId,
-          conversationId,
-          finishReason: body.finishReason,
-          ...diagnostics,
-        }));
-      }
+      if (diagnostics) logLiveDiagnostics(runId, conversationId, diagnostics, body.finishReason);
       await finishAgentRun({
         supabase,
         run,
