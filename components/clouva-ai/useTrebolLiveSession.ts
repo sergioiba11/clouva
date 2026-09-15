@@ -22,14 +22,11 @@ export function useTrebolLiveSession() {
   const assistantRef = useRef(assistant);
   const voiceDecisionRef = useRef<string | null>(null);
   const toolDecisionNoticeRef = useRef<number | null>(null);
-  const syncTimerRef = useRef<number | null>(null);
   contextRef.current = assistant.context;
   assistantRef.current = assistant;
 
   const stop = useCallback(async () => {
     dispatch({ type: "END" });
-    if (syncTimerRef.current !== null) window.clearTimeout(syncTimerRef.current);
-    syncTimerRef.current = null;
     const client = clientRef.current;
     const capture = captureRef.current;
     const playback = playbackRef.current;
@@ -144,15 +141,11 @@ export function useTrebolLiveSession() {
     dispatch({ type: "MUTE_CHANGED", muted });
   }, []);
 
-  useEffect(() => {
-    if (!["connected", "user_speaking", "trebol_thinking", "trebol_speaking", "interrupted"].includes(state.status)) return;
-    if (!Object.keys(assistant.contextPatch).length) return;
-    if (syncTimerRef.current !== null) window.clearTimeout(syncTimerRef.current);
-    syncTimerRef.current = window.setTimeout(() => {
-      syncTimerRef.current = null;
-      clientRef.current?.syncContext(assistant.contextPatch);
-    }, 500);
-  }, [assistant.contextPatch, state.status]);
+  // The current sanitized context is still available to tools through
+  // getContext(), but it is intentionally not injected into Gemini as
+  // background realtime text. Those automatic patches were producing model
+  // replies ("Contexto actualizado", "Contexto asimilado", etc.) and
+  // interrupting the user's actual Live conversation.
 
   useEffect(() => {
     const notice = assistant.toolDecisionNotice;
