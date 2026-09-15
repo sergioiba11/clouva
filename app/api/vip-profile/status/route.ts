@@ -127,8 +127,9 @@ export async function GET(request: NextRequest) {
       transparentLogoUrl: string | null;
     } | null = null;
 
+    const activeBrandAssetId = typeof brandAsset?.id === "string" ? brandAsset.id : null;
     const activeBrandVersionId = typeof brandAsset?.active_version_id === "string" ? brandAsset.active_version_id : null;
-    if (activeBrandVersionId) {
+    if (activeBrandAssetId && activeBrandVersionId) {
       // Resolve the active version explicitly. brand_assets <-> brand_asset_versions
       // has two legitimate relationships, so do not use an ambiguous PostgREST embed.
       const { data: brandVersion, error: brandVersionError } = await admin
@@ -139,7 +140,7 @@ export async function GET(request: NextRequest) {
       if (brandVersionError) throw new Error(brandVersionError.message);
       if (brandVersion) {
         officialLogoVariants = {
-          brandAssetId: String(brandAsset.id),
+          brandAssetId: activeBrandAssetId,
           brandAssetVersionId: String(brandVersion.id),
           primaryLogoUrl: typeof brandVersion.primary_logo_url === "string" ? brandVersion.primary_logo_url : null,
           whiteLogoUrl: typeof brandVersion.white_logo_url === "string" ? brandVersion.white_logo_url : null,
