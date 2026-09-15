@@ -89,7 +89,7 @@ test("Live run completion requires an explicit semantic finish reason", () => {
 test("unexpected Live socket closure keeps the semantic reason and stores provider diagnostics", () => {
   const route = read("./app/api/clouva-ai/live/turn/route.ts");
   const runStore = read("./lib/clouva-ai/agent/run-store.ts");
-  const migration = read("./supabase/migrations/20260915233000_trebol_live_diagnostics.sql");
+  const migration = read("./supabase/migrations/20260915232006_trebol_live_diagnostics.sql");
   assert.match(route, /case "SOCKET_CLOSED_UNEXPECTEDLY"[\s\S]{0,260}errorCode:\s*"GEMINI_LIVE_SOCKET_CLOSED"/);
   assert.match(route, /closeReason/);
   assert.match(route, /closeCode/);
