@@ -90,7 +90,8 @@ export async function GET(request: NextRequest) {
 
     const subjectColumn = playerId ? "player_id" : "studio_id";
     const subjectId = playerId || studioId;
-    const [{ data: jobs, error: jobsError }, { data: versions, error: versionsError }] = await Promise.all([
+    const ownerType = playerId ? "player" : "studio";
+    const [{ data: jobs, error: jobsError }, { data: versions, error: versionsError }, { data: brandAsset, error: brandAssetError }] = await Promise.all([
       admin
         .from("vip_profile_generation_jobs")
         .select("id,status,generated_copy,generated_assets,layout_variants,layout_analysis,error_message,actual_cost_usd,created_at,completed_at")
@@ -102,9 +103,51 @@ export async function GET(request: NextRequest) {
         .select("id,version_number,status,profile_level,copy_config,layout_config,asset_references,brand_asset_version_id,created_at,published_at")
         .eq(subjectColumn, subjectId)
         .order("version_number", { ascending: false }),
+      admin
+        .from("brand_assets")
+        .select("id,active_version_id")
+        .eq("owner_type", ownerType)
+        .eq("owner_id", subjectId)
+        .eq("status", "active")
+        .not("active_version_id", "is", null)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
     ]);
     if (jobsError) throw new Error(jobsError.message);
     if (versionsError) throw new Error(versionsError.message);
+    if (brandAssetError) throw new Error(brandAssetError.message);
+
+    let officialLogoVariants: {
+      brandAssetId: string;
+      brandAssetVersionId: string;
+      primaryLogoUrl: string | null;
+      whiteLogoUrl: string | null;
+      blackLogoUrl: string | null;
+      transparentLogoUrl: string | null;
+    } | null = null;
+
+    const activeBrandVersionId = typeof brandAsset?.active_version_id === "string" ? brandAsset.active_version_id : null;
+    if (activeBrandVersionId) {
+      // Resolve the active version explicitly. brand_assets <-> brand_asset_versions
+      // has two legitimate relationships, so do not use an ambiguous PostgREST embed.
+      const { data: brandVersion, error: brandVersionError } = await admin
+        .from("brand_asset_versions")
+        .select("id,primary_logo_url,white_logo_url,black_logo_url,transparent_logo_url")
+        .eq("id", activeBrandVersionId)
+        .maybeSingle();
+      if (brandVersionError) throw new Error(brandVersionError.message);
+      if (brandVersion) {
+        officialLogoVariants = {
+          brandAssetId: String(brandAsset.id),
+          brandAssetVersionId: String(brandVersion.id),
+          primaryLogoUrl: typeof brandVersion.primary_logo_url === "string" ? brandVersion.primary_logo_url : null,
+          whiteLogoUrl: typeof brandVersion.white_logo_url === "string" ? brandVersion.white_logo_url : null,
+          blackLogoUrl: typeof brandVersion.black_logo_url === "string" ? brandVersion.black_logo_url : null,
+          transparentLogoUrl: typeof brandVersion.transparent_logo_url === "string" ? brandVersion.transparent_logo_url : null,
+        };
+      }
+    }
 
     const normalizedVersions = (versions ?? []) as VersionRow[];
     const versionState = resolveVersionState(normalizedVersions);
@@ -130,6 +173,7 @@ export async function GET(request: NextRequest) {
       publishedVersion: versionState.publishedVersion,
       draftVersion: versionState.draftVersion,
       staleDrafts: versionState.staleDrafts,
+      officialLogoVariants,
       ...identityAssets,
     });
   } catch (error) {
