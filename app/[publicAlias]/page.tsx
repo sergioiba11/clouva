@@ -5,6 +5,12 @@ import { SpacePublicView } from "@/components/public/SpacePublicView";
 import { PublicAgendaSection } from "@/components/public/PublicAgendaSection";
 import { PublicKnowledgeSection } from "@/components/public/PublicKnowledgeSection";
 import { PublicMerchSection, loadPublicMerchProducts } from "@/components/public/PublicMerchSection";
+import { buildPlayerStructuredData } from "@/lib/seo/player-structured-data";
+import { serializeStructuredData } from "@/lib/seo/structured-data";
+import {
+  playerMusicConnectionsSelect,
+  type PlayerMusicConnection,
+} from "@/lib/players-data";
 import { loadPublicAgendaByPlayer } from "@/lib/server/agenda/public-loader";
 import { loadPublicKnowledgeByPlayer } from "@/lib/server/knowledge/public-loader";
 import { resolvePlayerAlias } from "@/lib/server/public-identity-data";
@@ -19,11 +25,33 @@ export async function generateMetadata({ params }: { params: Promise<{ publicAli
   if (playerResult) {
     const { player, canonicalAlias } = playerResult;
     const title = player.seo_title || `${player.display_name} — Perfil oficial`;
-    const description = player.seo_description || player.share_description || player.short_bio || player.tagline || undefined;
+    const description = player.seo_description || player.long_bio || player.share_description || player.short_bio || player.tagline || undefined;
     const canonical = `https://clouva.com.ar/${canonicalAlias}`;
     const image = player.og_image_url || player.cover_url || player.profile_image_url || undefined;
-    return { title, description, alternates: { canonical }, openGraph: { type: "profile", url: canonical, title: player.share_title || title, description, images: image ? [{ url: image }] : undefined }, robots: player.privacy_status === "public" ? { index: true, follow: true } : { index: false, follow: false } };
+    const shareTitle = player.share_title || title;
+    const shareDescription = player.share_description || description;
+
+    return {
+      title,
+      description,
+      alternates: { canonical },
+      openGraph: {
+        type: "profile",
+        url: canonical,
+        title: shareTitle,
+        description: shareDescription,
+        images: image ? [{ url: image }] : undefined,
+      },
+      twitter: {
+        card: image ? "summary_large_image" : "summary",
+        title: shareTitle,
+        description: shareDescription,
+        images: image ? [image] : undefined,
+      },
+      robots: player.privacy_status === "public" ? { index: true, follow: true } : { index: false, follow: false },
+    };
   }
+
   const spaceResult = await resolvePublicSpaceAlias(publicAlias).catch(() => null);
   if (!spaceResult) return { title: "Perfil no encontrado — CLOUVA", robots: { index: false, follow: false } };
   const { space, spot, canonicalAlias } = spaceResult;
@@ -31,7 +59,14 @@ export async function generateMetadata({ params }: { params: Promise<{ publicAli
   const description = spot?.description || space.description || `Spot oficial de ${space.name} en CLOUVA Matrix.`;
   const canonical = `https://clouva.com.ar/${canonicalAlias}`;
   const image = spot?.cover_url || spot?.logo_url || space.cover_url || space.logo_url || undefined;
-  return { title, description, alternates: { canonical }, openGraph: { type: "website", url: canonical, title, description, images: image ? [{ url: image }] : undefined }, robots: { index: true, follow: true } };
+  return {
+    title,
+    description,
+    alternates: { canonical },
+    openGraph: { type: "website", url: canonical, title, description, images: image ? [{ url: image }] : undefined },
+    twitter: { card: image ? "summary_large_image" : "summary", title, description, images: image ? [image] : undefined },
+    robots: { index: true, follow: true },
+  };
 }
 
 export default async function PublicAliasPage({ params }: { params: Promise<{ publicAlias: string }> }) {
@@ -44,15 +79,32 @@ export default async function PublicAliasPage({ params }: { params: Promise<{ pu
   }
 
   const admin = createAdminSupabase();
-  const [merchProducts, publicAgenda, publicKnowledge] = await Promise.all([
+  const [merchProducts, publicAgenda, publicKnowledge, musicConnectionsResult] = await Promise.all([
     loadPublicMerchProducts({ playerId: playerResult.player.id }),
     loadPublicAgendaByPlayer({ admin, playerId: playerResult.player.id }).catch(() => null),
     loadPublicKnowledgeByPlayer({ admin, playerId: playerResult.player.id }).catch(() => null),
+    admin
+      .from("player_music_connections")
+      .select(playerMusicConnectionsSelect)
+      .eq("player_id", playerResult.player.id)
+      .not("external_url", "is", null),
   ]);
+  const musicConnections = musicConnectionsResult.error
+    ? []
+    : (musicConnectionsResult.data ?? []) as unknown as PlayerMusicConnection[];
+  const structuredData = buildPlayerStructuredData({
+    player: playerResult.player,
+    canonicalAlias: playerResult.canonicalAlias,
+    musicConnections,
+  });
   const accent = playerResult.layoutConfig?.page_style?.palette?.accent || playerResult.player.accent_color || "#8f7cff";
 
   return (
     <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: serializeStructuredData(structuredData) }}
+      />
       <PlayerIdentityRenderer
         player={playerResult.player}
         affiliations={playerResult.affiliations}
