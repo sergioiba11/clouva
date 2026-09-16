@@ -69,7 +69,7 @@ export async function getImportJob(admin: SupabaseClient, jobId: string) {
   const { data, error } = await admin.from(JOBS_TABLE).select(jobSelect()).eq("id", jobId).maybeSingle();
   if (error) throw new Error(`No se pudo leer el import job: ${error.message}`);
   if (!data) throw new Error("El import job no existe.");
-  return normalizeAssetImportJob(data as Record<string, unknown>);
+  return normalizeAssetImportJob(data as unknown as Record<string, unknown>);
 }
 
 export async function listImportJobs(admin: SupabaseClient, userId: string, limit = 12) {
@@ -81,7 +81,7 @@ export async function listImportJobs(admin: SupabaseClient, userId: string, limi
     .order("created_at", { ascending: false })
     .limit(safeLimit);
   if (error) throw new Error(`No se pudieron leer las importaciones: ${error.message}`);
-  return (data ?? []).map((row) => normalizeAssetImportJob(row as Record<string, unknown>));
+  return (data ?? []).map((row) => normalizeAssetImportJob(row as unknown as Record<string, unknown>));
 }
 
 export async function createImportJob(params: {
@@ -154,7 +154,7 @@ export async function createImportJob(params: {
     if (updateError || !updated) throw new Error(updateError?.message ?? "No se pudo activar la subida.");
 
     return {
-      job: normalizeAssetImportJob(updated as Record<string, unknown>),
+      job: normalizeAssetImportJob(updated as unknown as Record<string, unknown>),
       uploadUrl,
       chunkBytes: ASSET_IMPORT_UPLOAD_CHUNK_BYTES,
       maxArchiveBytes: ASSET_IMPORT_MAX_ARCHIVE_BYTES,
@@ -192,7 +192,7 @@ export async function persistUploadProgress(admin: SupabaseClient, job: AssetImp
     .select(jobSelect())
     .single();
   if (error || !data) throw new Error(`No se pudo guardar el progreso: ${error?.message ?? "sin respuesta"}`);
-  return normalizeAssetImportJob(data as Record<string, unknown>);
+  return normalizeAssetImportJob(data as unknown as Record<string, unknown>);
 }
 
 async function metadataAccessToken() {
@@ -260,7 +260,7 @@ export async function enqueueImportJob(admin: SupabaseClient, job: AssetImportJo
       .select(jobSelect())
       .single();
     if (error || !data) throw new Error(error?.message ?? "No se pudo guardar el task id.");
-    return normalizeAssetImportJob(data as Record<string, unknown>);
+    return normalizeAssetImportJob(data as unknown as Record<string, unknown>);
   } catch (error) {
     await admin.from(JOBS_TABLE).update({
       status: "archive_uploaded",
