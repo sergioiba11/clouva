@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { notFound, permanentRedirect } from "next/navigation";
 import { StudioIdentityRenderer } from "@/components/public/StudioIdentityRenderer";
 import { TrebolContextRegistration } from "@/components/clouva-ai/TrebolContextRegistration";
@@ -8,7 +7,7 @@ import { PublicMerchSection } from "@/components/public/PublicMerchSection";
 import { loadPublicAgendaByStudio } from "@/lib/server/agenda/public";
 import { resolveStudioAlias, type StudioIdentityData } from "@/lib/server/public-identity-data";
 import { createAdminSupabase } from "@/lib/server/supabase";
-import { IGLU_RADIO_PATH, IGLU_STUDIO_SLUG } from "@/lib/iglu-radio/routes";
+import { IGLU_STUDIO_SLUG } from "@/lib/iglu-radio/routes";
 import { studioPublicHref } from "@/lib/public-studio-routes";
 import { siteUrl } from "@/lib/site-url";
 
@@ -45,7 +44,8 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
   const result = await resolveStudioAlias(slug).catch(() => null);
   if (!result) return { title: "Estudio no encontrado — CLOUVA", robots: { index: false, follow: false } };
 
-  const canonical = canonicalUrl(result.canonicalAlias);
+  const isIglu = result.studio.slug.toLowerCase() === IGLU_STUDIO_SLUG;
+  const canonical = isIglu ? `${siteUrl}/iglu` : canonicalUrl(result.canonicalAlias);
   const title = result.studio.seo_title || `${result.publicStudio.publicName} — Estudio en CLOUVA`;
   const description = result.studio.seo_description || result.studio.description || result.studio.tagline || undefined;
   const image = absoluteAssetUrl(result.studio.og_image_url || result.studio.cover_url || result.publicStudio.darkLogoUrl || result.studio.logo_url);
@@ -64,12 +64,13 @@ export default async function MatrixStudioProfilePage({ params, searchParams }: 
   const [{ slug }, query] = await Promise.all([params, searchParams]);
   const result = await resolveStudioAlias(slug);
   if (!result) notFound();
+
+  if (result.studio.slug.toLowerCase() === IGLU_STUDIO_SLUG) permanentRedirect("/iglu");
   if (slug.toLowerCase() !== result.canonicalAlias.toLowerCase()) permanentRedirect(`${studioPublicHref(result.canonicalAlias)}${query.joined === "1" ? "?joined=1" : ""}`);
 
   const data = publicIdentityData(result);
   const publicAgenda = await loadPublicAgendaByStudio({ admin: createAdminSupabase(), studioId: result.studio.id }).catch(() => null);
   const accent = data.layoutConfig?.page_style?.palette?.accent || data.studio.accent_color || "#8f7cff";
-  const isIglu = result.studio.slug.toLowerCase() === IGLU_STUDIO_SLUG;
   const canonical = canonicalUrl(result.canonicalAlias);
   const structuredName = result.publicStudio.publicName;
   const structuredDescription = result.studio.seo_description || result.studio.description || result.studio.tagline || undefined;
@@ -92,18 +93,6 @@ export default async function MatrixStudioProfilePage({ params, searchParams }: 
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData) }} />
       <TrebolContextRegistration scope="studio-public" id={result.studio.id} data={{ studioId: result.studio.id, slug: result.studio.slug, canonicalAlias: result.canonicalAlias, name: result.publicStudio.publicName, section: "public-profile" }} />
       <StudioIdentityRenderer data={data} joined={query.joined === "1"} />
-      {isIglu ? (
-        <section className="border-y border-white/10 bg-[#03070b] px-4 py-8 sm:px-6">
-          <div className="mx-auto flex max-w-6xl flex-col gap-6 rounded-[28px] border border-white/10 bg-white/[0.025] p-6 sm:flex-row sm:items-center sm:justify-between sm:p-8">
-            <div className="max-w-2xl">
-              <p className="text-[10px] font-bold uppercase tracking-[0.2em]" style={{ color: accent }}>IGLÚ RADIO · {result.publicStudio.publicName}</p>
-              <h2 className="mt-2 text-2xl font-semibold tracking-tight sm:text-3xl">La radio vive dentro de este Studio.</h2>
-              <p className="mt-3 text-sm leading-6 text-white/55">Entrá a la señal, sesiones, artistas, programas y programación de IGLÚ RADIO sin salir de la identidad oficial de {result.publicStudio.publicName}.</p>
-            </div>
-            <Link href={IGLU_RADIO_PATH} className="inline-flex min-h-12 shrink-0 items-center justify-center rounded-full border border-white/15 px-6 text-xs font-bold tracking-[0.12em] text-white shadow-lg transition hover:brightness-125" style={{ backgroundColor: accent }}>ENTRAR A IGLÚ RADIO</Link>
-          </div>
-        </section>
-      ) : null}
       {publicAgenda ? <PublicAgendaSection identityName={result.publicStudio.publicName} agendaHref={`${result.publicStudio.href}/agenda`} accent={accent} events={publicAgenda.events} bookingEnabled={publicAgenda.agenda.booking_enabled} description="Sesiones, clases, reuniones, grabaciones, lanzamientos y reservas públicas del Studio." /> : null}
       <PublicMerchSection studioId={result.studio.id} eyebrow={`Tienda de ${result.publicStudio.publicName}`} title="Merch" />
     </>
