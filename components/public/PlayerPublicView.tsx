@@ -20,6 +20,7 @@ import { PublicSpotifyPlayer } from "./PublicSpotifyPlayer";
 import { PublicYouTubeFeatured } from "./PublicYouTubeFeatured";
 import { PublicShell } from "./PublicShell";
 import { VISUAL_ASSETS } from "@/lib/visual-assets";
+import { studioPublicHref } from "@/lib/public-studio-routes";
 import type { LayoutConfig, RadiusValue } from "@/lib/server/layout-config";
 import {
   parsePlayerSocialLinks,
@@ -51,6 +52,14 @@ function mergeSocialLinks(player: Player) {
   append("youtube", player.youtube_channel_url, "YouTube");
   if (player.contact_email) append("contact", `mailto:${player.contact_email}`, "Contacto");
   return links as SocialLink[];
+}
+
+function studioPresentation(studio: NonNullable<PlayerStudioAffiliation["studio"]>) {
+  return {
+    name: studio.public_name || studio.share_title || studio.name,
+    href: studio.public_href || studioPublicHref(studio.public_alias || studio.slug),
+    logo: studio.official_logo_url || studio.logo_url,
+  };
 }
 
 function MediaCard({ item, radiusClass }: { item: PlayerMedia; radiusClass: string }) {
@@ -101,6 +110,7 @@ export function PlayerPublicView({
     ...(player.primary_role ? [player.primary_role] : []),
   ])].filter(Boolean);
   const primaryStudio = affiliations.find((entry) => entry.is_primary && entry.studio)?.studio || affiliations.find((entry) => entry.studio)?.studio;
+  const primaryStudioPublic = primaryStudio ? studioPresentation(primaryStudio) : null;
   const socialLinks = mergeSocialLinks(player);
   const youtubeFeatured = media.find((item) => item.origin === "youtube" && (item.media_type === "video" || item.media_type === "embed")) || null;
   const featuredMedia = media
@@ -117,13 +127,13 @@ export function PlayerPublicView({
   return (
     <PublicShell
       brand="LA MATRIX"
-      brandHref="/matrix"
+      brandHref="/lamatrix"
       accent={accent}
       navStyle={navStyle}
       navLinks={[
-        { label: "Inicio", href: "/" },
+        { label: "Inicio", href: "/lamatrix" },
         { label: "Players", href: "/players" },
-        { label: "Estudios", href: "/studios" },
+        { label: "Estudios", href: "/lamatrix/estudios" },
         { label: "Sellos", href: "#sellos", disabled: true },
         { label: "Colectivos", href: "#colectivos", disabled: true },
         { label: "Mundos", href: "#mundos", disabled: true },
@@ -162,12 +172,12 @@ export function PlayerPublicView({
               </div>
             </div>
 
-            {primaryStudio || hasMerch ? (
+            {primaryStudioPublic || hasMerch ? (
               <div className="mt-5 flex flex-wrap gap-3 sm:mt-6">
-                {primaryStudio ? (
-                  <Link href={`/studios/${primaryStudio.slug}`} className={`inline-flex min-w-[220px] max-w-full items-center gap-3 border border-white/12 bg-black/35 px-4 py-3 backdrop-blur transition hover:border-[color:var(--public-accent)]/45 ${radiusClass}`}>
-                    {primaryStudio.logo_url ? <img src={primaryStudio.logo_url} alt="" className="h-10 w-10 rounded-full object-cover" /> : <span className="grid h-10 w-10 place-items-center rounded-full bg-[color:var(--public-accent)]/15"><Building2 size={17} /></span>}
-                    <span className="min-w-0 flex-1"><b className="block truncate text-sm">{primaryStudio.name}</b><small className="text-white/40">Estudio principal</small></span>
+                {primaryStudioPublic ? (
+                  <Link href={primaryStudioPublic.href} className={`inline-flex min-w-[220px] max-w-full items-center gap-3 border border-white/12 bg-black/35 px-4 py-3 backdrop-blur transition hover:border-[color:var(--public-accent)]/45 ${radiusClass}`}>
+                    {primaryStudioPublic.logo ? <img src={primaryStudioPublic.logo} alt="" className="h-10 w-10 rounded-xl object-contain" /> : <span className="grid h-10 w-10 place-items-center rounded-full bg-[color:var(--public-accent)]/15"><Building2 size={17} /></span>}
+                    <span className="min-w-0 flex-1"><b className="block truncate text-sm">{primaryStudioPublic.name}</b><small className="text-white/40">Estudio principal</small></span>
                     <ArrowRight size={15} className="text-[color:var(--public-accent)]" />
                   </Link>
                 ) : null}
@@ -193,14 +203,7 @@ export function PlayerPublicView({
           </div>
 
           <div className="grid self-center justify-items-center gap-3 lg:justify-items-end">
-            {hasLocationMap ? (
-              <PlayerPublicLocationCard
-                latitude={player.latitude}
-                longitude={player.longitude}
-                label={player.location || ""}
-                accent={locationAccent}
-              />
-            ) : null}
+            {hasLocationMap ? <PlayerPublicLocationCard latitude={player.latitude} longitude={player.longitude} label={player.location || ""} accent={locationAccent} /> : null}
 
             <aside className={`w-full border border-white/12 bg-[#0c0b16]/80 p-5 shadow-2xl backdrop-blur-xl ${radiusClass}`}>
               <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[color:var(--public-accent)]/70">Identidad en La Matrix</p>
@@ -241,13 +244,17 @@ export function PlayerPublicView({
           <div className="flex items-center justify-between gap-3"><h2 className="text-sm font-semibold">Estudios conectados</h2><Building2 size={16} className="text-[color:var(--public-accent)]" /></div>
           {affiliations.length ? (
             <div className="mt-4 grid gap-2">
-              {affiliations.map((entry) => entry.studio ? (
-                <Link key={entry.studio.id} href={`/studios/${entry.studio.slug}`} className="flex items-center gap-3 rounded-xl border border-white/[0.07] p-2.5 transition hover:border-[color:var(--public-accent)]/35">
-                  {entry.studio.logo_url ? <img src={entry.studio.logo_url} alt="" className="h-9 w-9 rounded-full object-cover" /> : <span className="grid h-9 w-9 place-items-center rounded-full bg-[color:var(--public-accent)]/10 text-xs">{entry.studio.name.charAt(0)}</span>}
-                  <span className="min-w-0 flex-1"><b className="block truncate text-xs">{entry.studio.name}</b><small className="text-[10px] text-white/35">{entry.role || "Miembro"}</small></span>
-                  <ArrowRight size={13} className="text-white/30" />
-                </Link>
-              ) : null)}
+              {affiliations.map((entry) => {
+                if (!entry.studio) return null;
+                const publicStudio = studioPresentation(entry.studio);
+                return (
+                  <Link key={entry.studio.id} href={publicStudio.href} className="flex items-center gap-3 rounded-xl border border-white/[0.07] p-2.5 transition hover:border-[color:var(--public-accent)]/35">
+                    {publicStudio.logo ? <img src={publicStudio.logo} alt="" className="h-9 w-9 rounded-lg object-contain" /> : <span className="grid h-9 w-9 place-items-center rounded-full bg-[color:var(--public-accent)]/10 text-xs">{publicStudio.name.charAt(0)}</span>}
+                    <span className="min-w-0 flex-1"><b className="block truncate text-xs">{publicStudio.name}</b><small className="text-[10px] text-white/35">{entry.role || "Miembro"}</small></span>
+                    <ArrowRight size={13} className="text-white/30" />
+                  </Link>
+                );
+              })}
             </div>
           ) : <p className="mt-4 text-xs leading-5 text-white/35">Este Player todavía no publicó conexiones con Estudios.</p>}
         </aside>

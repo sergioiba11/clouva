@@ -4,7 +4,7 @@ import { createPublicSupabase } from "@/lib/server/public-supabase";
 import { studioPublicHref } from "@/lib/public-studio-routes";
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const staticRoutes = ["/", "/tienda", "/catalogo", "/carrito", "/checkout", "/studios", "/matrix"];
+  const staticRoutes = ["/", "/tienda", "/catalogo", "/carrito", "/checkout", "/lamatrix", "/lamatrix/estudios", "/players"];
   const supabase = createPublicSupabase();
 
   const { data: studios } = await supabase

@@ -60,7 +60,17 @@ export type PlayerStudioAffiliation = {
   role: string | null;
   area_label: string | null;
   is_primary: boolean;
-  studio: { id: string; slug: string; name: string; logo_url: string | null } | null;
+  studio: {
+    id: string;
+    slug: string;
+    name: string;
+    logo_url: string | null;
+    share_title: string | null;
+    public_alias?: string;
+    public_name?: string;
+    public_href?: string;
+    official_logo_url?: string | null;
+  } | null;
 };
 
 export type PlayerMedia = {
@@ -176,6 +186,6 @@ export const studioMembershipPlansSelect =
 export const playerPublicSelect =
   "id,owner_user_id,slug,display_name,username,primary_role,short_bio,long_bio,tagline,secondary_tagline,origin,location,latitude,longitude,genres,disciplines,professional_categories,social_links,profile_image_url,hero_image_url,cover_url,spotify_profile_url,youtube_channel_url,contact_email,booking_email,whatsapp_url,theme_key,accent_color,font_style,logo_url,palette,privacy_status,claim_status,is_verified,is_published,publication_status,seo_title,seo_description,share_title,share_description,og_image_url";
 
-export const playerStudiosSelect = "role,area_label,is_primary,studio:studios(id,slug,name,logo_url)";
+export const playerStudiosSelect = "role,area_label,is_primary,studio:studios(id,slug,name,logo_url,share_title)";
 
 export const studioPlayersSelect = "role,area_label,is_primary,player:players(id,slug,display_name,primary_role,profile_image_url)";

@@ -1,6 +1,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import Link from "next/link";
 import { PublicShareButton } from "./PublicShareButton";
+import { studioPublicHref } from "@/lib/public-studio-routes";
 import {
   parsePlayerSocialLinks,
   type Player,
@@ -46,6 +47,26 @@ const SHADOW_STYLE: Record<ShadowPreset, string | undefined> = {
 };
 const BLUR_STYLE: Record<BlurPreset, string | undefined> = { none: undefined, soft: "blur(6px)", medium: "blur(12px)", strong: "blur(20px)" };
 
+function studioPresentation(studio: NonNullable<PlayerStudioAffiliation["studio"]>) {
+  return {
+    name: studio.public_name || studio.share_title || studio.name,
+    href: studio.public_href || studioPublicHref(studio.public_alias || studio.slug),
+    logo: studio.official_logo_url || studio.logo_url,
+  };
+}
+
+function mobileFontCap(element: PositionedElement) {
+  switch (element.type) {
+    case "heading": return 48;
+    case "subheading": return 34;
+    case "button": return 16;
+    case "badge": return 14;
+    case "eyebrow": return 14;
+    case "paragraph": return 18;
+    default: return 20;
+  }
+}
+
 export function PrecisePlayerLayoutRenderer({
   player,
   affiliations,
@@ -60,7 +81,6 @@ export function PrecisePlayerLayoutRenderer({
   const socials = parsePlayerSocialLinks(player.social_links);
   const accent = layout.page_style?.palette?.accent || player.accent_color || "#8f7cff";
   const sections = layout.precise_sections;
-  const included = new Set(sections.map((section) => section.type));
   const nav = layout.nav_items?.length
     ? layout.nav_items.map((item) => ({ label: item.label, href: `#${SECTION_ANCHOR[item.section]}` }))
     : sections.filter((section) => section.type !== "hero").map((section) => ({ label: section.type.toUpperCase(), href: `#${SECTION_ANCHOR[section.type]}` }));
@@ -83,13 +103,29 @@ export function PrecisePlayerLayoutRenderer({
   function elementStyle(element: PositionedElement, absolute: boolean): CSSProperties {
     const style: CSSProperties = absolute
       ? { position: "absolute", left: `${element.x}%`, top: `${element.y}%`, width: `${element.w}%`, height: element.h != null ? `${element.h}%` : undefined, zIndex: element.zIndex ?? undefined }
-      : { width: element.mobile?.w ? `${element.mobile.w}%` : "100%", order: element.mobile?.order ?? undefined, alignSelf: element.mobile?.align === "center" ? "center" : element.mobile?.align === "right" ? "flex-end" : "stretch" };
-    if (element.fontSizePx) style.fontSize = `${element.fontSizePx}px`;
+      : {
+          width: `${Math.min(100, Math.max(10, element.mobile?.w ?? 100))}%`,
+          maxWidth: "100%",
+          minWidth: 0,
+          height: "auto",
+          order: element.mobile?.order ?? undefined,
+          alignSelf: element.mobile?.align === "center" ? "center" : element.mobile?.align === "right" ? "flex-end" : "stretch",
+          overflowWrap: "anywhere",
+          wordBreak: "break-word",
+        };
+    if (element.fontSizePx) {
+      if (absolute) style.fontSize = `${element.fontSizePx}px`;
+      else {
+        const max = Math.min(element.fontSizePx, mobileFontCap(element));
+        const min = Math.max(10, Math.min(max, Math.round(max * 0.72)));
+        style.fontSize = `clamp(${min}px, ${Math.min(10, Math.max(4, max / 5))}vw, ${max}px)`;
+      }
+    }
     if (element.fontWeight) style.fontWeight = element.fontWeight;
     if (element.fontFamilyToken) style.fontFamily = FONT_STACK[element.fontFamilyToken];
     if (element.textTransform) style.textTransform = element.textTransform;
-    if (element.letterSpacingPx != null) style.letterSpacing = `${element.letterSpacingPx}px`;
-    if (element.lineHeight != null) style.lineHeight = element.lineHeight;
+    if (element.letterSpacingPx != null) style.letterSpacing = `${absolute ? element.letterSpacingPx : Math.min(4, Math.max(-2, element.letterSpacingPx))}px`;
+    if (element.lineHeight != null) style.lineHeight = absolute ? element.lineHeight : Math.max(1, Math.min(1.7, element.lineHeight));
     if (element.align) style.textAlign = element.align;
     if (element.color) style.color = element.color;
     if (element.backgroundColor) style.backgroundColor = element.backgroundColor;
@@ -110,10 +146,10 @@ export function PrecisePlayerLayoutRenderer({
         return src ? <img src={src} alt="" className="h-full w-full object-cover" /> : <div className="h-full w-full border border-dashed border-white/15" />;
       }
       case "player-card":
-        return <div className="flex h-full items-center gap-3 border border-white/10 bg-black/25 p-3">{player.profile_image_url ? <img src={player.profile_image_url} alt="" className="h-14 w-14 rounded-xl object-cover" /> : null}<div><p className="font-semibold">{player.display_name}</p><p className="text-xs text-white/45">{player.primary_role || "Player"}</p></div></div>;
+        return <div className="flex h-full min-w-0 items-center gap-3 border border-white/10 bg-black/25 p-3">{player.profile_image_url ? <img src={player.profile_image_url} alt="" className="h-14 w-14 shrink-0 rounded-xl object-cover" /> : null}<div className="min-w-0"><p className="truncate font-semibold">{player.display_name}</p><p className="text-xs text-white/45">{player.primary_role || "Player"}</p></div></div>;
       case "social-link": {
         const social = socials[index] || socials[0];
-        return social ? <a href={social.url} target="_blank" rel="noreferrer" className="flex h-full items-center justify-center border border-white/15 bg-black/25 text-xs font-semibold uppercase tracking-[.12em]">{social.label || social.platform}</a> : null;
+        return social ? <a href={social.url} target="_blank" rel="noreferrer" className="flex min-h-11 h-full items-center justify-center border border-white/15 bg-black/25 px-3 text-center text-xs font-semibold uppercase tracking-[.12em]">{social.label || social.platform}</a> : null;
       }
       case "project-card":
       case "release-card":
@@ -121,13 +157,13 @@ export function PrecisePlayerLayoutRenderer({
       case "now-playing": {
         const audio = media.find((item) => item.media_type === "audio" || item.media_type === "embed") || null;
         const href = audio?.public_url || audio?.source_url || player.spotify_profile_url || player.youtube_channel_url;
-        return <article className="flex h-full flex-col justify-center border border-white/10 bg-black/30 p-4"><p className="text-xs uppercase tracking-[.15em] text-white/40">Música</p><h3 className="mt-2 font-semibold">{audio?.caption || player.display_name}</h3>{href ? <a href={href} target="_blank" rel="noreferrer" className="mt-3 text-sm font-semibold text-[color:var(--public-accent)]">Escuchar</a> : <span className="mt-3 text-xs text-white/35">Sin reproducción disponible</span>}</article>;
+        return <article className="flex h-full min-w-0 flex-col justify-center border border-white/10 bg-black/30 p-4"><p className="text-xs uppercase tracking-[.15em] text-white/40">Música</p><h3 className="mt-2 break-words font-semibold">{audio?.caption || player.display_name}</h3>{href ? <a href={href} target="_blank" rel="noreferrer" className="mt-3 text-sm font-semibold text-[color:var(--public-accent)]">Escuchar</a> : <span className="mt-3 text-xs text-white/35">Sin reproducción disponible</span>}</article>;
       }
       case "stat": return <div className="flex h-full items-center"><strong className="text-3xl">{element.text || affiliations.length}</strong></div>;
       case "section-title": return <h2 className="flex h-full items-center text-2xl font-semibold">{element.text || ""}</h2>;
       case "cta": {
         const href = player.spotify_profile_url || player.youtube_channel_url || (player.booking_email ? `mailto:${player.booking_email}` : null);
-        return href ? <a href={href} target={href.startsWith("mailto:") ? undefined : "_blank"} rel={href.startsWith("mailto:") ? undefined : "noreferrer"} className="flex h-full items-center justify-center bg-[color:var(--public-accent)] px-4 text-sm font-semibold">{element.text || "Ver más"}</a> : <span className="flex h-full items-center justify-center border border-white/15 text-sm text-white/50">{element.text || "Sin acción disponible"}</span>;
+        return href ? <a href={href} target={href.startsWith("mailto:") ? undefined : "_blank"} rel={href.startsWith("mailto:") ? undefined : "noreferrer"} className="flex min-h-11 h-full items-center justify-center bg-[color:var(--public-accent)] px-4 text-center text-sm font-semibold">{element.text || "Ver más"}</a> : <span className="flex min-h-11 h-full items-center justify-center border border-white/15 px-3 text-center text-sm text-white/50">{element.text || "Sin acción disponible"}</span>;
       }
       default: return null;
     }
@@ -135,15 +171,15 @@ export function PrecisePlayerLayoutRenderer({
   function action(element: PositionedElement): ReactNode {
     if (element.action === "share") return <PublicShareButton title={player.display_name} />;
     const href = element.action?.startsWith("scroll:") ? `#${SECTION_ANCHOR[element.action.slice(7) as LayoutSectionType]}` : null;
-    if (!href) return <span className={`flex h-full w-full items-center justify-center px-4 text-sm font-semibold ${BUTTON_CLASS[element.buttonStyle || "outline"]}`}>{element.text || "Acción"}</span>;
-    return <Link href={href} className={`flex h-full w-full items-center justify-center px-4 text-sm font-semibold ${BUTTON_CLASS[element.buttonStyle || "outline"]}`}>{element.text || "Ver"}</Link>;
+    if (!href) return <span className={`flex min-h-11 h-full w-full items-center justify-center px-4 text-center text-sm font-semibold ${BUTTON_CLASS[element.buttonStyle || "outline"]}`}>{element.text || "Acción"}</span>;
+    return <Link href={href} className={`flex min-h-11 h-full w-full items-center justify-center px-4 text-center text-sm font-semibold ${BUTTON_CLASS[element.buttonStyle || "outline"]}`}>{element.text || "Ver"}</Link>;
   }
   function renderElement(element: PositionedElement, index: number, absolute: boolean): ReactNode {
     if (!absolute && element.mobile?.hidden) return null;
     const style = elementStyle(element, absolute), key = element.id || index;
     if (element.type === "image") { const src = resolveImage(element.imageSlot); return src ? <img key={key} src={src} alt="" style={{ ...style, objectFit: element.imageFit || "cover", objectPosition: element.imagePosition || "center" }} /> : null; }
-    if (element.type === "dynamic") return <div key={key} style={style}>{renderDynamic(element)}</div>;
-    if (element.type === "button") return <div key={key} style={style}>{action(element)}</div>;
+    if (element.type === "dynamic") return <div key={key} className="min-w-0" style={style}>{renderDynamic(element)}</div>;
+    if (element.type === "button") return <div key={key} className="min-w-0" style={style}>{action(element)}</div>;
     if (!element.text) return null;
     if (element.type === "heading") return <h1 key={key} style={style}>{element.text}</h1>;
     if (element.type === "subheading") return <h2 key={key} style={style}>{element.text}</h2>;
@@ -159,21 +195,29 @@ export function PrecisePlayerLayoutRenderer({
   }
   function dynamicSection(section: PreciseSection, index: number): ReactNode {
     if (section.type === "gallery" && media.length) return <section key={section.id || index} id={SECTION_ANCHOR.gallery} className="mx-auto max-w-6xl px-5 py-10"><h2 className="text-2xl font-semibold">{section.styleHint?.heading || "Galería"}</h2><div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-3">{media.slice(0, 6).map((item) => { const src = item.public_url || item.thumbnail_url || item.source_url; return src ? <img key={item.id} src={src} alt="" className="aspect-square w-full object-cover" /> : null; })}</div></section>;
-    if (section.type === "roster" && affiliations.length) return <section key={section.id || index} id={SECTION_ANCHOR.roster} className="mx-auto max-w-6xl px-5 py-10"><h2 className="text-2xl font-semibold">{section.styleHint?.heading || "Estudios"}</h2><div className="mt-5 grid gap-3 md:grid-cols-3">{affiliations.map((entry, i) => entry.studio ? <Link key={`${entry.studio.id}-${i}`} href={`/studios/${entry.studio.slug}`} className="flex items-center gap-3 border border-white/10 bg-black/25 p-4">{entry.studio.logo_url ? <img src={entry.studio.logo_url} alt="" className="h-12 w-12 object-contain" /> : null}<div><p className="font-semibold">{entry.studio.name}</p><p className="text-xs text-white/45">{entry.role || entry.area_label || "Studio"}</p></div></Link> : null)}</div></section>;
+    if (section.type === "roster" && affiliations.length) return <section key={section.id || index} id={SECTION_ANCHOR.roster} className="mx-auto max-w-6xl px-5 py-10"><h2 className="text-2xl font-semibold">{section.styleHint?.heading || "Estudios"}</h2><div className="mt-5 grid gap-3 md:grid-cols-3">{affiliations.map((entry, i) => { if (!entry.studio) return null; const publicStudio = studioPresentation(entry.studio); return <Link key={`${entry.studio.id}-${i}`} href={publicStudio.href} className="flex min-w-0 items-center gap-3 border border-white/10 bg-black/25 p-4">{publicStudio.logo ? <img src={publicStudio.logo} alt="" className="h-12 w-12 shrink-0 object-contain" /> : null}<div className="min-w-0"><p className="truncate font-semibold">{publicStudio.name}</p><p className="text-xs text-white/45">{entry.role || entry.area_label || "Studio"}</p></div></Link>; })}</div></section>;
     return null;
+  }
+  function backgroundLayer(section: PreciseSection, bg: string | null) {
+    return <>{bg ? <img src={bg} alt="" className="absolute inset-0 h-full w-full" style={{ objectFit: section.background?.fit || "cover", objectPosition: section.background?.position || "center" }} /> : null}{section.background?.overlayOpacity ? <div className="absolute inset-0 bg-black" style={{ opacity: section.background.overlayOpacity }} /> : null}</>;
   }
   function section(section: PreciseSection, index: number): ReactNode {
     if (section.styleHint && (!section.elements || section.elements.length === 0)) return dynamicSection(section, index);
     const bg = section.background?.imageSlot ? resolveImage(section.background.imageSlot) : null;
-    return <section key={section.id || index} id={SECTION_ANCHOR[section.type]} className="relative overflow-hidden" style={{ minHeight: `${section.heightVh}vh`, height: `${section.heightVh}vh`, width: section.widthPct ? `${section.widthPct}%` : "100%", marginLeft: section.xPct ? `${section.xPct}%` : undefined, backgroundColor: section.background?.color || "#07060b" }}>{bg ? <img src={bg} alt="" className="absolute inset-0 h-full w-full" style={{ objectFit: section.background?.fit || "cover", objectPosition: section.background?.position || "center" }} /> : null}{section.background?.overlayOpacity ? <div className="absolute inset-0 bg-black" style={{ opacity: section.background.overlayOpacity }} /> : null}<div className="relative hidden h-full md:block">{(section.elements || []).map((element, i) => renderElement(element, i, true))}{(section.decorations || []).map(decoration)}</div><div className="relative flex flex-col gap-3 px-5 py-8 md:hidden">{(section.elements || []).map((element, i) => renderElement(element, i, false))}</div></section>;
+    const desktopStyle: CSSProperties = { minHeight: `${section.heightVh}vh`, height: `${section.heightVh}vh`, width: section.widthPct ? `${section.widthPct}%` : "100%", marginLeft: section.xPct ? `${section.xPct}%` : undefined, backgroundColor: section.background?.color || "#07060b" };
+    const mobileMinHeight = Math.min(65, Math.max(24, Math.round(section.heightVh * 0.32)));
+    return <section key={section.id || index} id={SECTION_ANCHOR[section.type]} className="relative w-full overflow-hidden bg-[#07060b]">
+      <div className="relative hidden overflow-hidden md:block" style={desktopStyle}>{backgroundLayer(section, bg)}<div className="relative h-full">{(section.elements || []).map((element, i) => renderElement(element, i, true))}{(section.decorations || []).map(decoration)}</div></div>
+      <div className="relative min-w-0 overflow-hidden md:hidden" style={{ minHeight: `${mobileMinHeight}vh`, backgroundColor: section.background?.color || "#07060b" }}>{backgroundLayer(section, bg)}<div className="relative flex min-w-0 flex-col gap-3 overflow-x-hidden px-5 py-8">{(section.elements || []).map((element, i) => renderElement(element, i, false))}</div></div>
+    </section>;
   }
 
-  return <div className="relative min-h-screen bg-[#07060b] text-white" style={{ ["--public-accent" as string]: accent }}><PlayerHeader config={layout.header} player={player} layout={layout} nav={nav} resolveImage={resolveImage} /><main>{sections.map(section)}</main><footer className="border-t border-white/10 px-5 py-8 text-center text-xs text-white/40">{socials.length ? <div className="mb-4 flex flex-wrap justify-center gap-4">{socials.map((social) => <a key={`${social.platform}-${social.url}`} href={social.url} target="_blank" rel="noreferrer">{social.label || social.platform}</a>)}</div> : null}{player.display_name} · CLOUVA</footer></div>;
+  return <div className="relative min-h-screen max-w-full overflow-x-hidden bg-[#07060b] text-white" style={{ ["--public-accent" as string]: accent }}><PlayerHeader config={layout.header} player={player} layout={layout} nav={nav} resolveImage={resolveImage} /><main>{sections.map(section)}</main><footer className="border-t border-white/10 px-5 py-8 text-center text-xs text-white/40">{socials.length ? <div className="mb-4 flex flex-wrap justify-center gap-4">{socials.map((social) => <a key={`${social.platform}-${social.url}`} href={social.url} target="_blank" rel="noreferrer">{social.label || social.platform}</a>)}</div> : null}{player.display_name} · CLOUVA</footer></div>;
 }
 
 function PlayerHeader({ config, player, layout, nav, resolveImage }: { config: HeaderConfig | null | undefined; player: Player; layout: LayoutConfig; nav: Array<{ label: string; href: string }>; resolveImage: (slot: ImageSlot | null | undefined) => string | null }) {
   const header = config || { mode: layout.page_style?.header_overlay ? "overlay" : "normal" } as HeaderConfig;
   const brand = header.brand?.imageSlot ? resolveImage(header.brand.imageSlot) : player.logo_url || player.profile_image_url;
   const position: CSSProperties["position"] = header.mode === "sticky" ? "sticky" : header.mode === "overlay" || header.mode === "floating" ? "absolute" : "relative";
-  return <header className="z-40" style={{ position, top: header.mode === "sticky" ? 0 : header.yPx || 0, left: header.xPct ? `${header.xPct}%` : 0, width: header.widthPct ? `${header.widthPct}%` : "100%", minHeight: header.heightPx || 64, backgroundColor: header.backgroundColor || (header.mode === "normal" ? "rgba(7,6,11,.92)" : "transparent"), opacity: header.opacity ?? 1, backdropFilter: header.blur ? BLUR_STYLE[header.blur] : undefined, borderColor: header.borderColor || undefined, borderWidth: header.borderWidthPx ? `${header.borderWidthPx}px` : undefined, borderStyle: header.borderWidthPx ? "solid" : undefined, borderRadius: header.radiusPx ? `${header.radiusPx}px` : undefined }}><div className="mx-auto flex min-h-16 max-w-7xl items-center gap-5 px-5">{brand ? <img src={brand} alt={player.display_name} style={{ width: header.brand?.widthPx || 34, height: header.brand?.heightPx || 34, objectFit: header.brand?.fit || "contain" }} /> : null}{header.brand?.showText !== false ? <span className="font-semibold">{player.display_name}</span> : null}<nav className="ml-auto hidden items-center md:flex" style={{ gap: `${header.nav?.gapPx || 22}px`, fontFamily: header.nav?.fontFamilyToken ? FONT_STACK[header.nav.fontFamilyToken] : undefined, fontSize: header.nav?.fontSizePx || 13, textTransform: header.nav?.uppercase ? "uppercase" : undefined }}>{nav.map((item) => <Link key={item.href} href={item.href} className="text-white/65 hover:text-white">{item.label}</Link>)}</nav>{header.cta ? <span className={`ml-auto px-4 py-2 text-xs font-semibold md:ml-0 ${BUTTON_CLASS[header.cta.buttonStyle || "outline"]}`}>{header.cta.label || "Ver más"}</span> : null}</div></header>;
+  return <header className="z-40 max-w-full" style={{ position, top: header.mode === "sticky" ? 0 : header.yPx || 0, left: header.xPct ? `${header.xPct}%` : 0, width: header.widthPct ? `${header.widthPct}%` : "100%", minHeight: header.heightPx || 64, backgroundColor: header.backgroundColor || (header.mode === "normal" ? "rgba(7,6,11,.92)" : "transparent"), opacity: header.opacity ?? 1, backdropFilter: header.blur ? BLUR_STYLE[header.blur] : undefined, borderColor: header.borderColor || undefined, borderWidth: header.borderWidthPx ? `${header.borderWidthPx}px` : undefined, borderStyle: header.borderWidthPx ? "solid" : undefined, borderRadius: header.radiusPx ? `${header.radiusPx}px` : undefined }}><div className="mx-auto flex min-h-16 max-w-7xl items-center gap-3 overflow-hidden px-4 sm:gap-5 sm:px-5">{brand ? <img src={brand} alt={player.display_name} className="shrink-0" style={{ width: Math.min(header.brand?.widthPx || 34, 120), height: Math.min(header.brand?.heightPx || 34, 72), objectFit: header.brand?.fit || "contain" }} /> : null}{header.brand?.showText !== false ? <span className="min-w-0 truncate font-semibold">{player.display_name}</span> : null}<nav className="ml-auto hidden items-center md:flex" style={{ gap: `${header.nav?.gapPx || 22}px`, fontFamily: header.nav?.fontFamilyToken ? FONT_STACK[header.nav.fontFamilyToken] : undefined, fontSize: header.nav?.fontSizePx || 13, textTransform: header.nav?.uppercase ? "uppercase" : undefined }}>{nav.map((item) => <Link key={item.href} href={item.href} className="text-white/65 hover:text-white">{item.label}</Link>)}</nav>{header.cta ? <span className={`ml-auto shrink-0 px-3 py-2 text-center text-[11px] font-semibold md:ml-0 md:px-4 md:text-xs ${BUTTON_CLASS[header.cta.buttonStyle || "outline"]}`}>{header.cta.label || "Ver más"}</span> : null}</div></header>;
 }

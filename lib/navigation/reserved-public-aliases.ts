@@ -21,6 +21,7 @@ const RESERVED_PUBLIC_ALIAS_VALUES = [
   "empleado",
   "gracias",
   "iglu",
+  "lamatrix",
   "login",
   "logo",
   "lookbook",

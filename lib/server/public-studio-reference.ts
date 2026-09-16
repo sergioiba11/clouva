@@ -17,6 +17,8 @@ export type PublicStudioReference = {
   name: string;
   publicName: string;
   logoUrl: string | null;
+  darkLogoUrl: string | null;
+  lightLogoUrl: string | null;
   href: string;
   aliases: string[];
   activeBrandVersionId: string | null;
@@ -32,13 +34,16 @@ function clean(value: unknown) {
 
 export function fallbackPublicStudioReference(studio: PublicStudioReferenceInput): PublicStudioReference {
   const publicAlias = studio.slug;
+  const logo = clean(studio.logo_url);
   return {
     id: studio.id,
     internalSlug: studio.slug,
     publicAlias,
     name: studio.name,
     publicName: clean(studio.share_title) ?? studio.name,
-    logoUrl: clean(studio.logo_url),
+    logoUrl: logo,
+    darkLogoUrl: logo,
+    lightLogoUrl: logo,
     href: studioPublicHref(publicAlias),
     aliases: [studio.slug],
     activeBrandVersionId: null,
@@ -53,13 +58,14 @@ export async function resolvePublicStudioReferences(
   if (!uniqueStudios.length) return new Map();
 
   const studioIds = uniqueStudios.map((studio) => studio.id);
+  const admin = createAdminSupabase();
   const [{ data: aliases, error: aliasError }, { data: brandAssets, error: brandError }] = await Promise.all([
     supabase
       .from("public_slug_aliases")
       .select("entity_id,alias,is_primary")
       .eq("entity_type", "studio")
       .in("entity_id", studioIds),
-    createAdminSupabase()
+    admin
       .from("brand_assets")
       .select("owner_id,active_version_id,status")
       .eq("owner_type", "studio")
@@ -68,14 +74,14 @@ export async function resolvePublicStudioReferences(
   ]);
 
   if (aliasError) throw new Error(aliasError.message);
-  // Public profile resolution must not disappear just because Brand Engine is
-  // temporarily unavailable. In that case we keep the published Studio logo.
+  // Public identity remains available if Brand Engine is temporarily unavailable.
+  // In that case the published Studio logo is the compatibility fallback.
   const safeBrandAssets = brandError ? [] : ((brandAssets ?? []) as BrandAssetRow[]);
   const activeVersionIds = Array.from(new Set(safeBrandAssets.map((row) => row.active_version_id).filter((id): id is string => Boolean(id))));
 
   let versions: BrandVersionRow[] = [];
   if (activeVersionIds.length) {
-    const { data, error } = await createAdminSupabase()
+    const { data, error } = await admin
       .from("brand_asset_versions")
       .select("id,status")
       .in("id", activeVersionIds)
@@ -103,9 +109,13 @@ export async function resolvePublicStudioReferences(
     const studioAliases = aliasesByStudio.get(studio.id) ?? [];
     const primaryAlias = studioAliases.find((row) => row.is_primary)?.alias || studio.slug;
     const activeBrandVersionId = brandByStudio.get(studio.id) ?? null;
-    const officialLogo = activeBrandVersionId
+    const fallbackLogo = clean(studio.logo_url);
+    const darkLogoUrl = activeBrandVersionId
       ? `/api/brand-assets/${encodeURIComponent(activeBrandVersionId)}/logo?surface=dark`
-      : clean(studio.logo_url);
+      : fallbackLogo;
+    const lightLogoUrl = activeBrandVersionId
+      ? `/api/brand-assets/${encodeURIComponent(activeBrandVersionId)}/logo?surface=light`
+      : fallbackLogo;
     const allAliases = Array.from(new Set([primaryAlias, studio.slug, ...studioAliases.map((row) => row.alias)].filter(Boolean)));
 
     result.set(studio.id, {
@@ -114,7 +124,9 @@ export async function resolvePublicStudioReferences(
       publicAlias: primaryAlias,
       name: studio.name,
       publicName: clean(studio.share_title) ?? studio.name,
-      logoUrl: officialLogo,
+      logoUrl: darkLogoUrl,
+      darkLogoUrl,
+      lightLogoUrl,
       href: studioPublicHref(primaryAlias),
       aliases: allAliases,
       activeBrandVersionId,

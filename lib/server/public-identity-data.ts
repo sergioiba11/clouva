@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createPublicSupabase } from "./public-supabase";
 import { sanitizeLayoutConfig, type LayoutConfig } from "./layout-config";
+import { fallbackPublicStudioReference, resolvePublicStudioReferences, type PublicStudioReference } from "./public-studio-reference";
 import {
   playerPublicSelect,
   playerStudiosSelect,
@@ -21,6 +22,7 @@ const studioPublicSelect =
 
 export type StudioIdentityData = {
   studio: StudioRow;
+  publicStudio: PublicStudioReference;
   players: StudioPlayer[];
   media: PlayerMedia[];
   projects: Array<Record<string, unknown>>;
@@ -35,14 +37,14 @@ async function loadStudioIdentityData(
   supabase: SupabaseClient,
   studio: StudioRow,
 ): Promise<StudioIdentityData> {
-  const [playersResult, mediaResult, projectsResult, servicesResult, membershipPlansResult, aliasResult, versionResult] = await Promise.all([
+  const [playersResult, mediaResult, projectsResult, servicesResult, membershipPlansResult, versionResult, publicRefs] = await Promise.all([
     supabase.from("player_studios").select(studioPlayersSelect).eq("studio_id", studio.id).eq("is_visible", true).eq("status", "active").order("display_order"),
     supabase.from("player_media").select("id,media_type,origin,source_url,public_url,thumbnail_url,caption,display_order").eq("studio_id", studio.id).eq("visibility", "public").order("display_order"),
     supabase.from("community_projects").select("id,title,cover_url,release_type,release_date,spotify_url,youtube_url,description").eq("studio_id", studio.id).order("release_date", { ascending: false }),
     supabase.from("studio_services").select(studioServicesSelect).eq("studio_id", studio.id).eq("is_active", true).order("display_order"),
     supabase.from("studio_membership_plans").select(studioMembershipPlansSelect).eq("studio_id", studio.id).eq("is_active", true).eq("is_public", true).order("display_order"),
-    supabase.from("public_slug_aliases").select("alias").eq("entity_type", "studio").eq("entity_id", studio.id).eq("is_primary", true).maybeSingle(),
     supabase.from("player_profile_versions").select("layout_config").eq("studio_id", studio.id).eq("status", "published").maybeSingle(),
+    resolvePublicStudioReferences(supabase, [studio]),
   ]);
   if (playersResult.error) throw new Error(playersResult.error.message);
   if (mediaResult.error) throw new Error(mediaResult.error.message);
@@ -50,9 +52,8 @@ async function loadStudioIdentityData(
   if (servicesResult.error) throw new Error(servicesResult.error.message);
   if (membershipPlansResult.error) throw new Error(membershipPlansResult.error.message);
 
-  const layoutConfig: LayoutConfig | null = versionResult.error
-    ? null
-    : sanitizeLayoutConfig(versionResult.data?.layout_config);
+  const publicStudio = publicRefs.get(studio.id) ?? fallbackPublicStudioReference(studio);
+  const layoutConfig: LayoutConfig | null = versionResult.error ? null : sanitizeLayoutConfig(versionResult.data?.layout_config);
   const projects = (projectsResult.data ?? []) as Array<Record<string, unknown>>;
   const matrixDiscoveryProjects = projects.length === 0
     ? await (async () => {
@@ -70,13 +71,14 @@ async function loadStudioIdentityData(
 
   return {
     studio,
+    publicStudio,
     players: (playersResult.data ?? []) as unknown as StudioPlayer[],
     media: (mediaResult.data ?? []) as unknown as PlayerMedia[],
     projects,
     matrixDiscoveryProjects,
     services: (servicesResult.data ?? []) as unknown as StudioService[],
     membershipPlans: (membershipPlansResult.data ?? []) as unknown as StudioMembershipPlan[],
-    canonicalAlias: aliasResult.data?.alias || studio.slug,
+    canonicalAlias: publicStudio.publicAlias,
     layoutConfig,
   };
 }
@@ -124,13 +126,30 @@ export async function resolvePlayerAlias(alias: string) {
   if (affiliationResult.error) throw new Error(affiliationResult.error.message);
   if (mediaResult.error) throw new Error(mediaResult.error.message);
 
-  const layoutConfig: LayoutConfig | null = versionResult.error
-    ? null
-    : sanitizeLayoutConfig(versionResult.data?.layout_config);
+  const rawAffiliations = (affiliationResult.data ?? []) as unknown as PlayerStudioAffiliation[];
+  const affiliationStudios = rawAffiliations.flatMap((entry) => entry.studio ? [entry.studio] : []);
+  const publicStudioRefs = await resolvePublicStudioReferences(supabase, affiliationStudios);
+  const affiliations = rawAffiliations.map((entry): PlayerStudioAffiliation => {
+    if (!entry.studio) return entry;
+    const publicStudio = publicStudioRefs.get(entry.studio.id);
+    if (!publicStudio) return entry;
+    return {
+      ...entry,
+      studio: {
+        ...entry.studio,
+        public_alias: publicStudio.publicAlias,
+        public_name: publicStudio.publicName,
+        public_href: publicStudio.href,
+        official_logo_url: publicStudio.darkLogoUrl,
+      },
+    };
+  });
+
+  const layoutConfig: LayoutConfig | null = versionResult.error ? null : sanitizeLayoutConfig(versionResult.data?.layout_config);
 
   return {
     player: player as unknown as Player,
-    affiliations: (affiliationResult.data ?? []) as unknown as PlayerStudioAffiliation[],
+    affiliations,
     media: (mediaResult.data ?? []) as unknown as PlayerMedia[],
     canonicalAlias: aliasResult.data?.alias || player.slug,
     isVip: vipResult.data === true,
@@ -171,52 +190,7 @@ export async function resolveStudioAlias(alias: string) {
   if (studioError) throw new Error(studioError.message);
   if (!studio) return null;
 
-  const [playersResult, mediaResult, projectsResult, servicesResult, membershipPlansResult, aliasResult, versionResult] = await Promise.all([
-    supabase.from("player_studios").select(studioPlayersSelect).eq("studio_id", studio.id).eq("is_visible", true).eq("status", "active").order("display_order"),
-    supabase.from("player_media").select("id,media_type,origin,source_url,public_url,thumbnail_url,caption,display_order").eq("studio_id", studio.id).eq("visibility", "public").order("display_order"),
-    supabase.from("community_projects").select("id,title,cover_url,release_type,release_date,spotify_url,youtube_url,description").eq("studio_id", studio.id).order("release_date", { ascending: false }),
-    supabase.from("studio_services").select(studioServicesSelect).eq("studio_id", studio.id).eq("is_active", true).order("display_order"),
-    supabase.from("studio_membership_plans").select(studioMembershipPlansSelect).eq("studio_id", studio.id).eq("is_active", true).eq("is_public", true).order("display_order"),
-    supabase.from("public_slug_aliases").select("alias").eq("entity_type", "studio").eq("entity_id", studio.id).eq("is_primary", true).maybeSingle(),
-    supabase.from("player_profile_versions").select("layout_config").eq("studio_id", studio.id).eq("status", "published").maybeSingle(),
-  ]);
-  if (playersResult.error) throw new Error(playersResult.error.message);
-  if (mediaResult.error) throw new Error(mediaResult.error.message);
-  if (projectsResult.error) throw new Error(projectsResult.error.message);
-  if (servicesResult.error) throw new Error(servicesResult.error.message);
-  if (membershipPlansResult.error) throw new Error(membershipPlansResult.error.message);
-  // No lanza si falla -- una versión publicada rara sin layout_config legible
-  // no debe tumbar la página pública, solo hace que caiga al template fijo.
-  const layoutConfig: LayoutConfig | null = versionResult.error
-    ? null
-    : sanitizeLayoutConfig(versionResult.data?.layout_config);
-
-  const projects = projectsResult.data ?? [];
-  const matrixDiscoveryProjects = projects.length === 0
-    ? await (async () => {
-        const { data, error } = await supabase
-          .from("community_projects")
-          .select("id,title,cover_url,spotify_url,youtube_url,studio:studios(name,slug)")
-          .neq("studio_id", studio.id)
-          .or("spotify_url.not.is.null,youtube_url.not.is.null")
-          .order("release_date", { ascending: false })
-          .limit(6);
-        if (error) return [];
-        return data ?? [];
-      })()
-    : [];
-
-  return {
-    studio: studio as unknown as StudioRow,
-    players: (playersResult.data ?? []) as unknown as StudioPlayer[],
-    media: (mediaResult.data ?? []) as unknown as PlayerMedia[],
-    projects,
-    matrixDiscoveryProjects,
-    services: (servicesResult.data ?? []) as unknown as StudioService[],
-    membershipPlans: (membershipPlansResult.data ?? []) as unknown as StudioMembershipPlan[],
-    canonicalAlias: aliasResult.data?.alias || studio.slug,
-    layoutConfig,
-  };
+  return loadStudioIdentityData(supabase, studio as unknown as StudioRow);
 }
 
 /** Authorized dashboard counterpart of the public resolver. Its caller must

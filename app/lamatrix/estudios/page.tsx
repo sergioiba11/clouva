@@ -1,0 +1,73 @@
+import type { Metadata } from "next";
+import Link from "next/link";
+import { PublicShell } from "@/components/public/PublicShell";
+import { listPublishedStudios } from "@/lib/server/public-identity-data";
+import { resolvePublicStudioReferences } from "@/lib/server/public-studio-reference";
+import { createPublicSupabase } from "@/lib/server/public-supabase";
+import { VISUAL_ASSETS } from "@/lib/visual-assets";
+
+export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+  title: "Estudios — La Matrix | CLOUVA",
+  description: "Estudios, sellos, colectivos y espacios creativos publicados dentro de La Matrix.",
+  alternates: { canonical: "https://clouva.com.ar/lamatrix/estudios" },
+  robots: { index: true, follow: true },
+};
+
+export default async function MatrixStudiosDirectoryPage() {
+  const studios = await listPublishedStudios();
+  const references = await resolvePublicStudioReferences(createPublicSupabase(), studios);
+
+  return (
+    <PublicShell brand="LA MATRIX" brandHref="/lamatrix" navLinks={[
+      { label: "Inicio", href: "/lamatrix" },
+      { label: "Players", href: "/players" },
+      { label: "Estudios", href: "/lamatrix/estudios" },
+      { label: "Sellos", href: "#sellos", disabled: true },
+      { label: "Colectivos", href: "#colectivos", disabled: true },
+      { label: "Mundos", href: "#mundos", disabled: true },
+    ]}>
+      <section className="relative overflow-hidden border-b border-white/10 px-4 py-16 sm:px-6" data-visual-asset="studio-directory-hero-01">
+        <div className="absolute inset-0 bg-cover bg-center opacity-70" style={{ backgroundImage: `url(${VISUAL_ASSETS["studio-directory-hero-01"]})` }} aria-hidden="true" />
+        <div className="absolute inset-0 bg-gradient-to-t from-[#07060b] via-[#07060b]/55 to-[#07060b]/25" aria-hidden="true" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_70%_10%,rgba(124,58,237,.22),transparent_42%)]" />
+        <div className="relative mx-auto max-w-6xl">
+          <p className="text-xs font-semibold uppercase tracking-[0.3em] text-violet-300/70">La Matrix</p>
+          <h1 className="mt-3 text-4xl font-bold tracking-tight sm:text-6xl">Estudios</h1>
+          <p className="mt-4 max-w-2xl text-white/60">Estudios, sellos, colectivos y espacios creativos con identidad pública propia.</p>
+        </div>
+      </section>
+
+      <section className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
+        {studios.length === 0 ? (
+          <div className="rounded-[2rem] border border-white/10 bg-white/[0.025] p-8 text-white/50">Todavía no hay Estudios publicados.</div>
+        ) : (
+          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+            {studios.map((studio) => {
+              const publicStudio = references.get(studio.id);
+              const href = publicStudio?.href || `/lamatrix/estudios/${encodeURIComponent(studio.slug)}`;
+              const name = publicStudio?.publicName || studio.share_title || studio.name;
+              const logo = publicStudio?.logoUrl || studio.logo_url;
+              return (
+                <Link key={studio.id} href={href} className="group overflow-hidden rounded-[2rem] border border-white/10 bg-white/[0.025] transition duration-300 hover:-translate-y-1 hover:border-violet-400/50">
+                  <div className="relative h-52 bg-white/[0.03]">
+                    {studio.cover_url ? <img src={studio.cover_url} alt={name} className="h-full w-full object-cover transition duration-500 group-hover:scale-[1.03]" /> : <div className="flex h-full items-center justify-center bg-gradient-to-br from-violet-500/25 to-black text-5xl font-semibold text-white/50">{name.charAt(0)}</div>}
+                    <div className="absolute inset-0 bg-gradient-to-t from-[#07060b] via-transparent to-transparent" />
+                    {logo ? <img src={logo} alt="" className="absolute bottom-4 left-4 h-16 w-16 rounded-2xl border-2 border-[#07060b] bg-black/35 object-contain p-1" /> : null}
+                  </div>
+                  <div className="p-5">
+                    <h2 className="text-xl font-semibold">{name}</h2>
+                    <p className="mt-1 text-xs text-white/40">{[studio.city, studio.country].filter(Boolean).join(", ")}</p>
+                    {studio.tagline || studio.description ? <p className="mt-4 line-clamp-2 text-sm leading-6 text-white/60">{studio.tagline || studio.description}</p> : null}
+                    {studio.categories?.length ? <div className="mt-5 flex flex-wrap gap-2">{studio.categories.slice(0, 3).map((category) => <span key={category} className="rounded-full border border-white/10 px-2.5 py-1 text-[11px] text-white/50">{category}</span>)}</div> : null}
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+        )}
+      </section>
+    </PublicShell>
+  );
+}

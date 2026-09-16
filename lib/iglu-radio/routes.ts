@@ -1,5 +1,8 @@
+import { studioPublicHref } from "@/lib/public-studio-routes";
+
 export const IGLU_STUDIO_SLUG = "el-iglu";
-export const IGLU_STUDIO_PATH = `/studios/${IGLU_STUDIO_SLUG}`;
+export const IGLU_PUBLIC_ALIAS = "eliglurecords";
+export const IGLU_STUDIO_PATH = studioPublicHref(IGLU_PUBLIC_ALIAS);
 export const IGLU_RADIO_PATH = `${IGLU_STUDIO_PATH}/radio`;
 
 export function igluRadioRoute(segment = "") {

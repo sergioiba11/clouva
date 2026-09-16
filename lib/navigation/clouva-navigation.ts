@@ -24,8 +24,8 @@ export const CLOUVA_NAVIGATION: Record<ClouvaSurfaceKey, ClouvaSurface> = {
   CREATE: { key: "CREATE", label: "Crear", href: "/crear", description: "Hub para crear media, identidad, avatar, ropa y 3D." },
   MI_SPOT: { key: "MI_SPOT", label: "Mi Spot", href: "/mi-spot", description: "Los espacios, negocios y organizaciones que manejás." },
   MARKET: { key: "MARKET", label: "Market", href: "/market", description: "Marketplace de Players, Studios, productos físicos y assets digitales 3D." },
-  MATRIX: { key: "MATRIX", label: "La Matrix", href: "/matrix", description: "Descubrimiento de Players, Studios y ecosistema CLOUVA." },
-  STUDIOS: { key: "STUDIOS", label: "Studios", href: "/studios", description: "Directorio público de Studios CLOUVA." },
+  MATRIX: { key: "MATRIX", label: "La Matrix", href: "/lamatrix", description: "Descubrimiento de Players, Studios y ecosistema CLOUVA." },
+  STUDIOS: { key: "STUDIOS", label: "Studios", href: "/lamatrix/estudios", description: "Directorio público de Studios CLOUVA." },
 };
 
 export const DESKTOP_PRIMARY_NAV_KEYS = ["HOME", "CREATE", "MARKET", "MATRIX"] as const satisfies readonly ClouvaSurfaceKey[];
