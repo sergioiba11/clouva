@@ -10,8 +10,9 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const EDITABLE_FIELDS = new Set([
-  "display_name", "username", "short_bio", "long_bio", "tagline", "secondary_tagline",
-  "origin", "location", "genres", "disciplines", "professional_categories", "profile_image_url",
+  "display_name", "username", "primary_role", "short_bio", "long_bio", "tagline", "secondary_tagline",
+  "origin", "location", "country", "birth_place", "schema_job_title", "public_identity_label",
+  "alternate_names", "genres", "disciplines", "professional_categories", "profile_image_url",
   "hero_image_url", "cover_url", "logo_url", "spotify_profile_url", "youtube_channel_url", "contact_email",
   "booking_email", "whatsapp_url", "social_links", "theme_key", "accent_color", "font_style",
   "privacy_status", "seo_title", "seo_description", "share_title", "share_description", "og_image_url",
@@ -86,7 +87,7 @@ function sanitizeUpdate(input: unknown) {
   const output: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(source)) {
     if (!EDITABLE_FIELDS.has(key)) continue;
-    if (["genres", "disciplines", "professional_categories"].includes(key)) {
+    if (["genres", "disciplines", "professional_categories", "alternate_names"].includes(key)) {
       output[key] = Array.isArray(value)
         ? value.filter((item): item is string => typeof item === "string").map((item) => item.trim()).filter(Boolean).slice(0, 20)
         : [];
