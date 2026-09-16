@@ -40,13 +40,13 @@ function fromCsv(value: string) {
 function emptyConnection(provider: Provider): EditableConnection {
   return {
     provider,
-    connection_type: "artist_profile",
+    connection_type: "artist",
     external_artist_id: "",
     external_uri: "",
     external_url: "",
     artist_name: "",
     artist_image_url: "",
-    verification_status: "manual",
+    verification_status: "unverified",
   };
 }
 
@@ -56,13 +56,13 @@ function normalizeConnections(rows: PlayerMusicConnection[]) {
     const row = byProvider.get(provider);
     return [provider, row ? {
       provider,
-      connection_type: row.connection_type || "artist_profile",
+      connection_type: row.connection_type || "artist",
       external_artist_id: row.external_artist_id || "",
       external_uri: row.external_uri || "",
       external_url: row.external_url || "",
       artist_name: row.artist_name || "",
       artist_image_url: row.artist_image_url || "",
-      verification_status: row.verification_status || "manual",
+      verification_status: row.verification_status || "unverified",
     } : emptyConnection(provider)];
   })) as Record<Provider, EditableConnection>;
 }
@@ -214,9 +214,9 @@ export function PublicIdentityKnowledgeGraphPanel() {
                   <div className="flex items-center justify-between gap-3"><h3 className="font-semibold">{label}</h3><span className="text-[10px] uppercase tracking-[0.16em] text-white/35">{connection.external_url ? "Conectado" : "Sin URL"}</span></div>
                   <div className="mt-4 space-y-3">
                     <Field label="URL oficial" value={connection.external_url} onChange={(value) => updateConnection(provider, "external_url", value)} placeholder="https://…" />
+                    <Field label="Nombre en la plataforma" value={connection.artist_name} onChange={(value) => updateConnection(provider, "artist_name", value)} hint="Obligatorio cuando cargás una URL; puede conservar el nombre histórico real de esa plataforma." />
                     <Field label="Artist ID" value={connection.external_artist_id} onChange={(value) => updateConnection(provider, "external_artist_id", value)} />
                     <Field label="URI externa" value={connection.external_uri} onChange={(value) => updateConnection(provider, "external_uri", value)} />
-                    <Field label="Nombre en la plataforma" value={connection.artist_name} onChange={(value) => updateConnection(provider, "artist_name", value)} />
                     <Field label="Imagen del artista" value={connection.artist_image_url} onChange={(value) => updateConnection(provider, "artist_image_url", value)} placeholder="https://…" />
                   </div>
                 </article>
