@@ -1,6 +1,7 @@
 "use client";
 
 import { AdminSidebar } from "@/components/admin/AdminSidebar";
+import { AssetImportProvider } from "@/components/admin/assets/AssetImportProvider";
 import { useAuth } from "@/components/auth-provider";
 import { canAccessAdmin, roleHome } from "@/lib/auth";
 import { usePathname, useRouter } from "next/navigation";
@@ -40,20 +41,22 @@ export default function AdminLayoutClient({ children }: { children: React.ReactN
   if (!user || !canAccessAdmin(role)) return null;
 
   return (
-    <main className="relative min-h-screen bg-[#050507] text-white">
-      <div
-        className="pointer-events-none fixed inset-0 opacity-40"
-        aria-hidden="true"
-        style={{
-          backgroundImage:
-            "linear-gradient(rgba(139,92,246,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(139,92,246,.035) 1px, transparent 1px), radial-gradient(circle at 72% 4%, rgba(124,58,237,.12), transparent 31%)",
-          backgroundSize: "38px 38px, 38px 38px, auto",
-        }}
-      />
-      <div className="relative mx-auto grid w-full max-w-[1900px] gap-4 p-3 md:grid-cols-[232px_minmax(0,1fr)] md:p-4 xl:gap-5 xl:px-5">
-        <AdminSidebar />
-        <section className="min-w-0 pb-12">{children}</section>
-      </div>
-    </main>
+    <AssetImportProvider>
+      <main className="relative min-h-screen bg-[#050507] text-white">
+        <div
+          className="pointer-events-none fixed inset-0 opacity-40"
+          aria-hidden="true"
+          style={{
+            backgroundImage:
+              "linear-gradient(rgba(139,92,246,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(139,92,246,.035) 1px, transparent 1px), radial-gradient(circle at 72% 4%, rgba(124,58,237,.12), transparent 31%)",
+            backgroundSize: "38px 38px, 38px 38px, auto",
+          }}
+        />
+        <div className="relative mx-auto grid w-full max-w-[1900px] gap-4 p-3 md:grid-cols-[232px_minmax(0,1fr)] md:p-4 xl:gap-5 xl:px-5">
+          <AdminSidebar />
+          <section className="min-w-0 pb-12">{children}</section>
+        </div>
+      </main>
+    </AssetImportProvider>
   );
 }
