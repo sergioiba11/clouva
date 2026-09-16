@@ -7,7 +7,8 @@ export type ImageAspectRatio = "1:1" | "4:5" | "5:4" | "16:9" | "9:16";
 export type VideoAspectRatio = "16:9" | "9:16";
 export type VideoDuration = 4 | 6 | 8;
 
-export const MEDIA_PRICING_VERSION = "2026-08-13";
+export const MEDIA_PRICING_VERSION = "2026-09-16-runway";
+export const RUNWAY_CREDIT_USD = 0.01;
 
 export const IMAGE_QUALITY_CONFIG = {
   quick: {
@@ -30,23 +31,32 @@ export const IMAGE_QUALITY_CONFIG = {
 export const VIDEO_QUALITY_CONFIG = {
   economy: {
     label: "Económica",
-    model: "veo-3.1-lite-generate-preview",
+    model: "seedance2_mini",
     resolution: "720p",
-    pricePerSecondUsd: 0.05,
+    creditsPerSecond: 16,
+    pricePerSecondUsd: 0.16,
   },
   fast: {
     label: "Rápida",
-    model: "veo-3.1-fast-generate-preview",
+    model: "seedance2_fast",
     resolution: "720p",
-    pricePerSecondUsd: 0.1,
+    creditsPerSecond: 29,
+    pricePerSecondUsd: 0.29,
   },
   cinematic: {
     label: "Cinemática",
-    model: "veo-3.1-generate-preview",
+    model: "seedance2_5",
     resolution: "720p",
-    pricePerSecondUsd: 0.4,
+    creditsPerSecond: 30,
+    pricePerSecondUsd: 0.3,
   },
-} as const satisfies Record<VideoQuality, { label: string; model: string; resolution: "720p"; pricePerSecondUsd: number }>;
+} as const satisfies Record<VideoQuality, {
+  label: string;
+  model: "seedance2_mini" | "seedance2_fast" | "seedance2_5";
+  resolution: "720p";
+  creditsPerSecond: number;
+  pricePerSecondUsd: number;
+}>;
 
 export const IMAGE_ASPECT_RATIOS: readonly ImageAspectRatio[] = ["1:1", "4:5", "5:4", "16:9", "9:16"];
 export const VIDEO_ASPECT_RATIOS: readonly VideoAspectRatio[] = ["16:9", "9:16"];
@@ -72,8 +82,12 @@ export function isVideoDuration(value: unknown): value is VideoDuration {
   return VIDEO_DURATIONS.includes(Number(value) as VideoDuration);
 }
 
+export function estimateVideoCredits(quality: VideoQuality, durationSeconds: VideoDuration) {
+  return VIDEO_QUALITY_CONFIG[quality].creditsPerSecond * durationSeconds;
+}
+
 export function estimateVideoCostUsd(quality: VideoQuality, durationSeconds: VideoDuration) {
-  return Number((VIDEO_QUALITY_CONFIG[quality].pricePerSecondUsd * durationSeconds).toFixed(2));
+  return Number((estimateVideoCredits(quality, durationSeconds) * RUNWAY_CREDIT_USD).toFixed(2));
 }
 
 export function formatAspectRatio(value: ImageAspectRatio | VideoAspectRatio) {
