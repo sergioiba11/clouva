@@ -1,6 +1,7 @@
 "use client";
 
 import { AdminSidebar } from "@/components/admin/AdminSidebar";
+import { AssetImportPanel } from "@/components/admin/assets/AssetImportPanel";
 import { AssetImportProvider } from "@/components/admin/assets/AssetImportProvider";
 import { useAuth } from "@/components/auth-provider";
 import { canAccessAdmin, roleHome } from "@/lib/auth";
@@ -54,7 +55,10 @@ export default function AdminLayoutClient({ children }: { children: React.ReactN
         />
         <div className="relative mx-auto grid w-full max-w-[1900px] gap-4 p-3 md:grid-cols-[232px_minmax(0,1fr)] md:p-4 xl:gap-5 xl:px-5">
           <AdminSidebar />
-          <section className="min-w-0 pb-12">{children}</section>
+          <section className="min-w-0 pb-12">
+            {pathname === "/admin/assets" ? <div className="mb-3"><AssetImportPanel /></div> : null}
+            {children}
+          </section>
         </div>
       </main>
     </AssetImportProvider>
