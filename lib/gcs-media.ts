@@ -1,8 +1,10 @@
 import { Storage } from "@google-cloud/storage";
 
-// Bucket público para assets generados/reconstruidos que se referencian desde
-// Supabase. Auth por ADC del servicio de Cloud Run.
-const BUCKET_NAME = process.env.CLOUVA_GENERATED_MEDIA_BUCKET ?? "clouva-generated-media";
+// Canonical Google Cloud bucket for generated/context media. Authentication is
+// provided by Application Default Credentials (Cloud Run service account in prod).
+export function generatedMediaBucketName() {
+  return process.env.CLOUAI_OUTPUT_BUCKET ?? process.env.CLOUVA_GENERATED_MEDIA_BUCKET ?? "clouva-generated-media";
+}
 
 let storage: Storage | null = null;
 function getStorage() {
@@ -19,6 +21,16 @@ const EXTENSION_BY_MIME: Record<string, string> = {
   "application/pdf": "pdf",
   "application/json": "json",
 };
+
+export function publicGeneratedMediaUrl(objectPath: string) {
+  const normalized = objectPath.replace(/^\/+/, "");
+  return `https://storage.googleapis.com/${generatedMediaBucketName()}/${normalized}`;
+}
+
+export function generatedMediaGsUri(objectPath: string) {
+  const normalized = objectPath.replace(/^\/+/, "");
+  return `gs://${generatedMediaBucketName()}/${normalized}`;
+}
 
 export async function uploadGeneratedMedia(args: {
   bytes: Buffer;
@@ -37,7 +49,7 @@ export async function uploadGeneratedMediaObject(args: {
   const extension = EXTENSION_BY_MIME[args.mimeType] ?? "bin";
   const objectPath = `${args.pathPrefix.replace(/\/+$/, "")}/${crypto.randomUUID()}.${extension}`;
 
-  const bucket = getStorage().bucket(BUCKET_NAME);
+  const bucket = getStorage().bucket(generatedMediaBucketName());
   const file = bucket.file(objectPath);
   await file.save(args.bytes, {
     contentType: args.mimeType,
@@ -48,13 +60,21 @@ export async function uploadGeneratedMediaObject(args: {
   });
 
   return {
-    url: `https://storage.googleapis.com/${BUCKET_NAME}/${objectPath}`,
+    url: publicGeneratedMediaUrl(objectPath),
+    gcsUri: generatedMediaGsUri(objectPath),
     objectPath,
   };
+}
+
+export async function readGeneratedMediaObject(objectPath: string) {
+  const normalized = objectPath.replace(/^\/+/, "");
+  if (!normalized || normalized.includes("..")) throw new Error("Ruta de almacenamiento inválida.");
+  const [bytes] = await getStorage().bucket(generatedMediaBucketName()).file(normalized).download();
+  return bytes;
 }
 
 export async function deleteGeneratedMedia(objectPath: string) {
   const normalized = objectPath.replace(/^\/+/, "");
   if (!normalized || normalized.includes("..")) throw new Error("Ruta de almacenamiento inválida.");
-  await getStorage().bucket(BUCKET_NAME).file(normalized).delete({ ignoreNotFound: true });
+  await getStorage().bucket(generatedMediaBucketName()).file(normalized).delete({ ignoreNotFound: true });
 }
