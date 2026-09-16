@@ -31,9 +31,9 @@ test("Workspace visual context is structured and bounded", () => {
   assert.throws(() => normalizeScreenContext({ logs: "x".repeat(24_100) }), /demasiado grande/i);
 });
 
-test("binary attachments are sent to Gemini but never persisted into ai_messages metadata", () => {
+test("binary attachments enter the provider-neutral content contract but never persist into ai_messages metadata", () => {
   const source = fs.readFileSync(new URL("./app/api/clouva-ai/chat/route.ts", import.meta.url), "utf8");
-  assert.match(source, /attachments\.map\(attachmentPart\)/);
+  assert.match(source, /attachments\.map\(attachmentContentPart\)/);
   assert.match(source, /attachments\.map\(\(\{ name, mimeType, size, kind \}\) => \(\{ name, mimeType, size, kind \}\)\)/);
   assert.doesNotMatch(source, /metadata:\s*\{[^}]*dataBase64/s);
 });

@@ -1,119 +1,54 @@
 import { NextResponse } from "next/server";
-import { getGeminiLayoutModelPolicy } from "@/lib/server/gemini-layout-model-policy";
+import { createAIProviderRouter } from "@/lib/clouva-ai/providers/provider-router";
+import { publicProviderError } from "@/lib/clouva-ai/providers/errors";
 
 export const runtime = "nodejs";
 export const revalidate = 300;
 
-type GeminiModel = {
-  name?: string;
-  displayName?: string;
-  description?: string;
-  supportedGenerationMethods?: string[];
-  inputTokenLimit?: number;
-  outputTokenLimit?: number;
-};
-
-const preciseModel = getGeminiLayoutModelPolicy("reference_precise").model;
-
-const CLOUVA_MODELS: Record<
-  string,
-  {
-    order: number;
-    recommendedFor: string;
-    tier: "principal" | "respaldo";
-  }
-> = {
-  [preciseModel]: {
-    order: 0,
-    tier: "principal",
-    recommendedFor: "Diseño visual de alta fidelidad, referencias multimodales y tareas complejas",
-  },
-  "gemini-3.5-flash": {
-    order: 1,
-    tier: "principal",
-    recommendedFor: "Arquitectura, código, investigación y tareas complejas",
-  },
-  "gemini-3.1-flash-lite": {
-    order: 2,
-    tier: "respaldo",
-    recommendedFor: "Chat rápido, tareas livianas y menor costo",
-  },
-};
-
-function modelId(model: GeminiModel) {
-  return (model.name ?? "").replace(/^models\//, "");
-}
-
-function isAllowed(model: GeminiModel) {
-  const id = modelId(model);
-  const methods = model.supportedGenerationMethods ?? [];
-  return id in CLOUVA_MODELS && methods.includes("generateContent");
-}
-
-export async function GET() {
+export async function GET(request: Request) {
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      return NextResponse.json(
-        { error: "Falta GEMINI_API_KEY en el servicio de Cloud Run." },
-        { status: 500 },
-      );
+    const router = createAIProviderRouter({ request });
+    const diagnostics = router.diagnostics();
+    try {
+      const models = await router.listModels();
+      const defaultModel = models.some((model) => model.id === diagnostics.model)
+        ? diagnostics.model
+        : models[0]?.id ?? diagnostics.model;
+      return NextResponse.json({
+        ok: true,
+        available: true,
+        provider: diagnostics.provider,
+        models,
+        defaultModel,
+        fallbackModel: diagnostics.fallbackModel,
+        fallbackProvider: diagnostics.fallbackProvider,
+        capabilities: diagnostics.capabilities,
+      });
+    } catch (error) {
+      const normalized = publicProviderError(error);
+      return NextResponse.json({
+        ok: true,
+        available: false,
+        provider: diagnostics.provider,
+        models: [{
+          id: diagnostics.model,
+          name: diagnostics.model,
+          description: "Modelo configurado en ClouAI; el catálogo del provider no respondió.",
+          inputTokenLimit: null,
+          outputTokenLimit: null,
+        }],
+        defaultModel: diagnostics.model,
+        fallbackModel: diagnostics.fallbackModel,
+        fallbackProvider: diagnostics.fallbackProvider,
+        capabilities: diagnostics.capabilities,
+        providerError: { code: normalized.code, message: normalized.message },
+      });
     }
-
-    const response = await fetch(
-      "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000",
-      {
-        headers: { "x-goog-api-key": apiKey },
-        cache: "no-store",
-      },
-    );
-
-    const payload = (await response.json().catch(() => ({}))) as {
-      models?: GeminiModel[];
-      error?: { message?: string };
-    };
-
-    if (!response.ok) {
-      throw new Error(payload.error?.message ?? `Gemini respondió HTTP ${response.status}`);
-    }
-
-    const available = (payload.models ?? [])
-      .filter(isAllowed)
-      .map((model) => {
-        const id = modelId(model);
-        const config = CLOUVA_MODELS[id];
-        return {
-          id,
-          name: model.displayName ?? model.name ?? "Gemini",
-          description: model.description ?? "Modelo compatible con CLOUVA AI.",
-          inputTokenLimit: model.inputTokenLimit ?? null,
-          outputTokenLimit: model.outputTokenLimit ?? null,
-          recommendedFor: config.recommendedFor,
-          tier: config.tier,
-          order: config.order,
-        };
-      })
-      .sort((a, b) => a.order - b.order)
-      .map(({ order: _order, ...model }) => model);
-
-    const configuredDefault = process.env.GEMINI_MODEL ?? "gemini-3.5-flash";
-    const defaultModel = available.some((model) => model.id === configuredDefault)
-      ? configuredDefault
-      : available[0]?.id ?? configuredDefault;
-
-    return NextResponse.json({
-      ok: true,
-      models: available,
-      defaultModel,
-      fallbackModel: process.env.GEMINI_FALLBACK_MODEL ?? "gemini-3.1-flash-lite",
-      preciseLayoutModel: preciseModel,
-    });
   } catch (error) {
+    const normalized = publicProviderError(error);
     return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : "No se pudieron cargar los modelos Gemini.",
-      },
-      { status: 500 },
+      { error: normalized.message, code: normalized.code },
+      { status: normalized.status },
     );
   }
 }
