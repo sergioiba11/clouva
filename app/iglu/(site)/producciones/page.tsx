@@ -2,13 +2,37 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { IgluServicePage, type IgluOffer } from "@/components/iglu/IgluPages";
 import { loadIgluSiteData } from "@/lib/iglu/site-data";
+import { resolveIgluServiceOffers } from "@/lib/iglu/service-offers";
 
 export const metadata: Metadata = { title: "Producciones" };
-const OFFERS: IgluOffer[] = [
-  { name:"Beat Lease MP3", description:"Uso comercial · alta calidad. Ideal para empezar.", usd:29, flows:29, ars:"43.500" },
-  { name:"Beat WAV", description:"Formato WAV · alta fidelidad. Para un sonido profesional.", usd:49, flows:49, ars:"73.500" },
-  { name:"Beat exclusivo", description:"Producción a medida. 100% tus derechos.", usd:250, flows:250, ars:"375.000" },
-  { name:"Mezcla", description:"Claridad, balance y potencia para llevar tus canciones al siguiente nivel.", usd:15, flows:15, ars:"22.500" },
-  { name:"Master", description:"Volumen, presencia e impacto. Sonido listo para el mundo.", usd:15, flows:15, ars:"22.500" },
+
+const FALLBACK_OFFERS: IgluOffer[] = [
+  { name: "Beat Lease MP3", description: "Licencia de beat en MP3 según disponibilidad publicada." },
+  { name: "Beat WAV", description: "Licencia en WAV para trabajar con mayor fidelidad." },
+  { name: "Beat exclusivo", description: "Producción exclusiva y condiciones definidas por el estudio." },
+  { name: "Mezcla", description: "Claridad, balance y potencia para llevar la canción al siguiente nivel." },
+  { name: "Master", description: "Terminación final preparada para el lanzamiento." },
 ];
-export default async function Page(){const data=await loadIgluSiteData();if(!data)notFound();return <IgluServicePage data={data} kicker="Estudio profesional" title="PRODUCCIONES" subtitle="BEATS · MEZCLA · MASTER" description="Tu visión, nuestra experiencia. De la idea al mundo." offers={OFFERS} ctaLabel="Agregar" />}
+
+export default async function Page() {
+  const data = await loadIgluSiteData();
+  if (!data) notFound();
+
+  const offers = resolveIgluServiceOffers(
+    data.services,
+    ["beat", "mezcla", "mix", "master", "produccion", "producción"],
+    FALLBACK_OFFERS,
+  );
+
+  return (
+    <IgluServicePage
+      data={data}
+      kicker="Estudio profesional"
+      title="PRODUCCIONES"
+      subtitle="BEATS · MEZCLA · MASTER"
+      description="Tu visión, nuestra experiencia. De la idea al mundo."
+      offers={offers}
+      ctaLabel="Consultar"
+    />
+  );
+}
