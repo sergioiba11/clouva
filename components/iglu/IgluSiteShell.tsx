@@ -4,18 +4,25 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 
-const NAV = [
+const PRIMARY_NAV = [
   ["Inicio", "/iglu"],
   ["El estudio", "/iglu/estudio"],
   ["Grabaciones", "/iglu/grabaciones"],
   ["Producciones", "/iglu/producciones"],
-  ["Productores", "/iglu/productores"],
-  ["Artistas", "/iglu/artistas"],
-  ["Sesiones", "/iglu/sesiones"],
   ["Iglú Radio", "/iglu/radio"],
   ["Nosotros", "/iglu/nosotros"],
   ["Contacto", "/iglu/contacto"],
 ] as const;
+
+const MORE_NAV = [
+  ["Productores", "/iglu/productores"],
+  ["Artistas / Player", "/iglu/artistas"],
+  ["Sesiones", "/iglu/sesiones"],
+  ["Membresías", "/iglu/membresias"],
+  ["Pagos únicos", "/iglu/pagos-unicos"],
+] as const;
+
+const ALL_NAV = [...PRIMARY_NAV, ...MORE_NAV] as const;
 
 function isActive(pathname: string, href: string) {
   return href === "/iglu" ? pathname === href : pathname === href || pathname.startsWith(`${href}/`);
@@ -42,12 +49,19 @@ export function IgluSiteShell({ children, logoUrl, emblemUrl }: { children: Reac
         </Link>
 
         <nav className="iglu-nav" aria-label="Navegación de IGLÚ Records">
-          {NAV.map(([label, href]) => (
+          {PRIMARY_NAV.map(([label, href]) => (
             <Link key={href} href={href} className={isActive(pathname, href) ? "is-active" : ""}>{label}</Link>
           ))}
+          <details className="iglu-nav-more">
+            <summary className={MORE_NAV.some(([, href]) => isActive(pathname, href)) ? "is-active" : ""}>Más</summary>
+            <div className="iglu-nav-more__menu">
+              {MORE_NAV.map(([label, href]) => <Link key={href} href={href} className={isActive(pathname, href) ? "is-active" : ""}>{label}</Link>)}
+            </div>
+          </details>
         </nav>
 
         <div className="iglu-header__actions">
+          <Link className="iglu-header__cart" href="/carrito" aria-label="Abrir carrito">Carrito</Link>
           <Link className="iglu-header__reserve" href="/iglu/contacto#reservar">Reservar sesión</Link>
           <button className="iglu-menu-button" type="button" aria-label="Abrir menú" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
             <span /> <span /> <span />
@@ -57,9 +71,9 @@ export function IgluSiteShell({ children, logoUrl, emblemUrl }: { children: Reac
 
       {open ? (
         <div className="iglu-mobile-menu">
-          {NAV.map(([label, href]) => <Link key={href} href={href}>{label}</Link>)}
-          <Link href="/iglu/membresias">Membresías</Link>
-          <Link href="/iglu/pagos-unicos">Pagos únicos</Link>
+          {ALL_NAV.map(([label, href]) => <Link key={href} href={href} className={isActive(pathname, href) ? "is-active" : ""}>{label}</Link>)}
+          <Link href="/carrito">Carrito</Link>
+          <Link className="iglu-mobile-menu__reserve" href="/iglu/contacto#reservar">Reservar sesión</Link>
         </div>
       ) : null}
 
@@ -72,9 +86,10 @@ export function IgluSiteShell({ children, logoUrl, emblemUrl }: { children: Reac
         </div>
         <p>Música · cultura · familia · del sur para el mundo</p>
         <div className="iglu-footer__links">
-          <Link href="/iglu/nosotros">Nosotros</Link>
-          <Link href="/iglu/contacto">Contacto</Link>
+          <Link href="/iglu/estudio">Estudio</Link>
+          <Link href="/iglu/artistas">Artistas</Link>
           <Link href="/iglu/radio">Radio</Link>
+          <Link href="/iglu/contacto">Contacto</Link>
         </div>
       </footer>
     </div>
