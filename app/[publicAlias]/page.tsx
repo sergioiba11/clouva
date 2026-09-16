@@ -5,6 +5,7 @@ import { SpacePublicView } from "@/components/public/SpacePublicView";
 import { PublicAgendaSection } from "@/components/public/PublicAgendaSection";
 import { PublicKnowledgeSection } from "@/components/public/PublicKnowledgeSection";
 import { PublicMerchSection, loadPublicMerchProducts } from "@/components/public/PublicMerchSection";
+import { buildPlayerStructuredData } from "@/lib/seo/player-structured-data";
 import { loadPublicAgendaByPlayer } from "@/lib/server/agenda/public-loader";
 import { loadPublicKnowledgeByPlayer } from "@/lib/server/knowledge/public-loader";
 import { resolvePlayerAlias } from "@/lib/server/public-identity-data";
@@ -19,10 +20,30 @@ export async function generateMetadata({ params }: { params: Promise<{ publicAli
   if (playerResult) {
     const { player, canonicalAlias } = playerResult;
     const title = player.seo_title || `${player.display_name} — Perfil oficial`;
-    const description = player.seo_description || player.share_description || player.short_bio || player.tagline || undefined;
+    const description = player.seo_description || player.share_description || player.long_bio || player.short_bio || player.tagline || undefined;
     const canonical = `https://clouva.com.ar/${canonicalAlias}`;
     const image = player.og_image_url || player.cover_url || player.profile_image_url || undefined;
-    return { title, description, alternates: { canonical }, openGraph: { type: "profile", url: canonical, title: player.share_title || title, description, images: image ? [{ url: image }] : undefined }, robots: player.privacy_status === "public" ? { index: true, follow: true } : { index: false, follow: false } };
+    const socialTitle = player.share_title || title;
+    const socialDescription = player.share_description || description;
+    return {
+      title,
+      description,
+      alternates: { canonical },
+      openGraph: {
+        type: "profile",
+        url: canonical,
+        title: socialTitle,
+        description: socialDescription,
+        images: image ? [{ url: image, alt: `${player.display_name}${player.public_identity_label ? `, ${player.public_identity_label.toLowerCase()}` : ""}` }] : undefined,
+      },
+      twitter: {
+        card: "summary_large_image",
+        title: socialTitle,
+        description: socialDescription,
+        images: image ? [image] : undefined,
+      },
+      robots: player.privacy_status === "public" ? { index: true, follow: true } : { index: false, follow: false },
+    };
   }
   const spaceResult = await resolvePublicSpaceAlias(publicAlias).catch(() => null);
   if (!spaceResult) return { title: "Perfil no encontrado — CLOUVA", robots: { index: false, follow: false } };
@@ -50,9 +71,18 @@ export default async function PublicAliasPage({ params }: { params: Promise<{ pu
     loadPublicKnowledgeByPlayer({ admin, playerId: playerResult.player.id }).catch(() => null),
   ]);
   const accent = playerResult.layoutConfig?.page_style?.palette?.accent || playerResult.player.accent_color || "#8f7cff";
+  const structuredData = buildPlayerStructuredData({
+    player: playerResult.player,
+    canonicalAlias: playerResult.canonicalAlias,
+    musicConnections: playerResult.musicConnections,
+  });
 
   return (
     <>
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData).replace(/</g, "\\u003c") }}
+      />
       <PlayerIdentityRenderer
         player={playerResult.player}
         affiliations={playerResult.affiliations}
