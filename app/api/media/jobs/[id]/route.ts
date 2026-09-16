@@ -13,10 +13,11 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
     let job = await getMediaJob(admin, user.id, id);
     if (!job) return NextResponse.json({ error: "La creación no existe.", code: "job_not_found" }, { status: 404 });
 
-    if (job.type === "video" && ["generating", "processing"].includes(job.status)) {
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) return NextResponse.json({ error: "GEMINI_API_KEY no está configurada.", code: "missing_api_key" }, { status: 500 });
-      job = await syncVideoJob(admin, job, apiKey);
+    if (job.type === "video" && ["queued", "generating", "processing"].includes(job.status)) {
+      job = await syncVideoJob(admin, job, {
+        runwayApiKey: process.env.RUNWAY_API_KEY,
+        geminiApiKey: process.env.GEMINI_API_KEY,
+      });
     }
 
     return NextResponse.json({ job: toPublicMediaJob(job) });
