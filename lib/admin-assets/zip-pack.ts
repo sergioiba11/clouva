@@ -3,14 +3,21 @@ import { inflateRawSync } from "node:zlib";
 export type AssetPackVariant = "black" | "light" | "adaptive" | "shared";
 export type AssetPackPlatform = "canonical" | "png" | "favicon" | "pwa" | "design" | "desktop" | "nextjs" | "android" | "ios" | "other";
 
-export type AssetPackEntry = {
+export type AssetPackEntryDescriptor = {
   originalPath: string;
   fileName: string;
-  bytes: Buffer;
   variant: AssetPackVariant;
   platform: AssetPackPlatform;
   destinationFolder: string;
   contentType: string;
+  localOffset: number;
+  compressedSize: number;
+  uncompressedSize: number;
+  compressionMethod: number;
+};
+
+export type AssetPackEntry = Omit<AssetPackEntryDescriptor, "localOffset" | "compressedSize" | "uncompressedSize" | "compressionMethod"> & {
+  bytes: Buffer;
 };
 
 const EOCD_SIGNATURE = 0x06054b50;
@@ -136,7 +143,7 @@ function inflateEntry(archive: Buffer, localOffset: number, compressedSize: numb
   return result;
 }
 
-export function extractAssetPack(archive: Buffer): AssetPackEntry[] {
+export function inspectAssetPack(archive: Buffer): AssetPackEntryDescriptor[] {
   const eocd = findEndOfCentralDirectory(archive);
   if (eocd < 0) throw new Error("No se pudo abrir el ZIP.");
 
@@ -149,7 +156,7 @@ export function extractAssetPack(archive: Buffer): AssetPackEntry[] {
   if (entryCount > MAX_ENTRIES) throw new Error(`El ZIP supera el máximo de ${MAX_ENTRIES} archivos.`);
   if (centralOffset + centralSize > archive.length) throw new Error("El directorio central del ZIP está dañado.");
 
-  const entries: AssetPackEntry[] = [];
+  const entries: AssetPackEntryDescriptor[] = [];
   let expandedBytes = 0;
   let cursor = centralOffset;
 
@@ -183,17 +190,42 @@ export function extractAssetPack(archive: Buffer): AssetPackEntry[] {
     expandedBytes += uncompressedSize;
     if (expandedBytes > MAX_EXPANDED_BYTES) throw new Error("El ZIP supera 250 MB una vez expandido.");
 
-    const bytes = inflateEntry(archive, localOffset, compressedSize, method, uncompressedSize);
     const classification = classifyPath(cleanPath);
     entries.push({
       originalPath: cleanPath,
       fileName: safeSegment(fileName),
-      bytes,
       contentType: contentTypeFromPath(cleanPath),
+      localOffset,
+      compressedSize,
+      uncompressedSize,
+      compressionMethod: method,
       ...classification,
     });
   }
 
   if (!entries.length) throw new Error("El ZIP no contiene assets importables.");
   return entries;
+}
+
+export function extractAssetPackEntry(archive: Buffer, descriptor: AssetPackEntryDescriptor): AssetPackEntry {
+  const bytes = inflateEntry(
+    archive,
+    descriptor.localOffset,
+    descriptor.compressedSize,
+    descriptor.compressionMethod,
+    descriptor.uncompressedSize,
+  );
+  return {
+    originalPath: descriptor.originalPath,
+    fileName: descriptor.fileName,
+    bytes,
+    variant: descriptor.variant,
+    platform: descriptor.platform,
+    destinationFolder: descriptor.destinationFolder,
+    contentType: descriptor.contentType,
+  };
+}
+
+export function extractAssetPack(archive: Buffer): AssetPackEntry[] {
+  return inspectAssetPack(archive).map((descriptor) => extractAssetPackEntry(archive, descriptor));
 }
