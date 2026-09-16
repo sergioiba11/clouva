@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
+import { registerAssetZipUploadHandler } from "@/lib/admin-assets/client-upload-interceptor";
 import {
   isAssetImportActive,
   type AssetImportItem,
@@ -53,6 +54,7 @@ const AssetImportContext = createContext<AssetImportContextValue | null>(null);
 const DB_NAME = "clouva-admin-asset-imports";
 const DB_VERSION = 1;
 const STORE_NAME = "resumable-uploads";
+const TERMINAL_IMPORT_STATUSES = new Set(["completed", "completed_with_errors", "failed", "cancelled"]);
 
 function openDb() {
   return new Promise<IDBDatabase>((resolve, reject) => {
@@ -139,6 +141,10 @@ async function queryResumableOffset(record: StoredUpload) {
     throw new Error("La sesión resumible de Google Cloud expiró. Volvé a seleccionar el ZIP para crear una sesión nueva.");
   }
   throw new Error(`Google Cloud no pudo recuperar el offset de la subida (${result.status}).`);
+}
+
+function sleep(milliseconds: number) {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
 }
 
 export function AssetImportProvider({ children }: { children: ReactNode }) {
@@ -297,6 +303,36 @@ export function AssetImportProvider({ children }: { children: ReactNode }) {
       setStarting(false);
     }
   }, [runUpload]);
+
+  const waitForImport = useCallback(async (jobId: string) => {
+    const deadline = Date.now() + 2 * 60 * 60 * 1000;
+    while (Date.now() < deadline) {
+      const response = await authenticatedFetch("/api/admin/assets/imports?limit=50", { cache: "no-store" });
+      const payload = await readApiJson<{ jobs: AssetImportJob[] }>(response);
+      setJobs(payload.jobs ?? []);
+      const job = (payload.jobs ?? []).find((candidate) => candidate.id === jobId);
+      if (!job) throw new Error("La importación dejó de aparecer en el historial.");
+      if (TERMINAL_IMPORT_STATUSES.has(job.status)) {
+        if (job.status === "failed" || job.status === "cancelled") {
+          throw new Error(job.errorMessage ?? "La importación no pudo completarse.");
+        }
+        return job;
+      }
+      await sleep(1500);
+    }
+    throw new Error("La importación sigue activa, pero la espera de esta pantalla superó dos horas. El job continúa registrado en CLOUVA.");
+  }, []);
+
+  useEffect(() => registerAssetZipUploadHandler(async ({ file, destinationFolder }) => {
+    const job = await startZipImport(file, destinationFolder);
+    const completed = await waitForImport(job.id);
+    return {
+      ok: true,
+      kind: "asset-pack",
+      imported: completed.successFiles,
+      asset: null,
+    };
+  }), [startZipImport, waitForImport]);
 
   const loadItems = useCallback(async (jobId: string) => {
     const response = await authenticatedFetch(`/api/admin/assets/imports/items?jobId=${encodeURIComponent(jobId)}`, { cache: "no-store" });
