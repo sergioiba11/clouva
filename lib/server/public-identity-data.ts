@@ -10,6 +10,7 @@ import {
   studioServicesSelect,
   type Player,
   type PlayerMedia,
+  type PlayerMusicConnection,
   type PlayerStudioAffiliation,
   type StudioMembershipPlan,
   type StudioPlayer,
@@ -116,15 +117,20 @@ export async function resolvePlayerAlias(alias: string) {
   if (playerError) throw new Error(playerError.message);
   if (!player) return null;
 
-  const [affiliationResult, mediaResult, aliasResult, vipResult, versionResult] = await Promise.all([
+  const [affiliationResult, mediaResult, aliasResult, vipResult, versionResult, musicConnectionsResult] = await Promise.all([
     supabase.from("player_studios").select(playerStudiosSelect).eq("player_id", player.id).eq("is_visible", true).eq("status", "active").order("display_order"),
     supabase.from("player_media").select("id,media_type,origin,source_url,public_url,thumbnail_url,caption,display_order").eq("player_id", player.id).eq("visibility", "public").order("display_order"),
     supabase.from("public_slug_aliases").select("alias").eq("entity_type", "player").eq("entity_id", player.id).eq("is_primary", true).maybeSingle(),
     supabase.rpc("is_player_vip", { p_player_id: player.id }),
     supabase.from("player_profile_versions").select("layout_config").eq("player_id", player.id).eq("status", "published").maybeSingle(),
+    supabase
+      .from("player_music_connections")
+      .select("id,player_id,provider,connection_type,external_artist_id,external_uri,external_url,artist_name,artist_image_url,verification_status,metadata,last_synced_at")
+      .eq("player_id", player.id),
   ]);
   if (affiliationResult.error) throw new Error(affiliationResult.error.message);
   if (mediaResult.error) throw new Error(mediaResult.error.message);
+  if (musicConnectionsResult.error) throw new Error(musicConnectionsResult.error.message);
 
   const rawAffiliations = (affiliationResult.data ?? []) as unknown as PlayerStudioAffiliation[];
   const affiliationStudios = rawAffiliations.flatMap((entry) => entry.studio ? [entry.studio] : []);
@@ -151,6 +157,7 @@ export async function resolvePlayerAlias(alias: string) {
     player: player as unknown as Player,
     affiliations,
     media: (mediaResult.data ?? []) as unknown as PlayerMedia[],
+    musicConnections: (musicConnectionsResult.data ?? []) as unknown as PlayerMusicConnection[],
     canonicalAlias: aliasResult.data?.alias || player.slug,
     isVip: vipResult.data === true,
     layoutConfig,
