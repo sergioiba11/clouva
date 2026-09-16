@@ -60,9 +60,10 @@ if [[ -n "${CLOUVA_ASSET_IMPORT_WORKER_SECRET_VALUE:-}" ]]; then
 else
   VERSION_COUNT="$(gcloud secrets versions list "$SECRET_NAME" --project "$PROJECT_ID" --filter='state=ENABLED' --format='value(name)' | wc -l | tr -d ' ')"
   if [[ "$VERSION_COUNT" == "0" ]]; then
-    echo "Falta crear el valor secreto." >&2
-    echo "Ejecutá de nuevo con CLOUVA_ASSET_IMPORT_WORKER_SECRET_VALUE definido." >&2
-    exit 1
+    python3 - <<'PY' | gcloud secrets versions add "$SECRET_NAME" --project "$PROJECT_ID" --data-file=- >/dev/null
+import secrets
+print(secrets.token_urlsafe(48), end="")
+PY
   fi
 fi
 
