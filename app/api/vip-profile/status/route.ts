@@ -56,6 +56,12 @@ function normalizeClientJob(job: JobRow | null) {
   };
 }
 
+function deliveredBrandLogoUrl(request: NextRequest, brandVersionId: string, surface: "dark" | "light") {
+  const url = new URL(`/api/brand-assets/${encodeURIComponent(brandVersionId)}/logo`, request.nextUrl.origin);
+  url.searchParams.set("surface", surface);
+  return url.toString();
+}
+
 export async function GET(request: NextRequest) {
   try {
     const { user } = await requireUser(request);
@@ -157,6 +163,33 @@ export async function GET(request: NextRequest) {
       // the same canonical resolver without guessing from loose DB fields.
       surface: "dark",
     });
+
+    // Brand variants can live in a private GCS bucket. Keep the canonical raw
+    // URLs in the Brand Engine, but hand the browser a stable same-origin URL
+    // that CLOUVA itself can serve with its Cloud Run service credentials.
+    let deliveredIdentityAssets = identityAssets;
+    if (activeBrandVersionId && identityAssets.officialLogo && identityAssets.officialDisplayLogo.preferredUrl) {
+      const darkUrl = deliveredBrandLogoUrl(request, activeBrandVersionId, "dark");
+      const lightUrl = deliveredBrandLogoUrl(request, activeBrandVersionId, "light");
+      const deliveredOfficialLogo = { ...identityAssets.officialLogo, url: darkUrl };
+      const deliveredOfficialAssets = identityAssets.officialAssets.map((asset) =>
+        asset.kind === "logo" ? deliveredOfficialLogo : asset,
+      );
+
+      deliveredIdentityAssets = {
+        ...identityAssets,
+        officialAssets: deliveredOfficialAssets,
+        officialLogo: deliveredOfficialLogo,
+        displayLogo: identityAssets.draftLogo ?? deliveredOfficialLogo,
+        officialDisplayLogo: {
+          ...identityAssets.officialDisplayLogo,
+          darkUrl,
+          lightUrl,
+          preferredUrl: darkUrl,
+        },
+      };
+    }
+
     const jobRows = (jobs ?? []) as JobRow[];
     const jobState = selectVipProfileJobState(jobRows);
     const activeJob = normalizeClientJob(jobState.activeJob);
@@ -175,7 +208,7 @@ export async function GET(request: NextRequest) {
       draftVersion: versionState.draftVersion,
       staleDrafts: versionState.staleDrafts,
       officialLogoVariants,
-      ...identityAssets,
+      ...deliveredIdentityAssets,
     });
   } catch (error) {
     const status = (error as Error & { status?: number })?.status ?? (isAuthError(error) ? 401 : 500);
