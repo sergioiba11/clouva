@@ -65,6 +65,20 @@ export function publicMediaError(error: unknown) {
     return { status: 422, body: { error: "El modelo seleccionado no está disponible para este proyecto.", code: "model_unavailable" } };
   }
 
+  const isRunwayVideoError = error instanceof Error && (
+    error.name === "RunwayVideoError" || error.constructor?.name === "RunwayVideoError"
+  );
+  if (isRunwayVideoError) {
+    const providerStatus = typeof (error as Error & { status?: unknown }).status === "number"
+      ? (error as Error & { status: number }).status
+      : 502;
+    const providerCode = typeof (error as Error & { code?: unknown }).code === "string"
+      ? (error as Error & { code: string }).code
+      : "runway_video_error";
+    const safeStatus = providerStatus >= 400 && providerStatus <= 599 ? providerStatus : 502;
+    return { status: safeStatus, body: { error: message.slice(0, 300), code: providerCode } };
+  }
+
   const isGeminiImageError = error instanceof Error && (
     error.name === "GeminiImageError" || error.constructor?.name === "GeminiImageError"
   );
