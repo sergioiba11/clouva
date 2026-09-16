@@ -1,6 +1,10 @@
 import { isCurrentPlayerMutation, notifyCurrentPlayerChanged } from "@/lib/current-player-events";
+import { maybeInterceptAssetZipUpload } from "@/lib/admin-assets/client-upload-interceptor";
 
 export async function authenticatedFetch(input: RequestInfo | URL, init: RequestInit = {}) {
+  const intercepted = await maybeInterceptAssetZipUpload(input, init);
+  if (intercepted) return intercepted;
+
   const { supabase } = await import("@/lib/supabase");
   const { data, error } = await supabase.auth.getSession();
   if (error) throw error;
