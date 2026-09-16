@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import type { ReactNode } from "react";
+import { PublicIdentityKnowledgeGraphPanel } from "@/components/profile/PublicIdentityKnowledgeGraphPanel";
 
 export default function ProfileEditorLayout({ children }: { children: ReactNode }) {
   return (
@@ -19,6 +20,7 @@ export default function ProfileEditorLayout({ children }: { children: ReactNode 
 
       <style>{`.profile-editor-shell > main > header { top: 61px !important; }`}</style>
       {children}
+      <PublicIdentityKnowledgeGraphPanel />
     </div>
   );
 }

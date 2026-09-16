@@ -4,10 +4,13 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { AuthProvider } from "@/components/auth-provider";
 import { ClouvaAppShell } from "@/components/clouva/ClouvaAppShell";
 
-// Browser identity is global: the tab always carries the official CLOUVA mark.
+const platformTitle = "CLOUVA — Plataforma creativa | Vida de Flows";
+const platformDescription = "CLOUVA es una plataforma creativa que conecta música, identidad, moda, 3D, Creator, Market, Mi Spot e inteligencia artificial en un mismo universo.";
+
+// Browser identity is global: the tab always carries the official CLOUVA platform mark.
 export const metadata: Metadata = {
-  title: "Clouva Vida de Flows",
-  description: "CLOUVA — Vida de flows. Player, Creator, Market, Mi Spot, música, moda, 3D y AI en un mismo universo creativo.",
+  title: platformTitle,
+  description: platformDescription,
   icons: {
     icon: [
       {
@@ -25,9 +28,15 @@ export const metadata: Metadata = {
     apple: "/assets/clouva/brand/logo-official-dark.png?v=official-20260907",
   },
   openGraph: {
-    title: "Clouva Vida de Flows",
-    description: "CLOUVA — Vida de flows. Un universo creativo para Player, música, moda, 3D, Market, Mi Spot y AI.",
-    url: "https://clouva.com.ar",
+    type: "website",
+    title: platformTitle,
+    description: platformDescription,
+    url: "https://clouva.com.ar/",
+  },
+  twitter: {
+    card: "summary",
+    title: platformTitle,
+    description: platformDescription,
   },
 };
 
