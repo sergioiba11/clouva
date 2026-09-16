@@ -133,7 +133,7 @@ jobs:
             --image "$IMAGE" \
             --revision-suffix "$suffix" \
             --tag "$suffix" \
-            --timeout 1800 \
+            --timeout 300 \
             --no-traffic \
             --quiet
           echo "revision=$SERVICE-$suffix" >> "$GITHUB_OUTPUT"
