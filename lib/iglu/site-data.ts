@@ -21,14 +21,27 @@ export const loadIgluSiteData = cache(async () => {
     resolveIgluAssets(),
   ]);
 
+  const primaryHero = assets.studioHero ?? identity.studio.cover_url ?? undefined;
+  const alternateHero = assets.studioHeroAlt ?? primaryHero;
+
   return {
     ...identity,
     products: (products ?? []) as unknown as CommerceProduct[],
     assets: {
       ...assets,
       logo: assets.logo ?? identity.studio.logo_url ?? undefined,
-      studioHero: assets.studioHero ?? identity.studio.cover_url ?? undefined,
-      studioHeroAlt: assets.studioHeroAlt ?? identity.studio.cover_url ?? undefined,
+      studioHero: primaryHero,
+      studioHeroAlt: alternateHero,
+      homeScene: assets.homeScene ?? primaryHero,
+      recordingsScene: assets.recordingsScene ?? alternateHero,
+      productionsScene: assets.productionsScene ?? alternateHero,
+      producersScene: assets.producersScene ?? alternateHero,
+      artistsScene: assets.artistsScene ?? primaryHero,
+      sessionsScene: assets.sessionsScene ?? alternateHero,
+      membershipsScene: assets.membershipsScene ?? primaryHero,
+      paymentsScene: assets.paymentsScene ?? alternateHero,
+      aboutScene: assets.aboutScene ?? alternateHero,
+      contactScene: assets.contactScene ?? primaryHero,
     },
   };
 });
