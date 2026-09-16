@@ -4,7 +4,7 @@ import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supa
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const MUSIC_PROVIDERS = new Set(["spotify", "apple_music", "youtube", "youtube_music", "soundcloud"]);
+const MUSIC_PROVIDERS = new Set(["spotify", "apple_music", "youtube", "youtube_music", "soundcloud", "instagram"]);
 const IDENTITY_FIELDS = new Set([
   "seo_title",
   "seo_description",
@@ -97,7 +97,6 @@ function sanitizeIdentity(input: unknown) {
 
 type MusicConnectionInput = {
   provider?: unknown;
-  connection_type?: unknown;
   external_artist_id?: unknown;
   external_uri?: unknown;
   external_url?: unknown;
@@ -118,9 +117,7 @@ async function syncMusicConnections(
     const item = raw as MusicConnectionInput;
     const provider = typeof item.provider === "string" ? item.provider.trim().toLowerCase() : "";
     if (!MUSIC_PROVIDERS.has(provider)) continue;
-    const connectionType = typeof item.connection_type === "string" && item.connection_type.trim()
-      ? item.connection_type.trim().slice(0, 80)
-      : "artist_profile";
+    const connectionType = "artist";
     const externalUrl = cleanHttpUrl(item.external_url);
 
     if (!externalUrl) {
@@ -134,6 +131,11 @@ async function syncMusicConnections(
       continue;
     }
 
+    const artistName = cleanString(item.artist_name, 300);
+    if (!artistName) throw new Error(`Completá el nombre del artista para ${provider}.`);
+    const requestedStatus = cleanString(item.verification_status, 80);
+    const verificationStatus = requestedStatus === "verified" ? "verified" : "unverified";
+
     const row = {
       player_id: playerId,
       provider,
@@ -141,9 +143,9 @@ async function syncMusicConnections(
       external_artist_id: cleanString(item.external_artist_id, 500),
       external_uri: cleanString(item.external_uri, 1000),
       external_url: externalUrl,
-      artist_name: cleanString(item.artist_name, 300),
+      artist_name: artistName,
       artist_image_url: cleanHttpUrl(item.artist_image_url),
-      verification_status: cleanString(item.verification_status, 80) || "manual",
+      verification_status: verificationStatus,
       updated_at: new Date().toISOString(),
     };
 
