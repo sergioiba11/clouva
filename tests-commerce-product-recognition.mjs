@@ -11,6 +11,8 @@ const route = read("./app/api/studios/[slug]/commerce/recognize/route.ts");
 const scannerRoute = read("./app/api/studios/[slug]/commerce/scan/route.ts");
 const productImagesRoute = read("./app/api/studios/[slug]/commerce/product-images/route.ts");
 const publicationCopyRoute = read("./app/api/commerce/products/[id]/publication-copy/route.ts");
+const publicationsRoute = read("./app/api/commerce/products/[id]/publications/route.ts");
+const channelCapabilities = read("./lib/commerce/channel-capabilities.ts");
 const captureContract = read("./lib/commerce/product-capture-contract.ts");
 const deployWorkflow = read("./.github/workflows/deploy-gcp-web.yml");
 
@@ -78,6 +80,15 @@ test("publication copy uses the same canonical Vertex AI provider", () => {
   assert.doesNotMatch(publicationCopyRoute, /process\.env\.GEMINI_API_KEY/);
   assert.doesNotMatch(publicationCopyRoute, /generativelanguage\.googleapis\.com/);
   assert.doesNotMatch(publicationCopyRoute, /NEXT_PUBLIC_/);
+});
+
+test("publication backend enforces canonical channel capabilities", () => {
+  assert.match(channelCapabilities, /facebook_marketplace:[\s\S]*canPublishAutomatically:\s*false/);
+  assert.match(channelCapabilities, /facebook_group:[\s\S]*canPublishAutomatically:\s*false/);
+  assert.match(channelCapabilities, /facebook_group:[\s\S]*requiresUserAction:\s*true/);
+  assert.match(channelCapabilities, /Groups API and publish_to_groups on 2024-04-22/);
+  assert.match(publicationsRoute, /publicationModeForChannel/);
+  assert.match(publicationsRoute, /const mode = publicationModeForChannel\(channel, body\.publicationMode\)/);
 });
 
 test("product capture contract supports one front, one back and many details", () => {
