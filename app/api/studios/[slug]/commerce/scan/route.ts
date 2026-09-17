@@ -18,6 +18,30 @@ function record(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function canonicalRecognitionMetadata(value: unknown) {
+  const metadata = record(value);
+  const recognition = record(metadata.recognition);
+  const legacySource = recognition.source === "gemini_product_vision";
+  if (!legacySource) return metadata;
+  return {
+    ...metadata,
+    recognition: {
+      ...recognition,
+      source: "google_cloud_product_recognition",
+      provider: "google_vertex_ai",
+    },
+  };
+}
+
+function canonicalScanPayload(value: Record<string, unknown> | undefined) {
+  const input = value ?? {};
+  if (!("metadata" in input)) return input;
+  return {
+    ...input,
+    metadata: canonicalRecognitionMetadata(input.metadata),
+  };
+}
+
 function stringUrls(value: unknown, limit = 24) {
   if (!Array.isArray(value)) return [];
   const urls = value
@@ -180,15 +204,18 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const validation = validateCommerceIdentifier(identifierType, code);
     if (!validation.valid) return NextResponse.json({ error: validation.error }, { status: 400 });
 
+    const productInput = canonicalScanPayload(body.product);
+    const listingInput = canonicalScanPayload(body.listing);
+    const variantInput = canonicalScanPayload(body.variant);
     const admin = createAdminSupabase();
     const { spot } = await requireManagedSpot({ admin, userId: user.id, studioId });
     const { data, error } = await admin.rpc("upsert_commerce_scanned_product", {
       p_spot_id: spot.id,
       p_identifier_type: identifierType,
       p_identifier_value: validation.value,
-      p_product: body.product ?? {},
-      p_listing: body.listing ?? {},
-      p_variant: body.variant ?? {},
+      p_product: productInput,
+      p_listing: listingInput,
+      p_variant: variantInput,
       p_actor_id: user.id,
       p_idempotency_key: body.idempotencyKey || `scan:${spot.id}:${randomUUID()}`,
     });
@@ -199,10 +226,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     // Solo cover_url y una gallery elegida explícitamente forman el master
     // público: generar una imagen no equivale a aprobarla para publicación.
     const listingId = resultListingId(data);
-    const requestedCover = typeof body.listing?.cover_url === "string" ? body.listing.cover_url.trim() : "";
-    const requestedMetadata = record(body.listing?.metadata);
+    const requestedCover = typeof listingInput.cover_url === "string" ? listingInput.cover_url.trim() : "";
+    const requestedMetadata = record(listingInput.metadata);
     const requestedGallery = canonicalListingGallery({
-      explicitGallery: body.listing?.gallery,
+      explicitGallery: listingInput.gallery,
       coverUrl: requestedCover,
     });
 
