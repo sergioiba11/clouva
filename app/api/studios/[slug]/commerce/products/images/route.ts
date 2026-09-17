@@ -57,7 +57,7 @@ function catalogImages(metadata: unknown): CatalogImage[] {
   });
   const generated = (Array.isArray(images.generated_images) ? images.generated_images : []).map((value) => {
     const item = record(value);
-    const sourceLabel = typeof item.source_label === "string" ? item.source_label : "Gemini";
+    const sourceLabel = typeof item.source_label === "string" ? item.source_label : "Imagen generada";
     const detailIndex = typeof item.detail_index === "number" ? ` ${item.detail_index}` : "";
     return {
       url: typeof item.url === "string" ? item.url : "",
@@ -91,13 +91,18 @@ function syncPublicationMetadata(metadata: unknown, coverUrl: string | null, gal
     ...(coverUrl ? [coverUrl] : []),
     ...gallery.filter(Boolean),
   ])).slice(0, 24);
+  const selectedAt = new Date().toISOString();
+  const hasApprovedMaster = Boolean(coverUrl && normalizedGallery.length);
   root.product_images = {
     ...current,
     cover_image: coverUrl,
     publication_master: {
+      approved: hasApprovedMaster,
       cover_url: coverUrl,
       gallery: normalizedGallery,
-      selected_at: new Date().toISOString(),
+      approved_at: hasApprovedMaster ? selectedAt : null,
+      selected_at: selectedAt,
+      approval_source: "catalog_image_review",
     },
   };
   return { metadata: root, gallery: normalizedGallery };
