@@ -58,6 +58,7 @@ test("visual scanner uses the canonical server-side Vertex AI provider with ADC"
   assert.doesNotMatch(service, /process\.env\.GEMINI_API_KEY/);
   assert.doesNotMatch(service, /generativelanguage\.googleapis\.com/);
   assert.doesNotMatch(service, /NEXT_PUBLIC_GEMINI/);
+  assert.match(service, /provider:\s*"google_vertex_ai"/);
   assert.match(service, /Frente/);
   assert.match(service, /Atrás/);
   assert.match(service, /Detalle/);
@@ -80,9 +81,15 @@ test("publication copy uses the same canonical Vertex AI provider", () => {
   assert.doesNotMatch(publicationCopyRoute, /process\.env\.GEMINI_API_KEY/);
   assert.doesNotMatch(publicationCopyRoute, /generativelanguage\.googleapis\.com/);
   assert.doesNotMatch(publicationCopyRoute, /NEXT_PUBLIC_/);
+  assert.match(publicationsRoute, /copy_provider:\s*provider/);
+  assert.match(publicationsRoute, /copy_model:\s*configuredModel/);
+  assert.match(publicationsRoute, /GOOGLE_CLOUD_PUBLICATION_COPY_MODEL/);
 });
 
 test("publication backend enforces canonical channel capabilities", () => {
+  assert.match(channelCapabilities, /clouva:[\s\S]*CLOUVA_INTERNAL_CAPABILITY/);
+  assert.match(channelCapabilities, /clouva_market:[\s\S]*CLOUVA_INTERNAL_CAPABILITY/);
+  assert.match(channelCapabilities, /canPublishAutomatically:\s*true/);
   assert.match(channelCapabilities, /facebook_marketplace:[\s\S]*canPublishAutomatically:\s*false/);
   assert.match(channelCapabilities, /facebook_group:[\s\S]*canPublishAutomatically:\s*false/);
   assert.match(channelCapabilities, /facebook_group:[\s\S]*requiresUserAction:\s*true/);
@@ -126,17 +133,18 @@ test("scanner captures canonical views, multiple details and preserves canonical
   assert.doesNotMatch(dashboard, /slice\(0,\s*3\)/);
   assert.match(dashboard, /Analizar y completar datos/);
   assert.match(dashboard, /Generar imágenes del producto/);
-  assert.match(dashboard, /generateProductImagesWithGemini/);
   assert.match(dashboard, /commerce\/product-images/);
   assert.match(dashboard, /setCreation\(\(current\) =>/);
   assert.match(dashboard, /buildSpotSku/);
-  assert.match(dashboard, /source:\s*"gemini_product_vision"/);
   assert.match(dashboard, /source_photos/);
   assert.match(dashboard, /generated_images/);
   assert.match(dashboard, /detail_index/);
   assert.match(dashboard, /display_label/);
   assert.match(dashboard, /cover_image/);
   assert.match(dashboard, /cover_url:\s*coverImage/);
+  assert.match(scannerRoute, /canonicalRecognitionMetadata/);
+  assert.match(scannerRoute, /google_cloud_product_recognition/);
+  assert.match(scannerRoute, /google_vertex_ai/);
   assert.match(scannerRoute, /upsert_commerce_scanned_product/);
   assert.match(scannerRoute, /commerce_products/);
   assert.match(scannerRoute, /cover_url/);
@@ -163,6 +171,17 @@ test("commerce product image generation reuses Vertex AI and isolates each real 
   assert.match(productImagesRoute, /Eliminá por completo manos, dedos, brazos/);
   assert.match(productImagesRoute, /referencias adicionales sirven SOLO como evidencia factual/);
   assert.match(productImagesRoute, /No inventes ilustraciones, palabras, símbolos, piezas, pestañas ni contenido/);
+});
+
+test("generated product images are not publication-approved until confirmed save", () => {
+  assert.doesNotMatch(productImagesRoute, /publication_master/);
+  assert.match(scannerRoute, /publication_master/);
+  assert.match(scannerRoute, /approved:\s*true/);
+  assert.match(scannerRoute, /approval_source:\s*"confirmed_product_save"/);
+  assert.match(publicationsRoute, /publicationMasterFromProduct/);
+  assert.match(publicationsRoute, /PUBLICATION_MASTER_REQUIRED/);
+  assert.match(publicationsRoute, /image_url:\s*publicationMaster\.coverUrl/);
+  assert.match(publicationsRoute, /image_urls:\s*publicationMaster\.gallery/);
 });
 
 test("commerce product image generation has a coherent timeout budget", () => {
