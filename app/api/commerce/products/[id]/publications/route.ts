@@ -36,6 +36,17 @@ function channelName(value: unknown, fallback: string) {
   return /^[a-z0-9_]+$/.test(raw) ? raw : fallback;
 }
 
+function canonicalPublicationMetadata(value: unknown) {
+  const metadata = value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+  if (metadata.copy_provider !== "gemini") return metadata;
+  return {
+    ...metadata,
+    copy_provider: "google_vertex_ai",
+  };
+}
+
 async function controlledPlayerIds(admin: ReturnType<typeof createAdminSupabase>, userId: string) {
   const [owned, memberships] = await Promise.all([
     admin.from("players").select("id").eq("owner_user_id", userId),
@@ -246,7 +257,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
       error: nextStatus === "failed" ? "La publicación requiere revisión." : null,
       metadata: {
         ...(existing.data?.metadata && typeof existing.data.metadata === "object" ? existing.data.metadata as Record<string, unknown> : {}),
-        ...(body.metadata && typeof body.metadata === "object" ? body.metadata : {}),
+        ...canonicalPublicationMetadata(body.metadata),
       },
       created_by_user_id: user.id,
       updated_at: new Date().toISOString(),
