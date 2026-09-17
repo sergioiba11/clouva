@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Megaphone } from "lucide-react";
 import { GlobalFlowBalance } from "@/components/GlobalFlowBalance";
 import { OfficialClouvaMark } from "@/components/clouva/OfficialClouvaMark";
+import { CommerceAiProviderCopyBridge } from "@/components/commerce/CommerceAiProviderCopyBridge";
 import { ClouvaQrEngineEventBridge } from "@/components/commerce/ClouvaQrEngineEventBridge";
 import { ClouvaQrEnginePanel } from "@/components/commerce/ClouvaQrEnginePanel";
 import { SpotCommerceDashboard } from "@/components/commerce/SpotCommerceDashboard";
@@ -38,9 +39,11 @@ export function SpaceCommerceWorkspace({ commerceScopeId }: { commerceScopeId: s
         </div>
       </header>
 
-      <SpotCommerceDashboard studioId={commerceScopeId} />
-      <ClouvaQrEnginePanel studioId={commerceScopeId} />
-      <ClouvaQrEngineEventBridge />
+      <CommerceAiProviderCopyBridge>
+        <SpotCommerceDashboard studioId={commerceScopeId} />
+        <ClouvaQrEnginePanel studioId={commerceScopeId} />
+        <ClouvaQrEngineEventBridge />
+      </CommerceAiProviderCopyBridge>
     </div>
   );
 }
