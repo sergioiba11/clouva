@@ -52,7 +52,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     return NextResponse.json({
       recognition: result.recognition,
-      provider: "gemini",
+      provider: result.provider,
       model: result.model,
       analyzedAt: new Date().toISOString(),
       usage: result.usage,
