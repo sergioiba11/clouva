@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { publicationModeForChannel } from "@/lib/commerce/channel-capabilities";
 import { requireSpotAccess } from "@/lib/server/commerce-spot";
 import { getSpaceAdminEligibility, requireSpaceAdminPlan } from "@/lib/server/space-access";
 import { requireStudioManager } from "@/lib/server/studio-permissions";
@@ -8,7 +9,6 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const CONTENT_SPACE_ROLES = new Set(["owner", "admin", "manager", "catalog", "content"]);
-const MODES = new Set(["automatic", "assisted", "manual"]);
 const STATUSES = new Set([
   "draft", "ready", "publishing", "published", "needs_user_action", "failed",
   "paused", "sold", "removed", "unavailable", "needs_removal",
@@ -188,7 +188,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
 
     const defaultChannel = targetType === "marketplace" ? "clouva_market" : "clouva";
     const channel = channelName(body.channel, defaultChannel);
-    const mode = MODES.has(String(body.publicationMode)) ? String(body.publicationMode) : channel === "clouva_market" || channel === "clouva" ? "automatic" : "assisted";
+    const mode = publicationModeForChannel(channel, body.publicationMode);
     const visible = body.isVisible !== false;
     const nextStatus = STATUSES.has(String(body.status))
       ? String(body.status)
