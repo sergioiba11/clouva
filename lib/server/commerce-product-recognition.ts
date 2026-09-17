@@ -18,16 +18,12 @@ import {
   orderProductCaptures,
   type ProductCaptureLabel,
 } from "@/lib/commerce/product-capture-contract";
+import {
+  generateGoogleCloudJson,
+  GoogleCloudGenAIError,
+} from "@/lib/server/google-cloud-genai";
 
 type RecognitionImage = { dataUrl: string; label?: unknown };
-type GeminiPayload = {
-  candidates?: Array<{
-    content?: { parts?: Array<{ text?: string }> };
-    finishReason?: string;
-  }>;
-  usageMetadata?: Record<string, unknown>;
-  error?: { message?: string };
-};
 
 const ACCEPTED_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
@@ -138,11 +134,10 @@ export async function recognizeCommerceProduct(args: {
   suppliedIdentifier?: { value: string; type: CommerceIdentifierType } | null;
 }): Promise<{
   recognition: CommerceProductRecognition;
+  provider: "google_vertex_ai";
   model: string;
   usage: Record<string, unknown> | null;
 }> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) throw new CommerceProductRecognitionError("GEMINI_API_KEY no está configurada.", 500);
   if (!Array.isArray(args.images) || args.images.length < 1) {
     throw new CommerceProductRecognitionError("Capturá al menos el Frente del producto.", 400);
   }
@@ -181,74 +176,51 @@ export async function recognizeCommerceProduct(args: {
     displayLabel: image.label === "Detalle" ? `Detalle ${++detailIndex}` : image.label,
   }));
 
-  const model = process.env.GEMINI_PRODUCT_VISION_MODEL
-    ?? process.env.GEMINI_MODEL
-    ?? "gemini-3.5-flash";
-  const parts: Array<Record<string, unknown>> = [
-    { text: buildPrompt({ spotName: args.spotName, suppliedIdentifier, imageLabels: labeledImages.map((image) => image.displayLabel) }) },
-    ...labeledImages.flatMap((image) => [
-      { text: `Vista: ${image.displayLabel}` },
-      { inlineData: { mimeType: image.mimeType, data: image.data } },
-    ]),
-  ];
+  const model = process.env.GOOGLE_CLOUD_PRODUCT_VISION_MODEL
+    ?? process.env.GEMINI_PRODUCT_VISION_MODEL
+    ?? "gemini-2.5-flash";
 
-  const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-      body: JSON.stringify({
-        contents: [{ role: "user", parts }],
-        generationConfig: {
-          temperature: 0.1,
-          maxOutputTokens: 2200,
-          responseMimeType: "application/json",
-          responseJsonSchema: RESPONSE_SCHEMA,
-        },
-      }),
-      cache: "no-store",
-      signal: AbortSignal.timeout(40_000),
-    },
-  );
-
-  const raw = await response.text();
-  let payload: GeminiPayload = {};
+  let generated: Awaited<ReturnType<typeof generateGoogleCloudJson>>;
   try {
-    payload = raw ? JSON.parse(raw) as GeminiPayload : {};
-  } catch {
-    throw new CommerceProductRecognitionError("Gemini devolvió una respuesta inválida.");
-  }
-  if (!response.ok) {
-    throw new CommerceProductRecognitionError(
-      payload.error?.message ?? `Gemini respondió HTTP ${response.status}`,
-      response.status,
-    );
-  }
-  const text = payload.candidates?.[0]?.content?.parts
-    ?.map((part) => part.text ?? "")
-    .join("")
-    .trim();
-  if (!text) {
-    const reason = payload.candidates?.[0]?.finishReason;
-    throw new CommerceProductRecognitionError(
-      reason ? `Gemini terminó sin una ficha (${reason}).` : "Gemini no devolvió una ficha del producto.",
-    );
+    generated = await generateGoogleCloudJson({
+      model,
+      prompt: buildPrompt({
+        spotName: args.spotName,
+        suppliedIdentifier,
+        imageLabels: labeledImages.map((image) => image.displayLabel),
+      }),
+      referenceImages: labeledImages.map((image) => ({ mimeType: image.mimeType, data: image.data })),
+      responseJsonSchema: RESPONSE_SCHEMA,
+      temperature: 0.1,
+      maxOutputTokens: 2200,
+    });
+  } catch (error) {
+    if (error instanceof GoogleCloudGenAIError) {
+      throw new CommerceProductRecognitionError(error.message, error.status);
+    }
+    throw error;
   }
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(text);
+    parsed = JSON.parse(generated.text);
   } catch {
-    throw new CommerceProductRecognitionError("No se pudo interpretar la ficha de Gemini.");
+    throw new CommerceProductRecognitionError("No se pudo interpretar la ficha de Vertex AI.");
   }
+
   const recognition = sanitizeCommerceProductRecognition(parsed);
   if (suppliedIdentifier) {
     recognition.identifier = suppliedIdentifier;
     recognition.confidence.identifier = 1;
   }
   if (!recognition.detectedObject && !recognition.name) {
-    throw new CommerceProductRecognitionError("Gemini no pudo identificar un producto en las fotos.", 422);
+    throw new CommerceProductRecognitionError("Vertex AI no pudo identificar un producto en las fotos.", 422);
   }
 
-  return { recognition, model, usage: payload.usageMetadata ?? null };
+  return {
+    recognition,
+    provider: generated.provider,
+    model: generated.model,
+    usage: generated.usage,
+  };
 }
