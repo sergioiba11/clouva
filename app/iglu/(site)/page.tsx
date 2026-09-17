@@ -1,9 +1,6 @@
-import { notFound } from "next/navigation";
-import { IgluHome } from "@/components/iglu/IgluPages";
-import { loadIgluSiteData } from "@/lib/iglu/site-data";
+import { permanentRedirect } from "next/navigation";
+import { IGLU_STUDIO_PATH } from "@/lib/iglu-radio/routes";
 
-export default async function IgluHomePage() {
-  const data = await loadIgluSiteData();
-  if (!data) notFound();
-  return <IgluHome data={data} />;
+export default function IgluHomePage() {
+  permanentRedirect(IGLU_STUDIO_PATH);
 }
