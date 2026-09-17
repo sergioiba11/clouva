@@ -10,6 +10,7 @@ const vertexProvider = read("./lib/server/google-cloud-genai.ts");
 const route = read("./app/api/studios/[slug]/commerce/recognize/route.ts");
 const scannerRoute = read("./app/api/studios/[slug]/commerce/scan/route.ts");
 const productImagesRoute = read("./app/api/studios/[slug]/commerce/product-images/route.ts");
+const productImagesManagementRoute = read("./app/api/studios/[slug]/commerce/products/images/route.ts");
 const publicationCopyRoute = read("./app/api/commerce/products/[id]/publication-copy/route.ts");
 const publicationsRoute = read("./app/api/commerce/products/[id]/publications/route.ts");
 const channelCapabilities = read("./lib/commerce/channel-capabilities.ts");
@@ -178,6 +179,9 @@ test("generated product images are not publication-approved until confirmed save
   assert.match(scannerRoute, /publication_master/);
   assert.match(scannerRoute, /approved:\s*true/);
   assert.match(scannerRoute, /approval_source:\s*"confirmed_product_save"/);
+  assert.match(productImagesManagementRoute, /action === "set_publication"/);
+  assert.match(productImagesManagementRoute, /approved:\s*hasApprovedMaster/);
+  assert.match(productImagesManagementRoute, /approval_source:\s*"catalog_image_review"/);
   assert.match(publicationsRoute, /publicationMasterFromProduct/);
   assert.match(publicationsRoute, /PUBLICATION_MASTER_REQUIRED/);
   assert.match(publicationsRoute, /image_url:\s*publicationMaster\.coverUrl/);
