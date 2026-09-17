@@ -1,10 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  generateImage,
-  GeminiImageError,
-  type GeminiImageModel,
-  type GeminiReferenceImage,
-} from "@/lib/gemini-image";
 import { uploadGeneratedMediaObject } from "@/lib/gcs-media";
 import {
   canonicalProductCaptureLabel,
@@ -16,6 +10,11 @@ import {
   orderProductCaptures,
   type ProductCaptureLabel,
 } from "@/lib/commerce/product-capture-contract";
+import {
+  generateGoogleCloudImage,
+  GoogleCloudGenAIError,
+  type GoogleCloudReferenceImage,
+} from "@/lib/server/google-cloud-genai";
 import { requireManagedSpot } from "@/lib/server/commerce-spot";
 import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
 
@@ -51,15 +50,10 @@ type GeneratedProductImage = {
   url: string;
   storagePath: string;
   mimeType: string;
-  model: GeminiImageModel;
+  model: string;
 };
 
 const ALLOWED_MIME = new Set(["image/jpeg", "image/png", "image/webp"]);
-const IMAGE_MODELS = new Set<GeminiImageModel>([
-  "gemini-3.1-flash-lite-image",
-  "gemini-3.1-flash-image",
-  "gemini-3-pro-image",
-]);
 const PRODUCT_IMAGE_GENERATION_TIMEOUT_MS = 150_000;
 
 class ProductImageError extends Error {
@@ -130,7 +124,7 @@ function referencesForTarget(target: GenerationTarget, captures: IndexedCapture[
 
 function generationPrompt(target: GenerationTarget, facts: string, referenceOrder: string[]) {
   return [
-    "Sos el generador de imágenes de catálogo de producto de CLOUVA.",
+    "Sos el generador de imágenes de catálogo de producto de CLOUVA ejecutándose sobre Google Cloud Vertex AI.",
     `La primera referencia es la vista ${target.sourceLabel} canónica y define el ángulo, frente/atrás y composición del producto.`,
     facts,
     referenceOrder.length ? `Referencias disponibles en orden: ${referenceOrder.join(", ")}.` : "",
@@ -151,11 +145,17 @@ function generationPrompt(target: GenerationTarget, facts: string, referenceOrde
 
 function publicError(error: unknown) {
   if (error instanceof ProductImageError) return { status: error.status, message: error.message };
-  if (error instanceof GeminiImageError) {
-    const message = error.message || "Gemini no pudo editar las imágenes del producto.";
-    if (/quota|resource exhausted|rate limit/i.test(message)) return { status: 429, message: "La cuota de Gemini para imágenes está agotada." };
-    if (/billing|paid tier|payment/i.test(message)) return { status: 402, message: "La edición de imágenes de Gemini requiere facturación habilitada." };
-    if (/abort|timeout|timed out/i.test(message)) return { status: 504, message: "Gemini superó el tiempo de espera editando la imagen." };
+  if (error instanceof GoogleCloudGenAIError) {
+    const message = error.message || "Vertex AI no pudo editar las imágenes del producto.";
+    if (error.status === 429 || /quota|resource exhausted|rate limit/i.test(message)) {
+      return { status: 429, message: "La cuota de Vertex AI para imágenes está agotada o limitada." };
+    }
+    if (/billing|payment/i.test(message)) {
+      return { status: 402, message: "Google Cloud requiere facturación habilitada para generar esta imagen." };
+    }
+    if (error.status === 504 || /abort|timeout|timed out/i.test(message)) {
+      return { status: 504, message: "Vertex AI superó el tiempo de espera editando la imagen." };
+    }
     return { status: error.status || 502, message };
   }
   const status = (error as Error & { status?: number })?.status ?? (isAuthError(error) ? 401 : 500);
@@ -164,16 +164,14 @@ function publicError(error: unknown) {
 
 async function generateCatalogTarget(args: {
   target: GenerationTarget;
-  apiKey: string;
-  model: GeminiImageModel;
+  model: string;
   facts: string;
   referenceOrder: string[];
-  referenceImages: GeminiReferenceImage[];
+  referenceImages: GoogleCloudReferenceImage[];
   spotId: string;
 }): Promise<GeneratedProductImage> {
   if (!args.referenceImages.length) throw new ProductImageError(`Falta la foto ${args.target.sourceLabel}.`);
-  const generated = await generateImage({
-    apiKey: args.apiKey,
+  const generated = await generateGoogleCloudImage({
     model: args.model,
     prompt: generationPrompt(args.target, args.facts, args.referenceOrder),
     referenceImages: args.referenceImages,
@@ -226,17 +224,14 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const totalBytes = captures.reduce((sum, capture) => sum + capture.bytes.length, 0);
     if (totalBytes > MAX_PRODUCT_TOTAL_BYTES) throw new ProductImageError("Las fotos juntas superan el máximo de 24 MB.", 413);
 
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) throw new ProductImageError("GEMINI_API_KEY no está configurada.", 500);
-
     const admin = createAdminSupabase();
     const { spot } = await requireManagedSpot({ admin, userId: user.id, studioId });
-    const configuredModel = process.env.GEMINI_COMMERCE_IMAGE_MODEL ?? process.env.GEMINI_IMAGE_MODEL ?? "gemini-3.1-flash-image";
-    const model: GeminiImageModel = IMAGE_MODELS.has(configuredModel as GeminiImageModel)
-      ? configuredModel as GeminiImageModel
-      : "gemini-3.1-flash-image";
+    const model = process.env.GOOGLE_CLOUD_COMMERCE_IMAGE_MODEL
+      ?? process.env.GEMINI_COMMERCE_IMAGE_MODEL
+      ?? "gemini-2.5-flash-image";
     const facts = productFacts(body.productDraft, body.identifier ?? undefined);
 
+    // Originales: se guardan antes de generar y nunca se sobrescriben.
     const sourcePhotos = await Promise.all(captures.map(async (capture) => {
       const stored = await uploadGeneratedMediaObject({
         bytes: capture.bytes,
@@ -263,13 +258,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const generatedImages = await Promise.all(targets.map((target) => {
       const targetCaptures = referencesForTarget(target, captures);
       const referenceOrder = targetCaptures.map((capture) => capture.displayLabel);
-      const referenceImages: GeminiReferenceImage[] = targetCaptures.map((capture) => ({
+      const referenceImages: GoogleCloudReferenceImage[] = targetCaptures.map((capture) => ({
         mimeType: capture.mimeType,
         data: capture.base64,
       }));
       return generateCatalogTarget({
         target,
-        apiKey,
         model,
         facts,
         referenceOrder,
@@ -284,7 +278,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       ?? null;
 
     return NextResponse.json({
-      provider: "gemini",
+      provider: "google_vertex_ai",
       model,
       sourcePhotos,
       generatedImages,
