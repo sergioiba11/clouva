@@ -15,6 +15,17 @@ const STATUSES = new Set([
 ]);
 
 type PublicationTarget = "player" | "space" | "marketplace";
+type PublicationMaster = {
+  coverUrl: string;
+  gallery: string[];
+  approvedAt: string | null;
+};
+
+function record(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
 
 function short(value: unknown, max: number) {
   return typeof value === "string" ? value.trim().slice(0, max) : "";
@@ -36,14 +47,45 @@ function channelName(value: unknown, fallback: string) {
   return /^[a-z0-9_]+$/.test(raw) ? raw : fallback;
 }
 
+function stringUrls(value: unknown, limit = 24) {
+  if (!Array.isArray(value)) return [];
+  return Array.from(new Set(value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter((item) => /^https?:\/\//i.test(item))))
+    .slice(0, limit);
+}
+
+function publicationMasterFromProduct(product: { cover_url?: unknown; gallery?: unknown; metadata?: unknown }): PublicationMaster | null {
+  const metadata = record(product.metadata);
+  const productImages = record(metadata.product_images);
+  const master = record(productImages.publication_master);
+  const coverUrl = optionalUrl(master.cover_url) ?? "";
+  const gallery = stringUrls(master.gallery);
+  const approved = master.approved === true || typeof master.selected_at === "string";
+  if (!approved || !coverUrl || !gallery.includes(coverUrl)) return null;
+  return {
+    coverUrl,
+    gallery,
+    approvedAt: short(master.approved_at ?? master.selected_at, 80) || null,
+  };
+}
+
 function canonicalPublicationMetadata(value: unknown) {
-  const metadata = value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
-  if (metadata.copy_provider !== "gemini") return metadata;
+  const metadata = record(value);
+  const copyWasGenerated = typeof metadata.copy_generated_at === "string" && Boolean(metadata.copy_generated_at);
+  const provider = metadata.copy_provider === "gemini"
+    ? "google_vertex_ai"
+    : metadata.copy_provider;
+  const configuredModel = process.env.GOOGLE_CLOUD_PUBLICATION_COPY_MODEL
+    ?? process.env.GEMINI_MODEL
+    ?? "gemini-2.5-flash";
   return {
     ...metadata,
-    copy_provider: "google_vertex_ai",
+    ...(provider ? { copy_provider: provider } : {}),
+    ...(copyWasGenerated && provider === "google_vertex_ai" && !short(metadata.copy_model, 160)
+      ? { copy_model: configuredModel }
+      : {}),
   };
 }
 
@@ -213,6 +255,16 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
       return NextResponse.json({ error: "El grupo necesita un identificador o URL." }, { status: 400 });
     }
 
+    const publicationMaster = targetType === "marketplace" && visible
+      ? publicationMasterFromProduct(product)
+      : null;
+    if (targetType === "marketplace" && visible && !publicationMaster) {
+      return NextResponse.json({
+        error: "Elegí y confirmá una imagen master antes de preparar o publicar este producto.",
+        code: "PUBLICATION_MASTER_REQUIRED",
+      }, { status: 409 });
+    }
+
     const placement = short(body.placement, 40) || "merch";
     let existingQuery = admin
       .from("commerce_product_publications")
@@ -258,6 +310,16 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
       metadata: {
         ...(existing.data?.metadata && typeof existing.data.metadata === "object" ? existing.data.metadata as Record<string, unknown> : {}),
         ...canonicalPublicationMetadata(body.metadata),
+        ...(publicationMaster ? {
+          publication_master: {
+            approved: true,
+            cover_url: publicationMaster.coverUrl,
+            gallery: publicationMaster.gallery,
+            approved_at: publicationMaster.approvedAt,
+          },
+          image_url: publicationMaster.coverUrl,
+          image_urls: publicationMaster.gallery,
+        } : {}),
       },
       created_by_user_id: user.id,
       updated_at: new Date().toISOString(),
