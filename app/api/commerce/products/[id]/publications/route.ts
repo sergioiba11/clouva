@@ -19,6 +19,7 @@ type PublicationMaster = {
   coverUrl: string;
   gallery: string[];
   approvedAt: string | null;
+  approvalSource: string;
 };
 
 function record(value: unknown): Record<string, unknown> {
@@ -68,6 +69,7 @@ function publicationMasterFromProduct(product: { cover_url?: unknown; gallery?: 
     coverUrl,
     gallery,
     approvedAt: short(master.approved_at ?? master.selected_at, 80) || null,
+    approvalSource: short(master.approval_source, 80) || "legacy_selection",
   };
 }
 
@@ -316,6 +318,7 @@ export async function PUT(request: NextRequest, { params }: { params: Promise<{ 
             cover_url: publicationMaster.coverUrl,
             gallery: publicationMaster.gallery,
             approved_at: publicationMaster.approvedAt,
+            approval_source: publicationMaster.approvalSource,
           },
           image_url: publicationMaster.coverUrl,
           image_urls: publicationMaster.gallery,
