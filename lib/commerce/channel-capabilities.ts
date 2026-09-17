@@ -8,19 +8,23 @@ export type ChannelCapability = {
 };
 
 export type CommercePublicationChannel =
+  | "clouva"
   | "clouva_market"
   | "facebook_marketplace"
   | "facebook_group";
 
+const CLOUVA_INTERNAL_CAPABILITY: ChannelCapability = {
+  canPublishAutomatically: true,
+  canSchedule: false,
+  canReadComments: false,
+  canReadMessages: false,
+  canReply: false,
+  requiresUserAction: false,
+};
+
 const CAPABILITIES: Record<CommercePublicationChannel, ChannelCapability> = {
-  clouva_market: {
-    canPublishAutomatically: true,
-    canSchedule: false,
-    canReadComments: false,
-    canReadMessages: false,
-    canReply: false,
-    requiresUserAction: false,
-  },
+  clouva: CLOUVA_INTERNAL_CAPABILITY,
+  clouva_market: CLOUVA_INTERNAL_CAPABILITY,
   facebook_marketplace: {
     canPublishAutomatically: false,
     canSchedule: false,
