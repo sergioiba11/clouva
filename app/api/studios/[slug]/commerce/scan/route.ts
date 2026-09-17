@@ -223,8 +223,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     // El RPC canónico conserva la creación/resolución del producto. Las fotos
     // fuente y todas las variantes generadas siguen en metadata como linaje.
-    // Solo cover_url y una gallery elegida explícitamente forman el master
-    // público: generar una imagen no equivale a aprobarla para publicación.
+    // El usuario confirma el master al guardar la ficha: generar una imagen
+    // por sí solo nunca crea publication_master ni la vuelve publicable.
     const listingId = resultListingId(data);
     const requestedCover = typeof listingInput.cover_url === "string" ? listingInput.cover_url.trim() : "";
     const requestedMetadata = record(listingInput.metadata);
@@ -236,13 +236,17 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (requestedGallery.length) {
       const productImages = record(requestedMetadata.product_images);
       if (Object.keys(productImages).length) {
+        const approvedAt = new Date().toISOString();
         requestedMetadata.product_images = {
           ...productImages,
           cover_image: requestedCover || requestedGallery[0] || null,
           publication_master: {
+            approved: true,
             cover_url: requestedCover || requestedGallery[0] || null,
             gallery: requestedGallery,
-            selected_at: new Date().toISOString(),
+            approved_at: approvedAt,
+            selected_at: approvedAt,
+            approval_source: "confirmed_product_save",
           },
         };
       }
