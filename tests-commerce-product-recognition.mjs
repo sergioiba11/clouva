@@ -6,6 +6,7 @@ import { sanitizeCommerceProductRecognition } from "./lib/commerce/product-recog
 const read = (path) => fs.readFileSync(new URL(path, import.meta.url), "utf8");
 const dashboard = read("./components/commerce/SpotCommerceDashboard.tsx");
 const service = read("./lib/server/commerce-product-recognition.ts");
+const vertexProvider = read("./lib/server/google-cloud-genai.ts");
 const route = read("./app/api/studios/[slug]/commerce/recognize/route.ts");
 const scannerRoute = read("./app/api/studios/[slug]/commerce/scan/route.ts");
 const productImagesRoute = read("./app/api/studios/[slug]/commerce/product-images/route.ts");
@@ -49,18 +50,24 @@ test("uncertain or invalid identifiers from vision are never registered", () => 
   assert.equal(invalidCheckDigit.identifier, null);
 });
 
-test("visual scanner uses server-side Gemini structured multimodal output", () => {
-  assert.match(service, /process\.env\.GEMINI_API_KEY/);
+test("visual scanner uses the canonical server-side Vertex AI provider with ADC", () => {
+  assert.match(service, /generateGoogleCloudJson/);
+  assert.doesNotMatch(service, /process\.env\.GEMINI_API_KEY/);
+  assert.doesNotMatch(service, /generativelanguage\.googleapis\.com/);
   assert.doesNotMatch(service, /NEXT_PUBLIC_GEMINI/);
   assert.match(service, /Frente/);
   assert.match(service, /Atrás/);
   assert.match(service, /Detalle/);
-  assert.match(service, /inlineData/);
-  assert.match(service, /responseMimeType:\s*"application\/json"/);
   assert.match(service, /responseJsonSchema:\s*RESPONSE_SCHEMA/);
   assert.match(service, /MAX_PRODUCT_TOTAL_BYTES/);
+  assert.match(vertexProvider, /GoogleGenAI/);
+  assert.match(vertexProvider, /vertexai:\s*true/);
+  assert.match(vertexProvider, /new Storage\(\)/);
+  assert.match(vertexProvider, /getProjectId\(\)/);
+  assert.doesNotMatch(vertexProvider, /NEXT_PUBLIC_/);
   assert.match(route, /requireManagedSpot/);
   assert.match(route, /recognizeCommerceProduct/);
+  assert.match(route, /provider:\s*result\.provider/);
 });
 
 test("product capture contract supports one front, one back and many details", () => {
@@ -114,11 +121,13 @@ test("scanner captures canonical views, multiple details and preserves canonical
   assert.match(scannerRoute, /cover_url/);
 });
 
-test("commerce product image generation reuses Gemini Image and isolates each real catalog view", () => {
+test("commerce product image generation reuses Vertex AI and isolates each real catalog view", () => {
   assert.match(productImagesRoute, /requireUser/);
   assert.match(productImagesRoute, /requireManagedSpot/);
-  assert.match(productImagesRoute, /generateImage/);
+  assert.match(productImagesRoute, /generateGoogleCloudImage/);
+  assert.doesNotMatch(productImagesRoute, /GEMINI_API_KEY/);
   assert.match(productImagesRoute, /uploadGeneratedMediaObject/);
+  assert.match(productImagesRoute, /google_vertex_ai/);
   assert.match(productImagesRoute, /front_catalog/);
   assert.match(productImagesRoute, /back_catalog/);
   assert.doesNotMatch(productImagesRoute, /detail_catalog/);
