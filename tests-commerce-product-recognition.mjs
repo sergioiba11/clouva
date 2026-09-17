@@ -10,6 +10,7 @@ const vertexProvider = read("./lib/server/google-cloud-genai.ts");
 const route = read("./app/api/studios/[slug]/commerce/recognize/route.ts");
 const scannerRoute = read("./app/api/studios/[slug]/commerce/scan/route.ts");
 const productImagesRoute = read("./app/api/studios/[slug]/commerce/product-images/route.ts");
+const publicationCopyRoute = read("./app/api/commerce/products/[id]/publication-copy/route.ts");
 const captureContract = read("./lib/commerce/product-capture-contract.ts");
 const deployWorkflow = read("./.github/workflows/deploy-gcp-web.yml");
 
@@ -68,6 +69,15 @@ test("visual scanner uses the canonical server-side Vertex AI provider with ADC"
   assert.match(route, /requireManagedSpot/);
   assert.match(route, /recognizeCommerceProduct/);
   assert.match(route, /provider:\s*result\.provider/);
+});
+
+test("publication copy uses the same canonical Vertex AI provider", () => {
+  assert.match(publicationCopyRoute, /generateGoogleCloudJson/);
+  assert.match(publicationCopyRoute, /GOOGLE_CLOUD_PUBLICATION_COPY_MODEL/);
+  assert.match(publicationCopyRoute, /provider:\s*generated\.provider/);
+  assert.doesNotMatch(publicationCopyRoute, /process\.env\.GEMINI_API_KEY/);
+  assert.doesNotMatch(publicationCopyRoute, /generativelanguage\.googleapis\.com/);
+  assert.doesNotMatch(publicationCopyRoute, /NEXT_PUBLIC_/);
 });
 
 test("product capture contract supports one front, one back and many details", () => {
