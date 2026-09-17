@@ -1,4 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import {
+  generateGoogleCloudJson,
+  GoogleCloudGenAIError,
+} from "@/lib/server/google-cloud-genai";
 import { requireSpotAccess } from "@/lib/server/commerce-spot";
 import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
 
@@ -7,11 +11,6 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 const CHANNELS = new Set(["clouva_market", "facebook_marketplace", "facebook_group"]);
-
-type GeminiPayload = {
-  candidates?: Array<{ content?: { parts?: Array<{ text?: string }> }; finishReason?: string }>;
-  error?: { message?: string };
-};
 
 const RESPONSE_SCHEMA = {
   type: "object",
@@ -24,6 +23,17 @@ const RESPONSE_SCHEMA = {
 
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function publicError(error: unknown) {
+  if (error instanceof GoogleCloudGenAIError) {
+    return { status: error.status, message: error.message };
+  }
+  const status = (error as Error & { status?: number })?.status ?? (isAuthError(error) ? 401 : 500);
+  return {
+    status,
+    message: error instanceof Error ? error.message : "No se pudo generar el copy.",
+  };
 }
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -45,9 +55,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (error) throw new Error(error.message);
     if (!product?.spot_id) return NextResponse.json({ error: "El producto no pertenece a un negocio comercial." }, { status: 404 });
     const { spot } = await requireSpotAccess({ admin, userId: user.id, spotId: product.spot_id, capability: "content" });
-
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) return NextResponse.json({ error: "GEMINI_API_KEY no está configurada." }, { status: 500 });
 
     const metadata = record(product.metadata);
     const recognition = record(metadata.recognition);
@@ -87,46 +94,40 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       JSON.stringify(factual),
     ].join("\n");
 
-    const model = process.env.GEMINI_MODEL ?? "gemini-3.5-flash";
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
-        body: JSON.stringify({
-          contents: [{ role: "user", parts: [{ text: prompt }] }],
-          generationConfig: {
-            temperature: 0.25,
-            maxOutputTokens: 900,
-            responseMimeType: "application/json",
-            responseJsonSchema: RESPONSE_SCHEMA,
-          },
-        }),
-        cache: "no-store",
-        signal: AbortSignal.timeout(40_000),
-      },
-    );
-
-    const raw = await response.text();
-    let payload: GeminiPayload = {};
-    try { payload = raw ? JSON.parse(raw) as GeminiPayload : {}; }
-    catch { return NextResponse.json({ error: "Gemini devolvió una respuesta inválida." }, { status: 502 }); }
-    if (!response.ok) return NextResponse.json({ error: payload.error?.message ?? `Gemini respondió HTTP ${response.status}` }, { status: response.status });
-
-    const text = payload.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("").trim();
-    if (!text) return NextResponse.json({ error: "Gemini no devolvió texto para la publicación." }, { status: 502 });
+    const model = process.env.GOOGLE_CLOUD_PUBLICATION_COPY_MODEL
+      ?? process.env.GEMINI_MODEL
+      ?? "gemini-2.5-flash";
+    const generated = await generateGoogleCloudJson({
+      model,
+      prompt,
+      responseJsonSchema: RESPONSE_SCHEMA,
+      temperature: 0.25,
+      maxOutputTokens: 900,
+    });
 
     let parsed: { title?: unknown; description?: unknown };
-    try { parsed = JSON.parse(text) as typeof parsed; }
-    catch { return NextResponse.json({ error: "No se pudo interpretar el copy de Gemini." }, { status: 502 }); }
+    try {
+      parsed = JSON.parse(generated.text) as typeof parsed;
+    } catch {
+      return NextResponse.json({ error: "No se pudo interpretar el copy de Vertex AI." }, { status: 502 });
+    }
 
     const title = typeof parsed.title === "string" ? parsed.title.trim().slice(0, 300) : "";
     const description = typeof parsed.description === "string" ? parsed.description.trim().slice(0, 5000) : "";
-    if (!title || !description) return NextResponse.json({ error: "Gemini devolvió un copy incompleto." }, { status: 502 });
+    if (!title || !description) {
+      return NextResponse.json({ error: "Vertex AI devolvió un copy incompleto." }, { status: 502 });
+    }
 
-    return NextResponse.json({ title, description, provider: "gemini", model, channel });
+    return NextResponse.json({
+      title,
+      description,
+      provider: generated.provider,
+      model: generated.model,
+      channel,
+      usage: generated.usage,
+    });
   } catch (error) {
-    const status = (error as Error & { status?: number })?.status ?? (isAuthError(error) ? 401 : 500);
-    return NextResponse.json({ error: error instanceof Error ? error.message : "No se pudo generar el copy." }, { status });
+    const mapped = publicError(error);
+    return NextResponse.json({ error: mapped.message }, { status: mapped.status });
   }
 }
