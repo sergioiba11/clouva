@@ -3,9 +3,10 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
+import { IGLU_STUDIO_PATH } from "@/lib/iglu-radio/routes";
 
 const PRIMARY_NAV = [
-  ["Inicio", "/iglu"],
+  ["Inicio", IGLU_STUDIO_PATH],
   ["El estudio", "/iglu/estudio"],
   ["Grabaciones", "/iglu/grabaciones"],
   ["Producciones", "/iglu/producciones"],
@@ -25,7 +26,8 @@ const MORE_NAV = [
 const ALL_NAV = [...PRIMARY_NAV, ...MORE_NAV] as const;
 
 function isActive(pathname: string, href: string) {
-  return href === "/iglu" ? pathname === href : pathname === href || pathname.startsWith(`${href}/`);
+  if (href === IGLU_STUDIO_PATH) return pathname === href || pathname === "/iglu";
+  return pathname === href || pathname.startsWith(`${href}/`);
 }
 
 export function IgluSiteShell({ children, logoUrl, emblemUrl }: { children: ReactNode; logoUrl?: string; emblemUrl?: string }) {
@@ -44,7 +46,7 @@ export function IgluSiteShell({ children, logoUrl, emblemUrl }: { children: Reac
   return (
     <div className="iglu-site">
       <header className={`iglu-header${scrolled ? " is-scrolled" : ""}`}>
-        <Link href="/iglu" className="iglu-header__brand" aria-label="IGLÚ Records">
+        <Link href={IGLU_STUDIO_PATH} className="iglu-header__brand" aria-label="IGLÚ Records">
           {logoUrl ? <img src={logoUrl} alt="IGLÚ Records" /> : <span>IGLÚ <small>RECORDS</small></span>}
         </Link>
 
