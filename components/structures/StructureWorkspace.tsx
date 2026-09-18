@@ -404,6 +404,7 @@ export function StructureWorkspace({
   const [cameraEditMode, setCameraEditMode] = useState(false);
   const stopAnalysisRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const spatialThumbRailRef = useRef<HTMLDivElement | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [projectForm, setProjectForm] = useState({
     description: "",
@@ -458,8 +459,15 @@ export function StructureWorkspace({
 
   useEffect(() => {
     if (initialTab !== "spatial" || !selectedImageId || typeof document === "undefined") return;
+    const rail = spatialThumbRailRef.current;
     const element = document.querySelector<HTMLElement>(`[data-spatial-thumb="${selectedImageId}"]`);
-    element?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
+    if (!rail || !element) return;
+
+    const left = Math.max(
+      0,
+      element.offsetLeft - (rail.clientWidth - element.clientWidth) / 2,
+    );
+    rail.scrollTo({ left, behavior: "smooth" });
   }, [initialTab, selectedImageId]);
 
   const coverage = useMemo(
@@ -779,7 +787,7 @@ export function StructureWorkspace({
     : {};
 
   return (
-    <main className="min-h-screen bg-[#05030a] pb-20 text-white">
+    <main className="min-h-screen overflow-x-hidden bg-[#05030a] pb-20 text-white">
       <input
         ref={fileInputRef}
         type="file"
@@ -789,7 +797,7 @@ export function StructureWorkspace({
         onChange={(event) => void uploadFiles(Array.from(event.target.files ?? []))}
       />
 
-      <div className="mx-auto w-full max-w-[1500px] px-3 pt-6 sm:px-5 lg:px-7">
+      <div className="mx-auto min-w-0 w-full max-w-[1500px] px-3 pt-6 sm:px-5 lg:px-7">
         <header className="rounded-[1.8rem] border border-white/10 bg-white/[0.025] p-5 sm:p-6">
           <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
             <div>
@@ -989,8 +997,8 @@ export function StructureWorkspace({
         ) : null}
 
         {initialTab === "spatial" ? (
-          <section className="mt-4 grid gap-4 xl:grid-cols-[1fr_360px]">
-            <div>
+          <section className="mt-4 grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+            <div className="min-w-0">
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-white/10 bg-white/[0.025] p-3">
                 <div>
                   <p className="text-sm font-semibold">Cámaras reales</p>
@@ -1036,7 +1044,10 @@ export function StructureWorkspace({
                 onMoveImage={moveImageNode}
               />
 
-              <div className="mt-3 flex gap-2 overflow-x-auto pb-2">
+              <div
+                ref={spatialThumbRailRef}
+                className="mt-3 flex min-w-0 max-w-full gap-2 overflow-x-auto overscroll-x-contain pb-2"
+              >
                 {data.images.slice(0, 120).map((image) => (
                   <button
                     type="button"
