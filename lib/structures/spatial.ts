@@ -219,27 +219,25 @@ export function coordinatesToLocalMeters(
   return { x, y };
 }
 
-export function imageSortKey(image: Pick<StructureImageRecord, "latitude" | "longitude" | "heading" | "original_filename">) {
-  return [
-    image.latitude == null ? 1 : 0,
-    image.latitude == null ? 0 : -image.latitude,
-    image.longitude ?? Number.POSITIVE_INFINITY,
-    image.heading ?? Number.POSITIVE_INFINITY,
-    image.original_filename.toLowerCase(),
-  ] as const;
-}
-
 export function compareStructureImages(
   a: Pick<StructureImageRecord, "latitude" | "longitude" | "heading" | "original_filename">,
   b: Pick<StructureImageRecord, "latitude" | "longitude" | "heading" | "original_filename">,
 ) {
-  const ak = imageSortKey(a);
-  const bk = imageSortKey(b);
-  for (let i = 0; i < ak.length; i += 1) {
-    if (ak[i] < bk[i]) return -1;
-    if (ak[i] > bk[i]) return 1;
+  const aHasCoordinates = a.latitude != null && a.longitude != null;
+  const bHasCoordinates = b.latitude != null && b.longitude != null;
+  if (aHasCoordinates !== bHasCoordinates) return aHasCoordinates ? -1 : 1;
+
+  if (a.latitude != null && b.latitude != null && a.latitude !== b.latitude) {
+    return b.latitude - a.latitude;
   }
-  return 0;
+  if (a.longitude != null && b.longitude != null && a.longitude !== b.longitude) {
+    return a.longitude - b.longitude;
+  }
+  if (a.heading != null && b.heading != null && a.heading !== b.heading) {
+    return a.heading - b.heading;
+  }
+  if ((a.heading == null) !== (b.heading == null)) return a.heading == null ? 1 : -1;
+  return a.original_filename.localeCompare(b.original_filename, "es");
 }
 
 export function buildOrderedFilename(index: number, image: Pick<
