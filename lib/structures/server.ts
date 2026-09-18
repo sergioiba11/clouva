@@ -125,13 +125,6 @@ export async function makeUniqueStructureSlug(admin: SupabaseClient, userId: str
   return `${base}-${crypto.randomUUID().slice(0, 8)}`;
 }
 
-function sourceExtension(mimeType: string, fileName: string) {
-  if (mimeType === "image/png") return "png";
-  if (mimeType === "image/webp") return "webp";
-  if (mimeType === "image/jpeg") return fileName.toLowerCase().endsWith(".jpeg") ? "jpeg" : "jpg";
-  return "bin";
-}
-
 export async function ingestStructureImage(args: {
   admin: SupabaseClient;
   userId: string;
