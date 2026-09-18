@@ -66,7 +66,8 @@ with check (exists (
     and s.owner_id = (select auth.uid())
 ));
 
-grant select, insert, update, delete on public.structure_spatial_features to authenticated;
+revoke all on table public.structure_spatial_features from anon;
+grant select, insert, update, delete on table public.structure_spatial_features to authenticated, service_role;
 
 comment on table public.structure_spatial_features is
   'Reusable GeoJSON spatial features shared by Google Maps, the local metric 3D world and future reconstruction tools.';
