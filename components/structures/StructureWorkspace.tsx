@@ -31,9 +31,11 @@ import {
   type StructureImageRecord,
   type StructureRecord,
   type StructureRuleRecord,
+  type StructureSpatialFeatureRecord,
   type StructureSurfaceRecord,
 } from "@/lib/structures/spatial";
 import { StructureScene } from "@/components/structures/StructureScene";
+import { StructureSatelliteMap, type SpatialEditMode } from "@/components/structures/StructureSatelliteMap";
 import { PlanEditor } from "@/components/structures/PlanEditor";
 
 type Tab = "project" | "images" | "spatial" | "plan" | "export" | "render";
@@ -61,6 +63,7 @@ type WorkspacePayload = {
   renderJobs: Array<Record<string, unknown>>;
   renderOutputs: RenderOutput[];
   imageSurfaceLinks: Array<Record<string, unknown>>;
+  spatialFeatures: StructureSpatialFeatureRecord[];
 };
 
 const TABS: Array<{ id: Tab; label: string; icon: typeof Box }> = [
@@ -398,10 +401,16 @@ export function StructureWorkspace({
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [selectedImageId, setSelectedImageId] = useState<string | null>(null);
+  const [selectedFeatureId, setSelectedFeatureId] = useState<string | null>(null);
   const [selectedCorner, setSelectedCorner] = useState<Corner | null>("NE");
   const [analysisProgress, setAnalysisProgress] = useState<string | null>(null);
   const [placementProgress, setPlacementProgress] = useState<string | null>(null);
   const [cameraEditMode, setCameraEditMode] = useState(false);
+  const [spatialViewMode, setSpatialViewMode] = useState<"3d" | "satellite" | "dual">("3d");
+  const [spatialEditMode, setSpatialEditMode] = useState<SpatialEditMode>("select");
+  const [originPickActive, setOriginPickActive] = useState(false);
+  const [originForm, setOriginForm] = useState({ lat: "", lon: "", alt: "", north: "0" });
+  const [volumeHeight, setVolumeHeight] = useState("3");
   const stopAnalysisRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [dragActive, setDragActive] = useState(false);
@@ -428,6 +437,12 @@ export function StructureWorkspace({
             ...payload.rules.filter((rule) => rule.active).map((rule) => rule.rule),
           ]),
         ].join("\n"),
+      });
+      setOriginForm({
+        lat: payload.structure.origin_latitude?.toString() ?? "",
+        lon: payload.structure.origin_longitude?.toString() ?? "",
+        alt: payload.structure.origin_alt?.toString() ?? "",
+        north: (payload.structure.north_rotation_deg ?? 0).toString(),
       });
       const focusFromUrl = typeof window !== "undefined"
         ? new URLSearchParams(window.location.search).get("focus")
