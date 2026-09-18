@@ -13,6 +13,10 @@ export type StructureRecord = {
   longitude: number | null;
   origin_latitude: number | null;
   origin_longitude: number | null;
+  origin_alt: number | null;
+  north_rotation_deg: number;
+  map_zoom: number | null;
+  map_type: "roadmap" | "satellite";
   historical_notes: string | null;
   reconstruction_rules: string[] | null;
   blockout: Record<string, unknown> | null;
@@ -90,6 +94,9 @@ export type StructureCameraNodeRecord = {
   local_x: number | null;
   local_y: number | null;
   local_z: number | null;
+  position_x: number | null;
+  position_y: number | null;
+  position_z: number | null;
   heading: number | null;
   pitch: number | null;
   roll: number | null;
@@ -99,6 +106,23 @@ export type StructureCameraNodeRecord = {
   target_z: number | null;
   confidence: number | null;
   spatial_source: SpatialSource;
+  spatial_status: string | null;
+};
+
+export type GeoJsonPoint = { type: "Point"; coordinates: [number, number] };
+export type GeoJsonLineString = { type: "LineString"; coordinates: Array<[number, number]> };
+export type GeoJsonPolygon = { type: "Polygon"; coordinates: Array<Array<[number, number]>> };
+export type StructureGeoJsonGeometry = GeoJsonPoint | GeoJsonLineString | GeoJsonPolygon;
+
+export type StructureSpatialFeatureRecord = {
+  id: string;
+  structure_id: string;
+  feature_type: "reference_point" | "building_footprint" | "lot" | "court" | "patio" | "sidewalk" | "street" | "wall" | "custom";
+  name: string | null;
+  geometry: StructureGeoJsonGeometry;
+  properties: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
 };
 
 export type StructureRuleRecord = {
@@ -210,30 +234,98 @@ export function parseSpatialHints(originalFilename: string, originalPath?: strin
   };
 }
 
+export function geoToLocalMeters(args: {
+  lat: number;
+  lon: number;
+  alt?: number | null;
+  originLat: number;
+  originLon: number;
+  originAlt?: number | null;
+  northRotationDeg?: number | null;
+}) {
+  const dLat = (args.lat - args.originLat) * Math.PI / 180;
+  const dLon = (args.lon - args.originLon) * Math.PI / 180;
+  const east = EARTH_RADIUS_METERS * dLon * Math.cos(args.originLat * Math.PI / 180);
+  const north = EARTH_RADIUS_METERS * dLat;
+  const rotation = ((args.northRotationDeg ?? 0) * Math.PI) / 180;
+  const eastRotated = east * Math.cos(rotation) + north * Math.sin(rotation);
+  const northRotated = -east * Math.sin(rotation) + north * Math.cos(rotation);
+  const altitude = args.alt ?? args.originAlt ?? 0;
+  const originAltitude = args.originAlt ?? 0;
+  return {
+    x: eastRotated,
+    y: altitude - originAltitude,
+    z: -northRotated,
+  };
+}
+
+export function localMetersToGeo(args: {
+  x: number;
+  y?: number | null;
+  z: number;
+  originLat: number;
+  originLon: number;
+  originAlt?: number | null;
+  northRotationDeg?: number | null;
+}) {
+  const rotation = ((args.northRotationDeg ?? 0) * Math.PI) / 180;
+  const eastRotated = args.x;
+  const northRotated = -args.z;
+  const east = eastRotated * Math.cos(rotation) - northRotated * Math.sin(rotation);
+  const north = eastRotated * Math.sin(rotation) + northRotated * Math.cos(rotation);
+  const latitude = args.originLat + (north / EARTH_RADIUS_METERS) * (180 / Math.PI);
+  const cosine = Math.cos(args.originLat * Math.PI / 180);
+  const safeCosine = Math.abs(cosine) < 1e-8 ? 1e-8 : cosine;
+  const longitude = args.originLon + (east / (EARTH_RADIUS_METERS * safeCosine)) * (180 / Math.PI);
+  return {
+    latitude,
+    longitude,
+    altitude: (args.originAlt ?? 0) + (args.y ?? 0),
+  };
+}
+
+export function cameraDirectionLocal(args: {
+  headingDeg: number;
+  pitchDeg?: number | null;
+  northRotationDeg?: number | null;
+}) {
+  const headingRad = ((args.headingDeg - (args.northRotationDeg ?? 0)) * Math.PI) / 180;
+  const pitchRad = ((args.pitchDeg ?? 0) * Math.PI) / 180;
+  const horizontal = Math.cos(pitchRad);
+  const x = Math.sin(headingRad) * horizontal;
+  const y = Math.sin(pitchRad);
+  const z = -Math.cos(headingRad) * horizontal;
+  const length = Math.hypot(x, y, z) || 1;
+  return { x: x / length, y: y / length, z: z / length };
+}
+
+// Legacy image-space compatibility: local_x=east, local_y=north.
+// The 3D world uses geoToLocalMeters(): X=east, Y=altitude, Z=south.
 export function coordinatesToLocalMeters(
   origin: { latitude: number; longitude: number },
   point: { latitude: number; longitude: number },
 ) {
-  const lat0 = origin.latitude * Math.PI / 180;
-  const lat1 = point.latitude * Math.PI / 180;
-  const lon0 = origin.longitude * Math.PI / 180;
-  const lon1 = point.longitude * Math.PI / 180;
-  const x = (lon1 - lon0) * Math.cos((lat0 + lat1) / 2) * EARTH_RADIUS_METERS;
-  const y = (lat1 - lat0) * EARTH_RADIUS_METERS;
-  return { x, y };
+  const local = geoToLocalMeters({
+    lat: point.latitude,
+    lon: point.longitude,
+    originLat: origin.latitude,
+    originLon: origin.longitude,
+  });
+  return { x: local.x, y: -local.z };
 }
 
 export function localMetersToCoordinates(
   origin: { latitude: number; longitude: number },
   local: { x: number; y: number },
 ) {
-  const lat0 = origin.latitude * Math.PI / 180;
-  const latitude = origin.latitude + (local.y / EARTH_RADIUS_METERS) * (180 / Math.PI);
-  const lat1 = latitude * Math.PI / 180;
-  const cosine = Math.cos((lat0 + lat1) / 2);
-  const safeCosine = Math.abs(cosine) < 1e-8 ? 1e-8 : cosine;
-  const longitude = origin.longitude + (local.x / (EARTH_RADIUS_METERS * safeCosine)) * (180 / Math.PI);
-  return { latitude, longitude };
+  const geo = localMetersToGeo({
+    x: local.x,
+    y: 0,
+    z: -local.y,
+    originLat: origin.latitude,
+    originLon: origin.longitude,
+  });
+  return { latitude: geo.latitude, longitude: geo.longitude };
 }
 
 export function placementState(image: Pick<
