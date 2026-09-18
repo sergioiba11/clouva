@@ -65,7 +65,7 @@ export async function buildContactSheets(args: {
 
   for (let start = 0; start < args.images.length; start += perSheet) {
     const page = args.images.slice(start, start + perSheet);
-    const composites: sharp.OverlayOptions[] = [];
+    const composites: Array<{ input: Buffer; left: number; top: number }> = [];
 
     for (let index = 0; index < page.length; index += 1) {
       const image = page[index];
