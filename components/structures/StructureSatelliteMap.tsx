@@ -152,8 +152,8 @@ export function StructureSatelliteMap({
     name?: string;
     geometry: StructureSpatialFeatureRecord["geometry"];
     properties?: Record<string, unknown>;
-  }) => Promise<void>;
-  onUpdateFeature: (featureId: string, patch: Record<string, unknown>) => Promise<void>;
+  }) => Promise<unknown>;
+  onUpdateFeature: (featureId: string, patch: Record<string, unknown>) => Promise<unknown>;
   onSetOriginFromMap: (point: LatLngLiteral) => Promise<void>;
 }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
@@ -208,6 +208,13 @@ export function StructureSatelliteMap({
     if (structure.map_zoom != null) mapRef.current.setZoom(structure.map_zoom);
     mapRef.current.setMapTypeId(structure.map_type ?? "satellite");
   }, [center?.lat, center?.lng, structure.map_type, structure.map_zoom]);
+
+  useEffect(() => {
+    if (!mapRef.current || !selectedImageId) return;
+    const selectedNode = cameraNodes.find((node) => node.image_id === selectedImageId);
+    if (selectedNode?.latitude == null || selectedNode.longitude == null) return;
+    mapRef.current.setCenter({ lat: selectedNode.latitude, lng: selectedNode.longitude });
+  }, [cameraNodes, selectedImageId]);
 
   useEffect(() => {
     if (!ready || !mapRef.current || !window.google?.maps) return;
