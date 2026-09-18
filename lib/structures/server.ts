@@ -9,7 +9,7 @@ import { parseExifMetadata } from "@/lib/structures/exif";
 import {
   buildOrderedFilename,
   compareStructureImages,
-  coordinatesToLocalMeters,
+  geoToLocalMeters,
   headingToCardinal,
   normalizeHeading,
   parseSpatialHints,
@@ -227,10 +227,15 @@ export async function ingestStructureImage(args: {
     && originLongitude != null
     && latitude != null
     && longitude != null
-  ) ? coordinatesToLocalMeters(
-    { latitude: originLatitude, longitude: originLongitude },
-    { latitude, longitude },
-  ) : null;
+  ) ? geoToLocalMeters({
+    lat: latitude,
+    lon: longitude,
+    alt: exif.altitude,
+    originLat: originLatitude,
+    originLon: originLongitude,
+    originAlt: args.structure.origin_alt,
+    northRotationDeg: args.structure.north_rotation_deg,
+  }) : null;
 
   const uploaded = await uploadGeneratedMediaObject({
     bytes: args.bytes,
@@ -258,7 +263,8 @@ export async function ingestStructureImage(args: {
       altitude: exif.altitude,
       heading,
       local_x: local?.x ?? null,
-      local_y: local?.y ?? null,
+      local_y: local == null ? null : -local.z,
+      local_z: local?.y ?? null,
       cardinal_direction: cardinal,
       sector: hints.sector,
       scene_type: hints.sceneType,
@@ -434,12 +440,16 @@ export async function syncCameraNode(admin: SupabaseClient, image: StructureImag
     local_x: image.local_x,
     local_y: image.local_y,
     local_z: image.local_z,
+    position_x: image.local_x,
+    position_y: image.local_z,
+    position_z: image.local_y == null ? null : -image.local_y,
     heading: image.heading,
     pitch: image.pitch,
     roll: image.roll,
     fov: image.fov,
     confidence: image.confidence,
     spatial_source: image.spatial_source ?? "unplaced",
+    spatial_status: image.placement_status ?? "unplaced",
     updated_at: new Date().toISOString(),
   };
   const { error } = await admin
@@ -751,10 +761,15 @@ export async function placeStructureImage(args: {
     && originLongitude != null
     && latitude != null
     && longitude != null
-  ) ? coordinatesToLocalMeters(
-    { latitude: originLatitude, longitude: originLongitude },
-    { latitude, longitude },
-  ) : null;
+  ) ? geoToLocalMeters({
+    lat: latitude,
+    lon: longitude,
+    alt: image.altitude,
+    originLat: originLatitude,
+    originLon: originLongitude,
+    originAlt: args.structure.origin_alt,
+    northRotationDeg: args.structure.north_rotation_deg,
+  }) : null;
 
   const hasPosition = local != null;
   const needsReview = hasPosition && (
@@ -784,8 +799,8 @@ export async function placeStructureImage(args: {
       pitch,
       fov,
       local_x: local?.x ?? null,
-      local_y: local?.y ?? null,
-      local_z: image.altitude ?? image.local_z,
+      local_y: local == null ? null : -local.z,
+      local_z: local?.y ?? image.local_z,
       cardinal_direction: headingToCardinal(heading),
       confidence,
       spatial_source: source,

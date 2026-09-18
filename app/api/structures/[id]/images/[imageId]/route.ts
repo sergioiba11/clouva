@@ -6,9 +6,9 @@ import {
   syncCameraNode,
 } from "@/lib/structures/server";
 import {
-  coordinatesToLocalMeters,
+  geoToLocalMeters,
   headingToCardinal,
-  localMetersToCoordinates,
+  localMetersToGeo,
   type StructureImageRecord,
 } from "@/lib/structures/spatial";
 
@@ -109,7 +109,8 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       ? update.heading as number | null
       : current.heading;
     const localWasEdited = Object.prototype.hasOwnProperty.call(update, "local_x")
-      || Object.prototype.hasOwnProperty.call(update, "local_y");
+      || Object.prototype.hasOwnProperty.call(update, "local_y")
+      || Object.prototype.hasOwnProperty.call(update, "local_z");
 
     if (
       localWasEdited
@@ -123,12 +124,21 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         ? update.local_y as number | null
         : current.local_y;
       if (nextLocalX != null && nextLocalY != null) {
-        const geo = localMetersToCoordinates(
-          { latitude: structure.origin_latitude, longitude: structure.origin_longitude },
-          { x: nextLocalX, y: nextLocalY },
-        );
+        const nextLocalZ = Object.prototype.hasOwnProperty.call(update, "local_z")
+          ? update.local_z as number | null
+          : current.local_z;
+        const geo = localMetersToGeo({
+          x: nextLocalX,
+          y: nextLocalZ,
+          z: -nextLocalY,
+          originLat: structure.origin_latitude,
+          originLon: structure.origin_longitude,
+          originAlt: structure.origin_alt,
+          northRotationDeg: structure.north_rotation_deg,
+        });
         update.latitude = geo.latitude;
         update.longitude = geo.longitude;
+        if (nextLocalZ != null) update.altitude = geo.altitude;
       }
     } else {
       const nextLatitude = Object.prototype.hasOwnProperty.call(update, "latitude")
@@ -143,12 +153,21 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         && structure.origin_latitude != null
         && structure.origin_longitude != null
       ) {
-        const local = coordinatesToLocalMeters(
-          { latitude: structure.origin_latitude, longitude: structure.origin_longitude },
-          { latitude: nextLatitude, longitude: nextLongitude },
-        );
+        const nextAltitude = Object.prototype.hasOwnProperty.call(update, "altitude")
+          ? update.altitude as number | null
+          : current.altitude;
+        const local = geoToLocalMeters({
+          lat: nextLatitude,
+          lon: nextLongitude,
+          alt: nextAltitude,
+          originLat: structure.origin_latitude,
+          originLon: structure.origin_longitude,
+          originAlt: structure.origin_alt,
+          northRotationDeg: structure.north_rotation_deg,
+        });
         update.local_x = local.x;
-        update.local_y = local.y;
+        update.local_y = -local.z;
+        update.local_z = local.y;
       }
     }
 
