@@ -285,6 +285,7 @@ export async function ingestStructureImage(args: {
       duplicate_of: duplicate?.id ?? null,
       analysis_status: "metadata_ready",
       spatial_source: spatialSource,
+      placement_status: local != null && heading != null ? "placed" : "unplaced",
     })
     .select("*")
     .single();
@@ -755,7 +756,11 @@ export async function placeStructureImage(args: {
     { latitude, longitude },
   ) : null;
 
-  const needsReview = source === "inferred_cloud" && (confidence ?? 0) < 0.58;
+  const hasPosition = local != null;
+  const needsReview = source === "inferred_cloud" && hasPosition && (confidence ?? 0) < 0.58;
+  const placementStatus = hasPosition && heading != null
+    ? (needsReview ? "needs_review" : "placed")
+    : cloud ? "blocked" : "unplaced";
   const metadata = placementMetadata(image.metadata, {
     placedAt: new Date().toISOString(),
     spatialSource: source,
@@ -781,6 +786,7 @@ export async function placeStructureImage(args: {
       cardinal_direction: headingToCardinal(heading),
       confidence,
       spatial_source: source,
+      placement_status: placementStatus,
       metadata,
       updated_at: new Date().toISOString(),
     })
