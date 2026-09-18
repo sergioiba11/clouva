@@ -109,7 +109,8 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       ? update.heading as number | null
       : current.heading;
     const localWasEdited = Object.prototype.hasOwnProperty.call(update, "local_x")
-      || Object.prototype.hasOwnProperty.call(update, "local_y");
+      || Object.prototype.hasOwnProperty.call(update, "local_y")
+      || Object.prototype.hasOwnProperty.call(update, "local_z");
 
     if (
       localWasEdited
