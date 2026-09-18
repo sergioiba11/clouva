@@ -3,6 +3,7 @@ import Link from "next/link";
 import {
   Bot,
   Boxes,
+  Building2,
   CircleUserRound,
   ImagePlay,
   Palette,
@@ -40,6 +41,12 @@ const creativeTools = [
     description: "Prendas, accesorios, objetos GLB y pipeline 3D especializado.",
     href: "/creator-studio",
     icon: Boxes,
+  },
+  {
+    title: "Structures",
+    description: "Reconstruí lugares reales desde fotos, cámaras y plano; exportá BASE 3D y generá vistas coherentes con CLOUVA Cloud.",
+    href: "/structures",
+    icon: Building2,
   },
   {
     title: "Avatar",
