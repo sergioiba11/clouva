@@ -257,9 +257,11 @@ export function StructureSatelliteMap({
 
     void loadGoogleMaps()
       .then(() => {
-        if (cancelled || !hostRef.current || !mapsWindow().google?.maps) return;
+        if (cancelled || !hostRef.current) return;
+        const maps = mapsWindow().google?.maps;
+        if (!maps) return;
         if (!mapRef.current) {
-          mapRef.current = new mapsWindow().google!.maps!.Map(hostRef.current, {
+          mapRef.current = new maps.Map(hostRef.current, {
             center: center ?? { lat: -38.9, lng: -70.0 },
             zoom: structure.map_zoom ?? 19,
             mapTypeId: structure.map_type ?? "satellite",
