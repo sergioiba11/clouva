@@ -59,6 +59,8 @@ export type StructureImageRecord = {
   manual_verified: boolean;
   duplicate_of: string | null;
   analysis_status: string;
+  spatial_source: SpatialSource;
+  placement_status: "unplaced" | "placed" | "needs_review" | "blocked";
   created_at: string;
   updated_at: string;
 };
@@ -95,6 +97,7 @@ export type StructureCameraNodeRecord = {
   target_y: number | null;
   target_z: number | null;
   confidence: number | null;
+  spatial_source: SpatialSource;
 };
 
 export type StructureRuleRecord = {
