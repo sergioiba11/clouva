@@ -755,29 +755,41 @@ export function StructureWorkspace({
     geometry: StructureSpatialFeatureRecord["geometry"];
     properties?: Record<string, unknown>;
   }) {
-    const response = await authenticatedFetch(`/api/structures/${structureId}/spatial/features`, {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-    const result = await readApiJson<{ feature: StructureSpatialFeatureRecord }>(response);
-    setSelectedFeatureId(result.feature.id);
-    setData((current) => current ? {
-      ...current,
-      spatialFeatures: [...current.spatialFeatures, result.feature],
-    } : current);
-    setMessage(`${payload.name || "Geometría"} agregada al mapa y al 3D.`);
+    try {
+      const response = await authenticatedFetch(`/api/structures/${structureId}/spatial/features`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      const result = await readApiJson<{ feature: StructureSpatialFeatureRecord }>(response);
+      setSelectedFeatureId(result.feature.id);
+      setData((current) => current ? {
+        ...current,
+        spatialFeatures: [...current.spatialFeatures, result.feature],
+      } : current);
+      setMessage(`${payload.name || "Geometría"} agregada al mapa y al 3D.`);
+      return true;
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo crear la geometría espacial.");
+      return false;
+    }
   }
 
   async function updateSpatialFeature(featureId: string, patch: Record<string, unknown>) {
-    const response = await authenticatedFetch(`/api/structures/${structureId}/spatial/features/${featureId}`, {
-      method: "PATCH",
-      body: JSON.stringify(patch),
-    });
-    const result = await readApiJson<{ feature: StructureSpatialFeatureRecord }>(response);
-    setData((current) => current ? {
-      ...current,
-      spatialFeatures: current.spatialFeatures.map((feature) => feature.id === featureId ? result.feature : feature),
-    } : current);
+    try {
+      const response = await authenticatedFetch(`/api/structures/${structureId}/spatial/features/${featureId}`, {
+        method: "PATCH",
+        body: JSON.stringify(patch),
+      });
+      const result = await readApiJson<{ feature: StructureSpatialFeatureRecord }>(response);
+      setData((current) => current ? {
+        ...current,
+        spatialFeatures: current.spatialFeatures.map((feature) => feature.id === featureId ? result.feature : feature),
+      } : current);
+      return true;
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo actualizar la geometría espacial.");
+      return false;
+    }
   }
 
   async function generateBaseVolume() {
@@ -789,14 +801,14 @@ export function StructureWorkspace({
     }
     setBusy("volume");
     try {
-      await updateSpatialFeature(selectedFeature.id, {
+      const saved = await updateSpatialFeature(selectedFeature.id, {
         properties: {
           ...selectedFeature.properties,
           height_m: height,
           volume_enabled: true,
         },
       });
-      setMessage(`Volumen base generado a ${height.toFixed(2)} m y vinculado a la huella.`);
+      if (saved) setMessage(`Volumen base generado a ${height.toFixed(2)} m y vinculado a la huella.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudo generar el volumen.");
     } finally {
