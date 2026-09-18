@@ -5,6 +5,7 @@ import {
   Box,
   Camera,
   Check,
+  Crosshair,
   ChevronLeft,
   Cloud,
   Download,
@@ -13,6 +14,7 @@ import {
   Loader2,
   Map as MapIcon,
   MapPin,
+  Move,
   Play,
   RefreshCw,
   Save,
@@ -108,41 +110,87 @@ function downloadBlob(blob: Blob, filename: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1_000);
 }
 
+function placementLabel(image: StructureImageRecord) {
+  if (image.manual_verified || image.spatial_source === "manual") return "verificado manual";
+  if (image.placement_status === "needs_review") return "revisar IA";
+  if (image.placement_status === "blocked") return "sin ubicar";
+  if (image.placement_status === "placed") {
+    return image.spatial_source === "inferred_cloud" ? "ubicado por IA" : "ubicado por metadatos";
+  }
+  return "sin ubicar";
+}
+
+function placementTone(image: StructureImageRecord) {
+  if (image.manual_verified || image.spatial_source === "manual") return "bg-emerald-400/90 text-black";
+  if (image.placement_status === "needs_review") return "bg-amber-300/90 text-black";
+  if (image.placement_status === "placed") return image.spatial_source === "inferred_cloud"
+    ? "bg-amber-400/90 text-black"
+    : "bg-violet-400/90 text-black";
+  return "bg-black/75 text-white/60";
+}
+
 function EvidenceCard({
   image,
   selected,
-  onClick,
+  placing,
+  onSelect,
+  onPlace,
+  onFocus,
 }: {
   image: StructureImageRecord;
   selected: boolean;
-  onClick: () => void;
+  placing: boolean;
+  onSelect: () => void;
+  onPlace: () => void;
+  onFocus: () => void;
 }) {
+  const canFocus = image.local_x != null && image.local_y != null;
+
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`group overflow-hidden rounded-2xl border text-left transition ${
+    <article
+      className={`group overflow-hidden rounded-2xl border transition ${
         selected ? "border-violet-300/70 bg-violet-500/10" : "border-white/10 bg-white/[0.025] hover:border-white/20"
       }`}
     >
-      <div className="relative aspect-[4/3] overflow-hidden bg-black">
-        <img src={image.public_url} alt={image.description || image.original_filename} className="h-full w-full object-cover" />
-        <div className="absolute inset-x-2 bottom-2 flex items-center justify-between gap-2">
-          <span className="rounded-full bg-black/75 px-2 py-1 text-[9px] uppercase tracking-[0.12em] text-white/70 backdrop-blur">
-            {image.cardinal_direction || "sin rumbo"}
-          </span>
-          {image.manual_verified ? (
-            <span className="grid h-6 w-6 place-items-center rounded-full bg-emerald-400 text-black">
-              <Check className="h-3.5 w-3.5" />
+      <button type="button" onClick={onSelect} className="block w-full text-left">
+        <div className="relative aspect-[4/3] overflow-hidden bg-black">
+          <img src={image.public_url} alt={image.description || image.original_filename} className="h-full w-full object-cover" />
+          <div className="absolute inset-x-2 bottom-2 flex items-center justify-between gap-2">
+            <span className="rounded-full bg-black/75 px-2 py-1 text-[9px] uppercase tracking-[0.12em] text-white/70 backdrop-blur">
+              {image.cardinal_direction || "sin rumbo"}
             </span>
-          ) : null}
+            <span className={`rounded-full px-2 py-1 text-[8px] font-semibold uppercase tracking-[0.1em] ${placementTone(image)}`}>
+              {placementLabel(image)}
+            </span>
+          </div>
         </div>
+        <div className="p-3 pb-2">
+          <p className="truncate text-xs font-semibold">{image.ordered_filename || image.original_filename}</p>
+          <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-white/40">{image.description || "Sin descripción"}</p>
+        </div>
+      </button>
+
+      <div className="grid grid-cols-2 gap-1.5 px-2.5 pb-2.5">
+        <button
+          type="button"
+          onClick={onPlace}
+          disabled={placing}
+          className="inline-flex min-h-8 items-center justify-center gap-1 rounded-lg border border-violet-400/20 bg-violet-500/[0.08] px-2 text-[9px] font-medium text-violet-100 disabled:opacity-40"
+        >
+          {placing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Crosshair className="h-3 w-3" />}
+          Ubicar en 3D
+        </button>
+        <button
+          type="button"
+          onClick={onFocus}
+          disabled={!canFocus || placing}
+          className="inline-flex min-h-8 items-center justify-center gap-1 rounded-lg border border-white/10 px-2 text-[9px] font-medium text-white/55 disabled:opacity-30"
+        >
+          <Camera className="h-3 w-3" />
+          Enfocar
+        </button>
       </div>
-      <div className="p-3">
-        <p className="truncate text-xs font-semibold">{image.ordered_filename || image.original_filename}</p>
-        <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-white/40">{image.description || "Sin descripción"}</p>
-      </div>
-    </button>
+    </article>
   );
 }
 
@@ -164,6 +212,8 @@ function ImageInspector({
     description: image.description ?? "",
     latitude: image.latitude?.toString() ?? "",
     longitude: image.longitude?.toString() ?? "",
+    localX: image.local_x?.toString() ?? "",
+    localY: image.local_y?.toString() ?? "",
     heading: image.heading?.toString() ?? "",
     pitch: image.pitch?.toString() ?? "",
     fov: image.fov?.toString() ?? "",
@@ -181,6 +231,8 @@ function ImageInspector({
       description: image.description ?? "",
       latitude: image.latitude?.toString() ?? "",
       longitude: image.longitude?.toString() ?? "",
+      localX: image.local_x?.toString() ?? "",
+      localY: image.local_y?.toString() ?? "",
       heading: image.heading?.toString() ?? "",
       pitch: image.pitch?.toString() ?? "",
       fov: image.fov?.toString() ?? "",
@@ -203,6 +255,8 @@ function ImageInspector({
       description: form.description,
       latitude: form.latitude,
       longitude: form.longitude,
+      localX: form.localX,
+      localY: form.localY,
       heading: form.heading,
       pitch: form.pitch,
       fov: form.fov,
@@ -213,12 +267,19 @@ function ImageInspector({
     });
   }
 
+  const headingNumber = Number(form.heading);
+
   return (
     <div className="rounded-[1.5rem] border border-white/10 bg-[#0b0811] p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate text-xs font-semibold text-white/80">{image.ordered_filename || image.original_filename}</p>
-          <p className="mt-1 text-[10px] uppercase tracking-[0.15em] text-violet-300">{image.analysis_status}</p>
+          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+            <span className="text-[9px] uppercase tracking-[0.15em] text-violet-300">{image.analysis_status}</span>
+            <span className={`rounded-full px-2 py-0.5 text-[8px] uppercase tracking-[0.1em] ${placementTone(image)}`}>
+              {placementLabel(image)}
+            </span>
+          </div>
         </div>
         {onClose ? (
           <button type="button" onClick={onClose} className="rounded-full border border-white/10 p-1.5 text-white/45">
@@ -228,6 +289,17 @@ function ImageInspector({
       </div>
 
       <img src={image.public_url} alt="" className="mt-3 aspect-video w-full rounded-xl object-cover" />
+
+      <div className="mt-3 rounded-xl border border-white/10 bg-black/25 p-3 text-[10px]">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-white/35">Fuente espacial</span>
+          <span className="font-semibold text-white/75">{image.spatial_source}</span>
+        </div>
+        <div className="mt-1 flex items-center justify-between gap-3">
+          <span className="text-white/35">Confianza</span>
+          <span className="font-semibold text-white/75">{image.confidence == null ? "sin dato" : `${Math.round(image.confidence * 100)}%`}</span>
+        </div>
+      </div>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
         <label>
@@ -247,6 +319,14 @@ function ImageInspector({
           <input value={form.longitude} onChange={(e) => field("longitude", e.target.value)} placeholder="sin dato" className="w-full rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-xs outline-none focus:border-violet-400/50" />
         </label>
         <label>
+          <span className="mb-1 block text-[10px] uppercase tracking-[0.13em] text-white/35">Local X · m</span>
+          <input value={form.localX} onChange={(e) => field("localX", e.target.value)} placeholder="sin dato" className="w-full rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-xs outline-none focus:border-cyan-300/50" />
+        </label>
+        <label>
+          <span className="mb-1 block text-[10px] uppercase tracking-[0.13em] text-white/35">Local Y · m</span>
+          <input value={form.localY} onChange={(e) => field("localY", e.target.value)} placeholder="sin dato" className="w-full rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-xs outline-none focus:border-cyan-300/50" />
+        </label>
+        <label>
           <span className="mb-1 block text-[10px] uppercase tracking-[0.13em] text-white/35">Heading</span>
           <input value={form.heading} onChange={(e) => field("heading", e.target.value)} placeholder="sin dato" className="w-full rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-xs outline-none focus:border-violet-400/50" />
         </label>
@@ -255,6 +335,25 @@ function ImageInspector({
           <input value={form.fov} onChange={(e) => field("fov", e.target.value)} placeholder="sin dato" className="w-full rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-xs outline-none focus:border-violet-400/50" />
         </label>
       </div>
+
+      <label className="mt-3 block">
+        <span className="mb-1 flex items-center justify-between text-[10px] uppercase tracking-[0.13em] text-white/35">
+          <span>Rotar dirección</span>
+          <span>{Number.isFinite(headingNumber) ? `${Math.round(headingNumber)}°` : "sin heading"}</span>
+        </span>
+        <input
+          type="range"
+          min="0"
+          max="359"
+          step="1"
+          value={Number.isFinite(headingNumber) ? headingNumber : 0}
+          onChange={(e) => {
+            field("heading", e.target.value);
+            field("manualVerified", true);
+          }}
+          className="w-full accent-cyan-300"
+        />
+      </label>
 
       <label className="mt-3 block">
         <span className="mb-1 block text-[10px] uppercase tracking-[0.13em] text-white/35">Descripción espacial</span>
