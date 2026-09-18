@@ -470,6 +470,18 @@ export function StructureWorkspace({
     () => data?.cameraNodes.find((node) => node.image_id === selectedImageId) ?? null,
     [data?.cameraNodes, selectedImageId],
   );
+  const selectedCameraNodeId = selectedCamera?.id ?? null;
+
+  const selectedFeature = useMemo(
+    () => data?.spatialFeatures.find((feature) => feature.id === selectedFeatureId) ?? null,
+    [data?.spatialFeatures, selectedFeatureId],
+  );
+
+  useEffect(() => {
+    if (!selectedFeature) return;
+    const height = Number(selectedFeature.properties.height_m);
+    if (Number.isFinite(height) && height > 0) setVolumeHeight(String(height));
+  }, [selectedFeature?.id, selectedFeature?.properties]);
 
   const coverage = useMemo(
     () => computeEvidenceCoverage(data?.images ?? []),
@@ -677,6 +689,116 @@ export function StructureWorkspace({
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudo mover la cámara.");
       await load();
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function defineOrigin(payload: Record<string, unknown>) {
+    if (busy) return;
+    setBusy("origin");
+    setMessage(null);
+    try {
+      const response = await authenticatedFetch(`/api/structures/${structureId}/spatial/origin`, {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      const result = await readApiJson<{ recalculated: number }>(response);
+      setMessage(`Origen espacial guardado · ${result.recalculated} cámaras recalculadas.`);
+      setOriginPickActive(false);
+      await load();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo definir el origen.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function defineOriginManual() {
+    await defineOrigin({
+      originLat: originForm.lat,
+      originLon: originForm.lon,
+      originAlt: originForm.alt,
+      northRotationDeg: originForm.north,
+    });
+  }
+
+  async function defineOriginFromSelectedCamera() {
+    if (!selectedImage) return;
+    await defineOrigin({
+      imageId: selectedImage.id,
+      northRotationDeg: originForm.north,
+    });
+  }
+
+  async function recalculateSpatialWorld() {
+    if (busy) return;
+    setBusy("recalculate");
+    try {
+      const response = await authenticatedFetch(`/api/structures/${structureId}/spatial/recalculate`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+      const result = await readApiJson<{ recalculated: number }>(response);
+      setMessage(`Escena recalculada desde lat/lon: ${result.recalculated} cámaras.`);
+      await load();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo recalcular la escena.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function createSpatialFeature(payload: {
+    featureType: StructureSpatialFeatureRecord["feature_type"];
+    name?: string;
+    geometry: StructureSpatialFeatureRecord["geometry"];
+    properties?: Record<string, unknown>;
+  }) {
+    const response = await authenticatedFetch(`/api/structures/${structureId}/spatial/features`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    const result = await readApiJson<{ feature: StructureSpatialFeatureRecord }>(response);
+    setSelectedFeatureId(result.feature.id);
+    setData((current) => current ? {
+      ...current,
+      spatialFeatures: [...current.spatialFeatures, result.feature],
+    } : current);
+    setMessage(`${payload.name || "Geometría"} agregada al mapa y al 3D.`);
+  }
+
+  async function updateSpatialFeature(featureId: string, patch: Record<string, unknown>) {
+    const response = await authenticatedFetch(`/api/structures/${structureId}/spatial/features/${featureId}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    });
+    const result = await readApiJson<{ feature: StructureSpatialFeatureRecord }>(response);
+    setData((current) => current ? {
+      ...current,
+      spatialFeatures: current.spatialFeatures.map((feature) => feature.id === featureId ? result.feature : feature),
+    } : current);
+  }
+
+  async function generateBaseVolume() {
+    if (!selectedFeature || selectedFeature.feature_type !== "building_footprint") return;
+    const height = Number(volumeHeight);
+    if (!Number.isFinite(height) || height <= 0) {
+      setMessage("Ingresá una altura válida en metros.");
+      return;
+    }
+    setBusy("volume");
+    try {
+      await updateSpatialFeature(selectedFeature.id, {
+        properties: {
+          ...selectedFeature.properties,
+          height_m: height,
+          volume_enabled: true,
+        },
+      });
+      setMessage(`Volumen base generado a ${height.toFixed(2)} m y vinculado a la huella.`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo generar el volumen.");
     } finally {
       setBusy(null);
     }
