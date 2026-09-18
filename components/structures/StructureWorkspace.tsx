@@ -400,6 +400,8 @@ export function StructureWorkspace({
   const [selectedImageId, setSelectedImageId] = useState<string | null>(null);
   const [selectedCorner, setSelectedCorner] = useState<Corner | null>("NE");
   const [analysisProgress, setAnalysisProgress] = useState<string | null>(null);
+  const [placementProgress, setPlacementProgress] = useState<string | null>(null);
+  const [cameraEditMode, setCameraEditMode] = useState(false);
   const stopAnalysisRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [dragActive, setDragActive] = useState(false);
@@ -427,9 +429,14 @@ export function StructureWorkspace({
           ]),
         ].join("\n"),
       });
-      setSelectedImageId((current) => current && payload.images.some((image) => image.id === current)
-        ? current
-        : payload.images[0]?.id ?? null);
+      const focusFromUrl = typeof window !== "undefined"
+        ? new URLSearchParams(window.location.search).get("focus")
+        : null;
+      setSelectedImageId((current) => {
+        if (focusFromUrl && payload.images.some((image) => image.id === focusFromUrl)) return focusFromUrl;
+        if (current && payload.images.some((image) => image.id === current)) return current;
+        return payload.images[0]?.id ?? null;
+      });
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudo cargar la estructura.");
     } finally {
@@ -442,6 +449,11 @@ export function StructureWorkspace({
   const selectedImage = useMemo(
     () => data?.images.find((image) => image.id === selectedImageId) ?? null,
     [data?.images, selectedImageId],
+  );
+
+  const selectedCamera = useMemo(
+    () => data?.cameraNodes.find((node) => node.image_id === selectedImageId) ?? null,
+    [data?.cameraNodes, selectedImageId],
   );
 
   const coverage = useMemo(
@@ -533,6 +545,123 @@ export function StructureWorkspace({
       await load();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudo guardar la referencia.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function placeImage(imageId: string, focusAfter = false) {
+    if (busy) return;
+    setBusy(`place:${imageId}`);
+    setMessage(null);
+    try {
+      const response = await authenticatedFetch(
+        `/api/structures/${structureId}/images/${imageId}/place`,
+        { method: "POST", body: JSON.stringify({}) },
+      );
+      const payload = await readApiJson<{
+        image: StructureImageRecord;
+        usedCloud: boolean;
+        needsReview: boolean;
+      }>(response);
+      setSelectedImageId(imageId);
+      setMessage(
+        payload.needsReview
+          ? "CLOUVA ubicó la cámara por inferencia, pero necesita revisión manual."
+          : payload.usedCloud
+            ? "CLOUVA Cloud ubicó la cámara y su dirección."
+            : "Cámara ubicada usando metadatos reales.",
+      );
+      await load();
+      if (focusAfter && typeof window !== "undefined") {
+        window.location.href = `/structures/${structureId}/spatial?focus=${encodeURIComponent(imageId)}`;
+      }
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo ubicar la cámara.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function placeAllImages() {
+    if (busy || !data?.images.length) return;
+    setBusy("place-all");
+    setMessage(null);
+    let processed = 0;
+    let placed = 0;
+    let review = 0;
+    try {
+      for (let batch = 0; batch < 100; batch += 1) {
+        setPlacementProgress(processed ? `Ubicadas/revisadas ${processed} imágenes…` : "Acomodando cámaras en el espacio…");
+        const response = await authenticatedFetch(`/api/structures/${structureId}/place-all`, {
+          method: "POST",
+          body: JSON.stringify({ limit: 4 }),
+        });
+        const payload = await readApiJson<{
+          processed: number;
+          placed: number;
+          review: number;
+          remaining: number;
+        }>(response);
+        processed += payload.processed;
+        placed += payload.placed;
+        review = payload.review;
+        setPlacementProgress(`Procesadas ${processed} · faltan ${payload.remaining} · revisar ${payload.review}`);
+        if (!payload.processed || payload.remaining <= 0) break;
+      }
+      setMessage(`Cámaras acomodadas: ${placed} listas · ${review} para revisar.`);
+      await load();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "La colocación automática se interrumpió.");
+      await load();
+    } finally {
+      setPlacementProgress(null);
+      setBusy(null);
+    }
+  }
+
+  async function focusImageInScene(image: StructureImageRecord) {
+    setSelectedImageId(image.id);
+    if (image.local_x == null || image.local_y == null || image.placement_status === "unplaced" || image.placement_status === "blocked") {
+      await placeImage(image.id, false);
+    }
+    if (typeof window !== "undefined") {
+      window.location.href = `/structures/${structureId}/spatial?focus=${encodeURIComponent(image.id)}`;
+    }
+  }
+
+  async function selectSpatialImage(image: StructureImageRecord) {
+    setSelectedImageId(image.id);
+    if (
+      !busy
+      && (image.local_x == null || image.local_y == null || image.heading == null || image.placement_status === "unplaced")
+    ) {
+      await placeImage(image.id, false);
+    }
+  }
+
+  async function moveImageNode(imageId: string, localX: number, localY: number) {
+    if (busy) return;
+    setBusy("move-camera");
+    setSelectedImageId(imageId);
+    try {
+      const response = await authenticatedFetch(
+        `/api/structures/${structureId}/images/${imageId}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            localX,
+            localY,
+            manualVerified: true,
+          }),
+        },
+      );
+      await readApiJson(response);
+      setMessage("Posición manual guardada. Esta corrección ahora tiene prioridad.");
+      await load();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo mover la cámara.");
+      await load();
     } finally {
       setBusy(null);
     }
