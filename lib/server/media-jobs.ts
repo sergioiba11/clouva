@@ -2,6 +2,12 @@ import sharp from "sharp";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { downloadGeneratedVideo, getVideoOperation } from "@/lib/gemini-video";
 import { uploadGeneratedMediaObject } from "@/lib/gcs-media";
+import {
+  downloadRunwayVideo,
+  getRunwayVideoTask,
+  RunwayVideoError,
+  type RunwayVideoTask,
+} from "@/lib/runway-video";
 
 export const MEDIA_JOB_COLUMNS = [
   "id", "user_id", "type", "source_mode", "status", "prompt", "model", "aspect_ratio", "quality",
@@ -38,6 +44,15 @@ export type MediaJobRow = {
   completed_at: string | null;
   updated_at: string;
 };
+
+export type VideoProviderKeys = {
+  runwayApiKey?: string | null;
+  geminiApiKey?: string | null;
+};
+
+export function videoProviderForJob(job: MediaJobRow): "runway" | "gemini" {
+  return job.provider_metadata?.provider === "runway" ? "runway" : "gemini";
+}
 
 export function toPublicMediaJob(row: MediaJobRow) {
   return {
@@ -96,19 +111,21 @@ export async function downloadReferenceImage(referenceUrl: string) {
   return { bytes, mimeType, width: metadata.width, height: metadata.height } as const;
 }
 
+function mergeProviderMetadata(job: MediaJobRow, patch: Record<string, unknown>) {
+  return { ...(job.provider_metadata ?? {}), ...patch };
+}
+
 async function saveCompletedVideo(args: {
   admin: SupabaseClient;
   job: MediaJobRow;
-  apiKey: string;
-  videoUri: string;
+  bytes: Buffer;
   mimeType: string;
-  operationMetadata: Record<string, unknown> | null;
+  providerMetadata: Record<string, unknown>;
 }) {
-  const generated = await downloadGeneratedVideo({ apiKey: args.apiKey, videoUri: args.videoUri });
   try {
     const stored = await uploadGeneratedMediaObject({
-      bytes: generated.bytes,
-      mimeType: generated.mimeType || args.mimeType,
+      bytes: args.bytes,
+      mimeType: args.mimeType,
       pathPrefix: `media/${args.job.user_id}/videos`,
     });
     const completedAt = new Date().toISOString();
@@ -118,8 +135,8 @@ async function saveCompletedVideo(args: {
         status: "completed",
         output_storage_path: stored.objectPath,
         output_url: stored.url,
-        mime_type: generated.mimeType || args.mimeType,
-        provider_metadata: { operationMetadata: args.operationMetadata },
+        mime_type: args.mimeType,
+        provider_metadata: mergeProviderMetadata(args.job, args.providerMetadata),
         actual_cost_usd: args.job.estimated_cost_usd,
         error_code: null,
         error_message: null,
@@ -145,50 +162,157 @@ async function saveCompletedVideo(args: {
   }
 }
 
-export async function syncVideoJob(admin: SupabaseClient, job: MediaJobRow, apiKey: string) {
-  if (job.type !== "video" || !["generating", "processing"].includes(job.status) || !job.operation_id) return job;
-  try {
-    const operation = await getVideoOperation({ apiKey, operationName: job.operation_id });
-    if (!operation.done) {
-      if (job.status !== "processing") {
-        await admin.from("media_generation_jobs").update({ status: "processing" }).eq("id", job.id).eq("user_id", job.user_id);
-        return { ...job, status: "processing", updated_at: new Date().toISOString() };
-      }
-      return job;
+async function updateRunwayActiveStatus(admin: SupabaseClient, job: MediaJobRow, task: RunwayVideoTask) {
+  const status = task.status === "THROTTLED" ? "queued" : task.status === "PENDING" ? "generating" : "processing";
+  const metadata = mergeProviderMetadata(job, {
+    provider: "runway",
+    taskStatus: task.status,
+    progress: task.progress,
+    taskMetadata: task.metadata,
+  });
+  if (job.status === status && JSON.stringify(job.provider_metadata ?? {}) === JSON.stringify(metadata)) return job;
+  const { data, error } = await admin
+    .from("media_generation_jobs")
+    .update({ status, provider_metadata: metadata })
+    .eq("id", job.id)
+    .eq("user_id", job.user_id)
+    .select(MEDIA_JOB_COLUMNS)
+    .single();
+  if (error || !data) throw new Error("No se pudo actualizar el estado del video.");
+  return data as unknown as MediaJobRow;
+}
+
+async function syncRunwayVideoJob(admin: SupabaseClient, job: MediaJobRow, apiKey: string) {
+  const task = await getRunwayVideoTask({ apiKey, taskId: job.operation_id! });
+  if (["PENDING", "THROTTLED", "RUNNING"].includes(task.status)) {
+    return updateRunwayActiveStatus(admin, job, task);
+  }
+  if (task.status === "CANCELED") {
+    const { data, error } = await admin
+      .from("media_generation_jobs")
+      .update({
+        status: "cancelled",
+        provider_metadata: mergeProviderMetadata(job, { provider: "runway", taskStatus: task.status, taskMetadata: task.metadata }),
+        error_code: "provider_cancelled",
+        error_message: "La generación fue cancelada por Runway.",
+      })
+      .eq("id", job.id)
+      .eq("user_id", job.user_id)
+      .select(MEDIA_JOB_COLUMNS)
+      .single();
+    if (error || !data) throw new Error("No se pudo registrar la cancelación del video.");
+    return data as unknown as MediaJobRow;
+  }
+  if (task.status === "FAILED") {
+    const message = (task.failure || "Runway no pudo generar el video.").slice(0, 300);
+    const { data, error } = await admin
+      .from("media_generation_jobs")
+      .update({
+        status: "failed",
+        provider_metadata: mergeProviderMetadata(job, { provider: "runway", taskStatus: task.status, taskMetadata: task.metadata }),
+        error_code: task.failureCode || "provider_failed",
+        error_message: message,
+      })
+      .eq("id", job.id)
+      .eq("user_id", job.user_id)
+      .select(MEDIA_JOB_COLUMNS)
+      .single();
+    if (error || !data) throw new Error("No se pudo registrar el fallo del video.");
+    return data as unknown as MediaJobRow;
+  }
+  if (!task.outputUrl) throw new Error("Runway terminó sin devolver el video.");
+  const generated = await downloadRunwayVideo({ videoUrl: task.outputUrl });
+  return saveCompletedVideo({
+    admin,
+    job,
+    bytes: generated.bytes,
+    mimeType: generated.mimeType,
+    providerMetadata: {
+      provider: "runway",
+      taskStatus: task.status,
+      progress: task.progress,
+      taskMetadata: task.metadata,
+    },
+  });
+}
+
+async function syncGeminiVideoJob(admin: SupabaseClient, job: MediaJobRow, apiKey: string) {
+  const operation = await getVideoOperation({ apiKey, operationName: job.operation_id! });
+  if (!operation.done) {
+    if (job.status !== "processing") {
+      const { data, error } = await admin
+        .from("media_generation_jobs")
+        .update({ status: "processing" })
+        .eq("id", job.id)
+        .eq("user_id", job.user_id)
+        .select(MEDIA_JOB_COLUMNS)
+        .single();
+      if (error || !data) throw new Error("No se pudo actualizar el estado del video.");
+      return data as unknown as MediaJobRow;
     }
-    if (!operation.videoUri) throw new Error("Gemini terminó sin devolver el video.");
-    return await saveCompletedVideo({
-      admin,
-      job,
-      apiKey,
-      videoUri: operation.videoUri,
-      mimeType: operation.mimeType,
-      operationMetadata: operation.metadata,
-    });
+    return job;
+  }
+  if (!operation.videoUri) throw new Error("Gemini terminó sin devolver el video.");
+  const generated = await downloadGeneratedVideo({ apiKey, videoUri: operation.videoUri });
+  return saveCompletedVideo({
+    admin,
+    job,
+    bytes: generated.bytes,
+    mimeType: generated.mimeType || operation.mimeType,
+    providerMetadata: { provider: "gemini", operationMetadata: operation.metadata },
+  });
+}
+
+export async function syncVideoJob(admin: SupabaseClient, job: MediaJobRow, keys: VideoProviderKeys) {
+  if (job.type !== "video" || !["queued", "generating", "processing"].includes(job.status) || !job.operation_id) return job;
+  const provider = videoProviderForJob(job);
+  try {
+    if (provider === "runway") {
+      if (!keys.runwayApiKey) throw new Error("RUNWAY_API_KEY no está configurada.");
+      return await syncRunwayVideoJob(admin, job, keys.runwayApiKey);
+    }
+    if (!keys.geminiApiKey) throw new Error("GEMINI_API_KEY no está configurada para este video anterior.");
+    return await syncGeminiVideoJob(admin, job, keys.geminiApiKey);
   } catch (error) {
     const message = error instanceof Error ? error.message : "La generación de video falló.";
-    if (/guardarse|almacen|registrar el video/i.test(message)) throw error;
+    if (/guardarse|almacen|registrar el video|actualizar el estado/i.test(message)) throw error;
+    if (error instanceof RunwayVideoError && [429, 500, 502, 503, 504].includes(error.status)) throw error;
     await admin
       .from("media_generation_jobs")
-      .update({ status: "failed", error_code: "provider_failed", error_message: "El video no pudo generarse." })
+      .update({ status: "failed", error_code: "provider_failed", error_message: message.slice(0, 300) })
       .eq("id", job.id)
       .eq("user_id", job.user_id);
     throw error;
   }
 }
 
-export async function retryVideoStorage(admin: SupabaseClient, job: MediaJobRow, apiKey: string) {
+export async function retryVideoStorage(admin: SupabaseClient, job: MediaJobRow, keys: VideoProviderKeys) {
   if (job.type !== "video" || job.status !== "storage_failed" || !job.operation_id) {
     throw new Error("Este trabajo no tiene un guardado de video pendiente.");
   }
-  const operation = await getVideoOperation({ apiKey, operationName: job.operation_id });
+  const provider = videoProviderForJob(job);
+  if (provider === "runway") {
+    if (!keys.runwayApiKey) throw new Error("RUNWAY_API_KEY no está configurada.");
+    const task = await getRunwayVideoTask({ apiKey: keys.runwayApiKey, taskId: job.operation_id });
+    if (task.status !== "SUCCEEDED" || !task.outputUrl) throw new Error("El resultado del video todavía no está disponible.");
+    const generated = await downloadRunwayVideo({ videoUrl: task.outputUrl });
+    return saveCompletedVideo({
+      admin,
+      job,
+      bytes: generated.bytes,
+      mimeType: generated.mimeType,
+      providerMetadata: { provider: "runway", taskStatus: task.status, progress: task.progress, taskMetadata: task.metadata },
+    });
+  }
+  if (!keys.geminiApiKey) throw new Error("GEMINI_API_KEY no está configurada para este video anterior.");
+  const operation = await getVideoOperation({ apiKey: keys.geminiApiKey, operationName: job.operation_id });
   if (!operation.done || !operation.videoUri) throw new Error("El resultado del video todavía no está disponible.");
+  const generated = await downloadGeneratedVideo({ apiKey: keys.geminiApiKey, videoUri: operation.videoUri });
   return saveCompletedVideo({
     admin,
     job,
-    apiKey,
-    videoUri: operation.videoUri,
-    mimeType: operation.mimeType,
-    operationMetadata: operation.metadata,
+    bytes: generated.bytes,
+    mimeType: generated.mimeType || operation.mimeType,
+    providerMetadata: { provider: "gemini", operationMetadata: operation.metadata },
   });
 }

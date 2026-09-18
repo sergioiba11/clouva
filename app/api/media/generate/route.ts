@@ -5,16 +5,17 @@ import {
   type GeminiAspectRatio,
   type GeminiImageModel,
 } from "@/lib/gemini-image";
-import { startVideoGeneration, type GeminiVideoModel } from "@/lib/gemini-video";
 import { uploadGeneratedMediaObject } from "@/lib/gcs-media";
 import {
   estimateVideoCostUsd,
+  estimateVideoCredits,
   IMAGE_QUALITY_CONFIG,
   isImageAspectRatio,
   isImageQuality,
   isVideoAspectRatio,
   isVideoDuration,
   isVideoQuality,
+  MEDIA_PRICING_VERSION,
   VIDEO_QUALITY_CONFIG,
   type ImageAspectRatio,
   type ImageQuality,
@@ -23,6 +24,7 @@ import {
   type VideoDuration,
   type VideoQuality,
 } from "@/lib/media-generation-config";
+import { startRunwayVideoGeneration } from "@/lib/runway-video";
 import { MediaApiError, publicMediaError, requireMediaAdmin } from "@/lib/server/media-auth";
 import {
   downloadReferenceImage,
@@ -185,6 +187,7 @@ async function createJob(args: {
   referenceStoragePath: string | null;
   referenceUrl: string | null;
   estimatedCostUsd: number | null;
+  providerMetadata?: Record<string, unknown> | null;
 }) {
   const { data: existing, error: existingError } = await args.admin
     .from("media_generation_jobs")
@@ -212,6 +215,7 @@ async function createJob(args: {
       reference_storage_path: args.referenceStoragePath,
       reference_url: args.referenceUrl,
       estimated_cost_usd: args.estimatedCostUsd,
+      provider_metadata: args.providerMetadata ?? null,
       started_at: new Date().toISOString(),
     })
     .select(MEDIA_JOB_COLUMNS)
@@ -244,8 +248,6 @@ export async function POST(request: NextRequest) {
 
     const authenticated = await requireMediaAdmin(request);
     admin = authenticated.admin;
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) throw new MediaApiError("GEMINI_API_KEY no está configurada.", 500, "missing_api_key");
     const prompt = validatePrompt(body.prompt);
     if (body.type !== "image" && body.type !== "video") throw new MediaApiError("Tipo de creación inválido.", 400, "invalid_media_type");
     if (!body.idempotencyKey || !/^[a-zA-Z0-9_-]{16,96}$/.test(body.idempotencyKey)) {
@@ -257,6 +259,8 @@ export async function POST(request: NextRequest) {
     }
 
     if (body.type === "image") {
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) throw new MediaApiError("GEMINI_API_KEY no está configurada.", 500, "missing_api_key");
       const quality: ImageQuality = isImageQuality(body.quality) ? body.quality : "high";
       const aspectRatio: ImageAspectRatio = isImageAspectRatio(body.aspectRatio) ? body.aspectRatio : "1:1";
       const config = IMAGE_QUALITY_CONFIG[quality];
@@ -275,6 +279,7 @@ export async function POST(request: NextRequest) {
         referenceStoragePath: body.referenceStoragePath ?? null,
         referenceUrl: body.referenceUrl ?? null,
         estimatedCostUsd: null,
+        providerMetadata: { provider: "gemini" },
       });
       jobId = created.row.id;
       if (created.reused) return NextResponse.json({ job: toPublicMediaJob(created.row), reused: true });
@@ -320,14 +325,19 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    const runwayApiKey = process.env.RUNWAY_API_KEY;
+    if (!runwayApiKey) throw new MediaApiError("RUNWAY_API_KEY no está configurada.", 500, "missing_runway_api_key");
     const quality: VideoQuality = isVideoQuality(body.quality) ? body.quality : "fast";
     const aspectRatio: VideoAspectRatio = isVideoAspectRatio(body.aspectRatio) ? body.aspectRatio : "16:9";
     const durationSeconds: VideoDuration = isVideoDuration(body.durationSeconds) ? Number(body.durationSeconds) as VideoDuration : 8;
     const config = VIDEO_QUALITY_CONFIG[quality];
+    const estimatedCredits = estimateVideoCredits(quality, durationSeconds);
     const estimatedCostUsd = estimateVideoCostUsd(quality, durationSeconds);
     if (typeof body.confirmedCostUsd !== "number" || Math.abs(body.confirmedCostUsd - estimatedCostUsd) > 0.001) {
       throw new MediaApiError("Confirmá el costo estimado antes de generar el video.", 409, "cost_confirmation_required");
     }
+    if (body.referenceUrl) await downloadReferenceImage(body.referenceUrl);
+
     const created = await createJob({
       admin,
       userId: authenticated.user.id,
@@ -342,24 +352,37 @@ export async function POST(request: NextRequest) {
       referenceStoragePath: body.referenceStoragePath ?? null,
       referenceUrl: body.referenceUrl ?? null,
       estimatedCostUsd,
+      providerMetadata: {
+        provider: "runway",
+        pricingVersion: MEDIA_PRICING_VERSION,
+        creditsPerSecond: config.creditsPerSecond,
+        estimatedCredits,
+      },
     });
     jobId = created.row.id;
     if (created.reused) return NextResponse.json({ job: toPublicMediaJob(created.row), reused: true });
 
-    const reference = body.referenceUrl ? await downloadReferenceImage(body.referenceUrl) : null;
-    const operation = await startVideoGeneration({
-      apiKey,
+    const task = await startRunwayVideoGeneration({
+      apiKey: runwayApiKey,
       prompt,
-      model: config.model as GeminiVideoModel,
+      model: config.model,
       aspectRatio,
       durationSeconds,
-      resolution: config.resolution,
-      referenceImage: reference ? { bytes: reference.bytes, mimeType: reference.mimeType } : undefined,
+      referenceUrl: body.referenceUrl ?? null,
     });
+    const taskStatus = task.status === "THROTTLED" ? "queued" : task.status === "RUNNING" ? "processing" : "generating";
     const { data: started, error } = await admin.from("media_generation_jobs").update({
-      status: operation.done ? "processing" : "generating",
-      operation_id: operation.name,
-      provider_metadata: operation.metadata ? { operationMetadata: operation.metadata } : {},
+      status: taskStatus,
+      operation_id: task.id,
+      provider_metadata: {
+        provider: "runway",
+        pricingVersion: MEDIA_PRICING_VERSION,
+        creditsPerSecond: config.creditsPerSecond,
+        estimatedCredits,
+        taskStatus: task.status,
+        progress: task.progress,
+        taskMetadata: task.metadata,
+      },
     }).eq("id", jobId).eq("user_id", authenticated.user.id).select(MEDIA_JOB_COLUMNS).single();
     if (error || !started) throw new MediaApiError("El video se inició, pero no pudo registrarse.", 500, "job_update_failed");
     return NextResponse.json({ job: toPublicMediaJob(started as unknown as MediaJobRow) }, { status: 202 });

@@ -23,14 +23,17 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
     if (job.status !== "storage_failed") {
       throw new MediaApiError("Esta creación no tiene un guardado pendiente.", 409, "storage_retry_not_available");
     }
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) throw new MediaApiError("GEMINI_API_KEY no está configurada.", 500, "missing_api_key");
 
     if (job.type === "video") {
-      const completed = await retryVideoStorage(admin, job, apiKey);
+      const completed = await retryVideoStorage(admin, job, {
+        runwayApiKey: process.env.RUNWAY_API_KEY,
+        geminiApiKey: process.env.GEMINI_API_KEY,
+      });
       return NextResponse.json({ job: toPublicMediaJob(completed) });
     }
 
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) throw new MediaApiError("GEMINI_API_KEY no está configurada.", 500, "missing_api_key");
     if (!job.operation_id) {
       throw new MediaApiError("El resultado de imagen ya no está disponible para reintentar.", 409, "provider_result_unavailable");
     }
