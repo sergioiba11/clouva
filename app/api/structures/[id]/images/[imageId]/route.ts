@@ -155,6 +155,11 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     if (manualSpatialChange || requestedVerified) {
       update.manual_verified = true;
       update.spatial_source = "manual";
+      update.placement_status = (update.local_x ?? current.local_x) != null
+        && (update.local_y ?? current.local_y) != null
+        && nextHeading != null
+        ? "placed"
+        : "needs_review";
       update.analysis_status = "verified";
       update.confidence = 1;
     } else if (Object.prototype.hasOwnProperty.call(body, "manualVerified")) {
