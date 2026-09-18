@@ -66,24 +66,27 @@ type FeatureOverlay = {
   geometryType: StructureSpatialFeatureRecord["geometry"]["type"];
 };
 
-declare global {
-  interface Window {
-    google?: { maps: GoogleMapsNamespace };
-    __clouvaMapsPromise?: Promise<void>;
-  }
+type MapsWindow = Window & {
+  google?: { maps?: GoogleMapsNamespace };
+  __clouvaMapsPromise?: Promise<void>;
+};
+
+function mapsWindow() {
+  return window as unknown as MapsWindow;
 }
 
 function loadGoogleMaps() {
   if (typeof window === "undefined") {
     return Promise.reject(new Error("Google Maps requiere navegador."));
   }
-  if (window.google?.maps) return Promise.resolve();
-  if (window.__clouvaMapsPromise) return window.__clouvaMapsPromise;
+  const browser = mapsWindow();
+  if (browser.google?.maps) return Promise.resolve();
+  if (browser.__clouvaMapsPromise) return browser.__clouvaMapsPromise;
 
   const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
   if (!apiKey) return Promise.reject(new Error("Falta NEXT_PUBLIC_GOOGLE_MAPS_API_KEY."));
 
-  window.__clouvaMapsPromise = new Promise<void>((resolve, reject) => {
+  browser.__clouvaMapsPromise = new Promise<void>((resolve, reject) => {
     const existing = document.getElementById("clouva-google-maps");
     if (existing) {
       existing.addEventListener("load", () => resolve(), { once: true });
@@ -101,7 +104,7 @@ function loadGoogleMaps() {
     document.head.appendChild(script);
   });
 
-  return window.__clouvaMapsPromise;
+  return browser.__clouvaMapsPromise;
 }
 
 function pointFromEvent(event: { latLng?: { lat: () => number; lng: () => number } }) {
@@ -254,9 +257,9 @@ export function StructureSatelliteMap({
 
     void loadGoogleMaps()
       .then(() => {
-        if (cancelled || !hostRef.current || !window.google?.maps) return;
+        if (cancelled || !hostRef.current || !mapsWindow().google?.maps) return;
         if (!mapRef.current) {
-          mapRef.current = new window.google.maps.Map(hostRef.current, {
+          mapRef.current = new mapsWindow().google!.maps!.Map(hostRef.current, {
             center: center ?? { lat: -38.9, lng: -70.0 },
             zoom: structure.map_zoom ?? 19,
             mapTypeId: structure.map_type ?? "satellite",
@@ -289,11 +292,11 @@ export function StructureSatelliteMap({
 
   // Permanent camera layer: rebuild only when camera data changes, never on selection.
   useEffect(() => {
-    if (!ready || !mapRef.current || !window.google?.maps) return;
+    if (!ready || !mapRef.current || !mapsWindow().google?.maps) return;
     const layer = cameraLayerRef.current;
     clearCameraLayer(layer);
 
-    const maps = window.google.maps;
+    const maps = mapsWindow().google!.maps!;
     for (const node of cameraNodes) {
       if (node.latitude == null || node.longitude == null) continue;
 
@@ -341,8 +344,8 @@ export function StructureSatelliteMap({
 
   // Selection changes only marker/heading highlight and map focus; the layer remains mounted.
   useEffect(() => {
-    if (!ready || !window.google?.maps) return;
-    const maps = window.google.maps;
+    if (!ready || !mapsWindow().google?.maps) return;
+    const maps = mapsWindow().google!.maps!;
 
     for (const [imageId, record] of cameraLayerRef.current.entries()) {
       const selected = imageId === selectedImageId;
@@ -372,11 +375,11 @@ export function StructureSatelliteMap({
 
   // Permanent feature layer: rebuild only when persisted geometry changes.
   useEffect(() => {
-    if (!ready || !mapRef.current || !window.google?.maps) return;
+    if (!ready || !mapRef.current || !mapsWindow().google?.maps) return;
     const layer = featureLayerRef.current;
     clearFeatureLayer(layer);
 
-    const maps = window.google.maps;
+    const maps = mapsWindow().google!.maps!;
     for (const feature of spatialFeatures) {
       const points = geometryPoints(feature);
       if (!points.length) continue;
@@ -465,8 +468,8 @@ export function StructureSatelliteMap({
 
   // Feature selection/edit mode updates options only; geometry objects stay alive.
   useEffect(() => {
-    if (!ready || !window.google?.maps) return;
-    const maps = window.google.maps;
+    if (!ready || !mapsWindow().google?.maps) return;
+    const maps = mapsWindow().google!.maps!;
 
     for (const [featureId, record] of featureLayerRef.current.entries()) {
       const selected = featureId === selectedFeatureId;
@@ -548,12 +551,12 @@ export function StructureSatelliteMap({
   }, [ready, editMode, originPickActive]);
 
   useEffect(() => {
-    if (!ready || !mapRef.current || !window.google?.maps) return;
+    if (!ready || !mapRef.current || !mapsWindow().google?.maps) return;
     draftOverlayRef.current?.setMap(null);
     draftOverlayRef.current = null;
     if (!draftPoints.length) return;
 
-    const draft = new window.google.maps.Polyline({
+    const draft = new mapsWindow().google!.maps!.Polyline({
       map: mapRef.current,
       path: draftPoints,
       strokeColor: editMode === "measure" ? "#22d3ee" : "#ffffff",
