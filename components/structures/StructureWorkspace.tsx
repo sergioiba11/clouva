@@ -11,7 +11,7 @@ import {
   FileArchive,
   Image as ImageIcon,
   Loader2,
-  Map,
+  Map as MapIcon,
   MapPin,
   Play,
   RefreshCw,
@@ -65,7 +65,7 @@ const TABS: Array<{ id: Tab; label: string; icon: typeof Box }> = [
   { id: "project", label: "Proyecto", icon: Box },
   { id: "images", label: "Imágenes", icon: ImageIcon },
   { id: "spatial", label: "3D espacial", icon: ScanLine },
-  { id: "plan", label: "Plano", icon: Map },
+  { id: "plan", label: "Plano", icon: MapIcon },
   { id: "export", label: "ZIP", icon: FileArchive },
   { id: "render", label: "Render CLOUD", icon: Cloud },
 ];
