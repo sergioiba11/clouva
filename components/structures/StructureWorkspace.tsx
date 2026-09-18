@@ -837,6 +837,7 @@ export function StructureWorkspace({
           </div>
 
           {analysisProgress ? <p className="mt-4 text-xs text-violet-200">{analysisProgress}</p> : null}
+          {placementProgress ? <p className="mt-4 text-xs text-cyan-200">{placementProgress}</p> : null}
           {message ? (
             <div className="mt-4 rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-xs text-white/70">
               {message}
@@ -953,7 +954,10 @@ export function StructureWorkspace({
                       key={image.id}
                       image={image}
                       selected={image.id === selectedImageId}
-                      onClick={() => setSelectedImageId(image.id)}
+                      placing={busy === `place:${image.id}`}
+                      onSelect={() => setSelectedImageId(image.id)}
+                      onPlace={() => { void placeImage(image.id, false); }}
+                      onFocus={() => { void focusImageInScene(image); }}
                     />
                   ))}
                 </div>
@@ -981,31 +985,125 @@ export function StructureWorkspace({
         {initialTab === "spatial" ? (
           <section className="mt-4 grid gap-4 xl:grid-cols-[1fr_360px]">
             <div>
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-white/10 bg-white/[0.025] p-3">
+                <div>
+                  <p className="text-sm font-semibold">Cámaras reales</p>
+                  <p className="mt-0.5 text-[11px] text-white/40">
+                    Cada punto representa dónde estaba el muñequito/cámara y la línea muestra hacia dónde miraba.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void placeAllImages()}
+                    disabled={Boolean(busy) || !data.images.length}
+                    className="inline-flex h-9 items-center gap-2 rounded-full bg-cyan-300 px-4 text-xs font-semibold text-black disabled:opacity-35"
+                  >
+                    {busy === "place-all" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Crosshair className="h-3.5 w-3.5" />}
+                    Colocar automáticamente todas
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCameraEditMode((current) => !current)}
+                    disabled={busy === "move-camera"}
+                    className={`inline-flex h-9 items-center gap-2 rounded-full border px-4 text-xs font-medium transition ${
+                      cameraEditMode
+                        ? "border-cyan-300/60 bg-cyan-400/10 text-cyan-100"
+                        : "border-white/10 text-white/55"
+                    }`}
+                  >
+                    <Move className="h-3.5 w-3.5" />
+                    {cameraEditMode ? "Ajuste manual ON" : "Ajustar cámaras"}
+                  </button>
+                </div>
+              </div>
+
               <StructureScene
                 images={data.images}
+                cameraNodes={data.cameraNodes}
                 blockout={blockout}
                 selectedImageId={selectedImageId}
                 onSelectImage={setSelectedImageId}
                 selectedCorner={selectedCorner}
                 onSelectCorner={setSelectedCorner}
+                editMode={cameraEditMode}
+                onMoveImage={moveImageNode}
               />
+
               <div className="mt-3 flex gap-2 overflow-x-auto pb-2">
-                {data.images.slice(0, 80).map((image) => (
+                {data.images.slice(0, 120).map((image) => (
                   <button
                     type="button"
                     key={image.id}
-                    onClick={() => setSelectedImageId(image.id)}
+                    onClick={() => { void selectSpatialImage(image); }}
                     className={`relative h-16 w-24 shrink-0 overflow-hidden rounded-xl border ${
                       selectedImageId === image.id ? "border-violet-300" : "border-white/10"
                     }`}
+                    title={`${placementLabel(image)} · ${image.cardinal_direction || "sin rumbo"}`}
                   >
                     <img src={image.public_url} alt="" className="h-full w-full object-cover" />
+                    <span className={`absolute bottom-1 right-1 h-2.5 w-2.5 rounded-full border border-black/60 ${
+                      image.placement_status === "placed"
+                        ? image.spatial_source === "inferred_cloud" ? "bg-amber-300" : "bg-emerald-400"
+                        : image.placement_status === "needs_review" ? "bg-amber-400" : "bg-white/35"
+                    }`} />
                   </button>
                 ))}
               </div>
             </div>
 
             <aside className="space-y-4">
+              {selectedImage ? (
+                <div className="rounded-[1.5rem] border border-cyan-300/15 bg-cyan-400/[0.035] p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.17em] text-cyan-300">Cámara seleccionada</p>
+                      <p className="mt-1 text-sm font-semibold">{selectedImage.cardinal_direction || "sin rumbo"} · {placementLabel(selectedImage)}</p>
+                    </div>
+                    <span className={`rounded-full px-2 py-1 text-[8px] uppercase tracking-[0.1em] ${placementTone(selectedImage)}`}>
+                      {selectedImage.spatial_source}
+                    </span>
+                  </div>
+
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-[10px]">
+                    <div className="rounded-xl border border-white/10 bg-black/20 p-2.5">
+                      <p className="text-white/30">LAT</p>
+                      <p className="mt-1 font-mono text-white/75">{selectedImage.latitude?.toFixed(7) ?? "—"}</p>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-black/20 p-2.5">
+                      <p className="text-white/30">LON</p>
+                      <p className="mt-1 font-mono text-white/75">{selectedImage.longitude?.toFixed(7) ?? "—"}</p>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-black/20 p-2.5">
+                      <p className="text-white/30">LOCAL X</p>
+                      <p className="mt-1 font-mono text-white/75">{selectedCamera?.local_x?.toFixed(2) ?? selectedImage.local_x?.toFixed(2) ?? "—"} m</p>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-black/20 p-2.5">
+                      <p className="text-white/30">LOCAL Y</p>
+                      <p className="mt-1 font-mono text-white/75">{selectedCamera?.local_y?.toFixed(2) ?? selectedImage.local_y?.toFixed(2) ?? "—"} m</p>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-black/20 p-2.5">
+                      <p className="text-white/30">HEADING</p>
+                      <p className="mt-1 font-mono text-white/75">{selectedImage.heading == null ? "—" : `${selectedImage.heading.toFixed(1)}°`}</p>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-black/20 p-2.5">
+                      <p className="text-white/30">CONFIANZA</p>
+                      <p className="mt-1 font-mono text-white/75">{selectedImage.confidence == null ? "—" : `${Math.round(selectedImage.confidence * 100)}%`}</p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => { void placeImage(selectedImage.id, false); }}
+                    disabled={Boolean(busy)}
+                    className="mt-3 inline-flex h-9 w-full items-center justify-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-400/[0.06] text-xs text-cyan-100 disabled:opacity-35"
+                  >
+                    {busy === `place:${selectedImage.id}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Crosshair className="h-3.5 w-3.5" />}
+                    Recalcular / ubicar esta cámara
+                  </button>
+                </div>
+              ) : null}
+
               <div className="rounded-[1.5rem] border border-white/10 bg-white/[0.025] p-4">
                 <p className="text-xs uppercase tracking-[0.17em] text-cyan-300">Esquinas</p>
                 <div className="mt-3 grid grid-cols-4 gap-2">
