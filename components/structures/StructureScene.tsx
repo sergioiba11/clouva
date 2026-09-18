@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Canvas, type ThreeEvent, useThree } from "@react-three/fiber";
+import { Canvas, type ThreeEvent, useFrame, useThree } from "@react-three/fiber";
 import { Grid, Html, Line, OrbitControls, PerspectiveCamera } from "@react-three/drei";
-import { Camera as ThreeCamera, Shape, Vector3 } from "three";
+import { Camera as ThreeCamera, Group, PerspectiveCamera as ThreePerspectiveCamera, Shape, Vector3 } from "three";
 import type { StructureCameraNodeRecord, StructureImageRecord } from "@/lib/structures/spatial";
 
 type Blockout = {
@@ -184,8 +184,8 @@ function AutoFrameController({
     const horizontalFov = 2 * Math.atan(Math.tan(verticalFov / 2) * aspect);
     const fitWidthDistance = (bounds.spanX / 2) / Math.tan(horizontalFov / 2);
     const fitHeightDistance = (bounds.spanY / 2) / Math.tan(verticalFov / 2);
-    const overviewDistance = Math.max(16, Math.max(fitWidthDistance, fitHeightDistance) * 1.5);
-    const viewDirection = new Vector3(0.72, 0.58, 0.82).normalize();
+    const overviewDistance = Math.max(16, Math.max(fitWidthDistance, fitHeightDistance) * 1.26);
+    const viewDirection = new Vector3(0.72, 0.92, 0.82).normalize();
     const overviewTarget = new Vector3(bounds.centerX, 1.2, -bounds.centerY);
     const forceOverview = previousOverviewVersion.current !== overviewVersion;
     previousOverviewVersion.current = overviewVersion;
@@ -268,6 +268,70 @@ function directionPoints(
   };
 }
 
+function ScreenSizedCameraNode({
+  position,
+  tone,
+  selected,
+  onClick,
+  onPointerDown,
+  onDoubleClick,
+}: {
+  position: [number, number, number];
+  tone: string;
+  selected: boolean;
+  onClick: (event: ThreeEvent<MouseEvent>) => void;
+  onPointerDown: (event: ThreeEvent<PointerEvent>) => void;
+  onDoubleClick: (event: ThreeEvent<MouseEvent>) => void;
+}) {
+  const groupRef = useRef<Group>(null);
+  const camera = useThree((state) => state.camera);
+  const viewportHeight = useThree((state) => state.size.height);
+
+  useFrame(() => {
+    const group = groupRef.current;
+    if (!group) return;
+
+    const worldPosition = group.getWorldPosition(new Vector3());
+    const distance = Math.max(0.01, camera.position.distanceTo(worldPosition));
+    const perspective = camera as ThreePerspectiveCamera;
+    const fov = perspective.isPerspectiveCamera ? perspective.fov : 47;
+    const worldUnitsPerPixel =
+      (2 * distance * Math.tan((fov * Math.PI / 180) / 2)) /
+      Math.max(1, viewportHeight);
+    const targetRadiusPx = selected ? 8.5 : 6.5;
+    const scale = Math.max(0.2, Math.min(14, worldUnitsPerPixel * targetRadiusPx));
+
+    group.scale.setScalar(scale);
+  });
+
+  return (
+    <group ref={groupRef} position={position}>
+      {selected ? (
+        <mesh scale={1.9}>
+          <sphereGeometry args={[1, 24, 24]} />
+          <meshBasicMaterial color={tone} transparent opacity={0.16} depthWrite={false} />
+        </mesh>
+      ) : null}
+      <mesh
+        scale={selected ? 1.18 : 1}
+        onClick={onClick}
+        onPointerDown={onPointerDown}
+        onDoubleClick={onDoubleClick}
+      >
+        <sphereGeometry args={[1, 22, 22]} />
+        <meshStandardMaterial
+          color={selected ? "#ffffff" : tone}
+          emissive={tone}
+          emissiveIntensity={selected ? 1.5 : 0.62}
+          roughness={0.28}
+          metalness={0.08}
+          depthTest
+        />
+      </mesh>
+    </group>
+  );
+}
+
 function CameraNodes({
   images,
   cameraNodes,
@@ -310,8 +374,8 @@ function CameraNodes({
           const selected = image.id === selectedImageId;
           const heading = node.heading ?? image.heading;
           const tone = nodeTone(image);
-          const nodeRadius = Math.max(0.31, Math.min(0.68, sceneSpan * 0.0046));
-          const rayLength = Math.max(4.5, Math.min(10, sceneSpan * 0.058));
+          const selectedRingRadius = Math.max(0.9, Math.min(6.5, sceneSpan * 0.016));
+          const rayLength = Math.max(6, Math.min(28, sceneSpan * 0.075));
           const rays = heading == null ? null : directionPoints(
             x,
             z,
@@ -323,20 +387,16 @@ function CameraNodes({
           return (
             <group key={node.id}>
               {selected ? (
-                <>
-                  <mesh position={[x, 1.35, z]} scale={2.15}>
-                    <sphereGeometry args={[nodeRadius, 24, 24]} />
-                    <meshBasicMaterial color={tone} transparent opacity={0.14} depthWrite={false} />
-                  </mesh>
-                  <mesh position={[x, 0.035, z]} rotation={[-Math.PI / 2, 0, 0]}>
-                    <ringGeometry args={[0.62, 0.92, 48]} />
-                    <meshBasicMaterial color={tone} transparent opacity={0.9} />
-                  </mesh>
-                </>
+                <mesh position={[x, 0.04, z]} rotation={[-Math.PI / 2, 0, 0]}>
+                  <ringGeometry args={[selectedRingRadius * 0.68, selectedRingRadius, 48]} />
+                  <meshBasicMaterial color={tone} transparent opacity={0.92} depthWrite={false} />
+                </mesh>
               ) : null}
 
-              <mesh
+              <ScreenSizedCameraNode
                 position={[x, 1.35, z]}
+                tone={tone}
+                selected={selected}
                 onClick={(event) => {
                   event.stopPropagation();
                   onSelectImage(image.id);
@@ -347,21 +407,11 @@ function CameraNodes({
                   onSelectImage(image.id);
                   onStartDrag(image.id);
                 }}
-                scale={selected ? 1.58 : 1}
                 onDoubleClick={(event) => {
                   event.stopPropagation();
                   onRequestOverview();
                 }}
-              >
-                <sphereGeometry args={[nodeRadius, 22, 22]} />
-                <meshStandardMaterial
-                  color={selected ? "#ffffff" : tone}
-                  emissive={tone}
-                  emissiveIntensity={selected ? 1.35 : 0.38}
-                  roughness={0.32}
-                  metalness={0.08}
-                />
-              </mesh>
+              />
 
               {rays ? (
                 <>
@@ -383,7 +433,7 @@ function CameraNodes({
               ) : null}
 
               {selected ? (
-                <Html position={[x, 3.05, z]} center distanceFactor={7.5} zIndexRange={[60, 0]}>
+                <Html position={[x, 3.05, z]} center zIndexRange={[60, 0]}>
                   <div className="pointer-events-none w-60 overflow-hidden rounded-2xl border border-white/20 bg-[#07050b]/95 p-2 shadow-2xl shadow-black/80 backdrop-blur-xl">
                     <img
                       src={image.public_url}
@@ -544,7 +594,7 @@ export function StructureScene({
   );
   const bounds = useMemo(() => sceneBounds(footprint, positionedNodes), [footprint, positionedNodes]);
   const selectedNode = cameraNodes.find((node) => node.image_id === selectedImageId) ?? null;
-  const gridSize = Math.max(30, Math.min(280, bounds.span * 2.5));
+  const gridSize = Math.max(36, Math.min(1600, bounds.span * 1.45));
   const cameraDistance = Math.max(18, bounds.span * 0.95);
   const cameraNear = Math.max(bounds.span / 10_000, 0.01);
   const cameraFar = Math.max(bounds.span * 50, 1000);
