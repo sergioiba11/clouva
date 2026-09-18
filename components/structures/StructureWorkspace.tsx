@@ -456,6 +456,12 @@ export function StructureWorkspace({
     [data?.cameraNodes, selectedImageId],
   );
 
+  useEffect(() => {
+    if (initialTab !== "spatial" || !selectedImageId || typeof document === "undefined") return;
+    const element = document.querySelector<HTMLElement>(`[data-spatial-thumb="${selectedImageId}"]`);
+    element?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
+  }, [initialTab, selectedImageId]);
+
   const coverage = useMemo(
     () => computeEvidenceCoverage(data?.images ?? []),
     [data?.images],
@@ -1036,16 +1042,32 @@ export function StructureWorkspace({
                     type="button"
                     key={image.id}
                     onClick={() => { void selectSpatialImage(image); }}
-                    className={`relative h-16 w-24 shrink-0 overflow-hidden rounded-xl border ${
-                      selectedImageId === image.id ? "border-violet-300" : "border-white/10"
+                    data-spatial-thumb={image.id}
+                    className={`relative h-20 w-28 shrink-0 overflow-hidden rounded-xl border transition ${
+                      selectedImageId === image.id
+                        ? "border-white ring-2 ring-violet-400/60 shadow-lg shadow-violet-950/50"
+                        : "border-white/10 opacity-80 hover:opacity-100"
                     }`}
                     title={`${placementLabel(image)} · ${image.cardinal_direction || "sin rumbo"}`}
                   >
                     <img src={image.public_url} alt="" className="h-full w-full object-cover" />
-                    <span className={`absolute bottom-1 right-1 h-2.5 w-2.5 rounded-full border border-black/60 ${
+                    <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent px-2 pb-1.5 pt-5">
+                      <p className="truncate text-left text-[8px] font-semibold text-white/85">
+                        {image.cardinal_direction || "sin rumbo"}{image.heading == null ? "" : ` · ${Math.round(image.heading)}°`}
+                      </p>
+                    </div>
+                    <span className={`absolute right-1.5 top-1.5 h-2.5 w-2.5 rounded-full border border-black/60 ${
                       image.placement_status === "placed"
-                        ? image.spatial_source === "inferred_cloud" ? "bg-amber-300" : "bg-emerald-400"
-                        : image.placement_status === "needs_review" ? "bg-amber-400" : "bg-white/35"
+                        ? image.spatial_source === "inferred_cloud"
+                          ? "bg-amber-300"
+                          : image.spatial_source === "manual" || image.manual_verified
+                            ? "bg-cyan-300"
+                            : "bg-violet-400"
+                        : image.placement_status === "needs_review"
+                          ? "bg-amber-500"
+                          : image.placement_status === "blocked"
+                            ? "bg-red-500"
+                            : "bg-white/30"
                     }`} />
                   </button>
                 ))}
@@ -1063,6 +1085,17 @@ export function StructureWorkspace({
                     <span className={`rounded-full px-2 py-1 text-[8px] uppercase tracking-[0.1em] ${placementTone(selectedImage)}`}>
                       {selectedImage.spatial_source}
                     </span>
+                  </div>
+
+                  <img
+                    src={selectedImage.public_url}
+                    alt={selectedImage.description || selectedImage.original_filename}
+                    className="mt-3 aspect-video w-full rounded-xl border border-white/10 object-cover"
+                  />
+
+                  <div className="mt-3 flex items-center justify-between gap-2 rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-[9px] uppercase tracking-[0.1em]">
+                    <span className="text-white/35">Estado</span>
+                    <span className="font-semibold text-white/75">{selectedImage.placement_status}</span>
                   </div>
 
                   <div className="mt-3 grid grid-cols-2 gap-2 text-[10px]">
