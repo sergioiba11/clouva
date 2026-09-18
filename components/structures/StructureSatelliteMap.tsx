@@ -558,7 +558,9 @@ export function StructureSatelliteMap({
     draftOverlayRef.current = null;
     if (!draftPoints.length) return;
 
-    const draft = new mapsWindow().google!.maps!.Polyline({
+    const maps = mapsWindow().google?.maps;
+    if (!maps) return;
+    const draft = new maps.Polyline({
       map: mapRef.current,
       path: draftPoints,
       strokeColor: editMode === "measure" ? "#22d3ee" : "#ffffff",
