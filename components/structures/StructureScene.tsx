@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, type ThreeEvent, useThree } from "@react-three/fiber";
 import { Grid, Html, Line, OrbitControls, PerspectiveCamera } from "@react-three/drei";
-import { Shape, Vector3 } from "three";
+import { Camera as ThreeCamera, Shape, Vector3 } from "three";
 import type { StructureCameraNodeRecord, StructureImageRecord } from "@/lib/structures/spatial";
 
 type Blockout = {
@@ -109,7 +109,7 @@ function BuildingBlockout({ blockout }: { blockout: Blockout }) {
 }
 
 function tweenCamera(args: {
-  camera: ReturnType<typeof useThree> extends never ? never : any;
+  camera: ThreeCamera;
   controls?: { target?: Vector3; update?: () => void };
   target: Vector3;
   position: Vector3;
