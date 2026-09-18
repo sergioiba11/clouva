@@ -1,4 +1,5 @@
-export type CardinalDirection = "N" | "NE" | "E" | "SE" | "S" | "SO" | "O" | "NO";\nexport type SpatialSource = "unplaced" | "exif" | "filename" | "manual" | "inferred_cloud";
+export type CardinalDirection = "N" | "NE" | "E" | "SE" | "S" | "SO" | "O" | "NO";
+export type SpatialSource = "unplaced" | "exif" | "filename" | "manual" | "inferred_cloud";
 
 export type StructureRecord = {
   id: string;
