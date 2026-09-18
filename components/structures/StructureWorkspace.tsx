@@ -217,6 +217,7 @@ function ImageInspector({
     longitude: image.longitude?.toString() ?? "",
     localX: image.local_x?.toString() ?? "",
     localY: image.local_y?.toString() ?? "",
+    localZ: image.local_z?.toString() ?? "",
     heading: image.heading?.toString() ?? "",
     pitch: image.pitch?.toString() ?? "",
     fov: image.fov?.toString() ?? "",
@@ -236,6 +237,7 @@ function ImageInspector({
       longitude: image.longitude?.toString() ?? "",
       localX: image.local_x?.toString() ?? "",
       localY: image.local_y?.toString() ?? "",
+      localZ: image.local_z?.toString() ?? "",
       heading: image.heading?.toString() ?? "",
       pitch: image.pitch?.toString() ?? "",
       fov: image.fov?.toString() ?? "",
@@ -260,6 +262,7 @@ function ImageInspector({
       longitude: form.longitude,
       localX: form.localX,
       localY: form.localY,
+      localZ: form.localZ,
       heading: form.heading,
       pitch: form.pitch,
       fov: form.fov,
@@ -326,12 +329,20 @@ function ImageInspector({
           <input value={form.localX} onChange={(e) => field("localX", e.target.value)} placeholder="sin dato" className="w-full rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-xs outline-none focus:border-cyan-300/50" />
         </label>
         <label>
-          <span className="mb-1 block text-[10px] uppercase tracking-[0.13em] text-white/35">Local Y · m</span>
+          <span className="mb-1 block text-[10px] uppercase tracking-[0.13em] text-white/35">Local Y · Norte legacy · m</span>
           <input value={form.localY} onChange={(e) => field("localY", e.target.value)} placeholder="sin dato" className="w-full rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-xs outline-none focus:border-cyan-300/50" />
+        </label>
+        <label>
+          <span className="mb-1 block text-[10px] uppercase tracking-[0.13em] text-white/35">Altura local · m</span>
+          <input value={form.localZ} onChange={(e) => field("localZ", e.target.value)} placeholder="sin dato" className="w-full rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-xs outline-none focus:border-cyan-300/50" />
         </label>
         <label>
           <span className="mb-1 block text-[10px] uppercase tracking-[0.13em] text-white/35">Heading</span>
           <input value={form.heading} onChange={(e) => field("heading", e.target.value)} placeholder="sin dato" className="w-full rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-xs outline-none focus:border-violet-400/50" />
+        </label>
+        <label>
+          <span className="mb-1 block text-[10px] uppercase tracking-[0.13em] text-white/35">Pitch</span>
+          <input value={form.pitch} onChange={(e) => field("pitch", e.target.value)} placeholder="sin dato" className="w-full rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-xs outline-none focus:border-violet-400/50" />
         </label>
         <label>
           <span className="mb-1 block text-[10px] uppercase tracking-[0.13em] text-white/35">FOV</span>
