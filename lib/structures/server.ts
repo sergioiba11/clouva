@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { GoogleGenAI } from "@google/genai";
 import sharp from "sharp";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { uploadGeneratedMediaObject } from "@/lib/gcs-media";
+import { uploadGeneratedMediaObject } from "@/lib/gcs-media";\nimport { parseExifMetadata } from "@/lib/structures/exif";
 import {
   buildOrderedFilename,
   compareStructureImages,
@@ -148,6 +148,7 @@ export async function ingestStructureImage(args: {
   if (!metadata.width || !metadata.height) throw new Error(`${args.fileName} no es una imagen válida.`);
 
   const sha256 = createHash("sha256").update(args.bytes).digest("hex");
+  const exif = parseExifMetadata(metadata.exif);
   const { data: duplicate } = await args.admin
     .from("structure_images")
     .select("id")
@@ -158,17 +159,21 @@ export async function ingestStructureImage(args: {
     .maybeSingle();
 
   const hints = parseSpatialHints(args.fileName, args.originalPath);
+  const latitude = exif.latitude ?? hints.latitude;
+  const longitude = exif.longitude ?? hints.longitude;
+  const heading = exif.gpsHeading ?? hints.heading;
+  const cardinal = headingToCardinal(heading) ?? hints.cardinal;
   let originLatitude = args.structure.origin_latitude ?? args.structure.latitude;
   let originLongitude = args.structure.origin_longitude ?? args.structure.longitude;
 
   if (
     originLatitude == null
     && originLongitude == null
-    && hints.latitude != null
-    && hints.longitude != null
+    && latitude != null
+    && longitude != null
   ) {
-    originLatitude = hints.latitude;
-    originLongitude = hints.longitude;
+    originLatitude = latitude;
+    originLongitude = longitude;
     await args.admin
       .from("structures")
       .update({
@@ -183,11 +188,11 @@ export async function ingestStructureImage(args: {
   const local = (
     originLatitude != null
     && originLongitude != null
-    && hints.latitude != null
-    && hints.longitude != null
+    && latitude != null
+    && longitude != null
   ) ? coordinatesToLocalMeters(
     { latitude: originLatitude, longitude: originLongitude },
-    { latitude: hints.latitude, longitude: hints.longitude },
+    { latitude, longitude },
   ) : null;
 
   const uploaded = await uploadGeneratedMediaObject({
@@ -211,12 +216,13 @@ export async function ingestStructureImage(args: {
       byte_size: args.bytes.length,
       sha256,
       source_type: hints.sourceType,
-      latitude: hints.latitude,
-      longitude: hints.longitude,
-      heading: hints.heading,
+      latitude,
+      longitude,
+      altitude: exif.altitude,
+      heading,
       local_x: local?.x ?? null,
       local_y: local?.y ?? null,
-      cardinal_direction: hints.cardinal,
+      cardinal_direction: cardinal,
       sector: hints.sector,
       scene_type: hints.sceneType,
       description: hints.description,
@@ -227,7 +233,16 @@ export async function ingestStructureImage(args: {
           height: metadata.height,
           format: metadata.format ?? null,
           hasEmbeddedExif: Boolean(metadata.exif?.length),
+          exif: {
+            orientation: exif.orientation,
+            dateTimeOriginal: exif.dateTimeOriginal,
+            latitude: exif.latitude,
+            longitude: exif.longitude,
+            altitude: exif.altitude,
+            gpsHeading: exif.gpsHeading,
+          },
           parsedSpatialHints: hints,
+          spatialTruthPriority: exif.latitude != null || exif.longitude != null || exif.gpsHeading != null ? "exif" : "filename",
         },
       },
       duplicate_of: duplicate?.id ?? null,
