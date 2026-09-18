@@ -28,6 +28,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
       jobsResult,
       outputsResult,
       linksResult,
+      spatialFeaturesResult,
     ] = await Promise.all([
       admin.from("structure_images").select("*").eq("structure_id", id).order("created_at", { ascending: true }),
       admin.from("structure_surfaces").select("*").eq("structure_id", id).order("name", { ascending: true }),
@@ -36,6 +37,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
       admin.from("structure_render_jobs").select("*").eq("structure_id", id).order("created_at", { ascending: false }).limit(12),
       admin.from("structure_render_outputs").select("*").eq("structure_id", id).order("created_at", { ascending: false }).limit(40),
       admin.from("structure_image_surface_links").select("*").eq("structure_id", id),
+      admin.from("structure_spatial_features").select("*").eq("structure_id", id).order("updated_at", { ascending: true }),
     ]);
 
     const firstError = [
@@ -46,6 +48,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
       jobsResult.error,
       outputsResult.error,
       linksResult.error,
+      spatialFeaturesResult.error,
     ].find(Boolean);
     if (firstError) throw new Error("No se pudo cargar toda la base espacial.");
 
@@ -58,6 +61,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
       renderJobs: jobsResult.data ?? [],
       renderOutputs: outputsResult.data ?? [],
       imageSurfaceLinks: linksResult.data ?? [],
+      spatialFeatures: spatialFeaturesResult.data ?? [],
     });
   } catch (error) {
     return responseError(error);
