@@ -5,6 +5,7 @@ import {
   Box,
   Camera,
   Check,
+  Crosshair,
   ChevronLeft,
   Cloud,
   Download,
@@ -13,6 +14,7 @@ import {
   Loader2,
   Map as MapIcon,
   MapPin,
+  Move,
   Play,
   RefreshCw,
   Save,
@@ -108,41 +110,87 @@ function downloadBlob(blob: Blob, filename: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1_000);
 }
 
+function placementLabel(image: StructureImageRecord) {
+  if (image.manual_verified || image.spatial_source === "manual") return "verificado manual";
+  if (image.placement_status === "needs_review") return "revisar IA";
+  if (image.placement_status === "blocked") return "sin ubicar";
+  if (image.placement_status === "placed") {
+    return image.spatial_source === "inferred_cloud" ? "ubicado por IA" : "ubicado por metadatos";
+  }
+  return "sin ubicar";
+}
+
+function placementTone(image: StructureImageRecord) {
+  if (image.manual_verified || image.spatial_source === "manual") return "bg-emerald-400/90 text-black";
+  if (image.placement_status === "needs_review") return "bg-amber-300/90 text-black";
+  if (image.placement_status === "placed") return image.spatial_source === "inferred_cloud"
+    ? "bg-amber-400/90 text-black"
+    : "bg-violet-400/90 text-black";
+  return "bg-black/75 text-white/60";
+}
+
 function EvidenceCard({
   image,
   selected,
-  onClick,
+  placing,
+  onSelect,
+  onPlace,
+  onFocus,
 }: {
   image: StructureImageRecord;
   selected: boolean;
-  onClick: () => void;
+  placing: boolean;
+  onSelect: () => void;
+  onPlace: () => void;
+  onFocus: () => void;
 }) {
+  const canFocus = image.local_x != null && image.local_y != null;
+
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`group overflow-hidden rounded-2xl border text-left transition ${
+    <article
+      className={`group overflow-hidden rounded-2xl border transition ${
         selected ? "border-violet-300/70 bg-violet-500/10" : "border-white/10 bg-white/[0.025] hover:border-white/20"
       }`}
     >
-      <div className="relative aspect-[4/3] overflow-hidden bg-black">
-        <img src={image.public_url} alt={image.description || image.original_filename} className="h-full w-full object-cover" />
-        <div className="absolute inset-x-2 bottom-2 flex items-center justify-between gap-2">
-          <span className="rounded-full bg-black/75 px-2 py-1 text-[9px] uppercase tracking-[0.12em] text-white/70 backdrop-blur">
-            {image.cardinal_direction || "sin rumbo"}
-          </span>
-          {image.manual_verified ? (
-            <span className="grid h-6 w-6 place-items-center rounded-full bg-emerald-400 text-black">
-              <Check className="h-3.5 w-3.5" />
+      <button type="button" onClick={onSelect} className="block w-full text-left">
+        <div className="relative aspect-[4/3] overflow-hidden bg-black">
+          <img src={image.public_url} alt={image.description || image.original_filename} className="h-full w-full object-cover" />
+          <div className="absolute inset-x-2 bottom-2 flex items-center justify-between gap-2">
+            <span className="rounded-full bg-black/75 px-2 py-1 text-[9px] uppercase tracking-[0.12em] text-white/70 backdrop-blur">
+              {image.cardinal_direction || "sin rumbo"}
             </span>
-          ) : null}
+            <span className={`rounded-full px-2 py-1 text-[8px] font-semibold uppercase tracking-[0.1em] ${placementTone(image)}`}>
+              {placementLabel(image)}
+            </span>
+          </div>
         </div>
+        <div className="p-3 pb-2">
+          <p className="truncate text-xs font-semibold">{image.ordered_filename || image.original_filename}</p>
+          <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-white/40">{image.description || "Sin descripción"}</p>
+        </div>
+      </button>
+
+      <div className="grid grid-cols-2 gap-1.5 px-2.5 pb-2.5">
+        <button
+          type="button"
+          onClick={onPlace}
+          disabled={placing}
+          className="inline-flex min-h-8 items-center justify-center gap-1 rounded-lg border border-violet-400/20 bg-violet-500/[0.08] px-2 text-[9px] font-medium text-violet-100 disabled:opacity-40"
+        >
+          {placing ? <Loader2 className="h-3 w-3 animate-spin" /> : <Crosshair className="h-3 w-3" />}
+          Ubicar en 3D
+        </button>
+        <button
+          type="button"
+          onClick={onFocus}
+          disabled={!canFocus || placing}
+          className="inline-flex min-h-8 items-center justify-center gap-1 rounded-lg border border-white/10 px-2 text-[9px] font-medium text-white/55 disabled:opacity-30"
+        >
+          <Camera className="h-3 w-3" />
+          Enfocar
+        </button>
       </div>
-      <div className="p-3">
-        <p className="truncate text-xs font-semibold">{image.ordered_filename || image.original_filename}</p>
-        <p className="mt-1 line-clamp-2 text-[11px] leading-4 text-white/40">{image.description || "Sin descripción"}</p>
-      </div>
-    </button>
+    </article>
   );
 }
 
@@ -164,6 +212,8 @@ function ImageInspector({
     description: image.description ?? "",
     latitude: image.latitude?.toString() ?? "",
     longitude: image.longitude?.toString() ?? "",
+    localX: image.local_x?.toString() ?? "",
+    localY: image.local_y?.toString() ?? "",
     heading: image.heading?.toString() ?? "",
     pitch: image.pitch?.toString() ?? "",
     fov: image.fov?.toString() ?? "",
@@ -181,6 +231,8 @@ function ImageInspector({
       description: image.description ?? "",
       latitude: image.latitude?.toString() ?? "",
       longitude: image.longitude?.toString() ?? "",
+      localX: image.local_x?.toString() ?? "",
+      localY: image.local_y?.toString() ?? "",
       heading: image.heading?.toString() ?? "",
       pitch: image.pitch?.toString() ?? "",
       fov: image.fov?.toString() ?? "",
@@ -203,6 +255,8 @@ function ImageInspector({
       description: form.description,
       latitude: form.latitude,
       longitude: form.longitude,
+      localX: form.localX,
+      localY: form.localY,
       heading: form.heading,
       pitch: form.pitch,
       fov: form.fov,
@@ -213,12 +267,19 @@ function ImageInspector({
     });
   }
 
+  const headingNumber = Number(form.heading);
+
   return (
     <div className="rounded-[1.5rem] border border-white/10 bg-[#0b0811] p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate text-xs font-semibold text-white/80">{image.ordered_filename || image.original_filename}</p>
-          <p className="mt-1 text-[10px] uppercase tracking-[0.15em] text-violet-300">{image.analysis_status}</p>
+          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+            <span className="text-[9px] uppercase tracking-[0.15em] text-violet-300">{image.analysis_status}</span>
+            <span className={`rounded-full px-2 py-0.5 text-[8px] uppercase tracking-[0.1em] ${placementTone(image)}`}>
+              {placementLabel(image)}
+            </span>
+          </div>
         </div>
         {onClose ? (
           <button type="button" onClick={onClose} className="rounded-full border border-white/10 p-1.5 text-white/45">
@@ -228,6 +289,17 @@ function ImageInspector({
       </div>
 
       <img src={image.public_url} alt="" className="mt-3 aspect-video w-full rounded-xl object-cover" />
+
+      <div className="mt-3 rounded-xl border border-white/10 bg-black/25 p-3 text-[10px]">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-white/35">Fuente espacial</span>
+          <span className="font-semibold text-white/75">{image.spatial_source}</span>
+        </div>
+        <div className="mt-1 flex items-center justify-between gap-3">
+          <span className="text-white/35">Confianza</span>
+          <span className="font-semibold text-white/75">{image.confidence == null ? "sin dato" : `${Math.round(image.confidence * 100)}%`}</span>
+        </div>
+      </div>
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
         <label>
@@ -247,6 +319,14 @@ function ImageInspector({
           <input value={form.longitude} onChange={(e) => field("longitude", e.target.value)} placeholder="sin dato" className="w-full rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-xs outline-none focus:border-violet-400/50" />
         </label>
         <label>
+          <span className="mb-1 block text-[10px] uppercase tracking-[0.13em] text-white/35">Local X · m</span>
+          <input value={form.localX} onChange={(e) => field("localX", e.target.value)} placeholder="sin dato" className="w-full rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-xs outline-none focus:border-cyan-300/50" />
+        </label>
+        <label>
+          <span className="mb-1 block text-[10px] uppercase tracking-[0.13em] text-white/35">Local Y · m</span>
+          <input value={form.localY} onChange={(e) => field("localY", e.target.value)} placeholder="sin dato" className="w-full rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-xs outline-none focus:border-cyan-300/50" />
+        </label>
+        <label>
           <span className="mb-1 block text-[10px] uppercase tracking-[0.13em] text-white/35">Heading</span>
           <input value={form.heading} onChange={(e) => field("heading", e.target.value)} placeholder="sin dato" className="w-full rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-xs outline-none focus:border-violet-400/50" />
         </label>
@@ -255,6 +335,25 @@ function ImageInspector({
           <input value={form.fov} onChange={(e) => field("fov", e.target.value)} placeholder="sin dato" className="w-full rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-xs outline-none focus:border-violet-400/50" />
         </label>
       </div>
+
+      <label className="mt-3 block">
+        <span className="mb-1 flex items-center justify-between text-[10px] uppercase tracking-[0.13em] text-white/35">
+          <span>Rotar dirección</span>
+          <span>{Number.isFinite(headingNumber) ? `${Math.round(headingNumber)}°` : "sin heading"}</span>
+        </span>
+        <input
+          type="range"
+          min="0"
+          max="359"
+          step="1"
+          value={Number.isFinite(headingNumber) ? headingNumber : 0}
+          onChange={(e) => {
+            field("heading", e.target.value);
+            field("manualVerified", true);
+          }}
+          className="w-full accent-cyan-300"
+        />
+      </label>
 
       <label className="mt-3 block">
         <span className="mb-1 block text-[10px] uppercase tracking-[0.13em] text-white/35">Descripción espacial</span>
@@ -301,6 +400,8 @@ export function StructureWorkspace({
   const [selectedImageId, setSelectedImageId] = useState<string | null>(null);
   const [selectedCorner, setSelectedCorner] = useState<Corner | null>("NE");
   const [analysisProgress, setAnalysisProgress] = useState<string | null>(null);
+  const [placementProgress, setPlacementProgress] = useState<string | null>(null);
+  const [cameraEditMode, setCameraEditMode] = useState(false);
   const stopAnalysisRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [dragActive, setDragActive] = useState(false);
@@ -328,9 +429,14 @@ export function StructureWorkspace({
           ]),
         ].join("\n"),
       });
-      setSelectedImageId((current) => current && payload.images.some((image) => image.id === current)
-        ? current
-        : payload.images[0]?.id ?? null);
+      const focusFromUrl = typeof window !== "undefined"
+        ? new URLSearchParams(window.location.search).get("focus")
+        : null;
+      setSelectedImageId((current) => {
+        if (focusFromUrl && payload.images.some((image) => image.id === focusFromUrl)) return focusFromUrl;
+        if (current && payload.images.some((image) => image.id === current)) return current;
+        return payload.images[0]?.id ?? null;
+      });
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudo cargar la estructura.");
     } finally {
@@ -343,6 +449,11 @@ export function StructureWorkspace({
   const selectedImage = useMemo(
     () => data?.images.find((image) => image.id === selectedImageId) ?? null,
     [data?.images, selectedImageId],
+  );
+
+  const selectedCamera = useMemo(
+    () => data?.cameraNodes.find((node) => node.image_id === selectedImageId) ?? null,
+    [data?.cameraNodes, selectedImageId],
   );
 
   const coverage = useMemo(
@@ -434,6 +545,123 @@ export function StructureWorkspace({
       await load();
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "No se pudo guardar la referencia.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function placeImage(imageId: string, focusAfter = false) {
+    if (busy) return;
+    setBusy(`place:${imageId}`);
+    setMessage(null);
+    try {
+      const response = await authenticatedFetch(
+        `/api/structures/${structureId}/images/${imageId}/place`,
+        { method: "POST", body: JSON.stringify({}) },
+      );
+      const payload = await readApiJson<{
+        image: StructureImageRecord;
+        usedCloud: boolean;
+        needsReview: boolean;
+      }>(response);
+      setSelectedImageId(imageId);
+      setMessage(
+        payload.needsReview
+          ? "CLOUVA ubicó la cámara por inferencia, pero necesita revisión manual."
+          : payload.usedCloud
+            ? "CLOUVA Cloud ubicó la cámara y su dirección."
+            : "Cámara ubicada usando metadatos reales.",
+      );
+      await load();
+      if (focusAfter && typeof window !== "undefined") {
+        window.location.href = `/structures/${structureId}/spatial?focus=${encodeURIComponent(imageId)}`;
+      }
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo ubicar la cámara.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function placeAllImages() {
+    if (busy || !data?.images.length) return;
+    setBusy("place-all");
+    setMessage(null);
+    let processed = 0;
+    let placed = 0;
+    let review = 0;
+    try {
+      for (let batch = 0; batch < 100; batch += 1) {
+        setPlacementProgress(processed ? `Ubicadas/revisadas ${processed} imágenes…` : "Acomodando cámaras en el espacio…");
+        const response = await authenticatedFetch(`/api/structures/${structureId}/place-all`, {
+          method: "POST",
+          body: JSON.stringify({ limit: 4 }),
+        });
+        const payload = await readApiJson<{
+          processed: number;
+          placed: number;
+          review: number;
+          remaining: number;
+        }>(response);
+        processed += payload.processed;
+        placed += payload.placed;
+        review = payload.review;
+        setPlacementProgress(`Procesadas ${processed} · faltan ${payload.remaining} · revisar ${payload.review}`);
+        if (!payload.processed || payload.remaining <= 0) break;
+      }
+      setMessage(`Cámaras acomodadas: ${placed} listas · ${review} para revisar.`);
+      await load();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "La colocación automática se interrumpió.");
+      await load();
+    } finally {
+      setPlacementProgress(null);
+      setBusy(null);
+    }
+  }
+
+  async function focusImageInScene(image: StructureImageRecord) {
+    setSelectedImageId(image.id);
+    if (image.local_x == null || image.local_y == null || image.placement_status === "unplaced" || image.placement_status === "blocked") {
+      await placeImage(image.id, false);
+    }
+    if (typeof window !== "undefined") {
+      window.location.href = `/structures/${structureId}/spatial?focus=${encodeURIComponent(image.id)}`;
+    }
+  }
+
+  async function selectSpatialImage(image: StructureImageRecord) {
+    setSelectedImageId(image.id);
+    if (
+      !busy
+      && (image.local_x == null || image.local_y == null || image.heading == null || image.placement_status === "unplaced")
+    ) {
+      await placeImage(image.id, false);
+    }
+  }
+
+  async function moveImageNode(imageId: string, localX: number, localY: number) {
+    if (busy) return;
+    setBusy("move-camera");
+    setSelectedImageId(imageId);
+    try {
+      const response = await authenticatedFetch(
+        `/api/structures/${structureId}/images/${imageId}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            localX,
+            localY,
+            manualVerified: true,
+          }),
+        },
+      );
+      await readApiJson(response);
+      setMessage("Posición manual guardada. Esta corrección ahora tiene prioridad.");
+      await load();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "No se pudo mover la cámara.");
+      await load();
     } finally {
       setBusy(null);
     }
@@ -609,6 +837,7 @@ export function StructureWorkspace({
           </div>
 
           {analysisProgress ? <p className="mt-4 text-xs text-violet-200">{analysisProgress}</p> : null}
+          {placementProgress ? <p className="mt-4 text-xs text-cyan-200">{placementProgress}</p> : null}
           {message ? (
             <div className="mt-4 rounded-xl border border-white/10 bg-black/25 px-3 py-2 text-xs text-white/70">
               {message}
@@ -725,7 +954,10 @@ export function StructureWorkspace({
                       key={image.id}
                       image={image}
                       selected={image.id === selectedImageId}
-                      onClick={() => setSelectedImageId(image.id)}
+                      placing={busy === `place:${image.id}`}
+                      onSelect={() => setSelectedImageId(image.id)}
+                      onPlace={() => { void placeImage(image.id, false); }}
+                      onFocus={() => { void focusImageInScene(image); }}
                     />
                   ))}
                 </div>
@@ -753,31 +985,125 @@ export function StructureWorkspace({
         {initialTab === "spatial" ? (
           <section className="mt-4 grid gap-4 xl:grid-cols-[1fr_360px]">
             <div>
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-white/10 bg-white/[0.025] p-3">
+                <div>
+                  <p className="text-sm font-semibold">Cámaras reales</p>
+                  <p className="mt-0.5 text-[11px] text-white/40">
+                    Cada punto representa dónde estaba el muñequito/cámara y la línea muestra hacia dónde miraba.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void placeAllImages()}
+                    disabled={Boolean(busy) || !data.images.length}
+                    className="inline-flex h-9 items-center gap-2 rounded-full bg-cyan-300 px-4 text-xs font-semibold text-black disabled:opacity-35"
+                  >
+                    {busy === "place-all" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Crosshair className="h-3.5 w-3.5" />}
+                    Colocar automáticamente todas
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCameraEditMode((current) => !current)}
+                    disabled={busy === "move-camera"}
+                    className={`inline-flex h-9 items-center gap-2 rounded-full border px-4 text-xs font-medium transition ${
+                      cameraEditMode
+                        ? "border-cyan-300/60 bg-cyan-400/10 text-cyan-100"
+                        : "border-white/10 text-white/55"
+                    }`}
+                  >
+                    <Move className="h-3.5 w-3.5" />
+                    {cameraEditMode ? "Ajuste manual ON" : "Ajustar cámaras"}
+                  </button>
+                </div>
+              </div>
+
               <StructureScene
                 images={data.images}
+                cameraNodes={data.cameraNodes}
                 blockout={blockout}
                 selectedImageId={selectedImageId}
                 onSelectImage={setSelectedImageId}
                 selectedCorner={selectedCorner}
                 onSelectCorner={setSelectedCorner}
+                editMode={cameraEditMode}
+                onMoveImage={moveImageNode}
               />
+
               <div className="mt-3 flex gap-2 overflow-x-auto pb-2">
-                {data.images.slice(0, 80).map((image) => (
+                {data.images.slice(0, 120).map((image) => (
                   <button
                     type="button"
                     key={image.id}
-                    onClick={() => setSelectedImageId(image.id)}
+                    onClick={() => { void selectSpatialImage(image); }}
                     className={`relative h-16 w-24 shrink-0 overflow-hidden rounded-xl border ${
                       selectedImageId === image.id ? "border-violet-300" : "border-white/10"
                     }`}
+                    title={`${placementLabel(image)} · ${image.cardinal_direction || "sin rumbo"}`}
                   >
                     <img src={image.public_url} alt="" className="h-full w-full object-cover" />
+                    <span className={`absolute bottom-1 right-1 h-2.5 w-2.5 rounded-full border border-black/60 ${
+                      image.placement_status === "placed"
+                        ? image.spatial_source === "inferred_cloud" ? "bg-amber-300" : "bg-emerald-400"
+                        : image.placement_status === "needs_review" ? "bg-amber-400" : "bg-white/35"
+                    }`} />
                   </button>
                 ))}
               </div>
             </div>
 
             <aside className="space-y-4">
+              {selectedImage ? (
+                <div className="rounded-[1.5rem] border border-cyan-300/15 bg-cyan-400/[0.035] p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.17em] text-cyan-300">Cámara seleccionada</p>
+                      <p className="mt-1 text-sm font-semibold">{selectedImage.cardinal_direction || "sin rumbo"} · {placementLabel(selectedImage)}</p>
+                    </div>
+                    <span className={`rounded-full px-2 py-1 text-[8px] uppercase tracking-[0.1em] ${placementTone(selectedImage)}`}>
+                      {selectedImage.spatial_source}
+                    </span>
+                  </div>
+
+                  <div className="mt-3 grid grid-cols-2 gap-2 text-[10px]">
+                    <div className="rounded-xl border border-white/10 bg-black/20 p-2.5">
+                      <p className="text-white/30">LAT</p>
+                      <p className="mt-1 font-mono text-white/75">{selectedImage.latitude?.toFixed(7) ?? "—"}</p>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-black/20 p-2.5">
+                      <p className="text-white/30">LON</p>
+                      <p className="mt-1 font-mono text-white/75">{selectedImage.longitude?.toFixed(7) ?? "—"}</p>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-black/20 p-2.5">
+                      <p className="text-white/30">LOCAL X</p>
+                      <p className="mt-1 font-mono text-white/75">{selectedCamera?.local_x?.toFixed(2) ?? selectedImage.local_x?.toFixed(2) ?? "—"} m</p>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-black/20 p-2.5">
+                      <p className="text-white/30">LOCAL Y</p>
+                      <p className="mt-1 font-mono text-white/75">{selectedCamera?.local_y?.toFixed(2) ?? selectedImage.local_y?.toFixed(2) ?? "—"} m</p>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-black/20 p-2.5">
+                      <p className="text-white/30">HEADING</p>
+                      <p className="mt-1 font-mono text-white/75">{selectedImage.heading == null ? "—" : `${selectedImage.heading.toFixed(1)}°`}</p>
+                    </div>
+                    <div className="rounded-xl border border-white/10 bg-black/20 p-2.5">
+                      <p className="text-white/30">CONFIANZA</p>
+                      <p className="mt-1 font-mono text-white/75">{selectedImage.confidence == null ? "—" : `${Math.round(selectedImage.confidence * 100)}%`}</p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => { void placeImage(selectedImage.id, false); }}
+                    disabled={Boolean(busy)}
+                    className="mt-3 inline-flex h-9 w-full items-center justify-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-400/[0.06] text-xs text-cyan-100 disabled:opacity-35"
+                  >
+                    {busy === `place:${selectedImage.id}` ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Crosshair className="h-3.5 w-3.5" />}
+                    Recalcular / ubicar esta cámara
+                  </button>
+                </div>
+              ) : null}
+
               <div className="rounded-[1.5rem] border border-white/10 bg-white/[0.025] p-4">
                 <p className="text-xs uppercase tracking-[0.17em] text-cyan-300">Esquinas</p>
                 <div className="mt-3 grid grid-cols-4 gap-2">

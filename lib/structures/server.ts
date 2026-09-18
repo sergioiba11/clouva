@@ -11,6 +11,7 @@ import {
   compareStructureImages,
   coordinatesToLocalMeters,
   headingToCardinal,
+  normalizeHeading,
   parseSpatialHints,
   safeFileSegment,
   slugifyStructure,
@@ -21,6 +22,17 @@ import {
 const MAX_IMAGE_BYTES = 35 * 1024 * 1024;
 const ALLOWED_IMAGE_MIME = new Set(["image/png", "image/jpeg", "image/webp"]);
 const GENERATED_BUCKET = process.env.CLOUVA_GENERATED_MEDIA_BUCKET ?? "clouva-generated-media";
+
+export type StructurePlacementAnalysis = {
+  canPlacePosition: boolean;
+  latitude: number | null;
+  longitude: number | null;
+  heading: number | null;
+  pitch: number | null;
+  fov: number | null;
+  confidence: number;
+  reason: string;
+};
 
 export type StructureVisionAnalysis = {
   sourceType: string | null;
@@ -97,6 +109,32 @@ function sanitizeAnalysis(raw: unknown): StructureVisionAnalysis {
   };
 }
 
+function sanitizePlacement(raw: unknown): StructurePlacementAnalysis {
+  const record = raw && typeof raw === "object" ? raw as Record<string, unknown> : {};
+  const latitude = finiteOrNull(record.latitude);
+  const longitude = finiteOrNull(record.longitude);
+  const rawHeading = finiteOrNull(record.heading);
+  const confidence = clampConfidence(record.confidence);
+  const canPlacePosition = Boolean(record.canPlacePosition)
+    && latitude != null
+    && longitude != null
+    && latitude >= -90
+    && latitude <= 90
+    && longitude >= -180
+    && longitude <= 180;
+
+  return {
+    canPlacePosition,
+    latitude: canPlacePosition ? latitude : null,
+    longitude: canPlacePosition ? longitude : null,
+    heading: rawHeading == null ? null : normalizeHeading(rawHeading),
+    pitch: finiteOrNull(record.pitch),
+    fov: finiteOrNull(record.fov),
+    confidence,
+    reason: stringOrNull(record.reason, 700) ?? "Sin explicación de colocación.",
+  };
+}
+
 export async function getOwnedStructure(admin: SupabaseClient, userId: string, structureId: string) {
   const { data, error } = await admin
     .from("structures")
@@ -157,6 +195,11 @@ export async function ingestStructureImage(args: {
   const longitude = exif.longitude ?? hints.longitude;
   const heading = exif.gpsHeading ?? hints.heading;
   const cardinal = headingToCardinal(heading) ?? hints.cardinal;
+  const spatialSource = exif.latitude != null || exif.longitude != null || exif.gpsHeading != null
+    ? "exif"
+    : hints.latitude != null || hints.longitude != null || hints.heading != null
+      ? "filename"
+      : "unplaced";
   let originLatitude = args.structure.origin_latitude ?? args.structure.latitude;
   let originLongitude = args.structure.origin_longitude ?? args.structure.longitude;
 
@@ -241,6 +284,8 @@ export async function ingestStructureImage(args: {
       },
       duplicate_of: duplicate?.id ?? null,
       analysis_status: "metadata_ready",
+      spatial_source: spatialSource,
+      placement_status: local != null && heading != null ? "placed" : "unplaced",
     })
     .select("*")
     .single();
@@ -394,6 +439,7 @@ export async function syncCameraNode(admin: SupabaseClient, image: StructureImag
     roll: image.roll,
     fov: image.fov,
     confidence: image.confidence,
+    spatial_source: image.spatial_source ?? "unplaced",
     updated_at: new Date().toISOString(),
   };
   const { error } = await admin
@@ -471,6 +517,291 @@ export async function applyStructureAnalysis(
   }
 
   return updated;
+}
+
+
+async function compactPlacementImage(image: StructureImageRecord) {
+  const bytes = await downloadStructureImage(image.public_url);
+  const prepared = await sharp(bytes)
+    .rotate()
+    .resize(1600, 1600, { fit: "inside", withoutEnlargement: true })
+    .jpeg({ quality: 82, mozjpeg: true })
+    .toBuffer();
+  return { mimeType: "image/jpeg", data: prepared.toString("base64") };
+}
+
+export async function inferStructurePlacementWithCloud(args: {
+  admin: SupabaseClient;
+  structure: StructureRecord;
+  image: StructureImageRecord;
+}) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error("GEMINI_API_KEY no está configurada para CLOUVA Cloud.");
+
+  const { data: anchorRows, error: anchorsError } = await args.admin
+    .from("structure_images")
+    .select("*")
+    .eq("structure_id", args.structure.id)
+    .neq("id", args.image.id)
+    .not("latitude", "is", null)
+    .not("longitude", "is", null)
+    .order("manual_verified", { ascending: false })
+    .order("priority", { ascending: false })
+    .limit(12);
+  if (anchorsError) throw new Error("No se pudieron preparar las referencias de ubicación.");
+
+  const anchors = (anchorRows ?? []) as unknown as StructureImageRecord[];
+  const scoredAnchors = anchors
+    .slice()
+    .sort((a, b) => {
+      const sameSectorA = a.sector && args.image.sector && a.sector === args.image.sector ? 20 : 0;
+      const sameSectorB = b.sector && args.image.sector && b.sector === args.image.sector ? 20 : 0;
+      return (sameSectorB + Number(b.manual_verified) * 30 + b.priority + (b.confidence ?? 0) * 5)
+        - (sameSectorA + Number(a.manual_verified) * 30 + a.priority + (a.confidence ?? 0) * 5);
+    })
+    .slice(0, 3);
+
+  const targetMedia = await compactPlacementImage(args.image);
+  const preparedAnchors = await Promise.all(scoredAnchors.map(async (anchor) => {
+    try {
+      return { anchor, media: await compactPlacementImage(anchor) };
+    } catch {
+      return null;
+    }
+  }));
+
+  const prompt = [
+    "CLOUVA STRUCTURES — COLOCACIÓN ESPACIAL DE CÁMARA.",
+    "La primera imagen es la captura objetivo. Las siguientes, si existen, son anchors geolocalizados del MISMO lugar físico.",
+    "La captura puede ser Google Street View/Maps y mostrar minimapa, brújula, nombre de calle, dirección, pin, muñequito o interfaz de navegación.",
+    "Ubicá la CÁMARA / MUÑEQUITO que produjo la captura y determiná hacia dónde mira.",
+    "NO reconstruyas el edificio. NO inventes coordenadas.",
+    "Solo devolvé latitud/longitud si están visibles/legibles o si pueden triangularse razonablemente con los anchors suministrados.",
+    "Si no hay base suficiente para posición absoluta, canPlacePosition=false y latitude/longitude=null.",
+    "El heading puede estimarse por brújula, orientación de Street View, calles o comparación con anchors. Si no alcanza, devolver null.",
+    "Los datos duros existentes del objetivo tienen prioridad.",
+    `Proyecto: ${JSON.stringify({
+      name: args.structure.name,
+      location: args.structure.location_name,
+      originLatitude: args.structure.origin_latitude,
+      originLongitude: args.structure.origin_longitude,
+    })}`,
+    `Objetivo: ${JSON.stringify({
+      filename: args.image.original_filename,
+      originalPath: args.image.original_path,
+      latitude: args.image.latitude,
+      longitude: args.image.longitude,
+      heading: args.image.heading,
+      sector: args.image.sector,
+      description: args.image.description,
+      source: args.image.spatial_source,
+    })}`,
+    `Anchors: ${JSON.stringify(scoredAnchors.map((anchor) => ({
+      id: anchor.id,
+      latitude: anchor.latitude,
+      longitude: anchor.longitude,
+      heading: anchor.heading,
+      sector: anchor.sector,
+      description: anchor.description,
+      verified: anchor.manual_verified,
+      source: anchor.spatial_source,
+    })))}`,
+    "Respondé EXCLUSIVAMENTE JSON:",
+    JSON.stringify({
+      canPlacePosition: false,
+      latitude: null,
+      longitude: null,
+      heading: null,
+      pitch: null,
+      fov: null,
+      confidence: 0,
+      reason: "explicación breve basada en evidencia visible",
+    }),
+  ].join("\n\n");
+
+  const parts: Array<Record<string, unknown>> = [
+    { text: prompt },
+    { text: "IMAGEN OBJETIVO" },
+    { inlineData: targetMedia },
+  ];
+
+  for (let index = 0; index < preparedAnchors.length; index += 1) {
+    const item = preparedAnchors[index];
+    if (!item) continue;
+    parts.push({
+      text: `ANCHOR ${index + 1}: ${JSON.stringify({
+        latitude: item.anchor.latitude,
+        longitude: item.anchor.longitude,
+        heading: item.anchor.heading,
+        sector: item.anchor.sector,
+        description: item.anchor.description,
+      })}`,
+    });
+    parts.push({ inlineData: item.media });
+  }
+
+  const ai = new GoogleGenAI({ apiKey });
+  const model = process.env.CLOUVA_STRUCTURES_VISION_MODEL ?? "gemini-2.5-flash";
+  const response = await ai.models.generateContent({
+    model,
+    contents: [{ role: "user", parts }],
+    config: {
+      responseMimeType: "application/json",
+      temperature: 0.05,
+    },
+  });
+
+  const text = (response.text ?? "").trim().replace(/^\`\`\`(?:json)?\s*/i, "").replace(/\s*\`\`\`$/, "");
+  if (!text) throw new Error("CLOUVA Cloud no devolvió una colocación espacial.");
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error("CLOUVA Cloud devolvió una colocación que no es JSON válido.");
+  }
+  return sanitizePlacement(parsed);
+}
+
+function placementMetadata(
+  current: Record<string, unknown> | null,
+  payload: Record<string, unknown>,
+) {
+  return {
+    ...(current ?? {}),
+    placement: {
+      ...((current?.placement && typeof current.placement === "object")
+        ? current.placement as Record<string, unknown>
+        : {}),
+      ...payload,
+    },
+  };
+}
+
+export async function placeStructureImage(args: {
+  admin: SupabaseClient;
+  userId: string;
+  structure: StructureRecord;
+  image: StructureImageRecord;
+  allowCloud?: boolean;
+}) {
+  const image = args.image;
+
+  if (image.manual_verified || image.spatial_source === "manual") {
+    await syncCameraNode(args.admin, image);
+    return { image, usedCloud: false, needsReview: false };
+  }
+
+  let latitude = image.latitude;
+  let longitude = image.longitude;
+  let heading = image.heading;
+  let pitch = image.pitch;
+  let fov = image.fov;
+  let confidence = image.confidence;
+  let source = image.spatial_source ?? "unplaced";
+  let cloud: StructurePlacementAnalysis | null = null;
+  const missingPosition = latitude == null || longitude == null;
+  const missingDirection = heading == null;
+
+  if ((missingPosition || missingDirection) && args.allowCloud !== false) {
+    cloud = await inferStructurePlacementWithCloud({
+      admin: args.admin,
+      structure: args.structure,
+      image,
+    });
+    if (missingPosition && cloud.canPlacePosition) {
+      latitude = cloud.latitude;
+      longitude = cloud.longitude;
+      source = "inferred_cloud";
+    }
+    if (missingDirection && cloud.heading != null) {
+      heading = cloud.heading;
+      if (source === "unplaced") source = "inferred_cloud";
+    }
+    if (pitch == null && cloud.pitch != null) pitch = cloud.pitch;
+    if (fov == null && cloud.fov != null) fov = cloud.fov;
+    confidence = cloud.confidence;
+  }
+
+  let originLatitude = args.structure.origin_latitude ?? args.structure.latitude;
+  let originLongitude = args.structure.origin_longitude ?? args.structure.longitude;
+
+  if (
+    originLatitude == null
+    && originLongitude == null
+    && latitude != null
+    && longitude != null
+    && source !== "inferred_cloud"
+  ) {
+    originLatitude = latitude;
+    originLongitude = longitude;
+    await args.admin
+      .from("structures")
+      .update({
+        origin_latitude: originLatitude,
+        origin_longitude: originLongitude,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", args.structure.id)
+      .eq("owner_id", args.userId);
+  }
+
+  const local = (
+    originLatitude != null
+    && originLongitude != null
+    && latitude != null
+    && longitude != null
+  ) ? coordinatesToLocalMeters(
+    { latitude: originLatitude, longitude: originLongitude },
+    { latitude, longitude },
+  ) : null;
+
+  const hasPosition = local != null;
+  const needsReview = hasPosition && (
+    heading == null
+    || (source === "inferred_cloud" && (confidence ?? 0) < 0.58)
+  );
+  const placementStatus = hasPosition
+    ? (needsReview ? "needs_review" : "placed")
+    : cloud ? "blocked" : "unplaced";
+  const metadata = placementMetadata(image.metadata, {
+    placedAt: new Date().toISOString(),
+    spatialSource: source,
+    cloudUsed: Boolean(cloud),
+    confidence: confidence ?? null,
+    needsReview,
+    reason: cloud?.reason ?? "Ubicación calculada desde metadatos determinísticos.",
+    positionSource: image.latitude != null && image.longitude != null ? image.spatial_source : (cloud?.canPlacePosition ? "inferred_cloud" : null),
+    headingSource: image.heading != null ? image.spatial_source : (cloud?.heading != null ? "inferred_cloud" : null),
+  });
+
+  const { data, error } = await args.admin
+    .from("structure_images")
+    .update({
+      latitude,
+      longitude,
+      heading,
+      pitch,
+      fov,
+      local_x: local?.x ?? null,
+      local_y: local?.y ?? null,
+      local_z: image.altitude ?? image.local_z,
+      cardinal_direction: headingToCardinal(heading),
+      confidence,
+      spatial_source: source,
+      placement_status: placementStatus,
+      metadata,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", image.id)
+    .eq("structure_id", args.structure.id)
+    .select("*")
+    .single();
+  if (error || !data) throw new Error("No se pudo guardar la colocación de cámara.");
+
+  const updated = data as unknown as StructureImageRecord;
+  await syncCameraNode(args.admin, updated);
+  return { image: updated, usedCloud: Boolean(cloud), needsReview };
 }
 
 export function normalizeRuleList(value: unknown) {

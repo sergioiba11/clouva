@@ -1,10 +1,10 @@
 "use client";
 
-import { useMemo } from "react";
-import { Canvas } from "@react-three/fiber";
-import { Grid, Line, OrbitControls, PerspectiveCamera } from "@react-three/drei";
-import { Shape } from "three";
-import type { StructureImageRecord } from "@/lib/structures/spatial";
+import { useEffect, useMemo, useState } from "react";
+import { Canvas, type ThreeEvent, useThree } from "@react-three/fiber";
+import { Grid, Html, Line, OrbitControls, PerspectiveCamera } from "@react-three/drei";
+import { Shape, Vector3 } from "three";
+import type { StructureCameraNodeRecord, StructureImageRecord } from "@/lib/structures/spatial";
 
 type Blockout = {
   height?: number;
@@ -70,54 +70,155 @@ function BuildingBlockout({ blockout }: { blockout: Blockout }) {
   );
 }
 
+function FocusController({
+  node,
+}: {
+  node: StructureCameraNodeRecord | null;
+}) {
+  const camera = useThree((state) => state.camera);
+  const controls = useThree((state) => (
+    state as unknown as { controls?: { target?: Vector3; update?: () => void } }
+  ).controls);
+
+  useEffect(() => {
+    if (!node || node.local_x == null || node.local_y == null) return;
+    const target = new Vector3(node.local_x, 1.25, -node.local_y);
+    const currentOffset = camera.position.clone().sub(target);
+    const offset = currentOffset.length() > 0.1
+      ? currentOffset.normalize().multiplyScalar(10)
+      : new Vector3(7, 5.5, 7);
+    camera.position.copy(target.clone().add(offset));
+    camera.lookAt(target);
+    if (controls?.target) controls.target.copy(target);
+    controls?.update?.();
+  }, [camera, controls, node?.id, node?.local_x, node?.local_y]);
+
+  return null;
+}
+
 function CameraNodes({
   images,
+  cameraNodes,
   selectedImageId,
   onSelectImage,
+  editMode,
+  draftPosition,
+  draggingImageId,
+  onStartDrag,
 }: {
   images: StructureImageRecord[];
+  cameraNodes: StructureCameraNodeRecord[];
   selectedImageId: string | null;
   onSelectImage: (id: string) => void;
+  editMode: boolean;
+  draftPosition: { imageId: string; localX: number; localY: number } | null;
+  draggingImageId: string | null;
+  onStartDrag: (imageId: string) => void;
 }) {
-  const nodes = images.filter((image) => image.local_x != null && image.local_y != null);
+  const imageById = useMemo(() => new Map(images.map((image) => [image.id, image])), [images]);
+
   return (
     <>
-      {nodes.map((image) => {
-        const selected = image.id === selectedImageId;
-        const x = image.local_x ?? 0;
-        const z = -(image.local_y ?? 0);
-        const radians = ((image.heading ?? 0) * Math.PI) / 180;
-        const target: [number, number, number] = [
-          x + Math.sin(radians) * 3,
-          1.35,
-          z - Math.cos(radians) * 3,
-        ];
-        return (
-          <group key={image.id}>
-            <mesh
-              position={[x, 1.35, z]}
-              onClick={(event) => {
-                event.stopPropagation();
-                onSelectImage(image.id);
-              }}
-              scale={selected ? 1.45 : 1}
-            >
-              <sphereGeometry args={[0.25, 18, 18]} />
-              <meshStandardMaterial color={selected ? "#ffffff" : "#a78bfa"} />
-            </mesh>
-            {image.heading != null ? (
-              <Line
-                points={[[x, 1.35, z], target]}
-                color={selected ? "#ffffff" : "#8b5cf6"}
-                lineWidth={selected ? 2 : 1}
-                transparent
-                opacity={selected ? 0.95 : 0.5}
-              />
-            ) : null}
-          </group>
-        );
-      })}
+      {cameraNodes
+        .filter((node) => node.local_x != null && node.local_y != null)
+        .map((node) => {
+          const image = imageById.get(node.image_id);
+          if (!image) return null;
+          const isDraft = draftPosition?.imageId === image.id;
+          const x = isDraft ? draftPosition.localX : (node.local_x ?? 0);
+          const localY = isDraft ? draftPosition.localY : (node.local_y ?? 0);
+          const z = -localY;
+          const selected = image.id === selectedImageId;
+          const radians = ((node.heading ?? image.heading ?? 0) * Math.PI) / 180;
+          const target: [number, number, number] = [
+            x + Math.sin(radians) * 4,
+            1.35,
+            z - Math.cos(radians) * 4,
+          ];
+
+          return (
+            <group key={node.id}>
+              <mesh
+                position={[x, 1.35, z]}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onSelectImage(image.id);
+                }}
+                onPointerDown={(event) => {
+                  if (!editMode) return;
+                  event.stopPropagation();
+                  onSelectImage(image.id);
+                  onStartDrag(image.id);
+                }}
+                scale={selected ? 1.55 : 1}
+              >
+                <sphereGeometry args={[0.28, 18, 18]} />
+                <meshStandardMaterial
+                  color={selected ? "#ffffff" : image.spatial_source === "inferred_cloud" ? "#f59e0b" : "#a78bfa"}
+                />
+              </mesh>
+
+              {(node.heading ?? image.heading) != null ? (
+                <Line
+                  points={[[x, 1.35, z], target]}
+                  color={selected ? "#ffffff" : image.spatial_source === "inferred_cloud" ? "#f59e0b" : "#8b5cf6"}
+                  lineWidth={selected ? 2.5 : 1.2}
+                  transparent
+                  opacity={selected ? 0.95 : 0.58}
+                />
+              ) : null}
+
+              {selected ? (
+                <Html position={[x, 2.15, z]} center distanceFactor={9} zIndexRange={[20, 0]}>
+                  <div className="pointer-events-none w-32 overflow-hidden rounded-xl border border-white/20 bg-black/90 p-1.5 shadow-2xl shadow-black/70 backdrop-blur">
+                    <img src={image.public_url} alt="" className="aspect-video w-full rounded-lg object-cover" />
+                    <p className="mt-1 truncate px-1 text-[9px] font-semibold text-white">
+                      {image.cardinal_direction || "sin rumbo"} · {image.spatial_source}
+                    </p>
+                  </div>
+                </Html>
+              ) : null}
+
+              {draggingImageId === image.id ? (
+                <mesh position={[x, 0.04, z]} rotation={[-Math.PI / 2, 0, 0]}>
+                  <ringGeometry args={[0.5, 0.7, 32]} />
+                  <meshBasicMaterial color="#22d3ee" transparent opacity={0.8} />
+                </mesh>
+              ) : null}
+            </group>
+          );
+        })}
     </>
+  );
+}
+
+function DragPlane({
+  active,
+  onMove,
+  onCommit,
+}: {
+  active: boolean;
+  onMove: (localX: number, localY: number) => void;
+  onCommit: () => void;
+}) {
+  if (!active) return null;
+  return (
+    <mesh
+      position={[0, 0.01, 0]}
+      rotation={[-Math.PI / 2, 0, 0]}
+      onPointerMove={(event: ThreeEvent<PointerEvent>) => {
+        event.stopPropagation();
+        onMove(event.point.x, -event.point.z);
+      }}
+      onPointerUp={(event: ThreeEvent<PointerEvent>) => {
+        event.stopPropagation();
+        onMove(event.point.x, -event.point.z);
+        onCommit();
+      }}
+    >
+      <planeGeometry args={[500, 500]} />
+      <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+    </mesh>
   );
 }
 
@@ -161,30 +262,57 @@ function CornerNodes({
 
 export function StructureScene({
   images,
+  cameraNodes,
   blockout,
   selectedImageId,
   onSelectImage,
   selectedCorner,
   onSelectCorner,
+  editMode = false,
+  onMoveImage,
 }: {
   images: StructureImageRecord[];
+  cameraNodes: StructureCameraNodeRecord[];
   blockout: Blockout;
   selectedImageId: string | null;
   onSelectImage: (id: string) => void;
   selectedCorner: Corner | null;
   onSelectCorner: (corner: Corner) => void;
+  editMode?: boolean;
+  onMoveImage?: (imageId: string, localX: number, localY: number) => Promise<void>;
 }) {
-  const geolocated = images.filter((image) => image.local_x != null && image.local_y != null).length;
+  const [draggingImageId, setDraggingImageId] = useState<string | null>(null);
+  const [draftPosition, setDraftPosition] = useState<{ imageId: string; localX: number; localY: number } | null>(null);
   const footprint = Array.isArray(blockout.footprint) ? blockout.footprint : [];
   const bounds = boundsOf(footprint);
+  const positionedNodes = cameraNodes.filter((node) => node.local_x != null && node.local_y != null);
+  const selectedNode = cameraNodes.find((node) => node.image_id === selectedImageId) ?? null;
   const span = Math.max(
     16,
     bounds.maxX - bounds.minX,
     bounds.maxY - bounds.minY,
-    ...images
-      .filter((image) => image.local_x != null && image.local_y != null)
-      .map((image) => Math.hypot(image.local_x ?? 0, image.local_y ?? 0) * 1.3),
+    ...positionedNodes.map((node) => Math.hypot(node.local_x ?? 0, node.local_y ?? 0) * 1.3),
   );
+
+  function startDrag(imageId: string) {
+    const node = cameraNodes.find((candidate) => candidate.image_id === imageId);
+    if (!node || node.local_x == null || node.local_y == null) return;
+    setDraggingImageId(imageId);
+    setDraftPosition({ imageId, localX: node.local_x, localY: node.local_y });
+  }
+
+  async function commitDrag() {
+    if (!draggingImageId || !draftPosition || !onMoveImage) {
+      setDraggingImageId(null);
+      setDraftPosition(null);
+      return;
+    }
+    const imageId = draggingImageId;
+    const { localX, localY } = draftPosition;
+    setDraggingImageId(null);
+    setDraftPosition(null);
+    await onMoveImage(imageId, localX, localY);
+  }
 
   return (
     <div className="relative h-[430px] w-full overflow-hidden rounded-[1.6rem] border border-white/10 bg-[#07050b]">
@@ -205,19 +333,47 @@ export function StructureScene({
           infiniteGrid
         />
         <BuildingBlockout blockout={blockout} />
-        <CameraNodes images={images} selectedImageId={selectedImageId} onSelectImage={onSelectImage} />
+        <CameraNodes
+          images={images}
+          cameraNodes={cameraNodes}
+          selectedImageId={selectedImageId}
+          onSelectImage={onSelectImage}
+          editMode={editMode}
+          draftPosition={draftPosition}
+          draggingImageId={draggingImageId}
+          onStartDrag={startDrag}
+        />
+        <DragPlane
+          active={Boolean(editMode && draggingImageId)}
+          onMove={(localX, localY) => {
+            if (!draggingImageId) return;
+            setDraftPosition({ imageId: draggingImageId, localX, localY });
+          }}
+          onCommit={() => { void commitDrag(); }}
+        />
         <CornerNodes blockout={blockout} selected={selectedCorner} onSelect={onSelectCorner} />
-        <OrbitControls makeDefault enableDamping dampingFactor={0.08} />
+        <FocusController node={draggingImageId ? null : selectedNode} />
+        <OrbitControls
+          makeDefault
+          enableDamping
+          dampingFactor={0.08}
+          enabled={!draggingImageId}
+        />
       </Canvas>
 
       <div className="pointer-events-none absolute left-3 top-3 rounded-full border border-white/10 bg-black/65 px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] text-white/60 backdrop-blur">
         {footprint.length >= 3
           ? (Number(blockout.height) > 0 ? "Blockout del plano" : "Huella cargada · altura pendiente")
-          : "Volumen de referencia · sin medidas"}
+          : "Cámaras reales · plano opcional"}
       </div>
       <div className="pointer-events-none absolute bottom-3 left-3 rounded-full border border-white/10 bg-black/65 px-3 py-1.5 text-[10px] text-white/55 backdrop-blur">
-        {geolocated} cámaras con posición espacial real
+        {positionedNodes.length} cámaras ubicadas
       </div>
+      {editMode ? (
+        <div className="pointer-events-none absolute right-3 top-3 rounded-full border border-cyan-300/20 bg-cyan-400/10 px-3 py-1.5 text-[10px] uppercase tracking-[0.14em] text-cyan-100 backdrop-blur">
+          Ajuste manual · arrastrá un nodo
+        </div>
+      ) : null}
     </div>
   );
 }

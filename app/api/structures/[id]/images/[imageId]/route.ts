@@ -8,6 +8,7 @@ import {
 import {
   coordinatesToLocalMeters,
   headingToCardinal,
+  localMetersToCoordinates,
   type StructureImageRecord,
 } from "@/lib/structures/spatial";
 
@@ -55,7 +56,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       }
     }
 
-    for (const [input, column] of [
+    const numericFields = [
       ["latitude", "latitude"],
       ["longitude", "longitude"],
       ["altitude", "altitude"],
@@ -63,10 +64,23 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       ["pitch", "pitch"],
       ["roll", "roll"],
       ["fov", "fov"],
-    ] as const) {
+      ["localX", "local_x"],
+      ["localY", "local_y"],
+      ["localZ", "local_z"],
+    ] as const;
+    let manualSpatialChange = false;
+
+    for (const [input, column] of numericFields) {
       if (!Object.prototype.hasOwnProperty.call(body, input)) continue;
       const value = nullableNumber(body[input]);
-      if (value !== undefined) update[column] = value;
+      if (value === undefined) continue;
+      update[column] = value;
+      const currentValue = Number((current as Record<string, unknown>)[column]);
+      const nextValue = value == null ? null : Number(value);
+      const changed = nextValue == null
+        ? (current as Record<string, unknown>)[column] != null
+        : !Number.isFinite(currentValue) || Math.abs(currentValue - nextValue) > 1e-8;
+      if (changed) manualSpatialChange = true;
     }
 
     if (Array.isArray(body.visibleSurfaces)) {
@@ -87,34 +101,72 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       const priority = Math.max(-100, Math.min(100, Math.round(Number(body.priority) || 0)));
       update.priority = priority;
     }
-    if (Object.prototype.hasOwnProperty.call(body, "manualVerified")) {
-      update.manual_verified = Boolean(body.manualVerified);
-      update.analysis_status = body.manualVerified ? "verified" : "analyzed";
-    }
+    const requestedVerified = Object.prototype.hasOwnProperty.call(body, "manualVerified")
+      ? Boolean(body.manualVerified)
+      : current.manual_verified;
 
-    const nextLatitude = Object.prototype.hasOwnProperty.call(update, "latitude")
-      ? update.latitude as number | null
-      : current.latitude;
-    const nextLongitude = Object.prototype.hasOwnProperty.call(update, "longitude")
-      ? update.longitude as number | null
-      : current.longitude;
     const nextHeading = Object.prototype.hasOwnProperty.call(update, "heading")
       ? update.heading as number | null
       : current.heading;
+    const localWasEdited = Object.prototype.hasOwnProperty.call(update, "local_x")
+      || Object.prototype.hasOwnProperty.call(update, "local_y");
 
     if (
-      nextLatitude != null
-      && nextLongitude != null
+      localWasEdited
       && structure.origin_latitude != null
       && structure.origin_longitude != null
     ) {
-      const local = coordinatesToLocalMeters(
-        { latitude: structure.origin_latitude, longitude: structure.origin_longitude },
-        { latitude: nextLatitude, longitude: nextLongitude },
-      );
-      update.local_x = local.x;
-      update.local_y = local.y;
+      const nextLocalX = Object.prototype.hasOwnProperty.call(update, "local_x")
+        ? update.local_x as number | null
+        : current.local_x;
+      const nextLocalY = Object.prototype.hasOwnProperty.call(update, "local_y")
+        ? update.local_y as number | null
+        : current.local_y;
+      if (nextLocalX != null && nextLocalY != null) {
+        const geo = localMetersToCoordinates(
+          { latitude: structure.origin_latitude, longitude: structure.origin_longitude },
+          { x: nextLocalX, y: nextLocalY },
+        );
+        update.latitude = geo.latitude;
+        update.longitude = geo.longitude;
+      }
+    } else {
+      const nextLatitude = Object.prototype.hasOwnProperty.call(update, "latitude")
+        ? update.latitude as number | null
+        : current.latitude;
+      const nextLongitude = Object.prototype.hasOwnProperty.call(update, "longitude")
+        ? update.longitude as number | null
+        : current.longitude;
+      if (
+        nextLatitude != null
+        && nextLongitude != null
+        && structure.origin_latitude != null
+        && structure.origin_longitude != null
+      ) {
+        const local = coordinatesToLocalMeters(
+          { latitude: structure.origin_latitude, longitude: structure.origin_longitude },
+          { latitude: nextLatitude, longitude: nextLongitude },
+        );
+        update.local_x = local.x;
+        update.local_y = local.y;
+      }
     }
+
+    if (manualSpatialChange || requestedVerified) {
+      update.manual_verified = true;
+      update.spatial_source = "manual";
+      update.placement_status = (update.local_x ?? current.local_x) != null
+        && (update.local_y ?? current.local_y) != null
+        && nextHeading != null
+        ? "placed"
+        : "needs_review";
+      update.analysis_status = "verified";
+      update.confidence = 1;
+    } else if (Object.prototype.hasOwnProperty.call(body, "manualVerified")) {
+      update.manual_verified = false;
+      update.analysis_status = current.analysis_status === "verified" ? "analyzed" : current.analysis_status;
+    }
+
     update.cardinal_direction = headingToCardinal(nextHeading);
 
     const { data, error } = await admin

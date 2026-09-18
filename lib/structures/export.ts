@@ -32,7 +32,7 @@ export function buildManifestCsv(images: StructureImageRecord[]) {
     "id", "ordered_filename", "original_filename", "original_path", "latitude", "longitude",
     "altitude", "heading", "cardinal_direction", "pitch", "fov", "local_x", "local_y", "local_z",
     "source_type", "scene_type", "sector", "description", "visible_surfaces", "tags",
-    "confidence", "priority", "manual_verified", "duplicate_of", "analysis_status", "storage_path",
+    "confidence", "priority", "manual_verified", "spatial_source", "placement_status", "duplicate_of", "analysis_status", "storage_path",
   ] as const;
   return [
     columns.join(","),
@@ -136,6 +136,8 @@ export function buildGeoJson(cameras: StructureCameraNodeRecord[], images: Struc
             sector: image?.sector ?? null,
             description: image?.description ?? null,
             confidence: camera.confidence,
+            spatialSource: image?.spatial_source ?? camera.spatial_source ?? null,
+            placementStatus: image?.placement_status ?? null,
           },
         };
       }),
