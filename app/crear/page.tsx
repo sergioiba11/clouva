@@ -42,6 +42,12 @@ const creativeTools = [
     icon: Boxes,
   },
   {
+    title: "Structures",
+    description: "Reconstruí lugares reales desde fotos, cámaras y plano; exportá BASE 3D y generá vistas coherentes con CLOUVA Cloud.",
+    href: "/structures",
+    icon: Building2,
+  },
+  {
     title: "Avatar",
     description: "Abrí tu identidad 3D y sus herramientas existentes.",
     href: "/mi-flow/avatar",
