@@ -34,7 +34,8 @@ function boundsOf(footprint: Array<{ x: number; y: number }>) {
 function BuildingBlockout({ blockout }: { blockout: Blockout }) {
   const footprint = Array.isArray(blockout.footprint) ? blockout.footprint : [];
   const hasFootprint = footprint.length >= 3;
-  const hasKnownHeight = Number.isFinite(Number(blockout.height)) && Number(blockout.height) > 0;\n  const height = hasKnownHeight ? Math.max(0.5, Math.min(30, Number(blockout.height))) : 0.15;
+  const hasKnownHeight = Number.isFinite(Number(blockout.height)) && Number(blockout.height) > 0;
+  const height = hasKnownHeight ? Math.max(0.5, Math.min(30, Number(blockout.height))) : 0.15;
 
   const shape = useMemo(() => {
     if (!hasFootprint) return null;
@@ -210,7 +211,9 @@ export function StructureScene({
       </Canvas>
 
       <div className="pointer-events-none absolute left-3 top-3 rounded-full border border-white/10 bg-black/65 px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] text-white/60 backdrop-blur">
-        {footprint.length >= 3\n          ? (Number(blockout.height) > 0 ? "Blockout del plano" : "Huella cargada · altura pendiente")\n          : "Volumen de referencia · sin medidas"}
+        {footprint.length >= 3
+          ? (Number(blockout.height) > 0 ? "Blockout del plano" : "Huella cargada · altura pendiente")
+          : "Volumen de referencia · sin medidas"}
       </div>
       <div className="pointer-events-none absolute bottom-3 left-3 rounded-full border border-white/10 bg-black/65 px-3 py-1.5 text-[10px] text-white/55 backdrop-blur">
         {geolocated} cámaras con posición espacial real
