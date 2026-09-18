@@ -3,6 +3,7 @@ import Link from "next/link";
 import {
   Bot,
   Boxes,
+  Building2,
   CircleUserRound,
   ImagePlay,
   Palette,
