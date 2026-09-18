@@ -1,4 +1,4 @@
-export type CardinalDirection = "N" | "NE" | "E" | "SE" | "S" | "SO" | "O" | "NO";
+export type CardinalDirection = "N" | "NE" | "E" | "SE" | "S" | "SO" | "O" | "NO";\nexport type SpatialSource = "unplaced" | "exif" | "filename" | "manual" | "inferred_cloud";
 
 export type StructureRecord = {
   id: string;
@@ -217,6 +217,31 @@ export function coordinatesToLocalMeters(
   const x = (lon1 - lon0) * Math.cos((lat0 + lat1) / 2) * EARTH_RADIUS_METERS;
   const y = (lat1 - lat0) * EARTH_RADIUS_METERS;
   return { x, y };
+}
+
+export function localMetersToCoordinates(
+  origin: { latitude: number; longitude: number },
+  local: { x: number; y: number },
+) {
+  const lat0 = origin.latitude * Math.PI / 180;
+  const latitude = origin.latitude + (local.y / EARTH_RADIUS_METERS) * (180 / Math.PI);
+  const lat1 = latitude * Math.PI / 180;
+  const cosine = Math.cos((lat0 + lat1) / 2);
+  const safeCosine = Math.abs(cosine) < 1e-8 ? 1e-8 : cosine;
+  const longitude = origin.longitude + (local.x / (EARTH_RADIUS_METERS * safeCosine)) * (180 / Math.PI);
+  return { latitude, longitude };
+}
+
+export function placementState(image: Pick<
+  StructureImageRecord,
+  "local_x" | "local_y" | "spatial_source" | "manual_verified" | "confidence"
+>) {
+  if (image.manual_verified || image.spatial_source === "manual") return "verified_manual" as const;
+  if (image.local_x == null || image.local_y == null || image.spatial_source === "unplaced") return "unplaced" as const;
+  if (image.spatial_source === "inferred_cloud") {
+    return (image.confidence ?? 0) < 0.58 ? "needs_review" as const : "placed_inferred" as const;
+  }
+  return "placed_metadata" as const;
 }
 
 export function compareStructureImages(
