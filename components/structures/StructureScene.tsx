@@ -23,7 +23,24 @@ type SceneBounds = {
   spanX: number;
   spanY: number;
   span: number;
+  pointCount: number;
+  fallback: boolean;
 };
+
+const MAX_LOCAL_COORDINATE_METERS = 100_000;
+
+function finiteCoordinate(value: unknown) {
+  if (value == null || value === "") return null;
+  const number = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(number) || Math.abs(number) > MAX_LOCAL_COORDINATE_METERS) return null;
+  return number;
+}
+
+function nodeLocalPosition(node: StructureCameraNodeRecord) {
+  const x = finiteCoordinate(node.local_x);
+  const y = finiteCoordinate(node.local_y);
+  return x == null || y == null ? null : { x, y };
+}
 
 function sceneBounds(
   footprint: Array<{ x: number; y: number }>,
@@ -31,13 +48,15 @@ function sceneBounds(
 ): SceneBounds {
   const points: Array<{ x: number; y: number }> = [];
 
+  // local_x/local_y are the canonical local-meter coordinate system used by Structures.
   for (const point of footprint) {
-    if (Number.isFinite(point.x) && Number.isFinite(point.y)) points.push(point);
+    const x = finiteCoordinate(point.x);
+    const y = finiteCoordinate(point.y);
+    if (x != null && y != null) points.push({ x, y });
   }
   for (const node of nodes) {
-    if (node.local_x != null && node.local_y != null) {
-      points.push({ x: node.local_x, y: node.local_y });
-    }
+    const point = nodeLocalPosition(node);
+    if (point) points.push(point);
   }
 
   if (!points.length) {
@@ -51,6 +70,8 @@ function sceneBounds(
       spanX: 16,
       spanY: 16,
       span: 16,
+      pointCount: 0,
+      fallback: true,
     };
   }
 
@@ -58,8 +79,10 @@ function sceneBounds(
   const maxX = Math.max(...points.map((point) => point.x));
   const minY = Math.min(...points.map((point) => point.y));
   const maxY = Math.max(...points.map((point) => point.y));
-  const spanX = Math.max(8, maxX - minX);
-  const spanY = Math.max(8, maxY - minY);
+  const rawSpanX = maxX - minX;
+  const rawSpanY = maxY - minY;
+  const spanX = Math.max(8, rawSpanX);
+  const spanY = Math.max(8, rawSpanY);
 
   return {
     minX,
@@ -71,6 +94,8 @@ function sceneBounds(
     spanX,
     spanY,
     span: Math.max(spanX, spanY),
+    pointCount: points.length,
+    fallback: false,
   };
 }
 
@@ -138,22 +163,40 @@ function AutoFrameController({
   bounds,
   selectedNode,
   selectionVersion,
+  overviewVersion,
 }: {
   bounds: SceneBounds;
   selectedNode: StructureCameraNodeRecord | null;
   selectionVersion: string;
+  overviewVersion: number;
 }) {
   const camera = useThree((state) => state.camera);
+  const viewportSize = useThree((state) => state.size);
   const controls = useThree((state) => (
     state as unknown as { controls?: { target?: Vector3; update?: () => void } }
   ).controls);
   const framedSignature = useRef("");
+  const previousOverviewVersion = useRef(overviewVersion);
 
   useEffect(() => {
-    if (selectedNode && selectedNode.local_x != null && selectedNode.local_y != null) {
-      const target = new Vector3(selectedNode.local_x, 1.25, -selectedNode.local_y);
-      const distance = Math.max(8, Math.min(15, bounds.span * 0.12));
-      const position = target.clone().add(new Vector3(distance * 0.72, distance * 0.55, distance * 0.82));
+    const verticalFov = 47 * Math.PI / 180;
+    const aspect = Math.max(0.45, viewportSize.width / Math.max(1, viewportSize.height));
+    const horizontalFov = 2 * Math.atan(Math.tan(verticalFov / 2) * aspect);
+    const fitWidthDistance = (bounds.spanX / 2) / Math.tan(horizontalFov / 2);
+    const fitHeightDistance = (bounds.spanY / 2) / Math.tan(verticalFov / 2);
+    const overviewDistance = Math.max(16, Math.max(fitWidthDistance, fitHeightDistance) * 1.5);
+    const viewDirection = new Vector3(0.72, 0.58, 0.82).normalize();
+    const overviewTarget = new Vector3(bounds.centerX, 1.2, -bounds.centerY);
+    const forceOverview = previousOverviewVersion.current !== overviewVersion;
+    previousOverviewVersion.current = overviewVersion;
+
+    const selectedPoint = selectedNode ? nodeLocalPosition(selectedNode) : null;
+    if (!forceOverview && selectedPoint) {
+      const nodeTarget = new Vector3(selectedPoint.x, 1.25, -selectedPoint.y);
+      // Move toward the selected evidence without throwing the rest of the scene away.
+      const target = overviewTarget.clone().lerp(nodeTarget, 0.62);
+      const distance = Math.max(12, overviewDistance * 0.72);
+      const position = target.clone().add(viewDirection.clone().multiplyScalar(distance));
       return tweenCamera({ camera, controls, target, position, duration: 460 });
     }
 
@@ -163,14 +206,15 @@ function AutoFrameController({
       bounds.minY.toFixed(2),
       bounds.maxY.toFixed(2),
       selectionVersion,
+      overviewVersion,
+      viewportSize.width,
+      viewportSize.height,
     ].join(":");
     if (framedSignature.current === signature) return;
     framedSignature.current = signature;
 
-    const target = new Vector3(bounds.centerX, 1.2, -bounds.centerY);
-    const distance = Math.max(16, bounds.span * 0.92);
-    const position = target.clone().add(new Vector3(distance * 0.72, distance * 0.58, distance * 0.82));
-    return tweenCamera({ camera, controls, target, position, duration: 520 });
+    const position = overviewTarget.clone().add(viewDirection.multiplyScalar(overviewDistance));
+    return tweenCamera({ camera, controls, target: overviewTarget, position, duration: 520 });
   }, [
     bounds.centerX,
     bounds.centerY,
@@ -178,13 +222,17 @@ function AutoFrameController({
     bounds.maxY,
     bounds.minX,
     bounds.minY,
-    bounds.span,
+    bounds.spanX,
+    bounds.spanY,
     camera,
     controls,
+    overviewVersion,
     selectedNode?.id,
     selectedNode?.local_x,
     selectedNode?.local_y,
     selectionVersion,
+    viewportSize.height,
+    viewportSize.width,
   ]);
 
   return null;
@@ -229,6 +277,8 @@ function CameraNodes({
   draftPosition,
   draggingImageId,
   onStartDrag,
+  sceneSpan,
+  onRequestOverview,
 }: {
   images: StructureImageRecord[];
   cameraNodes: StructureCameraNodeRecord[];
@@ -238,32 +288,44 @@ function CameraNodes({
   draftPosition: { imageId: string; localX: number; localY: number } | null;
   draggingImageId: string | null;
   onStartDrag: (imageId: string) => void;
+  sceneSpan: number;
+  onRequestOverview: () => void;
 }) {
   const imageById = useMemo(() => new Map(images.map((image) => [image.id, image])), [images]);
 
   return (
     <>
       {cameraNodes
-        .filter((node) => node.local_x != null && node.local_y != null)
+        .filter((node) => nodeLocalPosition(node) != null)
         .map((node) => {
           const image = imageById.get(node.image_id);
           if (!image) return null;
 
+          const point = nodeLocalPosition(node);
+          if (!point) return null;
           const isDraft = draftPosition?.imageId === image.id;
-          const x = isDraft ? draftPosition.localX : (node.local_x ?? 0);
-          const localY = isDraft ? draftPosition.localY : (node.local_y ?? 0);
+          const x = isDraft ? draftPosition.localX : point.x;
+          const localY = isDraft ? draftPosition.localY : point.y;
           const z = -localY;
           const selected = image.id === selectedImageId;
           const heading = node.heading ?? image.heading;
           const tone = nodeTone(image);
-          const rays = heading == null ? null : directionPoints(x, z, heading, node.fov ?? image.fov, selected ? 6.5 : 5);
+          const nodeRadius = Math.max(0.31, Math.min(0.68, sceneSpan * 0.0046));
+          const rayLength = Math.max(4.5, Math.min(10, sceneSpan * 0.058));
+          const rays = heading == null ? null : directionPoints(
+            x,
+            z,
+            heading,
+            node.fov ?? image.fov,
+            selected ? rayLength * 1.25 : rayLength,
+          );
 
           return (
             <group key={node.id}>
               {selected ? (
                 <>
                   <mesh position={[x, 1.35, z]} scale={2.15}>
-                    <sphereGeometry args={[0.34, 24, 24]} />
+                    <sphereGeometry args={[nodeRadius, 24, 24]} />
                     <meshBasicMaterial color={tone} transparent opacity={0.14} depthWrite={false} />
                   </mesh>
                   <mesh position={[x, 0.035, z]} rotation={[-Math.PI / 2, 0, 0]}>
@@ -286,8 +348,12 @@ function CameraNodes({
                   onStartDrag(image.id);
                 }}
                 scale={selected ? 1.58 : 1}
+                onDoubleClick={(event) => {
+                  event.stopPropagation();
+                  onRequestOverview();
+                }}
               >
-                <sphereGeometry args={[0.31, 22, 22]} />
+                <sphereGeometry args={[nodeRadius, 22, 22]} />
                 <meshStandardMaterial
                   color={selected ? "#ffffff" : tone}
                   emissive={tone}
@@ -469,13 +535,45 @@ export function StructureScene({
 }) {
   const [draggingImageId, setDraggingImageId] = useState<string | null>(null);
   const [draftPosition, setDraftPosition] = useState<{ imageId: string; localX: number; localY: number } | null>(null);
+  const [overviewVersion, setOverviewVersion] = useState(0);
 
   const footprint = Array.isArray(blockout.footprint) ? blockout.footprint : [];
-  const positionedNodes = cameraNodes.filter((node) => node.local_x != null && node.local_y != null);
+  const positionedNodes = useMemo(
+    () => cameraNodes.filter((node) => nodeLocalPosition(node) != null),
+    [cameraNodes],
+  );
   const bounds = useMemo(() => sceneBounds(footprint, positionedNodes), [footprint, positionedNodes]);
   const selectedNode = cameraNodes.find((node) => node.image_id === selectedImageId) ?? null;
-  const gridSize = Math.max(34, Math.min(260, bounds.span * 1.35));
-  const cameraDistance = Math.max(18, bounds.span * 0.9);
+  const gridSize = Math.max(30, Math.min(280, bounds.span * 2.5));
+  const cameraDistance = Math.max(18, bounds.span * 0.95);
+  const cameraNear = Math.max(bounds.span / 10_000, 0.01);
+  const cameraFar = Math.max(bounds.span * 50, 1000);
+
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production") return;
+    const invalidCameraCount = cameraNodes.length - positionedNodes.length;
+    console.table({
+      cameraCount: cameraNodes.length,
+      validCameraCount: positionedNodes.length,
+      invalidCameraCount,
+      minX: bounds.minX,
+      maxX: bounds.maxX,
+      minY: bounds.minY,
+      maxY: bounds.maxY,
+      centerX: bounds.centerX,
+      centerY: bounds.centerY,
+      maxDimension: bounds.span,
+    });
+    if (invalidCameraCount > 0) {
+      console.warn("INVALID_CAMERA_COORDINATE", { invalidCameraCount });
+    }
+    if (bounds.fallback || !Number.isFinite(bounds.span) || bounds.span <= 0) {
+      console.warn("INVALID_SPATIAL_BOUNDS", bounds);
+    }
+    if (bounds.span > 5000) {
+      console.warn("SPATIAL_SCALE_OUTLIER", { spanMeters: bounds.span });
+    }
+  }, [bounds, cameraNodes.length, positionedNodes.length]);
 
   function startDrag(imageId: string) {
     const node = cameraNodes.find((candidate) => candidate.image_id === imageId);
@@ -508,6 +606,8 @@ export function StructureScene({
             -bounds.centerY + cameraDistance * 0.82,
           ]}
           fov={47}
+          near={cameraNear}
+          far={cameraFar}
         />
         <ambientLight intensity={1.45} />
         <directionalLight position={[12, 18, 10]} intensity={2.2} />
@@ -516,13 +616,13 @@ export function StructureScene({
           <Grid
             args={[gridSize, gridSize]}
             cellSize={1}
-            cellThickness={0.22}
-            cellColor="#241b35"
+            cellThickness={0.14}
+            cellColor="#1d1729"
             sectionSize={5}
-            sectionThickness={0.52}
-            sectionColor="#49365f"
-            fadeDistance={gridSize * 0.62}
-            fadeStrength={1.7}
+            sectionThickness={0.34}
+            sectionColor="#362946"
+            fadeDistance={gridSize * 0.42}
+            fadeStrength={2.2}
             infiniteGrid={false}
           />
         </group>
@@ -537,7 +637,20 @@ export function StructureScene({
           draftPosition={draftPosition}
           draggingImageId={draggingImageId}
           onStartDrag={startDrag}
+          sceneSpan={bounds.span}
+          onRequestOverview={() => setOverviewVersion((value) => value + 1)}
         />
+        <mesh
+          position={[bounds.centerX, 0.005, -bounds.centerY]}
+          rotation={[-Math.PI / 2, 0, 0]}
+          onDoubleClick={(event) => {
+            event.stopPropagation();
+            setOverviewVersion((value) => value + 1);
+          }}
+        >
+          <planeGeometry args={[gridSize, gridSize]} />
+          <meshBasicMaterial transparent opacity={0} depthWrite={false} />
+        </mesh>
         <DragPlane
           active={Boolean(editMode && draggingImageId)}
           onMove={(localX, localY) => {
@@ -552,6 +665,7 @@ export function StructureScene({
           bounds={bounds}
           selectedNode={draggingImageId ? null : selectedNode}
           selectionVersion={selectedImageId ?? "none"}
+          overviewVersion={overviewVersion}
         />
         <OrbitControls
           makeDefault
@@ -582,11 +696,20 @@ export function StructureScene({
         <span className="h-2 w-2 rounded-full bg-cyan-300" /> manual
       </div>
 
-      {editMode ? (
-        <div className="pointer-events-none absolute right-3 top-3 rounded-full border border-cyan-300/20 bg-cyan-400/10 px-3 py-1.5 text-[10px] uppercase tracking-[0.14em] text-cyan-100 backdrop-blur">
-          Ajuste manual · arrastrá un nodo
-        </div>
-      ) : null}
+      <div className="absolute right-3 top-3 flex flex-col items-end gap-2">
+        <button
+          type="button"
+          onClick={() => setOverviewVersion((value) => value + 1)}
+          className="pointer-events-auto rounded-full border border-white/15 bg-black/75 px-3 py-1.5 text-[10px] font-medium text-white/75 backdrop-blur transition hover:border-white/30 hover:text-white"
+        >
+          Encuadrar todo
+        </button>
+        {editMode ? (
+          <div className="pointer-events-none rounded-full border border-cyan-300/20 bg-cyan-400/10 px-3 py-1.5 text-[10px] uppercase tracking-[0.14em] text-cyan-100 backdrop-blur">
+            Ajuste manual · arrastrá un nodo
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
