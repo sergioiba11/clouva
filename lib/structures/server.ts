@@ -712,7 +712,7 @@ export async function placeStructureImage(args: {
     if (missingPosition && cloud.canPlacePosition) {
       latitude = cloud.latitude;
       longitude = cloud.longitude;
-      if (source === "unplaced") source = "inferred_cloud";
+      source = "inferred_cloud";
     }
     if (missingDirection && cloud.heading != null) {
       heading = cloud.heading;
@@ -757,8 +757,11 @@ export async function placeStructureImage(args: {
   ) : null;
 
   const hasPosition = local != null;
-  const needsReview = source === "inferred_cloud" && hasPosition && (confidence ?? 0) < 0.58;
-  const placementStatus = hasPosition && heading != null
+  const needsReview = hasPosition && (
+    heading == null
+    || (source === "inferred_cloud" && (confidence ?? 0) < 0.58)
+  );
+  const placementStatus = hasPosition
     ? (needsReview ? "needs_review" : "placed")
     : cloud ? "blocked" : "unplaced";
   const metadata = placementMetadata(image.metadata, {
