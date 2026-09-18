@@ -4,7 +4,8 @@ import { createHash } from "node:crypto";
 import { GoogleGenAI } from "@google/genai";
 import sharp from "sharp";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { uploadGeneratedMediaObject } from "@/lib/gcs-media";\nimport { parseExifMetadata } from "@/lib/structures/exif";
+import { uploadGeneratedMediaObject } from "@/lib/gcs-media";
+import { parseExifMetadata } from "@/lib/structures/exif";
 import {
   buildOrderedFilename,
   compareStructureImages,
