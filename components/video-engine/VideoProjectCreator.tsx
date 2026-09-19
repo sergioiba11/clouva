@@ -39,6 +39,20 @@ function durationLabel(seconds: number) {
   return minutes ? `${minutes}:${String(rest).padStart(2, "0")}` : `${rest}s`;
 }
 
+function audioMimeType(file: File) {
+  const declared = file.type.trim().toLowerCase();
+  if (declared) return declared;
+  const extension = file.name.toLowerCase().split(".").pop();
+  const byExtension: Record<string, string> = {
+    mp3: "audio/mpeg",
+    m4a: "audio/mp4",
+    wav: "audio/wav",
+    flac: "audio/flac",
+    aac: "audio/aac",
+  };
+  return byExtension[extension || ""] || "application/octet-stream";
+}
+
 function statusLabel(status: string) {
   const labels: Record<string, string> = {
     draft: "Listo para generar",
@@ -168,6 +182,7 @@ export function VideoProjectCreator() {
 
   const uploadAudioMaster = async (projectId: string, file: File) => {
     setAudioUploadPercent(0);
+    const contentType = audioMimeType(file);
     const prepareResponse = await authenticatedFetch(
       `/api/video/projects/${encodeURIComponent(projectId)}/audio`,
       {
@@ -175,7 +190,7 @@ export function VideoProjectCreator() {
         body: JSON.stringify({
           filename: file.name,
           size: file.size,
-          contentType: file.type,
+          contentType,
         }),
       },
     );
@@ -189,6 +204,7 @@ export function VideoProjectCreator() {
       uploadUrl: prepared.uploadUrl,
       file,
       chunkBytes: prepared.chunkBytes,
+      contentType,
       onProgress: (progress) => setAudioUploadPercent(Math.round(progress.percent)),
     });
 
@@ -199,7 +215,7 @@ export function VideoProjectCreator() {
         body: JSON.stringify({
           filename: file.name,
           size: file.size,
-          contentType: file.type,
+          contentType,
           storagePath: prepared.storagePath,
         }),
       },
