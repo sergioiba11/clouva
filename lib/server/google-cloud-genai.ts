@@ -73,7 +73,7 @@ function normalizeProviderError(error: unknown) {
   return new GoogleCloudGenAIError(message, status, providerCode);
 }
 
-async function resolveProjectId() {
+export async function resolveGoogleCloudProjectId() {
   const configured = process.env.GOOGLE_CLOUD_PROJECT
     ?? process.env.GCLOUD_PROJECT
     ?? process.env.GCP_PROJECT
@@ -99,7 +99,7 @@ async function resolveProjectId() {
 async function getVertexClient(): Promise<VertexClient> {
   if (!vertexClientPromise) {
     vertexClientPromise = (async () => {
-      const project = await resolveProjectId();
+      const project = await resolveGoogleCloudProjectId();
       const location = (
         process.env.GOOGLE_CLOUD_LOCATION
         ?? process.env.VERTEX_AI_LOCATION
