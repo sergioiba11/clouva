@@ -78,3 +78,5 @@ jobs:
 # live check after provision success
 
 # current-state check after Paper 26.1.2
+
+# diagnose SKLauncher/AuthMe failure
