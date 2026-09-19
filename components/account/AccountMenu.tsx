@@ -116,7 +116,8 @@ export function AccountMenu({ variant = "nav", triggerClassName = "", preferUser
             <MenuLink href={CLOUVA_NAVIGATION.MI_FLOW.href} icon={<UserRound size={17} />} label="MI FLOW" detail="Billetera, ganancias, FLOWS y Diamantes" onSelect={closeMenu} tone="accent" />
             <MenuLink href={CLOUVA_NAVIGATION.MI_SPOT.href} icon={<Boxes size={17} />} label="MI SPOT" detail="Lo que manejás dentro de CLOUVA" onSelect={closeMenu} />
             <MenuLink href={publicProfileHref} icon={<CircleUserRound size={17} />} label="MI PLAYER / PERFIL PÚBLICO" detail="Tu identidad dentro de La Matrix" onSelect={closeMenu} />
-            <MenuLink href="/mi-qr" icon={<QrCode size={17} />} label="MI QR" detail="Mostrar, compartir y descargar tu QR CLOUVA" onSelect={closeMenu} />\n            <MenuLink href="/minecraft" icon={<Gamepad2 size={17} />} label="MINECRAFT FAMILIAR" detail="Mundo 24/7 para jugar juntos" onSelect={closeMenu} />
+            <MenuLink href="/mi-qr" icon={<QrCode size={17} />} label="MI QR" detail="Mostrar, compartir y descargar tu QR CLOUVA" onSelect={closeMenu} />
+            <MenuLink href="/minecraft" icon={<Gamepad2 size={17} />} label="MINECRAFT FAMILIAR" detail="Mundo 24/7 para jugar juntos" onSelect={closeMenu} />
             <MenuLink href="/perfil/configuracion" icon={<Settings size={17} />} label="CONFIGURACIÓN" detail="Privacidad y preferencias" onSelect={closeMenu} />
           </div>
 
