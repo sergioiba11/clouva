@@ -102,6 +102,8 @@ const CANDIDATES: Record<IgluAssetKey, string[]> = {
     "entra al iglu",
     "entrada iglu records",
     "iglu exterior home",
+    "home hero",
+    "homehero",
   ],
   publicPlayersCard: [
     "iglu players card",
@@ -109,6 +111,9 @@ const CANDIDATES: Record<IgluAssetKey, string[]> = {
     "iglu home studio console",
     "players iglu home",
     "artistas card iglu",
+    "players card",
+    "player visual",
+    "playervisual",
   ],
   publicReservationsCard: [
     "iglu reservas card",
@@ -116,6 +121,8 @@ const CANDIDATES: Record<IgluAssetKey, string[]> = {
     "booking card iglu",
     "agenda card iglu",
     "reservas iglu home",
+    "reservas card",
+    "reservas",
   ],
   publicMerchCard: [
     "iglu merch card",
@@ -123,6 +130,9 @@ const CANDIDATES: Record<IgluAssetKey, string[]> = {
     "iglu merch home",
     "hoodie gorra remera iglu",
     "merchandise iglu records",
+    "merch card",
+    "merch",
+    "abrigo",
   ],
   recordingsScene: [
     "iglu grabaciones hero",
@@ -223,13 +233,17 @@ function publicGcsUrl(objectPath: string) {
   return `https://storage.googleapis.com/${BUCKET_NAME}/${objectPath.split("/").map(encodeURIComponent).join("/")}`;
 }
 
-function metadataText(metadata: unknown) {
-  if (!metadata || typeof metadata !== "object") return "";
-  try {
-    return JSON.stringify(metadata);
-  } catch {
-    return "";
-  }
+function metadataRecord(metadata: unknown) {
+  if (!metadata || typeof metadata !== "object") return {} as Record<string, string>;
+  return Object.fromEntries(
+    Object.entries(metadata as Record<string, unknown>).map(([key, value]) => [key, String(value ?? "")]),
+  );
+}
+
+function objectTimestamp(metadata: Record<string, unknown>) {
+  const raw = metadata.updated ?? metadata.timeCreated ?? metadata.timeStorageClassUpdated;
+  const parsed = typeof raw === "string" ? Date.parse(raw) : 0;
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function isReferenceOnlyAsset(normalized: string) {
@@ -245,25 +259,53 @@ async function resolveAssets(): Promise<IgluAssetMap> {
     const normalizedFiles = files
       .filter((file) => file.name && !file.name.endsWith("/"))
       .map((file) => {
-        const basename = file.name.split("/").at(-1) ?? file.name;
-        const customMetadata = metadataText(file.metadata.metadata);
+        const basenameRaw = file.name.split("/").at(-1) ?? file.name;
+        const custom = metadataRecord(file.metadata.metadata);
+        const originalArchivePath = custom.originalArchivePath ?? "";
+        const originalBasenameRaw = originalArchivePath.split("/").at(-1) ?? originalArchivePath;
+        const importedFromPack = custom.importedFromAssetPack === "true";
         return {
           file,
-          basename: normalizeAssetName(basename),
-          searchable: normalizeAssetName(`${file.name} ${customMetadata}`),
+          basename: normalizeAssetName(basenameRaw),
+          originalBasename: normalizeAssetName(originalBasenameRaw),
+          searchable: normalizeAssetName(
+            `${file.name} ${originalArchivePath} ${custom.sourcePack ?? ""} ${JSON.stringify(custom)}`,
+          ),
+          importJobId: importedFromPack ? (custom.importJobId ?? "") : "",
+          uploadedAt: objectTimestamp(file.metadata as unknown as Record<string, unknown>),
         };
-      });
+      })
+      .sort((a, b) => b.uploadedAt - a.uploadedAt);
+
+    // A ZIP import stamps every extracted object with one importJobId.
+    // Prefer the newest imported batch so IGLÚ always consumes the assets the admin just uploaded,
+    // instead of an older object with the same basename elsewhere in admin-assets.
+    const newestImported = normalizedFiles.find((entry) => entry.importJobId);
+    const newestImportJobId = newestImported?.importJobId ?? "";
 
     const resolved: IgluAssetMap = {};
 
     for (const [key, candidates] of Object.entries(CANDIDATES) as Array<[IgluAssetKey, string[]]>) {
       const normalizedCandidates = candidates.map(normalizeAssetName).filter(Boolean);
       const allowed = normalizedFiles.filter(({ searchable }) => !(SCENE_KEYS.has(key) && isReferenceOnlyAsset(searchable)));
+      const currentBatch = newestImportJobId
+        ? allowed.filter((entry) => entry.importJobId === newestImportJobId)
+        : [];
 
-      const exact = allowed.find(({ basename }) => normalizedCandidates.includes(basename));
-      const fuzzy = exact ?? allowed.find(({ searchable }) => normalizedCandidates.some((candidate) => candidate.length >= 7 && searchable.includes(candidate)));
+      const pools = currentBatch.length ? [currentBatch, allowed] : [allowed];
+      let match: (typeof allowed)[number] | undefined;
 
-      if (fuzzy) resolved[key] = publicGcsUrl(fuzzy.file.name);
+      for (const pool of pools) {
+        match = pool.find(({ basename, originalBasename }) =>
+          normalizedCandidates.includes(basename) || normalizedCandidates.includes(originalBasename),
+        );
+        match ??= pool.find(({ searchable }) =>
+          normalizedCandidates.some((candidate) => candidate.length >= 5 && searchable.includes(candidate)),
+        );
+        if (match) break;
+      }
+
+      if (match) resolved[key] = publicGcsUrl(match.file.name);
     }
 
     return resolved;
