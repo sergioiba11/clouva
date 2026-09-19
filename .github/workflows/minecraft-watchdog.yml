@@ -1,0 +1,94 @@
+name: Minecraft Self-Healing Watchdog
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: clouva-minecraft-watchdog
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: gen-lang-client-0737053175
+  MC_ZONE: southamerica-east1-b
+  MC_INSTANCE: clouva-minecraft-family
+  MC_IP: 35.198.44.243
+
+jobs:
+  watchdog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Probe public Minecraft port
+        id: probe
+        shell: bash
+        run: |
+          if timeout 4 bash -c '</dev/tcp/${{ env.MC_IP }}/25565' >/dev/null 2>&1; then
+            echo "healthy=true" >> "$GITHUB_OUTPUT"
+            echo "Minecraft is healthy."
+          else
+            echo "healthy=false" >> "$GITHUB_OUTPUT"
+            echo "Minecraft is not accepting connections."
+          fi
+
+      - uses: google-github-actions/auth@v2
+        if: steps.probe.outputs.healthy != 'true'
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA_EMAIL }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+        if: steps.probe.outputs.healthy != 'true'
+
+      - name: Recover VM or Minecraft container
+        if: steps.probe.outputs.healthy != 'true'
+        shell: bash
+        run: |
+          set +e
+          status="$(gcloud compute instances describe "$MC_INSTANCE" --project "$PROJECT_ID" --zone "$MC_ZONE" --format='value(status)' 2>/dev/null)"
+          echo "VM status: $status"
+
+          if [ "$status" != "RUNNING" ]; then
+            gcloud compute instances start "$MC_INSTANCE" --project "$PROJECT_ID" --zone "$MC_ZONE" --quiet || exit 1
+          else
+            gcloud compute ssh "$MC_INSTANCE" \
+              --project "$PROJECT_ID" \
+              --zone "$MC_ZONE" \
+              --quiet \
+              --ssh-flag="-o ConnectTimeout=8" \
+              --ssh-flag="-o StrictHostKeyChecking=no" \
+              --ssh-flag="-o UserKnownHostsFile=/dev/null" \
+              --command='
+                sudo systemctl restart docker || true
+                if sudo docker inspect clouva-minecraft >/dev/null 2>&1; then
+                  sudo docker restart clouva-minecraft || true
+                fi
+              ' || true
+          fi
+
+          for attempt in $(seq 1 24); do
+            if timeout 4 bash -c "</dev/tcp/$MC_IP/25565" >/dev/null 2>&1; then
+              echo "Minecraft recovered without VM reset."
+              exit 0
+            fi
+            sleep 5
+          done
+
+          echo "Container recovery was insufficient; resetting VM."
+          gcloud compute instances reset "$MC_INSTANCE" --project "$PROJECT_ID" --zone "$MC_ZONE" --quiet || exit 1
+
+          for attempt in $(seq 1 36); do
+            if timeout 4 bash -c "</dev/tcp/$MC_IP/25565" >/dev/null 2>&1; then
+              echo "Minecraft recovered after VM reset."
+              exit 0
+            fi
+            sleep 5
+          done
+
+          echo "::error::Minecraft is still unavailable after self-healing."
+          exit 1
