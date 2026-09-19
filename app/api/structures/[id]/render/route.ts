@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import sharp from "sharp";
-import { generateImage, type GeminiImageModel } from "@/lib/gemini-image";
 import { uploadGeneratedMediaObject } from "@/lib/gcs-media";
+import { generateGoogleCloudImage, GoogleCloudGenAIError } from "@/lib/server/google-cloud-genai";
 import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
 import {
   compactStructureIdentityPack,
@@ -30,15 +30,11 @@ const VIEW_LABELS: Record<RenderView, string> = {
   environment: "03_ENVIRONMENT",
   aerial_oblique: "04_AERIAL_OBLIQUE",
 };
-const IMAGE_MODELS: GeminiImageModel[] = [
-  "gemini-3.1-flash-lite-image",
-  "gemini-3.1-flash-image",
-  "gemini-3-pro-image",
-];
-
 function responseError(error: unknown) {
   const message = error instanceof Error ? error.message : "CLOUVA Cloud no pudo completar el render.";
-  const status = isAuthError(error) ? 401 : /no encontrada/i.test(message) ? 404 : 400;
+  const status = error instanceof GoogleCloudGenAIError
+    ? error.status
+    : isAuthError(error) ? 401 : /no encontrada/i.test(message) ? 404 : 400;
   return NextResponse.json({ error: message }, { status });
 }
 
@@ -73,9 +69,6 @@ export async function POST(request: NextRequest, context: RouteContext) {
     const body = await request.json().catch(() => ({})) as { views?: unknown };
     const views = parseViews(body.views);
     if (!views.length) throw new Error("Elegí al menos una vista.");
-
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) throw new Error("CLOUVA Cloud no tiene configurada la clave de generación visual.");
 
     const [
       imagesResult,
@@ -134,7 +127,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
           identityPack,
           evidenceCount: images.length,
           surfaceCount: surfaces.length,
-          generatedBy: "clouva-cloud",
+          generatedBy: "google-cloud-vertex-ai",
         },
         started_at: new Date().toISOString(),
       })
@@ -165,10 +158,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
         .map((entry) => [entry.image.id, entry]),
     );
 
-    const configuredModel = process.env.CLOUVA_STRUCTURES_IMAGE_MODEL as GeminiImageModel | undefined;
-    const model = configuredModel && IMAGE_MODELS.includes(configuredModel)
-      ? configuredModel
-      : "gemini-3-pro-image";
+    const model = process.env.GOOGLE_CLOUD_STRUCTURES_IMAGE_MODEL
+      ?? process.env.CLOUVA_STRUCTURES_IMAGE_MODEL
+      ?? "gemini-2.5-flash-image";
 
     const outcomes = await Promise.allSettled(requested.map(async (requestedView) => {
       const references = requestedView.referenceIds
@@ -190,8 +182,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         })),
       });
 
-      const generated = await generateImage({
-        apiKey,
+      const generated = await generateGoogleCloudImage({
         prompt,
         model,
         aspectRatio: "16:9",
@@ -217,7 +208,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
           storage_path: stored.objectPath,
           public_url: stored.url,
           mime_type: generated.mimeType,
-          provider_operation_id: generated.providerOperationId,
+          provider_operation_id: generated.responseId,
         })
         .select("*")
         .single();
@@ -237,10 +228,6 @@ export async function POST(request: NextRequest, context: RouteContext) {
       ? "completed"
       : outputs.length > 0 ? "partial" : "failed";
 
-    const billingDepleted = errors.some((message) =>
-      /prepayment credits are depleted|insufficient credits|billing.*credit|credit.*depleted/i.test(message),
-    );
-
     await admin.from("structure_render_jobs").update({
       status,
       error: errors.length ? errors.join("\n").slice(0, 3000) : null,
@@ -253,17 +240,18 @@ export async function POST(request: NextRequest, context: RouteContext) {
     }).eq("id", id).eq("owner_id", user.id);
 
     if (!outputs.length) {
-      const error = billingDepleted
-        ? "CLOUVA Cloud no puede generar las vistas porque los créditos prepagos de Gemini están agotados. Cargá saldo en Google AI Studio y reintentá."
-        : errors[0] || "CLOUVA Cloud no pudo generar ninguna vista.";
+      const firstError = errors[0] || "CLOUVA Cloud no pudo generar ninguna vista.";
+      const quotaLimited = /RESOURCE_EXHAUSTED|quota|rate.?limit/i.test(firstError);
+      const permissionDenied = /PERMISSION_DENIED|forbidden|permission/i.test(firstError);
       return NextResponse.json({
-        error,
-        code: billingDepleted ? "credits_depleted" : "render_failed",
+        error: firstError,
+        code: quotaLimited ? "vertex_quota_limited" : permissionDenied ? "vertex_permission_denied" : "render_failed",
+        provider: "google_vertex_ai",
         job: { ...job, status },
         outputs,
         errors,
         model,
-      }, { status: billingDepleted ? 402 : 502 });
+      }, { status: quotaLimited ? 429 : permissionDenied ? 403 : 502 });
     }
 
     return NextResponse.json({
@@ -271,6 +259,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       outputs,
       errors,
       model,
+      provider: "google_vertex_ai",
     });
   } catch (error) {
     if (jobId) {
