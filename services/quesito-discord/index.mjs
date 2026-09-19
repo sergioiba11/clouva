@@ -54,6 +54,8 @@ const discord = new Client({
 
 const guildStates = new Map();
 const histories = new Map();
+let discordLoginError = null;
+let discordLoginAttempts = 0;
 
 function log(event, fields = {}) {
   console.log(JSON.stringify({ event, at: new Date().toISOString(), ...fields }));
@@ -429,6 +431,7 @@ async function registerCommands() {
 }
 
 discord.once("ready", async () => {
+  discordLoginError = null;
   log("QUESITO_READY", {
     user: discord.user.tag,
     guilds: discord.guilds.cache.size,
@@ -588,6 +591,8 @@ http
         guilds: discord.guilds.cache.size,
         voiceConnections: guildStates.size,
         wakeWord: WAKE_WORD,
+        discordError: discordLoginError,
+        discordLoginAttempts,
       }),
     );
   })
@@ -595,4 +600,22 @@ http
     log("QUESITO_HTTP_READY", { port: PORT });
   });
 
-await discord.login(DISCORD_BOT_TOKEN);
+async function connectDiscord() {
+  discordLoginAttempts += 1;
+  try {
+    await discord.login(DISCORD_BOT_TOKEN);
+    discordLoginError = null;
+  } catch (error) {
+    const message = String(error?.message || error).slice(0, 500);
+    discordLoginError = message;
+    log("QUESITO_DISCORD_LOGIN_ERROR", {
+      attempt: discordLoginAttempts,
+      error: message,
+    });
+    setTimeout(() => {
+      void connectDiscord();
+    }, 10_000).unref();
+  }
+}
+
+void connectDiscord();
