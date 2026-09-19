@@ -1,4 +1,5 @@
 name: Sync CLOUVA Cloud Run runtime config
+# Runtime contract for Cloud Tasks-backed asset imports.
 
 on:
   push:
