@@ -992,6 +992,65 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
     }
   }
 
+  async function detectBarcodePhoto(file: File | undefined) {
+    if (!file || !draftListingId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      let code = "";
+      const Detector = (window as typeof window & { BarcodeDetector?: NativeBarcodeDetectorConstructor }).BarcodeDetector;
+      if (Detector) {
+        const bitmap = await createImageBitmap(file);
+        try {
+          const detector = new Detector({ formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "qr_code"] });
+          const found = await detector.detect(bitmap);
+          code = found[0]?.rawValue?.trim() || "";
+        } finally {
+          bitmap.close();
+        }
+      }
+      if (!code) {
+        const dataUrl = await compressProductImage(file);
+        const image = document.createElement("img");
+        image.src = dataUrl;
+        await new Promise<void>((resolve, reject) => {
+          image.onload = () => resolve();
+          image.onerror = () => reject(new Error("No se pudo leer la foto del código."));
+        });
+        const { BrowserMultiFormatReader } = await import("@zxing/browser");
+        const reader = new BrowserMultiFormatReader();
+        const result = await reader.decodeFromImageElement(image);
+        code = result?.getText()?.trim() || "";
+      }
+      if (!code) throw new Error("No se detectó un código legible. Podés escanearlo con cámara o ingresarlo manualmente.");
+
+      const identifierType = detectCommerceIdentifierType(code);
+      const origin: Identifier["origin"] = ["ean_13", "ean_8", "upc_a", "upc_e"].includes(identifierType) ? "manufacturer" : "manual";
+      await authFetch(`/api/studios/${encodeURIComponent(studioId)}/commerce/codes`, {
+        method: "POST",
+        body: JSON.stringify({
+          action: "attach",
+          listingId: draftListingId,
+          variantId: null,
+          code,
+          identifierType,
+          origin,
+        }),
+      });
+      await addDraftReferenceImage(file, "Código de barras");
+      setManualCode(code);
+      setScanType(identifierType);
+      setCodeDraft({ listingId: draftListingId, variantId: "" });
+      setDraftSaveState("saved");
+      setMessage(`Código ${identifierType.replaceAll("_", " ").toUpperCase()} leído y asociado al mismo producto.`);
+      await load();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "No se pudo leer el código de la foto.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function refreshFx() {
     setBusy(true); setError(null); setMessage(null);
     try {
