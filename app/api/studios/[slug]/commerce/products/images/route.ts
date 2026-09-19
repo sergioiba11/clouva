@@ -222,7 +222,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const { spot } = await requireManagedSpot({ admin, userId: user.id, studioId });
     const { data: listing, error: listingError } = await admin
       .from("commerce_products")
-      .select("id,spot_id,catalog_product_id,cover_url,gallery,metadata")
+      .select("id,spot_id,catalog_product_id,status,cover_url,gallery,metadata")
       .eq("id", listingId)
       .eq("spot_id", spot.id)
       .maybeSingle();
