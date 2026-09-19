@@ -144,7 +144,8 @@ test("scanner captures canonical views, multiple details and preserves canonical
   assert.match(dashboard, /detail_index/);
   assert.match(dashboard, /display_label/);
   assert.match(dashboard, /cover_image/);
-  assert.match(dashboard, /cover_url:\s*coverImage/);
+  assert.match(dashboard, /cover_url:\s*selectedCoverImage\s*\|\|\s*null/);
+  assert.match(dashboard, /coverUrlCandidate:\s*selectedCoverImage\s*\|\|\s*null/);
   assert.match(scannerRoute, /canonicalRecognitionMetadata/);
   assert.match(scannerRoute, /google_cloud_product_recognition/);
   assert.match(scannerRoute, /google_vertex_ai/);
