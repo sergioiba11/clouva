@@ -59,13 +59,16 @@ type Listing = {
   listing_kind: string;
   name: string;
   slug: string;
+  description: string | null;
   price: number;
   cost_amount: number | null;
   currency: string;
   stock: number | null;
   status: string;
   cover_url: string | null;
+  gallery?: unknown;
   metadata: Record<string, unknown> | null;
+  updated_at?: string | null;
 };
 type Variant = {
   id: string;
@@ -166,11 +169,22 @@ type ProductCapture = {
   label: ProductCaptureLabel;
   dataUrl: string;
 };
+type DraftRecognition = {
+  listingId: string;
+  draftKey: string;
+  status: "draft";
+  stage: "incomplete";
+  identifier: { value: string; type: CommerceIdentifierType };
+  externalIdentifierPending: boolean;
+  sourcePhotos: StoredProductSource[];
+  missing: string[];
+};
 type RecognitionResult = {
   recognition: CommerceProductRecognition;
-  provider: "gemini";
+  provider: "google_vertex_ai";
   model: string;
   analyzedAt: string;
+  draft?: DraftRecognition;
 };
 type GeneratedProductImageKind = "front_catalog" | "back_catalog" | "detail_catalog";
 type StoredProductSource = {
@@ -191,12 +205,14 @@ type GeneratedProductImage = {
   model: string;
 };
 type ProductImagesResult = {
-  provider: "gemini";
+  provider: "google_vertex_ai";
   model: string;
   sourcePhotos: StoredProductSource[];
   generatedImages: GeneratedProductImage[];
   coverImage: string | null;
   generatedAt: string;
+  listingId?: string | null;
+  persisted?: boolean;
 };
 
 type NativeBarcodeDetector = {
@@ -270,6 +286,108 @@ function productReferenceSummary(captures: ProductCapture[]) {
   return parts.length ? `Gemini usará ${parts.join(" + ")}.` : "Agregá el Frente para empezar.";
 }
 
+function jsonRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function stringList(value: unknown) {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function listingLifecycle(listing: Listing) {
+  return jsonRecord(jsonRecord(listing.metadata).draft_lifecycle);
+}
+
+function listingDraftFields(listing: Listing) {
+  return jsonRecord(jsonRecord(listing.metadata).draft_fields);
+}
+
+function listingProductImages(listing: Listing) {
+  return jsonRecord(jsonRecord(listing.metadata).product_images);
+}
+
+function listingMissing(listing: Listing) {
+  return stringList(listingLifecycle(listing).missing);
+}
+
+function storedSourcesFromListing(listing: Listing): StoredProductSource[] {
+  const images = listingProductImages(listing);
+  return (Array.isArray(images.source_photos) ? images.source_photos : []).flatMap((raw) => {
+    const item = jsonRecord(raw);
+    const url = typeof item.url === "string" ? item.url : "";
+    const storagePath = typeof item.storage_path === "string" ? item.storage_path : "";
+    const label = item.label === "Atrás" || item.label === "Detalle" ? item.label : "Frente";
+    if (!url || !storagePath) return [];
+    return [{
+      label,
+      detailIndex: typeof item.detail_index === "number" ? item.detail_index : null,
+      displayLabel: typeof item.display_label === "string" ? item.display_label : label,
+      url,
+      storagePath,
+      mimeType: typeof item.mime_type === "string" ? item.mime_type : "image/jpeg",
+    } satisfies StoredProductSource];
+  });
+}
+
+function generatedImagesFromListing(listing: Listing): GeneratedProductImage[] {
+  const images = listingProductImages(listing);
+  return (Array.isArray(images.generated_images) ? images.generated_images : []).flatMap((raw) => {
+    const item = jsonRecord(raw);
+    const url = typeof item.url === "string" ? item.url : "";
+    const storagePath = typeof item.storage_path === "string" ? item.storage_path : "";
+    if (!url || !storagePath) return [];
+    const kind = item.kind === "back_catalog" ? "back_catalog" : item.kind === "detail_catalog" ? "detail_catalog" : "front_catalog";
+    return [{
+      kind,
+      sourceLabel: item.source_label === "Atrás" || item.source_label === "Detalle" ? item.source_label : "Frente",
+      detailIndex: typeof item.detail_index === "number" ? item.detail_index : null,
+      url,
+      storagePath,
+      mimeType: typeof item.mime_type === "string" ? item.mime_type : "image/jpeg",
+      model: typeof item.model === "string" ? item.model : "",
+    } satisfies GeneratedProductImage];
+  });
+}
+
+function restoredRecognition(listing: Listing): RecognitionResult | null {
+  const raw = jsonRecord(jsonRecord(listing.metadata).recognition);
+  if (!Object.keys(raw).length) return null;
+  const confidenceRaw = jsonRecord(raw.confidence);
+  const recognition: CommerceProductRecognition = {
+    detectedObject: typeof raw.detected_object === "string" ? raw.detected_object : "",
+    name: typeof raw.name === "string" ? raw.name : listing.name,
+    brand: typeof raw.brand === "string" ? raw.brand : "",
+    category: typeof raw.category === "string" ? raw.category : "",
+    description: typeof raw.description === "string" ? raw.description : listing.description ?? "",
+    productKind: ["physical", "avatar_item", "bundle", "digital"].includes(String(raw.product_kind))
+      ? raw.product_kind as CommerceProductRecognition["productKind"]
+      : "physical",
+    listingKind: ["resale", "owned_design", "avatar", "combo"].includes(String(raw.listing_kind))
+      ? raw.listing_kind as CommerceProductRecognition["listingKind"]
+      : "resale",
+    size: typeof raw.size === "string" ? raw.size : "",
+    color: typeof raw.color === "string" ? raw.color : "",
+    presentation: typeof raw.presentation === "string" ? raw.presentation : "",
+    identifier: null,
+    visibleText: stringList(raw.visible_text),
+    uncertainFields: stringList(raw.uncertain_fields),
+    confidence: {
+      overall: Number(confidenceRaw.overall || 0),
+      identity: Number(confidenceRaw.identity || 0),
+      variant: Number(confidenceRaw.variant || 0),
+      identifier: Number(confidenceRaw.identifier || 0),
+    },
+  };
+  return {
+    recognition,
+    provider: "google_vertex_ai",
+    model: typeof raw.model === "string" ? raw.model : "",
+    analyzedAt: typeof raw.analyzed_at === "string" ? raw.analyzed_at : listing.updated_at || new Date().toISOString(),
+  };
+}
+
 function cameraDisplayLabel(camera: MediaDeviceInfo, index: number) {
   const raw = camera.label.toLowerCase();
   if (/(back|rear|environment|trasera|posterior)/.test(raw)) return "Cámara trasera";
@@ -323,7 +441,10 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
   const [generatingProductImages, setGeneratingProductImages] = useState(false);
   const [productImagesResult, setProductImagesResult] = useState<ProductImagesResult | null>(null);
   const [selectedCoverImage, setSelectedCoverImage] = useState("");
-  const [creation, setCreation] = useState({ name: "", brand: "", category: "", description: "", productKind: "physical", listingKind: "resale", cost: "", price: "", stock: "1", status: "draft", size: "", color: "", presentation: "" });
+  const [draftListingId, setDraftListingId] = useState("");
+  const [draftSaveState, setDraftSaveState] = useState<"idle" | "saving" | "saved">("idle");
+  const draftKeyRef = useRef(crypto.randomUUID());
+  const [creation, setCreation] = useState({ name: "", brand: "", category: "", description: "", productKind: "physical", listingKind: "resale", cost: "", price: "", stock: "", status: "draft", size: "", color: "", presentation: "" });
   const [stockDraft, setStockDraft] = useState({ listingId: "", variantId: "", quantity: "1", note: "" });
   const [cart, setCart] = useState<Array<{ listingId: string; variantId: string | null; quantity: number }>>([]);
   const [paymentMethod, setPaymentMethod] = useState("cash");
