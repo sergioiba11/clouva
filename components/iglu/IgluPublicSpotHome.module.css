@@ -1,0 +1,378 @@
+.viewport {
+  min-height: 100svh;
+  background-color: #020710;
+  background-size: cover;
+  background-position: center;
+  position: relative;
+  color: #f5fbff;
+  isolation: isolate;
+}
+
+.viewport::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: rgba(0, 8, 18, 0.76);
+  backdrop-filter: blur(18px);
+}
+
+.app {
+  width: min(100%, 560px);
+  min-height: 100svh;
+  margin: 0 auto;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 50% 12%, rgba(70, 159, 225, 0.1), transparent 28%),
+    #020710;
+  box-shadow: 0 0 80px rgba(0, 0, 0, 0.46);
+}
+
+.hero {
+  min-height: 64svh;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  background-color: #071728;
+  background-size: cover;
+  background-position: center;
+  overflow: hidden;
+}
+
+.heroOverlay {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(0, 7, 15, 0.22) 0%, rgba(0, 7, 15, 0.08) 43%, rgba(1, 8, 16, 0.76) 88%, #020710 100%),
+    radial-gradient(circle at 50% 35%, transparent 0 32%, rgba(0, 8, 17, 0.26) 70%, rgba(0, 5, 12, 0.54) 100%);
+}
+
+.topbar {
+  position: absolute;
+  z-index: 4;
+  top: 0;
+  left: 0;
+  right: 0;
+  min-height: 134px;
+  padding: max(22px, env(safe-area-inset-top)) 22px 12px;
+  display: grid;
+  grid-template-columns: 48px 1fr auto;
+  align-items: start;
+  gap: 10px;
+  background: linear-gradient(180deg, rgba(0, 7, 15, 0.78), transparent);
+}
+
+.menu {
+  position: relative;
+  z-index: 8;
+  margin-top: 13px;
+}
+
+.menu summary {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  list-style: none;
+  cursor: pointer;
+  color: white;
+}
+
+.menu summary::-webkit-details-marker { display: none; }
+
+.menuPanel {
+  position: absolute;
+  top: 52px;
+  left: 0;
+  width: 210px;
+  display: grid;
+  gap: 2px;
+  padding: 10px;
+  border: 1px solid rgba(157, 220, 255, 0.24);
+  border-radius: 18px;
+  background: rgba(1, 9, 18, 0.96);
+  backdrop-filter: blur(20px);
+  box-shadow: 0 26px 60px rgba(0, 0, 0, 0.52);
+}
+
+.menuPanel a {
+  padding: 12px 13px;
+  border-radius: 11px;
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(244, 251, 255, 0.82);
+}
+
+.menuPanel a:hover { background: rgba(103, 190, 255, 0.1); color: white; }
+
+.brand {
+  display: flex;
+  justify-content: center;
+  min-width: 0;
+}
+
+.brand > img {
+  width: min(190px, 43vw);
+  height: 118px;
+  object-fit: contain;
+  filter:
+    drop-shadow(0 0 4px rgba(255, 255, 255, 0.42))
+    drop-shadow(0 0 22px rgba(73, 176, 255, 0.48));
+}
+
+.brandFallback {
+  display: grid;
+  place-items: center;
+  line-height: 1;
+  text-align: center;
+  text-shadow: 0 0 20px rgba(69, 176, 255, 0.56);
+}
+
+.brandFallback img { width: 65px; height: 54px; object-fit: contain; }
+.brandFallback strong { margin-top: 3px; font-size: 32px; letter-spacing: 0.08em; }
+.brandFallback span { margin-top: 5px; font-size: 11px; letter-spacing: 0.42em; }
+
+.topActions {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  margin-top: 14px;
+}
+
+.topActions a {
+  width: 32px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+}
+
+.heroCopy {
+  position: relative;
+  z-index: 3;
+  padding: 0 24px 18px;
+  text-align: center;
+}
+
+.heroCopy h1 {
+  margin: 0;
+  font-size: clamp(28px, 8.7vw, 42px);
+  line-height: 1;
+  letter-spacing: 0.055em;
+  font-weight: 800;
+  color: #f7fbff;
+  text-shadow: 0 0 14px rgba(96, 192, 255, 0.32);
+}
+
+.heroActions {
+  margin-top: 20px;
+  display: grid;
+  grid-template-columns: 1.35fr 0.9fr;
+  gap: 12px;
+}
+
+.reserveButton,
+.playButton {
+  min-height: 62px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(190, 231, 255, 0.84);
+}
+
+.reserveButton {
+  padding: 0 22px;
+  gap: 16px;
+  justify-content: space-between;
+  color: #07101a;
+  background:
+    radial-gradient(circle at 35% 0%, rgba(255, 255, 255, 0.95), transparent 42%),
+    linear-gradient(180deg, #dff5ff, #82cfff);
+  box-shadow:
+    0 0 24px rgba(98, 196, 255, 0.48),
+    inset 0 0 18px rgba(255, 255, 255, 0.62);
+  font-size: 13px;
+  font-weight: 750;
+  letter-spacing: 0.075em;
+}
+
+.reserveButton span:last-child {
+  font-size: 24px;
+  line-height: 1;
+}
+
+.playButton {
+  color: white;
+  background: linear-gradient(180deg, rgba(7, 25, 42, 0.9), rgba(2, 12, 23, 0.94));
+  border-color: rgba(106, 186, 255, 0.7);
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.cards {
+  padding: 0 20px 132px;
+  background:
+    linear-gradient(180deg, #020710 0%, #020710 76%, #020811 100%);
+}
+
+.cardRow {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.card {
+  min-height: 150px;
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(171, 222, 255, 0.24);
+  border-radius: 17px;
+  background-color: #0a1622;
+  background-size: cover;
+  background-position: center;
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.05);
+}
+
+.cardWide {
+  min-height: 152px;
+  display: block;
+  margin-top: 12px;
+}
+
+.cardShade {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, transparent 32%, rgba(0, 6, 13, 0.3) 58%, rgba(0, 5, 11, 0.92) 100%),
+    linear-gradient(90deg, rgba(1, 8, 16, 0.18), transparent 56%);
+}
+
+.cardLabel {
+  position: absolute;
+  z-index: 2;
+  left: 18px;
+  bottom: 17px;
+  color: white;
+  font-size: 18px;
+  letter-spacing: 0.07em;
+  font-weight: 500;
+}
+
+.cardArrow {
+  position: absolute;
+  z-index: 2;
+  right: 13px;
+  bottom: 12px;
+  width: 39px;
+  height: 39px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(190, 230, 255, 0.18);
+  background: rgba(9, 28, 45, 0.82);
+  color: white;
+}
+
+.bottomNav {
+  position: fixed;
+  z-index: 30;
+  left: 50%;
+  bottom: 0;
+  width: min(100%, 560px);
+  transform: translateX(-50%);
+  min-height: 105px;
+  padding:
+    16px 18px
+    max(14px, env(safe-area-inset-bottom));
+  display: grid;
+  grid-template-columns: 1fr 1fr 1.08fr 1fr 1fr;
+  align-items: center;
+  border-top: 1px solid rgba(166, 219, 255, 0.14);
+  border-radius: 28px 28px 0 0;
+  background:
+    radial-gradient(circle at 50% 15%, rgba(47, 93, 127, 0.18), transparent 38%),
+    rgba(1, 10, 19, 0.96);
+  box-shadow: 0 -18px 42px rgba(0, 0, 0, 0.36);
+  backdrop-filter: blur(18px);
+}
+
+.bottomNav > a:not(.centerAction) {
+  min-width: 0;
+  display: grid;
+  justify-items: center;
+  gap: 7px;
+  color: rgba(237, 248, 255, 0.84);
+}
+
+.bottomNav > a span {
+  max-width: 100%;
+  font-size: 9px;
+  line-height: 1;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+.navActive {
+  color: #aee6ff !important;
+  filter: drop-shadow(0 0 8px rgba(83, 184, 255, 0.48));
+}
+
+.centerAction {
+  display: grid;
+  place-items: center;
+  transform: translateY(-18px);
+}
+
+.centerGlow {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 95, 95, 0.82);
+  background:
+    radial-gradient(circle at 50% 42%, rgba(255, 89, 89, 0.22), transparent 46%),
+    #15080b;
+  color: #fff;
+  box-shadow:
+    0 0 8px #ff3143,
+    0 0 24px rgba(255, 26, 54, 0.78),
+    inset 0 0 22px rgba(255, 47, 66, 0.3);
+}
+
+.centerGlow img {
+  width: 45px;
+  height: 39px;
+  object-fit: contain;
+  filter:
+    brightness(2.2)
+    saturate(0)
+    drop-shadow(0 0 6px rgba(255, 255, 255, 0.9));
+}
+
+@media (max-width: 430px) {
+  .topbar {
+    padding-left: 14px;
+    padding-right: 14px;
+    grid-template-columns: 42px 1fr auto;
+  }
+
+  .topActions { gap: 6px; }
+  .topActions a { width: 29px; }
+  .brand > img { width: min(166px, 42vw); }
+  .heroCopy { padding-left: 16px; padding-right: 16px; }
+  .cards { padding-left: 14px; padding-right: 14px; }
+  .reserveButton { padding: 0 18px; font-size: 11px; }
+  .bottomNav { padding-left: 9px; padding-right: 9px; }
+  .bottomNav > a span { font-size: 8px; letter-spacing: 0.025em; }
+  .centerGlow { width: 66px; height: 66px; }
+}
+
+@media (min-width: 700px) {
+  .app {
+    border-left: 1px solid rgba(157, 220, 255, 0.12);
+    border-right: 1px solid rgba(157, 220, 255, 0.12);
+  }
+}

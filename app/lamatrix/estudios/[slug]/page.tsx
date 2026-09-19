@@ -4,8 +4,7 @@ import { StudioIdentityRenderer } from "@/components/public/StudioIdentityRender
 import { TrebolContextRegistration } from "@/components/clouva-ai/TrebolContextRegistration";
 import { PublicAgendaSection } from "@/components/public/PublicAgendaSection";
 import { PublicMerchSection } from "@/components/public/PublicMerchSection";
-import { IgluHome } from "@/components/iglu/IgluPages";
-import { IgluSiteShell } from "@/components/iglu/IgluSiteShell";
+import { IgluPublicSpotHome } from "@/components/iglu/IgluPublicSpotHome";
 import { loadPublicAgendaByStudio } from "@/lib/server/agenda/public";
 import { resolveStudioAlias, type StudioIdentityData } from "@/lib/server/public-identity-data";
 import { createAdminSupabase } from "@/lib/server/supabase";
@@ -13,7 +12,6 @@ import { loadIgluSiteData } from "@/lib/iglu/site-data";
 import { IGLU_STUDIO_SLUG } from "@/lib/iglu-radio/routes";
 import { studioPublicHref } from "@/lib/public-studio-routes";
 import { siteUrl } from "@/lib/site-url";
-import "../../../iglu/(site)/iglu-site.css";
 
 export const dynamic = "force-dynamic";
 
@@ -49,7 +47,8 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
   if (!result) return { title: "Estudio no encontrado — CLOUVA", robots: { index: false, follow: false } };
 
   const canonical = canonicalUrl(result.canonicalAlias);
-  const title = result.studio.seo_title || `${result.publicStudio.publicName} — Estudio en CLOUVA`;
+  const isIglu = result.studio.slug.toLowerCase() === IGLU_STUDIO_SLUG;
+  const title = result.studio.seo_title || (isIglu ? "IGLÚ Records" : `${result.publicStudio.publicName} — Estudio en CLOUVA`);
   const description = result.studio.seo_description || result.studio.description || result.studio.tagline || undefined;
   const image = absoluteAssetUrl(result.studio.og_image_url || result.studio.cover_url || result.publicStudio.darkLogoUrl || result.studio.logo_url);
 
@@ -58,7 +57,7 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
     description,
     alternates: { canonical },
     robots: { index: true, follow: true },
-    openGraph: { type: "website", url: canonical, title: result.studio.share_title || title, description: result.studio.share_description || description, images: image ? [{ url: image }] : undefined, siteName: "CLOUVA" },
+    openGraph: { type: "website", url: canonical, title: result.studio.share_title || title, description: result.studio.share_description || description, images: image ? [{ url: image }] : undefined, siteName: isIglu ? "IGLÚ Records" : "CLOUVA" },
     twitter: { card: image ? "summary_large_image" : "summary", title: result.studio.share_title || title, description: result.studio.share_description || description, images: image ? [image] : undefined },
   };
 }
@@ -81,9 +80,7 @@ export default async function MatrixStudioProfilePage({ params, searchParams }: 
           id={result.studio.id}
           data={{ studioId: result.studio.id, slug: result.studio.slug, canonicalAlias: result.canonicalAlias, name: result.publicStudio.publicName, section: "public-profile" }}
         />
-        <IgluSiteShell logoUrl={igluData.assets.logo} emblemUrl={igluData.assets.emblem}>
-          <IgluHome data={igluData} />
-        </IgluSiteShell>
+        <IgluPublicSpotHome data={igluData} />
       </>
     );
   }

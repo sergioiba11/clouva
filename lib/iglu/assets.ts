@@ -11,6 +11,10 @@ export type IgluAssetKey =
   | "studioHero"
   | "studioHeroAlt"
   | "homeScene"
+  | "publicHomeHero"
+  | "publicPlayersCard"
+  | "publicReservationsCard"
+  | "publicMerchCard"
   | "recordingsScene"
   | "productionsScene"
   | "producersScene"
@@ -91,6 +95,35 @@ const CANDIDATES: Record<IgluAssetKey, string[]> = {
     "gran salon iglu",
     "home iglu records",
   ],
+  publicHomeHero: [
+    "iglu public home hero",
+    "iglu home hero studio",
+    "home public spot iglu",
+    "entra al iglu",
+    "entrada iglu records",
+    "iglu exterior home",
+  ],
+  publicPlayersCard: [
+    "iglu players card",
+    "players studio console",
+    "iglu home studio console",
+    "players iglu home",
+    "artistas card iglu",
+  ],
+  publicReservationsCard: [
+    "iglu reservas card",
+    "reservas tablet iglu",
+    "booking card iglu",
+    "agenda card iglu",
+    "reservas iglu home",
+  ],
+  publicMerchCard: [
+    "iglu merch card",
+    "merch abrigo iglu",
+    "iglu merch home",
+    "hoodie gorra remera iglu",
+    "merchandise iglu records",
+  ],
   recordingsScene: [
     "iglu grabaciones hero",
     "grabaciones iglu background",
@@ -163,6 +196,10 @@ const CANDIDATES: Record<IgluAssetKey, string[]> = {
 
 const SCENE_KEYS = new Set<IgluAssetKey>([
   "homeScene",
+  "publicHomeHero",
+  "publicPlayersCard",
+  "publicReservationsCard",
+  "publicMerchCard",
   "recordingsScene",
   "productionsScene",
   "producersScene",
