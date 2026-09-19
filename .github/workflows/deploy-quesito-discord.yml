@@ -85,10 +85,11 @@ jobs:
         run: |
           sha="$(git rev-parse HEAD)"
           image="$IMAGE_REPO/quesito:$sha"
-          gcloud builds submit \
-            --project "$PROJECT_ID" \
-            --tag "$image" \
-            services/quesito-discord
+
+          gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+          docker build --pull -t "$image" services/quesito-discord
+          docker push "$image"
+
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "image=$image" >> "$GITHUB_OUTPUT"
 
