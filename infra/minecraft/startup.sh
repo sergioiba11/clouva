@@ -33,6 +33,24 @@ fi
 grep -qF "$DISK_DEVICE $WORLD_ROOT ext4" /etc/fstab || echo "$DISK_DEVICE $WORLD_ROOT ext4 defaults,nofail 0 2" >> /etc/fstab
 
 docker pull itzg/minecraft-server:latest
+
+# Paper 26.2 currently has an accepted startup failure when the overworld
+# world_gen_settings.dat is missing during migration. This family server has
+# not been used yet, so preserve the broken generated world once and bootstrap
+# cleanly on Paper 26.1.2. Keep the archived copy for recovery.
+BOOTSTRAP_MARKER="$WORLD_ROOT/.clouva-paper-26.1.2-bootstrap-complete"
+if [ ! -e "$BOOTSTRAP_MARKER" ]; then
+  docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+  recovery="$WORLD_ROOT/recovery/paper26.2-broken-20260919"
+  mkdir -p "$recovery"
+  for name in world world_nether world_the_end; do
+    if [ -e "$WORLD_ROOT/$name" ]; then
+      rm -rf "$recovery/$name"
+      mv "$WORLD_ROOT/$name" "$recovery/$name"
+    fi
+  done
+  touch "$BOOTSTRAP_MARKER"
+fi
 docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
 
 docker_args=(
@@ -43,7 +61,7 @@ docker_args=(
   -p 19132:19132/udp
   -e EULA=TRUE
   -e TYPE=PAPER
-  -e VERSION=LATEST
+  -e VERSION=26.1.2
   -e MEMORY=3G
   -e "MOTD=CLOUVA FAMILIA"
   -e MAX_PLAYERS=12
@@ -54,6 +72,8 @@ docker_args=(
   -e SPAWN_PROTECTION=16
   -e ONLINE_MODE=TRUE
   -e ENABLE_WHITELIST=FALSE
+  -e MODRINTH_PROJECTS=viaversion
+  -e MODRINTH_DOWNLOAD_DEPENDENCIES=required
   -e "PLUGINS=https://download.geysermc.org/v2/projects/geyser/versions/latest/builds/latest/downloads/spigot,https://download.geysermc.org/v2/projects/floodgate/versions/latest/builds/latest/downloads/spigot"
   -v "$WORLD_ROOT:/data"
 )
