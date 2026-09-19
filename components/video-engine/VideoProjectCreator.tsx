@@ -22,6 +22,7 @@ import {
 import { useAuth } from "@/components/auth-provider";
 import { CloverIcon } from "@/components/clover-icon";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
+import { uploadFileResumable } from "@/lib/resumable-upload-client";
 import type { MediaJob, ReferenceAsset } from "@/components/media-creator/types";
 import type { VideoClip, VideoFrame, VideoProject } from "./types";
 
@@ -69,6 +70,7 @@ export function VideoProjectCreator() {
   const [frames, setFrames] = useState<VideoFrame[]>([]);
   const [recentImages, setRecentImages] = useState<MediaJob[]>([]);
   const [audioFile, setAudioFile] = useState<File | null>(null);
+  const [audioUploadPercent, setAudioUploadPercent] = useState<number | null>(null);
   const [project, setProject] = useState<VideoProject | null>(null);
   const [clips, setClips] = useState<VideoClip[]>([]);
   const [busy, setBusy] = useState(false);
@@ -164,6 +166,49 @@ export function VideoProjectCreator() {
     });
   };
 
+  const uploadAudioMaster = async (projectId: string, file: File) => {
+    setAudioUploadPercent(0);
+    const prepareResponse = await authenticatedFetch(
+      `/api/video/projects/${encodeURIComponent(projectId)}/audio`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          filename: file.name,
+          size: file.size,
+          contentType: file.type,
+        }),
+      },
+    );
+    const prepared = await readApiJson<{
+      uploadUrl: string;
+      storagePath: string;
+      chunkBytes: number;
+    }>(prepareResponse);
+
+    await uploadFileResumable({
+      uploadUrl: prepared.uploadUrl,
+      file,
+      chunkBytes: prepared.chunkBytes,
+      onProgress: (progress) => setAudioUploadPercent(Math.round(progress.percent)),
+    });
+
+    const completeResponse = await authenticatedFetch(
+      `/api/video/projects/${encodeURIComponent(projectId)}/audio`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({
+          filename: file.name,
+          size: file.size,
+          contentType: file.type,
+          storagePath: prepared.storagePath,
+        }),
+      },
+    );
+    const payload = await readApiJson<{ project: VideoProject }>(completeResponse);
+    setAudioUploadPercent(100);
+    return payload.project;
+  };
+
   const prepareProject = async () => {
     if (!title.trim()) return setError("Poné un nombre al proyecto.");
     if (!masterPrompt.trim() && !frames.length) return setError("Escribí la dirección visual o agregá frames.");
@@ -190,14 +235,7 @@ export function VideoProjectCreator() {
       let nextProject = created.project;
 
       if (audioFile) {
-        const form = new FormData();
-        form.set("file", audioFile);
-        const audioResponse = await authenticatedFetch(
-          `/api/video/projects/${encodeURIComponent(nextProject.id)}/audio`,
-          { method: "POST", body: form },
-        );
-        const audioPayload = await readApiJson<{ project: VideoProject }>(audioResponse);
-        nextProject = audioPayload.project;
+        nextProject = await uploadAudioMaster(nextProject.id, audioFile);
       }
 
       const planResponse = await authenticatedFetch(
@@ -213,6 +251,7 @@ export function VideoProjectCreator() {
       setError(prepareError instanceof Error ? prepareError.message : "No se pudo preparar el proyecto.");
     } finally {
       setBusy(false);
+      setAudioUploadPercent(null);
     }
   };
 
@@ -339,9 +378,15 @@ export function VideoProjectCreator() {
 
               <section className="rounded-3xl border border-white/10 bg-white/[.035] p-4 sm:p-6">
                 <div className="mb-4 flex items-center gap-3"><Music2 size={18} /><div><h2 className="font-bold">Audio master</h2><p className="text-xs text-white/45">Opcional. WAV, MP3, M4A, AAC o FLAC.</p></div></div>
-                <button type="button" onClick={() => audioInput.current?.click()} className="flex w-full items-center justify-between rounded-2xl border border-white/10 bg-black/30 px-4 py-4 text-left">
+                <button type="button" onClick={() => audioInput.current?.click()} disabled={busy} className="flex w-full items-center justify-between rounded-2xl border border-white/10 bg-black/30 px-4 py-4 text-left disabled:opacity-50">
                   <span className="truncate text-sm">{audioFile?.name || "Seleccionar audio master"}</span><Upload size={17} className="text-white/45" />
                 </button>
+                {audioUploadPercent !== null ? (
+                  <div className="mt-3">
+                    <div className="h-1.5 overflow-hidden rounded-full bg-white/10"><div className="h-full bg-white transition-all" style={{ width: `${audioUploadPercent}%` }} /></div>
+                    <div className="mt-1 text-right text-[11px] text-white/45">Subiendo directo a Google Cloud · {audioUploadPercent}%</div>
+                  </div>
+                ) : null}
                 <input ref={audioInput} className="hidden" type="file" accept="audio/mpeg,audio/mp4,audio/x-m4a,audio/wav,audio/x-wav,audio/flac,audio/aac" onChange={(event) => setAudioFile(event.target.files?.[0] ?? null)} />
               </section>
             </>
