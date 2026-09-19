@@ -423,6 +423,35 @@ export async function POST(request: NextRequest, context: RouteContext) {
         const boardReferences = (["aerial_oblique","front","corner","environment"] as StandardRenderView[])
           .map((view) => generatedViewReferences.get(view))
           .filter((reference): reference is { mimeType: string; data: string } => Boolean(reference));
+
+        if (boardReferences.length < 4) {
+          const { data: previousOutputs } = await admin
+            .from("structure_render_outputs")
+            .select("view_key,public_url,created_at")
+            .eq("structure_id", id)
+            .in("view_key", STANDARD_VIEWS)
+            .order("created_at", { ascending: false })
+            .limit(24);
+          const seen = new Set<string>();
+          for (const output of previousOutputs ?? []) {
+            if (boardReferences.length >= 4) break;
+            const key = output.view_key as StandardRenderView;
+            if (generatedViewReferences.has(key) || seen.has(key) || !output.public_url) continue;
+            seen.add(key);
+            try {
+              const bytes = await downloadStructureImage(output.public_url);
+              const prepared = await sharp(bytes)
+                .rotate()
+                .resize(1600, 1600, { fit: "inside", withoutEnlargement: true })
+                .jpeg({ quality: 82, mozjpeg: true })
+                .toBuffer();
+              boardReferences.push({ mimeType: "image/jpeg", data: prepared.toString("base64") });
+            } catch {
+              // Continue with the remaining available canonical views.
+            }
+          }
+        }
+
         if (!boardReferences.length) throw new Error("00_MASTER_OVERVIEW: faltan vistas canónicas para construir el panel maestro.");
 
         const prompt = masterOverviewPrompt({
