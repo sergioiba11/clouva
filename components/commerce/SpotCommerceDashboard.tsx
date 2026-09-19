@@ -318,12 +318,17 @@ function storedSourcesFromListing(listing: Listing): StoredProductSource[] {
     const item = jsonRecord(raw);
     const url = typeof item.url === "string" ? item.url : "";
     const storagePath = typeof item.storage_path === "string" ? item.storage_path : "";
-    const label = item.label === "Atrás" || item.label === "Detalle" ? item.label : "Frente";
+    const displayLabel = typeof item.display_label === "string" ? item.display_label : "";
+    const label: ProductCaptureLabel = item.label === "Atrás" || displayLabel === "Atrás"
+      ? "Atrás"
+      : item.label === "Detalle" || (displayLabel && displayLabel !== "Frente")
+        ? "Detalle"
+        : "Frente";
     if (!url || !storagePath) return [];
     return [{
       label,
       detailIndex: typeof item.detail_index === "number" ? item.detail_index : null,
-      displayLabel: typeof item.display_label === "string" ? item.display_label : label,
+      displayLabel: displayLabel || label,
       url,
       storagePath,
       mimeType: typeof item.mime_type === "string" ? item.mime_type : "image/jpeg",
