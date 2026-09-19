@@ -235,3 +235,5 @@ jobs:
             -f context='gcloud/clouva-minecraft' \
             -f description="$description" \
             -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
+# recovery trigger 2026-09-19T20:38:00-03:00
