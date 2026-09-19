@@ -1,0 +1,53 @@
+name: Sync CLOUVA Cloud Run runtime config
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/sync-cloud-run-runtime.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: sync-cloud-run-runtime
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: gen-lang-client-0737053175
+  REGION: us-central1
+  SERVICE: clouva-web
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA_EMAIL }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Sync asset import runtime variables
+        run: |
+          gcloud run services update "$SERVICE" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --update-env-vars "CLOUVA_ASSET_IMPORT_TASKS_PROJECT=$PROJECT_ID,CLOUVA_ASSET_IMPORT_TASKS_LOCATION=$REGION,CLOUVA_ASSET_IMPORT_TASKS_QUEUE=clouva-asset-imports,CLOUVA_ASSET_IMPORT_WORKER_URL=https://clouva.com.ar/api/internal/admin/assets/imports/process" \
+            --quiet
+
+      - name: Verify service health
+        run: |
+          service_url="$(gcloud run services describe "$SERVICE" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --format='value(status.url)')"
+          test -n "$service_url"
+          curl --fail --silent --show-error \
+            --retry 10 --retry-all-errors --retry-delay 3 \
+            "$service_url/api/health"
