@@ -9,7 +9,7 @@ import {
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 1800;
 
 let storage: Storage | null = null;
 function getStorage() {

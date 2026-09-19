@@ -97,6 +97,27 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
+      - name: Ensure Asset Import Cloud Tasks queue
+        shell: bash
+        run: |
+          set +e
+          if gcloud tasks queues describe "clouva-asset-imports" \
+            --project "$PROJECT_ID" \
+            --location "$REGION" >/dev/null 2>&1; then
+            echo "Asset import queue already exists."
+          else
+            echo "Asset import queue is missing; attempting to create it."
+            gcloud tasks queues create "clouva-asset-imports" \
+              --project "$PROJECT_ID" \
+              --location "$REGION" \
+              --log-sampling-ratio=1.0
+            status=$?
+            if [ "$status" -ne 0 ]; then
+              echo "::warning::Could not create clouva-asset-imports with the deploy identity. Runtime inline recovery remains enabled."
+            fi
+          fi
+          exit 0
+
       # Secret Manager IAM is infrastructure state and must not be mutated by the
       # per-release deploy identity. Cloud Run keeps the service's configured
       # secret bindings when a new image revision is deployed.
@@ -134,7 +155,7 @@ jobs:
             --update-env-vars "GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=$REGION,CLOUVA_ASSET_IMPORT_TASKS_PROJECT=$PROJECT_ID,CLOUVA_ASSET_IMPORT_TASKS_LOCATION=$REGION,CLOUVA_ASSET_IMPORT_TASKS_QUEUE=clouva-asset-imports,CLOUVA_ASSET_IMPORT_WORKER_URL=https://clouva.com.ar/api/internal/admin/assets/imports/process" \
             --revision-suffix "$suffix" \
             --tag "$suffix" \
-            --timeout 300 \
+            --timeout 1800 \
             --no-traffic \
             --quiet
           echo "revision=$SERVICE-$suffix" >> "$GITHUB_OUTPUT"

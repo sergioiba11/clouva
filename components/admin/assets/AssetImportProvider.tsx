@@ -157,6 +157,7 @@ export function AssetImportProvider({ children }: { children: ReactNode }) {
   const [recoveryWarning, setRecoveryWarning] = useState<string | null>(null);
   const [completionVersion, setCompletionVersion] = useState(0);
   const runningRef = useRef<string | null>(null);
+  const recoveryAttemptsRef = useRef<Set<string>>(new Set());
   const previousStatusesRef = useRef<Map<string, string>>(new Map());
 
   const refreshJobs = useCallback(async () => {
@@ -360,6 +361,23 @@ export function AssetImportProvider({ children }: { children: ReactNode }) {
     })();
     return () => { cancelled = true; };
   }, [refreshJobs, runUpload]);
+
+  useEffect(() => {
+    const recoverable = jobs.find((job) =>
+      job.status === "archive_uploaded"
+      && job.uploadPercent >= 100
+      && !recoveryAttemptsRef.current.has(job.id)
+    );
+    if (!recoverable || runningRef.current === recoverable.id) return;
+
+    recoveryAttemptsRef.current.add(recoverable.id);
+    void completeUpload(recoverable.id)
+      .then(() => refreshJobs())
+      .catch((error) => {
+        setUploadError(error instanceof Error ? error.message : "No se pudo reanudar la importación.");
+        void refreshJobs().catch(() => undefined);
+      });
+  }, [jobs, completeUpload, refreshJobs]);
 
   const hasActiveJob = jobs.some((job) => isAssetImportActive(job.status));
   useEffect(() => {
