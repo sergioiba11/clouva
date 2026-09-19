@@ -312,8 +312,7 @@ function parallelLimit() {
 }
 
 function resolutionForQuality(quality: VideoQuality): "720p" | "1080p" | "4k" {
-  const configured = VIDEO_QUALITY_CONFIG[quality].resolution;
-  return configured === "1080p" || configured === "4k" ? configured : "720p";
+  return VIDEO_QUALITY_CONFIG[quality].resolution;
 }
 
 async function markJobRetryOrFailure(admin: SupabaseClient, job: VideoProjectJobRow, message: string) {
