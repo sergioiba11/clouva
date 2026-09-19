@@ -60,3 +60,52 @@ export async function enqueueVipProfileJobStep(jobId: string) {
     throw new Error(`No se pudo encolar el paso siguiente (${response.status})${raw ? `: ${raw.slice(0, 500)}` : ""}`);
   }
 }
+
+
+function videoQueueConfig() {
+  const project = process.env.CLOUVA_GCP_PROJECT || process.env.GOOGLE_CLOUD_PROJECT || "gen-lang-client-0737053175";
+  const location = process.env.CLOUVA_GCP_REGION || "us-central1";
+  const queue = process.env.CLOUVA_VIDEO_QUEUE_NAME || "clouva-video-generation";
+  return { project, location, queue };
+}
+
+export async function enqueueVideoProjectStep(projectId: string, delaySeconds = 15) {
+  const { project, location, queue } = videoQueueConfig();
+  const secret = process.env.VIDEO_PROJECT_TASK_SECRET?.trim();
+  if (!secret) throw new Error("VIDEO_PROJECT_TASK_SECRET no está configurada.");
+
+  const baseUrl = process.env.APP_BASE_URL?.trim() || "https://clouva.com.ar";
+  const targetUrl = `${baseUrl}/api/internal/video/projects/process`;
+  const token = await getAccessToken();
+  const scheduleTime = delaySeconds > 0
+    ? new Date(Date.now() + delaySeconds * 1000).toISOString()
+    : undefined;
+
+  const response = await fetch(
+    `https://cloudtasks.googleapis.com/v2/projects/${project}/locations/${location}/queues/${queue}/tasks`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        task: {
+          ...(scheduleTime ? { scheduleTime } : {}),
+          httpRequest: {
+            httpMethod: "POST",
+            url: targetUrl,
+            headers: {
+              "Content-Type": "application/json",
+              "x-clouva-video-task-secret": secret,
+            },
+            body: Buffer.from(JSON.stringify({ projectId })).toString("base64"),
+          },
+        },
+      }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(15 * 1000),
+    },
+  );
+  if (!response.ok) {
+    const raw = await response.text().catch(() => "");
+    throw new Error(`No se pudo encolar el siguiente paso de video (${response.status})${raw ? `: ${raw.slice(0, 500)}` : ""}`);
+  }
+}
