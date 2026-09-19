@@ -6,6 +6,8 @@ on:
       - main
     paths:
       - ".github/workflows/setup-video-engine-gcp.yml"
+      - "scripts/setup-video-engine-infra.sh"
+      - "worker/video-render/**"
   workflow_dispatch:
 
 permissions:
