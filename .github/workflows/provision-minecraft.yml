@@ -117,6 +117,8 @@ jobs:
               --maintenance-policy MIGRATE \
               --image-family debian-12 \
               --image-project debian-cloud \
+              --no-service-account \
+              --no-scopes \
               --boot-disk-size 20GB \
               --boot-disk-type pd-balanced \
               --address "$MC_IP" \
