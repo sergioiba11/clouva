@@ -141,7 +141,10 @@ test("Cloud Video Engine extiende el ledger actual y orquesta Vertex + Cloud Run
   assert.match(playerRoute, /player_media/);
   assert.match(playerRoute, /clouva-video-project:/);
   assert.match(infra, /CLOUVA_VIDEO_ARTIFACT_REPOSITORY:-clouva/);
-  assert.match(infra, /gcloud builds submit worker\/video-render/);
+  assert.match(infra, /gcloud builds submit/);
+  assert.match(infra, /cloudbuild-video-render\.yaml/);
+  assert.match(infra, /--async/);
+  assert.match(infra, /artifacts docker images describe/);
   assert.match(infra, /gcloud run jobs create/);
   assert.doesNotMatch(infra, /gcloud projects add-iam-policy-binding/);
   assert.doesNotMatch(infra, /gcloud services enable/);
