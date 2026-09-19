@@ -42,6 +42,19 @@ jobs:
             --update-env-vars "CLOUVA_ASSET_IMPORT_TASKS_PROJECT=$PROJECT_ID,CLOUVA_ASSET_IMPORT_TASKS_LOCATION=$REGION,CLOUVA_ASSET_IMPORT_TASKS_QUEUE=clouva-asset-imports,CLOUVA_ASSET_IMPORT_WORKER_URL=https://clouva.com.ar/api/internal/admin/assets/imports/process" \
             --quiet
 
+      - name: Verify runtime configuration
+        run: |
+          latest="$(gcloud run services describe "$SERVICE" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --format='value(status.latestReadyRevisionName)')"
+          echo "latest_ready_revision=$latest"
+          gcloud run revisions describe "$latest" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --format='table(spec.containers[0].env.name,spec.containers[0].env.value)' \
+            | grep -E 'CLOUVA_ASSET_IMPORT_TASKS_PROJECT|GOOGLE_CLOUD_PROJECT|CLOUVA_ASSET_IMPORT_TASKS_LOCATION|CLOUVA_ASSET_IMPORT_TASKS_QUEUE|CLOUVA_ASSET_IMPORT_WORKER_URL|CLOUVA_ASSET_IMPORT_WORKER_SECRET' || true
+
       - name: Verify service health
         run: |
           service_url="$(gcloud run services describe "$SERVICE" \
