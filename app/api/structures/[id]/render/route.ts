@@ -329,7 +329,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         .filter((entry): entry is Awaited<ReturnType<typeof prepareReference>> => Boolean(entry));
 
       if (!references.length) {
-        throw new Error(\`\${requestedView.label}: no hay referencias utilizables para esta camara.\`);
+        throw new Error(`${requestedView.label}: no hay referencias utilizables para esta camara.`);
       }
 
       const prompt = renderPrompt({
@@ -366,7 +366,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       const stored = await uploadGeneratedMediaObject({
         bytes: generated.bytes,
         mimeType: generated.mimeType,
-        pathPrefix: \`structures/\${user.id}/\${id}/renders/\${job.id}/\${requestedView.key}\`,
+        pathPrefix: `structures/${user.id}/${id}/renders/${job.id}/${requestedView.key}`,
       });
 
       const { data: output, error: outputError } = await admin
@@ -384,7 +384,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         })
         .select("*")
         .single();
-      if (outputError || !output) throw new Error(\`\${requestedView.label}: la imagen se genero pero no pudo registrarse.\`);
+      if (outputError || !output) throw new Error(`${requestedView.label}: la imagen se genero pero no pudo registrarse.`);
 
       return {
         output: output as Record<string, unknown>,
@@ -469,7 +469,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         const stored = await uploadGeneratedMediaObject({
           bytes: generated.bytes,
           mimeType: generated.mimeType,
-          pathPrefix: \`structures/\${user.id}/\${id}/renders/\${job.id}/master_overview\`,
+          pathPrefix: `structures/${user.id}/${id}/renders/${job.id}/master_overview`,
         });
         const { data: output, error: outputError } = await admin
           .from("structure_render_outputs")
