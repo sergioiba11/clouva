@@ -502,6 +502,62 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
     void load();
   }, [authLoading, load, router, studioId, user]);
 
+  useEffect(() => {
+    if (!draftListingId || !creation.name.trim() || recognizingProduct || generatingProductImages) return;
+    setDraftSaveState("saving");
+    let disposed = false;
+    const timer = window.setTimeout(() => {
+      void authFetch(`/api/studios/${encodeURIComponent(studioId)}/commerce/products/update`, {
+        method: "POST",
+        body: JSON.stringify({
+          listingId: draftListingId,
+          name: creation.name,
+          description: creation.description,
+          brand: creation.brand,
+          category: creation.category,
+          productKind: creation.productKind,
+          listingKind: creation.listingKind,
+          size: creation.size,
+          color: creation.color,
+          presentation: creation.presentation,
+          price: creation.price,
+          costAmount: creation.cost,
+          stock: creation.stock,
+          status: "draft",
+          autosave: true,
+          coverUrlCandidate: selectedCoverImage || null,
+        }),
+      }).then(() => {
+        if (!disposed) setDraftSaveState("saved");
+      }).catch(() => {
+        if (!disposed) setDraftSaveState("idle");
+      });
+    }, 900);
+    return () => {
+      disposed = true;
+      window.clearTimeout(timer);
+    };
+  }, [
+    authFetch,
+    creation.brand,
+    creation.category,
+    creation.color,
+    creation.cost,
+    creation.description,
+    creation.listingKind,
+    creation.name,
+    creation.presentation,
+    creation.price,
+    creation.productKind,
+    creation.size,
+    creation.stock,
+    draftListingId,
+    generatingProductImages,
+    recognizingProduct,
+    selectedCoverImage,
+    studioId,
+  ]);
+
   const stopScanner = useCallback(() => {
     if (animationRef.current != null) cancelAnimationFrame(animationRef.current);
     animationRef.current = null;
