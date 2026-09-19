@@ -207,7 +207,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
           evidenceCount: images.length,
           surfaceCount: surfaces.length,
           cameraNodeCount: cameraNodes.length,
-          analysisPass: "canonical-structure-v2-batched",
+          analysisPass: "canonical-structure-v3-adaptive",
           generatedBy: "google-cloud-vertex-ai",
         },
         started_at: new Date().toISOString(),
@@ -233,7 +233,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       ?? "gemini-2.5-flash";
 
     // Keep each multimodal request safely below Vertex input-token limits while preserving all evidence.
-    const BATCH_SIZE = 12;
+    const BATCH_SIZE = 8;
     const analysisBatches: typeof analysisPrepared[] = [];
     for (let start = 0; start < analysisPrepared.length; start += BATCH_SIZE) {
       analysisBatches.push(analysisPrepared.slice(start, start + BATCH_SIZE));
@@ -279,39 +279,64 @@ export async function POST(request: NextRequest, context: RouteContext) {
       required: ["batchIndex","observations","sectorSummary","aerialFacts","streetFacts"],
     };
 
-    const batchAnalyses = await Promise.all(
-      analysisBatches.map(async (batch, batchIndex) => {
-        const prompt = structureEvidenceBatchPrompt({
-          batchIndex: batchIndex + 1,
-          totalBatches: analysisBatches.length,
-          evidence: batch.map((entry, index) => {
-            const camera = cameraByImageId.get(entry.image.id);
-            return {
-              index: index + 1,
-              imageId: entry.image.id,
-              description: entry.image.description,
-              sector: entry.image.sector,
-              sourceType: entry.image.source_type,
-              sceneType: entry.image.scene_type,
-              direction: entry.image.cardinal_direction,
-              localX: camera?.local_x ?? entry.image.local_x,
-              localY: camera?.local_y ?? entry.image.local_y,
-              heading: camera?.heading ?? entry.image.heading,
-              verified: entry.image.manual_verified,
-            };
-          }),
-        });
+    const analyzeEvidenceBatch = async (
+      batch: typeof analysisPrepared,
+      batchIndex: number,
+      label: string,
+    ): Promise<Record<string, unknown>[]> => {
+      const prompt = structureEvidenceBatchPrompt({
+        batchIndex,
+        totalBatches: analysisBatches.length,
+        evidence: batch.map((entry, index) => {
+          const camera = cameraByImageId.get(entry.image.id);
+          return {
+            index: index + 1,
+            imageId: entry.image.id,
+            description: entry.image.description,
+            sector: entry.image.sector,
+            sourceType: entry.image.source_type,
+            sceneType: entry.image.scene_type,
+            direction: entry.image.cardinal_direction,
+            localX: camera?.local_x ?? entry.image.local_x,
+            localY: camera?.local_y ?? entry.image.local_y,
+            heading: camera?.heading ?? entry.image.heading,
+            verified: entry.image.manual_verified,
+          };
+        }),
+      });
+
+      try {
         const generated = await generateGoogleCloudJson({
           model: analysisModel,
           prompt,
           referenceImages: batch.map((entry) => entry.reference),
           responseJsonSchema: batchSchema,
           temperature: 0.05,
-          maxOutputTokens: 3200,
+          maxOutputTokens: 5200,
         });
-        return parseStructuredJson(generated.text);
-      }),
-    );
+        return [parseStructuredJson(generated.text)];
+      } catch (error) {
+        if (batch.length <= 1) {
+          const message = error instanceof Error ? error.message : "falló el análisis";
+          throw new Error(`Analysis batch ${label} failed for image ${batch[0]?.image.id ?? "unknown"}: ${message}`);
+        }
+
+        const middle = Math.ceil(batch.length / 2);
+        const [left, right] = await Promise.all([
+          analyzeEvidenceBatch(batch.slice(0, middle), batchIndex, `${label}a`),
+          analyzeEvidenceBatch(batch.slice(middle), batchIndex, `${label}b`),
+        ]);
+        return [...left, ...right];
+      }
+    };
+
+    const batchAnalyses = (
+      await Promise.all(
+        analysisBatches.map((batch, batchIndex) =>
+          analyzeEvidenceBatch(batch, batchIndex + 1, String(batchIndex + 1)),
+        ),
+      )
+    ).flat();
 
     const synthesisIdentityPack = {
       project: identityPack.project,
@@ -405,7 +430,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         surfaceCount: surfaces.length,
         cameraNodeCount: cameraNodes.length,
         analysisModel,
-        analysisPass: "canonical-structure-v2-batched",
+        analysisPass: "canonical-structure-v3-adaptive",
         generatedBy: "google-cloud-vertex-ai",
       },
     }).eq("id", job.id).eq("user_id", user.id);
