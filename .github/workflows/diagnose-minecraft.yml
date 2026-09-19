@@ -38,6 +38,29 @@ jobs:
             --zone "$MC_ZONE" \
             --format="yaml(name,status,lastStartTimestamp,networkInterfaces[0].accessConfigs[0].natIP,metadata.items)"
 
+      - name: Docker state and Minecraft logs
+        shell: bash
+        run: |
+          gcloud compute ssh "$MC_INSTANCE" \
+            --project "$PROJECT_ID" \
+            --zone "$MC_ZONE" \
+            --quiet \
+            --ssh-flag="-o StrictHostKeyChecking=no" \
+            --ssh-flag="-o UserKnownHostsFile=/dev/null" \
+            --command='
+              set +e
+              echo "===== DOCKER PS ====="
+              sudo docker ps -a --no-trunc
+              echo "===== CONTAINER INSPECT ====="
+              sudo docker inspect clouva-minecraft
+              echo "===== MINECRAFT LOGS ====="
+              sudo docker logs --tail 500 clouva-minecraft 2>&1
+              echo "===== MEMORY ====="
+              free -h
+              echo "===== DISK ====="
+              df -h
+            '
+
       - name: Startup serial output
         shell: bash
         run: |
