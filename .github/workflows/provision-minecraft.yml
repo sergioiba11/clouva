@@ -16,7 +16,7 @@ permissions:
 
 concurrency:
   group: clouva-minecraft-infra
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 env:
   PROJECT_ID: gen-lang-client-0737053175
@@ -27,7 +27,7 @@ env:
   MC_INSTANCE: clouva-minecraft-family
   MC_DISK: clouva-minecraft-world
   MC_ADDRESS: clouva-minecraft-ip
-  MC_MACHINE_TYPE: e2-medium
+  MC_MACHINE_TYPE: e2-standard-2
 
 jobs:
   provision:
@@ -131,7 +131,14 @@ jobs:
               --project "$PROJECT_ID" \
               --zone "$MC_ZONE" \
               --metadata-from-file startup-script=infra/minecraft/startup.sh
-            gcloud compute instances reset "$MC_INSTANCE" --project "$PROJECT_ID" --zone "$MC_ZONE"
+            current_type="$(gcloud compute instances describe "$MC_INSTANCE" --project "$PROJECT_ID" --zone "$MC_ZONE" --format='value(machineType.basename())')"
+            if [ "$current_type" != "$MC_MACHINE_TYPE" ]; then
+              gcloud compute instances stop "$MC_INSTANCE" --project "$PROJECT_ID" --zone "$MC_ZONE" --quiet
+              gcloud compute instances set-machine-type "$MC_INSTANCE" --project "$PROJECT_ID" --zone "$MC_ZONE" --machine-type "$MC_MACHINE_TYPE"
+              gcloud compute instances start "$MC_INSTANCE" --project "$PROJECT_ID" --zone "$MC_ZONE" --quiet
+            else
+              gcloud compute instances reset "$MC_INSTANCE" --project "$PROJECT_ID" --zone "$MC_ZONE"
+            fi
           fi
 
       - name: Wait for Minecraft to accept connections
