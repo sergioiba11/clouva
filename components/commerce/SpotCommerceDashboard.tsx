@@ -722,7 +722,7 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
       return;
     }
     if (!getFrontCapture(productCaptures)) {
-      setError("Capturá el Frente del producto antes de analizarlo con Gemini.");
+      setError("Capturá el Frente del producto antes de analizarlo con Vertex AI.");
       return;
     }
     const orderedCaptures = orderProductCaptures(productCaptures);
@@ -736,6 +736,8 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
           images: orderedCaptures.map(({ label, dataUrl }) => ({ label, dataUrl })),
           identifier: manualCode.trim() || null,
           identifierType: manualCode.trim() ? scanType : null,
+          draftListingId: draftListingId || null,
+          draftKey: draftKeyRef.current,
         }),
       }) as RecognitionResult;
       const recognized = payload.recognition;
@@ -752,26 +754,29 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
         size: recognized.size || current.size,
         color: recognized.color || current.color,
         presentation: recognized.presentation || current.presentation,
+        status: "draft",
       }));
 
-      let identifierMessage = "";
-      if (!manualCode.trim() && recognized.identifier?.value) {
-        setManualCode(recognized.identifier.value);
-        setScanType(recognized.identifier.type);
-        await processCode(recognized.identifier.value, recognized.identifier.type);
-        identifierMessage = ` También leyó ${recognized.identifier.type.replaceAll("_", " ").toUpperCase()}.`;
-      } else if (!manualCode.trim()) {
-        const generatedSku = buildSpotSku({
-          spotSlug: data.spot.slug,
-          productName: recognizedName || "Producto",
-          color: recognized.color,
-          size: recognized.size,
-          suffix: crypto.randomUUID().slice(0, 6),
-        });
-        setManualCode(generatedSku);
-        setScanType("sku");
+      const draft = payload.draft;
+      if (draft) {
+        setDraftListingId(draft.listingId);
+        draftKeyRef.current = draft.draftKey;
+        setManualCode(draft.identifier.value);
+        setScanType(draft.identifier.type);
         setScanResult({ exists: false });
-        identifierMessage = " No encontró un código comercial seguro, así que preparó un SKU interno del Spot.";
+        const sourceCover = draft.sourcePhotos.find((photo) => photo.label === "Frente")?.url || "";
+        setProductImagesResult((current) => ({
+          provider: "google_vertex_ai",
+          model: payload.model,
+          sourcePhotos: draft.sourcePhotos,
+          generatedImages: current?.generatedImages ?? [],
+          coverImage: current?.coverImage || sourceCover || null,
+          generatedAt: current?.generatedAt || payload.analyzedAt,
+          listingId: draft.listingId,
+          persisted: true,
+        }));
+        setSelectedCoverImage((current) => current || sourceCover);
+        setDraftSaveState("saved");
       }
 
       const completedFields = [
@@ -783,9 +788,15 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
         recognized.color,
         recognized.presentation,
       ].filter(Boolean).length;
-      setMessage(`Gemini identificó ${recognized.detectedObject || recognizedName} y completó ${completedFields} campos.${identifierMessage}`);
+      const identifierMessage = draft?.externalIdentifierPending
+        ? " No encontró un código comercial seguro: quedó usando un SKU interno CLOUVA y podés agregar el barcode después."
+        : draft?.identifier
+          ? ` Código confirmado: ${draft.identifier.type.replaceAll("_", " ").toUpperCase()}.`
+          : "";
+      setMessage(`Google Cloud Vertex AI identificó ${recognized.detectedObject || recognizedName} y completó ${completedFields} campos. Borrador guardado.${identifierMessage}`);
+      await load();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Gemini no pudo analizar el producto.");
+      setError(cause instanceof Error ? cause.message : "Vertex AI no pudo analizar el producto.");
     } finally {
       setRecognizingProduct(false);
     }
@@ -809,6 +820,7 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
         method: "POST",
         body: JSON.stringify({
           captures: orderedCaptures.map(({ label, dataUrl }) => ({ label, dataUrl })),
+          listingId: draftListingId || null,
           productDraft: {
             name: creation.name,
             brand: creation.brand,
@@ -822,14 +834,17 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
         }),
       }) as ProductImagesResult;
       setProductImagesResult(payload);
+      if (payload.listingId) setDraftListingId(payload.listingId);
       const preferredCover = payload.coverImage || payload.generatedImages[0]?.url || "";
       setSelectedCoverImage(preferredCover);
+      setDraftSaveState(payload.persisted ? "saved" : "idle");
+      if (payload.persisted) await load();
       if (!options?.quiet) {
-        setMessage(`Gemini generó ${payload.generatedImages.length} ${payload.generatedImages.length === 1 ? "imagen" : "imágenes"} de catálogo. La vista frontal quedó seleccionada como portada.`);
+        setMessage(`Google Cloud Vertex AI generó ${payload.generatedImages.length} ${payload.generatedImages.length === 1 ? "imagen" : "imágenes"} de catálogo. ${payload.persisted ? "Quedaron guardadas en el borrador." : "Guardá el borrador para conservarlas asociadas al producto."}`);
       }
       return payload;
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Gemini no pudo generar las imágenes del producto.");
+      setError(cause instanceof Error ? cause.message : "Vertex AI no pudo generar las imágenes del producto.");
       return null;
     } finally {
       setGeneratingProductImages(false);
@@ -847,73 +862,106 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
   }
 
   async function createScannedProduct() {
-    if (!manualCode || !creation.name.trim() || !creation.price) {
-      setError("Completá código, nombre y precio."); return;
+    if (!creation.name.trim()) {
+      setError("Confirmá el nombre del producto.");
+      return;
     }
-    setBusy(true); setError(null); setMessage(null);
+    if (creation.status === "published" && !(Number(creation.price) > 0)) {
+      setError("Confirmá el precio antes de publicar. El borrador puede guardarse sin precio.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setMessage(null);
     try {
-      const hasVariant = Boolean(creation.size || creation.color || creation.presentation);
-      let imagesResult = productImagesResult;
-      if (!imagesResult && productCaptures.some((capture) => capture.label === "Frente")) {
-        imagesResult = await generateProductImagesWithGemini({ quiet: true });
-        if (!imagesResult) return;
+      if (draftListingId) {
+        const payload = await authFetch(`/api/studios/${encodeURIComponent(studioId)}/commerce/products/update`, {
+          method: "POST",
+          body: JSON.stringify({
+            listingId: draftListingId,
+            name: creation.name,
+            description: creation.description,
+            brand: creation.brand,
+            category: creation.category,
+            productKind: creation.productKind,
+            listingKind: creation.listingKind,
+            size: creation.size,
+            color: creation.color,
+            presentation: creation.presentation,
+            price: creation.price,
+            costAmount: creation.cost,
+            stock: creation.stock,
+            status: creation.status,
+            coverUrlCandidate: selectedCoverImage || null,
+          }),
+        });
+        setDraftSaveState("saved");
+        setMessage(creation.status === "published"
+          ? `${creation.name} quedó publicado.`
+          : `${creation.name} quedó guardado como borrador. Podés salir y continuarlo después.`);
+        await load();
+        return payload;
       }
-      const recognitionMetadata = recognitionResult ? {
-        source: "gemini_product_vision",
-        provider: recognitionResult.provider,
-        model: recognitionResult.model,
-        analyzed_at: recognitionResult.analyzedAt,
-        detected_object: recognitionResult.recognition.detectedObject,
-        confidence: recognitionResult.recognition.confidence,
-        visible_text: recognitionResult.recognition.visibleText,
-        uncertain_fields: recognitionResult.recognition.uncertainFields,
-        captured_views: productCaptureDisplayLabels(productCaptures),
-      } : null;
-      const coverImage = selectedCoverImage || imagesResult?.coverImage || imagesResult?.generatedImages[0]?.url || null;
-      const productImagesMetadata = imagesResult ? {
-        provider: imagesResult.provider,
-        model: imagesResult.model,
-        generated_at: imagesResult.generatedAt,
-        source_photos: imagesResult.sourcePhotos.map((photo) => ({
-          label: photo.label,
-          display_label: photo.displayLabel,
-          detail_index: photo.detailIndex,
-          url: photo.url,
-          storage_path: photo.storagePath,
-          mime_type: photo.mimeType,
-        })),
-        generated_images: imagesResult.generatedImages.map((image) => ({
-          kind: image.kind,
-          source_label: image.sourceLabel,
-          detail_index: image.detailIndex,
-          url: image.url,
-          storage_path: image.storagePath,
-          mime_type: image.mimeType,
-          model: image.model,
-        })),
-        cover_image: coverImage,
-      } : null;
-      const sharedMetadata = {
-        ...(recognitionMetadata ? { recognition: recognitionMetadata } : {}),
-        ...(productImagesMetadata ? { product_images: productImagesMetadata } : {}),
-      };
-      const variantMetadata = recognitionMetadata ? { recognition: recognitionMetadata } : {};
+
+      const fallbackCode = manualCode.trim() || buildSpotSku({
+        spotSlug: data?.spot.slug || "spot",
+        productName: creation.name,
+        color: creation.color,
+        size: creation.size,
+        suffix: draftKeyRef.current.slice(0, 6),
+      });
+      const fallbackType = manualCode.trim() ? scanType : "sku";
+      setManualCode(fallbackCode);
+      setScanType(fallbackType);
+      const hasVariant = Boolean(creation.size || creation.color || creation.presentation);
       const payload = await authFetch(`/api/studios/${encodeURIComponent(studioId)}/commerce/scan`, {
         method: "POST",
         body: JSON.stringify({
-          code: manualCode,
-          identifierType: scanType,
-          product: { product_kind: creation.productKind, name: creation.name, brand: creation.brand, category: creation.category, description: creation.description, metadata: sharedMetadata },
-          listing: { listing_kind: creation.listingKind, cost: Number(creation.cost || 0), price: Number(creation.price), initial_stock: Number(creation.stock || 0), status: creation.status, cover_url: coverImage, metadata: sharedMetadata },
-          variant: hasVariant ? { size: creation.size, color: creation.color, presentation: creation.presentation, metadata: variantMetadata } : {},
-          idempotencyKey: `scan-ui:${data?.spot.id}:${manualCode}:${Date.now()}`,
+          code: fallbackCode,
+          identifierType: fallbackType,
+          product: {
+            product_kind: creation.productKind,
+            name: creation.name,
+            brand: creation.brand,
+            category: creation.category,
+            description: creation.description,
+            metadata: recognitionResult ? { recognition: {
+              source: "google_cloud_product_recognition",
+              provider: recognitionResult.provider,
+              model: recognitionResult.model,
+              analyzed_at: recognitionResult.analyzedAt,
+            } } : {},
+          },
+          listing: {
+            listing_kind: creation.listingKind,
+            cost: creation.cost || "",
+            price: creation.price || 0,
+            initial_stock: creation.stock || 0,
+            status: creation.status,
+            cover_url: selectedCoverImage || null,
+            gallery: selectedCoverImage ? [selectedCoverImage] : [],
+          },
+          variant: hasVariant ? {
+            size: creation.size,
+            color: creation.color,
+            presentation: creation.presentation,
+          } : {},
+          idempotencyKey: `scan-ui:${data?.spot.id}:${draftKeyRef.current}`,
         }),
       });
-      setScanResult(payload.result as ScanResult);
-      setMessage(`${creation.name} quedó conectado al catálogo de ${data?.spot.name}.`);
+      const result = payload.result as ScanResult;
+      setScanResult(result);
+      if (result.listing?.id) setDraftListingId(result.listing.id);
+      setDraftSaveState("saved");
+      setMessage(`${creation.name} quedó guardado en ${data?.spot.name}.`);
       await load();
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo guardar el producto."); }
-    finally { setBusy(false); }
+      return payload;
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "No se pudo guardar el producto.");
+      return null;
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function adjustStock() {
