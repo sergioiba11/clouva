@@ -34,6 +34,7 @@ type ProductDraft = {
   presentation?: unknown;
 };
 type IdentifierDraft = { value?: unknown; type?: unknown };
+type JsonRecord = Record<string, unknown>;
 type ParsedCapture = {
   label: CaptureLabel;
   mimeType: "image/jpeg" | "image/png" | "image/webp";
@@ -62,6 +63,30 @@ class ProductImageError extends Error {
     super(message);
     this.status = status;
   }
+}
+
+function record(value: unknown): JsonRecord {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : {};
+}
+
+function mediaKey(value: unknown) {
+  const item = record(value);
+  return typeof item.storage_path === "string" && item.storage_path
+    ? item.storage_path
+    : typeof item.url === "string" ? item.url : "";
+}
+
+function mergeMedia(existing: unknown, incoming: unknown[]) {
+  const map = new Map<string, unknown>();
+  for (const raw of Array.isArray(existing) ? existing : []) {
+    const key = mediaKey(raw);
+    if (key) map.set(key, raw);
+  }
+  for (const raw of incoming) {
+    const key = mediaKey(raw);
+    if (key) map.set(key, raw);
+  }
+  return Array.from(map.values()).slice(-32);
 }
 
 function shortText(value: unknown, maxLength: number) {
@@ -203,6 +228,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       captures?: ProductCaptureInput[];
       productDraft?: ProductDraft;
       identifier?: IdentifierDraft | null;
+      listingId?: unknown;
     };
 
     if (!Array.isArray(body.captures) || body.captures.length < 1) {
@@ -276,6 +302,78 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       ?? generatedImages[0]?.url
       ?? sourcePhotos.find((image) => image.label === "Frente")?.url
       ?? null;
+    const generatedAt = new Date().toISOString();
+    const listingId = typeof body.listingId === "string" ? body.listingId.trim() : "";
+    let persisted = false;
+
+    if (listingId) {
+      const { data: listing, error: listingError } = await admin
+        .from("commerce_products")
+        .select("id,spot_id,status,cover_url,gallery,metadata")
+        .eq("id", listingId)
+        .eq("spot_id", spot.id)
+        .maybeSingle();
+      if (listingError) throw new Error(listingError.message);
+      if (!listing) throw new ProductImageError("Ese borrador ya no existe en este MI SPOT.", 404);
+
+      const root = { ...record(listing.metadata) };
+      const currentImages = record(root.product_images);
+      const sourceMetadata = sourcePhotos.map((photo) => ({
+        label: photo.label,
+        display_label: photo.displayLabel,
+        detail_index: photo.detailIndex,
+        url: photo.url,
+        storage_path: photo.storagePath,
+        mime_type: photo.mimeType,
+      }));
+      const generatedMetadata = generatedImages.map((image) => ({
+        kind: image.kind,
+        source_label: image.sourceLabel,
+        detail_index: image.detailIndex,
+        url: image.url,
+        storage_path: image.storagePath,
+        mime_type: image.mimeType,
+        model: image.model,
+        generated_at: generatedAt,
+      }));
+      root.product_images = {
+        ...currentImages,
+        provider: "google_vertex_ai",
+        model,
+        generated_at: generatedAt,
+        source_photos: mergeMedia(currentImages.source_photos, sourceMetadata),
+        generated_images: mergeMedia(currentImages.generated_images, generatedMetadata),
+        cover_image: coverImage,
+      };
+      root.draft_lifecycle = {
+        ...record(root.draft_lifecycle),
+        stage: "incomplete",
+        generated_images: generatedImages.length > 0,
+        last_saved_at: generatedAt,
+      };
+
+      const previousGallery = Array.isArray(listing.gallery)
+        ? listing.gallery.filter((url): url is string => typeof url === "string" && /^https?:\/\//i.test(url))
+        : [];
+      const nextGallery = Array.from(new Set([
+        ...(coverImage ? [coverImage] : []),
+        ...generatedImages.map((image) => image.url),
+        ...previousGallery,
+      ])).slice(0, 24);
+      const { error: updateError } = await admin
+        .from("commerce_products")
+        .update({
+          cover_url: coverImage || listing.cover_url,
+          gallery: nextGallery,
+          metadata: root,
+          status: listing.status === "published" ? "published" : "draft",
+          updated_at: generatedAt,
+        })
+        .eq("id", listing.id)
+        .eq("spot_id", spot.id);
+      if (updateError) throw new Error(updateError.message);
+      persisted = true;
+    }
 
     return NextResponse.json({
       provider: "google_vertex_ai",
@@ -283,7 +381,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       sourcePhotos,
       generatedImages,
       coverImage,
-      generatedAt: new Date().toISOString(),
+      generatedAt,
+      listingId: listingId || null,
+      persisted,
     });
   } catch (error) {
     const mapped = publicError(error);

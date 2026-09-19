@@ -59,13 +59,16 @@ type Listing = {
   listing_kind: string;
   name: string;
   slug: string;
+  description: string | null;
   price: number;
   cost_amount: number | null;
   currency: string;
   stock: number | null;
   status: string;
   cover_url: string | null;
+  gallery?: unknown;
   metadata: Record<string, unknown> | null;
+  updated_at?: string | null;
 };
 type Variant = {
   id: string;
@@ -166,11 +169,22 @@ type ProductCapture = {
   label: ProductCaptureLabel;
   dataUrl: string;
 };
+type DraftRecognition = {
+  listingId: string;
+  draftKey: string;
+  status: "draft";
+  stage: "incomplete";
+  identifier: { value: string; type: CommerceIdentifierType };
+  externalIdentifierPending: boolean;
+  sourcePhotos: StoredProductSource[];
+  missing: string[];
+};
 type RecognitionResult = {
   recognition: CommerceProductRecognition;
-  provider: "gemini";
+  provider: "google_vertex_ai";
   model: string;
   analyzedAt: string;
+  draft?: DraftRecognition;
 };
 type GeneratedProductImageKind = "front_catalog" | "back_catalog" | "detail_catalog";
 type StoredProductSource = {
@@ -191,12 +205,14 @@ type GeneratedProductImage = {
   model: string;
 };
 type ProductImagesResult = {
-  provider: "gemini";
+  provider: "google_vertex_ai";
   model: string;
   sourcePhotos: StoredProductSource[];
   generatedImages: GeneratedProductImage[];
   coverImage: string | null;
   generatedAt: string;
+  listingId?: string | null;
+  persisted?: boolean;
 };
 
 type NativeBarcodeDetector = {
@@ -267,7 +283,114 @@ function productReferenceSummary(captures: ProductCapture[]) {
     getBackCapture(captures) ? "Atrás" : null,
     detailCount ? `${detailCount} ${detailCount === 1 ? "detalle" : "detalles"}` : null,
   ].filter(Boolean);
-  return parts.length ? `Gemini usará ${parts.join(" + ")}.` : "Agregá el Frente para empezar.";
+  return parts.length ? `Vertex AI usará ${parts.join(" + ")}.` : "Agregá el Frente para empezar.";
+}
+
+function jsonRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function stringList(value: unknown) {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function listingLifecycle(listing: Listing) {
+  return jsonRecord(jsonRecord(listing.metadata).draft_lifecycle);
+}
+
+function listingDraftFields(listing: Listing) {
+  return jsonRecord(jsonRecord(listing.metadata).draft_fields);
+}
+
+function listingProductImages(listing: Listing) {
+  return jsonRecord(jsonRecord(listing.metadata).product_images);
+}
+
+function listingMissing(listing: Listing) {
+  return stringList(listingLifecycle(listing).missing);
+}
+
+function storedSourcesFromListing(listing: Listing): StoredProductSource[] {
+  const images = listingProductImages(listing);
+  return (Array.isArray(images.source_photos) ? images.source_photos : []).flatMap((raw) => {
+    const item = jsonRecord(raw);
+    const url = typeof item.url === "string" ? item.url : "";
+    const storagePath = typeof item.storage_path === "string" ? item.storage_path : "";
+    const displayLabel = typeof item.display_label === "string" ? item.display_label : "";
+    const label: ProductCaptureLabel = item.label === "Atrás" || displayLabel === "Atrás"
+      ? "Atrás"
+      : item.label === "Detalle" || (displayLabel && displayLabel !== "Frente")
+        ? "Detalle"
+        : "Frente";
+    if (!url || !storagePath) return [];
+    return [{
+      label,
+      detailIndex: typeof item.detail_index === "number" ? item.detail_index : null,
+      displayLabel: displayLabel || label,
+      url,
+      storagePath,
+      mimeType: typeof item.mime_type === "string" ? item.mime_type : "image/jpeg",
+    } satisfies StoredProductSource];
+  });
+}
+
+function generatedImagesFromListing(listing: Listing): GeneratedProductImage[] {
+  const images = listingProductImages(listing);
+  return (Array.isArray(images.generated_images) ? images.generated_images : []).flatMap((raw) => {
+    const item = jsonRecord(raw);
+    const url = typeof item.url === "string" ? item.url : "";
+    const storagePath = typeof item.storage_path === "string" ? item.storage_path : "";
+    if (!url || !storagePath) return [];
+    const kind = item.kind === "back_catalog" ? "back_catalog" : item.kind === "detail_catalog" ? "detail_catalog" : "front_catalog";
+    return [{
+      kind,
+      sourceLabel: item.source_label === "Atrás" || item.source_label === "Detalle" ? item.source_label : "Frente",
+      detailIndex: typeof item.detail_index === "number" ? item.detail_index : null,
+      url,
+      storagePath,
+      mimeType: typeof item.mime_type === "string" ? item.mime_type : "image/jpeg",
+      model: typeof item.model === "string" ? item.model : "",
+    } satisfies GeneratedProductImage];
+  });
+}
+
+function restoredRecognition(listing: Listing): RecognitionResult | null {
+  const raw = jsonRecord(jsonRecord(listing.metadata).recognition);
+  if (!Object.keys(raw).length) return null;
+  const confidenceRaw = jsonRecord(raw.confidence);
+  const recognition: CommerceProductRecognition = {
+    detectedObject: typeof raw.detected_object === "string" ? raw.detected_object : "",
+    name: typeof raw.name === "string" ? raw.name : listing.name,
+    brand: typeof raw.brand === "string" ? raw.brand : "",
+    category: typeof raw.category === "string" ? raw.category : "",
+    description: typeof raw.description === "string" ? raw.description : listing.description ?? "",
+    productKind: ["physical", "avatar_item", "bundle", "digital"].includes(String(raw.product_kind))
+      ? raw.product_kind as CommerceProductRecognition["productKind"]
+      : "physical",
+    listingKind: ["resale", "owned_design", "avatar", "combo"].includes(String(raw.listing_kind))
+      ? raw.listing_kind as CommerceProductRecognition["listingKind"]
+      : "resale",
+    size: typeof raw.size === "string" ? raw.size : "",
+    color: typeof raw.color === "string" ? raw.color : "",
+    presentation: typeof raw.presentation === "string" ? raw.presentation : "",
+    identifier: null,
+    visibleText: stringList(raw.visible_text),
+    uncertainFields: stringList(raw.uncertain_fields),
+    confidence: {
+      overall: Number(confidenceRaw.overall || 0),
+      identity: Number(confidenceRaw.identity || 0),
+      variant: Number(confidenceRaw.variant || 0),
+      identifier: Number(confidenceRaw.identifier || 0),
+    },
+  };
+  return {
+    recognition,
+    provider: "google_vertex_ai",
+    model: typeof raw.model === "string" ? raw.model : "",
+    analyzedAt: typeof raw.analyzed_at === "string" ? raw.analyzed_at : listing.updated_at || new Date().toISOString(),
+  };
 }
 
 function cameraDisplayLabel(camera: MediaDeviceInfo, index: number) {
@@ -323,7 +446,10 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
   const [generatingProductImages, setGeneratingProductImages] = useState(false);
   const [productImagesResult, setProductImagesResult] = useState<ProductImagesResult | null>(null);
   const [selectedCoverImage, setSelectedCoverImage] = useState("");
-  const [creation, setCreation] = useState({ name: "", brand: "", category: "", description: "", productKind: "physical", listingKind: "resale", cost: "", price: "", stock: "1", status: "draft", size: "", color: "", presentation: "" });
+  const [draftListingId, setDraftListingId] = useState("");
+  const [draftSaveState, setDraftSaveState] = useState<"idle" | "saving" | "saved">("idle");
+  const draftKeyRef = useRef(crypto.randomUUID());
+  const [creation, setCreation] = useState({ name: "", brand: "", category: "", description: "", productKind: "physical", listingKind: "resale", cost: "", price: "", stock: "", status: "draft", size: "", color: "", presentation: "" });
   const [stockDraft, setStockDraft] = useState({ listingId: "", variantId: "", quantity: "1", note: "" });
   const [cart, setCart] = useState<Array<{ listingId: string; variantId: string | null; quantity: number }>>([]);
   const [paymentMethod, setPaymentMethod] = useState("cash");
@@ -380,6 +506,62 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
     }
     void load();
   }, [authLoading, load, router, studioId, user]);
+
+  useEffect(() => {
+    if (!draftListingId || !creation.name.trim() || recognizingProduct || generatingProductImages) return;
+    setDraftSaveState("saving");
+    let disposed = false;
+    const timer = window.setTimeout(() => {
+      void authFetch(`/api/studios/${encodeURIComponent(studioId)}/commerce/products/update`, {
+        method: "POST",
+        body: JSON.stringify({
+          listingId: draftListingId,
+          name: creation.name,
+          description: creation.description,
+          brand: creation.brand,
+          category: creation.category,
+          productKind: creation.productKind,
+          listingKind: creation.listingKind,
+          size: creation.size,
+          color: creation.color,
+          presentation: creation.presentation,
+          price: creation.price,
+          costAmount: creation.cost,
+          stock: creation.stock,
+          status: "draft",
+          autosave: true,
+          coverUrlCandidate: selectedCoverImage || null,
+        }),
+      }).then(() => {
+        if (!disposed) setDraftSaveState("saved");
+      }).catch(() => {
+        if (!disposed) setDraftSaveState("idle");
+      });
+    }, 900);
+    return () => {
+      disposed = true;
+      window.clearTimeout(timer);
+    };
+  }, [
+    authFetch,
+    creation.brand,
+    creation.category,
+    creation.color,
+    creation.cost,
+    creation.description,
+    creation.listingKind,
+    creation.name,
+    creation.presentation,
+    creation.price,
+    creation.productKind,
+    creation.size,
+    creation.stock,
+    draftListingId,
+    generatingProductImages,
+    recognizingProduct,
+    selectedCoverImage,
+    studioId,
+  ]);
 
   const stopScanner = useCallback(() => {
     if (animationRef.current != null) cancelAnimationFrame(animationRef.current);
@@ -542,11 +724,11 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
       invalidateProductAiResults();
       if (label === "Detalle") {
         const nextCount = Math.min(MAX_PRODUCT_DETAIL_IMAGES, detailCount + 1);
-        setMessage(`Detalle agregado. ${nextCount} ${nextCount === 1 ? "detalle listo" : "detalles listos"} para Gemini.`);
+        setMessage(`Detalle agregado. ${nextCount} ${nextCount === 1 ? "detalle listo" : "detalles listos"} para Vertex AI.`);
       } else if (label === "Frente") {
         setMessage("Frente capturado. Ahora podés sumar Atrás y todos los Detalles que necesites.");
       } else {
-        setMessage("Atrás capturado. Podés seguir agregando Detalles para darle más contexto a Gemini.");
+        setMessage("Atrás capturado. Podés seguir agregando Detalles para darle más contexto a Vertex AI.");
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "No se pudo capturar la foto.");
@@ -588,7 +770,7 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
       const addedDetails = Math.max(0, compressed.length - assignedBaseViews);
       const nextDetailCount = Math.min(MAX_PRODUCT_DETAIL_IMAGES, existingDetails + addedDetails);
       setMessage(addedDetails > 0
-        ? `${nextDetailCount} ${nextDetailCount === 1 ? "detalle listo" : "detalles listos"} para Gemini. Las referencias nuevas invalidaron el análisis anterior.`
+        ? `${nextDetailCount} ${nextDetailCount === 1 ? "detalle listo" : "detalles listos"} para Vertex AI. Las referencias nuevas invalidaron el análisis anterior.`
         : `${compressed.length} ${compressed.length === 1 ? "vista cargada" : "vistas cargadas"}. Ya podés analizar el producto.`);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "No se pudieron preparar las fotos.");
@@ -601,7 +783,7 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
       return;
     }
     if (!getFrontCapture(productCaptures)) {
-      setError("Capturá el Frente del producto antes de analizarlo con Gemini.");
+      setError("Capturá el Frente del producto antes de analizarlo con Vertex AI.");
       return;
     }
     const orderedCaptures = orderProductCaptures(productCaptures);
@@ -615,6 +797,8 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
           images: orderedCaptures.map(({ label, dataUrl }) => ({ label, dataUrl })),
           identifier: manualCode.trim() || null,
           identifierType: manualCode.trim() ? scanType : null,
+          draftListingId: draftListingId || null,
+          draftKey: draftKeyRef.current,
         }),
       }) as RecognitionResult;
       const recognized = payload.recognition;
@@ -631,26 +815,29 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
         size: recognized.size || current.size,
         color: recognized.color || current.color,
         presentation: recognized.presentation || current.presentation,
+        status: "draft",
       }));
 
-      let identifierMessage = "";
-      if (!manualCode.trim() && recognized.identifier?.value) {
-        setManualCode(recognized.identifier.value);
-        setScanType(recognized.identifier.type);
-        await processCode(recognized.identifier.value, recognized.identifier.type);
-        identifierMessage = ` También leyó ${recognized.identifier.type.replaceAll("_", " ").toUpperCase()}.`;
-      } else if (!manualCode.trim()) {
-        const generatedSku = buildSpotSku({
-          spotSlug: data.spot.slug,
-          productName: recognizedName || "Producto",
-          color: recognized.color,
-          size: recognized.size,
-          suffix: crypto.randomUUID().slice(0, 6),
-        });
-        setManualCode(generatedSku);
-        setScanType("sku");
+      const draft = payload.draft;
+      if (draft) {
+        setDraftListingId(draft.listingId);
+        draftKeyRef.current = draft.draftKey;
+        setManualCode(draft.identifier.value);
+        setScanType(draft.identifier.type);
         setScanResult({ exists: false });
-        identifierMessage = " No encontró un código comercial seguro, así que preparó un SKU interno del Spot.";
+        const sourceCover = draft.sourcePhotos.find((photo) => photo.label === "Frente")?.url || "";
+        setProductImagesResult((current) => ({
+          provider: "google_vertex_ai",
+          model: payload.model,
+          sourcePhotos: draft.sourcePhotos,
+          generatedImages: current?.generatedImages ?? [],
+          coverImage: current?.coverImage || sourceCover || null,
+          generatedAt: current?.generatedAt || payload.analyzedAt,
+          listingId: draft.listingId,
+          persisted: true,
+        }));
+        setSelectedCoverImage((current) => current || sourceCover);
+        setDraftSaveState("saved");
       }
 
       const completedFields = [
@@ -662,9 +849,15 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
         recognized.color,
         recognized.presentation,
       ].filter(Boolean).length;
-      setMessage(`Gemini identificó ${recognized.detectedObject || recognizedName} y completó ${completedFields} campos.${identifierMessage}`);
+      const identifierMessage = draft?.externalIdentifierPending
+        ? " No encontró un código comercial seguro: quedó usando un SKU interno CLOUVA y podés agregar el barcode después."
+        : draft?.identifier
+          ? ` Código confirmado: ${draft.identifier.type.replaceAll("_", " ").toUpperCase()}.`
+          : "";
+      setMessage(`Google Cloud Vertex AI identificó ${recognized.detectedObject || recognizedName} y completó ${completedFields} campos. Borrador guardado.${identifierMessage}`);
+      await load();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Gemini no pudo analizar el producto.");
+      setError(cause instanceof Error ? cause.message : "Vertex AI no pudo analizar el producto.");
     } finally {
       setRecognizingProduct(false);
     }
@@ -688,6 +881,7 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
         method: "POST",
         body: JSON.stringify({
           captures: orderedCaptures.map(({ label, dataUrl }) => ({ label, dataUrl })),
+          listingId: draftListingId || null,
           productDraft: {
             name: creation.name,
             brand: creation.brand,
@@ -701,17 +895,164 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
         }),
       }) as ProductImagesResult;
       setProductImagesResult(payload);
+      if (payload.listingId) setDraftListingId(payload.listingId);
       const preferredCover = payload.coverImage || payload.generatedImages[0]?.url || "";
       setSelectedCoverImage(preferredCover);
+      setDraftSaveState(payload.persisted ? "saved" : "idle");
+      if (payload.persisted) await load();
       if (!options?.quiet) {
-        setMessage(`Gemini generó ${payload.generatedImages.length} ${payload.generatedImages.length === 1 ? "imagen" : "imágenes"} de catálogo. La vista frontal quedó seleccionada como portada.`);
+        setMessage(`Google Cloud Vertex AI generó ${payload.generatedImages.length} ${payload.generatedImages.length === 1 ? "imagen" : "imágenes"} de catálogo. ${payload.persisted ? "Quedaron guardadas en el borrador." : "Guardá el borrador para conservarlas asociadas al producto."}`);
       }
       return payload;
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Gemini no pudo generar las imágenes del producto.");
+      setError(cause instanceof Error ? cause.message : "Vertex AI no pudo generar las imágenes del producto.");
       return null;
     } finally {
       setGeneratingProductImages(false);
+    }
+  }
+
+  function resumeDraft(listing: Listing) {
+    const fields = listingDraftFields(listing);
+    const images = listingProductImages(listing);
+    const sources = storedSourcesFromListing(listing);
+    const generated = generatedImagesFromListing(listing);
+    const recognition = restoredRecognition(listing);
+    setDraftListingId(listing.id);
+    setCreation({
+      name: listing.name,
+      brand: typeof fields.brand === "string" ? fields.brand : "",
+      category: typeof fields.category === "string" ? fields.category : "",
+      description: listing.description ?? "",
+      productKind: typeof fields.product_kind === "string" ? fields.product_kind : listing.product_type,
+      listingKind: typeof fields.listing_kind === "string" ? fields.listing_kind : listing.listing_kind,
+      cost: listing.cost_amount == null || Number(listing.cost_amount) === 0 ? "" : String(listing.cost_amount),
+      price: Number(listing.price || 0) > 0 ? String(listing.price) : "",
+      stock: listing.stock == null ? "" : String(listing.stock),
+      status: "draft",
+      size: typeof fields.size === "string" ? fields.size : "",
+      color: typeof fields.color === "string" ? fields.color : "",
+      presentation: typeof fields.presentation === "string" ? fields.presentation : "",
+    });
+    setRecognitionResult(recognition);
+    setProductCaptures([]);
+    setProductImagesResult(sources.length || generated.length ? {
+      provider: "google_vertex_ai",
+      model: typeof images.model === "string" ? images.model : "",
+      sourcePhotos: sources,
+      generatedImages: generated,
+      coverImage: typeof images.cover_image === "string" ? images.cover_image : listing.cover_url,
+      generatedAt: typeof images.generated_at === "string" ? images.generated_at : listing.updated_at || new Date().toISOString(),
+      listingId: listing.id,
+      persisted: true,
+    } : null);
+    setSelectedCoverImage(listing.cover_url || "");
+    const identifier = data?.identifiers.find((item) => item.catalog_product_id === listing.catalog_product_id && item.status === "active");
+    setManualCode(identifier?.value || "");
+    if (identifier) setScanType(identifier.identifier_type);
+    setScanResult({ exists: false });
+    setDraftSaveState("saved");
+    setMessage(`${listing.name} recuperado. Podés seguir completándolo.`);
+    setError(null);
+  }
+
+  function newProductDraft() {
+    draftKeyRef.current = crypto.randomUUID();
+    setDraftListingId("");
+    setDraftSaveState("idle");
+    setProductCaptures([]);
+    setRecognitionResult(null);
+    setProductImagesResult(null);
+    setSelectedCoverImage("");
+    setManualCode("");
+    setScanType("code_128");
+    setScanResult(null);
+    setCreation({ name: "", brand: "", category: "", description: "", productKind: "physical", listingKind: "resale", cost: "", price: "", stock: "", status: "draft", size: "", color: "", presentation: "" });
+    setMessage("Nuevo producto listo para escanear.");
+    setError(null);
+  }
+
+  async function addDraftReferenceImage(file: File | undefined, label: "Atrás" | "Detalle" | "Código de barras") {
+    if (!file || !draftListingId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const dataUrl = await compressProductImage(file);
+      await authFetch(`/api/studios/${encodeURIComponent(studioId)}/commerce/products/images`, {
+        method: "POST",
+        body: JSON.stringify({
+          action: "add_reference",
+          listingId: draftListingId,
+          dataUrl,
+          label,
+        }),
+      });
+      setDraftSaveState("saved");
+      setMessage(`${label} guardado en el mismo borrador.`);
+      await load();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "No se pudo guardar la referencia.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function detectBarcodePhoto(file: File | undefined) {
+    if (!file || !draftListingId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      let code = "";
+      const Detector = (window as typeof window & { BarcodeDetector?: NativeBarcodeDetectorConstructor }).BarcodeDetector;
+      if (Detector) {
+        const bitmap = await createImageBitmap(file);
+        try {
+          const detector = new Detector({ formats: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "qr_code"] });
+          const found = await detector.detect(bitmap);
+          code = found[0]?.rawValue?.trim() || "";
+        } finally {
+          bitmap.close();
+        }
+      }
+      if (!code) {
+        const dataUrl = await compressProductImage(file);
+        const image = document.createElement("img");
+        image.src = dataUrl;
+        await new Promise<void>((resolve, reject) => {
+          image.onload = () => resolve();
+          image.onerror = () => reject(new Error("No se pudo leer la foto del código."));
+        });
+        const { BrowserMultiFormatReader } = await import("@zxing/browser");
+        const reader = new BrowserMultiFormatReader();
+        const result = await reader.decodeFromImageElement(image);
+        code = result?.getText()?.trim() || "";
+      }
+      if (!code) throw new Error("No se detectó un código legible. Podés escanearlo con cámara o ingresarlo manualmente.");
+
+      const identifierType = detectCommerceIdentifierType(code);
+      const origin: Identifier["origin"] = ["ean_13", "ean_8", "upc_a", "upc_e"].includes(identifierType) ? "manufacturer" : "manual";
+      await authFetch(`/api/studios/${encodeURIComponent(studioId)}/commerce/codes`, {
+        method: "POST",
+        body: JSON.stringify({
+          action: "attach",
+          listingId: draftListingId,
+          variantId: null,
+          code,
+          identifierType,
+          origin,
+        }),
+      });
+      await addDraftReferenceImage(file, "Código de barras");
+      setManualCode(code);
+      setScanType(identifierType);
+      setCodeDraft({ listingId: draftListingId, variantId: "" });
+      setDraftSaveState("saved");
+      setMessage(`Código ${identifierType.replaceAll("_", " ").toUpperCase()} leído y asociado al mismo producto.`);
+      await load();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "No se pudo leer el código de la foto.");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -726,73 +1067,106 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
   }
 
   async function createScannedProduct() {
-    if (!manualCode || !creation.name.trim() || !creation.price) {
-      setError("Completá código, nombre y precio."); return;
+    if (!creation.name.trim()) {
+      setError("Confirmá el nombre del producto.");
+      return;
     }
-    setBusy(true); setError(null); setMessage(null);
+    if (creation.status === "published" && !(Number(creation.price) > 0)) {
+      setError("Confirmá el precio antes de publicar. El borrador puede guardarse sin precio.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setMessage(null);
     try {
-      const hasVariant = Boolean(creation.size || creation.color || creation.presentation);
-      let imagesResult = productImagesResult;
-      if (!imagesResult && productCaptures.some((capture) => capture.label === "Frente")) {
-        imagesResult = await generateProductImagesWithGemini({ quiet: true });
-        if (!imagesResult) return;
+      if (draftListingId) {
+        const payload = await authFetch(`/api/studios/${encodeURIComponent(studioId)}/commerce/products/update`, {
+          method: "POST",
+          body: JSON.stringify({
+            listingId: draftListingId,
+            name: creation.name,
+            description: creation.description,
+            brand: creation.brand,
+            category: creation.category,
+            productKind: creation.productKind,
+            listingKind: creation.listingKind,
+            size: creation.size,
+            color: creation.color,
+            presentation: creation.presentation,
+            price: creation.price,
+            costAmount: creation.cost,
+            stock: creation.stock,
+            status: creation.status,
+            coverUrlCandidate: selectedCoverImage || null,
+          }),
+        });
+        setDraftSaveState("saved");
+        setMessage(creation.status === "published"
+          ? `${creation.name} quedó publicado.`
+          : `${creation.name} quedó guardado como borrador. Podés salir y continuarlo después.`);
+        await load();
+        return payload;
       }
-      const recognitionMetadata = recognitionResult ? {
-        source: "gemini_product_vision",
-        provider: recognitionResult.provider,
-        model: recognitionResult.model,
-        analyzed_at: recognitionResult.analyzedAt,
-        detected_object: recognitionResult.recognition.detectedObject,
-        confidence: recognitionResult.recognition.confidence,
-        visible_text: recognitionResult.recognition.visibleText,
-        uncertain_fields: recognitionResult.recognition.uncertainFields,
-        captured_views: productCaptureDisplayLabels(productCaptures),
-      } : null;
-      const coverImage = selectedCoverImage || imagesResult?.coverImage || imagesResult?.generatedImages[0]?.url || null;
-      const productImagesMetadata = imagesResult ? {
-        provider: imagesResult.provider,
-        model: imagesResult.model,
-        generated_at: imagesResult.generatedAt,
-        source_photos: imagesResult.sourcePhotos.map((photo) => ({
-          label: photo.label,
-          display_label: photo.displayLabel,
-          detail_index: photo.detailIndex,
-          url: photo.url,
-          storage_path: photo.storagePath,
-          mime_type: photo.mimeType,
-        })),
-        generated_images: imagesResult.generatedImages.map((image) => ({
-          kind: image.kind,
-          source_label: image.sourceLabel,
-          detail_index: image.detailIndex,
-          url: image.url,
-          storage_path: image.storagePath,
-          mime_type: image.mimeType,
-          model: image.model,
-        })),
-        cover_image: coverImage,
-      } : null;
-      const sharedMetadata = {
-        ...(recognitionMetadata ? { recognition: recognitionMetadata } : {}),
-        ...(productImagesMetadata ? { product_images: productImagesMetadata } : {}),
-      };
-      const variantMetadata = recognitionMetadata ? { recognition: recognitionMetadata } : {};
+
+      const fallbackCode = manualCode.trim() || buildSpotSku({
+        spotSlug: data?.spot.slug || "spot",
+        productName: creation.name,
+        color: creation.color,
+        size: creation.size,
+        suffix: draftKeyRef.current.slice(0, 6),
+      });
+      const fallbackType = manualCode.trim() ? scanType : "sku";
+      setManualCode(fallbackCode);
+      setScanType(fallbackType);
+      const hasVariant = Boolean(creation.size || creation.color || creation.presentation);
       const payload = await authFetch(`/api/studios/${encodeURIComponent(studioId)}/commerce/scan`, {
         method: "POST",
         body: JSON.stringify({
-          code: manualCode,
-          identifierType: scanType,
-          product: { product_kind: creation.productKind, name: creation.name, brand: creation.brand, category: creation.category, description: creation.description, metadata: sharedMetadata },
-          listing: { listing_kind: creation.listingKind, cost: Number(creation.cost || 0), price: Number(creation.price), initial_stock: Number(creation.stock || 0), status: creation.status, cover_url: coverImage, metadata: sharedMetadata },
-          variant: hasVariant ? { size: creation.size, color: creation.color, presentation: creation.presentation, metadata: variantMetadata } : {},
-          idempotencyKey: `scan-ui:${data?.spot.id}:${manualCode}:${Date.now()}`,
+          code: fallbackCode,
+          identifierType: fallbackType,
+          product: {
+            product_kind: creation.productKind,
+            name: creation.name,
+            brand: creation.brand,
+            category: creation.category,
+            description: creation.description,
+            metadata: recognitionResult ? { recognition: {
+              source: "google_cloud_product_recognition",
+              provider: recognitionResult.provider,
+              model: recognitionResult.model,
+              analyzed_at: recognitionResult.analyzedAt,
+            } } : {},
+          },
+          listing: {
+            listing_kind: creation.listingKind,
+            cost: creation.cost || "",
+            price: creation.price || 0,
+            initial_stock: creation.stock || 0,
+            status: creation.status,
+            cover_url: selectedCoverImage || null,
+            gallery: selectedCoverImage ? [selectedCoverImage] : [],
+          },
+          variant: hasVariant ? {
+            size: creation.size,
+            color: creation.color,
+            presentation: creation.presentation,
+          } : {},
+          idempotencyKey: `scan-ui:${data?.spot.id}:${draftKeyRef.current}`,
         }),
       });
-      setScanResult(payload.result as ScanResult);
-      setMessage(`${creation.name} quedó conectado al catálogo de ${data?.spot.name}.`);
+      const result = payload.result as ScanResult;
+      setScanResult(result);
+      if (result.listing?.id) setDraftListingId(result.listing.id);
+      setDraftSaveState("saved");
+      setMessage(`${creation.name} quedó guardado en ${data?.spot.name}.`);
       await load();
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo guardar el producto."); }
-    finally { setBusy(false); }
+      return payload;
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "No se pudo guardar el producto.");
+      return null;
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function adjustStock() {
@@ -999,6 +1373,15 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
   const backCapture = getBackCapture(productCaptures);
   const detailCaptures = getDetailCaptures(productCaptures);
   const referenceSummary = productReferenceSummary(productCaptures);
+  const draftListings = data.listings.filter((listing) => listing.status === "draft");
+  const activeDraft = draftListingId ? data.listings.find((listing) => listing.id === draftListingId) ?? null : null;
+  const activeDraftMissing = activeDraft ? listingMissing(activeDraft) : [];
+  const activeDraftSources = activeDraft ? storedSourcesFromListing(activeDraft) : [];
+  const activeDraftGenerated = activeDraft ? generatedImagesFromListing(activeDraft) : [];
+  const activeDraftIdentifiers = activeDraft
+    ? data.identifiers.filter((identifier) => identifier.catalog_product_id === activeDraft.catalog_product_id && identifier.status === "active")
+    : [];
+  const hasExternalIdentifier = activeDraftIdentifiers.some((identifier) => !["sku", "clouva_barcode", "clouva_qr"].includes(identifier.identifier_type));
 
   return (
     <main className="relative min-h-screen overflow-hidden bg-[radial-gradient(circle_at_48%_-18%,rgba(105,46,196,.2),transparent_34%),radial-gradient(circle_at_95%_32%,rgba(76,29,149,.12),transparent_24%),#050507] text-white">
@@ -1039,12 +1422,12 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
 
           {tab === "scanner" ? <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
             <div className={`${CARD} min-w-0 overflow-hidden`}>
-              <div className="flex flex-col gap-3 border-b border-white/10 p-4 sm:flex-row sm:items-center sm:justify-between"><div className="min-w-0"><h1 className="text-lg font-semibold leading-tight sm:text-xl">Escanear código o producto</h1><p className="mt-1 text-xs leading-5 text-white/45 sm:text-sm">EAN, UPC, Code 128, QR y reconocimiento visual con Gemini</p></div><div className="flex w-full shrink-0 gap-2 sm:w-auto"><button type="button" aria-label="Linterna" onClick={() => void toggleTorch()} disabled={!scanning} className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-white/10 disabled:opacity-30"><Flashlight className={`h-5 w-5 ${torch ? "text-amber-300" : ""}`} /></button><button type="button" onClick={scanning ? stopScanner : () => void startScanner()} className="min-h-11 flex-1 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold sm:flex-none">{scanning ? "Detener" : "Abrir cámara"}</button></div></div>
+              <div className="flex flex-col gap-3 border-b border-white/10 p-4 sm:flex-row sm:items-center sm:justify-between"><div className="min-w-0"><h1 className="text-lg font-semibold leading-tight sm:text-xl">Escanear código o producto</h1><p className="mt-1 text-xs leading-5 text-white/45 sm:text-sm">EAN, UPC, Code 128, QR y reconocimiento visual con Google Cloud Vertex AI</p></div><div className="flex w-full shrink-0 gap-2 sm:w-auto"><button type="button" aria-label="Linterna" onClick={() => void toggleTorch()} disabled={!scanning} className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-white/10 disabled:opacity-30"><Flashlight className={`h-5 w-5 ${torch ? "text-amber-300" : ""}`} /></button><button type="button" onClick={scanning ? stopScanner : () => void startScanner()} className="min-h-11 flex-1 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold sm:flex-none">{scanning ? "Detener" : "Abrir cámara"}</button></div></div>
               <div data-commerce-scanner-camera className="relative aspect-[16/10] min-h-[188px] max-h-[340px] overflow-hidden bg-black sm:aspect-[16/9] sm:min-h-[260px] sm:max-h-[520px] xl:aspect-[4/3] xl:max-h-none"><video ref={videoRef} muted playsInline className="h-full w-full object-cover" /><div className="pointer-events-none absolute inset-[14%] rounded-3xl border-2 border-violet-400 shadow-[0_0_0_999px_rgba(0,0,0,.42),0_0_35px_rgba(139,92,246,.45)]"><div className="absolute left-3 right-3 top-1/2 h-px bg-gradient-to-r from-transparent via-violet-300 to-transparent shadow-[0_0_15px_#c4b5fd]" /></div>{!scanning ? <div className="absolute inset-0 grid place-items-center px-5 text-center"><div><Camera className="mx-auto h-9 w-9 text-white/35" /><p className="mt-3 max-w-xs text-xs leading-5 text-white/55 sm:text-sm">Abrí la cámara para leer el código o fotografiar el producto</p></div></div> : null}</div>
               <div className="grid gap-2.5 p-3 sm:grid-cols-[1fr_auto] sm:p-4">{cameras.length > 1 ? <select aria-label="Seleccionar cámara" className={INPUT} value={cameraId} onChange={(event) => setCameraId(event.target.value)}>{cameras.map((camera, index) => <option key={camera.deviceId} value={camera.deviceId}>{cameraDisplayLabel(camera, index)}</option>)}</select> : <div className="text-xs leading-5 text-white/50 sm:text-sm">La cámara prioriza el lente trasero.</div>}{cameraId && scanning ? <button type="button" onClick={() => void startScanner()} className="min-h-10 rounded-xl border border-white/10 px-4 py-2 text-sm">Cambiar</button> : null}</div>
               {cameraError ? <p className="mx-3 mb-3 rounded-xl border border-amber-400/20 bg-amber-400/10 p-3 text-sm text-amber-100 sm:mx-4 sm:mb-4">{cameraError}</p> : null}
               <section className="border-t border-white/[0.08] bg-[radial-gradient(circle_at_0%_0%,rgba(124,58,237,.12),transparent_48%)] p-3 sm:p-4">
-                <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[.15em] text-violet-300 sm:text-xs sm:tracking-[.18em]"><Sparkles className="h-4 w-4 shrink-0" /> Escanear producto con IA</p><p className="mt-2 text-[11px] leading-5 text-white/50 sm:text-xs">Frente obligatorio · Atrás opcional · hasta {MAX_PRODUCT_DETAIL_IMAGES} detalles. Revisá cada foto y confirmala antes de seguir.</p></div><span className="shrink-0 rounded-full border border-violet-400/20 bg-violet-500/10 px-2 py-1 text-[9px] font-bold text-violet-200">GEMINI</span></div>
+                <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[.15em] text-violet-300 sm:text-xs sm:tracking-[.18em]"><Sparkles className="h-4 w-4 shrink-0" /> Escanear producto con IA</p><p className="mt-2 text-[11px] leading-5 text-white/50 sm:text-xs">Frente obligatorio · Atrás opcional · hasta {MAX_PRODUCT_DETAIL_IMAGES} detalles. Revisá cada foto y confirmala antes de seguir.</p></div><span className="shrink-0 rounded-full border border-violet-400/20 bg-violet-500/10 px-2 py-1 text-[9px] font-bold text-violet-200">VERTEX AI</span></div>
                 <div className="mt-3 grid grid-cols-3 gap-1.5 sm:mt-4 sm:gap-2">
                   <div className={`min-w-0 rounded-xl border px-2.5 py-2 ${frontCapture ? "border-emerald-400/25 bg-emerald-400/[0.07]" : "border-amber-400/20 bg-amber-400/[0.04]"}`}><div className="flex items-center justify-between gap-1"><span className="truncate text-[10px] font-semibold">Frente</span>{frontCapture ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-300" /> : null}</div><p className={`mt-1 truncate text-[9px] ${frontCapture ? "text-emerald-200/75" : "text-amber-200/65"}`}>{frontCapture ? "Capturado" : "Obligatorio"}</p></div>
                   <div className={`min-w-0 rounded-xl border px-2.5 py-2 ${backCapture ? "border-emerald-400/25 bg-emerald-400/[0.07]" : "border-white/10 bg-white/[0.02]"}`}><div className="flex items-center justify-between gap-1"><span className="truncate text-[10px] font-semibold">Atrás</span>{backCapture ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-300" /> : null}</div><p className={`mt-1 truncate text-[9px] ${backCapture ? "text-emerald-200/75" : "text-white/45"}`}>{backCapture ? "Capturado" : "Opcional"}</p></div>
@@ -1061,10 +1444,33 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
                 {detailCaptures.length ? <div className="mt-3 rounded-2xl border border-white/[0.07] bg-black/20 p-2.5 sm:mt-4 sm:p-3"><div className="flex items-center justify-between gap-3"><div className="min-w-0"><p className="text-[10px] font-semibold uppercase tracking-[.16em] text-violet-300">Detalles del objeto</p><p className="mt-1 truncate text-[9px] text-white/45">Podés borrar cualquiera individualmente.</p></div><span className="shrink-0 rounded-full border border-violet-400/20 px-2 py-1 text-[9px] text-violet-200">{detailCaptures.length}</span></div><div className="mt-2.5 grid grid-cols-3 gap-2 sm:grid-cols-4">{detailCaptures.map((capture, index) => <ProductCapturePreview key={capture.id} capture={capture} label={`Detalle ${index + 1}`} onRemove={() => removeProductCapture(capture.id)} />)}</div></div> : null}
                 <button type="button" disabled={recognizingProduct || !frontCapture} onClick={() => void analyzeProductWithGemini()} className="mt-3 flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-violet-600 to-fuchsia-600 px-4 py-3 text-sm font-semibold shadow-[0_10px_28px_rgba(124,58,237,.22)] disabled:cursor-not-allowed disabled:opacity-40">{recognizingProduct ? <><LoaderCircle className="h-4 w-4 animate-spin" />Analizando producto…</> : <><Sparkles className="h-4 w-4" />Analizar y completar datos</>}</button>
                 <button type="button" disabled={generatingProductImages || !recognitionResult || !frontCapture} onClick={() => void generateProductImagesWithGemini()} className="mt-2 flex min-h-11 w-full items-center justify-center gap-2 rounded-xl border border-violet-400/30 bg-violet-500/[0.08] px-4 py-2.5 text-sm font-semibold text-violet-100 transition hover:bg-violet-500/[0.14] disabled:cursor-not-allowed disabled:opacity-35">{generatingProductImages ? <><LoaderCircle className="h-4 w-4 animate-spin" />Generando imágenes de catálogo…</> : <><ImagePlus className="h-4 w-4" />Generar imágenes del producto</>}</button>
-                {productImagesResult ? <div className="mt-4 rounded-2xl border border-violet-400/20 bg-black/20 p-3"><div className="flex items-center justify-between gap-3"><div><p className="text-[10px] font-semibold uppercase tracking-[.18em] text-violet-300">Imágenes de catálogo</p><p className="mt-1 text-[10px] text-white/45">Elegí cuál será la portada del producto.</p></div><span className="rounded-full border border-violet-400/20 px-2 py-1 text-[9px] text-violet-200">{productImagesResult.generatedImages.length} GEMINI</span></div><div className="mt-3 grid grid-cols-3 gap-2">{productImagesResult.generatedImages.map((image) => { const selected = selectedCoverImage === image.url; return <button type="button" key={`${image.kind}-${image.url}`} onClick={() => setSelectedCoverImage(image.url)} className={`relative overflow-hidden rounded-xl border text-left ${selected ? "border-violet-300 shadow-[0_0_20px_rgba(139,92,246,.25)]" : "border-white/10"}`}><img src={image.url} alt={image.sourceLabel} className="aspect-square w-full object-cover" /><span className="absolute bottom-1.5 left-1.5 rounded-md bg-black/80 px-1.5 py-1 text-[9px]">{image.sourceLabel}{image.detailIndex ? ` ${image.detailIndex}` : ""}</span>{selected ? <span className="absolute right-1.5 top-1.5 rounded-md bg-violet-600 px-1.5 py-1 text-[8px] font-bold uppercase tracking-wider">Portada</span> : null}</button>; })}</div><p className="mt-3 text-[10px] text-white/45">Originales guardados: {productImagesResult.sourcePhotos.map((photo) => photo.displayLabel).join(" · ")}</p></div> : null}
+                {productImagesResult ? <div className="mt-4 rounded-2xl border border-violet-400/20 bg-black/20 p-3"><div className="flex items-center justify-between gap-3"><div><p className="text-[10px] font-semibold uppercase tracking-[.18em] text-violet-300">Imágenes de catálogo</p><p className="mt-1 text-[10px] text-white/45">Elegí cuál será la portada del producto.</p></div><span className="rounded-full border border-violet-400/20 px-2 py-1 text-[9px] text-violet-200">{productImagesResult.generatedImages.length} VERTEX AI</span></div><div className="mt-3 grid grid-cols-3 gap-2">{productImagesResult.generatedImages.map((image) => { const selected = selectedCoverImage === image.url; return <button type="button" key={`${image.kind}-${image.url}`} onClick={() => setSelectedCoverImage(image.url)} className={`relative overflow-hidden rounded-xl border text-left ${selected ? "border-violet-300 shadow-[0_0_20px_rgba(139,92,246,.25)]" : "border-white/10"}`}><img src={image.url} alt={image.sourceLabel} className="aspect-square w-full object-cover" /><span className="absolute bottom-1.5 left-1.5 rounded-md bg-black/80 px-1.5 py-1 text-[9px]">{image.sourceLabel}{image.detailIndex ? ` ${image.detailIndex}` : ""}</span>{selected ? <span className="absolute right-1.5 top-1.5 rounded-md bg-violet-600 px-1.5 py-1 text-[8px] font-bold uppercase tracking-wider">Portada</span> : null}</button>; })}</div><p className="mt-3 text-[10px] text-white/45">Originales guardados: {productImagesResult.sourcePhotos.map((photo) => photo.displayLabel).join(" · ")}</p></div> : null}
               </section>
             </div>
             <div className="min-w-0 space-y-4">
+              {draftListings.length ? <div className={`${CARD} p-4`}>
+                <div className="flex items-center justify-between gap-3"><div><p className="text-[10px] font-semibold uppercase tracking-[.18em] text-violet-300">Borradores / incompletos</p><p className="mt-1 text-xs text-white/45">Salí cuando quieras y continuá desde acá.</p></div><button type="button" onClick={newProductDraft} className="rounded-lg border border-white/10 px-2.5 py-2 text-[10px] font-semibold text-white/60">Nuevo</button></div>
+                <div className="mt-3 space-y-2">{draftListings.slice(0, 6).map((listing) => { const missing = listingMissing(listing); return <button type="button" key={listing.id} onClick={() => resumeDraft(listing)} className={`flex w-full items-center gap-3 rounded-xl border p-2.5 text-left transition ${draftListingId === listing.id ? "border-violet-400/40 bg-violet-500/10" : "border-white/8 bg-black/20 hover:border-violet-400/25"}`}>{listing.cover_url ? <img src={listing.cover_url} alt="" className="h-12 w-12 shrink-0 rounded-lg object-cover" /> : <span className="grid h-12 w-12 shrink-0 place-items-center rounded-lg bg-violet-500/10"><PackagePlus className="h-4 w-4 text-violet-300" /></span>}<span className="min-w-0 flex-1"><strong className="block truncate text-xs">{listing.name}</strong><small className="mt-1 block truncate text-[9px] text-white/35">{missing.length ? `${missing.length} pendientes · ${missing.slice(0, 2).join(" · ")}` : "Listo para revisar"} · {when(listing.updated_at)}</small></span><span className="text-[9px] font-semibold text-violet-200">Continuar</span></button>; })}</div>
+              </div> : null}
+              {draftListingId ? <div className={`${CARD} border-violet-400/20 p-4`}>
+                <div className="flex items-start justify-between gap-3"><div><p className="text-[10px] font-semibold uppercase tracking-[.18em] text-violet-300">Completar producto</p><p className="mt-1 text-sm font-semibold">{creation.name || "Borrador persistente"}</p></div><span className={`rounded-full border px-2 py-1 text-[9px] font-semibold ${draftSaveState === "saving" ? "border-amber-400/25 text-amber-200" : "border-emerald-400/25 text-emerald-200"}`}>{draftSaveState === "saving" ? "Guardando…" : "Guardado"}</span></div>
+                <div className="mt-3 grid grid-cols-2 gap-2 text-[10px]">
+                  <DraftCheck ok={Boolean(activeDraftSources.some((photo) => photo.label === "Frente")) || Boolean(productImagesResult?.sourcePhotos.some((photo) => photo.label === "Frente")) || Boolean(frontCapture)} label="Foto frontal" />
+                  <DraftCheck ok={Boolean(recognitionResult)} label="Producto identificado" />
+                  <DraftCheck ok={Boolean(manualCode)} label="SKU / código interno" />
+                  <DraftCheck ok={Boolean(activeDraftGenerated.length) || Boolean(productImagesResult?.generatedImages.length)} label="Imagen de catálogo" />
+                  <DraftCheck ok={Boolean(activeDraftSources.some((photo) => photo.label === "Atrás")) || Boolean(productImagesResult?.sourcePhotos.some((photo) => photo.label === "Atrás")) || Boolean(backCapture)} label="Foto trasera" optional />
+                  <DraftCheck ok={hasExternalIdentifier} label="Código comercial" optional />
+                  <DraftCheck ok={Number(creation.price) > 0} label="Precio confirmado" />
+                  <DraftCheck ok={creation.stock !== ""} label="Stock confirmado" />
+                </div>
+                {activeDraftMissing.length ? <p className="mt-3 text-[9px] leading-4 text-white/35">Pendientes persistidos: {activeDraftMissing.join(" · ")}</p> : null}
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <label className="flex min-h-10 cursor-pointer items-center justify-center rounded-xl border border-white/10 px-2.5 py-2 text-center text-[10px] font-semibold"><ImagePlus className="mr-1.5 h-3.5 w-3.5" />Agregar foto trasera<input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={(event) => { void addDraftReferenceImage(event.currentTarget.files?.[0], "Atrás"); event.currentTarget.value = ""; }} /></label>
+                  <label className="flex min-h-10 cursor-pointer items-center justify-center rounded-xl border border-white/10 px-2.5 py-2 text-center text-[10px] font-semibold"><Barcode className="mr-1.5 h-3.5 w-3.5" />Foto código de barras<input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={(event) => { void detectBarcodePhoto(event.currentTarget.files?.[0]); event.currentTarget.value = ""; }} /></label>
+                  <button type="button" onClick={() => { setCodeDraft({ listingId: draftListingId, variantId: "" }); setTab("codes"); }} className="col-span-2 min-h-10 rounded-xl border border-violet-400/25 bg-violet-500/[0.06] px-3 py-2 text-[10px] font-semibold text-violet-200">Agregar / administrar código de barras, QR o SKU</button>
+                </div>
+              </div> : null}
               {recognitionResult ? <RecognitionSummary result={recognitionResult} /> : null}
               <div className={`${CARD} p-4`}><p className="text-xs uppercase tracking-[.2em] text-white/45">Código detectado o Ingreso manual</p><div className="mt-3 flex gap-2"><input value={manualCode} onChange={(event) => { setManualCode(event.target.value); setScanType(detectCommerceIdentifierType(event.target.value)); }} onKeyDown={(event) => { if (event.key === "Enter") void processCode(manualCode); }} placeholder="Código de barras, SKU o QR" className={INPUT} /><button disabled={busy} onClick={() => void processCode(manualCode)} className="rounded-xl bg-violet-600 px-4"><ScanLine className="h-5 w-5" /></button></div><p className="mt-2 text-xs text-white/45">Detectado como {scanType.replaceAll("_", " ").toUpperCase()}</p></div>
               {scanResult?.listing ? <ScanExisting
@@ -1099,6 +1505,13 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
       </div>
     </main>
   );
+}
+
+function DraftCheck({ ok, label, optional = false }: { ok: boolean; label: string; optional?: boolean }) {
+  return <div className={`flex items-center gap-2 rounded-xl border px-2.5 py-2 ${ok ? "border-emerald-400/20 bg-emerald-400/[0.06] text-emerald-100" : "border-white/8 bg-black/20 text-white/45"}`}>
+    {ok ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-300" /> : <span className="h-3.5 w-3.5 shrink-0 rounded-full border border-white/20" />}
+    <span className="truncate">{label}{optional && !ok ? " · opcional" : ""}</span>
+  </div>;
 }
 
 function ProductCapturePreview({ capture, label, onRemove }: { capture: ProductCapture; label: string; onRemove: () => void }) {
@@ -1243,7 +1656,7 @@ function RecognitionSummary({ result }: { result: RecognitionResult }) {
   const confidence = Math.round(recognition.confidence.overall * 100);
   const facts = [recognition.brand, recognition.category, recognition.presentation, recognition.color, recognition.size].filter(Boolean);
   return <div className={`${CARD} overflow-hidden border-violet-400/20`}>
-    <div className="flex items-start justify-between gap-3 border-b border-white/[0.08] bg-violet-500/[0.06] p-4"><div><p className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[.2em] text-violet-300"><Sparkles className="h-3.5 w-3.5" /> Datos completados por Gemini</p><h2 className="mt-2 text-lg font-semibold">{recognition.name || recognition.detectedObject}</h2><p className="mt-1 text-xs text-white/40">Objeto: {recognition.detectedObject || "producto físico"}</p></div><span className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-2.5 py-1 text-[10px] font-semibold text-emerald-200">{confidence}%</span></div>
+    <div className="flex items-start justify-between gap-3 border-b border-white/[0.08] bg-violet-500/[0.06] p-4"><div><p className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[.2em] text-violet-300"><Sparkles className="h-3.5 w-3.5" /> Datos completados por Google Cloud Vertex AI</p><h2 className="mt-2 text-lg font-semibold">{recognition.name || recognition.detectedObject}</h2><p className="mt-1 text-xs text-white/40">Objeto: {recognition.detectedObject || "producto físico"}</p></div><span className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-2.5 py-1 text-[10px] font-semibold text-emerald-200">{confidence}%</span></div>
     <div className="p-4"><div className="flex flex-wrap gap-1.5">{facts.map((fact) => <span key={fact} className="rounded-lg border border-white/10 bg-white/[0.025] px-2 py-1 text-[10px] text-white/55">{fact}</span>)}</div>{recognition.visibleText.length ? <p className="mt-3 line-clamp-2 text-[10px] leading-5 text-white/30">Texto leído: {recognition.visibleText.join(" · ")}</p> : null}{recognition.uncertainFields.length ? <p className="mt-3 text-[10px] leading-5 text-amber-200/65">Revisar: {recognition.uncertainFields.join(", ")}</p> : null}<p className="mt-3 border-t border-white/[0.07] pt-3 text-[10px] leading-5 text-white/30">La propuesta ya está en el formulario y se puede corregir. Precio, costo y stock se confirman manualmente.</p></div>
   </div>;
 }
@@ -1265,7 +1678,7 @@ function CreateProductForm({ value, onChange, onSubmit, busy, globalMatch, scann
   return <div className={`${CARD} p-5`}>
     <p className="text-xs uppercase tracking-[.2em] text-violet-300">{globalMatch ? "Agregar producto global a El Iglú" : "Crear producto con este código"}</p>
     <div className="mt-4 rounded-2xl border border-violet-400/20 bg-violet-500/[0.05] p-4"><p className="text-xs font-semibold uppercase tracking-[.16em]">¿Este producto ya tiene código?</p><div className="mt-3 grid grid-cols-3 gap-2 text-xs"><button onClick={onScan} className="rounded-xl border border-white/10 p-2">Escanear cámara</button><span className="rounded-xl border border-emerald-400/20 bg-emerald-400/10 p-2 text-center text-emerald-200">Ingresado</span><span className="rounded-xl border border-white/10 p-2 text-center text-white/35">No tiene código</span></div><p className="mt-3 break-all font-mono text-xs text-white/55">{scannedCode || "Esperando código"} · {scanType.replaceAll("_", " ").toUpperCase()}</p></div>
-    <div className="mt-4 grid gap-3 sm:grid-cols-2">{field("name", "Nombre")}{field("brand", "Marca")}{field("category", "Categoría")}<select className={INPUT} value={value.productKind} onChange={(event) => onChange((current) => ({ ...current, productKind: event.target.value }))}><option value="physical">Físico</option><option value="avatar_item">Prenda 3D</option><option value="bundle">Combo físico + 3D</option><option value="digital">Digital</option></select>{field("cost", "Costo", "number")}{field("price", "Precio", "number")}{field("stock", "Stock inicial", "number")}<select className={INPUT} value={value.status} onChange={(event) => onChange((current) => ({ ...current, status: event.target.value }))}><option value="draft">Borrador</option><option value="published">Publicado</option></select>{field("color", "Color")}{field("size", "Talle")}{field("presentation", "Presentación")}<select className={INPUT} value={value.listingKind} onChange={(event) => onChange((current) => ({ ...current, listingKind: event.target.value }))}><option value="resale">Reventa</option><option value="owned_design">Diseño propio</option><option value="avatar">Avatar 3D</option><option value="combo">Combo</option></select><textarea className={`${INPUT} sm:col-span-2`} value={value.description} placeholder="Descripción" onChange={(event) => onChange((current) => ({ ...current, description: event.target.value }))} /></div><button disabled={busy || !scannedCode} onClick={onSubmit} className="mt-4 w-full rounded-xl bg-violet-600 px-4 py-3 font-semibold disabled:opacity-50">{busy ? "Guardando…" : "Crear y conectar producto"}</button>
+    <div className="mt-4 grid gap-3 sm:grid-cols-2">{field("name", "Nombre")}{field("brand", "Marca")}{field("category", "Categoría")}<select className={INPUT} value={value.productKind} onChange={(event) => onChange((current) => ({ ...current, productKind: event.target.value }))}><option value="physical">Físico</option><option value="avatar_item">Prenda 3D</option><option value="bundle">Combo físico + 3D</option><option value="digital">Digital</option></select>{field("cost", "Costo", "number")}{field("price", "Precio", "number")}{field("stock", "Stock inicial", "number")}<select className={INPUT} value={value.status} onChange={(event) => onChange((current) => ({ ...current, status: event.target.value }))}><option value="draft">Borrador</option><option value="published">Publicado</option></select>{field("color", "Color")}{field("size", "Talle")}{field("presentation", "Presentación")}<select className={INPUT} value={value.listingKind} onChange={(event) => onChange((current) => ({ ...current, listingKind: event.target.value }))}><option value="resale">Reventa</option><option value="owned_design">Diseño propio</option><option value="avatar">Avatar 3D</option><option value="combo">Combo</option></select><textarea className={`${INPUT} sm:col-span-2`} value={value.description} placeholder="Descripción" onChange={(event) => onChange((current) => ({ ...current, description: event.target.value }))} /></div><button disabled={busy} onClick={onSubmit} className="mt-4 w-full rounded-xl bg-violet-600 px-4 py-3 font-semibold disabled:opacity-50">{busy ? "Guardando…" : value.status === "published" ? "Publicar producto" : "Guardar borrador"}</button>
   </div>;
 }
 
@@ -1405,7 +1818,7 @@ function Codes({ data, draft, setDraft, onGenerate, onAttach, onUpdate, onDownlo
       <div className="mt-4 flex gap-2 overflow-x-auto">{([['scan', 'ESCANEAR'], ['create', 'CREAR CÓDIGO'], ['labels', 'ETIQUETAS'], ['history', 'HISTORIAL']] as const).map(([id, label]) => <button key={id} onClick={() => setSubtab(id)} className={`shrink-0 rounded-xl px-4 py-2 text-xs font-semibold ${subtab === id ? "bg-violet-600" : "border border-white/10 text-white/50"}`}>{label}</button>)}</div>
     </div>
 
-    {subtab === "scan" ? <div className={`${CARD} p-6 text-center`}><ScanLine className="mx-auto h-10 w-10 text-violet-300" /><h2 className="mt-3 text-xl font-semibold">Escaneá el código o el producto completo</h2><p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-white/45">EAN/UPC, SKU, Code 128 y QR consultan el catálogo canónico. También podés fotografiar Frente, Atrás y Detalle para que Gemini reconozca el objeto y complete automáticamente su ficha.</p><button onClick={onScan} className="mt-5 rounded-xl bg-violet-600 px-5 py-3 font-semibold">Abrir escáner de código o producto</button></div> : null}
+    {subtab === "scan" ? <div className={`${CARD} p-6 text-center`}><ScanLine className="mx-auto h-10 w-10 text-violet-300" /><h2 className="mt-3 text-xl font-semibold">Escaneá el código o el producto completo</h2><p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-white/45">EAN/UPC, SKU, Code 128 y QR consultan el catálogo canónico. También podés fotografiar Frente, Atrás y Detalle para que Google Cloud Vertex AI reconozca el objeto y complete automáticamente su ficha.</p><button onClick={onScan} className="mt-5 rounded-xl bg-violet-600 px-5 py-3 font-semibold">Abrir escáner de código o producto</button></div> : null}
 
     {subtab === "create" ? <div className="grid gap-4 xl:grid-cols-[380px_minmax(0,1fr)]">
       <div className={`${CARD} p-5`}><p className="text-xs uppercase tracking-[.2em] text-violet-300">Identificación y etiquetas</p><h2 className="mt-1 text-xl font-semibold">{listing?.name || "Elegí un producto"}</h2><p className="mt-1 text-sm text-white/40">{selectedVariant ? [selectedVariant.color, selectedVariant.size, selectedVariant.sku].filter(Boolean).join(" · ") : variants.length ? "Todas las variantes" : "Producto base"}</p><div className="mt-5 space-y-3"><button onClick={onScan} className="w-full rounded-xl border border-white/10 px-4 py-3 text-sm"><Camera className="mr-2 inline h-4 w-4" />Escanear código existente</button><input className={INPUT} value={manual} onChange={(event) => changeManual(event.target.value)} placeholder="Ingresar código manualmente" /><div className="grid grid-cols-2 gap-2"><select className={INPUT} value={manualType} onChange={(event) => setManualType(event.target.value as CommerceIdentifierType)}>{["ean_13", "ean_8", "upc_a", "upc_e", "sku", "code_128"].map((type) => <option key={type} value={type}>{type.replaceAll("_", " ").toUpperCase()}</option>)}</select><select className={INPUT} value={origin} onChange={(event) => setOrigin(event.target.value as Identifier["origin"])}><option value="manufacturer">Fabricante</option><option value="imported">Importado</option><option value="manual">Manual</option></select></div><button disabled={busy || !listing || !manual} onClick={() => onAttach(manual, manualType, origin)} className="w-full rounded-xl bg-violet-600 px-4 py-3 font-semibold disabled:opacity-40">Guardar en el producto</button><div className="grid grid-cols-3 gap-2"><button disabled={busy || !listing} onClick={() => onGenerate("generate", ["sku"])} className="rounded-xl border border-white/10 p-2 text-xs">Generar SKU</button><button disabled={busy || !listing} onClick={() => onGenerate("generate", ["code_128"])} className="rounded-xl border border-white/10 p-2 text-xs">Code 128</button><button disabled={busy || !listing} onClick={() => onGenerate("generate", ["clouva_qr"])} className="rounded-xl border border-white/10 p-2 text-xs">QR CLOUVA</button></div><button disabled={busy || !listing} onClick={() => onGenerate("generate_all_variants")} className="w-full rounded-xl border border-violet-400/30 p-3 text-sm text-violet-200 disabled:opacity-40">Generar identificadores para todas las variantes</button></div><p className="mt-4 text-xs leading-5 text-white/35">Nunca se reemplaza un EAN comercial. Los códigos activos se reutilizan y no se regeneran.</p></div>
