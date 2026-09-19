@@ -1,16 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import sharp from "sharp";
 import { uploadGeneratedMediaObject } from "@/lib/gcs-media";
-import { generateGoogleCloudImage, GoogleCloudGenAIError } from "@/lib/server/google-cloud-genai";
+import { generateGoogleCloudImage, generateGoogleCloudJson, GoogleCloudGenAIError } from "@/lib/server/google-cloud-genai";
 import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
 import {
   compactStructureIdentityPack,
   downloadStructureImage,
   getOwnedStructure,
+  masterOverviewPrompt,
   pickRenderReferences,
   renderPrompt,
+  structureAnalysisPrompt,
 } from "@/lib/structures/server";
 import type {
+  StructureCameraNodeRecord,
   StructureImageRecord,
   StructureRuleRecord,
   StructureSurfaceRecord,
@@ -18,13 +21,16 @@ import type {
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 300;
+export const maxDuration = 600;
 
 type RouteContext = { params: Promise<{ id: string }> };
-type RenderView = "front" | "corner" | "environment" | "aerial_oblique";
+type RenderView = "master_overview" | "front" | "corner" | "environment" | "aerial_oblique";
+type StandardRenderView = Exclude<RenderView, "master_overview">;
 
-const ALL_VIEWS: RenderView[] = ["front", "corner", "environment", "aerial_oblique"];
+const ALL_VIEWS: RenderView[] = ["master_overview", "front", "corner", "environment", "aerial_oblique"];
+const STANDARD_VIEWS: StandardRenderView[] = ["front", "corner", "environment", "aerial_oblique"];
 const VIEW_LABELS: Record<RenderView, string> = {
+  master_overview: "00_MASTER_OVERVIEW",
   front: "01_FRONT",
   corner: "02_CORNER",
   environment: "03_ENVIRONMENT",
@@ -43,7 +49,7 @@ function parseViews(value: unknown): RenderView[] {
   const views = value.filter((item): item is RenderView =>
     typeof item === "string" && ALL_VIEWS.includes(item as RenderView),
   );
-  return [...new Set(views)].slice(0, 4);
+  return [...new Set(views)].slice(0, 5);
 }
 
 async function prepareReference(image: StructureImageRecord) {
@@ -57,6 +63,37 @@ async function prepareReference(image: StructureImageRecord) {
     image,
     reference: { mimeType: "image/jpeg", data: prepared.toString("base64") },
   };
+}
+
+async function prepareAnalysisReference(image: StructureImageRecord) {
+  const bytes = await downloadStructureImage(image.public_url);
+  const prepared = await sharp(bytes)
+    .rotate()
+    .resize(720, 720, { fit: "inside", withoutEnlargement: true })
+    .jpeg({ quality: 58, mozjpeg: true })
+    .toBuffer();
+  return {
+    image,
+    reference: { mimeType: "image/jpeg", data: prepared.toString("base64") },
+  };
+}
+
+async function prepareAnalysisReferences(images: StructureImageRecord[]) {
+  const unique = images.filter((image, index, all) =>
+    all.findIndex((candidate) => candidate.sha256 === image.sha256) === index,
+  ).slice(0, 96);
+  const prepared: Awaited<ReturnType<typeof prepareAnalysisReference>>[] = [];
+  for (let start = 0; start < unique.length; start += 12) {
+    const chunk = await Promise.all(unique.slice(start, start + 12).map(async (image) => {
+      try {
+        return await prepareAnalysisReference(image);
+      } catch {
+        return null;
+      }
+    }));
+    prepared.push(...chunk.filter((item): item is Awaited<ReturnType<typeof prepareAnalysisReference>> => Boolean(item)));
+  }
+  return prepared;
 }
 
 export async function POST(request: NextRequest, context: RouteContext) {
@@ -74,15 +111,17 @@ export async function POST(request: NextRequest, context: RouteContext) {
       imagesResult,
       surfacesResult,
       rulesResult,
+      cameraNodesResult,
       activeJobsResult,
     ] = await Promise.all([
       admin.from("structure_images").select("*").eq("structure_id", id),
       admin.from("structure_surfaces").select("*").eq("structure_id", id),
       admin.from("structure_rules").select("*").eq("structure_id", id).eq("active", true).order("priority", { ascending: false }),
+      admin.from("structure_camera_nodes").select("*").eq("structure_id", id),
       admin.from("structure_render_jobs").select("id", { count: "exact", head: true }).eq("structure_id", id).eq("status", "rendering"),
     ]);
 
-    if (imagesResult.error || surfacesResult.error || rulesResult.error || activeJobsResult.error) {
+    if (imagesResult.error || surfacesResult.error || rulesResult.error || cameraNodesResult.error || activeJobsResult.error) {
       throw new Error("No se pudo preparar el contexto espacial del render.");
     }
     if ((activeJobsResult.count ?? 0) > 0) {
@@ -92,6 +131,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     const images = (imagesResult.data ?? []) as unknown as StructureImageRecord[];
     const surfaces = (surfacesResult.data ?? []) as unknown as StructureSurfaceRecord[];
     const dbRules = (rulesResult.data ?? []) as unknown as StructureRuleRecord[];
+    const cameraNodes = (cameraNodesResult.data ?? []) as unknown as StructureCameraNodeRecord[];
     if (!images.length) throw new Error("Subí evidencia visual antes de generar las vistas.");
 
     const activeRules = [
@@ -108,13 +148,21 @@ export async function POST(request: NextRequest, context: RouteContext) {
         orientation: surface.orientation,
       })),
       images,
+      cameraNodes,
     });
 
-    const requested = views.map((view) => ({
-      key: view,
-      label: VIEW_LABELS[view],
-      referenceIds: pickRenderReferences(images, view, 8).map((image) => image.id),
-    }));
+    const requestedStandard = views
+      .filter((view): view is StandardRenderView => STANDARD_VIEWS.includes(view as StandardRenderView))
+      .map((view) => ({
+        key: view,
+        label: VIEW_LABELS[view],
+        referenceIds: pickRenderReferences(images, view, 8).map((image) => image.id),
+      }));
+    const wantsMasterOverview = views.includes("master_overview");
+    const requested = [
+      ...(wantsMasterOverview ? [{ key: "master_overview" as const, label: VIEW_LABELS.master_overview, referenceIds: [] as string[] }] : []),
+      ...requestedStandard,
+    ];
 
     const { data: job, error: jobError } = await admin
       .from("structure_render_jobs")
@@ -127,6 +175,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
           identityPack,
           evidenceCount: images.length,
           surfaceCount: surfaces.length,
+          cameraNodeCount: cameraNodes.length,
+          analysisPass: "canonical-structure-v1",
           generatedBy: "google-cloud-vertex-ai",
         },
         started_at: new Date().toISOString(),
@@ -142,7 +192,115 @@ export async function POST(request: NextRequest, context: RouteContext) {
     }).eq("id", id).eq("owner_id", user.id);
 
     const imageById = new Map(images.map((image) => [image.id, image]));
-    const allReferenceIds = [...new Set(requested.flatMap((view) => view.referenceIds))];
+    const cameraByImageId = new Map(cameraNodes.map((node) => [node.image_id, node]));
+
+    const analysisPrepared = await prepareAnalysisReferences(images);
+    if (!analysisPrepared.length) throw new Error("No se pudo preparar evidencia visual para el análisis canónico.");
+
+    const analysisPrompt = structureAnalysisPrompt({
+      identityPack: identityPack as Record<string, unknown>,
+      visualReferenceOrder: analysisPrepared.map((entry, index) => ({
+        index: index + 1,
+        imageId: entry.image.id,
+        description: entry.image.description,
+        sector: entry.image.sector,
+      })),
+    });
+
+    const analysisModel = process.env.GOOGLE_CLOUD_STRUCTURES_VISION_MODEL
+      ?? process.env.CLOUVA_STRUCTURES_VISION_MODEL
+      ?? "gemini-2.5-flash";
+
+    const analysisGenerated = await generateGoogleCloudJson({
+      model: analysisModel,
+      prompt: analysisPrompt,
+      referenceImages: analysisPrepared.map((entry) => entry.reference),
+      responseJsonSchema: {
+        type: "object",
+        properties: {
+          summary: { type: "string" },
+          canonicalSpatialModel: {
+            type: "object",
+            properties: {
+              footprint: { type: "string" },
+              orientation: { type: "string" },
+              massing: { type: "array", items: { type: "string" } },
+              facades: { type: "array", items: { type: "string" } },
+              corners: { type: "array", items: { type: "string" } },
+              roof: { type: "array", items: { type: "string" } },
+              accesses: { type: "array", items: { type: "string" } },
+              patiosOpenAreas: { type: "array", items: { type: "string" } },
+              perimeter: { type: "array", items: { type: "string" } },
+              sidewalksStreets: { type: "array", items: { type: "string" } },
+              immediateEnvironment: { type: "array", items: { type: "string" } },
+            },
+            required: ["footprint","orientation","massing","facades","corners","roof","accesses","patiosOpenAreas","perimeter","sidewalksStreets","immediateEnvironment"],
+          },
+          evidenceMapping: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                sector: { type: "string" },
+                imageIds: { type: "array", items: { type: "string" } },
+                confirms: { type: "array", items: { type: "string" } },
+                suggests: { type: "array", items: { type: "string" } },
+                conflicts: { type: "array", items: { type: "string" } },
+              },
+              required: ["sector","imageIds","confirms","suggests","conflicts"],
+            },
+          },
+          confidenceMap: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                sector: { type: "string" },
+                confidence: { type: "string", enum: ["high","medium","low"] },
+                basis: { type: "string" },
+                imageIds: { type: "array", items: { type: "string" } },
+              },
+              required: ["sector","confidence","basis","imageIds"],
+            },
+          },
+          renderConstraints: {
+            type: "object",
+            properties: {
+              immutableFacts: { type: "array", items: { type: "string" } },
+              uncertainAreas: { type: "array", items: { type: "string" } },
+              forbiddenInventions: { type: "array", items: { type: "string" } },
+            },
+            required: ["immutableFacts","uncertainAreas","forbiddenInventions"],
+          },
+        },
+        required: ["summary","canonicalSpatialModel","evidenceMapping","confidenceMap","renderConstraints"],
+      },
+      temperature: 0.05,
+      maxOutputTokens: 7000,
+    });
+
+    let canonicalAnalysis: Record<string, unknown>;
+    try {
+      canonicalAnalysis = JSON.parse(analysisGenerated.text) as Record<string, unknown>;
+    } catch {
+      throw new Error("CLOUVA Cloud no pudo estructurar el análisis canónico del spot.");
+    }
+
+    await admin.from("structure_render_jobs").update({
+      input_manifest: {
+        identityPack,
+        canonicalAnalysis,
+        evidenceCount: images.length,
+        visualEvidenceAnalyzed: analysisPrepared.length,
+        surfaceCount: surfaces.length,
+        cameraNodeCount: cameraNodes.length,
+        analysisModel,
+        analysisPass: "canonical-structure-v1",
+        generatedBy: "google-cloud-vertex-ai",
+      },
+    }).eq("id", job.id).eq("user_id", user.id);
+
+    const allReferenceIds = [...new Set(requestedStandard.flatMap((view) => view.referenceIds))];
     const preparedEntries = await Promise.all(allReferenceIds.map(async (imageId) => {
       const image = imageById.get(imageId);
       if (!image) return null;
@@ -162,24 +320,35 @@ export async function POST(request: NextRequest, context: RouteContext) {
       ?? process.env.CLOUVA_STRUCTURES_IMAGE_MODEL
       ?? "gemini-2.5-flash-image";
 
-    const outcomes = await Promise.allSettled(requested.map(async (requestedView) => {
+    const generateView = async (
+      requestedView: (typeof requestedStandard)[number],
+      canonicalAnchor?: { mimeType: string; data: string } | null,
+    ) => {
       const references = requestedView.referenceIds
         .map((imageId) => preparedById.get(imageId))
         .filter((entry): entry is Awaited<ReturnType<typeof prepareReference>> => Boolean(entry));
 
       if (!references.length) {
-        throw new Error(`${requestedView.label}: no hay referencias utilizables para esta cámara.`);
+        throw new Error(\`\${requestedView.label}: no hay referencias utilizables para esta camara.\`);
       }
 
       const prompt = renderPrompt({
         identityPack: identityPack as Record<string, unknown>,
+        canonicalAnalysis,
         view: requestedView.key,
-        referenceDescriptions: references.map(({ image }) => ({
-          id: image.id,
-          description: image.description,
-          sector: image.sector,
-          direction: image.cardinal_direction,
-        })),
+        hasCanonicalAnchor: Boolean(canonicalAnchor),
+        referenceDescriptions: references.map(({ image }) => {
+          const camera = cameraByImageId.get(image.id);
+          return {
+            id: image.id,
+            description: image.description,
+            sector: image.sector,
+            direction: image.cardinal_direction,
+            localX: camera?.local_x ?? image.local_x,
+            localY: camera?.local_y ?? image.local_y,
+            heading: camera?.heading ?? image.heading,
+          };
+        }),
       });
 
       const generated = await generateGoogleCloudImage({
@@ -187,14 +356,17 @@ export async function POST(request: NextRequest, context: RouteContext) {
         model,
         aspectRatio: "16:9",
         imageSize: "2K",
-        referenceImages: references.map((entry) => entry.reference),
+        referenceImages: [
+          ...(canonicalAnchor ? [canonicalAnchor] : []),
+          ...references.map((entry) => entry.reference),
+        ],
         timeoutMs: 120_000,
       });
 
       const stored = await uploadGeneratedMediaObject({
         bytes: generated.bytes,
         mimeType: generated.mimeType,
-        pathPrefix: `structures/${user.id}/${id}/renders/${job.id}/${requestedView.key}`,
+        pathPrefix: \`structures/\${user.id}/\${id}/renders/\${job.id}/\${requestedView.key}\`,
       });
 
       const { data: output, error: outputError } = await admin
@@ -212,10 +384,85 @@ export async function POST(request: NextRequest, context: RouteContext) {
         })
         .select("*")
         .single();
-      if (outputError || !output) throw new Error(`${requestedView.label}: la imagen se generó pero no pudo registrarse.`);
+      if (outputError || !output) throw new Error(\`\${requestedView.label}: la imagen se genero pero no pudo registrarse.\`);
 
-      return output;
-    }));
+      return {
+        output: output as Record<string, unknown>,
+        reference: { mimeType: generated.mimeType, data: generated.bytes.toString("base64") },
+      };
+    };
+
+    const outcomes: Array<PromiseSettledResult<Record<string, unknown>>> = [];
+    const generatedViewReferences = new Map<StandardRenderView, { mimeType: string; data: string }>();
+    let canonicalAnchor: { mimeType: string; data: string } | null = null;
+
+    const aerialRequest = requestedStandard.find((view) => view.key === "aerial_oblique");
+    if (aerialRequest) {
+      try {
+        const aerial = await generateView(aerialRequest, null);
+        canonicalAnchor = aerial.reference;
+        generatedViewReferences.set("aerial_oblique", aerial.reference);
+        outcomes.push({ status: "fulfilled", value: aerial.output });
+      } catch (reason) {
+        outcomes.push({ status: "rejected", reason });
+      }
+    }
+
+    const remainingViews = requestedStandard.filter((view) => view.key !== "aerial_oblique");
+    const remainingResults = await Promise.allSettled(
+      remainingViews.map(async (requestedView) => {
+        const result = await generateView(requestedView, canonicalAnchor);
+        generatedViewReferences.set(requestedView.key, result.reference);
+        return result.output;
+      }),
+    );
+    outcomes.push(...remainingResults);
+
+    if (wantsMasterOverview) {
+      try {
+        const boardReferences = (["aerial_oblique","front","corner","environment"] as StandardRenderView[])
+          .map((view) => generatedViewReferences.get(view))
+          .filter((reference): reference is { mimeType: string; data: string } => Boolean(reference));
+        if (!boardReferences.length) throw new Error("00_MASTER_OVERVIEW: faltan vistas canónicas para construir el panel maestro.");
+
+        const prompt = masterOverviewPrompt({
+          identityPack: identityPack as Record<string, unknown>,
+          canonicalAnalysis,
+        });
+        const generated = await generateGoogleCloudImage({
+          prompt,
+          model,
+          aspectRatio: "16:9",
+          imageSize: "2K",
+          referenceImages: boardReferences,
+          timeoutMs: 120_000,
+        });
+        const stored = await uploadGeneratedMediaObject({
+          bytes: generated.bytes,
+          mimeType: generated.mimeType,
+          pathPrefix: \`structures/\${user.id}/\${id}/renders/\${job.id}/master_overview\`,
+        });
+        const { data: output, error: outputError } = await admin
+          .from("structure_render_outputs")
+          .insert({
+            job_id: job.id,
+            structure_id: id,
+            view_key: "master_overview",
+            prompt,
+            reference_image_ids: [],
+            storage_path: stored.objectPath,
+            public_url: stored.url,
+            mime_type: generated.mimeType,
+            provider_operation_id: generated.responseId,
+          })
+          .select("*")
+          .single();
+        if (outputError || !output) throw new Error("00_MASTER_OVERVIEW: la imagen se genero pero no pudo registrarse.");
+        outcomes.unshift({ status: "fulfilled", value: output as Record<string, unknown> });
+      } catch (reason) {
+        outcomes.unshift({ status: "rejected", reason });
+      }
+    }
 
     const outputs = outcomes
       .filter((outcome): outcome is PromiseFulfilledResult<Record<string, unknown>> => outcome.status === "fulfilled")
