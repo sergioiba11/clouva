@@ -11,6 +11,8 @@ const route = read("./app/api/studios/[slug]/commerce/recognize/route.ts");
 const scannerRoute = read("./app/api/studios/[slug]/commerce/scan/route.ts");
 const productImagesRoute = read("./app/api/studios/[slug]/commerce/product-images/route.ts");
 const productImagesManagementRoute = read("./app/api/studios/[slug]/commerce/products/images/route.ts");
+const productUpdateRoute = read("./app/api/studios/[slug]/commerce/products/update/route.ts");
+const marketPage = read("./app/market/page.tsx");
 const publicationCopyRoute = read("./app/api/commerce/products/[id]/publication-copy/route.ts");
 const publicationsRoute = read("./app/api/commerce/products/[id]/publications/route.ts");
 const channelCapabilities = read("./lib/commerce/channel-capabilities.ts");
@@ -194,4 +196,51 @@ test("commerce product image generation has a coherent timeout budget", () => {
   assert.match(productImagesRoute, /Promise\.all\(targets\.map/);
   assert.doesNotMatch(productImagesRoute, /timeoutMs:\s*55_000/);
   assert.match(deployWorkflow, /--timeout 300/);
+});
+
+
+test("visual recognition creates a durable draft before publication fields are complete", () => {
+  assert.match(route, /upsert_commerce_scanned_product/);
+  assert.match(route, /uploadGeneratedMediaObject/);
+  assert.match(route, /draft_lifecycle/);
+  assert.match(route, /external_identifier_pending/);
+  assert.match(route, /status:\s*"draft"/);
+  assert.match(route, /commerce-draft:/);
+  assert.match(route, /draftListingId/);
+  assert.match(dashboard, /draftListingId/);
+  assert.match(dashboard, /Borradores \/ incompletos/);
+  assert.match(dashboard, /Completar producto/);
+  assert.match(dashboard, /Guardando…/);
+  assert.doesNotMatch(dashboard, /Completá código, nombre y precio\./);
+});
+
+test("generated catalog media is attached to the durable draft immediately", () => {
+  assert.match(productImagesRoute, /listingId/);
+  assert.match(productImagesRoute, /commerce_products/);
+  assert.match(productImagesRoute, /generated_images/);
+  assert.match(productImagesRoute, /persisted/);
+  assert.match(dashboard, /listingId:\s*draftListingId/);
+  assert.match(dashboard, /Quedaron guardadas en el borrador/);
+});
+
+test("draft enrichment supports later references and barcode attachment", () => {
+  assert.match(productImagesManagementRoute, /add_reference/);
+  assert.match(dashboard, /Agregar foto trasera/);
+  assert.match(dashboard, /Foto código de barras/);
+  assert.match(dashboard, /detectBarcodePhoto/);
+  assert.match(dashboard, /commerce\/codes/);
+});
+
+test("autosave keeps create-time fields separate from publish requirements", () => {
+  assert.match(productUpdateRoute, /autosave/);
+  assert.match(productUpdateRoute, /draft_lifecycle/);
+  assert.match(productUpdateRoute, /PRICE_REQUIRED/);
+  assert.match(productUpdateRoute, /PUBLICATION_MASTER_REQUIRED/);
+  assert.match(productUpdateRoute, /stage/);
+  assert.match(dashboard, /900/);
+});
+
+test("public Market never queries incomplete drafts", () => {
+  assert.doesNotMatch(marketPage, /"incomplete"/);
+  assert.match(marketPage, /"published"/);
 });
