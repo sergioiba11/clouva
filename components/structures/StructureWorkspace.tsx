@@ -33,10 +33,12 @@ import {
   type StructureRuleRecord,
   type StructureSurfaceRecord,
 } from "@/lib/structures/spatial";
-import { StructureScene } from "@/components/structures/StructureScene";\nimport { GoogleSpatialScene } from "@/components/structures/GoogleSpatialScene";
+import { StructureScene } from "@/components/structures/StructureScene";
+import { GoogleSpatialScene } from "@/components/structures/GoogleSpatialScene";
 import { PlanEditor } from "@/components/structures/PlanEditor";
 
-type Tab = "project" | "images" | "spatial" | "plan" | "export" | "render";\ntype SpatialBase = "spatial" | "map" | "satellite";
+type Tab = "project" | "images" | "spatial" | "plan" | "export" | "render";
+type SpatialBase = "spatial" | "map" | "satellite";
 type Corner = "NE" | "SE" | "SO" | "NO";
 type RenderView = "master_overview" | "front" | "corner" | "environment" | "aerial_oblique";
 
@@ -402,7 +404,8 @@ export function StructureWorkspace({
   const [selectedCorner, setSelectedCorner] = useState<Corner | null>("NE");
   const [analysisProgress, setAnalysisProgress] = useState<string | null>(null);
   const [placementProgress, setPlacementProgress] = useState<string | null>(null);
-  const [cameraEditMode, setCameraEditMode] = useState(false);\n  const [spatialBase, setSpatialBase] = useState<SpatialBase>("spatial");
+  const [cameraEditMode, setCameraEditMode] = useState(false);
+  const [spatialBase, setSpatialBase] = useState<SpatialBase>("spatial");
   const stopAnalysisRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const spatialThumbRailRef = useRef<HTMLDivElement | null>(null);
