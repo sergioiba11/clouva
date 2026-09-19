@@ -11,6 +11,7 @@ import {
   pickRenderReferences,
   renderPrompt,
   structureAnalysisPrompt,
+  structureEvidenceBatchPrompt,
 } from "@/lib/structures/server";
 import type {
   StructureCameraNodeRecord,
@@ -69,8 +70,8 @@ async function prepareAnalysisReference(image: StructureImageRecord) {
   const bytes = await downloadStructureImage(image.public_url);
   const prepared = await sharp(bytes)
     .rotate()
-    .resize(720, 720, { fit: "inside", withoutEnlargement: true })
-    .jpeg({ quality: 58, mozjpeg: true })
+    .resize(640, 640, { fit: "inside", withoutEnlargement: true })
+    .jpeg({ quality: 54, mozjpeg: true })
     .toBuffer();
   return {
     image,
@@ -206,7 +207,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
           evidenceCount: images.length,
           surfaceCount: surfaces.length,
           cameraNodeCount: cameraNodes.length,
-          analysisPass: "canonical-structure-v1",
+          analysisPass: "canonical-structure-v2-batched",
           generatedBy: "google-cloud-vertex-ai",
         },
         started_at: new Date().toISOString(),
@@ -227,24 +228,106 @@ export async function POST(request: NextRequest, context: RouteContext) {
     const analysisPrepared = await prepareAnalysisReferences(images);
     if (!analysisPrepared.length) throw new Error("No se pudo preparar evidencia visual para el análisis canónico.");
 
-    const analysisPrompt = structureAnalysisPrompt({
-      identityPack: identityPack as Record<string, unknown>,
-      visualReferenceOrder: analysisPrepared.map((entry, index) => ({
-        index: index + 1,
-        imageId: entry.image.id,
-        description: entry.image.description,
-        sector: entry.image.sector,
-      })),
-    });
-
     const analysisModel = process.env.GOOGLE_CLOUD_STRUCTURES_VISION_MODEL
       ?? process.env.CLOUVA_STRUCTURES_VISION_MODEL
       ?? "gemini-2.5-flash";
 
+    const BATCH_SIZE = 12;
+    const analysisBatches: typeof analysisPrepared[] = [];
+    for (let start = 0; start < analysisPrepared.length; start += BATCH_SIZE) {
+      analysisBatches.push(analysisPrepared.slice(start, start + BATCH_SIZE));
+    }
+
+    const batchSchema = {
+      type: "object",
+      properties: {
+        batchIndex: { type: "number" },
+        observations: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              imageId: { type: "string" },
+              sector: { type: "string" },
+              observedElements: { type: "array", items: { type: "string" } },
+              geometryClues: { type: "array", items: { type: "string" } },
+              continuityClues: { type: "array", items: { type: "string" } },
+              conflicts: { type: "array", items: { type: "string" } },
+              confidence: { type: "string", enum: ["high", "medium", "low"] },
+            },
+            required: ["imageId","sector","observedElements","geometryClues","continuityClues","conflicts","confidence"],
+          },
+        },
+        sectorSummary: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              sector: { type: "string" },
+              imageIds: { type: "array", items: { type: "string" } },
+              confirmed: { type: "array", items: { type: "string" } },
+              inferred: { type: "array", items: { type: "string" } },
+              uncertain: { type: "array", items: { type: "string" } },
+            },
+            required: ["sector","imageIds","confirmed","inferred","uncertain"],
+          },
+        },
+        aerialFacts: { type: "array", items: { type: "string" } },
+        streetFacts: { type: "array", items: { type: "string" } },
+      },
+      required: ["batchIndex","observations","sectorSummary","aerialFacts","streetFacts"],
+    };
+
+    const batchAnalyses = await Promise.all(
+      analysisBatches.map(async (batch, batchIndex) => {
+        const prompt = structureEvidenceBatchPrompt({
+          batchIndex: batchIndex + 1,
+          totalBatches: analysisBatches.length,
+          evidence: batch.map((entry, index) => {
+            const camera = cameraByImageId.get(entry.image.id);
+            return {
+              index: index + 1,
+              imageId: entry.image.id,
+              description: entry.image.description,
+              sector: entry.image.sector,
+              sourceType: entry.image.source_type,
+              sceneType: entry.image.scene_type,
+              direction: entry.image.cardinal_direction,
+              localX: camera?.local_x ?? entry.image.local_x,
+              localY: camera?.local_y ?? entry.image.local_y,
+              heading: camera?.heading ?? entry.image.heading,
+              verified: entry.image.manual_verified,
+            };
+          }),
+        });
+        const generated = await generateGoogleCloudJson({
+          model: analysisModel,
+          prompt,
+          referenceImages: batch.map((entry) => entry.reference),
+          responseJsonSchema: batchSchema,
+          temperature: 0.05,
+          maxOutputTokens: 3200,
+        });
+        return parseStructuredJson(generated.text);
+      }),
+    );
+
+    const synthesisIdentityPack = {
+      project: identityPack.project,
+      reconstructionRules: identityPack.reconstructionRules,
+      surfaces: identityPack.surfaces,
+      spatial: identityPack.spatial,
+      evidenceCount: images.length,
+    };
+
+    const analysisPrompt = structureAnalysisPrompt({
+      identityPack: synthesisIdentityPack as Record<string, unknown>,
+      batchAnalyses,
+    });
+
     const analysisGenerated = await generateGoogleCloudJson({
       model: analysisModel,
       prompt: analysisPrompt,
-      referenceImages: analysisPrepared.map((entry) => entry.reference),
       responseJsonSchema: {
         type: "object",
         properties: {
@@ -306,7 +389,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         required: ["summary","canonicalSpatialModel","evidenceMapping","confidenceMap","renderConstraints"],
       },
       temperature: 0.05,
-      maxOutputTokens: 12000,
+      maxOutputTokens: 9000,
     });
 
     const canonicalAnalysis = parseStructuredJson(analysisGenerated.text);
@@ -317,10 +400,11 @@ export async function POST(request: NextRequest, context: RouteContext) {
         canonicalAnalysis,
         evidenceCount: images.length,
         visualEvidenceAnalyzed: analysisPrepared.length,
+        analysisBatchCount: analysisBatches.length,
         surfaceCount: surfaces.length,
         cameraNodeCount: cameraNodes.length,
         analysisModel,
-        analysisPass: "canonical-structure-v1",
+        analysisPass: "canonical-structure-v2-batched",
         generatedBy: "google-cloud-vertex-ai",
       },
     }).eq("id", job.id).eq("user_id", user.id);
