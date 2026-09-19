@@ -2,9 +2,11 @@ steps:
   - name: gcr.io/cloud-builders/docker
     args:
       - build
-      - -t=us-central1-docker.pkg.dev/$PROJECT_ID/clouva/video-render:latest
+      - -t=us-central1-docker.pkg.dev/$PROJECT_ID/clouva/video-render:${_VIDEO_RENDER_TAG}
       - worker/video-render
 images:
-  - us-central1-docker.pkg.dev/$PROJECT_ID/clouva/video-render:latest
+  - us-central1-docker.pkg.dev/$PROJECT_ID/clouva/video-render:${_VIDEO_RENDER_TAG}
+substitutions:
+  _VIDEO_RENDER_TAG: latest
 options:
   logging: CLOUD_LOGGING_ONLY
