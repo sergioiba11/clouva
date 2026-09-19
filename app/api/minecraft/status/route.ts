@@ -152,10 +152,12 @@ export async function GET() {
   const host = process.env.MINECRAFT_HOST?.trim() || null;
   const javaPort = Number(process.env.MINECRAFT_JAVA_PORT || 25565);
   const bedrockPort = Number(process.env.MINECRAFT_BEDROCK_PORT || 19132);
+  const publicJavaHost = process.env.MINECRAFT_PUBLIC_JAVA_HOST?.trim() || host;
+  const publicBedrockHost = process.env.MINECRAFT_PUBLIC_BEDROCK_HOST?.trim() || host;
 
   if (!host) {
     return NextResponse.json(
-      { configured: false, online: false, host: null, javaPort, bedrockPort },
+      { configured: false, online: false, host: null, publicJavaHost, publicBedrockHost, javaPort, bedrockPort },
       { headers: { "Cache-Control": "no-store" } },
     );
   }
@@ -163,7 +165,7 @@ export async function GET() {
   try {
     const status = await queryMinecraft(host, javaPort);
     return NextResponse.json(
-      { configured: true, online: true, host, javaPort, bedrockPort, ...status },
+      { configured: true, online: true, host, publicJavaHost, publicBedrockHost, javaPort, bedrockPort, ...status },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {
@@ -172,6 +174,8 @@ export async function GET() {
         configured: true,
         online: false,
         host,
+        publicJavaHost,
+        publicBedrockHost,
         javaPort,
         bedrockPort,
         error: error instanceof Error ? error.message : "No se pudo consultar Minecraft",

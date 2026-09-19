@@ -9,6 +9,8 @@ type MinecraftStatus = {
   configured: boolean;
   online: boolean;
   host: string | null;
+  publicJavaHost?: string | null;
+  publicBedrockHost?: string | null;
   javaPort: number;
   bedrockPort: number;
   latencyMs?: number;
@@ -81,8 +83,8 @@ export default function MinecraftFamilyPage() {
     return () => window.clearInterval(interval);
   }, [load, user]);
 
-  const javaAddress = status?.host ? `${status.host}:${status.javaPort}` : "Preparando servidor";
-  const bedrockAddress = status?.host ? status.host : "Preparando servidor";
+  const javaAddress = status?.publicJavaHost || (status?.host ? `${status.host}:${status.javaPort}` : "Preparando servidor");
+  const bedrockAddress = status?.publicBedrockHost || status?.host || "Preparando servidor";
   const playerSummary = useMemo(() => {
     if (!status?.players) return "Sin datos de jugadores";
     return `${status.players.online} / ${status.players.max} conectados`;
