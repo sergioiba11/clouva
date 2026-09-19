@@ -34,10 +34,10 @@ grep -qF "$DISK_DEVICE $WORLD_ROOT ext4" /etc/fstab || echo "$DISK_DEVICE $WORLD
 
 docker pull itzg/minecraft-server:latest
 
-# Preserve the healthy 26.1.2 world before the one-time upgrade to Minecraft 26.2.
-UPGRADE_MARKER="$WORLD_ROOT/.clouva-minecraft-26.2-upgrade-backed-up"
+# Preserve the current world before the one-time upgrade to Minecraft 26.3.
+UPGRADE_MARKER="$WORLD_ROOT/.clouva-minecraft-26.3-upgrade-backed-up"
 if [ ! -e "$UPGRADE_MARKER" ]; then
-  recovery="$WORLD_ROOT/recovery/pre-26.2-upgrade-20260919"
+  recovery="$WORLD_ROOT/recovery/pre-26.3-upgrade-20260919"
   mkdir -p "$recovery"
   for name in world world_nether world_the_end; do
     if [ -e "$WORLD_ROOT/$name" ]; then
@@ -57,7 +57,8 @@ docker_args=(
   -p 19132:19132/udp
   -e EULA=TRUE
   -e TYPE=PAPER
-  -e VERSION=26.2
+  -e VERSION=26.3
+  -e PAPER_CHANNEL=experimental
   -e MEMORY=3G
   -e "MOTD=CLOUVA FAMILIA"
   -e MAX_PLAYERS=12
