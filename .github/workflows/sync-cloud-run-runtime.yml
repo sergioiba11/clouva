@@ -34,6 +34,35 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
+      - name: Ensure Cloud Tasks queue
+        run: |
+          if ! gcloud tasks queues describe "clouva-asset-imports" \
+            --project "$PROJECT_ID" \
+            --location "$REGION" >/dev/null 2>&1; then
+            gcloud tasks queues create "clouva-asset-imports" \
+              --project "$PROJECT_ID" \
+              --location "$REGION" \
+              --max-dispatches-per-second 5 \
+              --max-concurrent-dispatches 2
+          fi
+          gcloud tasks queues describe "clouva-asset-imports" \
+            --project "$PROJECT_ID" \
+            --location "$REGION" \
+            --format='value(name,state)'
+
+      - name: Ensure Cloud Run can enqueue tasks
+        run: |
+          runtime_sa="$(gcloud run services describe "$SERVICE" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --format='value(spec.template.spec.serviceAccountName)')"
+          test -n "$runtime_sa"
+          gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+            --member "serviceAccount:$runtime_sa" \
+            --role "roles/cloudtasks.enqueuer" \
+            --condition=None \
+            --quiet
+
       - name: Resolve existing secret binding
         id: secret
         run: |
