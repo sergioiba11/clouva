@@ -180,6 +180,34 @@ export function VideoProjectCreator() {
     });
   };
 
+  const moveClip = async (index: number, direction: -1 | 1) => {
+    if (!project || !["draft", "failed"].includes(project.status) || busy) return;
+    const target = index + direction;
+    if (target < 0 || target >= clips.length) return;
+    const previous = clips;
+    const reordered = [...clips];
+    [reordered[index], reordered[target]] = [reordered[target], reordered[index]];
+    setClips(reordered);
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await authenticatedFetch(
+        `/api/video/projects/${encodeURIComponent(project.id)}/clips`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ clipIds: reordered.map((clip) => clip.id) }),
+        },
+      );
+      const payload = await readApiJson<{ clips: VideoClip[] }>(response);
+      setClips(payload.clips);
+    } catch (reorderError) {
+      setClips(previous);
+      setError(reorderError instanceof Error ? reorderError.message : "No se pudo reordenar el timeline.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const uploadAudioMaster = async (projectId: string, file: File) => {
     setAudioUploadPercent(0);
     const contentType = audioMimeType(file);
@@ -440,8 +468,17 @@ export function VideoProjectCreator() {
 
               <div className="mt-6 grid grid-cols-4 gap-2 sm:grid-cols-8">
                 {clips.map((clip) => (
-                  <div key={clip.id} title={clip.error || statusLabel(clip.status)} className={`aspect-square rounded-xl border p-2 text-[10px] ${clip.status === "completed" ? "border-emerald-400/30 bg-emerald-400/10" : clip.status === "failed" ? "border-red-400/30 bg-red-400/10" : "border-white/10 bg-black/30"}`}>
-                    <strong>{String(clip.sequenceIndex + 1).padStart(2, "0")}</strong><div className="mt-1 truncate text-white/45">{clip.durationSeconds}s</div>
+                  <div key={clip.id} title={clip.error || statusLabel(clip.status)} className={`rounded-xl border p-2 text-[10px] ${clip.status === "completed" ? "border-emerald-400/30 bg-emerald-400/10" : clip.status === "failed" ? "border-red-400/30 bg-red-400/10" : "border-white/10 bg-black/30"}`}>
+                    <div className="aspect-square">
+                      <strong>{String(clip.sequenceIndex + 1).padStart(2, "0")}</strong>
+                      <div className="mt-1 truncate text-white/45">{clip.durationSeconds}s</div>
+                    </div>
+                    {project && ["draft", "failed"].includes(project.status) ? (
+                      <div className="mt-1 flex justify-between border-t border-white/10 pt-1">
+                        <button type="button" onClick={() => void moveClip(clip.sequenceIndex, -1)} disabled={busy || clip.sequenceIndex === 0} aria-label="Mover clip antes" className="rounded p-1 hover:bg-white/10 disabled:opacity-20"><ChevronUp size={12} /></button>
+                        <button type="button" onClick={() => void moveClip(clip.sequenceIndex, 1)} disabled={busy || clip.sequenceIndex === clips.length - 1} aria-label="Mover clip después" className="rounded p-1 hover:bg-white/10 disabled:opacity-20"><ChevronDown size={12} /></button>
+                      </div>
+                    ) : null}
                   </div>
                 ))}
               </div>
