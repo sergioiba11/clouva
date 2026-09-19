@@ -11,7 +11,7 @@ export const maxDuration = 60;
 const MAX_AUDIO_BYTES = 1024 * 1024 * 1024;
 const AUDIO_UPLOAD_CHUNK_BYTES = 8 * 1024 * 1024;
 const AUDIO_MIME = new Set([
-  "audio/mpeg", "audio/mp4", "audio/x-m4a", "audio/wav", "audio/x-wav", "audio/flac", "audio/aac",
+  "audio/mpeg", "audio/mp4", "audio/x-m4a", "audio/wav", "audio/x-wav", "audio/wave", "audio/vnd.wave", "audio/flac", "audio/aac",
 ]);
 
 let storage: Storage | null = null;
@@ -29,6 +29,8 @@ function safeExtension(filename: string, contentType: string) {
     "audio/x-m4a": "m4a",
     "audio/wav": "wav",
     "audio/x-wav": "wav",
+    "audio/wave": "wav",
+    "audio/vnd.wave": "wav",
     "audio/flac": "flac",
     "audio/aac": "aac",
   };
