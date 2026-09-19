@@ -131,6 +131,7 @@ jobs:
             --project "$PROJECT_ID" \
             --region "$REGION" \
             --image "$IMAGE" \
+            --update-env-vars "CLOUVA_ASSET_IMPORT_TASKS_PROJECT=$PROJECT_ID,CLOUVA_ASSET_IMPORT_TASKS_LOCATION=$REGION,CLOUVA_ASSET_IMPORT_TASKS_QUEUE=clouva-asset-imports,CLOUVA_ASSET_IMPORT_WORKER_URL=https://clouva.com.ar/api/internal/admin/assets/imports/process" \
             --revision-suffix "$suffix" \
             --tag "$suffix" \
             --timeout 300 \
