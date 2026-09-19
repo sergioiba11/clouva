@@ -947,7 +947,7 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
       persisted: true,
     } : null);
     setSelectedCoverImage(listing.cover_url || "");
-    const identifier = data.identifiers.find((item) => item.catalog_product_id === listing.catalog_product_id && item.status === "active");
+    const identifier = data?.identifiers.find((item) => item.catalog_product_id === listing.catalog_product_id && item.status === "active");
     setManualCode(identifier?.value || "");
     if (identifier) setScanType(identifier.identifier_type);
     setScanResult({ exists: false });
