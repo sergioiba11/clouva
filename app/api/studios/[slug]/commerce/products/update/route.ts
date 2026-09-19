@@ -128,8 +128,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const nextDescription = has(body, "description")
       ? nullableText(body.description, 4000)
       : listing.description;
-    const nextPrice = has(body, "price") && body.price !== ""
-      ? numberValue(body.price, "El precio")
+    const nextPrice: number = has(body, "price") && body.price !== ""
+      ? Number(numberValue(body.price, "El precio"))
       : Number(listing.price || 0);
     const nextCost = has(body, "costAmount")
       ? numberValue(body.costAmount, "El costo", { nullable: true })
