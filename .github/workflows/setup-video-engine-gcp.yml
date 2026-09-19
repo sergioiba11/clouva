@@ -8,6 +8,7 @@ on:
       - ".github/workflows/setup-video-engine-gcp.yml"
       - "scripts/setup-video-engine-infra.sh"
       - "worker/video-render/**"
+      - "cloudbuild-video-render.yaml"
   workflow_dispatch:
 
 permissions:
