@@ -140,8 +140,11 @@ test("Cloud Video Engine extiende el ledger actual y orquesta Vertex + Cloud Run
   assert.match(audioRoute, /audio_owner_mismatch/);
   assert.match(playerRoute, /player_media/);
   assert.match(playerRoute, /clouva-video-project:/);
-  assert.match(infra, /roles\/run\.jobsExecutorWithOverrides/);
-  assert.match(infra, /roles\/aiplatform\.user/);
+  assert.match(infra, /CLOUVA_VIDEO_ARTIFACT_REPOSITORY:-clouva/);
+  assert.match(infra, /gcloud builds submit worker\/video-render/);
+  assert.match(infra, /gcloud run jobs create/);
+  assert.doesNotMatch(infra, /gcloud projects add-iam-policy-binding/);
+  assert.doesNotMatch(infra, /gcloud services enable/);
 });
 
 test("inicia Veo con predictLongRunning y serializa la referencia real", async (t) => {
