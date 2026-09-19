@@ -65,14 +65,14 @@ export async function enqueueVipProfileJobStep(jobId: string) {
 function videoQueueConfig() {
   const project = process.env.CLOUVA_GCP_PROJECT || process.env.GOOGLE_CLOUD_PROJECT || "gen-lang-client-0737053175";
   const location = process.env.CLOUVA_GCP_REGION || "us-central1";
-  const queue = process.env.CLOUVA_VIDEO_QUEUE_NAME || "clouva-video-generation";
+  const queue = process.env.CLOUVA_VIDEO_QUEUE_NAME || process.env.CLOUVA_ASSET_IMPORT_TASKS_QUEUE || "clouva-asset-imports";
   return { project, location, queue };
 }
 
 export async function enqueueVideoProjectStep(projectId: string, delaySeconds = 15) {
   const { project, location, queue } = videoQueueConfig();
-  const secret = process.env.VIDEO_PROJECT_TASK_SECRET?.trim();
-  if (!secret) throw new Error("VIDEO_PROJECT_TASK_SECRET no está configurada.");
+  const secret = (process.env.VIDEO_PROJECT_TASK_SECRET || process.env.CLOUVA_ASSET_IMPORT_WORKER_SECRET)?.trim();
+  if (!secret) throw new Error("No hay secret de Cloud Tasks configurado para video.");
 
   const baseUrl = process.env.APP_BASE_URL?.trim() || "https://clouva.com.ar";
   const targetUrl = `${baseUrl}/api/internal/video/projects/process`;
