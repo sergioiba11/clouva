@@ -403,7 +403,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     const batchAnalyses = (
       await mapWithConcurrency(
         analysisBatches,
-        2,
+        1,
         (batch, batchIndex) =>
           analyzeEvidenceBatch(batch, batchIndex + 1, String(batchIndex + 1)),
       )
@@ -624,7 +624,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     const remainingViews = requestedStandard.filter((view) => view.key !== "aerial_oblique");
     const remainingResults = await mapWithConcurrency(
       remainingViews,
-      2,
+      1,
       async (requestedView) => {
         try {
           const result = await generateView(requestedView, canonicalAnchor);
