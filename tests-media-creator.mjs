@@ -112,6 +112,29 @@ test("limita Veo a duraciones válidas y calcula el costo confirmado", () => {
   assert.equal(estimateVideoCostUsd("cinematic", 8), 1.6);
 });
 
+test("Cloud Video Engine extiende el ledger actual y orquesta Vertex + Cloud Run", async () => {
+  const migration = await readFile(new URL("./supabase/migrations/20260919010930_cloud_video_engine.sql", import.meta.url), "utf8");
+  const orchestrator = await readFile(new URL("./lib/server/video-projects.ts", import.meta.url), "utf8");
+  const provider = await readFile(new URL("./lib/video/providers/vertex-veo.ts", import.meta.url), "utf8");
+  const creator = await readFile(new URL("./components/video-engine/VideoProjectCreator.tsx", import.meta.url), "utf8");
+  const worker = await readFile(new URL("./worker/video-render/render.mjs", import.meta.url), "utf8");
+
+  assert.match(migration, /create table if not exists public\.video_projects/i);
+  assert.match(migration, /alter table public\.media_generation_jobs/i);
+  assert.doesNotMatch(migration, /create table[^;]*video_generation_jobs/i);
+  assert.match(orchestrator, /enqueueVideoProjectStep/);
+  assert.match(orchestrator, /runVideoRenderJob/);
+  assert.match(orchestrator, /last_frame_url/);
+  assert.match(provider, /vertexai:\s*true/);
+  assert.match(provider, /outputGcsUri/);
+  assert.match(provider, /lastFrame/);
+  assert.match(creator, /GENERAR EN CLOUD/);
+  assert.match(creator, /Audio master/);
+  assert.match(worker, /ffmpeg/);
+  assert.match(worker, /audio_storage_path/);
+  assert.match(worker, /status:\s*"completed"/);
+});
+
 test("inicia Veo con predictLongRunning y serializa la referencia real", async (t) => {
   const originalFetch = globalThis.fetch;
   t.after(() => { globalThis.fetch = originalFetch; });
