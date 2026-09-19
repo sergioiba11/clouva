@@ -140,7 +140,7 @@ function addManualImage(metadata: unknown, image: { url: string; storagePath: st
     url: image.url,
     storage_path: image.storagePath,
     mime_type: image.mimeType,
-    label: "Manual",
+    label: label === "Atrás" ? "Atrás" : label === "Frente" ? "Frente" : "Detalle",
     display_label: label,
     detail_index: null,
   });
