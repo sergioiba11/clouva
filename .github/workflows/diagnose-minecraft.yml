@@ -72,3 +72,5 @@ jobs:
               --zone "$MC_ZONE" \
               --port "$port" 2>&1 | tail -n 1200
           done
+
+# post-repair check
