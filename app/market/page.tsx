@@ -18,7 +18,7 @@ export default function MarketPage() {
       const { data } = await supabase
         .from("commerce_products")
         .select(commerceProductSelect)
-        .in("status", ["published", "active", "incomplete"])
+        .in("status", ["published", "active"])
         .order("created_at", { ascending: false })
         .limit(60);
       setProducts((data ?? []) as unknown as CommerceProduct[]);
