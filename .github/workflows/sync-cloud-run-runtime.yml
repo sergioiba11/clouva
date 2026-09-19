@@ -34,34 +34,94 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
+      - name: Resolve existing secret binding
+        id: secret
+        run: |
+          gcloud run services describe "$SERVICE" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --format=json > /tmp/service.json
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          data = json.load(open("/tmp/service.json", "r", encoding="utf-8"))
+          env = data.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [{}])[0].get("env", [])
+          target = next((x for x in env if x.get("name") == "CLOUVA_ADMIN_UPLOAD_SECRET"), None)
+          ref = (target or {}).get("valueFrom", {}).get("secretKeyRef", {})
+          name = str(ref.get("name") or "")
+          version = str(ref.get("key") or "latest")
+          if not name:
+              raise SystemExit("CLOUVA_ADMIN_UPLOAD_SECRET is not backed by Secret Manager.")
+          print(f"name={name}")
+          print(f"version={version}")
+          PY
+
       - name: Sync asset import runtime variables
+        env:
+          SECRET_NAME: ${{ steps.secret.outputs.name }}
+          SECRET_VERSION: ${{ steps.secret.outputs.version }}
         run: |
           gcloud run services update "$SERVICE" \
             --project "$PROJECT_ID" \
             --region "$REGION" \
-            --update-env-vars "CLOUVA_ASSET_IMPORT_TASKS_PROJECT=$PROJECT_ID,CLOUVA_ASSET_IMPORT_TASKS_LOCATION=$REGION,CLOUVA_ASSET_IMPORT_TASKS_QUEUE=clouva-asset-imports,CLOUVA_ASSET_IMPORT_WORKER_URL=https://clouva.com.ar/api/internal/admin/assets/imports/process" \
+            --update-env-vars "CLOUVA_ASSET_IMPORT_TASKS_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,CLOUVA_ASSET_IMPORT_TASKS_LOCATION=$REGION,CLOUVA_ASSET_IMPORT_TASKS_QUEUE=clouva-asset-imports,CLOUVA_ASSET_IMPORT_WORKER_URL=https://clouva.com.ar/api/internal/admin/assets/imports/process" \
+            --update-secrets "CLOUVA_ASSET_IMPORT_WORKER_SECRET=$SECRET_NAME:$SECRET_VERSION" \
             --quiet
 
-      - name: Verify runtime configuration
+      - name: Shift traffic to configured revision
+        id: runtime
         run: |
           latest="$(gcloud run services describe "$SERVICE" \
             --project "$PROJECT_ID" \
             --region "$REGION" \
             --format='value(status.latestReadyRevisionName)')"
-          echo "latest_ready_revision=$latest"
-          gcloud run revisions describe "$latest" \
+          test -n "$latest"
+          gcloud run services update-traffic "$SERVICE" \
             --project "$PROJECT_ID" \
             --region "$REGION" \
-            --format='table(spec.containers[0].env.name,spec.containers[0].env.value)' \
-            | grep -E 'CLOUVA_ASSET_IMPORT_TASKS_PROJECT|GOOGLE_CLOUD_PROJECT|CLOUVA_ASSET_IMPORT_TASKS_LOCATION|CLOUVA_ASSET_IMPORT_TASKS_QUEUE|CLOUVA_ASSET_IMPORT_WORKER_URL|CLOUVA_ASSET_IMPORT_WORKER_SECRET' || true
+            --to-revisions "$latest=100" \
+            --quiet
+          echo "revision=$latest" >> "$GITHUB_OUTPUT"
 
-      - name: Verify service health
+      - name: Verify runtime configuration
+        env:
+          REVISION: ${{ steps.runtime.outputs.revision }}
         run: |
-          service_url="$(gcloud run services describe "$SERVICE" \
+          gcloud run revisions describe "$REVISION" \
             --project "$PROJECT_ID" \
             --region "$REGION" \
-            --format='value(status.url)')"
-          test -n "$service_url"
-          curl --fail --silent --show-error \
+            --format=json > /tmp/revision.json
+          python3 - <<'PY'
+          import json
+          data = json.load(open("/tmp/revision.json", "r", encoding="utf-8"))
+          env = data.get("spec", {}).get("containers", [{}])[0].get("env", [])
+          names = {item.get("name") for item in env}
+          required = {
+              "CLOUVA_ASSET_IMPORT_TASKS_PROJECT",
+              "GOOGLE_CLOUD_PROJECT",
+              "CLOUVA_ASSET_IMPORT_TASKS_LOCATION",
+              "CLOUVA_ASSET_IMPORT_TASKS_QUEUE",
+              "CLOUVA_ASSET_IMPORT_WORKER_URL",
+              "CLOUVA_ASSET_IMPORT_WORKER_SECRET",
+          }
+          missing = sorted(required - names)
+          if missing:
+              raise SystemExit("Missing runtime variables: " + ", ".join(missing))
+          print("Asset import runtime configuration verified.")
+          PY
+
+      - name: Verify production traffic and health
+        env:
+          EXPECTED_REVISION: ${{ steps.runtime.outputs.revision }}
+        run: |
+          response="$(curl --fail --silent --show-error \
             --retry 10 --retry-all-errors --retry-delay 3 \
-            "$service_url/api/health"
+            "https://clouva.com.ar/api/health")"
+          echo "$response"
+          python3 - "$EXPECTED_REVISION" "$response" <<'PY'
+          import json, sys
+          expected = sys.argv[1]
+          payload = json.loads(sys.argv[2])
+          assert payload.get("ok") is True, payload
+          assert payload.get("revision") == expected, (payload.get("revision"), expected)
+          print("Production traffic verified on revision:", expected)
+          PY
