@@ -134,6 +134,33 @@ jobs:
             gcloud compute instances reset "$MC_INSTANCE" --project "$PROJECT_ID" --zone "$MC_ZONE"
           fi
 
+      - name: Wait for Minecraft to accept connections
+        env:
+          MC_IP: ${{ steps.address.outputs.ip }}
+        shell: bash
+        run: |
+          set +e
+          ready=0
+          for attempt in $(seq 1 60); do
+            if timeout 3 bash -c "</dev/tcp/$MC_IP/25565" >/dev/null 2>&1; then
+              echo "Minecraft Java is accepting connections at $MC_IP:25565"
+              ready=1
+              break
+            fi
+            echo "Waiting for Minecraft startup ($attempt/60)..."
+            sleep 10
+          done
+
+          if [ "$ready" -ne 1 ]; then
+            echo "::error::Minecraft did not open port 25565 within 10 minutes."
+            echo "----- VM serial output -----"
+            gcloud compute instances get-serial-port-output "$MC_INSTANCE" \
+              --project "$PROJECT_ID" \
+              --zone "$MC_ZONE" \
+              --port 1 2>&1 | tail -n 500 || true
+            exit 1
+          fi
+
       - name: Publish server address into CLOUVA
         env:
           MC_IP: ${{ steps.address.outputs.ip }}
