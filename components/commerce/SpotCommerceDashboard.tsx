@@ -1224,6 +1224,13 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
   const backCapture = getBackCapture(productCaptures);
   const detailCaptures = getDetailCaptures(productCaptures);
   const referenceSummary = productReferenceSummary(productCaptures);
+  const draftListings = data.listings.filter((listing) => listing.status === "draft");
+  const activeDraft = draftListingId ? data.listings.find((listing) => listing.id === draftListingId) ?? null : null;
+  const activeDraftMissing = activeDraft ? listingMissing(activeDraft) : [];
+  const activeDraftIdentifiers = activeDraft
+    ? data.identifiers.filter((identifier) => identifier.catalog_product_id === activeDraft.catalog_product_id && identifier.status === "active")
+    : [];
+  const hasExternalIdentifier = activeDraftIdentifiers.some((identifier) => !["sku", "clouva_barcode", "clouva_qr"].includes(identifier.identifier_type));
 
   return (
     <main className="relative min-h-screen overflow-hidden bg-[radial-gradient(circle_at_48%_-18%,rgba(105,46,196,.2),transparent_34%),radial-gradient(circle_at_95%_32%,rgba(76,29,149,.12),transparent_24%),#050507] text-white">
