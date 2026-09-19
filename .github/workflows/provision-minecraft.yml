@@ -55,9 +55,6 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
-      - name: Ensure Compute Engine API
-        run: gcloud services enable compute.googleapis.com --project "$PROJECT_ID" --quiet
-
       - name: Reserve permanent public IP
         id: address
         shell: bash
