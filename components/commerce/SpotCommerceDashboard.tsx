@@ -967,6 +967,31 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
     setError(null);
   }
 
+  async function addDraftReferenceImage(file: File | undefined, label: "Atrás" | "Detalle" | "Código de barras") {
+    if (!file || !draftListingId) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const dataUrl = await compressProductImage(file);
+      await authFetch(`/api/studios/${encodeURIComponent(studioId)}/commerce/products/images`, {
+        method: "POST",
+        body: JSON.stringify({
+          action: "add_reference",
+          listingId: draftListingId,
+          dataUrl,
+          label,
+        }),
+      });
+      setDraftSaveState("saved");
+      setMessage(`${label} guardado en el mismo borrador.`);
+      await load();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "No se pudo guardar la referencia.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function refreshFx() {
     setBusy(true); setError(null); setMessage(null);
     try {
