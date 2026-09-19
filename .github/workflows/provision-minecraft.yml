@@ -1,0 +1,179 @@
+name: Provision CLOUVA Minecraft
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "infra/minecraft/**"
+      - ".github/workflows/provision-minecraft.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  statuses: write
+
+concurrency:
+  group: clouva-minecraft-infra
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: gen-lang-client-0737053175
+  WEB_REGION: us-central1
+  WEB_SERVICE: clouva-web
+  MC_REGION: southamerica-east1
+  MC_ZONE: southamerica-east1-b
+  MC_INSTANCE: clouva-minecraft-family
+  MC_DISK: clouva-minecraft-world
+  MC_ADDRESS: clouva-minecraft-ip
+  MC_MACHINE_TYPE: e2-medium
+
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Mark Minecraft provisioning pending
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -f state=pending \
+            -f context='gcloud/clouva-minecraft' \
+            -f description='Minecraft provisioning in progress' \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA_EMAIL }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Ensure Compute Engine API
+        run: gcloud services enable compute.googleapis.com --project "$PROJECT_ID" --quiet
+
+      - name: Reserve permanent public IP
+        id: address
+        shell: bash
+        run: |
+          if ! gcloud compute addresses describe "$MC_ADDRESS" --project "$PROJECT_ID" --region "$MC_REGION" >/dev/null 2>&1; then
+            gcloud compute addresses create "$MC_ADDRESS" --project "$PROJECT_ID" --region "$MC_REGION" --network-tier=PREMIUM
+          fi
+          ip="$(gcloud compute addresses describe "$MC_ADDRESS" --project "$PROJECT_ID" --region "$MC_REGION" --format='value(address)')"
+          test -n "$ip"
+          echo "ip=$ip" >> "$GITHUB_OUTPUT"
+
+      - name: Open Minecraft ports
+        shell: bash
+        run: |
+          if ! gcloud compute firewall-rules describe clouva-minecraft-java --project "$PROJECT_ID" >/dev/null 2>&1; then
+            gcloud compute firewall-rules create clouva-minecraft-java \
+              --project "$PROJECT_ID" \
+              --network default \
+              --direction INGRESS \
+              --priority 1000 \
+              --action ALLOW \
+              --rules tcp:25565 \
+              --source-ranges 0.0.0.0/0 \
+              --target-tags clouva-minecraft
+          fi
+
+          if ! gcloud compute firewall-rules describe clouva-minecraft-bedrock --project "$PROJECT_ID" >/dev/null 2>&1; then
+            gcloud compute firewall-rules create clouva-minecraft-bedrock \
+              --project "$PROJECT_ID" \
+              --network default \
+              --direction INGRESS \
+              --priority 1000 \
+              --action ALLOW \
+              --rules udp:19132 \
+              --source-ranges 0.0.0.0/0 \
+              --target-tags clouva-minecraft
+          fi
+
+      - name: Ensure persistent world disk
+        run: |
+          if ! gcloud compute disks describe "$MC_DISK" --project "$PROJECT_ID" --zone "$MC_ZONE" >/dev/null 2>&1; then
+            gcloud compute disks create "$MC_DISK" \
+              --project "$PROJECT_ID" \
+              --zone "$MC_ZONE" \
+              --type pd-balanced \
+              --size 30GB
+          fi
+
+      - name: Create or refresh Minecraft VM
+        env:
+          MC_IP: ${{ steps.address.outputs.ip }}
+        shell: bash
+        run: |
+          if ! gcloud compute instances describe "$MC_INSTANCE" --project "$PROJECT_ID" --zone "$MC_ZONE" >/dev/null 2>&1; then
+            gcloud compute instances create "$MC_INSTANCE" \
+              --project "$PROJECT_ID" \
+              --zone "$MC_ZONE" \
+              --machine-type "$MC_MACHINE_TYPE" \
+              --provisioning-model STANDARD \
+              --maintenance-policy MIGRATE \
+              --image-family debian-12 \
+              --image-project debian-cloud \
+              --boot-disk-size 20GB \
+              --boot-disk-type pd-balanced \
+              --address "$MC_IP" \
+              --network default \
+              --tags clouva-minecraft \
+              --disk "name=$MC_DISK,device-name=$MC_DISK,mode=rw,boot=no,auto-delete=no" \
+              --metadata-from-file startup-script=infra/minecraft/startup.sh
+          else
+            gcloud compute instances add-metadata "$MC_INSTANCE" \
+              --project "$PROJECT_ID" \
+              --zone "$MC_ZONE" \
+              --metadata-from-file startup-script=infra/minecraft/startup.sh
+            gcloud compute instances reset "$MC_INSTANCE" --project "$PROJECT_ID" --zone "$MC_ZONE"
+          fi
+
+      - name: Publish server address into CLOUVA
+        env:
+          MC_IP: ${{ steps.address.outputs.ip }}
+        run: |
+          gcloud run services update "$WEB_SERVICE" \
+            --project "$PROJECT_ID" \
+            --region "$WEB_REGION" \
+            --update-env-vars "MINECRAFT_HOST=$MC_IP,MINECRAFT_JAVA_PORT=25565,MINECRAFT_BEDROCK_PORT=19132" \
+            --quiet
+
+      - name: Server summary
+        env:
+          MC_IP: ${{ steps.address.outputs.ip }}
+        run: |
+          {
+            echo "## CLOUVA Minecraft"
+            echo ""
+            printf -- '- Java: `%s:25565`\n' "$MC_IP"
+            printf -- '- Bedrock: `%s:19132`\n' "$MC_IP"
+            printf -- '- VM: `%s`\n' "$MC_INSTANCE"
+            printf -- '- World disk: `%s`\n' "$MC_DISK"
+            printf -- '- Region: `%s`\n' "$MC_REGION"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish Minecraft provisioning status
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          if [ "$JOB_STATUS" = "success" ]; then
+            state=success
+            description='Minecraft infrastructure provisioned'
+          else
+            state=failure
+            description='Minecraft provisioning failed'
+          fi
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+            -f state="$state" \
+            -f context='gcloud/clouva-minecraft' \
+            -f description="$description" \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
