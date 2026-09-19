@@ -152,11 +152,11 @@ jobs:
           {
             echo "## CLOUVA Minecraft"
             echo ""
-            echo "- Java: `$MC_IP:25565`"
-            echo "- Bedrock: `$MC_IP:19132`"
-            echo "- VM: `$MC_INSTANCE`"
-            echo "- World disk: `$MC_DISK`"
-            echo "- Region: `$MC_REGION`"
+            printf -- '- Java: `%s:25565`\n' "$MC_IP"
+            printf -- '- Bedrock: `%s:19132`\n' "$MC_IP"
+            printf -- '- VM: `%s`\n' "$MC_INSTANCE"
+            printf -- '- World disk: `%s`\n' "$MC_DISK"
+            printf -- '- Region: `%s`\n' "$MC_REGION"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish Minecraft provisioning status
