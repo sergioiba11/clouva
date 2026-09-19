@@ -104,12 +104,12 @@ test("el retry conserva prompt, ratio, calidad y referencia sin reutilizar estad
 
 test("limita Veo a duraciones válidas y calcula el costo confirmado", () => {
   assert.deepEqual(VIDEO_DURATIONS, [4, 6, 8]);
-  assert.equal(VIDEO_QUALITY_CONFIG.economy.model, "veo-3.1-lite-generate-preview");
-  assert.equal(VIDEO_QUALITY_CONFIG.fast.model, "veo-3.1-fast-generate-preview");
-  assert.equal(VIDEO_QUALITY_CONFIG.cinematic.model, "veo-3.1-generate-preview");
-  assert.equal(estimateVideoCostUsd("economy", 8), 0.4);
-  assert.equal(estimateVideoCostUsd("fast", 8), 0.8);
-  assert.equal(estimateVideoCostUsd("cinematic", 8), 3.2);
+  assert.equal(VIDEO_QUALITY_CONFIG.economy.model, "veo-3.1-lite-generate-001");
+  assert.equal(VIDEO_QUALITY_CONFIG.fast.model, "veo-3.1-fast-generate-001");
+  assert.equal(VIDEO_QUALITY_CONFIG.cinematic.model, "veo-3.1-generate-001");
+  assert.equal(estimateVideoCostUsd("economy", 8), 0.24);
+  assert.equal(estimateVideoCostUsd("fast", 8), 0.64);
+  assert.equal(estimateVideoCostUsd("cinematic", 8), 1.6);
 });
 
 test("inicia Veo con predictLongRunning y serializa la referencia real", async (t) => {
