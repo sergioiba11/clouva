@@ -38,3 +38,5 @@ Optional:
 ## Privacy / family-server defaults
 
 The service decodes an utterance after Discord marks the speaker as silent, transcribes it, and discards non-wake-word text. It does not persist raw voice recordings. Quesito's system prompt is constrained for a teen/family server.
+
+Deployment retry marker: 2026-09-19.
