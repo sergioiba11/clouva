@@ -33,10 +33,10 @@ import {
   type StructureRuleRecord,
   type StructureSurfaceRecord,
 } from "@/lib/structures/spatial";
-import { StructureScene } from "@/components/structures/StructureScene";
+import { StructureScene } from "@/components/structures/StructureScene";\nimport { GoogleSpatialScene } from "@/components/structures/GoogleSpatialScene";
 import { PlanEditor } from "@/components/structures/PlanEditor";
 
-type Tab = "project" | "images" | "spatial" | "plan" | "export" | "render";
+type Tab = "project" | "images" | "spatial" | "plan" | "export" | "render";\ntype SpatialBase = "spatial" | "map" | "satellite";
 type Corner = "NE" | "SE" | "SO" | "NO";
 type RenderView = "master_overview" | "front" | "corner" | "environment" | "aerial_oblique";
 
@@ -402,7 +402,7 @@ export function StructureWorkspace({
   const [selectedCorner, setSelectedCorner] = useState<Corner | null>("NE");
   const [analysisProgress, setAnalysisProgress] = useState<string | null>(null);
   const [placementProgress, setPlacementProgress] = useState<string | null>(null);
-  const [cameraEditMode, setCameraEditMode] = useState(false);
+  const [cameraEditMode, setCameraEditMode] = useState(false);\n  const [spatialBase, setSpatialBase] = useState<SpatialBase>("spatial");
   const stopAnalysisRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const spatialThumbRailRef = useRef<HTMLDivElement | null>(null);
@@ -1033,17 +1033,58 @@ export function StructureWorkspace({
                 </div>
               </div>
 
-              <StructureScene
-                images={data.images}
-                cameraNodes={data.cameraNodes}
-                blockout={blockout}
-                selectedImageId={selectedImageId}
-                onSelectImage={setSelectedImageId}
-                selectedCorner={selectedCorner}
-                onSelectCorner={setSelectedCorner}
-                editMode={cameraEditMode}
-                onMoveImage={moveImageNode}
-              />
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div className="inline-flex rounded-full border border-white/10 bg-black/30 p-1">
+                  {([
+                    ["spatial", "ESPACIAL"],
+                    ["map", "MAPA"],
+                    ["satellite", "SATÉLITE"],
+                  ] as Array<[SpatialBase, string]>).map(([value, label]) => (
+                    <button
+                      type="button"
+                      key={value}
+                      onClick={() => setSpatialBase(value)}
+                      className={`rounded-full px-3 py-1.5 text-[10px] font-semibold tracking-[0.08em] transition ${
+                        spatialBase === value
+                          ? "bg-violet-500/20 text-violet-100 ring-1 ring-violet-300/30"
+                          : "text-white/40 hover:text-white/70"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+                {spatialBase !== "spatial" ? (
+                  <span className="text-[10px] text-white/35">
+                    Google Maps · mismo sistema local_x/local_y
+                  </span>
+                ) : null}
+              </div>
+
+              {spatialBase === "spatial" ? (
+                <StructureScene
+                  images={data.images}
+                  cameraNodes={data.cameraNodes}
+                  blockout={blockout}
+                  selectedImageId={selectedImageId}
+                  onSelectImage={setSelectedImageId}
+                  selectedCorner={selectedCorner}
+                  onSelectCorner={setSelectedCorner}
+                  editMode={cameraEditMode}
+                  onMoveImage={moveImageNode}
+                />
+              ) : (
+                <GoogleSpatialScene
+                  mode={spatialBase}
+                  structure={data.structure}
+                  images={data.images}
+                  cameraNodes={data.cameraNodes}
+                  surfaces={data.surfaces}
+                  blockout={blockout}
+                  selectedImageId={selectedImageId}
+                  onSelectImage={setSelectedImageId}
+                />
+              )}
 
               <div
                 ref={spatialThumbRailRef}
