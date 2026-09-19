@@ -12,9 +12,16 @@ export type IgluAssetKey =
   | "studioHeroAlt"
   | "homeScene"
   | "publicHomeHero"
+  | "publicLogo"
+  | "publicBackground"
   | "publicPlayersCard"
   | "publicReservationsCard"
   | "publicMerchCard"
+  | "publicBottomNav"
+  | "publicRedButton"
+  | "publicPlayButton"
+  | "publicTopIcons"
+  | "publicReserveButton"
   | "recordingsScene"
   | "productionsScene"
   | "producersScene"
@@ -34,6 +41,7 @@ const ROOT_PREFIX = "admin-assets/";
 
 const CANDIDATES: Record<IgluAssetKey, string[]> = {
   logo: [
+    "02_logo_iglu_records_neon_hielo.png",
     "assets iglu (26).png",
     "assets iglu (12)(1).png",
     "iglu records logo oficial",
@@ -96,6 +104,7 @@ const CANDIDATES: Record<IgluAssetKey, string[]> = {
     "home iglu records",
   ],
   publicHomeHero: [
+    "06_background_base_musical_iglu.png",
     "iglu public home hero",
     "iglu home hero studio",
     "home public spot iglu",
@@ -105,7 +114,29 @@ const CANDIDATES: Record<IgluAssetKey, string[]> = {
     "home hero",
     "homehero",
   ],
+  publicLogo: [
+    "02_logo_iglu_records_neon_hielo.png",
+  ],
+  publicBackground: [
+    "06_background_base_musical_iglu.png",
+  ],
+  publicBottomNav: [
+    "07_barra_navegacion_neon.png",
+  ],
+  publicRedButton: [
+    "08_boton_circular_iglu_rojo.png",
+  ],
+  publicPlayButton: [
+    "09_boton_play_azul_neon.png",
+  ],
+  publicTopIcons: [
+    "10_iconos_superiores_navegacion.png",
+  ],
+  publicReserveButton: [
+    "11_boton_cta_reservar_sesion.png",
+  ],
   publicPlayersCard: [
+    "04_card_players_iglu_records.png",
     "iglu players card",
     "players studio console",
     "iglu home studio console",
@@ -116,6 +147,7 @@ const CANDIDATES: Record<IgluAssetKey, string[]> = {
     "playervisual",
   ],
   publicReservationsCard: [
+    "05_card_reservas_iglu_records.png",
     "iglu reservas card",
     "reservas tablet iglu",
     "booking card iglu",
@@ -125,6 +157,7 @@ const CANDIDATES: Record<IgluAssetKey, string[]> = {
     "reservas",
   ],
   publicMerchCard: [
+    "03_banner_merch_iglu_records.png",
     "iglu merch card",
     "merch abrigo iglu",
     "iglu merch home",
@@ -207,9 +240,16 @@ const CANDIDATES: Record<IgluAssetKey, string[]> = {
 const SCENE_KEYS = new Set<IgluAssetKey>([
   "homeScene",
   "publicHomeHero",
+  "publicLogo",
+  "publicBackground",
   "publicPlayersCard",
   "publicReservationsCard",
   "publicMerchCard",
+  "publicBottomNav",
+  "publicRedButton",
+  "publicPlayButton",
+  "publicTopIcons",
+  "publicReserveButton",
   "recordingsScene",
   "productionsScene",
   "producersScene",

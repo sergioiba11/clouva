@@ -1,58 +1,18 @@
 import Link from "next/link";
-import {
-  BarChart3,
-  ChevronRight,
-  List,
-  Menu,
-  Play,
-  Search,
-  ShoppingCart,
-  UserCircle,
-  UserRound,
-  Home,
-} from "lucide-react";
-import type { CSSProperties } from "react";
 import type { IgluSiteData } from "@/lib/iglu/site-data";
 import { IGLU_STUDIO_PATH } from "@/lib/iglu-radio/routes";
 import styles from "./IgluPublicSpotHome.module.css";
 
-function imageFromProduct(product: IgluSiteData["products"][number] | undefined) {
-  if (!product) return undefined;
-  if (product.cover_url) return product.cover_url;
-  if (Array.isArray(product.gallery)) {
-    const first = product.gallery.find((item) => typeof item === "string");
-    if (typeof first === "string") return first;
-  }
-  return undefined;
-}
-
-function imageStyle(url?: string): CSSProperties | undefined {
-  return url ? { backgroundImage: `url("${url}")` } : undefined;
-}
-
-function SpotCard({
-  href,
-  label,
-  image,
-  wide = false,
+function AssetImage({
+  src,
+  alt = "",
+  className,
 }: {
-  href: string;
-  label: string;
-  image?: string;
-  wide?: boolean;
+  src?: string;
+  alt?: string;
+  className?: string;
 }) {
-  return (
-    <Link
-      href={href}
-      className={`${styles.card} ${wide ? styles.cardWide : ""}`}
-      style={imageStyle(image)}
-      aria-label={label}
-    >
-      <span className={styles.cardShade} aria-hidden="true" />
-      <span className={styles.cardLabel}>{label}</span>
-      <span className={styles.cardArrow} aria-hidden="true"><ChevronRight size={20} strokeWidth={1.8} /></span>
-    </Link>
-  );
+  return src ? <img src={src} alt={alt} className={className} /> : null;
 }
 
 export function IgluPublicSpotHome({ data }: { data: IgluSiteData }) {
@@ -60,20 +20,34 @@ export function IgluPublicSpotHome({ data }: { data: IgluSiteData }) {
   const radioHref = `${IGLU_STUDIO_PATH}/radio`;
   const merchHref = `${IGLU_STUDIO_PATH}/tienda`;
 
-  const hero = data.assets.publicHomeHero ?? data.assets.homeScene ?? data.assets.studioHero ?? data.assets.studioHeroAlt;
-  const playersImage = data.assets.publicPlayersCard ?? data.assets.artistsScene ?? data.assets.recordingsScene ?? hero;
-  const reservationsImage = data.assets.publicReservationsCard ?? data.assets.sessionsScene ?? data.assets.studioHeroAlt ?? hero;
-  const merchImage = data.assets.publicMerchCard ?? imageFromProduct(data.products[0]) ?? data.assets.membershipsScene ?? hero;
+  const background = data.assets.publicBackground ?? data.assets.publicHomeHero ?? data.assets.homeScene ?? data.assets.studioHero;
+  const logo = data.assets.publicLogo ?? data.assets.logo;
+  const topIcons = data.assets.publicTopIcons;
+  const reserveButton = data.assets.publicReserveButton;
+  const playButton = data.assets.publicPlayButton;
+  const playersCard = data.assets.publicPlayersCard;
+  const reservationsCard = data.assets.publicReservationsCard;
+  const merchBanner = data.assets.publicMerchCard;
+  const bottomNav = data.assets.publicBottomNav;
 
   return (
-    <div className={styles.viewport} style={imageStyle(hero)}>
+    <div className={styles.viewport}>
       <main className={styles.app} aria-label="IGLÚ Records">
-        <section className={styles.hero} style={imageStyle(hero)}>
-          <div className={styles.heroOverlay} aria-hidden="true" />
+        <section
+          className={styles.hero}
+          style={background ? { backgroundImage: `url("${background}")` } : undefined}
+        >
+          <div className={styles.heroShade} aria-hidden="true" />
 
-          <div className={styles.topbar}>
-            <details className={styles.menu}>
-              <summary aria-label="Abrir menú de IGLÚ"><Menu size={32} strokeWidth={1.8} /></summary>
+          <div className={styles.topIcons}>
+            {topIcons ? (
+              <AssetImage src={topIcons} alt="" />
+            ) : (
+              <div className={styles.topIconsFallback}>☰　⌕　🛒　◯</div>
+            )}
+
+            <details className={styles.menuHitbox}>
+              <summary aria-label="Abrir menú de IGLÚ" />
               <nav className={styles.menuPanel} aria-label="Menú IGLÚ">
                 <Link href="/iglu/artistas">Players</Link>
                 <Link href={agendaHref}>Reservas</Link>
@@ -83,35 +57,25 @@ export function IgluPublicSpotHome({ data }: { data: IgluSiteData }) {
                 <Link href="/profile">Perfil</Link>
               </nav>
             </details>
-
-            <div className={styles.brand}>
-              {data.assets.logo ? (
-                <img src={data.assets.logo} alt="IGLÚ Records" />
-              ) : (
-                <div className={styles.brandFallback}>
-                  {data.assets.igloo ? <img src={data.assets.igloo} alt="" aria-hidden="true" /> : null}
-                  <strong>IGLÚ</strong>
-                  <span>RECORDS</span>
-                </div>
-              )}
-            </div>
-
-            <div className={styles.topActions}>
-              <Link href={`${radioHref}/search`} aria-label="Buscar"><Search size={28} strokeWidth={1.8} /></Link>
-              <Link href="/carrito" aria-label="Carrito"><ShoppingCart size={28} strokeWidth={1.8} /></Link>
-              <Link href="/profile" aria-label="Perfil"><UserCircle size={30} strokeWidth={1.65} /></Link>
-            </div>
+            <Link className={styles.searchHitbox} href={`${radioHref}/search`} aria-label="Buscar" />
+            <Link className={styles.cartHitbox} href="/carrito" aria-label="Carrito" />
+            <Link className={styles.profileHitbox} href="/profile" aria-label="Perfil" />
           </div>
+
+          <div className={styles.brand}>
+            <AssetImage src={logo} alt="IGLÚ Records" />
+          </div>
+
+          <div className={styles.heroSpacer} />
 
           <div className={styles.heroCopy}>
             <h1>ENTRÁ AL IGLÚ</h1>
             <div className={styles.heroActions}>
-              <Link className={styles.reserveButton} href={agendaHref}>
-                <span>RESERVAR SESIÓN</span>
-                <span aria-hidden="true">→</span>
+              <Link href={agendaHref} className={styles.assetButton} aria-label="Reservar sesión">
+                {reserveButton ? <AssetImage src={reserveButton} alt="Reservar sesión" /> : <span>RESERVAR SESIÓN →</span>}
               </Link>
-              <Link className={styles.playButton} href={radioHref} aria-label="Entrar a IGLÚ Radio">
-                <Play size={30} fill="currentColor" strokeWidth={1.5} />
+              <Link href={radioHref} className={styles.assetButton} aria-label="Entrar a IGLÚ Radio">
+                {playButton ? <AssetImage src={playButton} alt="Reproducir IGLÚ Radio" /> : <span>▶</span>}
               </Link>
             </div>
           </div>
@@ -119,34 +83,26 @@ export function IgluPublicSpotHome({ data }: { data: IgluSiteData }) {
 
         <section className={styles.cards} aria-label="Accesos públicos de IGLÚ">
           <div className={styles.cardRow}>
-            <SpotCard href="/iglu/artistas" label="PLAYERS" image={playersImage} />
-            <SpotCard href={agendaHref} label="RESERVAS" image={reservationsImage} />
+            <Link href="/iglu/artistas" className={styles.assetCard} aria-label="Players">
+              <AssetImage src={playersCard} alt="Players" />
+            </Link>
+            <Link href={agendaHref} className={styles.assetCard} aria-label="Reservas">
+              <AssetImage src={reservationsCard} alt="Reservas" />
+            </Link>
           </div>
-          <SpotCard href={merchHref} label="MERCH" image={merchImage} wide />
+
+          <Link href={merchHref} className={`${styles.assetCard} ${styles.merchCard}`} aria-label="Merch">
+            <AssetImage src={merchBanner} alt="Merch" />
+          </Link>
         </section>
 
         <nav className={styles.bottomNav} aria-label="Navegación principal de IGLÚ">
-          <Link className={styles.navActive} href={IGLU_STUDIO_PATH}>
-            <Home size={25} strokeWidth={1.8} />
-            <span>INICIO</span>
-          </Link>
-          <Link href="/iglu/pagos-unicos">
-            <List size={25} strokeWidth={1.8} />
-            <span>CARTA/MENU</span>
-          </Link>
-          <Link className={styles.centerAction} href={radioHref} aria-label="IGLÚ Radio">
-            <span className={styles.centerGlow}>
-              {data.assets.igloo ? <img src={data.assets.igloo} alt="" aria-hidden="true" /> : <Play size={26} fill="currentColor" />}
-            </span>
-          </Link>
-          <Link href="/iglu/sesiones">
-            <BarChart3 size={25} strokeWidth={1.8} />
-            <span>SESIONES</span>
-          </Link>
-          <Link href="/profile">
-            <UserRound size={25} strokeWidth={1.8} />
-            <span>PERFIL</span>
-          </Link>
+          {bottomNav ? <AssetImage src={bottomNav} alt="" /> : null}
+          <Link className={styles.navHome} href={IGLU_STUDIO_PATH} aria-label="Inicio" />
+          <Link className={styles.navMenu} href="/iglu/pagos-unicos" aria-label="Carta y menú" />
+          <Link className={styles.navRadio} href={radioHref} aria-label="IGLÚ Radio" />
+          <Link className={styles.navSessions} href="/iglu/sesiones" aria-label="Sesiones" />
+          <Link className={styles.navProfile} href="/profile" aria-label="Perfil" />
         </nav>
       </main>
     </div>
