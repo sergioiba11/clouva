@@ -90,26 +90,12 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ p
       throw new MediaApiError("El orden enviado no coincide con los clips del proyecto.", 400, "invalid_clip_order");
     }
 
-    // The sequence index has a unique project constraint. Move every row to a
-    // temporary negative range first, then assign the definitive order.
-    for (let index = 0; index < clipIds.length; index += 1) {
-      const { error } = await admin
-        .from("media_generation_jobs")
-        .update({ sequence_index: -100000 - index })
-        .eq("id", clipIds[index])
-        .eq("project_id", project.id)
-        .eq("user_id", user.id);
-      if (error) throw new Error(`No se pudo reservar el orden temporal: ${error.message}`);
-    }
-    for (let index = 0; index < clipIds.length; index += 1) {
-      const { error } = await admin
-        .from("media_generation_jobs")
-        .update({ sequence_index: index })
-        .eq("id", clipIds[index])
-        .eq("project_id", project.id)
-        .eq("user_id", user.id);
-      if (error) throw new Error(`No se pudo guardar el nuevo orden: ${error.message}`);
-    }
+    const { error: reorderError } = await admin.rpc("reorder_video_project_clips", {
+      p_project_id: project.id,
+      p_user_id: user.id,
+      p_clip_ids: clipIds,
+    });
+    if (reorderError) throw new Error(`No se pudo guardar el nuevo orden: ${reorderError.message}`);
 
     const clips = await listVideoProjectJobs(admin, project.id);
     return NextResponse.json({ clips: clips.map(toPublicVideoProjectJob) });
