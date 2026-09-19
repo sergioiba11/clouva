@@ -73,16 +73,7 @@ export default async function MatrixStudioProfilePage({ params, searchParams }: 
   if (isIglu) {
     const igluData = await loadIgluSiteData();
     if (!igluData) notFound();
-    return (
-      <>
-        <TrebolContextRegistration
-          scope="studio-public"
-          id={result.studio.id}
-          data={{ studioId: result.studio.id, slug: result.studio.slug, canonicalAlias: result.canonicalAlias, name: result.publicStudio.publicName, section: "public-profile" }}
-        />
-        <IgluPublicSpotHome data={igluData} />
-      </>
-    );
+    return <IgluPublicSpotHome data={igluData} />;
   }
 
   const data = publicIdentityData(result);
