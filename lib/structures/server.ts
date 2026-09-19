@@ -912,22 +912,22 @@ export function structureAnalysisPrompt(args: {
 }) {
   return [
     "CLOUVA STRUCTURES — STRUCTURE ANALYSIS PASS",
-    "ROLE\\nYou are performing the pre-render spatial analysis for a CLOUVA Structure.",
-    "IMPORTANT\\nDo NOT generate the final visual render yet. Do NOT produce separate building interpretations. Do NOT treat each reference as an isolated scene.",
+    "ROLE\nYou are performing the pre-render spatial analysis for a CLOUVA Structure.",
+    "IMPORTANT\nDo NOT generate the final visual render yet. Do NOT produce separate building interpretations. Do NOT treat each reference as an isolated scene.",
     "Your task is to analyze ALL evidence as partial observations of the SAME physical place and resolve ONE canonical spatial interpretation of the spot.",
-    "PRIMARY GOAL\\nBuild a single coherent mental/spatial reconstruction of the structure and its surroundings, using every available evidence source as constraints on the same geometry.",
-    "AVAILABLE EVIDENCE\\nStreet-level photographs, satellite/aerial images, camera node positions, headings, local coordinates, inferred sectors, metadata, and repeated observations of the same elements from different angles.",
-    "INTERPRETATION RULE\\nWhen the same wall, corner, roof, patio, fence, access, sidewalk, or street appears from different perspectives, interpret those views as multiple observations of the SAME geometry. Never invent a different version of the structure for each perspective.",
-    "SPATIAL ANALYSIS TASKS\\nAnalyze camera position, heading/look direction, perspective, visible facade/side, roof, access points, doors, windows, walls, fences/railings/perimeter, materials, volumetric continuity, repeated geometry, sidewalks, streets, patios/open areas, surrounding context, and continuity with neighboring evidence.",
-    "CROSS-EVIDENCE SYNTHESIS\\nResolve which observations correspond to the same facade, which corners connect visible facades, how roof geometry relates to street-level geometry, where accesses/patios/side yards/perimeter boundaries are, what belongs to the building versus environment, and which parts are confirmed, inferred, or uncertain.",
-    "EVIDENCE PRIORITY\\n1) Satellite/aerial: footprint, orientation, roof geometry, patios/open areas, plant relationships, perimeter layout, relation to streets. 2) Street-level: facades, windows, doors, accesses, walls, fences/gates/railings, materials, relative heights, facade rhythm, corners. 3) Camera nodes/local coordinates/headings: observation origin, viewed sector, spatial organization, continuity validation, contradiction prevention.",
-    "CANONICAL RECONSTRUCTION RULE\\nResolve ONE canonical spot. It is the single source of truth for 00 Plano Maestro HD, 01 Frente, 02 Esquina, 03 Entorno, 04 Aerea oblicua. Same footprint, roof logic, access points, walls and perimeter must persist across all views. Perspective may change; structure may not.",
-    "FORBIDDEN BEHAVIOR\\nDo not create different buildings for different views. Do not copy browser UI or Google Maps/Street View UI. Do not interpret interface elements as architecture. Do not redesign the building. Do not add unsupported decorative architecture. Do not exaggerate or stylize the structure beyond evidence.",
-    "EXPECTED ANALYSIS OUTPUT\\nReturn a structured canonical spatial model, evidence mapping, confidence map and immutable render constraints. Be specific and concise. Use image IDs when connecting conclusions to evidence.",
-    \`IDENTITY PACK WITH ALL METADATA AND CAMERA NODES:\\n\${JSON.stringify(args.identityPack)}\`,
-    \`VISUAL REFERENCE ORDER:\\n\${JSON.stringify(args.visualReferenceOrder)}\`,
-    "FINAL INSTRUCTION\\nDo all analysis first. The returned analysis becomes the single spatial source of truth for every subsequent render.",
-  ].join("\\n\\n");
+    "PRIMARY GOAL\nBuild a single coherent mental/spatial reconstruction of the structure and its surroundings, using every available evidence source as constraints on the same geometry.",
+    "AVAILABLE EVIDENCE\nStreet-level photographs, satellite/aerial images, camera node positions, headings, local coordinates, inferred sectors, metadata, and repeated observations of the same elements from different angles.",
+    "INTERPRETATION RULE\nWhen the same wall, corner, roof, patio, fence, access, sidewalk, or street appears from different perspectives, interpret those views as multiple observations of the SAME geometry. Never invent a different version of the structure for each perspective.",
+    "SPATIAL ANALYSIS TASKS\nAnalyze camera position, heading/look direction, perspective, visible facade/side, roof, access points, doors, windows, walls, fences/railings/perimeter, materials, volumetric continuity, repeated geometry, sidewalks, streets, patios/open areas, surrounding context, and continuity with neighboring evidence.",
+    "CROSS-EVIDENCE SYNTHESIS\nResolve which observations correspond to the same facade, which corners connect visible facades, how roof geometry relates to street-level geometry, where accesses/patios/side yards/perimeter boundaries are, what belongs to the building versus environment, and which parts are confirmed, inferred, or uncertain.",
+    "EVIDENCE PRIORITY\n1) Satellite/aerial: footprint, orientation, roof geometry, patios/open areas, plant relationships, perimeter layout, relation to streets. 2) Street-level: facades, windows, doors, accesses, walls, fences/gates/railings, materials, relative heights, facade rhythm, corners. 3) Camera nodes/local coordinates/headings: observation origin, viewed sector, spatial organization, continuity validation, contradiction prevention.",
+    "CANONICAL RECONSTRUCTION RULE\nResolve ONE canonical spot. It is the single source of truth for 00 Plano Maestro HD, 01 Frente, 02 Esquina, 03 Entorno, 04 Aerea oblicua. Same footprint, roof logic, access points, walls and perimeter must persist across all views. Perspective may change; structure may not.",
+    "FORBIDDEN BEHAVIOR\nDo not create different buildings for different views. Do not copy browser UI or Google Maps/Street View UI. Do not interpret interface elements as architecture. Do not redesign the building. Do not add unsupported decorative architecture. Do not exaggerate or stylize the structure beyond evidence.",
+    "EXPECTED ANALYSIS OUTPUT\nReturn a structured canonical spatial model, evidence mapping, confidence map and immutable render constraints. Be specific and concise. Use image IDs when connecting conclusions to evidence.",
+    `IDENTITY PACK WITH ALL METADATA AND CAMERA NODES:\n${JSON.stringify(args.identityPack)}`,
+    `VISUAL REFERENCE ORDER:\n${JSON.stringify(args.visualReferenceOrder)}`,
+    "FINAL INSTRUCTION\nDo all analysis first. The returned analysis becomes the single spatial source of truth for every subsequent render.",
+  ].join("\n\n");
 }
 
 export function pickRenderReferences(
@@ -942,7 +942,7 @@ export function pickRenderReferences(
 
     const sector = (image.sector ?? "").toLowerCase();
     const description = (image.description ?? "").toLowerCase();
-    const text = \`\${sector} \${description}\`;
+    const text = `${sector} ${description}`;
     const aerial = image.source_type === "satellite" || image.scene_type === "aerial";
     const buildingEvidence = /escuela|edificio|fachada|muro|reja|perimetro|techo|patio|acceso|escalera|porton|ventana|aula/.test(text);
     const contextHeavy = /parque|barrio|viviendas|horizonte|lote abierto|plaza|arbolado/.test(text) && !buildingEvidence;
@@ -1017,12 +1017,12 @@ export function renderPrompt(args: {
     args.hasCanonicalAnchor
       ? "La PRIMERA imagen adjunta es un ANCLA CANONICA generada en este mismo job. Conserva estrictamente su huella, volumetria, techo y organizacion general."
       : "No hay ancla renderizada previa: deriva la geometria del analisis canonico y la evidencia.",
-    \`Vista solicitada: \${viewInstruction}.\`,
-    \`CANONICAL ANALYSIS:\\n\${JSON.stringify(args.canonicalAnalysis)}\`,
-    \`STRUCTURE IDENTITY PACK:\\n\${JSON.stringify(args.identityPack)}\`,
-    \`Referencias seleccionadas para esta camara:\\n\${JSON.stringify(args.referenceDescriptions)}\`,
+    `Vista solicitada: ${viewInstruction}.`,
+    `CANONICAL ANALYSIS:\n${JSON.stringify(args.canonicalAnalysis)}`,
+    `STRUCTURE IDENTITY PACK:\n${JSON.stringify(args.identityPack)}`,
+    `Referencias seleccionadas para esta camara:\n${JSON.stringify(args.referenceDescriptions)}`,
     "Salida: fotografia limpia y fotorrealista del lugar reconstruido. Sin texto, sin UI, sin marcos de navegador.",
-  ].join("\\n\\n");
+  ].join("\n\n");
 }
 
 export function masterOverviewPrompt(args: {
@@ -1039,10 +1039,10 @@ export function masterOverviewPrompt(args: {
     "Show the most important spot components with concise callouts: acceso principal, fachada principal, lateral, patio/espacio abierto, cerco/rejas/muro perimetral, veredas/calles, techo/cubierta. Add a north indicator, simple scale cue, camera-point markers and a small spot summary.",
     "Do not invent unsupported architecture. Presentation may be futuristic; architecture must remain the real reconstructed place.",
     "Do not reproduce browser UI, Google Maps UI, Street View UI, minimaps, pins, controls, watermarks or screenshot artifacts.",
-    \`CANONICAL ANALYSIS:\\n\${JSON.stringify(args.canonicalAnalysis)}\`,
-    \`STRUCTURE IDENTITY PACK:\\n\${JSON.stringify(args.identityPack)}\`,
+    `CANONICAL ANALYSIS:\n${JSON.stringify(args.canonicalAnalysis)}`,
+    `STRUCTURE IDENTITY PACK:\n${JSON.stringify(args.identityPack)}`,
     "Output a single polished 16:9 HD master board suitable as the first card before the four standard views.",
-  ].join("\\n\\n");
+  ].join("\n\n");
 }
 
 export function safeDownloadName(name: string) {
