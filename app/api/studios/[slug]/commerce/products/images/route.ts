@@ -212,6 +212,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       || body.action === "set_cover"
       || body.action === "set_publication"
       || body.action === "add"
+      || body.action === "add_reference"
       || body.action === "replace"
       ? body.action
       : "";
@@ -270,6 +271,50 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         .eq("spot_id", spot.id);
       if (updateError) throw new Error(updateError.message);
       return NextResponse.json({ ok: true, action, approved, listingId: listing.id, coverUrl: nextCover, gallery: synced.gallery });
+    }
+
+    if (action === "add_reference") {
+      const parsed = parseDataUrl(body.dataUrl);
+      const label = typeof body.label === "string" && body.label.trim()
+        ? body.label.trim().slice(0, 80)
+        : "Referencia";
+      const stored = await uploadGeneratedMediaObject({
+        bytes: parsed.bytes,
+        mimeType: parsed.mimeType,
+        pathPrefix: `commerce/${spot.id}/product-sources`,
+      });
+      const metadata = addManualImage(
+        listing.metadata,
+        { url: stored.url, storagePath: stored.objectPath, mimeType: parsed.mimeType },
+        label,
+      );
+      const root = { ...record(metadata) };
+      root.draft_lifecycle = {
+        ...record(root.draft_lifecycle),
+        stage: listing.status === "published" ? "published" : "incomplete",
+        last_saved_at: new Date().toISOString(),
+      };
+      const { error: updateError } = await admin
+        .from("commerce_products")
+        .update({ metadata: root, updated_at: new Date().toISOString() })
+        .eq("id", listing.id)
+        .eq("spot_id", spot.id);
+      if (updateError) {
+        await deleteGeneratedMedia(stored.objectPath);
+        throw new Error(updateError.message);
+      }
+      return NextResponse.json({
+        ok: true,
+        action,
+        listingId: listing.id,
+        image: {
+          url: stored.url,
+          storagePath: stored.objectPath,
+          mimeType: parsed.mimeType,
+          label,
+          approved: false,
+        },
+      });
     }
 
     if (action === "add" || action === "replace") {
