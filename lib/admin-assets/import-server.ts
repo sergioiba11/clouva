@@ -251,7 +251,18 @@ export async function enqueueImportJob(admin: SupabaseClient, job: AssetImportJo
       }),
     });
     const payload = await taskResponse.json().catch(() => ({})) as { name?: string; error?: { message?: string } };
-    if (!taskResponse.ok) throw new Error(payload.error?.message ?? `Cloud Tasks respondió ${taskResponse.status}.`);
+    if (!taskResponse.ok) {
+      const taskMessage = payload.error?.message ?? `Cloud Tasks respondió ${taskResponse.status}.`;
+      if (taskResponse.status === 404 || /queue does not exist/i.test(taskMessage)) {
+        console.warn("[admin-assets-import] Cloud Tasks queue unavailable; processing inline", {
+          jobId: job.id,
+          status: taskResponse.status,
+          message: taskMessage,
+        });
+        return await processAssetImportJob(job.id);
+      }
+      throw new Error(taskMessage);
+    }
 
     const { data, error } = await admin
       .from(JOBS_TABLE)
