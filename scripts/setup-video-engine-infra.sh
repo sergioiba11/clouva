@@ -7,7 +7,8 @@ SERVICE="${CLOUVA_VIDEO_WEB_SERVICE:-clouva-web}"
 JOB="${CLOUVA_VIDEO_RENDER_JOB_NAME:-clouva-video-render}"
 BUCKET="${CLOUVA_GENERATED_MEDIA_BUCKET:-clouva-generated-media}"
 ARTIFACT_REPOSITORY="${CLOUVA_VIDEO_ARTIFACT_REPOSITORY:-clouva}"
-IMAGE="${CLOUVA_VIDEO_RENDER_IMAGE:-${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REPOSITORY}/video-render:latest}"
+IMAGE_TAG="${CLOUVA_VIDEO_RENDER_TAG:-${GITHUB_SHA:-latest}}"
+IMAGE="${CLOUVA_VIDEO_RENDER_IMAGE:-${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REPOSITORY}/video-render:${IMAGE_TAG}}"
 
 command -v gcloud >/dev/null || { echo "gcloud es requerido" >&2; exit 1; }
 command -v python3 >/dev/null || { echo "python3 es requerido" >&2; exit 1; }
@@ -75,10 +76,34 @@ gcloud artifacts repositories describe "$ARTIFACT_REPOSITORY" \
   --location "$REGION" >/dev/null
 
 # Cloud Build is already the canonical image builder used by CLOUVA deployments.
-gcloud builds submit \
+BUILD_ID="$(gcloud builds submit \
   --project "$PROJECT_ID" \
   --config cloudbuild-video-render.yaml \
-  .
+  --substitutions="_VIDEO_RENDER_TAG=${IMAGE_TAG}" \
+  --async \
+  --format='value(id)' \
+  .)"
+[[ -n "$BUILD_ID" ]] || { echo "Cloud Build no devolvió build id." >&2; exit 1; }
+echo "Cloud Build submitted: $BUILD_ID"
+
+IMAGE_READY=0
+for attempt in $(seq 1 72); do
+  if gcloud artifacts docker images describe "$IMAGE" \
+    --project "$PROJECT_ID" \
+    --format='value(image_summary.digest)' >/tmp/video-render-digest 2>/dev/null; then
+    if [[ -s /tmp/video-render-digest ]]; then
+      IMAGE_READY=1
+      break
+    fi
+  fi
+  sleep 5
+done
+if [[ "$IMAGE_READY" != "1" ]]; then
+  echo "La imagen del worker no apareció en Artifact Registry." >&2
+  gcloud builds describe "$BUILD_ID" --project "$PROJECT_ID" --format='value(status)' || true
+  exit 1
+fi
+echo "Render worker image ready: $IMAGE @ $(cat /tmp/video-render-digest)"
 
 JOB_ARGS=(
   --project "$PROJECT_ID"
