@@ -74,3 +74,5 @@ jobs:
           done
 
 # post-repair check
+
+# live check after provision success
