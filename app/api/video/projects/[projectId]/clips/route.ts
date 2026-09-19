@@ -64,3 +64,57 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pr
     return NextResponse.json(mapped.body, { status: mapped.status });
   }
 }
+
+
+export async function PATCH(request: NextRequest, context: { params: Promise<{ projectId: string }> }) {
+  try {
+    const { admin, user } = await requireMediaAdmin(request);
+    const { projectId } = await context.params;
+    const project = await getVideoProject(admin, projectId, user.id);
+    if (!project) return NextResponse.json({ error: "El proyecto no existe.", code: "project_not_found" }, { status: 404 });
+    if (!["draft", "failed"].includes(project.status)) {
+      throw new MediaApiError("El timeline no puede reordenarse mientras el proyecto está ejecutándose.", 409, "project_locked");
+    }
+
+    const current = await listVideoProjectJobs(admin, project.id);
+    const body = await request.json().catch(() => ({})) as { clipIds?: unknown[] };
+    const clipIds = Array.isArray(body.clipIds)
+      ? body.clipIds.filter((value): value is string => typeof value === "string")
+      : [];
+    const currentIds = current.map((clip) => clip.id);
+    if (
+      clipIds.length !== currentIds.length
+      || new Set(clipIds).size !== clipIds.length
+      || clipIds.some((id) => !currentIds.includes(id))
+    ) {
+      throw new MediaApiError("El orden enviado no coincide con los clips del proyecto.", 400, "invalid_clip_order");
+    }
+
+    // The sequence index has a unique project constraint. Move every row to a
+    // temporary negative range first, then assign the definitive order.
+    for (let index = 0; index < clipIds.length; index += 1) {
+      const { error } = await admin
+        .from("media_generation_jobs")
+        .update({ sequence_index: -100000 - index })
+        .eq("id", clipIds[index])
+        .eq("project_id", project.id)
+        .eq("user_id", user.id);
+      if (error) throw new Error(`No se pudo reservar el orden temporal: ${error.message}`);
+    }
+    for (let index = 0; index < clipIds.length; index += 1) {
+      const { error } = await admin
+        .from("media_generation_jobs")
+        .update({ sequence_index: index })
+        .eq("id", clipIds[index])
+        .eq("project_id", project.id)
+        .eq("user_id", user.id);
+      if (error) throw new Error(`No se pudo guardar el nuevo orden: ${error.message}`);
+    }
+
+    const clips = await listVideoProjectJobs(admin, project.id);
+    return NextResponse.json({ clips: clips.map(toPublicVideoProjectJob) });
+  } catch (error) {
+    const mapped = publicMediaError(error);
+    return NextResponse.json(mapped.body, { status: mapped.status });
+  }
+}
