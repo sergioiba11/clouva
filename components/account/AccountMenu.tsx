@@ -6,6 +6,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import {
   Boxes,
   CircleUserRound,
+  Gamepad2,
   LogOut,
   Plus,
   QrCode,
