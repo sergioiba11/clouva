@@ -1,10 +1,10 @@
 import "server-only";
 
 import { createHash } from "node:crypto";
-import { GoogleGenAI } from "@google/genai";
 import sharp from "sharp";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { uploadGeneratedMediaObject } from "@/lib/gcs-media";
+import { generateGoogleCloudJson, type GoogleCloudReferenceImage } from "@/lib/server/google-cloud-genai";
 import { parseExifMetadata } from "@/lib/structures/exif";
 import {
   buildOrderedFilename,
@@ -338,11 +338,10 @@ export async function downloadStructureImage(url: string, maxBytes = MAX_IMAGE_B
 }
 
 export async function analyzeStructureImageWithCloud(image: StructureImageRecord) {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) throw new Error("GEMINI_API_KEY no está configurada para CLOUVA Cloud.");
   const bytes = await downloadStructureImage(image.public_url);
-  const ai = new GoogleGenAI({ apiKey });
-  const model = process.env.CLOUVA_STRUCTURES_VISION_MODEL ?? "gemini-2.5-flash";
+  const model = process.env.GOOGLE_CLOUD_STRUCTURES_VISION_MODEL
+    ?? process.env.CLOUVA_STRUCTURES_VISION_MODEL
+    ?? "gemini-2.5-flash";
 
   const deterministic = {
     filename: image.original_filename,
@@ -356,7 +355,7 @@ export async function analyzeStructureImageWithCloud(image: StructureImageRecord
   };
 
   const prompt = [
-    "CLOUVA STRUCTURES — análisis de evidencia espacial.",
+    "CLOUVA STRUCTURES — análisis de evidencia espacial sobre Google Cloud Vertex AI.",
     "La imagen pertenece a un proyecto de reconstrucción de un lugar físico real.",
     "No diseñes ni inventes arquitectura. Analizá solamente lo visible.",
     "Los datos determinísticos suministrados tienen prioridad y NO deben ser reemplazados por inferencias.",
@@ -365,41 +364,66 @@ export async function analyzeStructureImageWithCloud(image: StructureImageRecord
     "Si parece captura de Street View, satélite, foto común o screenshot, indicarlo.",
     "Si detectás una contradicción visual potencial con otras épocas (por ejemplo cercos/rejas nuevos), solo describí el elemento; no decidas qué época es correcta.",
     `Datos determinísticos: ${JSON.stringify(deterministic)}`,
-    "Respondé EXCLUSIVAMENTE JSON con esta forma:",
-    JSON.stringify({
-      sourceType: "street_view | photo | satellite | screenshot | unknown",
-      sceneType: "exterior | interior | aerial | context | unknown",
-      sectorCandidate: "texto corto o null",
-      camera: { heading: null, pitch: null, fovEstimate: null },
-      visibleSurfaces: ["fachada", "muro"],
-      landmarks: [{ type: "corner", description: "..." }],
-      description: "descripción concreta de lo visible y su utilidad espacial",
-      tags: ["..."],
-      potentialConflicts: ["..."],
-      confidence: 0.8,
-    }),
   ].join("\n\n");
 
-  const response = await ai.models.generateContent({
+  const generated = await generateGoogleCloudJson({
     model,
-    contents: [{
-      role: "user",
-      parts: [
-        { text: prompt },
-        { inlineData: { mimeType: image.mime_type, data: bytes.toString("base64") } },
-      ],
+    prompt,
+    referenceImages: [{
+      mimeType: image.mime_type,
+      data: bytes.toString("base64"),
     }],
-    config: {
-      responseMimeType: "application/json",
-      temperature: 0.1,
+    responseJsonSchema: {
+      type: "object",
+      properties: {
+        sourceType: { type: ["string", "null"] },
+        sceneType: { type: ["string", "null"] },
+        sectorCandidate: { type: ["string", "null"] },
+        camera: {
+          type: "object",
+          properties: {
+            heading: { type: ["number", "null"] },
+            pitch: { type: ["number", "null"] },
+            fovEstimate: { type: ["number", "null"] },
+          },
+          required: ["heading", "pitch", "fovEstimate"],
+        },
+        visibleSurfaces: { type: "array", items: { type: "string" } },
+        landmarks: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              type: { type: "string" },
+              description: { type: "string" },
+            },
+            required: ["type", "description"],
+          },
+        },
+        description: { type: "string" },
+        tags: { type: "array", items: { type: "string" } },
+        potentialConflicts: { type: "array", items: { type: "string" } },
+        confidence: { type: "number", minimum: 0, maximum: 1 },
+      },
+      required: [
+        "sourceType",
+        "sceneType",
+        "sectorCandidate",
+        "camera",
+        "visibleSurfaces",
+        "landmarks",
+        "description",
+        "tags",
+        "potentialConflicts",
+        "confidence",
+      ],
     },
+    temperature: 0.1,
   });
 
-  const text = (response.text ?? "").trim().replace(/^\`\`\`(?:json)?\s*/i, "").replace(/\s*\`\`\`$/, "");
-  if (!text) throw new Error("CLOUVA Cloud no devolvió análisis.");
   let parsed: unknown;
   try {
-    parsed = JSON.parse(text);
+    parsed = JSON.parse(generated.text);
   } catch {
     throw new Error("CLOUVA Cloud devolvió un análisis que no es JSON válido.");
   }
@@ -535,9 +559,6 @@ export async function inferStructurePlacementWithCloud(args: {
   structure: StructureRecord;
   image: StructureImageRecord;
 }) {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) throw new Error("GEMINI_API_KEY no está configurada para CLOUVA Cloud.");
-
   const { data: anchorRows, error: anchorsError } = await args.admin
     .from("structure_images")
     .select("*")
@@ -562,17 +583,18 @@ export async function inferStructurePlacementWithCloud(args: {
     .slice(0, 3);
 
   const targetMedia = await compactPlacementImage(args.image);
-  const preparedAnchors = await Promise.all(scoredAnchors.map(async (anchor) => {
+  const preparedAnchors = (await Promise.all(scoredAnchors.map(async (anchor) => {
     try {
       return { anchor, media: await compactPlacementImage(anchor) };
     } catch {
       return null;
     }
-  }));
+  }))).filter((item): item is { anchor: StructureImageRecord; media: GoogleCloudReferenceImage } => Boolean(item));
 
   const prompt = [
-    "CLOUVA STRUCTURES — COLOCACIÓN ESPACIAL DE CÁMARA.",
-    "La primera imagen es la captura objetivo. Las siguientes, si existen, son anchors geolocalizados del MISMO lugar físico.",
+    "CLOUVA STRUCTURES — COLOCACIÓN ESPACIAL DE CÁMARA sobre Google Cloud Vertex AI.",
+    "Referencia visual 1 es la captura objetivo.",
+    "Referencias visuales 2 en adelante son anchors geolocalizados del MISMO lugar físico, en el mismo orden que el array Anchors.",
     "La captura puede ser Google Street View/Maps y mostrar minimapa, brújula, nombre de calle, dirección, pin, muñequito o interfaz de navegación.",
     "Ubicá la CÁMARA / MUÑEQUITO que produjo la captura y determiná hacia dónde mira.",
     "NO reconstruyas el edificio. NO inventes coordenadas.",
@@ -596,7 +618,7 @@ export async function inferStructurePlacementWithCloud(args: {
       description: args.image.description,
       source: args.image.spatial_source,
     })}`,
-    `Anchors: ${JSON.stringify(scoredAnchors.map((anchor) => ({
+    `Anchors: ${JSON.stringify(preparedAnchors.map(({ anchor }) => ({
       id: anchor.id,
       latitude: anchor.latitude,
       longitude: anchor.longitude,
@@ -606,57 +628,48 @@ export async function inferStructurePlacementWithCloud(args: {
       verified: anchor.manual_verified,
       source: anchor.spatial_source,
     })))}`,
-    "Respondé EXCLUSIVAMENTE JSON:",
-    JSON.stringify({
-      canPlacePosition: false,
-      latitude: null,
-      longitude: null,
-      heading: null,
-      pitch: null,
-      fov: null,
-      confidence: 0,
-      reason: "explicación breve basada en evidencia visible",
-    }),
   ].join("\n\n");
 
-  const parts: Array<Record<string, unknown>> = [
-    { text: prompt },
-    { text: "IMAGEN OBJETIVO" },
-    { inlineData: targetMedia },
-  ];
+  const model = process.env.GOOGLE_CLOUD_STRUCTURES_VISION_MODEL
+    ?? process.env.CLOUVA_STRUCTURES_VISION_MODEL
+    ?? "gemini-2.5-flash";
 
-  for (let index = 0; index < preparedAnchors.length; index += 1) {
-    const item = preparedAnchors[index];
-    if (!item) continue;
-    parts.push({
-      text: `ANCHOR ${index + 1}: ${JSON.stringify({
-        latitude: item.anchor.latitude,
-        longitude: item.anchor.longitude,
-        heading: item.anchor.heading,
-        sector: item.anchor.sector,
-        description: item.anchor.description,
-      })}`,
-    });
-    parts.push({ inlineData: item.media });
-  }
-
-  const ai = new GoogleGenAI({ apiKey });
-  const model = process.env.CLOUVA_STRUCTURES_VISION_MODEL ?? "gemini-2.5-flash";
-  const response = await ai.models.generateContent({
+  const generated = await generateGoogleCloudJson({
     model,
-    contents: [{ role: "user", parts }],
-    config: {
-      responseMimeType: "application/json",
-      temperature: 0.05,
+    prompt,
+    referenceImages: [
+      targetMedia,
+      ...preparedAnchors.map((item) => item.media),
+    ],
+    responseJsonSchema: {
+      type: "object",
+      properties: {
+        canPlacePosition: { type: "boolean" },
+        latitude: { type: ["number", "null"] },
+        longitude: { type: ["number", "null"] },
+        heading: { type: ["number", "null"] },
+        pitch: { type: ["number", "null"] },
+        fov: { type: ["number", "null"] },
+        confidence: { type: "number", minimum: 0, maximum: 1 },
+        reason: { type: "string" },
+      },
+      required: [
+        "canPlacePosition",
+        "latitude",
+        "longitude",
+        "heading",
+        "pitch",
+        "fov",
+        "confidence",
+        "reason",
+      ],
     },
+    temperature: 0.05,
   });
-
-  const text = (response.text ?? "").trim().replace(/^\`\`\`(?:json)?\s*/i, "").replace(/\s*\`\`\`$/, "");
-  if (!text) throw new Error("CLOUVA Cloud no devolvió una colocación espacial.");
 
   let parsed: unknown;
   try {
-    parsed = JSON.parse(text);
+    parsed = JSON.parse(generated.text);
   } catch {
     throw new Error("CLOUVA Cloud devolvió una colocación que no es JSON válido.");
   }
