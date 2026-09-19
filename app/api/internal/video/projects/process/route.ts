@@ -7,7 +7,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 function authorized(request: NextRequest) {
-  const configured = process.env.VIDEO_PROJECT_TASK_SECRET?.trim();
+  const configured = (process.env.VIDEO_PROJECT_TASK_SECRET || process.env.CLOUVA_ASSET_IMPORT_WORKER_SECRET)?.trim();
   const supplied = request.headers.get("x-clouva-video-task-secret")?.trim();
   return Boolean(configured && supplied && configured === supplied);
 }
