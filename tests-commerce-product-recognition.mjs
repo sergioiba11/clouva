@@ -196,7 +196,13 @@ test("commerce product image generation has a coherent timeout budget", () => {
   assert.match(productImagesRoute, /PRODUCT_IMAGE_GENERATION_TIMEOUT_MS\s*=\s*150_000/);
   assert.match(productImagesRoute, /Promise\.all\(targets\.map/);
   assert.doesNotMatch(productImagesRoute, /timeoutMs:\s*55_000/);
-  assert.match(deployWorkflow, /--timeout 300/);
+
+  const cloudRunTimeout = deployWorkflow.match(/--timeout\s+(\d+)/);
+  assert.ok(cloudRunTimeout, "Cloud Run deployment must configure a request timeout");
+  assert.ok(
+    Number(cloudRunTimeout[1]) >= 300,
+    "Cloud Run timeout must be at least the commerce route maxDuration",
+  );
 });
 
 
