@@ -906,27 +906,54 @@ export function compactStructureIdentityPack(args: {
   };
 }
 
+export function structureEvidenceBatchPrompt(args: {
+  batchIndex: number;
+  totalBatches: number;
+  evidence: Array<{
+    index: number;
+    imageId: string;
+    description: string | null;
+    sector: string | null;
+    sourceType: string | null;
+    sceneType: string | null;
+    direction: string | null;
+    localX: number | null;
+    localY: number | null;
+    heading: number | null;
+    verified: boolean;
+  }>;
+}) {
+  return [
+    "CLOUVA STRUCTURES — EVIDENCE BATCH ANALYSIS",
+    `Batch ${args.batchIndex} of ${args.totalBatches}. These images are only one subset of a larger evidence set for ONE physical place.`,
+    "Analyze ONLY what this batch visibly contributes to the canonical reconstruction. Do not design or render anything.",
+    "For each image, identify the observed architectural/urban elements, the probable sector/facade, geometry clues, continuity clues with neighboring views, and conflicts/uncertainties.",
+    "Satellite/aerial imagery is authoritative for footprint, roof, patio and plan relationships. Street-level imagery is authoritative for facades, openings, walls, fences, materials and relative heights. Camera coordinates/headings are spatial constraints.",
+    "Ignore browser chrome, Google Maps/Street View UI, minimaps, pins, labels, controls and watermarks.",
+    "Keep the JSON compact. Prefer short factual phrases. Do not repeat the same fact in multiple fields.",
+    `EVIDENCE METADATA:\n${JSON.stringify(args.evidence)}`,
+  ].join("\n\n");
+}
+
 export function structureAnalysisPrompt(args: {
   identityPack: Record<string, unknown>;
-  visualReferenceOrder: Array<{ index: number; imageId: string; description: string | null; sector: string | null }>;
+  batchAnalyses: Array<Record<string, unknown>>;
 }) {
   return [
     "CLOUVA STRUCTURES — STRUCTURE ANALYSIS PASS",
-    "ROLE\nYou are performing the pre-render spatial analysis for a CLOUVA Structure.",
-    "IMPORTANT\nDo NOT generate the final visual render yet. Do NOT produce separate building interpretations. Do NOT treat each reference as an isolated scene.",
-    "Your task is to analyze ALL evidence as partial observations of the SAME physical place and resolve ONE canonical spatial interpretation of the spot.",
-    "PRIMARY GOAL\nBuild a single coherent mental/spatial reconstruction of the structure and its surroundings, using every available evidence source as constraints on the same geometry.",
-    "AVAILABLE EVIDENCE\nStreet-level photographs, satellite/aerial images, camera node positions, headings, local coordinates, inferred sectors, metadata, and repeated observations of the same elements from different angles.",
-    "INTERPRETATION RULE\nWhen the same wall, corner, roof, patio, fence, access, sidewalk, or street appears from different perspectives, interpret those views as multiple observations of the SAME geometry. Never invent a different version of the structure for each perspective.",
-    "SPATIAL ANALYSIS TASKS\nAnalyze camera position, heading/look direction, perspective, visible facade/side, roof, access points, doors, windows, walls, fences/railings/perimeter, materials, volumetric continuity, repeated geometry, sidewalks, streets, patios/open areas, surrounding context, and continuity with neighboring evidence.",
+    "ROLE\nYou are performing the final pre-render spatial synthesis for a CLOUVA Structure.",
+    "IMPORTANT\nDo NOT generate the final visual render yet. Do NOT produce separate building interpretations. Do NOT treat evidence clusters as isolated scenes.",
+    "Your task is to synthesize ALL batch analyses as observations of the SAME physical place and resolve ONE canonical spatial interpretation of the spot.",
+    "PRIMARY GOAL\nBuild a single coherent spatial reconstruction of the structure and its surroundings, using all batch findings plus camera-node geometry as constraints on the same canonical model.",
+    "INTERPRETATION RULE\nWhen the same wall, corner, roof, patio, fence, access, sidewalk, or street appears in different batches, merge those observations into the SAME geometry. Never invent a different version of the structure for each perspective.",
     "CROSS-EVIDENCE SYNTHESIS\nResolve which observations correspond to the same facade, which corners connect visible facades, how roof geometry relates to street-level geometry, where accesses/patios/side yards/perimeter boundaries are, what belongs to the building versus environment, and which parts are confirmed, inferred, or uncertain.",
     "EVIDENCE PRIORITY\n1) Satellite/aerial: footprint, orientation, roof geometry, patios/open areas, plant relationships, perimeter layout, relation to streets. 2) Street-level: facades, windows, doors, accesses, walls, fences/gates/railings, materials, relative heights, facade rhythm, corners. 3) Camera nodes/local coordinates/headings: observation origin, viewed sector, spatial organization, continuity validation, contradiction prevention.",
     "CANONICAL RECONSTRUCTION RULE\nResolve ONE canonical spot. It is the single source of truth for 00 Plano Maestro HD, 01 Frente, 02 Esquina, 03 Entorno, 04 Aerea oblicua. Same footprint, roof logic, access points, walls and perimeter must persist across all views. Perspective may change; structure may not.",
     "FORBIDDEN BEHAVIOR\nDo not create different buildings for different views. Do not copy browser UI or Google Maps/Street View UI. Do not interpret interface elements as architecture. Do not redesign the building. Do not add unsupported decorative architecture. Do not exaggerate or stylize the structure beyond evidence.",
-    "EXPECTED ANALYSIS OUTPUT\nReturn a structured canonical spatial model, evidence mapping, confidence map and immutable render constraints. Be specific and concise. Group repeated evidence by sector instead of narrating every image individually. Keep arrays compact, use short factual phrases, and keep the complete JSON comfortably below the output token limit. Use image IDs when connecting conclusions to evidence.",
-    `IDENTITY PACK WITH ALL METADATA AND CAMERA NODES:\n${JSON.stringify(args.identityPack)}`,
-    `VISUAL REFERENCE ORDER:\n${JSON.stringify(args.visualReferenceOrder)}`,
-    "FINAL INSTRUCTION\nDo all analysis first. The returned analysis becomes the single spatial source of truth for every subsequent render.",
+    "EXPECTED ANALYSIS OUTPUT\nReturn a compact canonical spatial model, evidence mapping by sector, confidence map and immutable render constraints. Merge repeated facts instead of narrating every source separately.",
+    `COMPACT IDENTITY PACK WITH PROJECT/SPATIAL DATA:\n${JSON.stringify(args.identityPack)}`,
+    `ALL BATCH ANALYSES:\n${JSON.stringify(args.batchAnalyses)}`,
+    "FINAL INSTRUCTION\nDo all synthesis now. The returned JSON becomes the single spatial source of truth for every subsequent render.",
   ].join("\n\n");
 }
 
