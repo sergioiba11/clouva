@@ -255,6 +255,28 @@ export function VideoProjectCreator() {
     }
   };
 
+  const openInPlayer = async () => {
+    if (!project?.outputUrl) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await authenticatedFetch(
+        `/api/video/projects/${encodeURIComponent(project.id)}/player`,
+        { method: "POST" },
+      );
+      const payload = await readApiJson<{ player: { href: string | null; isPublic: boolean } }>(response);
+      if (payload.player.href) {
+        window.location.assign(payload.player.href);
+        return;
+      }
+      setNotice("Video agregado al Player. Publicá el Player para abrirlo desde su perfil público.");
+    } catch (playerError) {
+      setError(playerError instanceof Error ? playerError.message : "No se pudo agregar el video al Player.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const generateProject = async () => {
     if (!project) return;
     setBusy(true);
@@ -413,7 +435,10 @@ export function VideoProjectCreator() {
                   <video src={project.outputUrl} poster={project.thumbnailUrl || undefined} controls playsInline className="w-full rounded-2xl bg-black" />
                   <div className="mt-3 flex flex-wrap gap-2">
                     <a href={project.outputUrl} download className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-semibold text-black"><ArrowDownToLine size={16} />Descargar MP4</a>
-                    <a href={project.outputUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 rounded-full border border-white/15 px-4 py-2 text-sm"><Play size={16} />Abrir video</a>
+                    <button type="button" onClick={() => void openInPlayer()} disabled={busy} className="inline-flex items-center gap-2 rounded-full border border-white/15 px-4 py-2 text-sm disabled:opacity-50">
+                      {busy ? <LoaderCircle className="animate-spin" size={16} /> : <Play size={16} />}Abrir en Player
+                    </button>
+                    <button type="button" onClick={reset} className="inline-flex items-center gap-2 rounded-full border border-white/15 px-4 py-2 text-sm">Editar proyecto</button>
                   </div>
                 </div>
               ) : null}
