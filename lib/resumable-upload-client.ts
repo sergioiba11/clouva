@@ -33,6 +33,7 @@ export async function uploadFileResumable(params: {
   uploadUrl: string;
   file: File;
   chunkBytes: number;
+  contentType?: string;
   onProgress?: (progress: ResumableUploadProgress) => void;
 }) {
   const totalBytes = params.file.size;
@@ -43,11 +44,12 @@ export async function uploadFileResumable(params: {
     const start = uploadedBytes;
     const endExclusive = Math.min(totalBytes, start + chunkBytes);
     const endInclusive = endExclusive - 1;
-    const chunk = params.file.slice(start, endExclusive);
+    const contentType = params.contentType || params.file.type || "application/octet-stream";
+    const chunk = params.file.slice(start, endExclusive, contentType);
     const response = await xhrPut({
       url: params.uploadUrl,
       headers: {
-        "Content-Type": params.file.type || "application/octet-stream",
+        "Content-Type": contentType,
         "Content-Range": `bytes ${start}-${endInclusive}/${totalBytes}`,
       },
       body: chunk,
