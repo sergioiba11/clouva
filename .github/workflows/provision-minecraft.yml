@@ -141,7 +141,7 @@ jobs:
           gcloud run services update "$WEB_SERVICE" \
             --project "$PROJECT_ID" \
             --region "$WEB_REGION" \
-            --update-env-vars "MINECRAFT_HOST=$MC_IP,MINECRAFT_JAVA_PORT=25565,MINECRAFT_BEDROCK_PORT=19132" \
+            --update-env-vars "MINECRAFT_HOST=$MC_IP,MINECRAFT_PUBLIC_JAVA_HOST=clouva.com.ar,MINECRAFT_PUBLIC_BEDROCK_HOST=mc.clouva.com.ar,MINECRAFT_JAVA_PORT=25565,MINECRAFT_BEDROCK_PORT=19132" \
             --quiet
 
       - name: Server summary
