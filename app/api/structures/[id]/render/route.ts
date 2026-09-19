@@ -74,15 +74,17 @@ export async function POST(request: NextRequest, context: RouteContext) {
       imagesResult,
       surfacesResult,
       rulesResult,
+      cameraNodesResult,
       activeJobsResult,
     ] = await Promise.all([
       admin.from("structure_images").select("*").eq("structure_id", id),
       admin.from("structure_surfaces").select("*").eq("structure_id", id),
       admin.from("structure_rules").select("*").eq("structure_id", id).eq("active", true).order("priority", { ascending: false }),
+      admin.from("structure_camera_nodes").select("*").eq("structure_id", id),
       admin.from("structure_render_jobs").select("id", { count: "exact", head: true }).eq("structure_id", id).eq("status", "rendering"),
     ]);
 
-    if (imagesResult.error || surfacesResult.error || rulesResult.error || activeJobsResult.error) {
+    if (imagesResult.error || surfacesResult.error || rulesResult.error || cameraNodesResult.error || activeJobsResult.error) {
       throw new Error("No se pudo preparar el contexto espacial del render.");
     }
     if ((activeJobsResult.count ?? 0) > 0) {
@@ -92,6 +94,26 @@ export async function POST(request: NextRequest, context: RouteContext) {
     const images = (imagesResult.data ?? []) as unknown as StructureImageRecord[];
     const surfaces = (surfacesResult.data ?? []) as unknown as StructureSurfaceRecord[];
     const dbRules = (rulesResult.data ?? []) as unknown as StructureRuleRecord[];
+    const cameraNodes = (cameraNodesResult.data ?? []) as Array<{
+      id: string;
+      structure_id: string;
+      image_id: string;
+      latitude: number | null;
+      longitude: number | null;
+      altitude: number | null;
+      local_x: number | null;
+      local_y: number | null;
+      local_z: number | null;
+      heading: number | null;
+      pitch: number | null;
+      roll: number | null;
+      fov: number | null;
+      target_x: number | null;
+      target_y: number | null;
+      target_z: number | null;
+      confidence: number | null;
+      spatial_source: "unplaced" | "exif" | "filename" | "manual" | "inferred_cloud";
+    }>;
     if (!images.length) throw new Error("Subí evidencia visual antes de generar las vistas.");
 
     const activeRules = [
@@ -108,6 +130,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         orientation: surface.orientation,
       })),
       images,
+      cameraNodes,
     });
 
     const requested = views.map((view) => ({
@@ -127,6 +150,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
           identityPack,
           evidenceCount: images.length,
           surfaceCount: surfaces.length,
+          cameraNodeCount: cameraNodes.length,
           generatedBy: "google-cloud-vertex-ai",
         },
         started_at: new Date().toISOString(),
@@ -142,6 +166,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     }).eq("id", id).eq("owner_id", user.id);
 
     const imageById = new Map(images.map((image) => [image.id, image]));
+    const cameraByImageId = new Map(cameraNodes.map((node) => [node.image_id, node]));
     const allReferenceIds = [...new Set(requested.flatMap((view) => view.referenceIds))];
     const preparedEntries = await Promise.all(allReferenceIds.map(async (imageId) => {
       const image = imageById.get(imageId);
@@ -162,7 +187,10 @@ export async function POST(request: NextRequest, context: RouteContext) {
       ?? process.env.CLOUVA_STRUCTURES_IMAGE_MODEL
       ?? "gemini-2.5-flash-image";
 
-    const outcomes = await Promise.allSettled(requested.map(async (requestedView) => {
+    const generateView = async (
+      requestedView: (typeof requested)[number],
+      canonicalAnchor?: { mimeType: string; data: string } | null,
+    ) => {
       const references = requestedView.referenceIds
         .map((imageId) => preparedById.get(imageId))
         .filter((entry): entry is Awaited<ReturnType<typeof prepareReference>> => Boolean(entry));
@@ -174,20 +202,32 @@ export async function POST(request: NextRequest, context: RouteContext) {
       const prompt = renderPrompt({
         identityPack: identityPack as Record<string, unknown>,
         view: requestedView.key,
-        referenceDescriptions: references.map(({ image }) => ({
-          id: image.id,
-          description: image.description,
-          sector: image.sector,
-          direction: image.cardinal_direction,
-        })),
+        hasCanonicalAnchor: Boolean(canonicalAnchor),
+        referenceDescriptions: references.map(({ image }) => {
+          const camera = cameraByImageId.get(image.id);
+          return {
+            id: image.id,
+            description: image.description,
+            sector: image.sector,
+            direction: image.cardinal_direction,
+            localX: camera?.local_x ?? image.local_x,
+            localY: camera?.local_y ?? image.local_y,
+            heading: camera?.heading ?? image.heading,
+          };
+        }),
       });
+
+      const referenceImages = [
+        ...(canonicalAnchor ? [canonicalAnchor] : []),
+        ...references.map((entry) => entry.reference),
+      ];
 
       const generated = await generateGoogleCloudImage({
         prompt,
         model,
         aspectRatio: "16:9",
         imageSize: "2K",
-        referenceImages: references.map((entry) => entry.reference),
+        referenceImages,
         timeoutMs: 120_000,
       });
 
@@ -212,10 +252,41 @@ export async function POST(request: NextRequest, context: RouteContext) {
         })
         .select("*")
         .single();
-      if (outputError || !output) throw new Error(`${requestedView.label}: la imagen se generó pero no pudo registrarse.`);
+      if (outputError || !output) {
+        throw new Error(`${requestedView.label}: la imagen se generó pero no pudo registrarse.`);
+      }
 
-      return output;
-    }));
+      return {
+        output,
+        generatedReference: {
+          mimeType: generated.mimeType,
+          data: generated.bytes.toString("base64"),
+        },
+      };
+    };
+
+    const outcomes: Array<PromiseSettledResult<Record<string, unknown>>> = [];
+    let canonicalAnchor: { mimeType: string; data: string } | null = null;
+
+    const aerialRequest = requested.find((view) => view.key === "aerial_oblique");
+    if (aerialRequest) {
+      try {
+        const aerial = await generateView(aerialRequest, null);
+        canonicalAnchor = aerial.generatedReference;
+        outcomes.push({ status: "fulfilled", value: aerial.output });
+      } catch (reason) {
+        outcomes.push({ status: "rejected", reason });
+      }
+    }
+
+    const remainingViews = requested.filter((view) => view.key !== "aerial_oblique");
+    const remainingOutcomes = await Promise.allSettled(
+      remainingViews.map(async (requestedView) => {
+        const result = await generateView(requestedView, canonicalAnchor);
+        return result.output;
+      }),
+    );
+    outcomes.push(...remainingOutcomes);
 
     const outputs = outcomes
       .filter((outcome): outcome is PromiseFulfilledResult<Record<string, unknown>> => outcome.status === "fulfilled")
