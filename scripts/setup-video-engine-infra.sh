@@ -75,9 +75,10 @@ gcloud artifacts repositories describe "$ARTIFACT_REPOSITORY" \
   --location "$REGION" >/dev/null
 
 # Cloud Build is already the canonical image builder used by CLOUVA deployments.
-gcloud builds submit worker/video-render \
+gcloud builds submit \
   --project "$PROJECT_ID" \
-  --tag "$IMAGE"
+  --config cloudbuild-video-render.yaml \
+  .
 
 JOB_ARGS=(
   --project "$PROJECT_ID"
