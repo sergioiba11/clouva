@@ -55,7 +55,15 @@ jobs:
           print(f"version={version}")
           PY
 
-      - name: Sync asset import runtime variables
+      - name: Sync asset import variables
+        run: |
+          gcloud run services update "$SERVICE" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --update-env-vars "CLOUVA_ASSET_IMPORT_TASKS_PROJECT=$PROJECT_ID,CLOUVA_ASSET_IMPORT_TASKS_LOCATION=$REGION,CLOUVA_ASSET_IMPORT_TASKS_QUEUE=clouva-asset-imports,CLOUVA_ASSET_IMPORT_WORKER_URL=https://clouva.com.ar/api/internal/admin/assets/imports/process" \
+            --quiet
+
+      - name: Bind worker secret
         env:
           SECRET_NAME: ${{ steps.secret.outputs.name }}
           SECRET_VERSION: ${{ steps.secret.outputs.version }}
@@ -63,7 +71,6 @@ jobs:
           gcloud run services update "$SERVICE" \
             --project "$PROJECT_ID" \
             --region "$REGION" \
-            --update-env-vars "CLOUVA_ASSET_IMPORT_TASKS_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_PROJECT=$PROJECT_ID,CLOUVA_ASSET_IMPORT_TASKS_LOCATION=$REGION,CLOUVA_ASSET_IMPORT_TASKS_QUEUE=clouva-asset-imports,CLOUVA_ASSET_IMPORT_WORKER_URL=https://clouva.com.ar/api/internal/admin/assets/imports/process" \
             --update-secrets "CLOUVA_ASSET_IMPORT_WORKER_SECRET=$SECRET_NAME:$SECRET_VERSION" \
             --quiet
 
@@ -97,7 +104,6 @@ jobs:
           names = {item.get("name") for item in env}
           required = {
               "CLOUVA_ASSET_IMPORT_TASKS_PROJECT",
-              "GOOGLE_CLOUD_PROJECT",
               "CLOUVA_ASSET_IMPORT_TASKS_LOCATION",
               "CLOUVA_ASSET_IMPORT_TASKS_QUEUE",
               "CLOUVA_ASSET_IMPORT_WORKER_URL",
