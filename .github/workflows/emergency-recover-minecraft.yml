@@ -1,0 +1,112 @@
+name: Emergency Recover CLOUVA Minecraft
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/emergency-recover-minecraft.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: gen-lang-client-0737053175
+  MC_ZONE: southamerica-east1-b
+  MC_INSTANCE: clouva-minecraft-family
+  MC_MACHINE_TYPE: e2-standard-2
+  MC_IP: 35.198.44.243
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA_EMAIL }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Force VM recovery
+        shell: bash
+        run: |
+          set -euxo pipefail
+          status="$(gcloud compute instances describe "$MC_INSTANCE" --project "$PROJECT_ID" --zone "$MC_ZONE" --format='value(status)')"
+          type="$(gcloud compute instances describe "$MC_INSTANCE" --project "$PROJECT_ID" --zone "$MC_ZONE" --format='value(machineType.basename())')"
+          echo "Before: status=$status type=$type"
+
+          if [ "$status" = "RUNNING" ]; then
+            gcloud compute instances stop "$MC_INSTANCE" --project "$PROJECT_ID" --zone "$MC_ZONE" --quiet
+          fi
+
+          if [ "$type" != "$MC_MACHINE_TYPE" ]; then
+            gcloud compute instances set-machine-type "$MC_INSTANCE" --project "$PROJECT_ID" --zone "$MC_ZONE" --machine-type "$MC_MACHINE_TYPE"
+          fi
+
+          gcloud compute instances start "$MC_INSTANCE" --project "$PROJECT_ID" --zone "$MC_ZONE" --quiet
+
+          gcloud compute instances describe "$MC_INSTANCE" --project "$PROJECT_ID" --zone "$MC_ZONE" \
+            --format='yaml(name,status,machineType,networkInterfaces[0].accessConfigs[0].natIP,lastStartTimestamp)'
+
+      - name: Wait for SSH
+        shell: bash
+        run: |
+          set +e
+          for attempt in $(seq 1 30); do
+            if gcloud compute ssh "$MC_INSTANCE" --project "$PROJECT_ID" --zone "$MC_ZONE" --quiet \
+              --ssh-flag="-o ConnectTimeout=5" \
+              --ssh-flag="-o StrictHostKeyChecking=no" \
+              --ssh-flag="-o UserKnownHostsFile=/dev/null" \
+              --command='echo SSH_OK' 2>/dev/null | grep -q SSH_OK; then
+              echo "SSH ready"
+              exit 0
+            fi
+            echo "Waiting for SSH ($attempt/30)"
+            sleep 5
+          done
+          exit 1
+
+      - name: Ensure Minecraft container
+        shell: bash
+        run: |
+          set -euxo pipefail
+          gcloud compute ssh "$MC_INSTANCE" --project "$PROJECT_ID" --zone "$MC_ZONE" --quiet \
+            --ssh-flag="-o StrictHostKeyChecking=no" \
+            --ssh-flag="-o UserKnownHostsFile=/dev/null" \
+            --command='
+              set -eux
+              sudo systemctl enable --now docker
+              for i in $(seq 1 60); do
+                if sudo docker inspect clouva-minecraft >/dev/null 2>&1; then
+                  sudo docker start clouva-minecraft >/dev/null 2>&1 || true
+                  break
+                fi
+                sleep 2
+              done
+              sudo docker ps -a
+              sudo docker logs --tail 120 clouva-minecraft 2>&1 || true
+              free -h
+              df -h
+            '
+
+      - name: Verify Minecraft port
+        shell: bash
+        run: |
+          set +e
+          for attempt in $(seq 1 60); do
+            if timeout 3 bash -c "</dev/tcp/$MC_IP/25565" >/dev/null 2>&1; then
+              echo "MINECRAFT_OK $MC_IP:25565"
+              exit 0
+            fi
+            echo "Waiting for Minecraft ($attempt/60)"
+            sleep 5
+          done
+
+          echo "Minecraft port still closed"
+          gcloud compute instances get-serial-port-output "$MC_INSTANCE" --project "$PROJECT_ID" --zone "$MC_ZONE" --port 1 2>&1 | tail -n 500 || true
+          exit 1
