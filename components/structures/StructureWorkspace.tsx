@@ -38,7 +38,7 @@ import { PlanEditor } from "@/components/structures/PlanEditor";
 
 type Tab = "project" | "images" | "spatial" | "plan" | "export" | "render";
 type Corner = "NE" | "SE" | "SO" | "NO";
-type RenderView = "front" | "corner" | "environment" | "aerial_oblique";
+type RenderView = "master_overview" | "front" | "corner" | "environment" | "aerial_oblique";
 
 type RenderOutput = {
   id: string;
@@ -73,6 +73,7 @@ const TABS: Array<{ id: Tab; label: string; icon: typeof Box }> = [
 ];
 
 const RENDER_LABELS: Record<RenderView, string> = {
+  master_overview: "00 · Plano Maestro HD",
   front: "01 · Frente",
   corner: "02 · Esquina",
   environment: "03 · Entorno",
@@ -1246,9 +1247,9 @@ export function StructureWorkspace({
                     <Cloud className="h-4 w-4" />
                     CLOUVA Cloud
                   </div>
-                  <h2 className="mt-3 text-2xl font-semibold">4 cámaras del mismo lugar</h2>
+                  <h2 className="mt-3 text-2xl font-semibold">Análisis canónico + 5 vistas del mismo lugar</h2>
                   <p className="mt-2 text-sm leading-6 text-white/50">
-                    El constructor elige evidencia relevante para cada cámara y comparte el mismo identity pack de geometría, reglas, superficies y proporciones.
+                    CLOUVA analiza primero toda la evidencia como un único spot, resuelve una estructura canónica y recién después genera el Plano Maestro HD, Frente, Esquina, Entorno y Aérea oblicua.
                   </p>
                 </div>
                 <button
@@ -1258,21 +1259,24 @@ export function StructureWorkspace({
                   className="inline-flex h-12 items-center justify-center gap-2 rounded-full bg-white px-6 font-semibold text-black disabled:opacity-40"
                 >
                   {busy === "render" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-                  {busy === "render" ? "CLOUD reconstruyendo…" : "GENERAR 4 VISTAS"}
+                  {busy === "render" ? "CLOUD analizando + reconstruyendo…" : "ANALIZAR + GENERAR 5 VISTAS"}
                 </button>
               </div>
             </div>
 
             <div className="mt-4 grid gap-4 md:grid-cols-2">
-              {(["front", "corner", "environment", "aerial_oblique"] as RenderView[]).map((view) => {
+              {(["master_overview", "front", "corner", "environment", "aerial_oblique"] as RenderView[]).map((view) => {
                 const output = latestOutputs.get(view);
                 return (
-                  <article key={view} className="overflow-hidden rounded-[1.6rem] border border-white/10 bg-white/[0.025]">
+                  <article
+                    key={view}
+                    className={`overflow-hidden rounded-[1.6rem] border border-white/10 bg-white/[0.025] ${view === "master_overview" ? "md:col-span-2" : ""}`}
+                  >
                     <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
                       <p className="text-sm font-semibold">{RENDER_LABELS[view]}</p>
                       <button
                         type="button"
-                        onClick={() => void renderViews([view])}
+                        onClick={() => void renderViews(view === "master_overview" ? undefined : [view])}
                         disabled={Boolean(busy) || !data.images.length}
                         className="inline-flex items-center gap-1.5 rounded-full border border-white/10 px-3 py-1.5 text-[10px] text-white/55 disabled:opacity-35"
                       >

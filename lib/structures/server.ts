@@ -15,6 +15,7 @@ import {
   parseSpatialHints,
   safeFileSegment,
   slugifyStructure,
+  type StructureCameraNodeRecord,
   type StructureImageRecord,
   type StructureRecord,
 } from "@/lib/structures/spatial";
@@ -831,23 +832,57 @@ export function compactStructureIdentityPack(args: {
   rules: string[];
   surfaces: Array<{ name: string; type: string; orientation?: number | null }>;
   images: StructureImageRecord[];
+  cameraNodes?: StructureCameraNodeRecord[];
 }) {
-  const topDescriptions = args.images
+  const evidenceSummary = args.images
     .slice()
     .sort((a, b) =>
       Number(b.manual_verified) - Number(a.manual_verified)
       || b.priority - a.priority
       || (b.confidence ?? 0) - (a.confidence ?? 0),
     )
-    .slice(0, 24)
     .map((image) => ({
       id: image.id,
+      filename: image.ordered_filename ?? image.original_filename,
+      sourceType: image.source_type,
+      sceneType: image.scene_type,
       sector: image.sector,
       direction: image.cardinal_direction,
+      heading: image.heading,
+      localX: image.local_x,
+      localY: image.local_y,
       description: image.description,
       surfaces: image.visible_surfaces ?? [],
       verified: image.manual_verified,
+      confidence: image.confidence,
     }));
+
+  const cameraGraph = (args.cameraNodes ?? [])
+    .map((node) => ({
+      imageId: node.image_id,
+      x: finiteOrNull(node.local_x),
+      y: finiteOrNull(node.local_y),
+      z: finiteOrNull(node.local_z),
+      heading: finiteOrNull(node.heading),
+      pitch: finiteOrNull(node.pitch),
+      fov: finiteOrNull(node.fov),
+      source: node.spatial_source,
+      confidence: node.confidence,
+    }))
+    .filter((node) => node.x != null && node.y != null);
+
+  const xs = cameraGraph.map((node) => node.x as number);
+  const ys = cameraGraph.map((node) => node.y as number);
+  const bounds = xs.length && ys.length
+    ? {
+        minX: Math.min(...xs),
+        maxX: Math.max(...xs),
+        minY: Math.min(...ys),
+        maxY: Math.max(...ys),
+        spanX: Math.max(...xs) - Math.min(...xs),
+        spanY: Math.max(...ys) - Math.min(...ys),
+      }
+    : null;
 
   return {
     project: {
@@ -861,8 +896,38 @@ export function compactStructureIdentityPack(args: {
     },
     reconstructionRules: args.rules,
     surfaces: args.surfaces.slice(0, 80),
-    evidenceSummary: topDescriptions,
+    spatial: {
+      coordinateSystem: "local meters; +X east/right, +Y north/up in plan",
+      cameraCount: cameraGraph.length,
+      bounds,
+      cameras: cameraGraph.slice(0, 140),
+    },
+    evidenceSummary: evidenceSummary.slice(0, 140),
   };
+}
+
+export function structureAnalysisPrompt(args: {
+  identityPack: Record<string, unknown>;
+  visualReferenceOrder: Array<{ index: number; imageId: string; description: string | null; sector: string | null }>;
+}) {
+  return [
+    "CLOUVA STRUCTURES — STRUCTURE ANALYSIS PASS",
+    "ROLE\nYou are performing the pre-render spatial analysis for a CLOUVA Structure.",
+    "IMPORTANT\nDo NOT generate the final visual render yet. Do NOT produce separate building interpretations. Do NOT treat each reference as an isolated scene.",
+    "Your task is to analyze ALL evidence as partial observations of the SAME physical place and resolve ONE canonical spatial interpretation of the spot.",
+    "PRIMARY GOAL\nBuild a single coherent mental/spatial reconstruction of the structure and its surroundings, using every available evidence source as constraints on the same geometry.",
+    "AVAILABLE EVIDENCE\nStreet-level photographs, satellite/aerial images, camera node positions, headings, local coordinates, inferred sectors, metadata, and repeated observations of the same elements from different angles.",
+    "INTERPRETATION RULE\nWhen the same wall, corner, roof, patio, fence, access, sidewalk, or street appears from different perspectives, interpret those views as multiple observations of the SAME geometry. Never invent a different version of the structure for each perspective.",
+    "SPATIAL ANALYSIS TASKS\nAnalyze camera position, heading/look direction, perspective, visible facade/side, roof, access points, doors, windows, walls, fences/railings/perimeter, materials, volumetric continuity, repeated geometry, sidewalks, streets, patios/open areas, surrounding context, and continuity with neighboring evidence.",
+    "CROSS-EVIDENCE SYNTHESIS\nResolve which observations correspond to the same facade, which corners connect visible facades, how roof geometry relates to street-level geometry, where accesses/patios/side yards/perimeter boundaries are, what belongs to the building versus environment, and which parts are confirmed, inferred, or uncertain.",
+    "EVIDENCE PRIORITY\n1) Satellite/aerial: footprint, orientation, roof geometry, patios/open areas, plant relationships, perimeter layout, relation to streets. 2) Street-level: facades, windows, doors, accesses, walls, fences/gates/railings, materials, relative heights, facade rhythm, corners. 3) Camera nodes/local coordinates/headings: observation origin, viewed sector, spatial organization, continuity validation, contradiction prevention.",
+    "CANONICAL RECONSTRUCTION RULE\nResolve ONE canonical spot. It is the single source of truth for 00 Plano Maestro HD, 01 Frente, 02 Esquina, 03 Entorno, 04 Aerea oblicua. Same footprint, roof logic, access points, walls and perimeter must persist across all views. Perspective may change; structure may not.",
+    "FORBIDDEN BEHAVIOR\nDo not create different buildings for different views. Do not copy browser UI or Google Maps/Street View UI. Do not interpret interface elements as architecture. Do not redesign the building. Do not add unsupported decorative architecture. Do not exaggerate or stylize the structure beyond evidence.",
+    "EXPECTED ANALYSIS OUTPUT\nReturn a structured canonical spatial model, evidence mapping, confidence map and immutable render constraints. Be specific and concise. Use image IDs when connecting conclusions to evidence.",
+    `IDENTITY PACK WITH ALL METADATA AND CAMERA NODES:\n${JSON.stringify(args.identityPack)}`,
+    `VISUAL REFERENCE ORDER:\n${JSON.stringify(args.visualReferenceOrder)}`,
+    "FINAL INSTRUCTION\nDo all analysis first. The returned analysis becomes the single spatial source of truth for every subsequent render.",
+  ].join("\n\n");
 }
 
 export function pickRenderReferences(
@@ -871,18 +936,39 @@ export function pickRenderReferences(
   limit = 8,
 ) {
   const score = (image: StructureImageRecord) => {
-    let value = image.priority * 4 + (image.confidence ?? 0) * 10;
-    if (image.manual_verified) value += 30;
-    if (image.duplicate_of) value -= 8;
+    let value = image.priority * 3 + (image.confidence ?? 0) * 8;
+    if (image.manual_verified) value += 24;
+    if (image.duplicate_of) value -= 12;
+
     const sector = (image.sector ?? "").toLowerCase();
     const description = (image.description ?? "").toLowerCase();
+    const text = `${sector} ${description}`;
     const aerial = image.source_type === "satellite" || image.scene_type === "aerial";
+    const buildingEvidence = /escuela|edificio|fachada|muro|reja|perimetro|techo|patio|acceso|escalera|porton|ventana|aula/.test(text);
+    const contextHeavy = /parque|barrio|viviendas|horizonte|lote abierto|plaza|arbolado/.test(text) && !buildingEvidence;
 
-    if (view === "front" && /frente|fachada.?principal/.test(`${sector} ${description}`)) value += 35;
-    if (view === "corner" && /esquina|noreste|noroeste|sudeste|sudoeste/.test(`${sector} ${description}`)) value += 35;
-    if (view === "environment" && (/contexto|parque|calle|entorno|barrio/.test(`${sector} ${description}`) || aerial)) value += 28;
-    if (view === "aerial_oblique" && aerial) value += 40;
-    if (view !== "aerial_oblique" && aerial) value -= 5;
+    if (view === "front") {
+      if (/frente|fachada.?principal/.test(text)) value += 55;
+      if (buildingEvidence) value += 32;
+      if (contextHeavy) value -= 34;
+      if (aerial) value -= 45;
+    }
+    if (view === "corner") {
+      if (/esquina|noreste|noroeste|sudeste|sudoeste/.test(text)) value += 48;
+      if (buildingEvidence) value += 28;
+      if (contextHeavy) value -= 24;
+      if (aerial) value -= 35;
+    }
+    if (view === "environment") {
+      if (/contexto|parque|calle|entorno|barrio|plaza|vereda/.test(text)) value += 36;
+      if (buildingEvidence) value += 16;
+      if (aerial) value += 6;
+    }
+    if (view === "aerial_oblique") {
+      if (aerial) value += 90;
+      else value -= 22;
+      if (/predio|techo|patio|huella|mapa|satelit/.test(text)) value += 24;
+    }
     return value;
   };
 
@@ -900,29 +986,62 @@ export function pickRenderReferences(
 
 export function renderPrompt(args: {
   identityPack: Record<string, unknown>;
+  canonicalAnalysis: Record<string, unknown>;
   view: "front" | "corner" | "environment" | "aerial_oblique";
-  referenceDescriptions: Array<{ id: string; description: string | null; sector: string | null; direction: string | null }>;
+  referenceDescriptions: Array<{
+    id: string;
+    description: string | null;
+    sector: string | null;
+    direction: string | null;
+    localX?: number | null;
+    localY?: number | null;
+    heading?: number | null;
+  }>;
+  hasCanonicalAnchor?: boolean;
 }) {
   const viewInstruction = {
-    front: "front principal / fachada principal, cámara humana a nivel de calle",
-    corner: "esquina arquitectónica que revele simultáneamente dos caras reales del lugar",
-    environment: "vista abierta del edificio dentro de su entorno real, conservando calles, veredas, parque y relaciones espaciales",
-    aerial_oblique: "vista superior oblicua realista tipo maqueta fotográfica, útil para entender huella, techo, patio y contexto",
+    front: "fachada principal real, camara humana a nivel de calle; mostrar el edificio y su frente, no una toma de contexto vacia",
+    corner: "esquina arquitectonica real que revele simultaneamente dos caras del MISMO edificio",
+    environment: "vista abierta del MISMO edificio dentro de su entorno real, conservando calles, veredas, parque y distancias relativas",
+    aerial_oblique: "vista superior oblicua limpia del MISMO edificio, preservando huella, techo, patio y contexto real",
   }[args.view];
 
   return [
-    "CLOUVA STRUCTURES — RECONSTRUCCIÓN VISUAL.",
-    "THIS IS A RECONSTRUCTION TASK, NOT A DESIGN TASK.",
-    "Las imágenes adjuntas son evidencia del MISMO lugar físico. No son inspiración.",
-    "No rediseñes el edificio. No agregues arquitectura decorativa. No sustituyas materiales o elementos por equivalentes genéricos.",
-    "Mantené huella, posición de paredes, geometría de techo, aberturas, proporciones relativas, cercos/rejas, veredas, calles, patio y entorno según la evidencia.",
-    "Las reglas históricas explícitas tienen prioridad sobre elementos modernos cuando haya conflicto.",
-    "Cuando una zona no esté documentada, completala solo con continuidad geométrica mínima; no introduzcas rasgos nuevos.",
-    "La imagen final debe parecer una fotografía adicional del MISMO lugar real.",
+    "CLOUVA STRUCTURES — CANONICAL MULTIVIEW RECONSTRUCTION.",
+    "THIS IS A RECONSTRUCTION TASK, NOT A DESIGN TASK AND NOT A SCREENSHOT REPRODUCTION TASK.",
+    "The CANONICAL ANALYSIS below is the source of truth. Every output must depict the SAME physical structure.",
+    "Las referencias son evidencia del mismo lugar. Fusionarlas en una sola geometria coherente; no copiar una referencia completa.",
+    "La evidencia satelital/aerea manda para huella, orientacion, techos, patios y relaciones de planta. La evidencia a nivel de calle manda para fachadas, aberturas, muros, rejas, materiales y alturas relativas.",
+    "Ignora completamente UI de navegador, Google Maps, Street View, minimapas, botones, pins, labels, cursores, marcas de agua y controles. Son ruido de captura, no parte del lugar.",
+    "No redisenes el edificio. No agregues arquitectura decorativa. No sustituyas materiales por equivalentes genericos.",
+    args.hasCanonicalAnchor
+      ? "La PRIMERA imagen adjunta es un ANCLA CANONICA generada en este mismo job. Conserva estrictamente su huella, volumetria, techo y organizacion general."
+      : "No hay ancla renderizada previa: deriva la geometria del analisis canonico y la evidencia.",
     `Vista solicitada: ${viewInstruction}.`,
+    `CANONICAL ANALYSIS:\n${JSON.stringify(args.canonicalAnalysis)}`,
     `STRUCTURE IDENTITY PACK:\n${JSON.stringify(args.identityPack)}`,
-    `Referencias seleccionadas para esta cámara:\n${JSON.stringify(args.referenceDescriptions)}`,
-    "Sin rótulos técnicos, sin textos explicativos, sin flechas, sin marcas de agua.",
+    `Referencias seleccionadas para esta camara:\n${JSON.stringify(args.referenceDescriptions)}`,
+    "Salida: fotografia limpia y fotorrealista del lugar reconstruido. Sin texto, sin UI, sin marcos de navegador.",
+  ].join("\n\n");
+}
+
+export function masterOverviewPrompt(args: {
+  identityPack: Record<string, unknown>;
+  canonicalAnalysis: Record<string, unknown>;
+}) {
+  return [
+    "CLOUVA STRUCTURES — 00 PLANO MAESTRO HD DEL SPOT.",
+    "Create a premium architectural/spatial-intelligence overview board of the SAME canonical spot shown in the supplied generated views.",
+    "This is an overview panel, not a fantasy redesign and not a screenshot reproduction.",
+    "Use a clean deep-black background with restrained holographic/blueprint styling: cyan, ice blue and white accents, elegant thin technical lines, precise premium architecture presentation, not chaotic cyberpunk.",
+    "COMPOSITION: one large central isometric/axonometric/oblique hero view of the complete spot, plus four smaller derived views around it: main facade, relevant corner, immediate environment, aerial/roof.",
+    "All subviews MUST visibly represent the same structure, same footprint, same roof, same accesses and same perimeter.",
+    "Show the most important spot components with concise callouts: acceso principal, fachada principal, lateral, patio/espacio abierto, cerco/rejas/muro perimetral, veredas/calles, techo/cubierta. Add a north indicator, simple scale cue, camera-point markers and a small spot summary.",
+    "Do not invent unsupported architecture. Presentation may be futuristic; architecture must remain the real reconstructed place.",
+    "Do not reproduce browser UI, Google Maps UI, Street View UI, minimaps, pins, controls, watermarks or screenshot artifacts.",
+    `CANONICAL ANALYSIS:\n${JSON.stringify(args.canonicalAnalysis)}`,
+    `STRUCTURE IDENTITY PACK:\n${JSON.stringify(args.identityPack)}`,
+    "Output a single polished 16:9 HD master board suitable as the first card before the four standard views.",
   ].join("\n\n");
 }
 
