@@ -28,6 +28,7 @@ const RESERVED_PUBLIC_ALIAS_VALUES = [
   "mapa-de-confianza",
   "matrix",
   "market",
+  "minecraft",
   "mi-flow",
   "mi-qr",
   "mi-spot",
