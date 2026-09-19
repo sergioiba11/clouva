@@ -951,6 +951,22 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
     setError(null);
   }
 
+  function newProductDraft() {
+    draftKeyRef.current = crypto.randomUUID();
+    setDraftListingId("");
+    setDraftSaveState("idle");
+    setProductCaptures([]);
+    setRecognitionResult(null);
+    setProductImagesResult(null);
+    setSelectedCoverImage("");
+    setManualCode("");
+    setScanType("code_128");
+    setScanResult(null);
+    setCreation({ name: "", brand: "", category: "", description: "", productKind: "physical", listingKind: "resale", cost: "", price: "", stock: "", status: "draft", size: "", color: "", presentation: "" });
+    setMessage("Nuevo producto listo para escanear.");
+    setError(null);
+  }
+
   async function refreshFx() {
     setBusy(true); setError(null); setMessage(null);
     try {
