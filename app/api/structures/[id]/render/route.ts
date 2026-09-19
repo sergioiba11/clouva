@@ -105,6 +105,70 @@ function parseStructuredJson(text: string): Record<string, unknown> {
   throw new Error("CLOUVA Cloud no pudo estructurar el análisis canónico del spot.");
 }
 
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+function isVertexCapacityError(error: unknown) {
+  return error instanceof GoogleCloudGenAIError
+    && (error.status === 429 || error.status === 503 || error.status === 504);
+}
+
+function shouldSplitAnalysisBatch(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/no pudo estructurar el análisis canónico/i.test(message)) return true;
+  return error instanceof GoogleCloudGenAIError
+    && error.status === 400
+    && /token count|maximum number of tokens|too many tokens|input.*tokens/i.test(message);
+}
+
+async function withVertexBackoff<T>(
+  label: string,
+  operation: () => Promise<T>,
+  maxAttempts = 6,
+) {
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (!isVertexCapacityError(error) || attempt === maxAttempts) throw error;
+      const delayMs = Math.min(24_000, 1_500 * (2 ** (attempt - 1)));
+      console.warn("VERTEX_BACKPRESSURE", {
+        label,
+        attempt,
+        status: error instanceof GoogleCloudGenAIError ? error.status : null,
+        delayMs,
+      });
+      await sleep(delayMs);
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(`${label}: Vertex AI no respondió.`);
+}
+
+async function mapWithConcurrency<T, R>(
+  values: T[],
+  concurrency: number,
+  mapper: (value: T, index: number) => Promise<R>,
+) {
+  const results = new Array<R>(values.length);
+  let nextIndex = 0;
+  const workers = Array.from(
+    { length: Math.max(1, Math.min(concurrency, values.length || 1)) },
+    async () => {
+      while (true) {
+        const index = nextIndex;
+        nextIndex += 1;
+        if (index >= values.length) return;
+        results[index] = await mapper(values[index], index);
+      }
+    },
+  );
+  await Promise.all(workers);
+  return results;
+}
+
 async function prepareAnalysisReferences(images: StructureImageRecord[]) {
   const unique = images.filter((image, index, all) =>
     all.findIndex((candidate) => candidate.sha256 === image.sha256) === index,
@@ -207,7 +271,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
           evidenceCount: images.length,
           surfaceCount: surfaces.length,
           cameraNodeCount: cameraNodes.length,
-          analysisPass: "canonical-structure-v3-adaptive",
+          analysisPass: "canonical-structure-v4-backpressure",
           generatedBy: "google-cloud-vertex-ai",
         },
         started_at: new Date().toISOString(),
@@ -306,35 +370,42 @@ export async function POST(request: NextRequest, context: RouteContext) {
       });
 
       try {
-        const generated = await generateGoogleCloudJson({
-          model: analysisModel,
-          prompt,
-          referenceImages: batch.map((entry) => entry.reference),
-          responseJsonSchema: batchSchema,
-          temperature: 0.05,
-          maxOutputTokens: 5200,
-        });
+        const generated = await withVertexBackoff(
+          `analysis-batch-${label}`,
+          () => generateGoogleCloudJson({
+            model: analysisModel,
+            prompt,
+            referenceImages: batch.map((entry) => entry.reference),
+            responseJsonSchema: batchSchema,
+            temperature: 0.05,
+            maxOutputTokens: 5200,
+          }),
+        );
         return [parseStructuredJson(generated.text)];
       } catch (error) {
-        if (batch.length <= 1) {
+        if (isVertexCapacityError(error)) {
+          const message = error instanceof Error ? error.message : "Google Cloud sin capacidad";
+          throw new Error(`Analysis batch ${label} agotó los reintentos de capacidad: ${message}`);
+        }
+
+        if (!shouldSplitAnalysisBatch(error) || batch.length <= 1) {
           const message = error instanceof Error ? error.message : "falló el análisis";
           throw new Error(`Analysis batch ${label} failed for image ${batch[0]?.image.id ?? "unknown"}: ${message}`);
         }
 
         const middle = Math.ceil(batch.length / 2);
-        const [left, right] = await Promise.all([
-          analyzeEvidenceBatch(batch.slice(0, middle), batchIndex, `${label}a`),
-          analyzeEvidenceBatch(batch.slice(middle), batchIndex, `${label}b`),
-        ]);
+        const left = await analyzeEvidenceBatch(batch.slice(0, middle), batchIndex, `${label}a`);
+        const right = await analyzeEvidenceBatch(batch.slice(middle), batchIndex, `${label}b`);
         return [...left, ...right];
       }
     };
 
     const batchAnalyses = (
-      await Promise.all(
-        analysisBatches.map((batch, batchIndex) =>
+      await mapWithConcurrency(
+        analysisBatches,
+        2,
+        (batch, batchIndex) =>
           analyzeEvidenceBatch(batch, batchIndex + 1, String(batchIndex + 1)),
-        ),
       )
     ).flat();
 
@@ -351,10 +422,12 @@ export async function POST(request: NextRequest, context: RouteContext) {
       batchAnalyses,
     });
 
-    const analysisGenerated = await generateGoogleCloudJson({
-      model: analysisModel,
-      prompt: analysisPrompt,
-      responseJsonSchema: {
+    const analysisGenerated = await withVertexBackoff(
+      "analysis-synthesis",
+      () => generateGoogleCloudJson({
+        model: analysisModel,
+        prompt: analysisPrompt,
+        responseJsonSchema: {
         type: "object",
         properties: {
           summary: { type: "string" },
@@ -414,9 +487,10 @@ export async function POST(request: NextRequest, context: RouteContext) {
         },
         required: ["summary","canonicalSpatialModel","evidenceMapping","confidenceMap","renderConstraints"],
       },
-      temperature: 0.05,
-      maxOutputTokens: 9000,
-    });
+        temperature: 0.05,
+        maxOutputTokens: 9000,
+      }),
+    );
 
     const canonicalAnalysis = parseStructuredJson(analysisGenerated.text);
 
@@ -430,7 +504,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         surfaceCount: surfaces.length,
         cameraNodeCount: cameraNodes.length,
         analysisModel,
-        analysisPass: "canonical-structure-v3-adaptive",
+        analysisPass: "canonical-structure-v4-backpressure",
         generatedBy: "google-cloud-vertex-ai",
       },
     }).eq("id", job.id).eq("user_id", user.id);
@@ -486,17 +560,21 @@ export async function POST(request: NextRequest, context: RouteContext) {
         }),
       });
 
-      const generated = await generateGoogleCloudImage({
-        prompt,
-        model,
-        aspectRatio: "16:9",
-        imageSize: "2K",
-        referenceImages: [
-          ...(canonicalAnchor ? [canonicalAnchor] : []),
-          ...references.map((entry) => entry.reference),
-        ],
-        timeoutMs: 120_000,
-      });
+      const generated = await withVertexBackoff(
+        `render-${requestedView.key}`,
+        () => generateGoogleCloudImage({
+          prompt,
+          model,
+          aspectRatio: "16:9",
+          imageSize: "2K",
+          referenceImages: [
+            ...(canonicalAnchor ? [canonicalAnchor] : []),
+            ...references.map((entry) => entry.reference),
+          ],
+          timeoutMs: 120_000,
+        }),
+        5,
+      );
 
       const stored = await uploadGeneratedMediaObject({
         bytes: generated.bytes,
@@ -544,12 +622,18 @@ export async function POST(request: NextRequest, context: RouteContext) {
     }
 
     const remainingViews = requestedStandard.filter((view) => view.key !== "aerial_oblique");
-    const remainingResults = await Promise.allSettled(
-      remainingViews.map(async (requestedView) => {
-        const result = await generateView(requestedView, canonicalAnchor);
-        generatedViewReferences.set(requestedView.key, result.reference);
-        return result.output;
-      }),
+    const remainingResults = await mapWithConcurrency(
+      remainingViews,
+      2,
+      async (requestedView) => {
+        try {
+          const result = await generateView(requestedView, canonicalAnchor);
+          generatedViewReferences.set(requestedView.key, result.reference);
+          return { status: "fulfilled", value: result.output } as PromiseFulfilledResult<Record<string, unknown>>;
+        } catch (reason) {
+          return { status: "rejected", reason } as PromiseRejectedResult;
+        }
+      },
     );
     outcomes.push(...remainingResults);
 
@@ -593,14 +677,18 @@ export async function POST(request: NextRequest, context: RouteContext) {
           identityPack: identityPack as Record<string, unknown>,
           canonicalAnalysis,
         });
-        const generated = await generateGoogleCloudImage({
-          prompt,
-          model,
-          aspectRatio: "16:9",
-          imageSize: "2K",
-          referenceImages: boardReferences,
-          timeoutMs: 120_000,
-        });
+        const generated = await withVertexBackoff(
+          "render-master-overview",
+          () => generateGoogleCloudImage({
+            prompt,
+            model,
+            aspectRatio: "16:9",
+            imageSize: "2K",
+            referenceImages: boardReferences,
+            timeoutMs: 120_000,
+          }),
+          5,
+        );
         const stored = await uploadGeneratedMediaObject({
           bytes: generated.bytes,
           mimeType: generated.mimeType,
