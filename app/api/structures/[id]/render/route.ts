@@ -232,6 +232,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       ?? process.env.CLOUVA_STRUCTURES_VISION_MODEL
       ?? "gemini-2.5-flash";
 
+    // Keep each multimodal request safely below Vertex input-token limits while preserving all evidence.
     const BATCH_SIZE = 12;
     const analysisBatches: typeof analysisPrepared[] = [];
     for (let start = 0; start < analysisPrepared.length; start += BATCH_SIZE) {
