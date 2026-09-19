@@ -237,6 +237,10 @@ export async function POST(request: NextRequest, context: RouteContext) {
       ? "completed"
       : outputs.length > 0 ? "partial" : "failed";
 
+    const billingDepleted = errors.some((message) =>
+      /prepayment credits are depleted|insufficient credits|billing.*credit|credit.*depleted/i.test(message),
+    );
+
     await admin.from("structure_render_jobs").update({
       status,
       error: errors.length ? errors.join("\n").slice(0, 3000) : null,
@@ -248,12 +252,26 @@ export async function POST(request: NextRequest, context: RouteContext) {
       updated_at: new Date().toISOString(),
     }).eq("id", id).eq("owner_id", user.id);
 
+    if (!outputs.length) {
+      const error = billingDepleted
+        ? "CLOUVA Cloud no puede generar las vistas porque los créditos prepagos de Gemini están agotados. Cargá saldo en Google AI Studio y reintentá."
+        : errors[0] || "CLOUVA Cloud no pudo generar ninguna vista.";
+      return NextResponse.json({
+        error,
+        code: billingDepleted ? "credits_depleted" : "render_failed",
+        job: { ...job, status },
+        outputs,
+        errors,
+        model,
+      }, { status: billingDepleted ? 402 : 502 });
+    }
+
     return NextResponse.json({
       job: { ...job, status },
       outputs,
       errors,
       model,
-    }, { status: outputs.length ? 200 : 502 });
+    });
   } catch (error) {
     if (jobId) {
       try {
