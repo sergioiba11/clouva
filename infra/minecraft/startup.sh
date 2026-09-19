@@ -67,8 +67,10 @@ docker_args=(
   -e VIEW_DISTANCE=8
   -e SIMULATION_DISTANCE=6
   -e SPAWN_PROTECTION=16
-  -e ONLINE_MODE=TRUE
+  -e ONLINE_MODE=FALSE
+  -e ENFORCE_SECURE_PROFILE=FALSE
   -e ENABLE_WHITELIST=FALSE
+  -e MODRINTH_PROJECTS=authmereloaded
   -e "PLUGINS=https://download.geysermc.org/v2/projects/geyser/versions/latest/builds/latest/downloads/spigot,https://download.geysermc.org/v2/projects/floodgate/versions/latest/builds/latest/downloads/spigot"
   -v "$WORLD_ROOT:/data"
 )
