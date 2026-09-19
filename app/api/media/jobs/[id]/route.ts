@@ -14,8 +14,10 @@ export async function GET(request: NextRequest, context: { params: Promise<{ id:
     if (!job) return NextResponse.json({ error: "La creación no existe.", code: "job_not_found" }, { status: 404 });
 
     if (job.type === "video" && ["generating", "processing"].includes(job.status)) {
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) return NextResponse.json({ error: "GEMINI_API_KEY no está configurada.", code: "missing_api_key" }, { status: 500 });
+      const apiKey = job.provider === "google_vertex_ai" ? undefined : process.env.GEMINI_API_KEY;
+      if (job.provider !== "google_vertex_ai" && !apiKey) {
+        return NextResponse.json({ error: "GEMINI_API_KEY no está configurada para esta operación legacy.", code: "missing_api_key" }, { status: 500 });
+      }
       job = await syncVideoJob(admin, job, apiKey);
     }
 
