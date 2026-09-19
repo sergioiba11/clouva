@@ -1,0 +1,162 @@
+name: Deploy Quesito Discord Voice
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Branch or tag to deploy
+        required: true
+        default: main
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy-quesito-discord
+  cancel-in-progress: true
+
+env:
+  PROJECT_ID: gen-lang-client-0737053175
+  REGION: us-central1
+  SERVICE: clouva-quesito
+  IMAGE_REPO: us-central1-docker.pkg.dev/gen-lang-client-0737053175/clouva
+  VERTEX_LOCATION: us-central1
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SOURCE_REF: ${{ inputs.source_ref }}
+      DISCORD_BOT_TOKEN: ${{ secrets.QUESITO_DISCORD_TOKEN }}
+      DISCORD_GUILD_ID: ${{ vars.QUESITO_DISCORD_GUILD_ID }}
+      VERTEX_MODEL: ${{ vars.QUESITO_VERTEX_MODEL }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SOURCE_REF }}
+          fetch-depth: 0
+
+      - name: Require Discord token
+        shell: bash
+        run: |
+          if [ -z "$DISCORD_BOT_TOKEN" ]; then
+            echo "::error::Create the repository secret QUESITO_DISCORD_TOKEN before deploying."
+            exit 1
+          fi
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA_EMAIL }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Best-effort enable Quesito Google Cloud APIs
+        shell: bash
+        run: |
+          set +e
+          gcloud services enable \
+            run.googleapis.com \
+            cloudbuild.googleapis.com \
+            aiplatform.googleapis.com \
+            speech.googleapis.com \
+            texttospeech.googleapis.com \
+            --project "$PROJECT_ID"
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            echo "::warning::The deploy identity could not enable one or more APIs. If Quesito later reports a 403, enable Vertex AI, Speech-to-Text and Text-to-Speech in Google Cloud."
+          fi
+          exit 0
+
+      - name: Build Quesito image
+        id: build
+        shell: bash
+        run: |
+          sha="$(git rev-parse HEAD)"
+          image="$IMAGE_REPO/quesito:$sha"
+          gcloud builds submit \
+            --project "$PROJECT_ID" \
+            --tag "$image" \
+            services/quesito-discord
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy always-on Quesito
+        shell: bash
+        env:
+          IMAGE: ${{ steps.build.outputs.image }}
+        run: |
+          model="$VERTEX_MODEL"
+          if [ -z "$model" ]; then
+            model="gemini-2.5-flash"
+          fi
+
+          public_env="GOOGLE_CLOUD_PROJECT=$PROJECT_ID,VERTEX_LOCATION=$VERTEX_LOCATION,VERTEX_MODEL=$model,QUESITO_WAKE_WORD=quesito,CLOUVA_MINECRAFT_STATUS_URL=https://clouva.com.ar/api/minecraft/status"
+
+          if [ -n "$DISCORD_GUILD_ID" ]; then
+            public_env="$public_env,DISCORD_GUILD_ID=$DISCORD_GUILD_ID"
+          fi
+
+          gcloud run deploy "$SERVICE" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --image "$IMAGE" \
+            --port 8080 \
+            --cpu 1 \
+            --memory 512Mi \
+            --min-instances 1 \
+            --max-instances 1 \
+            --concurrency 1 \
+            --no-cpu-throttling \
+            --execution-environment gen2 \
+            --allow-unauthenticated \
+            --set-env-vars "$public_env" \
+            --update-env-vars "DISCORD_BOT_TOKEN=$DISCORD_BOT_TOKEN" \
+            --quiet
+
+      - name: Verify Quesito health
+        shell: bash
+        run: |
+          url="$(gcloud run services describe "$SERVICE" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --format='value(status.url)')"
+
+          for attempt in $(seq 1 24); do
+            payload="$(curl --fail --silent --show-error "$url/health" || true)"
+
+            if python3 - "$payload" <<'PY'
+import json
+import sys
+
+try:
+    data = json.loads(sys.argv[1] or "{}")
+except Exception:
+    raise SystemExit(1)
+
+raise SystemExit(
+    0 if data.get("ok") is True and data.get("discordReady") is True else 1
+)
+PY
+            then
+              echo "$payload"
+              echo "Quesito is connected to Discord."
+              exit 0
+            fi
+
+            echo "Waiting for Quesito Discord login ($attempt/24)..."
+            sleep 5
+          done
+
+          echo "::error::Quesito Cloud Run service is up but Discord login did not become ready."
+          gcloud logging read \
+            "resource.type=cloud_run_revision AND resource.labels.service_name=$SERVICE" \
+            --project "$PROJECT_ID" \
+            --limit 80 \
+            --format='value(textPayload,jsonPayload.message)' || true
+          exit 1
