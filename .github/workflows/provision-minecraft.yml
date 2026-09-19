@@ -161,6 +161,38 @@ jobs:
             exit 1
           fi
 
+      - name: Verify AuthMe offline authentication
+        shell: bash
+        run: |
+          for attempt in $(seq 1 30); do
+            if gcloud compute ssh "$MC_INSTANCE" \
+              --project "$PROJECT_ID" \
+              --zone "$MC_ZONE" \
+              --quiet \
+              --ssh-flag="-o StrictHostKeyChecking=no" \
+              --ssh-flag="-o UserKnownHostsFile=/dev/null" \
+              --command='
+                set -e
+                test "$(sudo docker inspect -f "{{range .Config.Env}}{{println .}}{{end}}" clouva-minecraft | grep "^ONLINE_MODE=" | cut -d= -f2)" = "FALSE"
+                sudo docker logs clouva-minecraft 2>&1 | grep -Eiq "AuthMe.*(Enabl|loaded|success)|\[AuthMe\]"
+              ' >/dev/null 2>&1; then
+              echo "AuthMe offline authentication is active."
+              exit 0
+            fi
+            echo "Waiting for AuthMe to load ($attempt/30)..."
+            sleep 5
+          done
+
+          echo "::error::Minecraft opened 25565 but AuthMe offline authentication did not become ready."
+          gcloud compute ssh "$MC_INSTANCE" \
+            --project "$PROJECT_ID" \
+            --zone "$MC_ZONE" \
+            --quiet \
+            --ssh-flag="-o StrictHostKeyChecking=no" \
+            --ssh-flag="-o UserKnownHostsFile=/dev/null" \
+            --command='sudo docker logs --tail 300 clouva-minecraft 2>&1' || true
+          exit 1
+
       - name: Publish server address into CLOUVA
         env:
           MC_IP: ${{ steps.address.outputs.ip }}
