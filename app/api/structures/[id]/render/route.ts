@@ -124,9 +124,13 @@ async function prepareAnalysisReferences(images: StructureImageRecord[]) {
 
 export async function POST(request: NextRequest, context: RouteContext) {
   let jobId: string | null = null;
+  let structureId: string | null = null;
+  let ownerId: string | null = null;
   try {
     const { id } = await context.params;
+    structureId = id;
     const { user } = await requireUser(request);
+    ownerId = user.id;
     const admin = createAdminSupabase();
     const structure = await getOwnedStructure(admin, user.id, id);
     const body = await request.json().catch(() => ({})) as { views?: unknown };
@@ -567,10 +571,12 @@ export async function POST(request: NextRequest, context: RouteContext) {
           error: error instanceof Error ? error.message.slice(0, 3000) : "Falló la reconstrucción.",
           completed_at: new Date().toISOString(),
         }).eq("id", jobId);
-        await admin.from("structures").update({
-          status: "ready",
-          updated_at: new Date().toISOString(),
-        }).eq("id", id).eq("owner_id", user.id);
+        if (structureId && ownerId) {
+          await admin.from("structures").update({
+            status: "ready",
+            updated_at: new Date().toISOString(),
+          }).eq("id", structureId).eq("owner_id", ownerId);
+        }
       } catch {
         // Preserve the original render error.
       }
