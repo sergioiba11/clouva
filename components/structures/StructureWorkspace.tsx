@@ -1276,7 +1276,7 @@ export function StructureWorkspace({
                       <p className="text-sm font-semibold">{RENDER_LABELS[view]}</p>
                       <button
                         type="button"
-                        onClick={() => void renderViews([view])}
+                        onClick={() => void renderViews(view === "master_overview" ? undefined : [view])}
                         disabled={Boolean(busy) || !data.images.length}
                         className="inline-flex items-center gap-1.5 rounded-full border border-white/10 px-3 py-1.5 text-[10px] text-white/55 disabled:opacity-35"
                       >
