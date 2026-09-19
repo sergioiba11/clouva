@@ -907,6 +907,50 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
     }
   }
 
+  function resumeDraft(listing: Listing) {
+    const fields = listingDraftFields(listing);
+    const images = listingProductImages(listing);
+    const sources = storedSourcesFromListing(listing);
+    const generated = generatedImagesFromListing(listing);
+    const recognition = restoredRecognition(listing);
+    setDraftListingId(listing.id);
+    setCreation({
+      name: listing.name,
+      brand: typeof fields.brand === "string" ? fields.brand : "",
+      category: typeof fields.category === "string" ? fields.category : "",
+      description: listing.description ?? "",
+      productKind: typeof fields.product_kind === "string" ? fields.product_kind : listing.product_type,
+      listingKind: typeof fields.listing_kind === "string" ? fields.listing_kind : listing.listing_kind,
+      cost: listing.cost_amount == null || Number(listing.cost_amount) === 0 ? "" : String(listing.cost_amount),
+      price: Number(listing.price || 0) > 0 ? String(listing.price) : "",
+      stock: listing.stock == null ? "" : String(listing.stock),
+      status: "draft",
+      size: typeof fields.size === "string" ? fields.size : "",
+      color: typeof fields.color === "string" ? fields.color : "",
+      presentation: typeof fields.presentation === "string" ? fields.presentation : "",
+    });
+    setRecognitionResult(recognition);
+    setProductCaptures([]);
+    setProductImagesResult(sources.length || generated.length ? {
+      provider: "google_vertex_ai",
+      model: typeof images.model === "string" ? images.model : "",
+      sourcePhotos: sources,
+      generatedImages: generated,
+      coverImage: typeof images.cover_image === "string" ? images.cover_image : listing.cover_url,
+      generatedAt: typeof images.generated_at === "string" ? images.generated_at : listing.updated_at || new Date().toISOString(),
+      listingId: listing.id,
+      persisted: true,
+    } : null);
+    setSelectedCoverImage(listing.cover_url || "");
+    const identifier = data.identifiers.find((item) => item.catalog_product_id === listing.catalog_product_id && item.status === "active");
+    setManualCode(identifier?.value || "");
+    if (identifier) setScanType(identifier.identifier_type);
+    setScanResult({ exists: false });
+    setDraftSaveState("saved");
+    setMessage(`${listing.name} recuperado. Podés seguir completándolo.`);
+    setError(null);
+  }
+
   async function refreshFx() {
     setBusy(true); setError(null); setMessage(null);
     try {
