@@ -74,3 +74,42 @@ export async function cancelAnalyzerExecution(executionName: string): Promise<vo
     throw new Error(`No se pudo cancelar la ejecución del análisis (${response.status})${raw ? `: ${raw.slice(0, 500)}` : ""}`);
   }
 }
+
+
+function videoRenderJobConfig() {
+  const project = process.env.CLOUVA_GCP_PROJECT || process.env.GOOGLE_CLOUD_PROJECT || "gen-lang-client-0737053175";
+  const location = process.env.CLOUVA_GCP_REGION || "us-central1";
+  const job = process.env.CLOUVA_VIDEO_RENDER_JOB_NAME || "clouva-video-render";
+  return { project, location, job };
+}
+
+/** Starts the long-form CLOUVA FFmpeg renderer. The Cloud Run Job receives only
+ * the project id; media paths and ownership remain canonical in Supabase. */
+export async function runVideoRenderJob(projectId: string): Promise<string> {
+  const { project, location, job } = videoRenderJobConfig();
+  const token = await getAccessToken();
+  const response = await fetch(
+    `https://run.googleapis.com/v2/projects/${project}/locations/${location}/jobs/${job}:run`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        overrides: {
+          containerOverrides: [{
+            env: [{ name: "CLOUVA_VIDEO_PROJECT_ID", value: projectId }],
+          }],
+        },
+      }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(20 * 1000),
+    },
+  );
+  if (!response.ok) {
+    const raw = await response.text().catch(() => "");
+    throw new Error(`No se pudo iniciar el render de video en Cloud Run (${response.status})${raw ? `: ${raw.slice(0, 500)}` : ""}`);
+  }
+  const operation = await response.json() as CloudRunOperation;
+  const executionName = operation.metadata?.name;
+  if (!executionName) throw new Error("Cloud Run no devolvió la ejecución del render de video.");
+  return executionName;
+}

@@ -5,8 +5,8 @@ import {
   type GeminiAspectRatio,
   type GeminiImageModel,
 } from "@/lib/gemini-image";
-import { startVideoGeneration, type GeminiVideoModel } from "@/lib/gemini-video";
-import { uploadGeneratedMediaObject } from "@/lib/gcs-media";
+import { generatedMediaGsUri, generatedMediaObjectFromGsUri, uploadGeneratedMediaObject } from "@/lib/gcs-media";
+import { getVideoProvider } from "@/lib/video/providers";
 import {
   estimateVideoCostUsd,
   IMAGE_QUALITY_CONFIG,
@@ -185,6 +185,7 @@ async function createJob(args: {
   referenceStoragePath: string | null;
   referenceUrl: string | null;
   estimatedCostUsd: number | null;
+  provider?: string;
 }) {
   const { data: existing, error: existingError } = await args.admin
     .from("media_generation_jobs")
@@ -202,6 +203,7 @@ async function createJob(args: {
       user_id: args.userId,
       idempotency_key: args.idempotencyKey,
       type: args.type,
+      provider: args.provider ?? "google_gemini_api",
       source_mode: args.sourceMode,
       status: "generating",
       prompt: args.prompt,
@@ -244,8 +246,6 @@ export async function POST(request: NextRequest) {
 
     const authenticated = await requireMediaAdmin(request);
     admin = authenticated.admin;
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) throw new MediaApiError("GEMINI_API_KEY no está configurada.", 500, "missing_api_key");
     const prompt = validatePrompt(body.prompt);
     if (body.type !== "image" && body.type !== "video") throw new MediaApiError("Tipo de creación inválido.", 400, "invalid_media_type");
     if (!body.idempotencyKey || !/^[a-zA-Z0-9_-]{16,96}$/.test(body.idempotencyKey)) {
@@ -257,6 +257,8 @@ export async function POST(request: NextRequest) {
     }
 
     if (body.type === "image") {
+      const apiKey = process.env.GEMINI_API_KEY;
+      if (!apiKey) throw new MediaApiError("GEMINI_API_KEY no está configurada.", 500, "missing_api_key");
       const quality: ImageQuality = isImageQuality(body.quality) ? body.quality : "high";
       const aspectRatio: ImageAspectRatio = isImageAspectRatio(body.aspectRatio) ? body.aspectRatio : "1:1";
       const config = IMAGE_QUALITY_CONFIG[quality];
@@ -342,27 +344,47 @@ export async function POST(request: NextRequest) {
       referenceStoragePath: body.referenceStoragePath ?? null,
       referenceUrl: body.referenceUrl ?? null,
       estimatedCostUsd,
+      provider: "google_vertex_ai",
     });
     jobId = created.row.id;
     if (created.reused) return NextResponse.json({ job: toPublicMediaJob(created.row), reused: true });
 
-    const reference = body.referenceUrl ? await downloadReferenceImage(body.referenceUrl) : null;
-    const operation = await startVideoGeneration({
-      apiKey,
+    const provider = getVideoProvider("google_vertex_ai");
+    const outputPrefix = generatedMediaGsUri(`media/${authenticated.user.id}/videos/${jobId}`);
+    const operation = await provider.generate({
       prompt,
-      model: config.model as GeminiVideoModel,
+      model: config.model,
       aspectRatio,
       durationSeconds,
       resolution: config.resolution,
-      referenceImage: reference ? { bytes: reference.bytes, mimeType: reference.mimeType } : undefined,
+      firstFrame: body.referenceUrl ? {
+        url: body.referenceUrl,
+        storagePath: body.referenceStoragePath ?? null,
+      } : null,
+      outputGcsUri: outputPrefix,
+      generateAudio: false,
     });
+
+    const completedOutput = operation.done && operation.outputUri
+      ? generatedMediaObjectFromGsUri(operation.outputUri)
+      : null;
     const { data: started, error } = await admin.from("media_generation_jobs").update({
-      status: operation.done ? "processing" : "generating",
-      operation_id: operation.name,
-      provider_metadata: operation.metadata ? { operationMetadata: operation.metadata } : {},
+      status: completedOutput ? "completed" : operation.done ? "processing" : "generating",
+      provider: "google_vertex_ai",
+      operation_id: operation.operationName,
+      output_storage_path: completedOutput?.objectPath ?? null,
+      output_url: completedOutput?.url ?? null,
+      mime_type: completedOutput ? operation.mimeType : null,
+      actual_cost_usd: completedOutput ? estimatedCostUsd : null,
+      completed_at: completedOutput ? new Date().toISOString() : null,
+      provider_metadata: {
+        provider: "google_vertex_ai",
+        outputPrefix,
+        operationMetadata: operation.metadata,
+      },
     }).eq("id", jobId).eq("user_id", authenticated.user.id).select(MEDIA_JOB_COLUMNS).single();
     if (error || !started) throw new MediaApiError("El video se inició, pero no pudo registrarse.", 500, "job_update_failed");
-    return NextResponse.json({ job: toPublicMediaJob(started as unknown as MediaJobRow) }, { status: 202 });
+    return NextResponse.json({ job: toPublicMediaJob(started as unknown as MediaJobRow) }, { status: completedOutput ? 200 : 202 });
   } catch (error) {
     if (jobId && admin && !(error instanceof MediaApiError && error.code === "storage_failed")) {
       const publicError = publicMediaError(error);

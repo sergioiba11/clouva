@@ -6,8 +6,9 @@ export type ImageSize = "1K" | "2K" | "4K";
 export type ImageAspectRatio = "1:1" | "4:5" | "5:4" | "16:9" | "9:16";
 export type VideoAspectRatio = "16:9" | "9:16";
 export type VideoDuration = 4 | 6 | 8;
+export type VideoResolution = "720p" | "1080p" | "4k";
 
-export const MEDIA_PRICING_VERSION = "2026-08-13";
+export const MEDIA_PRICING_VERSION = "2026-09-18";
 
 export const IMAGE_QUALITY_CONFIG = {
   quick: {
@@ -30,23 +31,23 @@ export const IMAGE_QUALITY_CONFIG = {
 export const VIDEO_QUALITY_CONFIG = {
   economy: {
     label: "Económica",
-    model: "veo-3.1-lite-generate-preview",
+    model: "veo-3.1-lite-generate-001",
     resolution: "720p",
-    pricePerSecondUsd: 0.05,
+    pricePerSecondUsd: 0.03,
   },
   fast: {
     label: "Rápida",
-    model: "veo-3.1-fast-generate-preview",
+    model: "veo-3.1-fast-generate-001",
     resolution: "720p",
-    pricePerSecondUsd: 0.1,
+    pricePerSecondUsd: 0.08,
   },
   cinematic: {
     label: "Cinemática",
-    model: "veo-3.1-generate-preview",
+    model: "veo-3.1-generate-001",
     resolution: "720p",
-    pricePerSecondUsd: 0.4,
+    pricePerSecondUsd: 0.2,
   },
-} as const satisfies Record<VideoQuality, { label: string; model: string; resolution: "720p"; pricePerSecondUsd: number }>;
+} as const satisfies Record<VideoQuality, { label: string; model: string; resolution: VideoResolution; pricePerSecondUsd: number }>;
 
 export const IMAGE_ASPECT_RATIOS: readonly ImageAspectRatio[] = ["1:1", "4:5", "5:4", "16:9", "9:16"];
 export const VIDEO_ASPECT_RATIOS: readonly VideoAspectRatio[] = ["16:9", "9:16"];

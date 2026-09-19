@@ -54,6 +54,12 @@ jobs:
       - name: Validate worker Python
         run: python3 -m py_compile worker/garment-rig/*.py tools/unreal_avatar_export/export_clouva_avatar.py
 
+      - name: Validate CLOUVA video infrastructure scripts
+        run: bash -n scripts/setup-video-engine-infra.sh worker/video-render/deploy.sh
+
+      - name: Build CLOUVA video render worker
+        run: docker build --progress=plain -t clouva-video-render:test worker/video-render
+
       - name: Build and validate Blender worker image
         shell: bash
         run: |

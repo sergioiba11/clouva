@@ -1,12 +1,13 @@
 import sharp from "sharp";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { downloadGeneratedVideo, getVideoOperation } from "@/lib/gemini-video";
-import { uploadGeneratedMediaObject } from "@/lib/gcs-media";
+import { generatedMediaObjectFromGsUri, uploadGeneratedMediaObject } from "@/lib/gcs-media";
+import { getVideoProvider } from "@/lib/video/providers";
 
 export const MEDIA_JOB_COLUMNS = [
-  "id", "user_id", "type", "source_mode", "status", "prompt", "model", "aspect_ratio", "quality",
-  "duration_seconds", "reference_storage_path", "reference_url", "output_storage_path", "output_url", "mime_type",
-  "operation_id", "provider_metadata", "usage_metadata", "estimated_cost_usd", "actual_cost_usd", "error_code",
+  "id", "user_id", "type", "provider", "project_id", "sequence_index", "source_mode", "status", "prompt", "model", "aspect_ratio", "quality",
+  "duration_seconds", "reference_storage_path", "reference_url", "last_frame_storage_path", "last_frame_url", "output_storage_path", "output_url", "mime_type",
+  "operation_id", "provider_metadata", "usage_metadata", "estimated_cost_usd", "actual_cost_usd", "attempt_count", "last_error", "next_retry_at", "last_provider_sync_at", "error_code",
   "error_message", "created_at", "started_at", "completed_at", "updated_at",
 ].join(",");
 
@@ -14,6 +15,9 @@ export type MediaJobRow = {
   id: string;
   user_id: string;
   type: "image" | "video";
+  provider: string;
+  project_id: string | null;
+  sequence_index: number | null;
   source_mode: "text" | "reference";
   status: string;
   prompt: string;
@@ -23,6 +27,8 @@ export type MediaJobRow = {
   duration_seconds: number | null;
   reference_storage_path: string | null;
   reference_url: string | null;
+  last_frame_storage_path: string | null;
+  last_frame_url: string | null;
   output_storage_path: string | null;
   output_url: string | null;
   mime_type: string | null;
@@ -31,6 +37,10 @@ export type MediaJobRow = {
   usage_metadata: Record<string, unknown> | null;
   estimated_cost_usd: number | null;
   actual_cost_usd: number | null;
+  attempt_count: number;
+  last_error: string | null;
+  next_retry_at: string | null;
+  last_provider_sync_at: string | null;
   error_code: string | null;
   error_message: string | null;
   created_at: string;
@@ -43,6 +53,9 @@ export function toPublicMediaJob(row: MediaJobRow) {
   return {
     id: row.id,
     type: row.type,
+    provider: row.provider,
+    projectId: row.project_id,
+    sequenceIndex: row.sequence_index,
     sourceMode: row.source_mode,
     status: row.status,
     prompt: row.prompt,
@@ -145,8 +158,56 @@ async function saveCompletedVideo(args: {
   }
 }
 
-export async function syncVideoJob(admin: SupabaseClient, job: MediaJobRow, apiKey: string) {
+export async function syncVideoJob(admin: SupabaseClient, job: MediaJobRow, apiKey?: string) {
   if (job.type !== "video" || !["generating", "processing"].includes(job.status) || !job.operation_id) return job;
+
+  if (job.provider === "google_vertex_ai") {
+    try {
+      const operation = await getVideoProvider("google_vertex_ai").getStatus(job.operation_id);
+      if (operation.error) throw new Error(operation.error);
+      if (!operation.done) {
+        const { data } = await admin.from("media_generation_jobs").update({
+          status: "processing",
+          last_provider_sync_at: new Date().toISOString(),
+          provider_metadata: {
+            ...(job.provider_metadata ?? {}),
+            operationMetadata: operation.metadata,
+          },
+        }).eq("id", job.id).eq("user_id", job.user_id).select(MEDIA_JOB_COLUMNS).single();
+        return (data as unknown as MediaJobRow | null) ?? { ...job, status: "processing" };
+      }
+      if (!operation.outputUri) throw new Error("Vertex AI terminó sin devolver el video.");
+      const stored = generatedMediaObjectFromGsUri(operation.outputUri);
+      const completedAt = new Date().toISOString();
+      const { data, error } = await admin.from("media_generation_jobs").update({
+        status: "completed",
+        output_storage_path: stored.objectPath,
+        output_url: stored.url,
+        mime_type: operation.mimeType || "video/mp4",
+        provider_metadata: {
+          ...(job.provider_metadata ?? {}),
+          operationMetadata: operation.metadata,
+          outputUri: operation.outputUri,
+        },
+        actual_cost_usd: job.estimated_cost_usd,
+        error_code: null,
+        error_message: null,
+        completed_at: completedAt,
+        last_provider_sync_at: completedAt,
+      }).eq("id", job.id).eq("user_id", job.user_id).select(MEDIA_JOB_COLUMNS).single();
+      if (error || !data) throw new Error("No se pudo registrar el video terminado.");
+      return data as unknown as MediaJobRow;
+    } catch (error) {
+      await admin.from("media_generation_jobs").update({
+        status: "failed",
+        error_code: "provider_failed",
+        error_message: "El video no pudo generarse.",
+      }).eq("id", job.id).eq("user_id", job.user_id);
+      throw error;
+    }
+  }
+
+  if (!apiKey) throw new Error("GEMINI_API_KEY no está configurada para una operación legacy.");
   try {
     const operation = await getVideoOperation({ apiKey, operationName: job.operation_id });
     if (!operation.done) {

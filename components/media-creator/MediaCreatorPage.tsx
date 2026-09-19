@@ -61,7 +61,7 @@ const navSections = [
     { label: "Inicio", href: "/", icon: Home },
     { label: "Trébol / Chat", href: "/clouva-ai", icon: Sparkles },
     { label: "Crear imagen", href: buildMediaCreatorHref("image"), icon: ImageIcon },
-    { label: "Crear video", href: buildMediaCreatorHref("video"), icon: Video },
+    { label: "Crear video", href: "/crear/video", icon: Video },
     { label: "Biblioteca", href: "/biblioteca", icon: Library },
     { label: "Proyectos", href: "/studios", icon: FolderKanban },
   ],
