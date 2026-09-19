@@ -1376,6 +1376,8 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
   const draftListings = data.listings.filter((listing) => listing.status === "draft");
   const activeDraft = draftListingId ? data.listings.find((listing) => listing.id === draftListingId) ?? null : null;
   const activeDraftMissing = activeDraft ? listingMissing(activeDraft) : [];
+  const activeDraftSources = activeDraft ? storedSourcesFromListing(activeDraft) : [];
+  const activeDraftGenerated = activeDraft ? generatedImagesFromListing(activeDraft) : [];
   const activeDraftIdentifiers = activeDraft
     ? data.identifiers.filter((identifier) => identifier.catalog_product_id === activeDraft.catalog_product_id && identifier.status === "active")
     : [];
@@ -1453,11 +1455,11 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
               {draftListingId ? <div className={`${CARD} border-violet-400/20 p-4`}>
                 <div className="flex items-start justify-between gap-3"><div><p className="text-[10px] font-semibold uppercase tracking-[.18em] text-violet-300">Completar producto</p><p className="mt-1 text-sm font-semibold">{creation.name || "Borrador persistente"}</p></div><span className={`rounded-full border px-2 py-1 text-[9px] font-semibold ${draftSaveState === "saving" ? "border-amber-400/25 text-amber-200" : "border-emerald-400/25 text-emerald-200"}`}>{draftSaveState === "saving" ? "Guardando…" : "Guardado"}</span></div>
                 <div className="mt-3 grid grid-cols-2 gap-2 text-[10px]">
-                  <DraftCheck ok={Boolean(productImagesResult?.sourcePhotos.some((photo) => photo.label === "Frente")) || Boolean(frontCapture)} label="Foto frontal" />
+                  <DraftCheck ok={Boolean(activeDraftSources.some((photo) => photo.label === "Frente")) || Boolean(productImagesResult?.sourcePhotos.some((photo) => photo.label === "Frente")) || Boolean(frontCapture)} label="Foto frontal" />
                   <DraftCheck ok={Boolean(recognitionResult)} label="Producto identificado" />
                   <DraftCheck ok={Boolean(manualCode)} label="SKU / código interno" />
-                  <DraftCheck ok={Boolean(productImagesResult?.generatedImages.length)} label="Imagen de catálogo" />
-                  <DraftCheck ok={Boolean(productImagesResult?.sourcePhotos.some((photo) => photo.label === "Atrás")) || Boolean(backCapture)} label="Foto trasera" optional />
+                  <DraftCheck ok={Boolean(activeDraftGenerated.length) || Boolean(productImagesResult?.generatedImages.length)} label="Imagen de catálogo" />
+                  <DraftCheck ok={Boolean(activeDraftSources.some((photo) => photo.label === "Atrás")) || Boolean(productImagesResult?.sourcePhotos.some((photo) => photo.label === "Atrás")) || Boolean(backCapture)} label="Foto trasera" optional />
                   <DraftCheck ok={hasExternalIdentifier} label="Código comercial" optional />
                   <DraftCheck ok={Number(creation.price) > 0} label="Precio confirmado" />
                   <DraftCheck ok={creation.stock !== ""} label="Stock confirmado" />
