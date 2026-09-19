@@ -109,6 +109,8 @@ jobs:
             public_env="$public_env,DISCORD_GUILD_ID=$DISCORD_GUILD_ID"
           fi
 
+          runtime_env="$public_env,DISCORD_BOT_TOKEN=$DISCORD_BOT_TOKEN"
+
           gcloud run deploy "$SERVICE" \
             --project "$PROJECT_ID" \
             --region "$REGION" \
@@ -122,8 +124,7 @@ jobs:
             --no-cpu-throttling \
             --execution-environment gen2 \
             --allow-unauthenticated \
-            --set-env-vars "$public_env" \
-            --update-env-vars "DISCORD_BOT_TOKEN=$DISCORD_BOT_TOKEN" \
+            --set-env-vars "$runtime_env" \
             --quiet
 
       - name: Verify Quesito health
