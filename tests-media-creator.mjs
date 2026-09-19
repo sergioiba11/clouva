@@ -118,6 +118,9 @@ test("Cloud Video Engine extiende el ledger actual y orquesta Vertex + Cloud Run
   const provider = await readFile(new URL("./lib/video/providers/vertex-veo.ts", import.meta.url), "utf8");
   const creator = await readFile(new URL("./components/video-engine/VideoProjectCreator.tsx", import.meta.url), "utf8");
   const worker = await readFile(new URL("./worker/video-render/render.mjs", import.meta.url), "utf8");
+  const audioRoute = await readFile(new URL("./app/api/video/projects/[projectId]/audio/route.ts", import.meta.url), "utf8");
+  const playerRoute = await readFile(new URL("./app/api/video/projects/[projectId]/player/route.ts", import.meta.url), "utf8");
+  const infra = await readFile(new URL("./scripts/setup-video-engine-infra.sh", import.meta.url), "utf8");
 
   assert.match(migration, /create table if not exists public\.video_projects/i);
   assert.match(migration, /alter table public\.media_generation_jobs/i);
@@ -133,6 +136,12 @@ test("Cloud Video Engine extiende el ledger actual y orquesta Vertex + Cloud Run
   assert.match(worker, /ffmpeg/);
   assert.match(worker, /audio_storage_path/);
   assert.match(worker, /status:\s*"completed"/);
+  assert.match(audioRoute, /createResumableUpload/);
+  assert.match(audioRoute, /audio_owner_mismatch/);
+  assert.match(playerRoute, /player_media/);
+  assert.match(playerRoute, /clouva-video-project:/);
+  assert.match(infra, /roles\/run\.jobsExecutorWithOverrides/);
+  assert.match(infra, /roles\/aiplatform\.user/);
 });
 
 test("inicia Veo con predictLongRunning y serializa la referencia real", async (t) => {
