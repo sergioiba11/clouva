@@ -1,0 +1,84 @@
+name: Repair CLOUVA Minecraft World
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/repair-minecraft-world.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: gen-lang-client-0737053175
+  MC_ZONE: southamerica-east1-b
+  MC_INSTANCE: clouva-minecraft-family
+  MC_IP: 35.198.44.243
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA_EMAIL }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Preserve broken generated world
+        shell: bash
+        run: |
+          gcloud compute ssh "$MC_INSTANCE" \
+            --project "$PROJECT_ID" \
+            --zone "$MC_ZONE" \
+            --quiet \
+            --ssh-flag="-o StrictHostKeyChecking=no" \
+            --ssh-flag="-o UserKnownHostsFile=/dev/null" \
+            --command='
+              set -e
+              sudo docker rm -f clouva-minecraft >/dev/null 2>&1 || true
+              stamp=repair-20260919-2031
+              recovery="/srv/minecraft/recovery/$stamp"
+              sudo mkdir -p "$recovery"
+              for name in world world_nether world_the_end; do
+                if [ -e "/srv/minecraft/$name" ]; then
+                  sudo mv "/srv/minecraft/$name" "$recovery/$name"
+                fi
+              done
+              echo "Preserved broken world under $recovery"
+            '
+
+      - name: Restart VM with clean world
+        run: |
+          gcloud compute instances reset "$MC_INSTANCE" \
+            --project "$PROJECT_ID" \
+            --zone "$MC_ZONE"
+
+      - name: Wait for Java server
+        shell: bash
+        run: |
+          for attempt in $(seq 1 60); do
+            if timeout 3 bash -c "</dev/tcp/$MC_IP/25565" >/dev/null 2>&1; then
+              echo "Minecraft Java is online at $MC_IP:25565"
+              exit 0
+            fi
+            echo "Waiting for clean Minecraft world ($attempt/60)..."
+            sleep 10
+          done
+
+          echo "Minecraft still failed after clean-world repair."
+          gcloud compute ssh "$MC_INSTANCE" \
+            --project "$PROJECT_ID" \
+            --zone "$MC_ZONE" \
+            --quiet \
+            --ssh-flag="-o StrictHostKeyChecking=no" \
+            --ssh-flag="-o UserKnownHostsFile=/dev/null" \
+            --command='sudo docker logs --tail 300 clouva-minecraft 2>&1' || true
+          exit 1
