@@ -17,7 +17,10 @@ command -v python3 >/dev/null || { echo "python3 es requerido" >&2; exit 1; }
 
 gcloud config set project "$PROJECT_ID" >/dev/null
 
-gcloud services enable   aiplatform.googleapis.com   artifactregistry.googleapis.com   cloudbuild.googleapis.com   cloudtasks.googleapis.com   run.googleapis.com   secretmanager.googleapis.com   storage.googleapis.com   --project "$PROJECT_ID"
+# CLOUVA already uses these APIs in production. The deploy identity intentionally
+# cannot mutate Service Usage, so this setup configures only resources inside
+# the APIs that are already enabled.
+echo "Using existing CLOUVA Google Cloud APIs (no Service Usage mutation)."
 
 if ! gcloud tasks queues describe "$QUEUE" --location "$REGION" --project "$PROJECT_ID" >/dev/null 2>&1; then
   gcloud tasks queues create "$QUEUE"     --location "$REGION"     --project "$PROJECT_ID"     --log-sampling-ratio=1.0
