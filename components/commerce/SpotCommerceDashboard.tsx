@@ -1500,6 +1500,13 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
   );
 }
 
+function DraftCheck({ ok, label, optional = false }: { ok: boolean; label: string; optional?: boolean }) {
+  return <div className={`flex items-center gap-2 rounded-xl border px-2.5 py-2 ${ok ? "border-emerald-400/20 bg-emerald-400/[0.06] text-emerald-100" : "border-white/8 bg-black/20 text-white/45"}`}>
+    {ok ? <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-300" /> : <span className="h-3.5 w-3.5 shrink-0 rounded-full border border-white/20" />}
+    <span className="truncate">{label}{optional && !ok ? " · opcional" : ""}</span>
+  </div>;
+}
+
 function ProductCapturePreview({ capture, label, onRemove }: { capture: ProductCapture; label: string; onRemove: () => void }) {
   const [reviewing, setReviewing] = useState(() => !reviewedCaptureIds.has(capture.id));
   const accept = () => {
