@@ -128,8 +128,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const nextDescription = has(body, "description")
       ? nullableText(body.description, 4000)
       : listing.description;
-    const nextPrice: number = has(body, "price") && body.price !== ""
-      ? Number(numberValue(body.price, "El precio"))
+    const nextPrice: number = has(body, "price")
+      ? body.price === "" || body.price == null
+        ? 0
+        : Number(numberValue(body.price, "El precio"))
       : Number(listing.price || 0);
     const nextCost = has(body, "costAmount")
       ? numberValue(body.costAmount, "El costo", { nullable: true })
@@ -199,6 +201,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       }
       if (!nextCover) {
         return NextResponse.json({ error: "Elegí una portada antes de publicar.", code: "COVER_REQUIRED" }, { status: 400 });
+      }
+      if (listing.product_type === "physical" && nextStock == null) {
+        return NextResponse.json({ error: "Confirmá el stock antes de publicar.", code: "STOCK_REQUIRED" }, { status: 400 });
       }
       if (!publicationMasterApproved(nextMetadata)) {
         return NextResponse.json({
