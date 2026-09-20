@@ -62,6 +62,8 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     private static final String BLOCKS_TITLE = "BLOQUES — NINOTIMI";
     private static final String PVP_WORLD_NAME = "pvp_ninotimi";
     private static final String ICE_WORLD_NAME = "hielo_ninotimi";
+    private static final int MAX_ICE_PLAYERS = 12;
+    private static final long ICE_JOIN_WINDOW_TICKS = 100L;
 
     private NamespacedKey toolsKey;
     private NamespacedKey wandKey;
@@ -103,6 +105,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     private boolean iceActive;
     private int maxEditBlocks;
     private BukkitTask particleTask;
+    private BukkitTask iceStartTask;
 
     @Override
     public void onEnable() {
@@ -137,6 +140,10 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     public void onDisable() {
         if (particleTask != null) {
             particleTask.cancel();
+        }
+        if (iceStartTask != null) {
+            iceStartTask.cancel();
+            iceStartTask = null;
         }
 
         for (UUID id : new HashSet<>(fighters)) {
@@ -241,12 +248,13 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         portalStates.remove(id);
 
         iceQueue.remove(id);
-        if (iceFighters.contains(id)) {
-            UUID winner = iceFighters.stream()
-                .filter(other -> !other.equals(id))
-                .findFirst()
-                .orElse(null);
-            endIceBattle(winner, "abandono");
+        if (iceFighters.remove(id)) {
+            iceStates.remove(id);
+            if (iceActive && iceFighters.size() == 1) {
+                endIceBattle(iceFighters.iterator().next(), "último en pie");
+            } else if (iceActive && iceFighters.isEmpty()) {
+                endIceBattle(null, "sin jugadores");
+            }
         }
         icePortalStates.remove(id);
     }
@@ -384,12 +392,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             && player.getWorld().getName().equals(ICE_WORLD_NAME)
             && to.getY() < 76.0
         ) {
-            UUID loser = player.getUniqueId();
-            UUID winner = iceFighters.stream()
-                .filter(id -> !id.equals(loser))
-                .findFirst()
-                .orElse(null);
-            endIceBattle(winner, "cayó al vacío");
+            eliminateIcePlayer(player, "cayó al vacío");
         }
     }
 
@@ -442,7 +445,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
                 iceActive
                 && iceFighters.contains(player.getUniqueId())
                 && isIceArenaFloor(block)
-                && (block.getType() == Material.SNOW_BLOCK || block.getType() == Material.PACKED_ICE)
+                && block.getType() == Material.SNOW_BLOCK
             ) {
                 event.setDropItems(false);
                 event.setExpToDrop(0);
@@ -1352,10 +1355,25 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         iceSpawn2 = new Location(iceWorld, 8.5, 81.0, 50.5, 90f, 0f);
         iceSpectatorSpot = new Location(iceWorld, 0.5, 91.0, 50.5, 180f, 30f);
 
-        if (!getConfig().getBoolean("ice.built", false)) {
+        iceEntryPortal = loadRegion("ice.entry-portal");
+        int iceVersion = getConfig().getInt("ice.version", 0);
+        if (!getConfig().getBoolean("ice.built", false) || iceVersion < 2) {
             buildIceStructures();
-            buildDefaultIceEntryPortal();
+
+            if (iceEntryPortal != null) {
+                int centerX = (iceEntryPortal.minX + iceEntryPortal.maxX) / 2;
+                int centerZ = (iceEntryPortal.minZ + iceEntryPortal.maxZ) / 2;
+                int baseY = iceEntryPortal.minY - 1;
+                World portalWorld = Bukkit.getWorld(iceEntryPortal.worldName);
+                if (portalWorld != null) {
+                    buildIcePortalFrame(portalWorld, centerX, baseY, centerZ, true);
+                }
+            } else {
+                buildDefaultIceEntryPortal();
+            }
+
             getConfig().set("ice.built", true);
+            getConfig().set("ice.version", 2);
             saveConfig();
         }
 
@@ -1373,8 +1391,8 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         for (int x = -15; x <= 15; x++) {
             for (int z = -10; z <= 15; z++) {
                 Material floor = ((x + z) & 1) == 0
-                    ? Material.PACKED_ICE
-                    : Material.BLUE_ICE;
+                    ? Material.SNOW_BLOCK
+                    : Material.WHITE_CONCRETE;
                 iceWorld.getBlockAt(x, 80, z).setType(floor, false);
 
                 for (int y = 81; y <= 90; y++) {
@@ -1404,22 +1422,22 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             }
         }
 
-        // Borde y paredes bajas.
+        // Borde y paredes bajas: decoración sin bloques de hielo.
         for (int x = -15; x <= 15; x++) {
-            iceWorld.getBlockAt(x, 80, 35).setType(Material.BLUE_ICE, false);
-            iceWorld.getBlockAt(x, 80, 65).setType(Material.BLUE_ICE, false);
+            iceWorld.getBlockAt(x, 80, 35).setType(Material.LIGHT_BLUE_CONCRETE, false);
+            iceWorld.getBlockAt(x, 80, 65).setType(Material.LIGHT_BLUE_CONCRETE, false);
             for (int y = 81; y <= 83; y++) {
-                iceWorld.getBlockAt(x, y, 35).setType(Material.PACKED_ICE, false);
-                iceWorld.getBlockAt(x, y, 65).setType(Material.PACKED_ICE, false);
+                iceWorld.getBlockAt(x, y, 35).setType(Material.GLASS, false);
+                iceWorld.getBlockAt(x, y, 65).setType(Material.GLASS, false);
             }
         }
 
         for (int z = 35; z <= 65; z++) {
-            iceWorld.getBlockAt(-15, 80, z).setType(Material.BLUE_ICE, false);
-            iceWorld.getBlockAt(15, 80, z).setType(Material.BLUE_ICE, false);
+            iceWorld.getBlockAt(-15, 80, z).setType(Material.LIGHT_BLUE_CONCRETE, false);
+            iceWorld.getBlockAt(15, 80, z).setType(Material.LIGHT_BLUE_CONCRETE, false);
             for (int y = 81; y <= 83; y++) {
-                iceWorld.getBlockAt(-15, y, z).setType(Material.PACKED_ICE, false);
-                iceWorld.getBlockAt(15, y, z).setType(Material.PACKED_ICE, false);
+                iceWorld.getBlockAt(-15, y, z).setType(Material.GLASS, false);
+                iceWorld.getBlockAt(15, y, z).setType(Material.GLASS, false);
             }
         }
 
@@ -1438,10 +1456,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
 
         for (int x = -14; x <= 14; x++) {
             for (int z = 36; z <= 64; z++) {
-                Material floor = ((x + z) % 7 == 0)
-                    ? Material.PACKED_ICE
-                    : Material.SNOW_BLOCK;
-                iceWorld.getBlockAt(x, 80, z).setType(floor, false);
+                iceWorld.getBlockAt(x, 80, z).setType(Material.SNOW_BLOCK, false);
             }
         }
     }
@@ -1492,8 +1507,8 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     }
 
     private void buildIcePortalFrame(World world, int centerX, int baseY, int centerZ, boolean alongX) {
-        Material frame = Material.BLUE_ICE;
-        Material accent = Material.PACKED_ICE;
+        Material frame = Material.SNOW_BLOCK;
+        Material accent = Material.WHITE_CONCRETE;
 
         if (alongX) {
             for (int dx = -2; dx <= 2; dx++) {
@@ -1591,80 +1606,138 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         if (iceFighters.contains(id)) return;
 
         if (iceQueue.contains(id)) {
-            player.sendActionBar(Component.text("Ya estás esperando rival…", NamedTextColor.AQUA));
+            player.sendActionBar(Component.text(
+                "Ya estás adentro · " + iceQueue.size() + "/" + MAX_ICE_PLAYERS,
+                NamedTextColor.AQUA
+            ));
+            return;
+        }
+
+        if (iceQueue.size() >= MAX_ICE_PLAYERS) {
+            msg(player, "La próxima batalla ya está llena (" + MAX_ICE_PLAYERS + ").", NamedTextColor.RED);
             return;
         }
 
         iceQueue.addLast(id);
         player.teleport(new Location(iceWorld, 0.5, 81.0, 5.5, 180f, 0f));
-        player.sendTitle("BATALLA DE HIELO", "Esperando rival…", 5, 35, 10);
-        msg(player, "Entraste a la cola de hielo.", NamedTextColor.AQUA);
+        player.sendTitle(
+            "BATALLA DE HIELO",
+            iceQueue.size() < 2 ? "Esperando más jugadores…" : "Se abre la partida para todos…",
+            5, 35, 10
+        );
+        msg(
+            player,
+            "Entraste · " + iceQueue.size() + "/" + MAX_ICE_PLAYERS
+                + " · con 2 o más arranca una ventana de 5 segundos para que entren todos.",
+            NamedTextColor.AQUA
+        );
+        announceIceQueue();
         tryStartIceBattle();
     }
 
-    private void tryStartIceBattle() {
-        if (!iceFighters.isEmpty()) return;
-
-        while (!iceQueue.isEmpty()) {
-            UUID first = iceQueue.peekFirst();
-            Player player = Bukkit.getPlayer(first);
-            if (player != null && player.isOnline()) break;
-            iceQueue.removeFirst();
+    private void announceIceQueue() {
+        if (iceWorld == null) return;
+        String text = "❄ Cola BATALLA DE HIELO: " + iceQueue.size() + "/" + MAX_ICE_PLAYERS;
+        for (Player player : iceWorld.getPlayers()) {
+            if (!iceFighters.contains(player.getUniqueId())) {
+                player.sendActionBar(Component.text(text, NamedTextColor.AQUA));
+            }
         }
+    }
+
+    private void tryStartIceBattle() {
+        if (!iceFighters.isEmpty() || iceStartTask != null) return;
+
+        iceQueue.removeIf(id -> {
+            Player player = Bukkit.getPlayer(id);
+            return player == null || !player.isOnline();
+        });
 
         if (iceQueue.size() < 2) return;
 
-        UUID firstId = iceQueue.removeFirst();
-        UUID secondId = iceQueue.removeFirst();
-        Player first = Bukkit.getPlayer(firstId);
-        Player second = Bukkit.getPlayer(secondId);
-
-        if (first == null || second == null) {
-            if (first != null) iceQueue.addFirst(firstId);
-            if (second != null) iceQueue.addFirst(secondId);
-            return;
+        for (UUID id : iceQueue) {
+            Player queued = Bukkit.getPlayer(id);
+            if (queued != null) {
+                queued.sendTitle("BATALLA DE HIELO", "Arranca en 5 segundos · todavía pueden entrar más", 5, 50, 5);
+            }
         }
 
-        startIceBattle(first, second);
+        iceStartTask = Bukkit.getScheduler().runTaskLater(this, () -> {
+            iceStartTask = null;
+            if (!iceFighters.isEmpty()) return;
+
+            List<Player> players = new ArrayList<>();
+            while (!iceQueue.isEmpty() && players.size() < MAX_ICE_PLAYERS) {
+                UUID id = iceQueue.removeFirst();
+                Player player = Bukkit.getPlayer(id);
+                if (player != null && player.isOnline()) {
+                    players.add(player);
+                }
+            }
+
+            if (players.size() < 2) {
+                for (Player player : players) {
+                    iceQueue.addLast(player.getUniqueId());
+                }
+                announceIceQueue();
+                return;
+            }
+
+            startIceBattle(players);
+        }, ICE_JOIN_WINDOW_TICKS);
     }
 
-    private void startIceBattle(Player first, Player second) {
+    private void startIceBattle(List<Player> players) {
         iceFighters.clear();
         iceStates.clear();
         iceActive = false;
         resetIceFloor();
 
-        iceFighters.add(first.getUniqueId());
-        iceFighters.add(second.getUniqueId());
+        for (Player player : players) {
+            iceFighters.add(player.getUniqueId());
+            iceStates.put(player.getUniqueId(), captureState(player));
+        }
 
-        iceStates.put(first.getUniqueId(), captureState(first));
-        iceStates.put(second.getUniqueId(), captureState(second));
+        double centerX = 0.5;
+        double centerZ = 50.5;
+        double radius = 10.0;
 
-        prepareIceFighter(first, iceSpawn1);
-        prepareIceFighter(second, iceSpawn2);
+        for (int i = 0; i < players.size(); i++) {
+            double angle = (Math.PI * 2.0 * i) / players.size();
+            double x = centerX + Math.cos(angle) * radius;
+            double z = centerZ + Math.sin(angle) * radius;
+            float yaw = (float) Math.toDegrees(Math.atan2(centerX - x, z - centerZ));
+            Location spawn = new Location(iceWorld, x, 81.0, z, yaw, 0f);
+            prepareIceFighter(players.get(i), spawn);
+        }
 
-        Bukkit.broadcast(
-            Component.text("❄ BATALLA DE HIELO · ", NamedTextColor.AQUA)
-                .append(Component.text(first.getName(), NamedTextColor.WHITE))
-                .append(Component.text(" VS ", NamedTextColor.GOLD))
-                .append(Component.text(second.getName(), NamedTextColor.WHITE))
-        );
+        Bukkit.broadcast(Component.text(
+            "❄ BATALLA DE HIELO · " + players.size() + " jugadores",
+            NamedTextColor.AQUA
+        ));
 
         for (int secondLeft = 3; secondLeft >= 1; secondLeft--) {
             int delay = (3 - secondLeft) * 20;
             int value = secondLeft;
             Bukkit.getScheduler().runTaskLater(this, () -> {
-                if (!iceFighters.contains(first.getUniqueId()) || !iceFighters.contains(second.getUniqueId())) return;
-                first.sendTitle(String.valueOf(value), "Prepará la pala", 0, 20, 0);
-                second.sendTitle(String.valueOf(value), "Prepará la pala", 0, 20, 0);
+                for (UUID id : new HashSet<>(iceFighters)) {
+                    Player player = Bukkit.getPlayer(id);
+                    if (player != null) {
+                        player.sendTitle(String.valueOf(value), "Prepará la pala", 0, 20, 0);
+                    }
+                }
             }, delay);
         }
 
         Bukkit.getScheduler().runTaskLater(this, () -> {
-            if (!iceFighters.contains(first.getUniqueId()) || !iceFighters.contains(second.getUniqueId())) return;
+            if (iceFighters.size() < 2) return;
             iceActive = true;
-            first.sendTitle("ROMPAN EL PISO", "El último arriba gana", 0, 25, 5);
-            second.sendTitle("ROMPAN EL PISO", "El último arriba gana", 0, 25, 5);
+            for (UUID id : new HashSet<>(iceFighters)) {
+                Player player = Bukkit.getPlayer(id);
+                if (player != null) {
+                    player.sendTitle("ROMPAN EL PISO", "El último arriba gana", 0, 25, 5);
+                }
+            }
         }, 60L);
     }
 
@@ -1674,7 +1747,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         ItemStack shovel = new ItemStack(Material.DIAMOND_SHOVEL);
         ItemMeta meta = shovel.getItemMeta();
         meta.displayName(Component.text("❄ Rompepiso NINOTIMI", NamedTextColor.AQUA));
-        meta.lore(List.of(Component.text("Rompé nieve/hielo bajo tu rival", NamedTextColor.GRAY)));
+        meta.lore(List.of(Component.text("Rompé la nieve bajo tus rivales", NamedTextColor.GRAY)));
         meta.setUnbreakable(true);
         meta.addItemFlags(ItemFlag.HIDE_UNBREAKABLE);
         shovel.setItemMeta(meta);
@@ -1710,6 +1783,26 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             player.setAllowFlight(false);
             player.setFlying(false);
             player.teleport(iceLobby);
+        }
+    }
+
+    private void eliminateIcePlayer(Player player, String reason) {
+        UUID id = player.getUniqueId();
+        if (!iceFighters.remove(id)) return;
+
+        restoreIceState(player);
+        player.sendTitle("CAÍSTE", reason, 5, 35, 10);
+
+        Bukkit.broadcast(Component.text(
+            "❄ " + player.getName() + " quedó afuera · quedan " + iceFighters.size(),
+            NamedTextColor.AQUA
+        ));
+
+        if (iceFighters.size() == 1) {
+            UUID winner = iceFighters.iterator().next();
+            endIceBattle(winner, "último en pie");
+        } else if (iceFighters.isEmpty()) {
+            endIceBattle(null, "sin jugadores");
         }
     }
 
@@ -1803,7 +1896,8 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
                 player,
                 "Hielo: " + (iceActive ? "batalla activa" : "esperando")
                     + " · cola " + iceQueue.size()
-                    + " · jugadores " + iceFighters.size(),
+                    + " · jugando " + iceFighters.size()
+                    + " · máximo " + MAX_ICE_PLAYERS,
                 NamedTextColor.AQUA
             );
             case "portalhere" -> {
