@@ -15,6 +15,8 @@ on:
       - "lib/**"
       - "public/**"
       - "scripts/**"
+      - "worker/video-render/**"
+      - "cloudbuild-video-render.yaml"
       - "Dockerfile"
       - ".dockerignore"
       - "cloudbuild-web.yaml"
@@ -97,6 +99,25 @@ jobs:
           service_account: ${{ secrets.GCP_DEPLOY_SA_EMAIL }}
 
       - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy Cloud Video worker when changed
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          deploy_worker=1
+          if [[ "${GITHUB_EVENT_NAME}" == "push" && -n "${BEFORE_SHA:-}" && ! "${BEFORE_SHA}" =~ ^0+$ ]]; then
+            if git diff --quiet "${BEFORE_SHA}" HEAD -- worker/video-render cloudbuild-video-render.yaml scripts/setup-video-engine-infra.sh; then
+              deploy_worker=0
+            fi
+          fi
+          if [[ "${deploy_worker}" == "1" ]]; then
+            echo "Video worker changed; deploying canonical Cloud Run Job image."
+            CLOUVA_VIDEO_RENDER_TAG="${GITHUB_SHA}" bash scripts/setup-video-engine-infra.sh
+          else
+            echo "Video worker unchanged."
+          fi
 
       - name: Ensure Asset Import Cloud Tasks queue
         shell: bash
