@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getFacebookConfig } from "@/core/integrations/facebook/config";
+import { decryptFacebookSecret } from "@/core/integrations/facebook/crypto";
 import { enqueueFacebookPublisherBatch } from "@/lib/server/cloud-tasks";
 import {
   failPublicationJob,
@@ -111,15 +113,134 @@ export async function POST(request: NextRequest) {
         "Facebook Groups no ofrece publicación oficial por API. CLOUVA dejó el contenido listo y abre el grupo exacto para que confirmes la publicación.",
       );
     } else {
-      await markPublicationJobWaiting(
-        admin,
-        claimedJob,
-        "La publicación automática en Facebook Pages requiere una conexión Meta con permisos de Page válida. Hasta entonces este job queda asistido y no se marca como publicado.",
-      );
+      const credential = await admin
+        .from("facebook_page_credentials")
+        .select("page_id,access_token_ciphertext,access_token_iv,access_token_auth_tag")
+        .eq("destination_id", String(claimedJob.destination_id))
+        .eq("user_id", String(claimedJob.user_id))
+        .maybeSingle();
+      if (credential.error) throw new Error(credential.error.message);
+
+      if (!credential.data) {
+        await markPublicationJobWaiting(
+          admin,
+          claimedJob,
+          "La publicación automática en Facebook Pages requiere una conexión Meta con permisos de Page válida. Hasta entonces este job queda asistido y no se marca como publicado.",
+        );
+      } else {
+        const payload = claimedJob.payload && typeof claimedJob.payload === "object"
+          ? claimedJob.payload as Record<string, unknown>
+          : {};
+        const title = typeof payload.title === "string" ? payload.title.trim() : "";
+        const description = typeof payload.description === "string" ? payload.description.trim() : "";
+        const price = typeof payload.price === "number" ? payload.price : Number(payload.price);
+        const currency = typeof payload.currency === "string" ? payload.currency : "";
+        const images = Array.isArray(payload.images)
+          ? payload.images.filter((value): value is string => typeof value === "string" && /^https?:\/\//i.test(value))
+          : [];
+        const message = [
+          title,
+          description,
+          Number.isFinite(price) ? `${currency || "ARS"} ${price}` : "",
+        ].filter(Boolean).join("\n\n");
+        const token = decryptFacebookSecret({
+          ciphertext: credential.data.access_token_ciphertext,
+          iv: credential.data.access_token_iv,
+          authTag: credential.data.access_token_auth_tag,
+        });
+        const config = getFacebookConfig();
+        const endpoint = images[0]
+          ? `https://graph.facebook.com/${config.graphVersion}/${credential.data.page_id}/photos`
+          : `https://graph.facebook.com/${config.graphVersion}/${credential.data.page_id}/feed`;
+        const form = new URLSearchParams();
+        form.set("access_token", token);
+        if (images[0]) {
+          form.set("url", images[0]);
+          form.set("caption", message);
+          form.set("published", "true");
+        } else {
+          form.set("message", message);
+        }
+
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: form,
+          cache: "no-store",
+          signal: AbortSignal.timeout(30_000),
+        });
+        const meta = await response.json().catch(() => ({})) as {
+          id?: string;
+          post_id?: string;
+          error?: { message?: string; code?: number; error_subcode?: number };
+        };
+
+        if (!response.ok || (!meta.id && !meta.post_id)) {
+          const metaMessage = meta.error?.message || `Meta respondió HTTP ${response.status}.`;
+          await markPublicationJobWaiting(
+            admin,
+            claimedJob,
+            `Facebook Page requiere tu intervención: ${metaMessage}`,
+          );
+        } else {
+          const externalId = meta.post_id || meta.id || null;
+          const now = new Date().toISOString();
+          const publishedUrl = externalId ? `https://www.facebook.com/${externalId}` : null;
+          const published = await admin
+            .from("publication_jobs")
+            .update({
+              status: "published",
+              external_id: externalId,
+              published_url: publishedUrl,
+              completed_at: now,
+              error_code: null,
+              error_message: null,
+              updated_at: now,
+            })
+            .eq("id", String(claimedJob.id));
+          if (published.error) throw new Error(published.error.message);
+
+          await admin
+            .from("facebook_destinations")
+            .update({ last_published_at: now, updated_at: now })
+            .eq("id", String(claimedJob.destination_id))
+            .eq("user_id", String(claimedJob.user_id));
+
+          await admin
+            .from("commerce_product_publications")
+            .update({
+              status: "published",
+              external_id: externalId,
+              external_url: publishedUrl,
+              published_at: now,
+              last_sync_at: now,
+              error: null,
+              updated_at: now,
+            })
+            .eq("product_id", String(claimedJob.product_id))
+            .eq("channel", "facebook_page")
+            .eq("destination_key", String(claimedJob.destination_id))
+            .eq("placement", "merch");
+
+          await admin.from("publication_audit_log").insert({
+            spot_id: String(claimedJob.spot_id),
+            user_id: String(claimedJob.user_id),
+            batch_id: String(claimedJob.batch_id),
+            job_id: String(claimedJob.id),
+            action: "page_published_via_meta_api",
+            details: { external_id: externalId, published_url: publishedUrl },
+          });
+
+          await refreshPublicationBatchSummary(admin, batchId);
+        }
+      }
     }
 
     await enqueueFacebookPublisherBatch(batchId);
-    return NextResponse.json({ ok: true, jobId: claimedJob.id, status: "waiting_confirmation" });
+    const finalStatus = channel === "facebook_page"
+      ? ((await admin.from("publication_jobs").select("status").eq("id", String(claimedJob.id)).single()).data?.status || "unknown")
+      : "waiting_confirmation";
+    return NextResponse.json({ ok: true, jobId: claimedJob.id, status: finalStatus });
   } catch (error) {
     if (claimedJob?.id) {
       try {
