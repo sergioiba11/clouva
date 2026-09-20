@@ -1170,8 +1170,21 @@ discord.on("interactionCreate", async (interaction) => {
       }
 
       await interaction.deferReply({ ephemeral: true });
-      await speak(state, "Quesito está vivo. Ahora sí los escucho, manga de ratas.");
-      await interaction.editReply("🧀 Prueba de voz enviada al canal.");
+      state.muted = false;
+
+      if (state.mode === "live" && state.liveSession) {
+        state.lastInputHadWake = true;
+        state.liveSession.sendClientContent({
+          turns: "Decí en voz alta y corto: Quesito está vivo, ahora sí los escucho, manga de ratas.",
+          turnComplete: true,
+        });
+      } else {
+        await speak(state, "Quesito está vivo. Ahora sí los escucho, manga de ratas.");
+      }
+
+      await interaction.editReply(
+        "🧀 Prueba de voz enviada (" + state.mode + ").",
+      );
       return;
     }
 
@@ -1206,6 +1219,8 @@ discord.on("interactionCreate", async (interaction) => {
             : "conectado y escuchando “Quesito”"
           : "fuera del canal") +
         (state ? (state.ambientEnabled ? " · opiniones espontáneas ON" : " · opiniones espontáneas OFF") : "") +
+        (state ? " · motor " + state.mode : "") +
+        (state?.liveError ? " · Live fallback activo" : "") +
         ".\n🎮 " +
         minecraft,
       ephemeral: true,
