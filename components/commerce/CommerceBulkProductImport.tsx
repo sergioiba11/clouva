@@ -9,7 +9,14 @@ type BatchGroup = {
   name: string;
   brand: string;
   model: string;
+  packageKind: "box" | "retail_package" | "loose_product" | "unknown";
   identifier: { value: string; type: string } | null;
+  visibleIdentifiers: Array<{
+    value: string;
+    type: string;
+    source: "box" | "product" | "unknown";
+    confidence: number;
+  }>;
   confidence: number;
   needsReview: boolean;
   images: Array<{ sourceIndex: number; role: "Frente" | "Atrás" | "Detalle" }>;
@@ -34,7 +41,9 @@ type ProcessResponse = {
     ok: boolean;
     listingId?: string;
     name?: string;
+    packageKind?: BatchGroup["packageKind"];
     identifier?: { value: string; type: string };
+    visibleIdentifiers?: BatchGroup["visibleIdentifiers"];
     error?: string;
   }>;
 };
@@ -256,7 +265,7 @@ export function CommerceBulkProductImport({
           </div>
           <h2 className="mt-2 text-lg font-semibold">Fotos → productos separados</h2>
           <p className="mt-1 max-w-2xl text-xs leading-5 text-white/45">
-            Seleccioná fotos de varios productos juntas. Google Cloud agrupa las vistas del mismo artículo y CLOUVA crea un borrador independiente por producto.
+            Seleccioná fotos de productos, cajas y packaging juntas. Google Cloud separa cada unidad, lee sus códigos y CLOUVA crea un borrador independiente por producto o caja.
           </p>
         </div>
         {files.length && !busy ? (
@@ -344,8 +353,16 @@ export function CommerceBulkProductImport({
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <strong className="block truncate text-sm">{result?.name || group.name || "Producto detectado"}</strong>
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                        <span className="rounded-md border border-white/10 bg-white/[0.03] px-1.5 py-0.5 text-[9px] text-white/50">
+                          {group.packageKind === "box" ? "Caja" : group.packageKind === "retail_package" ? "Packaging" : group.packageKind === "loose_product" ? "Producto suelto" : "Tipo sin confirmar"}
+                        </span>
+                        <span className={`rounded-md border px-1.5 py-0.5 text-[9px] ${group.identifier ? "border-emerald-300/20 bg-emerald-300/[0.05] text-emerald-200" : "border-amber-300/20 bg-amber-300/[0.05] text-amber-200"}`}>
+                          {group.identifier ? `${group.identifier.type.toUpperCase()} · ${group.identifier.value}` : "Sin código · SKU CLOUVA"}
+                        </span>
+                      </div>
                       <p className="mt-1 truncate text-[10px] text-white/38">
-                        {[group.brand, group.model, group.identifier?.value].filter(Boolean).join(" · ") || `${group.images.length} fotos`}
+                        {[group.brand, group.model].filter(Boolean).join(" · ") || `${group.images.length} fotos`}
                       </p>
                     </div>
                     {result?.ok ? (
@@ -361,6 +378,11 @@ export function CommerceBulkProductImport({
                   <p className="mt-2 text-[10px] text-white/35">
                     {group.images.map((image) => `#${image.sourceIndex + 1} ${image.role}`).join(" · ")}
                   </p>
+                  {group.visibleIdentifiers.length > 1 ? (
+                    <p className="mt-1 text-[10px] leading-4 text-white/35">
+                      Códigos leídos: {group.visibleIdentifiers.map((code) => `${code.type.toUpperCase()} ${code.value}`).join(" · ")}
+                    </p>
+                  ) : null}
                   {result?.error ? <p className="mt-2 text-[10px] leading-4 text-rose-200">{result.error}</p> : null}
                 </div>
               );
