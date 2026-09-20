@@ -11,7 +11,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 function authorized(request: NextRequest) {
-  const expected = process.env.CLOUVA_FACEBOOK_PUBLISHER_TASK_SECRET?.trim();
+  const expected = (process.env.CLOUVA_FACEBOOK_PUBLISHER_TASK_SECRET || process.env.CLOUVA_ASSET_IMPORT_WORKER_SECRET)?.trim();
   const received = request.headers.get("x-clouva-facebook-publisher-secret")?.trim();
   return Boolean(expected && received && expected === received);
 }
