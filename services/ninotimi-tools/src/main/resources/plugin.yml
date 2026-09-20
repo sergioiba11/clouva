@@ -28,6 +28,10 @@ commands:
     description: Abre y controla NINOTIMI PARKOUR
     aliases: [pk, park]
     usage: /parkour [menu|1|2|3|restart|leave|rebuild]
+  survival:
+    description: Abre NINOTIMI SURVIVAL
+    aliases: [survi, sv]
+    usage: /survival [join|leave|status|portalhere]
 permissions:
   ninotimi.tools:
     description: Puede usar NINOTIMI TOOLS
