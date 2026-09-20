@@ -454,6 +454,28 @@ export async function POST(
           .in("id", itemIds);
         if (itemUpdateError) throw new Error(itemUpdateError.message);
 
+        const { data: invoiceMatches, error: invoiceMatchError } = await admin
+          .from("commerce_product_import_invoice_items")
+          .select("id,matched_listing_ids")
+          .eq("batch_id", batch.id)
+          .eq("spot_id", spot.id)
+          .contains("matched_group_keys", [group.groupKey]);
+        if (invoiceMatchError) throw new Error(invoiceMatchError.message);
+        for (const invoiceMatch of invoiceMatches ?? []) {
+          const currentListings = Array.isArray(invoiceMatch.matched_listing_ids)
+            ? invoiceMatch.matched_listing_ids.filter((value): value is string => typeof value === "string")
+            : [];
+          if (currentListings.includes(listingId)) continue;
+          const { error: linkError } = await admin
+            .from("commerce_product_import_invoice_items")
+            .update({
+              matched_listing_ids: [...currentListings, listingId],
+              updated_at: analyzedAt,
+            })
+            .eq("id", invoiceMatch.id);
+          if (linkError) throw new Error(linkError.message);
+        }
+
         for (const item of groupItems) {
           item.status = "created";
           item.listing_id = listingId;
