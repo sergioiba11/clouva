@@ -1,0 +1,1497 @@
+package ar.com.clouva.ninotimi;
+
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.NamedTextColor;
+import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
+import org.bukkit.Bukkit;
+import org.bukkit.GameMode;
+import org.bukkit.GameRule;
+import org.bukkit.Location;
+import org.bukkit.Material;
+import org.bukkit.NamespacedKey;
+import org.bukkit.Particle;
+import org.bukkit.World;
+import org.bukkit.WorldCreator;
+import org.bukkit.WorldType;
+import org.bukkit.block.Block;
+import org.bukkit.block.data.BlockData;
+import org.bukkit.command.Command;
+import org.bukkit.command.CommandExecutor;
+import org.bukkit.command.CommandSender;
+import org.bukkit.command.TabCompleter;
+import org.bukkit.configuration.file.FileConfiguration;
+import org.bukkit.entity.Entity;
+import org.bukkit.entity.Player;
+import org.bukkit.entity.Projectile;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
+import org.bukkit.event.Listener;
+import org.bukkit.event.block.Action;
+import org.bukkit.event.block.BlockBreakEvent;
+import org.bukkit.event.block.BlockPlaceEvent;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
+import org.bukkit.event.entity.EntityDamageEvent;
+import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerMoveEvent;
+import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.ItemFlag;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.persistence.PersistentDataType;
+import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.scheduler.BukkitTask;
+
+import java.text.Normalizer;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Deque;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+
+public final class NinotimiTools extends JavaPlugin implements Listener, CommandExecutor, TabCompleter {
+    private static final String MAIN_TITLE = "NINOTIMI TOOLS";
+    private static final String BLOCKS_TITLE = "BLOQUES — NINOTIMI";
+    private static final String PVP_WORLD_NAME = "pvp_ninotimi";
+
+    private NamespacedKey toolsKey;
+    private NamespacedKey wandKey;
+
+    private final Set<String> builderNames = new HashSet<>();
+    private final Map<UUID, Selection> selections = new HashMap<>();
+    private final Map<UUID, List<BlockSnapshot>> undo = new HashMap<>();
+    private final Map<UUID, ClipboardData> clipboards = new HashMap<>();
+
+    private final Deque<UUID> pvpQueue = new ArrayDeque<>();
+    private final Set<UUID> fighters = new HashSet<>();
+    private final Map<UUID, PlayerState> duelStates = new HashMap<>();
+    private final Map<UUID, PortalState> portalStates = new HashMap<>();
+
+    private World pvpWorld;
+    private Region entryPortal;
+    private Region exitPortal;
+    private Region queuePad;
+    private Location pvpLobby;
+    private Location arenaSpawn1;
+    private Location arenaSpawn2;
+    private Location spectatorSpot;
+
+    private boolean duelActive;
+    private int maxEditBlocks;
+    private BukkitTask particleTask;
+
+    @Override
+    public void onEnable() {
+        saveDefaultConfig();
+        toolsKey = new NamespacedKey(this, "tools-menu");
+        wandKey = new NamespacedKey(this, "builder-wand");
+
+        loadBuilders();
+        setupPvp();
+
+        getServer().getPluginManager().registerEvents(this, this);
+
+        if (getCommand("nrtools") != null) {
+            getCommand("nrtools").setExecutor(this);
+            getCommand("nrtools").setTabCompleter(this);
+        }
+        if (getCommand("pvp") != null) {
+            getCommand("pvp").setExecutor(this);
+            getCommand("pvp").setTabCompleter(this);
+        }
+
+        startPortalParticles();
+        getLogger().info("NINOTIMI TOOLS activo.");
+    }
+
+    @Override
+    public void onDisable() {
+        if (particleTask != null) {
+            particleTask.cancel();
+        }
+
+        for (UUID id : new HashSet<>(fighters)) {
+            Player player = Bukkit.getPlayer(id);
+            if (player != null) {
+                restoreDuelState(player);
+            }
+        }
+        fighters.clear();
+        duelStates.clear();
+        pvpQueue.clear();
+    }
+
+    private void loadBuilders() {
+        FileConfiguration config = getConfig();
+        maxEditBlocks = Math.max(1000, config.getInt("max-edit-blocks", 50000));
+        builderNames.clear();
+
+        for (String name : config.getStringList("builder-names")) {
+            String normalized = normalizeName(name);
+            if (!normalized.isBlank()) {
+                builderNames.add(normalized);
+            }
+        }
+
+        builderNames.add("ninotimi");
+        saveBuilders();
+    }
+
+    private void saveBuilders() {
+        getConfig().set("builder-names", builderNames.stream().sorted().toList());
+        saveConfig();
+    }
+
+    private String normalizeName(String raw) {
+        if (raw == null) return "";
+        String ascii = Normalizer.normalize(raw, Normalizer.Form.NFD)
+            .replaceAll("\\p{M}", "");
+        return ascii.toLowerCase(Locale.ROOT)
+            .replaceAll("[^a-z0-9_]", "");
+    }
+
+    private boolean canBuild(Player player) {
+        return player.isOp()
+            || player.hasPermission("ninotimi.tools")
+            || builderNames.contains(normalizeName(player.getName()));
+    }
+
+    @EventHandler
+    public void onJoin(PlayerJoinEvent event) {
+        Player player = event.getPlayer();
+
+        if (canBuild(player) && getConfig().getBoolean("give-tools-on-join", true)) {
+            Bukkit.getScheduler().runTaskLater(this, () -> {
+                if (player.isOnline()) {
+                    giveToolsCompass(player);
+                }
+            }, 20L);
+        }
+
+        if (player.getWorld().getName().equals(PVP_WORLD_NAME) && !fighters.contains(player.getUniqueId())) {
+            Bukkit.getScheduler().runTaskLater(this, () -> {
+                if (player.isOnline()) {
+                    enterPvpLobby(player, false);
+                }
+            }, 20L);
+        }
+    }
+
+    @EventHandler
+    public void onQuit(PlayerQuitEvent event) {
+        Player player = event.getPlayer();
+        UUID id = player.getUniqueId();
+        pvpQueue.remove(id);
+
+        if (fighters.contains(id)) {
+            UUID winner = fighters.stream()
+                .filter(other -> !other.equals(id))
+                .findFirst()
+                .orElse(null);
+            endDuel(winner, "abandono");
+        }
+
+        portalStates.remove(id);
+    }
+
+    @EventHandler
+    public void onInteract(PlayerInteractEvent event) {
+        Player player = event.getPlayer();
+        ItemStack item = event.getItem();
+        if (item == null || item.getType().isAir()) {
+            return;
+        }
+
+        ItemMeta meta = item.getItemMeta();
+        if (meta == null) {
+            return;
+        }
+
+        if (meta.getPersistentDataContainer().has(toolsKey, PersistentDataType.BYTE)) {
+            if (!canBuild(player)) return;
+            event.setCancelled(true);
+
+            if (fighters.contains(player.getUniqueId())) {
+                msg(player, "Las herramientas de builder están bloqueadas durante el duelo.", NamedTextColor.RED);
+                return;
+            }
+
+            openMainMenu(player);
+            return;
+        }
+
+        if (!meta.getPersistentDataContainer().has(wandKey, PersistentDataType.BYTE)) {
+            return;
+        }
+
+        if (!canBuild(player) || event.getClickedBlock() == null) {
+            return;
+        }
+
+        Action action = event.getAction();
+        if (action != Action.LEFT_CLICK_BLOCK && action != Action.RIGHT_CLICK_BLOCK) {
+            return;
+        }
+
+        event.setCancelled(true);
+        Block block = event.getClickedBlock();
+        Selection selection = selections.computeIfAbsent(player.getUniqueId(), ignored -> new Selection());
+
+        if (action == Action.LEFT_CLICK_BLOCK) {
+            selection.pos1 = block.getLocation();
+            msg(player, "Posición 1: " + coords(selection.pos1), NamedTextColor.AQUA);
+        } else {
+            selection.pos2 = block.getLocation();
+            msg(player, "Posición 2: " + coords(selection.pos2), NamedTextColor.LIGHT_PURPLE);
+        }
+    }
+
+    @EventHandler
+    public void onInventoryClick(InventoryClickEvent event) {
+        if (!(event.getWhoClicked() instanceof Player player)) {
+            return;
+        }
+
+        String title = PlainTextComponentSerializer.plainText().serialize(event.getView().title());
+
+        if (MAIN_TITLE.equals(title)) {
+            event.setCancelled(true);
+            if (!canBuild(player) || event.getRawSlot() < 0) {
+                return;
+            }
+            handleMainClick(player, event.getRawSlot());
+            return;
+        }
+
+        if (BLOCKS_TITLE.equals(title)) {
+            event.setCancelled(true);
+            if (!canBuild(player) || event.getRawSlot() < 0) {
+                return;
+            }
+
+            ItemStack clicked = event.getCurrentItem();
+            if (clicked == null || clicked.getType().isAir()) {
+                return;
+            }
+
+            Material material = clicked.getType() == Material.BARRIER
+                ? Material.AIR
+                : clicked.getType();
+
+            player.closeInventory();
+            fillSelection(player, material);
+        }
+    }
+
+    @EventHandler
+    public void onMove(PlayerMoveEvent event) {
+        if (event.getTo() == null) return;
+        if (sameBlock(event.getFrom(), event.getTo())) return;
+
+        Player player = event.getPlayer();
+        Location to = event.getTo();
+
+        if (entryPortal != null && entryPortal.contains(to)) {
+            enterPvpLobby(player, true);
+            return;
+        }
+
+        if (exitPortal != null && exitPortal.contains(to)) {
+            exitPvp(player);
+            return;
+        }
+
+        if (queuePad != null && queuePad.contains(to)) {
+            joinQueue(player);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST)
+    public void onPvpDamage(EntityDamageEvent event) {
+        if (!(event.getEntity() instanceof Player victim)) return;
+        if (!victim.getWorld().getName().equals(PVP_WORLD_NAME)) return;
+
+        UUID victimId = victim.getUniqueId();
+
+        if (!duelActive || !fighters.contains(victimId)) {
+            event.setCancelled(true);
+            return;
+        }
+
+        if (event instanceof EntityDamageByEntityEvent byEntity) {
+            Player attacker = attackingPlayer(byEntity.getDamager());
+            if (attacker == null || !fighters.contains(attacker.getUniqueId())) {
+                event.setCancelled(true);
+                return;
+            }
+        }
+
+        double remaining = victim.getHealth() - event.getFinalDamage();
+        if (remaining <= 0.0) {
+            event.setCancelled(true);
+            UUID winner = fighters.stream()
+                .filter(id -> !id.equals(victimId))
+                .findFirst()
+                .orElse(null);
+            endDuel(winner, "KO");
+        }
+    }
+
+    @EventHandler
+    public void onBlockBreak(BlockBreakEvent event) {
+        if (!event.getBlock().getWorld().getName().equals(PVP_WORLD_NAME)) return;
+        if (!canBuild(event.getPlayer()) || !fighters.isEmpty()) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler
+    public void onBlockPlace(BlockPlaceEvent event) {
+        if (!event.getBlock().getWorld().getName().equals(PVP_WORLD_NAME)) return;
+        if (!canBuild(event.getPlayer()) || !fighters.isEmpty()) {
+            event.setCancelled(true);
+        }
+    }
+
+    private Player attackingPlayer(Entity entity) {
+        if (entity instanceof Player player) {
+            return player;
+        }
+        if (entity instanceof Projectile projectile && projectile.getShooter() instanceof Player player) {
+            return player;
+        }
+        return null;
+    }
+
+    private boolean sameBlock(Location a, Location b) {
+        return a.getWorld() == b.getWorld()
+            && a.getBlockX() == b.getBlockX()
+            && a.getBlockY() == b.getBlockY()
+            && a.getBlockZ() == b.getBlockZ();
+    }
+
+    private void handleMainClick(Player player, int slot) {
+        switch (slot) {
+            case 9 -> setMode(player, GameMode.CREATIVE);
+            case 10 -> setMode(player, GameMode.SURVIVAL);
+            case 11 -> setMode(player, GameMode.SPECTATOR);
+            case 12 -> toggleFly(player);
+            case 13 -> heal(player);
+            case 14 -> {
+                player.getWorld().setTime(1000);
+                msg(player, "Ahora es de día.", NamedTextColor.YELLOW);
+            }
+            case 15 -> {
+                player.getWorld().setTime(13000);
+                msg(player, "Ahora es de noche.", NamedTextColor.BLUE);
+            }
+            case 16 -> {
+                player.getWorld().setStorm(false);
+                player.getWorld().setThundering(false);
+                player.getWorld().setClearWeatherDuration(20 * 60 * 30);
+                msg(player, "Clima despejado.", NamedTextColor.AQUA);
+            }
+            case 18 -> copySelection(player);
+            case 19 -> pasteClipboard(player);
+            case 20 -> giveBuilderWand(player);
+            case 21 -> openBlocksMenu(player);
+            case 22 -> undo(player);
+            case 23 -> {
+                player.teleport(player.getWorld().getSpawnLocation());
+                msg(player, "Teletransportado al spawn.", NamedTextColor.GREEN);
+            }
+            case 24 -> {
+                player.getInventory().addItem(new ItemStack(Material.ENDER_PEARL, 16));
+                msg(player, "16 ender pearls.", NamedTextColor.LIGHT_PURPLE);
+            }
+            case 25 -> {
+                player.closeInventory();
+                enterPvpLobby(player, true);
+            }
+            case 26 -> player.closeInventory();
+            default -> {
+            }
+        }
+    }
+
+    private void openMainMenu(Player player) {
+        Inventory inv = Bukkit.createInventory(null, 27, Component.text(MAIN_TITLE));
+
+        inv.setItem(9, menuItem(Material.GRASS_BLOCK, "Creativo", "Construcción libre"));
+        inv.setItem(10, menuItem(Material.IRON_SWORD, "Supervivencia", "Volver a survival"));
+        inv.setItem(11, menuItem(Material.ENDER_EYE, "Espectador", "Mirar sin tocar"));
+        inv.setItem(12, menuItem(Material.ELYTRA, player.getAllowFlight() ? "Fly: ON" : "Fly: OFF", "Activar o apagar vuelo"));
+        inv.setItem(13, menuItem(Material.GOLDEN_APPLE, "Curar", "Vida y comida al máximo"));
+        inv.setItem(14, menuItem(Material.SUNFLOWER, "Día", "Poner de día"));
+        inv.setItem(15, menuItem(Material.CLOCK, "Noche", "Poner de noche"));
+        inv.setItem(16, menuItem(Material.WATER_BUCKET, "Clima limpio", "Sacar lluvia y tormenta"));
+
+        inv.setItem(18, menuItem(Material.WRITABLE_BOOK, "Copiar selección", "Usá el Builder Wand primero"));
+        inv.setItem(19, menuItem(Material.CHEST, "Pegar", "Pega lo último copiado en tus pies"));
+        inv.setItem(20, menuItem(Material.WOODEN_AXE, "Builder Wand", "Izq: pos1 · Der: pos2"));
+        inv.setItem(21, menuItem(Material.BRICKS, "Rellenar selección", "Elegí un bloque"));
+        inv.setItem(22, menuItem(Material.RECOVERY_COMPASS, "Deshacer", "Revierte la última edición"));
+        inv.setItem(23, menuItem(Material.COMPASS, "Spawn", "Ir al spawn"));
+        inv.setItem(24, menuItem(Material.ENDER_PEARL, "Movilidad", "Recibir 16 ender pearls"));
+        inv.setItem(25, menuItem(Material.NETHERITE_SWORD, "NINOTIMI PVP", "Ir al lobby PVP"));
+        inv.setItem(26, menuItem(Material.BARRIER, "Cerrar", "Cerrar herramientas"));
+
+        player.openInventory(inv);
+    }
+
+    private void openBlocksMenu(Player player) {
+        Inventory inv = Bukkit.createInventory(null, 27, Component.text(BLOCKS_TITLE));
+
+        Material[] materials = {
+            Material.STONE,
+            Material.STONE_BRICKS,
+            Material.COBBLESTONE,
+            Material.OAK_PLANKS,
+            Material.SPRUCE_PLANKS,
+            Material.DARK_OAK_PLANKS,
+            Material.WHITE_CONCRETE,
+            Material.GRAY_CONCRETE,
+            Material.BLACK_CONCRETE,
+            Material.GLASS,
+            Material.SNOW_BLOCK,
+            Material.QUARTZ_BLOCK,
+            Material.DEEPSLATE_TILES,
+            Material.POLISHED_DEEPSLATE,
+            Material.SEA_LANTERN,
+            Material.GLOWSTONE,
+            Material.IRON_BLOCK,
+            Material.GOLD_BLOCK
+        };
+
+        for (int i = 0; i < materials.length; i++) {
+            inv.setItem(i, menuItem(materials[i], pretty(materials[i]), "Rellenar selección"));
+        }
+
+        inv.setItem(26, menuItem(Material.BARRIER, "AIRE / BORRAR", "Vaciar la selección"));
+        player.openInventory(inv);
+    }
+
+    private ItemStack menuItem(Material material, String name, String lore) {
+        ItemStack item = new ItemStack(material);
+        ItemMeta meta = item.getItemMeta();
+        meta.displayName(Component.text(name, NamedTextColor.GOLD));
+        meta.lore(List.of(Component.text(lore, NamedTextColor.GRAY)));
+        meta.addItemFlags(ItemFlag.HIDE_ATTRIBUTES);
+        item.setItemMeta(meta);
+        return item;
+    }
+
+    private void giveToolsCompass(Player player) {
+        for (ItemStack stack : player.getInventory().getContents()) {
+            if (isTagged(stack, toolsKey)) {
+                return;
+            }
+        }
+
+        ItemStack compass = new ItemStack(Material.COMPASS);
+        ItemMeta meta = compass.getItemMeta();
+        meta.displayName(Component.text("🧀 NINOTIMI TOOLS", NamedTextColor.GOLD));
+        meta.lore(List.of(
+            Component.text("Click derecho para abrir", NamedTextColor.GRAY),
+            Component.text("/tools funciona aunque pierdas la brújula", NamedTextColor.DARK_GRAY)
+        ));
+        meta.getPersistentDataContainer().set(toolsKey, PersistentDataType.BYTE, (byte) 1);
+        compass.setItemMeta(meta);
+
+        player.getInventory().addItem(compass);
+        msg(player, "Tenés NINOTIMI TOOLS. Si perdés la brújula: /tools.", NamedTextColor.GOLD);
+    }
+
+    private void giveBuilderWand(Player player) {
+        ItemStack wand = new ItemStack(Material.WOODEN_AXE);
+        ItemMeta meta = wand.getItemMeta();
+        meta.displayName(Component.text("NINOTIMI Builder Wand", NamedTextColor.AQUA));
+        meta.lore(List.of(
+            Component.text("Click izquierdo = posición 1", NamedTextColor.GRAY),
+            Component.text("Click derecho = posición 2", NamedTextColor.GRAY)
+        ));
+        meta.getPersistentDataContainer().set(wandKey, PersistentDataType.BYTE, (byte) 1);
+        wand.setItemMeta(meta);
+
+        player.getInventory().addItem(wand);
+        msg(player, "Builder Wand entregado.", NamedTextColor.AQUA);
+    }
+
+    private boolean isTagged(ItemStack stack, NamespacedKey key) {
+        if (stack == null || stack.getType().isAir()) {
+            return false;
+        }
+        ItemMeta meta = stack.getItemMeta();
+        return meta != null && meta.getPersistentDataContainer().has(key, PersistentDataType.BYTE);
+    }
+
+    private void setMode(Player player, GameMode mode) {
+        if (fighters.contains(player.getUniqueId())) {
+            msg(player, "No podés cambiar de modo durante un duelo.", NamedTextColor.RED);
+            return;
+        }
+
+        player.setGameMode(mode);
+        if (mode == GameMode.CREATIVE || mode == GameMode.SPECTATOR) {
+            player.setAllowFlight(true);
+        }
+        msg(player, "Modo: " + mode.name().toLowerCase(Locale.ROOT), NamedTextColor.GREEN);
+        player.closeInventory();
+    }
+
+    private void toggleFly(Player player) {
+        if (fighters.contains(player.getUniqueId())) {
+            msg(player, "Fly bloqueado durante el duelo.", NamedTextColor.RED);
+            return;
+        }
+
+        boolean enabled = !player.getAllowFlight();
+        player.setAllowFlight(enabled);
+        if (!enabled && player.isFlying()) {
+            player.setFlying(false);
+        }
+        msg(player, enabled ? "Fly activado." : "Fly desactivado.", NamedTextColor.AQUA);
+        openMainMenu(player);
+    }
+
+    private void heal(Player player) {
+        player.setHealth(player.getMaxHealth());
+        player.setFoodLevel(20);
+        player.setSaturation(20f);
+        player.setFireTicks(0);
+        msg(player, "Curado.", NamedTextColor.GREEN);
+    }
+
+    private Selection validSelection(Player player) {
+        Selection selection = selections.get(player.getUniqueId());
+        if (selection == null || selection.pos1 == null || selection.pos2 == null) {
+            msg(player, "Marcá pos1 y pos2 con el Builder Wand.", NamedTextColor.RED);
+            return null;
+        }
+
+        if (selection.pos1.getWorld() == null
+            || selection.pos2.getWorld() == null
+            || !selection.pos1.getWorld().getUID().equals(selection.pos2.getWorld().getUID())) {
+            msg(player, "Las dos posiciones tienen que estar en el mismo mundo.", NamedTextColor.RED);
+            return null;
+        }
+
+        long volume = selection.volume();
+        if (volume > maxEditBlocks) {
+            msg(player, "Selección demasiado grande: " + volume + " bloques. Máximo " + maxEditBlocks + ".", NamedTextColor.RED);
+            return null;
+        }
+
+        return selection;
+    }
+
+    private void fillSelection(Player player, Material material) {
+        Selection selection = validSelection(player);
+        if (selection == null) return;
+
+        World world = selection.pos1.getWorld();
+        Bounds b = selection.bounds();
+        List<BlockSnapshot> snapshots = new ArrayList<>((int) Math.min(selection.volume(), Integer.MAX_VALUE));
+
+        for (int x = b.minX; x <= b.maxX; x++) {
+            for (int y = b.minY; y <= b.maxY; y++) {
+                for (int z = b.minZ; z <= b.maxZ; z++) {
+                    Block block = world.getBlockAt(x, y, z);
+                    snapshots.add(new BlockSnapshot(world.getUID(), x, y, z, block.getBlockData().clone()));
+                    block.setType(material, false);
+                }
+            }
+        }
+
+        undo.put(player.getUniqueId(), snapshots);
+        msg(player, "Listo: " + snapshots.size() + " bloques → " + pretty(material) + ".", NamedTextColor.GREEN);
+    }
+
+    private void copySelection(Player player) {
+        Selection selection = validSelection(player);
+        if (selection == null) return;
+
+        World world = selection.pos1.getWorld();
+        Bounds b = selection.bounds();
+        List<BlockData> data = new ArrayList<>((int) selection.volume());
+
+        for (int x = b.minX; x <= b.maxX; x++) {
+            for (int y = b.minY; y <= b.maxY; y++) {
+                for (int z = b.minZ; z <= b.maxZ; z++) {
+                    data.add(world.getBlockAt(x, y, z).getBlockData().clone());
+                }
+            }
+        }
+
+        clipboards.put(player.getUniqueId(), new ClipboardData(b.sizeX(), b.sizeY(), b.sizeZ(), data));
+        msg(player, "Copiados " + data.size() + " bloques.", NamedTextColor.AQUA);
+    }
+
+    private void pasteClipboard(Player player) {
+        ClipboardData clipboard = clipboards.get(player.getUniqueId());
+        if (clipboard == null) {
+            msg(player, "Primero copiá una selección.", NamedTextColor.RED);
+            return;
+        }
+
+        if (clipboard.blocks.size() > maxEditBlocks) {
+            msg(player, "Clipboard demasiado grande.", NamedTextColor.RED);
+            return;
+        }
+
+        World world = player.getWorld();
+        Location origin = player.getLocation().getBlock().getLocation();
+        List<BlockSnapshot> snapshots = new ArrayList<>(clipboard.blocks.size());
+        int index = 0;
+
+        for (int x = 0; x < clipboard.sizeX; x++) {
+            for (int y = 0; y < clipboard.sizeY; y++) {
+                for (int z = 0; z < clipboard.sizeZ; z++) {
+                    int targetY = origin.getBlockY() + y;
+                    BlockData next = clipboard.blocks.get(index++);
+
+                    if (targetY < world.getMinHeight() || targetY >= world.getMaxHeight()) {
+                        continue;
+                    }
+
+                    Block target = world.getBlockAt(
+                        origin.getBlockX() + x,
+                        targetY,
+                        origin.getBlockZ() + z
+                    );
+
+                    snapshots.add(new BlockSnapshot(
+                        world.getUID(),
+                        target.getX(),
+                        target.getY(),
+                        target.getZ(),
+                        target.getBlockData().clone()
+                    ));
+                    target.setBlockData(next.clone(), false);
+                }
+            }
+        }
+
+        undo.put(player.getUniqueId(), snapshots);
+        msg(player, "Pegados " + snapshots.size() + " bloques.", NamedTextColor.GREEN);
+    }
+
+    private void undo(Player player) {
+        List<BlockSnapshot> snapshots = undo.remove(player.getUniqueId());
+        if (snapshots == null || snapshots.isEmpty()) {
+            msg(player, "No hay una edición para deshacer.", NamedTextColor.RED);
+            return;
+        }
+
+        int restored = 0;
+        for (BlockSnapshot snapshot : snapshots) {
+            World world = Bukkit.getWorld(snapshot.worldId);
+            if (world == null) continue;
+            world.getBlockAt(snapshot.x, snapshot.y, snapshot.z)
+                .setBlockData(snapshot.data.clone(), false);
+            restored++;
+        }
+
+        msg(player, "Deshecho: " + restored + " bloques restaurados.", NamedTextColor.YELLOW);
+    }
+
+    private void setupPvp() {
+        WorldCreator creator = new WorldCreator(PVP_WORLD_NAME);
+        creator.type(WorldType.FLAT);
+        creator.generateStructures(false);
+
+        pvpWorld = Bukkit.getWorld(PVP_WORLD_NAME);
+        if (pvpWorld == null) {
+            pvpWorld = creator.createWorld();
+        }
+
+        if (pvpWorld == null) {
+            getLogger().severe("No se pudo crear el mundo PVP.");
+            return;
+        }
+
+        pvpWorld.setPVP(true);
+        pvpWorld.setTime(6000);
+        pvpWorld.setStorm(false);
+        pvpWorld.setThundering(false);
+        pvpWorld.setGameRule(GameRule.DO_MOB_SPAWNING, false);
+        pvpWorld.setGameRule(GameRule.DO_DAYLIGHT_CYCLE, false);
+        pvpWorld.setGameRule(GameRule.DO_WEATHER_CYCLE, false);
+        pvpWorld.setGameRule(GameRule.KEEP_INVENTORY, true);
+
+        pvpLobby = new Location(pvpWorld, 0.5, 81.0, 0.5, 180f, 0f);
+        arenaSpawn1 = new Location(pvpWorld, -8.5, 81.0, 50.5, -90f, 0f);
+        arenaSpawn2 = new Location(pvpWorld, 8.5, 81.0, 50.5, 90f, 0f);
+        spectatorSpot = new Location(pvpWorld, 0.5, 91.0, 50.5, 180f, 25f);
+
+        if (!getConfig().getBoolean("pvp.built", false)) {
+            buildPvpStructures();
+            buildDefaultEntryPortal();
+            getConfig().set("pvp.built", true);
+            saveConfig();
+        }
+
+        entryPortal = loadRegion("pvp.entry-portal");
+        exitPortal = new Region(PVP_WORLD_NAME, -13, 81, -1, -11, 84, 1);
+        queuePad = new Region(PVP_WORLD_NAME, -1, 81, 7, 1, 82, 9);
+
+        pvpWorld.setSpawnLocation(pvpLobby);
+    }
+
+    private void buildPvpStructures() {
+        if (pvpWorld == null) return;
+
+        // Lobby platform
+        for (int x = -15; x <= 15; x++) {
+            for (int z = -10; z <= 15; z++) {
+                Material mat = ((x + z) & 1) == 0
+                    ? Material.POLISHED_BLACKSTONE_BRICKS
+                    : Material.DEEPSLATE_TILES;
+                pvpWorld.getBlockAt(x, 80, z).setType(mat, false);
+                for (int y = 81; y <= 86; y++) {
+                    pvpWorld.getBlockAt(x, y, z).setType(Material.AIR, false);
+                }
+            }
+        }
+
+        // Lobby accents and 1v1 queue pad.
+        for (int x = -1; x <= 1; x++) {
+            for (int z = 7; z <= 9; z++) {
+                pvpWorld.getBlockAt(x, 80, z).setType(Material.RED_CONCRETE, false);
+            }
+        }
+
+        pvpWorld.getBlockAt(0, 80, 5).setType(Material.SEA_LANTERN, false);
+        pvpWorld.getBlockAt(0, 80, 11).setType(Material.SEA_LANTERN, false);
+
+        // Return portal at the left side of the lobby.
+        buildPortalFrame(pvpWorld, -12, 80, 0, false);
+
+        // Arena floor.
+        for (int x = -16; x <= 16; x++) {
+            for (int z = 34; z <= 66; z++) {
+                boolean border = x == -16 || x == 16 || z == 34 || z == 66;
+                Material mat;
+                if (border) {
+                    mat = Material.CRYING_OBSIDIAN;
+                } else {
+                    mat = ((x + z) & 1) == 0
+                        ? Material.GRAY_CONCRETE
+                        : Material.BLACK_CONCRETE;
+                }
+                pvpWorld.getBlockAt(x, 80, z).setType(mat, false);
+                for (int y = 81; y <= 94; y++) {
+                    pvpWorld.getBlockAt(x, y, z).setType(Material.AIR, false);
+                }
+            }
+        }
+
+        // Arena glass walls.
+        for (int y = 81; y <= 87; y++) {
+            for (int x = -16; x <= 16; x++) {
+                pvpWorld.getBlockAt(x, y, 34).setType(Material.TINTED_GLASS, false);
+                pvpWorld.getBlockAt(x, y, 66).setType(Material.TINTED_GLASS, false);
+            }
+            for (int z = 34; z <= 66; z++) {
+                pvpWorld.getBlockAt(-16, y, z).setType(Material.TINTED_GLASS, false);
+                pvpWorld.getBlockAt(16, y, z).setType(Material.TINTED_GLASS, false);
+            }
+        }
+
+        // Spawn accents.
+        for (int z = 48; z <= 52; z++) {
+            pvpWorld.getBlockAt(-9, 80, z).setType(Material.BLUE_CONCRETE, false);
+            pvpWorld.getBlockAt(9, 80, z).setType(Material.RED_CONCRETE, false);
+        }
+
+        // Spectator platform.
+        for (int x = -6; x <= 6; x++) {
+            for (int z = 45; z <= 55; z++) {
+                pvpWorld.getBlockAt(x, 90, z).setType(Material.GLASS, false);
+            }
+        }
+
+        msgAllPvp("Arena NINOTIMI PVP construida.");
+    }
+
+    private void buildDefaultEntryPortal() {
+        List<World> worlds = Bukkit.getWorlds();
+        if (worlds.isEmpty()) return;
+
+        World main = worlds.get(0);
+        Location spawn = main.getSpawnLocation();
+        int centerX = spawn.getBlockX() + 12;
+        int centerZ = spawn.getBlockZ();
+        int groundY = main.getHighestBlockYAt(centerX, centerZ);
+        int baseY = groundY + 1;
+
+        buildPortalFrame(main, centerX, baseY, centerZ, true);
+        entryPortal = new Region(
+            main.getName(),
+            centerX - 1, baseY + 1, centerZ - 1,
+            centerX + 1, baseY + 3, centerZ + 1
+        );
+        saveRegion("pvp.entry-portal", entryPortal);
+    }
+
+    private void buildPortalAt(Player player) {
+        Location here = player.getLocation().getBlock().getLocation();
+        World world = player.getWorld();
+
+        int centerX = here.getBlockX();
+        int centerZ = here.getBlockZ();
+        int baseY = here.getBlockY();
+
+        buildPortalFrame(world, centerX, baseY, centerZ, true);
+        entryPortal = new Region(
+            world.getName(),
+            centerX - 1, baseY + 1, centerZ - 1,
+            centerX + 1, baseY + 3, centerZ + 1
+        );
+        saveRegion("pvp.entry-portal", entryPortal);
+        msg(player, "Portal NINOTIMI PVP creado acá.", NamedTextColor.LIGHT_PURPLE);
+    }
+
+    private void buildPortalFrame(World world, int centerX, int baseY, int centerZ, boolean alongX) {
+        Material frame = Material.CRYING_OBSIDIAN;
+        Material floor = Material.PURPLE_CONCRETE;
+
+        if (alongX) {
+            for (int dx = -2; dx <= 2; dx++) {
+                for (int dy = 0; dy <= 4; dy++) {
+                    boolean edge = dx == -2 || dx == 2 || dy == 0 || dy == 4;
+                    world.getBlockAt(centerX + dx, baseY + dy, centerZ)
+                        .setType(edge ? frame : Material.AIR, false);
+                }
+            }
+            for (int dx = -1; dx <= 1; dx++) {
+                world.getBlockAt(centerX + dx, baseY, centerZ).setType(floor, false);
+            }
+        } else {
+            for (int dz = -2; dz <= 2; dz++) {
+                for (int dy = 0; dy <= 4; dy++) {
+                    boolean edge = dz == -2 || dz == 2 || dy == 0 || dy == 4;
+                    world.getBlockAt(centerX, baseY + dy, centerZ + dz)
+                        .setType(edge ? frame : Material.AIR, false);
+                }
+            }
+            for (int dz = -1; dz <= 1; dz++) {
+                world.getBlockAt(centerX, baseY, centerZ + dz).setType(floor, false);
+            }
+        }
+    }
+
+    private void startPortalParticles() {
+        particleTask = Bukkit.getScheduler().runTaskTimer(this, () -> {
+            spawnRegionParticles(entryPortal);
+            spawnRegionParticles(exitPortal);
+        }, 20L, 10L);
+    }
+
+    private void spawnRegionParticles(Region region) {
+        if (region == null) return;
+        World world = Bukkit.getWorld(region.worldName);
+        if (world == null) return;
+
+        double x = (region.minX + region.maxX + 1) / 2.0;
+        double y = (region.minY + region.maxY + 1) / 2.0;
+        double z = (region.minZ + region.maxZ + 1) / 2.0;
+
+        world.spawnParticle(Particle.PORTAL, x, y, z, 18, 0.8, 1.1, 0.8, 0.15);
+    }
+
+    private void saveRegion(String prefix, Region region) {
+        getConfig().set(prefix + ".world", region.worldName);
+        getConfig().set(prefix + ".min-x", region.minX);
+        getConfig().set(prefix + ".min-y", region.minY);
+        getConfig().set(prefix + ".min-z", region.minZ);
+        getConfig().set(prefix + ".max-x", region.maxX);
+        getConfig().set(prefix + ".max-y", region.maxY);
+        getConfig().set(prefix + ".max-z", region.maxZ);
+        saveConfig();
+    }
+
+    private Region loadRegion(String prefix) {
+        String world = getConfig().getString(prefix + ".world");
+        if (world == null || world.isBlank()) return null;
+
+        return new Region(
+            world,
+            getConfig().getInt(prefix + ".min-x"),
+            getConfig().getInt(prefix + ".min-y"),
+            getConfig().getInt(prefix + ".min-z"),
+            getConfig().getInt(prefix + ".max-x"),
+            getConfig().getInt(prefix + ".max-y"),
+            getConfig().getInt(prefix + ".max-z")
+        );
+    }
+
+    private void enterPvpLobby(Player player, boolean rememberReturn) {
+        if (pvpWorld == null || pvpLobby == null) {
+            msg(player, "El mundo PVP todavía no está disponible.", NamedTextColor.RED);
+            return;
+        }
+
+        if (fighters.contains(player.getUniqueId())) {
+            return;
+        }
+
+        if (rememberReturn && !player.getWorld().getName().equals(PVP_WORLD_NAME)) {
+            portalStates.putIfAbsent(
+                player.getUniqueId(),
+                new PortalState(player.getLocation().clone(), player.getGameMode(), player.getAllowFlight(), player.isFlying())
+            );
+        }
+
+        pvpQueue.remove(player.getUniqueId());
+        player.setGameMode(GameMode.ADVENTURE);
+        player.setAllowFlight(false);
+        player.setFlying(false);
+        player.teleport(pvpLobby);
+        player.setHealth(player.getMaxHealth());
+        player.setFoodLevel(20);
+        player.setSaturation(20f);
+        player.setFireTicks(0);
+
+        player.sendTitle("NINOTIMI PVP", "Pisá el pad ROJO para entrar al 1v1", 10, 50, 10);
+        msg(player, "Pad rojo = 1v1 · portal violeta = volver · /pvp spectate = mirar.", NamedTextColor.GOLD);
+    }
+
+    private void exitPvp(Player player) {
+        UUID id = player.getUniqueId();
+
+        if (fighters.contains(id)) {
+            msg(player, "Primero salí del duelo con /pvp leave.", NamedTextColor.RED);
+            return;
+        }
+
+        pvpQueue.remove(id);
+        PortalState previous = portalStates.remove(id);
+
+        if (previous != null && previous.location.getWorld() != null) {
+            player.teleport(previous.location);
+            player.setGameMode(previous.gameMode);
+            player.setAllowFlight(previous.allowFlight);
+            player.setFlying(previous.flying && previous.allowFlight);
+        } else {
+            World main = Bukkit.getWorlds().get(0);
+            player.teleport(main.getSpawnLocation());
+            player.setGameMode(GameMode.SURVIVAL);
+            player.setAllowFlight(false);
+            player.setFlying(false);
+        }
+
+        msg(player, "Saliste de NINOTIMI PVP.", NamedTextColor.GREEN);
+    }
+
+    private void joinQueue(Player player) {
+        UUID id = player.getUniqueId();
+
+        if (!player.getWorld().getName().equals(PVP_WORLD_NAME)) {
+            enterPvpLobby(player, true);
+        }
+
+        if (fighters.contains(id)) return;
+
+        if (pvpQueue.contains(id)) {
+            player.sendActionBar(Component.text("Ya estás esperando rival…", NamedTextColor.YELLOW));
+            return;
+        }
+
+        pvpQueue.addLast(id);
+        player.teleport(new Location(pvpWorld, 0.5, 81.0, 5.5, 180f, 0f));
+        player.sendTitle("1v1", "Esperando rival…", 5, 35, 10);
+        msg(player, "Entraste a la cola 1v1.", NamedTextColor.YELLOW);
+        tryStartDuel();
+    }
+
+    private void tryStartDuel() {
+        if (!fighters.isEmpty()) return;
+
+        while (!pvpQueue.isEmpty()) {
+            UUID first = pvpQueue.peekFirst();
+            Player player = Bukkit.getPlayer(first);
+            if (player != null && player.isOnline()) break;
+            pvpQueue.removeFirst();
+        }
+
+        if (pvpQueue.size() < 2) return;
+
+        UUID firstId = pvpQueue.removeFirst();
+        UUID secondId = pvpQueue.removeFirst();
+        Player first = Bukkit.getPlayer(firstId);
+        Player second = Bukkit.getPlayer(secondId);
+
+        if (first == null || second == null) {
+            if (first != null) pvpQueue.addFirst(firstId);
+            if (second != null) pvpQueue.addFirst(secondId);
+            return;
+        }
+
+        startDuel(first, second);
+    }
+
+    private void startDuel(Player first, Player second) {
+        fighters.clear();
+        duelStates.clear();
+        duelActive = false;
+
+        fighters.add(first.getUniqueId());
+        fighters.add(second.getUniqueId());
+
+        duelStates.put(first.getUniqueId(), captureState(first));
+        duelStates.put(second.getUniqueId(), captureState(second));
+
+        prepareFighter(first, arenaSpawn1);
+        prepareFighter(second, arenaSpawn2);
+
+        Component versus = Component.text(first.getName(), NamedTextColor.AQUA)
+            .append(Component.text(" VS ", NamedTextColor.GOLD))
+            .append(Component.text(second.getName(), NamedTextColor.RED));
+
+        Bukkit.broadcast(
+            Component.text("⚔ NINOTIMI PVP · ", NamedTextColor.GOLD).append(versus)
+        );
+
+        for (int secondLeft = 3; secondLeft >= 1; secondLeft--) {
+            int delay = (3 - secondLeft) * 20;
+            int value = secondLeft;
+            Bukkit.getScheduler().runTaskLater(this, () -> {
+                if (!fighters.contains(first.getUniqueId()) || !fighters.contains(second.getUniqueId())) return;
+                first.sendTitle(String.valueOf(value), "", 0, 20, 0);
+                second.sendTitle(String.valueOf(value), "", 0, 20, 0);
+            }, delay);
+        }
+
+        Bukkit.getScheduler().runTaskLater(this, () -> {
+            if (!fighters.contains(first.getUniqueId()) || !fighters.contains(second.getUniqueId())) return;
+            duelActive = true;
+            first.sendTitle("PELEEN", "", 0, 20, 5);
+            second.sendTitle("PELEEN", "", 0, 20, 5);
+        }, 60L);
+    }
+
+    private PlayerState captureState(Player player) {
+        ItemStack[] contents = Arrays.stream(player.getInventory().getContents())
+            .map(item -> item == null ? null : item.clone())
+            .toArray(ItemStack[]::new);
+
+        return new PlayerState(
+            contents,
+            player.getGameMode(),
+            player.getAllowFlight(),
+            player.isFlying(),
+            player.getLevel(),
+            player.getExp()
+        );
+    }
+
+    private void prepareFighter(Player player, Location spawn) {
+        player.getInventory().clear();
+        player.getInventory().setHelmet(new ItemStack(Material.IRON_HELMET));
+        player.getInventory().setChestplate(new ItemStack(Material.IRON_CHESTPLATE));
+        player.getInventory().setLeggings(new ItemStack(Material.IRON_LEGGINGS));
+        player.getInventory().setBoots(new ItemStack(Material.IRON_BOOTS));
+        player.getInventory().setItem(0, new ItemStack(Material.IRON_SWORD));
+        player.getInventory().setItem(1, new ItemStack(Material.SHIELD));
+        player.getInventory().setItem(2, new ItemStack(Material.COOKED_BEEF, 16));
+
+        player.setGameMode(GameMode.SURVIVAL);
+        player.setAllowFlight(false);
+        player.setFlying(false);
+        player.setHealth(player.getMaxHealth());
+        player.setFoodLevel(20);
+        player.setSaturation(20f);
+        player.setFireTicks(0);
+        player.teleport(spawn);
+    }
+
+    private void restoreDuelState(Player player) {
+        PlayerState state = duelStates.remove(player.getUniqueId());
+        if (state == null) return;
+
+        player.getInventory().setContents(state.contents);
+        player.setGameMode(state.gameMode);
+        player.setAllowFlight(state.allowFlight);
+        player.setFlying(state.flying && state.allowFlight);
+        player.setLevel(state.level);
+        player.setExp(state.exp);
+        player.setHealth(player.getMaxHealth());
+        player.setFoodLevel(20);
+        player.setSaturation(20f);
+        player.setFireTicks(0);
+
+        if (pvpLobby != null && pvpLobby.getWorld() != null) {
+            player.setGameMode(GameMode.ADVENTURE);
+            player.setAllowFlight(false);
+            player.setFlying(false);
+            player.teleport(pvpLobby);
+        }
+    }
+
+    private void endDuel(UUID winnerId, String reason) {
+        if (fighters.isEmpty()) return;
+
+        duelActive = false;
+        Set<UUID> finished = new HashSet<>(fighters);
+        fighters.clear();
+
+        Bukkit.getScheduler().runTask(this, () -> {
+            String winnerName = "nadie";
+
+            if (winnerId != null) {
+                Player winner = Bukkit.getPlayer(winnerId);
+                if (winner != null) {
+                    winnerName = winner.getName();
+                }
+            }
+
+            for (UUID id : finished) {
+                Player player = Bukkit.getPlayer(id);
+                if (player == null) continue;
+
+                restoreDuelState(player);
+
+                if (winnerId != null && winnerId.equals(id)) {
+                    player.sendTitle("GANASTE", reason, 5, 45, 10);
+                } else {
+                    player.sendTitle("FIN DEL DUELO", winnerId == null ? reason : "Ganó " + winnerName, 5, 45, 10);
+                }
+            }
+
+            Bukkit.broadcast(Component.text(
+                "⚔ NINOTIMI PVP · " + (winnerId == null ? "Duelo terminado" : "Ganó " + winnerName),
+                NamedTextColor.GOLD
+            ));
+
+            Bukkit.getScheduler().runTaskLater(this, this::tryStartDuel, 40L);
+        });
+    }
+
+    private void spectate(Player player) {
+        if (pvpWorld == null || spectatorSpot == null) return;
+
+        if (fighters.contains(player.getUniqueId())) {
+            msg(player, "Estás peleando.", NamedTextColor.RED);
+            return;
+        }
+
+        pvpQueue.remove(player.getUniqueId());
+        player.setGameMode(GameMode.SPECTATOR);
+        player.setAllowFlight(true);
+        player.teleport(spectatorSpot);
+        msg(player, "Modo espectador. /pvp lobby para volver.", NamedTextColor.AQUA);
+    }
+
+    private void msgAllPvp(String text) {
+        if (pvpWorld == null) return;
+        for (Player player : pvpWorld.getPlayers()) {
+            msg(player, text, NamedTextColor.GOLD);
+        }
+    }
+
+    @Override
+    public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+        if (!(sender instanceof Player player)) {
+            sender.sendMessage("Este comando se usa dentro del juego.");
+            return true;
+        }
+
+        if (command.getName().equalsIgnoreCase("pvp")) {
+            return handlePvpCommand(player, args);
+        }
+
+        if (args.length == 0) {
+            if (!canBuild(player)) {
+                msg(player, "No tenés acceso a NINOTIMI TOOLS.", NamedTextColor.RED);
+                return true;
+            }
+            openMainMenu(player);
+            return true;
+        }
+
+        String sub = args[0].toLowerCase(Locale.ROOT);
+
+        if (sub.equals("grant") || sub.equals("revoke") || sub.equals("list")) {
+            if (!player.isOp()) {
+                msg(player, "Solo un OP puede administrar builders.", NamedTextColor.RED);
+                return true;
+            }
+
+            if (sub.equals("list")) {
+                msg(
+                    player,
+                    "Builders: " + (builderNames.isEmpty() ? "ninguno" : String.join(", ", builderNames)),
+                    NamedTextColor.GOLD
+                );
+                return true;
+            }
+
+            if (args.length < 2) {
+                msg(player, "Uso: /nrtools " + sub + " <jugador>", NamedTextColor.RED);
+                return true;
+            }
+
+            String targetName = normalizeName(args[1]);
+            if (targetName.isBlank()) {
+                msg(player, "Nombre inválido.", NamedTextColor.RED);
+                return true;
+            }
+
+            if (sub.equals("grant")) {
+                builderNames.add(targetName);
+                saveBuilders();
+
+                Player target = findOnlineByNormalizedName(targetName);
+                if (target != null) {
+                    giveToolsCompass(target);
+                    msg(target, "Ahora sos BUILDER de NINOTIMI.", NamedTextColor.GOLD);
+                }
+
+                msg(player, targetName + " agregado como builder.", NamedTextColor.GREEN);
+            } else {
+                builderNames.remove(targetName);
+                saveBuilders();
+                msg(player, targetName + " removido de builders.", NamedTextColor.YELLOW);
+            }
+            return true;
+        }
+
+        if (sub.equals("give")) {
+            if (!canBuild(player)) {
+                msg(player, "No tenés acceso a NINOTIMI TOOLS.", NamedTextColor.RED);
+                return true;
+            }
+            giveToolsCompass(player);
+            return true;
+        }
+
+        msg(player, "Usá /tools o /nrtools grant <jugador>.", NamedTextColor.YELLOW);
+        return true;
+    }
+
+    private boolean handlePvpCommand(Player player, String[] args) {
+        String sub = args.length == 0 ? "lobby" : args[0].toLowerCase(Locale.ROOT);
+
+        switch (sub) {
+            case "join" -> {
+                if (!player.getWorld().getName().equals(PVP_WORLD_NAME)) {
+                    enterPvpLobby(player, true);
+                }
+                joinQueue(player);
+            }
+            case "leave" -> {
+                UUID id = player.getUniqueId();
+                if (fighters.contains(id)) {
+                    UUID winner = fighters.stream()
+                        .filter(other -> !other.equals(id))
+                        .findFirst()
+                        .orElse(null);
+                    endDuel(winner, "abandono");
+                    Bukkit.getScheduler().runTaskLater(this, () -> exitPvp(player), 2L);
+                } else {
+                    exitPvp(player);
+                }
+            }
+            case "lobby" -> {
+                pvpQueue.remove(player.getUniqueId());
+                enterPvpLobby(player, !player.getWorld().getName().equals(PVP_WORLD_NAME));
+            }
+            case "spectate", "espectar" -> spectate(player);
+            case "status" -> {
+                msg(
+                    player,
+                    "PVP: " + (duelActive ? "duelo activo" : "esperando")
+                        + " · cola " + pvpQueue.size()
+                        + " · peleadores " + fighters.size(),
+                    NamedTextColor.GOLD
+                );
+            }
+            case "portalhere" -> {
+                if (!player.isOp()) {
+                    msg(player, "Solo OP puede mover el portal.", NamedTextColor.RED);
+                    return true;
+                }
+                buildPortalAt(player);
+            }
+            case "rebuild" -> {
+                if (!player.isOp()) {
+                    msg(player, "Solo OP puede reconstruir la arena.", NamedTextColor.RED);
+                    return true;
+                }
+                if (!fighters.isEmpty()) {
+                    msg(player, "Esperá a que termine el duelo.", NamedTextColor.RED);
+                    return true;
+                }
+                buildPvpStructures();
+                msg(player, "Lobby y arena PVP reconstruidos.", NamedTextColor.GREEN);
+            }
+            default -> msg(
+                player,
+                "/pvp join · leave · lobby · spectate · status"
+                    + (player.isOp() ? " · portalhere · rebuild" : ""),
+                NamedTextColor.YELLOW
+            );
+        }
+
+        return true;
+    }
+
+    private Player findOnlineByNormalizedName(String normalized) {
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            if (normalizeName(player.getName()).equals(normalized)) {
+                return player;
+            }
+        }
+        return null;
+    }
+
+    @Override
+    public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
+        if (!(sender instanceof Player player)) {
+            return List.of();
+        }
+
+        if (command.getName().equalsIgnoreCase("pvp")) {
+            if (args.length != 1) return List.of();
+
+            List<String> options = new ArrayList<>(List.of(
+                "join", "leave", "lobby", "spectate", "status"
+            ));
+            if (player.isOp()) {
+                options.add("portalhere");
+                options.add("rebuild");
+            }
+
+            String prefix = args[0].toLowerCase(Locale.ROOT);
+            return options.stream().filter(v -> v.startsWith(prefix)).toList();
+        }
+
+        if (args.length == 1) {
+            List<String> base = player.isOp()
+                ? List.of("grant", "revoke", "list", "give")
+                : List.of("give");
+            String prefix = args[0].toLowerCase(Locale.ROOT);
+            return base.stream().filter(v -> v.startsWith(prefix)).toList();
+        }
+
+        if (args.length == 2 && player.isOp()
+            && (args[0].equalsIgnoreCase("grant") || args[0].equalsIgnoreCase("revoke"))) {
+            String prefix = normalizeName(args[1]);
+            return Bukkit.getOnlinePlayers().stream()
+                .map(Player::getName)
+                .filter(name -> normalizeName(name).startsWith(prefix))
+                .toList();
+        }
+
+        return List.of();
+    }
+
+    private void msg(Player player, String text, NamedTextColor color) {
+        player.sendMessage(
+            Component.text("🧀 NINOTIMI · ", NamedTextColor.GOLD)
+                .append(Component.text(text, color))
+        );
+    }
+
+    private String coords(Location location) {
+        return location.getBlockX() + ", " + location.getBlockY() + ", " + location.getBlockZ();
+    }
+
+    private String pretty(Material material) {
+        if (material == Material.AIR) return "Aire";
+
+        String raw = material.name().toLowerCase(Locale.ROOT).replace('_', ' ');
+        String[] words = raw.split(" ");
+        StringBuilder out = new StringBuilder();
+
+        for (String word : words) {
+            if (!out.isEmpty()) out.append(' ');
+            out.append(Character.toUpperCase(word.charAt(0))).append(word.substring(1));
+        }
+        return out.toString();
+    }
+
+    private static final class Selection {
+        private Location pos1;
+        private Location pos2;
+
+        private Bounds bounds() {
+            return new Bounds(
+                Math.min(pos1.getBlockX(), pos2.getBlockX()),
+                Math.max(pos1.getBlockX(), pos2.getBlockX()),
+                Math.min(pos1.getBlockY(), pos2.getBlockY()),
+                Math.max(pos1.getBlockY(), pos2.getBlockY()),
+                Math.min(pos1.getBlockZ(), pos2.getBlockZ()),
+                Math.max(pos1.getBlockZ(), pos2.getBlockZ())
+            );
+        }
+
+        private long volume() {
+            Bounds b = bounds();
+            return (long) b.sizeX() * b.sizeY() * b.sizeZ();
+        }
+    }
+
+    private record Bounds(int minX, int maxX, int minY, int maxY, int minZ, int maxZ) {
+        private int sizeX() { return maxX - minX + 1; }
+        private int sizeY() { return maxY - minY + 1; }
+        private int sizeZ() { return maxZ - minZ + 1; }
+    }
+
+    private record BlockSnapshot(UUID worldId, int x, int y, int z, BlockData data) {
+    }
+
+    private record ClipboardData(int sizeX, int sizeY, int sizeZ, List<BlockData> blocks) {
+    }
+
+    private record Region(
+        String worldName,
+        int minX,
+        int minY,
+        int minZ,
+        int maxX,
+        int maxY,
+        int maxZ
+    ) {
+        private boolean contains(Location location) {
+            if (location.getWorld() == null || !location.getWorld().getName().equals(worldName)) {
+                return false;
+            }
+
+            int x = location.getBlockX();
+            int y = location.getBlockY();
+            int z = location.getBlockZ();
+
+            return x >= minX && x <= maxX
+                && y >= minY && y <= maxY
+                && z >= minZ && z <= maxZ;
+        }
+    }
+
+    private record PlayerState(
+        ItemStack[] contents,
+        GameMode gameMode,
+        boolean allowFlight,
+        boolean flying,
+        int level,
+        float exp
+    ) {
+    }
+
+    private record PortalState(
+        Location location,
+        GameMode gameMode,
+        boolean allowFlight,
+        boolean flying
+    ) {
+    }
+}
