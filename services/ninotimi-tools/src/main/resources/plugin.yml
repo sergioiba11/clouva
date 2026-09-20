@@ -16,6 +16,10 @@ commands:
     description: Controla BATALLA DE HIELO
     aliases: [ice, spleef]
     usage: /hielo [join|leave|lobby|spectate|status|portalhere|rebuild]
+  skyblock:
+    description: Controla NINOTIMI SKYBLOCK
+    aliases: [sb, sky]
+    usage: /skyblock [home|create|lobby|leave|visit|status|portalhere|rebuild]
 permissions:
   ninotimi.tools:
     description: Puede usar NINOTIMI TOOLS
