@@ -242,10 +242,15 @@ function audioFlowPrompt(project: VideoProjectRow, job: VideoProjectJobRow, jobs
   const sections = Array.isArray(analysis.sections) ? analysis.sections as AudioFlowSection[] : [];
   const events = Array.isArray(analysis.events) ? analysis.events as AudioFlowEvent[] : [];
   const ordered = [...jobs].sort((a, b) => a.sequence_index - b.sequence_index);
-  const start = ordered
-    .filter((item) => item.sequence_index < job.sequence_index)
-    .reduce((sum, item) => sum + Number(item.duration_seconds || 0), 0);
-  const end = start + Number(job.duration_seconds || 0);
+  const analyzedDuration = Number(analysis.durationSeconds || 0);
+  const start = project.project_mode === "visualizer" && analyzedDuration > 0
+    ? (job.sequence_index / Math.max(1, ordered.length)) * analyzedDuration
+    : ordered
+      .filter((item) => item.sequence_index < job.sequence_index)
+      .reduce((sum, item) => sum + Number(item.duration_seconds || 0), 0);
+  const end = project.project_mode === "visualizer" && analyzedDuration > 0
+    ? ((job.sequence_index + 1) / Math.max(1, ordered.length)) * analyzedDuration
+    : start + Number(job.duration_seconds || 0);
   const section = sections.find((item) => Number(item.start ?? 0) <= start && Number(item.end ?? 0) > start)
     ?? sections.find((item) => Number(item.start ?? 0) < end && Number(item.end ?? 0) > start);
   const localEvents = events
@@ -293,9 +298,20 @@ export async function createVideoProjectClipPlan(args: {
     if (error) throw new Error("No se pudo reemplazar el plan anterior.");
   }
 
-  const durations = planDurations(args.project.target_duration_seconds);
-  const config = VIDEO_QUALITY_CONFIG[args.project.quality];
   const frameCount = args.frames.length;
+  const visualizerSources = Math.max(
+    1,
+    Math.min(12, frameCount || Math.ceil(args.project.target_duration_seconds / 45)),
+  );
+  const visualizerSourceDuration: VideoDuration = args.project.target_duration_seconds <= 4
+    ? 4
+    : args.project.target_duration_seconds <= 6
+      ? 6
+      : 8;
+  const durations = args.project.project_mode === "visualizer"
+    ? Array.from({ length: visualizerSources }, () => visualizerSourceDuration)
+    : planDurations(args.project.target_duration_seconds);
+  const config = VIDEO_QUALITY_CONFIG[args.project.quality];
   const rows = durations.map((duration, sequenceIndex) => {
     const currentFrameIndex = frameCount
       ? Math.min(frameCount - 1, Math.floor((sequenceIndex / durations.length) * frameCount))
