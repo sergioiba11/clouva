@@ -1,0 +1,102 @@
+name: Deploy NINOTIMI Minecraft Tools
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "services/ninotimi-tools/**"
+      - ".github/workflows/deploy-ninotimi-tools.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: ninotimi-minecraft-tools
+  cancel-in-progress: true
+
+env:
+  PROJECT_ID: gen-lang-client-0737053175
+  MC_ZONE: southamerica-east1-b
+  MC_INSTANCE: clouva-minecraft-family
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA_EMAIL }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Setup Java 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+
+      - name: Build NINOTIMI tools
+        run: mvn -q -f services/ninotimi-tools/pom.xml -DskipTests package
+
+      - name: Upload plugin
+        run: |
+          gcloud compute scp             services/ninotimi-tools/target/NinotimiTools.jar             "$MC_INSTANCE:/tmp/NinotimiTools.jar"             --project "$PROJECT_ID"             --zone "$MC_ZONE"             --quiet
+
+      - name: Install with one short Minecraft restart
+        shell: bash
+        run: |
+          gcloud compute ssh "$MC_INSTANCE"             --project "$PROJECT_ID"             --zone "$MC_ZONE"             --quiet             --ssh-flag="-o StrictHostKeyChecking=no"             --ssh-flag="-o UserKnownHostsFile=/dev/null"             --command='
+              set -e
+              sudo docker exec clouva-minecraft rcon-cli save-all >/dev/null 2>&1 || true
+              sudo mkdir -p /srv/minecraft/plugins
+              sudo rm -f /srv/minecraft/plugins/NinosRataTools.jar
+              sudo cp /tmp/NinotimiTools.jar /srv/minecraft/plugins/NinotimiTools.jar
+              sudo chown root:root /srv/minecraft/plugins/NinotimiTools.jar
+              sudo docker restart clouva-minecraft >/dev/null
+            '
+
+      - name: Verify NINOTIMI tools and Minecraft
+        shell: bash
+        run: |
+          ready=0
+          for attempt in $(seq 1 72); do
+            if gcloud compute ssh "$MC_INSTANCE"               --project "$PROJECT_ID"               --zone "$MC_ZONE"               --quiet               --ssh-flag="-o StrictHostKeyChecking=no"               --ssh-flag="-o UserKnownHostsFile=/dev/null"               --command='
+                set -e
+                timeout 3 bash -c "</dev/tcp/127.0.0.1/25565"
+                sudo docker logs --tail 350 clouva-minecraft 2>&1 |
+                  grep -Fq "NINOTIMI TOOLS activo."
+              ' >/dev/null 2>&1; then
+              ready=1
+              echo "NINOTIMI tools loaded and Minecraft is accepting connections."
+              break
+            fi
+            echo "Waiting for Minecraft + NINOTIMI plugin ($attempt/72)..."
+            sleep 5
+          done
+
+          if [ "$ready" -ne 1 ]; then
+            echo "::error::NINOTIMI plugin did not become ready."
+            gcloud compute ssh "$MC_INSTANCE"               --project "$PROJECT_ID"               --zone "$MC_ZONE"               --quiet               --ssh-flag="-o StrictHostKeyChecking=no"               --ssh-flag="-o UserKnownHostsFile=/dev/null"               --command='sudo docker logs --tail 500 clouva-minecraft 2>&1' || true
+            exit 1
+          fi
+
+      - name: Summary
+        run: |
+          {
+            echo "## NINOTIMI Minecraft"
+            echo ""
+            echo "- Tools: deployed"
+            echo "- PVP world: pvp_ninotimi"
+            echo "- Portal: auto-created near the main spawn"
+            echo "- 1v1 queue: red pad in the PVP lobby"
+            echo "- Internal player key: ninotimi (ASCII, ñ-safe)"
+          } >> "$GITHUB_STEP_SUMMARY"
