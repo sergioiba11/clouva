@@ -354,6 +354,22 @@ export function FacebookPublisher({ spaceId }: { spaceId: string }) {
     setPublishedUrl("");
   }
 
+  async function connectFacebook() {
+    setBusy("facebook-connect");
+    setError(null);
+    try {
+      const response = await authenticatedFetch("/api/integrations/facebook/connect", {
+        method: "POST",
+        body: JSON.stringify({ spaceId }),
+      });
+      const payload = await readApiJson<{ authorizationUrl: string }>(response);
+      window.location.assign(payload.authorizationUrl);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "No se pudo iniciar Facebook.");
+      setBusy(null);
+    }
+  }
+
   async function copy(value: string | number | undefined | null) {
     if (value == null) return;
     await navigator.clipboard.writeText(String(value));
@@ -394,7 +410,7 @@ export function FacebookPublisher({ spaceId }: { spaceId: string }) {
               <p className="text-xs font-semibold uppercase tracking-[.16em] text-white/35">Facebook</p>
               <p className="mt-1 text-sm text-white/70">{data.connection.status === "connected" ? `Conectado · ${data.connection.facebook_name || "Cuenta Facebook"}` : data.connection.status === "attention_required" ? "Requiere atención" : data.connection.status === "expired" ? "Sesión vencida" : "No conectado"}</p>
             </div>
-            <a href={`/api/integrations/facebook/connect?spaceId=${encodeURIComponent(spaceId)}`} className={BUTTON}><Facebook size={14} /> CONECTAR FACEBOOK</a>
+            <button type="button" onClick={() => void connectFacebook()} disabled={busy === "facebook-connect"} className={BUTTON}>{busy === "facebook-connect" ? <Loader2 size={14} className="animate-spin" /> : <Facebook size={14} />} CONECTAR FACEBOOK</button>
           </div>
           <p className="mt-3 text-[11px] leading-5 text-white/32">Marketplace y Grupos usan confirmación asistida cuando Meta no ofrece una API oficial. CLOUVA nunca guarda tu contraseña ni marca una publicación como realizada sin confirmación real.</p>
         </section>
