@@ -938,17 +938,44 @@ async function joinGuildVoice(guild, channelId) {
     muted: false,
     speaking: false,
     receiving: new Set(),
+    activeSpeakers: new Set(),
     speakQueue: Promise.resolve(),
     speechEpoch: 0,
     ambientEnabled: true,
     pendingAmbient: false,
     lastAmbientAt: 0,
+    mode: "legacy",
+    liveSession: null,
+    liveError: null,
+    liveOutputStream: null,
+    liveTranscriptBuffer: "",
+    liveAudioStartedThisTurn: false,
+    dropLiveAudioUntilTurnComplete: false,
+    lastInputHadWake: false,
   };
 
   guildStates.set(guild.id, state);
+
+  try {
+    await connectLiveSession(state);
+  } catch (error) {
+    state.mode = "legacy";
+    state.liveError = String(error?.message || error).slice(0, 500);
+    voiceDiagnostics.liveFallbacks += 1;
+    voiceDiagnostics.lastError = state.liveError;
+    log("QUESITO_LIVE_FALLBACK", {
+      guildId: state.guildId,
+      error: state.liveError,
+    });
+  }
+
   attachReceiver(state);
 
   connection.on(VoiceConnectionStatus.Destroyed, () => {
+    try {
+      state.liveSession?.close();
+    } catch {}
+    endLiveOutput(state);
     guildStates.delete(guild.id);
   });
 
