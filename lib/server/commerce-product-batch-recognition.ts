@@ -21,12 +21,21 @@ export type CommerceBatchImageRole = {
   role: "Frente" | "Atrás" | "Detalle";
 };
 
+export type CommerceBatchVisibleIdentifier = {
+  value: string;
+  type: CommerceIdentifierType;
+  source: "box" | "product" | "unknown";
+  confidence: number;
+};
+
 export type CommerceBatchGroup = {
   groupKey: string;
   name: string;
   brand: string;
   model: string;
+  packageKind: "box" | "retail_package" | "loose_product" | "unknown";
   identifier: { value: string; type: CommerceIdentifierType } | null;
+  visibleIdentifiers: CommerceBatchVisibleIdentifier[];
   confidence: number;
   needsReview: boolean;
   images: CommerceBatchImageRole[];
@@ -44,10 +53,30 @@ const GROUP_SCHEMA = {
           name: { type: "string" },
           brand: { type: "string" },
           model: { type: "string" },
+          packageKind: {
+            type: "string",
+            enum: ["box", "retail_package", "loose_product", "unknown"],
+          },
           identifierValue: { type: "string" },
           identifierType: {
             type: "string",
             enum: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "clouva_barcode", "clouva_qr", "sku"],
+          },
+          visibleIdentifiers: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                value: { type: "string" },
+                type: {
+                  type: "string",
+                  enum: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "clouva_barcode", "clouva_qr", "sku"],
+                },
+                source: { type: "string", enum: ["box", "product", "unknown"] },
+                confidence: { type: "number", minimum: 0, maximum: 1 },
+              },
+              required: ["value", "type", "source", "confidence"],
+            },
           },
           confidence: { type: "number", minimum: 0, maximum: 1 },
           needsReview: { type: "boolean" },
@@ -64,8 +93,8 @@ const GROUP_SCHEMA = {
           },
         },
         required: [
-          "groupKey", "name", "brand", "model", "identifierValue", "identifierType",
-          "confidence", "needsReview", "images",
+          "groupKey", "name", "brand", "model", "packageKind", "identifierValue", "identifierType",
+          "visibleIdentifiers", "confidence", "needsReview", "images",
         ],
       },
     },
@@ -104,13 +133,9 @@ function normalizeIdentity(value: string) {
 
 function mergeKey(group: CommerceBatchGroup) {
   const identifier = group.identifier?.value?.trim();
-  if (identifier) return `code:${identifier.replace(/\s/g, "").toUpperCase()}`;
-  const brand = normalizeIdentity(group.brand);
-  const model = normalizeIdentity(group.model);
-  const name = normalizeIdentity(group.name);
-  if (brand && model) return `brand-model:${brand}:${model}`;
-  if (brand && name.length >= 8) return `brand-name:${brand}:${name}`;
-  return "";
+  // En carga masiva, un código exacto sí puede unir fotos del mismo objeto entre chunks.
+  // Sin código no fusionamos por apariencia/nombre: dos cajas iguales pueden ser unidades físicas distintas.
+  return identifier ? `code:${identifier.replace(/\s/g, "").toUpperCase()}` : "";
 }
 
 function normalizeRoles(images: CommerceBatchImageRole[]) {
@@ -154,15 +179,40 @@ function sanitizeGroup(raw: unknown, allowedIndexes: Set<number>, fallbackKey: s
   const supported = new Set<CommerceIdentifierType>([
     "ean_13", "ean_8", "upc_a", "upc_e", "code_128", "clouva_barcode", "clouva_qr", "sku",
   ]);
+  const visibleIdentifiers = (Array.isArray(item.visibleIdentifiers) ? item.visibleIdentifiers : []).flatMap((raw) => {
+    const code = record(raw);
+    const value = text(code.value, 512);
+    const type = text(code.type, 32) as CommerceIdentifierType;
+    if (!value || !supported.has(type)) return [];
+    const source = code.source === "box" ? "box" : code.source === "product" ? "product" : "unknown";
+    return [{
+      value,
+      type,
+      source,
+      confidence: number01(code.confidence),
+    } satisfies CommerceBatchVisibleIdentifier];
+  });
+  const primary = identifierValue && supported.has(identifierType)
+    ? { value: identifierValue, type: identifierType }
+    : visibleIdentifiers[0]
+      ? { value: visibleIdentifiers[0].value, type: visibleIdentifiers[0].type }
+      : null;
+  const packageKind = item.packageKind === "box"
+    ? "box"
+    : item.packageKind === "retail_package"
+      ? "retail_package"
+      : item.packageKind === "loose_product"
+        ? "loose_product"
+        : "unknown";
 
   return {
     groupKey: text(item.groupKey, 96) || fallbackKey,
     name: text(item.name, 180),
     brand: text(item.brand, 120),
     model: text(item.model, 120),
-    identifier: identifierValue && supported.has(identifierType)
-      ? { value: identifierValue, type: identifierType }
-      : null,
+    packageKind,
+    identifier: primary,
+    visibleIdentifiers,
     confidence: number01(item.confidence),
     needsReview: item.needsReview === true,
     images: normalizeRoles(uniqueImages),
@@ -189,11 +239,18 @@ async function analyzeChunk(args: {
     `Contexto: carga masiva para el Spot "${args.spotName}" en Argentina.`,
     "Recibís varias fotos que pueden representar productos físicos distintos, o varias vistas del mismo producto.",
     `Los índices disponibles en este bloque son: ${downloaded.map((image) => image.sourceIndex).join(", ")}.`,
-    "OBJETIVO: separar las fotos por producto físico/SKU exacto.",
-    "Agrupá juntas las vistas del mismo artículo cuando packaging, marca, modelo, variante y/o código lo confirmen.",
-    "NO agrupes artículos distintos solo porque sean de la misma marca o categoría.",
-    "Si dos fotos muestran el mismo envase desde ángulos distintos, deben estar en el mismo grupo.",
-    "Si un código EAN/UPC/barcode es legible, usalo como evidencia fuerte de identidad.",
+    "OBJETIVO: separar las fotos por unidad física/producto exacto y reconocer también sus cajas y códigos.",
+    "Una caja, packaging retail o producto suelto puede ser el objeto principal del grupo. No descartes una caja por no mostrar el producto fuera del envase.",
+    "Agrupá juntas las vistas del MISMO objeto físico cuando packaging, marcas, daños, etiquetas, fondo, modelo y/o código lo confirmen.",
+    "REGLA FUERTE: dos cajas o productos visualmente iguales con códigos completos distintos son DOS grupos distintos. Nunca los fusiones.",
+    "REGLA FUERTE: si una unidad no tiene código visible, igual debe tener su propio grupo; no inventes un código.",
+    "Si hay varias cajas iguales sin código, mantenelas separadas salvo que la evidencia visual demuestre que son fotos del mismo objeto físico.",
+    "Si una foto muestra el frente de una caja y otra su etiqueta/barcode, agrupá ambas solo cuando correspondan a la misma caja.",
+    "NO agrupes artículos distintos solo porque sean de la misma marca, modelo o categoría.",
+    "packageKind debe ser box para caja/cartón de mercadería, retail_package para blister/envase comercial, loose_product para producto suelto y unknown si no se puede determinar.",
+    "Leé TODOS los códigos visibles y completos en visibleIdentifiers. source=box si el código está impreso/pegado en la caja, product si está en el producto o su packaging directo.",
+    "identifierValue/identifierType representan el código principal más confiable. Si no hay ninguno inequívoco, dejá identifierValue vacío.",
+    "EAN/UPC requieren lectura completa. Para un barcode lineal alfanumérico claramente legible que no sea EAN/UPC, usá code_128.",
     "Cada índice debe aparecer exactamente una vez: dentro de un grupo o en unassignedIndexes.",
     "Para cada grupo elegí exactamente una imagen como Frente. Elegí como máximo una Atrás cuando exista una vista posterior clara. El resto debe ser Detalle.",
     "name, brand y model deben salir solo de texto/evidencia visible. Dejalos vacíos si no están confirmados.",
@@ -242,7 +299,9 @@ async function analyzeChunk(args: {
       name: "",
       brand: "",
       model: "",
+      packageKind: "unknown",
       identifier: null,
+      visibleIdentifiers: [],
       confidence: 0,
       needsReview: true,
       images: [{ sourceIndex, role: "Frente" }],
@@ -276,7 +335,13 @@ function mergeGroups(groups: CommerceBatchGroup[]) {
     existing.name = existing.name || group.name;
     existing.brand = existing.brand || group.brand;
     existing.model = existing.model || group.model;
+    existing.packageKind = existing.packageKind !== "unknown" ? existing.packageKind : group.packageKind;
     existing.identifier = existing.identifier || group.identifier;
+    const codeMap = new Map(
+      [...existing.visibleIdentifiers, ...group.visibleIdentifiers]
+        .map((code) => [`${code.type}:${code.value.replace(/\s/g, "").toUpperCase()}`, code] as const),
+    );
+    existing.visibleIdentifiers = Array.from(codeMap.values());
     existing.confidence = Math.min(existing.confidence, group.confidence);
     existing.needsReview = existing.needsReview || group.needsReview;
   }
