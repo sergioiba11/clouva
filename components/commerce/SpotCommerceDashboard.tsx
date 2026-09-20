@@ -38,6 +38,7 @@ import type { IScannerControls } from "@zxing/browser";
 import { AccountMenu } from "@/components/account/AccountMenu";
 import { useAuth } from "@/components/auth-provider";
 import { CatalogProductActions } from "@/components/commerce/CatalogProductActions";
+import { CommerceBulkProductImport } from "@/components/commerce/CommerceBulkProductImport";
 import {
   buildSpotSku,
   detectCommerceIdentifierType,
@@ -1420,7 +1421,7 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
 
           {tab === "dashboard" ? <SpotDashboard data={data} goal={goal} goalProgress={goalProgress} busy={busy} onNavigate={setTab} onRefreshFx={() => void refreshFx()} /> : null}
 
-          {tab === "scanner" ? <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
+          {tab === "scanner" ? <div className="space-y-4"><CommerceBulkProductImport studioId={studioId} onCompleted={load} /><div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
             <div className={`${CARD} min-w-0 overflow-hidden`}>
               <div className="flex flex-col gap-3 border-b border-white/10 p-4 sm:flex-row sm:items-center sm:justify-between"><div className="min-w-0"><h1 className="text-lg font-semibold leading-tight sm:text-xl">Escanear código o producto</h1><p className="mt-1 text-xs leading-5 text-white/45 sm:text-sm">EAN, UPC, Code 128, QR y reconocimiento visual con Google Cloud Vertex AI</p></div><div className="flex w-full shrink-0 gap-2 sm:w-auto"><button type="button" aria-label="Linterna" onClick={() => void toggleTorch()} disabled={!scanning} className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-white/10 disabled:opacity-30"><Flashlight className={`h-5 w-5 ${torch ? "text-amber-300" : ""}`} /></button><button type="button" onClick={scanning ? stopScanner : () => void startScanner()} className="min-h-11 flex-1 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold sm:flex-none">{scanning ? "Detener" : "Abrir cámara"}</button></div></div>
               <div data-commerce-scanner-camera className="relative aspect-[16/10] min-h-[188px] max-h-[340px] overflow-hidden bg-black sm:aspect-[16/9] sm:min-h-[260px] sm:max-h-[520px] xl:aspect-[4/3] xl:max-h-none"><video ref={videoRef} muted playsInline className="h-full w-full object-cover" /><div className="pointer-events-none absolute inset-[14%] rounded-3xl border-2 border-violet-400 shadow-[0_0_0_999px_rgba(0,0,0,.42),0_0_35px_rgba(139,92,246,.45)]"><div className="absolute left-3 right-3 top-1/2 h-px bg-gradient-to-r from-transparent via-violet-300 to-transparent shadow-[0_0_15px_#c4b5fd]" /></div>{!scanning ? <div className="absolute inset-0 grid place-items-center px-5 text-center"><div><Camera className="mx-auto h-9 w-9 text-white/35" /><p className="mt-3 max-w-xs text-xs leading-5 text-white/55 sm:text-sm">Abrí la cámara para leer el código o fotografiar el producto</p></div></div> : null}</div>
@@ -1481,7 +1482,7 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
                 onPrint={(identifier) => void downloadLabel(identifier, DEFAULT_LABEL_OPTIONS, true)}
               /> : <CreateProductForm value={creation} onChange={setCreation} onSubmit={() => void createScannedProduct()} busy={busy} globalMatch={Boolean(scanResult?.catalog_product)} scannedCode={manualCode} scanType={scanType} onScan={() => void startScanner()} />}
             </div>
-          </div> : null}
+          </div></div> : null}
 
           {tab === "catalog" ? <Catalog data={data} studioId={studioId} onChanged={load} bundleDraft={bundleDraft} setBundleDraft={setBundleDraft} onSaveBundle={() => void saveBundle()} busy={busy} onSell={addToCart} onCodes={(listing, variant) => { setCodeDraft({ listingId: listing.id, variantId: variant?.id || "" }); setTab("codes"); }} /> : null}
           {tab === "inventory" ? <Inventory data={data} draft={stockDraft} setDraft={setStockDraft} onSubmit={() => void adjustStock()} busy={busy} /> : null}
