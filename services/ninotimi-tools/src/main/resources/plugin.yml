@@ -29,9 +29,13 @@ commands:
     aliases: [pk, park]
     usage: /parkour [menu|1|2|3|restart|leave|rebuild]
   survival:
-    description: Abre NINOTIMI SURVIVAL
+    description: Abre NINOTIMI SURVIVAL personal o HARDCORE
     aliases: [survi, sv]
-    usage: /survival [join|leave|status|portalhere]
+    usage: /survival [menu|personal|hardcore|leave|status|portalhere|reset]
+  lobby:
+    description: Vuelve al lobby principal de NINOTIMI
+    aliases: [hub, spawn]
+    usage: /lobby
 permissions:
   ninotimi.tools:
     description: Puede usar NINOTIMI TOOLS
