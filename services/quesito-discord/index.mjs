@@ -140,6 +140,35 @@ function sanitizeForSpeech(text) {
   return out.slice(0, 900);
 }
 
+function normalizeForWake(text) {
+  return String(text || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function hasWakeFuzzy(clean) {
+  const n = normalizeForWake(clean);
+  if (new RegExp("\\b" + WAKE_WORD + "\\b", "i").test(n)) return true;
+  // Variantes baratas de STT sin llamar a la IA: kesito, quesita, que cito, etc.
+  return /\b(kesito|quesita|quesitoo|ke cito|que cito|quesi to|cecito)\b/i.test(n);
+}
+
+const LOCAL_FALLBACKS = [
+  "¡Ja! Se me cortó un toque, repetímelo dale.",
+  "No te escuché bien ahí, repetilo que estoy.",
+  "Se me lagueó la cabeza, ¿me lo repetís?",
+];
+
+function localFallbackReply(state) {
+  state.localFallbackIdx = ((state.localFallbackIdx || 0) + 1) % LOCAL_FALLBACKS.length;
+  return LOCAL_FALLBACKS[state.localFallbackIdx];
+}
+
+let mcCache = { at: 0, text: "" };
+
 function recentHistory(guildId) {
   return histories.get(guildId) || [];
 }
@@ -151,6 +180,8 @@ function remember(guildId, role, text) {
 }
 
 async function fetchMinecraftContext() {
+  // Cache barato en memoria: evita un fetch por cada utterance.
+  if (Date.now() - mcCache.at < 20000 && mcCache.text) return mcCache.text;
   try {
     const response = await fetch(MINECRAFT_STATUS_URL, {
       cache: "no-store",
@@ -160,7 +191,10 @@ async function fetchMinecraftContext() {
     if (!response.ok) return "Estado Minecraft: no disponible.";
     const data = await response.json();
 
-    if (!data?.online) return "Niños Rata Server: offline en este momento.";
+    if (!data?.online) {
+      mcCache = { at: Date.now(), text: "Niños Rata Server: offline en este momento." };
+      return mcCache.text;
+    }
 
     const online = Number(data?.players?.online ?? 0);
     const max = Number(data?.players?.max ?? 0);
@@ -170,7 +204,8 @@ async function fetchMinecraftContext() {
     const names = sample.length ? " Jugadores visibles: " + sample.join(", ") + "." : "";
     const version = data?.version ? " Versión: " + String(data.version) + "." : "";
 
-    return "Niños Rata Server: online, " + online + "/" + max + " jugadores." + names + version;
+    mcCache = { at: Date.now(), text: "Niños Rata Server: online, " + online + "/" + max + " jugadores." + names + version };
+    return mcCache.text;
   } catch {
     return "Estado Minecraft: no disponible.";
   }
@@ -565,7 +600,7 @@ function handleInterimControl(state, userId, transcript) {
 
 async function processTranscript(state, userId, transcript, source = "streaming-stt") {
   const clean = String(transcript || "").replace(/\s+/g, " ").trim();
-  if (!clean) return;
+  if (!clean || clean.length < 2) return;
 
   const totalStarted = Date.now();
   voiceDiagnostics.utterances += 1;
@@ -574,11 +609,12 @@ async function processTranscript(state, userId, transcript, source = "streaming-
   voiceDiagnostics.lastAt = new Date().toISOString();
   voiceDiagnostics.sttProvider = source;
 
-  const lower = clean.toLowerCase();
-  const escapedWake = WAKE_WORD.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const hasWake = new RegExp("\\b" + escapedWake + "\\b", "i").test(clean);
+  const hasWake = hasWakeFuzzy(clean);
   const member = state.guild.members.cache.get(userId);
   const speaker = member?.displayName || "un jugador";
+
+  // Ignorar ruiditos cortos sin wake: ahorra llamadas a Vertex.
+  if (!hasWake && clean.length < 4 && Date.now() >= state.conversationUntil) return;
 
   if (hasWake && isStopRequest(clean)) {
     log("QUESITO_STOP_REQUEST", { guildId: state.guildId, userId, source });
@@ -607,15 +643,20 @@ async function processTranscript(state, userId, transcript, source = "streaming-
     log("QUESITO_WAKE", { guildId: state.guildId, userId, source });
 
     const thinkStarted = Date.now();
-    const answer = await askVertex({
-      guildId: state.guildId,
-      speaker,
-      prompt,
-    });
-    voiceDiagnostics.lastThinkMs = Date.now() - thinkStarted;
+    try {
+      const answer = await askVertex({
+        guildId: state.guildId,
+        speaker,
+        prompt,
+      });
+      voiceDiagnostics.lastThinkMs = Date.now() - thinkStarted;
 
-    voiceDiagnostics.lastStage = "speaking";
-    await speak(state, answer);
+      voiceDiagnostics.lastStage = "speaking";
+      await speak(state, answer);
+    } catch (error) {
+      log("QUESITO_WAKE_FALLBACK", { guildId: state.guildId, userId, error: String(error?.message || error).slice(0, 200) });
+      await speak(state, localFallbackReply(state));
+    }
     voiceDiagnostics.replies += 1;
     voiceDiagnostics.lastTotalMs = Date.now() - totalStarted;
     voiceDiagnostics.lastStage = "listening";
@@ -648,6 +689,12 @@ async function processTranscript(state, userId, transcript, source = "streaming-
       await speak(state, answer);
       voiceDiagnostics.replies += 1;
       voiceDiagnostics.lastTotalMs = Date.now() - totalStarted;
+      voiceDiagnostics.lastStage = "listening";
+      return;
+    } catch (error) {
+      log("QUESITO_CONVERSATION_FALLBACK", { guildId: state.guildId, userId, error: String(error?.message || error).slice(0, 200) });
+      await speak(state, localFallbackReply(state));
+      voiceDiagnostics.replies += 1;
       voiceDiagnostics.lastStage = "listening";
       return;
     } finally {
@@ -1005,6 +1052,14 @@ const quesitoCommand = new SlashCommandBuilder()
   )
   .addSubcommand((sub) =>
     sub.setName("no-opinar").setDescription("Desactiva los comentarios espontáneos"),
+  )
+  .addSubcommand((sub) =>
+    sub
+      .setName("decir")
+      .setDescription("Hablale por texto a Quesito (sin usar la voz)")
+      .addStringOption((opt) =>
+        opt.setName("texto").setDescription("Lo que le querés decir").setRequired(true),
+      ),
   );
 
 async function autoJoinVoiceChannel(guild, preferredChannelId = null) {
@@ -1228,6 +1283,22 @@ discord.on("interactionCreate", async (interaction) => {
         content: "🧀 Quesito volvió. Escucha aunque estén hablando encima y también puede opinar solo.",
         ephemeral: true,
       });
+      return;
+    }
+
+    if (sub === "decir") {
+      const texto = interaction.options.getString("texto", true).slice(0, 500);
+      const state = guildStates.get(interaction.guild.id);
+      await interaction.deferReply({ ephemeral: true });
+      try {
+        const member = await interaction.guild.members.fetch(interaction.user.id);
+        const speaker = member?.displayName || "un jugador";
+        const answer = await askVertex({ guildId: interaction.guild.id, speaker, prompt: texto });
+        if (state && !state.muted) await speak(state, answer);
+        await interaction.editReply("🧀 Quesito: " + answer.slice(0, 1500));
+      } catch {
+        await interaction.editReply("🧀 " + localFallbackReply(state || {}));
+      }
       return;
     }
 
