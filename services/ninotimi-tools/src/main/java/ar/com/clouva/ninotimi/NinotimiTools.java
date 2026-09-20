@@ -4,6 +4,7 @@ import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.NamedTextColor;
 import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import org.bukkit.Bukkit;
+import org.bukkit.Difficulty;
 import org.bukkit.GameMode;
 import org.bukkit.GameRule;
 import org.bukkit.Location;
@@ -33,12 +34,14 @@ import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
+import org.bukkit.event.entity.PlayerDeathEvent;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemFlag;
 import org.bukkit.inventory.ItemStack;
@@ -65,11 +68,13 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     private static final String BLOCKS_TITLE = "BLOQUES — NINOTIMI";
     private static final String GAME_MENU_TITLE = "JUEGOS — NINOTIMI";
     private static final String PARKOUR_MENU_TITLE = "PARKOUR — ELEGÍ MAPA";
+    private static final String SURVIVAL_MENU_TITLE = "SURVIVAL — ELEGÍ MODO";
     private static final String PVP_WORLD_NAME = "pvp_ninotimi";
     private static final String PARKOUR_WORLD_NAME = "parkour_ninotimi";
     private static final String ICE_WORLD_NAME = "hielo_ninotimi";
     private static final String SKY_WORLD_NAME = "skyblock_ninotimi";
-    private static final String SURVIVAL_WORLD_NAME = "survival_ninotimi";
+    private static final String PERSONAL_SURVIVAL_PREFIX = "survival_player_";
+    private static final String HARDCORE_WORLD_NAME = "hardcore_ninotimi";
     private static final int SKY_ISLAND_SPACING = 256;
     private static final int SKY_ISLAND_RADIUS = 96;
     private static final int SKY_SCATTER_VERSION = 1;
@@ -79,6 +84,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     private NamespacedKey toolsKey;
     private NamespacedKey wandKey;
     private NamespacedKey npcGameKey;
+    private NamespacedKey parkourControlKey;
 
     private final Set<String> builderNames = new HashSet<>();
     private final Map<UUID, Selection> selections = new HashMap<>();
@@ -123,10 +129,9 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     private Region skyHomePad;
     private Location skyLobby;
 
-    private World survivalWorld;
     private Region survivalEntryPortal;
-    private Region survivalExitPortal;
-    private Location survivalSpawn;
+    private World hardcoreWorld;
+    private Location hardcoreSpawn;
 
     private World parkourWorld;
     private Location parkourLobby;
@@ -143,6 +148,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         toolsKey = new NamespacedKey(this, "tools-menu");
         wandKey = new NamespacedKey(this, "builder-wand");
         npcGameKey = new NamespacedKey(this, "game-npc");
+        parkourControlKey = new NamespacedKey(this, "parkour-control");
 
         loadBuilders();
         setupPvp();
@@ -173,6 +179,10 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         if (getCommand("survival") != null) {
             getCommand("survival").setExecutor(this);
             getCommand("survival").setTabCompleter(this);
+        }
+        if (getCommand("lobby") != null) {
+            getCommand("lobby").setExecutor(this);
+            getCommand("lobby").setTabCompleter(this);
         }
         if (getCommand("parkour") != null) {
             getCommand("parkour").setExecutor(this);
@@ -295,6 +305,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         if (player.getWorld().getName().equals(PARKOUR_WORLD_NAME)) {
             Bukkit.getScheduler().runTaskLater(this, () -> {
                 if (player.isOnline() && player.getWorld().getName().equals(PARKOUR_WORLD_NAME)) {
+                    giveParkourControls(player);
                     enterParkourLobby(player, false);
                 }
             }, 20L);
@@ -329,6 +340,10 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         icePortalStates.remove(id);
         skyPortalStates.remove(id);
         survivalPortalStates.remove(id);
+        if (isPersonalSurvivalWorld(player.getWorld())) {
+            String worldName = player.getWorld().getName();
+            Bukkit.getScheduler().runTaskLater(this, () -> unloadPersonalSurvivalWorld(worldName), 20L);
+        }
         parkourRuns.remove(id);
         parkourPortalStates.remove(id);
     }
@@ -343,6 +358,15 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
 
         ItemMeta meta = item.getItemMeta();
         if (meta == null) {
+            return;
+        }
+
+        String parkourAction = parkourControlKey == null
+            ? null
+            : meta.getPersistentDataContainer().get(parkourControlKey, PersistentDataType.STRING);
+        if (parkourAction != null) {
+            event.setCancelled(true);
+            handleParkourControl(player, parkourAction);
             return;
         }
 
@@ -403,7 +427,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             case "pvp" -> enterPvpLobby(player, true);
             case "hielo" -> enterIceLobby(player, true);
             case "skyblock" -> enterSkyLobby(player, true);
-            case "survival" -> enterSurvival(player, true);
+            case "survival" -> openSurvivalMenu(player);
             case "parkour" -> openParkourMenu(player, true);
             default -> openGameMenu(player);
         }
@@ -444,6 +468,28 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             return;
         }
 
+        if (SURVIVAL_MENU_TITLE.equals(title)) {
+            event.setCancelled(true);
+            if (event.getRawSlot() < 0) return;
+
+            switch (event.getRawSlot()) {
+                case 11 -> {
+                    player.closeInventory();
+                    if (player.getWorld().getName().equals(PARKOUR_WORLD_NAME)) exitParkour(player);
+                    enterPersonalSurvival(player, true);
+                }
+                case 15 -> {
+                    player.closeInventory();
+                    if (player.getWorld().getName().equals(PARKOUR_WORLD_NAME)) exitParkour(player);
+                    enterHardcore(player, true);
+                }
+                case 22 -> openGameMenu(player);
+                default -> {
+                }
+            }
+            return;
+        }
+
         if (GAME_MENU_TITLE.equals(title)) {
             event.setCancelled(true);
             if (event.getRawSlot() < 0) return;
@@ -451,14 +497,17 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             switch (event.getRawSlot()) {
                 case 11 -> {
                     player.closeInventory();
+                    if (player.getWorld().getName().equals(PARKOUR_WORLD_NAME)) exitParkour(player);
                     enterPvpLobby(player, true);
                 }
                 case 13 -> {
                     player.closeInventory();
+                    if (player.getWorld().getName().equals(PARKOUR_WORLD_NAME)) exitParkour(player);
                     enterIceLobby(player, true);
                 }
                 case 15 -> {
                     player.closeInventory();
+                    if (player.getWorld().getName().equals(PARKOUR_WORLD_NAME)) exitParkour(player);
                     enterSkyLobby(player, true);
                 }
                 case 17 -> {
@@ -467,7 +516,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
                 }
                 case 20 -> {
                     player.closeInventory();
-                    enterSurvival(player, true);
+                    openSurvivalMenu(player);
                 }
                 case 22 -> player.closeInventory();
                 default -> {
@@ -569,12 +618,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         }
 
         if (survivalEntryPortal != null && survivalEntryPortal.contains(to)) {
-            enterSurvival(player, true);
-            return;
-        }
-
-        if (survivalExitPortal != null && survivalExitPortal.contains(to)) {
-            exitSurvival(player);
+            openSurvivalMenu(player);
             return;
         }
 
@@ -629,6 +673,38 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
                 .orElse(null);
             endDuel(winner, "KO");
         }
+    }
+
+    @EventHandler
+    public void onHardcoreDeath(PlayerDeathEvent event) {
+        Player player = event.getEntity();
+        if (!player.getWorld().getName().equals(HARDCORE_WORLD_NAME)) return;
+
+        getConfig().set("hardcore.eliminated." + player.getUniqueId(), true);
+        getConfig().set("hardcore.names." + player.getUniqueId(), player.getName());
+        saveConfig();
+        survivalPortalStates.remove(player.getUniqueId());
+
+        player.sendMessage(
+            Component.text("☠ HARDCORE · ", NamedTextColor.RED)
+                .append(Component.text("quedaste eliminado de este mundo.", NamedTextColor.GRAY))
+        );
+    }
+
+    @EventHandler
+    public void onHardcoreRespawn(PlayerRespawnEvent event) {
+        Player player = event.getPlayer();
+        if (!getConfig().getBoolean("hardcore.eliminated." + player.getUniqueId(), false)) return;
+
+        World main = Bukkit.getWorlds().get(0);
+        event.setRespawnLocation(main.getSpawnLocation());
+        Bukkit.getScheduler().runTaskLater(this, () -> {
+            if (!player.isOnline()) return;
+            player.setGameMode(GameMode.SURVIVAL);
+            player.setAllowFlight(false);
+            player.setFlying(false);
+            msg(player, "Tu vida HARDCORE terminó. Un OP puede reiniciar tu acceso.", NamedTextColor.RED);
+        }, 2L);
     }
 
     @EventHandler
@@ -2775,6 +2851,10 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         if (command.getName().equalsIgnoreCase("survival")) {
             return handleSurvivalCommand(player, args);
         }
+        if (command.getName().equalsIgnoreCase("lobby")) {
+            returnToMainLobby(player);
+            return true;
+        }
         if (command.getName().equalsIgnoreCase("parkour")) {
             return handleParkourCommand(player, args);
         }
@@ -2851,47 +2931,169 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
 
 
     private void setupSurvival() {
-        WorldCreator creator = new WorldCreator(SURVIVAL_WORLD_NAME);
+        WorldCreator creator = new WorldCreator(HARDCORE_WORLD_NAME);
         creator.type(WorldType.NORMAL);
         creator.generateStructures(true);
 
-        survivalWorld = Bukkit.getWorld(SURVIVAL_WORLD_NAME);
-        if (survivalWorld == null) {
-            survivalWorld = creator.createWorld();
+        hardcoreWorld = Bukkit.getWorld(HARDCORE_WORLD_NAME);
+        if (hardcoreWorld == null) {
+            hardcoreWorld = creator.createWorld();
         }
 
-        if (survivalWorld == null) {
-            getLogger().severe("No se pudo crear NINOTIMI SURVIVAL.");
-            return;
+        if (hardcoreWorld == null) {
+            getLogger().severe("No se pudo crear NINOTIMI HARDCORE.");
+        } else {
+            hardcoreWorld.setPVP(false);
+            hardcoreWorld.setDifficulty(Difficulty.HARD);
+            hardcoreWorld.setGameRule(GameRule.DO_MOB_SPAWNING, true);
+            hardcoreWorld.setGameRule(GameRule.DO_DAYLIGHT_CYCLE, true);
+            hardcoreWorld.setGameRule(GameRule.DO_WEATHER_CYCLE, true);
+            hardcoreWorld.setGameRule(GameRule.KEEP_INVENTORY, false);
+
+            Location natural = hardcoreWorld.getSpawnLocation();
+            int x = natural.getBlockX();
+            int z = natural.getBlockZ();
+            int y = hardcoreWorld.getHighestBlockYAt(x, z) + 1;
+            hardcoreSpawn = new Location(hardcoreWorld, x + 0.5, y, z + 0.5, 0f, 0f);
+            hardcoreWorld.setSpawnLocation(hardcoreSpawn);
         }
-
-        survivalWorld.setPVP(false);
-        survivalWorld.setGameRule(GameRule.DO_MOB_SPAWNING, true);
-        survivalWorld.setGameRule(GameRule.DO_DAYLIGHT_CYCLE, true);
-        survivalWorld.setGameRule(GameRule.DO_WEATHER_CYCLE, true);
-        survivalWorld.setGameRule(GameRule.KEEP_INVENTORY, false);
-
-        Location naturalSpawn = survivalWorld.getSpawnLocation();
-        int sx = naturalSpawn.getBlockX();
-        int sz = naturalSpawn.getBlockZ();
-        int sy = survivalWorld.getHighestBlockYAt(sx, sz) + 1;
-        survivalSpawn = new Location(survivalWorld, sx + 0.5, sy, sz + 0.5, 0f, 0f);
-        survivalWorld.setSpawnLocation(survivalSpawn);
-
-        int portalX = sx + 8;
-        int portalZ = sz;
-        int portalY = survivalWorld.getHighestBlockYAt(portalX, portalZ) + 1;
-        buildSurvivalPortalFrame(survivalWorld, portalX, portalY, portalZ, true);
-        survivalExitPortal = new Region(
-            SURVIVAL_WORLD_NAME,
-            portalX - 1, portalY + 1, portalZ - 1,
-            portalX + 1, portalY + 3, portalZ + 1
-        );
 
         survivalEntryPortal = loadRegion("survival.entry-portal");
         if (survivalEntryPortal == null) {
             buildDefaultSurvivalEntryPortal();
         }
+    }
+
+    private String personalSurvivalWorldName(UUID ownerId) {
+        return PERSONAL_SURVIVAL_PREFIX + ownerId.toString().replace("-", "");
+    }
+
+    private boolean isPersonalSurvivalWorld(World world) {
+        return world != null && world.getName().startsWith(PERSONAL_SURVIVAL_PREFIX);
+    }
+
+    private World getOrCreatePersonalSurvivalWorld(Player owner) {
+        String worldName = personalSurvivalWorldName(owner.getUniqueId());
+        World world = Bukkit.getWorld(worldName);
+
+        if (world == null) {
+            WorldCreator creator = new WorldCreator(worldName);
+            creator.type(WorldType.NORMAL);
+            creator.generateStructures(true);
+            world = creator.createWorld();
+        }
+
+        if (world == null) {
+            return null;
+        }
+
+        world.setPVP(false);
+        world.setDifficulty(Difficulty.NORMAL);
+        world.setGameRule(GameRule.DO_MOB_SPAWNING, true);
+        world.setGameRule(GameRule.DO_DAYLIGHT_CYCLE, true);
+        world.setGameRule(GameRule.DO_WEATHER_CYCLE, true);
+        world.setGameRule(GameRule.KEEP_INVENTORY, false);
+
+        getConfig().set("survival.personal." + owner.getUniqueId() + ".world", worldName);
+        getConfig().set("survival.personal." + owner.getUniqueId() + ".name", owner.getName());
+        saveConfig();
+
+        return world;
+    }
+
+    private Location naturalSurvivalSpawn(World world) {
+        Location natural = world.getSpawnLocation();
+        int x = natural.getBlockX();
+        int z = natural.getBlockZ();
+        int y = world.getHighestBlockYAt(x, z) + 1;
+        return new Location(world, x + 0.5, y, z + 0.5, 0f, 0f);
+    }
+
+    private void rememberSurvivalReturn(Player player, boolean rememberReturn) {
+        if (!rememberReturn) return;
+        if (isPersonalSurvivalWorld(player.getWorld()) || player.getWorld().getName().equals(HARDCORE_WORLD_NAME)) return;
+
+        survivalPortalStates.putIfAbsent(
+            player.getUniqueId(),
+            new PortalState(
+                player.getLocation().clone(),
+                player.getGameMode(),
+                player.getAllowFlight(),
+                player.isFlying()
+            )
+        );
+    }
+
+    private void enterPersonalSurvival(Player player, boolean rememberReturn) {
+        rememberSurvivalReturn(player, rememberReturn);
+        World world = getOrCreatePersonalSurvivalWorld(player);
+
+        if (world == null) {
+            msg(player, "No se pudo abrir tu Survival personal.", NamedTextColor.RED);
+            return;
+        }
+
+        player.setGameMode(GameMode.SURVIVAL);
+        player.setAllowFlight(false);
+        player.setFlying(false);
+        player.teleport(naturalSurvivalSpawn(world));
+        player.setFireTicks(0);
+
+        player.sendTitle("TU SURVIVAL", "Este mundo es solamente tuyo", 10, 60, 10);
+        msg(player, "Tu progreso queda guardado en tu propio mundo · /lobby para volver.", NamedTextColor.GREEN);
+    }
+
+    private void enterHardcore(Player player, boolean rememberReturn) {
+        if (getConfig().getBoolean("hardcore.eliminated." + player.getUniqueId(), false)) {
+            msg(player, "Ya moriste en HARDCORE. Un OP tiene que reiniciar tu acceso.", NamedTextColor.RED);
+            return;
+        }
+
+        if (hardcoreWorld == null || hardcoreSpawn == null) {
+            msg(player, "HARDCORE todavía no está disponible.", NamedTextColor.RED);
+            return;
+        }
+
+        rememberSurvivalReturn(player, rememberReturn);
+        player.setGameMode(GameMode.SURVIVAL);
+        player.setAllowFlight(false);
+        player.setFlying(false);
+        player.teleport(hardcoreSpawn);
+        player.setFireTicks(0);
+
+        player.sendTitle("HARDCORE", "Un mundo para todos · una vida", 10, 60, 10);
+        msg(player, "Dificultad HARD · todos comparten el mundo · si morís quedás eliminado.", NamedTextColor.RED);
+    }
+
+    private void unloadPersonalSurvivalWorld(String worldName) {
+        World world = Bukkit.getWorld(worldName);
+        if (world == null || !world.getName().startsWith(PERSONAL_SURVIVAL_PREFIX)) return;
+        if (!world.getPlayers().isEmpty()) return;
+        Bukkit.unloadWorld(world, true);
+    }
+
+    private void exitSurvival(Player player) {
+        String leavingWorld = player.getWorld().getName();
+        PortalState previous = survivalPortalStates.remove(player.getUniqueId());
+
+        if (previous != null && previous.location().getWorld() != null) {
+            player.teleport(previous.location());
+            player.setGameMode(previous.gameMode());
+            player.setAllowFlight(previous.allowFlight());
+            player.setFlying(previous.flying() && previous.allowFlight());
+        } else {
+            World main = Bukkit.getWorlds().get(0);
+            player.teleport(main.getSpawnLocation());
+            player.setGameMode(GameMode.SURVIVAL);
+            player.setAllowFlight(false);
+            player.setFlying(false);
+        }
+
+        if (leavingWorld.startsWith(PERSONAL_SURVIVAL_PREFIX)) {
+            Bukkit.getScheduler().runTaskLater(this, () -> unloadPersonalSurvivalWorld(leavingWorld), 20L);
+        }
+
+        msg(player, "Volviste del Survival.", NamedTextColor.GREEN);
     }
 
     private void buildDefaultSurvivalEntryPortal() {
@@ -2926,7 +3128,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             centerX + 1, baseY + 3, centerZ + 1
         );
         saveRegion("survival.entry-portal", survivalEntryPortal);
-        msg(player, "Portal NINOTIMI SURVIVAL creado acá.", NamedTextColor.GREEN);
+        msg(player, "Portal SURVIVAL creado acá.", NamedTextColor.GREEN);
     }
 
     private void buildSurvivalPortalFrame(World world, int centerX, int baseY, int centerZ, boolean alongX) {
@@ -2958,67 +3160,31 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         }
     }
 
-    private void enterSurvival(Player player, boolean rememberReturn) {
-        if (survivalWorld == null || survivalSpawn == null) {
-            msg(player, "SURVIVAL todavía no está disponible.", NamedTextColor.RED);
-            return;
-        }
-
-        if (rememberReturn && !player.getWorld().getName().equals(SURVIVAL_WORLD_NAME)) {
-            survivalPortalStates.putIfAbsent(
-                player.getUniqueId(),
-                new PortalState(
-                    player.getLocation().clone(),
-                    player.getGameMode(),
-                    player.getAllowFlight(),
-                    player.isFlying()
-                )
-            );
-        }
-
-        player.setGameMode(GameMode.SURVIVAL);
-        player.setAllowFlight(false);
-        player.setFlying(false);
-        player.teleport(survivalSpawn);
-        player.setHealth(player.getMaxHealth());
-        player.setFoodLevel(20);
-        player.setSaturation(20f);
-        player.setFireTicks(0);
-
-        player.sendTitle("NINOTIMI SURVIVAL", "Mundo abierto · construí · explorá · sobreviví", 10, 60, 10);
-        msg(player, "Entraste al Survival. /survival leave para volver.", NamedTextColor.GREEN);
-    }
-
-    private void exitSurvival(Player player) {
-        PortalState previous = survivalPortalStates.remove(player.getUniqueId());
-
-        if (previous != null && previous.location.getWorld() != null) {
-            player.teleport(previous.location);
-            player.setGameMode(previous.gameMode);
-            player.setAllowFlight(previous.allowFlight);
-            player.setFlying(previous.flying && previous.allowFlight);
-        } else {
-            World main = Bukkit.getWorlds().get(0);
-            player.teleport(main.getSpawnLocation());
-            player.setGameMode(GameMode.SURVIVAL);
-            player.setAllowFlight(false);
-            player.setFlying(false);
-        }
-
-        msg(player, "Saliste de NINOTIMI SURVIVAL.", NamedTextColor.GREEN);
+    private void openSurvivalMenu(Player player) {
+        Inventory inv = Bukkit.createInventory(null, 27, Component.text(SURVIVAL_MENU_TITLE));
+        inv.setItem(11, menuItem(Material.OAK_SAPLING, "🌲 MI SURVIVAL", "Tu mundo personal y persistente"));
+        inv.setItem(15, menuItem(Material.WITHER_SKELETON_SKULL, "☠ HARDCORE", "Mundo compartido · dificultad HARD · una vida"));
+        inv.setItem(22, menuItem(Material.NETHER_STAR, "Volver a juegos", "Abrir todas las funciones"));
+        player.openInventory(inv);
     }
 
     private boolean handleSurvivalCommand(Player player, String[] args) {
-        String sub = args.length == 0 ? "join" : args[0].toLowerCase(Locale.ROOT);
+        String sub = args.length == 0 ? "menu" : args[0].toLowerCase(Locale.ROOT);
 
         switch (sub) {
-            case "join", "entrar", "lobby" -> enterSurvival(player, !player.getWorld().getName().equals(SURVIVAL_WORLD_NAME));
+            case "menu", "join", "entrar" -> openSurvivalMenu(player);
+            case "personal", "mio", "mío" -> enterPersonalSurvival(player, true);
+            case "hardcore", "hc" -> enterHardcore(player, true);
             case "leave", "salir" -> exitSurvival(player);
-            case "status" -> msg(
-                player,
-                "SURVIVAL: " + (survivalWorld == null ? "no disponible" : "online · mundo " + SURVIVAL_WORLD_NAME),
-                survivalWorld == null ? NamedTextColor.RED : NamedTextColor.GREEN
-            );
+            case "status" -> {
+                String personal = personalSurvivalWorldName(player.getUniqueId());
+                boolean eliminated = getConfig().getBoolean("hardcore.eliminated." + player.getUniqueId(), false);
+                msg(
+                    player,
+                    "Personal: " + personal + " · Hardcore: " + (eliminated ? "ELIMINADO" : "disponible"),
+                    eliminated ? NamedTextColor.YELLOW : NamedTextColor.GREEN
+                );
+            }
             case "portalhere" -> {
                 if (!player.isOp()) {
                     msg(player, "Solo OP puede mover el portal.", NamedTextColor.RED);
@@ -3026,14 +3192,79 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
                 }
                 buildSurvivalPortalAt(player);
             }
+            case "reset" -> {
+                if (!player.isOp()) {
+                    msg(player, "Solo OP puede resetear una vida Hardcore.", NamedTextColor.RED);
+                    return true;
+                }
+                if (args.length < 2) {
+                    msg(player, "Uso: /survival reset <jugador>", NamedTextColor.YELLOW);
+                    return true;
+                }
+                Player target = Bukkit.getPlayerExact(args[1]);
+                if (target == null) {
+                    msg(player, "Ese jugador tiene que estar conectado para resetearlo.", NamedTextColor.RED);
+                    return true;
+                }
+                getConfig().set("hardcore.eliminated." + target.getUniqueId(), false);
+                saveConfig();
+                msg(player, "Hardcore reiniciado para " + target.getName() + ".", NamedTextColor.GREEN);
+                msg(target, "Tu acceso a HARDCORE fue reiniciado.", NamedTextColor.GREEN);
+            }
             default -> msg(
                 player,
-                "/survival join · leave · status" + (player.isOp() ? " · portalhere" : ""),
+                "/survival menu · personal · hardcore · leave · status"
+                    + (player.isOp() ? " · portalhere · reset <jugador>" : ""),
                 NamedTextColor.YELLOW
             );
         }
 
         return true;
+    }
+
+    private void returnToMainLobby(Player player) {
+        UUID id = player.getUniqueId();
+
+        if (fighters.contains(id)) {
+            handlePvpCommand(player, new String[]{"leave"});
+            Bukkit.getScheduler().runTaskLater(this, () -> forceMainLobby(player), 4L);
+            return;
+        }
+
+        if (iceFighters.contains(id)) {
+            handleIceCommand(player, new String[]{"leave"});
+            Bukkit.getScheduler().runTaskLater(this, () -> forceMainLobby(player), 4L);
+            return;
+        }
+
+        forceMainLobby(player);
+    }
+
+    private void forceMainLobby(Player player) {
+        if (!player.isOnline()) return;
+
+        String oldWorld = player.getWorld().getName();
+        pvpQueue.remove(player.getUniqueId());
+        iceQueue.remove(player.getUniqueId());
+        parkourRuns.remove(player.getUniqueId());
+        removeParkourControls(player);
+        portalStates.remove(player.getUniqueId());
+        icePortalStates.remove(player.getUniqueId());
+        skyPortalStates.remove(player.getUniqueId());
+        survivalPortalStates.remove(player.getUniqueId());
+        parkourPortalStates.remove(player.getUniqueId());
+
+        World main = Bukkit.getWorlds().get(0);
+        player.teleport(main.getSpawnLocation());
+        player.setGameMode(GameMode.SURVIVAL);
+        player.setAllowFlight(false);
+        player.setFlying(false);
+        player.setFireTicks(0);
+        msg(player, "Volviste al lobby principal.", NamedTextColor.GREEN);
+
+        if (oldWorld.startsWith(PERSONAL_SURVIVAL_PREFIX)) {
+            Bukkit.getScheduler().runTaskLater(this, () -> unloadPersonalSurvivalWorld(oldWorld), 20L);
+        }
     }
 
 
@@ -3247,6 +3478,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         player.setFoodLevel(20);
         player.setSaturation(20f);
         player.setFireTicks(0);
+        giveParkourControls(player);
 
         player.sendTitle("NINOTIMI PARKOUR", "Elegí uno de los 3 mapas", 5, 40, 10);
         Bukkit.getScheduler().runTaskLater(this, () -> {
@@ -3271,6 +3503,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         player.setFlying(false);
         player.teleport(start);
         player.setFallDistance(0f);
+        giveParkourControls(player);
 
         player.sendTitle(
             "PARKOUR " + (track + 1),
@@ -3382,6 +3615,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
 
     private void exitParkour(Player player) {
         parkourRuns.remove(player.getUniqueId());
+        removeParkourControls(player);
         PortalState previous = parkourPortalStates.remove(player.getUniqueId());
 
         if (previous != null && previous.location().getWorld() != null) {
@@ -3398,6 +3632,62 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         }
 
         msg(player, "Saliste de PARKOUR.", NamedTextColor.GREEN);
+    }
+
+    private ItemStack parkourControl(Material material, String name, String lore, String action) {
+        ItemStack item = menuItem(material, name, lore);
+        ItemMeta meta = item.getItemMeta();
+        meta.getPersistentDataContainer().set(parkourControlKey, PersistentDataType.STRING, action);
+        item.setItemMeta(meta);
+        return item;
+    }
+
+    private void placeParkourControl(Player player, int preferredSlot, ItemStack item) {
+        ItemStack existing = player.getInventory().getItem(preferredSlot);
+        if (existing == null || existing.getType().isAir()) {
+            player.getInventory().setItem(preferredSlot, item);
+        } else {
+            player.getInventory().addItem(item);
+        }
+    }
+
+    private void removeParkourControls(Player player) {
+        if (parkourControlKey == null) return;
+        for (int slot = 0; slot < player.getInventory().getSize(); slot++) {
+            ItemStack item = player.getInventory().getItem(slot);
+            if (item == null || item.getType().isAir()) continue;
+            ItemMeta meta = item.getItemMeta();
+            if (meta != null && meta.getPersistentDataContainer().has(parkourControlKey, PersistentDataType.STRING)) {
+                player.getInventory().setItem(slot, null);
+            }
+        }
+    }
+
+    private void giveParkourControls(Player player) {
+        if (!player.getWorld().getName().equals(PARKOUR_WORLD_NAME)) return;
+        removeParkourControls(player);
+        placeParkourControl(player, 5, parkourControl(Material.CLOCK, "↻ REINICIAR", "Volver al inicio/checkpoint", "restart"));
+        placeParkourControl(player, 6, parkourControl(Material.COMPASS, "🏁 LOBBY PARKOUR", "Elegir otro recorrido", "parkour-lobby"));
+        placeParkourControl(player, 7, parkourControl(Material.NETHER_STAR, "🎮 JUEGOS", "Abrir PVP, Hielo, Skyblock y Survival", "games"));
+        placeParkourControl(player, 8, parkourControl(Material.BARRIER, "🚪 LOBBY PRINCIPAL", "Salir del Parkour", "exit"));
+    }
+
+    private void handleParkourControl(Player player, String action) {
+        switch (action) {
+            case "restart" -> {
+                ParkourRun run = parkourRuns.get(player.getUniqueId());
+                if (run == null) {
+                    openParkourMenu(player, false);
+                } else {
+                    startParkour(player, run.track());
+                }
+            }
+            case "parkour-lobby" -> enterParkourLobby(player, false);
+            case "games" -> openGameMenu(player);
+            case "exit" -> exitParkour(player);
+            default -> {
+            }
+        }
     }
 
     private boolean handleParkourCommand(Player player, String[] args) {
@@ -3564,7 +3854,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         inv.setItem(13, menuItem(Material.SNOWBALL, "❄ BATALLA DE HIELO", "Rompé la nieve y sé el último arriba"));
         inv.setItem(15, menuItem(Material.GRASS_BLOCK, "☁ SKYBLOCK", "Ir al lobby de Skyblock"));
         inv.setItem(17, menuItem(Material.RABBIT_FOOT, "🏃 PARKOUR", "Elegí uno de 3 recorridos"));
-        inv.setItem(20, menuItem(Material.OAK_SAPLING, "🌲 SURVIVAL", "Mundo abierto de supervivencia"));
+        inv.setItem(20, menuItem(Material.OAK_SAPLING, "🌲 SURVIVAL", "Personal o Hardcore compartido"));
         inv.setItem(22, menuItem(Material.BARRIER, "Cerrar", "Cerrar juegos"));
         player.openInventory(inv);
     }
@@ -3671,7 +3961,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             }
             default -> msg(
                 player,
-                "/npcgame create <master|pvp|hielo|skyblock> [nombre] · /npcgame remove · /npcgame list",
+                "/npcgame create <master|pvp|hielo|skyblock|survival|parkour> [nombre] · /npcgame remove · /npcgame list",
                 NamedTextColor.YELLOW
             );
         }
@@ -3793,11 +4083,23 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         }
 
         if (command.getName().equalsIgnoreCase("survival")) {
-            if (args.length != 1) return List.of();
-            List<String> options = new ArrayList<>(List.of("join", "leave", "status"));
-            if (player.isOp()) options.add("portalhere");
-            String prefix = args[0].toLowerCase(Locale.ROOT);
-            return options.stream().filter(v -> v.startsWith(prefix)).toList();
+            if (args.length == 1) {
+                List<String> options = new ArrayList<>(List.of("menu", "personal", "hardcore", "leave", "status"));
+                if (player.isOp()) {
+                    options.add("portalhere");
+                    options.add("reset");
+                }
+                String prefix = args[0].toLowerCase(Locale.ROOT);
+                return options.stream().filter(v -> v.startsWith(prefix)).toList();
+            }
+            if (args.length == 2 && player.isOp() && args[0].equalsIgnoreCase("reset")) {
+                String prefix = args[1].toLowerCase(Locale.ROOT);
+                return Bukkit.getOnlinePlayers().stream()
+                    .map(Player::getName)
+                    .filter(name -> name.toLowerCase(Locale.ROOT).startsWith(prefix))
+                    .toList();
+            }
+            return List.of();
         }
 
         if (command.getName().equalsIgnoreCase("parkour")) {
