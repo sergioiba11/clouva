@@ -11,7 +11,8 @@ export type CommercePublicationChannel =
   | "clouva"
   | "clouva_market"
   | "facebook_marketplace"
-  | "facebook_group"\n  | "facebook_page";
+  | "facebook_group"
+  | "facebook_page";
 
 const CLOUVA_INTERNAL_CAPABILITY: ChannelCapability = {
   canPublishAutomatically: true,
