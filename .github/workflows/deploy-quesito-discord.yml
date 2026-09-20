@@ -100,7 +100,7 @@ jobs:
         run: |
           model="$VERTEX_MODEL"
           if [ -z "$model" ]; then
-            model="gemini-2.5-flash"
+            model="gemini-2.0-flash"
           fi
 
           public_env="GOOGLE_CLOUD_PROJECT=$PROJECT_ID,VERTEX_LOCATION=$VERTEX_LOCATION,VERTEX_MODEL=$model,QUESITO_WAKE_WORD=quesito,CLOUVA_MINECRAFT_STATUS_URL=https://clouva.com.ar/api/minecraft/status"
