@@ -17,6 +17,9 @@ export async function POST(request: NextRequest, context: { params: Promise<{ pr
     }
     const clips = await listVideoProjectJobs(admin, project.id);
     if (!clips.length) throw new MediaApiError("Primero generá el plan de clips.", 409, "clip_plan_required");
+    if (project.project_mode === "visualizer" && project.audio_analysis_status !== "completed") {
+      throw new MediaApiError("El visualizer necesita terminar de analizar el flow del audio antes de generar.", 409, "audio_analysis_required");
+    }
 
     const body = await request.json().catch(() => ({})) as { confirmedCostUsd?: number };
     const expected = Number(project.estimated_cost_usd ?? 0);
