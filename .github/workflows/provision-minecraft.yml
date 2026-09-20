@@ -103,6 +103,18 @@ jobs:
               --target-tags clouva-minecraft
           fi
 
+          if ! gcloud compute firewall-rules describe clouva-minecraft-map --project "$PROJECT_ID" >/dev/null 2>&1; then
+            gcloud compute firewall-rules create clouva-minecraft-map \
+              --project "$PROJECT_ID" \
+              --network default \
+              --direction INGRESS \
+              --priority 1000 \
+              --action ALLOW \
+              --rules tcp:8100 \
+              --source-ranges 0.0.0.0/0 \
+              --target-tags clouva-minecraft
+          fi
+
       - name: Ensure persistent world disk
         run: |
           if ! gcloud compute disks describe "$MC_DISK" --project "$PROJECT_ID" --zone "$MC_ZONE" >/dev/null 2>&1; then
@@ -243,6 +255,43 @@ jobs:
             --command='sudo docker logs --tail 300 clouva-minecraft 2>&1' || true
           exit 1
 
+      - name: Verify BlueMap live webserver
+        shell: bash
+        run: |
+          ready=0
+          for attempt in $(seq 1 60); do
+            if gcloud compute ssh "$MC_INSTANCE" \
+              --project "$PROJECT_ID" \
+              --zone "$MC_ZONE" \
+              --quiet \
+              --ssh-flag="-o StrictHostKeyChecking=no" \
+              --ssh-flag="-o UserKnownHostsFile=/dev/null" \
+              --command='
+                set -e
+                timeout 3 bash -c "</dev/tcp/127.0.0.1/8100"
+                curl -fsS --max-time 5 http://127.0.0.1:8100/ >/dev/null
+                sudo docker logs --tail 500 clouva-minecraft 2>&1 | grep -Eiq "BlueMap|webserver"
+              ' >/dev/null 2>&1; then
+              ready=1
+              echo "BlueMap webserver is ready on port 8100."
+              break
+            fi
+            echo "Waiting for BlueMap ($attempt/60)..."
+            sleep 5
+          done
+
+          if [ "$ready" -ne 1 ]; then
+            echo "::error::BlueMap did not become ready on port 8100."
+            gcloud compute ssh "$MC_INSTANCE" \
+              --project "$PROJECT_ID" \
+              --zone "$MC_ZONE" \
+              --quiet \
+              --ssh-flag="-o StrictHostKeyChecking=no" \
+              --ssh-flag="-o UserKnownHostsFile=/dev/null" \
+              --command='sudo docker logs --tail 500 clouva-minecraft 2>&1' || true
+            exit 1
+          fi
+
       - name: Publish server address into CLOUVA
         env:
           MC_IP: ${{ steps.address.outputs.ip }}
@@ -250,7 +299,7 @@ jobs:
           gcloud run services update "$WEB_SERVICE" \
             --project "$PROJECT_ID" \
             --region "$WEB_REGION" \
-            --update-env-vars "MINECRAFT_HOST=$MC_IP,MINECRAFT_PUBLIC_JAVA_HOST=clouva.com.ar,MINECRAFT_PUBLIC_BEDROCK_HOST=mc.clouva.com.ar,MINECRAFT_JAVA_PORT=25565,MINECRAFT_BEDROCK_PORT=19132" \
+            --update-env-vars "MINECRAFT_HOST=$MC_IP,MINECRAFT_PUBLIC_JAVA_HOST=clouva.com.ar,MINECRAFT_PUBLIC_BEDROCK_HOST=mc.clouva.com.ar,MINECRAFT_JAVA_PORT=25565,MINECRAFT_BEDROCK_PORT=19132,MINECRAFT_MAP_URL=/minecraft/map/,MINECRAFT_MAP_UPSTREAM=http://$MC_IP:8100" \
             --quiet
 
       - name: Server summary
