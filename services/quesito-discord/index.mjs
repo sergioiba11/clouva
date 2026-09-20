@@ -122,6 +122,24 @@ function stripWakeWord(text) {
   return text.trim().replace(pattern, "").trim();
 }
 
+function sanitizeForSpeech(text) {
+  let out = String(text || "");
+  // No leer markdown, links, menciones ni emojis.
+  out = out.replace(/https?:\/\/\S+/g, " ");
+  out = out.replace(/<@!?\d+>|@\w+/g, " ");
+  out = out.replace(/[*_#`>~|]/g, " ");
+  // Emojis y símbolos raros fuera.
+  out = out.replace(/[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}]/gu, " ");
+  // Risa literal tipo jaja/jeje/jiji/jojo/lol -> risa natural corta en rioplatense.
+  // Chirp lee "jajaja" literal y suena robótico, con "¡Ja!" toma tono de risa.
+  out = out.replace(/\b((?:[jJ][aeiouáéíóúAEIOUÁÉÍÓÚ]+[hH]*|[hH]+[aeiouáéíóú]+|lol|lmao|rofl)[\s.,!¡?¿-]*)+/g, "¡Ja! ");
+  out = out.replace(/\b(je\s*je[\s\w]*|ji\s*ji[\s\w]*)\b/gi, "¡Ja! ");
+  out = out.replace(/\s+/g, " ").trim();
+  // Evitar que quede solo la risa.
+  if (/^(¡Ja![\s.,!¡?¿]*)+$/i.test(out)) out = "¡Ja! ¡Qué bueno!";
+  return out.slice(0, 900);
+}
+
 function recentHistory(guildId) {
   return histories.get(guildId) || [];
 }
@@ -197,6 +215,7 @@ async function askAmbientVertex({ guildId, speaker, transcript }) {
     "Tu público incluye chicos de 14 años: mantené el humor apto para adolescentes.",
     "No humilles, discrimines ni seas sexual. No des instrucciones peligrosas o ilegales.",
     "No uses markdown.",
+    "Nunca escribas jaja, jajaja, jeje, jiji ni lol literal: se lee en voz alta y suena robótico. Si algo es gracioso expresalo con palabras como ¡me mato! ¡qué bueno! ¡terrible!.",
     "Contexto del servidor: " + minecraft,
   ].join("\n");
 
@@ -250,6 +269,7 @@ async function askVertex({ guildId, speaker, prompt }) {
     "Hablá como una persona normal en llamada. Normalmente respondé entre dos y cuatro frases; si el tema da para más, podés explayarte un poco sin hacer un monólogo.",
     "No te cortes a mitad de una idea. Terminá lo que estabas diciendo salvo que te pidan explícitamente que te calles.",
     "No uses markdown ni listas porque se lee en voz alta.",
+    "Nunca escribas jaja, jajaja, jeje, jiji ni lol literal: la voz lo lee como letras y queda mal. Si algo te causa gracia decí ¡me mato! ¡qué bueno! ¡no lo puedo creer! con tono divertido.",
     "No cierres con '¿en qué más puedo ayudarte?' ni frases parecidas.",
     "Si no sabés algo, decilo sin inventar.",
     "Contexto del servidor: " + minecraft,
@@ -386,7 +406,7 @@ async function synthesizeLocal(text) {
       "52",
       "-w",
       wav,
-      String(text).slice(0, 650),
+      sanitizeForSpeech(text).slice(0, 650) || "Buena!",
     ]);
     await execFileAsync("ffmpeg", [
       "-hide_banner",
@@ -409,8 +429,9 @@ async function synthesizeLocal(text) {
 
 async function synthesizeCloud(text, voice) {
   const started = Date.now();
+  const speechText = sanitizeForSpeech(text) || "¡Buena!";
   const [response] = await ttsClient.synthesizeSpeech({
-    input: { text },
+    input: { text: speechText },
     voice,
     audioConfig: {
       audioEncoding: "OGG_OPUS",
@@ -552,8 +573,7 @@ async function processTranscript(state, userId, transcript, source = "streaming-
   voiceDiagnostics.sttProvider = source;
 
   const lower = clean.toLowerCase();
-  const escapedWake = WAKE_WORD.replace(/[.*+?^$(){}|[\]\\]/g, "\\  const lower = clean.toLowerCase();
-  const hasWake = lower.includes(WAKE_WORD);");
+  const escapedWake = WAKE_WORD.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const hasWake = new RegExp("\\b" + escapedWake + "\\b", "i").test(clean);
   const member = state.guild.members.cache.get(userId);
   const speaker = member?.displayName || "un jugador";
