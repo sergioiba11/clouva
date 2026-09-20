@@ -120,8 +120,8 @@ function facebookPublisherQueueConfig() {
 
 export async function enqueueFacebookPublisherBatch(batchId: string, scheduledAt?: string | null) {
   const { project, location, queue } = facebookPublisherQueueConfig();
-  const secret = process.env.CLOUVA_FACEBOOK_PUBLISHER_TASK_SECRET?.trim();
-  if (!secret) throw new Error("CLOUVA_FACEBOOK_PUBLISHER_TASK_SECRET no está configurada.");
+  const secret = (process.env.CLOUVA_FACEBOOK_PUBLISHER_TASK_SECRET || process.env.CLOUVA_ASSET_IMPORT_WORKER_SECRET)?.trim();
+  if (!secret) throw new Error("No hay secret server-side configurado para el publicador de Facebook.");
 
   const baseUrl = process.env.APP_BASE_URL?.trim() || "https://clouva.com.ar";
   const targetUrl = `${baseUrl}/api/internal/facebook-publisher/process`;
