@@ -235,8 +235,8 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         parkourPortalStates.clear();
 
         for (Player player : Bukkit.getOnlinePlayers()) {
-            if (player.getWorld().getName().equals(SHARED_SURVIVAL_WORLD_NAME)) {
-                restoreSharedSurvivalOp(player);
+            if (isNoOpSurvivalWorld(player.getWorld())) {
+                restoreSurvivalOp(player);
             }
         }
     }
@@ -271,7 +271,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     }
 
     private boolean canBuild(Player player) {
-        if (player.getWorld().getName().equals(SHARED_SURVIVAL_WORLD_NAME)) {
+        if (isNoOpSurvivalWorld(player.getWorld())) {
             return false;
         }
 
@@ -284,8 +284,8 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     public void onJoin(PlayerJoinEvent event) {
         Player player = event.getPlayer();
 
-        if (player.getWorld().getName().equals(SHARED_SURVIVAL_WORLD_NAME)) {
-            suspendSharedSurvivalOp(player);
+        if (isNoOpSurvivalWorld(player.getWorld())) {
+            suspendSurvivalOp(player);
         }
 
         if (canBuild(player) && getConfig().getBoolean("give-tools-on-join", true)) {
@@ -335,8 +335,8 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         Player player = event.getPlayer();
         UUID id = player.getUniqueId();
 
-        if (player.getWorld().getName().equals(SHARED_SURVIVAL_WORLD_NAME)) {
-            restoreSharedSurvivalOp(player);
+        if (isNoOpSurvivalWorld(player.getWorld())) {
+            restoreSurvivalOp(player);
         }
         pvpQueue.remove(id);
 
@@ -376,10 +376,13 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         String from = event.getFrom().getName();
         String to = player.getWorld().getName();
 
-        if (to.equals(SHARED_SURVIVAL_WORLD_NAME)) {
-            suspendSharedSurvivalOp(player);
-        } else if (from.equals(SHARED_SURVIVAL_WORLD_NAME)) {
-            restoreSharedSurvivalOp(player);
+        boolean enteringSurvival = isNoOpSurvivalWorldName(to);
+        boolean leavingSurvival = isNoOpSurvivalWorldName(from);
+
+        if (enteringSurvival) {
+            suspendSurvivalOp(player);
+        } else if (leavingSurvival) {
+            restoreSurvivalOp(player);
         }
     }
 
@@ -1374,7 +1377,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             spawnSkyRegionParticles(skyEntryPortal);
             spawnSkyRegionParticles(skyExitPortal);
             spawnSkyRegionParticles(survivalEntryPortal);
-            enforceSharedSurvivalNoOp();
+            enforceSurvivalNoOp();
         }, 20L, 10L);
     }
 
@@ -2982,12 +2985,22 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
 
 
 
-    private String sharedSurvivalOpPath(Player player) {
-        return "survival.shared-op." + player.getUniqueId();
+    private boolean isNoOpSurvivalWorldName(String worldName) {
+        return worldName.equals(SHARED_SURVIVAL_WORLD_NAME)
+            || worldName.equals(HARDCORE_WORLD_NAME)
+            || worldName.startsWith(PERSONAL_SURVIVAL_PREFIX);
     }
 
-    private void suspendSharedSurvivalOp(Player player) {
-        String path = sharedSurvivalOpPath(player);
+    private boolean isNoOpSurvivalWorld(World world) {
+        return world != null && isNoOpSurvivalWorldName(world.getName());
+    }
+
+    private String survivalOpPath(Player player) {
+        return "survival.no-op-original." + player.getUniqueId();
+    }
+
+    private void suspendSurvivalOp(Player player) {
+        String path = survivalOpPath(player);
 
         if (!getConfig().contains(path)) {
             getConfig().set(path, player.isOp());
@@ -2999,8 +3012,8 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         }
     }
 
-    private void restoreSharedSurvivalOp(Player player) {
-        String path = sharedSurvivalOpPath(player);
+    private void restoreSurvivalOp(Player player) {
+        String path = survivalOpPath(player);
         if (!getConfig().contains(path)) {
             return;
         }
@@ -3014,12 +3027,10 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         saveConfig();
     }
 
-    private void enforceSharedSurvivalNoOp() {
-        if (sharedSurvivalWorld == null) return;
-
-        for (Player player : sharedSurvivalWorld.getPlayers()) {
-            if (player.isOp()) {
-                suspendSharedSurvivalOp(player);
+    private void enforceSurvivalNoOp() {
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            if (isNoOpSurvivalWorld(player.getWorld()) && player.isOp()) {
+                suspendSurvivalOp(player);
             }
         }
     }
@@ -3161,6 +3172,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         player.setAllowFlight(false);
         player.setFlying(false);
         player.teleport(naturalSurvivalSpawn(world));
+        suspendSurvivalOp(player);
         player.setFireTicks(0);
 
         player.sendTitle("TU SURVIVAL", "Este mundo es solamente tuyo", 10, 60, 10);
@@ -3178,7 +3190,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         player.setAllowFlight(false);
         player.setFlying(false);
         player.teleport(sharedSurvivalSpawn);
-        suspendSharedSurvivalOp(player);
+        suspendSurvivalOp(player);
         player.setFireTicks(0);
 
         player.sendTitle("SURVIVAL COMÚN", "Un mundo normal para jugar todos juntos", 10, 60, 10);
@@ -3201,6 +3213,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         player.setAllowFlight(false);
         player.setFlying(false);
         player.teleport(hardcoreSpawn);
+        suspendSurvivalOp(player);
         player.setFireTicks(0);
 
         player.sendTitle("HARDCORE", "Un mundo para todos · una vida", 10, 60, 10);
