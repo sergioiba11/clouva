@@ -31,5 +31,5 @@ export default async function BusinessManagerPage({ params }: { params: Promise<
 
   if (!isBusiness || !space.legacy_commerce_spot_id) notFound();
 
-  return <SpaceCommerceWorkspace commerceScopeId={`spot:${space.legacy_commerce_spot_id}`} />;
+  return <SpaceCommerceWorkspace commerceScopeId={`spot:${space.legacy_commerce_spot_id}`} businessSpaceId={space.id} />;
 }
