@@ -398,32 +398,60 @@ async function synthesizeLocal(text) {
   }
 }
 
+async function synthesizeCloud(text, voice) {
+  const started = Date.now();
+  const [response] = await ttsClient.synthesizeSpeech({
+    input: { text },
+    voice,
+    audioConfig: {
+      audioEncoding: "OGG_OPUS",
+      speakingRate: 1.06,
+    },
+  });
+
+  if (!response.audioContent) throw new Error("Text-to-Speech returned no audio.");
+
+  voiceDiagnostics.lastTtsMs = Date.now() - started;
+  return Buffer.isBuffer(response.audioContent)
+    ? response.audioContent
+    : Buffer.from(response.audioContent);
+}
+
 async function synthesize(text) {
   try {
-    const [response] = await ttsClient.synthesizeSpeech({
-      input: { text },
-      voice: {
-        languageCode: "es-US",
-        ssmlGender: "NEUTRAL",
-      },
-      audioConfig: {
-        audioEncoding: "OGG_OPUS",
-        speakingRate: 1.06,
-        pitch: 1.0,
-      },
+    const audio = await synthesizeCloud(text, {
+      languageCode: "es-US",
+      name: TTS_VOICE,
     });
-
-    if (!response.audioContent) throw new Error("Text-to-Speech returned no audio.");
-
-    return Buffer.isBuffer(response.audioContent)
-      ? response.audioContent
-      : Buffer.from(response.audioContent);
+    voiceDiagnostics.ttsProvider = "gcloud-chirp3";
+    return audio;
   } catch (error) {
-    log("QUESITO_TTS_FALLBACK", {
+    voiceDiagnostics.ttsFallbacks += 1;
+    log("QUESITO_TTS_CHIRP3_FALLBACK", {
+      voice: TTS_VOICE,
       error: String(error?.message || error).slice(0, 300),
     });
-    return await synthesizeLocal(text);
   }
+
+  try {
+    const audio = await synthesizeCloud(text, {
+      languageCode: "es-US",
+      ssmlGender: "NEUTRAL",
+    });
+    voiceDiagnostics.ttsProvider = "gcloud-standard";
+    return audio;
+  } catch (error) {
+    voiceDiagnostics.ttsFallbacks += 1;
+    log("QUESITO_TTS_LOCAL_FALLBACK", {
+      error: String(error?.message || error).slice(0, 300),
+    });
+  }
+
+  voiceDiagnostics.ttsProvider = "local-espeak";
+  const started = Date.now();
+  const audio = await synthesizeLocal(text);
+  voiceDiagnostics.lastTtsMs = Date.now() - started;
+  return audio;
 }
 
 function stopCurrentSpeech(state, { mute = false } = {}) {
