@@ -667,7 +667,7 @@ function attachReceiver(state) {
     const source = receiver.subscribe(userId, {
       end: {
         behavior: EndBehaviorType.AfterSilence,
-        duration: 750,
+        duration: 600,
       },
     });
 
@@ -681,8 +681,11 @@ function attachReceiver(state) {
     let total = 0;
     let closed = false;
     let finalSeen = false;
+    let processedTranscript = false;
+    let latestInterim = "";
     let streamingFailed = false;
     let fallbackTimer = null;
+    let interimTimer = null;
 
     const recognizeStream = speechClient
       .streamingRecognize({
@@ -714,6 +717,8 @@ function attachReceiver(state) {
 
           if (result.isFinal) {
             finalSeen = true;
+            if (processedTranscript) continue;
+            processedTranscript = true;
             voiceDiagnostics.sttStreamingFinals += 1;
             voiceDiagnostics.sttProvider = "gcloud-streaming";
             void processTranscript(
@@ -730,6 +735,7 @@ function attachReceiver(state) {
               });
             });
           } else {
+            latestInterim = transcript;
             handleInterimControl(state, userId, transcript);
           }
         }
@@ -745,8 +751,37 @@ function attachReceiver(state) {
       });
 
     const runFallback = () => {
-      if (finalSeen || !chunks.length || total > 5000000) return;
+      if (processedTranscript || finalSeen || !chunks.length || total > 5000000) return;
+      processedTranscript = true;
       void processUtterance(state, userId, Buffer.concat(chunks));
+    };
+
+    const useInterimFastPath = () => {
+      if (
+        processedTranscript ||
+        finalSeen ||
+        !latestInterim ||
+        latestInterim.trim().length < 2
+      ) {
+        return false;
+      }
+
+      processedTranscript = true;
+      voiceDiagnostics.sttProvider = "gcloud-streaming-interim";
+      void processTranscript(
+        state,
+        userId,
+        latestInterim,
+        "gcloud-streaming-interim",
+      ).catch((error) => {
+        voiceDiagnostics.lastError = String(error?.message || error).slice(0, 500);
+        log("QUESITO_STREAM_INTERIM_ERROR", {
+          guildId: state.guildId,
+          userId,
+          error: voiceDiagnostics.lastError,
+        });
+      });
+      return true;
     };
 
     const finish = () => {
@@ -761,8 +796,14 @@ function attachReceiver(state) {
       if (streamingFailed) {
         runFallback();
       } else {
-        fallbackTimer = setTimeout(runFallback, STT_FALLBACK_DELAY_MS);
-        fallbackTimer.unref?.();
+        interimTimer = setTimeout(() => {
+          const usedInterim = useInterimFastPath();
+          if (!usedInterim) {
+            fallbackTimer = setTimeout(runFallback, 500);
+            fallbackTimer.unref?.();
+          }
+        }, 250);
+        interimTimer.unref?.();
       }
     };
 
