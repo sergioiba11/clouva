@@ -14,6 +14,7 @@ import org.bukkit.World;
 import org.bukkit.WorldCreator;
 import org.bukkit.WorldType;
 import org.bukkit.block.Block;
+import org.bukkit.block.Chest;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
@@ -62,6 +63,9 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     private static final String BLOCKS_TITLE = "BLOQUES — NINOTIMI";
     private static final String PVP_WORLD_NAME = "pvp_ninotimi";
     private static final String ICE_WORLD_NAME = "hielo_ninotimi";
+    private static final String SKY_WORLD_NAME = "skyblock_ninotimi";
+    private static final int SKY_ISLAND_SPACING = 256;
+    private static final int SKY_ISLAND_RADIUS = 96;
     private static final int MAX_ICE_PLAYERS = 12;
     private static final long ICE_JOIN_WINDOW_TICKS = 100L;
 
@@ -82,6 +86,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     private final Set<UUID> iceFighters = new HashSet<>();
     private final Map<UUID, PlayerState> iceStates = new HashMap<>();
     private final Map<UUID, PortalState> icePortalStates = new HashMap<>();
+    private final Map<UUID, PortalState> skyPortalStates = new HashMap<>();
 
     private World pvpWorld;
     private Region entryPortal;
@@ -101,6 +106,12 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     private Location iceSpawn2;
     private Location iceSpectatorSpot;
 
+    private World skyWorld;
+    private Region skyEntryPortal;
+    private Region skyExitPortal;
+    private Region skyHomePad;
+    private Location skyLobby;
+
     private boolean duelActive;
     private boolean iceActive;
     private int maxEditBlocks;
@@ -116,6 +127,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         loadBuilders();
         setupPvp();
         setupIceBattle();
+        setupSkyblock();
 
         getServer().getPluginManager().registerEvents(this, this);
 
@@ -130,6 +142,10 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         if (getCommand("hielo") != null) {
             getCommand("hielo").setExecutor(this);
             getCommand("hielo").setTabCompleter(this);
+        }
+        if (getCommand("skyblock") != null) {
+            getCommand("skyblock").setExecutor(this);
+            getCommand("skyblock").setTabCompleter(this);
         }
 
         startPortalParticles();
@@ -229,6 +245,14 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
                 }
             }, 20L);
         }
+
+        if (player.getWorld().getName().equals(SKY_WORLD_NAME)) {
+            Bukkit.getScheduler().runTaskLater(this, () -> {
+                if (player.isOnline() && player.getWorld().getName().equals(SKY_WORLD_NAME) && player.getLocation().getY() < 30) {
+                    teleportSkyHome(player);
+                }
+            }, 20L);
+        }
     }
 
     @EventHandler
@@ -257,6 +281,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             }
         }
         icePortalStates.remove(id);
+        skyPortalStates.remove(id);
     }
 
     @EventHandler
@@ -393,6 +418,26 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             && to.getY() < 76.0
         ) {
             eliminateIcePlayer(player, "cayó al vacío");
+            return;
+        }
+
+        if (skyEntryPortal != null && skyEntryPortal.contains(to)) {
+            enterSkyLobby(player, true);
+            return;
+        }
+
+        if (skyExitPortal != null && skyExitPortal.contains(to)) {
+            exitSkyblock(player);
+            return;
+        }
+
+        if (skyHomePad != null && skyHomePad.contains(to)) {
+            teleportSkyHome(player);
+            return;
+        }
+
+        if (player.getWorld().getName().equals(SKY_WORLD_NAME) && to.getY() < 30.0) {
+            teleportSkyHome(player);
         }
     }
 
@@ -437,6 +482,14 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     public void onBlockBreak(BlockBreakEvent event) {
         String worldName = event.getBlock().getWorld().getName();
 
+        if (worldName.equals(SKY_WORLD_NAME)) {
+            if (!canEditSkyBlock(event.getPlayer(), event.getBlock().getLocation())) {
+                event.setCancelled(true);
+                msg(event.getPlayer(), "Esta isla no es tuya.", NamedTextColor.RED);
+            }
+            return;
+        }
+
         if (worldName.equals(ICE_WORLD_NAME)) {
             Player player = event.getPlayer();
             Block block = event.getBlock();
@@ -467,6 +520,14 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     @EventHandler
     public void onBlockPlace(BlockPlaceEvent event) {
         String worldName = event.getBlock().getWorld().getName();
+
+        if (worldName.equals(SKY_WORLD_NAME)) {
+            if (!canEditSkyBlock(event.getPlayer(), event.getBlock().getLocation())) {
+                event.setCancelled(true);
+                msg(event.getPlayer(), "Solo podés construir en tu isla.", NamedTextColor.RED);
+            }
+            return;
+        }
 
         if (worldName.equals(ICE_WORLD_NAME)) {
             if (!canBuild(event.getPlayer()) || !iceFighters.isEmpty()) {
@@ -1015,6 +1076,8 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             spawnRegionParticles(exitPortal);
             spawnIceRegionParticles(iceEntryPortal);
             spawnIceRegionParticles(iceExitPortal);
+            spawnSkyRegionParticles(skyEntryPortal);
+            spawnSkyRegionParticles(skyExitPortal);
         }, 20L, 10L);
     }
 
@@ -1040,6 +1103,18 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         double z = (region.minZ + region.maxZ + 1) / 2.0;
 
         world.spawnParticle(Particle.SNOWFLAKE, x, y, z, 20, 0.8, 1.1, 0.8, 0.02);
+    }
+
+    private void spawnSkyRegionParticles(Region region) {
+        if (region == null) return;
+        World world = Bukkit.getWorld(region.worldName);
+        if (world == null) return;
+
+        double x = (region.minX + region.maxX + 1) / 2.0;
+        double y = (region.minY + region.maxY + 1) / 2.0;
+        double z = (region.minZ + region.maxZ + 1) / 2.0;
+
+        world.spawnParticle(Particle.CLOUD, x, y, z, 8, 0.8, 1.0, 0.8, 0.02);
     }
 
     private void saveRegion(String prefix, Region region) {
@@ -1930,6 +2005,433 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         return true;
     }
 
+
+    private void setupSkyblock() {
+        WorldCreator creator = new WorldCreator(SKY_WORLD_NAME);
+        creator.type(WorldType.FLAT);
+        creator.generateStructures(false);
+        creator.generatorSettings("{\"layers\":[],\"biome\":\"minecraft:the_void\"}");
+
+        skyWorld = Bukkit.getWorld(SKY_WORLD_NAME);
+        if (skyWorld == null) {
+            skyWorld = creator.createWorld();
+        }
+
+        if (skyWorld == null) {
+            getLogger().severe("No se pudo crear NINOTIMI SKYBLOCK.");
+            return;
+        }
+
+        skyWorld.setPVP(false);
+        skyWorld.setTime(6000);
+        skyWorld.setStorm(false);
+        skyWorld.setThundering(false);
+        skyWorld.setGameRule(GameRule.DO_MOB_SPAWNING, true);
+        skyWorld.setGameRule(GameRule.DO_DAYLIGHT_CYCLE, true);
+        skyWorld.setGameRule(GameRule.DO_WEATHER_CYCLE, true);
+        skyWorld.setGameRule(GameRule.KEEP_INVENTORY, false);
+
+        skyLobby = new Location(skyWorld, 0.5, 81.0, 0.5, 180f, 0f);
+
+        if (!getConfig().getBoolean("skyblock.built", false)) {
+            buildSkyLobby();
+            buildDefaultSkyEntryPortal();
+            getConfig().set("skyblock.built", true);
+            saveConfig();
+        }
+
+        skyEntryPortal = loadRegion("skyblock.entry-portal");
+        skyExitPortal = new Region(SKY_WORLD_NAME, -1, 81, -9, 1, 84, -7);
+        skyHomePad = new Region(SKY_WORLD_NAME, -2, 81, 6, 2, 82, 9);
+        skyWorld.setSpawnLocation(skyLobby);
+    }
+
+    private void buildSkyLobby() {
+        if (skyWorld == null) return;
+
+        for (int x = -10; x <= 10; x++) {
+            for (int z = -10; z <= 10; z++) {
+                boolean edge = Math.abs(x) == 10 || Math.abs(z) == 10;
+                Material floor = edge ? Material.LIGHT_BLUE_CONCRETE : Material.WHITE_CONCRETE;
+                skyWorld.getBlockAt(x, 80, z).setType(floor, false);
+
+                for (int y = 81; y <= 88; y++) {
+                    skyWorld.getBlockAt(x, y, z).setType(Material.AIR, false);
+                }
+            }
+        }
+
+        for (int x = -2; x <= 2; x++) {
+            for (int z = 6; z <= 9; z++) {
+                skyWorld.getBlockAt(x, 80, z).setType(Material.GRASS_BLOCK, false);
+            }
+        }
+
+        skyWorld.getBlockAt(-3, 81, 7).setType(Material.OAK_LOG, false);
+        skyWorld.getBlockAt(3, 81, 7).setType(Material.OAK_LOG, false);
+        buildSkyPortalFrame(skyWorld, 0, 80, -8, true);
+    }
+
+    private void buildDefaultSkyEntryPortal() {
+        List<World> worlds = Bukkit.getWorlds();
+        if (worlds.isEmpty()) return;
+
+        World main = worlds.get(0);
+        Location spawn = main.getSpawnLocation();
+        int centerX = spawn.getBlockX();
+        int centerZ = spawn.getBlockZ() + 12;
+        int baseY = main.getHighestBlockYAt(centerX, centerZ) + 1;
+
+        buildSkyPortalFrame(main, centerX, baseY, centerZ, true);
+        skyEntryPortal = new Region(
+            main.getName(),
+            centerX - 1, baseY + 1, centerZ - 1,
+            centerX + 1, baseY + 3, centerZ + 1
+        );
+        saveRegion("skyblock.entry-portal", skyEntryPortal);
+    }
+
+    private void buildSkyPortalAt(Player player) {
+        Location here = player.getLocation().getBlock().getLocation();
+        World world = player.getWorld();
+
+        int centerX = here.getBlockX();
+        int centerZ = here.getBlockZ();
+        int baseY = here.getBlockY();
+
+        buildSkyPortalFrame(world, centerX, baseY, centerZ, true);
+        skyEntryPortal = new Region(
+            world.getName(),
+            centerX - 1, baseY + 1, centerZ - 1,
+            centerX + 1, baseY + 3, centerZ + 1
+        );
+        saveRegion("skyblock.entry-portal", skyEntryPortal);
+        msg(player, "Portal NINOTIMI SKYBLOCK creado acá.", NamedTextColor.GREEN);
+    }
+
+    private void buildSkyPortalFrame(World world, int centerX, int baseY, int centerZ, boolean alongX) {
+        Material frame = Material.MOSS_BLOCK;
+        Material accent = Material.GLOWSTONE;
+
+        if (alongX) {
+            for (int dx = -2; dx <= 2; dx++) {
+                for (int dy = 0; dy <= 4; dy++) {
+                    boolean edge = dx == -2 || dx == 2 || dy == 0 || dy == 4;
+                    world.getBlockAt(centerX + dx, baseY + dy, centerZ)
+                        .setType(edge ? frame : Material.AIR, false);
+                }
+            }
+            for (int dx = -1; dx <= 1; dx++) {
+                world.getBlockAt(centerX + dx, baseY, centerZ).setType(accent, false);
+            }
+        } else {
+            for (int dz = -2; dz <= 2; dz++) {
+                for (int dy = 0; dy <= 4; dy++) {
+                    boolean edge = dz == -2 || dz == 2 || dy == 0 || dy == 4;
+                    world.getBlockAt(centerX, baseY + dy, centerZ + dz)
+                        .setType(edge ? frame : Material.AIR, false);
+                }
+            }
+            for (int dz = -1; dz <= 1; dz++) {
+                world.getBlockAt(centerX, baseY, centerZ + dz).setType(accent, false);
+            }
+        }
+    }
+
+    private void enterSkyLobby(Player player, boolean rememberReturn) {
+        if (skyWorld == null || skyLobby == null) {
+            msg(player, "SKYBLOCK todavía no está disponible.", NamedTextColor.RED);
+            return;
+        }
+
+        if (rememberReturn && !player.getWorld().getName().equals(SKY_WORLD_NAME)) {
+            skyPortalStates.putIfAbsent(
+                player.getUniqueId(),
+                new PortalState(
+                    player.getLocation().clone(),
+                    player.getGameMode(),
+                    player.getAllowFlight(),
+                    player.isFlying()
+                )
+            );
+        }
+
+        player.setGameMode(GameMode.ADVENTURE);
+        player.setAllowFlight(false);
+        player.setFlying(false);
+        player.teleport(skyLobby);
+        player.setHealth(player.getMaxHealth());
+        player.setFoodLevel(20);
+        player.setSaturation(20f);
+        player.setFireTicks(0);
+
+        player.sendTitle("NINOTIMI SKYBLOCK", "Pisá el pasto para crear o ir a tu isla", 10, 60, 10);
+        msg(player, "Pasto = tu isla · portal = volver · /skyblock home funciona desde cualquier lado.", NamedTextColor.GREEN);
+    }
+
+    private void exitSkyblock(Player player) {
+        PortalState previous = skyPortalStates.remove(player.getUniqueId());
+
+        if (previous != null && previous.location.getWorld() != null) {
+            player.teleport(previous.location);
+            player.setGameMode(previous.gameMode);
+            player.setAllowFlight(previous.allowFlight);
+            player.setFlying(previous.flying && previous.allowFlight);
+        } else {
+            World main = Bukkit.getWorlds().get(0);
+            player.teleport(main.getSpawnLocation());
+            player.setGameMode(GameMode.SURVIVAL);
+            player.setAllowFlight(false);
+            player.setFlying(false);
+        }
+
+        msg(player, "Saliste de NINOTIMI SKYBLOCK.", NamedTextColor.GREEN);
+    }
+
+    private int getSkyIslandIndex(UUID ownerId) {
+        return getConfig().getInt("skyblock.islands." + ownerId + ".index", -1);
+    }
+
+    private int ensureSkyIsland(Player owner) {
+        UUID id = owner.getUniqueId();
+        int index = getSkyIslandIndex(id);
+
+        if (index < 0) {
+            index = getConfig().getInt("skyblock.next-index", 0);
+            getConfig().set("skyblock.next-index", index + 1);
+            getConfig().set("skyblock.islands." + id + ".index", index);
+            getConfig().set("skyblock.islands." + id + ".name", owner.getName());
+            getConfig().set("skyblock.islands." + id + ".built", false);
+            saveConfig();
+        } else {
+            getConfig().set("skyblock.islands." + id + ".name", owner.getName());
+        }
+
+        if (!getConfig().getBoolean("skyblock.islands." + id + ".built", false)) {
+            buildStarterSkyIsland(index, owner.getName());
+            getConfig().set("skyblock.islands." + id + ".built", true);
+            saveConfig();
+        }
+
+        return index;
+    }
+
+    private Location skyIslandCenter(int index) {
+        int columns = 16;
+        int col = index % columns;
+        int row = index / columns;
+        double x = 512.5 + (double) col * SKY_ISLAND_SPACING;
+        double z = 0.5 + (double) row * SKY_ISLAND_SPACING;
+        return new Location(skyWorld, x, 121.0, z, 180f, 0f);
+    }
+
+    private void buildStarterSkyIsland(int index, String ownerName) {
+        if (skyWorld == null) return;
+
+        Location center = skyIslandCenter(index);
+        int cx = center.getBlockX();
+        int cz = center.getBlockZ();
+
+        for (int dx = -5; dx <= 5; dx++) {
+            for (int dz = -5; dz <= 5; dz++) {
+                int d2 = dx * dx + dz * dz;
+                if (d2 > 25) continue;
+
+                int topY = 120;
+                skyWorld.getBlockAt(cx + dx, topY, cz + dz).setType(Material.GRASS_BLOCK, false);
+                skyWorld.getBlockAt(cx + dx, topY - 1, cz + dz).setType(Material.DIRT, false);
+
+                if (d2 <= 10) {
+                    skyWorld.getBlockAt(cx + dx, topY - 2, cz + dz).setType(Material.STONE, false);
+                }
+            }
+        }
+
+        // Árbol inicial.
+        int treeX = cx + 2;
+        int treeZ = cz + 2;
+        for (int y = 121; y <= 124; y++) {
+            skyWorld.getBlockAt(treeX, y, treeZ).setType(Material.OAK_LOG, false);
+        }
+        for (int dx = -2; dx <= 2; dx++) {
+            for (int dz = -2; dz <= 2; dz++) {
+                for (int dy = 123; dy <= 126; dy++) {
+                    if (Math.abs(dx) + Math.abs(dz) + Math.abs(dy - 124) <= 4) {
+                        Block target = skyWorld.getBlockAt(treeX + dx, dy, treeZ + dz);
+                        if (target.getType().isAir()) {
+                            target.setType(Material.OAK_LEAVES, false);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Cofre starter sin usar hielo: agua + lava para generador.
+        Block chestBlock = skyWorld.getBlockAt(cx - 3, 121, cz);
+        chestBlock.setType(Material.CHEST, false);
+        if (chestBlock.getState() instanceof Chest chest) {
+            chest.getInventory().clear();
+            chest.getInventory().addItem(
+                new ItemStack(Material.WATER_BUCKET),
+                new ItemStack(Material.LAVA_BUCKET),
+                new ItemStack(Material.OAK_SAPLING, 2),
+                new ItemStack(Material.BONE_MEAL, 8),
+                new ItemStack(Material.WHEAT_SEEDS, 4),
+                new ItemStack(Material.MELON_SEEDS, 2),
+                new ItemStack(Material.PUMPKIN_SEEDS, 2),
+                new ItemStack(Material.SUGAR_CANE, 2),
+                new ItemStack(Material.BREAD, 4)
+            );
+        }
+
+        skyWorld.getBlockAt(cx, 120, cz).setType(Material.GLOWSTONE, false);
+        skyWorld.getBlockAt(cx, 121, cz).setType(Material.AIR, false);
+
+        getLogger().info("Skyblock creado para " + ownerName + " (#" + index + ").");
+    }
+
+    private void teleportSkyHome(Player player) {
+        if (skyWorld == null) {
+            msg(player, "SKYBLOCK todavía no está disponible.", NamedTextColor.RED);
+            return;
+        }
+
+        if (!player.getWorld().getName().equals(SKY_WORLD_NAME)) {
+            skyPortalStates.putIfAbsent(
+                player.getUniqueId(),
+                new PortalState(
+                    player.getLocation().clone(),
+                    player.getGameMode(),
+                    player.getAllowFlight(),
+                    player.isFlying()
+                )
+            );
+        }
+
+        int index = ensureSkyIsland(player);
+        Location home = skyIslandCenter(index);
+
+        player.setGameMode(GameMode.SURVIVAL);
+        player.setAllowFlight(false);
+        player.setFlying(false);
+        player.teleport(home);
+        player.setHealth(player.getMaxHealth());
+        player.setFoodLevel(20);
+        player.setSaturation(20f);
+        player.setFireTicks(0);
+
+        player.sendTitle("TU SKYBLOCK", "Isla #" + (index + 1), 5, 40, 10);
+        msg(player, "Esta isla es tuya. Los demás pueden visitarla, pero no romperla.", NamedTextColor.GREEN);
+    }
+
+    private boolean canEditSkyBlock(Player player, Location location) {
+        if (location.getWorld() == null || !location.getWorld().getName().equals(SKY_WORLD_NAME)) {
+            return true;
+        }
+
+        int index = getSkyIslandIndex(player.getUniqueId());
+        if (index < 0) return false;
+
+        Location center = skyIslandCenter(index);
+        double dx = location.getX() - center.getX();
+        double dz = location.getZ() - center.getZ();
+
+        return Math.abs(dx) <= SKY_ISLAND_RADIUS && Math.abs(dz) <= SKY_ISLAND_RADIUS;
+    }
+
+    private Integer findSkyIslandByName(String rawName) {
+        var section = getConfig().getConfigurationSection("skyblock.islands");
+        if (section == null) return null;
+
+        String wanted = normalizeName(rawName);
+
+        for (String key : section.getKeys(false)) {
+            String name = getConfig().getString("skyblock.islands." + key + ".name", "");
+            if (normalizeName(name).equals(wanted)) {
+                return getConfig().getInt("skyblock.islands." + key + ".index", -1);
+            }
+        }
+
+        return null;
+    }
+
+    private void visitSkyIsland(Player player, String targetName) {
+        Integer index = findSkyIslandByName(targetName);
+        if (index == null || index < 0) {
+            msg(player, "No encontré una isla de " + targetName + ".", NamedTextColor.RED);
+            return;
+        }
+
+        if (!player.getWorld().getName().equals(SKY_WORLD_NAME)) {
+            skyPortalStates.putIfAbsent(
+                player.getUniqueId(),
+                new PortalState(
+                    player.getLocation().clone(),
+                    player.getGameMode(),
+                    player.getAllowFlight(),
+                    player.isFlying()
+                )
+            );
+        }
+
+        Location target = skyIslandCenter(index).clone().add(0, 0, 3);
+        player.setGameMode(GameMode.ADVENTURE);
+        player.setAllowFlight(false);
+        player.setFlying(false);
+        player.teleport(target);
+        msg(player, "Visitando la isla de " + targetName + " en modo protegido.", NamedTextColor.AQUA);
+    }
+
+    private boolean handleSkyblockCommand(Player player, String[] args) {
+        String sub = args.length == 0 ? "home" : args[0].toLowerCase(Locale.ROOT);
+
+        switch (sub) {
+            case "home", "create", "island", "isla" -> teleportSkyHome(player);
+            case "lobby" -> enterSkyLobby(player, !player.getWorld().getName().equals(SKY_WORLD_NAME));
+            case "leave", "salir" -> exitSkyblock(player);
+            case "visit", "visitar" -> {
+                if (args.length < 2) {
+                    msg(player, "Uso: /skyblock visit <jugador>", NamedTextColor.YELLOW);
+                    return true;
+                }
+                visitSkyIsland(player, args[1]);
+            }
+            case "status" -> {
+                int index = getSkyIslandIndex(player.getUniqueId());
+                msg(
+                    player,
+                    index < 0
+                        ? "Todavía no tenés isla. Usá /skyblock create."
+                        : "Tu Skyblock: isla #" + (index + 1) + " · protección " + SKY_ISLAND_RADIUS + " bloques.",
+                    NamedTextColor.GREEN
+                );
+            }
+            case "portalhere" -> {
+                if (!player.isOp()) {
+                    msg(player, "Solo OP puede mover el portal.", NamedTextColor.RED);
+                    return true;
+                }
+                buildSkyPortalAt(player);
+            }
+            case "rebuild" -> {
+                if (!player.isOp()) {
+                    msg(player, "Solo OP puede reconstruir el lobby.", NamedTextColor.RED);
+                    return true;
+                }
+                buildSkyLobby();
+                msg(player, "Lobby de SKYBLOCK reconstruido.", NamedTextColor.GREEN);
+            }
+            default -> msg(
+                player,
+                "/skyblock home · create · lobby · leave · visit <jugador> · status"
+                    + (player.isOp() ? " · portalhere · rebuild" : ""),
+                NamedTextColor.YELLOW
+            );
+        }
+
+        return true;
+    }
+
     private void msgAllPvp(String text) {
         if (pvpWorld == null) return;
         for (Player player : pvpWorld.getPlayers()) {
@@ -1949,6 +2451,9 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         }
         if (command.getName().equalsIgnoreCase("hielo")) {
             return handleIceCommand(player, args);
+        }
+        if (command.getName().equalsIgnoreCase("skyblock")) {
+            return handleSkyblockCommand(player, args);
         }
 
         if (args.length == 0) {
@@ -2099,6 +2604,37 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         if (!(sender instanceof Player player)) {
+            return List.of();
+        }
+
+        if (command.getName().equalsIgnoreCase("skyblock")) {
+            if (args.length == 1) {
+                List<String> options = new ArrayList<>(List.of(
+                    "home", "create", "lobby", "leave", "visit", "status"
+                ));
+                if (player.isOp()) {
+                    options.add("portalhere");
+                    options.add("rebuild");
+                }
+                String prefix = args[0].toLowerCase(Locale.ROOT);
+                return options.stream().filter(v -> v.startsWith(prefix)).toList();
+            }
+
+            if (args.length == 2 && args[0].equalsIgnoreCase("visit")) {
+                String prefix = args[1].toLowerCase(Locale.ROOT);
+                List<String> names = new ArrayList<>();
+                var section = getConfig().getConfigurationSection("skyblock.islands");
+                if (section != null) {
+                    for (String key : section.getKeys(false)) {
+                        String name = getConfig().getString("skyblock.islands." + key + ".name", "");
+                        if (!name.isBlank() && name.toLowerCase(Locale.ROOT).startsWith(prefix)) {
+                            names.add(name);
+                        }
+                    }
+                }
+                return names;
+            }
+
             return List.of();
         }
 
