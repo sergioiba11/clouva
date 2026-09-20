@@ -105,12 +105,34 @@ function groupsFromMetadata(metadata: unknown): CommerceBatchGroup[] {
     }) : [];
     const groupKey = typeof group.groupKey === "string" ? group.groupKey : "";
     if (!groupKey || !images.length) return [];
+    const visibleIdentifiers = Array.isArray(group.visibleIdentifiers)
+      ? group.visibleIdentifiers.flatMap((value) => {
+          const rawIdentifier = record(value);
+          const identifier = safeIdentifier(rawIdentifier);
+          if (!identifier) return [];
+          const source = rawIdentifier.source === "box" ? "box" : rawIdentifier.source === "product" ? "product" : "unknown";
+          return [{
+            ...identifier,
+            source,
+            confidence: Math.max(0, Math.min(1, Number(rawIdentifier.confidence || 0))),
+          }];
+        })
+      : [];
+    const packageKind = group.packageKind === "box"
+      ? "box"
+      : group.packageKind === "retail_package"
+        ? "retail_package"
+        : group.packageKind === "loose_product"
+          ? "loose_product"
+          : "unknown";
     return [{
       groupKey,
       name: typeof group.name === "string" ? group.name : "",
       brand: typeof group.brand === "string" ? group.brand : "",
       model: typeof group.model === "string" ? group.model : "",
+      packageKind,
       identifier: safeIdentifier(group.identifier),
+      visibleIdentifiers,
       confidence: Number(group.confidence || 0),
       needsReview: group.needsReview === true,
       images,
@@ -282,6 +304,8 @@ export async function POST(
           visible_text: recognized.visibleText,
           uncertain_fields: recognized.uncertainFields,
           captured_views: sources.map((source) => source.display_label),
+          package_kind: group.packageKind,
+          visible_identifiers: group.visibleIdentifiers,
           identifier_type: identifier.type,
           identifier_value: identifier.value,
         };
@@ -325,6 +349,8 @@ export async function POST(
           batch_import: {
             batch_id: batch.id,
             group_key: group.groupKey,
+            package_kind: group.packageKind,
+            visible_identifiers: group.visibleIdentifiers,
             confidence: group.confidence,
             needs_review: group.needsReview,
             source_indexes: group.images.map((image) => image.sourceIndex),
@@ -366,13 +392,54 @@ export async function POST(
         const listingId = resultListingId(created);
         if (!listingId) throw new Error("CLOUVA no pudo resolver el borrador creado.");
 
+        const primaryNormalized = `${identifier.type}:${identifier.value.replace(/\s/g, "").toUpperCase()}`;
+        const extraIdentifierResults: Array<Record<string, unknown>> = [];
+        const uniqueExtras = new Map(
+          group.visibleIdentifiers
+            .filter((candidate) => `${candidate.type}:${candidate.value.replace(/\s/g, "").toUpperCase()}` !== primaryNormalized)
+            .map((candidate) => [`${candidate.type}:${candidate.value.replace(/\s/g, "").toUpperCase()}`, candidate] as const),
+        );
+        for (const candidate of uniqueExtras.values()) {
+          const { data: attached, error: attachError } = await admin.rpc("create_commerce_product_identifier", {
+            p_spot_id: spot.id,
+            p_listing_id: listingId,
+            p_listing_variant_id: null,
+            p_identifier_type: candidate.type,
+            p_value: candidate.value,
+            p_origin: "imported",
+            p_is_primary: false,
+            p_actor_id: user.id,
+            p_public_token: null,
+            p_destination_type: "product",
+            p_destination_path: null,
+            p_destination_metadata: {
+              source: candidate.source,
+              confidence: candidate.confidence,
+              batch_id: batch.id,
+              group_key: group.groupKey,
+            },
+            p_replaces_identifier_id: null,
+          });
+          extraIdentifierResults.push({
+            value: candidate.value,
+            type: candidate.type,
+            source: candidate.source,
+            attached: !attachError && !Boolean(record(attached).conflict),
+            conflict: Boolean(record(attached).conflict),
+            error: attachError?.message ?? null,
+          });
+        }
+
         const itemRecognition = {
           group_key: group.groupKey,
           listing_id: listingId,
           name: recognizedName,
           brand: recognized.brand,
           category: recognized.category,
+          package_kind: group.packageKind,
           identifier,
+          visible_identifiers: group.visibleIdentifiers,
+          extra_identifier_results: extraIdentifierResults,
           analyzed_at: analyzedAt,
         };
         const { error: itemUpdateError } = await admin
@@ -393,7 +460,16 @@ export async function POST(
           item.recognition = itemRecognition;
           item.error = null;
         }
-        results.push({ groupKey: group.groupKey, ok: true, listingId, name: recognizedName, identifier });
+        results.push({
+          groupKey: group.groupKey,
+          ok: true,
+          listingId,
+          name: recognizedName,
+          packageKind: group.packageKind,
+          identifier,
+          visibleIdentifiers: group.visibleIdentifiers,
+          extraIdentifierResults,
+        });
       } catch (error) {
         const message = error instanceof Error ? error.message : "No se pudo crear el producto.";
         await admin
