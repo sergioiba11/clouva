@@ -55,6 +55,16 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
+      - name: Setup Java 25 for NIÑOS RATA tools
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+
+      - name: Build NIÑOS RATA tools plugin
+        run: mvn -q -f infra/minecraft/tools-plugin/pom.xml -DskipTests package
+
       - name: Reserve permanent public IP
         id: address
         shell: bash
@@ -165,6 +175,39 @@ jobs:
               --project "$PROJECT_ID" \
               --zone "$MC_ZONE" \
               --port 1 2>&1 | tail -n 500 || true
+            exit 1
+          fi
+
+      - name: Install NIÑOS RATA builder tools
+        shell: bash
+        run: |
+          gcloud compute scp             infra/minecraft/tools-plugin/target/NinosRataTools.jar             "$MC_INSTANCE:/tmp/NinosRataTools.jar"             --project "$PROJECT_ID"             --zone "$MC_ZONE"             --quiet             --ssh-key-expire-after=10m
+
+          gcloud compute ssh "$MC_INSTANCE"             --project "$PROJECT_ID"             --zone "$MC_ZONE"             --quiet             --ssh-flag="-o StrictHostKeyChecking=no"             --ssh-flag="-o UserKnownHostsFile=/dev/null"             --command='
+              set -e
+              sudo mkdir -p /srv/minecraft/plugins
+              sudo cp /tmp/NinosRataTools.jar /srv/minecraft/plugins/NinosRataTools.jar
+              sudo chown root:root /srv/minecraft/plugins/NinosRataTools.jar
+              sudo docker restart clouva-minecraft >/dev/null
+            '
+
+          ready=0
+          for attempt in $(seq 1 60); do
+            if gcloud compute ssh "$MC_INSTANCE"               --project "$PROJECT_ID"               --zone "$MC_ZONE"               --quiet               --ssh-flag="-o StrictHostKeyChecking=no"               --ssh-flag="-o UserKnownHostsFile=/dev/null"               --command='
+                sudo docker logs --tail 250 clouva-minecraft 2>&1 |
+                grep -Eq "NinosRataTools.*(Enabled|activo)|NIÑOS RATA TOOLS activo"
+              ' >/dev/null 2>&1; then
+              ready=1
+              echo "NIÑOS RATA builder tools loaded."
+              break
+            fi
+            echo "Waiting for NIÑOS RATA tools ($attempt/60)..."
+            sleep 5
+          done
+
+          if [ "$ready" -ne 1 ]; then
+            echo "::error::NIÑOS RATA tools plugin did not load."
+            gcloud compute ssh "$MC_INSTANCE"               --project "$PROJECT_ID"               --zone "$MC_ZONE"               --quiet               --ssh-flag="-o StrictHostKeyChecking=no"               --ssh-flag="-o UserKnownHostsFile=/dev/null"               --command='sudo docker logs --tail 400 clouva-minecraft 2>&1' || true
             exit 1
           fi
 
