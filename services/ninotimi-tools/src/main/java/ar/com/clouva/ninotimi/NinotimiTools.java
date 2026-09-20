@@ -2591,27 +2591,74 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
 
 
     private void ensureDefaultGameNpc() {
-        if (getConfig().getBoolean("npcgame.default-created", false)) {
-            return;
-        }
-
         List<World> worlds = Bukkit.getWorlds();
         if (worlds.isEmpty()) return;
 
         World main = worlds.get(0);
         Location spawn = main.getSpawnLocation();
-        int x = spawn.getBlockX() + 4;
-        int z = spawn.getBlockZ() + 2;
-        int y = main.getHighestBlockYAt(x, z) + 1;
+        int version = getConfig().getInt("npcgame.spawn-pack-version", 0);
 
-        spawnGameNpc(
-            new Location(main, x + 0.5, y, z + 0.5, 180f, 0f),
-            "master",
-            "🎮 JUEGOS • CLICK"
-        );
+        if (!hasGameNpcNear(main, spawn, "master", 20.0)) {
+            spawnGameNpcAtSpawnOffset(main, spawn, 4, 2, "master", "🎮 JUEGOS • CLICK");
+        }
+
+        if (version < 2) {
+            if (!hasGameNpcNear(main, spawn, "pvp", 20.0)) {
+                spawnGameNpcAtSpawnOffset(main, spawn, 6, 2, "pvp", "⚔ GUERRERO • PVP");
+            }
+            if (!hasGameNpcNear(main, spawn, "hielo", 20.0)) {
+                spawnGameNpcAtSpawnOffset(main, spawn, 4, 4, "hielo", "❄ FROSTI • HIELO");
+            }
+            if (!hasGameNpcNear(main, spawn, "skyblock", 20.0)) {
+                spawnGameNpcAtSpawnOffset(main, spawn, 6, 4, "skyblock", "☁ ISLEÑO • SKYBLOCK");
+            }
+
+            getConfig().set("npcgame.spawn-pack-version", 2);
+        }
 
         getConfig().set("npcgame.default-created", true);
         saveConfig();
+    }
+
+    private void spawnGameNpcAtSpawnOffset(
+        World world,
+        Location spawn,
+        int offsetX,
+        int offsetZ,
+        String action,
+        String displayName
+    ) {
+        int x = spawn.getBlockX() + offsetX;
+        int z = spawn.getBlockZ() + offsetZ;
+        int y = world.getHighestBlockYAt(x, z) + 1;
+
+        spawnGameNpc(
+            new Location(world, x + 0.5, y, z + 0.5, 180f, 0f),
+            action,
+            displayName
+        );
+    }
+
+    private boolean hasGameNpcNear(
+        World world,
+        Location center,
+        String action,
+        double radius
+    ) {
+        double radiusSquared = radius * radius;
+
+        for (Entity entity : world.getEntities()) {
+            if (!(entity instanceof Villager villager)) continue;
+
+            String existingAction = getNpcAction(villager);
+            if (!action.equals(existingAction)) continue;
+
+            if (villager.getLocation().distanceSquared(center) <= radiusSquared) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private Villager spawnGameNpc(Location location, String action, String displayName) {
