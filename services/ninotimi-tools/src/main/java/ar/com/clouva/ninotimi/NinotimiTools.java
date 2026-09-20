@@ -88,6 +88,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     private NamespacedKey wandKey;
     private NamespacedKey npcGameKey;
     private NamespacedKey parkourControlKey;
+    private NamespacedKey lobbyControlKey;
 
     private final Set<String> builderNames = new HashSet<>();
     private final Map<UUID, Selection> selections = new HashMap<>();
@@ -154,6 +155,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         wandKey = new NamespacedKey(this, "builder-wand");
         npcGameKey = new NamespacedKey(this, "game-npc");
         parkourControlKey = new NamespacedKey(this, "parkour-control");
+        lobbyControlKey = new NamespacedKey(this, "lobby-control");
 
         loadBuilders();
         resetSurvivalDataIfNeeded();
@@ -297,7 +299,13 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             }, 2L);
         }
 
-        if (canBuild(player) && getConfig().getBoolean("give-tools-on-join", true)) {
+        if (isMainLobbyWorld(player.getWorld())) {
+            Bukkit.getScheduler().runTaskLater(this, () -> {
+                if (player.isOnline() && isMainLobbyWorld(player.getWorld())) {
+                    giveLobbyLoadout(player);
+                }
+            }, 20L);
+        } else if (canBuild(player) && getConfig().getBoolean("give-tools-on-join", true)) {
             Bukkit.getScheduler().runTaskLater(this, () -> {
                 if (player.isOnline()) {
                     giveToolsCompass(player);
@@ -394,6 +402,16 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         } else if (leavingSurvival) {
             restoreSurvivalOp(player);
         }
+
+        if (isMainLobbyWorldName(to)) {
+            Bukkit.getScheduler().runTaskLater(this, () -> {
+                if (player.isOnline() && isMainLobbyWorld(player.getWorld())) {
+                    giveLobbyLoadout(player);
+                }
+            }, 2L);
+        } else if (isMainLobbyWorldName(from)) {
+            removeLobbyControls(player);
+        }
     }
 
     @EventHandler
@@ -406,6 +424,15 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
 
         ItemMeta meta = item.getItemMeta();
         if (meta == null) {
+            return;
+        }
+
+        String lobbyAction = lobbyControlKey == null
+            ? null
+            : meta.getPersistentDataContainer().get(lobbyControlKey, PersistentDataType.STRING);
+        if (lobbyAction != null) {
+            event.setCancelled(true);
+            handleLobbyControl(player, lobbyAction);
             return;
         }
 
@@ -912,6 +939,116 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             }
         }
     }
+
+    private boolean isMainLobbyWorldName(String worldName) {
+        if (worldName == null || Bukkit.getWorlds().isEmpty()) return false;
+        return Bukkit.getWorlds().get(0).getName().equals(worldName);
+    }
+
+    private boolean isMainLobbyWorld(World world) {
+        return world != null && isMainLobbyWorldName(world.getName());
+    }
+
+    private ItemStack lobbyControl(Material material, String name, String lore, String action) {
+        ItemStack item = menuItem(material, name, lore);
+        ItemMeta meta = item.getItemMeta();
+        meta.getPersistentDataContainer().set(lobbyControlKey, PersistentDataType.STRING, action);
+        item.setItemMeta(meta);
+        return item;
+    }
+
+    private boolean isLobbyControl(ItemStack item) {
+        if (item == null || item.getType().isAir() || lobbyControlKey == null) return false;
+        ItemMeta meta = item.getItemMeta();
+        return meta != null
+            && meta.getPersistentDataContainer().has(lobbyControlKey, PersistentDataType.STRING);
+    }
+
+    private void removeLobbyControls(Player player) {
+        if (lobbyControlKey == null) return;
+        for (int slot = 0; slot < player.getInventory().getSize(); slot++) {
+            ItemStack item = player.getInventory().getItem(slot);
+            if (isLobbyControl(item)) {
+                player.getInventory().setItem(slot, null);
+            }
+        }
+    }
+
+    private void preserveSlotAndPlace(Player player, int slot, ItemStack control) {
+        ItemStack current = player.getInventory().getItem(slot);
+        if (current != null && !current.getType().isAir() && !isLobbyControl(current)) {
+            Map<Integer, ItemStack> leftovers = player.getInventory().addItem(current.clone());
+            if (!leftovers.isEmpty()) {
+                for (ItemStack leftover : leftovers.values()) {
+                    player.getWorld().dropItemNaturally(player.getLocation(), leftover);
+                }
+            }
+        }
+        player.getInventory().setItem(slot, control);
+    }
+
+    private void giveLobbyLoadout(Player player) {
+        if (!isMainLobbyWorld(player.getWorld())) return;
+
+        removeLobbyControls(player);
+
+        preserveSlotAndPlace(
+            player,
+            0,
+            lobbyControl(Material.NETHER_STAR, "1 · 🎮 JUEGOS", "PVP · Hielo · Skyblock · Parkour · Survival", "games")
+        );
+        preserveSlotAndPlace(
+            player,
+            1,
+            lobbyControl(Material.OAK_SAPLING, "2 · 🌲 SURVIVALS", "Mi Survival · Común · Hardcore", "survival")
+        );
+        preserveSlotAndPlace(
+            player,
+            2,
+            lobbyControl(Material.RABBIT_FOOT, "3 · 🏃 PARKOUR", "Elegir uno de los 3 recorridos", "parkour")
+        );
+        preserveSlotAndPlace(
+            player,
+            3,
+            lobbyControl(Material.COMPASS, "4 · 🧀 HERRAMIENTAS", "Builder · modos · fly · edición", "tools")
+        );
+
+        if (canBuild(player)) {
+            giveToolsCompass(player);
+            boolean hasWand = false;
+            for (ItemStack stack : player.getInventory().getContents()) {
+                if (isTagged(stack, wandKey)) {
+                    hasWand = true;
+                    break;
+                }
+            }
+            if (!hasWand) {
+                giveBuilderWand(player);
+            }
+        }
+    }
+
+    private void handleLobbyControl(Player player, String action) {
+        if (!isMainLobbyWorld(player.getWorld())) {
+            return;
+        }
+
+        switch (action) {
+            case "games" -> openGameMenu(player);
+            case "survival" -> openSurvivalMenu(player);
+            case "parkour" -> openParkourMenu(player, true);
+            case "tools" -> {
+                if (!canBuild(player)) {
+                    msg(player, "Las herramientas de builder son solo para builders/OP fuera de Survival.", NamedTextColor.RED);
+                    return;
+                }
+                openMainMenu(player);
+            }
+            default -> {
+            }
+        }
+    }
+
 
     private void openMainMenu(Player player) {
         Inventory inv = Bukkit.createInventory(null, 27, Component.text(MAIN_TITLE));
@@ -3586,6 +3723,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         if (leavingSurvival) {
             loadInventoryState(player, outsideInventoryPath(player));
         }
+        giveLobbyLoadout(player);
         msg(player, "Volviste al lobby principal.", NamedTextColor.GREEN);
 
         if (oldWorld.startsWith(PERSONAL_SURVIVAL_PREFIX)) {
