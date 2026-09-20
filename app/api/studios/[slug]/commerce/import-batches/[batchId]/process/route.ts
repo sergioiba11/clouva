@@ -100,7 +100,7 @@ function groupsFromMetadata(metadata: unknown): CommerceBatchGroup[] {
       const image = record(value);
       const sourceIndex = Number(image.sourceIndex);
       if (!Number.isInteger(sourceIndex)) return [];
-      const role = image.role === "Atrás" ? "Atrás" : image.role === "Detalle" ? "Detalle" : "Frente";
+      const role: CommerceBatchGroup["images"][number]["role"] = image.role === "Atrás" ? "Atrás" : image.role === "Detalle" ? "Detalle" : "Frente";
       return [{ sourceIndex, role }];
     }) : [];
     const groupKey = typeof group.groupKey === "string" ? group.groupKey : "";
