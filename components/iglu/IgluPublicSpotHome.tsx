@@ -16,7 +16,7 @@ const LATEST_IGLU_ASSETS = {
   bottomNav: `${PACK_ROOT}/07_barra_navegacion_neon.png`,
 } as const;
 
-export function IgluPublicSpotHome({ data: _data }: { data: IgluSiteData }) {
+export function IgluPublicSpotHome({ data }: { data: IgluSiteData }) {
   const agendaHref = `${IGLU_STUDIO_PATH}/agenda`;
   const radioHref = `${IGLU_STUDIO_PATH}/radio`;
   const merchHref = `${IGLU_STUDIO_PATH}/tienda`;
@@ -60,11 +60,11 @@ export function IgluPublicSpotHome({ data: _data }: { data: IgluSiteData }) {
         </header>
 
         <div className={styles.brand}>
-          <img src={LATEST_IGLU_ASSETS.logo} alt="IGLÚ Records" />
+          <img src={LATEST_IGLU_ASSETS.logo} alt="El Iglú — IGLÚ Records en CLOUVA" />
         </div>
 
         <section className={styles.heroCopy}>
-          <h1>ENTRÁ AL IGLÚ</h1>
+          <h1>El Iglú</h1>\n          <p className="sr-only">{data.studio.description || data.studio.tagline || "El Iglú es el estudio y espacio musical de IGLÚ Records dentro de CLOUVA."}</p>
           <div className={styles.heroActions}>
             <Link href={agendaHref} className={styles.reserveButton}>
               <span>RESERVAR SESIÓN</span>
