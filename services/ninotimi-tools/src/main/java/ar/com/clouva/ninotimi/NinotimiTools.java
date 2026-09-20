@@ -14,6 +14,7 @@ import org.bukkit.World;
 import org.bukkit.WorldCreator;
 import org.bukkit.WorldType;
 import org.bukkit.block.Block;
+import org.bukkit.block.Chest;
 import org.bukkit.block.data.BlockData;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
@@ -62,6 +63,9 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     private static final String BLOCKS_TITLE = "BLOQUES — NINOTIMI";
     private static final String PVP_WORLD_NAME = "pvp_ninotimi";
     private static final String ICE_WORLD_NAME = "hielo_ninotimi";
+    private static final String SKY_WORLD_NAME = "skyblock_ninotimi";
+    private static final int SKY_ISLAND_SPACING = 256;
+    private static final int SKY_ISLAND_RADIUS = 96;
     private static final int MAX_ICE_PLAYERS = 12;
     private static final long ICE_JOIN_WINDOW_TICKS = 100L;
 
@@ -82,6 +86,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     private final Set<UUID> iceFighters = new HashSet<>();
     private final Map<UUID, PlayerState> iceStates = new HashMap<>();
     private final Map<UUID, PortalState> icePortalStates = new HashMap<>();
+    private final Map<UUID, PortalState> skyPortalStates = new HashMap<>();
 
     private World pvpWorld;
     private Region entryPortal;
@@ -101,6 +106,12 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     private Location iceSpawn2;
     private Location iceSpectatorSpot;
 
+    private World skyWorld;
+    private Region skyEntryPortal;
+    private Region skyExitPortal;
+    private Region skyHomePad;
+    private Location skyLobby;
+
     private boolean duelActive;
     private boolean iceActive;
     private int maxEditBlocks;
@@ -116,6 +127,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         loadBuilders();
         setupPvp();
         setupIceBattle();
+        setupSkyblock();
 
         getServer().getPluginManager().registerEvents(this, this);
 
@@ -130,6 +142,10 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         if (getCommand("hielo") != null) {
             getCommand("hielo").setExecutor(this);
             getCommand("hielo").setTabCompleter(this);
+        }
+        if (getCommand("skyblock") != null) {
+            getCommand("skyblock").setExecutor(this);
+            getCommand("skyblock").setTabCompleter(this);
         }
 
         startPortalParticles();
@@ -229,6 +245,14 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
                 }
             }, 20L);
         }
+
+        if (player.getWorld().getName().equals(SKY_WORLD_NAME)) {
+            Bukkit.getScheduler().runTaskLater(this, () -> {
+                if (player.isOnline() && player.getWorld().getName().equals(SKY_WORLD_NAME) && player.getLocation().getY() < 30) {
+                    teleportSkyHome(player);
+                }
+            }, 20L);
+        }
     }
 
     @EventHandler
@@ -257,6 +281,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             }
         }
         icePortalStates.remove(id);
+        skyPortalStates.remove(id);
     }
 
     @EventHandler
@@ -393,6 +418,26 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             && to.getY() < 76.0
         ) {
             eliminateIcePlayer(player, "cayó al vacío");
+            return;
+        }
+
+        if (skyEntryPortal != null && skyEntryPortal.contains(to)) {
+            enterSkyLobby(player, true);
+            return;
+        }
+
+        if (skyExitPortal != null && skyExitPortal.contains(to)) {
+            exitSkyblock(player);
+            return;
+        }
+
+        if (skyHomePad != null && skyHomePad.contains(to)) {
+            teleportSkyHome(player);
+            return;
+        }
+
+        if (player.getWorld().getName().equals(SKY_WORLD_NAME) && to.getY() < 30.0) {
+            teleportSkyHome(player);
         }
     }
 
@@ -437,6 +482,14 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     public void onBlockBreak(BlockBreakEvent event) {
         String worldName = event.getBlock().getWorld().getName();
 
+        if (worldName.equals(SKY_WORLD_NAME)) {
+            if (!canEditSkyBlock(event.getPlayer(), event.getBlock().getLocation())) {
+                event.setCancelled(true);
+                msg(event.getPlayer(), "Esta isla no es tuya.", NamedTextColor.RED);
+            }
+            return;
+        }
+
         if (worldName.equals(ICE_WORLD_NAME)) {
             Player player = event.getPlayer();
             Block block = event.getBlock();
@@ -467,6 +520,14 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     @EventHandler
     public void onBlockPlace(BlockPlaceEvent event) {
         String worldName = event.getBlock().getWorld().getName();
+
+        if (worldName.equals(SKY_WORLD_NAME)) {
+            if (!canEditSkyBlock(event.getPlayer(), event.getBlock().getLocation())) {
+                event.setCancelled(true);
+                msg(event.getPlayer(), "Solo podés construir en tu isla.", NamedTextColor.RED);
+            }
+            return;
+        }
 
         if (worldName.equals(ICE_WORLD_NAME)) {
             if (!canBuild(event.getPlayer()) || !iceFighters.isEmpty()) {
@@ -1015,6 +1076,8 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             spawnRegionParticles(exitPortal);
             spawnIceRegionParticles(iceEntryPortal);
             spawnIceRegionParticles(iceExitPortal);
+            spawnSkyRegionParticles(skyEntryPortal);
+            spawnSkyRegionParticles(skyExitPortal);
         }, 20L, 10L);
     }
 
@@ -1950,6 +2013,9 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         if (command.getName().equalsIgnoreCase("hielo")) {
             return handleIceCommand(player, args);
         }
+        if (command.getName().equalsIgnoreCase("skyblock")) {
+            return handleSkyblockCommand(player, args);
+        }
 
         if (args.length == 0) {
             if (!canBuild(player)) {
@@ -2099,6 +2165,37 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
         if (!(sender instanceof Player player)) {
+            return List.of();
+        }
+
+        if (command.getName().equalsIgnoreCase("skyblock")) {
+            if (args.length == 1) {
+                List<String> options = new ArrayList<>(List.of(
+                    "home", "create", "lobby", "leave", "visit", "status"
+                ));
+                if (player.isOp()) {
+                    options.add("portalhere");
+                    options.add("rebuild");
+                }
+                String prefix = args[0].toLowerCase(Locale.ROOT);
+                return options.stream().filter(v -> v.startsWith(prefix)).toList();
+            }
+
+            if (args.length == 2 && args[0].equalsIgnoreCase("visit")) {
+                String prefix = args[1].toLowerCase(Locale.ROOT);
+                List<String> names = new ArrayList<>();
+                var section = getConfig().getConfigurationSection("skyblock.islands");
+                if (section != null) {
+                    for (String key : section.getKeys(false)) {
+                        String name = getConfig().getString("skyblock.islands." + key + ".name", "");
+                        if (!name.isBlank() && name.toLowerCase(Locale.ROOT).startsWith(prefix)) {
+                            names.add(name);
+                        }
+                    }
+                }
+                return names;
+            }
+
             return List.of();
         }
 
