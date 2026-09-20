@@ -63,8 +63,19 @@ const nextConfig: NextConfig = {
   // "Comunidad" is retired in favor of the Players/Estudios ecosystem
   // (/matrix, /players, /studios) -- permanent redirects so no duplicate
   // content lives at the old paths, per the Players/Estudios spec.
+  async rewrites() {
+    const minecraftMapUpstream = (process.env.MINECRAFT_MAP_UPSTREAM || "http://35.198.44.243:8100").replace(/\/$/, "");
+    return [
+      {
+        source: "/minecraft/map/:path*",
+        destination: `${minecraftMapUpstream}/:path*`,
+      },
+    ];
+  },
   async redirects() {
     return [
+      { source: "/ninos-rata-server", destination: "/minecraft", permanent: true },
+      { source: "/ninos-rata-server/:path*", destination: "/minecraft", permanent: true },
       { source: "/iglu/radio", destination: "/studios/el-iglu/radio", permanent: true },
       { source: "/iglu/radio/:path*", destination: "/studios/el-iglu/radio/:path*", permanent: true },
       { source: "/comunidad", destination: "/matrix", permanent: true },
