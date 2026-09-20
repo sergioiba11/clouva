@@ -1,5 +1,12 @@
 import http from "node:http";
 import { Readable } from "node:stream";
+import { execFile } from "node:child_process";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFile);
 
 import {
   Client,
@@ -56,6 +63,14 @@ const guildStates = new Map();
 const histories = new Map();
 let discordLoginError = null;
 let discordLoginAttempts = 0;
+const voiceDiagnostics = {
+  utterances: 0,
+  wakes: 0,
+  replies: 0,
+  lastStage: null,
+  lastError: null,
+  lastAt: null,
+};
 
 function log(event, fields = {}) {
   console.log(JSON.stringify({ event, at: new Date().toISOString(), ...fields }));
@@ -118,6 +133,30 @@ async function fetchMinecraftContext() {
   }
 }
 
+function vertexGenerateUrl() {
+  return (
+    "https://" +
+    VERTEX_LOCATION +
+    "-aiplatform.googleapis.com/v1/projects/" +
+    encodeURIComponent(PROJECT_ID) +
+    "/locations/" +
+    encodeURIComponent(VERTEX_LOCATION) +
+    "/publishers/google/models/" +
+    encodeURIComponent(VERTEX_MODEL) +
+    ":generateContent"
+  );
+}
+
+async function vertexGenerate(data, timeout = 15000) {
+  const client = await googleAuth.getClient();
+  return await client.request({
+    url: vertexGenerateUrl(),
+    method: "POST",
+    data,
+    timeout,
+  });
+}
+
 async function askVertex({ guildId, speaker, prompt }) {
   const minecraft = await fetchMinecraftContext();
   const history = recentHistory(guildId);
@@ -143,30 +182,13 @@ async function askVertex({ guildId, speaker, prompt }) {
     parts: [{ text: speaker + " dijo: " + (prompt || "Quesito") }],
   });
 
-  const client = await googleAuth.getClient();
-  const url =
-    "https://" +
-    VERTEX_LOCATION +
-    "-aiplatform.googleapis.com/v1/projects/" +
-    encodeURIComponent(PROJECT_ID) +
-    "/locations/" +
-    encodeURIComponent(VERTEX_LOCATION) +
-    "/publishers/google/models/" +
-    encodeURIComponent(VERTEX_MODEL) +
-    ":generateContent";
-
-  const response = await client.request({
-    url,
-    method: "POST",
-    data: {
-      systemInstruction: { parts: [{ text: system }] },
-      contents,
-      generationConfig: {
-        temperature: 0.75,
-        maxOutputTokens: 180,
-      },
+  const response = await vertexGenerate({
+    systemInstruction: { parts: [{ text: system }] },
+    contents,
+    generationConfig: {
+      temperature: 0.75,
+      maxOutputTokens: 180,
     },
-    timeout: 15000,
   });
 
   const parts = response.data?.candidates?.[0]?.content?.parts || [];
@@ -185,45 +207,149 @@ async function askVertex({ guildId, speaker, prompt }) {
   return answer;
 }
 
-async function transcribe(pcmMono) {
-  if (pcmMono.length < 12000) return "";
+function pcmToWav(pcmMono, sampleRate = 48000) {
+  const header = Buffer.alloc(44);
+  const dataLength = pcmMono.length;
+  header.write("RIFF", 0);
+  header.writeUInt32LE(36 + dataLength, 4);
+  header.write("WAVE", 8);
+  header.write("fmt ", 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(1, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(sampleRate * 2, 28);
+  header.writeUInt16LE(2, 32);
+  header.writeUInt16LE(16, 34);
+  header.write("data", 36);
+  header.writeUInt32LE(dataLength, 40);
+  return Buffer.concat([header, pcmMono]);
+}
 
-  const [response] = await speechClient.recognize({
-    config: {
-      encoding: "LINEAR16",
-      sampleRateHertz: 48000,
-      languageCode: "es-AR",
-      enableAutomaticPunctuation: true,
-      model: "latest_short",
+async function transcribeWithVertex(pcmMono) {
+  const wav = pcmToWav(pcmMono);
+  const response = await vertexGenerate(
+    {
+      contents: [
+        {
+          role: "user",
+          parts: [
+            {
+              text: "Transcribí este audio en español rioplatense. Devolvé solamente lo que se dijo, sin explicación.",
+            },
+            {
+              inlineData: {
+                mimeType: "audio/wav",
+                data: wav.toString("base64"),
+              },
+            },
+          ],
+        },
+      ],
+      generationConfig: {
+        temperature: 0,
+        maxOutputTokens: 160,
+      },
     },
-    audio: { content: pcmMono.toString("base64") },
-  });
+    20000,
+  );
 
-  return (response.results || [])
-    .map((result) => result.alternatives?.[0]?.transcript || "")
+  return (response.data?.candidates?.[0]?.content?.parts || [])
+    .map((part) => (typeof part?.text === "string" ? part.text : ""))
     .join(" ")
+    .replace(/\s+/g, " ")
     .trim();
 }
 
+async function transcribe(pcmMono) {
+  if (pcmMono.length < 12000) return "";
+
+  try {
+    const [response] = await speechClient.recognize({
+      config: {
+        encoding: "LINEAR16",
+        sampleRateHertz: 48000,
+        languageCode: "es-AR",
+        enableAutomaticPunctuation: true,
+        model: "latest_short",
+      },
+      audio: { content: pcmMono.toString("base64") },
+    });
+
+    return (response.results || [])
+      .map((result) => result.alternatives?.[0]?.transcript || "")
+      .join(" ")
+      .trim();
+  } catch (error) {
+    log("QUESITO_STT_FALLBACK", {
+      error: String(error?.message || error).slice(0, 300),
+    });
+    return await transcribeWithVertex(pcmMono);
+  }
+}
+
+async function synthesizeLocal(text) {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "quesito-"));
+  const wav = path.join(dir, "speech.wav");
+  const ogg = path.join(dir, "speech.ogg");
+
+  try {
+    await execFileAsync("espeak-ng", [
+      "-v",
+      "es-la",
+      "-s",
+      "175",
+      "-p",
+      "52",
+      "-w",
+      wav,
+      String(text).slice(0, 650),
+    ]);
+    await execFileAsync("ffmpeg", [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-y",
+      "-i",
+      wav,
+      "-c:a",
+      "libopus",
+      "-b:a",
+      "64k",
+      ogg,
+    ]);
+    return await fs.readFile(ogg);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 async function synthesize(text) {
-  const [response] = await ttsClient.synthesizeSpeech({
-    input: { text },
-    voice: {
-      languageCode: "es-US",
-      ssmlGender: "NEUTRAL",
-    },
-    audioConfig: {
-      audioEncoding: "OGG_OPUS",
-      speakingRate: 1.06,
-      pitch: 1.0,
-    },
-  });
+  try {
+    const [response] = await ttsClient.synthesizeSpeech({
+      input: { text },
+      voice: {
+        languageCode: "es-US",
+        ssmlGender: "NEUTRAL",
+      },
+      audioConfig: {
+        audioEncoding: "OGG_OPUS",
+        speakingRate: 1.06,
+        pitch: 1.0,
+      },
+    });
 
-  if (!response.audioContent) throw new Error("Text-to-Speech returned no audio.");
+    if (!response.audioContent) throw new Error("Text-to-Speech returned no audio.");
 
-  return Buffer.isBuffer(response.audioContent)
-    ? response.audioContent
-    : Buffer.from(response.audioContent);
+    return Buffer.isBuffer(response.audioContent)
+      ? response.audioContent
+      : Buffer.from(response.audioContent);
+  } catch (error) {
+    log("QUESITO_TTS_FALLBACK", {
+      error: String(error?.message || error).slice(0, 300),
+    });
+    return await synthesizeLocal(text);
+  }
 }
 
 async function speak(state, text) {
@@ -258,10 +384,18 @@ async function processUtterance(state, userId, pcmStereo) {
   if (state.muted || state.speaking) return;
 
   try {
+    voiceDiagnostics.utterances += 1;
+    voiceDiagnostics.lastStage = "transcribing";
+    voiceDiagnostics.lastError = null;
+    voiceDiagnostics.lastAt = new Date().toISOString();
+
     const mono = downmixStereo16LeToMono(pcmStereo);
     const transcript = await transcribe(mono);
 
     if (!transcript || !transcript.toLowerCase().includes(WAKE_WORD)) return;
+
+    voiceDiagnostics.wakes += 1;
+    voiceDiagnostics.lastStage = "thinking";
 
     const member = state.guild.members.cache.get(userId);
     const speaker = member?.displayName || "un jugador";
@@ -275,8 +409,13 @@ async function processUtterance(state, userId, pcmStereo) {
       prompt,
     });
 
+    voiceDiagnostics.lastStage = "speaking";
     await speak(state, answer);
+    voiceDiagnostics.replies += 1;
+    voiceDiagnostics.lastStage = "idle";
   } catch (error) {
+    voiceDiagnostics.lastStage = "error";
+    voiceDiagnostics.lastError = String(error?.message || error).slice(0, 500);
     log("QUESITO_TURN_ERROR", {
       guildId: state.guildId,
       userId,
@@ -409,24 +548,28 @@ const quesitoCommand = new SlashCommandBuilder()
   )
   .addSubcommand((sub) =>
     sub.setName("estado").setDescription("Muestra el estado de Quesito"),
+  )
+  .addSubcommand((sub) =>
+    sub.setName("probar").setDescription("Hace hablar a Quesito para probar el audio"),
   );
 
 async function registerCommands() {
   const rest = new REST({ version: "10" }).setToken(DISCORD_BOT_TOKEN);
   const body = [quesitoCommand.toJSON()];
 
-  if (DISCORD_GUILD_ID) {
+  await rest.put(Routes.applicationCommands(discord.user.id), { body });
+  log("QUESITO_COMMANDS_REGISTERED", { mode: "global" });
+
+  const guildIds = DISCORD_GUILD_ID
+    ? [DISCORD_GUILD_ID]
+    : [...discord.guilds.cache.keys()];
+
+  for (const guildId of guildIds) {
     await rest.put(
-      Routes.applicationGuildCommands(discord.user.id, DISCORD_GUILD_ID),
+      Routes.applicationGuildCommands(discord.user.id, guildId),
       { body },
     );
-    log("QUESITO_COMMANDS_REGISTERED", {
-      mode: "guild",
-      guildId: DISCORD_GUILD_ID,
-    });
-  } else {
-    await rest.put(Routes.applicationCommands(discord.user.id), { body });
-    log("QUESITO_COMMANDS_REGISTERED", { mode: "global" });
+    log("QUESITO_COMMANDS_REGISTERED", { mode: "guild", guildId });
   }
 }
 
@@ -514,6 +657,23 @@ discord.on("interactionCreate", async (interaction) => {
       return;
     }
 
+    if (sub === "probar") {
+      const state = guildStates.get(interaction.guild.id);
+
+      if (!state) {
+        await interaction.reply({
+          content: "🧀 Primero usá /quesito entrar estando en el canal de voz.",
+          ephemeral: true,
+        });
+        return;
+      }
+
+      await interaction.deferReply({ ephemeral: true });
+      await speak(state, "Quesito está vivo. Ahora sí los escucho, manga de ratas.");
+      await interaction.editReply("🧀 Prueba de voz enviada al canal.");
+      return;
+    }
+
     if (sub === "hablar") {
       const state = guildStates.get(interaction.guild.id);
 
@@ -566,6 +726,22 @@ discord.on("interactionCreate", async (interaction) => {
   }
 });
 
+discord.on("guildCreate", async (guild) => {
+  try {
+    const rest = new REST({ version: "10" }).setToken(DISCORD_BOT_TOKEN);
+    await rest.put(
+      Routes.applicationGuildCommands(discord.user.id, guild.id),
+      { body: [quesitoCommand.toJSON()] },
+    );
+    log("QUESITO_COMMANDS_REGISTERED", { mode: "guildCreate", guildId: guild.id });
+  } catch (error) {
+    log("QUESITO_COMMAND_REGISTER_ERROR", {
+      guildId: guild.id,
+      error: String(error?.message || error),
+    });
+  }
+});
+
 discord.on("error", (error) => {
   log("QUESITO_DISCORD_ERROR", { error: error.message });
 });
@@ -593,6 +769,7 @@ http
         wakeWord: WAKE_WORD,
         discordError: discordLoginError,
         discordLoginAttempts,
+        voiceDiagnostics,
       }),
     );
   })
