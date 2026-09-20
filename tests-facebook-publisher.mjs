@@ -27,11 +27,12 @@ test("marketplace and groups stop at explicit user confirmation", () => {
 test("page publishing is isolated to the official Graph API path", () => {
   const capabilities = read("./lib/commerce/channel-capabilities.ts");
   const client = read("./core/integrations/facebook/client.ts");
+  const config = read("./core/integrations/facebook/config.ts");
   assert.match(capabilities, /facebook_page/);
   assert.match(capabilities, /canPublishAutomatically: true/);
   assert.match(client, /graph\.facebook\.com/);
   assert.match(client, /attached_media/);
-  assert.match(client, /pages_manage_posts/);
+  assert.match(config, /pages_manage_posts/);
 });
 
 test("publish all UI and durable Cloud Tasks runner are wired", () => {
