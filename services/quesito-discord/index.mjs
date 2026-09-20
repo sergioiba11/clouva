@@ -486,6 +486,8 @@ async function speak(state, text) {
     })
     .catch((error) => {
       state.speaking = false;
+      voiceDiagnostics.lastStage = "error";
+      voiceDiagnostics.lastError = String(error?.message || error).slice(0, 500);
       log("QUESITO_TTS_ERROR", {
         guildId: state.guildId,
         error: String(error?.message || error),
@@ -590,6 +592,7 @@ async function processTranscript(state, userId, transcript, source = "streaming-
   if (
     state.ambientEnabled &&
     !state.pendingAmbient &&
+    !state.speaking &&
     now - state.lastAmbientAt >= AMBIENT_MIN_GAP_MS &&
     now - state.lastAmbientCheckAt >= AMBIENT_CHECK_MIN_GAP_MS &&
     clean.length >= 8
