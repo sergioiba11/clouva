@@ -69,6 +69,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     private static final String PARKOUR_WORLD_NAME = "parkour_ninotimi";
     private static final String ICE_WORLD_NAME = "hielo_ninotimi";
     private static final String SKY_WORLD_NAME = "skyblock_ninotimi";
+    private static final String SURVIVAL_WORLD_NAME = "survival_ninotimi";
     private static final int SKY_ISLAND_SPACING = 256;
     private static final int SKY_ISLAND_RADIUS = 96;
     private static final int SKY_SCATTER_VERSION = 1;
@@ -94,6 +95,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     private final Map<UUID, PlayerState> iceStates = new HashMap<>();
     private final Map<UUID, PortalState> icePortalStates = new HashMap<>();
     private final Map<UUID, PortalState> skyPortalStates = new HashMap<>();
+    private final Map<UUID, PortalState> survivalPortalStates = new HashMap<>();
     private final Map<UUID, PortalState> parkourPortalStates = new HashMap<>();
     private final Map<UUID, ParkourRun> parkourRuns = new HashMap<>();
 
@@ -121,6 +123,11 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     private Region skyHomePad;
     private Location skyLobby;
 
+    private World survivalWorld;
+    private Region survivalEntryPortal;
+    private Region survivalExitPortal;
+    private Location survivalSpawn;
+
     private World parkourWorld;
     private Location parkourLobby;
 
@@ -141,6 +148,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         setupPvp();
         setupIceBattle();
         setupSkyblock();
+        setupSurvival();
         setupParkour();
         ensureDefaultGameNpc();
 
@@ -161,6 +169,10 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         if (getCommand("skyblock") != null) {
             getCommand("skyblock").setExecutor(this);
             getCommand("skyblock").setTabCompleter(this);
+        }
+        if (getCommand("survival") != null) {
+            getCommand("survival").setExecutor(this);
+            getCommand("survival").setTabCompleter(this);
         }
         if (getCommand("parkour") != null) {
             getCommand("parkour").setExecutor(this);
@@ -316,6 +328,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         }
         icePortalStates.remove(id);
         skyPortalStates.remove(id);
+        survivalPortalStates.remove(id);
         parkourRuns.remove(id);
         parkourPortalStates.remove(id);
     }
@@ -390,6 +403,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             case "pvp" -> enterPvpLobby(player, true);
             case "hielo" -> enterIceLobby(player, true);
             case "skyblock" -> enterSkyLobby(player, true);
+            case "survival" -> enterSurvival(player, true);
             case "parkour" -> openParkourMenu(player, true);
             default -> openGameMenu(player);
         }
@@ -450,6 +464,10 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
                 case 17 -> {
                     player.closeInventory();
                     openParkourMenu(player, true);
+                }
+                case 20 -> {
+                    player.closeInventory();
+                    enterSurvival(player, true);
                 }
                 case 22 -> player.closeInventory();
                 default -> {
@@ -547,6 +565,16 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
 
         if (skyHomePad != null && skyHomePad.contains(to)) {
             teleportSkyHome(player);
+            return;
+        }
+
+        if (survivalEntryPortal != null && survivalEntryPortal.contains(to)) {
+            enterSurvival(player, true);
+            return;
+        }
+
+        if (survivalExitPortal != null && survivalExitPortal.contains(to)) {
+            exitSurvival(player);
             return;
         }
 
@@ -1217,6 +1245,8 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             spawnIceRegionParticles(iceExitPortal);
             spawnSkyRegionParticles(skyEntryPortal);
             spawnSkyRegionParticles(skyExitPortal);
+            spawnSkyRegionParticles(survivalEntryPortal);
+            spawnSkyRegionParticles(survivalExitPortal);
         }, 20L, 10L);
     }
 
@@ -2736,12 +2766,10 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         if (command.getName().equalsIgnoreCase("hielo")) {
             return handleIceCommand(player, args);
         }
-        if (command.getName().equalsIgnoreCase("parkour")) {
+        if (command.getName().equalsIgnoreCase("survival")) {
             if (args.length != 1) return List.of();
-            List<String> options = new ArrayList<>(List.of(
-                "menu", "lobby", "1", "2", "3", "restart", "leave"
-            ));
-            if (player.isOp()) options.add("rebuild");
+            List<String> options = new ArrayList<>(List.of("join", "leave", "status"));
+            if (player.isOp()) options.add("portalhere");
             String prefix = args[0].toLowerCase(Locale.ROOT);
             return options.stream().filter(v -> v.startsWith(prefix)).toList();
         }
@@ -2751,6 +2779,9 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         }
         if (command.getName().equalsIgnoreCase("skyblock")) {
             return handleSkyblockCommand(player, args);
+        }
+        if (command.getName().equalsIgnoreCase("survival")) {
+            return handleSurvivalCommand(player, args);
         }
         if (command.getName().equalsIgnoreCase("parkour")) {
             return handleParkourCommand(player, args);
@@ -2822,6 +2853,194 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         }
 
         msg(player, "Usá /tools o /nrtools grant <jugador>.", NamedTextColor.YELLOW);
+        return true;
+    }
+
+
+
+    private void setupSurvival() {
+        WorldCreator creator = new WorldCreator(SURVIVAL_WORLD_NAME);
+        creator.type(WorldType.NORMAL);
+        creator.generateStructures(true);
+
+        survivalWorld = Bukkit.getWorld(SURVIVAL_WORLD_NAME);
+        if (survivalWorld == null) {
+            survivalWorld = creator.createWorld();
+        }
+
+        if (survivalWorld == null) {
+            getLogger().severe("No se pudo crear NINOTIMI SURVIVAL.");
+            return;
+        }
+
+        survivalWorld.setPVP(false);
+        survivalWorld.setGameRule(GameRule.DO_MOB_SPAWNING, true);
+        survivalWorld.setGameRule(GameRule.DO_DAYLIGHT_CYCLE, true);
+        survivalWorld.setGameRule(GameRule.DO_WEATHER_CYCLE, true);
+        survivalWorld.setGameRule(GameRule.KEEP_INVENTORY, false);
+
+        Location naturalSpawn = survivalWorld.getSpawnLocation();
+        int sx = naturalSpawn.getBlockX();
+        int sz = naturalSpawn.getBlockZ();
+        int sy = survivalWorld.getHighestBlockYAt(sx, sz) + 1;
+        survivalSpawn = new Location(survivalWorld, sx + 0.5, sy, sz + 0.5, 0f, 0f);
+        survivalWorld.setSpawnLocation(survivalSpawn);
+
+        int portalX = sx + 8;
+        int portalZ = sz;
+        int portalY = survivalWorld.getHighestBlockYAt(portalX, portalZ) + 1;
+        buildSurvivalPortalFrame(survivalWorld, portalX, portalY, portalZ, true);
+        survivalExitPortal = new Region(
+            SURVIVAL_WORLD_NAME,
+            portalX - 1, portalY + 1, portalZ - 1,
+            portalX + 1, portalY + 3, portalZ + 1
+        );
+
+        survivalEntryPortal = loadRegion("survival.entry-portal");
+        if (survivalEntryPortal == null) {
+            buildDefaultSurvivalEntryPortal();
+        }
+    }
+
+    private void buildDefaultSurvivalEntryPortal() {
+        List<World> worlds = Bukkit.getWorlds();
+        if (worlds.isEmpty()) return;
+
+        World main = worlds.get(0);
+        Location spawn = main.getSpawnLocation();
+        int centerX = spawn.getBlockX();
+        int centerZ = spawn.getBlockZ() - 12;
+        int baseY = main.getHighestBlockYAt(centerX, centerZ) + 1;
+
+        buildSurvivalPortalFrame(main, centerX, baseY, centerZ, true);
+        survivalEntryPortal = new Region(
+            main.getName(),
+            centerX - 1, baseY + 1, centerZ - 1,
+            centerX + 1, baseY + 3, centerZ + 1
+        );
+        saveRegion("survival.entry-portal", survivalEntryPortal);
+    }
+
+    private void buildSurvivalPortalAt(Player player) {
+        Location here = player.getLocation().getBlock().getLocation();
+        int centerX = here.getBlockX();
+        int centerZ = here.getBlockZ();
+        int baseY = here.getBlockY();
+
+        buildSurvivalPortalFrame(player.getWorld(), centerX, baseY, centerZ, true);
+        survivalEntryPortal = new Region(
+            player.getWorld().getName(),
+            centerX - 1, baseY + 1, centerZ - 1,
+            centerX + 1, baseY + 3, centerZ + 1
+        );
+        saveRegion("survival.entry-portal", survivalEntryPortal);
+        msg(player, "Portal NINOTIMI SURVIVAL creado acá.", NamedTextColor.GREEN);
+    }
+
+    private void buildSurvivalPortalFrame(World world, int centerX, int baseY, int centerZ, boolean alongX) {
+        Material frame = Material.OAK_LOG;
+        Material accent = Material.GRASS_BLOCK;
+
+        if (alongX) {
+            for (int dx = -2; dx <= 2; dx++) {
+                for (int dy = 0; dy <= 4; dy++) {
+                    boolean edge = dx == -2 || dx == 2 || dy == 0 || dy == 4;
+                    world.getBlockAt(centerX + dx, baseY + dy, centerZ)
+                        .setType(edge ? frame : Material.AIR, false);
+                }
+            }
+            for (int dx = -1; dx <= 1; dx++) {
+                world.getBlockAt(centerX + dx, baseY, centerZ).setType(accent, false);
+            }
+        } else {
+            for (int dz = -2; dz <= 2; dz++) {
+                for (int dy = 0; dy <= 4; dy++) {
+                    boolean edge = dz == -2 || dz == 2 || dy == 0 || dy == 4;
+                    world.getBlockAt(centerX, baseY + dy, centerZ + dz)
+                        .setType(edge ? frame : Material.AIR, false);
+                }
+            }
+            for (int dz = -1; dz <= 1; dz++) {
+                world.getBlockAt(centerX, baseY, centerZ + dz).setType(accent, false);
+            }
+        }
+    }
+
+    private void enterSurvival(Player player, boolean rememberReturn) {
+        if (survivalWorld == null || survivalSpawn == null) {
+            msg(player, "SURVIVAL todavía no está disponible.", NamedTextColor.RED);
+            return;
+        }
+
+        if (rememberReturn && !player.getWorld().getName().equals(SURVIVAL_WORLD_NAME)) {
+            survivalPortalStates.putIfAbsent(
+                player.getUniqueId(),
+                new PortalState(
+                    player.getLocation().clone(),
+                    player.getGameMode(),
+                    player.getAllowFlight(),
+                    player.isFlying()
+                )
+            );
+        }
+
+        player.setGameMode(GameMode.SURVIVAL);
+        player.setAllowFlight(false);
+        player.setFlying(false);
+        player.teleport(survivalSpawn);
+        player.setHealth(player.getMaxHealth());
+        player.setFoodLevel(20);
+        player.setSaturation(20f);
+        player.setFireTicks(0);
+
+        player.sendTitle("NINOTIMI SURVIVAL", "Mundo abierto · construí · explorá · sobreviví", 10, 60, 10);
+        msg(player, "Entraste al Survival. /survival leave para volver.", NamedTextColor.GREEN);
+    }
+
+    private void exitSurvival(Player player) {
+        PortalState previous = survivalPortalStates.remove(player.getUniqueId());
+
+        if (previous != null && previous.location.getWorld() != null) {
+            player.teleport(previous.location);
+            player.setGameMode(previous.gameMode);
+            player.setAllowFlight(previous.allowFlight);
+            player.setFlying(previous.flying && previous.allowFlight);
+        } else {
+            World main = Bukkit.getWorlds().get(0);
+            player.teleport(main.getSpawnLocation());
+            player.setGameMode(GameMode.SURVIVAL);
+            player.setAllowFlight(false);
+            player.setFlying(false);
+        }
+
+        msg(player, "Saliste de NINOTIMI SURVIVAL.", NamedTextColor.GREEN);
+    }
+
+    private boolean handleSurvivalCommand(Player player, String[] args) {
+        String sub = args.length == 0 ? "join" : args[0].toLowerCase(Locale.ROOT);
+
+        switch (sub) {
+            case "join", "entrar", "lobby" -> enterSurvival(player, !player.getWorld().getName().equals(SURVIVAL_WORLD_NAME));
+            case "leave", "salir" -> exitSurvival(player);
+            case "status" -> msg(
+                player,
+                "SURVIVAL: " + (survivalWorld == null ? "no disponible" : "online · mundo " + SURVIVAL_WORLD_NAME),
+                survivalWorld == null ? NamedTextColor.RED : NamedTextColor.GREEN
+            );
+            case "portalhere" -> {
+                if (!player.isOp()) {
+                    msg(player, "Solo OP puede mover el portal.", NamedTextColor.RED);
+                    return true;
+                }
+                buildSurvivalPortalAt(player);
+            }
+            default -> msg(
+                player,
+                "/survival join · leave · status" + (player.isOp() ? " · portalhere" : ""),
+                NamedTextColor.YELLOW
+            );
+        }
+
         return true;
     }
 
@@ -3274,6 +3493,13 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             getConfig().set("npcgame.spawn-pack-version", 3);
         }
 
+        if (version < 4) {
+            if (!hasGameNpcNear(main, spawn, "survival", 24.0)) {
+                spawnGameNpcAtSpawnOffset(main, spawn, 7, 6, "survival", "🌲 EXPLORADOR • SURVIVAL");
+            }
+            getConfig().set("npcgame.spawn-pack-version", 4);
+        }
+
         getConfig().set("npcgame.default-created", true);
         saveConfig();
     }
@@ -3346,6 +3572,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         inv.setItem(13, menuItem(Material.SNOWBALL, "❄ BATALLA DE HIELO", "Rompé la nieve y sé el último arriba"));
         inv.setItem(15, menuItem(Material.GRASS_BLOCK, "☁ SKYBLOCK", "Ir al lobby de Skyblock"));
         inv.setItem(17, menuItem(Material.RABBIT_FOOT, "🏃 PARKOUR", "Elegí uno de 3 recorridos"));
+        inv.setItem(20, menuItem(Material.OAK_SAPLING, "🌲 SURVIVAL", "Mundo abierto de supervivencia"));
         inv.setItem(22, menuItem(Material.BARRIER, "Cerrar", "Cerrar juegos"));
         player.openInventory(inv);
     }
@@ -3355,6 +3582,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             case "pvp" -> "⚔ GUERRERO • PVP";
             case "hielo" -> "❄ FROSTI • HIELO";
             case "skyblock" -> "☁ ISLEÑO • SKYBLOCK";
+            case "survival" -> "🌲 EXPLORADOR • SURVIVAL";
             case "parkour" -> "🏃 SALTARÍN • PARKOUR";
             default -> "🎮 JUEGOS • CLICK";
         };
@@ -3371,13 +3599,13 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         switch (sub) {
             case "create" -> {
                 if (args.length < 2) {
-                    msg(player, "Uso: /npcgame create <master|pvp|hielo|skyblock> [nombre]", NamedTextColor.YELLOW);
+                    msg(player, "Uso: /npcgame create <master|pvp|hielo|skyblock|survival|parkour> [nombre]", NamedTextColor.YELLOW);
                     return true;
                 }
 
                 String action = args[1].toLowerCase(Locale.ROOT);
-                if (!Set.of("master", "pvp", "hielo", "skyblock", "parkour").contains(action)) {
-                    msg(player, "Juego inválido: master, pvp, hielo, skyblock o parkour.", NamedTextColor.RED);
+                if (!Set.of("master", "pvp", "hielo", "skyblock", "survival", "parkour").contains(action)) {
+                    msg(player, "Juego inválido: master, pvp, hielo, skyblock, survival o parkour.", NamedTextColor.RED);
                     return true;
                 }
 
@@ -3582,7 +3810,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
 
             if (args.length == 2 && args[0].equalsIgnoreCase("create")) {
                 String prefix = args[1].toLowerCase(Locale.ROOT);
-                return List.of("master", "pvp", "hielo", "skyblock", "parkour").stream()
+                return List.of("master", "pvp", "hielo", "skyblock", "survival", "parkour").stream()
                     .filter(v -> v.startsWith(prefix))
                     .toList();
             }
