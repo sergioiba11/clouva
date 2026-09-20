@@ -46,7 +46,14 @@ const MINECRAFT_STATUS_URL =
   "https://clouva.com.ar/api/minecraft/status";
 const PORT = Number(process.env.PORT || 8080);
 const AMBIENT_MIN_GAP_MS = Number(process.env.QUESITO_AMBIENT_MIN_GAP_MS || 35000);
-const AMBIENT_CHANCE = Number(process.env.QUESITO_AMBIENT_CHANCE || 0.28);
+const AMBIENT_CHECK_MIN_GAP_MS = Number(
+  process.env.QUESITO_AMBIENT_CHECK_MIN_GAP_MS || 12000,
+);
+const STT_FALLBACK_DELAY_MS = Number(
+  process.env.QUESITO_STT_FALLBACK_DELAY_MS || 1200,
+);
+const TTS_VOICE =
+  process.env.QUESITO_TTS_VOICE?.trim() || "es-US-Chirp3-HD-Puck";
 
 if (!DISCORD_BOT_TOKEN) throw new Error("DISCORD_BOT_TOKEN is required.");
 if (!PROJECT_ID) throw new Error("GOOGLE_CLOUD_PROJECT is required.");
@@ -72,6 +79,15 @@ const voiceDiagnostics = {
   lastStage: null,
   lastError: null,
   lastAt: null,
+  sttProvider: null,
+  ttsProvider: null,
+  ttsVoice: TTS_VOICE,
+  sttStreamingFinals: 0,
+  sttFallbacks: 0,
+  ttsFallbacks: 0,
+  lastThinkMs: null,
+  lastTtsMs: null,
+  lastTotalMs: null,
 };
 
 function log(event, fields = {}) {
@@ -165,10 +181,11 @@ async function askAmbientVertex({ guildId, speaker, transcript }) {
 
   const system = [
     "Sos Quesito, la IA de voz del Discord del Niños Rata Server.",
-    "Estás escuchando una charla grupal y a veces podés meter un comentario espontáneo.",
-    "No respondas a todo. La mayoría de las veces quedate callado.",
-    "Solo opiná si hay algo gracioso, interesante, discutible o donde tu comentario aporte al momento.",
-    "Si no vale la pena interrumpir, respondé exactamente SILENCIO.",
+    "Estás escuchando una charla grupal en Discord y decidís vos cuándo vale la pena meterte.",
+    "No respondas a todo ni rellenes silencios por obligación.",
+    "Metete solo si tu comentario reacciona de verdad a lo que están hablando: algo gracioso, una opinión, una aclaración útil o una pregunta corta.",
+    "No repitas lo que acaba de decir la gente y no suenes como asistente.",
+    "Si no aporta meterte, respondé exactamente SILENCIO.",
     "Si opinás, hacelo en español rioplatense, corto, natural y divertido, una sola frase.",
     "Tu público incluye chicos de 14 años: mantené el humor apto para adolescentes.",
     "No humilles, discrimines ni seas sexual. No des instrucciones peligrosas o ilegales.",
@@ -217,11 +234,14 @@ async function askVertex({ guildId, speaker, prompt }) {
 
   const system = [
     "Sos Quesito, la IA de voz del Discord del Niños Rata Server.",
-    "Hablás en español rioplatense, natural, rápido y divertido.",
+    "Sos uno más del canal: hablás en español rioplatense, natural, rápido y divertido.",
+    "Respondé a la persona y al contexto real de la charla, sin frases genéricas ni tono de asistente.",
+    "Usá el nombre del jugador cuando quede natural. No lo repitas de más.",
     "Tu público incluye chicos de 14 años: mantené el humor apto para adolescentes.",
     "Podés descansar suavemente a los jugadores, pero nunca humilles, discrimines ni seas sexual.",
     "No des instrucciones peligrosas, de drogas, autolesión, armas ni actividades ilegales.",
-    "Respondé corto: normalmente una o dos frases. No uses markdown ni listas porque tu respuesta se va a leer en voz alta.",
+    "Respondé muy corto: normalmente una frase; dos solo si hacen falta. No uses markdown ni listas porque se lee en voz alta.",
+    "No cierres con '¿en qué más puedo ayudarte?' ni frases parecidas.",
     "Si no sabés algo, decilo sin inventar.",
     "Contexto del servidor: " + minecraft,
   ].join("\n");
@@ -241,7 +261,7 @@ async function askVertex({ guildId, speaker, prompt }) {
     contents,
     generationConfig: {
       temperature: 0.75,
-      maxOutputTokens: 180,
+      maxOutputTokens: 110,
     },
   });
 
@@ -378,32 +398,60 @@ async function synthesizeLocal(text) {
   }
 }
 
+async function synthesizeCloud(text, voice) {
+  const started = Date.now();
+  const [response] = await ttsClient.synthesizeSpeech({
+    input: { text },
+    voice,
+    audioConfig: {
+      audioEncoding: "OGG_OPUS",
+      speakingRate: 1.06,
+    },
+  });
+
+  if (!response.audioContent) throw new Error("Text-to-Speech returned no audio.");
+
+  voiceDiagnostics.lastTtsMs = Date.now() - started;
+  return Buffer.isBuffer(response.audioContent)
+    ? response.audioContent
+    : Buffer.from(response.audioContent);
+}
+
 async function synthesize(text) {
   try {
-    const [response] = await ttsClient.synthesizeSpeech({
-      input: { text },
-      voice: {
-        languageCode: "es-US",
-        ssmlGender: "NEUTRAL",
-      },
-      audioConfig: {
-        audioEncoding: "OGG_OPUS",
-        speakingRate: 1.06,
-        pitch: 1.0,
-      },
+    const audio = await synthesizeCloud(text, {
+      languageCode: "es-US",
+      name: TTS_VOICE,
     });
-
-    if (!response.audioContent) throw new Error("Text-to-Speech returned no audio.");
-
-    return Buffer.isBuffer(response.audioContent)
-      ? response.audioContent
-      : Buffer.from(response.audioContent);
+    voiceDiagnostics.ttsProvider = "gcloud-chirp3";
+    return audio;
   } catch (error) {
-    log("QUESITO_TTS_FALLBACK", {
+    voiceDiagnostics.ttsFallbacks += 1;
+    log("QUESITO_TTS_CHIRP3_FALLBACK", {
+      voice: TTS_VOICE,
       error: String(error?.message || error).slice(0, 300),
     });
-    return await synthesizeLocal(text);
   }
+
+  try {
+    const audio = await synthesizeCloud(text, {
+      languageCode: "es-US",
+      ssmlGender: "NEUTRAL",
+    });
+    voiceDiagnostics.ttsProvider = "gcloud-standard";
+    return audio;
+  } catch (error) {
+    voiceDiagnostics.ttsFallbacks += 1;
+    log("QUESITO_TTS_LOCAL_FALLBACK", {
+      error: String(error?.message || error).slice(0, 300),
+    });
+  }
+
+  voiceDiagnostics.ttsProvider = "local-espeak";
+  const started = Date.now();
+  const audio = await synthesizeLocal(text);
+  voiceDiagnostics.lastTtsMs = Date.now() - started;
+  return audio;
 }
 
 function stopCurrentSpeech(state, { mute = false } = {}) {
@@ -438,6 +486,8 @@ async function speak(state, text) {
     })
     .catch((error) => {
       state.speaking = false;
+      voiceDiagnostics.lastStage = "error";
+      voiceDiagnostics.lastError = String(error?.message || error).slice(0, 500);
       log("QUESITO_TTS_ERROR", {
         guildId: state.guildId,
         error: String(error?.message || error),
@@ -447,84 +497,153 @@ async function speak(state, text) {
   return state.speakQueue;
 }
 
-async function processUtterance(state, userId, pcmStereo) {
-  if (state.muted) return;
+function isStopRequest(text) {
+  return /\b(callate|cállate|silencio|para|pará|basta)\b/i.test(text);
+}
 
+function isResumeRequest(text) {
+  return /\b(habla|hablá|despertate|despertá|volvé|volve|seguí|segui)\b/i.test(text);
+}
+
+function handleInterimControl(state, userId, transcript) {
+  const lower = String(transcript || "").toLowerCase();
+  if (!lower.includes(WAKE_WORD)) return;
+
+  if (isStopRequest(transcript)) {
+    log("QUESITO_STOP_REQUEST", {
+      guildId: state.guildId,
+      userId,
+      source: "stt-interim",
+    });
+    stopCurrentSpeech(state, { mute: true });
+    voiceDiagnostics.lastStage = "muted";
+    return;
+  }
+
+  if (state.muted && isResumeRequest(transcript)) {
+    state.muted = false;
+    voiceDiagnostics.lastStage = "listening";
+    log("QUESITO_RESUME_REQUEST", {
+      guildId: state.guildId,
+      userId,
+      source: "stt-interim",
+    });
+  }
+}
+
+async function processTranscript(state, userId, transcript, source = "streaming-stt") {
+  const clean = String(transcript || "").replace(/\s+/g, " ").trim();
+  if (!clean) return;
+
+  const totalStarted = Date.now();
+  voiceDiagnostics.utterances += 1;
+  voiceDiagnostics.lastStage = "heard";
+  voiceDiagnostics.lastError = null;
+  voiceDiagnostics.lastAt = new Date().toISOString();
+  voiceDiagnostics.sttProvider = source;
+
+  const lower = clean.toLowerCase();
+  const hasWake = lower.includes(WAKE_WORD);
+  const member = state.guild.members.cache.get(userId);
+  const speaker = member?.displayName || "un jugador";
+
+  if (hasWake && isStopRequest(clean)) {
+    log("QUESITO_STOP_REQUEST", { guildId: state.guildId, userId, source });
+    stopCurrentSpeech(state, { mute: true });
+    voiceDiagnostics.lastStage = "muted";
+    return;
+  }
+
+  if (state.muted) {
+    if (hasWake && isResumeRequest(clean)) {
+      state.muted = false;
+      voiceDiagnostics.lastStage = "listening";
+      log("QUESITO_RESUME_REQUEST", { guildId: state.guildId, userId, source });
+      await speak(state, "Volví.");
+    }
+    return;
+  }
+
+  if (hasWake) {
+    voiceDiagnostics.wakes += 1;
+    voiceDiagnostics.lastStage = "thinking";
+    const prompt = stripWakeWord(clean) || "¿estás ahí?";
+
+    log("QUESITO_WAKE", { guildId: state.guildId, userId, source });
+
+    const thinkStarted = Date.now();
+    const answer = await askVertex({
+      guildId: state.guildId,
+      speaker,
+      prompt,
+    });
+    voiceDiagnostics.lastThinkMs = Date.now() - thinkStarted;
+
+    voiceDiagnostics.lastStage = "speaking";
+    await speak(state, answer);
+    voiceDiagnostics.replies += 1;
+    voiceDiagnostics.lastTotalMs = Date.now() - totalStarted;
+    voiceDiagnostics.lastStage = "listening";
+    return;
+  }
+
+  let rememberedAmbientInput = false;
+  const now = Date.now();
+  if (
+    state.ambientEnabled &&
+    !state.pendingAmbient &&
+    !state.speaking &&
+    now - state.lastAmbientAt >= AMBIENT_MIN_GAP_MS &&
+    now - state.lastAmbientCheckAt >= AMBIENT_CHECK_MIN_GAP_MS &&
+    clean.length >= 8
+  ) {
+    state.pendingAmbient = true;
+    state.lastAmbientCheckAt = now;
+
+    try {
+      const thinkStarted = Date.now();
+      const ambient = await askAmbientVertex({
+        guildId: state.guildId,
+        speaker,
+        transcript: clean,
+      });
+      voiceDiagnostics.lastThinkMs = Date.now() - thinkStarted;
+
+      if (ambient) {
+        state.lastAmbientAt = Date.now();
+        remember(state.guildId, "user", speaker + ": " + clean);
+        rememberedAmbientInput = true;
+        remember(state.guildId, "assistant", ambient);
+        log("QUESITO_AMBIENT_REPLY", { guildId: state.guildId, userId });
+        voiceDiagnostics.lastStage = "speaking";
+        await speak(state, ambient);
+        voiceDiagnostics.replies += 1;
+        voiceDiagnostics.lastTotalMs = Date.now() - totalStarted;
+      }
+    } finally {
+      state.pendingAmbient = false;
+    }
+  }
+
+  if (!rememberedAmbientInput) {
+    remember(state.guildId, "user", speaker + ": " + clean);
+  }
+
+  if (!state.speaking) voiceDiagnostics.lastStage = "listening";
+}
+
+async function processUtterance(state, userId, pcmStereo) {
   try {
-    voiceDiagnostics.utterances += 1;
-    voiceDiagnostics.lastStage = "transcribing";
+    voiceDiagnostics.lastStage = "fallback-transcribing";
     voiceDiagnostics.lastError = null;
     voiceDiagnostics.lastAt = new Date().toISOString();
+    voiceDiagnostics.sttFallbacks += 1;
 
     const mono = downmixStereo16LeToMono(pcmStereo);
     const transcript = await transcribe(mono);
     if (!transcript) return;
 
-    const lower = transcript.toLowerCase();
-    const hasWake = lower.includes(WAKE_WORD);
-    const member = state.guild.members.cache.get(userId);
-    const speaker = member?.displayName || "un jugador";
-
-    if (
-      hasWake &&
-      /\b(callate|cállate|silencio|para|pará|basta)\b/i.test(transcript)
-    ) {
-      log("QUESITO_STOP_REQUEST", { guildId: state.guildId, userId });
-      stopCurrentSpeech(state, { mute: true });
-      voiceDiagnostics.lastStage = "muted";
-      return;
-    }
-
-    if (hasWake) {
-      voiceDiagnostics.wakes += 1;
-      voiceDiagnostics.lastStage = "thinking";
-
-      const prompt = stripWakeWord(transcript) || "¿estás ahí?";
-      log("QUESITO_WAKE", { guildId: state.guildId, userId });
-
-      const answer = await askVertex({
-        guildId: state.guildId,
-        speaker,
-        prompt,
-      });
-
-      voiceDiagnostics.lastStage = "speaking";
-      await speak(state, answer);
-      voiceDiagnostics.replies += 1;
-      voiceDiagnostics.lastStage = "idle";
-      return;
-    }
-
-    const now = Date.now();
-    if (
-      state.ambientEnabled &&
-      !state.pendingAmbient &&
-      now - state.lastAmbientAt >= AMBIENT_MIN_GAP_MS &&
-      transcript.length >= 8 &&
-      Math.random() < AMBIENT_CHANCE
-    ) {
-      state.pendingAmbient = true;
-      try {
-        const ambient = await askAmbientVertex({
-          guildId: state.guildId,
-          speaker,
-          transcript,
-        });
-
-        if (ambient) {
-          state.lastAmbientAt = Date.now();
-          remember(state.guildId, "user", speaker + ": " + transcript);
-          remember(state.guildId, "assistant", ambient);
-          log("QUESITO_AMBIENT_REPLY", { guildId: state.guildId, userId });
-          await speak(state, ambient);
-          voiceDiagnostics.replies += 1;
-        }
-      } finally {
-        state.pendingAmbient = false;
-      }
-    }
-
-    voiceDiagnostics.lastStage = "idle";
+    await processTranscript(state, userId, transcript, "gcloud-sync-fallback");
   } catch (error) {
     voiceDiagnostics.lastStage = "error";
     voiceDiagnostics.lastError = String(error?.message || error).slice(0, 500);
@@ -540,7 +659,7 @@ function attachReceiver(state) {
   const receiver = state.connection.receiver;
 
   receiver.speaking.on("start", (userId) => {
-    if (state.muted || state.receiving.has(userId)) return;
+    if (state.receiving.has(userId)) return;
     if (userId === discord.user?.id) return;
 
     state.receiving.add(userId);
@@ -548,7 +667,7 @@ function attachReceiver(state) {
     const source = receiver.subscribe(userId, {
       end: {
         behavior: EndBehaviorType.AfterSilence,
-        duration: 900,
+        duration: 750,
       },
     });
 
@@ -561,23 +680,110 @@ function attachReceiver(state) {
     const chunks = [];
     let total = 0;
     let closed = false;
+    let finalSeen = false;
+    let streamingFailed = false;
+    let fallbackTimer = null;
+
+    const recognizeStream = speechClient
+      .streamingRecognize({
+        config: {
+          encoding: "LINEAR16",
+          sampleRateHertz: 48000,
+          languageCode: "es-AR",
+          enableAutomaticPunctuation: true,
+          model: "latest_short",
+          speechContexts: [
+            {
+              phrases: [
+                "Quesito",
+                "Quesito callate",
+                "Quesito pará",
+                "Quesito silencio",
+                "Quesito hablá",
+              ],
+              boost: 18,
+            },
+          ],
+        },
+        interimResults: true,
+      })
+      .on("data", (data) => {
+        for (const result of data?.results || []) {
+          const transcript = result?.alternatives?.[0]?.transcript?.trim();
+          if (!transcript) continue;
+
+          if (result.isFinal) {
+            finalSeen = true;
+            voiceDiagnostics.sttStreamingFinals += 1;
+            voiceDiagnostics.sttProvider = "gcloud-streaming";
+            void processTranscript(
+              state,
+              userId,
+              transcript,
+              "gcloud-streaming",
+            ).catch((error) => {
+              voiceDiagnostics.lastError = String(error?.message || error).slice(0, 500);
+              log("QUESITO_STREAM_TRANSCRIPT_ERROR", {
+                guildId: state.guildId,
+                userId,
+                error: voiceDiagnostics.lastError,
+              });
+            });
+          } else {
+            handleInterimControl(state, userId, transcript);
+          }
+        }
+      })
+      .on("error", (error) => {
+        streamingFailed = true;
+        voiceDiagnostics.lastError = String(error?.message || error).slice(0, 500);
+        log("QUESITO_STREAMING_STT_ERROR", {
+          guildId: state.guildId,
+          userId,
+          error: voiceDiagnostics.lastError,
+        });
+      });
+
+    const runFallback = () => {
+      if (finalSeen || !chunks.length || total > 5000000) return;
+      void processUtterance(state, userId, Buffer.concat(chunks));
+    };
 
     const finish = () => {
       if (closed) return;
       closed = true;
       state.receiving.delete(userId);
 
-      if (chunks.length && total <= 3000000) {
-        void processUtterance(state, userId, Buffer.concat(chunks));
+      try {
+        recognizeStream.end();
+      } catch {}
+
+      if (streamingFailed) {
+        runFallback();
+      } else {
+        fallbackTimer = setTimeout(runFallback, STT_FALLBACK_DELAY_MS);
+        fallbackTimer.unref?.();
       }
     };
 
     decoder.on("data", (chunk) => {
       total += chunk.length;
 
-      if (total <= 3000000) {
+      if (total <= 5000000) {
         chunks.push(Buffer.from(chunk));
-      } else {
+      }
+
+      const mono = downmixStereo16LeToMono(chunk);
+      if (!streamingFailed && mono.length) {
+        try {
+          recognizeStream.write(mono);
+        } catch (error) {
+          streamingFailed = true;
+          voiceDiagnostics.lastError = String(error?.message || error).slice(0, 500);
+        }
+      }
+
+      if (total > 5000000) {
         source.destroy();
         decoder.destroy();
       }
@@ -635,10 +841,22 @@ async function joinGuildVoice(guild, channelId) {
     ambientEnabled: true,
     pendingAmbient: false,
     lastAmbientAt: 0,
+    lastAmbientCheckAt: 0,
   };
 
   guildStates.set(guild.id, state);
   attachReceiver(state);
+
+  connection.on(VoiceConnectionStatus.Disconnected, async () => {
+    try {
+      await Promise.race([
+        entersState(connection, VoiceConnectionStatus.Signalling, 5000),
+        entersState(connection, VoiceConnectionStatus.Connecting, 5000),
+      ]);
+    } catch {
+      connection.destroy();
+    }
+  });
 
   connection.on(VoiceConnectionStatus.Destroyed, () => {
     guildStates.delete(guild.id);
@@ -871,6 +1089,9 @@ discord.on("interactionCreate", async (interaction) => {
             : "conectado y escuchando “Quesito”"
           : "fuera del canal") +
         (state ? (state.ambientEnabled ? " · opiniones espontáneas ON" : " · opiniones espontáneas OFF") : "") +
+        (voiceDiagnostics.sttProvider ? " · STT " + voiceDiagnostics.sttProvider : "") +
+        (voiceDiagnostics.ttsProvider ? " · TTS " + voiceDiagnostics.ttsProvider : "") +
+        (voiceDiagnostics.lastTotalMs != null ? " · " + voiceDiagnostics.lastTotalMs + " ms última respuesta" : "") +
         ".\n🎮 " +
         minecraft,
       ephemeral: true,

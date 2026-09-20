@@ -11,6 +11,7 @@ COPY package.json ./
 RUN npm install --omit=dev --no-audit --no-fund
 
 COPY index.mjs ./
+RUN node --check index.mjs
 
 ENV PORT=8080
 EXPOSE 8080
