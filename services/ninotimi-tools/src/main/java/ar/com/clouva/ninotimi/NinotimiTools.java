@@ -1322,7 +1322,6 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             spawnSkyRegionParticles(skyEntryPortal);
             spawnSkyRegionParticles(skyExitPortal);
             spawnSkyRegionParticles(survivalEntryPortal);
-            spawnSkyRegionParticles(survivalExitPortal);
         }, 20L, 10L);
     }
 
