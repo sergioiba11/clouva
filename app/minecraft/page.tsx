@@ -11,6 +11,7 @@ type MinecraftStatus = {
   players?: { online: number; max: number; sample: string[] }; error?: string;
 };
 
+// Production surface for the integrated Minecraft dashboard and live map.
 const REFRESH_MS = 10_000;
 
 function CopyValue({ value, label }: { value: string; label: string }) {
