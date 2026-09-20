@@ -585,9 +585,7 @@ async function processTranscript(state, userId, transcript, source = "streaming-
     return;
   }
 
-  // Keep the room context even when Quesito chooses not to speak.
-  remember(state.guildId, "user", speaker + ": " + clean);
-
+  let rememberedAmbientInput = false;
   const now = Date.now();
   if (
     state.ambientEnabled &&
@@ -610,6 +608,8 @@ async function processTranscript(state, userId, transcript, source = "streaming-
 
       if (ambient) {
         state.lastAmbientAt = Date.now();
+        remember(state.guildId, "user", speaker + ": " + clean);
+        rememberedAmbientInput = true;
         remember(state.guildId, "assistant", ambient);
         log("QUESITO_AMBIENT_REPLY", { guildId: state.guildId, userId });
         voiceDiagnostics.lastStage = "speaking";
@@ -620,6 +620,10 @@ async function processTranscript(state, userId, transcript, source = "streaming-
     } finally {
       state.pendingAmbient = false;
     }
+  }
+
+  if (!rememberedAmbientInput) {
+    remember(state.guildId, "user", speaker + ": " + clean);
   }
 
   if (!state.speaking) voiceDiagnostics.lastStage = "listening";
