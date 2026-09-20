@@ -1,0 +1,42 @@
+name: Inspect IGLU assets
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/inspect-iglu-assets.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA_EMAIL }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Resolve bucket and list IGLU pack
+        run: |
+          PROJECT_ID="gen-lang-client-0737053175"
+          REGION="us-central1"
+          SERVICE="clouva-web"
+          gcloud run services describe "$SERVICE" --project "$PROJECT_ID" --region "$REGION" --format=json > /tmp/service.json
+          bucket="$(python3 - <<'PY'
+          import json
+          d=json.load(open('/tmp/service.json'))
+          env=d.get('spec',{}).get('template',{}).get('spec',{}).get('containers',[{}])[0].get('env',[])
+          vals={x.get('name'):x.get('value') for x in env}
+          print(vals.get('CLOUVA_ADMIN_ASSETS_BUCKET') or vals.get('CLOUVA_GENERATED_MEDIA_BUCKET') or 'clouva-generated-media')
+          PY
+          )"
+          echo "bucket=$bucket"
+          gcloud storage ls --recursive "gs://$bucket/admin-assets/**" | grep -Ei '01_interfaz_principal_iglu_records|02_logo_iglu_records_neon_hielo|03_banner_merch_iglu_records|04_card_players_iglu_records|05_card_reservas_iglu_records|06_background_base_musical_iglu|07_barra_navegacion_neon' || true
