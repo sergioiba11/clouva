@@ -12,6 +12,10 @@ commands:
   pvp:
     description: Controla NINOTIMI PVP
     usage: /pvp [join|leave|lobby|spectate|status|portalhere|rebuild]
+  hielo:
+    description: Controla BATALLA DE HIELO
+    aliases: [ice, spleef]
+    usage: /hielo [join|leave|lobby|spectate|status|portalhere|rebuild]
 permissions:
   ninotimi.tools:
     description: Puede usar NINOTIMI TOOLS
