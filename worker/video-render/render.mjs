@@ -243,7 +243,7 @@ async function main() {
   }
 
   const plannedSeconds = clips.reduce((sum, clip) => sum + Number(clip.duration_seconds || 0), 0);
-  if (plannedSeconds < Number(project.target_duration_seconds)) {
+  if (project.project_mode !== "visualizer" && plannedSeconds < Number(project.target_duration_seconds)) {
     throw new Error("El timeline visual no cubre la duración objetivo.");
   }
 
@@ -268,7 +268,13 @@ async function main() {
     }
 
     const concatFile = path.join(workdir, "concat.txt");
-    await writeFile(concatFile, normalized.map((file) => `file '${file.replaceAll("'", "'\\''")}'`).join("\n"));
+    let timelineFiles = normalized;
+    if (project.project_mode === "visualizer") {
+      const cycleSeconds = Math.max(1, plannedSeconds);
+      const repeats = Math.max(1, Math.ceil(Number(project.target_duration_seconds) / cycleSeconds) + 1);
+      timelineFiles = Array.from({ length: repeats }, () => normalized).flat();
+    }
+    await writeFile(concatFile, timelineFiles.map((file) => `file '${file.replaceAll("'", "'\\''")}'`).join("\n"));
     const visual = path.join(workdir, "visual.mp4");
     await run("ffmpeg", [
       "-y", "-f", "concat", "-safe", "0", "-i", concatFile,
