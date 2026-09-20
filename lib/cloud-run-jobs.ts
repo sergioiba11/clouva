@@ -85,7 +85,7 @@ function videoRenderJobConfig() {
 
 /** Starts the long-form CLOUVA FFmpeg renderer. The Cloud Run Job receives only
  * the project id; media paths and ownership remain canonical in Supabase. */
-export async function runVideoRenderJob(projectId: string): Promise<string> {
+export async function runVideoRenderJob(projectId: string, mode: "render" | "analyze" = "render"): Promise<string> {
   const { project, location, job } = videoRenderJobConfig();
   const token = await getAccessToken();
   const response = await fetch(
@@ -96,7 +96,10 @@ export async function runVideoRenderJob(projectId: string): Promise<string> {
       body: JSON.stringify({
         overrides: {
           containerOverrides: [{
-            env: [{ name: "CLOUVA_VIDEO_PROJECT_ID", value: projectId }],
+            env: [
+              { name: "CLOUVA_VIDEO_PROJECT_ID", value: projectId },
+              { name: "CLOUVA_VIDEO_JOB_MODE", value: mode },
+            ],
           }],
         },
       }),
@@ -112,4 +115,9 @@ export async function runVideoRenderJob(projectId: string): Promise<string> {
   const executionName = operation.metadata?.name;
   if (!executionName) throw new Error("Cloud Run no devolvió la ejecución del render de video.");
   return executionName;
+}
+
+/** Starts the audio-analysis pass in the same canonical Cloud Run video worker. */
+export async function runVideoAudioAnalysisJob(projectId: string): Promise<string> {
+  return runVideoRenderJob(projectId, "analyze");
 }
