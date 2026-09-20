@@ -119,6 +119,32 @@ jobs:
           fi
           exit 0
 
+      - name: Ensure Facebook Publisher Cloud Tasks queue
+        shell: bash
+        run: |
+          set +e
+          if gcloud tasks queues describe "clouva-facebook-publisher" \
+            --project "$PROJECT_ID" \
+            --location "$REGION" >/dev/null 2>&1; then
+            echo "Facebook publisher queue already exists."
+          else
+            echo "Facebook publisher queue is missing; attempting to create it."
+            gcloud tasks queues create "clouva-facebook-publisher" \
+              --project "$PROJECT_ID" \
+              --location "$REGION" \
+              --max-dispatches-per-second=1 \
+              --max-concurrent-dispatches=1 \
+              --max-attempts=5 \
+              --min-backoff=10s \
+              --max-backoff=300s \
+              --log-sampling-ratio=1.0
+            status=$?
+            if [ "$status" -ne 0 ]; then
+              echo "::warning::Could not create clouva-facebook-publisher with the deploy identity."
+            fi
+          fi
+          exit 0
+
       # Secret Manager IAM is infrastructure state and must not be mutated by the
       # per-release deploy identity. Cloud Run keeps the service's configured
       # secret bindings when a new image revision is deployed.
@@ -153,7 +179,7 @@ jobs:
             --project "$PROJECT_ID" \
             --region "$REGION" \
             --image "$IMAGE" \
-            --update-env-vars "GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=$REGION,CLOUVA_ASSET_IMPORT_TASKS_PROJECT=$PROJECT_ID,CLOUVA_ASSET_IMPORT_TASKS_LOCATION=$REGION,CLOUVA_ASSET_IMPORT_TASKS_QUEUE=clouva-asset-imports,CLOUVA_ASSET_IMPORT_WORKER_URL=https://clouva.com.ar/api/internal/admin/assets/imports/process" \
+            --update-env-vars "GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=$REGION,CLOUVA_ASSET_IMPORT_TASKS_PROJECT=$PROJECT_ID,CLOUVA_ASSET_IMPORT_TASKS_LOCATION=$REGION,CLOUVA_ASSET_IMPORT_TASKS_QUEUE=clouva-asset-imports,CLOUVA_ASSET_IMPORT_WORKER_URL=https://clouva.com.ar/api/internal/admin/assets/imports/process,CLOUVA_FACEBOOK_PUBLISHER_QUEUE=clouva-facebook-publisher" \
             --revision-suffix "$suffix" \
             --tag "$suffix" \
             --timeout 1800 \

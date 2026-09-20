@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, ArrowRight, Boxes, CalendarDays, ChartNoAxesCombined, ClipboardList, Loader2, Megaphone, Package, Save, Settings2, Sparkles, Store, Users } from "lucide-react";
+import { ArrowLeft, ArrowRight, Boxes, CalendarDays, ChartNoAxesCombined, ClipboardList, Facebook, Loader2, Megaphone, Package, Save, Settings2, Sparkles, Store, Users } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -145,6 +145,7 @@ export default function SpotHomePage() {
                 {canAgenda ? <Link href="/agenda" className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm"><CalendarDays size={15} /> Agenda</Link> : null}
                 {data.canOpenCommerce ? <Link href={`/mi-spot/${spotId}/commerce`} className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm">Operaciones <ArrowRight size={16} /></Link> : null}
                 {canContent && data.space ? <Link href={`/mi-spot/${spotId}/publicaciones`} className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm"><Megaphone size={15} /> Publicaciones</Link> : null}
+                {canContent ? <Link href={`/mi-spot/publicador?spotId=${encodeURIComponent(spotId)}`} className="inline-flex items-center gap-2 rounded-xl border border-[#1877f2]/30 bg-[#1877f2]/10 px-4 py-2.5 text-sm text-blue-100"><Facebook size={15} /> Publicador Facebook</Link> : null}
                 {canTeam ? <Link href={`/mi-spot/${spotId}/team`} className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm"><Users size={15} /> Equipo</Link> : null}
                 {canSettings ? <button type="button" onClick={() => setEditing((value) => !value)} className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-sm"><Settings2 size={15} /> Estilo</button> : null}
               </div>
