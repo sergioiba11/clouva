@@ -45,15 +45,15 @@ const MINECRAFT_STATUS_URL =
   process.env.CLOUVA_MINECRAFT_STATUS_URL?.trim() ||
   "https://clouva.com.ar/api/minecraft/status";
 const PORT = Number(process.env.PORT || 8080);
-const AMBIENT_MIN_GAP_MS = Number(process.env.QUESITO_AMBIENT_MIN_GAP_MS || 22000);
+const AMBIENT_MIN_GAP_MS = Number(process.env.QUESITO_AMBIENT_MIN_GAP_MS || 10000);
 const CONVERSATION_WINDOW_MS = Number(
-  process.env.QUESITO_CONVERSATION_WINDOW_MS || 120000,
+  process.env.QUESITO_CONVERSATION_WINDOW_MS || 600000,
 );
 const CONVERSATION_REPLY_GAP_MS = Number(
-  process.env.QUESITO_CONVERSATION_REPLY_GAP_MS || 2500,
+  process.env.QUESITO_CONVERSATION_REPLY_GAP_MS || 1200,
 );
 const AMBIENT_CHECK_MIN_GAP_MS = Number(
-  process.env.QUESITO_AMBIENT_CHECK_MIN_GAP_MS || 12000,
+  process.env.QUESITO_AMBIENT_CHECK_MIN_GAP_MS || 6000,
 );
 const STT_FALLBACK_DELAY_MS = Number(
   process.env.QUESITO_STT_FALLBACK_DELAY_MS || 1200,
@@ -507,7 +507,7 @@ async function speak(state, text) {
 }
 
 function isStopRequest(text) {
-  return /\b(callate|cállate|silencio|para|pará|basta)\b/i.test(text);
+  return /\b(callate|cállate|silencio|pará|basta|dejá de hablar|deja de hablar)\b/i.test(text);
 }
 
 function isResumeRequest(text) {
@@ -552,7 +552,9 @@ async function processTranscript(state, userId, transcript, source = "streaming-
   voiceDiagnostics.sttProvider = source;
 
   const lower = clean.toLowerCase();
-  const hasWake = lower.includes(WAKE_WORD);
+  const escapedWake = WAKE_WORD.replace(/[.*+?^$(){}|[\]\\]/g, "\\  const lower = clean.toLowerCase();
+  const hasWake = lower.includes(WAKE_WORD);");
+  const hasWake = new RegExp("\\b" + escapedWake + "\\b", "i").test(clean);
   const member = state.guild.members.cache.get(userId);
   const speaker = member?.displayName || "un jugador";
 
