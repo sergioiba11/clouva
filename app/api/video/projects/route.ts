@@ -33,6 +33,8 @@ export async function POST(request: NextRequest) {
     const quality: VideoQuality = isVideoQuality(body.quality) ? body.quality : "fast";
     const aspectRatio = isVideoAspectRatio(body.aspectRatio) ? body.aspectRatio : "16:9";
     const targetDurationSeconds = Math.max(4, Math.min(7200, Math.ceil(Number(body.targetDurationSeconds) || 8)));
+    const projectMode = body.projectMode === "visualizer" ? "visualizer" : "video";
+    const visualizerReactivity = Math.max(0.25, Math.min(2, Number(body.visualizerReactivity) || 1));
     const config = VIDEO_QUALITY_CONFIG[quality];
 
     const { data, error } = await admin.from("video_projects").insert({
@@ -50,6 +52,9 @@ export async function POST(request: NextRequest) {
       maintain_character: body.maintainCharacter !== false,
       use_frame_continuity: body.useFrameContinuity !== false,
       generate_clip_audio: body.generateClipAudio === true,
+      project_mode: projectMode,
+      visualizer_reactivity: visualizerReactivity,
+      audio_analysis_status: "idle",
       status: "draft",
       progress: 0,
     }).select(VIDEO_PROJECT_COLUMNS).single();
