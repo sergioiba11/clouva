@@ -361,7 +361,7 @@ export async function savePublicationVariant(args: {
   const payloadForHash = {
     title: short(input.title, 300) || null,
     description: short(input.description, 5000) || null,
-    price: Number.isFinite(input.priceOverride) ? Number(input.priceOverride) : null,
+    price: typeof input.priceOverride === "number" && Number.isFinite(input.priceOverride) ? input.priceOverride : null,
     primaryImageUrl: short(input.primaryImageUrl, 2000) || null,
     imageUrls: stringUrls(input.imageUrls),
   };
