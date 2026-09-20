@@ -48,8 +48,8 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
 
   const canonical = canonicalUrl(result.canonicalAlias);
   const isIglu = result.studio.slug.toLowerCase() === IGLU_STUDIO_SLUG;
-  const title = result.studio.seo_title || (isIglu ? "IGLÚ Records" : `${result.publicStudio.publicName} — Estudio en CLOUVA`);
-  const description = result.studio.seo_description || result.studio.description || result.studio.tagline || undefined;
+  const title = result.studio.seo_title || (isIglu ? "El Iglú | CLOUVA" : `${result.publicStudio.publicName} — Estudio en CLOUVA`);
+  const description = result.studio.seo_description || result.studio.description || result.studio.tagline || (isIglu ? "El Iglú es el estudio y espacio musical de IGLÚ Records dentro de CLOUVA." : undefined);
   const image = absoluteAssetUrl(result.studio.og_image_url || result.studio.cover_url || result.publicStudio.darkLogoUrl || result.studio.logo_url);
 
   return {
@@ -57,7 +57,7 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
     description,
     alternates: { canonical },
     robots: { index: true, follow: true },
-    openGraph: { type: "website", url: canonical, title: result.studio.share_title || title, description: result.studio.share_description || description, images: image ? [{ url: image }] : undefined, siteName: isIglu ? "IGLÚ Records" : "CLOUVA" },
+    openGraph: { type: "website", url: canonical, title: result.studio.share_title || title, description: result.studio.share_description || description, images: image ? [{ url: image, alt: isIglu ? "El Iglú — IGLÚ Records en CLOUVA" : result.publicStudio.publicName }] : undefined, siteName: "CLOUVA" },
     twitter: { card: image ? "summary_large_image" : "summary", title: result.studio.share_title || title, description: result.studio.share_description || description, images: image ? [image] : undefined },
   };
 }
@@ -70,20 +70,39 @@ export default async function MatrixStudioProfilePage({ params, searchParams }: 
   if (slug.toLowerCase() !== result.canonicalAlias.toLowerCase()) permanentRedirect(`${studioPublicHref(result.canonicalAlias)}${query.joined === "1" ? "?joined=1" : ""}`);
 
   const isIglu = result.studio.slug.toLowerCase() === IGLU_STUDIO_SLUG;
+  const canonical = canonicalUrl(result.canonicalAlias);
+  const structuredDescription = result.studio.seo_description || result.studio.description || result.studio.tagline || (isIglu ? "El Iglú es el estudio y espacio musical de IGLÚ Records dentro de CLOUVA." : undefined);
+  const structuredLogo = absoluteAssetUrl(result.publicStudio.darkLogoUrl || result.studio.logo_url);
+  const structuredImage = absoluteAssetUrl(result.studio.og_image_url || result.studio.cover_url || result.publicStudio.darkLogoUrl || result.studio.logo_url);
+
   if (isIglu) {
     const igluData = await loadIgluSiteData();
     if (!igluData) notFound();
-    return <IgluPublicSpotHome data={igluData} />;
+    const structuredData = {
+      "@context": "https://schema.org",
+      "@type": "Organization",
+      "@id": `${canonical}#entity`,
+      name: "El Iglú",
+      alternateName: Array.from(new Set(["IGLÚ Records", "Iglú Records", result.publicStudio.publicName, result.studio.name].filter(Boolean))),
+      url: canonical,
+      description: structuredDescription,
+      logo: structuredLogo,
+      image: structuredImage,
+      parentOrganization: { "@type": "Organization", "@id": `${siteUrl}/#organization`, name: "CLOUVA", url: `${siteUrl}/` },
+    };
+    return (
+      <>
+        <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData).replace(/</g, "\\u003c") }} />
+        <IgluPublicSpotHome data={igluData} />
+      </>
+    );
   }
 
   const data = publicIdentityData(result);
   const publicAgenda = await loadPublicAgendaByStudio({ admin: createAdminSupabase(), studioId: result.studio.id }).catch(() => null);
   const accent = data.layoutConfig?.page_style?.palette?.accent || data.studio.accent_color || "#8f7cff";
-  const canonical = canonicalUrl(result.canonicalAlias);
   const structuredName = result.publicStudio.publicName;
-  const structuredDescription = result.studio.seo_description || result.studio.description || result.studio.tagline || undefined;
   const alternateNames = Array.from(new Set([result.studio.name, result.studio.slug, ...result.publicStudio.aliases].filter((value): value is string => Boolean(value && value.toLowerCase() !== structuredName.toLowerCase()))));
-  const structuredLogo = absoluteAssetUrl(result.publicStudio.darkLogoUrl || result.studio.logo_url);
   const structuredData = {
     "@context": "https://schema.org",
     "@type": "Organization",
@@ -93,12 +112,12 @@ export default async function MatrixStudioProfilePage({ params, searchParams }: 
     url: canonical,
     description: structuredDescription,
     logo: structuredLogo,
-    image: absoluteAssetUrl(result.studio.og_image_url || result.studio.cover_url || result.publicStudio.darkLogoUrl || result.studio.logo_url),
+    image: structuredImage,
   };
 
   return (
     <>
-      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData) }} />
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData).replace(/</g, "\\u003c") }} />
       <TrebolContextRegistration scope="studio-public" id={result.studio.id} data={{ studioId: result.studio.id, slug: result.studio.slug, canonicalAlias: result.canonicalAlias, name: result.publicStudio.publicName, section: "public-profile" }} />
       <StudioIdentityRenderer data={data} joined={query.joined === "1"} />
       {publicAgenda ? <PublicAgendaSection identityName={result.publicStudio.publicName} agendaHref={`${result.publicStudio.href}/agenda`} accent={accent} events={publicAgenda.events} bookingEnabled={publicAgenda.agenda.booking_enabled} description="Sesiones, clases, reuniones, grabaciones, lanzamientos y reservas públicas del Studio." /> : null}
