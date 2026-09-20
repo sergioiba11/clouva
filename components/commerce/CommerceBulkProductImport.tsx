@@ -1,6 +1,6 @@
 "use client";
 
-import { Boxes, CheckCircle2, ImagePlus, LoaderCircle, RefreshCw, Sparkles, TriangleAlert, X } from "lucide-react";
+import { Boxes, CheckCircle2, FileText, ImagePlus, LoaderCircle, RefreshCw, Sparkles, TriangleAlert, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
 
@@ -48,6 +48,44 @@ type ProcessResponse = {
   }>;
 };
 
+type InvoiceItem = {
+  id: string;
+  line_number: number;
+  description: string;
+  brand: string | null;
+  model: string | null;
+  supplier_sku: string | null;
+  barcode_value: string | null;
+  barcode_type: string | null;
+  quantity: number;
+  unit_price: number | null;
+  tax_amount: number | null;
+  line_total: number | null;
+  matched_group_keys: string[];
+  matched_quantity: number;
+  match_status: "matched" | "partial" | "unmatched" | "ambiguous";
+  checked: boolean;
+  metadata: Record<string, unknown>;
+};
+
+type InvoicePayload = {
+  invoice: {
+    id: string;
+    supplier_name: string | null;
+    supplier_tax_id: string | null;
+    document_type: string | null;
+    document_number: string | null;
+    issued_at: string | null;
+    currency: string | null;
+    subtotal: number | null;
+    tax_amount: number | null;
+    total_amount: number | null;
+    file_name: string | null;
+    source_url: string;
+  } | null;
+  items: InvoiceItem[];
+};
+
 type PreparedImage = {
   file: File;
   dataUrl: string;
@@ -80,6 +118,27 @@ async function prepareImage(file: File): Promise<PreparedImage> {
   }
 }
 
+async function prepareDocumentDataUrl(file: File) {
+  if (file.type === "application/pdf") {
+    if (file.size > 12 * 1024 * 1024) throw new Error("La factura PDF debe pesar hasta 12 MB.");
+    return await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error("No se pudo leer la factura."));
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.readAsDataURL(file);
+    });
+  }
+  if (file.type.startsWith("image/")) {
+    const bitmap = await createImageBitmap(file);
+    try {
+      return imageToJpegDataUrl(bitmap, bitmap.width, bitmap.height);
+    } finally {
+      bitmap.close();
+    }
+  }
+  throw new Error("La factura debe ser JPG, PNG, WEBP o PDF.");
+}
+
 async function postJson<T>(url: string, body: unknown) {
   const response = await authenticatedFetch(url, {
     method: "POST",
@@ -97,13 +156,16 @@ export function CommerceBulkProductImport({
 }) {
   const [files, setFiles] = useState<File[]>([]);
   const [previews, setPreviews] = useState<string[]>([]);
-  const [stage, setStage] = useState<"idle" | "preparing" | "uploading" | "analyzing" | "creating" | "done" | "error">("idle");
+  const [stage, setStage] = useState<"idle" | "preparing" | "uploading" | "analyzing" | "invoice" | "creating" | "done" | "error">("idle");
   const [uploaded, setUploaded] = useState(0);
   const [batchId, setBatchId] = useState("");
   const [groups, setGroups] = useState<BatchGroup[]>([]);
   const [processed, setProcessed] = useState(0);
   const [failed, setFailed] = useState(0);
   const [processResults, setProcessResults] = useState<ProcessResponse["results"]>([]);
+  const [invoiceFile, setInvoiceFile] = useState<File | null>(null);
+  const [invoiceData, setInvoiceData] = useState<InvoicePayload | null>(null);
+  const [checkingInvoiceItem, setCheckingInvoiceItem] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -114,11 +176,12 @@ export function CommerceBulkProductImport({
     };
   }, [files]);
 
-  const busy = ["preparing", "uploading", "analyzing", "creating"].includes(stage);
+  const busy = ["preparing", "uploading", "analyzing", "invoice", "creating"].includes(stage);
   const progressText = useMemo(() => {
     if (stage === "preparing") return `Preparando ${files.length} imágenes…`;
     if (stage === "uploading") return `Subiendo ${uploaded}/${files.length}…`;
     if (stage === "analyzing") return "Google Cloud está separando las fotos por producto…";
+    if (stage === "invoice") return "Leyendo factura y armando el checklist…";
     if (stage === "creating") return `Creando borradores ${processed}/${groups.length}…`;
     if (stage === "done") return failed
       ? `${processed} productos creados · ${failed} necesitan reintento`
@@ -137,6 +200,7 @@ export function CommerceBulkProductImport({
     setProcessed(0);
     setFailed(0);
     setProcessResults([]);
+    setInvoiceData(null);
     setError(incoming.length > MAX_BATCH_IMAGES
       ? `Se tomaron las primeras ${MAX_BATCH_IMAGES} imágenes del lote.`
       : "");
@@ -157,6 +221,8 @@ export function CommerceBulkProductImport({
     setProcessed(0);
     setFailed(0);
     setProcessResults([]);
+    setInvoiceFile(null);
+    setInvoiceData(null);
     setError("");
     setStage("idle");
   }
@@ -179,6 +245,39 @@ export function CommerceBulkProductImport({
       }
     };
     await Promise.all(Array.from({ length: Math.min(3, prepared.length) }, () => worker()));
+  }
+
+  async function uploadAndAnalyzeInvoice(batch: string, file: File) {
+    setStage("invoice");
+    const dataUrl = await prepareDocumentDataUrl(file);
+    const payload = await postJson<InvoicePayload>(
+      `/api/studios/${encodeURIComponent(studioId)}/commerce/import-batches/${encodeURIComponent(batch)}/invoice`,
+      { fileName: file.name, dataUrl },
+    );
+    setInvoiceData(payload);
+    return payload;
+  }
+
+  async function toggleInvoiceItem(item: InvoiceItem, checked: boolean) {
+    if (!batchId || checkingInvoiceItem) return;
+    setCheckingInvoiceItem(item.id);
+    try {
+      const response = await authenticatedFetch(
+        `/api/studios/${encodeURIComponent(studioId)}/commerce/import-batches/${encodeURIComponent(batchId)}/invoice`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ itemId: item.id, checked }),
+        },
+      );
+      const payload = await readApiJson<{ item: InvoiceItem }>(response);
+      setInvoiceData((current) => current
+        ? { ...current, items: current.items.map((candidate) => candidate.id === item.id ? payload.item : candidate) }
+        : current);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "No se pudo actualizar el check.");
+    } finally {
+      setCheckingInvoiceItem("");
+    }
   }
 
   async function processUntilFinished(batch: string, retryFailed = false) {
@@ -235,11 +334,25 @@ export function CommerceBulkProductImport({
       );
       setGroups(analyzed.groups);
 
+      if (invoiceFile) await uploadAndAnalyzeInvoice(id, invoiceFile);
+
       setStage("creating");
       await processUntilFinished(id);
     } catch (cause) {
       setStage("error");
       setError(cause instanceof Error ? cause.message : "No se pudo completar la carga masiva.");
+    }
+  }
+
+  async function analyzeLateInvoice() {
+    if (!batchId || !invoiceFile || busy) return;
+    setError("");
+    try {
+      await uploadAndAnalyzeInvoice(batchId, invoiceFile);
+      setStage("done");
+    } catch (cause) {
+      setStage("error");
+      setError(cause instanceof Error ? cause.message : "No se pudo analizar la factura.");
     }
   }
 
@@ -308,6 +421,36 @@ export function CommerceBulkProductImport({
             ))}
           </div>
 
+          <div className="mt-4 rounded-xl border border-white/[0.08] bg-black/15 p-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="grid h-9 w-9 shrink-0 place-items-center rounded-lg border border-white/10 bg-white/[0.03]">
+                  <FileText className="h-4 w-4 text-violet-200" />
+                </div>
+                <div className="min-w-0">
+                  <strong className="block text-xs">Factura / comprobante</strong>
+                  <p className="mt-0.5 truncate text-[10px] text-white/38">
+                    {invoiceFile ? invoiceFile.name : "Opcional · JPG, PNG, WEBP o PDF"}
+                  </p>
+                </div>
+              </div>
+              <label className={`inline-flex min-h-9 cursor-pointer items-center justify-center rounded-lg border border-white/10 px-3 text-xs font-semibold transition hover:bg-white/[0.04] ${busy ? "pointer-events-none opacity-40" : ""}`}>
+                {invoiceFile ? "Cambiar factura" : "Adjuntar factura"}
+                <input
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp,application/pdf"
+                  className="hidden"
+                  onChange={(event) => {
+                    const file = event.currentTarget.files?.[0] ?? null;
+                    setInvoiceFile(file);
+                    setInvoiceData(null);
+                    event.currentTarget.value = "";
+                  }}
+                />
+              </label>
+            </div>
+          </div>
+
           <div className="mt-4 flex flex-col gap-2 sm:flex-row">
             <button
               type="button"
@@ -323,6 +466,11 @@ export function CommerceBulkProductImport({
                 <RefreshCw className="h-4 w-4" /> Reintentar {failed}
               </button>
             ) : null}
+            {stage === "done" && batchId && invoiceFile && !invoiceData ? (
+              <button type="button" onClick={() => void analyzeLateInvoice()} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-violet-300/25 bg-violet-300/[0.06] px-4 text-sm font-semibold text-violet-100">
+                <FileText className="h-4 w-4" /> Procesar factura
+              </button>
+            ) : null}
           </div>
         </>
       )}
@@ -336,6 +484,62 @@ export function CommerceBulkProductImport({
       {error ? (
         <div className="mt-4 flex items-start gap-2 rounded-xl border border-rose-300/15 bg-rose-300/[0.05] px-3 py-2 text-xs leading-5 text-rose-100">
           <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" /> {error}
+        </div>
+      ) : null}
+
+      {invoiceData?.invoice ? (
+        <div className="mt-4 rounded-2xl border border-emerald-300/15 bg-emerald-300/[0.035] p-3 sm:p-4">
+          <div className="flex flex-col gap-3 border-b border-white/[0.07] pb-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <div className="flex items-center gap-2">
+                <FileText className="h-4 w-4 text-emerald-200" />
+                <strong className="text-sm">Checklist de factura</strong>
+              </div>
+              <p className="mt-1 text-[10px] text-white/38">
+                {[invoiceData.invoice.supplier_name, invoiceData.invoice.document_type, invoiceData.invoice.document_number].filter(Boolean).join(" · ") || "Factura analizada"}
+              </p>
+            </div>
+            <div className="text-left sm:text-right">
+              <p className="text-xs font-semibold">
+                {invoiceData.invoice.total_amount != null
+                  ? new Intl.NumberFormat("es-AR", { style: "currency", currency: invoiceData.invoice.currency || "ARS" }).format(invoiceData.invoice.total_amount)
+                  : "Total sin detectar"}
+              </p>
+              <p className="mt-1 text-[10px] text-white/35">
+                {invoiceData.items.filter((item) => item.checked).length}/{invoiceData.items.length} chequeados
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-3 space-y-2">
+            {invoiceData.items.map((item) => (
+              <label key={item.id} className="flex cursor-pointer items-start gap-3 rounded-xl border border-white/[0.07] bg-black/15 p-3">
+                <input
+                  type="checkbox"
+                  className="mt-0.5 h-4 w-4 shrink-0 accent-violet-500"
+                  checked={item.checked}
+                  disabled={checkingInvoiceItem === item.id}
+                  onChange={(event) => void toggleInvoiceItem(item, event.currentTarget.checked)}
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <strong className="min-w-0 flex-1 text-xs leading-5">{item.description}</strong>
+                    <span className={`rounded-md border px-1.5 py-0.5 text-[9px] ${item.match_status === "matched" ? "border-emerald-300/20 text-emerald-200" : item.match_status === "partial" ? "border-amber-300/20 text-amber-200" : item.match_status === "ambiguous" ? "border-violet-300/20 text-violet-200" : "border-white/10 text-white/40"}`}>
+                      {item.match_status === "matched" ? "Coincide" : item.match_status === "partial" ? "Parcial" : item.match_status === "ambiguous" ? "Revisar" : "Sin match"}
+                    </span>
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-white/38">
+                    <span>Cant. {item.quantity}</span>
+                    {item.unit_price != null ? <span>Unit. {new Intl.NumberFormat("es-AR", { style: "currency", currency: invoiceData.invoice?.currency || "ARS" }).format(item.unit_price)}</span> : null}
+                    {item.line_total != null ? <span>Total {new Intl.NumberFormat("es-AR", { style: "currency", currency: invoiceData.invoice?.currency || "ARS" }).format(item.line_total)}</span> : null}
+                    {item.supplier_sku ? <span>SKU proveedor {item.supplier_sku}</span> : null}
+                    {item.barcode_value ? <span>{item.barcode_type?.toUpperCase()} {item.barcode_value}</span> : null}
+                    <span>Detectados {item.matched_quantity}/{item.quantity}</span>
+                  </div>
+                </div>
+              </label>
+            ))}
+          </div>
         </div>
       ) : null}
 
