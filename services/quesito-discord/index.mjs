@@ -45,7 +45,13 @@ const MINECRAFT_STATUS_URL =
   process.env.CLOUVA_MINECRAFT_STATUS_URL?.trim() ||
   "https://clouva.com.ar/api/minecraft/status";
 const PORT = Number(process.env.PORT || 8080);
-const AMBIENT_MIN_GAP_MS = Number(process.env.QUESITO_AMBIENT_MIN_GAP_MS || 35000);
+const AMBIENT_MIN_GAP_MS = Number(process.env.QUESITO_AMBIENT_MIN_GAP_MS || 22000);
+const CONVERSATION_WINDOW_MS = Number(
+  process.env.QUESITO_CONVERSATION_WINDOW_MS || 120000,
+);
+const CONVERSATION_REPLY_GAP_MS = Number(
+  process.env.QUESITO_CONVERSATION_REPLY_GAP_MS || 2500,
+);
 const AMBIENT_CHECK_MIN_GAP_MS = Number(
   process.env.QUESITO_AMBIENT_CHECK_MIN_GAP_MS || 12000,
 );
@@ -187,7 +193,7 @@ async function askAmbientVertex({ guildId, speaker, transcript }) {
     "Metete solo si tu comentario reacciona de verdad a lo que están hablando: algo gracioso, una opinión, una aclaración útil o una pregunta corta.",
     "No repitas lo que acaba de decir la gente y no suenes como asistente.",
     "Si no aporta meterte, respondé exactamente SILENCIO.",
-    "Si opinás, hacelo en español rioplatense, corto, natural y divertido, una sola frase.",
+    "Si opinás, hacelo en español rioplatense, natural y divertido. Podés usar una o dos frases si hace falta para que suene humano.",
     "Tu público incluye chicos de 14 años: mantené el humor apto para adolescentes.",
     "No humilles, discrimines ni seas sexual. No des instrucciones peligrosas o ilegales.",
     "No uses markdown.",
@@ -241,7 +247,9 @@ async function askVertex({ guildId, speaker, prompt }) {
     "Tu público incluye chicos de 14 años: mantené el humor apto para adolescentes.",
     "Podés descansar suavemente a los jugadores, pero nunca humilles, discrimines ni seas sexual.",
     "No des instrucciones peligrosas, de drogas, autolesión, armas ni actividades ilegales.",
-    "Respondé muy corto: normalmente una frase; dos solo si hacen falta. No uses markdown ni listas porque se lee en voz alta.",
+    "Hablá como una persona normal en llamada. Normalmente respondé entre dos y cuatro frases; si el tema da para más, podés explayarte un poco sin hacer un monólogo.",
+    "No te cortes a mitad de una idea. Terminá lo que estabas diciendo salvo que te pidan explícitamente que te calles.",
+    "No uses markdown ni listas porque se lee en voz alta.",
     "No cierres con '¿en qué más puedo ayudarte?' ni frases parecidas.",
     "Si no sabés algo, decilo sin inventar.",
     "Contexto del servidor: " + minecraft,
@@ -262,7 +270,7 @@ async function askVertex({ guildId, speaker, prompt }) {
     contents,
     generationConfig: {
       temperature: 0.75,
-      maxOutputTokens: 110,
+      maxOutputTokens: 240,
     },
   });
 
@@ -273,7 +281,7 @@ async function askVertex({ guildId, speaker, prompt }) {
     .replace(/[*_#\x60>]/g, "")
     .replace(/\s+/g, " ")
     .trim()
-    .slice(0, 650);
+    .slice(0, 1400);
 
   if (!answer) throw new Error("Vertex AI returned no text.");
 
@@ -480,7 +488,7 @@ async function speak(state, text) {
 
         state.player.play(resource);
         await entersState(state.player, AudioPlayerStatus.Playing, 5000);
-        await entersState(state.player, AudioPlayerStatus.Idle, 30000);
+        await entersState(state.player, AudioPlayerStatus.Idle, 60000);
       } finally {
         state.speaking = false;
       }
@@ -566,6 +574,8 @@ async function processTranscript(state, userId, transcript, source = "streaming-
   }
 
   if (hasWake) {
+    state.conversationUntil = Date.now() + CONVERSATION_WINDOW_MS;
+    state.lastConversationSpeakerId = userId;
     voiceDiagnostics.wakes += 1;
     voiceDiagnostics.lastStage = "thinking";
     const prompt = stripWakeWord(clean) || "¿estás ahí?";
@@ -590,6 +600,37 @@ async function processTranscript(state, userId, transcript, source = "streaming-
 
   let rememberedAmbientInput = false;
   const now = Date.now();
+
+  if (
+    now < state.conversationUntil &&
+    !state.pendingConversation &&
+    !state.speaking &&
+    now - state.lastConversationReplyAt >= CONVERSATION_REPLY_GAP_MS &&
+    clean.length >= 2
+  ) {
+    state.pendingConversation = true;
+    try {
+      const thinkStarted = Date.now();
+      const answer = await askVertex({
+        guildId: state.guildId,
+        speaker,
+        prompt: "Seguimos charlando. " + clean,
+      });
+      voiceDiagnostics.lastThinkMs = Date.now() - thinkStarted;
+      state.conversationUntil = Date.now() + CONVERSATION_WINDOW_MS;
+      state.lastConversationReplyAt = Date.now();
+      state.lastConversationSpeakerId = userId;
+      voiceDiagnostics.lastStage = "speaking";
+      await speak(state, answer);
+      voiceDiagnostics.replies += 1;
+      voiceDiagnostics.lastTotalMs = Date.now() - totalStarted;
+      voiceDiagnostics.lastStage = "listening";
+      return;
+    } finally {
+      state.pendingConversation = false;
+    }
+  }
+
   if (
     state.ambientEnabled &&
     !state.pendingAmbient &&
@@ -884,6 +925,10 @@ async function joinGuildVoice(guild, channelId) {
     pendingAmbient: false,
     lastAmbientAt: 0,
     lastAmbientCheckAt: 0,
+    conversationUntil: 0,
+    pendingConversation: false,
+    lastConversationReplyAt: 0,
+    lastConversationSpeakerId: null,
   };
 
   guildStates.set(guild.id, state);
@@ -1189,6 +1234,7 @@ discord.on("interactionCreate", async (interaction) => {
         (state ? (state.ambientEnabled ? " · opiniones espontáneas ON" : " · opiniones espontáneas OFF") : "") +
         (voiceDiagnostics.sttProvider ? " · STT " + voiceDiagnostics.sttProvider : "") +
         (voiceDiagnostics.ttsProvider ? " · TTS " + voiceDiagnostics.ttsProvider : "") +
+        (state && Date.now() < state.conversationUntil ? " · conversación activa" : "") +
         (voiceDiagnostics.lastTotalMs != null ? " · " + voiceDiagnostics.lastTotalMs + " ms última respuesta" : "") +
         ".\n🎮 " +
         minecraft,
