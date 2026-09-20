@@ -49,6 +49,7 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.scheduler.BukkitTask;
 
 import java.text.Normalizer;
@@ -79,7 +80,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     private static final String HARDCORE_WORLD_NAME = "hardcore_ninotimi";
     private static final int SKY_ISLAND_SPACING = 256;
     private static final int SKY_ISLAND_RADIUS = 96;
-    private static final int SKY_SCATTER_VERSION = 1;
+    private static final int SKY_SCATTER_VERSION = 2;
     private static final int MAX_ICE_PLAYERS = 12;
     private static final long ICE_JOIN_WINDOW_TICKS = 100L;
     private static final int SURVIVAL_RESET_VERSION = 2;
@@ -300,6 +301,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         }
 
         if (isMainLobbyWorld(player.getWorld())) {
+            restoreLastLobbyLocationAfterJoin(player);
             Bukkit.getScheduler().runTaskLater(this, () -> {
                 if (player.isOnline() && isMainLobbyWorld(player.getWorld())) {
                     giveLobbyLoadout(player);
@@ -351,6 +353,10 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     public void onQuit(PlayerQuitEvent event) {
         Player player = event.getPlayer();
         UUID id = player.getUniqueId();
+
+        if (isMainLobbyWorld(player.getWorld())) {
+            saveLastLobbyLocation(player);
+        }
 
         if (isNoOpSurvivalWorld(player.getWorld())) {
             saveCurrentSurvivalInventory(player);
@@ -939,6 +945,73 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             }
         }
     }
+
+    private String lastLobbyLocationPath(Player player) {
+        return "lobby.last-location." + player.getUniqueId();
+    }
+
+    private void saveLastLobbyLocation(Player player) {
+        if (!isMainLobbyWorld(player.getWorld())) return;
+
+        Location location = player.getLocation();
+        String path = lastLobbyLocationPath(player);
+
+        getConfig().set(path + ".world", location.getWorld().getName());
+        getConfig().set(path + ".x", location.getX());
+        getConfig().set(path + ".y", location.getY());
+        getConfig().set(path + ".z", location.getZ());
+        getConfig().set(path + ".yaw", (double) location.getYaw());
+        getConfig().set(path + ".pitch", (double) location.getPitch());
+        saveConfig();
+    }
+
+    private Location loadLastLobbyLocation(Player player) {
+        String path = lastLobbyLocationPath(player);
+        String worldName = getConfig().getString(path + ".world");
+        if (worldName == null || worldName.isBlank() || !isMainLobbyWorldName(worldName)) {
+            return null;
+        }
+
+        World world = Bukkit.getWorld(worldName);
+        if (world == null) return null;
+
+        return new Location(
+            world,
+            getConfig().getDouble(path + ".x"),
+            getConfig().getDouble(path + ".y"),
+            getConfig().getDouble(path + ".z"),
+            (float) getConfig().getDouble(path + ".yaw"),
+            (float) getConfig().getDouble(path + ".pitch")
+        );
+    }
+
+    private void restoreLastLobbyLocationAfterJoin(Player player) {
+        Location saved = loadLastLobbyLocation(player);
+        if (saved == null) return;
+
+        new BukkitRunnable() {
+            private int checks;
+
+            @Override
+            public void run() {
+                checks++;
+
+                if (!player.isOnline() || !isMainLobbyWorld(player.getWorld()) || checks > 30) {
+                    cancel();
+                    return;
+                }
+
+                World main = Bukkit.getWorlds().get(0);
+                Location spawn = main.getSpawnLocation();
+
+                if (player.getLocation().distanceSquared(spawn) <= 9.0) {
+                    player.teleport(saved);
+                    giveLobbyLoadout(player);
+                }
+            }
+        }.runTaskTimer(this, 20L, 20L);
+    }
+
 
     private boolean isMainLobbyWorldName(String worldName) {
         if (worldName == null || Bukkit.getWorlds().isEmpty()) return false;
@@ -2783,7 +2856,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         int baseX = center.getBlockX();
         int baseZ = center.getBlockZ();
 
-        // dx, yOffset, dz, radius. Todo queda dentro del radio editable de la isla.
+        // Núcleo original: conserva compatibilidad con las islas ya creadas.
         int[][] layout = {
             {24, 2, 0, 4},
             {-28, 4, 10, 5},
@@ -2838,8 +2911,120 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             );
         }
 
-        getLogger().info("Islas flotantes dispersas listas para Skyblock #" + index + ".");
+        // V2: seis islas temáticas nuevas, más grandes y con recursos/landmarks.
+        buildSkySatelliteIsland(baseX + 76, 126, baseZ + 48, 7, Material.GRASS_BLOCK, Material.DIRT);
+        buildSkyTree(baseX + 74, 127, baseZ + 46, Material.OAK_LOG, Material.OAK_LEAVES);
+        buildSkyTree(baseX + 79, 127, baseZ + 51, Material.BIRCH_LOG, Material.BIRCH_LEAVES);
+        placeSkyChest(
+            baseX + 76, 127, baseZ + 48,
+            new ItemStack(Material.APPLE, 3),
+            new ItemStack(Material.OAK_SAPLING, 2),
+            new ItemStack(Material.BIRCH_SAPLING, 2)
+        );
+
+        buildSkySatelliteIsland(baseX - 78, 122, baseZ - 45, 6, Material.STONE, Material.DEEPSLATE);
+        buildSkyOreCluster(baseX - 78, 121, baseZ - 45);
+
+        buildSkySatelliteIsland(baseX + 40, 130, baseZ + 78, 6, Material.SAND, Material.SANDSTONE);
+        placeIfAir(baseX + 38, 131, baseZ + 77, Material.CACTUS);
+        placeIfAir(baseX + 38, 132, baseZ + 77, Material.CACTUS);
+        placeIfAir(baseX + 42, 131, baseZ + 80, Material.DEAD_BUSH);
+
+        buildSkySatelliteIsland(baseX - 50, 132, baseZ + 72, 6, Material.SNOW_BLOCK, Material.STONE);
+        buildSkyTree(baseX - 50, 133, baseZ + 72, Material.SPRUCE_LOG, Material.SPRUCE_LEAVES);
+
+        buildSkySatelliteIsland(baseX + 84, 118, baseZ - 20, 5, Material.MOSS_BLOCK, Material.COBBLESTONE);
+        buildSkyRuin(baseX + 84, 119, baseZ - 20);
+
+        buildSkySatelliteIsland(baseX - 82, 115, baseZ + 26, 5, Material.MYCELIUM, Material.DIRT);
+        placeIfAir(baseX - 83, 116, baseZ + 25, Material.RED_MUSHROOM);
+        placeIfAir(baseX - 80, 116, baseZ + 28, Material.BROWN_MUSHROOM);
+
+        getLogger().info("Skyblock #" + index + ": archipiélago V2 listo.");
     }
+
+    private void placeIfAir(int x, int y, int z, Material material) {
+        Block block = skyWorld.getBlockAt(x, y, z);
+        if (block.getType().isAir()) {
+            block.setType(material, false);
+        }
+    }
+
+    private void buildSkyTree(int x, int baseY, int z, Material log, Material leaves) {
+        for (int dy = 0; dy < 4; dy++) {
+            placeIfAir(x, baseY + dy, z, log);
+        }
+
+        for (int dx = -2; dx <= 2; dx++) {
+            for (int dz = -2; dz <= 2; dz++) {
+                for (int dy = 2; dy <= 5; dy++) {
+                    int score = Math.abs(dx) + Math.abs(dz) + Math.abs(dy - 4);
+                    if (score <= 4) {
+                        placeIfAir(x + dx, baseY + dy, z + dz, leaves);
+                    }
+                }
+            }
+        }
+    }
+
+    private void buildSkyOreCluster(int x, int y, int z) {
+        int[][] offsets = {
+            {0,0,0}, {1,0,0}, {-1,0,1}, {0,-1,-1}, {2,-1,0},
+            {-2,-1,0}, {0,-2,1}, {1,-2,-1}
+        };
+        Material[] ores = {
+            Material.COAL_ORE,
+            Material.IRON_ORE,
+            Material.COPPER_ORE,
+            Material.COAL_ORE,
+            Material.IRON_ORE,
+            Material.COPPER_ORE,
+            Material.IRON_ORE,
+            Material.COAL_ORE
+        };
+
+        for (int i = 0; i < offsets.length; i++) {
+            int[] o = offsets[i];
+            Block block = skyWorld.getBlockAt(x + o[0], y + o[1], z + o[2]);
+            if (block.getType() == Material.STONE || block.getType() == Material.DEEPSLATE) {
+                block.setType(ores[i], false);
+            }
+        }
+    }
+
+    private void buildSkyRuin(int x, int baseY, int z) {
+        for (int dx = -2; dx <= 2; dx++) {
+            placeIfAir(x + dx, baseY, z, Material.STONE_BRICKS);
+        }
+
+        for (int dy = 1; dy <= 4; dy++) {
+            placeIfAir(x - 2, baseY + dy, z, dy == 4 ? Material.MOSSY_STONE_BRICKS : Material.STONE_BRICKS);
+            placeIfAir(x + 2, baseY + dy, z, dy == 4 ? Material.MOSSY_STONE_BRICKS : Material.STONE_BRICKS);
+        }
+
+        for (int dx = -1; dx <= 1; dx++) {
+            placeIfAir(x + dx, baseY + 4, z, Material.MOSSY_STONE_BRICKS);
+        }
+
+        placeSkyChest(
+            x, baseY + 1, z,
+            new ItemStack(Material.TORCH, 12),
+            new ItemStack(Material.IRON_NUGGET, 8),
+            new ItemStack(Material.STRING, 4)
+        );
+    }
+
+    private void placeSkyChest(int x, int y, int z, ItemStack... loot) {
+        Block block = skyWorld.getBlockAt(x, y, z);
+        if (!block.getType().isAir()) return;
+
+        block.setType(Material.CHEST, false);
+        if (block.getState() instanceof Chest chest) {
+            chest.getInventory().clear();
+            chest.getInventory().addItem(loot);
+        }
+    }
+
 
     private void buildSkySatelliteIsland(
         int centerX,
