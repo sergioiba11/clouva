@@ -1062,19 +1062,6 @@ discord.once("ready", async () => {
     });
   }
 
-  setTimeout(() => {
-    for (const guild of discord.guilds.cache.values()) {
-      void autoJoinVoiceChannel(guild);
-    }
-  }, 1500).unref();
-});
-
-discord.on("voiceStateUpdate", (oldState, newState) => {
-  const member = newState.member || oldState.member;
-  if (!member || member.user?.bot) return;
-  if (!newState.channelId) return;
-
-  void autoJoinVoiceChannel(newState.guild, newState.channelId);
 });
 
 discord.on("interactionCreate", async (interaction) => {
