@@ -31,7 +31,7 @@ import prism from "prism-media";
 import speech from "@google-cloud/speech";
 import textToSpeech from "@google-cloud/text-to-speech";
 import { GoogleAuth } from "google-auth-library";
-import { ActivityHandling, GoogleGenAI, Modality } from "@google/genai";
+import { GoogleGenAI, Modality } from "@google/genai";
 
 const { SpeechClient } = speech;
 const { TextToSpeechClient } = textToSpeech;
@@ -290,7 +290,7 @@ async function connectLiveSession(state) {
       proactivity: { proactiveAudio: true },
       explicitVadSignal: true,
       realtimeInputConfig: {
-        activityHandling: ActivityHandling.NO_INTERRUPTION,
+        activityHandling: "NO_INTERRUPTION",
         automaticActivityDetection: { disabled: true },
       },
       systemInstruction: {
