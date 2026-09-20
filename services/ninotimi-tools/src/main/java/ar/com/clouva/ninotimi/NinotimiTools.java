@@ -74,6 +74,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     private static final String ICE_WORLD_NAME = "hielo_ninotimi";
     private static final String SKY_WORLD_NAME = "skyblock_ninotimi";
     private static final String PERSONAL_SURVIVAL_PREFIX = "survival_player_";
+    private static final String SHARED_SURVIVAL_WORLD_NAME = "survival_comun_ninotimi";
     private static final String HARDCORE_WORLD_NAME = "hardcore_ninotimi";
     private static final int SKY_ISLAND_SPACING = 256;
     private static final int SKY_ISLAND_RADIUS = 96;
@@ -130,6 +131,8 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     private Location skyLobby;
 
     private Region survivalEntryPortal;
+    private World sharedSurvivalWorld;
+    private Location sharedSurvivalSpawn;
     private World hardcoreWorld;
     private Location hardcoreSpawn;
 
@@ -473,12 +476,17 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             if (event.getRawSlot() < 0) return;
 
             switch (event.getRawSlot()) {
-                case 11 -> {
+                case 10 -> {
                     player.closeInventory();
                     if (player.getWorld().getName().equals(PARKOUR_WORLD_NAME)) exitParkour(player);
                     enterPersonalSurvival(player, true);
                 }
-                case 15 -> {
+                case 13 -> {
+                    player.closeInventory();
+                    if (player.getWorld().getName().equals(PARKOUR_WORLD_NAME)) exitParkour(player);
+                    enterSharedSurvival(player, true);
+                }
+                case 16 -> {
                     player.closeInventory();
                     if (player.getWorld().getName().equals(PARKOUR_WORLD_NAME)) exitParkour(player);
                     enterHardcore(player, true);
@@ -694,6 +702,18 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     @EventHandler
     public void onHardcoreRespawn(PlayerRespawnEvent event) {
         Player player = event.getPlayer();
+        World deathWorld = player.getWorld();
+
+        if (deathWorld.getName().equals(SHARED_SURVIVAL_WORLD_NAME) && sharedSurvivalSpawn != null) {
+            event.setRespawnLocation(sharedSurvivalSpawn);
+            return;
+        }
+
+        if (isPersonalSurvivalWorld(deathWorld)) {
+            event.setRespawnLocation(naturalSurvivalSpawn(deathWorld));
+            return;
+        }
+
         if (!getConfig().getBoolean("hardcore.eliminated." + player.getUniqueId(), false)) return;
 
         World main = Bukkit.getWorlds().get(0);
@@ -2930,6 +2950,33 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
 
 
     private void setupSurvival() {
+        WorldCreator sharedCreator = new WorldCreator(SHARED_SURVIVAL_WORLD_NAME);
+        sharedCreator.type(WorldType.NORMAL);
+        sharedCreator.generateStructures(true);
+
+        sharedSurvivalWorld = Bukkit.getWorld(SHARED_SURVIVAL_WORLD_NAME);
+        if (sharedSurvivalWorld == null) {
+            sharedSurvivalWorld = sharedCreator.createWorld();
+        }
+
+        if (sharedSurvivalWorld == null) {
+            getLogger().severe("No se pudo crear NINOTIMI SURVIVAL COMÚN.");
+        } else {
+            sharedSurvivalWorld.setPVP(false);
+            sharedSurvivalWorld.setDifficulty(Difficulty.NORMAL);
+            sharedSurvivalWorld.setGameRule(GameRule.DO_MOB_SPAWNING, true);
+            sharedSurvivalWorld.setGameRule(GameRule.DO_DAYLIGHT_CYCLE, true);
+            sharedSurvivalWorld.setGameRule(GameRule.DO_WEATHER_CYCLE, true);
+            sharedSurvivalWorld.setGameRule(GameRule.KEEP_INVENTORY, false);
+
+            Location natural = sharedSurvivalWorld.getSpawnLocation();
+            int x = natural.getBlockX();
+            int z = natural.getBlockZ();
+            int y = sharedSurvivalWorld.getHighestBlockYAt(x, z) + 1;
+            sharedSurvivalSpawn = new Location(sharedSurvivalWorld, x + 0.5, y, z + 0.5, 0f, 0f);
+            sharedSurvivalWorld.setSpawnLocation(sharedSurvivalSpawn);
+        }
+
         WorldCreator creator = new WorldCreator(HARDCORE_WORLD_NAME);
         creator.type(WorldType.NORMAL);
         creator.generateStructures(true);
@@ -3010,7 +3057,9 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
 
     private void rememberSurvivalReturn(Player player, boolean rememberReturn) {
         if (!rememberReturn) return;
-        if (isPersonalSurvivalWorld(player.getWorld()) || player.getWorld().getName().equals(HARDCORE_WORLD_NAME)) return;
+        if (isPersonalSurvivalWorld(player.getWorld())
+            || player.getWorld().getName().equals(SHARED_SURVIVAL_WORLD_NAME)
+            || player.getWorld().getName().equals(HARDCORE_WORLD_NAME)) return;
 
         survivalPortalStates.putIfAbsent(
             player.getUniqueId(),
@@ -3040,6 +3089,23 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
 
         player.sendTitle("TU SURVIVAL", "Este mundo es solamente tuyo", 10, 60, 10);
         msg(player, "Tu progreso queda guardado en tu propio mundo · /lobby para volver.", NamedTextColor.GREEN);
+    }
+
+    private void enterSharedSurvival(Player player, boolean rememberReturn) {
+        if (sharedSurvivalWorld == null || sharedSurvivalSpawn == null) {
+            msg(player, "SURVIVAL COMÚN todavía no está disponible.", NamedTextColor.RED);
+            return;
+        }
+
+        rememberSurvivalReturn(player, rememberReturn);
+        player.setGameMode(GameMode.SURVIVAL);
+        player.setAllowFlight(false);
+        player.setFlying(false);
+        player.teleport(sharedSurvivalSpawn);
+        player.setFireTicks(0);
+
+        player.sendTitle("SURVIVAL COMÚN", "Un mundo normal para jugar todos juntos", 10, 60, 10);
+        msg(player, "Todos comparten este mundo · dificultad NORMAL · muerte y respawn normales · /lobby para volver.", NamedTextColor.GREEN);
     }
 
     private void enterHardcore(Player player, boolean rememberReturn) {
@@ -3161,8 +3227,9 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
 
     private void openSurvivalMenu(Player player) {
         Inventory inv = Bukkit.createInventory(null, 27, Component.text(SURVIVAL_MENU_TITLE));
-        inv.setItem(11, menuItem(Material.OAK_SAPLING, "🌲 MI SURVIVAL", "Tu mundo personal y persistente"));
-        inv.setItem(15, menuItem(Material.WITHER_SKELETON_SKULL, "☠ HARDCORE", "Mundo compartido · dificultad HARD · una vida"));
+        inv.setItem(10, menuItem(Material.OAK_SAPLING, "🌲 MI SURVIVAL", "Tu mundo personal y persistente"));
+        inv.setItem(13, menuItem(Material.GRASS_BLOCK, "🌍 SURVIVAL COMÚN", "Mundo normal compartido por todos"));
+        inv.setItem(16, menuItem(Material.WITHER_SKELETON_SKULL, "☠ HARDCORE", "Mundo compartido · dificultad HARD · una vida"));
         inv.setItem(22, menuItem(Material.NETHER_STAR, "Volver a juegos", "Abrir todas las funciones"));
         player.openInventory(inv);
     }
@@ -3173,6 +3240,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         switch (sub) {
             case "menu", "join", "entrar" -> openSurvivalMenu(player);
             case "personal", "mio", "mío" -> enterPersonalSurvival(player, true);
+            case "comun", "común", "normal", "publico", "público" -> enterSharedSurvival(player, true);
             case "hardcore", "hc" -> enterHardcore(player, true);
             case "leave", "salir" -> exitSurvival(player);
             case "status" -> {
@@ -3180,7 +3248,9 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
                 boolean eliminated = getConfig().getBoolean("hardcore.eliminated." + player.getUniqueId(), false);
                 msg(
                     player,
-                    "Personal: " + personal + " · Hardcore: " + (eliminated ? "ELIMINADO" : "disponible"),
+                    "Personal: " + personal + " · Común: "
+                        + (sharedSurvivalWorld == null ? "no disponible" : "online")
+                        + " · Hardcore: " + (eliminated ? "ELIMINADO" : "disponible"),
                     eliminated ? NamedTextColor.YELLOW : NamedTextColor.GREEN
                 );
             }
@@ -3212,7 +3282,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             }
             default -> msg(
                 player,
-                "/survival menu · personal · hardcore · leave · status"
+                "/survival menu · personal · comun · hardcore · leave · status"
                     + (player.isOp() ? " · portalhere · reset <jugador>" : ""),
                 NamedTextColor.YELLOW
             );
@@ -4083,7 +4153,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
 
         if (command.getName().equalsIgnoreCase("survival")) {
             if (args.length == 1) {
-                List<String> options = new ArrayList<>(List.of("menu", "personal", "hardcore", "leave", "status"));
+                List<String> options = new ArrayList<>(List.of("menu", "personal", "comun", "hardcore", "leave", "status"));
                 if (player.isOp()) {
                     options.add("portalhere");
                     options.add("reset");
