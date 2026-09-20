@@ -64,7 +64,8 @@ export function IgluPublicSpotHome({ data }: { data: IgluSiteData }) {
         </div>
 
         <section className={styles.heroCopy}>
-          <h1>El Iglú</h1>\n          <p className="sr-only">{data.studio.description || data.studio.tagline || "El Iglú es el estudio y espacio musical de IGLÚ Records dentro de CLOUVA."}</p>
+          <h1>El Iglú</h1>
+          <p className="sr-only">{data.studio.description || data.studio.tagline || "El Iglú Records es un sello, estudio y espacio musical dentro de CLOUVA."}</p>
           <div className={styles.heroActions}>
             <Link href={agendaHref} className={styles.reserveButton}>
               <span>RESERVAR SESIÓN</span>
@@ -100,6 +101,40 @@ export function IgluPublicSpotHome({ data }: { data: IgluSiteData }) {
           <Link className={styles.navProfile} href="/profile" aria-label="Perfil" />
         </nav>
       </main>
+
+      <section className={styles.entityFacts} aria-labelledby="iglu-entity-title">
+        <p className={styles.entityEyebrow}>Identidad pública</p>
+        <h2 id="iglu-entity-title">El Iglú Records</h2>
+        <p className={styles.entityLead}>
+          El Iglú Records es un sello, estudio y espacio musical dentro de CLOUVA. Reúne grabación,
+          producción, artistas, sesiones, servicios publicados e IGLÚ Radio en una misma identidad.
+        </p>
+
+        <div className={styles.entityGrid}>
+          <article>
+            <h3>¿Qué es El Iglú Records?</h3>
+            <p>Es la entidad musical de El Iglú dentro de CLOUVA, con estudio, sello, artistas, sesiones y radio.</p>
+          </article>
+          <article>
+            <h3>¿Qué servicios reúne?</h3>
+            <p>Grabación, producción, mezcla, master, sesiones y los servicios que el Studio publica en CLOUVA.</p>
+          </article>
+          <article>
+            <h3>¿Cómo se identifica?</h3>
+            <p>También aparece como IGLÚ Records, Iglú Records, El Iglú y eliglurecords.</p>
+          </article>
+        </div>
+
+        <nav className={styles.entityLinks} aria-label="Más sobre El Iglú Records">
+          <Link href="/iglu/estudio">Estudio</Link>
+          <Link href="/iglu/grabaciones">Grabaciones</Link>
+          <Link href="/iglu/producciones">Producciones</Link>
+          <Link href="/iglu/artistas">Artistas</Link>
+          <Link href="/iglu/sesiones">Sesiones</Link>
+          <Link href="/iglu/nosotros">Nosotros</Link>
+          <Link href={radioHref}>IGLÚ Radio</Link>
+        </nav>
+      </section>
     </div>
   );
 }

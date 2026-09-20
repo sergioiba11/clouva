@@ -24,6 +24,28 @@ function absoluteAssetUrl(url: string | null | undefined) {
   return url.startsWith("/") ? `${siteUrl}${url}` : url;
 }
 
+function publicHttpUrl(value: unknown) {
+  if (typeof value !== "string" || !value.trim()) return null;
+  try {
+    const url = new URL(value.trim());
+    return url.protocol === "https:" || url.protocol === "http:" ? url.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+function studioSameAs(result: StudioIdentityData) {
+  const candidates: unknown[] = [result.studio.website_url];
+  if (Array.isArray(result.studio.social_links)) {
+    for (const entry of result.studio.social_links) {
+      if (entry && typeof entry === "object" && "url" in entry) {
+        candidates.push((entry as { url?: unknown }).url);
+      }
+    }
+  }
+  return Array.from(new Set(candidates.map(publicHttpUrl).filter((url): url is string => Boolean(url))));
+}
+
 function presentationLogo(result: StudioIdentityData) {
   return result.layoutConfig?.page_style?.theme === "light"
     ? result.publicStudio.lightLogoUrl || result.publicStudio.logoUrl || result.studio.logo_url
@@ -48,8 +70,8 @@ export async function generateMetadata({ params }: { params: Promise<{ slug: str
 
   const canonical = canonicalUrl(result.canonicalAlias);
   const isIglu = result.studio.slug.toLowerCase() === IGLU_STUDIO_SLUG;
-  const title = result.studio.seo_title || (isIglu ? "El Iglú | CLOUVA" : `${result.publicStudio.publicName} — Estudio en CLOUVA`);
-  const description = result.studio.seo_description || result.studio.description || result.studio.tagline || (isIglu ? "El Iglú es el estudio y espacio musical de IGLÚ Records dentro de CLOUVA." : undefined);
+  const title = result.studio.seo_title || (isIglu ? "El Iglú Records — estudio, sello y música en CLOUVA" : `${result.publicStudio.publicName} — Estudio en CLOUVA`);
+  const description = result.studio.seo_description || result.studio.description || result.studio.tagline || (isIglu ? "El Iglú Records es un sello, estudio y espacio musical dentro de CLOUVA: grabación, producción, artistas, sesiones e IGLÚ Radio." : undefined);
   const image = absoluteAssetUrl(result.studio.og_image_url || result.studio.cover_url || result.publicStudio.darkLogoUrl || result.studio.logo_url);
 
   return {
@@ -71,24 +93,81 @@ export default async function MatrixStudioProfilePage({ params, searchParams }: 
 
   const isIglu = result.studio.slug.toLowerCase() === IGLU_STUDIO_SLUG;
   const canonical = canonicalUrl(result.canonicalAlias);
-  const structuredDescription = result.studio.seo_description || result.studio.description || result.studio.tagline || (isIglu ? "El Iglú es el estudio y espacio musical de IGLÚ Records dentro de CLOUVA." : undefined);
+  const structuredDescription = result.studio.seo_description || result.studio.description || result.studio.tagline || (isIglu ? "El Iglú Records es un sello, estudio y espacio musical dentro de CLOUVA: grabación, producción, artistas, sesiones e IGLÚ Radio." : undefined);
   const structuredLogo = absoluteAssetUrl(result.publicStudio.darkLogoUrl || result.studio.logo_url);
   const structuredImage = absoluteAssetUrl(result.studio.og_image_url || result.studio.cover_url || result.publicStudio.darkLogoUrl || result.studio.logo_url);
 
   if (isIglu) {
     const igluData = await loadIgluSiteData();
     if (!igluData) notFound();
+    const serviceTopics = Array.from(new Set(result.services.flatMap((service) => [service.name, service.category]).filter((value): value is string => Boolean(value))));
+    const knownTopics = Array.from(new Set([...(result.studio.categories || []), ...serviceTopics]));
+    const sameAs = studioSameAs(result).filter((url) => url !== canonical);
+    const locationName = [result.studio.city, result.studio.country].filter(Boolean).join(", ");
+    const members = result.players.flatMap((entry) => entry.player ? [{
+      "@type": "Person",
+      name: entry.player.display_name,
+      ...(entry.role || entry.player.primary_role ? { jobTitle: entry.role || entry.player.primary_role } : {}),
+    }] : []);
+    const offers = result.services.slice(0, 12).map((service) => ({
+      "@type": "Offer",
+      itemOffered: {
+        "@type": "Service",
+        name: service.name,
+        ...(service.description ? { description: service.description } : {}),
+        ...(service.category ? { serviceType: service.category } : {}),
+      },
+    }));
     const structuredData = {
       "@context": "https://schema.org",
-      "@type": "Organization",
-      "@id": `${canonical}#entity`,
-      name: "El Iglú",
-      alternateName: Array.from(new Set(["IGLÚ Records", "Iglú Records", result.publicStudio.publicName, result.studio.name].filter(Boolean))),
-      url: canonical,
-      description: structuredDescription,
-      logo: structuredLogo,
-      image: structuredImage,
-      parentOrganization: { "@type": "Organization", "@id": `${siteUrl}/#organization`, name: "CLOUVA", url: `${siteUrl}/` },
+      "@graph": [
+        {
+          "@type": "WebPage",
+          "@id": `${canonical}#webpage`,
+          url: canonical,
+          name: "El Iglú Records — perfil oficial en CLOUVA",
+          description: structuredDescription,
+          inLanguage: "es-AR",
+          mainEntity: { "@id": `${canonical}#entity` },
+        },
+        {
+          "@type": "Organization",
+          "@id": `${canonical}#entity`,
+          name: "El Iglú Records",
+          alternateName: Array.from(new Set([
+            "IGLÚ Records",
+            "Iglú Records",
+            "El Iglú",
+            result.publicStudio.publicName,
+            result.studio.name,
+            result.canonicalAlias,
+            result.studio.slug,
+          ].filter(Boolean))),
+          url: canonical,
+          mainEntityOfPage: { "@id": `${canonical}#webpage` },
+          description: structuredDescription,
+          disambiguatingDescription: "Entidad musical de CLOUVA que reúne estudio de grabación, producción, artistas, sesiones e IGLÚ Radio.",
+          slogan: result.studio.tagline || "Del Sur para el mundo",
+          logo: structuredLogo,
+          image: structuredImage,
+          ...(sameAs.length ? { sameAs } : {}),
+          ...(result.studio.contact_email ? { email: result.studio.contact_email } : {}),
+          ...(locationName ? { location: { "@type": "Place", name: locationName } } : {}),
+          ...(knownTopics.length ? { knowsAbout: knownTopics } : {}),
+          ...(members.length ? { member: members } : {}),
+          ...(offers.length ? { makesOffer: offers } : {}),
+          parentOrganization: { "@type": "Organization", "@id": `${siteUrl}/#organization`, name: "CLOUVA", url: `${siteUrl}/` },
+          subOrganization: { "@id": `${canonical}/radio#entity` },
+        },
+        {
+          "@type": "Organization",
+          "@id": `${canonical}/radio#entity`,
+          name: "IGLÚ Radio",
+          url: `${canonical}/radio`,
+          description: "La radio oficial de IGLÚ Records dentro de CLOUVA: música, cultura urbana, sesiones y transmisión en vivo.",
+          parentOrganization: { "@id": `${canonical}#entity` },
+        },
+      ],
     };
     return (
       <>

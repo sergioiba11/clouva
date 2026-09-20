@@ -331,3 +331,96 @@
     box-shadow: 0 28px 90px rgba(0, 0, 0, 0.5);
   }
 }
+
+.entityFacts {
+  width: min(calc(100% - 32px), 880px);
+  margin: 0 auto;
+  padding: 42px 0 56px;
+  border-top: 1px solid rgba(143, 210, 255, 0.14);
+}
+
+.entityEyebrow {
+  margin: 0 0 8px;
+  color: rgba(158, 220, 255, 0.72);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.entityFacts h2 {
+  margin: 0;
+  color: #fff;
+  font-size: clamp(28px, 7vw, 46px);
+  line-height: 1;
+  letter-spacing: -0.025em;
+}
+
+.entityLead {
+  max-width: 720px;
+  margin: 16px 0 0;
+  color: rgba(234, 245, 255, 0.76);
+  font-size: 15px;
+  line-height: 1.7;
+}
+
+.entityGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 26px;
+}
+
+.entityGrid article {
+  min-height: 150px;
+  padding: 18px;
+  border: 1px solid rgba(143, 210, 255, 0.13);
+  border-radius: 18px;
+  background: rgba(7, 18, 30, 0.72);
+}
+
+.entityGrid h3 {
+  margin: 0 0 10px;
+  color: #f8fbff;
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.entityGrid p {
+  margin: 0;
+  color: rgba(226, 240, 250, 0.66);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.entityLinks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.entityLinks a {
+  padding: 8px 11px;
+  border: 1px solid rgba(143, 210, 255, 0.14);
+  border-radius: 999px;
+  color: rgba(235, 248, 255, 0.8);
+  font-size: 11px;
+  text-decoration: none;
+  background: rgba(5, 15, 25, 0.66);
+}
+
+@media (max-width: 699px) {
+  .entityFacts {
+    width: min(calc(100% - 28px), 560px);
+    padding: 32px 0 44px;
+  }
+
+  .entityGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .entityGrid article {
+    min-height: 0;
+  }
+}

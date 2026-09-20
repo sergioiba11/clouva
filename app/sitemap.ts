@@ -4,7 +4,23 @@ import { createPublicSupabase } from "@/lib/server/public-supabase";
 import { studioPublicHref } from "@/lib/public-studio-routes";
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
-  const staticRoutes = ["/", "/tienda", "/catalogo", "/carrito", "/checkout", "/lamatrix", "/lamatrix/estudios", "/players"];
+  const staticRoutes = [
+    "/",
+    "/tienda",
+    "/catalogo",
+    "/carrito",
+    "/checkout",
+    "/lamatrix",
+    "/lamatrix/estudios",
+    "/players",
+    "/iglu/estudio",
+    "/iglu/grabaciones",
+    "/iglu/producciones",
+    "/iglu/artistas",
+    "/iglu/sesiones",
+    "/iglu/nosotros",
+    "/iglu/contacto",
+  ];
   const supabase = createPublicSupabase();
 
   const [{ data: studios }, { data: players }] = await Promise.all([
