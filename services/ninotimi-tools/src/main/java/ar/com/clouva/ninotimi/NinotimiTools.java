@@ -268,8 +268,8 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             if (!canBuild(player)) return;
             event.setCancelled(true);
 
-            if (fighters.contains(player.getUniqueId())) {
-                msg(player, "Las herramientas de builder están bloqueadas durante el duelo.", NamedTextColor.RED);
+            if (fighters.contains(player.getUniqueId()) || iceFighters.contains(player.getUniqueId())) {
+                msg(player, "Las herramientas de builder están bloqueadas durante una batalla.", NamedTextColor.RED);
                 return;
             }
 
@@ -651,8 +651,8 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     }
 
     private void setMode(Player player, GameMode mode) {
-        if (fighters.contains(player.getUniqueId())) {
-            msg(player, "No podés cambiar de modo durante un duelo.", NamedTextColor.RED);
+        if (fighters.contains(player.getUniqueId()) || iceFighters.contains(player.getUniqueId())) {
+            msg(player, "No podés cambiar de modo durante una batalla.", NamedTextColor.RED);
             return;
         }
 
@@ -665,8 +665,8 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     }
 
     private void toggleFly(Player player) {
-        if (fighters.contains(player.getUniqueId())) {
-            msg(player, "Fly bloqueado durante el duelo.", NamedTextColor.RED);
+        if (fighters.contains(player.getUniqueId()) || iceFighters.contains(player.getUniqueId())) {
+            msg(player, "Fly bloqueado durante una batalla.", NamedTextColor.RED);
             return;
         }
 
@@ -1027,6 +1027,18 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         world.spawnParticle(Particle.PORTAL, x, y, z, 18, 0.8, 1.1, 0.8, 0.15);
     }
 
+    private void spawnIceRegionParticles(Region region) {
+        if (region == null) return;
+        World world = Bukkit.getWorld(region.worldName);
+        if (world == null) return;
+
+        double x = (region.minX + region.maxX + 1) / 2.0;
+        double y = (region.minY + region.maxY + 1) / 2.0;
+        double z = (region.minZ + region.maxZ + 1) / 2.0;
+
+        world.spawnParticle(Particle.SNOWFLAKE, x, y, z, 20, 0.8, 1.1, 0.8, 0.02);
+    }
+
     private void saveRegion(String prefix, Region region) {
         getConfig().set(prefix + ".world", region.worldName);
         getConfig().set(prefix + ".min-x", region.minX);
@@ -1308,6 +1320,520 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         player.setAllowFlight(true);
         player.teleport(spectatorSpot);
         msg(player, "Modo espectador. /pvp lobby para volver.", NamedTextColor.AQUA);
+    }
+
+
+    private void setupIceBattle() {
+        WorldCreator creator = new WorldCreator(ICE_WORLD_NAME);
+        creator.type(WorldType.FLAT);
+        creator.generateStructures(false);
+
+        iceWorld = Bukkit.getWorld(ICE_WORLD_NAME);
+        if (iceWorld == null) {
+            iceWorld = creator.createWorld();
+        }
+
+        if (iceWorld == null) {
+            getLogger().severe("No se pudo crear el mundo de BATALLA DE HIELO.");
+            return;
+        }
+
+        iceWorld.setPVP(false);
+        iceWorld.setTime(6000);
+        iceWorld.setStorm(false);
+        iceWorld.setThundering(false);
+        iceWorld.setGameRule(GameRule.DO_MOB_SPAWNING, false);
+        iceWorld.setGameRule(GameRule.DO_DAYLIGHT_CYCLE, false);
+        iceWorld.setGameRule(GameRule.DO_WEATHER_CYCLE, false);
+        iceWorld.setGameRule(GameRule.KEEP_INVENTORY, true);
+
+        iceLobby = new Location(iceWorld, 0.5, 81.0, 0.5, 180f, 0f);
+        iceSpawn1 = new Location(iceWorld, -8.5, 81.0, 50.5, -90f, 0f);
+        iceSpawn2 = new Location(iceWorld, 8.5, 81.0, 50.5, 90f, 0f);
+        iceSpectatorSpot = new Location(iceWorld, 0.5, 91.0, 50.5, 180f, 30f);
+
+        if (!getConfig().getBoolean("ice.built", false)) {
+            buildIceStructures();
+            buildDefaultIceEntryPortal();
+            getConfig().set("ice.built", true);
+            saveConfig();
+        }
+
+        iceEntryPortal = loadRegion("ice.entry-portal");
+        iceExitPortal = new Region(ICE_WORLD_NAME, 11, 81, -1, 13, 84, 1);
+        iceQueuePad = new Region(ICE_WORLD_NAME, -1, 81, 7, 1, 82, 9);
+
+        iceWorld.setSpawnLocation(iceLobby);
+    }
+
+    private void buildIceStructures() {
+        if (iceWorld == null) return;
+
+        // Lobby helado.
+        for (int x = -15; x <= 15; x++) {
+            for (int z = -10; z <= 15; z++) {
+                Material floor = ((x + z) & 1) == 0
+                    ? Material.PACKED_ICE
+                    : Material.BLUE_ICE;
+                iceWorld.getBlockAt(x, 80, z).setType(floor, false);
+
+                for (int y = 81; y <= 90; y++) {
+                    iceWorld.getBlockAt(x, y, z).setType(Material.AIR, false);
+                }
+            }
+        }
+
+        // Pad celeste para la cola.
+        for (int x = -1; x <= 1; x++) {
+            for (int z = 7; z <= 9; z++) {
+                iceWorld.getBlockAt(x, 80, z).setType(Material.LIGHT_BLUE_CONCRETE, false);
+            }
+        }
+
+        buildIcePortalFrame(iceWorld, 12, 80, 0, false);
+
+        // Vacío real debajo de la arena para detectar al que cae.
+        for (int x = -16; x <= 16; x++) {
+            for (int z = 34; z <= 66; z++) {
+                for (int y = 60; y <= 79; y++) {
+                    iceWorld.getBlockAt(x, y, z).setType(Material.AIR, false);
+                }
+                for (int y = 81; y <= 95; y++) {
+                    iceWorld.getBlockAt(x, y, z).setType(Material.AIR, false);
+                }
+            }
+        }
+
+        // Borde y paredes bajas.
+        for (int x = -15; x <= 15; x++) {
+            iceWorld.getBlockAt(x, 80, 35).setType(Material.BLUE_ICE, false);
+            iceWorld.getBlockAt(x, 80, 65).setType(Material.BLUE_ICE, false);
+            for (int y = 81; y <= 83; y++) {
+                iceWorld.getBlockAt(x, y, 35).setType(Material.PACKED_ICE, false);
+                iceWorld.getBlockAt(x, y, 65).setType(Material.PACKED_ICE, false);
+            }
+        }
+
+        for (int z = 35; z <= 65; z++) {
+            iceWorld.getBlockAt(-15, 80, z).setType(Material.BLUE_ICE, false);
+            iceWorld.getBlockAt(15, 80, z).setType(Material.BLUE_ICE, false);
+            for (int y = 81; y <= 83; y++) {
+                iceWorld.getBlockAt(-15, y, z).setType(Material.PACKED_ICE, false);
+                iceWorld.getBlockAt(15, y, z).setType(Material.PACKED_ICE, false);
+            }
+        }
+
+        resetIceFloor();
+
+        // Mirador.
+        for (int x = -6; x <= 6; x++) {
+            for (int z = 45; z <= 55; z++) {
+                iceWorld.getBlockAt(x, 90, z).setType(Material.GLASS, false);
+            }
+        }
+    }
+
+    private void resetIceFloor() {
+        if (iceWorld == null) return;
+
+        for (int x = -14; x <= 14; x++) {
+            for (int z = 36; z <= 64; z++) {
+                Material floor = ((x + z) % 7 == 0)
+                    ? Material.PACKED_ICE
+                    : Material.SNOW_BLOCK;
+                iceWorld.getBlockAt(x, 80, z).setType(floor, false);
+            }
+        }
+    }
+
+    private boolean isIceArenaFloor(Block block) {
+        if (!block.getWorld().getName().equals(ICE_WORLD_NAME)) return false;
+        return block.getY() == 80
+            && block.getX() >= -14 && block.getX() <= 14
+            && block.getZ() >= 36 && block.getZ() <= 64;
+    }
+
+    private void buildDefaultIceEntryPortal() {
+        List<World> worlds = Bukkit.getWorlds();
+        if (worlds.isEmpty()) return;
+
+        World main = worlds.get(0);
+        Location spawn = main.getSpawnLocation();
+        int centerX = spawn.getBlockX() - 12;
+        int centerZ = spawn.getBlockZ();
+        int groundY = main.getHighestBlockYAt(centerX, centerZ);
+        int baseY = groundY + 1;
+
+        buildIcePortalFrame(main, centerX, baseY, centerZ, true);
+        iceEntryPortal = new Region(
+            main.getName(),
+            centerX - 1, baseY + 1, centerZ - 1,
+            centerX + 1, baseY + 3, centerZ + 1
+        );
+        saveRegion("ice.entry-portal", iceEntryPortal);
+    }
+
+    private void buildIcePortalAt(Player player) {
+        Location here = player.getLocation().getBlock().getLocation();
+        World world = player.getWorld();
+
+        int centerX = here.getBlockX();
+        int centerZ = here.getBlockZ();
+        int baseY = here.getBlockY();
+
+        buildIcePortalFrame(world, centerX, baseY, centerZ, true);
+        iceEntryPortal = new Region(
+            world.getName(),
+            centerX - 1, baseY + 1, centerZ - 1,
+            centerX + 1, baseY + 3, centerZ + 1
+        );
+        saveRegion("ice.entry-portal", iceEntryPortal);
+        msg(player, "Portal BATALLA DE HIELO creado acá.", NamedTextColor.AQUA);
+    }
+
+    private void buildIcePortalFrame(World world, int centerX, int baseY, int centerZ, boolean alongX) {
+        Material frame = Material.BLUE_ICE;
+        Material accent = Material.PACKED_ICE;
+
+        if (alongX) {
+            for (int dx = -2; dx <= 2; dx++) {
+                for (int dy = 0; dy <= 4; dy++) {
+                    boolean edge = dx == -2 || dx == 2 || dy == 0 || dy == 4;
+                    world.getBlockAt(centerX + dx, baseY + dy, centerZ)
+                        .setType(edge ? frame : Material.AIR, false);
+                }
+            }
+            for (int dx = -1; dx <= 1; dx++) {
+                world.getBlockAt(centerX + dx, baseY, centerZ).setType(accent, false);
+            }
+        } else {
+            for (int dz = -2; dz <= 2; dz++) {
+                for (int dy = 0; dy <= 4; dy++) {
+                    boolean edge = dz == -2 || dz == 2 || dy == 0 || dy == 4;
+                    world.getBlockAt(centerX, baseY + dy, centerZ + dz)
+                        .setType(edge ? frame : Material.AIR, false);
+                }
+            }
+            for (int dz = -1; dz <= 1; dz++) {
+                world.getBlockAt(centerX, baseY, centerZ + dz).setType(accent, false);
+            }
+        }
+    }
+
+    private void enterIceLobby(Player player, boolean rememberReturn) {
+        if (iceWorld == null || iceLobby == null) {
+            msg(player, "BATALLA DE HIELO todavía no está disponible.", NamedTextColor.RED);
+            return;
+        }
+
+        if (iceFighters.contains(player.getUniqueId())) return;
+
+        if (rememberReturn && !player.getWorld().getName().equals(ICE_WORLD_NAME)) {
+            icePortalStates.putIfAbsent(
+                player.getUniqueId(),
+                new PortalState(
+                    player.getLocation().clone(),
+                    player.getGameMode(),
+                    player.getAllowFlight(),
+                    player.isFlying()
+                )
+            );
+        }
+
+        iceQueue.remove(player.getUniqueId());
+        player.setGameMode(GameMode.ADVENTURE);
+        player.setAllowFlight(false);
+        player.setFlying(false);
+        player.teleport(iceLobby);
+        player.setHealth(player.getMaxHealth());
+        player.setFoodLevel(20);
+        player.setSaturation(20f);
+        player.setFireTicks(0);
+
+        player.sendTitle("BATALLA DE HIELO", "Rompé el piso y hacé caer a tu rival", 10, 55, 10);
+        msg(player, "Pad CELESTE = jugar · portal de hielo = volver · /hielo spectate = mirar.", NamedTextColor.AQUA);
+    }
+
+    private void exitIce(Player player) {
+        UUID id = player.getUniqueId();
+
+        if (iceFighters.contains(id)) {
+            msg(player, "Primero salí de la batalla con /hielo leave.", NamedTextColor.RED);
+            return;
+        }
+
+        iceQueue.remove(id);
+        PortalState previous = icePortalStates.remove(id);
+
+        if (previous != null && previous.location.getWorld() != null) {
+            player.teleport(previous.location);
+            player.setGameMode(previous.gameMode);
+            player.setAllowFlight(previous.allowFlight);
+            player.setFlying(previous.flying && previous.allowFlight);
+        } else {
+            World main = Bukkit.getWorlds().get(0);
+            player.teleport(main.getSpawnLocation());
+            player.setGameMode(GameMode.SURVIVAL);
+            player.setAllowFlight(false);
+            player.setFlying(false);
+        }
+
+        msg(player, "Saliste de BATALLA DE HIELO.", NamedTextColor.GREEN);
+    }
+
+    private void joinIceQueue(Player player) {
+        UUID id = player.getUniqueId();
+
+        if (!player.getWorld().getName().equals(ICE_WORLD_NAME)) {
+            enterIceLobby(player, true);
+        }
+
+        if (iceFighters.contains(id)) return;
+
+        if (iceQueue.contains(id)) {
+            player.sendActionBar(Component.text("Ya estás esperando rival…", NamedTextColor.AQUA));
+            return;
+        }
+
+        iceQueue.addLast(id);
+        player.teleport(new Location(iceWorld, 0.5, 81.0, 5.5, 180f, 0f));
+        player.sendTitle("BATALLA DE HIELO", "Esperando rival…", 5, 35, 10);
+        msg(player, "Entraste a la cola de hielo.", NamedTextColor.AQUA);
+        tryStartIceBattle();
+    }
+
+    private void tryStartIceBattle() {
+        if (!iceFighters.isEmpty()) return;
+
+        while (!iceQueue.isEmpty()) {
+            UUID first = iceQueue.peekFirst();
+            Player player = Bukkit.getPlayer(first);
+            if (player != null && player.isOnline()) break;
+            iceQueue.removeFirst();
+        }
+
+        if (iceQueue.size() < 2) return;
+
+        UUID firstId = iceQueue.removeFirst();
+        UUID secondId = iceQueue.removeFirst();
+        Player first = Bukkit.getPlayer(firstId);
+        Player second = Bukkit.getPlayer(secondId);
+
+        if (first == null || second == null) {
+            if (first != null) iceQueue.addFirst(firstId);
+            if (second != null) iceQueue.addFirst(secondId);
+            return;
+        }
+
+        startIceBattle(first, second);
+    }
+
+    private void startIceBattle(Player first, Player second) {
+        iceFighters.clear();
+        iceStates.clear();
+        iceActive = false;
+        resetIceFloor();
+
+        iceFighters.add(first.getUniqueId());
+        iceFighters.add(second.getUniqueId());
+
+        iceStates.put(first.getUniqueId(), captureState(first));
+        iceStates.put(second.getUniqueId(), captureState(second));
+
+        prepareIceFighter(first, iceSpawn1);
+        prepareIceFighter(second, iceSpawn2);
+
+        Bukkit.broadcast(
+            Component.text("❄ BATALLA DE HIELO · ", NamedTextColor.AQUA)
+                .append(Component.text(first.getName(), NamedTextColor.WHITE))
+                .append(Component.text(" VS ", NamedTextColor.GOLD))
+                .append(Component.text(second.getName(), NamedTextColor.WHITE))
+        );
+
+        for (int secondLeft = 3; secondLeft >= 1; secondLeft--) {
+            int delay = (3 - secondLeft) * 20;
+            int value = secondLeft;
+            Bukkit.getScheduler().runTaskLater(this, () -> {
+                if (!iceFighters.contains(first.getUniqueId()) || !iceFighters.contains(second.getUniqueId())) return;
+                first.sendTitle(String.valueOf(value), "Prepará la pala", 0, 20, 0);
+                second.sendTitle(String.valueOf(value), "Prepará la pala", 0, 20, 0);
+            }, delay);
+        }
+
+        Bukkit.getScheduler().runTaskLater(this, () -> {
+            if (!iceFighters.contains(first.getUniqueId()) || !iceFighters.contains(second.getUniqueId())) return;
+            iceActive = true;
+            first.sendTitle("ROMPAN EL PISO", "El último arriba gana", 0, 25, 5);
+            second.sendTitle("ROMPAN EL PISO", "El último arriba gana", 0, 25, 5);
+        }, 60L);
+    }
+
+    private void prepareIceFighter(Player player, Location spawn) {
+        player.getInventory().clear();
+
+        ItemStack shovel = new ItemStack(Material.DIAMOND_SHOVEL);
+        ItemMeta meta = shovel.getItemMeta();
+        meta.displayName(Component.text("❄ Rompepiso NINOTIMI", NamedTextColor.AQUA));
+        meta.lore(List.of(Component.text("Rompé nieve/hielo bajo tu rival", NamedTextColor.GRAY)));
+        meta.setUnbreakable(true);
+        meta.addItemFlags(ItemFlag.HIDE_UNBREAKABLE);
+        shovel.setItemMeta(meta);
+
+        player.getInventory().setItem(0, shovel);
+        player.setGameMode(GameMode.SURVIVAL);
+        player.setAllowFlight(false);
+        player.setFlying(false);
+        player.setHealth(player.getMaxHealth());
+        player.setFoodLevel(20);
+        player.setSaturation(20f);
+        player.setFireTicks(0);
+        player.teleport(spawn);
+    }
+
+    private void restoreIceState(Player player) {
+        PlayerState state = iceStates.remove(player.getUniqueId());
+        if (state == null) return;
+
+        player.getInventory().setContents(state.contents);
+        player.setGameMode(state.gameMode);
+        player.setAllowFlight(state.allowFlight);
+        player.setFlying(state.flying && state.allowFlight);
+        player.setLevel(state.level);
+        player.setExp(state.exp);
+        player.setHealth(player.getMaxHealth());
+        player.setFoodLevel(20);
+        player.setSaturation(20f);
+        player.setFireTicks(0);
+
+        if (iceLobby != null && iceLobby.getWorld() != null) {
+            player.setGameMode(GameMode.ADVENTURE);
+            player.setAllowFlight(false);
+            player.setFlying(false);
+            player.teleport(iceLobby);
+        }
+    }
+
+    private void endIceBattle(UUID winnerId, String reason) {
+        if (iceFighters.isEmpty()) return;
+
+        iceActive = false;
+        Set<UUID> finished = new HashSet<>(iceFighters);
+        iceFighters.clear();
+
+        Bukkit.getScheduler().runTask(this, () -> {
+            String winnerName = "nadie";
+
+            if (winnerId != null) {
+                Player winner = Bukkit.getPlayer(winnerId);
+                if (winner != null) {
+                    winnerName = winner.getName();
+                }
+            }
+
+            for (UUID id : finished) {
+                Player player = Bukkit.getPlayer(id);
+                if (player == null) continue;
+
+                restoreIceState(player);
+
+                if (winnerId != null && winnerId.equals(id)) {
+                    player.sendTitle("GANASTE ❄", reason, 5, 45, 10);
+                } else {
+                    player.sendTitle("CAÍSTE", winnerId == null ? reason : "Ganó " + winnerName, 5, 45, 10);
+                }
+            }
+
+            Bukkit.broadcast(Component.text(
+                "❄ BATALLA DE HIELO · "
+                    + (winnerId == null ? "Partida terminada" : "Ganó " + winnerName),
+                NamedTextColor.AQUA
+            ));
+
+            Bukkit.getScheduler().runTaskLater(this, () -> {
+                resetIceFloor();
+                tryStartIceBattle();
+            }, 40L);
+        });
+    }
+
+    private void spectateIce(Player player) {
+        if (iceWorld == null || iceSpectatorSpot == null) return;
+
+        if (iceFighters.contains(player.getUniqueId())) {
+            msg(player, "Estás jugando.", NamedTextColor.RED);
+            return;
+        }
+
+        iceQueue.remove(player.getUniqueId());
+        player.setGameMode(GameMode.SPECTATOR);
+        player.setAllowFlight(true);
+        player.teleport(iceSpectatorSpot);
+        msg(player, "Espectando BATALLA DE HIELO. /hielo lobby para volver.", NamedTextColor.AQUA);
+    }
+
+    private boolean handleIceCommand(Player player, String[] args) {
+        String sub = args.length == 0 ? "lobby" : args[0].toLowerCase(Locale.ROOT);
+
+        switch (sub) {
+            case "join" -> {
+                if (!player.getWorld().getName().equals(ICE_WORLD_NAME)) {
+                    enterIceLobby(player, true);
+                }
+                joinIceQueue(player);
+            }
+            case "leave" -> {
+                UUID id = player.getUniqueId();
+                if (iceFighters.contains(id)) {
+                    UUID winner = iceFighters.stream()
+                        .filter(other -> !other.equals(id))
+                        .findFirst()
+                        .orElse(null);
+                    endIceBattle(winner, "abandono");
+                    Bukkit.getScheduler().runTaskLater(this, () -> exitIce(player), 2L);
+                } else {
+                    exitIce(player);
+                }
+            }
+            case "lobby" -> {
+                iceQueue.remove(player.getUniqueId());
+                enterIceLobby(player, !player.getWorld().getName().equals(ICE_WORLD_NAME));
+            }
+            case "spectate", "espectar" -> spectateIce(player);
+            case "status" -> msg(
+                player,
+                "Hielo: " + (iceActive ? "batalla activa" : "esperando")
+                    + " · cola " + iceQueue.size()
+                    + " · jugadores " + iceFighters.size(),
+                NamedTextColor.AQUA
+            );
+            case "portalhere" -> {
+                if (!player.isOp()) {
+                    msg(player, "Solo OP puede mover el portal.", NamedTextColor.RED);
+                    return true;
+                }
+                buildIcePortalAt(player);
+            }
+            case "rebuild" -> {
+                if (!player.isOp()) {
+                    msg(player, "Solo OP puede reconstruir la arena.", NamedTextColor.RED);
+                    return true;
+                }
+                if (!iceFighters.isEmpty()) {
+                    msg(player, "Esperá a que termine la batalla.", NamedTextColor.RED);
+                    return true;
+                }
+                buildIceStructures();
+                msg(player, "BATALLA DE HIELO reconstruida.", NamedTextColor.GREEN);
+            }
+            default -> msg(
+                player,
+                "/hielo join · leave · lobby · spectate · status"
+                    + (player.isOp() ? " · portalhere · rebuild" : ""),
+                NamedTextColor.YELLOW
+            );
+        }
+
+        return true;
     }
 
     private void msgAllPvp(String text) {
