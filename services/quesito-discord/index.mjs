@@ -661,6 +661,10 @@ async function synthesize(text) {
 function stopCurrentSpeech(state, { mute = false } = {}) {
   state.speechEpoch += 1;
   state.player.stop(true);
+  if (state.liveOutputStream) {
+    state.liveOutputStream.destroy();
+    state.liveOutputStream = null;
+  }
   state.speaking = false;
   state.speakQueue = Promise.resolve();
   if (mute) state.muted = true;
@@ -792,15 +796,28 @@ function attachReceiver(state) {
   const receiver = state.connection.receiver;
 
   receiver.speaking.on("start", (userId) => {
-    if (state.muted || state.receiving.has(userId)) return;
+    if (state.receiving.has(userId)) return;
     if (userId === discord.user?.id) return;
 
     state.receiving.add(userId);
+    state.activeSpeakers.add(userId);
+
+    if (state.mode === "live" && state.liveSession && state.activeSpeakers.size === 1) {
+      try {
+        state.liveSession.sendRealtimeInput({ activityStart: {} });
+      } catch (error) {
+        state.liveError = String(error?.message || error).slice(0, 500);
+        log("QUESITO_LIVE_ACTIVITY_ERROR", {
+          guildId: state.guildId,
+          error: state.liveError,
+        });
+      }
+    }
 
     const source = receiver.subscribe(userId, {
       end: {
         behavior: EndBehaviorType.AfterSilence,
-        duration: 900,
+        duration: 1150,
       },
     });
 
@@ -818,16 +835,55 @@ function attachReceiver(state) {
       if (closed) return;
       closed = true;
       state.receiving.delete(userId);
+      state.activeSpeakers.delete(userId);
 
-      if (chunks.length && total <= 3000000) {
+      if (state.mode === "live" && state.liveSession) {
+        if (state.activeSpeakers.size === 0) {
+          try {
+            state.liveSession.sendRealtimeInput({ activityEnd: {} });
+          } catch (error) {
+            state.liveError = String(error?.message || error).slice(0, 500);
+            log("QUESITO_LIVE_ACTIVITY_ERROR", {
+              guildId: state.guildId,
+              error: state.liveError,
+            });
+          }
+        }
+        return;
+      }
+
+      if (chunks.length && total <= 5000000) {
         void processUtterance(state, userId, Buffer.concat(chunks));
       }
     };
 
     decoder.on("data", (chunk) => {
-      total += chunk.length;
+      if (state.mode === "live" && state.liveSession) {
+        const pcm16 = downsampleStereo48kToMono16k(chunk);
+        if (!pcm16.length) return;
 
-      if (total <= 3000000) {
+        try {
+          state.liveSession.sendRealtimeInput({
+            audio: {
+              data: pcm16.toString("base64"),
+              mimeType: "audio/pcm;rate=16000",
+            },
+          });
+          voiceDiagnostics.lastStage = state.muted ? "muted-listening" : "listening";
+          voiceDiagnostics.lastAt = new Date().toISOString();
+        } catch (error) {
+          state.liveError = String(error?.message || error).slice(0, 500);
+          voiceDiagnostics.lastError = state.liveError;
+          log("QUESITO_LIVE_SEND_ERROR", {
+            guildId: state.guildId,
+            error: state.liveError,
+          });
+        }
+        return;
+      }
+
+      total += chunk.length;
+      if (total <= 5000000) {
         chunks.push(Buffer.from(chunk));
       } else {
         source.destroy();
