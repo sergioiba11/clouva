@@ -55,6 +55,7 @@ docker_args=(
   --restart unless-stopped
   -p 25565:25565/tcp
   -p 19132:19132/udp
+  -p 8100:8100/tcp
   -e EULA=TRUE
   -e TYPE=PAPER
   -e VERSION=26.3
@@ -70,7 +71,7 @@ docker_args=(
   -e ONLINE_MODE=FALSE
   -e ENFORCE_SECURE_PROFILE=FALSE
   -e ENABLE_WHITELIST=FALSE
-  -e "PLUGINS=https://download.geysermc.org/v2/projects/geyser/versions/latest/builds/latest/downloads/spigot,https://download.geysermc.org/v2/projects/floodgate/versions/latest/builds/latest/downloads/spigot,https://github.com/AuthMe/AuthMeReloaded/releases/download/6.0.1/AuthMe-6.0.1-Paper.jar"
+  -e "PLUGINS=https://download.geysermc.org/v2/projects/geyser/versions/latest/builds/latest/downloads/spigot,https://download.geysermc.org/v2/projects/floodgate/versions/latest/builds/latest/downloads/spigot,https://github.com/AuthMe/AuthMeReloaded/releases/download/6.0.1/AuthMe-6.0.1-Paper.jar,https://github.com/BlueMap-Minecraft/BlueMap/releases/download/v5.27/bluemap-5.27-paper.jar"
   -v "$WORLD_ROOT:/data"
 )
 
@@ -81,7 +82,74 @@ docker run "${docker_args[@]}" itzg/minecraft-server:latest
 for _ in $(seq 1 90); do
   config="$(find "$WORLD_ROOT/plugins" -maxdepth 3 -type f -name config.yml -ipath '*geyser*' 2>/dev/null | head -n 1 || true)"
   if [ -n "$config" ]; then
-    if grep -Eq '^[[:space:]]*auth-type:[[:space:]]*online[[:space:]]*$' "$config"; then
+    if grep -Eq '^[[:space:]]*auth-type:[[:space:]]*online[[:space:]]*# CLOUVA host watchdog: if Docker or the Minecraft listener hangs, recover it locally.
+cat >/usr/local/sbin/clouva-minecraft-watchdog.sh <<'EOF'
+#!/usr/bin/env bash
+set -u
+
+CONTAINER="clouva-minecraft"
+FAIL_FILE="/run/clouva-minecraft-watchdog.failures"
+
+failures=0
+[ -f "$FAIL_FILE" ] && failures="$(cat "$FAIL_FILE" 2>/dev/null || echo 0)"
+case "$failures" in
+  ''|*[!0-9]*) failures=0 ;;
+esac
+
+systemctl is-active --quiet docker || systemctl restart docker || true
+
+running="$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null || echo false)"
+if [ "$running" != "true" ]; then
+  docker start "$CONTAINER" >/dev/null 2>&1 || true
+  sleep 8
+fi
+
+if timeout 3 bash -c '</dev/tcp/127.0.0.1/25565' >/dev/null 2>&1; then
+  echo 0 >"$FAIL_FILE"
+  exit 0
+fi
+
+failures=$((failures + 1))
+echo "$failures" >"$FAIL_FILE"
+logger -t clouva-minecraft-watchdog "Minecraft health check failed ($failures/3)"
+
+if [ "$failures" -ge 3 ]; then
+  logger -t clouva-minecraft-watchdog "Restarting Minecraft container after repeated health-check failures"
+  docker restart "$CONTAINER" >/dev/null 2>&1 || true
+  echo 0 >"$FAIL_FILE"
+fi
+EOF
+chmod 0755 /usr/local/sbin/clouva-minecraft-watchdog.sh
+
+cat >/etc/systemd/system/clouva-minecraft-watchdog.service <<'EOF'
+[Unit]
+Description=CLOUVA Minecraft local watchdog
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/clouva-minecraft-watchdog.sh
+EOF
+
+cat >/etc/systemd/system/clouva-minecraft-watchdog.timer <<'EOF'
+[Unit]
+Description=Check CLOUVA Minecraft every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=15s
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now clouva-minecraft-watchdog.timer
+
+ "$config"; then
       sed -i -E 's/^([[:space:]]*auth-type:)[[:space:]]*online[[:space:]]*$/\1 floodgate/' "$config"
       docker restart "$CONTAINER_NAME"
     fi
@@ -90,6 +158,88 @@ for _ in $(seq 1 90); do
   sleep 2
 done
 
+
+# BlueMap powers the in-app real-time 3D map. On first boot it creates
+# its config and waits for explicit permission to download Mojang resources.
+# Enable that once, then restart so rendering + the web server on :8100 start.
+for _ in $(seq 1 90); do
+  bluemap_core="$WORLD_ROOT/plugins/BlueMap/core.conf"
+  if [ -f "$bluemap_core" ]; then
+    if grep -Eq '^[[:space:]]*accept-download:[[:space:]]*false[[:space:]]*# CLOUVA host watchdog: if Docker or the Minecraft listener hangs, recover it locally.
+cat >/usr/local/sbin/clouva-minecraft-watchdog.sh <<'EOF'
+#!/usr/bin/env bash
+set -u
+
+CONTAINER="clouva-minecraft"
+FAIL_FILE="/run/clouva-minecraft-watchdog.failures"
+
+failures=0
+[ -f "$FAIL_FILE" ] && failures="$(cat "$FAIL_FILE" 2>/dev/null || echo 0)"
+case "$failures" in
+  ''|*[!0-9]*) failures=0 ;;
+esac
+
+systemctl is-active --quiet docker || systemctl restart docker || true
+
+running="$(docker inspect -f '{{.State.Running}}' "$CONTAINER" 2>/dev/null || echo false)"
+if [ "$running" != "true" ]; then
+  docker start "$CONTAINER" >/dev/null 2>&1 || true
+  sleep 8
+fi
+
+if timeout 3 bash -c '</dev/tcp/127.0.0.1/25565' >/dev/null 2>&1; then
+  echo 0 >"$FAIL_FILE"
+  exit 0
+fi
+
+failures=$((failures + 1))
+echo "$failures" >"$FAIL_FILE"
+logger -t clouva-minecraft-watchdog "Minecraft health check failed ($failures/3)"
+
+if [ "$failures" -ge 3 ]; then
+  logger -t clouva-minecraft-watchdog "Restarting Minecraft container after repeated health-check failures"
+  docker restart "$CONTAINER" >/dev/null 2>&1 || true
+  echo 0 >"$FAIL_FILE"
+fi
+EOF
+chmod 0755 /usr/local/sbin/clouva-minecraft-watchdog.sh
+
+cat >/etc/systemd/system/clouva-minecraft-watchdog.service <<'EOF'
+[Unit]
+Description=CLOUVA Minecraft local watchdog
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/clouva-minecraft-watchdog.sh
+EOF
+
+cat >/etc/systemd/system/clouva-minecraft-watchdog.timer <<'EOF'
+[Unit]
+Description=Check CLOUVA Minecraft every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=15s
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now clouva-minecraft-watchdog.timer
+
+ "$bluemap_core"; then
+      sed -i -E 's/^([[:space:]]*accept-download:)[[:space:]]*false[[:space:]]*$/\1 true/' "$bluemap_core"
+      docker restart "$CONTAINER_NAME" >/dev/null
+    fi
+    break
+  fi
+  sleep 2
+done
 
 # CLOUVA host watchdog: if Docker or the Minecraft listener hangs, recover it locally.
 cat >/usr/local/sbin/clouva-minecraft-watchdog.sh <<'EOF'
