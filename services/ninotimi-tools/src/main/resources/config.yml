@@ -4,3 +4,7 @@ max-edit-blocks: 50000
 give-tools-on-join: true
 pvp:
   built: false
+
+skyblock:
+  built: false
+  next-index: 0
