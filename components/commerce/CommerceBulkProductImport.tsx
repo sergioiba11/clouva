@@ -334,7 +334,16 @@ export function CommerceBulkProductImport({
       );
       setGroups(analyzed.groups);
 
-      if (invoiceFile) await uploadAndAnalyzeInvoice(id, invoiceFile);
+      if (invoiceFile) {
+        try {
+          await uploadAndAnalyzeInvoice(id, invoiceFile);
+        } catch (invoiceError) {
+          setInvoiceData(null);
+          setError(invoiceError instanceof Error
+            ? `Los productos siguen; la factura quedó pendiente: ${invoiceError.message}`
+            : "Los productos siguen; la factura quedó pendiente.");
+        }
+      }
 
       setStage("creating");
       await processUntilFinished(id);
