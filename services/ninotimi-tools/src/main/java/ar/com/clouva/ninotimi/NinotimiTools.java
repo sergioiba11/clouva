@@ -61,6 +61,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     private static final String MAIN_TITLE = "NINOTIMI TOOLS";
     private static final String BLOCKS_TITLE = "BLOQUES — NINOTIMI";
     private static final String PVP_WORLD_NAME = "pvp_ninotimi";
+    private static final String ICE_WORLD_NAME = "hielo_ninotimi";
 
     private NamespacedKey toolsKey;
     private NamespacedKey wandKey;
@@ -75,6 +76,11 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     private final Map<UUID, PlayerState> duelStates = new HashMap<>();
     private final Map<UUID, PortalState> portalStates = new HashMap<>();
 
+    private final Deque<UUID> iceQueue = new ArrayDeque<>();
+    private final Set<UUID> iceFighters = new HashSet<>();
+    private final Map<UUID, PlayerState> iceStates = new HashMap<>();
+    private final Map<UUID, PortalState> icePortalStates = new HashMap<>();
+
     private World pvpWorld;
     private Region entryPortal;
     private Region exitPortal;
@@ -84,7 +90,17 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     private Location arenaSpawn2;
     private Location spectatorSpot;
 
+    private World iceWorld;
+    private Region iceEntryPortal;
+    private Region iceExitPortal;
+    private Region iceQueuePad;
+    private Location iceLobby;
+    private Location iceSpawn1;
+    private Location iceSpawn2;
+    private Location iceSpectatorSpot;
+
     private boolean duelActive;
+    private boolean iceActive;
     private int maxEditBlocks;
     private BukkitTask particleTask;
 
@@ -96,6 +112,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
 
         loadBuilders();
         setupPvp();
+        setupIceBattle();
 
         getServer().getPluginManager().registerEvents(this, this);
 
@@ -106,6 +123,10 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         if (getCommand("pvp") != null) {
             getCommand("pvp").setExecutor(this);
             getCommand("pvp").setTabCompleter(this);
+        }
+        if (getCommand("hielo") != null) {
+            getCommand("hielo").setExecutor(this);
+            getCommand("hielo").setTabCompleter(this);
         }
 
         startPortalParticles();
@@ -127,6 +148,16 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         fighters.clear();
         duelStates.clear();
         pvpQueue.clear();
+
+        for (UUID id : new HashSet<>(iceFighters)) {
+            Player player = Bukkit.getPlayer(id);
+            if (player != null) {
+                restoreIceState(player);
+            }
+        }
+        iceFighters.clear();
+        iceStates.clear();
+        iceQueue.clear();
     }
 
     private void loadBuilders() {
@@ -183,6 +214,14 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
                 }
             }, 20L);
         }
+
+        if (player.getWorld().getName().equals(ICE_WORLD_NAME) && !iceFighters.contains(player.getUniqueId())) {
+            Bukkit.getScheduler().runTaskLater(this, () -> {
+                if (player.isOnline()) {
+                    enterIceLobby(player, false);
+                }
+            }, 20L);
+        }
     }
 
     @EventHandler
@@ -200,6 +239,16 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         }
 
         portalStates.remove(id);
+
+        iceQueue.remove(id);
+        if (iceFighters.contains(id)) {
+            UUID winner = iceFighters.stream()
+                .filter(other -> !other.equals(id))
+                .findFirst()
+                .orElse(null);
+            endIceBattle(winner, "abandono");
+        }
+        icePortalStates.remove(id);
     }
 
     @EventHandler
@@ -311,12 +360,48 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
 
         if (queuePad != null && queuePad.contains(to)) {
             joinQueue(player);
+            return;
+        }
+
+        if (iceEntryPortal != null && iceEntryPortal.contains(to)) {
+            enterIceLobby(player, true);
+            return;
+        }
+
+        if (iceExitPortal != null && iceExitPortal.contains(to)) {
+            exitIce(player);
+            return;
+        }
+
+        if (iceQueuePad != null && iceQueuePad.contains(to)) {
+            joinIceQueue(player);
+            return;
+        }
+
+        if (
+            iceActive
+            && iceFighters.contains(player.getUniqueId())
+            && player.getWorld().getName().equals(ICE_WORLD_NAME)
+            && to.getY() < 76.0
+        ) {
+            UUID loser = player.getUniqueId();
+            UUID winner = iceFighters.stream()
+                .filter(id -> !id.equals(loser))
+                .findFirst()
+                .orElse(null);
+            endIceBattle(winner, "cayó al vacío");
         }
     }
 
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onPvpDamage(EntityDamageEvent event) {
         if (!(event.getEntity() instanceof Player victim)) return;
+
+        if (victim.getWorld().getName().equals(ICE_WORLD_NAME)) {
+            event.setCancelled(true);
+            return;
+        }
+
         if (!victim.getWorld().getName().equals(PVP_WORLD_NAME)) return;
 
         UUID victimId = victim.getUniqueId();
@@ -347,7 +432,30 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
 
     @EventHandler
     public void onBlockBreak(BlockBreakEvent event) {
-        if (!event.getBlock().getWorld().getName().equals(PVP_WORLD_NAME)) return;
+        String worldName = event.getBlock().getWorld().getName();
+
+        if (worldName.equals(ICE_WORLD_NAME)) {
+            Player player = event.getPlayer();
+            Block block = event.getBlock();
+
+            if (
+                iceActive
+                && iceFighters.contains(player.getUniqueId())
+                && isIceArenaFloor(block)
+                && (block.getType() == Material.SNOW_BLOCK || block.getType() == Material.PACKED_ICE)
+            ) {
+                event.setDropItems(false);
+                event.setExpToDrop(0);
+                return;
+            }
+
+            if (!canBuild(player) || !iceFighters.isEmpty()) {
+                event.setCancelled(true);
+            }
+            return;
+        }
+
+        if (!worldName.equals(PVP_WORLD_NAME)) return;
         if (!canBuild(event.getPlayer()) || !fighters.isEmpty()) {
             event.setCancelled(true);
         }
@@ -355,7 +463,16 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
 
     @EventHandler
     public void onBlockPlace(BlockPlaceEvent event) {
-        if (!event.getBlock().getWorld().getName().equals(PVP_WORLD_NAME)) return;
+        String worldName = event.getBlock().getWorld().getName();
+
+        if (worldName.equals(ICE_WORLD_NAME)) {
+            if (!canBuild(event.getPlayer()) || !iceFighters.isEmpty()) {
+                event.setCancelled(true);
+            }
+            return;
+        }
+
+        if (!worldName.equals(PVP_WORLD_NAME)) return;
         if (!canBuild(event.getPlayer()) || !fighters.isEmpty()) {
             event.setCancelled(true);
         }
@@ -893,6 +1010,8 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         particleTask = Bukkit.getScheduler().runTaskTimer(this, () -> {
             spawnRegionParticles(entryPortal);
             spawnRegionParticles(exitPortal);
+            spawnIceRegionParticles(iceEntryPortal);
+            spawnIceRegionParticles(iceExitPortal);
         }, 20L, 10L);
     }
 
@@ -1208,6 +1327,9 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         if (command.getName().equalsIgnoreCase("pvp")) {
             return handlePvpCommand(player, args);
         }
+        if (command.getName().equalsIgnoreCase("hielo")) {
+            return handleIceCommand(player, args);
+        }
 
         if (args.length == 0) {
             if (!canBuild(player)) {
@@ -1360,7 +1482,8 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             return List.of();
         }
 
-        if (command.getName().equalsIgnoreCase("pvp")) {
+        if (command.getName().equalsIgnoreCase("pvp")
+            || command.getName().equalsIgnoreCase("hielo")) {
             if (args.length != 1) return List.of();
 
             List<String> options = new ArrayList<>(List.of(
