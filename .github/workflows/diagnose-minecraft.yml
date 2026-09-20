@@ -61,6 +61,37 @@ jobs:
               df -h
             '
 
+      - name: BlueMap HTTP diagnostics
+        shell: bash
+        run: |
+          echo "===== PUBLIC CLOUVA MAP ====="
+          curl -vkL --max-time 20 https://clouva.com.ar/minecraft/map/ -o /tmp/clouva-map.html 2>&1 | tail -n 120 || true
+          echo "===== PUBLIC HTML HEAD ====="
+          head -n 80 /tmp/clouva-map.html 2>/dev/null || true
+          echo "===== PUBLIC ASSET PATHS ====="
+          grep -Eo '(src|href)="[^"]+"' /tmp/clouva-map.html 2>/dev/null | head -n 80 || true
+
+          echo "===== VM LOCAL BLUEMAP ====="
+          gcloud compute ssh "$MC_INSTANCE" \
+            --project "$PROJECT_ID" \
+            --zone "$MC_ZONE" \
+            --quiet \
+            --ssh-flag="-o StrictHostKeyChecking=no" \
+            --ssh-flag="-o UserKnownHostsFile=/dev/null" \
+            --command='
+              set +e
+              curl -svL --max-time 10 http://127.0.0.1:8100/ -o /tmp/bluemap-index.html 2>&1 | tail -n 100
+              echo "----- INDEX HEAD -----"
+              head -n 80 /tmp/bluemap-index.html
+              echo "----- ASSETS -----"
+              grep -Eo "(src|href)=\"[^\"]+\"" /tmp/bluemap-index.html | head -n 80
+              echo "----- BLUEMAP CONFIG -----"
+              sed -n "1,220p" /srv/minecraft/plugins/BlueMap/webserver.conf 2>/dev/null || true
+              sed -n "1,220p" /srv/minecraft/plugins/BlueMap/webapp.conf 2>/dev/null || true
+              echo "----- PORTS -----"
+              sudo ss -lntp | grep -E ":8100|:25565" || true
+            '
+
       - name: Startup serial output
         shell: bash
         run: |
