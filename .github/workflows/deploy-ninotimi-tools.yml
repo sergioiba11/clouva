@@ -61,7 +61,17 @@ jobs:
               sudo rm -f /srv/minecraft/plugins/NinosRataTools.jar
               sudo cp /tmp/NinotimiTools.jar /srv/minecraft/plugins/NinotimiTools.jar
               sudo chown root:root /srv/minecraft/plugins/NinotimiTools.jar
-              sudo docker restart clouva-minecraft >/dev/null
+
+              # One-time clean start for the new shared normal Survival.
+              RESET_MARKER=/srv/minecraft/.survival-comun-fresh-v1
+              if [ ! -e "$RESET_MARKER" ]; then
+                sudo docker stop clouva-minecraft >/dev/null
+                sudo rm -rf                   /srv/minecraft/survival_comun_ninotimi                   /srv/minecraft/survival_comun_ninotimi_nether                   /srv/minecraft/survival_comun_ninotimi_the_end
+                sudo touch "$RESET_MARKER"
+                sudo docker start clouva-minecraft >/dev/null
+              else
+                sudo docker restart clouva-minecraft >/dev/null
+              fi
             '
 
       - name: Verify NINOTIMI tools and Minecraft
@@ -99,4 +109,5 @@ jobs:
             echo "- Portal: auto-created near the main spawn"
             echo "- 1v1 queue: red pad in the PVP lobby"
             echo "- Internal player key: ninotimi (ASCII, ñ-safe)"
+            echo "- Shared Survival: fresh world, no OP privileges inside"
           } >> "$GITHUB_STEP_SUMMARY"
