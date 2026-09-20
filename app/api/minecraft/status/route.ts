@@ -164,7 +164,12 @@ export async function GET() {
   const bedrockPort = Number(process.env.MINECRAFT_BEDROCK_PORT || 19132);
   const publicJavaHost = process.env.MINECRAFT_PUBLIC_JAVA_HOST?.trim() || host;
   const publicBedrockHost = process.env.MINECRAFT_PUBLIC_BEDROCK_HOST?.trim() || host;
-  const mapUrl = process.env.MINECRAFT_MAP_URL?.trim() || "/minecraft/map/";
+  const rawMapUrl = process.env.MINECRAFT_MAP_URL?.trim() || "/minecraft/map/";
+  // BlueMap ships relative ./assets URLs. Next redirects directory URLs without
+  // a trailing slash, which would make those assets resolve under /minecraft/assets
+  // instead of /minecraft/map/assets. Point at index.html so the relative base stays
+  // inside the proxied BlueMap path and the embedded app can boot correctly.
+  const mapUrl = rawMapUrl.endsWith("/") ? `${rawMapUrl}index.html` : rawMapUrl;
 
   if (!host) {
     return NextResponse.json({
