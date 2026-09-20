@@ -39,6 +39,7 @@ import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerChangedWorldEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerRespawnEvent;
@@ -232,6 +233,12 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
 
         parkourRuns.clear();
         parkourPortalStates.clear();
+
+        for (Player player : Bukkit.getOnlinePlayers()) {
+            if (player.getWorld().getName().equals(SHARED_SURVIVAL_WORLD_NAME)) {
+                restoreSharedSurvivalOp(player);
+            }
+        }
     }
 
     private void loadBuilders() {
@@ -264,6 +271,10 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     }
 
     private boolean canBuild(Player player) {
+        if (player.getWorld().getName().equals(SHARED_SURVIVAL_WORLD_NAME)) {
+            return false;
+        }
+
         return player.isOp()
             || player.hasPermission("ninotimi.tools")
             || builderNames.contains(normalizeName(player.getName()));
@@ -272,6 +283,10 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     @EventHandler
     public void onJoin(PlayerJoinEvent event) {
         Player player = event.getPlayer();
+
+        if (player.getWorld().getName().equals(SHARED_SURVIVAL_WORLD_NAME)) {
+            suspendSharedSurvivalOp(player);
+        }
 
         if (canBuild(player) && getConfig().getBoolean("give-tools-on-join", true)) {
             Bukkit.getScheduler().runTaskLater(this, () -> {
@@ -319,6 +334,10 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     public void onQuit(PlayerQuitEvent event) {
         Player player = event.getPlayer();
         UUID id = player.getUniqueId();
+
+        if (player.getWorld().getName().equals(SHARED_SURVIVAL_WORLD_NAME)) {
+            restoreSharedSurvivalOp(player);
+        }
         pvpQueue.remove(id);
 
         if (fighters.contains(id)) {
@@ -349,6 +368,19 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         }
         parkourRuns.remove(id);
         parkourPortalStates.remove(id);
+    }
+
+    @EventHandler
+    public void onWorldChange(PlayerChangedWorldEvent event) {
+        Player player = event.getPlayer();
+        String from = event.getFrom().getName();
+        String to = player.getWorld().getName();
+
+        if (to.equals(SHARED_SURVIVAL_WORLD_NAME)) {
+            suspendSharedSurvivalOp(player);
+        } else if (from.equals(SHARED_SURVIVAL_WORLD_NAME)) {
+            restoreSharedSurvivalOp(player);
+        }
     }
 
     @EventHandler
@@ -1342,6 +1374,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             spawnSkyRegionParticles(skyEntryPortal);
             spawnSkyRegionParticles(skyExitPortal);
             spawnSkyRegionParticles(survivalEntryPortal);
+            enforceSharedSurvivalNoOp();
         }, 20L, 10L);
     }
 
@@ -2949,6 +2982,49 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
 
 
 
+    private String sharedSurvivalOpPath(Player player) {
+        return "survival.shared-op." + player.getUniqueId();
+    }
+
+    private void suspendSharedSurvivalOp(Player player) {
+        String path = sharedSurvivalOpPath(player);
+
+        if (!getConfig().contains(path)) {
+            getConfig().set(path, player.isOp());
+            saveConfig();
+        }
+
+        if (player.isOp()) {
+            player.setOp(false);
+        }
+    }
+
+    private void restoreSharedSurvivalOp(Player player) {
+        String path = sharedSurvivalOpPath(player);
+        if (!getConfig().contains(path)) {
+            return;
+        }
+
+        boolean wasOp = getConfig().getBoolean(path, false);
+        if (player.isOp() != wasOp) {
+            player.setOp(wasOp);
+        }
+
+        getConfig().set(path, null);
+        saveConfig();
+    }
+
+    private void enforceSharedSurvivalNoOp() {
+        if (sharedSurvivalWorld == null) return;
+
+        for (Player player : sharedSurvivalWorld.getPlayers()) {
+            if (player.isOp()) {
+                suspendSharedSurvivalOp(player);
+            }
+        }
+    }
+
+
     private void setupSurvival() {
         WorldCreator sharedCreator = new WorldCreator(SHARED_SURVIVAL_WORLD_NAME);
         sharedCreator.type(WorldType.NORMAL);
@@ -3102,6 +3178,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         player.setAllowFlight(false);
         player.setFlying(false);
         player.teleport(sharedSurvivalSpawn);
+        suspendSharedSurvivalOp(player);
         player.setFireTicks(0);
 
         player.sendTitle("SURVIVAL COMÚN", "Un mundo normal para jugar todos juntos", 10, 60, 10);
