@@ -1,0 +1,15 @@
+name: NinosRataTools
+version: 1.0.0
+main: ar.com.clouva.ninosrata.NinosRataTools
+api-version: '26.2'
+author: CLOUVA
+description: Builder tools menu for NIÑOS RATA SERVER
+commands:
+  nrtools:
+    description: Abre y administra NIÑOS RATA TOOLS
+    aliases: [tools, herramientas]
+    usage: /nrtools [grant|revoke|list|give]
+permissions:
+  ninosrata.tools:
+    description: Puede usar NIÑOS RATA TOOLS
+    default: op
