@@ -2766,14 +2766,6 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         if (command.getName().equalsIgnoreCase("hielo")) {
             return handleIceCommand(player, args);
         }
-        if (command.getName().equalsIgnoreCase("survival")) {
-            if (args.length != 1) return List.of();
-            List<String> options = new ArrayList<>(List.of("join", "leave", "status"));
-            if (player.isOp()) options.add("portalhere");
-            String prefix = args[0].toLowerCase(Locale.ROOT);
-            return options.stream().filter(v -> v.startsWith(prefix)).toList();
-        }
-
         if (command.getName().equalsIgnoreCase("npcgame")) {
             return handleNpcGameCommand(player, args);
         }
@@ -3798,6 +3790,24 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             }
 
             return List.of();
+        }
+
+        if (command.getName().equalsIgnoreCase("survival")) {
+            if (args.length != 1) return List.of();
+            List<String> options = new ArrayList<>(List.of("join", "leave", "status"));
+            if (player.isOp()) options.add("portalhere");
+            String prefix = args[0].toLowerCase(Locale.ROOT);
+            return options.stream().filter(v -> v.startsWith(prefix)).toList();
+        }
+
+        if (command.getName().equalsIgnoreCase("parkour")) {
+            if (args.length != 1) return List.of();
+            List<String> options = new ArrayList<>(List.of(
+                "menu", "lobby", "1", "2", "3", "restart", "leave"
+            ));
+            if (player.isOp()) options.add("rebuild");
+            String prefix = args[0].toLowerCase(Locale.ROOT);
+            return options.stream().filter(v -> v.startsWith(prefix)).toList();
         }
 
         if (command.getName().equalsIgnoreCase("npcgame")) {
