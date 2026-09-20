@@ -834,10 +834,22 @@ async function joinGuildVoice(guild, channelId) {
     ambientEnabled: true,
     pendingAmbient: false,
     lastAmbientAt: 0,
+    lastAmbientCheckAt: 0,
   };
 
   guildStates.set(guild.id, state);
   attachReceiver(state);
+
+  connection.on(VoiceConnectionStatus.Disconnected, async () => {
+    try {
+      await Promise.race([
+        entersState(connection, VoiceConnectionStatus.Signalling, 5000),
+        entersState(connection, VoiceConnectionStatus.Connecting, 5000),
+      ]);
+    } catch {
+      connection.destroy();
+    }
+  });
 
   connection.on(VoiceConnectionStatus.Destroyed, () => {
     guildStates.delete(guild.id);
@@ -1070,6 +1082,9 @@ discord.on("interactionCreate", async (interaction) => {
             : "conectado y escuchando “Quesito”"
           : "fuera del canal") +
         (state ? (state.ambientEnabled ? " · opiniones espontáneas ON" : " · opiniones espontáneas OFF") : "") +
+        (voiceDiagnostics.sttProvider ? " · STT " + voiceDiagnostics.sttProvider : "") +
+        (voiceDiagnostics.ttsProvider ? " · TTS " + voiceDiagnostics.ttsProvider : "") +
+        (voiceDiagnostics.lastTotalMs != null ? " · " + voiceDiagnostics.lastTotalMs + " ms última respuesta" : "") +
         ".\n🎮 " +
         minecraft,
       ephemeral: true,
