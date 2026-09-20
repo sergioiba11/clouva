@@ -127,6 +127,10 @@ export async function PATCH(request: NextRequest, context: { params: Promise<{ p
     const { data, error } = await admin.from("video_projects").update({
       audio_storage_path: objectPath,
       audio_url: url,
+      audio_analysis_status: "idle",
+      audio_analysis: null,
+      audio_analysis_error: null,
+      audio_analysis_execution_name: null,
     }).eq("id", project.id).eq("user_id", user.id).select("id").single();
     if (error || !data) throw new MediaApiError("No se pudo vincular el audio al proyecto.", 500, "audio_link_failed");
 

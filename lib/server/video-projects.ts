@@ -11,6 +11,8 @@ export const VIDEO_PROJECT_COLUMNS = [
   "id", "user_id", "title", "description", "master_prompt", "style_prompt",
   "provider", "model", "quality", "aspect_ratio", "target_duration_seconds",
   "maintain_style", "maintain_character", "use_frame_continuity", "generate_clip_audio",
+  "project_mode", "visualizer_reactivity", "audio_analysis_status", "audio_analysis",
+  "audio_analysis_error", "audio_analysis_execution_name",
   "reference_assets", "audio_storage_path", "audio_url", "status", "progress",
   "estimated_cost_usd", "actual_cost_usd", "cost_confirmed_at", "render_execution_name",
   "output_storage_path", "output_url", "thumbnail_storage_path", "thumbnail_url",
@@ -43,6 +45,12 @@ export type VideoProjectRow = {
   maintain_character: boolean;
   use_frame_continuity: boolean;
   generate_clip_audio: boolean;
+  project_mode: "video" | "visualizer";
+  visualizer_reactivity: number;
+  audio_analysis_status: "idle" | "queued" | "analyzing" | "completed" | "failed";
+  audio_analysis: Record<string, unknown> | null;
+  audio_analysis_error: string | null;
+  audio_analysis_execution_name: string | null;
   reference_assets: unknown[];
   audio_storage_path: string | null;
   audio_url: string | null;
@@ -124,6 +132,11 @@ export function toPublicVideoProject(row: VideoProjectRow) {
     maintainCharacter: row.maintain_character,
     useFrameContinuity: row.use_frame_continuity,
     generateClipAudio: row.generate_clip_audio,
+    projectMode: row.project_mode,
+    visualizerReactivity: Number(row.visualizer_reactivity || 1),
+    audioAnalysisStatus: row.audio_analysis_status,
+    audioAnalysis: row.audio_analysis,
+    audioAnalysisError: row.audio_analysis_error,
     referenceAssets: Array.isArray(row.reference_assets) ? row.reference_assets : [],
     audioUrl: row.audio_url,
     status: row.status,
@@ -216,6 +229,57 @@ function composeClipPrompt(project: VideoProjectRow, sequenceIndex: number, tota
   return parts.filter(Boolean).join("\n\n").slice(0, 4000);
 }
 
+type AudioFlowSection = { start?: number; end?: number; energy?: number; label?: string };
+type AudioFlowEvent = { time?: number; type?: string; strength?: number };
+
+function audioFlowPrompt(project: VideoProjectRow, job: VideoProjectJobRow, jobs: VideoProjectJobRow[]) {
+  if (project.project_mode !== "visualizer" || project.audio_analysis_status !== "completed" || !project.audio_analysis) {
+    return job.prompt;
+  }
+
+  const analysis = project.audio_analysis;
+  const bpm = Number(analysis.bpm || 0);
+  const sections = Array.isArray(analysis.sections) ? analysis.sections as AudioFlowSection[] : [];
+  const events = Array.isArray(analysis.events) ? analysis.events as AudioFlowEvent[] : [];
+  const ordered = [...jobs].sort((a, b) => a.sequence_index - b.sequence_index);
+  const analyzedDuration = Number(analysis.durationSeconds || 0);
+  const start = project.project_mode === "visualizer" && analyzedDuration > 0
+    ? (job.sequence_index / Math.max(1, ordered.length)) * analyzedDuration
+    : ordered
+      .filter((item) => item.sequence_index < job.sequence_index)
+      .reduce((sum, item) => sum + Number(item.duration_seconds || 0), 0);
+  const end = project.project_mode === "visualizer" && analyzedDuration > 0
+    ? ((job.sequence_index + 1) / Math.max(1, ordered.length)) * analyzedDuration
+    : start + Number(job.duration_seconds || 0);
+  const section = sections.find((item) => Number(item.start ?? 0) <= start && Number(item.end ?? 0) > start)
+    ?? sections.find((item) => Number(item.start ?? 0) < end && Number(item.end ?? 0) > start);
+  const localEvents = events
+    .filter((item) => Number(item.time ?? -1) >= start && Number(item.time ?? -1) < end)
+    .slice(0, 12);
+  const eventSummary = localEvents.length
+    ? localEvents.map((item) => `${item.type || "accent"}@${Number(item.time || 0).toFixed(2)}s`).join(", ")
+    : "no major accent detected";
+  const energy = Number(section?.energy ?? 0.5);
+  const energyLabel = section?.label || (energy >= 0.7 ? "high" : energy <= 0.35 ? "low" : "medium");
+  const motion = energy >= 0.7
+    ? "Use stronger camera/body motion and clearer rhythmic accents."
+    : energy <= 0.35
+      ? "Keep motion restrained, floating and spacious; save strong movement for detected accents."
+      : "Use controlled rhythmic motion with visible accents on the stronger hits.";
+
+  const cue = [
+    "AUDIO FLOW LOCK — the final master audio drives this visualizer.",
+    `Timeline segment: ${start.toFixed(2)}s–${end.toFixed(2)}s.`,
+    bpm > 0 ? `Detected tempo: ~${bpm.toFixed(1)} BPM.` : "",
+    `Section energy: ${energyLabel} (${energy.toFixed(2)}).`,
+    `Local accents: ${eventSummary}.`,
+    motion,
+    "Do not generate text overlays unless explicitly requested. Preserve the same visual universe while making movement feel musical rather than random.",
+  ].filter(Boolean).join("\n");
+
+  return `${job.prompt.slice(0, 3000)}\n\n${cue}`.slice(0, 4000);
+}
+
 export async function createVideoProjectClipPlan(args: {
   admin: SupabaseClient;
   project: VideoProjectRow;
@@ -234,9 +298,20 @@ export async function createVideoProjectClipPlan(args: {
     if (error) throw new Error("No se pudo reemplazar el plan anterior.");
   }
 
-  const durations = planDurations(args.project.target_duration_seconds);
-  const config = VIDEO_QUALITY_CONFIG[args.project.quality];
   const frameCount = args.frames.length;
+  const visualizerSources = Math.max(
+    1,
+    Math.min(12, frameCount || Math.ceil(args.project.target_duration_seconds / 45)),
+  );
+  const visualizerSourceDuration: VideoDuration = args.project.target_duration_seconds <= 4
+    ? 4
+    : args.project.target_duration_seconds <= 6
+      ? 6
+      : 8;
+  const durations = args.project.project_mode === "visualizer"
+    ? Array.from({ length: visualizerSources }, () => visualizerSourceDuration)
+    : planDurations(args.project.target_duration_seconds);
+  const config = VIDEO_QUALITY_CONFIG[args.project.quality];
   const rows = durations.map((duration, sequenceIndex) => {
     const currentFrameIndex = frameCount
       ? Math.min(frameCount - 1, Math.floor((sequenceIndex / durations.length) * frameCount))
@@ -381,7 +456,7 @@ async function syncActiveClip(admin: SupabaseClient, job: VideoProjectJobRow) {
   }
 }
 
-async function startQueuedClip(admin: SupabaseClient, project: VideoProjectRow, job: VideoProjectJobRow) {
+async function startQueuedClip(admin: SupabaseClient, project: VideoProjectRow, job: VideoProjectJobRow, timelineJobs: VideoProjectJobRow[]) {
   const now = new Date().toISOString();
   const nextAttempt = Number(job.attempt_count || 0) + 1;
   const { data: claimed, error: claimError } = await admin
@@ -409,7 +484,7 @@ async function startQueuedClip(admin: SupabaseClient, project: VideoProjectRow, 
       `video-projects/${project.user_id}/${project.id}/clips/${String(claimedJob.sequence_index).padStart(4, "0")}-${claimedJob.id}`,
     );
     const operation = await provider.generate({
-      prompt: claimedJob.prompt,
+      prompt: audioFlowPrompt(project, claimedJob, timelineJobs),
       negativePrompt: claimedJob.negative_prompt,
       model: claimedJob.model,
       aspectRatio: project.aspect_ratio,
@@ -533,7 +608,7 @@ export async function processVideoProjectStep(admin: SupabaseClient, projectId: 
   const slots = Math.max(0, parallelLimit() - activeCount);
   const now = Date.now();
   const queued = jobs.filter((job) => job.status === "queued" && (!job.next_retry_at || Date.parse(job.next_retry_at) <= now));
-  for (const job of queued.slice(0, slots)) await startQueuedClip(admin, project, job);
+  for (const job of queued.slice(0, slots)) await startQueuedClip(admin, project, job, jobs);
 
   jobs = await listVideoProjectJobs(admin, project.id);
   const failed = jobs.filter((job) => job.status === "failed");

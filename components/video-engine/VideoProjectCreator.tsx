@@ -39,6 +39,26 @@ function durationLabel(seconds: number) {
   return minutes ? `${minutes}:${String(rest).padStart(2, "0")}` : `${rest}s`;
 }
 
+function readAudioDuration(file: File) {
+  return new Promise<number>((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const audio = new Audio();
+    const cleanup = () => URL.revokeObjectURL(url);
+    audio.preload = "metadata";
+    audio.onloadedmetadata = () => {
+      const duration = Number(audio.duration);
+      cleanup();
+      if (Number.isFinite(duration) && duration > 0) resolve(duration);
+      else reject(new Error("No se pudo leer la duración del audio."));
+    };
+    audio.onerror = () => {
+      cleanup();
+      reject(new Error("No se pudo leer la duración del audio."));
+    };
+    audio.src = url;
+  });
+}
+
 function audioMimeType(file: File) {
   const declared = file.type.trim().toLowerCase();
   if (declared) return declared;
@@ -77,6 +97,8 @@ export function VideoProjectCreator() {
   const [stylePrompt, setStylePrompt] = useState("");
   const [aspectRatio, setAspectRatio] = useState<"16:9" | "9:16">("16:9");
   const [quality, setQuality] = useState<"economy" | "fast" | "cinematic">("fast");
+  const [projectMode, setProjectMode] = useState<"video" | "visualizer">("video");
+  const [visualizerReactivity, setVisualizerReactivity] = useState(1);
   const [targetDurationSeconds, setTargetDurationSeconds] = useState(8);
   const [maintainStyle, setMaintainStyle] = useState(true);
   const [maintainCharacter, setMaintainCharacter] = useState(true);
@@ -94,6 +116,9 @@ export function VideoProjectCreator() {
 
   const prepared = Boolean(project && clips.length);
   const completedClips = clips.filter((clip) => clip.status === "completed").length;
+  const visualizerAnalysisPending = project?.projectMode === "visualizer"
+    && ["queued", "analyzing"].includes(project.audioAnalysisStatus);
+  const visualizerReady = project?.projectMode !== "visualizer" || project.audioAnalysisStatus === "completed";
   const estimatedCost = project?.estimatedCostUsd ?? clips.reduce((sum, clip) => sum + Number(clip.estimatedCostUsd || 0), 0);
 
   const refreshProject = useCallback(async (projectId: string) => {
@@ -118,12 +143,16 @@ export function VideoProjectCreator() {
   }, [user, role]);
 
   useEffect(() => {
-    if (!project || !active.has(project.status)) return;
+    if (!project || (!active.has(project.status) && !["queued", "analyzing"].includes(project.audioAnalysisStatus))) return;
     let stopped = false;
     const sync = async () => {
       try {
         const next = await refreshProject(project.id);
         if (!stopped && next.status === "completed") setNotice("Video completado y guardado en CLOUVA.");
+        if (!stopped && next.projectMode === "visualizer" && next.audioAnalysisStatus === "completed") {
+          const bpm = Number(next.audioAnalysis?.bpm || 0);
+          setNotice(bpm > 0 ? `Flow detectado · ${bpm.toFixed(1)} BPM · visualizer listo para generar.` : "Flow del audio analizado · visualizer listo para generar.");
+        }
       } catch (pollError) {
         if (!stopped) setError(pollError instanceof Error ? pollError.message : "No se pudo actualizar el proyecto.");
       }
@@ -134,7 +163,7 @@ export function VideoProjectCreator() {
       stopped = true;
       window.clearInterval(timer);
     };
-  }, [project?.id, project?.status, refreshProject]);
+  }, [project?.id, project?.status, project?.audioAnalysisStatus, refreshProject]);
 
   const addRecentImage = (job: MediaJob) => {
     if (!job.outputUrl) return;
@@ -253,13 +282,48 @@ export function VideoProjectCreator() {
     return payload.project;
   };
 
+  const selectAudio = async (file: File | null) => {
+    setAudioFile(file);
+    if (!file || projectMode !== "visualizer") return;
+    try {
+      const duration = await readAudioDuration(file);
+      setTargetDurationSeconds(Math.max(4, Math.min(7200, Math.ceil(duration))));
+    } catch {
+      // Cloud analysis is authoritative; metadata detection only improves the initial plan.
+    }
+  };
+
+  const chooseProjectMode = async (mode: "video" | "visualizer") => {
+    setProjectMode(mode);
+    if (mode === "visualizer" && audioFile) {
+      try {
+        const duration = await readAudioDuration(audioFile);
+        setTargetDurationSeconds(Math.max(4, Math.min(7200, Math.ceil(duration))));
+      } catch {
+        // The server-side analyzer will resolve the exact duration after upload.
+      }
+    }
+  };
+
   const prepareProject = async () => {
     if (!title.trim()) return setError("Poné un nombre al proyecto.");
     if (!masterPrompt.trim() && !frames.length) return setError("Escribí la dirección visual o agregá frames.");
+    if (projectMode === "visualizer" && !audioFile) return setError("Subí el tema para que CLOUVA pueda reconocer el flow.");
     setBusy(true);
     setError(null);
     setNotice(null);
     try {
+      let resolvedDuration = targetDurationSeconds;
+      if (projectMode === "visualizer" && audioFile) {
+        try {
+          const detected = await readAudioDuration(audioFile);
+          resolvedDuration = Math.max(4, Math.min(7200, Math.ceil(detected)));
+          setTargetDurationSeconds(resolvedDuration);
+        } catch {
+          // Keep the selected duration until the cloud analyzer returns the exact master length.
+        }
+      }
+
       const createResponse = await authenticatedFetch("/api/video/projects", {
         method: "POST",
         body: JSON.stringify({
@@ -268,7 +332,9 @@ export function VideoProjectCreator() {
           stylePrompt: stylePrompt.trim(),
           quality,
           aspectRatio,
-          targetDurationSeconds,
+          projectMode,
+          visualizerReactivity,
+          targetDurationSeconds: resolvedDuration,
           maintainStyle,
           maintainCharacter,
           useFrameContinuity,
@@ -288,14 +354,45 @@ export function VideoProjectCreator() {
       );
       const planPayload = await readApiJson<{ clips: VideoClip[] }>(planResponse);
       setClips(planPayload.clips);
-      const refreshed = await refreshProject(nextProject.id);
-      setProject(refreshed);
-      setNotice(`Proyecto preparado: ${planPayload.clips.length} clips en el timeline.`);
+      let refreshed = await refreshProject(nextProject.id);
+      if (projectMode === "visualizer") {
+        const analyzeResponse = await authenticatedFetch(
+          `/api/video/projects/${encodeURIComponent(nextProject.id)}/analyze`,
+          { method: "POST" },
+        );
+        const analyzePayload = await readApiJson<{ project: VideoProject }>(analyzeResponse);
+        refreshed = analyzePayload.project;
+        setProject(refreshed);
+        setNotice(`Visualizer preparado: ${planPayload.clips.length} clips · CLOUVA está reconociendo el flow del tema.`);
+      } else {
+        setProject(refreshed);
+        setNotice(`Proyecto preparado: ${planPayload.clips.length} clips en el timeline.`);
+      }
     } catch (prepareError) {
       setError(prepareError instanceof Error ? prepareError.message : "No se pudo preparar el proyecto.");
     } finally {
       setBusy(false);
       setAudioUploadPercent(null);
+    }
+  };
+
+  const reanalyzeFlow = async () => {
+    if (!project || project.projectMode !== "visualizer") return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const response = await authenticatedFetch(
+        `/api/video/projects/${encodeURIComponent(project.id)}/analyze`,
+        { method: "POST" },
+      );
+      const payload = await readApiJson<{ project: VideoProject }>(response);
+      setProject(payload.project);
+      setNotice("CLOUVA está analizando de nuevo el flow del tema.");
+    } catch (analysisError) {
+      setError(analysisError instanceof Error ? analysisError.message : "No se pudo reiniciar el análisis del audio.");
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -386,6 +483,11 @@ export function VideoProjectCreator() {
             <>
               <section className="rounded-3xl border border-white/10 bg-white/[.035] p-4 sm:p-6">
                 <div className="grid gap-4">
+                  <div className="grid grid-cols-2 gap-2 rounded-2xl border border-white/10 bg-black/30 p-1">
+                    <button type="button" onClick={() => void chooseProjectMode("video")} className={`rounded-xl px-4 py-3 text-sm font-bold transition ${projectMode === "video" ? "bg-white text-black" : "text-white/55 hover:text-white"}`}>VIDEO</button>
+                    <button type="button" onClick={() => void chooseProjectMode("visualizer")} className={`rounded-xl px-4 py-3 text-sm font-bold transition ${projectMode === "visualizer" ? "bg-violet-300 text-black" : "text-white/55 hover:text-white"}`}>VISUALIZER</button>
+                  </div>
+                  {projectMode === "visualizer" ? <p className="text-xs leading-5 text-violet-200/70">El tema dirige el movimiento: CLOUVA detecta BPM, golpes, energía, breaks y drops para sincronizar el visual.</p> : null}
                   <label className="grid gap-2">
                     <span className="text-xs font-semibold uppercase tracking-wider text-white/45">Proyecto</span>
                     <input value={title} onChange={(event) => setTitle(event.target.value)} maxLength={160} className="rounded-2xl border border-white/10 bg-black/30 px-4 py-3 outline-none focus:border-violet-400/60" />
@@ -443,7 +545,7 @@ export function VideoProjectCreator() {
               </section>
 
               <section className="rounded-3xl border border-white/10 bg-white/[.035] p-4 sm:p-6">
-                <div className="mb-4 flex items-center gap-3"><Music2 size={18} /><div><h2 className="font-bold">Audio master</h2><p className="text-xs text-white/45">Opcional. WAV, MP3, M4A, AAC o FLAC.</p></div></div>
+                <div className="mb-4 flex items-center gap-3"><Music2 size={18} /><div><h2 className="font-bold">Audio master</h2><p className="text-xs text-white/45">{projectMode === "visualizer" ? "Obligatorio · CLOUVA lo analiza para reconocer el flow." : "Opcional. WAV, MP3, M4A, AAC o FLAC."}</p></div></div>
                 <button type="button" onClick={() => audioInput.current?.click()} disabled={busy} className="flex w-full items-center justify-between rounded-2xl border border-white/10 bg-black/30 px-4 py-4 text-left disabled:opacity-50">
                   <span className="truncate text-sm">{audioFile?.name || "Seleccionar audio master"}</span><Upload size={17} className="text-white/45" />
                 </button>
@@ -453,18 +555,40 @@ export function VideoProjectCreator() {
                     <div className="mt-1 text-right text-[11px] text-white/45">Subiendo directo a Google Cloud · {audioUploadPercent}%</div>
                   </div>
                 ) : null}
-                <input ref={audioInput} className="hidden" type="file" accept="audio/mpeg,audio/mp4,audio/x-m4a,audio/wav,audio/x-wav,audio/flac,audio/aac" onChange={(event) => setAudioFile(event.target.files?.[0] ?? null)} />
+                <input ref={audioInput} className="hidden" type="file" accept="audio/mpeg,audio/mp4,audio/x-m4a,audio/wav,audio/x-wav,audio/flac,audio/aac" onChange={(event) => void selectAudio(event.target.files?.[0] ?? null)} />
               </section>
             </>
           ) : (
             <section className="rounded-3xl border border-white/10 bg-white/[.035] p-4 sm:p-6">
               <div className="flex flex-wrap items-start justify-between gap-4">
-                <div><span className="text-xs uppercase tracking-[.2em] text-violet-300">{statusLabel(project?.status || "draft")}</span><h2 className="mt-1 text-2xl font-black">{project?.title}</h2><p className="mt-1 text-sm text-white/45">{clips.length} clips · {durationLabel(project?.targetDurationSeconds || 0)}</p></div>
+                <div><span className="text-xs uppercase tracking-[.2em] text-violet-300">{project?.projectMode === "visualizer" ? "Visualizer · " : ""}{statusLabel(project?.status || "draft")}</span><h2 className="mt-1 text-2xl font-black">{project?.title}</h2><p className="mt-1 text-sm text-white/45">{clips.length} clips · {durationLabel(project?.targetDurationSeconds || 0)}{project?.projectMode === "visualizer" && project.audioAnalysis?.bpm ? ` · ${Number(project.audioAnalysis.bpm).toFixed(1)} BPM` : ""}</p></div>
                 {project?.status === "completed" ? <span className="grid h-10 w-10 place-items-center rounded-full bg-emerald-400 text-black"><Check size={20} /></span> : null}
               </div>
 
               <div className="mt-6 h-2 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-white transition-all" style={{ width: `${project?.progress || 0}%` }} /></div>
               <div className="mt-2 flex justify-between text-xs text-white/45"><span>{completedClips} / {clips.length} clips</span><span>{project?.progress || 0}%</span></div>
+              {project?.projectMode === "visualizer" ? (
+                <div className="mt-4 rounded-2xl border border-violet-300/15 bg-violet-300/5 px-4 py-3 text-sm">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-semibold">Reconocimiento de sonido</span>
+                    <span className="text-xs uppercase tracking-wider text-violet-200/70">{project.audioAnalysisStatus}</span>
+                  </div>
+                  {project.audioAnalysisStatus === "completed" ? (
+                    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/55">
+                      <span>{Number(project.audioAnalysis?.bpm || 0).toFixed(1)} BPM</span>
+                      <span>{project.audioAnalysis?.sections?.length || 0} secciones</span>
+                      <span>{project.audioAnalysis?.events?.length || 0} acentos fuertes</span>
+                    </div>
+                  ) : project.audioAnalysisError ? (
+                    <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-xs text-red-200">{project.audioAnalysisError}</p>
+                      <button type="button" onClick={() => void reanalyzeFlow()} disabled={busy} className="rounded-full border border-white/15 px-3 py-1.5 text-xs font-semibold disabled:opacity-50">
+                        {busy ? "ANALIZANDO…" : "REANALIZAR FLOW"}
+                      </button>
+                    </div>
+                  ) : <p className="mt-2 text-xs text-white/45">Analizando ritmo, energía, breaks y drops en Google Cloud…</p>}
+                </div>
+              ) : null}
 
               <div className="mt-6 grid grid-cols-4 gap-2 sm:grid-cols-8">
                 {clips.map((clip) => (
@@ -508,7 +632,14 @@ export function VideoProjectCreator() {
             <div className="grid gap-3">
               <label className="grid gap-1.5"><span className="text-xs text-white/45">Formato</span><select value={aspectRatio} onChange={(event) => setAspectRatio(event.target.value as "16:9" | "9:16")} disabled={prepared} className="rounded-xl border border-white/10 bg-black/40 px-3 py-2.5"><option value="16:9">16:9 · YouTube</option><option value="9:16">9:16 · Vertical</option></select></label>
               <label className="grid gap-1.5"><span className="text-xs text-white/45">Motor</span><select value={quality} onChange={(event) => setQuality(event.target.value as typeof quality)} disabled={prepared} className="rounded-xl border border-white/10 bg-black/40 px-3 py-2.5">{qualityOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
-              <label className="grid gap-1.5"><span className="text-xs text-white/45">Duración objetivo</span><div className="flex gap-2"><input type="number" min={4} max={7200} value={targetDurationSeconds} onChange={(event) => setTargetDurationSeconds(Math.max(4, Math.min(7200, Number(event.target.value) || 4)))} disabled={prepared} className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/40 px-3 py-2.5" /><button type="button" onClick={() => setTargetDurationSeconds(480)} disabled={prepared} className="rounded-xl border border-white/10 px-3 text-xs">8 min</button></div></label>
+              {projectMode === "visualizer" ? (
+                <>
+                  <div className="grid gap-1.5"><span className="text-xs text-white/45">Duración</span><div className="rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-sm">{audioFile ? `Auto · ~${durationLabel(targetDurationSeconds)}` : "Auto · según el tema"}</div></div>
+                  <label className="grid gap-1.5"><span className="text-xs text-white/45">Reactividad · {visualizerReactivity.toFixed(2)}×</span><input type="range" min="0.25" max="2" step="0.05" value={visualizerReactivity} onChange={(event) => setVisualizerReactivity(Number(event.target.value))} disabled={prepared} className="w-full accent-violet-400" /></label>
+                </>
+              ) : (
+                <label className="grid gap-1.5"><span className="text-xs text-white/45">Duración objetivo</span><div className="flex gap-2"><input type="number" min={4} max={7200} value={targetDurationSeconds} onChange={(event) => setTargetDurationSeconds(Math.max(4, Math.min(7200, Number(event.target.value) || 4)))} disabled={prepared} className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/40 px-3 py-2.5" /><button type="button" onClick={() => setTargetDurationSeconds(480)} disabled={prepared} className="rounded-xl border border-white/10 px-3 text-xs">8 min</button></div></label>
+              )}
             </div>
 
             <div className="my-5 border-t border-white/10" />
@@ -523,8 +654,8 @@ export function VideoProjectCreator() {
                 <div className="my-5 border-t border-white/10" />
                 <div className="flex items-end justify-between"><span className="text-xs text-white/45">Costo estimado del plan</span><strong className="text-xl">USD {Number(estimatedCost).toFixed(2)}</strong></div>
                 {project?.status === "draft" || project?.status === "failed" ? (
-                  <button type="button" onClick={() => void generateProject()} disabled={busy} className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3.5 font-black text-black disabled:opacity-50">
-                    {busy ? <LoaderCircle className="animate-spin" size={18} /> : <Sparkles size={18} />}GENERAR EN CLOUD
+                  <button type="button" onClick={() => void generateProject()} disabled={busy || !visualizerReady} className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3.5 font-black text-black disabled:opacity-50">
+                    {busy || visualizerAnalysisPending ? <LoaderCircle className="animate-spin" size={18} /> : <Sparkles size={18} />}{visualizerAnalysisPending ? "ANALIZANDO FLOW" : "GENERAR EN CLOUD"}
                   </button>
                 ) : (
                   <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-center text-sm">{statusLabel(project?.status || "")}</div>
