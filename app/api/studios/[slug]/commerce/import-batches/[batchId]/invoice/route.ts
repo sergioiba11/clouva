@@ -69,7 +69,7 @@ function groupsFromMetadata(metadata: unknown): CommerceBatchGroup[] {
           const code = record(rawCode);
           const identifier = safeIdentifier(code);
           if (!identifier) return [];
-          const source = code.source === "box" ? "box" : code.source === "product" ? "product" : "unknown";
+          const source: CommerceBatchGroup["visibleIdentifiers"][number]["source"] = code.source === "box" ? "box" : code.source === "product" ? "product" : "unknown";
           return [{
             ...identifier,
             source,
