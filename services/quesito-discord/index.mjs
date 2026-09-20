@@ -417,7 +417,7 @@ async function transcribeWithVertex(pcmMono) {
 }
 
 async function transcribe(pcmMono) {
-  if (pcmMono.length < 12000) return "";
+  if (pcmMono.length < 48000) return "";
 
   try {
     const [response] = await speechClient.recognize({
@@ -627,6 +627,18 @@ async function processTranscript(state, userId, transcript, source = "streaming-
   const member = state.guild.members.cache.get(userId);
   const speaker = member?.displayName || "un jugador";
 
+  // Anti-spam barato: ignora repetidos y ráfagas del mismo usuario (ahorra cuota Vertex).
+  const now0 = Date.now();
+  const lastKey = state.guildId + ":" + userId;
+  const lastSeen = state.lastSeenByUser?.get(lastKey);
+  state.lastSeenByUser = state.lastSeenByUser || new Map();
+  if (lastSeen && now0 - lastSeen.at < 900 && lastSeen.text === clean) return;
+  state.lastSeenByUser.set(lastKey, { at: now0, text: clean });
+  if (state.lastSeenByUser.size > 50) {
+    const first = state.lastSeenByUser.keys().next().value;
+    state.lastSeenByUser.delete(first);
+  }
+
   // Ignorar ruiditos cortos sin wake: ahorra llamadas a Vertex.
   if (!hasWake && clean.length < 4 && Date.now() >= state.conversationUntil) return;
 
@@ -722,7 +734,7 @@ async function processTranscript(state, userId, transcript, source = "streaming-
     !state.speaking &&
     now - state.lastAmbientAt >= AMBIENT_MIN_GAP_MS &&
     now - state.lastAmbientCheckAt >= AMBIENT_CHECK_MIN_GAP_MS &&
-    clean.length >= 8
+    clean.length >= 12
   ) {
     state.pendingAmbient = true;
     state.lastAmbientCheckAt = now;
@@ -1329,6 +1341,7 @@ discord.on("interactionCreate", async (interaction) => {
         (state ? (state.ambientEnabled ? " · opiniones espontáneas ON" : " · opiniones espontáneas OFF") : "") +
         (voiceDiagnostics.sttProvider ? " · STT " + voiceDiagnostics.sttProvider : "") +
         (voiceDiagnostics.ttsProvider ? " · TTS " + voiceDiagnostics.ttsProvider : "") +
+        " · IA " + VERTEX_MODEL +
         (state && Date.now() < state.conversationUntil ? " · conversación activa" : "") +
         (voiceDiagnostics.lastTotalMs != null ? " · " + voiceDiagnostics.lastTotalMs + " ms última respuesta" : "") +
         ".\n🎮 " +
