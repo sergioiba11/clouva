@@ -1,0 +1,18 @@
+name: NinotimiTools
+version: 2.0.0
+main: ar.com.clouva.ninotimi.NinotimiTools
+api-version: '26.2'
+author: CLOUVA
+description: NINOTIMI builder tools + PVP portal/arena
+commands:
+  nrtools:
+    description: Abre y administra NINOTIMI TOOLS
+    aliases: [tools, herramientas, ninotimi]
+    usage: /nrtools [grant|revoke|list|give]
+  pvp:
+    description: Controla NINOTIMI PVP
+    usage: /pvp [join|leave|lobby|spectate|status|portalhere|rebuild]
+permissions:
+  ninotimi.tools:
+    description: Puede usar NINOTIMI TOOLS
+    default: op
