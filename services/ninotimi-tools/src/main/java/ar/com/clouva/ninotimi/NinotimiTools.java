@@ -64,7 +64,9 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     private static final String MAIN_TITLE = "NINOTIMI TOOLS";
     private static final String BLOCKS_TITLE = "BLOQUES — NINOTIMI";
     private static final String GAME_MENU_TITLE = "JUEGOS — NINOTIMI";
+    private static final String PARKOUR_MENU_TITLE = "PARKOUR — ELEGÍ MAPA";
     private static final String PVP_WORLD_NAME = "pvp_ninotimi";
+    private static final String PARKOUR_WORLD_NAME = "parkour_ninotimi";
     private static final String ICE_WORLD_NAME = "hielo_ninotimi";
     private static final String SKY_WORLD_NAME = "skyblock_ninotimi";
     private static final int SKY_ISLAND_SPACING = 256;
@@ -92,6 +94,8 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     private final Map<UUID, PlayerState> iceStates = new HashMap<>();
     private final Map<UUID, PortalState> icePortalStates = new HashMap<>();
     private final Map<UUID, PortalState> skyPortalStates = new HashMap<>();
+    private final Map<UUID, PortalState> parkourPortalStates = new HashMap<>();
+    private final Map<UUID, ParkourRun> parkourRuns = new HashMap<>();
 
     private World pvpWorld;
     private Region entryPortal;
@@ -117,6 +121,9 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     private Region skyHomePad;
     private Location skyLobby;
 
+    private World parkourWorld;
+    private Location parkourLobby;
+
     private boolean duelActive;
     private boolean iceActive;
     private int maxEditBlocks;
@@ -134,6 +141,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         setupPvp();
         setupIceBattle();
         setupSkyblock();
+        setupParkour();
         ensureDefaultGameNpc();
 
         getServer().getPluginManager().registerEvents(this, this);
@@ -153,6 +161,10 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         if (getCommand("skyblock") != null) {
             getCommand("skyblock").setExecutor(this);
             getCommand("skyblock").setTabCompleter(this);
+        }
+        if (getCommand("parkour") != null) {
+            getCommand("parkour").setExecutor(this);
+            getCommand("parkour").setTabCompleter(this);
         }
         if (getCommand("npcgame") != null) {
             getCommand("npcgame").setExecutor(this);
@@ -192,6 +204,9 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         iceFighters.clear();
         iceStates.clear();
         iceQueue.clear();
+
+        parkourRuns.clear();
+        parkourPortalStates.clear();
     }
 
     private void loadBuilders() {
@@ -264,6 +279,14 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
                 }
             }, 20L);
         }
+
+        if (player.getWorld().getName().equals(PARKOUR_WORLD_NAME)) {
+            Bukkit.getScheduler().runTaskLater(this, () -> {
+                if (player.isOnline() && player.getWorld().getName().equals(PARKOUR_WORLD_NAME)) {
+                    enterParkourLobby(player, false);
+                }
+            }, 20L);
+        }
     }
 
     @EventHandler
@@ -293,6 +316,8 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         }
         icePortalStates.remove(id);
         skyPortalStates.remove(id);
+        parkourRuns.remove(id);
+        parkourPortalStates.remove(id);
     }
 
     @EventHandler
@@ -365,6 +390,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             case "pvp" -> enterPvpLobby(player, true);
             case "hielo" -> enterIceLobby(player, true);
             case "skyblock" -> enterSkyLobby(player, true);
+            case "parkour" -> openParkourMenu(player, true);
             default -> openGameMenu(player);
         }
     }
@@ -376,6 +402,33 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         }
 
         String title = PlainTextComponentSerializer.plainText().serialize(event.getView().title());
+
+        if (PARKOUR_MENU_TITLE.equals(title)) {
+            event.setCancelled(true);
+            if (event.getRawSlot() < 0) return;
+
+            switch (event.getRawSlot()) {
+                case 11 -> {
+                    player.closeInventory();
+                    startParkour(player, 0);
+                }
+                case 13 -> {
+                    player.closeInventory();
+                    startParkour(player, 1);
+                }
+                case 15 -> {
+                    player.closeInventory();
+                    startParkour(player, 2);
+                }
+                case 22 -> {
+                    player.closeInventory();
+                    enterParkourLobby(player, false);
+                }
+                default -> {
+                }
+            }
+            return;
+        }
 
         if (GAME_MENU_TITLE.equals(title)) {
             event.setCancelled(true);
@@ -393,6 +446,10 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
                 case 15 -> {
                     player.closeInventory();
                     enterSkyLobby(player, true);
+                }
+                case 17 -> {
+                    player.closeInventory();
+                    openParkourMenu(player, true);
                 }
                 case 22 -> player.closeInventory();
                 default -> {
@@ -495,6 +552,11 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
 
         if (player.getWorld().getName().equals(SKY_WORLD_NAME) && to.getY() < 30.0) {
             teleportSkyHome(player);
+            return;
+        }
+
+        if (player.getWorld().getName().equals(PARKOUR_WORLD_NAME)) {
+            handleParkourMove(player, to);
         }
     }
 
@@ -507,7 +569,8 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
 
         if (!(event.getEntity() instanceof Player victim)) return;
 
-        if (victim.getWorld().getName().equals(ICE_WORLD_NAME)) {
+        if (victim.getWorld().getName().equals(ICE_WORLD_NAME)
+            || victim.getWorld().getName().equals(PARKOUR_WORLD_NAME)) {
             event.setCancelled(true);
             return;
         }
@@ -543,6 +606,13 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     @EventHandler
     public void onBlockBreak(BlockBreakEvent event) {
         String worldName = event.getBlock().getWorld().getName();
+
+        if (worldName.equals(PARKOUR_WORLD_NAME)) {
+            if (!canBuild(event.getPlayer())) {
+                event.setCancelled(true);
+            }
+            return;
+        }
 
         if (worldName.equals(SKY_WORLD_NAME)) {
             if (!canEditSkyBlock(event.getPlayer(), event.getBlock().getLocation())) {
@@ -582,6 +652,13 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     @EventHandler
     public void onBlockPlace(BlockPlaceEvent event) {
         String worldName = event.getBlock().getWorld().getName();
+
+        if (worldName.equals(PARKOUR_WORLD_NAME)) {
+            if (!canBuild(event.getPlayer())) {
+                event.setCancelled(true);
+            }
+            return;
+        }
 
         if (worldName.equals(SKY_WORLD_NAME)) {
             if (!canEditSkyBlock(event.getPlayer(), event.getBlock().getLocation())) {
@@ -2659,11 +2736,24 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         if (command.getName().equalsIgnoreCase("hielo")) {
             return handleIceCommand(player, args);
         }
+        if (command.getName().equalsIgnoreCase("parkour")) {
+            if (args.length != 1) return List.of();
+            List<String> options = new ArrayList<>(List.of(
+                "menu", "lobby", "1", "2", "3", "restart", "leave"
+            ));
+            if (player.isOp()) options.add("rebuild");
+            String prefix = args[0].toLowerCase(Locale.ROOT);
+            return options.stream().filter(v -> v.startsWith(prefix)).toList();
+        }
+
         if (command.getName().equalsIgnoreCase("npcgame")) {
             return handleNpcGameCommand(player, args);
         }
         if (command.getName().equalsIgnoreCase("skyblock")) {
             return handleSkyblockCommand(player, args);
+        }
+        if (command.getName().equalsIgnoreCase("parkour")) {
+            return handleParkourCommand(player, args);
         }
 
         if (args.length == 0) {
@@ -2736,6 +2826,423 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     }
 
 
+    private void setupParkour() {
+        WorldCreator creator = new WorldCreator(PARKOUR_WORLD_NAME);
+        creator.type(WorldType.FLAT);
+        creator.generateStructures(false);
+        creator.generatorSettings("{\"layers\":[],\"biome\":\"minecraft:the_void\"}");
+
+        parkourWorld = Bukkit.getWorld(PARKOUR_WORLD_NAME);
+        if (parkourWorld == null) {
+            parkourWorld = creator.createWorld();
+        }
+
+        if (parkourWorld == null) {
+            getLogger().severe("No se pudo crear NINOTIMI PARKOUR.");
+            return;
+        }
+
+        parkourWorld.setPVP(false);
+        parkourWorld.setTime(6000);
+        parkourWorld.setStorm(false);
+        parkourWorld.setThundering(false);
+        parkourWorld.setGameRule(GameRule.DO_MOB_SPAWNING, false);
+        parkourWorld.setGameRule(GameRule.DO_DAYLIGHT_CYCLE, false);
+        parkourWorld.setGameRule(GameRule.DO_WEATHER_CYCLE, false);
+        parkourWorld.setGameRule(GameRule.KEEP_INVENTORY, true);
+
+        parkourLobby = new Location(parkourWorld, 0.5, 81.0, 0.5, 180f, 0f);
+        parkourWorld.setSpawnLocation(parkourLobby);
+
+        if (getConfig().getInt("parkour.build-version", 0) < 1) {
+            buildParkourWorld();
+            getConfig().set("parkour.build-version", 1);
+            saveConfig();
+        }
+    }
+
+    private void buildParkourWorld() {
+        if (parkourWorld == null) return;
+
+        for (int x = -12; x <= 12; x++) {
+            for (int z = -10; z <= 10; z++) {
+                parkourWorld.getBlockAt(x, 80, z).setType(
+                    Math.abs(x) == 12 || Math.abs(z) == 10
+                        ? Material.YELLOW_CONCRETE
+                        : Material.BLACK_CONCRETE,
+                    false
+                );
+            }
+        }
+
+        buildParkourTrack(0);
+        buildParkourTrack(1);
+        buildParkourTrack(2);
+    }
+
+    private int[][] parkourLayout(int track) {
+        return switch (track) {
+            case 0 -> new int[][]{
+                {0,0,0,3}, {0,0,5,3}, {2,0,10,3}, {2,1,15,3},
+                {0,1,20,3}, {-2,2,25,3}, {0,2,30,3}, {2,3,35,3},
+                {0,3,40,3}, {0,4,46,5}
+            };
+            case 1 -> new int[][]{
+                {0,0,0,3}, {0,1,5,2}, {3,1,10,2}, {-1,2,15,2},
+                {3,3,20,2}, {0,3,26,2}, {-3,4,31,2}, {1,5,37,2},
+                {4,5,43,2}, {0,6,49,2}, {-3,7,55,2}, {0,8,62,4}
+            };
+            default -> new int[][]{
+                {0,0,0,3}, {0,1,5,1}, {3,2,9,1}, {-1,3,14,1},
+                {3,4,18,1}, {-3,5,23,1}, {1,6,28,1}, {4,7,33,1},
+                {0,8,38,1}, {-4,9,43,1}, {0,10,48,1}, {3,11,53,1},
+                {-2,12,58,1}, {0,13,64,3}
+            };
+        };
+    }
+
+    private int parkourBaseX(int track) {
+        return switch (track) {
+            case 0 -> -80;
+            case 1 -> 0;
+            default -> 80;
+        };
+    }
+
+    private Material parkourMaterial(int track) {
+        return switch (track) {
+            case 0 -> Material.LIME_CONCRETE;
+            case 1 -> Material.ORANGE_CONCRETE;
+            default -> Material.RED_CONCRETE;
+        };
+    }
+
+    private String parkourName(int track) {
+        return switch (track) {
+            case 0 -> "FÁCIL";
+            case 1 -> "MEDIO";
+            default -> "DIFÍCIL";
+        };
+    }
+
+    private void buildParkourTrack(int track) {
+        int[][] layout = parkourLayout(track);
+        int baseX = parkourBaseX(track);
+        int baseY = 80;
+        int baseZ = 35;
+        Material material = parkourMaterial(track);
+
+        for (int i = 0; i < layout.length; i++) {
+            int[] step = layout[i];
+            int size = step[3];
+            int half = size / 2;
+
+            for (int dx = -half; dx <= half; dx++) {
+                for (int dz = -half; dz <= half; dz++) {
+                    parkourWorld.getBlockAt(
+                        baseX + step[0] + dx,
+                        baseY + step[1],
+                        baseZ + step[2] + dz
+                    ).setType(material, false);
+                }
+            }
+
+            if (i == layout.length - 1) {
+                for (int dx = -2; dx <= 2; dx++) {
+                    parkourWorld.getBlockAt(
+                        baseX + step[0] + dx,
+                        baseY + step[1],
+                        baseZ + step[2]
+                    ).setType(Material.GOLD_BLOCK, false);
+                }
+            }
+        }
+    }
+
+    private Location parkourStepLocation(int track, int stepIndex) {
+        int[][] layout = parkourLayout(track);
+        int safeIndex = Math.max(0, Math.min(stepIndex, layout.length - 1));
+        int[] step = layout[safeIndex];
+        return new Location(
+            parkourWorld,
+            parkourBaseX(track) + step[0] + 0.5,
+            81.0 + step[1],
+            35.0 + step[2] + 0.5,
+            0f,
+            0f
+        );
+    }
+
+    private int firstCheckpointIndex(int track) {
+        int length = parkourLayout(track).length;
+        return Math.max(2, length / 3);
+    }
+
+    private int secondCheckpointIndex(int track) {
+        int length = parkourLayout(track).length;
+        return Math.max(firstCheckpointIndex(track) + 1, (length * 2) / 3);
+    }
+
+    private void openParkourMenu(Player player, boolean rememberReturn) {
+        if (parkourWorld == null) {
+            msg(player, "PARKOUR todavía no está disponible.", NamedTextColor.RED);
+            return;
+        }
+
+        if (rememberReturn && !player.getWorld().getName().equals(PARKOUR_WORLD_NAME)) {
+            parkourPortalStates.putIfAbsent(
+                player.getUniqueId(),
+                new PortalState(
+                    player.getLocation().clone(),
+                    player.getGameMode(),
+                    player.getAllowFlight(),
+                    player.isFlying()
+                )
+            );
+        }
+
+        Inventory inv = Bukkit.createInventory(null, 27, Component.text(PARKOUR_MENU_TITLE));
+        inv.setItem(11, menuItem(Material.LIME_CONCRETE, "PARKOUR 1 · FÁCIL", "Saltos grandes + 2 checkpoints"));
+        inv.setItem(13, menuItem(Material.ORANGE_CONCRETE, "PARKOUR 2 · MEDIO", "Más distancia + plataformas chicas"));
+        inv.setItem(15, menuItem(Material.RED_CONCRETE, "PARKOUR 3 · DIFÍCIL", "Bloques de 1 + altura"));
+        inv.setItem(22, menuItem(Material.BARRIER, "Volver", "Volver al lobby de parkour"));
+        player.openInventory(inv);
+    }
+
+    private void enterParkourLobby(Player player, boolean rememberReturn) {
+        if (parkourWorld == null || parkourLobby == null) {
+            msg(player, "PARKOUR todavía no está disponible.", NamedTextColor.RED);
+            return;
+        }
+
+        if (rememberReturn && !player.getWorld().getName().equals(PARKOUR_WORLD_NAME)) {
+            parkourPortalStates.putIfAbsent(
+                player.getUniqueId(),
+                new PortalState(
+                    player.getLocation().clone(),
+                    player.getGameMode(),
+                    player.getAllowFlight(),
+                    player.isFlying()
+                )
+            );
+        }
+
+        parkourRuns.remove(player.getUniqueId());
+        player.setGameMode(GameMode.ADVENTURE);
+        player.setAllowFlight(false);
+        player.setFlying(false);
+        player.teleport(parkourLobby);
+        player.setHealth(player.getMaxHealth());
+        player.setFoodLevel(20);
+        player.setSaturation(20f);
+        player.setFireTicks(0);
+
+        player.sendTitle("NINOTIMI PARKOUR", "Elegí uno de los 3 mapas", 5, 40, 10);
+        Bukkit.getScheduler().runTaskLater(this, () -> {
+            if (player.isOnline() && player.getWorld().getName().equals(PARKOUR_WORLD_NAME)) {
+                openParkourMenu(player, false);
+            }
+        }, 10L);
+    }
+
+    private void startParkour(Player player, int track) {
+        if (parkourWorld == null) return;
+        if (track < 0 || track > 2) track = 0;
+
+        Location start = parkourStepLocation(track, 0);
+        parkourRuns.put(
+            player.getUniqueId(),
+            new ParkourRun(track, 0, System.currentTimeMillis())
+        );
+
+        player.setGameMode(GameMode.ADVENTURE);
+        player.setAllowFlight(false);
+        player.setFlying(false);
+        player.teleport(start);
+        player.setFallDistance(0f);
+
+        player.sendTitle(
+            "PARKOUR " + (track + 1),
+            parkourName(track) + " · ¡YA!",
+            5, 30, 5
+        );
+    }
+
+    private void handleParkourMove(Player player, Location to) {
+        ParkourRun run = parkourRuns.get(player.getUniqueId());
+
+        if (run == null) {
+            if (to.getY() < 45.0) {
+                enterParkourLobby(player, false);
+            }
+            return;
+        }
+
+        if (to.getY() < 45.0) {
+            respawnParkour(player, run);
+            return;
+        }
+
+        int track = run.track();
+        int[][] layout = parkourLayout(track);
+        int first = firstCheckpointIndex(track);
+        int second = secondCheckpointIndex(track);
+
+        if (run.checkpoint() < 1 && isNearParkourStep(to, track, first)) {
+            run = new ParkourRun(track, 1, run.startedAt());
+            parkourRuns.put(player.getUniqueId(), run);
+            msg(player, "Checkpoint 1/2 ✓", NamedTextColor.GREEN);
+        }
+
+        if (run.checkpoint() < 2 && isNearParkourStep(to, track, second)) {
+            run = new ParkourRun(track, 2, run.startedAt());
+            parkourRuns.put(player.getUniqueId(), run);
+            msg(player, "Checkpoint 2/2 ✓", NamedTextColor.GREEN);
+        }
+
+        if (isNearParkourStep(to, track, layout.length - 1)) {
+            finishParkour(player, run);
+        }
+    }
+
+    private boolean isNearParkourStep(Location location, int track, int stepIndex) {
+        Location target = parkourStepLocation(track, stepIndex);
+        if (location.getWorld() != target.getWorld()) return false;
+
+        double dx = Math.abs(location.getX() - target.getX());
+        double dy = Math.abs(location.getY() - target.getY());
+        double dz = Math.abs(location.getZ() - target.getZ());
+
+        return dx <= 2.2 && dy <= 1.8 && dz <= 2.2;
+    }
+
+    private void respawnParkour(Player player, ParkourRun run) {
+        int stepIndex = switch (run.checkpoint()) {
+            case 1 -> firstCheckpointIndex(run.track());
+            case 2 -> secondCheckpointIndex(run.track());
+            default -> 0;
+        };
+
+        player.teleport(parkourStepLocation(run.track(), stepIndex));
+        player.setFallDistance(0f);
+        msg(
+            player,
+            run.checkpoint() == 0
+                ? "Caíste. Volvés al inicio."
+                : "Caíste. Volvés al checkpoint " + run.checkpoint() + ".",
+            NamedTextColor.YELLOW
+        );
+    }
+
+    private void finishParkour(Player player, ParkourRun run) {
+        long elapsed = Math.max(1L, System.currentTimeMillis() - run.startedAt());
+        double seconds = elapsed / 1000.0;
+        String bestPath = "parkour.best." + player.getUniqueId() + "." + run.track();
+        long previousBest = getConfig().getLong(bestPath, 0L);
+        boolean record = previousBest <= 0L || elapsed < previousBest;
+
+        if (record) {
+            getConfig().set(bestPath, elapsed);
+            getConfig().set("parkour.names." + player.getUniqueId(), player.getName());
+            saveConfig();
+        }
+
+        parkourRuns.remove(player.getUniqueId());
+        player.sendTitle(
+            "¡META!",
+            String.format(Locale.ROOT, "%.2f s%s", seconds, record ? " · RÉCORD" : ""),
+            5, 60, 10
+        );
+        msg(
+            player,
+            "Terminaste PARKOUR " + (run.track() + 1)
+                + " (" + parkourName(run.track()) + ") en "
+                + String.format(Locale.ROOT, "%.2f segundos", seconds)
+                + (record ? " · nuevo récord." : "."),
+            record ? NamedTextColor.GOLD : NamedTextColor.GREEN
+        );
+
+        Bukkit.getScheduler().runTaskLater(this, () -> {
+            if (player.isOnline()) {
+                enterParkourLobby(player, false);
+            }
+        }, 60L);
+    }
+
+    private void exitParkour(Player player) {
+        parkourRuns.remove(player.getUniqueId());
+        PortalState previous = parkourPortalStates.remove(player.getUniqueId());
+
+        if (previous != null && previous.location().getWorld() != null) {
+            player.teleport(previous.location());
+            player.setGameMode(previous.gameMode());
+            player.setAllowFlight(previous.allowFlight());
+            player.setFlying(previous.flying() && previous.allowFlight());
+        } else {
+            World main = Bukkit.getWorlds().get(0);
+            player.teleport(main.getSpawnLocation());
+            player.setGameMode(GameMode.SURVIVAL);
+            player.setAllowFlight(false);
+            player.setFlying(false);
+        }
+
+        msg(player, "Saliste de PARKOUR.", NamedTextColor.GREEN);
+    }
+
+    private boolean handleParkourCommand(Player player, String[] args) {
+        String sub = args.length == 0 ? "menu" : args[0].toLowerCase(Locale.ROOT);
+
+        switch (sub) {
+            case "menu", "lobby" -> enterParkourLobby(
+                player,
+                !player.getWorld().getName().equals(PARKOUR_WORLD_NAME)
+            );
+            case "1", "facil", "fácil" -> {
+                if (!player.getWorld().getName().equals(PARKOUR_WORLD_NAME)) {
+                    enterParkourLobby(player, true);
+                }
+                startParkour(player, 0);
+            }
+            case "2", "medio" -> {
+                if (!player.getWorld().getName().equals(PARKOUR_WORLD_NAME)) {
+                    enterParkourLobby(player, true);
+                }
+                startParkour(player, 1);
+            }
+            case "3", "dificil", "difícil" -> {
+                if (!player.getWorld().getName().equals(PARKOUR_WORLD_NAME)) {
+                    enterParkourLobby(player, true);
+                }
+                startParkour(player, 2);
+            }
+            case "leave", "salir" -> exitParkour(player);
+            case "restart", "reiniciar" -> {
+                ParkourRun run = parkourRuns.get(player.getUniqueId());
+                if (run == null) {
+                    openParkourMenu(player, !player.getWorld().getName().equals(PARKOUR_WORLD_NAME));
+                } else {
+                    startParkour(player, run.track());
+                }
+            }
+            case "rebuild" -> {
+                if (!player.isOp()) {
+                    msg(player, "Solo OP puede reconstruir el parkour.", NamedTextColor.RED);
+                    return true;
+                }
+                buildParkourWorld();
+                msg(player, "Los 3 parkours fueron reconstruidos.", NamedTextColor.GREEN);
+            }
+            default -> msg(
+                player,
+                "/parkour menu · 1 · 2 · 3 · restart · leave"
+                    + (player.isOp() ? " · rebuild" : ""),
+                NamedTextColor.YELLOW
+            );
+        }
+
+        return true;
+    }
+
     private void ensureDefaultGameNpc() {
         List<World> worlds = Bukkit.getWorlds();
         if (worlds.isEmpty()) return;
@@ -2758,8 +3265,13 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             if (!hasGameNpcNear(main, spawn, "skyblock", 20.0)) {
                 spawnGameNpcAtSpawnOffset(main, spawn, 6, 4, "skyblock", "☁ ISLEÑO • SKYBLOCK");
             }
+        }
 
-            getConfig().set("npcgame.spawn-pack-version", 2);
+        if (version < 3) {
+            if (!hasGameNpcNear(main, spawn, "parkour", 20.0)) {
+                spawnGameNpcAtSpawnOffset(main, spawn, 5, 6, "parkour", "🏃 SALTARÍN • PARKOUR");
+            }
+            getConfig().set("npcgame.spawn-pack-version", 3);
         }
 
         getConfig().set("npcgame.default-created", true);
@@ -2833,6 +3345,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         inv.setItem(11, menuItem(Material.NETHERITE_SWORD, "⚔ NINOTIMI PVP", "Entrar al lobby PVP"));
         inv.setItem(13, menuItem(Material.SNOWBALL, "❄ BATALLA DE HIELO", "Rompé la nieve y sé el último arriba"));
         inv.setItem(15, menuItem(Material.GRASS_BLOCK, "☁ SKYBLOCK", "Ir al lobby de Skyblock"));
+        inv.setItem(17, menuItem(Material.RABBIT_FOOT, "🏃 PARKOUR", "Elegí uno de 3 recorridos"));
         inv.setItem(22, menuItem(Material.BARRIER, "Cerrar", "Cerrar juegos"));
         player.openInventory(inv);
     }
@@ -2842,6 +3355,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             case "pvp" -> "⚔ GUERRERO • PVP";
             case "hielo" -> "❄ FROSTI • HIELO";
             case "skyblock" -> "☁ ISLEÑO • SKYBLOCK";
+            case "parkour" -> "🏃 SALTARÍN • PARKOUR";
             default -> "🎮 JUEGOS • CLICK";
         };
     }
@@ -2862,8 +3376,8 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
                 }
 
                 String action = args[1].toLowerCase(Locale.ROOT);
-                if (!Set.of("master", "pvp", "hielo", "skyblock").contains(action)) {
-                    msg(player, "Juego inválido: master, pvp, hielo o skyblock.", NamedTextColor.RED);
+                if (!Set.of("master", "pvp", "hielo", "skyblock", "parkour").contains(action)) {
+                    msg(player, "Juego inválido: master, pvp, hielo, skyblock o parkour.", NamedTextColor.RED);
                     return true;
                 }
 
@@ -3068,7 +3582,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
 
             if (args.length == 2 && args[0].equalsIgnoreCase("create")) {
                 String prefix = args[1].toLowerCase(Locale.ROOT);
-                return List.of("master", "pvp", "hielo", "skyblock").stream()
+                return List.of("master", "pvp", "hielo", "skyblock", "parkour").stream()
                     .filter(v -> v.startsWith(prefix))
                     .toList();
             }
@@ -3201,6 +3715,13 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         boolean flying,
         int level,
         float exp
+    ) {
+    }
+
+    private record ParkourRun(
+        int track,
+        int checkpoint,
+        long startedAt
     ) {
     }
 
