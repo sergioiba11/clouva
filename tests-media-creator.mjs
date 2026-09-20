@@ -114,7 +114,8 @@ test("limita Veo a duraciones válidas y calcula el costo confirmado", () => {
 
 test("Cloud Video Engine extiende el ledger actual y orquesta Vertex + Cloud Run", async () => {
   const migration = await readFile(new URL("./supabase/migrations/20260919010930_cloud_video_engine.sql", import.meta.url), "utf8");
-  const visualizerMigration = await readFile(new URL("./supabase/migrations/20260920163000_audio_reactive_visualizer.sql", import.meta.url), "utf8");
+  const visualizerColumnsMigration = await readFile(new URL("./supabase/migrations/20260920164006_audio_reactive_visualizer_columns.sql", import.meta.url), "utf8");
+  const visualizerConstraintsMigration = await readFile(new URL("./supabase/migrations/20260920164016_audio_reactive_visualizer_constraints.sql", import.meta.url), "utf8");
   const orchestrator = await readFile(new URL("./lib/server/video-projects.ts", import.meta.url), "utf8");
   const provider = await readFile(new URL("./lib/video/providers/vertex-veo.ts", import.meta.url), "utf8");
   const creator = await readFile(new URL("./components/video-engine/VideoProjectCreator.tsx", import.meta.url), "utf8");
@@ -125,9 +126,10 @@ test("Cloud Video Engine extiende el ledger actual y orquesta Vertex + Cloud Run
   const infra = await readFile(new URL("./scripts/setup-video-engine-infra.sh", import.meta.url), "utf8");
 
   assert.match(migration, /create table if not exists public\.video_projects/i);
-  assert.match(visualizerMigration, /project_mode/i);
-  assert.match(visualizerMigration, /audio_analysis_status/i);
-  assert.match(visualizerMigration, /visualizer_reactivity/i);
+  assert.match(visualizerColumnsMigration, /project_mode/i);
+  assert.match(visualizerColumnsMigration, /audio_analysis_status/i);
+  assert.match(visualizerConstraintsMigration, /visualizer_reactivity/i);
+  assert.match(visualizerConstraintsMigration, /audio_analysis_status/i);
   assert.match(migration, /alter table public\.media_generation_jobs/i);
   assert.doesNotMatch(migration, /create table[^;]*video_generation_jobs/i);
   assert.match(orchestrator, /enqueueVideoProjectStep/);
