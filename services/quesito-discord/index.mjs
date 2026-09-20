@@ -652,7 +652,7 @@ function attachReceiver(state) {
   const receiver = state.connection.receiver;
 
   receiver.speaking.on("start", (userId) => {
-    if (state.muted || state.receiving.has(userId)) return;
+    if (state.receiving.has(userId)) return;
     if (userId === discord.user?.id) return;
 
     state.receiving.add(userId);
@@ -660,7 +660,7 @@ function attachReceiver(state) {
     const source = receiver.subscribe(userId, {
       end: {
         behavior: EndBehaviorType.AfterSilence,
-        duration: 900,
+        duration: 750,
       },
     });
 
@@ -673,23 +673,110 @@ function attachReceiver(state) {
     const chunks = [];
     let total = 0;
     let closed = false;
+    let finalSeen = false;
+    let streamingFailed = false;
+    let fallbackTimer = null;
+
+    const recognizeStream = speechClient
+      .streamingRecognize({
+        config: {
+          encoding: "LINEAR16",
+          sampleRateHertz: 48000,
+          languageCode: "es-AR",
+          enableAutomaticPunctuation: true,
+          model: "latest_short",
+          speechContexts: [
+            {
+              phrases: [
+                "Quesito",
+                "Quesito callate",
+                "Quesito pará",
+                "Quesito silencio",
+                "Quesito hablá",
+              ],
+              boost: 18,
+            },
+          ],
+        },
+        interimResults: true,
+      })
+      .on("data", (data) => {
+        for (const result of data?.results || []) {
+          const transcript = result?.alternatives?.[0]?.transcript?.trim();
+          if (!transcript) continue;
+
+          if (result.isFinal) {
+            finalSeen = true;
+            voiceDiagnostics.sttStreamingFinals += 1;
+            voiceDiagnostics.sttProvider = "gcloud-streaming";
+            void processTranscript(
+              state,
+              userId,
+              transcript,
+              "gcloud-streaming",
+            ).catch((error) => {
+              voiceDiagnostics.lastError = String(error?.message || error).slice(0, 500);
+              log("QUESITO_STREAM_TRANSCRIPT_ERROR", {
+                guildId: state.guildId,
+                userId,
+                error: voiceDiagnostics.lastError,
+              });
+            });
+          } else {
+            handleInterimControl(state, userId, transcript);
+          }
+        }
+      })
+      .on("error", (error) => {
+        streamingFailed = true;
+        voiceDiagnostics.lastError = String(error?.message || error).slice(0, 500);
+        log("QUESITO_STREAMING_STT_ERROR", {
+          guildId: state.guildId,
+          userId,
+          error: voiceDiagnostics.lastError,
+        });
+      });
+
+    const runFallback = () => {
+      if (finalSeen || !chunks.length || total > 5000000) return;
+      void processUtterance(state, userId, Buffer.concat(chunks));
+    };
 
     const finish = () => {
       if (closed) return;
       closed = true;
       state.receiving.delete(userId);
 
-      if (chunks.length && total <= 3000000) {
-        void processUtterance(state, userId, Buffer.concat(chunks));
+      try {
+        recognizeStream.end();
+      } catch {}
+
+      if (streamingFailed) {
+        runFallback();
+      } else {
+        fallbackTimer = setTimeout(runFallback, STT_FALLBACK_DELAY_MS);
+        fallbackTimer.unref?.();
       }
     };
 
     decoder.on("data", (chunk) => {
       total += chunk.length;
 
-      if (total <= 3000000) {
+      if (total <= 5000000) {
         chunks.push(Buffer.from(chunk));
-      } else {
+      }
+
+      const mono = downmixStereo16LeToMono(chunk);
+      if (!streamingFailed && mono.length) {
+        try {
+          recognizeStream.write(mono);
+        } catch (error) {
+          streamingFailed = true;
+          voiceDiagnostics.lastError = String(error?.message || error).slice(0, 500);
+        }
+      }
+
+      if (total > 5000000) {
         source.destroy();
         decoder.destroy();
       }
