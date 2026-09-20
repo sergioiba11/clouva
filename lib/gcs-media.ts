@@ -109,6 +109,17 @@ export async function uploadGeneratedMediaObject(args: {
   };
 }
 
+export async function downloadGeneratedMediaObject(objectPath: string) {
+  const normalized = objectPath.replace(/^\/+/, "");
+  if (!normalized || normalized.includes("..")) throw new Error("Ruta de almacenamiento inválida.");
+  const file = getStorage().bucket(BUCKET_NAME).file(normalized);
+  const [[bytes], [metadata]] = await Promise.all([file.download(), file.getMetadata()]);
+  return {
+    bytes,
+    mimeType: metadata.contentType || "application/octet-stream",
+  };
+}
+
 export async function deleteGeneratedMedia(objectPath: string) {
   const normalized = objectPath.replace(/^\/+/, "");
   if (!normalized || normalized.includes("..")) throw new Error("Ruta de almacenamiento inválida.");
