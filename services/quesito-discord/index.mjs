@@ -45,6 +45,8 @@ const MINECRAFT_STATUS_URL =
   process.env.CLOUVA_MINECRAFT_STATUS_URL?.trim() ||
   "https://clouva.com.ar/api/minecraft/status";
 const PORT = Number(process.env.PORT || 8080);
+const AMBIENT_MIN_GAP_MS = Number(process.env.QUESITO_AMBIENT_MIN_GAP_MS || 35000);
+const AMBIENT_CHANCE = Number(process.env.QUESITO_AMBIENT_CHANCE || 0.28);
 
 if (!DISCORD_BOT_TOKEN) throw new Error("DISCORD_BOT_TOKEN is required.");
 if (!PROJECT_ID) throw new Error("GOOGLE_CLOUD_PROJECT is required.");
@@ -155,6 +157,58 @@ async function vertexGenerate(data, timeout = 15000) {
     data,
     timeout,
   });
+}
+
+async function askAmbientVertex({ guildId, speaker, transcript }) {
+  const minecraft = await fetchMinecraftContext();
+  const history = recentHistory(guildId);
+
+  const system = [
+    "Sos Quesito, la IA de voz del Discord del Niños Rata Server.",
+    "Estás escuchando una charla grupal y a veces podés meter un comentario espontáneo.",
+    "No respondas a todo. La mayoría de las veces quedate callado.",
+    "Solo opiná si hay algo gracioso, interesante, discutible o donde tu comentario aporte al momento.",
+    "Si no vale la pena interrumpir, respondé exactamente SILENCIO.",
+    "Si opinás, hacelo en español rioplatense, corto, natural y divertido, una sola frase.",
+    "Tu público incluye chicos de 14 años: mantené el humor apto para adolescentes.",
+    "No humilles, discrimines ni seas sexual. No des instrucciones peligrosas o ilegales.",
+    "No uses markdown.",
+    "Contexto del servidor: " + minecraft,
+  ].join("\n");
+
+  const context = history
+    .slice(-6)
+    .map((turn) => (turn.role === "assistant" ? "Quesito: " : "Jugador: ") + turn.text)
+    .join("\n");
+
+  const response = await vertexGenerate({
+    systemInstruction: { parts: [{ text: system }] },
+    contents: [
+      {
+        role: "user",
+        parts: [{
+          text:
+            (context ? "Contexto reciente:\n" + context + "\n\n" : "") +
+            speaker + " acaba de decir: " + transcript,
+        }],
+      },
+    ],
+    generationConfig: {
+      temperature: 0.95,
+      maxOutputTokens: 90,
+    },
+  });
+
+  const answer = (response.data?.candidates?.[0]?.content?.parts || [])
+    .map((part) => (typeof part?.text === "string" ? part.text : ""))
+    .join(" ")
+    .replace(/[*_#\x60>]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 320);
+
+  if (!answer || /^silencio[.!]?$/i.test(answer)) return null;
+  return answer;
 }
 
 async function askVertex({ guildId, speaker, prompt }) {
@@ -352,13 +406,26 @@ async function synthesize(text) {
   }
 }
 
+function stopCurrentSpeech(state, { mute = false } = {}) {
+  state.speechEpoch += 1;
+  state.player.stop(true);
+  state.speaking = false;
+  state.speakQueue = Promise.resolve();
+  if (mute) state.muted = true;
+}
+
 async function speak(state, text) {
+  const epoch = state.speechEpoch;
+
   state.speakQueue = state.speakQueue
     .then(async () => {
+      if (epoch !== state.speechEpoch || state.muted) return;
+
       state.speaking = true;
 
       try {
         const audio = await synthesize(text);
+        if (epoch !== state.speechEpoch || state.muted) return;
         const stream = Readable.from([audio]);
         const resource = createAudioResource(stream, { inputType: StreamType.OggOpus });
 
@@ -381,7 +448,7 @@ async function speak(state, text) {
 }
 
 async function processUtterance(state, userId, pcmStereo) {
-  if (state.muted || state.speaking) return;
+  if (state.muted) return;
 
   try {
     voiceDiagnostics.utterances += 1;
@@ -391,27 +458,72 @@ async function processUtterance(state, userId, pcmStereo) {
 
     const mono = downmixStereo16LeToMono(pcmStereo);
     const transcript = await transcribe(mono);
+    if (!transcript) return;
 
-    if (!transcript || !transcript.toLowerCase().includes(WAKE_WORD)) return;
-
-    voiceDiagnostics.wakes += 1;
-    voiceDiagnostics.lastStage = "thinking";
-
+    const lower = transcript.toLowerCase();
+    const hasWake = lower.includes(WAKE_WORD);
     const member = state.guild.members.cache.get(userId);
     const speaker = member?.displayName || "un jugador";
-    const prompt = stripWakeWord(transcript) || "¿estás ahí?";
 
-    log("QUESITO_WAKE", { guildId: state.guildId, userId });
+    if (
+      hasWake &&
+      /\b(callate|cállate|silencio|para|pará|basta)\b/i.test(transcript)
+    ) {
+      log("QUESITO_STOP_REQUEST", { guildId: state.guildId, userId });
+      stopCurrentSpeech(state, { mute: true });
+      voiceDiagnostics.lastStage = "muted";
+      return;
+    }
 
-    const answer = await askVertex({
-      guildId: state.guildId,
-      speaker,
-      prompt,
-    });
+    if (hasWake) {
+      voiceDiagnostics.wakes += 1;
+      voiceDiagnostics.lastStage = "thinking";
 
-    voiceDiagnostics.lastStage = "speaking";
-    await speak(state, answer);
-    voiceDiagnostics.replies += 1;
+      const prompt = stripWakeWord(transcript) || "¿estás ahí?";
+      log("QUESITO_WAKE", { guildId: state.guildId, userId });
+
+      const answer = await askVertex({
+        guildId: state.guildId,
+        speaker,
+        prompt,
+      });
+
+      voiceDiagnostics.lastStage = "speaking";
+      await speak(state, answer);
+      voiceDiagnostics.replies += 1;
+      voiceDiagnostics.lastStage = "idle";
+      return;
+    }
+
+    const now = Date.now();
+    if (
+      state.ambientEnabled &&
+      !state.pendingAmbient &&
+      now - state.lastAmbientAt >= AMBIENT_MIN_GAP_MS &&
+      transcript.length >= 8 &&
+      Math.random() < AMBIENT_CHANCE
+    ) {
+      state.pendingAmbient = true;
+      try {
+        const ambient = await askAmbientVertex({
+          guildId: state.guildId,
+          speaker,
+          transcript,
+        });
+
+        if (ambient) {
+          state.lastAmbientAt = Date.now();
+          remember(state.guildId, "user", speaker + ": " + transcript);
+          remember(state.guildId, "assistant", ambient);
+          log("QUESITO_AMBIENT_REPLY", { guildId: state.guildId, userId });
+          await speak(state, ambient);
+          voiceDiagnostics.replies += 1;
+        }
+      } finally {
+        state.pendingAmbient = false;
+      }
+    }
+
     voiceDiagnostics.lastStage = "idle";
   } catch (error) {
     voiceDiagnostics.lastStage = "error";
@@ -428,7 +540,7 @@ function attachReceiver(state) {
   const receiver = state.connection.receiver;
 
   receiver.speaking.on("start", (userId) => {
-    if (state.muted || state.speaking || state.receiving.has(userId)) return;
+    if (state.muted || state.receiving.has(userId)) return;
     if (userId === discord.user?.id) return;
 
     state.receiving.add(userId);
@@ -519,6 +631,10 @@ async function joinGuildVoice(guild, channelId) {
     speaking: false,
     receiving: new Set(),
     speakQueue: Promise.resolve(),
+    speechEpoch: 0,
+    ambientEnabled: true,
+    pendingAmbient: false,
+    lastAmbientAt: 0,
   };
 
   guildStates.set(guild.id, state);
@@ -551,6 +667,15 @@ const quesitoCommand = new SlashCommandBuilder()
   )
   .addSubcommand((sub) =>
     sub.setName("probar").setDescription("Hace hablar a Quesito para probar el audio"),
+  )
+  .addSubcommand((sub) =>
+    sub.setName("callate").setDescription("Corta lo que está diciendo y queda en silencio"),
+  )
+  .addSubcommand((sub) =>
+    sub.setName("opinar").setDescription("Activa los comentarios espontáneos de Quesito"),
+  )
+  .addSubcommand((sub) =>
+    sub.setName("no-opinar").setDescription("Desactiva los comentarios espontáneos"),
   );
 
 async function registerCommands() {
@@ -638,6 +763,47 @@ discord.on("interactionCreate", async (interaction) => {
       return;
     }
 
+    if (sub === "callate") {
+      const state = guildStates.get(interaction.guild.id);
+
+      if (!state) {
+        await interaction.reply({
+          content: "🧀 Quesito no está en un canal de voz.",
+          ephemeral: true,
+        });
+        return;
+      }
+
+      stopCurrentSpeech(state, { mute: true });
+      await interaction.reply({
+        content: "🤐 Quesito se calló. Usá /quesito hablar para despertarlo.",
+        ephemeral: true,
+      });
+      return;
+    }
+
+    if (sub === "opinar" || sub === "no-opinar") {
+      const state = guildStates.get(interaction.guild.id);
+
+      if (!state) {
+        await interaction.reply({
+          content: "🧀 Primero usá /quesito entrar.",
+          ephemeral: true,
+        });
+        return;
+      }
+
+      state.ambientEnabled = sub === "opinar";
+      await interaction.reply({
+        content:
+          sub === "opinar"
+            ? "🧀 Opiniones espontáneas activadas."
+            : "🧀 Quesito solo responde cuando lo llaman.",
+        ephemeral: true,
+      });
+      return;
+    }
+
     if (sub === "silencio") {
       const state = guildStates.get(interaction.guild.id);
 
@@ -649,7 +815,7 @@ discord.on("interactionCreate", async (interaction) => {
         return;
       }
 
-      state.muted = true;
+      stopCurrentSpeech(state, { mute: true });
       await interaction.reply({
         content: "🤫 Quesito quedó en silencio.",
         ephemeral: true,
@@ -687,7 +853,7 @@ discord.on("interactionCreate", async (interaction) => {
 
       state.muted = false;
       await interaction.reply({
-        content: "🧀 Quesito vuelve a responder cuando escucha su nombre.",
+        content: "🧀 Quesito volvió. Escucha aunque estén hablando encima y también puede opinar solo.",
         ephemeral: true,
       });
       return;
@@ -704,6 +870,7 @@ discord.on("interactionCreate", async (interaction) => {
             ? "conectado y en silencio"
             : "conectado y escuchando “Quesito”"
           : "fuera del canal") +
+        (state ? (state.ambientEnabled ? " · opiniones espontáneas ON" : " · opiniones espontáneas OFF") : "") +
         ".\n🎮 " +
         minecraft,
       ephemeral: true,
