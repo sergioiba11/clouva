@@ -16,6 +16,10 @@ commands:
     description: Controla BATALLA DE HIELO
     aliases: [ice, spleef]
     usage: /hielo [join|leave|lobby|spectate|status|portalhere|rebuild]
+  npcgame:
+    description: Crea y administra aldeanos que llevan a juegos
+    aliases: [juegosnpc, gamevillager]
+    usage: /npcgame [create|remove|list]
   skyblock:
     description: Controla NINOTIMI SKYBLOCK
     aliases: [sb, sky]

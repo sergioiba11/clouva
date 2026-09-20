@@ -24,6 +24,7 @@ import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Projectile;
+import org.bukkit.entity.Villager;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
@@ -34,6 +35,7 @@ import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
@@ -61,6 +63,7 @@ import java.util.UUID;
 public final class NinotimiTools extends JavaPlugin implements Listener, CommandExecutor, TabCompleter {
     private static final String MAIN_TITLE = "NINOTIMI TOOLS";
     private static final String BLOCKS_TITLE = "BLOQUES — NINOTIMI";
+    private static final String GAME_MENU_TITLE = "JUEGOS — NINOTIMI";
     private static final String PVP_WORLD_NAME = "pvp_ninotimi";
     private static final String ICE_WORLD_NAME = "hielo_ninotimi";
     private static final String SKY_WORLD_NAME = "skyblock_ninotimi";
@@ -71,6 +74,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
 
     private NamespacedKey toolsKey;
     private NamespacedKey wandKey;
+    private NamespacedKey npcGameKey;
 
     private final Set<String> builderNames = new HashSet<>();
     private final Map<UUID, Selection> selections = new HashMap<>();
@@ -123,11 +127,13 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         saveDefaultConfig();
         toolsKey = new NamespacedKey(this, "tools-menu");
         wandKey = new NamespacedKey(this, "builder-wand");
+        npcGameKey = new NamespacedKey(this, "game-npc");
 
         loadBuilders();
         setupPvp();
         setupIceBattle();
         setupSkyblock();
+        ensureDefaultGameNpc();
 
         getServer().getPluginManager().registerEvents(this, this);
 
@@ -146,6 +152,10 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         if (getCommand("skyblock") != null) {
             getCommand("skyblock").setExecutor(this);
             getCommand("skyblock").setTabCompleter(this);
+        }
+        if (getCommand("npcgame") != null) {
+            getCommand("npcgame").setExecutor(this);
+            getCommand("npcgame").setTabCompleter(this);
         }
 
         startPortalParticles();
@@ -337,12 +347,58 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     }
 
     @EventHandler
+    public void onNpcInteract(PlayerInteractEntityEvent event) {
+        if (!(event.getRightClicked() instanceof Villager villager)) {
+            return;
+        }
+
+        String action = getNpcAction(villager);
+        if (action == null) {
+            return;
+        }
+
+        event.setCancelled(true);
+        Player player = event.getPlayer();
+
+        switch (action) {
+            case "pvp" -> enterPvpLobby(player, true);
+            case "hielo" -> enterIceLobby(player, true);
+            case "skyblock" -> enterSkyLobby(player, true);
+            default -> openGameMenu(player);
+        }
+    }
+
+    @EventHandler
     public void onInventoryClick(InventoryClickEvent event) {
         if (!(event.getWhoClicked() instanceof Player player)) {
             return;
         }
 
         String title = PlainTextComponentSerializer.plainText().serialize(event.getView().title());
+
+        if (GAME_MENU_TITLE.equals(title)) {
+            event.setCancelled(true);
+            if (event.getRawSlot() < 0) return;
+
+            switch (event.getRawSlot()) {
+                case 11 -> {
+                    player.closeInventory();
+                    enterPvpLobby(player, true);
+                }
+                case 13 -> {
+                    player.closeInventory();
+                    enterIceLobby(player, true);
+                }
+                case 15 -> {
+                    player.closeInventory();
+                    enterSkyLobby(player, true);
+                }
+                case 22 -> player.closeInventory();
+                default -> {
+                }
+            }
+            return;
+        }
 
         if (MAIN_TITLE.equals(title)) {
             event.setCancelled(true);
@@ -443,6 +499,11 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
 
     @EventHandler(priority = EventPriority.HIGHEST)
     public void onPvpDamage(EntityDamageEvent event) {
+        if (event.getEntity() instanceof Villager villager && getNpcAction(villager) != null) {
+            event.setCancelled(true);
+            return;
+        }
+
         if (!(event.getEntity() instanceof Player victim)) return;
 
         if (victim.getWorld().getName().equals(ICE_WORLD_NAME)) {
@@ -2452,6 +2513,9 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         if (command.getName().equalsIgnoreCase("hielo")) {
             return handleIceCommand(player, args);
         }
+        if (command.getName().equalsIgnoreCase("npcgame")) {
+            return handleNpcGameCommand(player, args);
+        }
         if (command.getName().equalsIgnoreCase("skyblock")) {
             return handleSkyblockCommand(player, args);
         }
@@ -2522,6 +2586,169 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         }
 
         msg(player, "Usá /tools o /nrtools grant <jugador>.", NamedTextColor.YELLOW);
+        return true;
+    }
+
+
+    private void ensureDefaultGameNpc() {
+        if (getConfig().getBoolean("npcgame.default-created", false)) {
+            return;
+        }
+
+        List<World> worlds = Bukkit.getWorlds();
+        if (worlds.isEmpty()) return;
+
+        World main = worlds.get(0);
+        Location spawn = main.getSpawnLocation();
+        int x = spawn.getBlockX() + 4;
+        int z = spawn.getBlockZ() + 2;
+        int y = main.getHighestBlockYAt(x, z) + 1;
+
+        spawnGameNpc(
+            new Location(main, x + 0.5, y, z + 0.5, 180f, 0f),
+            "master",
+            "🎮 JUEGOS • CLICK"
+        );
+
+        getConfig().set("npcgame.default-created", true);
+        saveConfig();
+    }
+
+    private Villager spawnGameNpc(Location location, String action, String displayName) {
+        Villager villager = location.getWorld().spawn(location, Villager.class);
+        villager.setAI(false);
+        villager.setInvulnerable(true);
+        villager.setSilent(true);
+        villager.setCollidable(false);
+        villager.setRemoveWhenFarAway(false);
+        villager.setAdult();
+        villager.setAgeLock(true);
+        villager.setProfession(Villager.Profession.LIBRARIAN);
+        villager.customName(Component.text(displayName, NamedTextColor.GOLD));
+        villager.setCustomNameVisible(true);
+        villager.getPersistentDataContainer().set(npcGameKey, PersistentDataType.STRING, action);
+        return villager;
+    }
+
+    private String getNpcAction(Villager villager) {
+        if (npcGameKey == null) return null;
+        return villager.getPersistentDataContainer().get(npcGameKey, PersistentDataType.STRING);
+    }
+
+    private void openGameMenu(Player player) {
+        Inventory inv = Bukkit.createInventory(null, 27, Component.text(GAME_MENU_TITLE));
+        inv.setItem(11, menuItem(Material.NETHERITE_SWORD, "⚔ NINOTIMI PVP", "Entrar al lobby PVP"));
+        inv.setItem(13, menuItem(Material.SNOWBALL, "❄ BATALLA DE HIELO", "Rompé la nieve y sé el último arriba"));
+        inv.setItem(15, menuItem(Material.GRASS_BLOCK, "☁ SKYBLOCK", "Ir al lobby de Skyblock"));
+        inv.setItem(22, menuItem(Material.BARRIER, "Cerrar", "Cerrar juegos"));
+        player.openInventory(inv);
+    }
+
+    private String defaultNpcName(String action) {
+        return switch (action) {
+            case "pvp" -> "⚔ GUERRERO • PVP";
+            case "hielo" -> "❄ FROSTI • HIELO";
+            case "skyblock" -> "☁ ISLEÑO • SKYBLOCK";
+            default -> "🎮 JUEGOS • CLICK";
+        };
+    }
+
+    private boolean handleNpcGameCommand(Player player, String[] args) {
+        if (!player.isOp()) {
+            msg(player, "Solo un OP puede administrar aldeanos de juegos.", NamedTextColor.RED);
+            return true;
+        }
+
+        String sub = args.length == 0 ? "help" : args[0].toLowerCase(Locale.ROOT);
+
+        switch (sub) {
+            case "create" -> {
+                if (args.length < 2) {
+                    msg(player, "Uso: /npcgame create <master|pvp|hielo|skyblock> [nombre]", NamedTextColor.YELLOW);
+                    return true;
+                }
+
+                String action = args[1].toLowerCase(Locale.ROOT);
+                if (!Set.of("master", "pvp", "hielo", "skyblock").contains(action)) {
+                    msg(player, "Juego inválido: master, pvp, hielo o skyblock.", NamedTextColor.RED);
+                    return true;
+                }
+
+                String displayName = args.length >= 3
+                    ? String.join(" ", Arrays.copyOfRange(args, 2, args.length))
+                    : defaultNpcName(action);
+
+                Location location = player.getLocation().getBlock().getLocation().add(0.5, 0.0, 0.5);
+                location.setYaw(player.getLocation().getYaw() + 180f);
+                spawnGameNpc(location, action, displayName);
+                msg(player, "Aldeano creado: " + displayName + " → " + action + ".", NamedTextColor.GREEN);
+            }
+            case "remove" -> {
+                Villager nearest = null;
+                double best = 36.0;
+
+                for (Entity entity : player.getNearbyEntities(6.0, 6.0, 6.0)) {
+                    if (!(entity instanceof Villager villager)) continue;
+                    if (getNpcAction(villager) == null) continue;
+
+                    double distance = villager.getLocation().distanceSquared(player.getLocation());
+                    if (distance < best) {
+                        best = distance;
+                        nearest = villager;
+                    }
+                }
+
+                if (nearest == null) {
+                    msg(player, "No hay un aldeano de juegos a menos de 6 bloques.", NamedTextColor.RED);
+                    return true;
+                }
+
+                String name = nearest.customName() == null
+                    ? "aldeano"
+                    : PlainTextComponentSerializer.plainText().serialize(nearest.customName());
+                nearest.remove();
+                msg(player, "Eliminado: " + name + ".", NamedTextColor.YELLOW);
+            }
+            case "list" -> {
+                List<String> entries = new ArrayList<>();
+
+                for (World world : Bukkit.getWorlds()) {
+                    for (Entity entity : world.getEntities()) {
+                        if (!(entity instanceof Villager villager)) continue;
+                        String action = getNpcAction(villager);
+                        if (action == null) continue;
+
+                        String name = villager.customName() == null
+                            ? "aldeano"
+                            : PlainTextComponentSerializer.plainText().serialize(villager.customName());
+                        Location loc = villager.getLocation();
+
+                        entries.add(
+                            name + " [" + action + "] @ "
+                                + world.getName() + " "
+                                + loc.getBlockX() + ","
+                                + loc.getBlockY() + ","
+                                + loc.getBlockZ()
+                        );
+                    }
+                }
+
+                if (entries.isEmpty()) {
+                    msg(player, "No hay aldeanos de juegos.", NamedTextColor.YELLOW);
+                } else {
+                    msg(player, "Aldeanos de juegos (" + entries.size() + "):", NamedTextColor.GOLD);
+                    for (String entry : entries) {
+                        player.sendMessage(Component.text("• " + entry, NamedTextColor.GRAY));
+                    }
+                }
+            }
+            default -> msg(
+                player,
+                "/npcgame create <master|pvp|hielo|skyblock> [nombre] · /npcgame remove · /npcgame list",
+                NamedTextColor.YELLOW
+            );
+        }
+
         return true;
     }
 
@@ -2633,6 +2860,24 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
                     }
                 }
                 return names;
+            }
+
+            return List.of();
+        }
+
+        if (command.getName().equalsIgnoreCase("npcgame")) {
+            if (args.length == 1) {
+                String prefix = args[0].toLowerCase(Locale.ROOT);
+                return List.of("create", "remove", "list").stream()
+                    .filter(v -> v.startsWith(prefix))
+                    .toList();
+            }
+
+            if (args.length == 2 && args[0].equalsIgnoreCase("create")) {
+                String prefix = args[1].toLowerCase(Locale.ROOT);
+                return List.of("master", "pvp", "hielo", "skyblock").stream()
+                    .filter(v -> v.startsWith(prefix))
+                    .toList();
             }
 
             return List.of();
