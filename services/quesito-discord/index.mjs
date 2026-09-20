@@ -46,7 +46,14 @@ const MINECRAFT_STATUS_URL =
   "https://clouva.com.ar/api/minecraft/status";
 const PORT = Number(process.env.PORT || 8080);
 const AMBIENT_MIN_GAP_MS = Number(process.env.QUESITO_AMBIENT_MIN_GAP_MS || 35000);
-const AMBIENT_CHANCE = Number(process.env.QUESITO_AMBIENT_CHANCE || 0.28);
+const AMBIENT_CHECK_MIN_GAP_MS = Number(
+  process.env.QUESITO_AMBIENT_CHECK_MIN_GAP_MS || 12000,
+);
+const STT_FALLBACK_DELAY_MS = Number(
+  process.env.QUESITO_STT_FALLBACK_DELAY_MS || 1200,
+);
+const TTS_VOICE =
+  process.env.QUESITO_TTS_VOICE?.trim() || "es-US-Chirp3-HD-Puck";
 
 if (!DISCORD_BOT_TOKEN) throw new Error("DISCORD_BOT_TOKEN is required.");
 if (!PROJECT_ID) throw new Error("GOOGLE_CLOUD_PROJECT is required.");
@@ -72,6 +79,15 @@ const voiceDiagnostics = {
   lastStage: null,
   lastError: null,
   lastAt: null,
+  sttProvider: null,
+  ttsProvider: null,
+  ttsVoice: TTS_VOICE,
+  sttStreamingFinals: 0,
+  sttFallbacks: 0,
+  ttsFallbacks: 0,
+  lastThinkMs: null,
+  lastTtsMs: null,
+  lastTotalMs: null,
 };
 
 function log(event, fields = {}) {
