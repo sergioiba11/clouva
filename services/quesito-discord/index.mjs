@@ -105,6 +105,246 @@ function downmixStereo16LeToMono(buffer) {
   return mono;
 }
 
+
+function downsampleStereo48kToMono16k(buffer) {
+  if (buffer.length < 12) return Buffer.alloc(0);
+  const frameCount = Math.floor(buffer.length / 4);
+  const outFrames = Math.floor(frameCount / 3);
+  const mono = Buffer.allocUnsafe(outFrames * 2);
+
+  for (let i = 0; i < outFrames; i += 1) {
+    let sum = 0;
+    for (let j = 0; j < 3; j += 1) {
+      const frame = (i * 3 + j) * 4;
+      sum += buffer.readInt16LE(frame);
+      sum += buffer.readInt16LE(frame + 2);
+    }
+    const mixed = Math.max(-32768, Math.min(32767, Math.round(sum / 6)));
+    mono.writeInt16LE(mixed, i * 2);
+  }
+
+  return mono;
+}
+
+function upsampleMono24kToStereo48k(buffer) {
+  if (buffer.length < 2) return Buffer.alloc(0);
+  const samples = Math.floor(buffer.length / 2);
+  const stereo = Buffer.allocUnsafe(samples * 8);
+
+  for (let i = 0; i < samples; i += 1) {
+    const sample = buffer.readInt16LE(i * 2);
+    const offset = i * 8;
+    stereo.writeInt16LE(sample, offset);
+    stereo.writeInt16LE(sample, offset + 2);
+    stereo.writeInt16LE(sample, offset + 4);
+    stereo.writeInt16LE(sample, offset + 6);
+  }
+
+  return stereo;
+}
+
+function liveSystemPrompt(minecraft) {
+  return [
+    "Sos Quesito, uno más del canal de voz del Niños Rata Server.",
+    "Hablás en español rioplatense, corto, natural, rápido y con humor.",
+    "Escuchás la charla completa. No contestes a todo: elegí cuándo vale la pena meterte.",
+    "Podés opinar espontáneamente cuando haya algo gracioso, interesante o útil.",
+    "Si nadie te llamó y no aporta meterte, quedate callado.",
+    "Cuando alguien diga Quesito y te hable directamente, respondé.",
+    "Si otras personas hablan mientras vos hablás, NO cortes tu respuesta.",
+    "Solo frenás si escuchás claramente Quesito callate, Quesito pará, Quesito basta o Quesito silencio.",
+    "Tu público puede incluir adolescentes: nada sexual, humillante, discriminatorio ni peligroso.",
+    "No uses markdown. Soná como una persona en Discord, no como un asistente formal.",
+    "Contexto del servidor: " + minecraft,
+  ].join("\n");
+}
+
+function beginLiveOutput(state) {
+  if (state.liveOutputStream) return state.liveOutputStream;
+
+  const stream = new PassThrough();
+  state.liveOutputStream = stream;
+  state.speaking = true;
+  state.liveAudioStartedThisTurn = true;
+
+  const resource = createAudioResource(stream, { inputType: StreamType.Raw });
+  state.player.play(resource);
+
+  return stream;
+}
+
+function endLiveOutput(state) {
+  if (state.liveOutputStream) {
+    state.liveOutputStream.end();
+    state.liveOutputStream = null;
+  }
+  state.speaking = false;
+}
+
+function handleLiveTranscript(state, transcript) {
+  const text = String(transcript || "").trim();
+  if (!text) return;
+
+  const lower = text.toLowerCase();
+  const hasWake = lower.includes(WAKE_WORD);
+  state.lastInputHadWake = hasWake;
+  voiceDiagnostics.utterances += 1;
+  voiceDiagnostics.lastAt = new Date().toISOString();
+
+  if (
+    hasWake &&
+    /\b(callate|cállate|silencio|para|pará|basta)\b/i.test(text)
+  ) {
+    log("QUESITO_STOP_REQUEST", { guildId: state.guildId, via: "live" });
+    stopCurrentSpeech(state, { mute: true });
+    state.dropLiveAudioUntilTurnComplete = true;
+    voiceDiagnostics.lastStage = "muted";
+    return;
+  }
+
+  if (
+    hasWake &&
+    /\b(habla|hablá|despertate|despertá|volvé|volve)\b/i.test(text)
+  ) {
+    state.muted = false;
+    state.dropLiveAudioUntilTurnComplete = false;
+    voiceDiagnostics.lastStage = "listening";
+    return;
+  }
+
+  if (hasWake) {
+    voiceDiagnostics.wakes += 1;
+  }
+}
+
+function onLiveMessage(state, message) {
+  const content = message?.serverContent;
+  if (!content) return;
+
+  const transcript = content.inputTranscription;
+  if (transcript?.text) {
+    state.liveTranscriptBuffer = (
+      state.liveTranscriptBuffer +
+      " " +
+      transcript.text
+    )
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  if (transcript?.finished && state.liveTranscriptBuffer) {
+    handleLiveTranscript(state, state.liveTranscriptBuffer);
+    state.liveTranscriptBuffer = "";
+  }
+
+  const parts = content.modelTurn?.parts || [];
+  for (const part of parts) {
+    const data = part?.inlineData?.data;
+    if (!data) continue;
+
+    const canPlay =
+      !state.muted &&
+      !state.dropLiveAudioUntilTurnComplete &&
+      (state.ambientEnabled || state.lastInputHadWake);
+
+    if (!canPlay) continue;
+
+    const pcm24 = Buffer.from(data, "base64");
+    const pcm48Stereo = upsampleMono24kToStereo48k(pcm24);
+    if (!pcm48Stereo.length) continue;
+
+    beginLiveOutput(state).write(pcm48Stereo);
+    voiceDiagnostics.lastStage = "speaking";
+  }
+
+  if (content.turnComplete) {
+    if (state.liveTranscriptBuffer) {
+      handleLiveTranscript(state, state.liveTranscriptBuffer);
+      state.liveTranscriptBuffer = "";
+    }
+
+    if (state.liveAudioStartedThisTurn) {
+      voiceDiagnostics.replies += 1;
+    }
+
+    endLiveOutput(state);
+    state.liveAudioStartedThisTurn = false;
+    state.dropLiveAudioUntilTurnComplete = false;
+    state.lastInputHadWake = false;
+    if (!state.muted) voiceDiagnostics.lastStage = "listening";
+  }
+}
+
+async function connectLiveSession(state) {
+  if (!LIVE_ENABLED) throw new Error("Quesito Live disabled");
+
+  const minecraft = await fetchMinecraftContext();
+
+  const session = await genAI.live.connect({
+    model: LIVE_MODEL,
+    config: {
+      responseModalities: [Modality.AUDIO],
+      inputAudioTranscription: {},
+      outputAudioTranscription: {},
+      enableAffectiveDialog: true,
+      proactivity: { proactiveAudio: true },
+      explicitVadSignal: true,
+      realtimeInputConfig: {
+        activityHandling: ActivityHandling.NO_INTERRUPTION,
+        automaticActivityDetection: { disabled: true },
+      },
+      systemInstruction: {
+        parts: [{ text: liveSystemPrompt(minecraft) }],
+      },
+    },
+    callbacks: {
+      onopen: () => {
+        log("QUESITO_LIVE_OPEN", { guildId: state.guildId, model: LIVE_MODEL });
+      },
+      onmessage: (message) => {
+        try {
+          onLiveMessage(state, message);
+        } catch (error) {
+          state.liveError = String(error?.message || error).slice(0, 500);
+          voiceDiagnostics.lastError = state.liveError;
+          log("QUESITO_LIVE_MESSAGE_ERROR", {
+            guildId: state.guildId,
+            error: state.liveError,
+          });
+        }
+      },
+      onerror: (error) => {
+        state.liveError = String(error?.message || error?.error || error).slice(0, 500);
+        voiceDiagnostics.lastError = state.liveError;
+        log("QUESITO_LIVE_ERROR", {
+          guildId: state.guildId,
+          error: state.liveError,
+        });
+      },
+      onclose: (event) => {
+        state.liveSession = null;
+        if (state.mode === "live") {
+          state.mode = "legacy";
+          voiceDiagnostics.liveFallbacks += 1;
+        }
+        endLiveOutput(state);
+        log("QUESITO_LIVE_CLOSED", {
+          guildId: state.guildId,
+          code: event?.code,
+          reason: event?.reason,
+        });
+      },
+    },
+  });
+
+  state.liveSession = session;
+  state.liveError = null;
+  state.mode = "live";
+  voiceDiagnostics.liveSessions += 1;
+  voiceDiagnostics.lastStage = "listening";
+  return session;
+}
+
 function stripWakeWord(text) {
   const escaped = WAKE_WORD.replace(/[.*+?^$(){}|[\]\\]/g, "\\$&");
   const pattern = new RegExp("\\b" + escaped + "\\b[,:;.!?¿¡\\s-]*", "i");
