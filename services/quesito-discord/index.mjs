@@ -39,7 +39,7 @@ const DISCORD_BOT_TOKEN = process.env.DISCORD_BOT_TOKEN?.trim() || "";
 const DISCORD_GUILD_ID = process.env.DISCORD_GUILD_ID?.trim() || "";
 const PROJECT_ID = process.env.GOOGLE_CLOUD_PROJECT?.trim() || "";
 const VERTEX_LOCATION = process.env.VERTEX_LOCATION?.trim() || "us-central1";
-const VERTEX_MODEL = process.env.VERTEX_MODEL?.trim() || "gemini-2.5-flash";
+const VERTEX_MODEL = process.env.VERTEX_MODEL?.trim() || "gemini-2.0-flash";
 const WAKE_WORD = (process.env.QUESITO_WAKE_WORD?.trim() || "quesito").toLowerCase();
 const MINECRAFT_STATUS_URL =
   process.env.CLOUVA_MINECRAFT_STATUS_URL?.trim() ||
@@ -227,12 +227,27 @@ function vertexGenerateUrl() {
 
 async function vertexGenerate(data, timeout = 15000) {
   const client = await googleAuth.getClient();
-  return await client.request({
-    url: vertexGenerateUrl(),
-    method: "POST",
-    data,
-    timeout,
-  });
+  try {
+    return await client.request({
+      url: vertexGenerateUrl(),
+      method: "POST",
+      data,
+      timeout,
+    });
+  } catch (error) {
+    const msg = String(error?.message || error);
+    // Retry barato una sola vez ante 429: no sube costo, salva la respuesta.
+    if (/429|resource exhausted|quota/i.test(msg)) {
+      await new Promise((r) => setTimeout(r, 1500));
+      return await client.request({
+        url: vertexGenerateUrl(),
+        method: "POST",
+        data,
+        timeout,
+      });
+    }
+    throw error;
+  }
 }
 
 async function askAmbientVertex({ guildId, speaker, transcript }) {
@@ -411,7 +426,6 @@ async function transcribe(pcmMono) {
         sampleRateHertz: 48000,
         languageCode: "es-AR",
         enableAutomaticPunctuation: true,
-        model: "latest_short",
       },
       audio: { content: pcmMono.toString("base64") },
     });
@@ -807,7 +821,6 @@ function attachReceiver(state) {
           sampleRateHertz: 48000,
           languageCode: "es-AR",
           enableAutomaticPunctuation: true,
-          model: "latest_short",
           speechContexts: [
             {
               phrases: [
