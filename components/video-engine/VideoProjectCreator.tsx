@@ -376,6 +376,26 @@ export function VideoProjectCreator() {
     }
   };
 
+  const reanalyzeFlow = async () => {
+    if (!project || project.projectMode !== "visualizer") return;
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const response = await authenticatedFetch(
+        `/api/video/projects/${encodeURIComponent(project.id)}/analyze`,
+        { method: "POST" },
+      );
+      const payload = await readApiJson<{ project: VideoProject }>(response);
+      setProject(payload.project);
+      setNotice("CLOUVA está analizando de nuevo el flow del tema.");
+    } catch (analysisError) {
+      setError(analysisError instanceof Error ? analysisError.message : "No se pudo reiniciar el análisis del audio.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const openInPlayer = async () => {
     if (!project?.outputUrl) return;
     setBusy(true);
@@ -559,7 +579,14 @@ export function VideoProjectCreator() {
                       <span>{project.audioAnalysis?.sections?.length || 0} secciones</span>
                       <span>{project.audioAnalysis?.events?.length || 0} acentos fuertes</span>
                     </div>
-                  ) : project.audioAnalysisError ? <p className="mt-2 text-xs text-red-200">{project.audioAnalysisError}</p> : <p className="mt-2 text-xs text-white/45">Analizando ritmo, energía, breaks y drops en Google Cloud…</p>}
+                  ) : project.audioAnalysisError ? (
+                    <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-xs text-red-200">{project.audioAnalysisError}</p>
+                      <button type="button" onClick={() => void reanalyzeFlow()} disabled={busy} className="rounded-full border border-white/15 px-3 py-1.5 text-xs font-semibold disabled:opacity-50">
+                        {busy ? "ANALIZANDO…" : "REANALIZAR FLOW"}
+                      </button>
+                    </div>
+                  ) : <p className="mt-2 text-xs text-white/45">Analizando ritmo, energía, breaks y drops en Google Cloud…</p>}
                 </div>
               ) : null}
 
