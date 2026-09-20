@@ -69,6 +69,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     private static final String SKY_WORLD_NAME = "skyblock_ninotimi";
     private static final int SKY_ISLAND_SPACING = 256;
     private static final int SKY_ISLAND_RADIUS = 96;
+    private static final int SKY_SCATTER_VERSION = 1;
     private static final int MAX_ICE_PLAYERS = 12;
     private static final long ICE_JOIN_WINDOW_TICKS = 100L;
 
@@ -2105,6 +2106,36 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         skyExitPortal = new Region(SKY_WORLD_NAME, -1, 81, -9, 1, 84, -7);
         skyHomePad = new Region(SKY_WORLD_NAME, -2, 81, 6, 2, 82, 9);
         skyWorld.setSpawnLocation(skyLobby);
+        upgradeExistingSkyIslands();
+    }
+
+    private void upgradeExistingSkyIslands() {
+        var section = getConfig().getConfigurationSection("skyblock.islands");
+        if (section == null) return;
+
+        boolean changed = false;
+
+        for (String key : section.getKeys(false)) {
+            String base = "skyblock.islands." + key;
+            int index = getConfig().getInt(base + ".index", -1);
+
+            if (index < 0 || !getConfig().getBoolean(base + ".built", false)) {
+                continue;
+            }
+
+            int scatterVersion = getConfig().getInt(base + ".scatter-version", 0);
+            if (scatterVersion >= SKY_SCATTER_VERSION) {
+                continue;
+            }
+
+            buildScatteredSkyIslands(index);
+            getConfig().set(base + ".scatter-version", SKY_SCATTER_VERSION);
+            changed = true;
+        }
+
+        if (changed) {
+            saveConfig();
+        }
     }
 
     private void buildSkyLobby() {
@@ -2268,12 +2299,19 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             getConfig().set("skyblock.islands." + id + ".name", owner.getName());
         }
 
-        if (!getConfig().getBoolean("skyblock.islands." + id + ".built", false)) {
+        String base = "skyblock.islands." + id;
+
+        if (!getConfig().getBoolean(base + ".built", false)) {
             buildStarterSkyIsland(index, owner.getName());
-            getConfig().set("skyblock.islands." + id + ".built", true);
-            saveConfig();
+            getConfig().set(base + ".built", true);
         }
 
+        if (getConfig().getInt(base + ".scatter-version", 0) < SKY_SCATTER_VERSION) {
+            buildScatteredSkyIslands(index);
+            getConfig().set(base + ".scatter-version", SKY_SCATTER_VERSION);
+        }
+
+        saveConfig();
         return index;
     }
 
@@ -2349,6 +2387,114 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         skyWorld.getBlockAt(cx, 121, cz).setType(Material.AIR, false);
 
         getLogger().info("Skyblock creado para " + ownerName + " (#" + index + ").");
+    }
+
+    private void buildScatteredSkyIslands(int index) {
+        if (skyWorld == null) return;
+
+        Location center = skyIslandCenter(index);
+        int baseX = center.getBlockX();
+        int baseZ = center.getBlockZ();
+
+        // dx, yOffset, dz, radius. Todo queda dentro del radio editable de la isla.
+        int[][] layout = {
+            {24, 2, 0, 4},
+            {-28, 4, 10, 5},
+            {12, -3, 32, 4},
+            {-17, 6, -34, 5},
+            {43, 1, 25, 6},
+            {-48, -2, -19, 4},
+            {55, 8, -41, 5},
+            {-62, 3, 38, 6},
+            {8, 11, -63, 4},
+            {68, -5, 8, 5},
+            {-5, -6, 72, 4}
+        };
+
+        Material[] tops = {
+            Material.GRASS_BLOCK,
+            Material.MOSS_BLOCK,
+            Material.STONE,
+            Material.GRASS_BLOCK,
+            Material.PODZOL,
+            Material.MOSS_BLOCK,
+            Material.STONE,
+            Material.GRASS_BLOCK,
+            Material.COARSE_DIRT,
+            Material.MOSS_BLOCK,
+            Material.GRASS_BLOCK
+        };
+
+        Material[] fills = {
+            Material.DIRT,
+            Material.DIRT,
+            Material.COBBLESTONE,
+            Material.DIRT,
+            Material.DIRT,
+            Material.DIRT,
+            Material.ANDESITE,
+            Material.DIRT,
+            Material.DIRT,
+            Material.DIRT,
+            Material.DIRT
+        };
+
+        for (int i = 0; i < layout.length; i++) {
+            int[] island = layout[i];
+            buildSkySatelliteIsland(
+                baseX + island[0],
+                120 + island[1],
+                baseZ + island[2],
+                island[3],
+                tops[i],
+                fills[i]
+            );
+        }
+
+        getLogger().info("Islas flotantes dispersas listas para Skyblock #" + index + ".");
+    }
+
+    private void buildSkySatelliteIsland(
+        int centerX,
+        int topY,
+        int centerZ,
+        int radius,
+        Material topMaterial,
+        Material fillMaterial
+    ) {
+        for (int dx = -radius; dx <= radius; dx++) {
+            for (int dz = -radius; dz <= radius; dz++) {
+                int distanceSquared = dx * dx + dz * dz;
+                if (distanceSquared > radius * radius) continue;
+
+                int distance = (int) Math.sqrt(distanceSquared);
+                int depth = 1 + Math.max(0, (radius - distance) / 2);
+
+                for (int depthOffset = 0; depthOffset < depth; depthOffset++) {
+                    Block target = skyWorld.getBlockAt(
+                        centerX + dx,
+                        topY - depthOffset,
+                        centerZ + dz
+                    );
+
+                    // No pisa construcciones que ya hayan hecho los jugadores.
+                    if (!target.getType().isAir()) {
+                        continue;
+                    }
+
+                    Material material;
+                    if (depthOffset == 0) {
+                        material = topMaterial;
+                    } else if (depthOffset == 1) {
+                        material = fillMaterial;
+                    } else {
+                        material = Material.STONE;
+                    }
+
+                    target.setType(material, false);
+                }
+            }
+        }
     }
 
     private void teleportSkyHome(Player player) {
