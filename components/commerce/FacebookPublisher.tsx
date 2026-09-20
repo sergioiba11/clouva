@@ -10,7 +10,7 @@ import {
   Clock3,
   Copy,
   ExternalLink,
-  Facebook,
+  Share2,
   Loader2,
   Pause,
   Play,
@@ -389,7 +389,7 @@ export function FacebookPublisher({ spaceId }: { spaceId: string }) {
         <header className={`${CARD} overflow-hidden p-5 sm:p-7`}>
           <div className="flex items-start justify-between gap-4">
             <div>
-              <span className="inline-flex items-center gap-2 rounded-full border border-blue-400/20 bg-blue-500/[0.07] px-3 py-1 text-[10px] font-semibold uppercase tracking-[.16em] text-blue-200"><Facebook size={12} /> SIZ 8340</span>
+              <span className="inline-flex items-center gap-2 rounded-full border border-blue-400/20 bg-blue-500/[0.07] px-3 py-1 text-[10px] font-semibold uppercase tracking-[.16em] text-blue-200"><Share2 size={12} /> SIZ 8340</span>
               <h1 className="mt-4 text-3xl font-semibold tracking-tight sm:text-5xl">PUBLICADOR FACEBOOK</h1>
               <p className="mt-2 text-sm text-white/42">Player Clouva → Bisnes {data.space.name}. Productos canónicos de este Bisnes, sin inventario paralelo.</p>
             </div>
@@ -410,7 +410,7 @@ export function FacebookPublisher({ spaceId }: { spaceId: string }) {
               <p className="text-xs font-semibold uppercase tracking-[.16em] text-white/35">Facebook</p>
               <p className="mt-1 text-sm text-white/70">{data.connection.status === "connected" ? `Conectado · ${data.connection.facebook_name || "Cuenta Facebook"}` : data.connection.status === "attention_required" ? "Requiere atención" : data.connection.status === "expired" ? "Sesión vencida" : "No conectado"}</p>
             </div>
-            <button type="button" onClick={() => void connectFacebook()} disabled={busy === "facebook-connect"} className={BUTTON}>{busy === "facebook-connect" ? <Loader2 size={14} className="animate-spin" /> : <Facebook size={14} />} CONECTAR FACEBOOK</button>
+            <button type="button" onClick={() => void connectFacebook()} disabled={busy === "facebook-connect"} className={BUTTON}>{busy === "facebook-connect" ? <Loader2 size={14} className="animate-spin" /> : <Share2 size={14} />} CONECTAR FACEBOOK</button>
           </div>
           <p className="mt-3 text-[11px] leading-5 text-white/32">Marketplace y Grupos usan confirmación asistida cuando Meta no ofrece una API oficial. CLOUVA nunca guarda tu contraseña ni marca una publicación como realizada sin confirmación real.</p>
         </section>
