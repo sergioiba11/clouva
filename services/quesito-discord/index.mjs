@@ -70,6 +70,7 @@ const discord = new Client({
 
 const guildStates = new Map();
 const histories = new Map();
+const autoJoiningGuilds = new Set();
 let discordLoginError = null;
 let discordLoginAttempts = 0;
 const voiceDiagnostics = {
@@ -937,6 +938,48 @@ const quesitoCommand = new SlashCommandBuilder()
     sub.setName("no-opinar").setDescription("Desactiva los comentarios espontáneos"),
   );
 
+async function autoJoinVoiceChannel(guild, preferredChannelId = null) {
+  if (guildStates.has(guild.id) || autoJoiningGuilds.has(guild.id)) return false;
+
+  let channel = preferredChannelId
+    ? guild.channels.cache.get(preferredChannelId)
+    : null;
+
+  if (!channel?.isVoiceBased?.()) {
+    channel = guild.channels.cache
+      .filter((candidate) => candidate.isVoiceBased?.())
+      .find((candidate) =>
+        candidate.members?.some((member) => !member.user?.bot),
+      );
+  }
+
+  if (!channel?.isVoiceBased?.()) return false;
+
+  const hasHuman = channel.members?.some((member) => !member.user?.bot);
+  if (!hasHuman) return false;
+
+  autoJoiningGuilds.add(guild.id);
+
+  try {
+    await joinGuildVoice(guild, channel.id);
+    log("QUESITO_AUTO_JOIN", {
+      guildId: guild.id,
+      channelId: channel.id,
+      channelName: channel.name,
+    });
+    return true;
+  } catch (error) {
+    log("QUESITO_AUTO_JOIN_ERROR", {
+      guildId: guild.id,
+      channelId: channel.id,
+      error: String(error?.message || error),
+    });
+    return false;
+  } finally {
+    autoJoiningGuilds.delete(guild.id);
+  }
+}
+
 async function registerCommands() {
   const rest = new REST({ version: "10" }).setToken(DISCORD_BOT_TOKEN);
   const body = [quesitoCommand.toJSON()];
@@ -971,6 +1014,20 @@ discord.once("ready", async () => {
       error: String(error?.message || error),
     });
   }
+
+  setTimeout(() => {
+    for (const guild of discord.guilds.cache.values()) {
+      void autoJoinVoiceChannel(guild);
+    }
+  }, 1500).unref();
+});
+
+discord.on("voiceStateUpdate", (oldState, newState) => {
+  const member = newState.member || oldState.member;
+  if (!member || member.user?.bot) return;
+  if (!newState.channelId) return;
+
+  void autoJoinVoiceChannel(newState.guild, newState.channelId);
 });
 
 discord.on("interactionCreate", async (interaction) => {
