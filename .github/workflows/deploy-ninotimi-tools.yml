@@ -62,7 +62,18 @@ jobs:
               sudo cp /tmp/NinotimiTools.jar /srv/minecraft/plugins/NinotimiTools.jar
               sudo chown root:root /srv/minecraft/plugins/NinotimiTools.jar
 
-              sudo docker restart clouva-minecraft >/dev/null
+              # One-time clean reset for all Survival modes (v2).
+              RESET_MARKER=/srv/minecraft/.survival-all-fresh-v2
+              if [ ! -e "$RESET_MARKER" ]; then
+                sudo docker stop clouva-minecraft >/dev/null
+                sudo rm -rf /srv/minecraft/survival_comun_ninotimi*
+                sudo rm -rf /srv/minecraft/hardcore_ninotimi*
+                sudo rm -rf /srv/minecraft/survival_player_*
+                sudo touch "$RESET_MARKER"
+                sudo docker start clouva-minecraft >/dev/null
+              else
+                sudo docker restart clouva-minecraft >/dev/null
+              fi
             '
 
       - name: Verify NINOTIMI tools and Minecraft
@@ -100,5 +111,5 @@ jobs:
             echo "- Portal: auto-created near the main spawn"
             echo "- 1v1 queue: red pad in the PVP lobby"
             echo "- Internal player key: ninotimi (ASCII, ñ-safe)"
-            echo "- Survival modes: no OP privileges inside Personal, Common or Hardcore"
+            echo "- Survival modes: isolated inventories, no OP, fresh v2 worlds and advancement reset"
           } >> "$GITHUB_STEP_SUMMARY"
