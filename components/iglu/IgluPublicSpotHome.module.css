@@ -21,7 +21,7 @@
   position: absolute;
   z-index: 0;
   inset: 0 0 auto;
-  height: 59.5%;
+  height: 61.5%;
   background-color: #06111d;
   background-repeat: no-repeat;
   background-size: 100% auto;
@@ -37,9 +37,9 @@
     linear-gradient(
       180deg,
       rgba(0, 4, 10, 0.02) 0%,
-      rgba(0, 5, 12, 0.02) 36%,
-      rgba(0, 5, 12, 0.12) 48%,
-      #01060c 60.5%,
+      rgba(0, 5, 12, 0.02) 34%,
+      rgba(0, 5, 12, 0.12) 47%,
+      #01060c 58.8%,
       #01060c 100%
     );
 }
@@ -140,7 +140,7 @@
 .heroCopy {
   position: absolute;
   z-index: 6;
-  top: 45.8%;
+  top: 43.8%;
   left: 5.8%;
   right: 5.8%;
   text-align: center;
@@ -204,7 +204,7 @@
 .cards {
   position: absolute;
   z-index: 7;
-  top: 57.1%;
+  top: 54.8%;
   left: 5.7%;
   right: 5.7%;
 }
@@ -212,7 +212,7 @@
 .cardRow {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 2.3%;
+  gap: 2.6%;
 }
 
 .assetCard,
@@ -225,7 +225,7 @@
 }
 
 .assetCard {
-  aspect-ratio: 1.62 / 1;
+  aspect-ratio: 1.68 / 1;
 }
 
 .assetCard img {
@@ -239,8 +239,8 @@
 }
 
 .merchCard {
-  margin-top: 2.5%;
-  aspect-ratio: 3.03 / 1;
+  margin-top: 2.8%;
+  aspect-ratio: 3.08 / 1;
 }
 
 .merchCard img {
@@ -256,10 +256,10 @@
 .bottomNav {
   position: absolute;
   z-index: 12;
-  left: 4.3%;
-  right: 4.3%;
-  bottom: 1.65%;
-  aspect-ratio: 2172 / 724;
+  left: 6%;
+  right: 6%;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 10px);
+  aspect-ratio: 2172 / 650;
 }
 
 .bottomNav > img {
