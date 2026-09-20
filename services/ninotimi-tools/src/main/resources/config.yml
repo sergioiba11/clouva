@@ -1,0 +1,6 @@
+builder-names:
+  - ninotimi
+max-edit-blocks: 50000
+give-tools-on-join: true
+pvp:
+  built: false
