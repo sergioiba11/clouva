@@ -11,7 +11,7 @@ export type CommercePublicationChannel =
   | "clouva"
   | "clouva_market"
   | "facebook_marketplace"
-  | "facebook_group";
+  | "facebook_group"\n  | "facebook_page";
 
 const CLOUVA_INTERNAL_CAPABILITY: ChannelCapability = {
   canPublishAutomatically: true,
@@ -43,6 +43,14 @@ const CAPABILITIES: Record<CommercePublicationChannel, ChannelCapability> = {
     canReadMessages: false,
     canReply: false,
     requiresUserAction: true,
+  },
+  facebook_page: {
+    canPublishAutomatically: true,
+    canSchedule: true,
+    canReadComments: false,
+    canReadMessages: false,
+    canReply: false,
+    requiresUserAction: false,
   },
 };
 
