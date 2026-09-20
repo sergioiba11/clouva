@@ -225,17 +225,26 @@
 }
 
 .assetCard {
-  aspect-ratio: 1.68 / 1;
+  aspect-ratio: 1.48 / 1;
 }
 
 .assetCard img {
   position: absolute;
-  width: 118%;
   max-width: none;
   height: auto;
-  left: -9%;
-  top: -12%;
   display: block;
+}
+
+.assetCard:first-child img {
+  width: 104%;
+  left: -2%;
+  top: -4%;
+}
+
+.assetCard:nth-child(2) img {
+  width: 102%;
+  left: -1%;
+  top: -3%;
 }
 
 .merchCard {
