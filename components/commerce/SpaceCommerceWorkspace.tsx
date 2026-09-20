@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Megaphone } from "lucide-react";
+import { Megaphone, Share2 } from "lucide-react";
 import { GlobalFlowBalance } from "@/components/GlobalFlowBalance";
 import { OfficialClouvaMark } from "@/components/clouva/OfficialClouvaMark";
 import { CommerceAiProviderCopyBridge } from "@/components/commerce/CommerceAiProviderCopyBridge";
@@ -18,7 +18,13 @@ import styles from "./SpaceCommerceWorkspace.module.css";
  * `spot:<uuid>`. The commerce API resolves both through requireManagedSpot(),
  * so scanner, catalog, inventory, POS, orders, codes and QR stay on one engine.
  */
-export function SpaceCommerceWorkspace({ commerceScopeId }: { commerceScopeId: string }) {
+export function SpaceCommerceWorkspace({
+  commerceScopeId,
+  businessSpaceId,
+}: {
+  commerceScopeId: string;
+  businessSpaceId?: string | null;
+}) {
   const directSpotId = commerceScopeId.startsWith("spot:") ? commerceScopeId.slice("spot:".length).trim() : null;
 
   return (
@@ -34,6 +40,7 @@ export function SpaceCommerceWorkspace({ commerceScopeId }: { commerceScopeId: s
           </span>
         </Link>
         <div className="flex items-center gap-2">
+          {businessSpaceId ? <Link href={`/businesses/${businessSpaceId}/publicador`} className="inline-flex items-center gap-2 rounded-xl border border-blue-400/20 bg-blue-500/[0.06] px-3 py-2 text-xs font-semibold text-blue-100 transition hover:border-blue-400/35"><Share2 size={14} /> Publicador Facebook</Link> : null}
           {directSpotId ? <Link href={`/mi-spot/${directSpotId}/publicaciones`} className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-semibold text-white/65 transition hover:border-violet-400/30 hover:text-white"><Megaphone size={14} /> Publicaciones</Link> : null}
           <GlobalFlowBalance variant="header" />
         </div>

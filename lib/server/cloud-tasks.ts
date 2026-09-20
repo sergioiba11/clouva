@@ -109,3 +109,54 @@ export async function enqueueVideoProjectStep(projectId: string, delaySeconds = 
     throw new Error(`No se pudo encolar el siguiente paso de video (${response.status})${raw ? `: ${raw.slice(0, 500)}` : ""}`);
   }
 }
+
+
+function facebookPublisherQueueConfig() {
+  const project = process.env.CLOUVA_GCP_PROJECT || process.env.GOOGLE_CLOUD_PROJECT || "gen-lang-client-0737053175";
+  const location = process.env.CLOUVA_GCP_REGION || "us-central1";
+  const queue = process.env.CLOUVA_FACEBOOK_PUBLISHER_QUEUE || "clouva-facebook-publisher";
+  return { project, location, queue };
+}
+
+export async function enqueueFacebookPublisherBatch(batchId: string, scheduledAt?: string | null) {
+  const { project, location, queue } = facebookPublisherQueueConfig();
+  const secret = (process.env.CLOUVA_FACEBOOK_PUBLISHER_TASK_SECRET || process.env.CLOUVA_ASSET_IMPORT_WORKER_SECRET)?.trim();
+  if (!secret) throw new Error("No hay secret server-side configurado para el publicador de Facebook.");
+
+  const baseUrl = process.env.APP_BASE_URL?.trim() || "https://clouva.com.ar";
+  const targetUrl = `${baseUrl}/api/internal/facebook-publisher/process`;
+  const token = await getAccessToken();
+  const now = Date.now();
+  const scheduleMs = scheduledAt ? Date.parse(scheduledAt) : NaN;
+  const scheduleTime = Number.isFinite(scheduleMs) && scheduleMs > now + 1000
+    ? new Date(scheduleMs).toISOString()
+    : undefined;
+
+  const response = await fetch(
+    `https://cloudtasks.googleapis.com/v2/projects/${project}/locations/${location}/queues/${queue}/tasks`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        task: {
+          ...(scheduleTime ? { scheduleTime } : {}),
+          httpRequest: {
+            httpMethod: "POST",
+            url: targetUrl,
+            headers: {
+              "Content-Type": "application/json",
+              "x-clouva-facebook-publisher-secret": secret,
+            },
+            body: Buffer.from(JSON.stringify({ batchId })).toString("base64"),
+          },
+        },
+      }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(15 * 1000),
+    },
+  );
+  if (!response.ok) {
+    const raw = await response.text().catch(() => "");
+    throw new Error(`No se pudo encolar el lote de Facebook (${response.status})${raw ? `: ${raw.slice(0, 500)}` : ""}`);
+  }
+}
