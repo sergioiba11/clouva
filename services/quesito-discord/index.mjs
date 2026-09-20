@@ -1283,6 +1283,8 @@ http
         discordReady: discord.isReady(),
         guilds: discord.guilds.cache.size,
         voiceConnections: guildStates.size,
+        liveVoiceConnections: [...guildStates.values()].filter((state) => state.mode === "live").length,
+        legacyVoiceConnections: [...guildStates.values()].filter((state) => state.mode === "legacy").length,
         wakeWord: WAKE_WORD,
         discordError: discordLoginError,
         discordLoginAttempts,
