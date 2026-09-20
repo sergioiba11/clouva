@@ -1,5 +1,12 @@
 begin;
 
+alter table public.commerce_product_publications
+  drop constraint if exists commerce_product_publications_source_check;
+
+alter table public.commerce_product_publications
+  add constraint commerce_product_publications_source_check
+  check (source in ('manual','auto_owner','auto_space','facebook_publisher'));
+
 create table if not exists public.commerce_facebook_connections (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
