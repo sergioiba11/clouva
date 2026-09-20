@@ -1,5 +1,5 @@
 import http from "node:http";
-import { Readable } from "node:stream";
+import { PassThrough, Readable } from "node:stream";
 import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
 import os from "node:os";
@@ -31,6 +31,7 @@ import prism from "prism-media";
 import speech from "@google-cloud/speech";
 import textToSpeech from "@google-cloud/text-to-speech";
 import { GoogleAuth } from "google-auth-library";
+import { ActivityHandling, GoogleGenAI, Modality } from "@google/genai";
 
 const { SpeechClient } = speech;
 const { TextToSpeechClient } = textToSpeech;
@@ -47,6 +48,10 @@ const MINECRAFT_STATUS_URL =
 const PORT = Number(process.env.PORT || 8080);
 const AMBIENT_MIN_GAP_MS = Number(process.env.QUESITO_AMBIENT_MIN_GAP_MS || 35000);
 const AMBIENT_CHANCE = Number(process.env.QUESITO_AMBIENT_CHANCE || 0.28);
+const LIVE_ENABLED = process.env.QUESITO_LIVE_ENABLED !== "false";
+const LIVE_LOCATION = process.env.QUESITO_LIVE_LOCATION?.trim() || "global";
+const LIVE_MODEL =
+  process.env.QUESITO_LIVE_MODEL?.trim() || "gemini-live-2.5-flash-native-audio";
 
 if (!DISCORD_BOT_TOKEN) throw new Error("DISCORD_BOT_TOKEN is required.");
 if (!PROJECT_ID) throw new Error("GOOGLE_CLOUD_PROJECT is required.");
@@ -55,6 +60,11 @@ const speechClient = new SpeechClient();
 const ttsClient = new TextToSpeechClient();
 const googleAuth = new GoogleAuth({
   scopes: ["https://www.googleapis.com/auth/cloud-platform"],
+});
+const genAI = new GoogleGenAI({
+  vertexai: true,
+  project: PROJECT_ID,
+  location: LIVE_LOCATION,
 });
 
 const discord = new Client({
@@ -72,6 +82,8 @@ const voiceDiagnostics = {
   lastStage: null,
   lastError: null,
   lastAt: null,
+  liveSessions: 0,
+  liveFallbacks: 0,
 };
 
 function log(event, fields = {}) {
