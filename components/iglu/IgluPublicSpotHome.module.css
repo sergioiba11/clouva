@@ -306,6 +306,12 @@
   width: 20%;
 }
 
+@media (max-width: 699px) {
+  .app {
+    min-height: 100svh;
+  }
+}
+
 @media (max-width: 430px) {
   .menuPanel {
     width: 190px;
