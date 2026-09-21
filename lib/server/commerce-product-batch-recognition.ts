@@ -5,16 +5,44 @@ import {
   generateGoogleCloudJson,
   GoogleCloudGenAIError,
 } from "@/lib/server/google-cloud-genai";
-import type { CommerceIdentifierType } from "@/lib/commerce/identifiers";
+import { validateCommerceIdentifier, type CommerceIdentifierType } from "@/lib/commerce/identifiers";
 
 const MAX_BATCH_IMAGES = 80;
-const GROUPING_CHUNK_SIZE = 16;
+const GROUPING_CHUNK_SIZE = 8;
 
 type StoredBatchImage = {
   sourceIndex: number;
   storagePath: string;
   mimeType: string;
 };
+
+class CommerceBatchGroupingParseError extends Error {
+  constructor(message = "Vertex AI devolvió un agrupamiento que no se pudo interpretar.") {
+    super(message);
+    this.name = "CommerceBatchGroupingParseError";
+  }
+}
+
+function parseGroupingJson(value: string) {
+  const trimmed = value.trim();
+  const unfenced = trimmed
+    .replace(/^\`\`\`(?:json)?\s*/i, "")
+    .replace(/\s*\`\`\`$/i, "")
+    .trim();
+
+  try {
+    return JSON.parse(unfenced) as unknown;
+  } catch {
+    const firstObject = unfenced.indexOf("{");
+    const lastObject = unfenced.lastIndexOf("}");
+    if (firstObject >= 0 && lastObject > firstObject) {
+      try {
+        return JSON.parse(unfenced.slice(firstObject, lastObject + 1)) as unknown;
+      } catch {}
+    }
+    throw new CommerceBatchGroupingParseError();
+  }
+}
 
 export type CommerceBatchImageRole = {
   sourceIndex: number;
@@ -192,11 +220,17 @@ function sanitizeGroup(raw: unknown, allowedIndexes: Set<number>, fallbackKey: s
       confidence: number01(code.confidence),
     } satisfies CommerceBatchVisibleIdentifier];
   });
-  const primary = identifierValue && supported.has(identifierType)
+  const primaryCandidate = identifierValue && supported.has(identifierType)
     ? { value: identifierValue, type: identifierType }
     : visibleIdentifiers[0]
       ? { value: visibleIdentifiers[0].value, type: visibleIdentifiers[0].type }
       : null;
+  const primary = primaryCandidate
+    ? (() => {
+        const validation = validateCommerceIdentifier(primaryCandidate.type, primaryCandidate.value);
+        return validation.valid ? { value: validation.value, type: primaryCandidate.type } : null;
+      })()
+    : null;
   const packageKind = item.packageKind === "box"
     ? "box"
     : item.packageKind === "retail_package"
@@ -267,15 +301,10 @@ async function analyzeChunk(args: {
     referenceImages: downloaded.map((image) => ({ mimeType: image.mimeType, data: image.data })),
     responseJsonSchema: GROUP_SCHEMA,
     temperature: 0.05,
-    maxOutputTokens: 3500,
+    maxOutputTokens: 6000,
   });
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(generated.text);
-  } catch {
-    throw new Error("Vertex AI devolvió un agrupamiento que no se pudo interpretar.");
-  }
+  const parsed = parseGroupingJson(generated.text);
 
   const root = record(parsed);
   const allowed = new Set(args.images.map((image) => image.sourceIndex));
@@ -309,6 +338,58 @@ async function analyzeChunk(args: {
   }
 
   return groups;
+}
+
+async function analyzeChunkWithFallback(args: {
+  images: StoredBatchImage[];
+  spotName: string;
+  chunkNumber: number;
+}): Promise<CommerceBatchGroup[]> {
+  try {
+    return await analyzeChunk(args);
+  } catch (error) {
+    if (error instanceof GoogleCloudGenAIError) throw error;
+
+    // Structured output can still be truncated by the model on visually dense
+    // batches. Split only the failing chunk instead of aborting the whole import.
+    if (error instanceof CommerceBatchGroupingParseError && args.images.length > 2) {
+      const middle = Math.ceil(args.images.length / 2);
+      const left = args.images.slice(0, middle);
+      const right = args.images.slice(middle);
+      const [leftGroups, rightGroups] = await Promise.all([
+        analyzeChunkWithFallback({
+          images: left,
+          spotName: args.spotName,
+          chunkNumber: args.chunkNumber * 10 + 1,
+        }),
+        analyzeChunkWithFallback({
+          images: right,
+          spotName: args.spotName,
+          chunkNumber: args.chunkNumber * 10 + 2,
+        }),
+      ]);
+      return [...leftGroups, ...rightGroups];
+    }
+
+    // Never lose an entire 60+ photo batch because structured grouping failed
+    // for one tiny fragment. Canonical per-product recognition still runs later.
+    if (error instanceof CommerceBatchGroupingParseError) {
+      return args.images.map((image) => ({
+        groupKey: `single-${image.sourceIndex}`,
+        name: "",
+        brand: "",
+        model: "",
+        packageKind: "unknown" as const,
+        identifier: null,
+        visibleIdentifiers: [],
+        confidence: 0,
+        needsReview: true,
+        images: [{ sourceIndex: image.sourceIndex, role: "Frente" as const }],
+      }));
+    }
+
+    throw error;
+  }
 }
 
 function mergeGroups(groups: CommerceBatchGroup[]) {
@@ -365,12 +446,11 @@ export async function analyzeCommerceProductBatch(args: {
   const groups: CommerceBatchGroup[] = [];
   for (let offset = 0, chunkNumber = 1; offset < args.images.length; offset += GROUPING_CHUNK_SIZE, chunkNumber += 1) {
     const chunk = args.images.slice(offset, offset + GROUPING_CHUNK_SIZE);
-    try {
-      groups.push(...await analyzeChunk({ images: chunk, spotName: args.spotName, chunkNumber }));
-    } catch (error) {
-      if (error instanceof GoogleCloudGenAIError) throw error;
-      throw error;
-    }
+    groups.push(...await analyzeChunkWithFallback({
+      images: chunk,
+      spotName: args.spotName,
+      chunkNumber,
+    }));
   }
 
   return mergeGroups(groups);
