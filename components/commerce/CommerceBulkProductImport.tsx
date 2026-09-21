@@ -86,6 +86,20 @@ type InvoicePayload = {
   items: InvoiceItem[];
 };
 
+type BatchStatus = {
+  id: string;
+  status: string;
+  total_images: number;
+  detected_products: number;
+  processed_products: number;
+  failed_products: number;
+  error: string | null;
+  metadata: {
+    groups?: BatchGroup[];
+    [key: string]: unknown;
+  } | null;
+};
+
 type PreparedImage = {
   file: File;
   dataUrl: string;
@@ -240,6 +254,20 @@ async function postJson<T>(url: string, body: unknown) {
   return readApiJson<T>(response);
 }
 
+
+async function getJson<T>(url: string) {
+  const response = await authenticatedFetch(url);
+  return readApiJson<T>(response);
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function batchGroups(batch: BatchStatus) {
+  return Array.isArray(batch.metadata?.groups) ? batch.metadata.groups : [];
+}
+
 export function CommerceBulkProductImport({
   studioId,
   onCompleted,
@@ -259,6 +287,7 @@ export function CommerceBulkProductImport({
   const [invoiceFile, setInvoiceFile] = useState<File | null>(null);
   const [invoiceData, setInvoiceData] = useState<InvoicePayload | null>(null);
   const [checkingInvoiceItem, setCheckingInvoiceItem] = useState("");
+  const [recoverableBatch, setRecoverableBatch] = useState<BatchStatus | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -268,6 +297,31 @@ export function CommerceBulkProductImport({
       for (const url of urls) URL.revokeObjectURL(url);
     };
   }, [files]);
+
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const payload = await getJson<{ batches: BatchStatus[] }>(
+          `/api/studios/${encodeURIComponent(studioId)}/commerce/import-batches`,
+        );
+        if (cancelled) return;
+        const candidate = payload.batches.find((batch) => {
+          const groups = batchGroups(batch);
+          return groups.length > 0
+            && ["review", "processing", "completed_with_errors"].includes(batch.status)
+            && batch.processed_products < Math.max(batch.detected_products, groups.length);
+        }) ?? null;
+        setRecoverableBatch(candidate);
+      } catch {
+        // La recuperación es auxiliar; no debe bloquear la carga normal.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [studioId]);
 
   const busy = ["preparing", "uploading", "analyzing", "invoice", "creating"].includes(stage);
   const progressText = useMemo(() => {
@@ -373,13 +427,69 @@ export function CommerceBulkProductImport({
     }
   }
 
+  async function fetchBatchStatus(batch: string) {
+    const payload = await getJson<{ batch: BatchStatus }>(
+      `/api/studios/${encodeURIComponent(studioId)}/commerce/import-batches/${encodeURIComponent(batch)}`,
+    );
+    return payload.batch;
+  }
+
+  async function waitForAnalyzedBatch(batch: string) {
+    let lastStatus = "";
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      const current = await fetchBatchStatus(batch);
+      lastStatus = current.status;
+      const recoveredGroups = batchGroups(current);
+      if (recoveredGroups.length && ["review", "processing", "completed", "completed_with_errors"].includes(current.status)) {
+        return {
+          batchId: current.id,
+          status: current.status,
+          totalImages: current.total_images,
+          detectedProducts: current.detected_products || recoveredGroups.length,
+          groups: recoveredGroups,
+        } satisfies AnalyzeResponse;
+      }
+      if (current.status === "failed") {
+        throw new Error(current.error || "El análisis del lote falló.");
+      }
+      await wait(3000);
+    }
+    throw new Error(`El análisis sigue en estado ${lastStatus || "desconocido"}. Podés reanudar el lote sin volver a subir las fotos.`);
+  }
+
+  async function analyzeWithRecovery(batch: string) {
+    try {
+      return await postJson<AnalyzeResponse>(
+        `/api/studios/${encodeURIComponent(studioId)}/commerce/import-batches/${encodeURIComponent(batch)}/analyze`,
+        {},
+      );
+    } catch (cause) {
+      // En móviles la conexión puede cerrarse aunque Cloud Run haya terminado.
+      // Recuperamos el resultado persistido en Supabase en vez de crear otro lote.
+      const message = cause instanceof Error ? cause.message : "";
+      if (!/Failed to fetch|network|fetch/i.test(message)) throw cause;
+      return waitForAnalyzedBatch(batch);
+    }
+  }
+
   async function processUntilFinished(batch: string, retryFailed = false) {
     let first = true;
-    for (let attempt = 0; attempt < 40; attempt += 1) {
-      const result = await postJson<ProcessResponse>(
-        `/api/studios/${encodeURIComponent(studioId)}/commerce/import-batches/${encodeURIComponent(batch)}/process`,
-        { retryFailed: retryFailed && first },
-      );
+    let transientFailures = 0;
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      let result: ProcessResponse;
+      try {
+        result = await postJson<ProcessResponse>(
+          `/api/studios/${encodeURIComponent(studioId)}/commerce/import-batches/${encodeURIComponent(batch)}/process`,
+          { retryFailed: retryFailed && first },
+        );
+        transientFailures = 0;
+      } catch (cause) {
+        const message = cause instanceof Error ? cause.message : "";
+        if (!/Failed to fetch|network|fetch/i.test(message) || transientFailures >= 5) throw cause;
+        transientFailures += 1;
+        await wait(2500);
+        continue;
+      }
       first = false;
       setProcessed(result.processed);
       setFailed(result.failed);
@@ -444,11 +554,9 @@ export function CommerceBulkProductImport({
       await uploadPrepared(id, prepared);
 
       setStage("analyzing");
-      const analyzed = await postJson<AnalyzeResponse>(
-        `/api/studios/${encodeURIComponent(studioId)}/commerce/import-batches/${encodeURIComponent(id)}/analyze`,
-        {},
-      );
+      const analyzed = await analyzeWithRecovery(id);
       setGroups(analyzed.groups);
+      setRecoverableBatch(null);
 
       if (invoiceFile) {
         try {
@@ -466,6 +574,37 @@ export function CommerceBulkProductImport({
     } catch (cause) {
       setStage("error");
       setError(cause instanceof Error ? cause.message : "No se pudo completar la carga masiva.");
+    }
+  }
+
+  async function resumeBatch(batch: BatchStatus) {
+    if (busy) return;
+    const recoveredGroups = batchGroups(batch);
+    if (!recoveredGroups.length) {
+      setError("Ese lote todavía no tiene productos agrupados para reanudar.");
+      return;
+    }
+    setError("");
+    setBatchId(batch.id);
+    setGroups(recoveredGroups);
+    setProcessed(batch.processed_products || 0);
+    setFailed(batch.failed_products || 0);
+    try {
+      if (invoiceFile && !invoiceData) {
+        try {
+          await uploadAndAnalyzeInvoice(batch.id, invoiceFile);
+        } catch (invoiceError) {
+          setError(invoiceError instanceof Error
+            ? `Los productos siguen; la factura quedó pendiente: ${invoiceError.message}`
+            : "Los productos siguen; la factura quedó pendiente.");
+        }
+      }
+      setStage("creating");
+      await processUntilFinished(batch.id, batch.status === "completed_with_errors");
+      setRecoverableBatch(null);
+    } catch (cause) {
+      setStage("error");
+      setError(cause instanceof Error ? cause.message : "No se pudo reanudar el lote.");
     }
   }
 
@@ -599,6 +738,26 @@ export function CommerceBulkProductImport({
           </div>
         </>
       )}
+
+      {recoverableBatch && !busy ? (
+        <div className="mt-4 rounded-xl border border-cyan-300/20 bg-cyan-300/[0.05] p-3">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <strong className="text-xs text-cyan-100">Lote listo para reanudar</strong>
+              <p className="mt-1 text-[10px] leading-4 text-white/45">
+                {batchGroups(recoverableBatch).length} productos detectados · {recoverableBatch.total_images} fotos. No hace falta volver a subirlas.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void resumeBatch(recoverableBatch)}
+              className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-cyan-300/25 bg-cyan-300/[0.08] px-3 text-xs font-semibold text-cyan-100"
+            >
+              <RefreshCw className="h-4 w-4" /> Reanudar lote
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {progressText && !busy ? (
         <div className="mt-4 flex items-center gap-2 rounded-xl border border-emerald-300/15 bg-emerald-300/[0.05] px-3 py-2 text-xs text-emerald-100">
