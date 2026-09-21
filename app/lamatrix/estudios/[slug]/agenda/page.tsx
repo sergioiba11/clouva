@@ -43,6 +43,7 @@ export default async function MatrixStudioAgendaPage({ params }: { params: Promi
         availabilityRules={iglu.availabilityRules}
         timezone={iglu.studioAgenda?.timezone || "America/Argentina/Buenos_Aires"}
         bookingEnabled={Boolean(iglu.studioAgenda?.booking_enabled)}
+        studioId={result.studio.id}
       />
     );
   }
