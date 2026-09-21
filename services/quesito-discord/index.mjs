@@ -60,6 +60,12 @@ const STT_FALLBACK_DELAY_MS = Number(
 );
 const TTS_VOICE =
   process.env.QUESITO_TTS_VOICE?.trim() || "es-US-Chirp3-HD-Puck";
+const YOUTUBE_POT_PROVIDER_URL =
+  process.env.QUESITO_YOUTUBE_POT_PROVIDER_URL?.trim() ||
+  "http://127.0.0.1:4416";
+const YOUTUBE_POT_PROVIDER_ENTRY =
+  process.env.QUESITO_YOUTUBE_POT_PROVIDER_ENTRY?.trim() ||
+  "/opt/bgutil/server/build/main.js";
 
 if (!DISCORD_BOT_TOKEN) throw new Error("DISCORD_BOT_TOKEN is required.");
 if (!PROJECT_ID) throw new Error("GOOGLE_CLOUD_PROJECT is required.");
@@ -78,6 +84,13 @@ const guildStates = new Map();
 const histories = new Map();
 let discordLoginError = null;
 let discordLoginAttempts = 0;
+let potProviderProcess = null;
+const youtubeDiagnostics = {
+  potProviderReady: false,
+  potProviderVersion: null,
+  potProviderLastError: null,
+  lastYtDlpError: null,
+};
 const voiceDiagnostics = {
   utterances: 0,
   wakes: 0,
@@ -1012,24 +1025,150 @@ function youtubeTarget(input) {
   return YOUTUBE_URL_RE.test(clean) ? clean : "ytsearch1:" + clean;
 }
 
-async function resolveYouTubeTrack(input) {
-  const target = youtubeTarget(input);
-  const { stdout } = await execFileAsync(
-    "yt-dlp",
+function youtubeRuntimeArgs() {
+  return [
+    "--js-runtimes",
+    "node",
+    "--extractor-args",
+    "youtube:player_client=mweb",
+    "--extractor-args",
+    "youtubepot-bgutilhttp:base_url=" + YOUTUBE_POT_PROVIDER_URL,
+  ];
+}
+
+async function waitForPotProvider(timeoutMs = 12000) {
+  const started = Date.now();
+
+  while (Date.now() - started < timeoutMs) {
+    try {
+      const response = await fetch(YOUTUBE_POT_PROVIDER_URL + "/ping", {
+        signal: AbortSignal.timeout(1200),
+        cache: "no-store",
+      });
+      if (response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        youtubeDiagnostics.potProviderReady = true;
+        youtubeDiagnostics.potProviderVersion = payload?.version || null;
+        youtubeDiagnostics.potProviderLastError = null;
+        return true;
+      }
+    } catch (error) {
+      youtubeDiagnostics.potProviderLastError = String(error?.message || error).slice(0, 300);
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+
+  youtubeDiagnostics.potProviderReady = false;
+  return false;
+}
+
+function startPotProvider() {
+  if (potProviderProcess && !potProviderProcess.killed) return potProviderProcess;
+
+  const child = spawn(
+    process.execPath,
     [
-      "--no-playlist",
-      "--js-runtimes",
-      "node",
-      "--dump-single-json",
-      "--skip-download",
-      "--no-warnings",
-      target,
+      YOUTUBE_POT_PROVIDER_ENTRY,
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "4416",
     ],
-    {
-      timeout: 45000,
-      maxBuffer: 4 * 1024 * 1024,
-    },
+    { stdio: ["ignore", "pipe", "pipe"] },
   );
+
+  potProviderProcess = child;
+  youtubeDiagnostics.potProviderReady = false;
+
+  child.stdout.on("data", (chunk) => {
+    const message = String(chunk).trim();
+    if (message) log("QUESITO_YOUTUBE_POT", { message: message.slice(0, 500) });
+  });
+
+  child.stderr.on("data", (chunk) => {
+    const message = String(chunk).trim();
+    if (!message) return;
+    youtubeDiagnostics.potProviderLastError = message.slice(-500);
+    log("QUESITO_YOUTUBE_POT_STDERR", { message: message.slice(-500) });
+  });
+
+  child.on("error", (error) => {
+    youtubeDiagnostics.potProviderReady = false;
+    youtubeDiagnostics.potProviderLastError = String(error?.message || error).slice(0, 500);
+    log("QUESITO_YOUTUBE_POT_ERROR", {
+      error: youtubeDiagnostics.potProviderLastError,
+    });
+  });
+
+  child.on("exit", (code, signal) => {
+    if (potProviderProcess !== child) return;
+    potProviderProcess = null;
+    youtubeDiagnostics.potProviderReady = false;
+    log("QUESITO_YOUTUBE_POT_EXIT", { code, signal });
+    setTimeout(() => {
+      startPotProvider();
+      void waitForPotProvider();
+    }, 2000).unref();
+  });
+
+  void waitForPotProvider().then((ready) => {
+    log("QUESITO_YOUTUBE_POT_READY", {
+      ready,
+      version: youtubeDiagnostics.potProviderVersion,
+    });
+  });
+
+  return child;
+}
+
+async function ensurePotProvider() {
+  if (youtubeDiagnostics.potProviderReady) return;
+  startPotProvider();
+  const ready = await waitForPotProvider();
+  if (!ready) {
+    throw new Error("El desbloqueo de YouTube todavía no está listo. Probá de nuevo en unos segundos.");
+  }
+}
+
+function compactYtError(error) {
+  const raw = String(error?.stderr || error?.message || error || "");
+  youtubeDiagnostics.lastYtDlpError = raw.slice(-1200);
+
+  if (/sign in to confirm you.?re not a bot/i.test(raw)) {
+    return new Error("YouTube volvió a bloquear la salida del servidor. Reintentá el tema.");
+  }
+  if (/video unavailable|private video/i.test(raw)) {
+    return new Error("Ese video no está disponible para reproducir.");
+  }
+  return error;
+}
+
+async function resolveYouTubeTrack(input) {
+  await ensurePotProvider();
+  const target = youtubeTarget(input);
+  let stdout = "";
+
+  try {
+    const result = await execFileAsync(
+      "yt-dlp",
+      [
+        "--no-playlist",
+        ...youtubeRuntimeArgs(),
+        "--dump-single-json",
+        "--skip-download",
+        "--no-warnings",
+        target,
+      ],
+      {
+        timeout: 45000,
+        maxBuffer: 4 * 1024 * 1024,
+      },
+    );
+    stdout = result.stdout;
+  } catch (error) {
+    throw compactYtError(error);
+  }
 
   const info = JSON.parse(stdout);
   const url = info.webpage_url || info.original_url;
@@ -1071,13 +1210,14 @@ async function playNextMusic(state) {
     state.musicIgnoreNextIdle = (state.musicIgnoreNextIdle || 0) + 1;
   }
 
+  await ensurePotProvider();
+
   const track = state.musicQueue.shift();
   const source = spawn(
     "yt-dlp",
     [
       "--no-playlist",
-      "--js-runtimes",
-      "node",
+      ...youtubeRuntimeArgs(),
       "--no-warnings",
       "-f",
       "bestaudio/best",
@@ -1111,6 +1251,7 @@ async function playNextMusic(state) {
   source.stdout.pipe(ffmpeg.stdin);
   source.stderr.on("data", (chunk) => {
     state.musicLastError = String(chunk).slice(-500);
+    youtubeDiagnostics.lastYtDlpError = state.musicLastError;
   });
   ffmpeg.stderr.on("data", (chunk) => {
     state.musicLastError = String(chunk).slice(-500);
@@ -1815,6 +1956,7 @@ http
         discordError: discordLoginError,
         discordLoginAttempts,
         voiceDiagnostics,
+        youtubeDiagnostics,
       }),
     );
   })
@@ -1835,7 +1977,8 @@ async function connectDiscord() {
       error: message,
     });
     setTimeout(() => {
-      void connectDiscord();
+      startPotProvider();
+void connectDiscord();
     }, 10_000).unref();
   }
 }
