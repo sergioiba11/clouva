@@ -69,9 +69,15 @@ export async function loadIgluOperationalData(options?: { from?: string; to?: st
     .order("display_order", { ascending: true });
   if (playerLinksError) throw new Error(playerLinksError.message);
 
-  const rawPlayers = (playerLinks ?? [])
-    .map((row) => Array.isArray(row.player) ? row.player[0] : row.player)
-    .filter((player): player is NonNullable<typeof player> => Boolean(player?.id && player?.is_published && player?.publication_status === "published"));
+  const linkedPlayers = (playerLinks ?? [])
+    .map((link) => ({
+      link,
+      player: Array.isArray(link.player) ? link.player[0] : link.player,
+    }))
+    .filter((entry): entry is { link: typeof entry.link; player: NonNullable<typeof entry.player> } =>
+      Boolean(entry.player?.id && entry.player?.is_published && entry.player?.publication_status === "published"),
+    );
+  const rawPlayers = linkedPlayers.map((entry) => entry.player);
 
   const ownerUserIds = Array.from(new Set(rawPlayers.flatMap((player) => player.owner_user_id ? [String(player.owner_user_id)] : [])));
   const { data: entitlementRows, error: entitlementError } = ownerUserIds.length
@@ -95,11 +101,11 @@ export async function loadIgluOperationalData(options?: { from?: string; to?: st
       .map((row) => String(row.user_id)),
   );
 
-  const players: IgluPublicPlayer[] = rawPlayers.map((player, index) => ({
+  const players: IgluPublicPlayer[] = linkedPlayers.map(({ player, link }) => ({
     id: String(player.id),
     slug: String(player.slug),
     displayName: String(player.display_name || player.slug || "Player"),
-    role: String((playerLinks?.[index] as { role?: unknown } | undefined)?.role || "") || null,
+    role: String(link.role || "") || null,
     primaryRole: player.primary_role ? String(player.primary_role) : null,
     location: player.location ? String(player.location) : null,
     latitude: typeof player.latitude === "number" ? player.latitude : null,
