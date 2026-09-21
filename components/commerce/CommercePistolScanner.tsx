@@ -202,11 +202,11 @@ export function CommercePistolScanner({ studioId }: { studioId: string }) {
       setMode("identified");
       setMessage("Código leído. Este producto todavía no está en tu catálogo.");
     } catch (cause) {
-      setMode(recognition ? "identified" : "ready");
-      setMessage(recognition ? "Objeto identificado. Podés agregarlo con +." : "Tocá el objeto para identificarlo.");
+      setMode((current) => current === "matched" ? "matched" : "ready");
+      setMessage("Tocá el objeto para identificarlo o mostrale el código a la cámara.");
       setError(cause instanceof Error ? cause.message : "No se pudo consultar el código.");
     }
-  }, [authFetch, recognition, studioId]);
+  }, [authFetch, studioId]);
 
   const stopCamera = useCallback(() => {
     if (animationRef.current != null) cancelAnimationFrame(animationRef.current);
