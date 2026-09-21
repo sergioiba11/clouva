@@ -277,6 +277,37 @@ export async function syncYoutubeVideos(admin: SupabaseClient, userId: string) {
   return { synced: normalized.length, channelUrl: url, videos: normalized.map((item) => ({ id: item.videoId, title: item.title, thumbnailUrl: item.thumbnailUrl })) };
 }
 
+export async function getActiveYoutubeLive(admin: SupabaseClient, userId: string) {
+  const response = await youtubeUserApi<{
+    items?: Array<{
+      id?: string;
+      snippet?: { title?: string; description?: string; actualStartTime?: string; scheduledStartTime?: string; thumbnails?: Record<string, { url?: string }> };
+      status?: { lifeCycleStatus?: string };
+    }>;
+  }>(admin, userId, "/liveBroadcasts?part=id,snippet,status&broadcastStatus=active&mine=true&maxResults=1");
+
+  const broadcast = response.items?.[0];
+  if (!broadcast?.id) return null;
+  const thumbnails = broadcast.snippet?.thumbnails || {};
+  const thumbnailUrl =
+    thumbnails.maxres?.url ||
+    thumbnails.standard?.url ||
+    thumbnails.high?.url ||
+    thumbnails.medium?.url ||
+    thumbnails.default?.url ||
+    null;
+
+  return {
+    videoId: broadcast.id,
+    title: broadcast.snippet?.title || "IGLÚ en vivo",
+    description: broadcast.snippet?.description || null,
+    startedAt: broadcast.snippet?.actualStartTime || broadcast.snippet?.scheduledStartTime || null,
+    thumbnailUrl,
+    watchUrl: `https://www.youtube.com/watch?v=${broadcast.id}`,
+    embedUrl: `https://www.youtube-nocookie.com/embed/${broadcast.id}?autoplay=1&playsinline=1`,
+  };
+}
+
 export async function getYoutubePublicConnection(admin: SupabaseClient, userId: string): Promise<YoutubePublicConnection> {
   const row = await loadYoutubeConnection(admin, userId);
   if (!row) return { connected: false, provider: "youtube", displayName: null, externalUsername: null, channelUrl: null, thumbnailUrl: null, status: null, connectedAt: null, lastSyncedAt: null };
