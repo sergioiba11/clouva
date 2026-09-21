@@ -14,6 +14,7 @@ async function createCanonicalBooking(args: {
   serviceId: string;
   studioId: string;
   buyerUserId: string;
+  hostPlayerId?: string | null;
   scheduledAt: string;
   durationMinutes: number;
   price: number | null;
@@ -22,10 +23,12 @@ async function createCanonicalBooking(args: {
   externalReference?: string | null;
   notes?: string | null;
 }) {
-  const { data, error } = await args.admin.rpc("create_studio_booking_with_agenda", {
+  const rpcName = args.hostPlayerId ? "create_studio_booking_with_player_agenda" : "create_studio_booking_with_agenda";
+  const payload = {
     p_service_id: args.serviceId,
     p_studio_id: args.studioId,
     p_buyer_user_id: args.buyerUserId,
+    ...(args.hostPlayerId ? { p_host_player_id: args.hostPlayerId } : {}),
     p_scheduled_at: args.scheduledAt,
     p_duration_minutes: args.durationMinutes,
     p_price: args.price,
@@ -33,7 +36,8 @@ async function createCanonicalBooking(args: {
     p_payment_status: args.paymentStatus,
     p_external_reference: args.externalReference ?? null,
     p_notes: args.notes ?? null,
-  });
+  };
+  const { data, error } = await args.admin.rpc(rpcName, payload);
   if (error) throw new Error(error.message);
   const row = (Array.isArray(data) ? data[0] : data) as BookingRpcRow | null;
   if (!row?.booking_id || !row?.agenda_event_id) throw new Error("No se pudo crear la reserva canónica.");
@@ -47,9 +51,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   try {
     const { user } = await requireUser(request);
     const { slug: studioId } = await params;
-    const body = (await request.json().catch(() => ({}))) as { serviceId?: unknown; scheduledAt?: unknown; durationMinutes?: unknown; notes?: unknown };
+    const body = (await request.json().catch(() => ({}))) as { serviceId?: unknown; playerId?: unknown; scheduledAt?: unknown; durationMinutes?: unknown; notes?: unknown };
 
     const serviceId = String(body.serviceId || "");
+    const playerId = typeof body.playerId === "string" && body.playerId.trim() ? body.playerId.trim() : null;
     const scheduledAtRaw = String(body.scheduledAt || "");
     const scheduledAt = new Date(scheduledAtRaw);
     if (!serviceId || Number.isNaN(scheduledAt.getTime())) {
@@ -78,6 +83,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         serviceId: service.id,
         studioId,
         buyerUserId: user.id,
+        hostPlayerId: playerId,
         scheduledAt: scheduledAt.toISOString(),
         durationMinutes,
         price: null,
