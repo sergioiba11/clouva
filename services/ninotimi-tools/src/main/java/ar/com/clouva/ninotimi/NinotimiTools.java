@@ -71,7 +71,7 @@ import java.util.UUID;
 
 public final class NinotimiTools extends JavaPlugin implements Listener, CommandExecutor, TabCompleter {
     private static final String MAIN_TITLE = "NINOTIMI TOOLS";
-    private static final String CLOUVA_PANEL_TITLE = "CLOUVA — PANEL";
+    private static final String CLOUVA_PANEL_TITLE = "RATCRAFT — PANEL";
     private static final String BLOCKS_TITLE = "BLOQUES — NINOTIMI";
     private static final String GAME_MENU_TITLE = "JUEGOS — NINOTIMI";
     private static final String PARKOUR_MENU_TITLE = "PARKOUR — ELEGÍ MAPA";
@@ -1480,7 +1480,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             4,
             menuItem(
                 Material.NETHER_STAR,
-                "✦ CLOUVA SERVER ✦",
+                "✦ RATCRAFT ✦",
                 Bukkit.getOnlinePlayers().size() + " online · " + worldLabel(player.getWorld())
             )
         );
@@ -1502,7 +1502,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     private void showServerStatus(Player player) {
         msg(
             player,
-            "CLOUVA · " + worldLabel(player.getWorld())
+            "RATCRAFT · " + worldLabel(player.getWorld())
                 + " · " + Bukkit.getOnlinePlayers().size() + " online"
                 + " · " + roleLabel(player)
                 + " · ping " + player.getPing() + "ms",
@@ -1523,31 +1523,25 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         }
 
         for (Player viewer : Bukkit.getOnlinePlayers()) {
-            String pvpState = duelActive ? "EN PARTIDA" : (pvpQueue.isEmpty() ? "LIBRE" : "COLA " + pvpQueue.size());
-            String iceState = iceActive ? "EN PARTIDA" : (iceQueue.isEmpty() ? "LIBRE" : "COLA " + iceQueue.size());
+            String pvpState = duelActive ? "en partida" : (pvpQueue.isEmpty() ? "libre" : "cola " + pvpQueue.size());
+            String iceState = iceActive ? "en partida" : (iceQueue.isEmpty() ? "esperando" : "cola " + iceQueue.size());
 
-            Component header = Component.text("✦ CLOUVA SERVER ✦", NamedTextColor.LIGHT_PURPLE)
+            Component header = Component.text("          ✦ RATCRAFT ✦", NamedTextColor.LIGHT_PURPLE)
                 .append(Component.newline())
-                .append(Component.text("VIDA DE FLOWS", NamedTextColor.AQUA))
-                .append(Component.newline())
-                .append(Component.text("────────────────────────", NamedTextColor.DARK_GRAY))
-                .append(Component.newline())
-                .append(Component.text("Mundo: ", NamedTextColor.GRAY))
+                .append(Component.newline());
+
+            Component footer = Component.newline()
+                .append(Component.text("🌎 Mundo: ", NamedTextColor.GRAY))
                 .append(Component.text(worldLabel(viewer.getWorld()), NamedTextColor.GREEN))
-                .append(Component.text("  |  Online: " + onlineCount, NamedTextColor.GRAY))
                 .append(Component.newline())
-                .append(Component.text("Rango: ", NamedTextColor.GRAY))
-                .append(Component.text(roleLabel(viewer), roleColor(viewer)))
-                .append(Component.text("  |  Ping: " + viewer.getPing() + "ms", NamedTextColor.GRAY));
-
-            Component footer = Component.text("PVP: " + pvpState, NamedTextColor.GOLD)
-                .append(Component.text("  |  HIELO: " + iceState, NamedTextColor.AQUA))
+                .append(Component.text("👥 Online: " + onlineCount, NamedTextColor.GRAY))
                 .append(Component.newline())
-                .append(Component.text("Quesito: ", NamedTextColor.GRAY))
-                .append(Component.text(isQuesitoOnline() ? "ONLINE" : "OFFLINE", isQuesitoOnline() ? NamedTextColor.GREEN : NamedTextColor.DARK_GRAY))
+                .append(Component.text("⚔ PvP: " + pvpState, NamedTextColor.GOLD))
                 .append(Component.newline())
-                .append(Component.text("✦ /panel", NamedTextColor.LIGHT_PURPLE))
-                .append(Component.text("  →  abrir controles CLOUVA", NamedTextColor.GRAY));
+                .append(Component.text("❄ Hielo: " + iceState, NamedTextColor.AQUA))
+                .append(Component.newline())
+                .append(Component.newline())
+                .append(Component.text("      /panel  →  PANEL RATCRAFT", NamedTextColor.LIGHT_PURPLE));
 
             viewer.sendPlayerListHeaderAndFooter(header, footer);
         }
@@ -1558,7 +1552,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             player.playerListName(
                 Component.text("★ ", NamedTextColor.GOLD)
                     .append(Component.text(player.getName(), NamedTextColor.WHITE))
-                    .append(Component.text("  ADMIN", NamedTextColor.RED))
+                    .append(Component.text("        ADMIN", NamedTextColor.RED))
             );
             player.setPlayerListOrder(0);
             return;
@@ -1568,7 +1562,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             player.playerListName(
                 Component.text("⚡ ", NamedTextColor.LIGHT_PURPLE)
                     .append(Component.text(player.getName(), NamedTextColor.WHITE))
-                    .append(Component.text("  TEMP", NamedTextColor.LIGHT_PURPLE))
+                    .append(Component.text("        ADMIN TEMP", NamedTextColor.LIGHT_PURPLE))
             );
             player.setPlayerListOrder(10);
             return;
@@ -1578,13 +1572,18 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             player.playerListName(
                 Component.text("◆ ", NamedTextColor.AQUA)
                     .append(Component.text(player.getName(), NamedTextColor.WHITE))
-                    .append(Component.text("  BUILDER", NamedTextColor.AQUA))
+                    .append(Component.text("      BUILDER", NamedTextColor.AQUA))
             );
             player.setPlayerListOrder(20);
             return;
         }
 
-        player.playerListName(Component.text(player.getName(), NamedTextColor.WHITE));
+        String survivalSuffix = isSurvivalLocked(player) ? "      SURVIVAL" : "";
+        player.playerListName(
+            Component.text("👤 ", NamedTextColor.GRAY)
+                .append(Component.text(player.getName(), NamedTextColor.WHITE))
+                .append(Component.text(survivalSuffix, NamedTextColor.GRAY))
+        );
         player.setPlayerListOrder(100);
     }
 
