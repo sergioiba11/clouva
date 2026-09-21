@@ -108,7 +108,7 @@ function cropFrame(video: HTMLVideoElement, rect: DOMRect, clientX: number, clie
   return canvas.toDataURL("image/jpeg", 0.86);
 }
 
-export function CommercePistolScanner({ studioId }: { studioId: string }) {
+export function CommercePistolScanner({ studioId, returnPath }: { studioId: string; returnPath?: string }) {
   const router = useRouter();
   const { session, user, loading: authLoading } = useAuth();
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -163,9 +163,32 @@ export function CommercePistolScanner({ studioId }: { studioId: string }) {
     const current = source ?? overview;
     if (!current) return null;
     const candidates = [recognized.name, recognized.detectedObject].map(normalize).filter(Boolean);
-    return current.listings.find((listing) =>
-      listing.status !== "archived" && candidates.includes(normalize(listing.name)),
-    ) ?? null;
+    if (!candidates.length) return null;
+
+    const scored = current.listings
+      .filter((listing) => listing.status !== "archived")
+      .map((listing) => {
+        const listingName = normalize(listing.name);
+        let score = 0;
+        for (const candidate of candidates) {
+          if (!candidate || !listingName) continue;
+          if (candidate === listingName) score = Math.max(score, 1);
+          else if (candidate.includes(listingName) || listingName.includes(candidate)) score = Math.max(score, 0.9);
+          else {
+            const a = new Set(candidate.split(" ").filter((token) => token.length > 2));
+            const b = new Set(listingName.split(" ").filter((token) => token.length > 2));
+            const intersection = [...a].filter((token) => b.has(token)).length;
+            const union = new Set([...a, ...b]).size || 1;
+            score = Math.max(score, intersection / union);
+          }
+        }
+        return { listing, score };
+      })
+      .sort((a, b) => b.score - a.score);
+
+    if (!scored[0] || scored[0].score < 0.72) return null;
+    if (scored[1] && scored[0].score - scored[1].score < 0.12 && scored[0].score < 0.95) return null;
+    return scored[0].listing;
   }, [overview]);
 
   const processCode = useCallback(async (raw: string) => {
@@ -334,13 +357,14 @@ export function CommercePistolScanner({ studioId }: { studioId: string }) {
   useEffect(() => {
     if (authLoading) return;
     if (!user) {
-      router.replace(`/login?next=${encodeURIComponent(`/studio-dashboard/${studioId}/commerce/scanner`)}`);
+      const next = returnPath || `/studio-dashboard/${studioId}/commerce/scanner`;
+      router.replace(`/login?next=${encodeURIComponent(next)}`);
       return;
     }
     void loadOverview().catch((cause) => setError(cause instanceof Error ? cause.message : "No se pudo cargar el Spot."));
     void startCamera();
     return stopCamera;
-  }, [authLoading, loadOverview, router, startCamera, stopCamera, studioId, user]);
+  }, [authLoading, loadOverview, returnPath, router, startCamera, stopCamera, studioId, user]);
 
   async function toggleTorch() {
     const track = streamRef.current?.getVideoTracks()[0];
@@ -541,7 +565,7 @@ export function CommercePistolScanner({ studioId }: { studioId: string }) {
         </button>
         <div className="text-center">
           <p className="text-[11px] font-semibold uppercase tracking-[.3em] text-cyan-200/75">CLOUVA</p>
-          <p className="mt-0.5 text-sm font-semibold">Scanner</p>
+          <p className="mt-0.5 max-w-[180px] truncate text-sm font-semibold">{overview?.spot.name || "Scanner"}</p>
         </div>
         <button type="button" onClick={() => void toggleTorch()} className={`grid h-11 w-11 place-items-center rounded-full border backdrop-blur-xl ${torch ? "border-cyan-300/60 bg-cyan-300/20 text-cyan-100" : "border-white/15 bg-black/35"}`} aria-label="Linterna">
           <Flashlight className="h-5 w-5" />
