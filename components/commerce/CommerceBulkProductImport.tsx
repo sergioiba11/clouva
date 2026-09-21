@@ -86,6 +86,18 @@ type InvoicePayload = {
   items: InvoiceItem[];
 };
 
+type BatchSourceItem = {
+  id: string;
+  source_index: number;
+  file_name: string | null;
+  source_url: string;
+  mime_type: string;
+  status: string;
+  group_key: string | null;
+  listing_id: string | null;
+  error: string | null;
+};
+
 type BatchStatus = {
   id: string;
   status: string;
@@ -98,6 +110,7 @@ type BatchStatus = {
     groups?: BatchGroup[];
     [key: string]: unknown;
   } | null;
+  items?: BatchSourceItem[];
 };
 
 type PreparedImage = {
@@ -288,6 +301,7 @@ export function CommerceBulkProductImport({
   const [invoiceData, setInvoiceData] = useState<InvoicePayload | null>(null);
   const [checkingInvoiceItem, setCheckingInvoiceItem] = useState("");
   const [recoverableBatch, setRecoverableBatch] = useState<BatchStatus | null>(null);
+  const [batchSources, setBatchSources] = useState<Record<number, BatchSourceItem>>({});
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -313,7 +327,18 @@ export function CommerceBulkProductImport({
             && ["review", "processing", "completed_with_errors", "failed"].includes(batch.status)
             && batch.processed_products < Math.max(batch.detected_products, groups.length);
         }) ?? null;
-        setRecoverableBatch(candidate);
+        if (!candidate) {
+          setRecoverableBatch(null);
+          return;
+        }
+        try {
+          const detail = await getJson<{ batch: BatchStatus }>(
+            `/api/studios/${encodeURIComponent(studioId)}/commerce/import-batches/${encodeURIComponent(candidate.id)}`,
+          );
+          if (!cancelled) setRecoverableBatch(detail.batch);
+        } catch {
+          if (!cancelled) setRecoverableBatch(candidate);
+        }
       } catch {
         // La recuperación es auxiliar; no debe bloquear la carga normal.
       }
@@ -348,6 +373,7 @@ export function CommerceBulkProductImport({
     setFailed(0);
     setProcessResults([]);
     setInvoiceData(null);
+    setBatchSources({});
     setError(incoming.length > MAX_BATCH_IMAGES
       ? `Se tomaron las primeras ${MAX_BATCH_IMAGES} imágenes del lote.`
       : "");
@@ -370,6 +396,7 @@ export function CommerceBulkProductImport({
     setProcessResults([]);
     setInvoiceFile(null);
     setInvoiceData(null);
+    setBatchSources({});
     setError("");
     setStage("idle");
   }
@@ -558,6 +585,7 @@ export function CommerceBulkProductImport({
       setStage("analyzing");
       const analyzed = await analyzeWithRecovery(id);
       setGroups(analyzed.groups);
+      setBatchSources({});
       setRecoverableBatch(null);
 
       if (invoiceFile) {
@@ -589,6 +617,7 @@ export function CommerceBulkProductImport({
     setError("");
     setBatchId(batch.id);
     setGroups(recoveredGroups);
+    setBatchSources(Object.fromEntries((batch.items ?? []).map((item) => [item.source_index, item])));
     setProcessed(batch.processed_products || 0);
     setFailed(batch.failed_products || 0);
     try {
@@ -838,8 +867,34 @@ export function CommerceBulkProductImport({
           <div className="mt-2 grid gap-2 sm:grid-cols-2">
             {groups.map((group) => {
               const result = processResults.find((candidate) => candidate.groupKey === group.groupKey);
+              const photos = group.images.map((image) => ({
+                ...image,
+                url: batchSources[image.sourceIndex]?.source_url || previews[image.sourceIndex] || "",
+                fileName: batchSources[image.sourceIndex]?.file_name || files[image.sourceIndex]?.name || "",
+              }));
               return (
                 <div key={group.groupKey} className="rounded-xl border border-white/[0.08] bg-black/20 p-3">
+                  {photos.some((photo) => photo.url) ? (
+                    <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
+                      {photos.map((photo) => photo.url ? (
+                        <div key={photo.sourceIndex} className="relative h-20 w-20 shrink-0 overflow-hidden rounded-lg border border-white/10 bg-black/30">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={photo.url}
+                            alt={photo.fileName || `${group.name || "Producto"} · ${photo.role}`}
+                            className="h-full w-full object-cover"
+                            loading="lazy"
+                          />
+                          <span className="absolute bottom-1 left-1 rounded bg-black/75 px-1.5 py-0.5 text-[8px] font-semibold text-white/80">
+                            {photo.role}
+                          </span>
+                          <span className="absolute right-1 top-1 rounded bg-black/75 px-1 py-0.5 text-[8px] text-white/70">
+                            #{photo.sourceIndex + 1}
+                          </span>
+                        </div>
+                      ) : null)}
+                    </div>
+                  ) : null}
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <strong className="block truncate text-sm">{result?.name || group.name || "Producto detectado"}</strong>
