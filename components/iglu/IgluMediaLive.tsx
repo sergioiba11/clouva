@@ -16,10 +16,22 @@ type Track = {
   audioUrl: string | null;
 };
 
+type YoutubeLive = {
+  videoId: string;
+  title: string;
+  description: string | null;
+  startedAt: string | null;
+  thumbnailUrl: string | null;
+  watchUrl: string;
+  embedUrl: string;
+};
+
 type LibraryPayload = {
   studio?: { id: string; name: string };
-  radio?: { station_name: string; tagline: string | null; stream_url: string | null; artwork_url: string | null } | null;
+  radio?: { station_name: string; tagline: string | null; stream_url: string | null; artwork_url: string | null; primary_track_id?: string | null } | null;
   tracks?: Track[];
+  primaryTrack?: Track | null;
+  youtubeLive?: YoutubeLive | null;
   error?: string;
 };
 
@@ -30,6 +42,7 @@ export function IgluMediaLive({ studioId, studioName, publicAlias }: { studioId:
   const [youtubeConnected, setYoutubeConnected] = useState<boolean | null>(null);
   const [uploading, setUploading] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [selectingPrimary, setSelectingPrimary] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
@@ -72,7 +85,29 @@ export function IgluMediaLive({ studioId, studioName, publicAlias }: { studioId:
   }
 
   const hasStream = Boolean(data.radio?.stream_url);
+  const youtubeLive = data.youtubeLive || null;
+  const primaryTrack = data.primaryTrack || null;
   const tracks = data.tracks ?? [];
+
+  async function selectPrimary(trackId: string) {
+    setSelectingPrimary(trackId);
+    setMessage(null);
+    const response = await fetch("/api/iglu/media/audio", {
+      method: "PATCH",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ trackId }),
+    });
+    const payload = await response.json().catch(() => ({})) as { error?: string };
+    if (!response.ok) {
+      setMessage(payload.error || "No se pudo cambiar el audio principal.");
+      setSelectingPrimary(null);
+      return;
+    }
+    setMessage("Reproducción principal actualizada.");
+    setSelectingPrimary(null);
+    await load();
+  }
 
   return (
     <div className={styles.root}>
@@ -86,12 +121,33 @@ export function IgluMediaLive({ studioId, studioName, publicAlias }: { studioId:
 
         <section className={styles.section}>
           <div className={styles.mediaHero}>
-            <div className={styles.mediaVisual}>
-              <Radio size={38} />
-              <strong>{data.radio?.station_name || "IGLÚ RADIO"}</strong>
-              <span>{hasStream ? "Señal de audio configurada" : "Sin transmisión en vivo configurada"}</span>
-            </div>
-            {hasStream ? <audio controls preload="none" src={data.radio?.stream_url || undefined} style={{ width: "100%" }} /> : null}
+            {youtubeLive ? (
+              <>
+                <div style={{ position: "relative", aspectRatio: "16 / 9", background: "#000" }}>
+                  <iframe
+                    title={youtubeLive.title}
+                    src={youtubeLive.embedUrl}
+                    allow="autoplay; encrypted-media; picture-in-picture"
+                    allowFullScreen
+                    style={{ position: "absolute", inset: 0, width: "100%", height: "100%", border: 0 }}
+                  />
+                  <span style={{ position: "absolute", left: 12, top: 12, zIndex: 2, borderRadius: 999, padding: "6px 10px", background: "#e51d36", color: "#fff", fontSize: 10, fontWeight: 900, letterSpacing: ".08em" }}>● EN VIVO · YOUTUBE</span>
+                </div>
+                <div style={{ padding: 14 }}>
+                  <p className={styles.cardTitle}>{youtubeLive.title}</p>
+                  <p className={styles.meta}>La transmisión visual en vivo tiene prioridad sobre audio y biblioteca.</p>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className={styles.mediaVisual}>
+                  <Radio size={38} />
+                  <strong>{primaryTrack?.title || data.radio?.station_name || "IGLÚ MEDIA"}</strong>
+                  <span>{primaryTrack ? `${primaryTrack.artist || studioName} · reproducción principal` : hasStream ? "Señal de audio configurada" : "No hay transmisión ni audio principal configurado"}</span>
+                </div>
+                {primaryTrack?.audioUrl ? <audio controls preload="metadata" src={primaryTrack.audioUrl} style={{ width: "100%" }} /> : hasStream ? <audio controls preload="none" src={data.radio?.stream_url || undefined} style={{ width: "100%" }} /> : null}
+              </>
+            )}
           </div>
         </section>
 
@@ -105,6 +161,16 @@ export function IgluMediaLive({ studioId, studioName, publicAlias }: { studioId:
                   <div><p className={styles.cardTitle}>{track.title}</p><p className={styles.meta}>{track.artist || studioName}</p></div>
                   {track.audioUrl ? <audio controls preload="none" src={track.audioUrl} /> : null}
                   {track.youtube_url ? <Link className={styles.secondaryButton} href={track.youtube_url}>YouTube</Link> : null}
+                  {manager && track.audioUrl ? (
+                    <button
+                      type="button"
+                      className={data.radio?.primary_track_id === track.id ? styles.primaryButton : styles.secondaryButton}
+                      disabled={selectingPrimary === track.id}
+                      onClick={() => void selectPrimary(track.id)}
+                    >
+                      {selectingPrimary === track.id ? "Guardando…" : data.radio?.primary_track_id === track.id ? "Principal ✓" : "Usar como principal"}
+                    </button>
+                  ) : null}
                 </div>
               </article>
             ))}
