@@ -150,22 +150,6 @@ function number01(value: unknown) {
   return Math.min(1, Math.max(0, number));
 }
 
-function normalizeIdentity(value: string) {
-  return value
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
-}
-
-function mergeKey(group: CommerceBatchGroup) {
-  const identifier = group.identifier?.value?.trim();
-  // En carga masiva, un código exacto sí puede unir fotos del mismo objeto entre chunks.
-  // Sin código no fusionamos por apariencia/nombre: dos cajas iguales pueden ser unidades físicas distintas.
-  return identifier ? `code:${identifier.replace(/\s/g, "").toUpperCase()}` : "";
-}
-
 function normalizeRoles(images: CommerceBatchImageRole[]) {
   const sorted = [...images].sort((a, b) => a.sourceIndex - b.sourceIndex);
   let frontUsed = false;
@@ -393,41 +377,11 @@ async function analyzeChunkWithFallback(args: {
 }
 
 function mergeGroups(groups: CommerceBatchGroup[]) {
-  const merged: CommerceBatchGroup[] = [];
-  const byKey = new Map<string, CommerceBatchGroup>();
-
-  for (const group of groups) {
-    const key = mergeKey(group);
-    if (!key) {
-      merged.push(group);
-      continue;
-    }
-    const existing = byKey.get(key);
-    if (!existing) {
-      const copy = { ...group, images: [...group.images] };
-      byKey.set(key, copy);
-      merged.push(copy);
-      continue;
-    }
-
-    const imageMap = new Map(existing.images.map((image) => [image.sourceIndex, image]));
-    for (const image of group.images) imageMap.set(image.sourceIndex, image);
-    existing.images = normalizeRoles(Array.from(imageMap.values()));
-    existing.name = existing.name || group.name;
-    existing.brand = existing.brand || group.brand;
-    existing.model = existing.model || group.model;
-    existing.packageKind = existing.packageKind !== "unknown" ? existing.packageKind : group.packageKind;
-    existing.identifier = existing.identifier || group.identifier;
-    const codeMap = new Map(
-      [...existing.visibleIdentifiers, ...group.visibleIdentifiers]
-        .map((code) => [`${code.type}:${code.value.replace(/\s/g, "").toUpperCase()}`, code] as const),
-    );
-    existing.visibleIdentifiers = Array.from(codeMap.values());
-    existing.confidence = Math.min(existing.confidence, group.confidence);
-    existing.needsReview = existing.needsReview || group.needsReview;
-  }
-
-  return merged.map((group, index) => ({
+  // Cada grupo representa una unidad física observada. Dos unidades del mismo
+  // SKU/barcode NO se fusionan: el código identifica el producto, no la unidad.
+  // Las fotos duplicadas exactas ya se colapsan antes del análisis y las vistas
+  // del mismo objeto se agrupan dentro de cada chunk visual.
+  return groups.map((group, index) => ({
     ...group,
     groupKey: `product-${String(index + 1).padStart(3, "0")}`,
     images: normalizeRoles(group.images),
