@@ -79,14 +79,20 @@ function sourceMetadata(args: {
   });
 }
 
-function missingFields(args: { hasBack: boolean; externalIdentifier: boolean; name: string }) {
+function missingFields(args: {
+  hasBack: boolean;
+  externalIdentifier: boolean;
+  name: string;
+  costConfirmed: boolean;
+  stockConfirmed: boolean;
+}) {
   return [
     ...(!args.hasBack ? ["back_photo"] : []),
     ...(!args.externalIdentifier ? ["external_identifier"] : []),
     ...(!args.name ? ["name"] : []),
     "price",
-    "cost",
-    "stock",
+    ...(!args.costConfirmed ? ["cost"] : []),
+    ...(!args.stockConfirmed ? ["stock"] : []),
     "publication_master",
   ];
 }
@@ -219,6 +225,60 @@ export async function POST(
     const items = (itemRows ?? []) as BatchItem[];
     const itemsByIndex = new Map(items.map((item) => [item.source_index, item]));
 
+    const { data: location, error: locationError } = await admin
+      .from("commerce_inventory_locations")
+      .select("id")
+      .eq("spot_id", spot.id)
+      .eq("status", "active")
+      .order("code", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (locationError) throw new Error(locationError.message);
+    if (!location) return NextResponse.json({ error: "El Spot no tiene una ubicación de inventario activa." }, { status: 409 });
+
+    const { data: purchaseLines, error: purchaseLinesError } = await admin
+      .from("commerce_product_import_invoice_items")
+      .select("id,line_number,description,quantity,unit_price,line_total,matched_group_keys")
+      .eq("batch_id", batch.id)
+      .eq("spot_id", spot.id);
+    if (purchaseLinesError) throw new Error(purchaseLinesError.message);
+
+    const purchaseLineForGroup = (groupKey: string) => (purchaseLines ?? []).find((line) =>
+      Array.isArray(line.matched_group_keys) && line.matched_group_keys.includes(groupKey),
+    ) ?? null;
+
+    const postReceiptStock = async (args: {
+      group: CommerceBatchGroup;
+      listingId: string;
+      variantId?: string | null;
+    }) => {
+      const line = purchaseLineForGroup(args.group.groupKey);
+      const quantity = Math.max(1, Math.floor(Number(args.group.unitCount) || 1));
+      const unitCost = line?.unit_price == null ? null : Number(line.unit_price);
+      const { error: receiptError } = await admin.rpc("adjust_commerce_spot_inventory", {
+        p_spot_id: spot.id,
+        p_listing_id: args.listingId,
+        p_variant_id: args.variantId || null,
+        p_location_id: location.id,
+        p_quantity_delta: quantity,
+        p_movement_type: "purchase_receipt",
+        p_unit_cost: Number.isFinite(unitCost) ? unitCost : null,
+        p_currency: spot.currency,
+        p_reference: line ? `factura:${line.line_number}` : `batch:${batch.id}`,
+        p_note: line?.description || "Ingreso de compra por carga masiva",
+        p_actor_id: user.id,
+        p_idempotency_key: `commerce-batch:${batch.id}:${args.group.groupKey}:purchase-receipt`,
+        p_metadata: {
+          batch_id: batch.id,
+          group_key: args.group.groupKey,
+          invoice_item_id: line?.id ?? null,
+          unit_count: quantity,
+        },
+      });
+      if (receiptError) throw new Error(receiptError.message);
+      return { line, quantity, unitCost: Number.isFinite(unitCost) ? unitCost : null };
+    };
+
     // A previous request may have created the listing and then failed in a
     // post-create step. Normalize those rows back to "created" so retries do not
     // duplicate products and the UI stops showing a false product failure.
@@ -236,6 +296,15 @@ export async function POST(
           item.status = "created";
           item.error = null;
         }
+      }
+    }
+
+    for (const group of groups) {
+      const existing = group.images
+        .map((image) => itemsByIndex.get(image.sourceIndex))
+        .find((item) => Boolean(item?.listing_id));
+      if (existing?.listing_id) {
+        await postReceiptStock({ group, listingId: existing.listing_id });
       }
     }
 
@@ -327,6 +396,8 @@ export async function POST(
           type: "sku" as const,
         };
         const analyzedAt = new Date().toISOString();
+        const purchaseLine = purchaseLineForGroup(group.groupKey);
+        const confirmedUnitCost = purchaseLine?.unit_price == null ? null : Number(purchaseLine.unit_price);
         const sources = sourceMetadata({ group, itemsByIndex });
         const frontUrl = sources.find((source) => source.label === "Frente")?.url ?? sources[0]?.url ?? "";
         const hasBack = sources.some((source) => source.label === "Atrás");
@@ -376,10 +447,12 @@ export async function POST(
               hasBack,
               externalIdentifier: Boolean(externalIdentifier),
               name: recognizedName,
+              costConfirmed: Number.isFinite(confirmedUnitCost),
+              stockConfirmed: true,
             }),
             price_confirmed: false,
-            cost_confirmed: false,
-            stock_confirmed: false,
+            cost_confirmed: Number.isFinite(confirmedUnitCost),
+            stock_confirmed: true,
             external_identifier_pending: !externalIdentifier,
             last_saved_at: analyzedAt,
           },
@@ -418,7 +491,7 @@ export async function POST(
           p_listing: {
             listing_kind: recognized.listingKind,
             price: 0,
-            cost: 0,
+            cost: Number.isFinite(confirmedUnitCost) ? confirmedUnitCost : 0,
             initial_stock: 0,
             status: "draft",
             cover_url: frontUrl,
@@ -437,6 +510,10 @@ export async function POST(
         if (createError) throw new Error(createError.message);
         const listingId = resultListingId(created);
         if (!listingId) throw new Error("CLOUVA no pudo resolver el borrador creado.");
+        const createdRoot = record(created);
+        const createdVariant = record(createdRoot.listing_variant);
+        const listingVariantId = typeof createdVariant.id === "string" ? createdVariant.id : null;
+        const receipt = await postReceiptStock({ group, listingId, variantId: listingVariantId });
 
         const primaryNormalized = `${identifier.type}:${identifier.value.replace(/\s/g, "").toUpperCase()}`;
         const extraIdentifierResults: Array<Record<string, unknown>> = [];
@@ -486,6 +563,9 @@ export async function POST(
           identifier,
           visible_identifiers: group.visibleIdentifiers,
           extra_identifier_results: extraIdentifierResults,
+          received_quantity: receipt.quantity,
+          unit_cost: receipt.unitCost,
+          invoice_item_id: receipt.line?.id ?? null,
           analyzed_at: analyzedAt,
         };
         const { error: itemUpdateError } = await admin
