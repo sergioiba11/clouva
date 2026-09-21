@@ -77,7 +77,7 @@ as $$
     'flows',totals.flows,
     'stock_capital_flows',case when latest_fx.local_per_quote>0 then round(inventory.capital_local/latest_fx.local_per_quote,8) else 0 end,
     'pending_settlement_flows',case when latest_fx.local_per_quote>0 then round(pending.amount_local/latest_fx.local_per_quote,8) else 0 end,
-    'available_flows_equivalent',case when latest_fx.local_per_quote>0 then round(totals.available_local/latest_fx.local_per_quote,8) else totals.available_usd end,
+    'available_flows_equivalent',totals.available_usd,
     'goal',case when goal.id is null then null else jsonb_build_object(
       'id',goal.id,'name',goal.name,'metric',goal.metric,
       'target_currency',goal.target_currency,'target_amount',goal.target_amount,
