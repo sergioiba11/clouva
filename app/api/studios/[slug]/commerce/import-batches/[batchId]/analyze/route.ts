@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { analyzeCommerceProductBatch } from "@/lib/server/commerce-product-batch-recognition";
+import { reconcileCommerceInvoice, type CommerceInvoiceRecognition } from "@/lib/server/commerce-invoice-recognition";
+import type { CommerceIdentifierType } from "@/lib/commerce/identifiers";
 import { requireManagedSpot } from "@/lib/server/commerce-spot";
 import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
 
@@ -15,6 +17,8 @@ export async function POST(
   try {
     const { user } = await requireUser(request);
     const { slug, batchId } = await params;
+    const body = (await request.json().catch(() => ({}))) as { force?: unknown };
+    const force = body.force === true;
     const admin = createAdminSupabase();
     const { spot } = await requireManagedSpot({ admin, userId: user.id, studioId: slug });
 
@@ -32,7 +36,7 @@ export async function POST(
       ? batch.metadata as Record<string, unknown>
       : {};
     const existingGroups = Array.isArray(existingMetadata.groups) ? existingMetadata.groups : [];
-    if (existingGroups.length) {
+    if (existingGroups.length && !force) {
       return NextResponse.json({
         batchId: batch.id,
         status: batch.status,
@@ -138,10 +142,91 @@ export async function POST(
     }
 
     const analyzedAt = new Date().toISOString();
+
+    const { data: invoice } = await admin
+      .from("commerce_product_import_invoices")
+      .select("id,supplier_name,supplier_tax_id,document_type,document_number,issued_at,currency,subtotal,tax_amount,total_amount")
+      .eq("batch_id", batch.id)
+      .eq("spot_id", spot.id)
+      .maybeSingle();
+
+    if (invoice) {
+      const { data: invoiceRows, error: invoiceRowsError } = await admin
+        .from("commerce_product_import_invoice_items")
+        .select("id,line_number,description,brand,model,supplier_sku,barcode_value,barcode_type,quantity,unit_price,tax_amount,line_total,checked,checked_by")
+        .eq("invoice_id", invoice.id)
+        .order("line_number");
+      if (invoiceRowsError) throw new Error(invoiceRowsError.message);
+
+      const recognition: CommerceInvoiceRecognition = {
+        supplierName: invoice.supplier_name || "",
+        supplierTaxId: invoice.supplier_tax_id || "",
+        documentType: invoice.document_type || "",
+        documentNumber: invoice.document_number || "",
+        issuedAt: invoice.issued_at || "",
+        currency: invoice.currency || "",
+        subtotal: invoice.subtotal == null ? null : Number(invoice.subtotal),
+        taxAmount: invoice.tax_amount == null ? null : Number(invoice.tax_amount),
+        totalAmount: invoice.total_amount == null ? null : Number(invoice.total_amount),
+        lines: (invoiceRows ?? []).map((row) => ({
+          lineNumber: Number(row.line_number),
+          description: row.description || "",
+          brand: row.brand || "",
+          model: row.model || "",
+          supplierSku: row.supplier_sku || "",
+          barcode: row.barcode_value && row.barcode_type
+            ? { value: row.barcode_value, type: row.barcode_type as CommerceIdentifierType }
+            : null,
+          quantity: Number(row.quantity || 1),
+          unitPrice: row.unit_price == null ? null : Number(row.unit_price),
+          taxAmount: row.tax_amount == null ? null : Number(row.tax_amount),
+          lineTotal: row.line_total == null ? null : Number(row.line_total),
+        })),
+      };
+      const reconciled = reconcileCommerceInvoice({ invoice: recognition, groups });
+      const rowByLine = new Map((invoiceRows ?? []).map((row) => [Number(row.line_number), row]));
+      for (const match of reconciled) {
+        const row = rowByLine.get(match.line.lineNumber);
+        if (!row) continue;
+        const wasChecked = row.checked === true;
+        const { error: rowUpdateError } = await admin
+          .from("commerce_product_import_invoice_items")
+          .update({
+            matched_group_keys: match.matchedGroupKeys,
+            matched_quantity: match.matchedQuantity,
+            match_status: match.matchStatus,
+            checked: wasChecked || match.autoChecked,
+            checked_by: wasChecked ? row.checked_by : match.autoChecked ? user.id : null,
+            checked_at: wasChecked || match.autoChecked ? analyzedAt : null,
+            metadata: {
+              confidence: match.confidence,
+              reasons: match.reasons,
+              auto_checked: match.autoChecked,
+              reconciled_after_reanalysis: true,
+            },
+            updated_at: analyzedAt,
+          })
+          .eq("id", row.id);
+        if (rowUpdateError) throw new Error(rowUpdateError.message);
+      }
+
+      await admin
+        .from("commerce_product_import_invoices")
+        .update({
+          metadata: {
+            reanalyzed_at: analyzedAt,
+            reconciliation_version: 2,
+          },
+          updated_at: analyzedAt,
+        })
+        .eq("id", invoice.id);
+    }
+
     const metadata = {
       ...(batch.metadata && typeof batch.metadata === "object" ? batch.metadata : {}),
       groups,
       analyzed_at: analyzedAt,
+      reanalyzed: force,
     };
     const { error: updateError } = await admin
       .from("commerce_product_import_batches")
@@ -161,6 +246,7 @@ export async function POST(
       totalImages: items.length,
       detectedProducts: groups.length,
       groups,
+      reanalyzed: force,
     });
   } catch (error) {
     if (authorizedBatchId) {
