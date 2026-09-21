@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { CalendarDays } from "lucide-react";
-import { PointerEvent, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { PointerEvent, useEffect, useMemo, useRef, useState } from "react";
+import { supabase } from "@/lib/supabase";
 import type { IgluAvailabilityRule, IgluCalendarEvent, IgluPublicPlayer } from "@/lib/server/iglu/public-app";
 import styles from "./IgluFunctional.module.css";
 
@@ -44,13 +46,16 @@ export function IgluUnifiedCalendar({
   availabilityRules,
   timezone,
   bookingEnabled,
+  studioId,
 }: {
   players: IgluPublicPlayer[];
   events: IgluCalendarEvent[];
   availabilityRules: IgluAvailabilityRule[];
   timezone: string;
   bookingEnabled: boolean;
+  studioId: string;
 }) {
+  const router = useRouter();
   const [month, setMonth] = useState(() => {
     const now = new Date();
     return new Date(now.getFullYear(), now.getMonth(), 1);
@@ -59,6 +64,25 @@ export function IgluUnifiedCalendar({
   const [playerId, setPlayerId] = useState<string>("all");
   const [preview, setPreview] = useState<IgluCalendarEvent | null>(null);
   const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleRefresh = () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => router.refresh(), 250);
+    };
+
+    const channel = supabase
+      .channel(`iglu-public-calendar-${studioId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "bookings", filter: `studio_id=eq.${studioId}` }, scheduleRefresh)
+      .on("postgres_changes", { event: "*", schema: "public", table: "agenda_events" }, scheduleRefresh)
+      .subscribe();
+
+    return () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      void supabase.removeChannel(channel);
+    };
+  }, [router, studioId]);
 
   const filteredEvents = useMemo(() => events.filter((event) => playerId === "all" || event.playerId === playerId), [events, playerId]);
   const eventMap = useMemo(() => {
