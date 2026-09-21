@@ -407,6 +407,53 @@ export function CommerceBulkProductImport({
     };
   }, [groups, invoiceData]);
 
+  const productSummary = useMemo(() => {
+    const rows = new Map<string, {
+      key: string;
+      name: string;
+      brand: string;
+      model: string;
+      code: string;
+      codeType: string;
+      quantity: number;
+      groupKeys: string[];
+      needsReview: boolean;
+    }>();
+    const normalize = (value: string) => value.toLowerCase().trim().replace(/\s+/g, " ");
+    for (const group of groups) {
+      const external = group.identifier && !["sku", "clouva_barcode", "clouva_qr"].includes(group.identifier.type)
+        ? group.identifier
+        : null;
+      const fallbackIdentity = [group.brand, group.model, group.name]
+        .map(normalize)
+        .filter(Boolean)
+        .join("|");
+      const key = external
+        ? `code:${external.type}:${external.value.replace(/\s/g, "").toUpperCase()}`
+        : `visual:${fallbackIdentity || group.groupKey}`;
+      const existing = rows.get(key);
+      const quantity = Math.max(1, Math.floor(Number(group.unitCount) || 1));
+      if (existing) {
+        existing.quantity += quantity;
+        existing.groupKeys.push(group.groupKey);
+        existing.needsReview = existing.needsReview || group.needsReview;
+      } else {
+        rows.set(key, {
+          key,
+          name: group.name || "Producto detectado",
+          brand: group.brand || "",
+          model: group.model || "",
+          code: external?.value || "",
+          codeType: external?.type || "",
+          quantity,
+          groupKeys: [group.groupKey],
+          needsReview: group.needsReview,
+        });
+      }
+    }
+    return Array.from(rows.values()).sort((a, b) => b.quantity - a.quantity || a.name.localeCompare(b.name));
+  }, [groups]);
+
   function chooseFiles(list: FileList | null) {
     if (busy) return;
     const incoming = Array.from(list ?? []).filter((file) => file.type.startsWith("image/"));
@@ -965,6 +1012,33 @@ export function CommerceBulkProductImport({
               <span className="text-[9px] text-white/35">sin línea asignada</span>
             </div>
           </div>
+
+          {productSummary.length ? (
+            <div className="mt-3 overflow-hidden rounded-xl border border-white/[0.07]">
+              <div className="flex items-center justify-between border-b border-white/[0.06] px-3 py-2">
+                <strong className="text-[10px] uppercase tracking-[.14em] text-white/45">Resumen por producto</strong>
+                <span className="text-[10px] text-white/35">{productSummary.length} tipos</span>
+              </div>
+              <div className="max-h-72 divide-y divide-white/[0.05] overflow-y-auto">
+                {productSummary.map((row) => (
+                  <div key={row.key} className="flex items-center gap-3 px-3 py-2.5">
+                    <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-white/10 bg-white/[0.025] text-xs font-bold">
+                      ×{row.quantity}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <strong className="block truncate text-xs">{row.name}</strong>
+                      <p className="mt-0.5 truncate text-[9px] text-white/38">
+                        {[row.brand, row.model].filter(Boolean).join(" · ") || `${row.groupKeys.length} grupo${row.groupKeys.length === 1 ? "" : "s"} visual${row.groupKeys.length === 1 ? "" : "es"}`}
+                      </p>
+                    </div>
+                    <span className={`shrink-0 rounded-md border px-1.5 py-0.5 text-[9px] ${row.code ? "border-emerald-300/20 text-emerald-200" : "border-amber-300/20 text-amber-200"}`}>
+                      {row.code ? `${row.codeType.toUpperCase()} · ${row.code}` : "SIN CÓDIGO"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
 
           {!invoiceData?.invoice ? (
             <div className="mt-3 rounded-xl border border-dashed border-white/10 p-3">
