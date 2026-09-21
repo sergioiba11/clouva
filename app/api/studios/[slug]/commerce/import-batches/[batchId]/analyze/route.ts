@@ -45,7 +45,7 @@ export async function POST(
 
     const { data: items, error: itemsError } = await admin
       .from("commerce_product_import_items")
-      .select("id,source_index,source_url,storage_path,mime_type,status")
+      .select("id,source_index,source_url,storage_path,mime_type,status,recognition")
       .eq("batch_id", batch.id)
       .eq("spot_id", spot.id)
       .order("source_index");
@@ -62,14 +62,44 @@ export async function POST(
       .update({ status: "analyzing", error: null, updated_at: new Date().toISOString() })
       .eq("id", batch.id);
 
+    const hashOwner = new Map<string, number>();
+    const duplicateIndexes = new Map<number, number[]>();
+    const representativeItems = items.filter((item) => {
+      const recognition = item.recognition && typeof item.recognition === "object" && !Array.isArray(item.recognition)
+        ? item.recognition as Record<string, unknown>
+        : {};
+      const upload = recognition.upload && typeof recognition.upload === "object" && !Array.isArray(recognition.upload)
+        ? recognition.upload as Record<string, unknown>
+        : {};
+      const sha256 = typeof upload.sha256 === "string" ? upload.sha256 : "";
+      if (!sha256) return true;
+      const owner = hashOwner.get(sha256);
+      if (owner == null) {
+        hashOwner.set(sha256, item.source_index);
+        return true;
+      }
+      duplicateIndexes.set(owner, [...(duplicateIndexes.get(owner) ?? []), item.source_index]);
+      return false;
+    });
+
     const groups = await analyzeCommerceProductBatch({
       spotName: spot.name,
-      images: items.map((item) => ({
+      images: representativeItems.map((item) => ({
         sourceIndex: item.source_index,
         storagePath: item.storage_path,
         mimeType: item.mime_type,
       })),
     });
+
+    for (const group of groups) {
+      const additions: Array<{ sourceIndex: number; role: "Detalle" }> = [];
+      for (const image of group.images) {
+        for (const duplicateIndex of duplicateIndexes.get(image.sourceIndex) ?? []) {
+          additions.push({ sourceIndex: duplicateIndex, role: "Detalle" });
+        }
+      }
+      if (additions.length) group.images.push(...additions);
+    }
 
     const groupByIndex = new Map<number, { key: string; summary: Record<string, unknown> }>();
     for (const group of groups) {
