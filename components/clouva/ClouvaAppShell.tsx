@@ -24,6 +24,7 @@ const LIGHTWEIGHT_PREFIXES = [
 
 function isLightweightRoute(pathname: string) {
   if (pathname.includes("/commerce/scanner")) return true;
+  if (/^\/mi-spot\/[^/]+\/scanner\/?$/.test(pathname)) return true;
   return LIGHTWEIGHT_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
 }
 
