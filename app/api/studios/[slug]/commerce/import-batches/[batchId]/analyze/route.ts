@@ -20,13 +20,28 @@ export async function POST(
 
     const { data: batch, error: batchError } = await admin
       .from("commerce_product_import_batches")
-      .select("id,status,total_images,metadata")
+      .select("id,status,total_images,detected_products,metadata")
       .eq("id", batchId)
       .eq("spot_id", spot.id)
       .maybeSingle();
     if (batchError) throw new Error(batchError.message);
     if (!batch) return NextResponse.json({ error: "El lote no existe en este Spot." }, { status: 404 });
     authorizedBatchId = batch.id;
+
+    const existingMetadata = batch.metadata && typeof batch.metadata === "object" && !Array.isArray(batch.metadata)
+      ? batch.metadata as Record<string, unknown>
+      : {};
+    const existingGroups = Array.isArray(existingMetadata.groups) ? existingMetadata.groups : [];
+    if (existingGroups.length) {
+      return NextResponse.json({
+        batchId: batch.id,
+        status: batch.status,
+        totalImages: batch.total_images,
+        detectedProducts: Number(batch.detected_products || existingGroups.length),
+        groups: existingGroups,
+        recovered: true,
+      });
+    }
 
     const { data: items, error: itemsError } = await admin
       .from("commerce_product_import_items")
