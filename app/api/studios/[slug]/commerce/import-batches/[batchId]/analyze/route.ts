@@ -11,6 +11,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ slug: string; batchId: string }> },
 ) {
+  let authorizedBatchId: string | null = null;
   try {
     const { user } = await requireUser(request);
     const { slug, batchId } = await params;
@@ -25,6 +26,7 @@ export async function POST(
       .maybeSingle();
     if (batchError) throw new Error(batchError.message);
     if (!batch) return NextResponse.json({ error: "El lote no existe en este Spot." }, { status: 404 });
+    authorizedBatchId = batch.id;
 
     const { data: items, error: itemsError } = await admin
       .from("commerce_product_import_items")
@@ -116,18 +118,19 @@ export async function POST(
       groups,
     });
   } catch (error) {
-    try {
-      const { batchId } = await params;
-      const admin = createAdminSupabase();
-      await admin
-        .from("commerce_product_import_batches")
-        .update({
-          status: "failed",
-          error: error instanceof Error ? error.message : "Falló el análisis.",
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", batchId);
-    } catch {}
+    if (authorizedBatchId) {
+      try {
+        const admin = createAdminSupabase();
+        await admin
+          .from("commerce_product_import_batches")
+          .update({
+            status: "failed",
+            error: error instanceof Error ? error.message : "Falló el análisis.",
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", authorizedBatchId);
+      } catch {}
+    }
     const status = (error as Error & { status?: number })?.status ?? (isAuthError(error) ? 401 : 500);
     return NextResponse.json({ error: error instanceof Error ? error.message : "No se pudo analizar el lote." }, { status });
   }
