@@ -148,14 +148,49 @@ jobs:
       # per-release deploy identity. Cloud Run keeps the service's configured
       # secret bindings when a new image revision is deployed.
       - name: Build image via Cloud Build
+        id: cloudbuild
         env:
           DEPLOYED_COMMIT: ${{ steps.source.outputs.sha }}
+        shell: bash
         run: |
-          gcloud builds submit \
+          set -euo pipefail
+
+          # `gcloud builds submit` waits by polling once per second. The project
+          # quota only allows 60 Build/Get requests per minute, so long builds
+          # were failing with RESOURCE_EXHAUSTED even though Cloud Build itself
+          # was still healthy. Submit asynchronously and poll at a safe cadence.
+          build_id="$(gcloud builds submit \
             --project "$PROJECT_ID" \
             --config cloudbuild-web.yaml \
             --substitutions="_NEXT_PUBLIC_SUPABASE_URL=${{ vars.NEXT_PUBLIC_SUPABASE_URL }},_NEXT_PUBLIC_SUPABASE_ANON_KEY=${{ vars.NEXT_PUBLIC_SUPABASE_ANON_KEY }},_NEXT_PUBLIC_GOOGLE_CLIENT_ID=${{ vars.NEXT_PUBLIC_GOOGLE_CLIENT_ID }},_NEXT_PUBLIC_GOOGLE_MAPS_API_KEY=${{ vars.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY }},_NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID=${{ vars.NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID }},_NEXT_PUBLIC_IGLU_RADIO_STREAM_URL=${{ vars.NEXT_PUBLIC_IGLU_RADIO_STREAM_URL }},_DEPLOY_REF=$SOURCE_REF,COMMIT_SHA=$DEPLOYED_COMMIT" \
-            .
+            --async \
+            --format='value(id)' \
+            .)"
+          test -n "$build_id"
+          echo "build_id=$build_id" >> "$GITHUB_OUTPUT"
+          echo "Cloud Build started: $build_id"
+
+          for attempt in $(seq 1 100); do
+            status="$(gcloud builds describe "$build_id" \
+              --project "$PROJECT_ID" \
+              --format='value(status)')"
+            echo "Cloud Build status: $status (poll $attempt/100)"
+
+            case "$status" in
+              SUCCESS)
+                exit 0
+                ;;
+              FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
+                echo "::error::Cloud Build $build_id ended with status $status"
+                exit 1
+                ;;
+            esac
+
+            sleep 15
+          done
+
+          echo "::error::Cloud Build $build_id did not finish within 25 minutes."
+          exit 1
 
       - name: Resolve built image digest
         id: image
