@@ -93,6 +93,7 @@ function groupsFromMetadata(metadata: unknown): CommerceBatchGroup[] {
       brand: typeof group.brand === "string" ? group.brand : "",
       model: typeof group.model === "string" ? group.model : "",
       packageKind,
+      unitCount: Math.max(1, Math.min(100, Math.floor(Number(group.unitCount) || 1))),
       identifier: safeIdentifier(group.identifier),
       visibleIdentifiers,
       confidence: Number(group.confidence || 0),
