@@ -161,7 +161,7 @@ function buildSlots(args: {
     const start = new Date(wallToIso(dayKey, time, timezone)).getTime();
     const end = start + durationMinutes * 60_000;
     return !events.some((event) => {
-      if (event.playerId != null && event.playerId !== playerId) return false;
+      if (event.playerId != null && !event.playerIds.includes(playerId)) return false;
       if (dateKeyInZone(event.startAt, timezone) !== dayKey) return false;
       const eventStart = new Date(event.startAt).getTime();
       const eventEnd = new Date(event.endAt).getTime();
