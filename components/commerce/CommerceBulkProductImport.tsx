@@ -310,7 +310,7 @@ export function CommerceBulkProductImport({
         const candidate = payload.batches.find((batch) => {
           const groups = batchGroups(batch);
           return groups.length > 0
-            && ["review", "processing", "completed_with_errors"].includes(batch.status)
+            && ["review", "processing", "completed_with_errors", "failed"].includes(batch.status)
             && batch.processed_products < Math.max(batch.detected_products, groups.length);
         }) ?? null;
         setRecoverableBatch(candidate);
@@ -485,9 +485,11 @@ export function CommerceBulkProductImport({
         transientFailures = 0;
       } catch (cause) {
         const message = cause instanceof Error ? cause.message : "";
-        if (!/Failed to fetch|network|fetch/i.test(message) || transientFailures >= 5) throw cause;
+        const networkDrop = /Failed to fetch|network|fetch/i.test(message);
+        const providerBusy = /RESOURCE_EXHAUSTED|resource exhausted|quota|429/i.test(message);
+        if ((!networkDrop && !providerBusy) || transientFailures >= 10) throw cause;
         transientFailures += 1;
-        await wait(2500);
+        await wait(providerBusy ? Math.min(30000, 5000 * transientFailures) : 2500);
         continue;
       }
       first = false;
@@ -600,7 +602,7 @@ export function CommerceBulkProductImport({
         }
       }
       setStage("creating");
-      await processUntilFinished(batch.id, batch.status === "completed_with_errors");
+      await processUntilFinished(batch.id, batch.status === "completed_with_errors" || batch.failed_products > 0);
       setRecoverableBatch(null);
     } catch (cause) {
       setStage("error");
