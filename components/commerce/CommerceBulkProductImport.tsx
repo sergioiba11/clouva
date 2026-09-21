@@ -150,11 +150,39 @@ async function readFileAsDataUrl(file: File) {
 }
 
 
-async function prepareImage(file: File): Promise<PreparedImage> {
+async function prepareImage(file: File, previewUrl?: string): Promise<PreparedImage> {
   if (!file.type.startsWith("image/")) throw new Error(`${file.name}: no es una imagen.`);
 
-  // Android/Chrome puede fallar con createImageBitmap en fotos perfectamente
-  // visualizables. Primero usamos el camino rápido y después el decoder <img>.
+  // En Android algunos archivos del selector quedan visibles en el preview pero
+  // fallan al reabrirse desde FileReader/createImageBitmap. Reutilizamos primero
+  // el object URL que YA está renderizando correctamente en la grilla.
+  if (previewUrl) {
+    try {
+      const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const candidate = new Image();
+        candidate.decoding = "async";
+        candidate.onload = () => resolve(candidate);
+        candidate.onerror = () => reject(new Error("PREVIEW_DECODE_FAILED"));
+        candidate.src = previewUrl;
+        if (candidate.complete && candidate.naturalWidth > 0) resolve(candidate);
+      });
+      return {
+        file,
+        dataUrl: imageToJpegDataUrl(image, image.naturalWidth, image.naturalHeight),
+      };
+    } catch {
+      try {
+        const response = await fetch(previewUrl);
+        if (response.ok) {
+          const bytes = new Uint8Array(await response.arrayBuffer());
+          if (bytes.length) return { file, dataUrl: bytesToDataUrl(bytes, file.type || response.headers.get("content-type") || "image/jpeg") };
+        }
+      } catch {}
+    }
+  }
+
+  // Android/Chrome también puede fallar con createImageBitmap en fotos
+  // perfectamente visualizables. Probamos los caminos de archivo después.
   try {
     const bitmap = await createImageBitmap(file);
     try {
@@ -381,9 +409,9 @@ export function CommerceBulkProductImport({
       setStage("preparing");
       const prepared: PreparedImage[] = [];
       const unreadable: string[] = [];
-      for (const file of files) {
+      for (const [index, file] of files.entries()) {
         try {
-          prepared.push(await prepareImage(file));
+          prepared.push(await prepareImage(file, previews[index]));
         } catch (prepareError) {
           unreadable.push(
             prepareError instanceof Error
