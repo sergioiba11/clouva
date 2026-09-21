@@ -71,6 +71,7 @@ import java.util.UUID;
 
 public final class NinotimiTools extends JavaPlugin implements Listener, CommandExecutor, TabCompleter {
     private static final String MAIN_TITLE = "NINOTIMI TOOLS";
+    private static final String CLOUVA_PANEL_TITLE = "CLOUVA — PANEL";
     private static final String BLOCKS_TITLE = "BLOQUES — NINOTIMI";
     private static final String GAME_MENU_TITLE = "JUEGOS — NINOTIMI";
     private static final String PARKOUR_MENU_TITLE = "PARKOUR — ELEGÍ MAPA";
@@ -157,6 +158,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     private boolean iceActive;
     private int maxEditBlocks;
     private BukkitTask particleTask;
+    private BukkitTask tabTask;
     private BukkitTask iceStartTask;
 
     @Override
@@ -213,8 +215,12 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             getCommand("npcgame").setExecutor(this);
             getCommand("npcgame").setTabCompleter(this);
         }
+        if (getCommand("panel") != null) {
+            getCommand("panel").setExecutor(this);
+        }
 
         startPortalParticles();
+        startTabDashboard();
         getLogger().info("NINOTIMI TOOLS activo.");
     }
 
@@ -224,6 +230,15 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
 
         if (particleTask != null) {
             particleTask.cancel();
+        }
+        if (tabTask != null) {
+            tabTask.cancel();
+            tabTask = null;
+        }
+        for (Player online : Bukkit.getOnlinePlayers()) {
+            online.playerListName(null);
+            online.setPlayerListOrder(0);
+            online.sendPlayerListHeaderAndFooter(Component.empty(), Component.empty());
         }
         if (iceStartTask != null) {
             iceStartTask.cancel();
@@ -734,6 +749,35 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         }
 
         String title = PlainTextComponentSerializer.plainText().serialize(event.getView().title());
+
+        if (CLOUVA_PANEL_TITLE.equals(title)) {
+            event.setCancelled(true);
+            if (event.getRawSlot() < 0) return;
+
+            switch (event.getRawSlot()) {
+                case 4 -> showServerStatus(player);
+                case 10 -> openGameMenu(player);
+                case 12 -> openSurvivalMenu(player);
+                case 14 -> {
+                    player.closeInventory();
+                    returnToMainLobby(player);
+                }
+                case 16 -> {
+                    if (canBuild(player)) {
+                        openMainMenu(player);
+                    }
+                }
+                case 22 -> {
+                    if (isPermanentAdmin(player)) {
+                        openTempAdminPlayersMenu(player);
+                    }
+                }
+                case 26 -> player.closeInventory();
+                default -> {
+                }
+            }
+            return;
+        }
 
         if (PARKOUR_MENU_TITLE.equals(title)) {
             event.setCancelled(true);
@@ -1429,6 +1473,160 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     }
 
 
+    private void openClouvaPanel(Player player) {
+        Inventory inv = Bukkit.createInventory(null, 27, Component.text(CLOUVA_PANEL_TITLE));
+
+        inv.setItem(
+            4,
+            menuItem(
+                Material.NETHER_STAR,
+                "✦ CLOUVA SERVER ✦",
+                Bukkit.getOnlinePlayers().size() + " online · " + worldLabel(player.getWorld())
+            )
+        );
+        inv.setItem(10, menuItem(Material.DIAMOND_SWORD, "JUEGOS", "PVP · Hielo · Skyblock · Parkour"));
+        inv.setItem(12, menuItem(Material.OAK_SAPLING, "SURVIVAL", "Personal · Común · Hardcore"));
+        inv.setItem(14, menuItem(Material.COMPASS, "LOBBY", "Volver al lobby principal"));
+
+        if (canBuild(player)) {
+            inv.setItem(16, menuItem(Material.RECOVERY_COMPASS, "TOOLS", "Abrir herramientas de builder"));
+        }
+        if (isPermanentAdmin(player)) {
+            inv.setItem(22, menuItem(Material.COMMAND_BLOCK, "⚡ ADMIN TEMPORAL", "Dar control total por un rato"));
+        }
+
+        inv.setItem(26, menuItem(Material.BARRIER, "Cerrar", "Cerrar panel"));
+        player.openInventory(inv);
+    }
+
+    private void showServerStatus(Player player) {
+        msg(
+            player,
+            "CLOUVA · " + worldLabel(player.getWorld())
+                + " · " + Bukkit.getOnlinePlayers().size() + " online"
+                + " · " + roleLabel(player)
+                + " · ping " + player.getPing() + "ms",
+            NamedTextColor.AQUA
+        );
+    }
+
+    private void startTabDashboard() {
+        refreshTabDashboard();
+        tabTask = Bukkit.getScheduler().runTaskTimer(this, this::refreshTabDashboard, 20L, 40L);
+    }
+
+    private void refreshTabDashboard() {
+        int onlineCount = Bukkit.getOnlinePlayers().size();
+
+        for (Player listed : Bukkit.getOnlinePlayers()) {
+            updatePlayerListName(listed);
+        }
+
+        for (Player viewer : Bukkit.getOnlinePlayers()) {
+            String pvpState = duelActive ? "EN PARTIDA" : (pvpQueue.isEmpty() ? "LIBRE" : "COLA " + pvpQueue.size());
+            String iceState = iceActive ? "EN PARTIDA" : (iceQueue.isEmpty() ? "LIBRE" : "COLA " + iceQueue.size());
+
+            Component header = Component.text("✦ CLOUVA SERVER ✦", NamedTextColor.LIGHT_PURPLE)
+                .append(Component.newline())
+                .append(Component.text("VIDA DE FLOWS", NamedTextColor.AQUA))
+                .append(Component.newline())
+                .append(Component.text("────────────────────────", NamedTextColor.DARK_GRAY))
+                .append(Component.newline())
+                .append(Component.text("Mundo: ", NamedTextColor.GRAY))
+                .append(Component.text(worldLabel(viewer.getWorld()), NamedTextColor.GREEN))
+                .append(Component.text("  |  Online: " + onlineCount, NamedTextColor.GRAY))
+                .append(Component.newline())
+                .append(Component.text("Rango: ", NamedTextColor.GRAY))
+                .append(Component.text(roleLabel(viewer), roleColor(viewer)))
+                .append(Component.text("  |  Ping: " + viewer.getPing() + "ms", NamedTextColor.GRAY));
+
+            Component footer = Component.text("PVP: " + pvpState, NamedTextColor.GOLD)
+                .append(Component.text("  |  HIELO: " + iceState, NamedTextColor.AQUA))
+                .append(Component.newline())
+                .append(Component.text("Quesito: ", NamedTextColor.GRAY))
+                .append(Component.text(isQuesitoOnline() ? "ONLINE" : "OFFLINE", isQuesitoOnline() ? NamedTextColor.GREEN : NamedTextColor.DARK_GRAY))
+                .append(Component.newline())
+                .append(Component.text("✦ /panel", NamedTextColor.LIGHT_PURPLE))
+                .append(Component.text("  →  abrir controles CLOUVA", NamedTextColor.GRAY));
+
+            viewer.sendPlayerListHeaderAndFooter(header, footer);
+        }
+    }
+
+    private void updatePlayerListName(Player player) {
+        if (isPermanentAdmin(player)) {
+            player.playerListName(
+                Component.text("★ ", NamedTextColor.GOLD)
+                    .append(Component.text(player.getName(), NamedTextColor.WHITE))
+                    .append(Component.text("  ADMIN", NamedTextColor.RED))
+            );
+            player.setPlayerListOrder(0);
+            return;
+        }
+
+        if (isTempAdmin(player)) {
+            player.playerListName(
+                Component.text("⚡ ", NamedTextColor.LIGHT_PURPLE)
+                    .append(Component.text(player.getName(), NamedTextColor.WHITE))
+                    .append(Component.text("  TEMP", NamedTextColor.LIGHT_PURPLE))
+            );
+            player.setPlayerListOrder(10);
+            return;
+        }
+
+        if (builderNames.contains(normalizeName(player.getName()))) {
+            player.playerListName(
+                Component.text("◆ ", NamedTextColor.AQUA)
+                    .append(Component.text(player.getName(), NamedTextColor.WHITE))
+                    .append(Component.text("  BUILDER", NamedTextColor.AQUA))
+            );
+            player.setPlayerListOrder(20);
+            return;
+        }
+
+        player.playerListName(Component.text(player.getName(), NamedTextColor.WHITE));
+        player.setPlayerListOrder(100);
+    }
+
+    private String roleLabel(Player player) {
+        if (isPermanentAdmin(player)) return "ADMIN";
+        if (isTempAdmin(player)) return "ADMIN TEMP";
+        if (builderNames.contains(normalizeName(player.getName()))) return "BUILDER";
+        return "PLAYER";
+    }
+
+    private NamedTextColor roleColor(Player player) {
+        if (isPermanentAdmin(player)) return NamedTextColor.GOLD;
+        if (isTempAdmin(player)) return NamedTextColor.LIGHT_PURPLE;
+        if (builderNames.contains(normalizeName(player.getName()))) return NamedTextColor.AQUA;
+        return NamedTextColor.WHITE;
+    }
+
+    private String worldLabel(World world) {
+        if (world == null) return "DESCONOCIDO";
+
+        String name = world.getName();
+        String survivalBase = survivalBaseWorldName(name);
+        if (SHARED_SURVIVAL_WORLD_NAME.equals(survivalBase)) return "SURVIVAL COMÚN";
+        if (HARDCORE_WORLD_NAME.equals(survivalBase)) return "HARDCORE";
+        if (survivalBase != null && survivalBase.startsWith(PERSONAL_SURVIVAL_PREFIX)) return "SURVIVAL PERSONAL";
+        if (PVP_WORLD_NAME.equals(name)) return "NINOTIMI PVP";
+        if (ICE_WORLD_NAME.equals(name)) return "BATALLA DE HIELO";
+        if (SKY_WORLD_NAME.equals(name)) return "SKYBLOCK";
+        if (PARKOUR_WORLD_NAME.equals(name)) return "PARKOUR";
+        if (isMainLobbyWorld(world)) return "LOBBY";
+        return name;
+    }
+
+    private boolean isQuesitoOnline() {
+        for (Player online : Bukkit.getOnlinePlayers()) {
+            if (normalizeName(online.getName()).startsWith("quesito")) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private void openMainMenu(Player player) {
         Inventory inv = Bukkit.createInventory(null, 27, Component.text(MAIN_TITLE));
 
@@ -1440,7 +1638,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         inv.setItem(14, menuItem(Material.SUNFLOWER, "Día", "Poner de día"));
         inv.setItem(15, menuItem(Material.CLOCK, "Noche", "Poner de noche"));
         inv.setItem(16, menuItem(Material.WATER_BUCKET, "Clima limpio", "Sacar lluvia y tormenta"));
-        if (player.isOp() && !isTempAdmin(player)) {
+        if (isPermanentAdmin(player)) {
             inv.setItem(17, menuItem(Material.COMMAND_BLOCK, "⚡ ADMIN TEMPORAL", "Dar control total por 15, 30 o 60 min"));
         }
 
@@ -1458,7 +1656,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     }
 
     private void openTempAdminPlayersMenu(Player player) {
-        if (!player.isOp() || isTempAdmin(player)) {
+        if (!isPermanentAdmin(player)) {
             msg(player, "Solo un administrador permanente puede abrir este panel.", NamedTextColor.RED);
             player.closeInventory();
             return;
@@ -1507,7 +1705,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     }
 
     private void grantTempAdmin(Player granter, Player target, int minutes) {
-        if (!granter.isOp() || isTempAdmin(granter)) {
+        if (!isPermanentAdmin(granter)) {
             msg(granter, "Solo un administrador permanente puede dar ADMIN temporal.", NamedTextColor.RED);
             return;
         }
@@ -3676,6 +3874,10 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             return true;
         }
 
+        if (command.getName().equalsIgnoreCase("panel")) {
+            openClouvaPanel(player);
+            return true;
+        }
         if (command.getName().equalsIgnoreCase("pvp")) {
             return handlePvpCommand(player, args);
         }
