@@ -1,6 +1,6 @@
 import http from "node:http";
 import { Readable } from "node:stream";
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -537,7 +537,7 @@ async function synthesize(text) {
 
 function stopCurrentSpeech(state, { mute = false } = {}) {
   state.speechEpoch += 1;
-  state.player.stop(true);
+  if (!state.currentTrack) state.player.stop(true);
   state.speaking = false;
   state.speakQueue = Promise.resolve();
   if (mute) state.muted = true;
@@ -548,7 +548,14 @@ async function speak(state, text) {
 
   state.speakQueue = state.speakQueue
     .then(async () => {
-      if (epoch !== state.speechEpoch || state.muted) return;
+      if (
+        epoch !== state.speechEpoch ||
+        state.muted ||
+        state.currentTrack ||
+        state.musicQueue?.length
+      ) {
+        return;
+      }
 
       state.speaking = true;
 
@@ -983,10 +990,369 @@ function attachReceiver(state) {
   });
 }
 
+
+const YOUTUBE_URL_RE = /^https?:\/\/(?:www\.|m\.)?(?:youtube\.com|youtu\.be)\//i;
+
+function formatDuration(seconds) {
+  if (!Number.isFinite(seconds) || seconds <= 0) return "EN VIVO";
+  const total = Math.round(seconds);
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+  return hours > 0
+    ? [hours, minutes, secs].map((part) => String(part).padStart(2, "0")).join(":")
+    : [minutes, secs].map((part) => String(part).padStart(2, "0")).join(":");
+}
+
+function youtubeTarget(input) {
+  const clean = String(input || "").trim();
+  if (!clean) throw new Error("Pasame un link o una búsqueda de YouTube.");
+  if (/^https?:\/\//i.test(clean) && !YOUTUBE_URL_RE.test(clean)) {
+    throw new Error("Por ahora /play acepta solamente YouTube.");
+  }
+  return YOUTUBE_URL_RE.test(clean) ? clean : "ytsearch1:" + clean;
+}
+
+async function resolveYouTubeTrack(input) {
+  const target = youtubeTarget(input);
+  const { stdout } = await execFileAsync(
+    "yt-dlp",
+    [
+      "--no-playlist",
+      "--js-runtimes",
+      "node",
+      "--dump-single-json",
+      "--skip-download",
+      "--no-warnings",
+      target,
+    ],
+    {
+      timeout: 45000,
+      maxBuffer: 4 * 1024 * 1024,
+    },
+  );
+
+  const info = JSON.parse(stdout);
+  const url = info.webpage_url || info.original_url;
+  if (!url || !YOUTUBE_URL_RE.test(url)) {
+    throw new Error("No pude resolver ese video de YouTube.");
+  }
+
+  return {
+    id: String(info.id || ""),
+    title: String(info.title || "Video de YouTube").slice(0, 180),
+    url,
+    channel: String(info.channel || info.uploader || "YouTube").slice(0, 100),
+    duration: Number(info.duration || 0),
+    live: Boolean(info.is_live || info.live_status === "is_live"),
+  };
+}
+
+function cleanupMusicProcesses(state) {
+  for (const child of [state.musicProcess, state.musicFfmpeg]) {
+    if (!child || child.killed) continue;
+    try {
+      child.kill("SIGKILL");
+    } catch {}
+  }
+  state.musicProcess = null;
+  state.musicFfmpeg = null;
+  state.musicResource = null;
+}
+
+async function playNextMusic(state) {
+  if (state.currentTrack || !state.musicQueue?.length) return false;
+
+  state.speechEpoch += 1;
+  state.speaking = false;
+  state.speakQueue = Promise.resolve();
+
+  const interruptedSpeech = state.player.stop(true);
+  if (interruptedSpeech) {
+    state.musicIgnoreNextIdle = (state.musicIgnoreNextIdle || 0) + 1;
+  }
+
+  const track = state.musicQueue.shift();
+  const source = spawn(
+    "yt-dlp",
+    [
+      "--no-playlist",
+      "--js-runtimes",
+      "node",
+      "--no-warnings",
+      "-f",
+      "bestaudio/best",
+      "-o",
+      "-",
+      track.url,
+    ],
+    { stdio: ["ignore", "pipe", "pipe"] },
+  );
+
+  const ffmpeg = spawn(
+    "ffmpeg",
+    [
+      "-hide_banner",
+      "-loglevel",
+      "error",
+      "-i",
+      "pipe:0",
+      "-vn",
+      "-f",
+      "s16le",
+      "-ar",
+      "48000",
+      "-ac",
+      "2",
+      "pipe:1",
+    ],
+    { stdio: ["pipe", "pipe", "pipe"] },
+  );
+
+  source.stdout.pipe(ffmpeg.stdin);
+  source.stderr.on("data", (chunk) => {
+    state.musicLastError = String(chunk).slice(-500);
+  });
+  ffmpeg.stderr.on("data", (chunk) => {
+    state.musicLastError = String(chunk).slice(-500);
+  });
+
+  const resource = createAudioResource(ffmpeg.stdout, {
+    inputType: StreamType.Raw,
+    inlineVolume: true,
+  });
+
+  resource.volume?.setVolume(state.musicVolume ?? 1);
+
+  state.currentTrack = track;
+  state.musicProcess = source;
+  state.musicFfmpeg = ffmpeg;
+  state.musicResource = resource;
+  state.musicStopRequested = false;
+  state.musicLastError = null;
+
+  log("QUESITO_MUSIC_PLAY", {
+    guildId: state.guildId,
+    title: track.title,
+    url: track.url,
+  });
+
+  state.player.play(resource);
+  return true;
+}
+
+function stopMusic(state) {
+  if (!state.currentTrack && !state.musicQueue?.length) return false;
+  state.musicQueue = [];
+  state.musicStopRequested = true;
+  cleanupMusicProcesses(state);
+  const stopped = state.player.stop(true);
+  if (!stopped) {
+    state.currentTrack = null;
+    state.musicStopRequested = false;
+  }
+  return true;
+}
+
+function skipMusic(state) {
+  if (!state.currentTrack) return false;
+  state.musicStopRequested = false;
+  cleanupMusicProcesses(state);
+  const stopped = state.player.stop(true);
+  if (!stopped) {
+    state.currentTrack = null;
+    void playNextMusic(state);
+  }
+  return true;
+}
+
+async function stateForMusicInteraction(interaction) {
+  const member = await interaction.guild.members.fetch(interaction.user.id);
+  const channel = member.voice.channel;
+  if (!channel) {
+    throw new Error("Metete a un canal de voz primero.");
+  }
+
+  let state = guildStates.get(interaction.guild.id);
+  if (!state || state.channelId !== channel.id) {
+    state = await joinGuildVoice(interaction.guild, channel.id);
+  }
+  return state;
+}
+
+function queueText(state) {
+  const lines = [];
+  if (state.currentTrack) {
+    lines.push(
+      "▶️ " +
+        state.currentTrack.title +
+        " · " +
+        formatDuration(state.currentTrack.duration),
+    );
+  }
+
+  for (const [index, track] of (state.musicQueue || []).slice(0, 9).entries()) {
+    lines.push(
+      String(index + 1) +
+        ". " +
+        track.title +
+        " · " +
+        formatDuration(track.duration),
+    );
+  }
+
+  return lines.length ? lines.join("\n") : "La cola está vacía.";
+}
+
+const playCommand = new SlashCommandBuilder()
+  .setName("play")
+  .setDescription("Reproduce un tema de YouTube para todo el canal")
+  .addStringOption((opt) =>
+    opt
+      .setName("youtube")
+      .setDescription("Link de YouTube o nombre del tema")
+      .setRequired(true),
+  );
+
+const pauseCommand = new SlashCommandBuilder()
+  .setName("pause")
+  .setDescription("Pausa la música de Quesito");
+
+const resumeCommand = new SlashCommandBuilder()
+  .setName("resume")
+  .setDescription("Continúa la música pausada");
+
+const skipCommand = new SlashCommandBuilder()
+  .setName("skip")
+  .setDescription("Salta al próximo tema");
+
+const queueCommand = new SlashCommandBuilder()
+  .setName("queue")
+  .setDescription("Muestra la cola de música");
+
+const stopCommand = new SlashCommandBuilder()
+  .setName("stop")
+  .setDescription("Detiene la música y vacía la cola");
+
+const volumeCommand = new SlashCommandBuilder()
+  .setName("volume")
+  .setDescription("Cambia el volumen de la música")
+  .addIntegerOption((opt) =>
+    opt
+      .setName("porcentaje")
+      .setDescription("0 a 200")
+      .setMinValue(0)
+      .setMaxValue(200)
+      .setRequired(true),
+  );
+
+const musicCommands = [
+  playCommand,
+  pauseCommand,
+  resumeCommand,
+  skipCommand,
+  queueCommand,
+  stopCommand,
+  volumeCommand,
+];
+
+const MUSIC_COMMAND_NAMES = new Set(
+  musicCommands.map((command) => command.name),
+);
+
+async function handleMusicInteraction(interaction) {
+  const command = interaction.commandName;
+
+  if (command === "play") {
+    await interaction.deferReply();
+    const state = await stateForMusicInteraction(interaction);
+    const input = interaction.options.getString("youtube", true);
+    const track = await resolveYouTubeTrack(input);
+    track.requestedBy = interaction.user.id;
+    state.musicQueue.push(track);
+
+    const started = !state.currentTrack && (await playNextMusic(state));
+    await interaction.editReply(
+      (started ? "▶️ " : "➕ ") +
+        "**" +
+        track.title.replace(/\*/g, "") +
+        "** · " +
+        formatDuration(track.duration) +
+        "\n" +
+        track.url,
+    );
+    return;
+  }
+
+  const state = guildStates.get(interaction.guild.id);
+  if (!state) {
+    await interaction.reply({
+      content: "🧀 Quesito no está en un canal de voz.",
+      ephemeral: true,
+    });
+    return;
+  }
+
+  if (command === "pause") {
+    const paused = Boolean(state.currentTrack && state.player.pause(true));
+    await interaction.reply({
+      content: paused ? "⏸️ Música pausada." : "🧀 No hay música sonando.",
+      ephemeral: true,
+    });
+    return;
+  }
+
+  if (command === "resume") {
+    const resumed = Boolean(state.currentTrack && state.player.unpause());
+    await interaction.reply({
+      content: resumed ? "▶️ Seguimos." : "🧀 No hay música pausada.",
+      ephemeral: true,
+    });
+    return;
+  }
+
+  if (command === "skip") {
+    const skipped = skipMusic(state);
+    await interaction.reply({
+      content: skipped ? "⏭️ Saltando tema." : "🧀 No hay un tema para saltar.",
+      ephemeral: true,
+    });
+    return;
+  }
+
+  if (command === "stop") {
+    const stopped = stopMusic(state);
+    await interaction.reply({
+      content: stopped ? "⏹️ Música detenida y cola vacía." : "🧀 No hay música sonando.",
+      ephemeral: true,
+    });
+    return;
+  }
+
+  if (command === "queue") {
+    await interaction.reply({
+      content: "🎵 **Cola de Quesito**\n" + queueText(state),
+      ephemeral: true,
+    });
+    return;
+  }
+
+  if (command === "volume") {
+    const value = interaction.options.getInteger("porcentaje", true);
+    state.musicVolume = value / 100;
+    state.musicResource?.volume?.setVolume(state.musicVolume);
+    await interaction.reply({
+      content: "🔊 Volumen: " + value + "%.",
+      ephemeral: true,
+    });
+  }
+}
+
 async function joinGuildVoice(guild, channelId) {
   const previous = guildStates.get(guild.id);
 
   if (previous) {
+    cleanupMusicProcesses(previous);
     previous.connection.destroy();
     guildStates.delete(guild.id);
   }
@@ -1009,6 +1375,7 @@ async function joinGuildVoice(guild, channelId) {
 
   const state = {
     guildId: guild.id,
+    channelId,
     guild,
     connection,
     player,
@@ -1025,7 +1392,60 @@ async function joinGuildVoice(guild, channelId) {
     pendingConversation: false,
     lastConversationReplyAt: 0,
     lastConversationSpeakerId: null,
+    musicQueue: [],
+    currentTrack: null,
+    musicProcess: null,
+    musicFfmpeg: null,
+    musicResource: null,
+    musicVolume: 1,
+    musicStopRequested: false,
+    musicIgnoreNextIdle: 0,
+    musicLastError: null,
   };
+
+  player.on(AudioPlayerStatus.Idle, () => {
+    if (state.musicIgnoreNextIdle > 0) {
+      state.musicIgnoreNextIdle -= 1;
+      return;
+    }
+
+    if (!state.currentTrack) return;
+
+    const finished = state.currentTrack;
+    cleanupMusicProcesses(state);
+    state.currentTrack = null;
+
+    log("QUESITO_MUSIC_IDLE", {
+      guildId: state.guildId,
+      title: finished.title,
+      stopRequested: state.musicStopRequested,
+    });
+
+    if (state.musicStopRequested) {
+      state.musicStopRequested = false;
+      return;
+    }
+
+    void playNextMusic(state).catch((error) => {
+      state.musicLastError = String(error?.message || error).slice(0, 500);
+      log("QUESITO_MUSIC_NEXT_ERROR", {
+        guildId: state.guildId,
+        error: state.musicLastError,
+      });
+    });
+  });
+
+  player.on("error", (error) => {
+    if (!state.currentTrack) return;
+    state.musicLastError = String(error?.message || error).slice(0, 500);
+    log("QUESITO_MUSIC_PLAYER_ERROR", {
+      guildId: state.guildId,
+      error: state.musicLastError,
+    });
+    cleanupMusicProcesses(state);
+    state.currentTrack = null;
+    void playNextMusic(state);
+  });
 
   guildStates.set(guild.id, state);
   attachReceiver(state);
@@ -1042,6 +1462,7 @@ async function joinGuildVoice(guild, channelId) {
   });
 
   connection.on(VoiceConnectionStatus.Destroyed, () => {
+    cleanupMusicProcesses(state);
     guildStates.delete(guild.id);
   });
 
@@ -1131,7 +1552,10 @@ async function autoJoinVoiceChannel(guild, preferredChannelId = null) {
 
 async function registerCommands() {
   const rest = new REST({ version: "10" }).setToken(DISCORD_BOT_TOKEN);
-  const body = [quesitoCommand.toJSON()];
+  const body = [
+    quesitoCommand.toJSON(),
+    ...musicCommands.map((command) => command.toJSON()),
+  ];
 
   await rest.put(Routes.applicationCommands(discord.user.id), { body });
   log("QUESITO_COMMANDS_REGISTERED", { mode: "global" });
@@ -1167,13 +1591,32 @@ discord.once("ready", async () => {
 });
 
 discord.on("interactionCreate", async (interaction) => {
-  if (
-    !interaction.isChatInputCommand() ||
-    interaction.commandName !== "quesito" ||
-    !interaction.guild
-  ) {
+  if (!interaction.isChatInputCommand() || !interaction.guild) return;
+
+  if (MUSIC_COMMAND_NAMES.has(interaction.commandName)) {
+    try {
+      await handleMusicInteraction(interaction);
+    } catch (error) {
+      log("QUESITO_MUSIC_COMMAND_ERROR", {
+        guildId: interaction.guild.id,
+        command: interaction.commandName,
+        error: String(error?.message || error),
+      });
+
+      const message =
+        "🧀 No pude reproducir eso: " +
+        String(error?.message || "error de YouTube").slice(0, 300);
+
+      if (interaction.deferred || interaction.replied) {
+        await interaction.editReply(message).catch(() => {});
+      } else {
+        await interaction.reply({ content: message, ephemeral: true }).catch(() => {});
+      }
+    }
     return;
   }
+
+  if (interaction.commandName !== "quesito") return;
 
   const sub = interaction.options.getSubcommand();
 
@@ -1371,7 +1814,12 @@ discord.on("guildCreate", async (guild) => {
     const rest = new REST({ version: "10" }).setToken(DISCORD_BOT_TOKEN);
     await rest.put(
       Routes.applicationGuildCommands(discord.user.id, guild.id),
-      { body: [quesitoCommand.toJSON()] },
+      {
+        body: [
+          quesitoCommand.toJSON(),
+          ...musicCommands.map((command) => command.toJSON()),
+        ],
+      },
     );
     log("QUESITO_COMMANDS_REGISTERED", { mode: "guildCreate", guildId: guild.id });
   } catch (error) {
