@@ -1550,7 +1550,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     private void updatePlayerListName(Player player) {
         if (isPermanentAdmin(player)) {
             player.playerListName(
-                Component.text("★ ", NamedTextColor.GOLD)
+                Component.text("👑 ", NamedTextColor.GOLD)
                     .append(Component.text(player.getName(), NamedTextColor.WHITE))
                     .append(Component.text("        ADMIN", NamedTextColor.RED))
             );
@@ -1570,7 +1570,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
 
         if (builderNames.contains(normalizeName(player.getName()))) {
             player.playerListName(
-                Component.text("◆ ", NamedTextColor.AQUA)
+                Component.text("⚡ ", NamedTextColor.AQUA)
                     .append(Component.text(player.getName(), NamedTextColor.WHITE))
                     .append(Component.text("      BUILDER", NamedTextColor.AQUA))
             );
