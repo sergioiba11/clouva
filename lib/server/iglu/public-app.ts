@@ -16,6 +16,7 @@ export type IgluPublicPlayer = {
   longitude: number | null;
   avatar: string | null;
   disciplines: string[];
+  isPro: boolean;
 };
 
 export type IgluCalendarEvent = {
@@ -32,6 +33,8 @@ export type IgluCalendarEvent = {
 
 export type IgluAvailabilityRule = {
   id: string;
+  agendaId: string;
+  playerId: string | null;
   weekday: number;
   startLocal: string;
   endLocal: string;
@@ -70,6 +73,28 @@ export async function loadIgluOperationalData(options?: { from?: string; to?: st
     .map((row) => Array.isArray(row.player) ? row.player[0] : row.player)
     .filter((player): player is NonNullable<typeof player> => Boolean(player?.id && player?.is_published && player?.publication_status === "published"));
 
+  const ownerUserIds = Array.from(new Set(rawPlayers.flatMap((player) => player.owner_user_id ? [String(player.owner_user_id)] : [])));
+  const { data: entitlementRows, error: entitlementError } = ownerUserIds.length
+    ? await admin
+        .from("user_entitlements")
+        .select("user_id,product_code,tier,status,valid_from,valid_until")
+        .in("user_id", ownerUserIds)
+        .eq("product_code", "clouva_vip")
+        .eq("tier", "vip")
+        .eq("status", "active")
+    : { data: [], error: null };
+  if (entitlementError) throw new Error(entitlementError.message);
+  const nowMs = Date.now();
+  const proUserIds = new Set(
+    (entitlementRows ?? [])
+      .filter((row) => {
+        const from = row.valid_from ? new Date(String(row.valid_from)).getTime() : null;
+        const until = row.valid_until ? new Date(String(row.valid_until)).getTime() : null;
+        return (from == null || from <= nowMs) && (until == null || until > nowMs);
+      })
+      .map((row) => String(row.user_id)),
+  );
+
   const players: IgluPublicPlayer[] = rawPlayers.map((player, index) => ({
     id: String(player.id),
     slug: String(player.slug),
@@ -81,6 +106,7 @@ export async function loadIgluOperationalData(options?: { from?: string; to?: st
     longitude: typeof player.longitude === "number" ? player.longitude : null,
     avatar: player.profile_image_url ? String(player.profile_image_url) : null,
     disciplines: Array.isArray(player.disciplines) ? player.disciplines.filter((item): item is string => typeof item === "string").slice(0, 8) : [],
+    isPro: Boolean(player.owner_user_id && proUserIds.has(String(player.owner_user_id))),
   }));
 
   const playerOwnerUser = new Map(rawPlayers.map((player) => [String(player.id), player.owner_user_id ? String(player.owner_user_id) : null]));
@@ -153,11 +179,15 @@ export async function loadIgluOperationalData(options?: { from?: string; to?: st
   const dedupedEvents = Array.from(new Map(calendarEvents.map((event) => [`${event.id}:${event.startAt}`, event])).values())
     .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
 
-  const { data: availabilityRules, error: availabilityError } = studioAgenda
+  const agendaIds = agendas.map((agenda) => String(agenda.id));
+  const agendaPlayerById = new Map(
+    agendas.map((agenda) => [String(agenda.id), agenda.owner_player_id ? String(agenda.owner_player_id) : null]),
+  );
+  const { data: availabilityRules, error: availabilityError } = agendaIds.length
     ? await admin
         .from("agenda_availability_rules")
-        .select("id,weekday,start_local,end_local,timezone,is_available")
-        .eq("agenda_id", studioAgenda.id)
+        .select("id,agenda_id,weekday,start_local,end_local,timezone,is_available")
+        .in("agenda_id", agendaIds)
         .order("weekday")
         .order("start_local")
     : { data: [], error: null };
@@ -205,6 +235,8 @@ export async function loadIgluOperationalData(options?: { from?: string; to?: st
     events: dedupedEvents,
     availabilityRules: (availabilityRules ?? []).map((rule): IgluAvailabilityRule => ({
       id: String(rule.id),
+      agendaId: String(rule.agenda_id),
+      playerId: agendaPlayerById.get(String(rule.agenda_id)) || null,
       weekday: Number(rule.weekday),
       startLocal: String(rule.start_local),
       endLocal: String(rule.end_local),
