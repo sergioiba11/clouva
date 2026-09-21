@@ -98,6 +98,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     private NamespacedKey lobbyControlKey;
 
     private final Set<String> builderNames = new HashSet<>();
+    private final Set<String> permanentAdminNames = new HashSet<>();
     private final Map<UUID, UUID> tempAdminMenuTargets = new HashMap<>();
     private final Map<UUID, Map<Integer, UUID>> tempAdminPlayerSlots = new HashMap<>();
     private final Map<UUID, BukkitTask> tempAdminTasks = new HashMap<>();
@@ -168,6 +169,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         lobbyControlKey = new NamespacedKey(this, "lobby-control");
 
         loadBuilders();
+        loadPermanentAdmins();
         cleanupTempAdminsFromPreviousRun();
         resetSurvivalDataIfNeeded();
         setupPvp();
@@ -281,6 +283,39 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         saveConfig();
     }
 
+    private void loadPermanentAdmins() {
+        permanentAdminNames.clear();
+        for (String name : getConfig().getStringList("permanent-admin-names")) {
+            String normalized = normalizeName(name);
+            if (!normalized.isBlank()) {
+                permanentAdminNames.add(normalized);
+            }
+        }
+
+        // Owner can never be demoted by Survival protections.
+        permanentAdminNames.add("clouva");
+        getConfig().set("permanent-admin-names", permanentAdminNames.stream().sorted().toList());
+        saveConfig();
+    }
+
+    private boolean isPermanentAdmin(Player player) {
+        return player != null && permanentAdminNames.contains(normalizeName(player.getName()));
+    }
+
+    private void ensurePermanentAdmin(Player player) {
+        if (!isPermanentAdmin(player)) return;
+
+        if (!player.isOp()) {
+            player.setOp(true);
+        }
+
+        String staleSurvivalOp = survivalOpPath(player);
+        if (getConfig().contains(staleSurvivalOp)) {
+            getConfig().set(staleSurvivalOp, null);
+            saveConfig();
+        }
+    }
+
     private String normalizeName(String raw) {
         if (raw == null) return "";
         String ascii = Normalizer.normalize(raw, Normalizer.Form.NFD)
@@ -290,7 +325,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     }
 
     private boolean canBuild(Player player) {
-        if (isSurvivalLocked(player) && !isTempAdmin(player)) {
+        if (isSurvivalLocked(player) && !isTempAdmin(player) && !isPermanentAdmin(player)) {
             return false;
         }
 
@@ -302,6 +337,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     @EventHandler
     public void onJoin(PlayerJoinEvent event) {
         Player player = event.getPlayer();
+        ensurePermanentAdmin(player);
 
         String joinedSurvivalMode = activeSurvivalMode(player);
         if (joinedSurvivalMode == null) {
@@ -495,7 +531,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onSurvivalGameModeChange(PlayerGameModeChangeEvent event) {
         Player player = event.getPlayer();
-        if (isTempAdmin(player)) return;
+        if (isPermanentAdmin(player) || isTempAdmin(player)) return;
         if (!isSurvivalLocked(player)) return;
         if (event.getNewGameMode() == GameMode.SURVIVAL) return;
 
@@ -511,7 +547,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onSurvivalFlight(PlayerToggleFlightEvent event) {
         Player player = event.getPlayer();
-        if (isTempAdmin(player)) return;
+        if (isPermanentAdmin(player) || isTempAdmin(player)) return;
         if (!isSurvivalLocked(player) || !event.isFlying()) return;
 
         event.setCancelled(true);
@@ -3788,7 +3824,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     }
 
     private void enforcePlayerSurvivalLock(Player player) {
-        if (!isSurvivalLocked(player) || isTempAdmin(player)) return;
+        if (!isSurvivalLocked(player) || isPermanentAdmin(player) || isTempAdmin(player)) return;
 
         suspendSurvivalOp(player);
         if (player.getGameMode() != GameMode.SURVIVAL) {
@@ -4073,7 +4109,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     }
 
     private void suspendSurvivalOp(Player player) {
-        if (isTempAdmin(player)) return;
+        if (isPermanentAdmin(player) || isTempAdmin(player)) return;
 
         String path = survivalOpPath(player);
 
