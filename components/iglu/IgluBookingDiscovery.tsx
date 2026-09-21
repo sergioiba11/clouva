@@ -1,7 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { CalendarDays, ChevronRight, MapPin } from "lucide-react";
+import {
+  BarChart3,
+  CalendarDays,
+  ChevronLeft,
+  ChevronRight,
+  Home,
+  List,
+  MapPin,
+  UserRound,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { IgluAvailabilityRule, IgluCalendarEvent, IgluPublicPlayer } from "@/lib/server/iglu/public-app";
 import styles from "./IgluFunctional.module.css";
@@ -24,27 +33,62 @@ type MePlayer = {
   longitude?: number | null;
 };
 
-function haversineKm(aLat: number, aLon: number, bLat: number, bLon: number) {
-  const toRad = (value: number) => value * Math.PI / 180;
-  const r = 6371;
-  const dLat = toRad(bLat - aLat);
-  const dLon = toRad(bLon - aLon);
-  const x = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLon / 2) ** 2;
-  return 2 * r * Math.asin(Math.sqrt(x));
+type NearbyProducer = {
+  id: string;
+  slug: string;
+  displayName: string;
+  primaryRole: string | null;
+  disciplines: string[];
+  location: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  avatar: string | null;
+  isVerified: boolean;
+  isPro: boolean;
+  bookingEnabled: boolean;
+  hasAvailability: boolean;
+  distanceKm: number | null;
+  zoneMatch: boolean;
+};
+
+const PACK_ROOT =
+  "https://storage.googleapis.com/clouva-generated-media/admin-assets/brand/clouva-logo/shared/other";
+const BACKGROUND = `${PACK_ROOT}/06_background_base_musical_iglu.png`;
+const LOGO = `${PACK_ROOT}/02_logo_iglu_records_neon_hielo.png`;
+const IGLU_HOME = "/lamatrix/estudios/eliglurecords";
+
+const WEEKDAYS = ["LUN", "MAR", "MIÉ", "JUE", "VIE", "SÁB", "DOM"];
+
+function producerLike(player: IgluPublicPlayer) {
+  const values = [player.role, player.primaryRole, ...player.disciplines].filter(Boolean).map((value) => String(value).toLowerCase());
+  return values.some((value) => value.includes("productor") || value.includes("producer") || value.includes("beatmaker") || value.includes("engineer") || value.includes("ingeniero"));
+}
+
+function dateKey(date: Date) {
+  return new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
+}
+
+function monthLabel(date: Date) {
+  return new Intl.DateTimeFormat("es-AR", { month: "long", year: "numeric" }).format(date).toUpperCase();
 }
 
 function dateKeyInZone(iso: string, timeZone: string) {
   return new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(iso));
 }
 
-function wallToIso(dateKey: string, hhmm: string, timeZone: string) {
-  const [year, month, day] = dateKey.split("-").map(Number);
+function wallToIso(dayKey: string, hhmm: string, timeZone: string) {
+  const [year, month, day] = dayKey.split("-").map(Number);
   const [hour, minute] = hhmm.split(":").map(Number);
   let guess = new Date(Date.UTC(year, month - 1, day, hour, minute, 0));
   for (let index = 0; index < 4; index += 1) {
     const parts = new Intl.DateTimeFormat("en-CA", {
       timeZone,
-      year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
       hourCycle: "h23",
     }).formatToParts(guess);
     const value = (type: string) => Number(parts.find((part) => part.type === type)?.value || "0");
@@ -58,17 +102,72 @@ function wallToIso(dateKey: string, hhmm: string, timeZone: string) {
 }
 
 function minutes(value: string) {
-  const [h, m] = value.split(":").map(Number);
-  return h * 60 + m;
+  const [hour, minute] = value.split(":").map(Number);
+  return hour * 60 + minute;
 }
 
 function hhmm(value: number) {
-  return `${String(Math.floor(value / 60) % 24).padStart(2, "0")}:${String(value % 60).padStart(2, "0")}`;
+  const normalized = ((value % 1440) + 1440) % 1440;
+  return `${String(Math.floor(normalized / 60)).padStart(2, "0")}:${String(normalized % 60).padStart(2, "0")}`;
+}
+
+function ruleContains(rule: IgluAvailabilityRule, minute: number, durationMinutes: number) {
+  const start = minutes(rule.startLocal);
+  let end = minutes(rule.endLocal);
+  let candidate = minute;
+  if (end <= start) end += 1440;
+  if (candidate < start && end > 1440) candidate += 1440;
+  return candidate >= start && candidate + durationMinutes <= end;
 }
 
 function formatMoney(value: number | null, currency: string) {
   if (value == null) return "Consultar";
   return new Intl.NumberFormat("es-AR", { style: "currency", currency: currency || "ARS", maximumFractionDigits: 0 }).format(value);
+}
+
+function buildSlots(args: {
+  dayKey: string;
+  playerId: string;
+  durationMinutes: number;
+  rules: IgluAvailabilityRule[];
+  events: IgluCalendarEvent[];
+  timezone: string;
+}) {
+  const { dayKey, playerId, durationMinutes, rules, events, timezone } = args;
+  const [year, month, day] = dayKey.split("-").map(Number);
+  const weekday = new Date(Date.UTC(year, month - 1, day, 12)).getUTCDay();
+  const studioPositive = rules.filter((rule) => rule.playerId == null && rule.isAvailable && rule.weekday === weekday);
+  const playerPositive = rules.filter((rule) => rule.playerId === playerId && rule.isAvailable && rule.weekday === weekday);
+  const studioNegative = rules.filter((rule) => rule.playerId == null && !rule.isAvailable && rule.weekday === weekday);
+  const playerNegative = rules.filter((rule) => rule.playerId === playerId && !rule.isAvailable && rule.weekday === weekday);
+  const source = playerPositive.length ? playerPositive : studioPositive;
+  if (!source.length) return [] as string[];
+
+  const candidates = new Set<string>();
+  for (const rule of source) {
+    const start = minutes(rule.startLocal);
+    let end = minutes(rule.endLocal);
+    if (end <= start) end += 1440;
+    for (let current = start; current + durationMinutes <= end; current += 30) {
+      if (current >= 1440) break;
+      if (studioPositive.length && !studioPositive.some((studioRule) => ruleContains(studioRule, current, durationMinutes))) continue;
+      if (studioNegative.some((block) => ruleContains(block, current, durationMinutes))) continue;
+      if (playerNegative.some((block) => ruleContains(block, current, durationMinutes))) continue;
+      candidates.add(hhmm(current));
+    }
+  }
+
+  return [...candidates].filter((time) => {
+    const start = new Date(wallToIso(dayKey, time, timezone)).getTime();
+    const end = start + durationMinutes * 60_000;
+    return !events.some((event) => {
+      if (event.playerId != null && event.playerId !== playerId) return false;
+      if (dateKeyInZone(event.startAt, timezone) !== dayKey) return false;
+      const eventStart = new Date(event.startAt).getTime();
+      const eventEnd = new Date(event.endAt).getTime();
+      return eventStart < end && eventEnd > start;
+    });
+  }).sort();
 }
 
 export function IgluBookingDiscovery({
@@ -79,6 +178,9 @@ export function IgluBookingDiscovery({
   availabilityRules,
   bookingEnabled,
   timezone,
+  initialDate,
+  initialTime,
+  initialPlayerId,
 }: {
   studioId: string;
   players: IgluPublicPlayer[];
@@ -87,16 +189,29 @@ export function IgluBookingDiscovery({
   availabilityRules: IgluAvailabilityRule[];
   bookingEnabled: boolean;
   timezone: string;
+  initialDate?: string | null;
+  initialTime?: string | null;
+  initialPlayerId?: string | null;
 }) {
+  const today = dateKey(new Date());
+  const validInitialPlayer = initialPlayerId && players.some((player) => player.id === initialPlayerId) ? initialPlayerId : null;
+  const producerPlayers = useMemo(() => {
+    const producers = players.filter(producerLike);
+    return producers.length ? producers : players;
+  }, [players]);
+
   const [me, setMe] = useState<MePlayer | null>(null);
   const [authRequired, setAuthRequired] = useState(false);
-  const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(null);
+  const [nearby, setNearby] = useState<NearbyProducer[]>([]);
+  const [nearbyLoading, setNearbyLoading] = useState(true);
+  const [selectedPlayerId, setSelectedPlayerId] = useState<string | null>(validInitialPlayer);
   const [serviceId, setServiceId] = useState(services[0]?.id || "");
-  const [dateKey, setDateKey] = useState(() => {
-    const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
-    return new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" }).format(tomorrow);
+  const [selectedDate, setSelectedDate] = useState(initialDate && /^\d{4}-\d{2}-\d{2}$/.test(initialDate) ? initialDate : today);
+  const [slot, setSlot] = useState(initialTime && /^\d{2}:\d{2}$/.test(initialTime) ? initialTime : "");
+  const [month, setMonth] = useState(() => {
+    const [year, monthNumber] = selectedDate.split("-").map(Number);
+    return new Date(year, monthNumber - 1, 1);
   });
-  const [slot, setSlot] = useState("");
   const [working, setWorking] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -105,77 +220,100 @@ export function IgluBookingDiscovery({
       .then(async (response) => {
         if (response.status === 401) {
           setAuthRequired(true);
-          return;
+          return null;
         }
-        if (!response.ok) return;
+        if (!response.ok) return null;
         const payload = await response.json() as { player?: MePlayer | null };
-        setMe(payload.player || null);
+        const player = payload.player || null;
+        setMe(player);
+        return player;
       })
-      .catch(() => undefined);
+      .then(async (player) => {
+        const params = new URLSearchParams();
+        if (typeof player?.latitude === "number") params.set("lat", String(player.latitude));
+        if (typeof player?.longitude === "number") params.set("lon", String(player.longitude));
+        if (player?.location) params.set("zone", player.location);
+        const response = await fetch(`/api/iglu/reservas/producers?${params.toString()}`, { cache: "no-store" });
+        const payload = await response.json().catch(() => ({})) as { producers?: NearbyProducer[] };
+        setNearby(response.ok ? payload.producers || [] : []);
+        setNearbyLoading(false);
+      })
+      .catch(() => setNearbyLoading(false));
   }, []);
 
-  const ranked = useMemo(() => {
-    return players
-      .filter((player) => !me?.id || player.id !== me.id)
-      .map((player) => ({
-        ...player,
-        distance: typeof me?.latitude === "number" && typeof me?.longitude === "number" && typeof player.latitude === "number" && typeof player.longitude === "number"
-          ? haversineKm(me.latitude, me.longitude, player.latitude, player.longitude)
-          : null,
-      }))
-      .sort((a, b) => {
-        if (a.distance != null && b.distance != null) return a.distance - b.distance;
-        if (a.distance != null) return -1;
-        if (b.distance != null) return 1;
-        return a.displayName.localeCompare(b.displayName, "es");
-      });
-  }, [me, players]);
-
   useEffect(() => {
-    if (!selectedPlayerId && ranked[0]?.id) setSelectedPlayerId(ranked[0].id);
-  }, [ranked, selectedPlayerId]);
+    if (selectedPlayerId) return;
+    const nearestBookable = nearby.find((producer) => players.some((player) => player.id === producer.id));
+    if (nearestBookable) {
+      setSelectedPlayerId(nearestBookable.id);
+      return;
+    }
+    if (producerPlayers[0]?.id) setSelectedPlayerId(producerPlayers[0].id);
+  }, [nearby, players, producerPlayers, selectedPlayerId]);
 
   const selectedService = services.find((service) => service.id === serviceId) || null;
-  const selectedPlayer = ranked.find((player) => player.id === selectedPlayerId) || null;
+  const selectedPlayer = players.find((player) => player.id === selectedPlayerId) || null;
   const duration = Math.max(15, selectedService?.duration_minutes || 60);
 
   const availableSlots = useMemo(() => {
-    const midday = new Date(`${dateKey}T12:00:00`);
-    const weekday = midday.getDay();
-    const rules = availabilityRules.filter((rule) => rule.isAvailable && rule.weekday === weekday);
-    if (!rules.length) return [] as string[];
-
-    const candidates: string[] = [];
-    for (const rule of rules) {
-      const start = minutes(rule.startLocal);
-      let end = minutes(rule.endLocal);
-      if (end <= start) end += 24 * 60;
-      for (let current = start; current + duration <= end; current += 30) candidates.push(hhmm(current));
-    }
-
-    return Array.from(new Set(candidates)).filter((time) => {
-      const startIso = wallToIso(dateKey, time, timezone);
-      const start = new Date(startIso).getTime();
-      const end = start + duration * 60_000;
-      return !events.some((event) => {
-        if (event.playerId && selectedPlayerId && event.playerId !== selectedPlayerId) return false;
-        if (!event.playerId && dateKeyInZone(event.startAt, timezone) !== dateKey) return false;
-        const eventStart = new Date(event.startAt).getTime();
-        const eventEnd = new Date(event.endAt).getTime();
-        return eventStart < end && eventEnd > start;
-      });
+    if (!selectedPlayerId) return [] as string[];
+    return buildSlots({
+      dayKey: selectedDate,
+      playerId: selectedPlayerId,
+      durationMinutes: duration,
+      rules: availabilityRules,
+      events,
+      timezone,
     });
-  }, [availabilityRules, dateKey, duration, events, selectedPlayerId, timezone]);
+  }, [availabilityRules, duration, events, selectedDate, selectedPlayerId, timezone]);
 
   useEffect(() => {
     if (slot && !availableSlots.includes(slot)) setSlot("");
   }, [availableSlots, slot]);
 
+  const eventDays = useMemo(() => {
+    const set = new Set(events.map((event) => dateKeyInZone(event.startAt, timezone)));
+    return set;
+  }, [events, timezone]);
+
+  const availableDays = useMemo(() => {
+    const set = new Set<string>();
+    if (!selectedPlayerId) return set;
+    const year = month.getFullYear();
+    const monthIndex = month.getMonth();
+    const count = new Date(year, monthIndex + 1, 0).getDate();
+    for (let day = 1; day <= count; day += 1) {
+      const key = dateKey(new Date(year, monthIndex, day));
+      if (buildSlots({ dayKey: key, playerId: selectedPlayerId, durationMinutes: duration, rules: availabilityRules, events, timezone }).length) set.add(key);
+    }
+    return set;
+  }, [availabilityRules, duration, events, month, selectedPlayerId, timezone]);
+
+  const calendarDays = useMemo(() => {
+    const year = month.getFullYear();
+    const monthIndex = month.getMonth();
+    const first = new Date(year, monthIndex, 1);
+    const firstMonday = (first.getDay() + 6) % 7;
+    const count = new Date(year, monthIndex + 1, 0).getDate();
+    const cells: Array<{ key: string | null; day: number | null }> = [];
+    for (let index = 0; index < firstMonday; index += 1) cells.push({ key: null, day: null });
+    for (let day = 1; day <= count; day += 1) {
+      const date = new Date(year, monthIndex, day);
+      cells.push({ key: dateKey(date), day });
+    }
+    while (cells.length % 7) cells.push({ key: null, day: null });
+    return cells;
+  }, [month]);
+
+  const inStudio = new Set(players.map((player) => player.id));
+  const nearest = nearby[0] || null;
+  const others = nearby.slice(1, 9);
+
   async function confirmBooking() {
     if (!selectedPlayerId || !selectedService || !slot) return;
     setWorking(true);
     setMessage(null);
-    const scheduledAt = wallToIso(dateKey, slot, timezone);
+    const scheduledAt = wallToIso(selectedDate, slot, timezone);
     const response = await fetch(`/api/studios/${studioId}/bookings`, {
       method: "POST",
       credentials: "include",
@@ -187,7 +325,7 @@ export function IgluBookingDiscovery({
         durationMinutes: duration,
       }),
     });
-    const payload = await response.json().catch(() => ({})) as { error?: string; initPoint?: string | null; booking?: { id?: string }; bookingId?: string };
+    const payload = await response.json().catch(() => ({})) as { error?: string; initPoint?: string | null };
     if (!response.ok) {
       if (response.status === 401) setAuthRequired(true);
       setMessage(payload.error || "No se pudo crear la reserva.");
@@ -198,80 +336,226 @@ export function IgluBookingDiscovery({
       window.location.assign(payload.initPoint);
       return;
     }
-    setMessage("Reserva creada. El horario quedó bloqueado en Agenda.");
+    setMessage("Reserva creada. El horario quedó bloqueado en la Agenda del IGLÚ y del Player.");
     setWorking(false);
   }
 
+  function quickDate(offsetDays: number) {
+    const date = new Date();
+    date.setDate(date.getDate() + offsetDays);
+    const key = dateKey(date);
+    setSelectedDate(key);
+    setMonth(new Date(date.getFullYear(), date.getMonth(), 1));
+  }
+
   return (
-    <div className={styles.root}>
-      <main className={styles.shell}>
-        <Link className={styles.back} href="/lamatrix/estudios/eliglurecords">← Volver al IGLÚ</Link>
-        <header className={styles.header}>
-          <p className={styles.eyebrow}>IGLÚ RECORDS · RESERVAS</p>
-          <h1 className={styles.title}>RESERVÁ TU SESIÓN</h1>
-          <p className={styles.subtitle}>Elegí un Player real del IGLÚ. La confirmación valida al mismo tiempo la Agenda del Studio y la Agenda del Player para evitar dobles reservas.</p>
+    <div className={styles.calendarRoot}>
+      <div className={styles.calendarBackdrop} style={{ backgroundImage: `url("${BACKGROUND}")` }} aria-hidden="true" />
+      <main className={styles.calendarShell}>
+        <div className={styles.calendarTop}>
+          <Link className={styles.calendarRoundButton} href={IGLU_HOME} aria-label="Volver al IGLÚ"><ChevronLeft size={21} /></Link>
+          <div className={styles.calendarBrand}><img src={LOGO} alt="IGLÚ Records" /></div>
+          <Link className={styles.calendarRoundButton} href={`${IGLU_HOME}/agenda`} aria-label="Calendario completo"><CalendarDays size={20} /></Link>
+        </div>
+
+        <header className={styles.calendarTitleBlock}>
+          <h1>RESERVAR SESIÓN</h1>
+          <p>ZONA · PLAYER · FECHA · HORARIO</p>
         </header>
 
-        <section className={styles.section}>
-          <div className={styles.sectionHead}><h2>Tu zona</h2><span>{me?.location || "Sin zona configurada"}</span></div>
-          <div className={styles.notice}>
-            <MapPin size={14} style={{ display: "inline", marginRight: 6 }} />
-            {me?.location ? "Ordenamos por distancia cuando ambos Players tienen coordenadas públicas." : "Configurá tu ubicación en tu Player para ordenar por cercanía. No inventamos distancias."}
+        <section className={`${styles.glassPanel} ${styles.nearbyPanel}`}>
+          <div className={styles.bookingZoneBar}>
+            <div>
+              <span>TU ZONA</span>
+              <strong>{me?.location || "Ubicación no configurada"}</strong>
+            </div>
+            <Link href="/profile/edit">CAMBIAR</Link>
           </div>
+
+          <div className={styles.sectionHead}>
+            <h2>Recomendado para vos</h2>
+            <span>{nearbyLoading ? "Buscando…" : nearest?.distanceKm != null ? `${nearest.distanceKm.toFixed(1)} km` : "según datos reales"}</span>
+          </div>
+
+          {nearest ? (
+            <article className={styles.nearbyHero}>
+              <div className={styles.nearbyHeroAvatar}>
+                {nearest.avatar ? <img src={nearest.avatar} alt="" /> : <span className={styles.avatarFallback}>{nearest.displayName.slice(0, 1)}</span>}
+              </div>
+              <div>
+                <h3>{nearest.displayName} {nearest.isPro ? <span className={styles.chip}>PRO PLAYER</span> : null}</h3>
+                <p>{nearest.location || "Ubicación no publicada"}{nearest.distanceKm != null ? ` · ${nearest.distanceKm.toFixed(1)} km` : ""}</p>
+                <div className={styles.chips}>
+                  {[nearest.primaryRole, ...nearest.disciplines].filter(Boolean).slice(0, 4).map((label) => <span className={styles.chip} key={String(label)}>{label}</span>)}
+                </div>
+              </div>
+              {inStudio.has(nearest.id) ? (
+                <button className={styles.scheduleAction} type="button" onClick={() => setSelectedPlayerId(nearest.id)}>Elegir</button>
+              ) : (
+                <Link className={styles.scheduleAction} href={`/${nearest.slug}`}>Ver Player</Link>
+              )}
+            </article>
+          ) : !nearbyLoading ? (
+            <div className={styles.empty}>No hay productores públicos con datos suficientes para recomendar en tu zona.</div>
+          ) : null}
+
+          {others.length ? (
+            <>
+              <div className={styles.sectionHead} style={{ marginTop: 16 }}><h2>Otros productores</h2><span>{others.length} visibles</span></div>
+              <div className={styles.nearbyList}>
+                {others.map((producer) => (
+                  <article className={styles.nearbyRow} key={producer.id}>
+                    {producer.avatar ? <img src={producer.avatar} alt="" /> : <span className={styles.nearbyAvatarFallback}>{producer.displayName.slice(0, 1)}</span>}
+                    <div>
+                      <p className={styles.cardTitle}>{producer.displayName} {producer.isPro ? <span className={styles.chip}>PRO</span> : null}</p>
+                      <p className={styles.meta}>{producer.location || "Ubicación no publicada"}{producer.distanceKm != null ? ` · ${producer.distanceKm.toFixed(1)} km` : ""}</p>
+                    </div>
+                    {inStudio.has(producer.id) ? (
+                      <button className={styles.scheduleAction} type="button" onClick={() => setSelectedPlayerId(producer.id)}>Elegir</button>
+                    ) : (
+                      <Link className={styles.scheduleAction} href={`/${producer.slug}`}>Ver</Link>
+                    )}
+                  </article>
+                ))}
+              </div>
+            </>
+          ) : null}
         </section>
 
-        <section className={styles.section}>
-          <div className={styles.sectionHead}><h2>{ranked.length ? "Players del IGLÚ" : "Players"}</h2><span>{ranked.length} disponibles en directorio</span></div>
-          <div className={styles.grid}>
-            {ranked.map((player, index) => (
-              <button key={player.id} type="button" className={styles.card} onClick={() => setSelectedPlayerId(player.id)} style={{ padding: 0, color: "inherit", textAlign: "left", borderColor: selectedPlayerId === player.id ? "rgba(132,214,255,.58)" : undefined }}>
-                <div className={styles.playerCard}>
-                  {player.avatar ? <img className={styles.avatar} src={player.avatar} alt="" /> : <span className={styles.avatarFallback}>{player.displayName.charAt(0)}</span>}
-                  <div>
-                    <p className={styles.cardTitle}>{index === 0 && player.distance != null ? "Más cercano · " : ""}{player.displayName}</p>
-                    <p className={styles.meta}>{player.location || "Ubicación no publicada"}{player.distance != null ? ` · ${player.distance.toFixed(1)} km` : ""}</p>
-                    <div className={styles.chips}>{[player.role, player.primaryRole, ...player.disciplines].filter(Boolean).slice(0, 4).map((item) => <span className={styles.chip} key={String(item)}>{item}</span>)}</div>
-                  </div>
-                  <ChevronRight size={18} />
-                </div>
+        <section className={`${styles.glassPanel} ${styles.dayPanel}`}>
+          <div className={styles.sectionHead}><h2>Player para la sesión</h2><span>{selectedPlayer?.displayName || "Elegí uno"}</span></div>
+          <div className={styles.playerRail}>
+            {producerPlayers.map((player) => (
+              <button
+                type="button"
+                key={player.id}
+                className={`${styles.playerBubble} ${selectedPlayerId === player.id ? styles.playerBubbleActive : ""}`}
+                onClick={() => setSelectedPlayerId(player.id)}
+              >
+                <span className={styles.playerBubbleAvatar}>
+                  {player.avatar ? <img src={player.avatar} alt="" /> : player.displayName.slice(0, 1)}
+                  {player.isPro ? <span className={styles.proBadge}>PRO</span> : null}
+                </span>
+                <strong>{player.displayName}</strong>
+                <small>{player.role || player.primaryRole || "Player"}</small>
               </button>
             ))}
-            {!ranked.length ? <div className={styles.empty}>No hay otros Players publicados vinculados al IGLÚ para reservar.</div> : null}
           </div>
-          {selectedPlayer ? <Link className={styles.secondaryButton} style={{ marginTop: 12 }} href={`/${selectedPlayer.slug}`}>Ver Player público →</Link> : null}
+          {!producerPlayers.length ? <div className={styles.empty}>El IGLÚ no tiene todavía un Player productor publicado para recibir reservas.</div> : null}
         </section>
 
-        <section className={styles.section}>
-          <div className={styles.sectionHead}><h2>Servicio y fecha</h2><span>Agenda real</span></div>
-          {!bookingEnabled ? <div className={styles.notice}>La Agenda del IGLÚ todavía no tiene reservas públicas habilitadas. Podés explorar Players y calendario, pero no se confirmará un turno hasta que el Studio las active.</div> : null}
-          {!services.length ? <div className={styles.empty}>El IGLÚ todavía no publicó un servicio con CTA “reservar”. No mostramos precios ni servicios inventados.</div> : (
+        <section className={`${styles.glassPanel} ${styles.calendarPanel}`} style={{ marginTop: 14 }}>
+          <div className={styles.calendarMonthBar}>
+            <button className={styles.monthArrow} type="button" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))}><ChevronLeft /></button>
+            <strong>{monthLabel(month)}</strong>
+            <button className={styles.monthArrow} type="button" onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))}><ChevronRight /></button>
+          </div>
+
+          <div className={styles.chips} style={{ padding: "12px 12px 0", justifyContent: "center" }}>
+            <button type="button" className={styles.chip} onClick={() => quickDate(0)}>HOY</button>
+            <button type="button" className={styles.chip} onClick={() => quickDate(1)}>MAÑANA</button>
+            <button type="button" className={styles.chip} onClick={() => quickDate(7)}>ESTA SEMANA</button>
+          </div>
+
+          <div className={styles.calendarWeek}>
+            {WEEKDAYS.map((weekday) => <span key={weekday}>{weekday}</span>)}
+          </div>
+          <div className={styles.calendarGrid}>
+            {calendarDays.map((cell, index) => {
+              if (!cell.key || cell.day == null) return <div className={styles.calendarBlank} key={`blank-${index}`} />;
+              const isPast = cell.key < today;
+              return (
+                <button
+                  type="button"
+                  key={cell.key}
+                  disabled={isPast}
+                  className={[
+                    styles.calendarCell,
+                    selectedDate === cell.key ? styles.calendarCellSelected : "",
+                    cell.key === today ? styles.calendarCellToday : "",
+                  ].filter(Boolean).join(" ")}
+                  style={isPast ? { opacity: .28 } : undefined}
+                  onClick={() => setSelectedDate(cell.key!)}
+                >
+                  <span className={styles.calendarCellNumber}>{cell.day}</span>
+                  <span className={styles.calendarCellDots}>
+                    {availableDays.has(cell.key) ? <i className={`${styles.statusDot} ${styles.statusAvailable}`} /> : null}
+                    {eventDays.has(cell.key) ? <i className={`${styles.statusDot} ${styles.statusOccupied}`} /> : null}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </section>
+
+        <section className={`${styles.glassPanel} ${styles.dayPanel}`}>
+          <div className={styles.dayPanelHead}>
+            <h2>{selectedDate}</h2>
+            <span>{availableSlots.length ? `${availableSlots.length} horarios disponibles` : "Sin horarios publicados"}</span>
+          </div>
+
+          {!bookingEnabled ? <div className={styles.notice}>La Agenda del IGLÚ todavía no tiene reservas públicas habilitadas. El calendario sigue mostrando datos reales, pero no confirma turnos hasta que el Studio lo active.</div> : null}
+          {!services.length ? <div className={styles.empty}>El IGLÚ todavía no publicó un servicio real con CTA “reservar”.</div> : (
             <div className={styles.form}>
               <select className={styles.select} value={serviceId} onChange={(event) => setServiceId(event.target.value)}>
                 {services.map((service) => <option value={service.id} key={service.id}>{service.name} · {formatMoney(service.price, service.currency)}</option>)}
               </select>
-              <input className={styles.input} type="date" value={dateKey} min={new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date())} onChange={(event) => setDateKey(event.target.value)} />
               <div className={styles.chips}>
-                {availableSlots.map((time) => <button type="button" key={time} className={styles.chip} onClick={() => setSlot(time)} style={{ borderColor: slot === time ? "rgba(136,219,255,.8)" : undefined, background: slot === time ? "rgba(87,181,237,.16)" : undefined }}>{time}</button>)}
+                {availableSlots.map((time) => (
+                  <button
+                    type="button"
+                    key={time}
+                    className={styles.chip}
+                    onClick={() => setSlot(time)}
+                    style={{
+                      borderColor: slot === time ? "rgba(210,244,255,.85)" : undefined,
+                      background: slot === time ? "rgba(61,168,230,.22)" : undefined,
+                    }}
+                  >
+                    {time}
+                  </button>
+                ))}
               </div>
-              {!availableSlots.length ? <div className={styles.empty}>No hay franjas de disponibilidad publicadas para esta fecha. Elegí otra fecha o esperá a que el IGLÚ configure sus horarios.</div> : null}
+              {!availableSlots.length ? <div className={styles.empty}>No hay horarios publicados para ese Player en esa fecha. Probá otro día o Player.</div> : null}
             </div>
           )}
+
+          {selectedPlayer && selectedService && slot ? (
+            <div className={styles.card} style={{ marginTop: 14, padding: 14 }}>
+              <p className={styles.eyebrow}>RESUMEN</p>
+              <p className={styles.cardTitle} style={{ marginTop: 8 }}>{selectedPlayer.displayName}</p>
+              <p className={styles.meta}>{selectedService.name} · {selectedDate} · {slot} · {duration} min · {formatMoney(selectedService.price, selectedService.currency)}</p>
+              {authRequired ? (
+                <Link className={styles.primaryButton} style={{ marginTop: 14, width: "100%" }} href="/login">Iniciar sesión para reservar →</Link>
+              ) : (
+                <button
+                  type="button"
+                  className={styles.primaryButton}
+                  style={{ marginTop: 14, width: "100%" }}
+                  disabled={working || !bookingEnabled}
+                  onClick={() => void confirmBooking()}
+                >
+                  {working ? "Confirmando…" : "CONFIRMAR RESERVA →"}
+                </button>
+              )}
+              {message ? <p className={message.startsWith("Reserva creada") ? styles.meta : styles.error}>{message}</p> : null}
+            </div>
+          ) : null}
         </section>
 
-        {selectedPlayer && selectedService && slot ? (
-          <section className={styles.section}>
-            <div className={styles.sectionHead}><h2>Confirmar</h2><span>{duration} min</span></div>
-            <p className={styles.cardTitle}>{selectedPlayer.displayName}</p>
-            <p className={styles.meta}>{selectedService.name} · {dateKey} · {slot} · {formatMoney(selectedService.price, selectedService.currency)}</p>
-            {authRequired ? <Link className={styles.primaryButton} style={{ marginTop: 14 }} href="/login">Iniciar sesión para reservar →</Link> : (
-              <button type="button" className={styles.primaryButton} style={{ marginTop: 14, width: "100%" }} disabled={working || !bookingEnabled} onClick={() => void confirmBooking()}>{working ? "Confirmando…" : "CONFIRMAR RESERVA →"}</button>
-            )}
-            {message ? <p className={message.startsWith("Reserva creada") ? styles.meta : styles.error}>{message}</p> : null}
-          </section>
-        ) : null}
-
-        <div className={styles.bottomActions}><Link className={styles.secondaryButton} style={{ width: "100%" }} href="/lamatrix/estudios/eliglurecords/agenda"><CalendarDays size={16} /> Ver calendario completo</Link></div>
+        <div className={styles.notice} style={{ marginTop: 14 }}>
+          <MapPin size={14} style={{ display: "inline", marginRight: 6 }} />
+          La cercanía solo se calcula cuando ambos Players tienen coordenadas guardadas. Si falta ubicación, el orden usa zona, disponibilidad pública y estado PRO real; nunca inventa distancia.
+        </div>
       </main>
+
+      <nav className={styles.igluBottomNav} aria-label="Navegación IGLÚ">
+        <Link href={IGLU_HOME}><Home /><span>INICIO</span></Link>
+        <Link href="/iglu/pagos-unicos"><List /><span>CARTA/MENU</span></Link>
+        <Link className={styles.igluBottomCenter} href={IGLU_HOME}><CalendarDays /><span>IGLÚ</span></Link>
+        <Link href="/iglu/sesiones"><BarChart3 /><span>SESIONES</span></Link>
+        <Link href={`${IGLU_HOME}/perfil`}><UserRound /><span>PERFIL</span></Link>
+      </nav>
     </div>
   );
 }
