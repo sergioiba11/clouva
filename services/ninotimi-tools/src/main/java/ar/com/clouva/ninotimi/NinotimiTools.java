@@ -1429,9 +1429,8 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         }
 
         Inventory inv = Bukkit.createInventory(null, 54, Component.text(TEMP_ADMIN_PLAYERS_TITLE));
-        List<Player> online = Bukkit.getOnlinePlayers().stream()
-            .sorted((a, b) -> a.getName().compareToIgnoreCase(b.getName()))
-            .toList();
+        List<Player> online = new ArrayList<>(Bukkit.getOnlinePlayers());
+        online.sort((a, b) -> a.getName().compareToIgnoreCase(b.getName()));
 
         Map<Integer, UUID> slots = new HashMap<>();
         int slot = 0;
