@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { PlayerIdentityRenderer } from "@/components/public/PlayerIdentityRenderer";
 import { SpacePublicView } from "@/components/public/SpacePublicView";
 import { PublicAgendaSection } from "@/components/public/PublicAgendaSection";
@@ -31,6 +31,8 @@ export async function generateMetadata({ params }: { params: Promise<{ publicAli
       alternates: { canonical },
       openGraph: {
         type: "profile",
+        siteName: "CLOUVA",
+        locale: "es_AR",
         url: canonical,
         title: socialTitle,
         description: socialDescription,
@@ -58,6 +60,9 @@ export async function generateMetadata({ params }: { params: Promise<{ publicAli
 export default async function PublicAliasPage({ params }: { params: Promise<{ publicAlias: string }> }) {
   const { publicAlias } = await params;
   const playerResult = await resolvePlayerAlias(publicAlias);
+  if (playerResult && publicAlias.toLowerCase() !== playerResult.canonicalAlias.toLowerCase()) {
+    redirect(`/${playerResult.canonicalAlias}`);
+  }
   if (!playerResult) {
     const spaceResult = await resolvePublicSpaceAlias(publicAlias);
     if (!spaceResult) notFound();

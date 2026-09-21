@@ -6,6 +6,8 @@ import { studioPublicHref } from "@/lib/public-studio-routes";
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const staticRoutes = [
     "/",
+    "/sobre-clouva",
+    "/clouva",
     "/tienda",
     "/catalogo",
     "/carrito",

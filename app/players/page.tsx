@@ -1,9 +1,25 @@
+import type { Metadata } from "next";
 import Link from "next/link";
 import { PublicShell } from "@/components/public/PublicShell";
 import { listPublishedPlayers } from "@/lib/server/public-identity-data";
 import { VISUAL_ASSETS } from "@/lib/visual-assets";
 
 export const dynamic = "force-dynamic";
+
+export const metadata: Metadata = {
+  title: "Players — Artistas, productores y creadores | CLOUVA",
+  description: "Directorio público de Players de CLOUVA: artistas, productores y creadores con identidad propia dentro de La Matrix.",
+  alternates: { canonical: "https://clouva.com.ar/players" },
+  robots: { index: true, follow: true },
+  openGraph: {
+    type: "website",
+    siteName: "CLOUVA",
+    locale: "es_AR",
+    url: "https://clouva.com.ar/players",
+    title: "Players — CLOUVA",
+    description: "Artistas, productores y creadores con identidad pública propia dentro de La Matrix.",
+  },
+};
 
 export default async function PlayersDirectoryPage() {
   const players = await listPublishedPlayers();

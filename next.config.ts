@@ -31,6 +31,32 @@ const securityHeaders = [
   },
 ];
 
+const noIndexHeaders = [
+  { key: "X-Robots-Tag", value: "noindex, nofollow, noarchive" },
+];
+
+const noIndexSources = [
+  "/api/:path*",
+  "/admin/:path*",
+  "/auth/:path*",
+  "/account/:path*",
+  "/cuenta/:path*",
+  "/checkout/:path*",
+  "/carrito",
+  "/empleado/:path*",
+  "/mi-flow/:path*",
+  "/profile/edit/:path*",
+  "/debug-auth",
+  "/onboarding/:path*",
+  "/registro",
+  "/login",
+  "/studio-dashboard/:path*",
+  "/businesses/manage",
+  "/businesses/new",
+  "/gracias",
+  "/pedido/:path*",
+];
+
 const nextConfig: NextConfig = {
   images: {
     // Prefer modern encodings for critical visual assets. The original PNGs
@@ -58,6 +84,10 @@ const nextConfig: NextConfig = {
         source: "/(.*)",
         headers: securityHeaders,
       },
+      ...noIndexSources.map((source) => ({
+        source,
+        headers: noIndexHeaders,
+      })),
     ];
   },
   // "Comunidad" is retired in favor of the Players/Estudios ecosystem

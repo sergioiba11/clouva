@@ -8,8 +8,11 @@ import { ClouvaAppShell } from "@/components/clouva/ClouvaAppShell";
 // has its own canonical entity at /clouva.
 export const metadata: Metadata = {
   metadataBase: new URL("https://clouva.com.ar"),
-  title: "CLOUVA — Plataforma creativa | Vida de Flows",
+  applicationName: "CLOUVA",
+  title: "CLOUVA — Plataforma creativa",
   description: "CLOUVA es una plataforma creativa que conecta música, identidad, moda, 3D, Creator, Market, Mi Spot e inteligencia artificial en un mismo universo.",
+  alternates: { canonical: "/" },
+  robots: { index: true, follow: true },
   icons: {
     icon: [
       {
@@ -28,14 +31,16 @@ export const metadata: Metadata = {
   },
   openGraph: {
     type: "website",
-    title: "CLOUVA — Plataforma creativa | Vida de Flows",
+    siteName: "CLOUVA",
+    locale: "es_AR",
+    title: "CLOUVA — Plataforma creativa",
     description: "CLOUVA es una plataforma creativa que conecta música, identidad, moda, 3D, Creator, Market, Mi Spot e inteligencia artificial en un mismo universo.",
     url: "https://clouva.com.ar/",
   },
   twitter: {
-    card: "summary_large_image",
-    title: "CLOUVA — Plataforma creativa | Vida de Flows",
-    description: "CLOUVA es una plataforma creativa que conecta música, identidad, moda, 3D, Creator, Market, Mi Spot e inteligencia artificial en un mismo universo.",
+    card: "summary",
+    title: "CLOUVA — Plataforma creativa",
+    description: "Música, identidad, moda, 3D, Creator, Market, Mi Spot e inteligencia artificial en un mismo universo creativo.",
   },
 };
 
