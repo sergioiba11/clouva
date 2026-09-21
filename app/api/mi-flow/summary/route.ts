@@ -46,6 +46,19 @@ type SpaceRow = {
   legacy_commerce_spot_id: string | null;
 };
 
+type CommerceFinancialSummary = {
+  currency?: string;
+  stock_capital_local?: number;
+  stock_retail_local?: number;
+  pending_settlement_local?: number;
+  available_local?: number;
+  stock_capital_flows?: number;
+  pending_settlement_flows?: number;
+  available_flows_equivalent?: number;
+  realized_margin_local?: number;
+  fx_rate?: { id?: string; local_per_quote?: number; source?: string; quoted_at?: string } | null;
+};
+
 const MONEY_SELECT = "id,beneficiary_user_id,beneficiary_type,beneficiary_entity_id,currency,source_type,source_id,gross_amount_minor,fees_amount_minor,commission_amount_minor,net_amount_minor,status,pending_at,available_at,withdrawn_at,refunded_at,reversed_at,metadata,created_at";
 const FINANCE_ROLES = new Set(["owner", "admin", "manager", "finance"]);
 
@@ -149,6 +162,7 @@ export async function GET(request: NextRequest) {
       activity: MoneyLedgerRow[];
       adminHref: string;
       moneyRelation: "separate" | "personal_breakdown";
+      commerce: CommerceFinancialSummary | null;
     }> = [];
     let managedRows: MoneyLedgerRow[] = [];
 
@@ -171,6 +185,13 @@ export async function GET(request: NextRequest) {
         if (spacesResult.error) throw new Error(spacesResult.error.message);
 
         const spaces = (spacesResult.data ?? []) as SpaceRow[];
+        const commerceSummaryEntries = await Promise.all(spaces.map(async (space) => {
+          if (!space.legacy_commerce_spot_id) return [space.id, null] as const;
+          const result = await admin.rpc("commerce_spot_financial_summary", { p_spot_id: space.legacy_commerce_spot_id });
+          if (result.error) throw new Error(result.error.message);
+          return [space.id, (result.data ?? null) as CommerceFinancialSummary | null] as const;
+        }));
+        const commerceSummaries = new Map<string, CommerceFinancialSummary | null>(commerceSummaryEntries);
         const studioIds = spaces.flatMap((space) => space.legacy_studio_id ? [space.legacy_studio_id] : []);
         const playerIds = Array.from(new Set(spaces.map((space) => space.owner_player_id)));
         const managedFilters: string[] = [];
@@ -209,6 +230,7 @@ export async function GET(request: NextRequest) {
             activity: rows.slice(0, 20),
             adminHref,
             moneyRelation: personalBreakdown ? "personal_breakdown" as const : "separate" as const,
+            commerce: commerceSummaries.get(space.id) ?? null,
           };
         });
       }
