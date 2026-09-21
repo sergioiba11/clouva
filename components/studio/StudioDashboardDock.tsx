@@ -9,7 +9,7 @@ export function StudioDashboardDock({ studioId }: { studioId: string }) {
   const pathname = usePathname() || "/";
   const searchParams = useSearchParams();
   const identityDesignerActive = searchParams.get("tab") === "ai-profile";
-  if (isImmersiveClouvaPreviewPath(pathname) || identityDesignerActive) return null;
+  if (isImmersiveClouvaPreviewPath(pathname) || pathname.includes("/commerce/scanner") || identityDesignerActive) return null;
 
   const root = `/studio-dashboard/${encodeURIComponent(studioId)}/inventario`;
 
