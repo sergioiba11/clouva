@@ -37,7 +37,7 @@ commands:
     aliases: [hub, spawn]
     usage: /lobby
   panel:
-    description: Abre el panel CLOUVA del servidor
+    description: Abre el panel RATCRAFT del servidor
     aliases: [clouva, cpanel]
     usage: /panel
 permissions:
