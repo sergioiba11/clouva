@@ -39,7 +39,7 @@ permissions:
 # Production deploys are superseded by newer main commits. Do not waste Cloud Run
 # release time deploying a stale SHA before the newest one.
 concurrency:
-  group: deploy-gcp-web
+  group: deploy-gcp-web-latest
   cancel-in-progress: true
 
 env:
