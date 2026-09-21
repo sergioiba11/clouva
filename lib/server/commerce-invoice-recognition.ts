@@ -293,10 +293,12 @@ export function reconcileCommerceInvoice(args: {
       .sort((a, b) => b.score - a.score);
 
     const selected: typeof candidates = [];
+    let selectedUnits = 0;
     for (const candidate of candidates) {
       if (reserved.has(candidate.group.groupKey)) continue;
-      if (selected.length >= target) break;
+      if (selectedUnits >= target) break;
       selected.push(candidate);
+      selectedUnits += Math.max(1, Math.floor(candidate.group.unitCount || 1));
     }
 
     const best = selected[0]?.score ?? 0;
@@ -306,7 +308,10 @@ export function reconcileCommerceInvoice(args: {
 
     for (const candidate of strongSelected) reserved.add(candidate.group.groupKey);
 
-    const matchedQuantity = strongSelected.length;
+    const matchedQuantity = strongSelected.reduce(
+      (sum, candidate) => sum + Math.max(1, Math.floor(candidate.group.unitCount || 1)),
+      0,
+    );
     const matchStatus: CommerceInvoiceMatch["matchStatus"] = ambiguous
       ? "ambiguous"
       : matchedQuantity >= target
