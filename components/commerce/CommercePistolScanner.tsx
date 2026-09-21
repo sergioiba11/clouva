@@ -60,7 +60,7 @@ type NativeBarcodeDetector = {
 };
 type NativeBarcodeDetectorConstructor = new (options?: { formats?: string[] }) => NativeBarcodeDetector;
 
-type Mode = "ready" | "identifying" | "identified" | "reading_code" | "matched" | "adding" | "sold";
+type Mode = "ready" | "identifying" | "waiting_code" | "identified" | "reading_code" | "matched" | "adding" | "sold";
 
 function normalize(value: string) {
   return value
@@ -117,6 +117,9 @@ export function CommercePistolScanner({ studioId }: { studioId: string }) {
   const controlsRef = useRef<IScannerControls | null>(null);
   const animationRef = useRef<number | null>(null);
   const lastCodeRef = useRef<{ value: string; at: number }>({ value: "", at: 0 });
+  const recognitionRef = useRef<CommerceProductRecognition | null>(null);
+  const lastCaptureRef = useRef("");
+  const codeBusyRef = useRef(false);
 
   const [overview, setOverview] = useState<Overview | null>(null);
   const [cameraReady, setCameraReady] = useState(false);
@@ -167,10 +170,11 @@ export function CommercePistolScanner({ studioId }: { studioId: string }) {
 
   const processCode = useCallback(async (raw: string) => {
     const code = raw.trim();
-    if (!code) return;
+    if (!code || codeBusyRef.current) return;
     const now = Date.now();
     if (lastCodeRef.current.value === code && now - lastCodeRef.current.at < 2500) return;
     lastCodeRef.current = { value: code, at: now };
+    codeBusyRef.current = true;
 
     const type = detectCommerceIdentifierType(code);
     setScannedCode(code);
@@ -184,29 +188,78 @@ export function CommercePistolScanner({ studioId }: { studioId: string }) {
         `/api/studios/${encodeURIComponent(studioId)}/commerce/scan?code=${encodeURIComponent(code)}&type=${encodeURIComponent(type)}`,
       );
       const result = payload.result as ScanResult;
+
       if (result.listing?.id) {
         setMatchedListing(result.listing);
         setMatchedVariantId(result.listing_variant?.id || null);
         setMode("matched");
-        setMessage("Producto encontrado. Listo para vender.");
+        setMessage(`Código ${type.replaceAll("_", " ").toUpperCase()} anotado · producto encontrado.`);
         if (navigator.vibrate) navigator.vibrate([45, 35, 80]);
+        return;
+      }
+
+      const currentRecognition = recognitionRef.current;
+      const currentCapture = lastCaptureRef.current;
+
+      // Si primero tocaste el objeto, el scanner queda esperando su código.
+      // Al enfocarlo, CLOUVA lo asocia y crea el producto automáticamente.
+      if (currentRecognition && currentCapture) {
+        setMode("adding");
+        setMessage("Código leído. Anotando y agregando producto…");
+
+        const createdPayload = await authFetch(
+          `/api/studios/${encodeURIComponent(studioId)}/commerce/recognize`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              images: [{ label: "Frente", dataUrl: currentCapture }],
+              identifier: code,
+              identifierType: type,
+              draftKey: crypto.randomUUID(),
+            }),
+          },
+        );
+
+        const nextOverview = await loadOverview();
+        const created = nextOverview.listings.find(
+          (listing) => listing.id === createdPayload.draft?.listingId,
+        ) ?? null;
+
+        if (created) {
+          setMatchedListing(created);
+          setMatchedVariantId(null);
+          setConfirmAdd(false);
+          setMode("matched");
+          setMessage(Number(created.price) > 0
+            ? `Código anotado · ${created.name} agregado y listo para vender.`
+            : `Código anotado · ${created.name} agregado. Falta cargarle precio.`);
+        } else {
+          setMode("identified");
+          setMessage("Código anotado y producto agregado al catálogo.");
+        }
+
+        if (navigator.vibrate) navigator.vibrate([55, 40, 100]);
         return;
       }
 
       if (result.catalog_product) {
         setMode("identified");
-        setMessage("El producto existe en CLOUVA, pero todavía no está cargado en este Spot.");
+        setMessage("Código leído. Tocá el producto para asociarlo a este Spot.");
         return;
       }
 
-      setMode("identified");
-      setMessage("Código leído. Este producto todavía no está en tu catálogo.");
+      setMode("ready");
+      setMessage("Código leído. Tocá el producto para identificarlo y asociarlo.");
     } catch (cause) {
-      setMode((current) => current === "matched" ? "matched" : "ready");
-      setMessage("Tocá el objeto para identificarlo o mostrale el código a la cámara.");
+      setMode(recognitionRef.current ? "waiting_code" : "ready");
+      setMessage(recognitionRef.current
+        ? "¿Tiene QR o código de barras? Enfocalo. Si no tiene, tocá +."
+        : "Tocá el objeto para identificarlo o mostrale el código a la cámara.");
       setError(cause instanceof Error ? cause.message : "No se pudo consultar el código.");
+    } finally {
+      codeBusyRef.current = false;
     }
-  }, [authFetch, studioId]);
+  }, [authFetch, loadOverview, studioId]);
 
   const stopCamera = useCallback(() => {
     if (animationRef.current != null) cancelAnimationFrame(animationRef.current);
@@ -313,16 +366,20 @@ export function CommercePistolScanner({ studioId }: { studioId: string }) {
     setMatchedListing(null);
     setMatchedVariantId(null);
     setScannedCode("");
+    recognitionRef.current = null;
+    lastCaptureRef.current = "";
     setMessage("Identificando…");
 
     try {
       const frame = cropFrame(video, viewport.getBoundingClientRect(), clientX, clientY);
+      lastCaptureRef.current = frame;
       setLastCapture(frame);
       const payload = await authFetch(`/api/studios/${encodeURIComponent(studioId)}/commerce/identify`, {
         method: "POST",
         body: JSON.stringify({ image: frame }),
       }) as IdentifyPayload;
 
+      recognitionRef.current = payload.recognition;
       setRecognition(payload.recognition);
       const listing = findVisualListing(payload.recognition);
       if (listing) {
@@ -330,8 +387,8 @@ export function CommercePistolScanner({ studioId }: { studioId: string }) {
         setMode("matched");
         setMessage("Coincide con un producto de tu catálogo. Si tiene código, mostralo para confirmarlo.");
       } else {
-        setMode("identified");
-        setMessage("¿Tiene QR o código de barras? Mostralo a la cámara. Si no, podés agregarlo con +.");
+        setMode("waiting_code");
+        setMessage("¿Tiene QR o código de barras? Enfocalo. Si no tiene, tocá +.");
       }
       if (navigator.vibrate) navigator.vibrate(45);
     } catch (cause) {
@@ -493,7 +550,7 @@ export function CommercePistolScanner({ studioId }: { studioId: string }) {
 
       <div className="pointer-events-none absolute right-5 top-28 z-10 text-right">
         <p className="text-[10px] font-semibold uppercase tracking-[.23em] text-cyan-200/80">
-          {mode === "matched" ? "Producto encontrado" : mode === "identifying" ? "Analizando" : "Scanner activo"}
+          {mode === "matched" ? "Producto encontrado" : mode === "identifying" ? "Analizando" : mode === "waiting_code" ? "Esperando código" : "Scanner activo"}
         </p>
         <div className="ml-auto mt-2 h-0.5 w-20 rounded-full bg-cyan-300/80" />
       </div>
@@ -512,6 +569,7 @@ export function CommercePistolScanner({ studioId }: { studioId: string }) {
                 </div>
                 <p className="mt-1 truncate text-sm text-white/45">{detectedInfo}</p>
                 {price ? <p className="mt-1 text-xl font-bold text-cyan-300">{price}</p> : null}
+                {scannedCode ? <p className="mt-1 truncate font-mono text-[10px] uppercase tracking-wide text-cyan-200/60">{scanType.replaceAll("_", " ")} · {scannedCode}</p> : null}
               </div>
               {busy ? <LoaderCircle className="h-5 w-5 shrink-0 animate-spin text-cyan-300" /> : null}
             </div>
