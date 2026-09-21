@@ -62,6 +62,7 @@ export type CommerceBatchGroup = {
   brand: string;
   model: string;
   packageKind: "box" | "retail_package" | "loose_product" | "unknown";
+  unitCount: number;
   identifier: { value: string; type: CommerceIdentifierType } | null;
   visibleIdentifiers: CommerceBatchVisibleIdentifier[];
   confidence: number;
@@ -85,6 +86,7 @@ const GROUP_SCHEMA = {
             type: "string",
             enum: ["box", "retail_package", "loose_product", "unknown"],
           },
+          unitCount: { type: "integer", minimum: 1, maximum: 100 },
           identifierValue: { type: "string" },
           identifierType: {
             type: "string",
@@ -121,7 +123,7 @@ const GROUP_SCHEMA = {
           },
         },
         required: [
-          "groupKey", "name", "brand", "model", "packageKind", "identifierValue", "identifierType",
+          "groupKey", "name", "brand", "model", "packageKind", "unitCount", "identifierValue", "identifierType",
           "visibleIdentifiers", "confidence", "needsReview", "images",
         ],
       },
@@ -229,6 +231,7 @@ function sanitizeGroup(raw: unknown, allowedIndexes: Set<number>, fallbackKey: s
     brand: text(item.brand, 120),
     model: text(item.model, 120),
     packageKind,
+    unitCount: Math.max(1, Math.min(100, Math.floor(Number(item.unitCount) || 1))),
     identifier: primary,
     visibleIdentifiers,
     confidence: number01(item.confidence),
@@ -266,6 +269,7 @@ async function analyzeChunk(args: {
     "Si una foto muestra el frente de una caja y otra su etiqueta/barcode, agrupá ambas solo cuando correspondan a la misma caja.",
     "NO agrupes artículos distintos solo porque sean de la misma marca, modelo o categoría.",
     "packageKind debe ser box para caja/cartón de mercadería, retail_package para blister/envase comercial, loose_product para producto suelto y unknown si no se puede determinar.",
+    "unitCount es la cantidad de UNIDADES FÍSICAS del mismo producto que se ven representadas por ese grupo. Si una foto muestra 3 cajas iguales claramente separadas, unitCount=3. Si son varias fotos del mismo objeto o de las mismas 3 cajas, no sumes de nuevo. Si no podés contar con seguridad, usá 1 y needsReview=true.",
     "Leé TODOS los códigos visibles y completos en visibleIdentifiers. source=box si el código está impreso/pegado en la caja, product si está en el producto o su packaging directo.",
     "identifierValue/identifierType representan el código principal más confiable. Si no hay ninguno inequívoco, dejá identifierValue vacío.",
     "EAN/UPC requieren lectura completa. Para un barcode lineal alfanumérico claramente legible que no sea EAN/UPC, usá code_128.",
@@ -313,6 +317,7 @@ async function analyzeChunk(args: {
       brand: "",
       model: "",
       packageKind: "unknown",
+      unitCount: 1,
       identifier: null,
       visibleIdentifiers: [],
       confidence: 0,
@@ -364,6 +369,7 @@ async function analyzeChunkWithFallback(args: {
         brand: "",
         model: "",
         packageKind: "unknown" as const,
+        unitCount: 1,
         identifier: null,
         visibleIdentifiers: [],
         confidence: 0,
