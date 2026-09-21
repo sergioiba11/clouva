@@ -303,6 +303,8 @@ export function CommerceBulkProductImport({
   const [checkingInvoiceItem, setCheckingInvoiceItem] = useState("");
   const [recoverableBatch, setRecoverableBatch] = useState<BatchStatus | null>(null);
   const [batchSources, setBatchSources] = useState<Record<number, BatchSourceItem>>({});
+  const [printingCodeGroup, setPrintingCodeGroup] = useState("");
+  const [generatedCodeGroups, setGeneratedCodeGroups] = useState<Record<string, boolean>>({});
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -724,6 +726,52 @@ export function CommerceBulkProductImport({
     }
   }
 
+
+  async function generateAndPrintInternalCode(groupKey: string, listingId: string) {
+    if (!listingId || printingCodeGroup) return;
+    setPrintingCodeGroup(groupKey);
+    setError("");
+    const popup = window.open("about:blank", "_blank");
+    try {
+      await postJson(
+        `/api/studios/${encodeURIComponent(studioId)}/commerce/codes`,
+        {
+          action: "generate",
+          listingId,
+          identifierTypes: ["code_128"],
+        },
+      );
+      const params = new URLSearchParams({
+        listingId,
+        format: "pdf",
+        page: "label",
+        layout: "full",
+        size: "40x30",
+        showPrice: "false",
+        showSku: "true",
+        showQr: "false",
+        print: "true",
+      });
+      const response = await authenticatedFetch(
+        `/api/studios/${encodeURIComponent(studioId)}/commerce/labels?${params.toString()}`,
+      );
+      if (!response.ok) {
+        const payload = await readApiJson<{ error?: string }>(response);
+        throw new Error(payload.error || "No se pudo generar la etiqueta.");
+      }
+      const blobUrl = URL.createObjectURL(await response.blob());
+      if (popup) popup.location.href = blobUrl;
+      else window.location.href = blobUrl;
+      window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+      setGeneratedCodeGroups((current) => ({ ...current, [groupKey]: true }));
+    } catch (cause) {
+      if (popup) popup.close();
+      setError(cause instanceof Error ? cause.message : "No se pudo generar el código.");
+    } finally {
+      setPrintingCodeGroup("");
+    }
+  }
+
   return (
     <section className="rounded-2xl border border-violet-400/15 bg-violet-500/[0.045] p-4 sm:p-5">
       <div className="flex items-start justify-between gap-4">
@@ -1048,6 +1096,12 @@ export function CommerceBulkProductImport({
                 url: batchSources[image.sourceIndex]?.source_url || previews[image.sourceIndex] || "",
                 fileName: batchSources[image.sourceIndex]?.file_name || files[image.sourceIndex]?.name || "",
               }));
+              const listingId = result?.listingId
+                || photos.map((photo) => batchSources[photo.sourceIndex]?.listing_id).find((value): value is string => Boolean(value))
+                || "";
+              const hasExternalCode = Boolean(
+                group.identifier && !["sku", "clouva_barcode", "clouva_qr"].includes(group.identifier.type),
+              );
               return (
                 <div key={group.groupKey} className="rounded-xl border border-white/[0.08] bg-black/20 p-3">
                   {photos.some((photo) => photo.url) ? (
@@ -1108,6 +1162,23 @@ export function CommerceBulkProductImport({
                     </p>
                   ) : null}
                   {result?.error ? <p className="mt-2 text-[10px] leading-4 text-rose-200">{result.error}</p> : null}
+                  {!hasExternalCode ? (
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      {listingId ? (
+                        <button
+                          type="button"
+                          disabled={printingCodeGroup === group.groupKey}
+                          onClick={() => void generateAndPrintInternalCode(group.groupKey, listingId)}
+                          className="inline-flex min-h-9 items-center justify-center gap-2 rounded-lg border border-amber-300/20 bg-amber-300/[0.06] px-3 text-[10px] font-semibold text-amber-100 disabled:opacity-45"
+                        >
+                          {printingCodeGroup === group.groupKey ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : <FileText className="h-3.5 w-3.5" />}
+                          {generatedCodeGroups[group.groupKey] ? "Imprimir etiqueta otra vez" : "Crear código + imprimir sticker"}
+                        </button>
+                      ) : (
+                        <span className="text-[10px] text-amber-100/60">Sin código: CLOUVA lo genera al ingresar el producto.</span>
+                      )}
+                    </div>
+                  ) : null}
                 </div>
               );
             })}
