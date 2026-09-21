@@ -863,6 +863,121 @@ export function CommerceBulkProductImport({
         </div>
       ) : null}
 
+      {groups.length && receivingSummary ? (
+        <div className="mt-4 rounded-2xl border border-violet-300/15 bg-black/20 p-3 sm:p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-[.18em] text-violet-200">Control de compra</p>
+              <h3 className="mt-1 text-base font-semibold">
+                {invoiceData?.invoice
+                  ? receivingSummary.complete
+                    ? "La factura está cubierta por lo fotografiado"
+                    : `Faltan ${receivingSummary.missingUnits} unidad${receivingSummary.missingUnits === 1 ? "" : "es"} por encontrar`
+                  : "Adjuntá la factura para chequear la compra"}
+              </h3>
+              <p className="mt-1 text-[11px] leading-5 text-white/42">
+                CLOUVA compara cantidades, costo unitario, códigos y los productos físicos que aparecen en las fotos.
+              </p>
+            </div>
+            {invoiceData?.invoice ? (
+              <span className={`w-fit rounded-full border px-2.5 py-1 text-[10px] font-semibold ${receivingSummary.complete ? "border-emerald-300/25 bg-emerald-300/[0.07] text-emerald-100" : "border-amber-300/25 bg-amber-300/[0.07] text-amber-100"}`}>
+                {receivingSummary.complete ? "CHECK FACTURA OK" : "REVISIÓN PENDIENTE"}
+              </span>
+            ) : null}
+          </div>
+
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
+            <div className="rounded-xl border border-white/[0.07] bg-white/[0.025] p-2.5">
+              <p className="text-[9px] uppercase tracking-[.12em] text-white/35">Factura</p>
+              <strong className="mt-1 block text-lg">{invoiceData?.invoice ? receivingSummary.expectedUnits : "—"}</strong>
+              <span className="text-[9px] text-white/35">unidades esperadas</span>
+            </div>
+            <div className="rounded-xl border border-white/[0.07] bg-white/[0.025] p-2.5">
+              <p className="text-[9px] uppercase tracking-[.12em] text-white/35">Fotos</p>
+              <strong className="mt-1 block text-lg">{receivingSummary.detectedUnits}</strong>
+              <span className="text-[9px] text-white/35">unidades detectadas</span>
+            </div>
+            <div className="rounded-xl border border-white/[0.07] bg-white/[0.025] p-2.5">
+              <p className="text-[9px] uppercase tracking-[.12em] text-white/35">Faltan</p>
+              <strong className={`mt-1 block text-lg ${receivingSummary.missingUnits ? "text-amber-200" : "text-emerald-200"}`}>
+                {invoiceData?.invoice ? receivingSummary.missingUnits : "—"}
+              </strong>
+              <span className="text-[9px] text-white/35">vs. factura</span>
+            </div>
+            <div className="rounded-xl border border-white/[0.07] bg-white/[0.025] p-2.5">
+              <p className="text-[9px] uppercase tracking-[.12em] text-white/35">Sin código</p>
+              <strong className={`mt-1 block text-lg ${receivingSummary.noCodeUnits ? "text-amber-200" : "text-emerald-200"}`}>
+                {receivingSummary.noCodeUnits}
+              </strong>
+              <span className="text-[9px] text-white/35">para etiquetar</span>
+            </div>
+            <div className="rounded-xl border border-white/[0.07] bg-white/[0.025] p-2.5">
+              <p className="text-[9px] uppercase tracking-[.12em] text-white/35">Extra</p>
+              <strong className="mt-1 block text-lg">{invoiceData?.invoice ? receivingSummary.extraUnits : "—"}</strong>
+              <span className="text-[9px] text-white/35">sin línea asignada</span>
+            </div>
+          </div>
+
+          {!invoiceData?.invoice ? (
+            <div className="mt-3 rounded-xl border border-dashed border-white/10 p-3">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <strong className="block text-xs">Factura / comprobante de esta compra</strong>
+                  <p className="mt-1 truncate text-[10px] text-white/38">
+                    {invoiceFile ? invoiceFile.name : "JPG, PNG, WEBP o PDF"}
+                  </p>
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <label className="inline-flex min-h-10 cursor-pointer items-center justify-center rounded-lg border border-white/10 px-3 text-xs font-semibold hover:bg-white/[0.04]">
+                    {invoiceFile ? "Cambiar factura" : "Adjuntar factura"}
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp,application/pdf"
+                      className="hidden"
+                      onChange={(event) => {
+                        const file = event.currentTarget.files?.[0] ?? null;
+                        setInvoiceFile(file);
+                        setInvoiceData(null);
+                        event.currentTarget.value = "";
+                      }}
+                    />
+                  </label>
+                  {batchId && invoiceFile ? (
+                    <button
+                      type="button"
+                      onClick={() => void analyzeLateInvoice()}
+                      disabled={busy}
+                      className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-violet-600 px-3 text-xs font-semibold hover:bg-violet-500 disabled:opacity-45"
+                    >
+                      <FileText className="h-4 w-4" /> Chequear factura
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+          ) : null}
+
+          {batchId ? (
+            <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
+              {!invoiceData?.invoice ? (
+                <span className="mr-auto text-[10px] leading-4 text-white/35">
+                  Podés ingresar sin factura, pero no habrá control automático de cantidades ni costos.
+                </span>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => void confirmPurchaseImport()}
+                disabled={busy}
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-emerald-500/90 px-4 text-sm font-semibold text-black transition hover:bg-emerald-400 disabled:opacity-45"
+              >
+                <CheckCircle2 className="h-4 w-4" />
+                {invoiceData?.invoice ? "Confirmar ingreso de compra" : "Ingresar sin factura"}
+              </button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
       {invoiceData?.invoice ? (
         <div className="mt-4 rounded-2xl border border-emerald-300/15 bg-emerald-300/[0.035] p-3 sm:p-4">
           <div className="flex flex-col gap-3 border-b border-white/[0.07] pb-3 sm:flex-row sm:items-start sm:justify-between">
@@ -969,6 +1084,9 @@ export function CommerceBulkProductImport({
                       </div>
                       <p className="mt-1 truncate text-[10px] text-white/38">
                         {[group.brand, group.model].filter(Boolean).join(" · ") || `${group.images.length} fotos`}
+                      </p>
+                      <p className="mt-1 text-[10px] font-medium text-white/55">
+                        {Math.max(1, Math.floor(Number(group.unitCount) || 1))} unidad{Math.max(1, Math.floor(Number(group.unitCount) || 1)) === 1 ? "" : "es"} física{Math.max(1, Math.floor(Number(group.unitCount) || 1)) === 1 ? "" : "s"}
                       </p>
                     </div>
                     {result?.ok ? (
