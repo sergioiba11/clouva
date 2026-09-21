@@ -218,6 +218,26 @@ export async function POST(
     const items = (itemRows ?? []) as BatchItem[];
     const itemsByIndex = new Map(items.map((item) => [item.source_index, item]));
 
+    // A previous request may have created the listing and then failed in a
+    // post-create step. Normalize those rows back to "created" so retries do not
+    // duplicate products and the UI stops showing a false product failure.
+    const createdItemIds = items
+      .filter((item) => Boolean(item.listing_id) && item.status !== "created")
+      .map((item) => item.id);
+    if (createdItemIds.length) {
+      const { error: repairError } = await admin
+        .from("commerce_product_import_items")
+        .update({ status: "created", error: null, updated_at: new Date().toISOString() })
+        .in("id", createdItemIds);
+      if (repairError) throw new Error(repairError.message);
+      for (const item of items) {
+        if (item.listing_id) {
+          item.status = "created";
+          item.error = null;
+        }
+      }
+    }
+
     const pendingGroups = groups.filter((group) => {
       const groupItems = group.images.flatMap((image) => {
         const item = itemsByIndex.get(image.sourceIndex);
@@ -479,14 +499,16 @@ export async function POST(
           .in("id", itemIds);
         if (itemUpdateError) throw new Error(itemUpdateError.message);
 
-        const { data: invoiceMatches, error: invoiceMatchError } = await admin
+        const { data: invoiceRows, error: invoiceMatchError } = await admin
           .from("commerce_product_import_invoice_items")
-          .select("id,matched_listing_ids")
+          .select("id,matched_group_keys,matched_listing_ids")
           .eq("batch_id", batch.id)
-          .eq("spot_id", spot.id)
-          .contains("matched_group_keys", [group.groupKey]);
+          .eq("spot_id", spot.id);
         if (invoiceMatchError) throw new Error(invoiceMatchError.message);
-        for (const invoiceMatch of invoiceMatches ?? []) {
+        const invoiceMatches = (invoiceRows ?? []).filter((row) =>
+          Array.isArray(row.matched_group_keys) && row.matched_group_keys.includes(group.groupKey),
+        );
+        for (const invoiceMatch of invoiceMatches) {
           const currentListings = Array.isArray(invoiceMatch.matched_listing_ids)
             ? invoiceMatch.matched_listing_ids.filter((value): value is string => typeof value === "string")
             : [];
