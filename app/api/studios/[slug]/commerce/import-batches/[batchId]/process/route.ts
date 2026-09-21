@@ -140,6 +140,16 @@ function groupsFromMetadata(metadata: unknown): CommerceBatchGroup[] {
   });
 }
 
+function isTransientProviderError(error: unknown) {
+  const status = Number((error as Error & { status?: number })?.status || 0);
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return status === 429 || /RESOURCE_EXHAUSTED|resource exhausted|quota|rate.?limit|429/i.test(message);
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function recognizeGroup(args: {
   group: CommerceBatchGroup;
   itemsByIndex: Map<number, BatchItem>;
@@ -266,7 +276,22 @@ export async function POST(
         .in("id", itemIds);
 
       try {
-        const recognizedResult = await recognizeGroup({ group, itemsByIndex, spotName: spot.name });
+        let recognizedResult: Awaited<ReturnType<typeof recognizeGroup>> | null = null;
+        let lastRecognitionError: unknown = null;
+        for (let recognitionAttempt = 0; recognitionAttempt < 4; recognitionAttempt += 1) {
+          try {
+            recognizedResult = await recognizeGroup({ group, itemsByIndex, spotName: spot.name });
+            break;
+          } catch (recognitionError) {
+            lastRecognitionError = recognitionError;
+            if (!isTransientProviderError(recognitionError) || recognitionAttempt >= 3) break;
+            await sleep(2500 * (recognitionAttempt + 1));
+          }
+        }
+        if (!recognizedResult) throw lastRecognitionError instanceof Error
+          ? lastRecognitionError
+          : new Error("Google Cloud no pudo reconocer el producto.");
+
         const recognized = recognizedResult.recognition;
         const recognizedName = recognized.name || group.name || recognized.detectedObject || "Producto";
         const externalIdentifier = recognizedIdentifier(recognized) ?? safeIdentifier(group.identifier);
@@ -494,6 +519,18 @@ export async function POST(
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : "No se pudo crear el producto.";
+        if (isTransientProviderError(error)) {
+          await admin
+            .from("commerce_product_import_items")
+            .update({ status: "grouped", error: message, updated_at: new Date().toISOString() })
+            .in("id", itemIds);
+          for (const item of groupItems) {
+            item.status = "grouped";
+            item.error = message;
+          }
+          throw error;
+        }
+
         await admin
           .from("commerce_product_import_items")
           .update({ status: "error", error: message, updated_at: new Date().toISOString() })
