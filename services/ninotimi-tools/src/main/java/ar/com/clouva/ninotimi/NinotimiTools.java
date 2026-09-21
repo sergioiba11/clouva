@@ -75,6 +75,8 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     private static final String GAME_MENU_TITLE = "JUEGOS — NINOTIMI";
     private static final String PARKOUR_MENU_TITLE = "PARKOUR — ELEGÍ MAPA";
     private static final String SURVIVAL_MENU_TITLE = "SURVIVAL — ELEGÍ MODO";
+    private static final String TEMP_ADMIN_PLAYERS_TITLE = "ADMIN TEMPORAL — JUGADOR";
+    private static final String TEMP_ADMIN_DURATION_TITLE = "ADMIN TEMPORAL — DURACIÓN";
     private static final String PVP_WORLD_NAME = "pvp_ninotimi";
     private static final String PARKOUR_WORLD_NAME = "parkour_ninotimi";
     private static final String ICE_WORLD_NAME = "hielo_ninotimi";
@@ -96,6 +98,9 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     private NamespacedKey lobbyControlKey;
 
     private final Set<String> builderNames = new HashSet<>();
+    private final Map<UUID, UUID> tempAdminMenuTargets = new HashMap<>();
+    private final Map<UUID, Map<Integer, UUID>> tempAdminPlayerSlots = new HashMap<>();
+    private final Map<UUID, BukkitTask> tempAdminTasks = new HashMap<>();
     private final Map<UUID, Selection> selections = new HashMap<>();
     private final Map<UUID, List<BlockSnapshot>> undo = new HashMap<>();
     private final Map<UUID, ClipboardData> clipboards = new HashMap<>();
@@ -163,6 +168,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         lobbyControlKey = new NamespacedKey(this, "lobby-control");
 
         loadBuilders();
+        cleanupTempAdminsFromPreviousRun();
         resetSurvivalDataIfNeeded();
         setupPvp();
         setupIceBattle();
@@ -212,6 +218,8 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
 
     @Override
     public void onDisable() {
+        revokeAllTempAdmins("reinicio del server");
+
         if (particleTask != null) {
             particleTask.cancel();
         }
@@ -282,7 +290,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     }
 
     private boolean canBuild(Player player) {
-        if (isSurvivalLocked(player)) {
+        if (isSurvivalLocked(player) && !isTempAdmin(player)) {
             return false;
         }
 
@@ -370,6 +378,10 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     public void onQuit(PlayerQuitEvent event) {
         Player player = event.getPlayer();
         UUID id = player.getUniqueId();
+
+        if (isTempAdmin(player)) {
+            revokeTempAdmin(id, "sesión terminada al desconectarte", false);
+        }
 
         if (isMainLobbyWorld(player.getWorld())) {
             saveLastLobbyLocation(player);
@@ -483,6 +495,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onSurvivalGameModeChange(PlayerGameModeChangeEvent event) {
         Player player = event.getPlayer();
+        if (isTempAdmin(player)) return;
         if (!isSurvivalLocked(player)) return;
         if (event.getNewGameMode() == GameMode.SURVIVAL) return;
 
@@ -498,6 +511,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onSurvivalFlight(PlayerToggleFlightEvent event) {
         Player player = event.getPlayer();
+        if (isTempAdmin(player)) return;
         if (!isSurvivalLocked(player) || !event.isFlying()) return;
 
         event.setCancelled(true);
@@ -771,6 +785,72 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
                 default -> {
                 }
             }
+            return;
+        }
+
+        if (TEMP_ADMIN_PLAYERS_TITLE.equals(title)) {
+            event.setCancelled(true);
+            if (event.getRawSlot() < 0) return;
+
+            if (event.getRawSlot() == 53) {
+                player.closeInventory();
+                return;
+            }
+
+            Map<Integer, UUID> slots = tempAdminPlayerSlots.get(player.getUniqueId());
+            UUID targetId = slots == null ? null : slots.get(event.getRawSlot());
+            if (targetId == null) return;
+
+            Player target = Bukkit.getPlayer(targetId);
+            if (target == null || !target.isOnline()) {
+                msg(player, "Ese jugador ya no está conectado.", NamedTextColor.RED);
+                openTempAdminPlayersMenu(player);
+                return;
+            }
+
+            tempAdminMenuTargets.put(player.getUniqueId(), targetId);
+            openTempAdminDurationMenu(player, target);
+            return;
+        }
+
+        if (TEMP_ADMIN_DURATION_TITLE.equals(title)) {
+            event.setCancelled(true);
+            if (event.getRawSlot() < 0) return;
+
+            UUID targetId = tempAdminMenuTargets.get(player.getUniqueId());
+            if (targetId == null) {
+                openTempAdminPlayersMenu(player);
+                return;
+            }
+
+            if (event.getRawSlot() == 22) {
+                openTempAdminPlayersMenu(player);
+                return;
+            }
+
+            if (event.getRawSlot() == 16) {
+                revokeTempAdmin(targetId, "revocado manualmente por " + player.getName(), true);
+                openTempAdminPlayersMenu(player);
+                return;
+            }
+
+            int minutes = switch (event.getRawSlot()) {
+                case 10 -> 15;
+                case 12 -> 30;
+                case 14 -> 60;
+                default -> 0;
+            };
+            if (minutes <= 0) return;
+
+            Player target = Bukkit.getPlayer(targetId);
+            if (target == null || !target.isOnline()) {
+                msg(player, "Ese jugador ya no está conectado.", NamedTextColor.RED);
+                openTempAdminPlayersMenu(player);
+                return;
+            }
+
+            grantTempAdmin(player, target, minutes);
+            player.closeInventory();
             return;
         }
 
@@ -1106,6 +1186,13 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
                 player.getWorld().setClearWeatherDuration(20 * 60 * 30);
                 msg(player, "Clima despejado.", NamedTextColor.AQUA);
             }
+            case 17 -> {
+                if (!player.isOp() || isTempAdmin(player)) {
+                    msg(player, "Solo un administrador permanente puede dar ADMIN temporal.", NamedTextColor.RED);
+                    return;
+                }
+                openTempAdminPlayersMenu(player);
+            }
             case 18 -> copySelection(player);
             case 19 -> pasteClipboard(player);
             case 20 -> giveBuilderWand(player);
@@ -1317,6 +1404,9 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         inv.setItem(14, menuItem(Material.SUNFLOWER, "Día", "Poner de día"));
         inv.setItem(15, menuItem(Material.CLOCK, "Noche", "Poner de noche"));
         inv.setItem(16, menuItem(Material.WATER_BUCKET, "Clima limpio", "Sacar lluvia y tormenta"));
+        if (player.isOp() && !isTempAdmin(player)) {
+            inv.setItem(17, menuItem(Material.COMMAND_BLOCK, "⚡ ADMIN TEMPORAL", "Dar control total por 15, 30 o 60 min"));
+        }
 
         inv.setItem(18, menuItem(Material.WRITABLE_BOOK, "Copiar selección", "Usá el Builder Wand primero"));
         inv.setItem(19, menuItem(Material.CHEST, "Pegar", "Pega lo último copiado en tus pies"));
@@ -1329,6 +1419,149 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         inv.setItem(26, menuItem(Material.BARRIER, "Cerrar", "Cerrar herramientas"));
 
         player.openInventory(inv);
+    }
+
+    private void openTempAdminPlayersMenu(Player player) {
+        if (!player.isOp() || isTempAdmin(player)) {
+            msg(player, "Solo un administrador permanente puede abrir este panel.", NamedTextColor.RED);
+            player.closeInventory();
+            return;
+        }
+
+        Inventory inv = Bukkit.createInventory(null, 54, Component.text(TEMP_ADMIN_PLAYERS_TITLE));
+        List<Player> online = Bukkit.getOnlinePlayers().stream()
+            .sorted((a, b) -> a.getName().compareToIgnoreCase(b.getName()))
+            .toList();
+
+        Map<Integer, UUID> slots = new HashMap<>();
+        int slot = 0;
+        for (Player target : online) {
+            if (slot >= 45) break;
+            String state = isTempAdmin(target) ? "ADMIN temporal activo" : "Dar acceso total temporal";
+            inv.setItem(slot, menuItem(Material.PLAYER_HEAD, target.getName(), state));
+            slots.put(slot, target.getUniqueId());
+            slot++;
+        }
+
+        inv.setItem(53, menuItem(Material.BARRIER, "Cerrar", "Cerrar panel"));
+        tempAdminPlayerSlots.put(player.getUniqueId(), slots);
+        player.openInventory(inv);
+    }
+
+    private void openTempAdminDurationMenu(Player player, Player target) {
+        Inventory inv = Bukkit.createInventory(null, 27, Component.text(TEMP_ADMIN_DURATION_TITLE));
+        inv.setItem(4, menuItem(
+            Material.PLAYER_HEAD,
+            target.getName(),
+            isTempAdmin(target) ? "ADMIN temporal activo" : "Elegí cuánto dura el acceso"
+        ));
+        inv.setItem(10, menuItem(Material.CLOCK, "15 minutos", "OP total · se revoca automáticamente"));
+        inv.setItem(12, menuItem(Material.CLOCK, "30 minutos", "OP total · se revoca automáticamente"));
+        inv.setItem(14, menuItem(Material.CLOCK, "60 minutos", "OP total · se revoca automáticamente"));
+        inv.setItem(16, menuItem(Material.REDSTONE_BLOCK, "REVOCAR AHORA", "Quitar ADMIN temporal"));
+        inv.setItem(22, menuItem(Material.ARROW, "Volver", "Elegir otro jugador"));
+        player.openInventory(inv);
+    }
+
+    private String tempAdminPath(UUID id) {
+        return "temp-admin.sessions." + id;
+    }
+
+    private boolean isTempAdmin(Player player) {
+        return player != null && getConfig().contains(tempAdminPath(player.getUniqueId()) + ".expires-at");
+    }
+
+    private void grantTempAdmin(Player granter, Player target, int minutes) {
+        if (!granter.isOp() || isTempAdmin(granter)) {
+            msg(granter, "Solo un administrador permanente puede dar ADMIN temporal.", NamedTextColor.RED);
+            return;
+        }
+
+        UUID id = target.getUniqueId();
+        String path = tempAdminPath(id);
+        BukkitTask oldTask = tempAdminTasks.remove(id);
+        if (oldTask != null) oldTask.cancel();
+
+        if (!getConfig().contains(path + ".was-op")) {
+            getConfig().set(path + ".was-op", target.isOp());
+        }
+        long expiresAt = System.currentTimeMillis() + (minutes * 60_000L);
+        getConfig().set(path + ".name", target.getName());
+        getConfig().set(path + ".expires-at", expiresAt);
+        getConfig().set(path + ".granted-by", granter.getName());
+        saveConfig();
+
+        target.setOp(true);
+        BukkitTask task = Bukkit.getScheduler().runTaskLater(
+            this,
+            () -> revokeTempAdmin(id, "tiempo terminado", true),
+            minutes * 60L * 20L
+        );
+        tempAdminTasks.put(id, task);
+
+        msg(target, "ADMIN TOTAL activado por " + minutes + " min. Tenés OP completo.", NamedTextColor.LIGHT_PURPLE);
+        msg(granter, target.getName() + " tiene ADMIN TOTAL por " + minutes + " min.", NamedTextColor.GREEN);
+    }
+
+    private void revokeTempAdmin(UUID id, String reason, boolean notify) {
+        String path = tempAdminPath(id);
+        if (!getConfig().contains(path + ".expires-at")) return;
+
+        BukkitTask task = tempAdminTasks.remove(id);
+        if (task != null) task.cancel();
+
+        boolean wasOp = getConfig().getBoolean(path + ".was-op", false);
+        Player online = Bukkit.getPlayer(id);
+        if (online != null) {
+            online.setOp(wasOp);
+        } else {
+            Bukkit.getOfflinePlayer(id).setOp(wasOp);
+        }
+
+        getConfig().set(path, null);
+        saveConfig();
+
+        if (online != null) {
+            enforcePlayerSurvivalLock(online);
+            if (notify) {
+                msg(online, "ADMIN temporal finalizado: " + reason + ".", NamedTextColor.YELLOW);
+            }
+        }
+    }
+
+    private void revokeAllTempAdmins(String reason) {
+        var section = getConfig().getConfigurationSection("temp-admin.sessions");
+        if (section == null) return;
+
+        List<UUID> ids = new ArrayList<>();
+        for (String raw : section.getKeys(false)) {
+            try {
+                ids.add(UUID.fromString(raw));
+            } catch (IllegalArgumentException ignored) {
+            }
+        }
+        for (UUID id : ids) {
+            revokeTempAdmin(id, reason, false);
+        }
+        tempAdminTasks.clear();
+    }
+
+    private void cleanupTempAdminsFromPreviousRun() {
+        var section = getConfig().getConfigurationSection("temp-admin.sessions");
+        if (section == null) return;
+
+        for (String raw : new HashSet<>(section.getKeys(false))) {
+            try {
+                UUID id = UUID.fromString(raw);
+                boolean wasOp = getConfig().getBoolean(tempAdminPath(id) + ".was-op", false);
+                Bukkit.getOfflinePlayer(id).setOp(wasOp);
+            } catch (IllegalArgumentException ignored) {
+            }
+        }
+
+        getConfig().set("temp-admin.sessions", null);
+        saveConfig();
+        getLogger().info("ADMIN temporal de la sesión anterior revocado.");
     }
 
     private void openBlocksMenu(Player player) {
@@ -3556,7 +3789,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     }
 
     private void enforcePlayerSurvivalLock(Player player) {
-        if (!isSurvivalLocked(player)) return;
+        if (!isSurvivalLocked(player) || isTempAdmin(player)) return;
 
         suspendSurvivalOp(player);
         if (player.getGameMode() != GameMode.SURVIVAL) {
@@ -3841,6 +4074,8 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     }
 
     private void suspendSurvivalOp(Player player) {
+        if (isTempAdmin(player)) return;
+
         String path = survivalOpPath(player);
 
         if (!getConfig().contains(path)) {
