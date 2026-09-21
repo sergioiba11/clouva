@@ -37,3 +37,26 @@ test("IGLÚ Media uses the canonical radio bucket and real library", async () =>
   assert.match(page, /\/api\/integrations\/youtube\/status/);
   assert.match(page, /ProfileRadioSettingsCard/);
 });
+
+
+test("IGLÚ calendar aggregates canonical Player agendas and real availability rules", async () => {
+  const loader = await read("./lib/server/iglu/public-app.ts");
+  const calendar = await read("./components/iglu/IgluUnifiedCalendar.tsx");
+  assert.match(loader, /getAgendaOccurrences/);
+  assert.match(loader, /agenda_availability_rules/);
+  assert.match(loader, /playerId:/);
+  assert.match(calendar, /Players con presencia en El Iglú/);
+  assert.match(calendar, /statusAvailable/);
+  assert.match(calendar, /RESERVAS/);
+});
+
+test("IGLÚ booking discovers public producers without hardcoded names", async () => {
+  const api = await read("./app/api/iglu/reservas/producers/route.ts");
+  const booking = await read("./components/iglu/IgluBookingDiscovery.tsx");
+  assert.match(api, /professional_categories/);
+  assert.match(api, /user_entitlements/);
+  assert.match(api, /distanceKm/);
+  assert.doesNotMatch(api, /Joyze|Palermo/);
+  assert.match(booking, /Recomendado para vos/);
+  assert.match(booking, /Otros productores/);
+});
