@@ -36,6 +36,10 @@ commands:
     description: Vuelve al lobby principal de NINOTIMI
     aliases: [hub, spawn]
     usage: /lobby
+  panel:
+    description: Abre el panel CLOUVA del servidor
+    aliases: [clouva, cpanel]
+    usage: /panel
 permissions:
   ninotimi.tools:
     description: Puede usar NINOTIMI TOOLS
