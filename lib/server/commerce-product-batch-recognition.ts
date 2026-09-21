@@ -274,6 +274,8 @@ async function analyzeChunk(args: {
     "identifierValue/identifierType representan el código principal más confiable. Si no hay ninguno inequívoco, dejá identifierValue vacío.",
     "EAN/UPC requieren lectura completa. Para un barcode lineal alfanumérico claramente legible que no sea EAN/UPC, usá code_128.",
     "Cada índice debe aparecer exactamente una vez: dentro de un grupo o en unassignedIndexes.",
+    "Usá unassignedIndexes SOLO para fotos de contexto general: mesa/caja con varios productos distintos mezclados, comprobantes, fotos borrosas o imágenes que no representan una sola identidad de producto. Esas fotos NO deben convertirse en un producto ficticio.",
+    "Si una imagen muestra un solo producto pero no podés reconocer nombre/código, creá igualmente un grupo con campos vacíos y needsReview=true; no la mandes a unassignedIndexes.",
     "Para cada grupo elegí exactamente una imagen como Frente. Elegí como máximo una Atrás cuando exista una vista posterior clara. El resto debe ser Detalle.",
     "name, brand y model deben salir solo de texto/evidencia visible. Dejalos vacíos si no están confirmados.",
     "identifierValue debe estar vacío salvo que el código completo sea inequívoco carácter por carácter.",
@@ -301,16 +303,17 @@ async function analyzeChunk(args: {
     .filter((group): group is CommerceBatchGroup => Boolean(group));
 
   const assigned = new Set(groups.flatMap((group) => group.images.map((image) => image.sourceIndex)));
-  const unassigned = new Set<number>();
+  const explicitContext = new Set<number>();
   for (const value of Array.isArray(root.unassignedIndexes) ? root.unassignedIndexes : []) {
     const index = Number(value);
-    if (Number.isInteger(index) && allowed.has(index) && !assigned.has(index)) unassigned.add(index);
-  }
-  for (const index of allowed) {
-    if (!assigned.has(index)) unassigned.add(index);
+    if (Number.isInteger(index) && allowed.has(index) && !assigned.has(index)) explicitContext.add(index);
   }
 
-  for (const sourceIndex of unassigned) {
+  // If the model simply forgot an index, keep it as a reviewable single item.
+  // Explicit unassigned indexes are overview/context photos and must not inflate
+  // the physical product count.
+  for (const sourceIndex of allowed) {
+    if (assigned.has(sourceIndex) || explicitContext.has(sourceIndex)) continue;
     groups.push({
       groupKey: `single-${sourceIndex}`,
       name: "",
