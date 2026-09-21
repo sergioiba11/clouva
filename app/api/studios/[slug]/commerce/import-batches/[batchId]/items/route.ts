@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { uploadGeneratedMediaObject } from "@/lib/gcs-media";
 import { requireManagedSpot } from "@/lib/server/commerce-spot";
@@ -60,6 +61,7 @@ export async function POST(
     });
     const fileName = typeof body.fileName === "string" ? body.fileName.trim().slice(0, 240) : null;
 
+    const sha256 = createHash("sha256").update(parsed.bytes).digest("hex");
     const { data, error } = await admin
       .from("commerce_product_import_items")
       .upsert({
@@ -73,7 +75,7 @@ export async function POST(
         status: "uploaded",
         group_key: null,
         listing_id: null,
-        recognition: {},
+        recognition: { upload: { sha256 } },
         error: null,
         updated_at: new Date().toISOString(),
       }, { onConflict: "batch_id,source_index" })
