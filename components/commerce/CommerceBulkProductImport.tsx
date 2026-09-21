@@ -305,6 +305,7 @@ export function CommerceBulkProductImport({
   const [batchSources, setBatchSources] = useState<Record<number, BatchSourceItem>>({});
   const [printingCodeGroup, setPrintingCodeGroup] = useState("");
   const [generatedCodeGroups, setGeneratedCodeGroups] = useState<Record<string, boolean>>({});
+  const [updatingUnitGroup, setUpdatingUnitGroup] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -774,6 +775,29 @@ export function CommerceBulkProductImport({
   }
 
 
+  async function updateGroupUnitCount(groupKey: string, unitCount: number) {
+    if (!batchId || updatingUnitGroup) return;
+    const next = Math.max(1, Math.min(100, Math.floor(unitCount)));
+    setUpdatingUnitGroup(groupKey);
+    setError("");
+    try {
+      await authenticatedFetch(
+        `/api/studios/${encodeURIComponent(studioId)}/commerce/import-batches/${encodeURIComponent(batchId)}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ groupKey, unitCount: next }),
+        },
+      ).then((response) => readApiJson(response));
+      setGroups((current) => current.map((group) =>
+        group.groupKey === groupKey ? { ...group, unitCount: next } : group,
+      ));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "No se pudo actualizar la cantidad.");
+    } finally {
+      setUpdatingUnitGroup("");
+    }
+  }
+
   async function generateAndPrintInternalCode(groupKey: string, listingId: string) {
     if (!listingId || printingCodeGroup) return;
     setPrintingCodeGroup(groupKey);
@@ -1213,9 +1237,32 @@ export function CommerceBulkProductImport({
                       <p className="mt-1 truncate text-[10px] text-white/38">
                         {[group.brand, group.model].filter(Boolean).join(" · ") || `${group.images.length} fotos`}
                       </p>
-                      <p className="mt-1 text-[10px] font-medium text-white/55">
-                        {Math.max(1, Math.floor(Number(group.unitCount) || 1))} unidad{Math.max(1, Math.floor(Number(group.unitCount) || 1)) === 1 ? "" : "es"} física{Math.max(1, Math.floor(Number(group.unitCount) || 1)) === 1 ? "" : "s"}
-                      </p>
+                      <div className="mt-2 flex items-center gap-2">
+                        <span className="text-[10px] font-medium text-white/55">Unidades físicas</span>
+                        <div className="inline-flex items-center overflow-hidden rounded-lg border border-white/10 bg-black/20">
+                          <button
+                            type="button"
+                            disabled={!batchId || updatingUnitGroup === group.groupKey || Math.max(1, Math.floor(Number(group.unitCount) || 1)) <= 1}
+                            onClick={() => void updateGroupUnitCount(group.groupKey, Math.max(1, Math.floor(Number(group.unitCount) || 1)) - 1)}
+                            className="grid h-7 w-7 place-items-center text-xs text-white/60 hover:bg-white/[0.05] disabled:opacity-30"
+                            aria-label="Restar unidad"
+                          >
+                            −
+                          </button>
+                          <span className="min-w-8 border-x border-white/10 px-2 text-center text-[11px] font-semibold">
+                            {Math.max(1, Math.floor(Number(group.unitCount) || 1))}
+                          </span>
+                          <button
+                            type="button"
+                            disabled={!batchId || updatingUnitGroup === group.groupKey}
+                            onClick={() => void updateGroupUnitCount(group.groupKey, Math.max(1, Math.floor(Number(group.unitCount) || 1)) + 1)}
+                            className="grid h-7 w-7 place-items-center text-xs text-white/60 hover:bg-white/[0.05] disabled:opacity-30"
+                            aria-label="Sumar unidad"
+                          >
+                            +
+                          </button>
+                        </div>
+                      </div>
                     </div>
                     {result?.ok ? (
                       <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-300" />
