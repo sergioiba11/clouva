@@ -291,7 +291,7 @@ export function CommerceBulkProductImport({
 }) {
   const [files, setFiles] = useState<File[]>([]);
   const [previews, setPreviews] = useState<string[]>([]);
-  const [stage, setStage] = useState<"idle" | "preparing" | "uploading" | "analyzing" | "invoice" | "creating" | "done" | "error">("idle");
+  const [stage, setStage] = useState<"idle" | "preparing" | "uploading" | "analyzing" | "invoice" | "review" | "creating" | "done" | "error">("idle");
   const [uploaded, setUploaded] = useState(0);
   const [batchId, setBatchId] = useState("");
   const [groups, setGroups] = useState<BatchGroup[]>([]);
@@ -355,7 +355,8 @@ export function CommerceBulkProductImport({
     if (stage === "uploading") return `Subiendo ${uploaded}/${files.length}…`;
     if (stage === "analyzing") return "Google Cloud está separando las fotos por producto…";
     if (stage === "invoice") return "Leyendo factura y armando el checklist…";
-    if (stage === "creating") return `Creando borradores ${processed}/${groups.length}…`;
+    if (stage === "review") return "Revisá la compra antes de ingresarla al stock";
+    if (stage === "creating") return `Ingresando compra ${processed}/${groups.length}…`;
     if (stage === "done") return failed
       ? `${processed} productos creados · ${failed} necesitan reintento`
       : `${processed} productos creados en SIZ`;
@@ -595,13 +596,12 @@ export function CommerceBulkProductImport({
         } catch (invoiceError) {
           setInvoiceData(null);
           setError(invoiceError instanceof Error
-            ? `Los productos siguen; la factura quedó pendiente: ${invoiceError.message}`
-            : "Los productos siguen; la factura quedó pendiente.");
+            ? `Las fotos quedaron clasificadas; la factura quedó pendiente: ${invoiceError.message}`
+            : "Las fotos quedaron clasificadas; la factura quedó pendiente.");
         }
       }
 
-      setStage("creating");
-      await processUntilFinished(id);
+      setStage("review");
     } catch (cause) {
       setStage("error");
       setError(cause instanceof Error ? cause.message : "No se pudo completar la carga masiva.");
@@ -622,17 +622,23 @@ export function CommerceBulkProductImport({
     setProcessed(batch.processed_products || 0);
     setFailed(batch.failed_products || 0);
     try {
+      try {
+        const existingInvoice = await getJson<InvoicePayload>(
+          `/api/studios/${encodeURIComponent(studioId)}/commerce/import-batches/${encodeURIComponent(batch.id)}/invoice`,
+        );
+        if (existingInvoice.invoice) setInvoiceData(existingInvoice);
+      } catch {}
+
       if (invoiceFile && !invoiceData) {
         try {
           await uploadAndAnalyzeInvoice(batch.id, invoiceFile);
         } catch (invoiceError) {
           setError(invoiceError instanceof Error
-            ? `Los productos siguen; la factura quedó pendiente: ${invoiceError.message}`
-            : "Los productos siguen; la factura quedó pendiente.");
+            ? `El lote está recuperado; la factura quedó pendiente: ${invoiceError.message}`
+            : "El lote está recuperado; la factura quedó pendiente.");
         }
       }
-      setStage("creating");
-      await processUntilFinished(batch.id, batch.status === "completed_with_errors" || batch.failed_products > 0);
+      setStage("review");
       setRecoverableBatch(null);
     } catch (cause) {
       setStage("error");
@@ -645,10 +651,22 @@ export function CommerceBulkProductImport({
     setError("");
     try {
       await uploadAndAnalyzeInvoice(batchId, invoiceFile);
-      setStage("done");
+      setStage("review");
     } catch (cause) {
       setStage("error");
       setError(cause instanceof Error ? cause.message : "No se pudo analizar la factura.");
+    }
+  }
+
+  async function confirmPurchaseImport() {
+    if (!batchId || busy || !groups.length) return;
+    setError("");
+    setStage("creating");
+    try {
+      await processUntilFinished(batchId, failed > 0);
+    } catch (cause) {
+      setStage("error");
+      setError(cause instanceof Error ? cause.message : "No se pudo ingresar la compra.");
     }
   }
 
