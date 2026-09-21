@@ -163,7 +163,7 @@ function availableTimes(args: {
     return !events.some((event) => {
       const relevant = playerId === "all"
         ? event.playerId == null
-        : event.playerId == null || event.playerId === playerId;
+        : event.playerId == null || event.playerIds.includes(playerId);
       if (!relevant) return false;
       const eventStart = new Date(event.startAt).getTime();
       const eventEnd = new Date(event.endAt).getTime();
@@ -219,7 +219,7 @@ export function IgluUnifiedCalendar({
   }, [router, studioId]);
 
   const filteredEvents = useMemo(
-    () => events.filter((event) => playerId === "all" || event.playerId == null || event.playerId === playerId),
+    () => events.filter((event) => playerId === "all" || event.playerId == null || event.playerIds.includes(playerId)),
     [events, playerId],
   );
 
