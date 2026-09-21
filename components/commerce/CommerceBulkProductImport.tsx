@@ -10,6 +10,7 @@ type BatchGroup = {
   brand: string;
   model: string;
   packageKind: "box" | "retail_package" | "loose_product" | "unknown";
+  unitCount: number;
   identifier: { value: string; type: string } | null;
   visibleIdentifiers: Array<{
     value: string;
