@@ -285,7 +285,7 @@ select case co.seller_type when 'player' then p.owner_user_id when 'studio' then
        round(greatest(coalesce(co.fees,0),0)*100)::bigint,
        round(greatest(coalesce(co.commission,0),0)*100)::bigint,
        round(greatest(coalesce(co.total,0)-coalesce(co.fees,0)-coalesce(co.commission,0),0)*100)::bigint,
-       'pending',coalesce(co.updated_at,co.created_at),
+       'pending',co.created_at,
        jsonb_build_object('seller_type',co.seller_type,'spot_id',co.spot_id,'order_total',co.total,'external_payment_id',co.external_payment_id)
 from public.commerce_orders co
 left join public.players p on co.seller_type='player' and p.id=co.seller_player_id
