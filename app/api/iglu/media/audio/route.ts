@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
+import { getActiveYoutubeLive } from "@/core/integrations/youtube/service";
 import { requireStudioManager } from "@/lib/server/studio-permissions";
 import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
 
@@ -23,7 +24,7 @@ export async function GET() {
     const admin = createAdminSupabase();
     const studio = await igluStudio(admin);
     const [{ data: radio, error: radioError }, { data: tracks, error: tracksError }] = await Promise.all([
-      admin.from("profile_radio_settings").select("station_name,tagline,stream_url,artwork_url,is_enabled,is_public").eq("studio_id", studio.id).maybeSingle(),
+      admin.from("profile_radio_settings").select("station_name,tagline,stream_url,artwork_url,is_enabled,is_public,primary_track_id").eq("studio_id", studio.id).maybeSingle(),
       admin.from("radio_tracks").select("id,title,artist,album,duration_seconds,artwork_url,status,youtube_url,storage_bucket,storage_path,created_at").eq("studio_id", studio.id).in("status", ["ready", "synced"]).order("created_at", { ascending: false }).limit(30),
     ]);
     if (radioError) throw new Error(radioError.message);
@@ -38,10 +39,30 @@ export async function GET() {
       return { ...track, audioUrl };
     }));
 
+    const { data: space } = await admin
+      .from("spaces")
+      .select("owner_player_id")
+      .eq("legacy_studio_id", studio.id)
+      .eq("status", "active")
+      .maybeSingle();
+    const { data: ownerPlayer } = space?.owner_player_id
+      ? await admin.from("players").select("owner_user_id").eq("id", space.owner_player_id).maybeSingle()
+      : { data: null };
+    const youtubeLive = ownerPlayer?.owner_user_id
+      ? await getActiveYoutubeLive(admin, String(ownerPlayer.owner_user_id)).catch(() => null)
+      : null;
+
+    const primaryTrackId = radio?.primary_track_id ? String(radio.primary_track_id) : null;
+    const primaryTrack = primaryTrackId
+      ? publicTracks.find((track) => String(track.id) === primaryTrackId) || null
+      : publicTracks[0] || null;
+
     return NextResponse.json({
       studio: { id: studio.id, name: studio.name },
       radio: radio && radio.is_enabled && radio.is_public ? radio : null,
       tracks: publicTracks,
+      primaryTrack,
+      youtubeLive,
     }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "No se pudo cargar Media." }, { status: 500 });
@@ -91,5 +112,43 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     const status = (error as Error & { status?: number }).status ?? (isAuthError(error) ? 401 : 500);
     return NextResponse.json({ error: error instanceof Error ? error.message : "No se pudo subir el audio." }, { status });
+  }
+}
+
+
+export async function PATCH(request: NextRequest) {
+  try {
+    const { user } = await requireUser(request);
+    const admin = createAdminSupabase();
+    const studio = await igluStudio(admin);
+    await requireStudioManager({ admin, userId: user.id, studioId: studio.id });
+
+    const body = (await request.json().catch(() => ({}))) as { trackId?: unknown };
+    const trackId = typeof body.trackId === "string" && body.trackId.trim() ? body.trackId.trim() : null;
+    if (!trackId) return NextResponse.json({ error: "Seleccioná un audio de la biblioteca." }, { status: 400 });
+
+    const { data: track, error: trackError } = await admin
+      .from("radio_tracks")
+      .select("id")
+      .eq("id", trackId)
+      .eq("studio_id", studio.id)
+      .in("status", ["ready", "synced"])
+      .maybeSingle();
+    if (trackError) throw new Error(trackError.message);
+    if (!track) return NextResponse.json({ error: "Ese audio no pertenece a la biblioteca pública del IGLÚ." }, { status: 404 });
+
+    const { data: settings, error: settingsError } = await admin
+      .from("profile_radio_settings")
+      .update({ primary_track_id: track.id, updated_at: new Date().toISOString() })
+      .eq("studio_id", studio.id)
+      .select("primary_track_id")
+      .maybeSingle();
+    if (settingsError) throw new Error(settingsError.message);
+    if (!settings) return NextResponse.json({ error: "Activá primero la Radio del IGLÚ." }, { status: 409 });
+
+    return NextResponse.json({ ok: true, primaryTrackId: settings.primary_track_id });
+  } catch (error) {
+    const status = (error as Error & { status?: number }).status ?? (isAuthError(error) ? 401 : 500);
+    return NextResponse.json({ error: error instanceof Error ? error.message : "No se pudo cambiar la reproducción principal." }, { status });
   }
 }
