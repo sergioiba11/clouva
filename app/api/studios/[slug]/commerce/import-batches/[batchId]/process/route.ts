@@ -262,7 +262,7 @@ export async function POST(
         p_location_id: location.id,
         p_quantity_delta: quantity,
         p_movement_type: "purchase_receipt",
-        p_unit_cost: Number.isFinite(unitCost) ? unitCost : null,
+        p_unit_cost: unitCost != null && Number.isFinite(unitCost) ? unitCost : null,
         p_currency: spot.currency,
         p_reference: line ? `factura:${line.line_number}` : `batch:${batch.id}`,
         p_note: line?.description || "Ingreso de compra por carga masiva",
@@ -276,7 +276,7 @@ export async function POST(
         },
       });
       if (receiptError) throw new Error(receiptError.message);
-      return { line, quantity, unitCost: Number.isFinite(unitCost) ? unitCost : null };
+      return { line, quantity, unitCost: unitCost != null && Number.isFinite(unitCost) ? unitCost : null };
     };
 
     // A previous request may have created the listing and then failed in a
@@ -447,11 +447,11 @@ export async function POST(
               hasBack,
               externalIdentifier: Boolean(externalIdentifier),
               name: recognizedName,
-              costConfirmed: Number.isFinite(confirmedUnitCost),
+              costConfirmed: confirmedUnitCost != null && Number.isFinite(confirmedUnitCost),
               stockConfirmed: true,
             }),
             price_confirmed: false,
-            cost_confirmed: Number.isFinite(confirmedUnitCost),
+            cost_confirmed: confirmedUnitCost != null && Number.isFinite(confirmedUnitCost),
             stock_confirmed: true,
             external_identifier_pending: !externalIdentifier,
             last_saved_at: analyzedAt,
@@ -491,7 +491,7 @@ export async function POST(
           p_listing: {
             listing_kind: recognized.listingKind,
             price: 0,
-            cost: Number.isFinite(confirmedUnitCost) ? confirmedUnitCost : 0,
+            cost: confirmedUnitCost != null && Number.isFinite(confirmedUnitCost) ? confirmedUnitCost : 0,
             initial_stock: 0,
             status: "draft",
             cover_url: frontUrl,
