@@ -23,6 +23,7 @@ const LIGHTWEIGHT_PREFIXES = [
 ] as const;
 
 function isLightweightRoute(pathname: string) {
+  if (pathname.includes("/commerce/scanner")) return true;
   return LIGHTWEIGHT_PREFIXES.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
 }
 
