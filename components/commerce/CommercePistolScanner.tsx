@@ -376,9 +376,12 @@ export function CommercePistolScanner({ studioId }: { studioId: string }) {
       setMessage(`${recognition.name || recognition.detectedObject || "Producto"} agregado como borrador. Ya quedó dentro de CLOUVA.`);
       const nextOverview = await loadOverview();
       const created = nextOverview.listings.find((listing) => listing.id === payload.draft?.listingId) ?? null;
-      if (created && Number(created.price) > 0) {
+      if (created) {
         setMatchedListing(created);
         setMode("matched");
+        setMessage(Number(created.price) > 0
+          ? "Producto agregado. Ya está listo para vender."
+          : "Producto agregado. Falta cargarle precio antes de vender.");
       }
       if (navigator.vibrate) navigator.vibrate([55, 45, 90]);
     } catch (cause) {
@@ -523,7 +526,7 @@ export function CommercePistolScanner({ studioId }: { studioId: string }) {
             <button
               type="button"
               onClick={() => void addProduct()}
-              disabled={busy}
+              disabled={busy || Boolean(matchedListing)}
               className="mx-auto grid h-20 w-20 place-items-center rounded-full border-2 border-emerald-300/80 bg-emerald-400/10 shadow-[0_0_28px_rgba(52,211,153,.24)] transition active:scale-95 disabled:opacity-35"
               aria-label="Agregar producto"
             >
