@@ -6,8 +6,15 @@ import { resolveStudioAlias } from "@/lib/server/public-identity-data";
 
 export const dynamic = "force-dynamic";
 
-export default async function IgluReservePage({ params }: { params: Promise<{ slug: string }> }) {
+export default async function IgluReservePage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ slug: string }>;
+  searchParams: Promise<{ date?: string; time?: string; player?: string }>;
+}) {
   const { slug } = await params;
+  const query = await searchParams;
   const identity = await resolveStudioAlias(slug);
   if (!identity || identity.studio.slug.toLowerCase() !== IGLU_STUDIO_SLUG) notFound();
   const data = await loadIgluOperationalData();
@@ -22,6 +29,9 @@ export default async function IgluReservePage({ params }: { params: Promise<{ sl
       availabilityRules={data.availabilityRules}
       bookingEnabled={Boolean(data.studioAgenda?.booking_enabled)}
       timezone={data.studioAgenda?.timezone || "America/Argentina/Buenos_Aires"}
+      initialDate={query.date || null}
+      initialTime={query.time || null}
+      initialPlayerId={query.player || null}
     />
   );
 }
