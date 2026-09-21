@@ -252,7 +252,7 @@
   aspect-ratio: 3.08 / 1;
 }
 
-.merchCard img {
+.merchCard > img {
   position: absolute;
   width: 111%;
   max-width: none;
