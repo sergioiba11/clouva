@@ -24,7 +24,15 @@ export async function GET(
     if (error) throw new Error(error.message);
     if (!batch) return NextResponse.json({ error: "El lote no existe en este Spot." }, { status: 404 });
 
-    return NextResponse.json({ batch });
+    const { data: items, error: itemsError } = await admin
+      .from("commerce_product_import_items")
+      .select("id,source_index,file_name,source_url,mime_type,status,group_key,listing_id,error")
+      .eq("batch_id", batch.id)
+      .eq("spot_id", spot.id)
+      .order("source_index");
+    if (itemsError) throw new Error(itemsError.message);
+
+    return NextResponse.json({ batch: { ...batch, items: items ?? [] } });
   } catch (error) {
     const status = (error as Error & { status?: number })?.status ?? (isAuthError(error) ? 401 : 500);
     return NextResponse.json(
