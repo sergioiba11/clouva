@@ -105,13 +105,48 @@ function imageToJpegDataUrl(source: CanvasImageSource, width: number, height: nu
   return canvas.toDataURL("image/jpeg", 0.82);
 }
 
-function readFileAsDataUrl(file: File) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error(`${file.name}: no se pudo leer el archivo.`));
-    reader.onload = () => resolve(String(reader.result || ""));
-    reader.readAsDataURL(file);
-  });
+function bytesToDataUrl(bytes: Uint8Array, mimeType: string) {
+  const chunkSize = 0x8000;
+  let binary = "";
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    const chunk = bytes.subarray(offset, Math.min(bytes.length, offset + chunkSize));
+    binary += String.fromCharCode(...chunk);
+  }
+  return `data:${mimeType || "application/octet-stream"};base64,${btoa(binary)}`;
+}
+
+async function readFileAsDataUrl(file: File) {
+  try {
+    return await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(reader.error ?? new Error("FILE_READER_FAILED"));
+      reader.onload = () => {
+        const value = String(reader.result || "");
+        if (!value.startsWith("data:")) reject(new Error("FILE_READER_EMPTY"));
+        else resolve(value);
+      };
+      reader.readAsDataURL(file);
+    });
+  } catch {
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      if (!bytes.length) throw new Error("FILE_EMPTY");
+      return bytesToDataUrl(bytes, file.type);
+    } catch {
+      const objectUrl = URL.createObjectURL(file);
+      try {
+        const response = await fetch(objectUrl);
+        if (!response.ok) throw new Error("OBJECT_URL_READ_FAILED");
+        const bytes = new Uint8Array(await response.arrayBuffer());
+        if (!bytes.length) throw new Error("FILE_EMPTY");
+        return bytesToDataUrl(bytes, file.type || response.headers.get("content-type") || "application/octet-stream");
+      } catch {
+        throw new Error(`${file.name}: no se pudo leer el archivo.`);
+      } finally {
+        URL.revokeObjectURL(objectUrl);
+      }
+    }
+  }
 }
 
 
@@ -345,7 +380,30 @@ export function CommerceBulkProductImport({
     try {
       setStage("preparing");
       const prepared: PreparedImage[] = [];
-      for (const file of files) prepared.push(await prepareImage(file));
+      const unreadable: string[] = [];
+      for (const file of files) {
+        try {
+          prepared.push(await prepareImage(file));
+        } catch (prepareError) {
+          unreadable.push(
+            prepareError instanceof Error
+              ? prepareError.message.replace(/: no se pudo leer el archivo\.$/, "")
+              : file.name,
+          );
+        }
+      }
+
+      if (!prepared.length) {
+        throw new Error("El teléfono no pudo leer ninguna de las fotos seleccionadas.");
+      }
+
+      if (unreadable.length) {
+        const readableFiles = prepared.map((image) => image.file);
+        setFiles(readableFiles);
+        setError(
+          `Se omitieron ${unreadable.length} foto${unreadable.length === 1 ? "" : "s"} que Android no pudo abrir: ${unreadable.slice(0, 3).join(", ")}${unreadable.length > 3 ? ` +${unreadable.length - 3}` : ""}. El resto del lote continúa.`,
+        );
+      }
 
       const created = await postJson<{ batch: { id: string } }>(
         `/api/studios/${encodeURIComponent(studioId)}/commerce/import-batches`,
