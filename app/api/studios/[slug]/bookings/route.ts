@@ -105,6 +105,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       serviceId: service.id,
       studioId,
       buyerUserId: user.id,
+      hostPlayerId: playerId,
       scheduledAt: scheduledAt.toISOString(),
       durationMinutes,
       price: Number(service.price),
@@ -139,7 +140,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "No se pudo crear la reserva.";
-    const conflict = /horario ya no está disponible|conflict|overlap|23P01/i.test(message);
+    const conflict = /horario ya no está disponible|Player seleccionado ya está ocupado|conflict|overlap|23P01/i.test(message);
     const status = conflict ? 409 : ((error as Error & { status?: number })?.status ?? (isAuthError(error) ? 401 : 500));
     return NextResponse.json({ error: conflict ? "Ese horario ya no está disponible." : message }, { status });
   }
