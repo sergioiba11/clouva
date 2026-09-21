@@ -40,11 +40,13 @@ import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerChangedWorldEvent;
+import org.bukkit.event.player.PlayerGameModeChangeEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerPortalEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.player.PlayerTeleportEvent.TeleportCause;
 import org.bukkit.event.player.PlayerRespawnEvent;
+import org.bukkit.event.player.PlayerToggleFlightEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemFlag;
 import org.bukkit.inventory.ItemStack;
@@ -280,7 +282,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     }
 
     private boolean canBuild(Player player) {
-        if (isNoOpSurvivalWorld(player.getWorld())) {
+        if (isSurvivalLocked(player)) {
             return false;
         }
 
@@ -293,12 +295,25 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     public void onJoin(PlayerJoinEvent event) {
         Player player = event.getPlayer();
 
-        if (isNoOpSurvivalWorld(player.getWorld())) {
+        String joinedSurvivalMode = activeSurvivalMode(player);
+        if (joinedSurvivalMode == null) {
+            joinedSurvivalMode = survivalModeKey(player.getWorld().getName());
+            if (joinedSurvivalMode != null) {
+                startSurvivalSession(player, joinedSurvivalMode);
+            }
+        }
+
+        if (joinedSurvivalMode != null) {
+            String mode = joinedSurvivalMode;
             suspendSurvivalOp(player);
+            player.setGameMode(GameMode.SURVIVAL);
+            player.setAllowFlight(false);
+            player.setFlying(false);
             Bukkit.getScheduler().runTaskLater(this, () -> {
-                if (!player.isOnline() || !isNoOpSurvivalWorld(player.getWorld())) return;
-                loadInventoryState(player, survivalInventoryPath(player, survivalModeKey(player.getWorld().getName())));
+                if (!player.isOnline() || !mode.equals(activeSurvivalMode(player))) return;
+                loadInventoryState(player, survivalInventoryPath(player, mode));
                 resetSurvivalAdvancementsIfNeeded(player);
+                enforcePlayerSurvivalLock(player);
             }, 2L);
         }
 
@@ -360,7 +375,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             saveLastLobbyLocation(player);
         }
 
-        if (isNoOpSurvivalWorld(player.getWorld())) {
+        if (isSurvivalLocked(player)) {
             saveCurrentSurvivalInventory(player);
             saveSurvivalCheckpoint(player);
             restoreSurvivalOp(player);
@@ -402,28 +417,61 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         Player player = event.getPlayer();
         String from = event.getFrom().getName();
         String to = player.getWorld().getName();
+        String activeMode = activeSurvivalMode(player);
 
-        boolean enteringSurvival = isNoOpSurvivalWorldName(to);
-        boolean leavingSurvival = isNoOpSurvivalWorldName(from);
+        if (activeMode != null) {
+            enforcePlayerSurvivalLock(player);
 
-        if (enteringSurvival) {
-            suspendSurvivalOp(player);
-            player.setGameMode(GameMode.SURVIVAL);
-            player.setAllowFlight(false);
-            player.setFlying(false);
+            // Fallback fuerte: si un portal vanilla intentó mandar al jugador
+            // a una dimensión global, lo movemos a la dimensión de SU Survival.
+            if (!isAllowedWorldForSurvivalMode(player, activeMode, player.getWorld())) {
+                World.Environment environment = player.getWorld().getEnvironment();
+                World target = getOrCreateSurvivalDimensionWorld(
+                    survivalBaseWorldForMode(player, activeMode),
+                    environment
+                );
 
-            Bukkit.getScheduler().runTaskLater(this, () -> {
-                if (player.isOnline() && isNoOpSurvivalWorld(player.getWorld())) {
-                    saveSurvivalCheckpoint(player);
+                if (target != null) {
+                    Location current = player.getLocation();
+                    Location corrected = environment == World.Environment.THE_END
+                        ? target.getSpawnLocation().clone()
+                        : new Location(
+                            target,
+                            current.getX(),
+                            Math.max(target.getMinHeight() + 4, Math.min(target.getMaxHeight() - 4, current.getY())),
+                            current.getZ(),
+                            current.getYaw(),
+                            current.getPitch()
+                        );
+
+                    Bukkit.getScheduler().runTask(this, () -> {
+                        if (player.isOnline() && activeMode.equals(activeSurvivalMode(player))) {
+                            player.teleport(corrected);
+                            enforcePlayerSurvivalLock(player);
+                            saveSurvivalCheckpoint(player);
+                        }
+                    });
                 }
-            }, 2L);
-        } else if (leavingSurvival) {
-            restoreSurvivalOp(player);
+            } else {
+                Bukkit.getScheduler().runTaskLater(this, () -> {
+                    if (player.isOnline() && activeMode.equals(activeSurvivalMode(player))) {
+                        enforcePlayerSurvivalLock(player);
+                        saveSurvivalCheckpoint(player);
+                    }
+                }, 2L);
+            }
+        } else {
+            boolean leavingSurvivalWorld = isNoOpSurvivalWorldName(from);
+            if (leavingSurvivalWorld) {
+                restoreSurvivalOp(player);
+            }
         }
 
-        if (isMainLobbyWorldName(to)) {
+        if (isMainLobbyWorldName(to) && activeSurvivalMode(player) == null) {
             Bukkit.getScheduler().runTaskLater(this, () -> {
-                if (player.isOnline() && isMainLobbyWorld(player.getWorld())) {
+                if (player.isOnline()
+                    && isMainLobbyWorld(player.getWorld())
+                    && activeSurvivalMode(player) == null) {
                     giveLobbyLoadout(player);
                 }
             }, 2L);
@@ -432,11 +480,39 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         }
     }
 
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onSurvivalGameModeChange(PlayerGameModeChangeEvent event) {
+        Player player = event.getPlayer();
+        if (!isSurvivalLocked(player)) return;
+        if (event.getNewGameMode() == GameMode.SURVIVAL) return;
+
+        event.setCancelled(true);
+        Bukkit.getScheduler().runTask(this, () -> {
+            if (player.isOnline() && isSurvivalLocked(player)) {
+                enforcePlayerSurvivalLock(player);
+            }
+        });
+        msg(player, "En Survival no se puede usar Creativo, Espectador ni Aventura.", NamedTextColor.RED);
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onSurvivalFlight(PlayerToggleFlightEvent event) {
+        Player player = event.getPlayer();
+        if (!isSurvivalLocked(player) || !event.isFlying()) return;
+
+        event.setCancelled(true);
+        player.setAllowFlight(false);
+        player.setFlying(false);
+    }
+
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onSurvivalPortal(PlayerPortalEvent event) {
         Player player = event.getPlayer();
         World source = player.getWorld();
-        String baseWorldName = survivalBaseWorldName(source.getName());
+        String activeMode = activeSurvivalMode(player);
+        String baseWorldName = activeMode == null
+            ? survivalBaseWorldName(source.getName())
+            : survivalBaseWorldForMode(player, activeMode);
 
         if (baseWorldName == null) return;
 
@@ -851,12 +927,17 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     @EventHandler
     public void onHardcoreDeath(PlayerDeathEvent event) {
         Player player = event.getEntity();
-        if (!player.getWorld().getName().equals(HARDCORE_WORLD_NAME)) return;
+        String activeMode = activeSurvivalMode(player);
+        if (!"hardcore".equals(activeMode)
+            && !"hardcore".equals(survivalModeKey(player.getWorld().getName()))) {
+            return;
+        }
 
         getConfig().set("hardcore.eliminated." + player.getUniqueId(), true);
         getConfig().set("hardcore.names." + player.getUniqueId(), player.getName());
         getConfig().set(survivalInventoryPath(player, "hardcore"), null);
         getConfig().set(survivalCheckpointPath(player, "hardcore"), null);
+        endSurvivalSession(player);
         saveConfig();
         survivalPortalStates.remove(player.getUniqueId());
 
@@ -904,6 +985,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             player.setAllowFlight(false);
             player.setFlying(false);
             loadInventoryState(player, outsideInventoryPath(player));
+            restoreSurvivalOp(player);
             msg(player, "Tu vida HARDCORE terminó. Un OP puede reiniciar tu acceso.", NamedTextColor.RED);
         }, 2L);
     }
@@ -3432,6 +3514,63 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         saveConfig();
     }
 
+    private String activeSurvivalModePath(Player player) {
+        return "survival.active-mode." + player.getUniqueId();
+    }
+
+    private String activeSurvivalMode(Player player) {
+        String mode = getConfig().getString(activeSurvivalModePath(player));
+        if (mode == null) return null;
+        mode = mode.toLowerCase(Locale.ROOT);
+        return Set.of("personal", "common", "hardcore").contains(mode) ? mode : null;
+    }
+
+    private void startSurvivalSession(Player player, String mode) {
+        getConfig().set(activeSurvivalModePath(player), mode);
+        saveConfig();
+    }
+
+    private void endSurvivalSession(Player player) {
+        getConfig().set(activeSurvivalModePath(player), null);
+        saveConfig();
+    }
+
+    private String survivalBaseWorldForMode(Player player, String mode) {
+        return switch (mode) {
+            case "personal" -> personalSurvivalWorldName(player.getUniqueId());
+            case "common" -> SHARED_SURVIVAL_WORLD_NAME;
+            case "hardcore" -> HARDCORE_WORLD_NAME;
+            default -> null;
+        };
+    }
+
+    private boolean isAllowedWorldForSurvivalMode(Player player, String mode, World world) {
+        if (world == null) return false;
+        String expectedBase = survivalBaseWorldForMode(player, mode);
+        String actualBase = survivalBaseWorldName(world.getName());
+        return expectedBase != null && expectedBase.equals(actualBase);
+    }
+
+    private boolean isSurvivalLocked(Player player) {
+        return activeSurvivalMode(player) != null || isNoOpSurvivalWorld(player.getWorld());
+    }
+
+    private void enforcePlayerSurvivalLock(Player player) {
+        if (!isSurvivalLocked(player)) return;
+
+        suspendSurvivalOp(player);
+        if (player.getGameMode() != GameMode.SURVIVAL) {
+            player.setGameMode(GameMode.SURVIVAL);
+        }
+        if (player.getAllowFlight()) {
+            player.setAllowFlight(false);
+        }
+        if (player.isFlying()) {
+            player.setFlying(false);
+        }
+    }
+
+
     private String survivalBaseWorldName(String worldName) {
         if (worldName == null || worldName.isBlank()) return null;
 
@@ -3514,7 +3653,10 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     }
 
     private void saveSurvivalCheckpoint(Player player) {
-        String mode = survivalModeKey(player.getWorld().getName());
+        String mode = activeSurvivalMode(player);
+        if (mode == null) {
+            mode = survivalModeKey(player.getWorld().getName());
+        }
         if (mode == null) return;
 
         Location location = player.getLocation();
@@ -3642,13 +3784,19 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
     }
 
     private void saveCurrentSurvivalInventory(Player player) {
-        String mode = survivalModeKey(player.getWorld().getName());
+        String mode = activeSurvivalMode(player);
+        if (mode == null) {
+            mode = survivalModeKey(player.getWorld().getName());
+        }
         if (mode == null) return;
         saveInventoryState(player, survivalInventoryPath(player, mode));
     }
 
     private void prepareSurvivalInventory(Player player, String targetMode) {
-        String currentMode = survivalModeKey(player.getWorld().getName());
+        String currentMode = activeSurvivalMode(player);
+        if (currentMode == null) {
+            currentMode = survivalModeKey(player.getWorld().getName());
+        }
 
         if (currentMode == null) {
             saveInventoryState(player, outsideInventoryPath(player));
@@ -3722,20 +3870,8 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
 
     private void enforceSurvivalNoOp() {
         for (Player player : Bukkit.getOnlinePlayers()) {
-            if (!isNoOpSurvivalWorld(player.getWorld())) continue;
-
-            if (player.isOp()) {
-                suspendSurvivalOp(player);
-            }
-            if (player.getGameMode() != GameMode.SURVIVAL) {
-                player.setGameMode(GameMode.SURVIVAL);
-            }
-            if (player.getAllowFlight()) {
-                player.setAllowFlight(false);
-            }
-            if (player.isFlying()) {
-                player.setFlying(false);
-            }
+            if (!isSurvivalLocked(player)) continue;
+            enforcePlayerSurvivalLock(player);
         }
     }
 
@@ -3873,6 +4009,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         }
 
         prepareSurvivalInventory(player, "personal");
+        startSurvivalSession(player, "personal");
         player.setGameMode(GameMode.SURVIVAL);
         player.setAllowFlight(false);
         player.setFlying(false);
@@ -3892,6 +4029,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
 
         rememberSurvivalReturn(player, rememberReturn);
         prepareSurvivalInventory(player, "common");
+        startSurvivalSession(player, "common");
         player.setGameMode(GameMode.SURVIVAL);
         player.setAllowFlight(false);
         player.setFlying(false);
@@ -3916,6 +4054,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
 
         rememberSurvivalReturn(player, rememberReturn);
         prepareSurvivalInventory(player, "hardcore");
+        startSurvivalSession(player, "hardcore");
         player.setGameMode(GameMode.SURVIVAL);
         player.setAllowFlight(false);
         player.setFlying(false);
@@ -3936,9 +4075,11 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
 
     private void exitSurvival(Player player) {
         String leavingWorld = player.getWorld().getName();
-        if (isNoOpSurvivalWorldName(leavingWorld)) {
+        boolean wasInSurvival = isSurvivalLocked(player);
+        if (wasInSurvival) {
             saveCurrentSurvivalInventory(player);
             saveSurvivalCheckpoint(player);
+            endSurvivalSession(player);
         }
 
         PortalState previous = survivalPortalStates.remove(player.getUniqueId());
@@ -3957,6 +4098,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         }
 
         loadInventoryState(player, outsideInventoryPath(player));
+        restoreSurvivalOp(player);
 
         if (leavingWorld.startsWith(PERSONAL_SURVIVAL_PREFIX)) {
             Bukkit.getScheduler().runTaskLater(this, () -> unloadPersonalSurvivalWorld(leavingWorld), 20L);
@@ -4117,10 +4259,11 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         if (!player.isOnline()) return;
 
         String oldWorld = player.getWorld().getName();
-        boolean leavingSurvival = isNoOpSurvivalWorldName(oldWorld);
+        boolean leavingSurvival = isSurvivalLocked(player);
         if (leavingSurvival) {
             saveCurrentSurvivalInventory(player);
             saveSurvivalCheckpoint(player);
+            endSurvivalSession(player);
         }
 
         pvpQueue.remove(player.getUniqueId());
@@ -4141,6 +4284,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         player.setFireTicks(0);
         if (leavingSurvival) {
             loadInventoryState(player, outsideInventoryPath(player));
+            restoreSurvivalOp(player);
         }
         giveLobbyLoadout(player);
         msg(player, "Volviste al lobby principal.", NamedTextColor.GREEN);
