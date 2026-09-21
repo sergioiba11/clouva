@@ -29,6 +29,8 @@ export type IgluCalendarEvent = {
   location: string | null;
   playerId: string | null;
   playerName: string | null;
+  playerIds: string[];
+  playerNames: string[];
 };
 
 export type IgluAvailabilityRule = {
@@ -168,6 +170,8 @@ export async function loadIgluOperationalData(options?: { from?: string; to?: st
           : normalizedType.includes("session") || normalizedType.includes("booking")
             ? "session"
             : "event";
+      const ownerId = agenda.owner_player_id ? String(agenda.owner_player_id) : null;
+      const ownerName = ownerId ? playerName.get(ownerId) || null : "El Iglú";
       calendarEvents.push({
         id: String(event.id),
         title: publicEvent ? event.title : "Ocupado",
@@ -176,13 +180,37 @@ export async function loadIgluOperationalData(options?: { from?: string; to?: st
         kind,
         public: publicEvent,
         location: publicEvent ? event.locationText : null,
-        playerId: agenda.owner_player_id ? String(agenda.owner_player_id) : null,
-        playerName: agenda.owner_player_id ? playerName.get(String(agenda.owner_player_id)) || null : "El Iglú",
+        playerId: ownerId,
+        playerName: ownerName,
+        playerIds: ownerId ? [ownerId] : [],
+        playerNames: ownerId && ownerName ? [ownerName] : [],
       });
     }
   }
 
-  const dedupedEvents = Array.from(new Map(calendarEvents.map((event) => [`${event.id}:${event.startAt}`, event])).values())
+  const mergedEventMap = new Map<string, IgluCalendarEvent>();
+  for (const event of calendarEvents) {
+    const key = `${event.id}:${event.startAt}`;
+    const existing = mergedEventMap.get(key);
+    if (!existing) {
+      mergedEventMap.set(key, event);
+      continue;
+    }
+    const playerIds = Array.from(new Set([...existing.playerIds, ...event.playerIds]));
+    const playerNames = Array.from(new Set([...existing.playerNames, ...event.playerNames]));
+    mergedEventMap.set(key, {
+      ...existing,
+      playerId: existing.playerId || event.playerId,
+      playerName: playerNames.join(" · ") || existing.playerName || event.playerName,
+      playerIds,
+      playerNames,
+      public: existing.public || event.public,
+      title: existing.public ? existing.title : event.public ? event.title : "Ocupado",
+      location: existing.location || event.location,
+      kind: existing.kind === "occupied" && event.kind !== "occupied" ? event.kind : existing.kind,
+    });
+  }
+  const dedupedEvents = Array.from(mergedEventMap.values())
     .sort((a, b) => new Date(a.startAt).getTime() - new Date(b.startAt).getTime());
 
   const agendaIds = agendas.map((agenda) => String(agenda.id));
