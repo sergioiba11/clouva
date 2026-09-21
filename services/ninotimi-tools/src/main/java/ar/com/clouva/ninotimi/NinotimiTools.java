@@ -41,7 +41,9 @@ import org.bukkit.event.player.PlayerInteractEntityEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerChangedWorldEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
+import org.bukkit.event.player.PlayerPortalEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.player.PlayerTeleportEvent.TeleportCause;
 import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemFlag;
@@ -360,6 +362,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
 
         if (isNoOpSurvivalWorld(player.getWorld())) {
             saveCurrentSurvivalInventory(player);
+            saveSurvivalCheckpoint(player);
             restoreSurvivalOp(player);
         }
         pvpQueue.remove(id);
@@ -405,6 +408,15 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
 
         if (enteringSurvival) {
             suspendSurvivalOp(player);
+            player.setGameMode(GameMode.SURVIVAL);
+            player.setAllowFlight(false);
+            player.setFlying(false);
+
+            Bukkit.getScheduler().runTaskLater(this, () -> {
+                if (player.isOnline() && isNoOpSurvivalWorld(player.getWorld())) {
+                    saveSurvivalCheckpoint(player);
+                }
+            }, 2L);
         } else if (leavingSurvival) {
             restoreSurvivalOp(player);
         }
@@ -418,6 +430,81 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         } else if (isMainLobbyWorldName(from)) {
             removeLobbyControls(player);
         }
+    }
+
+    @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
+    public void onSurvivalPortal(PlayerPortalEvent event) {
+        Player player = event.getPlayer();
+        World source = player.getWorld();
+        String baseWorldName = survivalBaseWorldName(source.getName());
+
+        if (baseWorldName == null) return;
+
+        TeleportCause cause = event.getCause();
+        if (cause != TeleportCause.NETHER_PORTAL && cause != TeleportCause.END_PORTAL) {
+            return;
+        }
+
+        World target;
+        Location from = event.getFrom();
+        Location destination;
+
+        if (cause == TeleportCause.NETHER_PORTAL) {
+            if (source.getEnvironment() == World.Environment.NETHER) {
+                target = getOrCreateSurvivalDimensionWorld(baseWorldName, World.Environment.NORMAL);
+                if (target == null) {
+                    event.setCancelled(true);
+                    msg(player, "No se pudo abrir el mundo principal de este Survival.", NamedTextColor.RED);
+                    return;
+                }
+
+                destination = new Location(
+                    target,
+                    from.getX() * 8.0,
+                    Math.max(target.getMinHeight() + 4, Math.min(target.getMaxHeight() - 4, from.getY())),
+                    from.getZ() * 8.0,
+                    from.getYaw(),
+                    from.getPitch()
+                );
+            } else {
+                target = getOrCreateSurvivalDimensionWorld(baseWorldName, World.Environment.NETHER);
+                if (target == null) {
+                    event.setCancelled(true);
+                    msg(player, "No se pudo abrir el Nether de este Survival.", NamedTextColor.RED);
+                    return;
+                }
+
+                destination = new Location(
+                    target,
+                    from.getX() / 8.0,
+                    Math.max(target.getMinHeight() + 4, Math.min(target.getMaxHeight() - 4, from.getY())),
+                    from.getZ() / 8.0,
+                    from.getYaw(),
+                    from.getPitch()
+                );
+            }
+
+            event.setTo(destination);
+            event.setCanCreatePortal(true);
+            return;
+        }
+
+        if (source.getEnvironment() == World.Environment.THE_END) {
+            target = getOrCreateSurvivalDimensionWorld(baseWorldName, World.Environment.NORMAL);
+        } else {
+            target = getOrCreateSurvivalDimensionWorld(baseWorldName, World.Environment.THE_END);
+        }
+
+        if (target == null) {
+            event.setCancelled(true);
+            msg(player, "No se pudo abrir la dimensión de este Survival.", NamedTextColor.RED);
+            return;
+        }
+
+        Location targetSpawn = target.getSpawnLocation().clone();
+        targetSpawn.setYaw(from.getYaw());
+        targetSpawn.setPitch(from.getPitch());
+        event.setTo(targetSpawn);
     }
 
     @EventHandler
@@ -769,6 +856,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         getConfig().set("hardcore.eliminated." + player.getUniqueId(), true);
         getConfig().set("hardcore.names." + player.getUniqueId(), player.getName());
         getConfig().set(survivalInventoryPath(player, "hardcore"), null);
+        getConfig().set(survivalCheckpointPath(player, "hardcore"), null);
         saveConfig();
         survivalPortalStates.remove(player.getUniqueId());
 
@@ -783,13 +871,26 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         Player player = event.getPlayer();
         World deathWorld = player.getWorld();
 
-        if (deathWorld.getName().equals(SHARED_SURVIVAL_WORLD_NAME) && sharedSurvivalSpawn != null) {
+        if ("common".equals(survivalModeKey(deathWorld.getName())) && sharedSurvivalSpawn != null) {
             event.setRespawnLocation(sharedSurvivalSpawn);
+            Bukkit.getScheduler().runTaskLater(this, () -> {
+                if (player.isOnline() && "common".equals(survivalModeKey(player.getWorld().getName()))) {
+                    saveSurvivalCheckpoint(player);
+                }
+            }, 2L);
             return;
         }
 
-        if (isPersonalSurvivalWorld(deathWorld)) {
-            event.setRespawnLocation(naturalSurvivalSpawn(deathWorld));
+        if ("personal".equals(survivalModeKey(deathWorld.getName()))) {
+            String base = survivalBaseWorldName(deathWorld.getName());
+            World personalBase = base == null ? null : getOrCreateSurvivalDimensionWorld(base, World.Environment.NORMAL);
+            Location respawn = personalBase == null ? deathWorld.getSpawnLocation() : naturalSurvivalSpawn(personalBase);
+            event.setRespawnLocation(respawn);
+            Bukkit.getScheduler().runTaskLater(this, () -> {
+                if (player.isOnline() && "personal".equals(survivalModeKey(player.getWorld().getName()))) {
+                    saveSurvivalCheckpoint(player);
+                }
+            }, 2L);
             return;
         }
 
@@ -3331,12 +3432,133 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         saveConfig();
     }
 
-    private String survivalModeKey(String worldName) {
-        if (worldName == null) return null;
-        if (worldName.equals(SHARED_SURVIVAL_WORLD_NAME)) return "common";
-        if (worldName.equals(HARDCORE_WORLD_NAME)) return "hardcore";
-        if (worldName.startsWith(PERSONAL_SURVIVAL_PREFIX)) return "personal";
+    private String survivalBaseWorldName(String worldName) {
+        if (worldName == null || worldName.isBlank()) return null;
+
+        if (worldName.equals(SHARED_SURVIVAL_WORLD_NAME)
+            || worldName.equals(SHARED_SURVIVAL_WORLD_NAME + "_nether")
+            || worldName.equals(SHARED_SURVIVAL_WORLD_NAME + "_the_end")) {
+            return SHARED_SURVIVAL_WORLD_NAME;
+        }
+
+        if (worldName.equals(HARDCORE_WORLD_NAME)
+            || worldName.equals(HARDCORE_WORLD_NAME + "_nether")
+            || worldName.equals(HARDCORE_WORLD_NAME + "_the_end")) {
+            return HARDCORE_WORLD_NAME;
+        }
+
+        if (worldName.startsWith(PERSONAL_SURVIVAL_PREFIX)) {
+            if (worldName.endsWith("_nether")) {
+                return worldName.substring(0, worldName.length() - "_nether".length());
+            }
+            if (worldName.endsWith("_the_end")) {
+                return worldName.substring(0, worldName.length() - "_the_end".length());
+            }
+            return worldName;
+        }
+
         return null;
+    }
+
+    private String survivalModeKey(String worldName) {
+        String base = survivalBaseWorldName(worldName);
+        if (base == null) return null;
+        if (base.equals(SHARED_SURVIVAL_WORLD_NAME)) return "common";
+        if (base.equals(HARDCORE_WORLD_NAME)) return "hardcore";
+        if (base.startsWith(PERSONAL_SURVIVAL_PREFIX)) return "personal";
+        return null;
+    }
+
+    private World.Environment survivalEnvironmentFromWorldName(String worldName) {
+        if (worldName != null && worldName.endsWith("_nether")) {
+            return World.Environment.NETHER;
+        }
+        if (worldName != null && worldName.endsWith("_the_end")) {
+            return World.Environment.THE_END;
+        }
+        return World.Environment.NORMAL;
+    }
+
+    private String survivalDimensionWorldName(String baseWorldName, World.Environment environment) {
+        return switch (environment) {
+            case NETHER -> baseWorldName + "_nether";
+            case THE_END -> baseWorldName + "_the_end";
+            default -> baseWorldName;
+        };
+    }
+
+    private World getOrCreateSurvivalDimensionWorld(String baseWorldName, World.Environment environment) {
+        String worldName = survivalDimensionWorldName(baseWorldName, environment);
+        World world = Bukkit.getWorld(worldName);
+        if (world != null) return world;
+
+        WorldCreator creator = new WorldCreator(worldName);
+        creator.environment(environment);
+        creator.generateStructures(true);
+        world = creator.createWorld();
+
+        if (world != null) {
+            world.setPVP(false);
+            world.setDifficulty(baseWorldName.equals(HARDCORE_WORLD_NAME) ? Difficulty.HARD : Difficulty.NORMAL);
+            world.setGameRule(GameRule.DO_MOB_SPAWNING, true);
+            world.setGameRule(GameRule.DO_DAYLIGHT_CYCLE, true);
+            world.setGameRule(GameRule.DO_WEATHER_CYCLE, true);
+            world.setGameRule(GameRule.KEEP_INVENTORY, false);
+        }
+
+        return world;
+    }
+
+    private String survivalCheckpointPath(Player player, String mode) {
+        return "survival.checkpoints." + player.getUniqueId() + "." + mode;
+    }
+
+    private void saveSurvivalCheckpoint(Player player) {
+        String mode = survivalModeKey(player.getWorld().getName());
+        if (mode == null) return;
+
+        Location location = player.getLocation();
+        String path = survivalCheckpointPath(player, mode);
+        getConfig().set(path + ".world", location.getWorld().getName());
+        getConfig().set(path + ".x", location.getX());
+        getConfig().set(path + ".y", location.getY());
+        getConfig().set(path + ".z", location.getZ());
+        getConfig().set(path + ".yaw", (double) location.getYaw());
+        getConfig().set(path + ".pitch", (double) location.getPitch());
+        saveConfig();
+    }
+
+    private Location loadSurvivalCheckpoint(Player player, String mode) {
+        String path = survivalCheckpointPath(player, mode);
+        String worldName = getConfig().getString(path + ".world");
+        if (worldName == null || worldName.isBlank()) return null;
+        if (!mode.equals(survivalModeKey(worldName))) return null;
+
+        String base = survivalBaseWorldName(worldName);
+        if (base == null) return null;
+
+        World world = Bukkit.getWorld(worldName);
+        if (world == null) {
+            world = getOrCreateSurvivalDimensionWorld(base, survivalEnvironmentFromWorldName(worldName));
+        }
+        if (world == null) return null;
+
+        double y = getConfig().getDouble(path + ".y");
+        y = Math.max(world.getMinHeight() + 1.0, Math.min(world.getMaxHeight() - 2.0, y));
+
+        return new Location(
+            world,
+            getConfig().getDouble(path + ".x"),
+            y,
+            getConfig().getDouble(path + ".z"),
+            (float) getConfig().getDouble(path + ".yaw"),
+            (float) getConfig().getDouble(path + ".pitch")
+        );
+    }
+
+    private Location survivalResumeLocation(Player player, String mode, Location fallback) {
+        Location checkpoint = loadSurvivalCheckpoint(player, mode);
+        return checkpoint == null ? fallback : checkpoint;
     }
 
     private String outsideInventoryPath(Player player) {
@@ -3432,6 +3654,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
             saveInventoryState(player, outsideInventoryPath(player));
         } else {
             saveInventoryState(player, survivalInventoryPath(player, currentMode));
+            saveSurvivalCheckpoint(player);
         }
 
         loadInventoryState(player, survivalInventoryPath(player, targetMode));
@@ -3458,9 +3681,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
 
 
     private boolean isNoOpSurvivalWorldName(String worldName) {
-        return worldName.equals(SHARED_SURVIVAL_WORLD_NAME)
-            || worldName.equals(HARDCORE_WORLD_NAME)
-            || worldName.startsWith(PERSONAL_SURVIVAL_PREFIX);
+        return survivalModeKey(worldName) != null;
     }
 
     private boolean isNoOpSurvivalWorld(World world) {
@@ -3501,8 +3722,19 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
 
     private void enforceSurvivalNoOp() {
         for (Player player : Bukkit.getOnlinePlayers()) {
-            if (isNoOpSurvivalWorld(player.getWorld()) && player.isOp()) {
+            if (!isNoOpSurvivalWorld(player.getWorld())) continue;
+
+            if (player.isOp()) {
                 suspendSurvivalOp(player);
+            }
+            if (player.getGameMode() != GameMode.SURVIVAL) {
+                player.setGameMode(GameMode.SURVIVAL);
+            }
+            if (player.getAllowFlight()) {
+                player.setAllowFlight(false);
+            }
+            if (player.isFlying()) {
+                player.setFlying(false);
             }
         }
     }
@@ -3644,7 +3876,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         player.setGameMode(GameMode.SURVIVAL);
         player.setAllowFlight(false);
         player.setFlying(false);
-        player.teleport(naturalSurvivalSpawn(world));
+        player.teleport(survivalResumeLocation(player, "personal", naturalSurvivalSpawn(world)));
         suspendSurvivalOp(player);
         player.setFireTicks(0);
 
@@ -3663,7 +3895,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         player.setGameMode(GameMode.SURVIVAL);
         player.setAllowFlight(false);
         player.setFlying(false);
-        player.teleport(sharedSurvivalSpawn);
+        player.teleport(survivalResumeLocation(player, "common", sharedSurvivalSpawn));
         suspendSurvivalOp(player);
         player.setFireTicks(0);
 
@@ -3687,7 +3919,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         player.setGameMode(GameMode.SURVIVAL);
         player.setAllowFlight(false);
         player.setFlying(false);
-        player.teleport(hardcoreSpawn);
+        player.teleport(survivalResumeLocation(player, "hardcore", hardcoreSpawn));
         suspendSurvivalOp(player);
         player.setFireTicks(0);
 
@@ -3706,6 +3938,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         String leavingWorld = player.getWorld().getName();
         if (isNoOpSurvivalWorldName(leavingWorld)) {
             saveCurrentSurvivalInventory(player);
+            saveSurvivalCheckpoint(player);
         }
 
         PortalState previous = survivalPortalStates.remove(player.getUniqueId());
@@ -3887,6 +4120,7 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         boolean leavingSurvival = isNoOpSurvivalWorldName(oldWorld);
         if (leavingSurvival) {
             saveCurrentSurvivalInventory(player);
+            saveSurvivalCheckpoint(player);
         }
 
         pvpQueue.remove(player.getUniqueId());
