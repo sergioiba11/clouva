@@ -363,6 +363,48 @@ export function CommerceBulkProductImport({
     return "";
   }, [failed, files.length, groups.length, processed, stage, uploaded]);
 
+  const receivingSummary = useMemo(() => {
+    if (!groups.length) return null;
+    const groupByKey = new Map(groups.map((group) => [group.groupKey, group]));
+    const matchedKeys = new Set<string>();
+    for (const item of invoiceData?.items ?? []) {
+      for (const key of item.matched_group_keys ?? []) matchedKeys.add(key);
+    }
+    const unitCount = (group: BatchGroup) => Math.max(1, Math.floor(Number(group.unitCount) || 1));
+    const hasExternalCode = (group: BatchGroup) => Boolean(
+      group.identifier && !["sku", "clouva_barcode", "clouva_qr"].includes(group.identifier.type),
+    );
+    const detectedUnits = groups.reduce((sum, group) => sum + unitCount(group), 0);
+    const codedUnits = groups.reduce((sum, group) => sum + (hasExternalCode(group) ? unitCount(group) : 0), 0);
+    const noCodeUnits = Math.max(0, detectedUnits - codedUnits);
+    const expectedUnits = (invoiceData?.items ?? []).reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+    const matchedInvoiceUnits = (invoiceData?.items ?? []).reduce(
+      (sum, item) => sum + Math.min(Number(item.quantity || 0), Number(item.matched_quantity || 0)),
+      0,
+    );
+    const missingUnits = (invoiceData?.items ?? []).reduce(
+      (sum, item) => sum + Math.max(0, Number(item.quantity || 0) - Number(item.matched_quantity || 0)),
+      0,
+    );
+    const matchedPhysicalUnits = Array.from(matchedKeys).reduce(
+      (sum, key) => sum + (groupByKey.get(key) ? unitCount(groupByKey.get(key)!) : 0),
+      0,
+    );
+    const extraUnits = Math.max(0, detectedUnits - matchedPhysicalUnits);
+    const complete = Boolean(invoiceData?.invoice) && missingUnits === 0;
+    return {
+      detectedUnits,
+      codedUnits,
+      noCodeUnits,
+      expectedUnits,
+      matchedInvoiceUnits,
+      missingUnits,
+      extraUnits,
+      complete,
+      matchedKeys,
+    };
+  }, [groups, invoiceData]);
+
   function chooseFiles(list: FileList | null) {
     if (busy) return;
     const incoming = Array.from(list ?? []).filter((file) => file.type.startsWith("image/"));
