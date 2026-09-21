@@ -36,9 +36,11 @@ permissions:
   id-token: write
   statuses: write
 
+# Production deploys are superseded by newer main commits. Do not waste Cloud Run
+# release time deploying a stale SHA before the newest one.
 concurrency:
   group: deploy-gcp-web
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 env:
   PROJECT_ID: gen-lang-client-0737053175
