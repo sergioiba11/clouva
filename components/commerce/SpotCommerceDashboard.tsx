@@ -141,6 +141,14 @@ type Overview = {
     commissions_local?: number;
     net_local?: number;
     available_local?: number;
+    available_usd?: number;
+    pending_settlement_local?: number;
+    stock_capital_local?: number;
+    stock_retail_local?: number;
+    stock_capital_flows?: number;
+    pending_settlement_flows?: number;
+    available_flows_equivalent?: number;
+    realized_margin_local?: number;
     net_usd?: number;
     flows?: number;
     goal?: { id: string; name: string; metric: string; target_amount: number; progress_amount: number } | null;
@@ -1393,7 +1401,7 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
             <div className="relative grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-2xl border border-violet-400/25 bg-[radial-gradient(circle_at_50%_20%,rgba(168,85,247,.26),rgba(76,29,149,.08))] shadow-[0_0_28px_rgba(124,58,237,.14)]"><Store className="h-5 w-5 text-violet-200" /><span className="absolute bottom-1 right-1 h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_7px_#34d399]" /></div>
             <div className="min-w-0"><div className="flex items-center gap-2"><p className="truncate text-sm font-bold sm:text-base">MI SPOT — {data.spot.name}</p><span className="hidden rounded-full border border-emerald-400/20 bg-emerald-400/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-emerald-300 sm:inline">Activo</span></div><p className="mt-0.5 text-[11px] text-white/35">{data.studio.name} · Centro de operaciones</p></div>
           </div>
-          <div className="hidden items-center gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.025] px-4 py-2 text-xs xl:flex"><span className="font-semibold text-violet-300">◎ {decimal(data.summary.flows)} FLOWS</span><span className="h-4 w-px bg-white/10" /><span className="text-white/65">{money(data.summary.available_local, data.spot.currency)}</span><span className="h-4 w-px bg-white/10" /><span className="text-white/45">USD {decimal(data.summary.net_usd)}</span></div>
+          <div className="hidden items-center gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.025] px-4 py-2 text-xs xl:flex"><span className="font-semibold text-violet-300">Stock {money(data.summary.stock_capital_local, data.spot.currency)}</span><span className="h-4 w-px bg-white/10" /><span className="text-amber-200/80">A liquidar {money(data.summary.pending_settlement_local, data.spot.currency)}</span><span className="h-4 w-px bg-white/10" /><span className="text-emerald-200/80">Disponible {money(data.summary.available_local, data.spot.currency)}</span></div>
           <div className="flex items-center gap-2">
             <button type="button" onClick={() => setTab("sales")} className="hidden items-center gap-2 rounded-xl bg-violet-600 px-3.5 py-2.5 text-xs font-semibold shadow-[0_8px_24px_rgba(124,58,237,.25)] transition hover:bg-violet-500 sm:flex"><ShoppingCart className="h-4 w-4" /> Nueva venta</button>
             <Link href={`/studios/${data.studio.slug}/tienda`} className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.025] px-3 py-2.5 text-xs text-white/65 transition hover:border-violet-400/30 hover:text-white"><span className="hidden sm:inline">Ver tienda</span><ExternalLink className="h-4 w-4" /></Link>
@@ -1595,13 +1603,19 @@ function SpotDashboard({ data, goal, goalProgress, busy, onNavigate, onRefreshFx
         <div className="rounded-2xl border border-white/[0.08] bg-black/20 p-4 backdrop-blur-sm">
           <div className="flex items-center justify-between"><span className="text-[10px] font-bold uppercase tracking-[.18em] text-white/30">Disponible</span><BadgeDollarSign className="h-4 w-4 text-emerald-300" /></div>
           <p className="mt-3 text-3xl font-semibold tracking-tight">{money(data.summary.available_local, data.spot.currency)}</p>
-          <div className="mt-4 grid grid-cols-2 gap-2 border-t border-white/[0.08] pt-4"><div><p className="text-[9px] uppercase tracking-wider text-white/25">Neto en USD</p><p className="mt-1 text-sm font-semibold text-white/70">USD {decimal(data.summary.net_usd)}</p></div><div><p className="text-[9px] uppercase tracking-wider text-white/25">Saldo Flow</p><p className="mt-1 text-sm font-semibold text-violet-300">◎ {decimal(data.summary.flows)}</p></div></div>
+          <div className="mt-4 grid grid-cols-2 gap-2 border-t border-white/[0.08] pt-4"><div><p className="text-[9px] uppercase tracking-wider text-white/25">A liquidar</p><p className="mt-1 text-sm font-semibold text-amber-200/80">{money(data.summary.pending_settlement_local, data.spot.currency)}</p></div><div><p className="text-[9px] uppercase tracking-wider text-white/25">FLOW equivalente</p><p className="mt-1 text-sm font-semibold text-violet-300">◎ {decimal(data.summary.available_flows_equivalent)}</p></div></div>
         </div>
       </div>
     </section>
 
     <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
       {quickActions.map(({ label, detail, tab, icon: Icon, tone }) => <button key={tab} type="button" onClick={() => onNavigate(tab)} className={`group flex items-center gap-3 rounded-2xl border border-white/[0.08] bg-gradient-to-br ${tone} p-3.5 text-left transition hover:-translate-y-0.5 hover:border-white/15 sm:p-4`}><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-current/10 bg-black/20"><Icon className="h-4 w-4" /></span><span className="min-w-0 flex-1"><strong className="block text-xs text-white/80 sm:text-sm">{label}</strong><small className="mt-1 hidden text-[9px] text-white/30 sm:block">{detail}</small></span><ArrowRight className="hidden h-3.5 w-3.5 text-white/20 transition group-hover:translate-x-0.5 group-hover:text-white/55 sm:block" /></button>)}
+    </div>
+
+    <div className="grid gap-3 md:grid-cols-3">
+      <Metric label="Capital en stock" value={money(data.summary.stock_capital_local, data.spot.currency)} detail={`≈ ${decimal(data.summary.stock_capital_flows)} FLOW · costo de mercadería disponible`} icon={Boxes} />
+      <Metric label="A liquidar" value={money(data.summary.pending_settlement_local, data.spot.currency)} detail={`≈ ${decimal(data.summary.pending_settlement_flows)} FLOW · cobros iniciados pendientes`} icon={CircleDollarSign} />
+      <Metric label="Disponible" value={money(data.summary.available_local, data.spot.currency)} detail={`≈ ${decimal(data.summary.available_flows_equivalent)} FLOW · cobros ya acreditados`} icon={TrendingUp} positive />
     </div>
 
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
