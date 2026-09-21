@@ -430,3 +430,696 @@
   .avatar, .avatarFallback { width: 56px; height: 56px; }
   .day { min-height: 48px; padding: 6px; }
 }
+
+
+/* IGLÚ unified calendar — keeps CLOUVA Agenda logic, only changes the public skin. */
+.calendarRoot {
+  min-height: 100svh;
+  color: #f8fbff;
+  background: #020914;
+}
+
+.calendarBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  background-position: center top;
+  background-size: cover;
+  filter: saturate(.92) contrast(1.04);
+}
+
+.calendarBackdrop::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(0, 6, 15, .14) 0%, rgba(0, 7, 18, .58) 35%, rgba(0, 4, 11, .9) 100%),
+    radial-gradient(circle at 50% 22%, rgba(73, 183, 255, .12), transparent 34rem);
+}
+
+.calendarShell {
+  position: relative;
+  z-index: 1;
+  width: min(100%, 980px);
+  margin: 0 auto;
+  padding: max(18px, env(safe-area-inset-top)) 16px calc(118px + env(safe-area-inset-bottom));
+}
+
+.calendarTop {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 12px;
+}
+
+.calendarTopActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.calendarRoundButton {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  border: 1px solid rgba(195, 235, 255, .3);
+  border-radius: 999px;
+  color: rgba(246, 252, 255, .9);
+  background: rgba(0, 11, 24, .52);
+  box-shadow: inset 0 0 18px rgba(71, 186, 255, .08);
+  backdrop-filter: blur(14px);
+}
+
+.calendarBrand {
+  display: grid;
+  justify-items: center;
+  gap: 0;
+  margin-top: 4px;
+}
+
+.calendarBrand img {
+  width: clamp(138px, 30vw, 218px);
+  height: auto;
+  filter: drop-shadow(0 0 24px rgba(114, 211, 255, .34));
+}
+
+.calendarTitleBlock {
+  margin: 24px auto 14px;
+  text-align: center;
+}
+
+.calendarTitleBlock h1 {
+  margin: 0;
+  font-size: clamp(34px, 8vw, 58px);
+  line-height: .9;
+  font-weight: 950;
+  letter-spacing: .045em;
+  text-shadow: 0 0 28px rgba(115, 211, 255, .28);
+}
+
+.calendarTitleBlock p {
+  margin: 9px 0 0;
+  color: rgba(221, 242, 255, .62);
+  font-size: 10px;
+  font-weight: 750;
+  letter-spacing: .28em;
+  text-transform: uppercase;
+}
+
+.glassPanel {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(158, 220, 255, .4);
+  border-radius: 26px;
+  background:
+    linear-gradient(180deg, rgba(6, 30, 52, .72), rgba(1, 13, 25, .86)),
+    rgba(1, 10, 19, .78);
+  box-shadow:
+    0 20px 70px rgba(0,0,0,.48),
+    inset 0 0 0 1px rgba(255,255,255,.02),
+    inset 0 0 36px rgba(66, 177, 241, .07);
+  backdrop-filter: blur(18px);
+}
+
+.calendarPanel {
+  padding: 0 0 14px;
+}
+
+.calendarMonthBar {
+  display: grid;
+  grid-template-columns: 54px 1fr 54px;
+  align-items: center;
+  min-height: 60px;
+  border-bottom: 1px solid rgba(151, 219, 255, .17);
+  background: linear-gradient(180deg, rgba(14, 47, 76, .68), rgba(4, 20, 35, .28));
+}
+
+.calendarMonthBar strong {
+  text-align: center;
+  font-size: clamp(17px, 4.5vw, 23px);
+  letter-spacing: .02em;
+}
+
+.monthArrow {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  place-items: center;
+  justify-self: center;
+  border: 0;
+  color: white;
+  background: transparent;
+  cursor: pointer;
+}
+
+.calendarWeek {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0,1fr));
+  padding: 9px 12px 0;
+}
+
+.calendarWeek span {
+  color: rgba(220, 241, 254, .72);
+  font-size: 10px;
+  font-weight: 750;
+  text-align: center;
+  letter-spacing: .08em;
+}
+
+.calendarGrid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0,1fr));
+  padding: 4px 12px 0;
+}
+
+.calendarCell,
+.calendarBlank {
+  min-width: 0;
+  min-height: 64px;
+}
+
+.calendarCell {
+  position: relative;
+  display: grid;
+  align-content: start;
+  justify-items: center;
+  gap: 7px;
+  border: 0;
+  border-right: 1px solid rgba(123, 194, 237, .08);
+  border-bottom: 1px solid rgba(123, 194, 237, .08);
+  padding: 9px 3px 6px;
+  color: rgba(246,251,255,.9);
+  background: transparent;
+  cursor: pointer;
+  touch-action: pan-y;
+}
+
+.calendarCell:nth-child(7n) {
+  border-right: 0;
+}
+
+.calendarCellNumber {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 13px;
+  transition: .2s ease;
+}
+
+.calendarCellSelected .calendarCellNumber {
+  border-color: rgba(194, 239, 255, .8);
+  background: rgba(52, 160, 222, .28);
+  box-shadow: 0 0 0 5px rgba(59, 170, 233, .09), 0 0 26px rgba(73, 191, 255, .45);
+}
+
+.calendarCellToday .calendarCellNumber {
+  color: #fff;
+  font-weight: 900;
+}
+
+.calendarCellDots {
+  display: flex;
+  min-height: 6px;
+  justify-content: center;
+  gap: 4px;
+}
+
+.statusDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 999px;
+  box-shadow: 0 0 8px currentColor;
+}
+
+.statusAvailable { color: #5ff0a2; background: currentColor; }
+.statusOccupied { color: #ff5267; background: currentColor; }
+.statusSession { color: #3ea8ff; background: currentColor; }
+.statusShow { color: #b95cff; background: currentColor; }
+.statusEvent { color: #8cdcff; background: currentColor; }
+
+.calendarLegend {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px 18px;
+  margin: 12px 14px 0;
+  padding: 11px 13px;
+  border: 1px solid rgba(138, 209, 250, .12);
+  border-radius: 15px;
+  color: rgba(227, 244, 255, .68);
+  background: rgba(0, 9, 18, .28);
+  font-size: 10px;
+}
+
+.calendarLegend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.inlinePreview {
+  position: absolute;
+  z-index: 5;
+  top: 146px;
+  right: 20px;
+  width: min(330px, 42%);
+  padding: 16px;
+  border: 1px solid rgba(161, 224, 255, .55);
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgba(5, 24, 42, .94), rgba(0, 9, 18, .96));
+  box-shadow: 0 16px 48px rgba(0,0,0,.58), 0 0 28px rgba(65, 181, 246, .13);
+  backdrop-filter: blur(16px);
+}
+
+.inlinePreviewType {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 8px;
+  color: #c57cff;
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+
+.inlinePreview h3 {
+  margin: 0;
+  font-size: 19px;
+  line-height: 1.04;
+}
+
+.inlinePreview p {
+  margin: 8px 0 0;
+  color: rgba(229, 244, 253, .62);
+  font-size: 11px;
+}
+
+.dayPanel {
+  margin-top: 14px;
+  padding: 16px;
+}
+
+.dayPanelHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.dayPanelHead h2 {
+  margin: 0;
+  font-size: clamp(19px, 5vw, 27px);
+  letter-spacing: .02em;
+}
+
+.dayPanelHead span {
+  color: rgba(224, 243, 255, .6);
+  font-size: 12px;
+}
+
+.playerRail {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  margin: 0 -4px 14px;
+  padding: 4px 4px 8px;
+  scroll-snap-type: x proximity;
+  scrollbar-width: none;
+}
+
+.playerRail::-webkit-scrollbar { display: none; }
+
+.playerBubble {
+  display: grid;
+  min-width: 74px;
+  scroll-snap-align: start;
+  justify-items: center;
+  gap: 7px;
+  border: 0;
+  padding: 0;
+  color: rgba(238, 248, 255, .84);
+  background: transparent;
+  cursor: pointer;
+}
+
+.playerBubbleAvatar {
+  position: relative;
+  display: grid;
+  width: 58px;
+  height: 58px;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid rgba(145, 215, 255, .38);
+  border-radius: 999px;
+  background: linear-gradient(145deg, rgba(61,166,226,.25), rgba(0,11,22,.96));
+  box-shadow: inset 0 0 20px rgba(67, 175, 237, .1);
+  font-size: 20px;
+  font-weight: 900;
+}
+
+.playerBubbleAvatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.playerBubbleActive .playerBubbleAvatar {
+  border-color: rgba(226, 248, 255, .92);
+  box-shadow: 0 0 0 4px rgba(79,181,242,.1), 0 0 26px rgba(71, 184, 249, .34);
+}
+
+.playerBubble strong {
+  max-width: 78px;
+  overflow: hidden;
+  font-size: 10px;
+  line-height: 1.15;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.playerBubble small {
+  margin-top: -5px;
+  color: rgba(218,239,252,.46);
+  font-size: 9px;
+}
+
+.proBadge {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  z-index: 2;
+  padding: 2px 5px;
+  border: 1px solid rgba(218, 244, 255, .68);
+  border-radius: 999px;
+  color: #02101b;
+  background: #c8f1ff;
+  font-size: 7px;
+  font-weight: 950;
+  letter-spacing: .05em;
+}
+
+.scheduleList {
+  display: grid;
+  gap: 7px;
+}
+
+.scheduleRow {
+  display: grid;
+  grid-template-columns: 72px 15px minmax(0,1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 62px;
+  border: 1px solid rgba(142, 211, 251, .15);
+  border-radius: 14px;
+  padding: 10px 12px;
+  background: linear-gradient(90deg, rgba(3, 20, 34, .8), rgba(4, 25, 43, .5));
+}
+
+.scheduleTime strong {
+  display: block;
+  font-size: 17px;
+  line-height: 1;
+}
+
+.scheduleTime small {
+  display: block;
+  margin-top: 4px;
+  color: rgba(224,243,255,.45);
+  font-size: 9px;
+}
+
+.scheduleInfo {
+  min-width: 0;
+}
+
+.scheduleInfo strong {
+  display: block;
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scheduleInfo span {
+  display: block;
+  overflow: hidden;
+  margin-top: 3px;
+  color: rgba(224,242,253,.49);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scheduleAction {
+  display: inline-flex;
+  min-width: 112px;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(137, 215, 255, .65);
+  border-radius: 999px;
+  padding: 0 14px;
+  color: #dff6ff;
+  background: rgba(34, 127, 181, .18);
+  box-shadow: inset 0 0 15px rgba(75, 181, 243, .08), 0 0 18px rgba(62, 172, 237, .08);
+  font-size: 10px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.scheduleActionMuted {
+  border-color: rgba(166, 199, 219, .18);
+  color: rgba(218,236,246,.34);
+  background: rgba(6,19,31,.52);
+  box-shadow: none;
+}
+
+.igluBottomNav {
+  position: fixed;
+  z-index: 50;
+  left: 50%;
+  bottom: max(10px, env(safe-area-inset-bottom));
+  display: grid;
+  width: min(calc(100% - 24px), 760px);
+  min-height: 74px;
+  transform: translateX(-50%);
+  grid-template-columns: repeat(5, minmax(0,1fr));
+  border: 1px solid rgba(151, 219, 255, .35);
+  border-radius: 999px;
+  background: rgba(0, 10, 21, .9);
+  box-shadow: 0 18px 55px rgba(0,0,0,.58), inset 0 0 30px rgba(59,169,232,.06);
+  backdrop-filter: blur(20px);
+}
+
+.igluBottomNav a {
+  display: grid;
+  place-items: center;
+  gap: 3px;
+  padding: 8px 2px;
+  color: rgba(232,246,255,.78);
+  font-size: 8px;
+  font-weight: 750;
+  text-decoration: none;
+  text-align: center;
+}
+
+.igluBottomNav a svg {
+  width: 20px;
+  height: 20px;
+}
+
+.igluBottomCenter {
+  position: relative;
+}
+
+.igluBottomCenter::before {
+  content: "";
+  position: absolute;
+  width: 55px;
+  height: 55px;
+  border: 2px solid rgba(255, 76, 95, .95);
+  border-radius: 999px;
+  box-shadow: 0 0 0 5px rgba(255,49,72,.08), 0 0 24px rgba(255,48,72,.42);
+}
+
+.bookingZoneBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 11px 13px;
+  border: 1px solid rgba(151, 219, 255, .2);
+  border-radius: 15px;
+  background: rgba(0, 10, 19, .38);
+}
+
+.bookingZoneBar strong {
+  display: block;
+  font-size: 13px;
+}
+
+.bookingZoneBar span {
+  color: rgba(224,243,255,.52);
+  font-size: 10px;
+}
+
+.bookingZoneBar a {
+  color: #c9f1ff;
+  font-size: 10px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.nearbyPanel {
+  margin-top: 14px;
+  padding: 16px;
+}
+
+.nearbyHero {
+  display: grid;
+  grid-template-columns: 68px minmax(0,1fr) auto;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid rgba(150, 219, 255, .28);
+  border-radius: 18px;
+  padding: 12px;
+  background: rgba(5, 28, 47, .66);
+}
+
+.nearbyHeroAvatar {
+  width: 68px;
+  height: 68px;
+  overflow: hidden;
+  border: 1px solid rgba(191, 237, 255, .52);
+  border-radius: 999px;
+  background: rgba(47,151,211,.14);
+}
+
+.nearbyHeroAvatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.nearbyHero h3 {
+  margin: 0;
+  font-size: 16px;
+}
+
+.nearbyHero p {
+  margin: 5px 0 0;
+  color: rgba(225,242,252,.5);
+  font-size: 10px;
+}
+
+.nearbyList {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.nearbyRow {
+  display: grid;
+  grid-template-columns: 48px minmax(0,1fr) auto;
+  align-items: center;
+  gap: 11px;
+  min-height: 64px;
+  border: 1px solid rgba(144, 210, 249, .12);
+  border-radius: 15px;
+  padding: 8px 10px;
+  color: inherit;
+  background: rgba(0, 12, 23, .5);
+  text-decoration: none;
+}
+
+.nearbyRow img,
+.nearbyAvatarFallback {
+  width: 48px;
+  height: 48px;
+  border-radius: 999px;
+  object-fit: cover;
+}
+
+.nearbyAvatarFallback {
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(152,218,255,.23);
+  background: rgba(59,160,218,.11);
+  font-weight: 850;
+}
+
+@media (max-width: 680px) {
+  .calendarShell {
+    padding-inline: 10px;
+  }
+
+  .calendarTop {
+    grid-template-columns: auto 1fr auto;
+  }
+
+  .calendarBrand img {
+    width: 150px;
+  }
+
+  .calendarCell,
+  .calendarBlank {
+    min-height: 54px;
+  }
+
+  .calendarCellNumber {
+    width: 29px;
+    height: 29px;
+    font-size: 12px;
+  }
+
+  .inlinePreview {
+    position: static;
+    width: auto;
+    margin: 12px 12px 0;
+  }
+
+  .scheduleRow {
+    grid-template-columns: 58px 12px minmax(0,1fr);
+    gap: 9px;
+  }
+
+  .scheduleAction {
+    grid-column: 1 / -1;
+    width: 100%;
+    min-height: 34px;
+  }
+
+  .nearbyHero {
+    grid-template-columns: 58px minmax(0,1fr);
+  }
+
+  .nearbyHeroAvatar {
+    width: 58px;
+    height: 58px;
+  }
+
+  .nearbyHero > :last-child {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 390px) {
+  .calendarShell { padding-inline: 8px; }
+  .glassPanel { border-radius: 22px; }
+  .calendarWeek, .calendarGrid { padding-inline: 8px; }
+  .calendarCell, .calendarBlank { min-height: 50px; }
+  .calendarCellNumber { width: 27px; height: 27px; font-size: 11px; }
+  .calendarLegend { gap: 8px 12px; padding-inline: 9px; }
+  .playerBubble { min-width: 68px; }
+  .scheduleRow { padding-inline: 9px; }
+}
