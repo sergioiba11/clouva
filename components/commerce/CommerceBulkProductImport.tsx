@@ -555,13 +555,14 @@ export function CommerceBulkProductImport({
     return payload.batch;
   }
 
-  async function waitForAnalyzedBatch(batch: string) {
+  async function waitForAnalyzedBatch(batch: string, requireReanalysis = false) {
     let lastStatus = "";
     for (let attempt = 0; attempt < 50; attempt += 1) {
       const current = await fetchBatchStatus(batch);
       lastStatus = current.status;
       const recoveredGroups = batchGroups(current);
-      if (recoveredGroups.length && ["review", "processing", "completed", "completed_with_errors"].includes(current.status)) {
+      const reanalysisReady = !requireReanalysis || current.metadata?.reanalyzed === true;
+      if (reanalysisReady && recoveredGroups.length && ["review", "processing", "completed", "completed_with_errors"].includes(current.status)) {
         return {
           batchId: current.id,
           status: current.status,
@@ -578,18 +579,19 @@ export function CommerceBulkProductImport({
     throw new Error(`El análisis sigue en estado ${lastStatus || "desconocido"}. Podés reanudar el lote sin volver a subir las fotos.`);
   }
 
-  async function analyzeWithRecovery(batch: string) {
+  async function analyzeWithRecovery(batch: string, force = false) {
     try {
       return await postJson<AnalyzeResponse>(
         `/api/studios/${encodeURIComponent(studioId)}/commerce/import-batches/${encodeURIComponent(batch)}/analyze`,
-        {},
+        { force },
       );
     } catch (cause) {
       // En móviles la conexión puede cerrarse aunque Cloud Run haya terminado.
       // Recuperamos el resultado persistido en Supabase en vez de crear otro lote.
       const message = cause instanceof Error ? cause.message : "";
       if (!/Failed to fetch|network|fetch/i.test(message)) throw cause;
-      return waitForAnalyzedBatch(batch);
+      if (force) await wait(3000);
+      return waitForAnalyzedBatch(batch, force);
     }
   }
 
@@ -747,6 +749,27 @@ export function CommerceBulkProductImport({
     } catch (cause) {
       setStage("error");
       setError(cause instanceof Error ? cause.message : "No se pudo analizar la factura.");
+    }
+  }
+
+  async function reanalyzeCurrentBatch() {
+    if (!batchId || busy) return;
+    setError("");
+    setStage("analyzing");
+    try {
+      const analyzed = await analyzeWithRecovery(batchId, true);
+      setGroups(analyzed.groups);
+      setProcessResults([]);
+      try {
+        const refreshedInvoice = await getJson<InvoicePayload>(
+          `/api/studios/${encodeURIComponent(studioId)}/commerce/import-batches/${encodeURIComponent(batchId)}/invoice`,
+        );
+        setInvoiceData(refreshedInvoice.invoice ? refreshedInvoice : null);
+      } catch {}
+      setStage("review");
+    } catch (cause) {
+      setStage("error");
+      setError(cause instanceof Error ? cause.message : "No se pudo reanalizar el lote.");
     }
   }
 
@@ -998,11 +1021,23 @@ export function CommerceBulkProductImport({
                 CLOUVA compara cantidades, costo unitario, códigos y los productos físicos que aparecen en las fotos.
               </p>
             </div>
-            {invoiceData?.invoice ? (
-              <span className={`w-fit rounded-full border px-2.5 py-1 text-[10px] font-semibold ${receivingSummary.complete ? "border-emerald-300/25 bg-emerald-300/[0.07] text-emerald-100" : "border-amber-300/25 bg-amber-300/[0.07] text-amber-100"}`}>
-                {receivingSummary.complete ? "CHECK FACTURA OK" : "REVISIÓN PENDIENTE"}
-              </span>
-            ) : null}
+            <div className="flex flex-wrap items-center gap-2">
+              {batchId ? (
+                <button
+                  type="button"
+                  onClick={() => void reanalyzeCurrentBatch()}
+                  disabled={busy}
+                  className="inline-flex min-h-8 items-center justify-center gap-1.5 rounded-lg border border-violet-300/20 bg-violet-300/[0.05] px-2.5 text-[10px] font-semibold text-violet-100 disabled:opacity-45"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" /> Reanalizar fotos
+                </button>
+              ) : null}
+              {invoiceData?.invoice ? (
+                <span className={`w-fit rounded-full border px-2.5 py-1 text-[10px] font-semibold ${receivingSummary.complete ? "border-emerald-300/25 bg-emerald-300/[0.07] text-emerald-100" : "border-amber-300/25 bg-amber-300/[0.07] text-amber-100"}`}>
+                  {receivingSummary.complete ? "CHECK FACTURA OK" : "REVISIÓN PENDIENTE"}
+                </span>
+              ) : null}
+            </div>
           </div>
 
           <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
