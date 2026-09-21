@@ -105,36 +105,66 @@ function imageToJpegDataUrl(source: CanvasImageSource, width: number, height: nu
   return canvas.toDataURL("image/jpeg", 0.82);
 }
 
+function readFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error(`${file.name}: no se pudo leer el archivo.`));
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.readAsDataURL(file);
+  });
+}
+
+
 async function prepareImage(file: File): Promise<PreparedImage> {
   if (!file.type.startsWith("image/")) throw new Error(`${file.name}: no es una imagen.`);
-  const bitmap = await createImageBitmap(file);
+
+  // Android/Chrome puede fallar con createImageBitmap en fotos perfectamente
+  // visualizables. Primero usamos el camino rápido y después el decoder <img>.
   try {
-    return {
-      file,
-      dataUrl: imageToJpegDataUrl(bitmap, bitmap.width, bitmap.height),
-    };
-  } finally {
-    bitmap.close();
+    const bitmap = await createImageBitmap(file);
+    try {
+      return {
+        file,
+        dataUrl: imageToJpegDataUrl(bitmap, bitmap.width, bitmap.height),
+      };
+    } finally {
+      bitmap.close();
+    }
+  } catch {
+    const url = URL.createObjectURL(file);
+    try {
+      const image = new Image();
+      image.decoding = "async";
+      image.src = url;
+      await image.decode();
+      return {
+        file,
+        dataUrl: imageToJpegDataUrl(image, image.naturalWidth, image.naturalHeight),
+      };
+    } catch {
+      // Último fallback: si ya es un formato aceptado y entra en el límite
+      // del endpoint, se envía el original sin recodificar en el navegador.
+      const supported = new Set(["image/jpeg", "image/png", "image/webp"]);
+      if (supported.has(file.type) && file.size <= 5 * 1024 * 1024) {
+        return { file, dataUrl: await readFileAsDataUrl(file) };
+      }
+      throw new Error(`${file.name}: el teléfono no pudo decodificar esta imagen. Probá compartirla o guardarla nuevamente como JPG/PNG.`);
+    } finally {
+      URL.revokeObjectURL(url);
+    }
   }
 }
 
 async function prepareDocumentDataUrl(file: File) {
   if (file.type === "application/pdf") {
     if (file.size > 12 * 1024 * 1024) throw new Error("La factura PDF debe pesar hasta 12 MB.");
-    return await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onerror = () => reject(new Error("No se pudo leer la factura."));
-      reader.onload = () => resolve(String(reader.result || ""));
-      reader.readAsDataURL(file);
-    });
+    return readFileAsDataUrl(file);
   }
   if (file.type.startsWith("image/")) {
-    const bitmap = await createImageBitmap(file);
-    try {
-      return imageToJpegDataUrl(bitmap, bitmap.width, bitmap.height);
-    } finally {
-      bitmap.close();
-    }
+    if (file.size > 12 * 1024 * 1024) throw new Error("La imagen de la factura debe pesar hasta 12 MB.");
+    // Para facturas no necesitamos recodificar en el navegador. Enviar el
+    // archivo original evita el error de Android: "The source image could not be decoded".
+    return readFileAsDataUrl(file);
   }
   throw new Error("La factura debe ser JPG, PNG, WEBP o PDF.");
 }
