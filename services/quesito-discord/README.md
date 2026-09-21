@@ -11,9 +11,9 @@ Quesito is the voice bot for **Niños Rata Server**.
 - Answers through Google Cloud Text-to-Speech.
 - Reads the live Minecraft status from `https://clouva.com.ar/api/minecraft/status`.
 - Keeps only a short in-memory conversation history. Audio is not written to disk.
-- Plays YouTube audio in the same Discord voice channel through Quesito.
-- Accepts either a YouTube URL or a YouTube search in `/play`.
-- Keeps an in-memory queue and supports pause, resume, skip, stop and volume.
+- Opens Discord's official **Watch Together** Activity from `/play`.
+- Keeps YouTube playback inside Discord's embedded YouTube player instead of extracting audio from Cloud Run.
+- Sends the selected YouTube URL next to the Activity invite so the host can paste it into the synchronized Watch Together queue.
 
 ## Discord commands
 
@@ -22,13 +22,7 @@ Quesito is the voice bot for **Niños Rata Server**.
 - `/quesito silencio`
 - `/quesito hablar`
 - `/quesito estado`
-- `/play youtube:<link o búsqueda>`
-- `/pause`
-- `/resume`
-- `/skip`
-- `/queue`
-- `/stop`
-- `/volume porcentaje:<0-200>`
+- `/play youtube:<link>`
 
 ## Runtime environment
 
@@ -51,10 +45,8 @@ The service decodes an utterance after Discord marks the speaker as silent, tran
 
 ## YouTube playback runtime
 
-The container bundles the official Linux `yt-dlp` release plus `ffmpeg`, and runs a local BgUtils PO Token provider. YouTube extraction uses the `mweb` player client plus generated Proof-of-Origin tokens so Cloud Run egress is less likely to be rejected by YouTube's anti-bot checks.
+Quesito does not extract or restream YouTube media. `/play` creates an invite for Discord's official Watch Together embedded application (application ID `880218394199220334`) in the invoking user's voice channel and posts the YouTube URL alongside it.
 
-Music never makes Quesito auto-join a channel by itself. `/play` is an explicit user action: if Quesito is not connected yet, it joins the invoking user's current voice channel.
+Playback, synchronization, queue controls, pause/seek and volume are handled inside Watch Together by Discord/YouTube.
 
-While a track is playing, Quesito does not interrupt it with TTS. Voice conversation resumes normally after the music queue finishes or is stopped.
-
-Deployment retry marker: 2026-09-20.
+Deployment retry marker: 2026-09-21.

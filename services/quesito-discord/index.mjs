@@ -1,6 +1,6 @@
 import http from "node:http";
 import { Readable } from "node:stream";
-import { execFile, spawn } from "node:child_process";
+import { execFile } from "node:child_process";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -11,6 +11,7 @@ const execFileAsync = promisify(execFile);
 import {
   Client,
   GatewayIntentBits,
+  InviteTargetType,
   REST,
   Routes,
   SlashCommandBuilder,
@@ -60,12 +61,6 @@ const STT_FALLBACK_DELAY_MS = Number(
 );
 const TTS_VOICE =
   process.env.QUESITO_TTS_VOICE?.trim() || "es-US-Chirp3-HD-Puck";
-const YOUTUBE_POT_PROVIDER_URL =
-  process.env.QUESITO_YOUTUBE_POT_PROVIDER_URL?.trim() ||
-  "http://127.0.0.1:4416";
-const YOUTUBE_POT_PROVIDER_ENTRY =
-  process.env.QUESITO_YOUTUBE_POT_PROVIDER_ENTRY?.trim() ||
-  "/opt/bgutil/server/build/main.js";
 
 if (!DISCORD_BOT_TOKEN) throw new Error("DISCORD_BOT_TOKEN is required.");
 if (!PROJECT_ID) throw new Error("GOOGLE_CLOUD_PROJECT is required.");
@@ -84,13 +79,6 @@ const guildStates = new Map();
 const histories = new Map();
 let discordLoginError = null;
 let discordLoginAttempts = 0;
-let potProviderProcess = null;
-const youtubeDiagnostics = {
-  potProviderReady: false,
-  potProviderVersion: null,
-  potProviderLastError: null,
-  lastYtDlpError: null,
-};
 const voiceDiagnostics = {
   utterances: 0,
   wakes: 0,
@@ -1003,496 +991,84 @@ function attachReceiver(state) {
 }
 
 
-const YOUTUBE_URL_RE = /^https?:\/\/(?:www\.|m\.|music\.)?(?:youtube\.com|youtu\.be)\//i;
+const WATCH_TOGETHER_APPLICATION_ID = "880218394199220334";
+const YOUTUBE_URL_RE =
+  /^https?:\/\/(?:www\.|m\.|music\.)?(?:youtube\.com|youtu\.be)\//i;
 
-function formatDuration(seconds) {
-  if (!Number.isFinite(seconds) || seconds <= 0) return "EN VIVO";
-  const total = Math.round(seconds);
-  const hours = Math.floor(total / 3600);
-  const minutes = Math.floor((total % 3600) / 60);
-  const secs = total % 60;
-  return hours > 0
-    ? [hours, minutes, secs].map((part) => String(part).padStart(2, "0")).join(":")
-    : [minutes, secs].map((part) => String(part).padStart(2, "0")).join(":");
-}
-
-function youtubeTarget(input) {
+function normalizeYouTubeInput(input) {
   const clean = String(input || "").trim();
-  if (!clean) throw new Error("Pasame un link o una búsqueda de YouTube.");
-  if (/^https?:\/\//i.test(clean) && !YOUTUBE_URL_RE.test(clean)) {
-    throw new Error("Por ahora /play acepta solamente YouTube.");
-  }
-  return YOUTUBE_URL_RE.test(clean) ? clean : "ytsearch1:" + clean;
-}
+  if (!clean) throw new Error("Pasame un link de YouTube.");
 
-function youtubeRuntimeArgs() {
-  return [
-    "--js-runtimes",
-    "node",
-    "--extractor-args",
-    "youtube:player_client=mweb",
-    "--extractor-args",
-    "youtubepot-bgutilhttp:base_url=" + YOUTUBE_POT_PROVIDER_URL,
-  ];
-}
-
-async function waitForPotProvider(timeoutMs = 12000) {
-  const started = Date.now();
-
-  while (Date.now() - started < timeoutMs) {
-    try {
-      const response = await fetch(YOUTUBE_POT_PROVIDER_URL + "/ping", {
-        signal: AbortSignal.timeout(1200),
-        cache: "no-store",
-      });
-      if (response.ok) {
-        const payload = await response.json().catch(() => ({}));
-        youtubeDiagnostics.potProviderReady = true;
-        youtubeDiagnostics.potProviderVersion = payload?.version || null;
-        youtubeDiagnostics.potProviderLastError = null;
-        return true;
-      }
-    } catch (error) {
-      youtubeDiagnostics.potProviderLastError = String(error?.message || error).slice(0, 300);
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, 300));
+  if (!YOUTUBE_URL_RE.test(clean)) {
+    throw new Error("Pegame el link del video de YouTube que querés poner.");
   }
 
-  youtubeDiagnostics.potProviderReady = false;
-  return false;
-}
-
-function startPotProvider() {
-  if (potProviderProcess && !potProviderProcess.killed) return potProviderProcess;
-
-  const child = spawn(
-    process.execPath,
-    [
-      YOUTUBE_POT_PROVIDER_ENTRY,
-      "--host",
-      "127.0.0.1",
-      "--port",
-      "4416",
-    ],
-    { stdio: ["ignore", "pipe", "pipe"] },
-  );
-
-  potProviderProcess = child;
-  youtubeDiagnostics.potProviderReady = false;
-
-  child.stdout.on("data", (chunk) => {
-    const message = String(chunk).trim();
-    if (message) log("QUESITO_YOUTUBE_POT", { message: message.slice(0, 500) });
-  });
-
-  child.stderr.on("data", (chunk) => {
-    const message = String(chunk).trim();
-    if (!message) return;
-    youtubeDiagnostics.potProviderLastError = message.slice(-500);
-    log("QUESITO_YOUTUBE_POT_STDERR", { message: message.slice(-500) });
-  });
-
-  child.on("error", (error) => {
-    youtubeDiagnostics.potProviderReady = false;
-    youtubeDiagnostics.potProviderLastError = String(error?.message || error).slice(0, 500);
-    log("QUESITO_YOUTUBE_POT_ERROR", {
-      error: youtubeDiagnostics.potProviderLastError,
-    });
-  });
-
-  child.on("exit", (code, signal) => {
-    if (potProviderProcess !== child) return;
-    potProviderProcess = null;
-    youtubeDiagnostics.potProviderReady = false;
-    log("QUESITO_YOUTUBE_POT_EXIT", { code, signal });
-    setTimeout(() => {
-      startPotProvider();
-      void waitForPotProvider();
-    }, 2000).unref();
-  });
-
-  void waitForPotProvider().then((ready) => {
-    log("QUESITO_YOUTUBE_POT_READY", {
-      ready,
-      version: youtubeDiagnostics.potProviderVersion,
-    });
-  });
-
-  return child;
-}
-
-async function ensurePotProvider() {
-  if (youtubeDiagnostics.potProviderReady) return;
-  startPotProvider();
-  const ready = await waitForPotProvider();
-  if (!ready) {
-    throw new Error("El desbloqueo de YouTube todavía no está listo. Probá de nuevo en unos segundos.");
-  }
-}
-
-function compactYtError(error) {
-  const raw = String(error?.stderr || error?.message || error || "");
-  youtubeDiagnostics.lastYtDlpError = raw.slice(-1200);
-
-  if (/sign in to confirm you.?re not a bot/i.test(raw)) {
-    return new Error("YouTube volvió a bloquear la salida del servidor. Reintentá el tema.");
-  }
-  if (/video unavailable|private video/i.test(raw)) {
-    return new Error("Ese video no está disponible para reproducir.");
-  }
-  return error;
-}
-
-async function resolveYouTubeTrack(input) {
-  await ensurePotProvider();
-  const target = youtubeTarget(input);
-  let stdout = "";
-
-  try {
-    const result = await execFileAsync(
-      "yt-dlp",
-      [
-        "--no-playlist",
-        ...youtubeRuntimeArgs(),
-        "--dump-single-json",
-        "--skip-download",
-        "--no-warnings",
-        target,
-      ],
-      {
-        timeout: 45000,
-        maxBuffer: 4 * 1024 * 1024,
-      },
-    );
-    stdout = result.stdout;
-  } catch (error) {
-    throw compactYtError(error);
-  }
-
-  const info = JSON.parse(stdout);
-  const url = info.webpage_url || info.original_url;
-  if (!url || !YOUTUBE_URL_RE.test(url)) {
-    throw new Error("No pude resolver ese video de YouTube.");
-  }
-
-  return {
-    id: String(info.id || ""),
-    title: String(info.title || "Video de YouTube").slice(0, 180),
-    url,
-    channel: String(info.channel || info.uploader || "YouTube").slice(0, 100),
-    duration: Number(info.duration || 0),
-    live: Boolean(info.is_live || info.live_status === "is_live"),
-  };
-}
-
-function cleanupMusicProcesses(state) {
-  for (const child of [state.musicProcess, state.musicFfmpeg]) {
-    if (!child || child.killed) continue;
-    try {
-      child.kill("SIGKILL");
-    } catch {}
-  }
-  state.musicProcess = null;
-  state.musicFfmpeg = null;
-  state.musicResource = null;
-}
-
-async function playNextMusic(state) {
-  if (state.currentTrack || !state.musicQueue?.length) return false;
-
-  state.speechEpoch += 1;
-  state.speaking = false;
-  state.speakQueue = Promise.resolve();
-
-  const interruptedSpeech = state.player.stop(true);
-  if (interruptedSpeech) {
-    state.musicIgnoreNextIdle = (state.musicIgnoreNextIdle || 0) + 1;
-  }
-
-  await ensurePotProvider();
-
-  const track = state.musicQueue.shift();
-  const source = spawn(
-    "yt-dlp",
-    [
-      "--no-playlist",
-      ...youtubeRuntimeArgs(),
-      "--no-warnings",
-      "-f",
-      "bestaudio/best",
-      "-o",
-      "-",
-      track.url,
-    ],
-    { stdio: ["ignore", "pipe", "pipe"] },
-  );
-
-  const ffmpeg = spawn(
-    "ffmpeg",
-    [
-      "-hide_banner",
-      "-loglevel",
-      "error",
-      "-i",
-      "pipe:0",
-      "-vn",
-      "-f",
-      "s16le",
-      "-ar",
-      "48000",
-      "-ac",
-      "2",
-      "pipe:1",
-    ],
-    { stdio: ["pipe", "pipe", "pipe"] },
-  );
-
-  source.stdout.pipe(ffmpeg.stdin);
-  source.stderr.on("data", (chunk) => {
-    state.musicLastError = String(chunk).slice(-500);
-    youtubeDiagnostics.lastYtDlpError = state.musicLastError;
-  });
-  ffmpeg.stderr.on("data", (chunk) => {
-    state.musicLastError = String(chunk).slice(-500);
-  });
-
-  const resource = createAudioResource(ffmpeg.stdout, {
-    inputType: StreamType.Raw,
-    inlineVolume: true,
-  });
-
-  resource.volume?.setVolume(state.musicVolume ?? 1);
-
-  state.currentTrack = track;
-  state.musicProcess = source;
-  state.musicFfmpeg = ffmpeg;
-  state.musicResource = resource;
-  state.musicStopRequested = false;
-  state.musicLastError = null;
-
-  log("QUESITO_MUSIC_PLAY", {
-    guildId: state.guildId,
-    title: track.title,
-    url: track.url,
-  });
-
-  state.player.play(resource);
-  return true;
-}
-
-function stopMusic(state) {
-  if (!state.currentTrack && !state.musicQueue?.length) return false;
-  state.musicQueue = [];
-  state.musicStopRequested = true;
-  cleanupMusicProcesses(state);
-  const stopped = state.player.stop(true);
-  if (!stopped) {
-    state.currentTrack = null;
-    state.musicStopRequested = false;
-  }
-  return true;
-}
-
-function skipMusic(state) {
-  if (!state.currentTrack) return false;
-  state.musicStopRequested = false;
-  cleanupMusicProcesses(state);
-  const stopped = state.player.stop(true);
-  if (!stopped) {
-    state.currentTrack = null;
-    void playNextMusic(state);
-  }
-  return true;
-}
-
-async function stateForMusicInteraction(interaction) {
-  const member = await interaction.guild.members.fetch(interaction.user.id);
-  const channel = member.voice.channel;
-  if (!channel) {
-    throw new Error("Metete a un canal de voz primero.");
-  }
-
-  let state = guildStates.get(interaction.guild.id);
-  if (!state || state.channelId !== channel.id) {
-    state = await joinGuildVoice(interaction.guild, channel.id);
-  }
-  return state;
-}
-
-function queueText(state) {
-  const lines = [];
-  if (state.currentTrack) {
-    lines.push(
-      "▶️ " +
-        state.currentTrack.title +
-        " · " +
-        formatDuration(state.currentTrack.duration),
-    );
-  }
-
-  for (const [index, track] of (state.musicQueue || []).slice(0, 9).entries()) {
-    lines.push(
-      String(index + 1) +
-        ". " +
-        track.title +
-        " · " +
-        formatDuration(track.duration),
-    );
-  }
-
-  return lines.length ? lines.join("\n") : "La cola está vacía.";
+  return clean;
 }
 
 const playCommand = new SlashCommandBuilder()
   .setName("play")
-  .setDescription("Reproduce un tema de YouTube para todo el canal")
+  .setDescription("Abre YouTube Watch Together para todo el canal")
   .addStringOption((opt) =>
     opt
       .setName("youtube")
-      .setDescription("Link de YouTube o nombre del tema")
+      .setDescription("Link del video de YouTube")
       .setRequired(true),
   );
 
-const pauseCommand = new SlashCommandBuilder()
-  .setName("pause")
-  .setDescription("Pausa la música de Quesito");
-
-const resumeCommand = new SlashCommandBuilder()
-  .setName("resume")
-  .setDescription("Continúa la música pausada");
-
-const skipCommand = new SlashCommandBuilder()
-  .setName("skip")
-  .setDescription("Salta al próximo tema");
-
-const queueCommand = new SlashCommandBuilder()
-  .setName("queue")
-  .setDescription("Muestra la cola de música");
-
-const stopCommand = new SlashCommandBuilder()
-  .setName("stop")
-  .setDescription("Detiene la música y vacía la cola");
-
-const volumeCommand = new SlashCommandBuilder()
-  .setName("volume")
-  .setDescription("Cambia el volumen de la música")
-  .addIntegerOption((opt) =>
-    opt
-      .setName("porcentaje")
-      .setDescription("0 a 200")
-      .setMinValue(0)
-      .setMaxValue(200)
-      .setRequired(true),
-  );
-
-const musicCommands = [
-  playCommand,
-  pauseCommand,
-  resumeCommand,
-  skipCommand,
-  queueCommand,
-  stopCommand,
-  volumeCommand,
-];
-
-const MUSIC_COMMAND_NAMES = new Set(
-  musicCommands.map((command) => command.name),
+const activityCommands = [playCommand];
+const ACTIVITY_COMMAND_NAMES = new Set(
+  activityCommands.map((command) => command.name),
 );
 
-async function handleMusicInteraction(interaction) {
-  const command = interaction.commandName;
+async function handleActivityInteraction(interaction) {
+  const member = await interaction.guild.members.fetch(interaction.user.id);
+  const voiceChannel = member.voice.channel;
 
-  if (command === "play") {
-    await interaction.deferReply();
-    const state = await stateForMusicInteraction(interaction);
-    const input = interaction.options.getString("youtube", true);
-    const track = await resolveYouTubeTrack(input);
-    track.requestedBy = interaction.user.id;
-    state.musicQueue.push(track);
-
-    const started = !state.currentTrack && (await playNextMusic(state));
-    await interaction.editReply(
-      (started ? "▶️ " : "➕ ") +
-        "**" +
-        track.title.replace(/\*/g, "") +
-        "** · " +
-        formatDuration(track.duration) +
-        "\n" +
-        track.url,
-    );
-    return;
+  if (!voiceChannel) {
+    throw new Error("Metete a un canal de voz primero.");
   }
 
-  const state = guildStates.get(interaction.guild.id);
-  if (!state) {
-    await interaction.reply({
-      content: "🧀 Quesito no está en un canal de voz.",
-      ephemeral: true,
-    });
-    return;
-  }
+  const youtubeUrl = normalizeYouTubeInput(
+    interaction.options.getString("youtube", true),
+  );
 
-  if (command === "pause") {
-    const paused = Boolean(state.currentTrack && state.player.pause(true));
-    await interaction.reply({
-      content: paused ? "⏸️ Música pausada." : "🧀 No hay música sonando.",
-      ephemeral: true,
-    });
-    return;
-  }
+  await interaction.deferReply();
 
-  if (command === "resume") {
-    const resumed = Boolean(state.currentTrack && state.player.unpause());
-    await interaction.reply({
-      content: resumed ? "▶️ Seguimos." : "🧀 No hay música pausada.",
-      ephemeral: true,
-    });
-    return;
-  }
+  const invite = await voiceChannel.createInvite({
+    maxAge: 3600,
+    maxUses: 0,
+    temporary: false,
+    unique: true,
+    targetApplication: WATCH_TOGETHER_APPLICATION_ID,
+    targetType: InviteTargetType.EmbeddedApplication,
+    reason: "Quesito /play — YouTube Watch Together",
+  });
 
-  if (command === "skip") {
-    const skipped = skipMusic(state);
-    await interaction.reply({
-      content: skipped ? "⏭️ Saltando tema." : "🧀 No hay un tema para saltar.",
-      ephemeral: true,
-    });
-    return;
-  }
+  log("QUESITO_WATCH_TOGETHER", {
+    guildId: interaction.guild.id,
+    channelId: voiceChannel.id,
+    userId: interaction.user.id,
+    youtubeUrl,
+  });
 
-  if (command === "stop") {
-    const stopped = stopMusic(state);
-    await interaction.reply({
-      content: stopped ? "⏹️ Música detenida y cola vacía." : "🧀 No hay música sonando.",
-      ephemeral: true,
-    });
-    return;
-  }
-
-  if (command === "queue") {
-    await interaction.reply({
-      content: "🎵 **Cola de Quesito**\n" + queueText(state),
-      ephemeral: true,
-    });
-    return;
-  }
-
-  if (command === "volume") {
-    const value = interaction.options.getInteger("porcentaje", true);
-    state.musicVolume = value / 100;
-    state.musicResource?.volume?.setVolume(state.musicVolume);
-    await interaction.reply({
-      content: "🔊 Volumen: " + value + "%.",
-      ephemeral: true,
-    });
-  }
+  await interaction.editReply(
+    [
+      "🎬 **YouTube Watch Together**",
+      "Entren todos desde este botón/link:",
+      invite.url,
+      "",
+      "🎵 **Tema:** " + youtubeUrl,
+      "",
+      "Cuando abra Watch Together, pegá ese link en la búsqueda y queda sincronizado para todos.",
+    ].join("\n"),
+  );
 }
 
 async function joinGuildVoice(guild, channelId) {
   const previous = guildStates.get(guild.id);
 
   if (previous) {
-    cleanupMusicProcesses(previous);
     previous.connection.destroy();
     guildStates.delete(guild.id);
   }
@@ -1532,60 +1108,7 @@ async function joinGuildVoice(guild, channelId) {
     pendingConversation: false,
     lastConversationReplyAt: 0,
     lastConversationSpeakerId: null,
-    musicQueue: [],
-    currentTrack: null,
-    musicProcess: null,
-    musicFfmpeg: null,
-    musicResource: null,
-    musicVolume: 1,
-    musicStopRequested: false,
-    musicIgnoreNextIdle: 0,
-    musicLastError: null,
   };
-
-  player.on(AudioPlayerStatus.Idle, () => {
-    if (state.musicIgnoreNextIdle > 0) {
-      state.musicIgnoreNextIdle -= 1;
-      return;
-    }
-
-    if (!state.currentTrack) return;
-
-    const finished = state.currentTrack;
-    cleanupMusicProcesses(state);
-    state.currentTrack = null;
-
-    log("QUESITO_MUSIC_IDLE", {
-      guildId: state.guildId,
-      title: finished.title,
-      stopRequested: state.musicStopRequested,
-    });
-
-    if (state.musicStopRequested) {
-      state.musicStopRequested = false;
-      return;
-    }
-
-    void playNextMusic(state).catch((error) => {
-      state.musicLastError = String(error?.message || error).slice(0, 500);
-      log("QUESITO_MUSIC_NEXT_ERROR", {
-        guildId: state.guildId,
-        error: state.musicLastError,
-      });
-    });
-  });
-
-  player.on("error", (error) => {
-    if (!state.currentTrack) return;
-    state.musicLastError = String(error?.message || error).slice(0, 500);
-    log("QUESITO_MUSIC_PLAYER_ERROR", {
-      guildId: state.guildId,
-      error: state.musicLastError,
-    });
-    cleanupMusicProcesses(state);
-    state.currentTrack = null;
-    void playNextMusic(state);
-  });
 
   guildStates.set(guild.id, state);
   attachReceiver(state);
@@ -1602,7 +1125,6 @@ async function joinGuildVoice(guild, channelId) {
   });
 
   connection.on(VoiceConnectionStatus.Destroyed, () => {
-    cleanupMusicProcesses(state);
     guildStates.delete(guild.id);
   });
 
@@ -1652,7 +1174,7 @@ async function registerCommands() {
   const rest = new REST({ version: "10" }).setToken(DISCORD_BOT_TOKEN);
   const body = [
     quesitoCommand.toJSON(),
-    ...musicCommands.map((command) => command.toJSON()),
+    ...activityCommands.map((command) => command.toJSON()),
   ];
 
   await rest.put(Routes.applicationCommands(discord.user.id), { body });
@@ -1691,19 +1213,19 @@ discord.once("ready", async () => {
 discord.on("interactionCreate", async (interaction) => {
   if (!interaction.isChatInputCommand() || !interaction.guild) return;
 
-  if (MUSIC_COMMAND_NAMES.has(interaction.commandName)) {
+  if (ACTIVITY_COMMAND_NAMES.has(interaction.commandName)) {
     try {
-      await handleMusicInteraction(interaction);
+      await handleActivityInteraction(interaction);
     } catch (error) {
-      log("QUESITO_MUSIC_COMMAND_ERROR", {
+      log("QUESITO_ACTIVITY_COMMAND_ERROR", {
         guildId: interaction.guild.id,
         command: interaction.commandName,
         error: String(error?.message || error),
       });
 
       const message =
-        "🧀 No pude reproducir eso: " +
-        String(error?.message || "error de YouTube").slice(0, 300);
+        "🧀 No pude abrir Watch Together: " +
+        String(error?.message || "error de Discord").slice(0, 300);
 
       if (interaction.deferred || interaction.replied) {
         await interaction.editReply(message).catch(() => {});
@@ -1915,7 +1437,7 @@ discord.on("guildCreate", async (guild) => {
       {
         body: [
           quesitoCommand.toJSON(),
-          ...musicCommands.map((command) => command.toJSON()),
+          ...activityCommands.map((command) => command.toJSON()),
         ],
       },
     );
@@ -1956,7 +1478,6 @@ http
         discordError: discordLoginError,
         discordLoginAttempts,
         voiceDiagnostics,
-        youtubeDiagnostics,
       }),
     );
   })
@@ -1977,8 +1498,7 @@ async function connectDiscord() {
       error: message,
     });
     setTimeout(() => {
-      startPotProvider();
-void connectDiscord();
+      void connectDiscord();
     }, 10_000).unref();
   }
 }
