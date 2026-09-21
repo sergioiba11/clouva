@@ -184,7 +184,7 @@ export default function MinecraftFamilyPage() {
         }),
       );
 
-      const byUuid = new Map<string, LiveMinecraftPlayer>();
+      const byUuid = new globalThis.Map<string, LiveMinecraftPlayer>();
       snapshots.flat().forEach((player) => byUuid.set(player.uuid, player));
       const nextPlayers = Array.from(byUuid.values()).sort((a, b) => a.name.localeCompare(b.name));
       setLivePlayers(nextPlayers);
