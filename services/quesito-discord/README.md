@@ -51,7 +51,7 @@ The service decodes an utterance after Discord marks the speaker as silent, tran
 
 ## YouTube playback runtime
 
-The container bundles the official Linux `yt-dlp` release plus `ffmpeg`. YouTube extraction explicitly enables the Node.js 22 runtime with `--js-runtimes node`; the official standalone yt-dlp build includes its EJS challenge-solver package.
+The container bundles the official Linux `yt-dlp` release plus `ffmpeg`, and runs a local BgUtils PO Token provider. YouTube extraction uses the `mweb` player client plus generated Proof-of-Origin tokens so Cloud Run egress is less likely to be rejected by YouTube's anti-bot checks.
 
 Music never makes Quesito auto-join a channel by itself. `/play` is an explicit user action: if Quesito is not connected yet, it joins the invoking user's current voice channel.
 
