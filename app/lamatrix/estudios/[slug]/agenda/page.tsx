@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
 import { notFound, permanentRedirect } from "next/navigation";
-import { StudioIdentityRenderer } from "@/components/public/StudioIdentityRenderer";
+import { IgluUnifiedCalendar } from "@/components/iglu/IgluUnifiedCalendar";
 import { PublicAgendaSection } from "@/components/public/PublicAgendaSection";
-import { loadPublicAgendaByStudio } from "@/lib/server/agenda/public";
+import { StudioIdentityRenderer } from "@/components/public/StudioIdentityRenderer";
+import { IGLU_STUDIO_SLUG } from "@/lib/iglu-radio/routes";
+import { loadCanonicalPublicAgenda, loadPublicAgendaByStudio } from "@/lib/server/agenda/public-loader";
+import { loadIgluOperationalData } from "@/lib/server/iglu/public-app";
 import { resolveStudioAlias } from "@/lib/server/public-identity-data";
-import { createAdminSupabase } from "@/lib/server/supabase";
 import { siteUrl } from "@/lib/site-url";
 
 export const dynamic = "force-dynamic";
@@ -12,13 +14,11 @@ export const dynamic = "force-dynamic";
 export async function generateMetadata({ params }: { params: Promise<{ slug: string }> }): Promise<Metadata> {
   const { slug } = await params;
   const result = await resolveStudioAlias(slug).catch(() => null);
-  if (!result) return { title: "Agenda no encontrada — CLOUVA", robots: { index: false, follow: false } };
-  const canonical = `${siteUrl}${result.publicStudio.href}/agenda`;
+  const canonical = result ? `${siteUrl}${result.publicStudio.href}/agenda` : undefined;
   return {
-    title: `Agenda de ${result.publicStudio.publicName} — CLOUVA`,
-    description: `Sesiones, clases, reuniones y fechas públicas de ${result.publicStudio.publicName}.`,
-    alternates: { canonical },
-    robots: { index: true, follow: true },
+    title: result?.studio.slug === IGLU_STUDIO_SLUG ? "Reservas — El Iglú Records" : "Agenda — CLOUVA",
+    alternates: canonical ? { canonical } : undefined,
+    robots: { index: false, follow: true },
   };
 }
 
@@ -28,20 +28,35 @@ export default async function MatrixStudioAgendaPage({ params }: { params: Promi
   if (!result) notFound();
   if (slug.toLowerCase() !== result.canonicalAlias.toLowerCase()) permanentRedirect(`${result.publicStudio.href}/agenda`);
 
-  const publicAgenda = await loadPublicAgendaByStudio({ admin: createAdminSupabase(), studioId: result.studio.id });
-  if (!publicAgenda) notFound();
-  const accent = result.layoutConfig?.page_style?.palette?.accent || result.studio.accent_color || "#8f7cff";
-  const logo = result.publicStudio.logoUrl || result.studio.logo_url;
-  const data = {
-    ...result,
-    studio: { ...result.studio, name: result.publicStudio.publicName, logo_url: logo },
-    layoutConfig: result.layoutConfig ? { ...result.layoutConfig, image_slots: { ...result.layoutConfig.image_slots, ...(logo ? { logo, "brand-lockup": logo } : {}) } } : null,
-  };
+  if (result.studio.slug.toLowerCase() === IGLU_STUDIO_SLUG) {
+    const data = await loadIgluOperationalData();
+    if (!data) notFound();
+    return (
+      <IgluUnifiedCalendar
+        players={data.players}
+        events={data.events}
+        availabilityRules={data.availabilityRules}
+        timezone={data.studioAgenda?.timezone || "America/Argentina/Buenos_Aires"}
+        bookingEnabled={Boolean(data.studioAgenda?.booking_enabled)}
+      />
+    );
+  }
+
+  const agenda = await loadPublicAgendaByStudio(result.studio.id);
+  if (!agenda) notFound();
+  const canonical = await loadCanonicalPublicAgenda("space", agenda.agenda.ownerSpaceId || "");
+  if (!canonical) notFound();
 
   return (
-    <>
-      <StudioIdentityRenderer data={data} />
-      <PublicAgendaSection identityName={result.publicStudio.publicName} agendaHref={`${result.publicStudio.href}/agenda`} accent={accent} events={publicAgenda.events} bookingEnabled={publicAgenda.agenda.booking_enabled} compact={false} description="Sesiones, clases, reuniones, grabaciones, lanzamientos y reservas públicas del Studio." />
-    </>
+    <StudioIdentityRenderer data={result} context="agenda">
+      <PublicAgendaSection
+        identityName={result.publicStudio.publicName}
+        agendaHref={`${result.publicStudio.href}/agenda`}
+        accent={result.studio.palette?.primary || result.studio.accent_color || "#8b5cf6"}
+        events={canonical.events}
+        bookingEnabled={agenda.agenda.bookingEnabled}
+        compact={false}
+      />
+    </StudioIdentityRenderer>
   );
 }
