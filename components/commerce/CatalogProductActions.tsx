@@ -1,6 +1,7 @@
 "use client";
 
-import { CheckCircle2, Eye, EyeOff, ImageIcon, LoaderCircle, Pencil, Save, Trash2, Upload, X } from "lucide-react";
+import { CheckCircle2, Eye, EyeOff, ImageIcon, LoaderCircle, Megaphone, Pencil, Save, Trash2, Upload, X } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
 
@@ -97,10 +98,12 @@ export function CatalogProductActions({
   studioId,
   listing,
   onChanged,
+  publicationHref,
 }: {
   studioId: string;
   listing: ListingForActions;
   onChanged: () => void | Promise<void>;
+  publicationHref?: string;
 }) {
   const { session } = useAuth();
   const [imagesOpen, setImagesOpen] = useState(false);
@@ -278,6 +281,9 @@ export function CatalogProductActions({
         {busyKey === "edit" ? <LoaderCircle className="h-3.5 w-3.5 animate-spin" /> : published ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
         {published ? "Ocultar de tienda" : "Publicar en tienda"}
       </button>
+      {publicationHref ? <Link href={publicationHref} className="flex items-center gap-2 rounded-lg border border-blue-400/25 bg-blue-500/[0.08] px-3 py-2 text-xs font-semibold text-blue-100 transition hover:border-blue-300/45 hover:bg-blue-500/[0.13]">
+        <Megaphone className="h-3.5 w-3.5" /> Publicar / Facebook
+      </Link> : null}
       <button type="button" disabled={anyBusy} onClick={() => { setConfirmDelete(true); setImagesOpen(false); setEditOpen(false); setLocalError(null); }} className="ml-auto flex items-center gap-2 rounded-lg border border-red-400/20 bg-red-500/[0.06] px-3 py-2 text-xs font-semibold text-red-200 transition hover:border-red-400/40 hover:bg-red-500/10 disabled:opacity-40">
         <Trash2 className="h-3.5 w-3.5" /> Eliminar
       </button>
