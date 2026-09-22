@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { analyzeCommerceProductBatch } from "@/lib/server/commerce-product-batch-recognition";
-import { reconcileCommerceInvoice, type CommerceInvoiceRecognition } from "@/lib/server/commerce-invoice-recognition";
+import { reconcileCommerceInvoiceWithAI, type CommerceInvoiceRecognition } from "@/lib/server/commerce-invoice-recognition";
 import type { CommerceIdentifierType } from "@/lib/commerce/identifiers";
 import { requireManagedSpot } from "@/lib/server/commerce-spot";
 import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
@@ -212,7 +212,7 @@ export async function POST(
           lineTotal: row.line_total == null ? null : Number(row.line_total),
         })),
       };
-      const reconciled = reconcileCommerceInvoice({ invoice: recognition, groups });
+      const reconciled = await reconcileCommerceInvoiceWithAI({ invoice: recognition, groups });
       const rowByLine = new Map((invoiceRows ?? []).map((row) => [Number(row.line_number), row]));
       for (const match of reconciled) {
         const row = rowByLine.get(match.line.lineNumber);
