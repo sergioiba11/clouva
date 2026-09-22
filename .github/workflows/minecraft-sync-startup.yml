@@ -30,6 +30,9 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
+      - name: Validate startup script
+        run: bash -n infra/minecraft/startup.sh
+
       - name: Update startup metadata without reboot
         run: |
           gcloud compute instances add-metadata "$MC_INSTANCE" \
