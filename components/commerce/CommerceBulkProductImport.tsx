@@ -636,7 +636,8 @@ export function CommerceBulkProductImport({
       // En móviles la conexión puede cerrarse aunque Cloud Run haya terminado.
       // Recuperamos el resultado persistido en Supabase en vez de crear otro lote.
       const message = cause instanceof Error ? cause.message : "";
-      if (!/Failed to fetch|network|fetch/i.test(message)) throw cause;
+      const recoverable = /Failed to fetch|network|fetch|HTTP (502|503|504|524)/i.test(message);
+      if (!recoverable) throw cause;
       if (force) await wait(3000);
       return waitForAnalyzedBatch(batch, force);
     }
@@ -865,7 +866,8 @@ export function CommerceBulkProductImport({
         );
       } catch (cause) {
         const message = cause instanceof Error ? cause.message : "";
-        if (!/Failed to fetch|network|fetch/i.test(message)) throw cause;
+        const recoverable = /Failed to fetch|network|fetch|HTTP (409|502|503|504|524)|reanálisis ya está en curso/i.test(message);
+        if (!recoverable) throw cause;
         await wait(3000);
         analyzed = await waitForAnalyzedBatch(batchId, true);
       }
