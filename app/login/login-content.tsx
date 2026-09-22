@@ -434,31 +434,41 @@ export default function LoginContent() {
         </div>
 
         <div className="mt-7 space-y-4">
-          <div className="grid grid-cols-4 gap-2" aria-label="Métodos de acceso">
-            <div className="flex min-h-12 items-center justify-center overflow-hidden rounded-xl border border-white/10 bg-white/[.04] transition hover:border-white/20 hover:bg-white/[.07]">
-              <div ref={googleButtonRef} className="grid h-10 w-10 place-items-center overflow-hidden" />
+          <div className="grid grid-cols-4 gap-2.5" aria-label="Métodos de acceso">
+            <div className="group relative flex min-h-[74px] flex-col items-center justify-center gap-1.5 overflow-hidden rounded-[18px] border border-white/12 bg-[linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,.035))] shadow-[inset_0_1px_0_rgba(255,255,255,.08),0_12px_28px_rgba(0,0,0,.18)] transition duration-200 hover:-translate-y-0.5 hover:border-white/25 hover:bg-white/[.09] hover:shadow-[inset_0_1px_0_rgba(255,255,255,.12),0_16px_34px_rgba(0,0,0,.26)]">
+              <div className="pointer-events-none absolute inset-x-3 top-0 h-px bg-gradient-to-r from-transparent via-white/35 to-transparent" aria-hidden="true" />
+              <div ref={googleButtonRef} className="grid h-10 w-10 place-items-center overflow-hidden rounded-xl" />
+              <span className="pointer-events-none text-[9px] font-semibold uppercase tracking-[0.11em] text-white/55 transition group-hover:text-white/80">Google</span>
             </div>
 
             <button
               type="button"
               disabled={loading}
               onClick={() => void onFacebook()}
-              className="flex min-h-12 items-center justify-center rounded-xl border border-white/10 bg-[#1877F2] text-white transition hover:-translate-y-0.5 hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/70 disabled:translate-y-0 disabled:cursor-wait disabled:opacity-50"
+              className="group relative flex min-h-[74px] flex-col items-center justify-center gap-1.5 overflow-hidden rounded-[18px] border border-blue-300/25 bg-[linear-gradient(180deg,rgba(24,119,242,.95),rgba(12,78,175,.88))] text-white shadow-[inset_0_1px_0_rgba(255,255,255,.20),0_12px_30px_rgba(24,119,242,.16)] transition duration-200 hover:-translate-y-0.5 hover:brightness-110 hover:shadow-[0_16px_36px_rgba(24,119,242,.24)] active:translate-y-0 active:scale-[.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-300/70 disabled:translate-y-0 disabled:cursor-wait disabled:opacity-50"
               aria-label="Continuar con Facebook"
               title="Facebook"
             >
-              <FacebookIcon />
+              <div className="grid h-9 w-9 place-items-center rounded-xl bg-white/10 shadow-[inset_0_1px_0_rgba(255,255,255,.15)]">
+                <FacebookIcon />
+              </div>
+              <span className="text-[9px] font-semibold uppercase tracking-[0.11em] text-white/80">Facebook</span>
             </button>
 
             <button
               type="button"
               onClick={onTikTok}
-              className="relative flex min-h-12 items-center justify-center rounded-xl border border-white/10 bg-black text-white transition hover:-translate-y-0.5 hover:border-white/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50"
+              className="group relative flex min-h-[74px] flex-col items-center justify-center gap-1.5 overflow-hidden rounded-[18px] border border-white/15 bg-[linear-gradient(180deg,rgba(14,14,18,.98),rgba(3,3,7,.98))] text-white shadow-[inset_0_1px_0_rgba(255,255,255,.08),-10px_8px_28px_rgba(37,244,238,.06),10px_8px_28px_rgba(254,44,85,.07)] transition duration-200 hover:-translate-y-0.5 hover:border-white/30 hover:shadow-[-12px_12px_32px_rgba(37,244,238,.10),12px_12px_32px_rgba(254,44,85,.11)] active:translate-y-0 active:scale-[.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/50"
               aria-label="Continuar con TikTok"
               title="TikTok"
             >
-              <TikTokIcon />
-              <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-violet-400" aria-hidden="true" />
+              <span className="absolute left-0 top-0 h-full w-px bg-cyan-300/35" aria-hidden="true" />
+              <span className="absolute right-0 top-0 h-full w-px bg-rose-400/35" aria-hidden="true" />
+              <div className="grid h-9 w-9 place-items-center rounded-xl border border-white/10 bg-white/[.045]">
+                <TikTokIcon />
+              </div>
+              <span className="text-[9px] font-semibold uppercase tracking-[0.11em] text-white/70">TikTok</span>
+              <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-violet-400 shadow-[0_0_10px_rgba(167,139,250,.9)]" aria-hidden="true" />
             </button>
 
             <button
@@ -467,20 +477,16 @@ export default function LoginContent() {
                 setPhoneMode((visible) => !visible);
                 setError(null);
               }}
-              className={`flex min-h-12 items-center justify-center rounded-xl border text-white transition hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-300/70 ${phoneMode ? "border-violet-300/45 bg-violet-500/20" : "border-white/10 bg-white/[.04] hover:border-white/20 hover:bg-white/[.07]"}`}
+              className={`group relative flex min-h-[74px] flex-col items-center justify-center gap-1.5 overflow-hidden rounded-[18px] border text-white shadow-[inset_0_1px_0_rgba(255,255,255,.08),0_12px_28px_rgba(0,0,0,.18)] transition duration-200 hover:-translate-y-0.5 active:translate-y-0 active:scale-[.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-300/70 ${phoneMode ? "border-violet-300/55 bg-[linear-gradient(180deg,rgba(139,92,246,.30),rgba(75,32,145,.30))] shadow-[0_0_0_1px_rgba(167,139,250,.08),0_14px_34px_rgba(108,49,214,.22)]" : "border-violet-200/15 bg-[linear-gradient(180deg,rgba(109,40,217,.12),rgba(255,255,255,.035))] hover:border-violet-200/35 hover:bg-violet-500/[.14]"}`}
               aria-label="Continuar con teléfono"
               aria-pressed={phoneMode}
               title="Teléfono"
             >
-              <PhoneIcon />
+              <div className="grid h-9 w-9 place-items-center rounded-xl border border-violet-200/15 bg-violet-300/[.08] text-violet-100">
+                <PhoneIcon />
+              </div>
+              <span className="text-[9px] font-semibold uppercase tracking-[0.11em] text-violet-100/65 transition group-hover:text-violet-100">Teléfono</span>
             </button>
-          </div>
-
-          <div className="grid grid-cols-4 gap-2 text-center text-[9px] font-medium uppercase tracking-[0.08em] text-white/35" aria-hidden="true">
-            <span>Google</span>
-            <span>Facebook</span>
-            <span>TikTok</span>
-            <span>Teléfono</span>
           </div>
 
           {phoneMode ? (
@@ -535,7 +541,7 @@ export default function LoginContent() {
               value={email}
               onChange={(event) => setEmail(event.target.value)}
               placeholder="Correo"
-              className="min-h-12 w-full rounded-2xl border border-white/10 bg-black/35 px-4 text-[15px] text-white outline-none transition placeholder:text-white/35 hover:border-white/20 focus:border-violet-300/60 focus:shadow-[0_0_0_3px_rgba(139,92,246,.10)]"
+              className="min-h-12 w-full rounded-[18px] border border-white/12 bg-[linear-gradient(180deg,rgba(255,255,255,.055),rgba(0,0,0,.24))] px-4 text-[15px] text-white shadow-[inset_0_1px_0_rgba(255,255,255,.05)] outline-none transition placeholder:text-white/30 hover:border-white/22 hover:bg-white/[.065] focus:border-violet-300/65 focus:bg-violet-400/[.055] focus:shadow-[0_0_0_3px_rgba(139,92,246,.10),0_10px_28px_rgba(82,34,160,.12)]"
             />
 
             <div className="relative">
@@ -548,7 +554,7 @@ export default function LoginContent() {
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 placeholder="Contraseña"
-                className="min-h-12 w-full rounded-2xl border border-white/10 bg-black/35 px-4 pr-16 text-[15px] text-white outline-none transition placeholder:text-white/35 hover:border-white/20 focus:border-violet-300/60 focus:shadow-[0_0_0_3px_rgba(139,92,246,.10)]"
+                className="min-h-12 w-full rounded-[18px] border border-white/12 bg-[linear-gradient(180deg,rgba(255,255,255,.055),rgba(0,0,0,.24))] px-4 pr-16 text-[15px] text-white shadow-[inset_0_1px_0_rgba(255,255,255,.05)] outline-none transition placeholder:text-white/30 hover:border-white/22 hover:bg-white/[.065] focus:border-violet-300/65 focus:bg-violet-400/[.055] focus:shadow-[0_0_0_3px_rgba(139,92,246,.10),0_10px_28px_rgba(82,34,160,.12)]"
               />
               <button
                 type="button"
@@ -562,7 +568,7 @@ export default function LoginContent() {
 
             <button
               disabled={loading}
-              className="min-h-12 w-full rounded-2xl border border-violet-200/25 bg-[linear-gradient(135deg,rgba(106,42,216,.96),rgba(130,55,246,.96),rgba(89,40,194,.96))] px-4 font-semibold text-white shadow-[0_12px_36px_rgba(87,34,184,.25)] transition hover:-translate-y-0.5 hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-300/70 disabled:translate-y-0 disabled:cursor-wait disabled:opacity-60"
+              className="min-h-12 w-full rounded-[18px] border border-violet-200/30 bg-[linear-gradient(135deg,rgba(101,35,221,.98),rgba(139,61,255,.98),rgba(91,37,200,.98))] px-4 font-semibold text-white shadow-[inset_0_1px_0_rgba(255,255,255,.18),0_14px_38px_rgba(99,44,204,.30)] transition duration-200 hover:-translate-y-0.5 hover:brightness-115 hover:shadow-[0_18px_44px_rgba(111,48,226,.38)] active:translate-y-0 active:scale-[.995] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-300/70 disabled:translate-y-0 disabled:cursor-wait disabled:opacity-60"
             >
               {loading ? "Procesando..." : "Entrar"}
             </button>
