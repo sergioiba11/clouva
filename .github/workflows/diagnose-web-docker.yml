@@ -1,0 +1,30 @@
+name: Diagnose CLOUVA web Docker build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/diagnose-web-docker.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  docker-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build production image locally
+        run: |
+          docker build --progress=plain \
+            --build-arg=NEXT_PUBLIC_SUPABASE_URL="${{ vars.NEXT_PUBLIC_SUPABASE_URL }}" \
+            --build-arg=NEXT_PUBLIC_SUPABASE_ANON_KEY="${{ vars.NEXT_PUBLIC_SUPABASE_ANON_KEY }}" \
+            --build-arg=NEXT_PUBLIC_GOOGLE_CLIENT_ID="${{ vars.NEXT_PUBLIC_GOOGLE_CLIENT_ID }}" \
+            --build-arg=NEXT_PUBLIC_GOOGLE_MAPS_API_KEY="${{ vars.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY }}" \
+            --build-arg=NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID="${{ vars.NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID }}" \
+            --build-arg=NEXT_PUBLIC_IGLU_RADIO_STREAM_URL="${{ vars.NEXT_PUBLIC_IGLU_RADIO_STREAM_URL }}" \
+            --build-arg=CLOUVA_DEPLOYED_COMMIT="$GITHUB_SHA" \
+            --build-arg=CLOUVA_DEPLOYED_REF=main \
+            --build-arg=CLOUVA_BUILD_DATE=diagnostic \
+            -t clouva-web:diagnostic .
