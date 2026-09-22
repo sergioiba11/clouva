@@ -1,7 +1,7 @@
 "use client";
 
 import { Loader2 } from "lucide-react";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
 import { SpaceCommerceWorkspace } from "@/components/commerce/SpaceCommerceWorkspace";
@@ -16,12 +16,8 @@ type SpotScope = {
 
 export default function SpotCommercePage() {
   const params = useParams<{ spotId: string }>();
-  const searchParams = useSearchParams();
   const spotId = String(params.spotId || "");
-  const requestedTab = searchParams.get("tab");
-  const initialTab = ["dashboard", "scanner", "catalog", "inventory", "sales", "orders", "codes", "settings"].includes(requestedTab || "")
-    ? requestedTab as "dashboard" | "scanner" | "catalog" | "inventory" | "sales" | "orders" | "codes" | "settings"
-    : "dashboard";
+  const [initialTab, setInitialTab] = useState<"dashboard" | "scanner" | "catalog" | "inventory" | "sales" | "orders" | "codes" | "settings">("dashboard");
   const { user, loading: authLoading } = useAuth();
   const [scope, setScope] = useState<SpotScope | null>(null);
   const [loading, setLoading] = useState(true);
@@ -42,6 +38,13 @@ export default function SpotCommercePage() {
       setLoading(false);
     }
   }, [spotId, user]);
+
+  useEffect(() => {
+    const requestedTab = new URLSearchParams(window.location.search).get("tab");
+    if (["dashboard", "scanner", "catalog", "inventory", "sales", "orders", "codes", "settings"].includes(requestedTab || "")) {
+      setInitialTab(requestedTab as "dashboard" | "scanner" | "catalog" | "inventory" | "sales" | "orders" | "codes" | "settings");
+    }
+  }, []);
 
   useEffect(() => {
     if (authLoading) return;
