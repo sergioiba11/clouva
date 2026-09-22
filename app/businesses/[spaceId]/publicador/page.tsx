@@ -6,10 +6,13 @@ export const dynamic = "force-dynamic";
 
 export default async function BusinessFacebookPublisherPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ spaceId: string }>;
+  searchParams: Promise<{ product?: string }>;
 }) {
-  const { spaceId } = await params;
+  const [{ spaceId }, query] = await Promise.all([params, searchParams]);
+  const initialProductId = typeof query.product === "string" ? query.product : null;
   const admin = createAdminSupabase();
   const { data: space, error } = await admin
     .from("spaces")
@@ -25,5 +28,5 @@ export default async function BusinessFacebookPublisherPage({
     || (space.type === "business" && space.business_kind !== "studio");
 
   if (!isBusiness || !space.legacy_commerce_spot_id) notFound();
-  return <FacebookPublisher spaceId={space.id} />;
+  return <FacebookPublisher spaceId={space.id} initialProductId={initialProductId} />;
 }
