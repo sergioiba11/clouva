@@ -463,7 +463,7 @@ export function SpotCommerceDashboard({
   const [draftListingId, setDraftListingId] = useState("");
   const [draftSaveState, setDraftSaveState] = useState<"idle" | "saving" | "saved">("idle");
   const draftKeyRef = useRef(crypto.randomUUID());
-  const [creation, setCreation] = useState({ name: "", brand: "", category: "", description: "", productKind: "physical", listingKind: "resale", cost: "", price: "", stock: "", status: "draft", size: "", color: "", presentation: "" });
+  const [creation, setCreation] = useState({ name: "", brand: "", category: "", description: "", productKind: "physical", listingKind: "resale", cost: "", price: "", stock: "", status: "draft", size: "", color: "", presentation: "", condition: "" });
   const [stockDraft, setStockDraft] = useState({ listingId: "", variantId: "", quantity: "1", note: "" });
   const [cart, setCart] = useState<Array<{ listingId: string; variantId: string | null; quantity: number }>>([]);
   const [paymentMethod, setPaymentMethod] = useState("cash");
@@ -947,6 +947,7 @@ export function SpotCommerceDashboard({
       size: typeof fields.size === "string" ? fields.size : "",
       color: typeof fields.color === "string" ? fields.color : "",
       presentation: typeof fields.presentation === "string" ? fields.presentation : "",
+      condition: typeof fields.condition === "string" ? fields.condition : "",
     });
     setRecognitionResult(recognition);
     setProductCaptures([]);
@@ -981,7 +982,7 @@ export function SpotCommerceDashboard({
     setManualCode("");
     setScanType("code_128");
     setScanResult(null);
-    setCreation({ name: "", brand: "", category: "", description: "", productKind: "physical", listingKind: "resale", cost: "", price: "", stock: "", status: "draft", size: "", color: "", presentation: "" });
+    setCreation({ name: "", brand: "", category: "", description: "", productKind: "physical", listingKind: "resale", cost: "", price: "", stock: "", status: "draft", size: "", color: "", presentation: "", condition: "" });
     setMessage("Nuevo producto listo para escanear.");
     setError(null);
   }
@@ -1080,12 +1081,12 @@ export function SpotCommerceDashboard({
     finally { setBusy(false); }
   }
 
-  async function createScannedProduct() {
+  async function createScannedProduct(targetStatus: "draft" | "published" = creation.status === "published" ? "published" : "draft") {
     if (!creation.name.trim()) {
       setError("Confirmá el nombre del producto.");
       return;
     }
-    if (creation.status === "published" && !(Number(creation.price) > 0)) {
+    if (targetStatus === "published" && !(Number(creation.price) > 0)) {
       setError("Confirmá el precio antes de publicar. El borrador puede guardarse sin precio.");
       return;
     }
@@ -1094,6 +1095,17 @@ export function SpotCommerceDashboard({
     setMessage(null);
     try {
       if (draftListingId) {
+        if (targetStatus === "published") {
+          if (!selectedCoverImage) throw new Error("Elegí la imagen que querés usar para publicar.");
+          await authFetch(`/api/studios/${encodeURIComponent(studioId)}/commerce/products/images`, {
+            method: "POST",
+            body: JSON.stringify({
+              action: "set_cover",
+              listingId: draftListingId,
+              url: selectedCoverImage,
+            }),
+          });
+        }
         const payload = await authFetch(`/api/studios/${encodeURIComponent(studioId)}/commerce/products/update`, {
           method: "POST",
           body: JSON.stringify({
@@ -1107,18 +1119,23 @@ export function SpotCommerceDashboard({
             size: creation.size,
             color: creation.color,
             presentation: creation.presentation,
+            condition: creation.condition,
             price: creation.price,
             costAmount: creation.cost,
             stock: creation.stock,
-            status: creation.status,
+            status: targetStatus,
             coverUrlCandidate: selectedCoverImage || null,
           }),
         });
         setDraftSaveState("saved");
-        setMessage(creation.status === "published"
-          ? `${creation.name} quedó publicado.`
+        setCreation((current) => ({ ...current, status: targetStatus }));
+        setMessage(targetStatus === "published"
+          ? `${creation.name} quedó publicado y listo para distribuir.`
           : `${creation.name} quedó guardado como borrador. Podés salir y continuarlo después.`);
         await load();
+        if (targetStatus === "published" && directSpotId) {
+          router.push(`/mi-spot/${directSpotId}/publicaciones?product=${draftListingId}`);
+        }
         return payload;
       }
 
@@ -1156,9 +1173,10 @@ export function SpotCommerceDashboard({
             cost: creation.cost || "",
             price: creation.price || 0,
             initial_stock: creation.stock || 0,
-            status: creation.status,
+            status: targetStatus === "published" ? "draft" : targetStatus,
             cover_url: selectedCoverImage || null,
             gallery: selectedCoverImage ? [selectedCoverImage] : [],
+            metadata: { draft_fields: { condition: creation.condition } },
           },
           variant: hasVariant ? {
             size: creation.size,
@@ -1170,10 +1188,50 @@ export function SpotCommerceDashboard({
       });
       const result = payload.result as ScanResult;
       setScanResult(result);
-      if (result.listing?.id) setDraftListingId(result.listing.id);
+      if (result.listing?.id) {
+        setDraftListingId(result.listing.id);
+        if (targetStatus === "published") {
+          if (!selectedCoverImage) throw new Error("Elegí la imagen que querés usar para publicar.");
+          await authFetch(`/api/studios/${encodeURIComponent(studioId)}/commerce/products/images`, {
+            method: "POST",
+            body: JSON.stringify({
+              action: "set_cover",
+              listingId: result.listing.id,
+              url: selectedCoverImage,
+            }),
+          });
+          await authFetch(`/api/studios/${encodeURIComponent(studioId)}/commerce/products/update`, {
+            method: "POST",
+            body: JSON.stringify({
+              listingId: result.listing.id,
+              name: creation.name,
+              description: creation.description,
+              brand: creation.brand,
+              category: creation.category,
+              productKind: creation.productKind,
+              listingKind: creation.listingKind,
+              size: creation.size,
+              color: creation.color,
+              presentation: creation.presentation,
+              condition: creation.condition,
+              price: creation.price,
+              costAmount: creation.cost,
+              stock: creation.stock,
+              status: "published",
+              coverUrlCandidate: selectedCoverImage,
+            }),
+          });
+        }
+      }
+      setCreation((current) => ({ ...current, status: targetStatus }));
       setDraftSaveState("saved");
-      setMessage(`${creation.name} quedó guardado en ${data?.spot.name}.`);
+      setMessage(targetStatus === "published"
+        ? `${creation.name} quedó publicado y listo para distribuir.`
+        : `${creation.name} quedó guardado en ${data?.spot.name}.`);
       await load();
+      if (targetStatus === "published" && directSpotId && result.listing?.id) {
+        router.push(`/mi-spot/${directSpotId}/publicaciones?product=${result.listing.id}`);
+      }
       return payload;
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "No se pudo guardar el producto.");
@@ -1536,7 +1594,7 @@ export function SpotCommerceDashboard({
                 onSell={(listing, variant) => addToCart(listing, variant)}
                 onStock={(listing, variant) => { setStockDraft((current) => ({ ...current, listingId: listing.id, variantId: variant?.id || "" })); setTab("inventory"); }}
                 onPrint={(identifier) => void downloadLabel(identifier, DEFAULT_LABEL_OPTIONS, true)}
-              /> : <CreateProductForm value={creation} onChange={setCreation} onSubmit={() => void createScannedProduct()} busy={busy} globalMatch={Boolean(scanResult?.catalog_product)} scannedCode={manualCode} scanType={scanType} onScan={() => void startScanner()} />}
+              /> : <CreateProductForm value={creation} onChange={setCreation} onSubmit={(status) => void createScannedProduct(status)} busy={busy} globalMatch={Boolean(scanResult?.catalog_product)} scannedCode={manualCode} scanType={scanType} onScan={() => void startScanner()} />}
             </div>
           </div> : null}
           </div> : null}
@@ -1730,13 +1788,13 @@ function ScanExisting({ result, onOpen, onSell, onStock, onPrint }: { result: Sc
   </div>;
 }
 
-type CreationState = { name: string; brand: string; category: string; description: string; productKind: string; listingKind: string; cost: string; price: string; stock: string; status: string; size: string; color: string; presentation: string };
-function CreateProductForm({ value, onChange, onSubmit, busy, globalMatch, scannedCode, scanType, onScan }: { value: CreationState; onChange: React.Dispatch<React.SetStateAction<CreationState>>; onSubmit: () => void; busy: boolean; globalMatch: boolean; scannedCode: string; scanType: CommerceIdentifierType; onScan: () => void }) {
+type CreationState = { name: string; brand: string; category: string; description: string; productKind: string; listingKind: string; cost: string; price: string; stock: string; status: string; size: string; color: string; presentation: string; condition: string };
+function CreateProductForm({ value, onChange, onSubmit, busy, globalMatch, scannedCode, scanType, onScan }: { value: CreationState; onChange: React.Dispatch<React.SetStateAction<CreationState>>; onSubmit: (status: "draft" | "published") => void; busy: boolean; globalMatch: boolean; scannedCode: string; scanType: CommerceIdentifierType; onScan: () => void }) {
   const field = (key: keyof CreationState, placeholder: string, type = "text") => <input type={type} className={INPUT} value={value[key]} placeholder={placeholder} onChange={(event) => onChange((current) => ({ ...current, [key]: event.target.value }))} />;
   return <div className={`${CARD} p-5`}>
     <p className="text-xs uppercase tracking-[.2em] text-violet-300">{globalMatch ? "Agregar producto global a El Iglú" : "Crear producto con este código"}</p>
     <div className="mt-4 rounded-2xl border border-violet-400/20 bg-violet-500/[0.05] p-4"><p className="text-xs font-semibold uppercase tracking-[.16em]">¿Este producto ya tiene código?</p><div className="mt-3 grid grid-cols-3 gap-2 text-xs"><button onClick={onScan} className="rounded-xl border border-white/10 p-2">Escanear cámara</button><span className="rounded-xl border border-emerald-400/20 bg-emerald-400/10 p-2 text-center text-emerald-200">Ingresado</span><span className="rounded-xl border border-white/10 p-2 text-center text-white/35">No tiene código</span></div><p className="mt-3 break-all font-mono text-xs text-white/55">{scannedCode || "Esperando código"} · {scanType.replaceAll("_", " ").toUpperCase()}</p></div>
-    <div className="mt-4 grid gap-3 sm:grid-cols-2">{field("name", "Nombre")}{field("brand", "Marca")}{field("category", "Categoría")}<select className={INPUT} value={value.productKind} onChange={(event) => onChange((current) => ({ ...current, productKind: event.target.value }))}><option value="physical">Físico</option><option value="avatar_item">Prenda 3D</option><option value="bundle">Combo físico + 3D</option><option value="digital">Digital</option></select>{field("cost", "Costo", "number")}{field("price", "Precio", "number")}{field("stock", "Stock inicial", "number")}<select className={INPUT} value={value.status} onChange={(event) => onChange((current) => ({ ...current, status: event.target.value }))}><option value="draft">Borrador</option><option value="published">Publicado</option></select>{field("color", "Color")}{field("size", "Talle")}{field("presentation", "Presentación")}<select className={INPUT} value={value.listingKind} onChange={(event) => onChange((current) => ({ ...current, listingKind: event.target.value }))}><option value="resale">Reventa</option><option value="owned_design">Diseño propio</option><option value="avatar">Avatar 3D</option><option value="combo">Combo</option></select><textarea className={`${INPUT} sm:col-span-2`} value={value.description} placeholder="Descripción" onChange={(event) => onChange((current) => ({ ...current, description: event.target.value }))} /></div><button disabled={busy} onClick={onSubmit} className="mt-4 w-full rounded-xl bg-violet-600 px-4 py-3 font-semibold disabled:opacity-50">{busy ? "Guardando…" : value.status === "published" ? "Publicar producto" : "Guardar borrador"}</button>
+    <div className="mt-4 grid gap-3 sm:grid-cols-2">{field("name", "Nombre")}{field("brand", "Marca")}{field("category", "Categoría")}<select className={INPUT} value={value.productKind} onChange={(event) => onChange((current) => ({ ...current, productKind: event.target.value }))}><option value="physical">Físico</option><option value="avatar_item">Prenda 3D</option><option value="bundle">Combo físico + 3D</option><option value="digital">Digital</option></select>{field("cost", "Costo", "number")}{field("price", "Precio", "number")}{field("stock", "Stock inicial", "number")}<select className={INPUT} value={value.condition} onChange={(event) => onChange((current) => ({ ...current, condition: event.target.value }))}><option value="">Estado del producto</option><option value="Nuevo">Nuevo</option><option value="Usado - como nuevo">Usado · como nuevo</option><option value="Usado - buen estado">Usado · buen estado</option><option value="Usado - aceptable">Usado · aceptable</option></select>{field("color", "Color")}{field("size", "Talle")}{field("presentation", "Presentación")}<select className={INPUT} value={value.listingKind} onChange={(event) => onChange((current) => ({ ...current, listingKind: event.target.value }))}><option value="resale">Reventa</option><option value="owned_design">Diseño propio</option><option value="avatar">Avatar 3D</option><option value="combo">Combo</option></select><textarea className={`${INPUT} sm:col-span-2`} value={value.description} placeholder="Descripción" onChange={(event) => onChange((current) => ({ ...current, description: event.target.value }))} /></div><div className="mt-4 grid grid-cols-2 gap-2"><button disabled={busy} onClick={() => onSubmit("draft")} className="rounded-xl border border-white/12 bg-white/[0.035] px-4 py-3 text-sm font-semibold text-white/70 disabled:opacity-50">{busy ? "Guardando…" : "Guardar borrador"}</button><button disabled={busy || !(Number(value.price) > 0) || value.stock === ""} onClick={() => onSubmit("published")} className="rounded-xl bg-violet-600 px-4 py-3 text-sm font-bold disabled:opacity-40">{busy ? "Publicando…" : "Guardar y publicar"}</button></div>
   </div>;
 }
 
