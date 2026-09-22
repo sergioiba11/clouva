@@ -182,6 +182,10 @@ jobs:
                 ;;
               FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
                 echo "::error::Cloud Build $build_id ended with status $status"
+                echo "===== Cloud Build failure details ====="
+                gcloud builds describe "$build_id"                   --project "$PROJECT_ID"                   --format='yaml(id,status,statusDetail,failureInfo,results,steps)' || true
+                echo "===== Cloud Build logs ====="
+                gcloud builds log "$build_id"                   --project "$PROJECT_ID" || true
                 exit 1
                 ;;
             esac
