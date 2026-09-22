@@ -70,6 +70,15 @@ export type CommerceBatchGroup = {
   images: CommerceBatchImageRole[];
 };
 
+export type CommerceBatchAnalysisProgress = {
+  stage: "grouping" | "consolidating" | "refining" | "done";
+  completed: number;
+  total: number;
+  provisionalProducts: number;
+  message: string;
+  updatedAt: string;
+};
+
 const GROUP_SCHEMA = {
   type: "object",
   properties: {
@@ -597,6 +606,7 @@ async function refineMergedGroup(args: {
 export async function analyzeCommerceProductBatch(args: {
   images: StoredBatchImage[];
   spotName: string;
+  onProgress?: (progress: CommerceBatchAnalysisProgress) => void | Promise<void>;
 }): Promise<CommerceBatchGroup[]> {
   if (!args.images.length) throw new Error("El lote no tiene imágenes.");
   if (args.images.length > MAX_BATCH_IMAGES) {
@@ -604,6 +614,8 @@ export async function analyzeCommerceProductBatch(args: {
   }
 
   const groups: CommerceBatchGroup[] = [];
+  const totalChunks = Math.max(1, Math.ceil(args.images.length / GROUPING_CHUNK_SIZE));
+  let completedChunks = 0;
   for (let offset = 0, chunkNumber = 1; offset < args.images.length; offset += GROUPING_CHUNK_SIZE, chunkNumber += 1) {
     const chunk = args.images.slice(offset, offset + GROUPING_CHUNK_SIZE);
     groups.push(...await analyzeChunkWithFallback({
@@ -611,18 +623,62 @@ export async function analyzeCommerceProductBatch(args: {
       spotName: args.spotName,
       chunkNumber,
     }));
+    completedChunks += 1;
+    await args.onProgress?.({
+      stage: "grouping",
+      completed: completedChunks,
+      total: totalChunks,
+      provisionalProducts: groups.length,
+      message: `Separando fotos · bloque ${completedChunks}/${totalChunks}`,
+      updatedAt: new Date().toISOString(),
+    });
   }
 
+  await args.onProgress?.({
+    stage: "consolidating",
+    completed: 0,
+    total: 1,
+    provisionalProducts: groups.length,
+    message: "Uniendo vistas repetidas y productos iguales…",
+    updatedAt: new Date().toISOString(),
+  });
   const consolidated = await consolidateGroups(groups);
+  await args.onProgress?.({
+    stage: "consolidating",
+    completed: 1,
+    total: 1,
+    provisionalProducts: consolidated.length,
+    message: `${consolidated.length} grupos candidatos · verificando unidades…`,
+    updatedAt: new Date().toISOString(),
+  });
+
   const imagesByIndex = new Map(args.images.map((image) => [image.sourceIndex, image]));
   const refined: CommerceBatchGroup[] = [];
-  for (const group of consolidated) {
+  for (let index = 0; index < consolidated.length; index += 1) {
+    const group = consolidated[index];
     refined.push(await refineMergedGroup({ group, imagesByIndex, spotName: args.spotName }));
+    await args.onProgress?.({
+      stage: "refining",
+      completed: index + 1,
+      total: consolidated.length,
+      provisionalProducts: refined.length,
+      message: `Verificando producto ${index + 1}/${consolidated.length}`,
+      updatedAt: new Date().toISOString(),
+    });
   }
 
-  return refined.map((group, index) => ({
+  const result = refined.map((group, index) => ({
     ...group,
     groupKey: `product-${String(index + 1).padStart(3, "0")}`,
     images: normalizeRoles(group.images),
   }));
+  await args.onProgress?.({
+    stage: "done",
+    completed: result.length,
+    total: result.length,
+    provisionalProducts: result.length,
+    message: `${result.length} productos listos para comparar con la factura`,
+    updatedAt: new Date().toISOString(),
+  });
+  return result;
 }
