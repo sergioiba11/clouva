@@ -1081,6 +1081,19 @@ export function SpotCommerceDashboard({
     finally { setBusy(false); }
   }
 
+  async function prepareFacebookMarketplaceDestination(productId: string) {
+    if (!businessSpaceId) return;
+    await authFetch(`/api/businesses/${encodeURIComponent(businessSpaceId)}/facebook-publisher`, {
+      method: "POST",
+      body: JSON.stringify({
+        action: "save_product_destination",
+        productId,
+        destinationType: "marketplace",
+        enabled: true,
+      }),
+    });
+  }
+
   async function createScannedProduct(targetStatus: "draft" | "published" = creation.status === "published" ? "published" : "draft") {
     if (!creation.name.trim()) {
       setError("Confirmá el nombre del producto.");
@@ -1134,7 +1147,10 @@ export function SpotCommerceDashboard({
           : `${creation.name} quedó guardado como borrador. Podés salir y continuarlo después.`);
         await load();
         if (targetStatus === "published") {
-          if (businessSpaceId) router.push(`/businesses/${businessSpaceId}/publicador?product=${draftListingId}`);
+          if (businessSpaceId) {
+            try { await prepareFacebookMarketplaceDestination(draftListingId); } catch { /* El Publicador permite activar el destino manualmente si Facebook no está disponible. */ }
+            router.push(`/businesses/${businessSpaceId}/publicador?product=${draftListingId}`);
+          }
           else if (directSpotId) router.push(`/mi-spot/${directSpotId}/publicaciones?product=${draftListingId}`);
         }
         return payload;
@@ -1231,7 +1247,10 @@ export function SpotCommerceDashboard({
         : `${creation.name} quedó guardado en ${data?.spot.name}.`);
       await load();
       if (targetStatus === "published" && result.listing?.id) {
-        if (businessSpaceId) router.push(`/businesses/${businessSpaceId}/publicador?product=${result.listing.id}`);
+        if (businessSpaceId) {
+          try { await prepareFacebookMarketplaceDestination(result.listing.id); } catch { /* El Publicador permite activar el destino manualmente si Facebook no está disponible. */ }
+          router.push(`/businesses/${businessSpaceId}/publicador?product=${result.listing.id}`);
+        }
         else if (directSpotId) router.push(`/mi-spot/${directSpotId}/publicaciones?product=${result.listing.id}`);
       }
       return payload;
