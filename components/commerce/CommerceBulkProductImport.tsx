@@ -99,6 +99,15 @@ type BatchSourceItem = {
   error: string | null;
 };
 
+type AnalysisProgress = {
+  stage: "grouping" | "consolidating" | "refining" | "done";
+  completed: number;
+  total: number;
+  provisionalProducts: number;
+  message: string;
+  updatedAt: string;
+};
+
 type BatchStatus = {
   id: string;
   status: string;
@@ -109,6 +118,7 @@ type BatchStatus = {
   error: string | null;
   metadata: {
     groups?: BatchGroup[];
+    analysis_progress?: AnalysisProgress;
     [key: string]: unknown;
   } | null;
   items?: BatchSourceItem[];
@@ -306,6 +316,7 @@ export function CommerceBulkProductImport({
   const [printingCodeGroup, setPrintingCodeGroup] = useState("");
   const [generatedCodeGroups, setGeneratedCodeGroups] = useState<Record<string, boolean>>({});
   const [updatingUnitGroup, setUpdatingUnitGroup] = useState("");
+  const [analysisProgress, setAnalysisProgress] = useState<AnalysisProgress | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -351,6 +362,27 @@ export function CommerceBulkProductImport({
       cancelled = true;
     };
   }, [studioId]);
+
+  useEffect(() => {
+    if (stage !== "analyzing" || !batchId) {
+      if (stage !== "analyzing") setAnalysisProgress(null);
+      return;
+    }
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const current = await fetchBatchStatus(batchId);
+        if (cancelled) return;
+        setAnalysisProgress(current.metadata?.analysis_progress ?? null);
+      } catch {}
+    };
+    void poll();
+    const timer = window.setInterval(() => void poll(), 1800);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [batchId, stage]);
 
   const busy = ["preparing", "uploading", "analyzing", "invoice", "creating"].includes(stage);
   const progressText = useMemo(() => {
@@ -640,6 +672,7 @@ export function CommerceBulkProductImport({
     setProcessed(0);
     setFailed(0);
     setProcessResults([]);
+    setAnalysisProgress(null);
     try {
       setStage("preparing");
       const prepared: PreparedImage[] = [];
@@ -764,6 +797,7 @@ export function CommerceBulkProductImport({
     setProcessed(0);
     setFailed(0);
     setProcessResults([]);
+    setAnalysisProgress(null);
     try {
       let analyzed: AnalyzeResponse;
       try {
@@ -1016,6 +1050,32 @@ export function CommerceBulkProductImport({
               <RefreshCw className="h-4 w-4" /> Reanudar lote
             </button>
           </div>
+        </div>
+      ) : null}
+
+      {busy && progressText ? (
+        <div className="mt-4 rounded-xl border border-violet-300/15 bg-violet-300/[0.05] px-3 py-3">
+          <div className="flex items-center gap-2 text-xs text-violet-100">
+            <LoaderCircle className="h-4 w-4 animate-spin" />
+            <span>{analysisProgress?.message || progressText}</span>
+          </div>
+          {stage === "analyzing" && analysisProgress ? (
+            <div className="mt-2">
+              <div className="h-1.5 overflow-hidden rounded-full bg-white/[0.06]">
+                <div
+                  className="h-full rounded-full bg-violet-400 transition-[width] duration-500"
+                  style={{ width: `${Math.max(6, Math.min(100, analysisProgress.total ? (analysisProgress.completed / analysisProgress.total) * 100 : 6))}%` }}
+                />
+              </div>
+              <div className="mt-1 flex items-center justify-between text-[9px] text-white/35">
+                <span>{analysisProgress.stage === "grouping" ? "Separando imágenes" : analysisProgress.stage === "consolidating" ? "Uniendo vistas/productos" : analysisProgress.stage === "refining" ? "Verificando unidades" : "Listo"}</span>
+                <span>{analysisProgress.provisionalProducts} productos provisionales</span>
+              </div>
+              {groups.length ? (
+                <p className="mt-1 text-[9px] text-white/30">Mientras termina, abajo seguís viendo el resultado anterior.</p>
+              ) : null}
+            </div>
+          ) : null}
         </div>
       ) : null}
 
