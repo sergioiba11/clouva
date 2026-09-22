@@ -354,6 +354,13 @@ public final class NinotimiTools extends JavaPlugin implements Listener, Command
         Player player = event.getPlayer();
         ensurePermanentAdmin(player);
 
+        // Axiom: builders can use the editor, while AxiomPaper itself restricts edits
+        // to the main lobby world. Permanent admins are already OP, but granting the
+        // node explicitly keeps the permission model clear and future-proof.
+        if (isPermanentAdmin(player) || builderNames.contains(normalizeName(player.getName()))) {
+            player.addAttachment(this, "axiom.default", true);
+        }
+
         String joinedSurvivalMode = activeSurvivalMode(player);
         if (joinedSurvivalMode == null) {
             joinedSurvivalMode = survivalModeKey(player.getWorld().getName());
