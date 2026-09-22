@@ -71,6 +71,7 @@ export function IgluPublicSpotHome({ data }: { data: IgluSiteData }) {
           <img src={LATEST_IGLU_ASSETS.logo} alt="El Iglú — IGLÚ Records en CLOUVA" />
         </div>
 
+        <div className={styles.contentStack}>
         <section className={styles.heroCopy}>
           <h1>El Iglú</h1>
           <p className="sr-only">{data.studio.description || data.studio.tagline || "El Iglú Records es un sello, estudio y espacio musical dentro de CLOUVA."}</p>
@@ -79,7 +80,7 @@ export function IgluPublicSpotHome({ data }: { data: IgluSiteData }) {
               <span>RESERVAR SESIÓN</span>
               <span aria-hidden="true">→</span>
             </Link>
-            <Link href={mediaHref} className={styles.playButton} aria-label="Entrar a IGLÚ Radio">
+            <Link href={mediaHref} className={styles.playButton} aria-label="Abrir IGLÚ Media / Live">
               <span aria-hidden="true">▶</span>
             </Link>
           </div>
@@ -96,21 +97,32 @@ export function IgluPublicSpotHome({ data }: { data: IgluSiteData }) {
           </div>
 
           {merchSlides.length ? (
-            <IgluMerchCarousel products={merchSlides} className={styles.merchCard} />
+            <IgluMerchCarousel products={merchSlides} className={styles.merchCard} itemClassName={styles.merchSlide} />
           ) : (
             <Link href={merchHref} className={styles.merchCard} aria-label="Merch">
               <img src={LATEST_IGLU_ASSETS.merch} alt="Merch" />
             </Link>
           )}
         </section>
+        </div>
 
         <nav className={styles.bottomNav} aria-label="Navegación principal de IGLÚ">
           <img src={LATEST_IGLU_ASSETS.bottomNav} alt="" />
-          <Link className={styles.navHome} href={IGLU_STUDIO_PATH} aria-label="Inicio" />
-          <Link className={styles.navMenu} href="/iglu/pagos-unicos" aria-label="Carta y menú" />
-          <Link className={styles.navRadio} href={IGLU_STUDIO_PATH} aria-label="IGLÚ" />
-          <Link className={styles.navSessions} href="/iglu/sesiones" aria-label="Sesiones" />
-          <Link className={styles.navProfile} href={profileHref} aria-label="Perfil" />
+          <Link className={styles.navHome} href={IGLU_STUDIO_PATH} aria-label="Inicio" aria-current="page">
+            <span className="sr-only">Inicio</span>
+          </Link>
+          <Link className={styles.navMenu} href="/iglu/pagos-unicos" aria-label="Carta y menú">
+            <span className="sr-only">Carta y menú</span>
+          </Link>
+          <Link className={styles.navRadio} href={IGLU_STUDIO_PATH} aria-label="IGLÚ">
+            <span className="sr-only">IGLÚ</span>
+          </Link>
+          <Link className={styles.navSessions} href="/iglu/sesiones" aria-label="Sesiones">
+            <span className="sr-only">Sesiones</span>
+          </Link>
+          <Link className={styles.navProfile} href={profileHref} aria-label="Perfil">
+            <span className="sr-only">Perfil</span>
+          </Link>
         </nav>
       </main>
 

@@ -60,3 +60,29 @@ test("IGLÚ booking discovers public producers without hardcoded names", async (
   assert.match(booking, /Recomendado para vos/);
   assert.match(booking, /Otros productores/);
 });
+
+
+test("IGLÚ public home exposes real mobile touch targets and non-blocking artwork", async () => {
+  const home = await read("./components/iglu/IgluPublicSpotHome.tsx");
+  const css = await read("./components/iglu/IgluPublicSpotHome.module.css");
+  assert.match(home, /contentStack/);
+  assert.match(home, /sr-only">Inicio/);
+  assert.match(home, /sr-only">Perfil/);
+  assert.match(css, /min-width:\s*44px/);
+  assert.match(css, /min-height:\s*56px/);
+  assert.match(css, /touch-action:\s*manipulation/);
+  assert.match(css, /pointer-events:\s*none/);
+  assert.match(css, /grid-template-columns:\s*20fr 22fr 16fr 22fr 20fr/);
+  assert.match(css, /transform:\s*scale\(0\.975\)/);
+});
+
+test("IGLÚ merch distinguishes a tap from a horizontal swipe", async () => {
+  const source = await read("./components/iglu/IgluMerchCarousel.tsx");
+  assert.match(source, /DRAG_THRESHOLD\s*=\s*8/);
+  assert.match(source, /onPointerDown/);
+  assert.match(source, /onPointerMove/);
+  assert.match(source, /onPointerCancel/);
+  assert.match(source, /preventDefault\(\)/);
+  assert.match(source, /pan-y pinch-zoom/);
+  assert.match(source, /pointerEvents:\s*"none"/);
+});
