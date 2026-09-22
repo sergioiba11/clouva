@@ -55,3 +55,5 @@ jobs:
         run: |
           set +e
           gcloud compute instances get-serial-port-output "$MC_INSTANCE"             --project "$PROJECT_ID"             --zone "$MC_ZONE"             --port 1 2>&1 | tail -n 1200
+
+# live runtime check 2026-09-21T22:52:00-03:00
