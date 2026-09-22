@@ -473,6 +473,12 @@ export function SpotCommerceDashboard({
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const animationRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!initialTab) return;
+    setTab(initialTab);
+    if (initialTab === "scanner") setSingleScannerOpen(true);
+  }, [initialTab]);
   const controlsRef = useRef<IScannerControls | null>(null);
   const lastScanRef = useRef<{ value: string; at: number }>({ value: "", at: 0 });
 
