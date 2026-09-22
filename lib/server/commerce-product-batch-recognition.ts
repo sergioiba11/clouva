@@ -276,10 +276,7 @@ function enforceUniqueImageAssignments(groups: CommerceBatchGroup[]) {
       winners.set(sourceIndex, sourceClaims[0].groupIndex);
       continue;
     }
-    if (sourceClaims.length >= 3) {
-      ambiguousIndexes.add(sourceIndex);
-      continue;
-    }
+    if (sourceClaims.length >= 3) ambiguousIndexes.add(sourceIndex);
     const ranked = [...sourceClaims].sort((a, b) => {
       const left = groups[a.groupIndex];
       const right = groups[b.groupIndex];
@@ -294,19 +291,113 @@ function enforceUniqueImageAssignments(groups: CommerceBatchGroup[]) {
   }
 
   const cleaned = groups.flatMap((group, groupIndex) => {
-    const images = group.images.filter((image) =>
-      !ambiguousIndexes.has(image.sourceIndex) && winners.get(image.sourceIndex) === groupIndex);
+    const images = group.images.filter((image) => winners.get(image.sourceIndex) === groupIndex);
     if (!images.length) return [];
     return [{
       ...group,
       images: normalizeRoles(images),
-      needsReview: group.needsReview || images.length !== group.images.length,
+      needsReview: group.needsReview
+        || images.length !== group.images.length
+        || images.some((image) => ambiguousIndexes.has(image.sourceIndex)),
     }];
   });
 
   return { groups: cleaned, ambiguousIndexes };
 }
 
+
+async function recoverExplicitUnassignedImages(args: {
+  images: StoredBatchImage[];
+  spotName: string;
+  chunkNumber: number;
+}): Promise<CommerceBatchGroup[]> {
+  if (!args.images.length) return [];
+  const downloaded = await Promise.all(args.images.map(async (image) => {
+    const stored = await downloadGeneratedMediaObject(image.storagePath);
+    const mimeType = stored.mimeType.startsWith("image/") ? stored.mimeType : image.mimeType;
+    return {
+      sourceIndex: image.sourceIndex,
+      mimeType,
+      data: stored.bytes.toString("base64"),
+    };
+  }));
+
+  const prompt = [
+    "Sos el segundo pase visual de CLOUVA para fotos que un primer análisis marcó como contexto.",
+    "Revisá cada imagen otra vez de forma conservadora: muchas veces un frente, dorso, código o detalle real fue descartado por error.",
+    `Spot: "${args.spotName}". Índices: ${downloaded.map((image) => image.sourceIndex).join(", ")}.`,
+    "Si una imagen muestra UNA identidad de producto reconocible (producto, caja, blister, frente, dorso, etiqueta o código), DEBE quedar dentro de un grupo.",
+    "Usá unassignedIndexes SOLO si la imagen es realmente una vista general con varios productos distintos, un comprobante, está inutilizable/borrosa o no aporta evidencia de una identidad de producto.",
+    "Varias vistas del mismo producto exacto deben quedar juntas. La cantidad de fotos nunca determina unitCount.",
+    "Si no podés demostrar más de una unidad física distinta, unitCount=1.",
+    "No inventes marca, modelo ni código. Código completo distinto = variante distinta.",
+    "Cada índice debe aparecer exactamente una vez: en un grupo o en unassignedIndexes.",
+    "Elegí un Frente por grupo, máximo una Atrás, y el resto Detalle.",
+  ].join("\n");
+
+  try {
+    const generated = await generateGoogleCloudJson({
+      model: process.env.GOOGLE_CLOUD_PRODUCT_VISION_MODEL
+        ?? process.env.GEMINI_PRODUCT_VISION_MODEL
+        ?? "gemini-2.5-flash",
+      prompt,
+      referenceImages: downloaded.map((image) => ({ mimeType: image.mimeType, data: image.data })),
+      responseJsonSchema: GROUP_SCHEMA,
+      temperature: 0,
+      maxOutputTokens: 4200,
+    });
+    const root = record(parseGroupingJson(generated.text));
+    const allowed = new Set(args.images.map((image) => image.sourceIndex));
+    const parsedGroups = (Array.isArray(root.groups) ? root.groups : [])
+      .map((group, index) => sanitizeGroup(group, allowed, `recovery-${args.chunkNumber}-group-${index + 1}`))
+      .filter((group): group is CommerceBatchGroup => Boolean(group));
+    const unique = enforceUniqueImageAssignments(parsedGroups);
+    const groups = unique.groups;
+    const assigned = new Set(groups.flatMap((group) => group.images.map((image) => image.sourceIndex)));
+    const confirmedContext = new Set<number>();
+    for (const value of Array.isArray(root.unassignedIndexes) ? root.unassignedIndexes : []) {
+      const sourceIndex = Number(value);
+      if (Number.isInteger(sourceIndex) && allowed.has(sourceIndex) && !assigned.has(sourceIndex)) {
+        confirmedContext.add(sourceIndex);
+      }
+    }
+
+    // Never silently lose a photo because the recovery model omitted it.
+    for (const sourceIndex of allowed) {
+      if (assigned.has(sourceIndex) || confirmedContext.has(sourceIndex)) continue;
+      groups.push({
+        groupKey: `recovered-single-${sourceIndex}`,
+        name: "",
+        brand: "",
+        model: "",
+        packageKind: "unknown",
+        unitCount: 1,
+        identifier: null,
+        visibleIdentifiers: [],
+        confidence: 0,
+        needsReview: true,
+        images: [{ sourceIndex, role: "Frente" }],
+      });
+    }
+    return groups;
+  } catch {
+    // A recovery failure must preserve evidence instead of throwing away a
+    // potentially real product photo.
+    return args.images.map((image) => ({
+      groupKey: `recovered-single-${image.sourceIndex}`,
+      name: "",
+      brand: "",
+      model: "",
+      packageKind: "unknown" as const,
+      unitCount: 1,
+      identifier: null,
+      visibleIdentifiers: [],
+      confidence: 0,
+      needsReview: true,
+      images: [{ sourceIndex: image.sourceIndex, role: "Frente" as const }],
+    }));
+  }
+}
 
 async function analyzeChunk(args: {
   images: StoredBatchImage[];
@@ -376,17 +467,28 @@ async function analyzeChunk(args: {
   const groups = uniqueAssignments.groups;
 
   const assigned = new Set(groups.flatMap((group) => group.images.map((image) => image.sourceIndex)));
-  const explicitContext = new Set<number>(uniqueAssignments.ambiguousIndexes);
+  const explicitUnassigned = new Set<number>();
   for (const value of Array.isArray(root.unassignedIndexes) ? root.unassignedIndexes : []) {
     const index = Number(value);
-    if (Number.isInteger(index) && allowed.has(index) && !assigned.has(index)) explicitContext.add(index);
+    if (Number.isInteger(index) && allowed.has(index) && !assigned.has(index)) explicitUnassigned.add(index);
   }
 
-  // If the model simply forgot an index, keep it as a reviewable single item.
-  // Explicit unassigned indexes are overview/context photos and must not inflate
-  // the physical product count.
+  // Dense first-pass grouping can wrongly throw away a real front/back/code
+  // photo as "context". Re-check those images in a dedicated smaller pass
+  // before we ever mark them context-only.
+  if (explicitUnassigned.size) {
+    const recoveryImages = args.images.filter((image) => explicitUnassigned.has(image.sourceIndex));
+    groups.push(...await recoverExplicitUnassignedImages({
+      images: recoveryImages,
+      spotName: args.spotName,
+      chunkNumber: args.chunkNumber,
+    }));
+  }
+
+  const assignedAfterRecovery = new Set(groups.flatMap((group) => group.images.map((image) => image.sourceIndex)));
+  // If the first model simply forgot an index, keep it as reviewable evidence.
   for (const sourceIndex of allowed) {
-    if (assigned.has(sourceIndex) || explicitContext.has(sourceIndex)) continue;
+    if (assignedAfterRecovery.has(sourceIndex) || explicitUnassigned.has(sourceIndex)) continue;
     groups.push({
       groupKey: `single-${sourceIndex}`,
       name: "",
@@ -535,14 +637,51 @@ function identitySimilarity(left: string, right: string) {
   return common / Math.max(a.size, b.size);
 }
 
+function editDistance(left: string, right: string) {
+  const a = left.replace(/\s+/g, "");
+  const b = right.replace(/\s+/g, "");
+  if (!a) return b.length;
+  if (!b) return a.length;
+  const row = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i += 1) {
+    let previous = row[0];
+    row[0] = i;
+    for (let j = 1; j <= b.length; j += 1) {
+      const current = row[j];
+      row[j] = Math.min(
+        row[j] + 1,
+        row[j - 1] + 1,
+        previous + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+      previous = current;
+    }
+  }
+  return row[b.length];
+}
+
+function looselySameBrand(left: string, right: string) {
+  const a = normalizeIdentityText(left).replace(/\s+/g, "");
+  const b = normalizeIdentityText(right).replace(/\s+/g, "");
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const shorter = a.length <= b.length ? a : b;
+  const longer = a.length > b.length ? a : b;
+  if (shorter.length >= 4 && longer.includes(shorter) && shorter.length / longer.length >= 0.6) return true;
+  const distance = editDistance(a, b);
+  return Math.max(a.length, b.length) >= 5 && distance <= Math.max(1, Math.floor(Math.max(a.length, b.length) * 0.3));
+}
+
 function externalCodeKeys(group: CommerceBatchGroup) {
   const raw = [
     ...(group.identifier ? [group.identifier] : []),
     ...group.visibleIdentifiers,
   ];
-  return new Set(raw
-    .filter((code) => !["sku", "clouva_barcode", "clouva_qr"].includes(code.type))
-    .map((code) => `${code.type}:${code.value.replace(/\s/g, "").toUpperCase()}`));
+  return new Set(raw.flatMap((code) => {
+    if (["sku", "clouva_barcode", "clouva_qr"].includes(code.type)) return [];
+    const validation = validateCommerceIdentifier(code.type, code.value);
+    if (!validation.valid) return [];
+    return [`${code.type}:${validation.value.replace(/\s/g, "").toUpperCase()}`];
+  }));
 }
 
 function hasConflictingExternalCodes(left: CommerceBatchGroup, right: CommerceBatchGroup) {
@@ -580,7 +719,7 @@ function shouldMergeCommercialIdentity(left: CommerceBatchGroup, right: Commerce
   const similarity = identitySimilarity(leftIdentity, rightIdentity);
   const nameSimilarity = identitySimilarity(left.name, right.name);
 
-  if (modelSame && (!brandConflict || similarity >= 0.72)) return true;
+  if (modelSame && (!brandConflict || looselySameBrand(left.brand, right.brand) || similarity >= 0.72)) return true;
   if (brandSame && nameSimilarity >= 0.72) return true;
   if (!brandConflict && similarity >= 0.84 && (!leftModel || !rightModel)) return true;
   return false;
