@@ -194,19 +194,19 @@ export function IgluMediaLive({ studioId, studioName, publicAlias }: { studioId:
               <>
                 <div className={styles.mediaVisual}>
                   <Radio size={38} />
-                  <strong>{fallbackTrack?.title || data.radio?.station_name || "IGLÚ MEDIA"}</strong>
+                  <strong>{hasStream ? data.radio?.station_name || "IGLÚ EN DIRECTO" : fallbackTrack?.title || "IGLÚ MEDIA"}</strong>
                   <span>
-                    {fallbackTrack
-                      ? `PLAYER · ${fallbackTrack.artist || studioName}${fallbackTrack.album ? ` · ${fallbackTrack.album}` : ""}`
-                      : hasStream
-                        ? "Señal de audio configurada"
+                    {hasStream
+                      ? "IGLÚ · EN DIRECTO"
+                      : fallbackTrack
+                        ? `PLAYER · ${fallbackTrack.artist || studioName}${fallbackTrack.album ? ` · ${fallbackTrack.album}` : ""}`
                         : "No hay transmisión ni audio principal configurado"}
                   </span>
                 </div>
-                {fallbackTrack?.audioUrl ? (
-                  <audio controls preload="metadata" src={fallbackTrack.audioUrl} style={{ width: "100%" }} />
-                ) : hasStream ? (
+                {hasStream ? (
                   <audio controls preload="none" src={data.radio?.stream_url || undefined} style={{ width: "100%" }} />
+                ) : fallbackTrack?.audioUrl ? (
+                  <audio controls preload="metadata" src={fallbackTrack.audioUrl} style={{ width: "100%" }} />
                 ) : null}
               </>
             )}
