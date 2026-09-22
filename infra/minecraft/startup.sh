@@ -55,6 +55,7 @@ docker_args=(
   --restart unless-stopped
   -p 25565:25565/tcp
   -p 19132:19132/udp
+  -p 8100:8100/tcp
   -e EULA=TRUE
   -e TYPE=PAPER
   -e VERSION=26.3
