@@ -291,8 +291,23 @@ export async function POST(
       .eq("id", batch.id);
     if (resetBatchError) throw new Error(resetBatchError.message);
 
+    const { data: expectedInvoiceRows, error: expectedInvoiceRowsError } = await admin
+      .from("commerce_product_import_invoice_items")
+      .select("description,brand,model,supplier_sku,quantity")
+      .eq("batch_id", batch.id)
+      .eq("spot_id", spot.id)
+      .order("line_number");
+    if (expectedInvoiceRowsError) throw new Error(expectedInvoiceRowsError.message);
+
     const groups = await analyzeCommerceProductBatch({
       spotName: spot.name,
+      expectedProducts: (expectedInvoiceRows ?? []).map((line) => ({
+        description: line.description || "",
+        brand: line.brand || "",
+        model: line.model || "",
+        supplierSku: line.supplier_sku || "",
+        quantity: Math.max(1, Number(line.quantity) || 1),
+      })),
       images: items.map((item) => ({
         sourceIndex: item.source_index,
         storagePath: item.storage_path,
