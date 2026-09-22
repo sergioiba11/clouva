@@ -260,14 +260,16 @@ async function analyzeChunk(args: {
     `Contexto: carga masiva para el Spot "${args.spotName}" en Argentina.`,
     "Recibís varias fotos que pueden representar productos físicos distintos, o varias vistas del mismo producto.",
     `Los índices disponibles en este bloque son: ${downloaded.map((image) => image.sourceIndex).join(", ")}.`,
-    "OBJETIVO: separar las fotos por unidad física/producto exacto y reconocer también sus cajas y códigos.",
+    "OBJETIVO: separar las fotos por IDENTIDAD COMERCIAL exacta del producto/variante y reconocer sus cajas, unidades y códigos.",
     "Una caja, packaging retail o producto suelto puede ser el objeto principal del grupo. No descartes una caja por no mostrar el producto fuera del envase.",
-    "Agrupá juntas las vistas del MISMO objeto físico cuando packaging, marcas, daños, etiquetas, fondo, modelo y/o código lo confirmen.",
-    "REGLA FUERTE: dos cajas o productos visualmente iguales con códigos completos distintos son DOS grupos distintos. Nunca los fusiones.",
-    "REGLA FUERTE: si una unidad no tiene código visible, igual debe tener su propio grupo; no inventes un código.",
-    "Si hay varias cajas iguales sin código, mantenelas separadas salvo que la evidencia visual demuestre que son fotos del mismo objeto físico.",
-    "Si una foto muestra el frente de una caja y otra su etiqueta/barcode, agrupá ambas solo cuando correspondan a la misma caja.",
-    "NO agrupes artículos distintos solo porque sean de la misma marca, modelo o categoría.",
+    "Agrupá juntas TODAS las fotos del mismo producto/variante aunque sean frente, dorso, detalle o varias unidades idénticas.",
+    "Si aparecen varias unidades físicas del mismo producto exacto, deben quedar en UN solo grupo y unitCount debe indicar cuántas unidades distintas hay.",
+    "Varias fotos del mismo objeto físico siguen contando como UNA sola unidad. No sumes una unidad por foto.",
+    "REGLA FUERTE: productos visualmente similares con códigos completos DISTINTOS son productos/variantes distintos. Nunca los fusiones.",
+    "REGLA FUERTE: el mismo EAN/UPC/barcode repetido en varias cajas identifica la misma identidad comercial; agrupá esas cajas y contá sus unidades.",
+    "Si una unidad no tiene código visible, igual puede agruparse con otra vista del mismo producto cuando marca, modelo, diseño, packaging y texto lo confirmen. No inventes un código.",
+    "Si una foto muestra el frente y otra el dorso/barcode del mismo producto, deben quedar juntas.",
+    "NO agrupes artículos distintos solo porque sean de la misma marca o categoría. Color, conector, capacidad, modelo o código distinto separan variantes.",
     "packageKind debe ser box para caja/cartón de mercadería, retail_package para blister/envase comercial, loose_product para producto suelto y unknown si no se puede determinar.",
     "unitCount es la cantidad de UNIDADES FÍSICAS del mismo producto que se ven representadas por ese grupo. Si una foto muestra 3 cajas iguales claramente separadas, unitCount=3. Si son varias fotos del mismo objeto o de las mismas 3 cajas, no sumes de nuevo. Si no podés contar con seguridad, usá 1 y needsReview=true.",
     "Leé TODOS los códigos visibles y completos en visibleIdentifiers. source=box si el código está impreso/pegado en la caja, product si está en el producto o su packaging directo.",
@@ -385,16 +387,211 @@ async function analyzeChunkWithFallback(args: {
   }
 }
 
-function mergeGroups(groups: CommerceBatchGroup[]) {
-  // Cada grupo representa una unidad física observada. Dos unidades del mismo
-  // SKU/barcode NO se fusionan: el código identifica el producto, no la unidad.
-  // Las fotos duplicadas exactas ya se colapsan antes del análisis y las vistas
-  // del mismo objeto se agrupan dentro de cada chunk visual.
-  return groups.map((group, index) => ({
-    ...group,
-    groupKey: `product-${String(index + 1).padStart(3, "0")}`,
-    images: normalizeRoles(group.images),
-  }));
+const CONSOLIDATION_SCHEMA = {
+  type: "object",
+  properties: {
+    clusters: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          groupKeys: { type: "array", items: { type: "string" } },
+          unitCount: { type: "integer", minimum: 1, maximum: 100 },
+          confidence: { type: "number", minimum: 0, maximum: 1 },
+          needsReview: { type: "boolean" },
+        },
+        required: ["groupKeys", "unitCount", "confidence", "needsReview"],
+      },
+    },
+  },
+  required: ["clusters"],
+} as const;
+
+const REFINE_SCHEMA = {
+  type: "object",
+  properties: {
+    name: { type: "string" },
+    brand: { type: "string" },
+    model: { type: "string" },
+    packageKind: { type: "string", enum: ["box", "retail_package", "loose_product", "unknown"] },
+    unitCount: { type: "integer", minimum: 1, maximum: 100 },
+    identifierValue: { type: "string" },
+    identifierType: {
+      type: "string",
+      enum: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "clouva_barcode", "clouva_qr", "sku"],
+    },
+    visibleIdentifiers: GROUP_SCHEMA.properties.groups.items.properties.visibleIdentifiers,
+    confidence: { type: "number", minimum: 0, maximum: 1 },
+    needsReview: { type: "boolean" },
+    images: GROUP_SCHEMA.properties.groups.items.properties.images,
+  },
+  required: [
+    "name", "brand", "model", "packageKind", "unitCount", "identifierValue", "identifierType",
+    "visibleIdentifiers", "confidence", "needsReview", "images",
+  ],
+} as const;
+
+function mergeClusterGroups(groups: CommerceBatchGroup[], unitCount: number, confidence: number, needsReview: boolean) {
+  const coded = groups.find((group) => group.identifier);
+  const preferred = coded ?? [...groups].sort((a, b) =>
+    (b.name.length + b.brand.length + b.model.length) - (a.name.length + a.brand.length + a.model.length))[0];
+  const imageMap = new Map<number, CommerceBatchImageRole>();
+  for (const group of groups) for (const image of group.images) imageMap.set(image.sourceIndex, image);
+  const codeMap = new Map<string, CommerceBatchVisibleIdentifier>();
+  for (const group of groups) {
+    for (const code of group.visibleIdentifiers) {
+      codeMap.set(`${code.type}:${code.value.replace(/\s/g, "").toUpperCase()}`, code);
+    }
+  }
+  return {
+    groupKey: preferred.groupKey,
+    name: preferred.name || groups.find((group) => group.name)?.name || "",
+    brand: preferred.brand || groups.find((group) => group.brand)?.brand || "",
+    model: preferred.model || groups.find((group) => group.model)?.model || "",
+    packageKind: preferred.packageKind !== "unknown"
+      ? preferred.packageKind
+      : groups.find((group) => group.packageKind !== "unknown")?.packageKind ?? "unknown",
+    unitCount: Math.max(1, Math.min(100, Math.floor(unitCount || 1))),
+    identifier: coded?.identifier ?? null,
+    visibleIdentifiers: Array.from(codeMap.values()),
+    confidence: Math.min(number01(confidence), ...groups.map((group) => group.confidence)),
+    needsReview: needsReview || groups.some((group) => group.needsReview),
+    images: normalizeRoles(Array.from(imageMap.values())),
+  } satisfies CommerceBatchGroup;
+}
+
+async function consolidateGroups(groups: CommerceBatchGroup[]) {
+  if (groups.length <= 1) return groups;
+  const prompt = [
+    "Sos el consolidador de identidad de productos de CLOUVA.",
+    "Recibís grupos preliminares creados por bloques de fotos. Algunos grupos separados son en realidad el MISMO producto/variante visto en fotos distintas.",
+    "Tu tarea es devolver clusters de groupKeys que representan la misma identidad comercial exacta.",
+    "Mismo producto exacto con mismo EAN/UPC/barcode: unilo, aunque sean varias unidades físicas.",
+    "Frente y dorso del mismo packaging deben unirse aunque uno no tenga código visible.",
+    "Marca + modelo + nombre equivalentes pueden confirmar identidad aun si una foto leyó un dato incompleto.",
+    "NO unas códigos completos distintos. NO unas colores, conectores, capacidades o modelos distintos.",
+    "unitCount es la mejor estimación de unidades físicas distintas representadas por TODO el cluster; no sumes fotos repetidas ni frente/dorso como unidades nuevas.",
+    "Cada groupKey debe aparecer una sola vez. Si no hay evidencia suficiente, dejalo como cluster individual con needsReview=true.",
+    JSON.stringify(groups.map((group) => ({
+      groupKey: group.groupKey,
+      name: group.name,
+      brand: group.brand,
+      model: group.model,
+      packageKind: group.packageKind,
+      unitCount: group.unitCount,
+      identifier: group.identifier,
+      visibleIdentifiers: group.visibleIdentifiers,
+      sourceIndexes: group.images.map((image) => image.sourceIndex),
+    }))),
+  ].join("\n");
+
+  try {
+    const generated = await generateGoogleCloudJson({
+      model: process.env.GOOGLE_CLOUD_PRODUCT_VISION_MODEL
+        ?? process.env.GEMINI_PRODUCT_VISION_MODEL
+        ?? "gemini-2.5-flash",
+      prompt,
+      responseJsonSchema: CONSOLIDATION_SCHEMA,
+      temperature: 0,
+      maxOutputTokens: 5000,
+    });
+    const root = record(parseGroupingJson(generated.text));
+    const known = new Map(groups.map((group) => [group.groupKey, group]));
+    const used = new Set<string>();
+    const consolidated: CommerceBatchGroup[] = [];
+
+    for (const raw of Array.isArray(root.clusters) ? root.clusters : []) {
+      const cluster = record(raw);
+      const keys = Array.isArray(cluster.groupKeys)
+        ? cluster.groupKeys.filter((key): key is string => typeof key === "string" && known.has(key) && !used.has(key))
+        : [];
+      if (!keys.length) continue;
+      const members = keys.map((key) => known.get(key)!).filter(Boolean);
+      const distinctCodes = new Set(
+        members.flatMap((group) => group.identifier ? [`${group.identifier.type}:${group.identifier.value.replace(/\s/g, "").toUpperCase()}`] : []),
+      );
+      // Conflicting validated codes always win over semantic similarity.
+      if (distinctCodes.size > 1) {
+        for (const member of members) {
+          used.add(member.groupKey);
+          consolidated.push(member);
+        }
+        continue;
+      }
+      keys.forEach((key) => used.add(key));
+      consolidated.push(mergeClusterGroups(
+        members,
+        Number(cluster.unitCount) || Math.max(...members.map((group) => group.unitCount)),
+        number01(cluster.confidence),
+        cluster.needsReview === true,
+      ));
+    }
+
+    for (const group of groups) if (!used.has(group.groupKey)) consolidated.push(group);
+    return consolidated;
+  } catch {
+    return groups;
+  }
+}
+
+async function refineMergedGroup(args: {
+  group: CommerceBatchGroup;
+  imagesByIndex: Map<number, StoredBatchImage>;
+  spotName: string;
+}) {
+  if (args.group.images.length <= 1 || args.group.images.length > 16) return args.group;
+  try {
+    const refs = await Promise.all(args.group.images.map(async (image) => {
+      const source = args.imagesByIndex.get(image.sourceIndex);
+      if (!source) throw new Error("Imagen de lote inexistente.");
+      const stored = await downloadGeneratedMediaObject(source.storagePath);
+      return {
+        sourceIndex: image.sourceIndex,
+        mimeType: stored.mimeType.startsWith("image/") ? stored.mimeType : source.mimeType,
+        data: stored.bytes.toString("base64"),
+      };
+    }));
+    const prompt = [
+      "Sos el verificador visual final de una identidad de producto de CLOUVA.",
+      `Spot: "${args.spotName}".`,
+      "Todas estas fotos fueron propuestas como el mismo producto/variante. Confirmá la identidad y contá unidades físicas sin duplicar vistas.",
+      "Frente, dorso y detalle del mismo objeto cuentan como UNA unidad.",
+      "Si se ven varias cajas/unidades idénticas, contalas una sola vez cada una aunque aparezcan repetidas en otras fotos.",
+      "Si descubrís códigos completos distintos o una variante claramente diferente, marcá needsReview=true; no inventes datos.",
+      `Índices: ${refs.map((ref) => ref.sourceIndex).join(", ")}.`,
+    ].join("\n");
+    const generated = await generateGoogleCloudJson({
+      model: process.env.GOOGLE_CLOUD_PRODUCT_VISION_MODEL
+        ?? process.env.GEMINI_PRODUCT_VISION_MODEL
+        ?? "gemini-2.5-flash",
+      prompt,
+      referenceImages: refs.map((ref) => ({ mimeType: ref.mimeType, data: ref.data })),
+      responseJsonSchema: REFINE_SCHEMA,
+      temperature: 0,
+      maxOutputTokens: 2600,
+    });
+    const allowed = new Set(args.group.images.map((image) => image.sourceIndex));
+    const sanitized = sanitizeGroup({
+      ...record(parseGroupingJson(generated.text)),
+      groupKey: args.group.groupKey,
+    }, allowed, args.group.groupKey);
+    if (!sanitized) return args.group;
+    const oldCode = args.group.identifier;
+    if (oldCode && sanitized.identifier
+      && `${oldCode.type}:${oldCode.value.replace(/\s/g, "").toUpperCase()}`
+        !== `${sanitized.identifier.type}:${sanitized.identifier.value.replace(/\s/g, "").toUpperCase()}`) {
+      return { ...args.group, needsReview: true };
+    }
+    return {
+      ...sanitized,
+      groupKey: args.group.groupKey,
+      visibleIdentifiers: sanitized.visibleIdentifiers.length ? sanitized.visibleIdentifiers : args.group.visibleIdentifiers,
+      identifier: sanitized.identifier ?? args.group.identifier,
+      needsReview: sanitized.needsReview || args.group.needsReview,
+    };
+  } catch {
+    return { ...args.group, needsReview: true };
+  }
 }
 
 export async function analyzeCommerceProductBatch(args: {
@@ -416,5 +613,16 @@ export async function analyzeCommerceProductBatch(args: {
     }));
   }
 
-  return mergeGroups(groups);
+  const consolidated = await consolidateGroups(groups);
+  const imagesByIndex = new Map(args.images.map((image) => [image.sourceIndex, image]));
+  const refined: CommerceBatchGroup[] = [];
+  for (const group of consolidated) {
+    refined.push(await refineMergedGroup({ group, imagesByIndex, spotName: args.spotName }));
+  }
+
+  return refined.map((group, index) => ({
+    ...group,
+    groupKey: `product-${String(index + 1).padStart(3, "0")}`,
+    images: normalizeRoles(group.images),
+  }));
 }
