@@ -298,6 +298,22 @@ export async function POST(
         storagePath: item.storage_path,
         mimeType: item.mime_type,
       })),
+      onProgress: async (progress) => {
+        await admin
+          .from("commerce_product_import_batches")
+          .update({
+            metadata: {
+              ...cleanMetadata,
+              reanalysis_count: reanalysisCount,
+              reanalysis_started_at: startedAt,
+              reanalyzed: false,
+              deleted_stale_drafts: deletedDrafts,
+              analysis_progress: progress,
+            },
+            updated_at: progress.updatedAt,
+          })
+          .eq("id", batch.id);
+      },
     });
 
     const groupByIndex = new Map<number, { key: string; summary: JsonRecord }>();
@@ -377,6 +393,14 @@ export async function POST(
           reanalyzed: true,
           deleted_stale_drafts: deletedDrafts,
           invoice_reconciled: invoice.reconciled,
+          analysis_progress: {
+            stage: "done",
+            completed: groups.length,
+            total: groups.length,
+            provisionalProducts: groups.length,
+            message: `${groups.length} productos listos`,
+            updatedAt: finishedAt,
+          },
         },
         updated_at: finishedAt,
       })
