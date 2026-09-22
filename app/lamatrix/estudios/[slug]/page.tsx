@@ -9,14 +9,14 @@ import { loadPublicAgendaByStudio } from "@/lib/server/agenda/public";
 import { resolveStudioAlias, type StudioIdentityData } from "@/lib/server/public-identity-data";
 import { createAdminSupabase } from "@/lib/server/supabase";
 import { loadIgluSiteData } from "@/lib/iglu/site-data";
-import { IGLU_STUDIO_SLUG } from "@/lib/iglu-radio/routes";
+import { IGLU_PUBLIC_ALIAS, IGLU_PUBLIC_PATH, IGLU_STUDIO_SLUG } from "@/lib/iglu-radio/routes";
 import { studioPublicHref } from "@/lib/public-studio-routes";
 import { siteUrl } from "@/lib/site-url";
 
 export const dynamic = "force-dynamic";
 
 function canonicalUrl(alias: string) {
-  return `${siteUrl}${studioPublicHref(alias)}`;
+  return `${siteUrl}${alias.toLowerCase() === IGLU_PUBLIC_ALIAS ? IGLU_PUBLIC_PATH : studioPublicHref(alias)}`;
 }
 
 function absoluteAssetUrl(url: string | null | undefined) {
@@ -92,6 +92,7 @@ export default async function MatrixStudioProfilePage({ params, searchParams }: 
   if (slug.toLowerCase() !== result.canonicalAlias.toLowerCase()) permanentRedirect(`${studioPublicHref(result.canonicalAlias)}${query.joined === "1" ? "?joined=1" : ""}`);
 
   const isIglu = result.studio.slug.toLowerCase() === IGLU_STUDIO_SLUG;
+  if (isIglu) permanentRedirect(`${IGLU_PUBLIC_PATH}${query.joined === "1" ? "?joined=1" : ""}`);
   const canonical = canonicalUrl(result.canonicalAlias);
   const structuredDescription = result.studio.seo_description || result.studio.description || result.studio.tagline || (isIglu ? "El Iglú Records es un sello, estudio y espacio musical dentro de CLOUVA: grabación, producción, artistas, sesiones e IGLÚ Radio." : undefined);
   const structuredLogo = absoluteAssetUrl(result.publicStudio.darkLogoUrl || result.studio.logo_url);

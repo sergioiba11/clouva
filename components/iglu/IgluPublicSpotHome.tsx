@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { Menu, Search, ShoppingCart, UserRound } from "lucide-react";
 import { IgluMerchCarousel } from "@/components/iglu/IgluMerchCarousel";
+import { IgluStreamButton } from "@/components/iglu/IgluStreamButton";
 import { commerceProductImages } from "@/lib/commerce-store-data";
 import type { IgluSiteData } from "@/lib/iglu/site-data";
-import { IGLU_STUDIO_PATH } from "@/lib/iglu-radio/routes";
+import { IGLU_MEDIA_PATH, IGLU_PUBLIC_PATH, IGLU_STUDIO_PATH } from "@/lib/iglu-radio/routes";
 import styles from "./IgluPublicSpotHome.module.css";
 
 const PACK_ROOT =
@@ -21,7 +22,7 @@ const LATEST_IGLU_ASSETS = {
 export function IgluPublicSpotHome({ data }: { data: IgluSiteData }) {
   const agendaHref = `${IGLU_STUDIO_PATH}/agenda`;
   const reserveHref = `${IGLU_STUDIO_PATH}/reservar`;
-  const mediaHref = `${IGLU_STUDIO_PATH}/media`;
+  const mediaHref = IGLU_MEDIA_PATH;
   const profileHref = `${IGLU_STUDIO_PATH}/perfil`;
   const merchHref = `${IGLU_STUDIO_PATH}/tienda`;
   const merchSlides = data.products.flatMap((product) => {
@@ -80,9 +81,11 @@ export function IgluPublicSpotHome({ data }: { data: IgluSiteData }) {
               <span>RESERVAR SESIÓN</span>
               <span aria-hidden="true">→</span>
             </Link>
-            <Link href={mediaHref} className={styles.playButton} aria-label="Abrir IGLÚ Media / Live">
-              <span aria-hidden="true">▶</span>
-            </Link>
+            <IgluStreamButton
+              className={styles.playButton}
+              mediaHref={mediaHref}
+              studioName={data.publicStudio.publicName}
+            />
           </div>
         </section>
 
@@ -108,13 +111,13 @@ export function IgluPublicSpotHome({ data }: { data: IgluSiteData }) {
 
         <nav className={styles.bottomNav} aria-label="Navegación principal de IGLÚ">
           <img src={LATEST_IGLU_ASSETS.bottomNav} alt="" />
-          <Link className={styles.navHome} href={IGLU_STUDIO_PATH} aria-label="Inicio" aria-current="page">
+          <Link className={styles.navHome} href={IGLU_PUBLIC_PATH} aria-label="Inicio" aria-current="page">
             <span className="sr-only">Inicio</span>
           </Link>
           <Link className={styles.navMenu} href="/iglu/pagos-unicos" aria-label="Carta y menú">
             <span className="sr-only">Carta y menú</span>
           </Link>
-          <Link className={styles.navRadio} href={IGLU_STUDIO_PATH} aria-label="IGLÚ">
+          <Link className={styles.navRadio} href={IGLU_PUBLIC_PATH} aria-label="IGLÚ">
             <span className="sr-only">IGLÚ</span>
           </Link>
           <Link className={styles.navSessions} href="/iglu/sesiones" aria-label="Sesiones">

@@ -1,10 +1,13 @@
 import type { Metadata } from "next";
 import { notFound, redirect } from "next/navigation";
+import { IgluPublicSpotHome } from "@/components/iglu/IgluPublicSpotHome";
 import { PlayerIdentityRenderer } from "@/components/public/PlayerIdentityRenderer";
 import { SpacePublicView } from "@/components/public/SpacePublicView";
 import { PublicAgendaSection } from "@/components/public/PublicAgendaSection";
 import { PublicKnowledgeSection } from "@/components/public/PublicKnowledgeSection";
 import { PublicMerchSection, loadPublicMerchProducts } from "@/components/public/PublicMerchSection";
+import { IGLU_PUBLIC_ALIAS, IGLU_PUBLIC_PATH } from "@/lib/iglu-radio/routes";
+import { loadIgluSiteData } from "@/lib/iglu/site-data";
 import { buildPlayerStructuredData } from "@/lib/seo/player-structured-data";
 import { loadPublicAgendaByPlayer } from "@/lib/server/agenda/public-loader";
 import { loadPublicKnowledgeByPlayer } from "@/lib/server/knowledge/public-loader";
@@ -16,6 +19,22 @@ export const dynamic = "force-dynamic";
 
 export async function generateMetadata({ params }: { params: Promise<{ publicAlias: string }> }): Promise<Metadata> {
   const { publicAlias } = await params;
+  if (publicAlias.toLowerCase() === IGLU_PUBLIC_ALIAS) {
+    const data = await loadIgluSiteData().catch(() => null);
+    if (!data) return { title: "El Iglú Records — CLOUVA", robots: { index: false, follow: false } };
+    const canonical = `https://clouva.com.ar${IGLU_PUBLIC_PATH}`;
+    const title = data.studio.seo_title || "El Iglú Records — estudio, sello y música en CLOUVA";
+    const description = data.studio.seo_description || data.studio.description || data.studio.tagline || "El Iglú Records es un sello, estudio y espacio musical dentro de CLOUVA.";
+    const image = data.studio.og_image_url || data.studio.cover_url || data.publicStudio.darkLogoUrl || data.studio.logo_url || undefined;
+    return {
+      title,
+      description,
+      alternates: { canonical },
+      robots: { index: true, follow: true },
+      openGraph: { type: "website", url: canonical, title, description, images: image ? [{ url: image, alt: "El Iglú — IGLÚ Records en CLOUVA" }] : undefined, siteName: "CLOUVA" },
+      twitter: { card: image ? "summary_large_image" : "summary", title, description, images: image ? [image] : undefined },
+    };
+  }
   const playerResult = await resolvePlayerAlias(publicAlias).catch(() => null);
   if (playerResult) {
     const { player, canonicalAlias } = playerResult;
@@ -59,6 +78,45 @@ export async function generateMetadata({ params }: { params: Promise<{ publicAli
 
 export default async function PublicAliasPage({ params }: { params: Promise<{ publicAlias: string }> }) {
   const { publicAlias } = await params;
+  if (publicAlias.toLowerCase() === IGLU_PUBLIC_ALIAS) {
+    const data = await loadIgluSiteData();
+    if (!data) notFound();
+    const canonical = `https://clouva.com.ar${IGLU_PUBLIC_PATH}`;
+    const description = data.studio.seo_description || data.studio.description || data.studio.tagline || "El Iglú Records es un sello, estudio y espacio musical dentro de CLOUVA.";
+    const structuredData = {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "WebPage",
+          "@id": `${canonical}#webpage`,
+          url: canonical,
+          name: "El Iglú Records — perfil oficial en CLOUVA",
+          description,
+          inLanguage: "es-AR",
+          mainEntity: { "@id": `${canonical}#entity` },
+        },
+        {
+          "@type": "Organization",
+          "@id": `${canonical}#entity`,
+          name: "El Iglú Records",
+          alternateName: ["IGLÚ Records", "Iglú Records", "El Iglú", "eliglurecords"],
+          url: canonical,
+          mainEntityOfPage: { "@id": `${canonical}#webpage` },
+          description,
+          slogan: data.studio.tagline || "Del Sur para el mundo",
+          logo: data.publicStudio.darkLogoUrl || data.studio.logo_url || undefined,
+          image: data.studio.og_image_url || data.studio.cover_url || undefined,
+          parentOrganization: { "@type": "Organization", name: "CLOUVA", url: "https://clouva.com.ar/" },
+        },
+      ],
+    };
+    return (
+      <>
+        <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData).replace(/</g, "\\u003c") }} />
+        <IgluPublicSpotHome data={data} />
+      </>
+    );
+  }
   const playerResult = await resolvePlayerAlias(publicAlias);
   if (playerResult && publicAlias.toLowerCase() !== playerResult.canonicalAlias.toLowerCase()) {
     redirect(`/${playerResult.canonicalAlias}`);

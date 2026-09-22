@@ -7,7 +7,8 @@ const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 test("IGLÚ home routes public controls into functional surfaces", async () => {
   const source = await read("./components/iglu/IgluPublicSpotHome.tsx");
   assert.match(source, /\/reservar/);
-  assert.match(source, /\/media/);
+  assert.match(source, /IGLU_MEDIA_PATH/);
+  assert.match(source, /IgluStreamButton/);
   assert.match(source, /\/perfil/);
   assert.match(source, /IgluMerchCarousel/);
 });
@@ -36,6 +37,29 @@ test("IGLÚ Media uses the canonical radio bucket and real library", async () =>
   assert.match(api, /radio_tracks/);
   assert.match(page, /\/api\/integrations\/youtube\/status/);
   assert.match(page, /ProfileRadioSettingsCard/);
+  assert.match(api, /getActiveKickLive/);
+  assert.match(api, /fallbackTrack/);
+  assert.match(page, /EN VIVO · KICK/);
+  assert.match(page, /EN VIVO · YOUTUBE/);
+});
+
+test("IGLÚ canonical public route lives at /eliglurecords and legacy Matrix routes converge", async () => {
+  const publicAlias = await read("./app/[publicAlias]/page.tsx");
+  const legacy = await read("./app/lamatrix/estudios/[slug]/page.tsx");
+  const legacyMedia = await read("./app/lamatrix/estudios/[slug]/media/page.tsx");
+  const streamButton = await read("./components/iglu/IgluStreamButton.tsx");
+  const kick = await read("./core/integrations/kick/public.ts");
+
+  assert.match(publicAlias, /IGLU_PUBLIC_ALIAS/);
+  assert.match(publicAlias, /IgluPublicSpotHome/);
+  assert.match(legacy, /permanentRedirect/);
+  assert.match(legacy, /IGLU_PUBLIC_PATH/);
+  assert.match(legacyMedia, /IGLU_MEDIA_PATH/);
+  assert.match(streamButton, /kickLive/);
+  assert.match(streamButton, /youtubeLive/);
+  assert.match(streamButton, /fallbackTrack/);
+  assert.match(kick, /public\/v1\/channels/);
+  assert.match(kick, /is_live/);
 });
 
 
