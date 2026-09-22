@@ -76,6 +76,92 @@ jobs:
               fi
             '
 
+      - name: Install Axiom editor for the main lobby
+        shell: bash
+        run: |
+          gcloud compute ssh "$MC_INSTANCE" \
+            --project "$PROJECT_ID" \
+            --zone "$MC_ZONE" \
+            --quiet \
+            --ssh-flag="-o StrictHostKeyChecking=no" \
+            --ssh-flag="-o UserKnownHostsFile=/dev/null" \
+            --command='
+              set -euo pipefail
+
+              api="https://api.modrinth.com/v2/project/axiom-paper-plugin/version?loaders=%5B%22paper%22%5D&game_versions=%5B%2226.3%22%5D"
+              axiom_url="$(curl -fsSL "$api" | grep -oE "https://cdn\\.modrinth\\.com/data/[^\"]+\\.jar" | head -n 1)"
+              test -n "$axiom_url"
+
+              sudo mkdir -p /srv/minecraft/plugins
+              sudo curl -fsSL "$axiom_url" -o /srv/minecraft/plugins/AxiomPaperPlugin.jar
+              sudo chown root:root /srv/minecraft/plugins/AxiomPaperPlugin.jar
+
+              sudo docker restart clouva-minecraft >/dev/null
+
+              axiom_config=""
+              for attempt in $(seq 1 60); do
+                axiom_config="$(sudo find /srv/minecraft/plugins -maxdepth 3 -type f -name config.yml -ipath "*axiom*" 2>/dev/null | head -n 1 || true)"
+                if [ -n "$axiom_config" ]; then
+                  break
+                fi
+                sleep 2
+              done
+              test -n "$axiom_config"
+
+              lobby_world="$(sudo grep -E "^level-name=" /srv/minecraft/server.properties | tail -n 1 | cut -d= -f2- || true)"
+              if [ -z "$lobby_world" ]; then
+                lobby_world="world"
+              fi
+
+              sudo sed -i -E "s|^whitelist-world-regex:.*|whitelist-world-regex: \"^${lobby_world}$\"|" "$axiom_config"
+              sudo sed -i -E "s|^allow-teleport-between-worlds:.*|allow-teleport-between-worlds: false|" "$axiom_config"
+              sudo sed -i -E "s|^blueprint-sharing:.*|blueprint-sharing: false|" "$axiom_config"
+
+              sudo docker restart clouva-minecraft >/dev/null
+            '
+
+      - name: Verify Axiom lobby editor
+        shell: bash
+        run: |
+          ready=0
+          for attempt in $(seq 1 72); do
+            if gcloud compute ssh "$MC_INSTANCE" \
+              --project "$PROJECT_ID" \
+              --zone "$MC_ZONE" \
+              --quiet \
+              --ssh-flag="-o StrictHostKeyChecking=no" \
+              --ssh-flag="-o UserKnownHostsFile=/dev/null" \
+              --command='
+                set -e
+                timeout 3 bash -c "</dev/tcp/127.0.0.1/25565"
+                test -s /srv/minecraft/plugins/AxiomPaperPlugin.jar
+                axiom_config="$(sudo find /srv/minecraft/plugins -maxdepth 3 -type f -name config.yml -ipath "*axiom*" 2>/dev/null | head -n 1)"
+                test -n "$axiom_config"
+                lobby_world="$(sudo grep -E "^level-name=" /srv/minecraft/server.properties | tail -n 1 | cut -d= -f2- || true)"
+                [ -n "$lobby_world" ] || lobby_world="world"
+                grep -Fq "whitelist-world-regex: \"^${lobby_world}$\"" "$axiom_config"
+                sudo docker logs --tail 500 clouva-minecraft 2>&1 | grep -Eiq "Axiom"
+              ' >/dev/null 2>&1; then
+              ready=1
+              echo "Axiom is active and locked to the main lobby."
+              break
+            fi
+            echo "Waiting for Axiom lobby editor ($attempt/72)..."
+            sleep 5
+          done
+
+          if [ "$ready" -ne 1 ]; then
+            echo "::error::Axiom lobby editor did not become ready."
+            gcloud compute ssh "$MC_INSTANCE" \
+              --project "$PROJECT_ID" \
+              --zone "$MC_ZONE" \
+              --quiet \
+              --ssh-flag="-o StrictHostKeyChecking=no" \
+              --ssh-flag="-o UserKnownHostsFile=/dev/null" \
+              --command='sudo docker logs --tail 500 clouva-minecraft 2>&1; sudo find /srv/minecraft/plugins -maxdepth 3 -ipath "*axiom*" -print 2>/dev/null || true' || true
+            exit 1
+          fi
+
       - name: Verify NINOTIMI tools and Minecraft
         shell: bash
         run: |
@@ -112,4 +198,5 @@ jobs:
             echo "- 1v1 queue: red pad in the PVP lobby"
             echo "- Internal player key: ninotimi (ASCII, ñ-safe)"
             echo "- Survival modes: isolated inventories, no OP, fresh v2 worlds and advancement reset"
+            echo "- Axiom: installed for Minecraft 26.3 and restricted to the main lobby world"
           } >> "$GITHUB_STEP_SUMMARY"
