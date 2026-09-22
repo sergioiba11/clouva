@@ -20,6 +20,8 @@ type RadioSettingsRow = {
   tagline: string | null;
   stream_url: string | null;
   artwork_url: string | null;
+  kick_channel_url: string | null;
+  podcast_rss_url: string | null;
   is_enabled: boolean;
   is_public: boolean;
 };
@@ -29,6 +31,8 @@ type RadioDraft = {
   tagline: string;
   streamUrl: string;
   artworkUrl: string;
+  kickChannelUrl: string;
+  podcastRssUrl: string;
   enabled: boolean;
   isPublic: boolean;
 };
@@ -45,6 +49,8 @@ function draftFromRow(row: RadioSettingsRow | null, profileName: string): RadioD
     tagline: row?.tagline || "",
     streamUrl: row?.stream_url || "",
     artworkUrl: row?.artwork_url || "",
+    kickChannelUrl: row?.kick_channel_url || "",
+    podcastRssUrl: row?.podcast_rss_url || "",
     enabled: row?.is_enabled ?? false,
     isPublic: row?.is_public ?? false,
   };
@@ -77,7 +83,7 @@ export function ProfileRadioSettingsCard({
       try {
         const { data, error: queryError } = await supabase
           .from("profile_radio_settings")
-          .select("id,station_name,tagline,stream_url,artwork_url,is_enabled,is_public")
+          .select("id,station_name,tagline,stream_url,artwork_url,kick_channel_url,podcast_rss_url,is_enabled,is_public")
           .eq(ownerColumn, ownerId)
           .maybeSingle();
 
@@ -112,6 +118,8 @@ export function ProfileRadioSettingsCard({
       tagline: nextDraft.tagline.trim() || null,
       stream_url: nextDraft.streamUrl.trim() || null,
       artwork_url: nextDraft.artworkUrl.trim() || null,
+      kick_channel_url: nextDraft.kickChannelUrl.trim() || null,
+      podcast_rss_url: nextDraft.podcastRssUrl.trim() || null,
       is_enabled: nextDraft.enabled,
       is_public: normalizedPublic,
       [ownerColumn]: ownerId,
@@ -123,12 +131,12 @@ export function ProfileRadioSettingsCard({
             .from("profile_radio_settings")
             .update(payload)
             .eq("id", rowId)
-            .select("id,station_name,tagline,stream_url,artwork_url,is_enabled,is_public")
+            .select("id,station_name,tagline,stream_url,artwork_url,kick_channel_url,podcast_rss_url,is_enabled,is_public")
             .single()
         : supabase
             .from("profile_radio_settings")
             .insert(payload)
-            .select("id,station_name,tagline,stream_url,artwork_url,is_enabled,is_public")
+            .select("id,station_name,tagline,stream_url,artwork_url,kick_channel_url,podcast_rss_url,is_enabled,is_public")
             .single();
 
       const { data, error: writeError } = await query;
@@ -209,6 +217,15 @@ export function ProfileRadioSettingsCard({
         <label className="text-xs text-white/55 md:col-span-2">
           Artwork URL
           <input type="url" value={draft.artworkUrl} onChange={(event) => setDraft((current) => ({ ...current, artworkUrl: event.target.value }))} className="mt-1.5 w-full rounded-xl border border-white/10 bg-black/25 px-3 py-2.5 text-sm text-white outline-none focus:border-violet-300/45" placeholder="https://…" />
+        </label>
+        <label className="text-xs text-white/55 md:col-span-2">
+          Kick channel URL
+          <input type="url" value={draft.kickChannelUrl} onChange={(event) => setDraft((current) => ({ ...current, kickChannelUrl: event.target.value }))} className="mt-1.5 w-full rounded-xl border border-white/10 bg-black/25 px-3 py-2.5 text-sm text-white outline-none focus:border-violet-300/45" placeholder="https://kick.com/…" />
+          <span className="mt-1 block text-[11px] text-white/30">CLOUVA consulta este canal para mostrar EN VIVO solamente cuando Kick confirma una transmisión activa.</span>
+        </label>
+        <label className="text-xs text-white/55 md:col-span-2">
+          Podcast URL / RSS
+          <input type="url" value={draft.podcastRssUrl} onChange={(event) => setDraft((current) => ({ ...current, podcastRssUrl: event.target.value }))} className="mt-1.5 w-full rounded-xl border border-white/10 bg-black/25 px-3 py-2.5 text-sm text-white outline-none focus:border-violet-300/45" placeholder="https://…" />
         </label>
       </div>
 
