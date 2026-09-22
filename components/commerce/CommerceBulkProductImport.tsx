@@ -754,12 +754,38 @@ export function CommerceBulkProductImport({
 
   async function reanalyzeCurrentBatch() {
     if (!batchId || busy) return;
+    const confirmed = window.confirm(
+      "CLOUVA va a reanalizar las mismas fotos sin volver a subirlas. La factura se conserva y los borradores incompletos creados por este lote se reconstruyen con el nuevo agrupamiento. ¿Continuar?",
+    );
+    if (!confirmed) return;
+
     setError("");
     setStage("analyzing");
+    setProcessed(0);
+    setFailed(0);
+    setProcessResults([]);
     try {
-      const analyzed = await analyzeWithRecovery(batchId, true);
+      let analyzed: AnalyzeResponse;
+      try {
+        analyzed = await postJson<AnalyzeResponse>(
+          `/api/studios/${encodeURIComponent(studioId)}/commerce/import-batches/${encodeURIComponent(batchId)}/reanalyze`,
+          {},
+        );
+      } catch (cause) {
+        const message = cause instanceof Error ? cause.message : "";
+        if (!/Failed to fetch|network|fetch/i.test(message)) throw cause;
+        await wait(3000);
+        analyzed = await waitForAnalyzedBatch(batchId, true);
+      }
+
       setGroups(analyzed.groups);
-      setProcessResults([]);
+      try {
+        const detail = await getJson<{ batch: BatchStatus }>(
+          `/api/studios/${encodeURIComponent(studioId)}/commerce/import-batches/${encodeURIComponent(batchId)}`,
+        );
+        setBatchSources(Object.fromEntries((detail.batch.items ?? []).map((item) => [item.source_index, item])));
+      } catch {}
+
       try {
         const refreshedInvoice = await getJson<InvoicePayload>(
           `/api/studios/${encodeURIComponent(studioId)}/commerce/import-batches/${encodeURIComponent(batchId)}/invoice`,
