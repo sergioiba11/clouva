@@ -173,12 +173,12 @@ function channelLabel(channel: string) {
   return channel;
 }
 
-export function FacebookPublisher({ spaceId }: { spaceId: string }) {
+export function FacebookPublisher({ spaceId, initialProductId }: { spaceId: string; initialProductId?: string | null }) {
   const [data, setData] = useState<Overview | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(initialProductId ? [initialProductId] : []));
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
   const [scheduleAt, setScheduleAt] = useState("");
