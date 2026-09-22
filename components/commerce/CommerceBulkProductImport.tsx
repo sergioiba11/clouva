@@ -342,6 +342,7 @@ export function CommerceBulkProductImport({
         if (cancelled) return;
         const candidate = payload.batches.find((batch) => {
           const groups = batchGroups(batch);
+          if (batch.status === "analyzing") return true;
           return groups.length > 0
             && ["review", "processing", "completed_with_errors", "failed"].includes(batch.status)
             && batch.processed_products < Math.max(batch.detected_products, groups.length);
@@ -603,7 +604,7 @@ export function CommerceBulkProductImport({
 
   async function waitForAnalyzedBatch(batch: string, requireReanalysis = false) {
     let lastStatus = "";
-    for (let attempt = 0; attempt < 50; attempt += 1) {
+    for (let attempt = 0; attempt < 160; attempt += 1) {
       const current = await fetchBatchStatus(batch);
       lastStatus = current.status;
       const recoveredGroups = batchGroups(current);
@@ -622,7 +623,7 @@ export function CommerceBulkProductImport({
       }
       await wait(3000);
     }
-    throw new Error(`El análisis sigue en estado ${lastStatus || "desconocido"}. Podés reanudar el lote sin volver a subir las fotos.`);
+    throw new Error(`El análisis sigue en estado ${lastStatus || "desconocido"}. Podés seguir el lote sin volver a subir las fotos.`);
   }
 
   async function analyzeWithRecovery(batch: string, force = false) {
@@ -761,7 +762,8 @@ export function CommerceBulkProductImport({
   async function resumeBatch(batch: BatchStatus) {
     if (busy) return;
     const recoveredGroups = batchGroups(batch);
-    if (!recoveredGroups.length) {
+    const isAnalyzing = batch.status === "analyzing";
+    if (!isAnalyzing && !recoveredGroups.length) {
       setError("Ese lote todavía no tiene productos agrupados para reanudar.");
       return;
     }
@@ -772,6 +774,39 @@ export function CommerceBulkProductImport({
     setProcessed(batch.processed_products || 0);
     setFailed(batch.failed_products || 0);
     try {
+      if (isAnalyzing) {
+        setRecoverableBatch(null);
+        setAnalysisProgress(batch.metadata?.analysis_progress ?? null);
+        setStage("analyzing");
+
+        const startedAt = String(batch.metadata?.reanalysis_started_at ?? "");
+        const finishedAt = String(batch.metadata?.reanalysis_finished_at ?? "");
+        const startedTime = Date.parse(startedAt);
+        const finishedTime = Date.parse(finishedAt);
+        const requireReanalysis = Boolean(startedAt)
+          && (!finishedAt || (Number.isFinite(startedTime) && Number.isFinite(finishedTime) && startedTime > finishedTime));
+
+        const analyzed = await waitForAnalyzedBatch(batch.id, requireReanalysis);
+        setGroups(analyzed.groups);
+
+        try {
+          const detail = await getJson<{ batch: BatchStatus }>(
+            `/api/studios/${encodeURIComponent(studioId)}/commerce/import-batches/${encodeURIComponent(batch.id)}`,
+          );
+          setBatchSources(Object.fromEntries((detail.batch.items ?? []).map((item) => [item.source_index, item])));
+        } catch {}
+
+        try {
+          const existingInvoice = await getJson<InvoicePayload>(
+            `/api/studios/${encodeURIComponent(studioId)}/commerce/import-batches/${encodeURIComponent(batch.id)}/invoice`,
+          );
+          if (existingInvoice.invoice) setInvoiceData(existingInvoice);
+        } catch {}
+
+        setStage("review");
+        return;
+      }
+
       try {
         const existingInvoice = await getJson<InvoicePayload>(
           `/api/studios/${encodeURIComponent(studioId)}/commerce/import-batches/${encodeURIComponent(batch.id)}/invoice`,
@@ -1060,9 +1095,13 @@ export function CommerceBulkProductImport({
         <div className="mt-4 rounded-xl border border-cyan-300/20 bg-cyan-300/[0.05] p-3">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <strong className="text-xs text-cyan-100">Lote listo para reanudar</strong>
+              <strong className="text-xs text-cyan-100">
+                {recoverableBatch.status === "analyzing" ? "Análisis en curso" : "Lote listo para reanudar"}
+              </strong>
               <p className="mt-1 text-[10px] leading-4 text-white/45">
-                {batchGroups(recoverableBatch).length} productos detectados · {recoverableBatch.total_images} fotos. No hace falta volver a subirlas.
+                {recoverableBatch.status === "analyzing"
+                  ? `${recoverableBatch.metadata?.analysis_progress?.message || "CLOUVA sigue agrupando el lote"} · ${recoverableBatch.total_images} fotos. No vuelvas a subirlas.`
+                  : `${batchGroups(recoverableBatch).length} productos detectados · ${recoverableBatch.total_images} fotos. No hace falta volver a subirlas.`}
               </p>
             </div>
             <button
@@ -1070,7 +1109,8 @@ export function CommerceBulkProductImport({
               onClick={() => void resumeBatch(recoverableBatch)}
               className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg border border-cyan-300/25 bg-cyan-300/[0.08] px-3 text-xs font-semibold text-cyan-100"
             >
-              <RefreshCw className="h-4 w-4" /> Reanudar lote
+              <RefreshCw className={`h-4 w-4 ${recoverableBatch.status === "analyzing" ? "animate-spin" : ""}`} />
+              {recoverableBatch.status === "analyzing" ? "Seguir análisis" : "Reanudar lote"}
             </button>
           </div>
         </div>
