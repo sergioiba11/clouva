@@ -251,7 +251,7 @@ export function ProductPublicationControls({
   async function prepareFacebookMarketplace() {
     setSavingKey("facebook_marketplace"); setError(null); setMessage(null);
     try {
-      const prepared = await put({
+      const { publication: prepared } = await put({
         targetType: "marketplace",
         channel: "facebook_marketplace",
         destinationKey: "default",
