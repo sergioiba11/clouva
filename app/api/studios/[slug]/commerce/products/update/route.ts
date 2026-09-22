@@ -21,6 +21,7 @@ type UpdateBody = {
   size?: unknown;
   color?: unknown;
   presentation?: unknown;
+  condition?: unknown;
   coverUrlCandidate?: unknown;
 };
 
@@ -158,6 +159,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       ...(has(body, "size") ? { size: text(body.size, 80) } : {}),
       ...(has(body, "color") ? { color: text(body.color, 80) } : {}),
       ...(has(body, "presentation") ? { presentation: text(body.presentation, 160) } : {}),
+      ...(has(body, "condition") ? { condition: text(body.condition, 80) } : {}),
     };
 
     let nextCover = listing.cover_url;
