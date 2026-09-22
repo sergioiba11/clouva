@@ -222,13 +222,34 @@ export async function POST(
 
     const { data: batch, error: batchError } = await admin
       .from("commerce_product_import_batches")
-      .select("id,status,total_images,metadata")
+      .select("id,status,total_images,metadata,updated_at")
       .eq("id", batchId)
       .eq("spot_id", spot.id)
       .maybeSingle();
     if (batchError) throw new Error(batchError.message);
     if (!batch) return NextResponse.json({ error: "El lote no existe en este Spot." }, { status: 404 });
     activeBatchId = batch.id;
+
+    const existingMetadata = record(batch.metadata);
+    const progress = record(existingMetadata.analysis_progress);
+    const progressUpdatedAt = typeof progress.updatedAt === "string"
+      ? Date.parse(progress.updatedAt)
+      : Date.parse(String(batch.updated_at || ""));
+    const analysisIsFresh = Number.isFinite(progressUpdatedAt)
+      && Date.now() - progressUpdatedAt < 12 * 60 * 1000;
+
+    if (batch.status === "analyzing" && analysisIsFresh) {
+      return NextResponse.json(
+        {
+          error: "El reanálisis ya está en curso. CLOUVA va a continuar con el lote actual.",
+          code: "REANALYSIS_IN_PROGRESS",
+          batchId: batch.id,
+          status: batch.status,
+          progress: existingMetadata.analysis_progress ?? null,
+        },
+        { status: 409 },
+      );
+    }
 
     const { data: items, error: itemsError } = await admin
       .from("commerce_product_import_items")
