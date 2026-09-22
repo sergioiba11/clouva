@@ -5,6 +5,7 @@ import {
 } from "@/lib/server/commerce-product-batch-recognition";
 import {
   reconcileCommerceInvoice,
+  reconcileCommerceInvoiceWithAI,
   type CommerceInvoiceRecognition,
 } from "@/lib/server/commerce-invoice-recognition";
 import { requireManagedSpot } from "@/lib/server/commerce-spot";
