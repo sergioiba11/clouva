@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
+import { getActiveKickLive } from "@/core/integrations/kick/public";
 import { getActiveYoutubeLive } from "@/core/integrations/youtube/service";
 import { requireStudioManager } from "@/lib/server/studio-permissions";
 import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
@@ -24,7 +25,7 @@ export async function GET() {
     const admin = createAdminSupabase();
     const studio = await igluStudio(admin);
     const [{ data: radio, error: radioError }, { data: tracks, error: tracksError }] = await Promise.all([
-      admin.from("profile_radio_settings").select("station_name,tagline,stream_url,artwork_url,is_enabled,is_public,primary_track_id").eq("studio_id", studio.id).maybeSingle(),
+      admin.from("profile_radio_settings").select("station_name,tagline,stream_url,artwork_url,is_enabled,is_public,primary_track_id,podcast_rss_url,kick_channel_url").eq("studio_id", studio.id).maybeSingle(),
       admin.from("radio_tracks").select("id,title,artist,album,duration_seconds,artwork_url,status,youtube_url,storage_bucket,storage_path,created_at").eq("studio_id", studio.id).in("status", ["ready", "synced"]).order("created_at", { ascending: false }).limit(30),
     ]);
     if (radioError) throw new Error(radioError.message);
@@ -48,21 +49,30 @@ export async function GET() {
     const { data: ownerPlayer } = space?.owner_player_id
       ? await admin.from("players").select("owner_user_id").eq("id", space.owner_player_id).maybeSingle()
       : { data: null };
-    const youtubeLive = ownerPlayer?.owner_user_id
-      ? await getActiveYoutubeLive(admin, String(ownerPlayer.owner_user_id)).catch(() => null)
-      : null;
+    const [youtubeLive, kickLive] = await Promise.all([
+      ownerPlayer?.owner_user_id
+        ? getActiveYoutubeLive(admin, String(ownerPlayer.owner_user_id)).catch(() => null)
+        : Promise.resolve(null),
+      getActiveKickLive(radio?.kick_channel_url).catch(() => null),
+    ]);
 
     const primaryTrackId = radio?.primary_track_id ? String(radio.primary_track_id) : null;
     const primaryTrack = primaryTrackId
       ? publicTracks.find((track) => String(track.id) === primaryTrackId) || null
       : publicTracks[0] || null;
+    const playableTracks = publicTracks.filter((track) => Boolean(track.audioUrl));
+    const fallbackTrack = playableTracks.length
+      ? playableTracks[Math.floor(Math.random() * playableTracks.length)]
+      : primaryTrack;
 
     return NextResponse.json({
       studio: { id: studio.id, name: studio.name },
       radio: radio && radio.is_enabled && radio.is_public ? radio : null,
       tracks: publicTracks,
       primaryTrack,
+      fallbackTrack,
       youtubeLive,
+      kickLive,
     }, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "No se pudo cargar Media." }, { status: 500 });
