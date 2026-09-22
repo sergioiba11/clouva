@@ -15,9 +15,11 @@ import styles from "./SpaceCommerceWorkspace.module.css";
 export function SpaceCommerceWorkspace({
   commerceScopeId,
   businessSpaceId,
+  initialTab,
 }: {
   commerceScopeId: string;
   businessSpaceId?: string | null;
+  initialTab?: "dashboard" | "scanner" | "catalog" | "inventory" | "sales" | "orders" | "codes" | "settings";
 }) {
   const directSpotId = commerceScopeId.startsWith("spot:")
     ? commerceScopeId.slice("spot:".length).trim()
@@ -30,6 +32,7 @@ export function SpaceCommerceWorkspace({
           studioId={commerceScopeId}
           businessSpaceId={businessSpaceId}
           directSpotId={directSpotId}
+          initialTab={initialTab}
         />
         <ClouvaQrEnginePanel studioId={commerceScopeId} />
         <ClouvaQrEngineEventBridge />
