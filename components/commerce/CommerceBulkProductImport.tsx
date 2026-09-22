@@ -17,6 +17,7 @@ type BatchGroup = {
     type: string;
     source: "box" | "product" | "unknown";
     confidence: number;
+    sourceIndex?: number;
   }>;
   confidence: number;
   needsReview: boolean;
@@ -319,6 +320,7 @@ export function CommerceBulkProductImport({
   const [analysisProgress, setAnalysisProgress] = useState<AnalysisProgress | null>(null);
   const [showAllInvoiceItems, setShowAllInvoiceItems] = useState(false);
   const [showAllDetectedGroups, setShowAllDetectedGroups] = useState(false);
+  const [expandedPhotoGroup, setExpandedPhotoGroup] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -1351,29 +1353,36 @@ export function CommerceBulkProductImport({
               const hasExternalCode = Boolean(
                 group.identifier && !["sku", "clouva_barcode", "clouva_qr"].includes(group.identifier.type),
               );
+              const coverPhoto = photos.find((photo) => photo.role === "Frente" && photo.url)
+                ?? photos.find((photo) => photo.url)
+                ?? null;
+              const expandedPhotos = expandedPhotoGroup === group.groupKey;
+              const codePhotoIndex = group.visibleIdentifiers.find((code) =>
+                code.sourceIndex != null
+                && (!group.identifier
+                  || (code.type === group.identifier.type && code.value === group.identifier.value)),
+              )?.sourceIndex;
               return (
                 <div key={group.groupKey} className="rounded-xl border border-white/[0.08] bg-black/20 p-3">
-                  {photos.some((photo) => photo.url) ? (
-                    <div className="mb-3 flex gap-2 overflow-x-auto pb-1">
-                      {photos.map((photo) => photo.url ? (
-                        <div key={photo.sourceIndex} className="relative h-20 w-20 shrink-0 overflow-hidden rounded-lg border border-white/10 bg-black/30">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={photo.url}
-                            alt={photo.fileName || `${group.name || "Producto"} · ${photo.role}`}
-                            className="h-full w-full object-cover"
-                            loading="lazy"
-                          />
-                          <span className="absolute bottom-1 left-1 rounded bg-black/75 px-1.5 py-0.5 text-[8px] font-semibold text-white/80">
-                            {photo.role}
-                          </span>
-                          <span className="absolute right-1 top-1 rounded bg-black/75 px-1 py-0.5 text-[8px] text-white/70">
-                            #{photo.sourceIndex + 1}
-                          </span>
-                        </div>
-                      ) : null)}
-                    </div>
-                  ) : null}
+                  <div className="flex items-start gap-3">
+                    {coverPhoto ? (
+                      <div className="relative h-24 w-24 shrink-0 overflow-hidden rounded-xl border border-violet-300/15 bg-black/30">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={coverPhoto.url}
+                          alt={coverPhoto.fileName || `${group.name || "Producto"} · Frente`}
+                          className="h-full w-full object-cover"
+                          loading="lazy"
+                        />
+                        <span className="absolute bottom-1 left-1 rounded bg-black/80 px-1.5 py-0.5 text-[8px] font-semibold text-white/85">
+                          Frente
+                        </span>
+                        <span className="absolute right-1 top-1 rounded bg-black/80 px-1 py-0.5 text-[8px] text-white/75">
+                          #{coverPhoto.sourceIndex + 1}
+                        </span>
+                      </div>
+                    ) : null}
+                    <div className="min-w-0 flex-1">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <strong className="block truncate text-sm">{result?.name || group.name || "Producto detectado"}</strong>
@@ -1426,12 +1435,50 @@ export function CommerceBulkProductImport({
                     )}
                   </div>
                   <p className="mt-2 text-[10px] text-white/35">
-                    {group.images.map((image) => `#${image.sourceIndex + 1} ${image.role}`).join(" · ")}
+                    {group.images.length} foto{group.images.length === 1 ? "" : "s"} agrupada{group.images.length === 1 ? "" : "s"}
+                    {coverPhoto ? ` · frente #${coverPhoto.sourceIndex + 1}` : ""}
                   </p>
+                  {group.identifier && codePhotoIndex != null ? (
+                    <p className="mt-1 text-[10px] leading-4 text-emerald-200/70">
+                      Código confirmado desde foto #{codePhotoIndex + 1}
+                    </p>
+                  ) : null}
                   {group.visibleIdentifiers.length > 1 ? (
                     <p className="mt-1 text-[10px] leading-4 text-white/35">
-                      Códigos leídos: {group.visibleIdentifiers.map((code) => `${code.type.toUpperCase()} ${code.value}`).join(" · ")}
+                      Códigos leídos: {group.visibleIdentifiers.map((code) => `${code.type.toUpperCase()} ${code.value}${code.sourceIndex != null ? ` (#${code.sourceIndex + 1})` : ""}`).join(" · ")}
                     </p>
+                  ) : null}
+                  {photos.filter((photo) => photo.url).length > 1 ? (
+                    <button
+                      type="button"
+                      onClick={() => setExpandedPhotoGroup((current) => current === group.groupKey ? "" : group.groupKey)}
+                      className="mt-2 rounded-lg border border-white/10 px-2.5 py-1.5 text-[10px] font-semibold text-white/55 transition hover:border-violet-300/25 hover:text-white"
+                    >
+                      {expandedPhotos ? "Ocultar fotos" : `Ver ${photos.filter((photo) => photo.url).length} fotos del producto`}
+                    </button>
+                  ) : null}
+                  </div>
+                  </div>
+                  {expandedPhotos ? (
+                    <div className="mt-3 flex gap-2 overflow-x-auto border-t border-white/[0.06] pt-3">
+                      {photos.map((photo) => photo.url ? (
+                        <div key={photo.sourceIndex} className="relative h-20 w-20 shrink-0 overflow-hidden rounded-lg border border-white/10 bg-black/30">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={photo.url}
+                            alt={photo.fileName || `${group.name || "Producto"} · ${photo.role}`}
+                            className="h-full w-full object-cover"
+                            loading="lazy"
+                          />
+                          <span className="absolute bottom-1 left-1 rounded bg-black/80 px-1.5 py-0.5 text-[8px] font-semibold text-white/85">
+                            {codePhotoIndex === photo.sourceIndex ? "Código" : photo.role}
+                          </span>
+                          <span className="absolute right-1 top-1 rounded bg-black/80 px-1 py-0.5 text-[8px] text-white/75">
+                            #{photo.sourceIndex + 1}
+                          </span>
+                        </div>
+                      ) : null)}
+                    </div>
                   ) : null}
                   {result?.error ? <p className="mt-2 text-[10px] leading-4 text-rose-200">{result.error}</p> : null}
                   {!hasExternalCode ? (
