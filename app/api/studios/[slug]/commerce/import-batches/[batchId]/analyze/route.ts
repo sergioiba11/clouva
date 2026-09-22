@@ -93,6 +93,20 @@ export async function POST(
         storagePath: item.storage_path,
         mimeType: item.mime_type,
       })),
+      onProgress: async (progress) => {
+        await admin
+          .from("commerce_product_import_batches")
+          .update({
+            metadata: {
+              ...existingMetadata,
+              groups: existingGroups,
+              analysis_progress: progress,
+              reanalyzed: false,
+            },
+            updated_at: progress.updatedAt,
+          })
+          .eq("id", batch.id);
+      },
     });
 
     for (const group of groups) {
@@ -227,6 +241,14 @@ export async function POST(
       groups,
       analyzed_at: analyzedAt,
       reanalyzed: force,
+      analysis_progress: {
+        stage: "done",
+        completed: groups.length,
+        total: groups.length,
+        provisionalProducts: groups.length,
+        message: `${groups.length} productos listos`,
+        updatedAt: analyzedAt,
+      },
     };
     const { error: updateError } = await admin
       .from("commerce_product_import_batches")
