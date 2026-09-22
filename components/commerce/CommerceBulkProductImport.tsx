@@ -957,9 +957,9 @@ export function CommerceBulkProductImport({
             <Boxes className="h-4 w-4" />
             <p className="text-xs font-semibold uppercase tracking-[.18em]">Carga masiva</p>
           </div>
-          <h2 className="mt-2 text-lg font-semibold">Fotos → productos separados</h2>
+          <h2 className="mt-2 text-lg font-semibold">Fotos → productos agrupados</h2>
           <p className="mt-1 max-w-2xl text-xs leading-5 text-white/45">
-            Seleccioná fotos de productos, cajas y packaging juntas. Google Cloud separa cada unidad, lee sus códigos y CLOUVA crea un borrador independiente por producto o caja.
+            Subí frente, dorso, detalles y códigos mezclados. CLOUVA junta las fotos del mismo producto en una sola ficha, usa el frente como portada y hereda cualquier código leído dentro del grupo.
           </p>
         </div>
         {files.length && !busy ? (
