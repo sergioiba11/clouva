@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { ExternalLink, MapPin, PackageOpen, Store } from "lucide-react";
+import { MikeTattooSpaceView } from "@/components/public/MikeTattooSpaceView";
 import { PublicShell } from "@/components/public/PublicShell";
 import { SpaceManageButton } from "@/components/public/SpaceManageButton";
 import type { PublicSpaceIdentity, PublicSpaceProduct } from "@/lib/server/public-space-data";
@@ -18,6 +19,10 @@ function money(product: PublicSpaceProduct) {
 
 export function SpacePublicView({ data }: { data: PublicSpaceIdentity }) {
   const { space, spot, products, canonicalAlias } = data;
+  const publicTheme = typeof space.settings.public_theme === "string" ? space.settings.public_theme : null;
+  if (publicTheme === "mike_tattoo" || data.ownerPlayer?.theme_key === "mike_tattoo") {
+    return <MikeTattooSpaceView data={data} />;
+  }
   const logo = spot?.logo_url || space.logo_url;
   const cover = spot?.cover_url || space.cover_url;
   const description = spot?.description || space.description;

@@ -1,3 +1,4 @@
+import { MikeTattooPlayerView } from "./MikeTattooPlayerView";
 import { PlayerPublicView } from "./PlayerPublicView";
 import { PrecisePlayerLayoutRenderer } from "./PrecisePlayerLayoutRenderer";
 import type { LayoutConfig } from "@/lib/server/layout-config";
@@ -29,6 +30,17 @@ export function PlayerIdentityRenderer({
         affiliations={affiliations}
         media={media}
         layout={layoutConfig}
+      />
+    );
+  }
+
+  if (player.theme_key === "mike_tattoo") {
+    return (
+      <MikeTattooPlayerView
+        player={player}
+        affiliations={affiliations}
+        media={media}
+        isVip={isVip}
       />
     );
   }

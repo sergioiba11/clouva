@@ -18,11 +18,13 @@ export type PublicSpaceIdentity = {
     type: string;
     slug: string;
     name: string;
+    owner_player_id: string;
     description: string | null;
     logo_url: string | null;
     cover_url: string | null;
     accent_color: string | null;
     palette: string[];
+    settings: Record<string, unknown>;
     business_kind: string | null;
     category: string | null;
     subcategory: string | null;
@@ -42,6 +44,15 @@ export type PublicSpaceIdentity = {
     business_categories: string[];
     brand_tone: string | null;
   } | null;
+  ownerPlayer: {
+    id: string;
+    slug: string;
+    canonicalAlias: string;
+    display_name: string;
+    profile_image_url: string | null;
+    theme_key: string | null;
+    accent_color: string | null;
+  } | null;
   products: PublicSpaceProduct[];
   canonicalAlias: string;
 };
@@ -50,17 +61,21 @@ function strings(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
+function object(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
 export async function resolvePublicSpaceAlias(alias: string): Promise<PublicSpaceIdentity | null> {
   const normalized = alias.trim().toLowerCase();
   if (!normalized) return null;
 
-  // This is server-only and uses explicit public/status filters. `spaces` RLS
+  // This is server-only and uses explicit public/status filters. spaces RLS
   // also supports member reads, so the public resolver must not rely on viewer
   // membership or accidentally expose a private Space.
   const supabase = createAdminSupabase();
   const { data: rawSpace, error: spaceError } = await supabase
     .from("spaces")
-    .select("id,type,slug,name,description,logo_url,cover_url,accent_color,palette,business_kind,category,subcategory,location_label,legacy_commerce_spot_id")
+    .select("id,type,slug,name,owner_player_id,description,logo_url,cover_url,accent_color,palette,settings,business_kind,category,subcategory,location_label,legacy_commerce_spot_id")
     .eq("slug", normalized)
     .eq("public_enabled", true)
     .eq("status", "active")
@@ -73,7 +88,36 @@ export async function resolvePublicSpaceAlias(alias: string): Promise<PublicSpac
   const space = {
     ...rawSpace,
     palette: strings(rawSpace.palette),
+    settings: object(rawSpace.settings),
   };
+
+  let ownerPlayer: PublicSpaceIdentity["ownerPlayer"] = null;
+  if (space.owner_player_id) {
+    const { data: rawOwner, error: ownerError } = await supabase
+      .from("players")
+      .select("id,slug,display_name,profile_image_url,theme_key,accent_color")
+      .eq("id", space.owner_player_id)
+      .eq("is_published", true)
+      .eq("publication_status", "published")
+      .neq("privacy_status", "private")
+      .maybeSingle();
+    if (ownerError) throw new Error(ownerError.message);
+
+    if (rawOwner) {
+      const { data: aliasRow, error: aliasError } = await supabase
+        .from("public_slug_aliases")
+        .select("alias")
+        .eq("entity_type", "player")
+        .eq("entity_id", rawOwner.id)
+        .eq("is_primary", true)
+        .maybeSingle();
+      if (aliasError) throw new Error(aliasError.message);
+      ownerPlayer = {
+        ...rawOwner,
+        canonicalAlias: aliasRow?.alias || rawOwner.slug,
+      };
+    }
+  }
 
   let spot: PublicSpaceIdentity["spot"] = null;
   let products: PublicSpaceProduct[] = [];
@@ -111,6 +155,7 @@ export async function resolvePublicSpaceAlias(alias: string): Promise<PublicSpac
   return {
     space: space as PublicSpaceIdentity["space"],
     spot,
+    ownerPlayer,
     products,
     canonicalAlias: space.slug,
   };
