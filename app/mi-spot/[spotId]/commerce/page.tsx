@@ -60,8 +60,7 @@ export default function SpotCommercePage() {
     const commerceScope = scope.spot.owner_type === "studio" && scope.studio?.id
       ? scope.studio.id
       : `spot:${scope.spot.id}`;
-    return <SpaceCommerceWorkspace
-      commerceScopeId={commerceScope}
+    return <SpaceCommerceWorkspace commerceScopeId={commerceScope}
       businessSpaceId={scope.space?.type === "business" ? scope.space.id : null}
       initialTab={initialTab}
     />;
