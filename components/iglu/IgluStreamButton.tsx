@@ -90,12 +90,19 @@ export function IgluStreamButton({
         return;
       }
 
-      const fallback = payload.fallbackTrack || null;
-      if (fallback?.audioUrl && audio) {
-        audio.src = fallback.audioUrl;
+      const radioStream = publicHttpUrl(payload.radio?.stream_url);
+      if (radioStream && audio) {
+        audio.src = radioStream;
         audio.load();
-        setTrack(fallback);
-        setSourceLabel("IGLÚ · PLAYER");
+        setTrack({
+          id: "iglu-radio-live",
+          title: payload.radio?.station_name || "IGLÚ Radio",
+          artist: studioName,
+          album: "Señal en directo",
+          duration_seconds: null,
+          audioUrl: radioStream,
+        });
+        setSourceLabel("IGLÚ · EN DIRECTO");
         try {
           await audio.play();
           setPlaying(true);
@@ -105,19 +112,12 @@ export function IgluStreamButton({
         return;
       }
 
-      const radioStream = publicHttpUrl(payload.radio?.stream_url);
-      if (radioStream && audio) {
-        audio.src = radioStream;
+      const fallback = payload.fallbackTrack || null;
+      if (fallback?.audioUrl && audio) {
+        audio.src = fallback.audioUrl;
         audio.load();
-        setTrack({
-          id: "iglu-radio-live",
-          title: payload.radio?.station_name || "IGLÚ Radio",
-          artist: studioName,
-          album: "Señal de audio",
-          duration_seconds: null,
-          audioUrl: radioStream,
-        });
-        setSourceLabel("IGLÚ · AUDIO");
+        setTrack(fallback);
+        setSourceLabel("IGLÚ · PLAYER");
         try {
           await audio.play();
           setPlaying(true);
