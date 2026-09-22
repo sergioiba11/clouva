@@ -173,3 +173,5 @@ EOF
 systemctl daemon-reload
 systemctl enable --now clouva-minecraft-watchdog.timer
 
+
+# startup metadata sync v2
