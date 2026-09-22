@@ -1,0 +1,39 @@
+name: Minecraft Boot Diagnose
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/minecraft-boot-diagnose.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: gen-lang-client-0737053175
+  MC_ZONE: southamerica-east1-b
+  MC_INSTANCE: clouva-minecraft-family
+
+jobs:
+  boot-diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA_EMAIL }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Instance state
+        run: |
+          gcloud compute instances describe "$MC_INSTANCE"             --project "$PROJECT_ID"             --zone "$MC_ZONE"             --format="yaml(name,status,lastStartTimestamp,lastStopTimestamp,networkInterfaces[0].accessConfigs[0].natIP,machineType)"
+
+      - name: Serial boot output
+        shell: bash
+        run: |
+          set +e
+          gcloud compute instances get-serial-port-output "$MC_INSTANCE"             --project "$PROJECT_ID"             --zone "$MC_ZONE"             --port 1 2>&1 | tail -n 1200
