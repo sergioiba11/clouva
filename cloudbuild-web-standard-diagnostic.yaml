@@ -16,5 +16,4 @@ steps:
 timeout: 1200s
 options:
   logging: CLOUD_LOGGING_ONLY
-  machineType: E2_STANDARD_2
   diskSizeGb: 100
