@@ -449,7 +449,7 @@ export function SpotCommerceDashboard({
   const [scanType, setScanType] = useState<CommerceIdentifierType>("code_128");
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [scanning, setScanning] = useState(false);
-  const [singleScannerOpen, setSingleScannerOpen] = useState(false);
+  const [singleScannerOpen, setSingleScannerOpen] = useState(initialTab === "scanner");
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
   const [cameraId, setCameraId] = useState("");
