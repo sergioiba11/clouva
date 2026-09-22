@@ -48,6 +48,27 @@ const NAV_GROUPS: Array<{ label: string; items: Section[] }> = [
   { label: "Sistema", items: ["QR del Spot", "Configuración"] },
 ];
 
+const TAB_TO_SECTION: Record<string, Section> = {
+  resumen: "Resumen",
+  profile: "Perfil público",
+  "ai-profile": "Identidad IA",
+  "clouva-ai": "CLOUVA AI",
+  players: "Players",
+  memberships: "Membresías",
+  services: "Servicios",
+  requests: "Solicitudes",
+  roles: "Roles",
+  projects: "Proyectos",
+  music: "Música",
+  events: "Eventos",
+  "spot-qr": "QR del Spot",
+  config: "Configuración",
+};
+
+function sectionFromTab(tab: string | null): Section {
+  return tab ? TAB_TO_SECTION[tab] || "Resumen" : "Resumen";
+}
+
 type PlanRow = {
   id: string;
   name: string;
@@ -90,18 +111,14 @@ export default function StudioDashboardPage({ params }: { params: Promise<{ stud
   const [studioId, setStudioId] = useState("");
   const [data, setData] = useState<DashboardData | null>(null);
   const initialTab = searchParams.get("tab");
-  const initialSection: Section = initialTab === "ai-profile" ? "Identidad IA" : initialTab === "clouva-ai" ? "CLOUVA AI" : initialTab === "spot-qr" ? "QR del Spot" : "Resumen";
+  const initialSection: Section = sectionFromTab(initialTab);
   const [section, setSection] = useState<Section>(initialSection);
   const [identityWorkspaceMounted, setIdentityWorkspaceMounted] = useState(initialSection === "Identidad IA");
 
   useEffect(() => {
-    const requestedTab = searchParams.get("tab");
-    if (requestedTab === "ai-profile") {
-      setIdentityWorkspaceMounted(true);
-      setSection("Identidad IA");
-    }
-    if (requestedTab === "clouva-ai") setSection("CLOUVA AI");
-    if (requestedTab === "spot-qr") setSection("QR del Spot");
+    const nextSection = sectionFromTab(searchParams.get("tab"));
+    if (nextSection === "Identidad IA") setIdentityWorkspaceMounted(true);
+    setSection(nextSection);
   }, [searchParams]);
 
   const [profileDraft, setProfileDraft] = useState<Record<string, unknown>>({});
@@ -265,7 +282,7 @@ export default function StudioDashboardPage({ params }: { params: Promise<{ stud
   const studioName = String(data.studio.name || "Estudio");
   const studioSlug = String(data.studio.slug || studioId);
   const spotIsPublic = Boolean(data.studio.is_published) && String(data.studio.publication_status || "") === "published" && ["active", "grace", "legacy_active"].includes(String(data.studio.studio_os_status || ""));
-  const publicSpotPath = `/studios/${studioSlug}`;
+  const publicSpotPath = ["el-iglu", "eliglurecords", "iglu-records"].includes(studioSlug.toLowerCase()) ? "/eliglurecords" : `/studios/${studioSlug}`;
   const profileDirty = JSON.stringify(profileDraft) !== JSON.stringify(data.studio);
   const sectionMeta = SECTION_META[section];
   const profileSaveVisible = profileDirty && ["Perfil público", "Configuración"].includes(section);
