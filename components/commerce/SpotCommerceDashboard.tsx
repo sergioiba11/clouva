@@ -18,12 +18,14 @@ import {
   History,
   ImagePlus,
   LoaderCircle,
+  Megaphone,
   PackagePlus,
   Printer,
   QrCode,
   RefreshCw,
   ScanLine,
   Settings,
+  Share2,
   ShoppingCart,
   Sparkles,
   Store,
@@ -35,7 +37,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { IScannerControls } from "@zxing/browser";
-import { AccountMenu } from "@/components/account/AccountMenu";
 import { useAuth } from "@/components/auth-provider";
 import { CatalogProductActions } from "@/components/commerce/CatalogProductActions";
 import { CommerceBulkProductImport } from "@/components/commerce/CommerceBulkProductImport";
@@ -233,7 +234,7 @@ const NAV: Array<{ id: Tab; label: string; icon: typeof Store }> = [
 ];
 
 const INPUT = "w-full rounded-xl border border-white/10 bg-black/35 px-3 py-2.5 text-sm text-white outline-none transition focus:border-violet-400/60";
-const CARD = "rounded-2xl border border-white/[0.08] bg-[#0b0912]/95 shadow-[0_18px_55px_rgba(0,0,0,.14)]";
+const CARD = "rounded-[20px] border border-white/[0.065] bg-[linear-gradient(180deg,rgba(13,11,20,.92),rgba(8,7,13,.94))] shadow-[0_16px_44px_rgba(0,0,0,.16)]";
 const DEFAULT_LABEL_OPTIONS: LabelOptions = {
   format: "pdf",
   layout: "full",
@@ -424,7 +425,15 @@ async function compressProductImage(file: File) {
   }
 }
 
-export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
+export function SpotCommerceDashboard({
+  studioId,
+  businessSpaceId,
+  directSpotId,
+}: {
+  studioId: string;
+  businessSpaceId?: string | null;
+  directSpotId?: string | null;
+}) {
   const router = useRouter();
   const { session, user, loading: authLoading } = useAuth();
   const [tab, setTab] = useState<Tab>("dashboard");
@@ -1386,27 +1395,51 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
   const hasExternalIdentifier = activeDraftIdentifiers.some((identifier) => !["sku", "clouva_barcode", "clouva_qr"].includes(identifier.identifier_type));
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[radial-gradient(circle_at_48%_-18%,rgba(105,46,196,.2),transparent_34%),radial-gradient(circle_at_95%_32%,rgba(76,29,149,.12),transparent_24%),#050507] text-white">
-      <div className="pointer-events-none fixed inset-0 opacity-[.17] [background-image:linear-gradient(rgba(139,92,246,.13)_1px,transparent_1px),linear-gradient(90deg,rgba(139,92,246,.13)_1px,transparent_1px)] [background-size:42px_42px] [mask-image:linear-gradient(to_bottom,black,transparent_88%)]" />
-      <header className="sticky top-0 z-40 border-b border-white/[0.08] bg-[#050507]/88 backdrop-blur-2xl">
-        <div className="mx-auto flex max-w-[1600px] items-center justify-between gap-3 px-4 py-3 sm:px-6">
+    <main className="relative min-h-screen overflow-hidden bg-[radial-gradient(circle_at_48%_-18%,rgba(105,46,196,.16),transparent_34%),radial-gradient(circle_at_96%_26%,rgba(76,29,149,.08),transparent_24%),#050507] text-white">
+      <div className="pointer-events-none fixed inset-0 opacity-[.075] [background-image:linear-gradient(rgba(139,92,246,.15)_1px,transparent_1px),linear-gradient(90deg,rgba(139,92,246,.15)_1px,transparent_1px)] [background-size:56px_56px] [mask-image:linear-gradient(to_bottom,black,transparent_82%)]" />
+      <header className="sticky top-0 z-40 border-b border-white/[0.065] bg-[#050507]/92 shadow-[0_10px_32px_rgba(0,0,0,.18)] backdrop-blur-2xl">
+        <div className="mx-auto flex max-w-[1540px] items-center justify-between gap-3 px-3 py-2.5 sm:px-5">
           <div className="flex min-w-0 items-center gap-3">
-            <div className="relative grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-2xl border border-violet-400/25 bg-[radial-gradient(circle_at_50%_20%,rgba(168,85,247,.26),rgba(76,29,149,.08))] shadow-[0_0_28px_rgba(124,58,237,.14)]"><Store className="h-5 w-5 text-violet-200" /><span className="absolute bottom-1 right-1 h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_7px_#34d399]" /></div>
-            <div className="min-w-0"><div className="flex items-center gap-2"><p className="truncate text-sm font-bold sm:text-base">MI SPOT — {data.spot.name}</p><span className="hidden rounded-full border border-emerald-400/20 bg-emerald-400/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-emerald-300 sm:inline">Activo</span></div><p className="mt-0.5 text-[11px] text-white/35">{data.studio.name} · Centro de operaciones</p></div>
+            <div className="relative grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-[14px] border border-violet-400/20 bg-[radial-gradient(circle_at_50%_18%,rgba(168,85,247,.23),rgba(76,29,149,.07))] shadow-[0_0_24px_rgba(124,58,237,.12)]">
+              <Store className="h-[18px] w-[18px] text-violet-200" />
+              <span className="absolute bottom-1 right-1 h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_7px_#34d399]" />
+            </div>
+            <div className="min-w-0">
+              <p className="text-[9px] font-bold uppercase tracking-[.17em] text-violet-300/70">Mi Spot · Centro operativo</p>
+              <div className="mt-0.5 flex min-w-0 items-center gap-2">
+                <h1 className="truncate text-sm font-bold tracking-[-.01em] sm:text-[15px]">{data.spot.name}</h1>
+                <span className="hidden rounded-full border border-emerald-400/18 bg-emerald-400/[0.08] px-2 py-0.5 text-[8px] font-bold uppercase tracking-wider text-emerald-300 sm:inline">Activo</span>
+              </div>
+            </div>
           </div>
-          <div className="hidden items-center gap-3 rounded-2xl border border-white/[0.08] bg-white/[0.025] px-4 py-2 text-xs xl:flex"><span className="font-semibold text-violet-300">◎ {decimal(data.summary.flows)} FLOWS</span><span className="h-4 w-px bg-white/10" /><span className="text-white/65">{money(data.summary.available_local, data.spot.currency)}</span><span className="h-4 w-px bg-white/10" /><span className="text-white/45">USD {decimal(data.summary.net_usd)}</span></div>
-          <div className="flex items-center gap-2">
-            <button type="button" onClick={() => setTab("sales")} className="hidden items-center gap-2 rounded-xl bg-violet-600 px-3.5 py-2.5 text-xs font-semibold shadow-[0_8px_24px_rgba(124,58,237,.25)] transition hover:bg-violet-500 sm:flex"><ShoppingCart className="h-4 w-4" /> Nueva venta</button>
-            <Link href={`/studios/${data.studio.slug}/tienda`} className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.025] px-3 py-2.5 text-xs text-white/65 transition hover:border-violet-400/30 hover:text-white"><span className="hidden sm:inline">Ver tienda</span><ExternalLink className="h-4 w-4" /></Link>
-            <AccountMenu preferUsername />
+
+          <div className="flex items-center gap-1.5 sm:gap-2">
+            <button type="button" onClick={() => setTab("scanner")} className="flex h-9 items-center gap-2 rounded-[11px] border border-cyan-300/20 bg-cyan-400/[0.06] px-2.5 text-[11px] font-semibold text-cyan-100 transition hover:border-cyan-300/40 hover:bg-cyan-400/[0.10] sm:px-3">
+              <ScanLine className="h-3.5 w-3.5" /><span className="hidden sm:inline">Scanner</span>
+            </button>
+            {businessSpaceId ? (
+              <Link href={`/businesses/${businessSpaceId}/publicador`} className="hidden h-9 items-center gap-2 rounded-[11px] border border-blue-400/18 bg-blue-500/[0.05] px-3 text-[11px] font-semibold text-blue-100 transition hover:border-blue-400/35 xl:flex">
+                <Share2 className="h-3.5 w-3.5" /> Publicador
+              </Link>
+            ) : directSpotId ? (
+              <Link href={`/mi-spot/${directSpotId}/publicaciones`} className="hidden h-9 items-center gap-2 rounded-[11px] border border-white/[0.08] bg-white/[0.025] px-3 text-[11px] font-semibold text-white/60 transition hover:border-violet-400/25 hover:text-white xl:flex">
+                <Megaphone className="h-3.5 w-3.5" /> Publicaciones
+              </Link>
+            ) : null}
+            <button type="button" onClick={() => setTab("sales")} className="flex h-9 items-center gap-2 rounded-[11px] bg-violet-600 px-3 text-[11px] font-bold shadow-[0_8px_22px_rgba(124,58,237,.24)] transition hover:bg-violet-500">
+              <ShoppingCart className="h-3.5 w-3.5" /><span className="hidden sm:inline">Nueva venta</span>
+            </button>
+            <Link href={`/studios/${data.studio.slug}/tienda`} aria-label="Ver tienda" className="grid h-9 w-9 place-items-center rounded-[11px] border border-white/[0.08] bg-white/[0.025] text-white/55 transition hover:border-violet-400/25 hover:text-white">
+              <ExternalLink className="h-3.5 w-3.5" />
+            </Link>
           </div>
         </div>
       </header>
 
-      <div className="relative mx-auto grid max-w-[1600px] gap-4 p-3 sm:p-5 lg:grid-cols-[230px_minmax(0,1fr)]">
-        <aside className={`${CARD} flex gap-1.5 overflow-x-auto p-2 lg:sticky lg:top-[78px] lg:h-[calc(100vh-98px)] lg:flex-col lg:p-3`}>
-          <p className="hidden px-3 pb-2 pt-1 text-[9px] font-bold uppercase tracking-[.2em] text-white/25 lg:block">Administración</p>
-          {NAV.map((item) => { const Icon = item.icon; return <button key={item.id} type="button" onClick={() => setTab(item.id)} className={`group relative flex shrink-0 items-center gap-3 overflow-hidden rounded-xl px-3 py-2.5 text-left text-sm transition ${tab === item.id ? "bg-gradient-to-r from-violet-600 to-violet-600/80 text-white shadow-[0_8px_24px_rgba(109,40,217,.2)]" : "text-white/45 hover:bg-white/[0.04] hover:text-white"}`}>{tab === item.id ? <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-white/80" /> : null}<Icon className={`h-4 w-4 ${tab === item.id ? "text-white" : "text-white/35 transition group-hover:text-violet-300"}`} />{item.label}</button>; })}
+      <div className="relative mx-auto grid max-w-[1540px] gap-3 p-3 sm:p-4 lg:grid-cols-[205px_minmax(0,1fr)]">
+        <aside className={`${CARD} flex gap-1 overflow-x-auto p-2 lg:sticky lg:top-[68px] lg:h-[calc(100vh-84px)] lg:flex-col lg:p-2.5`}>
+          <p className="hidden px-3 pb-2 pt-1 text-[10px] font-bold uppercase tracking-[.18em] text-white/35 lg:block">Administración</p>
+          {NAV.map((item) => { const Icon = item.icon; return <button key={item.id} type="button" onClick={() => setTab(item.id)} className={`group relative flex shrink-0 items-center gap-2.5 overflow-hidden rounded-[11px] px-3 py-2.5 text-left text-[13px] transition ${tab === item.id ? "border border-violet-400/20 bg-violet-500/[0.13] text-white shadow-[inset_0_1px_0_rgba(255,255,255,.04),0_8px_24px_rgba(109,40,217,.10)]" : "border border-transparent text-white/50 hover:border-white/[0.05] hover:bg-white/[0.035] hover:text-white"}`}>{tab === item.id ? <span className="absolute inset-y-2 left-0 w-0.5 rounded-full bg-violet-300 shadow-[0_0_8px_rgba(196,181,253,.75)]" /> : null}<Icon className={`h-4 w-4 ${tab === item.id ? "text-white" : "text-white/35 transition group-hover:text-violet-300"}`} />{item.label}</button>; })}
           <div className="mt-auto hidden space-y-3 lg:block">
             <Link href="/clouva-ai" className="group flex items-center gap-3 rounded-2xl border border-violet-400/20 bg-[radial-gradient(circle_at_0%_0%,rgba(139,92,246,.18),transparent_60%),rgba(255,255,255,.025)] p-3 transition hover:border-violet-400/40">
               <div className="grid h-10 w-10 shrink-0 place-items-center"><Image src="/assets/clouva-ai/trebol-mascot.png" alt="Trébol CLOUVA AI" width={48} height={48} className="drop-shadow-[0_0_12px_rgba(168,85,247,.55)]" /></div>
@@ -1416,7 +1449,7 @@ export function SpotCommerceDashboard({ studioId }: { studioId: string }) {
           </div>
         </aside>
 
-        <section className="min-w-0 space-y-4">
+        <section className="min-w-0 space-y-3">
           {error ? <div className="flex items-start justify-between gap-3 rounded-xl border border-red-400/25 bg-red-400/10 p-3 text-sm text-red-100"><span>{error}</span><button onClick={() => setError(null)}><X className="h-4 w-4" /></button></div> : null}
           {message ? <div className="flex items-start justify-between gap-3 rounded-xl border border-emerald-400/25 bg-emerald-400/10 p-3 text-sm text-emerald-100"><span>{message}</span><button onClick={() => setMessage(null)}><X className="h-4 w-4" /></button></div> : null}
 
@@ -1592,36 +1625,36 @@ function SpotDashboard({ data, goal, goalProgress, busy, onNavigate, onRefreshFx
   const hasSales = Number(data.summary.gross_local || 0) > 0 || data.orders.length > 0;
 
   const quickActions: Array<{ label: string; detail: string; tab: Tab; icon: typeof Store; tone: string }> = [
-    { label: "Nueva venta", detail: "Abrir caja", tab: "sales", icon: ShoppingCart, tone: "from-violet-600/25 to-fuchsia-500/5 text-violet-200" },
+    { label: "Nueva venta", detail: "Abrir caja", tab: "sales", icon: ShoppingCart, tone: "from-violet-600/55 to-fuchsia-500/12 text-violet-100" },
     { label: "Escanear", detail: "Buscar o crear", tab: "scanner", icon: ScanLine, tone: "from-cyan-500/15 to-cyan-500/0 text-cyan-200" },
     { label: "Cargar stock", detail: "Actualizar inventario", tab: "inventory", icon: PackagePlus, tone: "from-emerald-500/15 to-emerald-500/0 text-emerald-200" },
     { label: "Crear etiquetas", detail: "QR y barras", tab: "codes", icon: Printer, tone: "from-fuchsia-500/15 to-fuchsia-500/0 text-fuchsia-200" },
   ];
 
   return <div className="space-y-4">
-    <section className="relative overflow-hidden rounded-3xl border border-violet-400/15 bg-[linear-gradient(120deg,rgba(76,29,149,.24),rgba(11,9,18,.92)_46%,rgba(15,10,25,.96))] p-5 shadow-[0_22px_80px_rgba(50,18,91,.18)] sm:p-7">
-      <div className="pointer-events-none absolute -right-20 -top-32 h-80 w-80 rounded-full bg-violet-600/15 blur-3xl" />
-      <div className="pointer-events-none absolute bottom-0 right-[22%] h-28 w-52 bg-fuchsia-500/10 blur-3xl" />
-      <div className="relative grid items-center gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+    <section className="relative overflow-hidden rounded-[22px] border border-violet-400/12 bg-[linear-gradient(118deg,rgba(76,29,149,.20),rgba(11,9,18,.90)_48%,rgba(13,9,22,.94))] p-4 shadow-[0_18px_58px_rgba(50,18,91,.14)] sm:p-5">
+      <div className="pointer-events-none absolute -right-20 -top-36 h-72 w-72 rounded-full bg-violet-600/12 blur-3xl" />
+      <div className="pointer-events-none absolute bottom-0 right-[24%] h-20 w-48 bg-fuchsia-500/[0.07] blur-3xl" />
+      <div className="relative grid items-center gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
         <div>
-          <p className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[.22em] text-violet-300"><CircleGauge className="h-3.5 w-3.5" /> Centro operativo · {data.spot.name}</p>
-          <h1 className="mt-3 max-w-2xl text-3xl font-bold tracking-[-.035em] sm:text-4xl">{hasSales ? "Tu Spot está en movimiento." : "Todo listo para la primera venta."}</h1>
-          <p className="mt-3 max-w-xl text-sm leading-6 text-white/45">{hasSales ? "Seguí ventas, stock, pedidos y crecimiento desde un solo lugar." : "Cargá un producto, asignale su código y vendelo desde la misma operación."}</p>
-          <div className="mt-6 flex flex-wrap gap-2.5">
-            <button type="button" onClick={() => onNavigate("sales")} className="flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-xs font-bold text-[#10091a] transition hover:bg-violet-100"><ShoppingCart className="h-4 w-4" /> Iniciar venta</button>
-            <button type="button" onClick={() => onNavigate("scanner")} className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-4 py-2.5 text-xs font-semibold text-white/70 transition hover:border-violet-400/35 hover:text-white"><ScanLine className="h-4 w-4 text-violet-300" /> Escanear producto</button>
+          <p className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[.19em] text-violet-300/85"><CircleGauge className="h-3.5 w-3.5" /> Centro operativo · {data.spot.name}</p>
+          <h1 className="mt-2 max-w-2xl text-2xl font-bold tracking-[-.035em] sm:text-[30px]">{hasSales ? "Tu Spot está en movimiento." : "Todo listo para la primera venta."}</h1>
+          <p className="mt-2 max-w-xl text-[13px] leading-5 text-white/52">{hasSales ? "Seguí ventas, stock, pedidos y crecimiento desde un solo lugar." : "Cargá un producto, asignale su código y vendelo desde la misma operación."}</p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button type="button" onClick={() => onNavigate("sales")} className="flex min-h-10 items-center gap-2 rounded-[11px] bg-white px-4 py-2 text-[11px] font-bold text-[#10091a] transition hover:bg-violet-100"><ShoppingCart className="h-3.5 w-3.5" /> Iniciar venta</button>
+            <button type="button" onClick={() => onNavigate("scanner")} className="flex min-h-10 items-center gap-2 rounded-[11px] border border-white/[0.09] bg-white/[0.035] px-4 py-2 text-[11px] font-semibold text-white/72 transition hover:border-violet-400/30 hover:bg-violet-500/[0.06] hover:text-white"><ScanLine className="h-3.5 w-3.5 text-violet-300" /> Escanear producto</button>
           </div>
         </div>
-        <div className="rounded-2xl border border-white/[0.08] bg-black/20 p-4 backdrop-blur-sm">
-          <div className="flex items-center justify-between"><span className="text-[10px] font-bold uppercase tracking-[.18em] text-white/30">Disponible</span><BadgeDollarSign className="h-4 w-4 text-emerald-300" /></div>
-          <p className="mt-3 text-3xl font-semibold tracking-tight">{money(data.summary.available_local, data.spot.currency)}</p>
-          <div className="mt-4 grid grid-cols-2 gap-2 border-t border-white/[0.08] pt-4"><div><p className="text-[9px] uppercase tracking-wider text-white/25">Neto en USD</p><p className="mt-1 text-sm font-semibold text-white/70">USD {decimal(data.summary.net_usd)}</p></div><div><p className="text-[9px] uppercase tracking-wider text-white/25">Saldo Flow</p><p className="mt-1 text-sm font-semibold text-violet-300">◎ {decimal(data.summary.flows)}</p></div></div>
+        <div className="rounded-[18px] border border-white/[0.07] bg-black/18 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,.025)] backdrop-blur-sm">
+          <div className="flex items-center justify-between"><span className="text-[10px] font-bold uppercase tracking-[.16em] text-white/38">Disponible</span><BadgeDollarSign className="h-4 w-4 text-emerald-300" /></div>
+          <p className="mt-2 text-[28px] font-semibold tracking-tight">{money(data.summary.available_local, data.spot.currency)}</p>
+          <div className="mt-3 grid grid-cols-2 gap-2 border-t border-white/[0.07] pt-3"><div><p className="text-[10px] uppercase tracking-wider text-white/35">Neto en USD</p><p className="mt-1 text-[13px] font-semibold text-white/75">USD {decimal(data.summary.net_usd)}</p></div><div><p className="text-[10px] uppercase tracking-wider text-white/35">Saldo Flow</p><p className="mt-1 text-[13px] font-semibold text-violet-300">◎ {decimal(data.summary.flows)}</p></div></div>
         </div>
       </div>
     </section>
 
-    <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-      {quickActions.map(({ label, detail, tab, icon: Icon, tone }) => <button key={tab} type="button" onClick={() => onNavigate(tab)} className={`group flex items-center gap-3 rounded-2xl border border-white/[0.08] bg-gradient-to-br ${tone} p-3.5 text-left transition hover:-translate-y-0.5 hover:border-white/15 sm:p-4`}><span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-current/10 bg-black/20"><Icon className="h-4 w-4" /></span><span className="min-w-0 flex-1"><strong className="block text-xs text-white/80 sm:text-sm">{label}</strong><small className="mt-1 hidden text-[9px] text-white/30 sm:block">{detail}</small></span><ArrowRight className="hidden h-3.5 w-3.5 text-white/20 transition group-hover:translate-x-0.5 group-hover:text-white/55 sm:block" /></button>)}
+    <div className="grid grid-cols-2 gap-2.5 xl:grid-cols-4">
+      {quickActions.map(({ label, detail, tab, icon: Icon, tone }) => <button key={tab} type="button" onClick={() => onNavigate(tab)} className={`group flex min-h-[76px] items-center gap-3 rounded-[18px] border border-white/[0.065] bg-gradient-to-br ${tone} p-3.5 text-left shadow-[0_12px_28px_rgba(0,0,0,.12)] transition duration-200 hover:-translate-y-0.5 hover:border-white/[0.14] hover:shadow-[0_16px_34px_rgba(0,0,0,.18)]`}><span className="grid h-10 w-10 shrink-0 place-items-center rounded-[12px] border border-current/10 bg-black/18"><Icon className="h-[17px] w-[17px]" /></span><span className="min-w-0 flex-1"><strong className="block text-[13px] text-white/88">{label}</strong><small className="mt-1 hidden text-[10px] text-white/42 sm:block">{detail}</small></span><ArrowRight className="hidden h-3.5 w-3.5 text-white/28 transition group-hover:translate-x-0.5 group-hover:text-white/65 sm:block" /></button>)}
     </div>
 
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -1632,17 +1665,17 @@ function SpotDashboard({ data, goal, goalProgress, busy, onNavigate, onRefreshFx
     </div>
 
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
-      <section className={`${CARD} relative overflow-hidden p-5 sm:p-6`}>
-        <div className="pointer-events-none absolute right-0 top-0 h-48 w-48 rounded-full bg-violet-600/[0.07] blur-3xl" />
-        <div className="relative grid items-center gap-6 sm:grid-cols-[minmax(0,1fr)_150px]">
+      <section className={`${CARD} relative overflow-hidden p-4 sm:p-5`}>
+        <div className="pointer-events-none absolute right-0 top-0 h-40 w-40 rounded-full bg-violet-600/[0.055] blur-3xl" />
+        <div className="relative grid items-center gap-4 sm:grid-cols-[minmax(0,1fr)_118px]">
           <div>
-            <div className="flex items-center gap-2"><span className="rounded-full border border-violet-400/20 bg-violet-500/10 px-2.5 py-1 text-[9px] font-bold uppercase tracking-[.18em] text-violet-300">Objetivo principal</span>{goalProgress >= 100 ? <CheckCircle2 className="h-4 w-4 text-emerald-300" /> : null}</div>
-            <h2 className="mt-4 text-2xl font-semibold tracking-tight sm:text-3xl">{goal?.name || "Objetivo económico"}</h2>
-            <p className="mt-2 text-xs leading-5 text-white/35">Cada venta confirmada actualiza el avance usando la cotización histórica guardada en ese pedido.</p>
-            <div className="mt-6 h-2 overflow-hidden rounded-full bg-white/[0.06]"><div className="h-full rounded-full bg-gradient-to-r from-violet-600 via-fuchsia-500 to-pink-400 shadow-[0_0_16px_rgba(192,38,211,.35)] transition-[width] duration-700" style={{ width: `${goalProgress}%` }} /></div>
-            <div className="mt-3 flex flex-wrap justify-between gap-2 text-[10px]"><span className="text-white/35">Generado <strong className="ml-1 text-white/70">USD {decimal(generated)}</strong></span><span className="text-white/35">Faltan <strong className="ml-1 text-violet-300">USD {decimal(remaining)}</strong></span></div>
+            <div className="flex items-center gap-2"><span className="rounded-full border border-violet-400/18 bg-violet-500/[0.08] px-2.5 py-1 text-[9px] font-bold uppercase tracking-[.16em] text-violet-300">Objetivo principal</span>{goalProgress >= 100 ? <CheckCircle2 className="h-4 w-4 text-emerald-300" /> : null}</div>
+            <h2 className="mt-3 text-xl font-semibold tracking-tight sm:text-[26px]">{goal?.name || "Objetivo económico"}</h2>
+            <p className="mt-1.5 text-[11px] leading-5 text-white/42">Cada venta confirmada actualiza el avance usando la cotización histórica guardada en ese pedido.</p>
+            <div className="mt-4 h-2 overflow-hidden rounded-full bg-white/[0.055]"><div className="h-full rounded-full bg-gradient-to-r from-violet-600 via-fuchsia-500 to-pink-400 shadow-[0_0_14px_rgba(192,38,211,.30)] transition-[width] duration-700" style={{ width: `${goalProgress}%` }} /></div>
+            <div className="mt-2.5 flex flex-wrap justify-between gap-2 text-[10px]"><span className="text-white/42">Generado <strong className="ml-1 text-white/78">USD {decimal(generated)}</strong></span><span className="text-white/42">Faltan <strong className="ml-1 text-violet-300">USD {decimal(remaining)}</strong></span></div>
           </div>
-          <div className="mx-auto grid h-32 w-32 place-items-center rounded-full p-[9px] shadow-[0_0_42px_rgba(124,58,237,.13)]" style={{ background: `conic-gradient(#a855f7 ${goalProgress * 3.6}deg, rgba(255,255,255,.055) 0deg)` }}><div className="grid h-full w-full place-items-center rounded-full border border-white/[0.06] bg-[#0b0912]"><div className="text-center"><p className="text-2xl font-bold">{goalProgress.toFixed(1)}%</p><span className="text-[8px] uppercase tracking-[.17em] text-white/25">Completado</span></div></div></div>
+          <div className="mx-auto grid h-[104px] w-[104px] place-items-center rounded-full p-[7px] shadow-[0_0_34px_rgba(124,58,237,.11)]" style={{ background: `conic-gradient(#a855f7 ${goalProgress * 3.6}deg, rgba(255,255,255,.05) 0deg)` }}><div className="grid h-full w-full place-items-center rounded-full border border-white/[0.055] bg-[#0b0912]"><div className="text-center"><p className="text-xl font-bold">{goalProgress.toFixed(1)}%</p><span className="text-[8px] uppercase tracking-[.14em] text-white/35">Completado</span></div></div></div>
         </div>
       </section>
 
@@ -1657,7 +1690,7 @@ function SpotDashboard({ data, goal, goalProgress, busy, onNavigate, onRefreshFx
 }
 
 function Metric({ label, value, detail, icon: Icon, positive = false }: { label: string; value: string; detail: string; icon: typeof Store; positive?: boolean }) {
-  return <div className={`${CARD} group relative overflow-hidden p-4 transition hover:border-violet-400/20 sm:p-5`}><div className="absolute right-0 top-0 h-20 w-20 rounded-full bg-violet-600/[0.05] blur-2xl transition group-hover:bg-violet-600/10" /><div className="relative flex items-center justify-between"><p className="text-[10px] font-bold uppercase tracking-[.16em] text-white/30">{label}</p><span className="grid h-8 w-8 place-items-center rounded-lg border border-violet-400/10 bg-violet-500/[0.06]"><Icon className="h-3.5 w-3.5 text-violet-300" /></span></div><p className={`relative mt-3 text-xl font-semibold tracking-tight sm:text-2xl ${positive ? "text-emerald-300" : ""}`}>{value}</p><p className="relative mt-2 truncate text-[9px] text-white/25">{detail}</p></div>;
+  return <div className={`${CARD} group relative overflow-hidden p-3.5 transition duration-200 hover:border-violet-400/18 sm:p-4`}><div className="absolute right-0 top-0 h-20 w-20 rounded-full bg-violet-600/[0.035] blur-2xl transition group-hover:bg-violet-600/[0.075]" /><div className="relative flex items-center justify-between gap-3"><p className="text-[10px] font-bold uppercase tracking-[.15em] text-white/42">{label}</p><span className="grid h-8 w-8 shrink-0 place-items-center rounded-[10px] border border-violet-400/10 bg-violet-500/[0.055]"><Icon className="h-3.5 w-3.5 text-violet-300" /></span></div><p className={`relative mt-2.5 text-[22px] font-semibold tracking-tight sm:text-[26px] ${positive ? "text-emerald-300" : "text-white/92"}`}>{value}</p><p className="relative mt-1.5 truncate text-[10px] text-white/38">{detail}</p></div>;
 }
 
 function RecentMovements({ data, onNavigate }: { data: Overview; onNavigate?: (tab: Tab) => void }) {
