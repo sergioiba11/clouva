@@ -1,12 +1,6 @@
 name: Provision CLOUVA Minecraft
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "infra/minecraft/**"
-      - ".github/workflows/provision-minecraft.yml"
   workflow_dispatch:
 
 permissions:
