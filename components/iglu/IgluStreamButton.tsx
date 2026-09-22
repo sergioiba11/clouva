@@ -112,6 +112,12 @@ export function IgluStreamButton({
         return;
       }
 
+      const podcastUrl = publicHttpUrl(payload.radio?.podcast_rss_url);
+      if (podcastUrl) {
+        window.location.assign(podcastUrl);
+        return;
+      }
+
       const fallback = payload.fallbackTrack || null;
       if (fallback?.audioUrl && audio) {
         audio.src = fallback.audioUrl;
