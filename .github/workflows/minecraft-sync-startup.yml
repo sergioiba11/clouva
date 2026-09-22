@@ -1,0 +1,45 @@
+name: Sync Minecraft Startup Metadata
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "infra/minecraft/startup.sh"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: gen-lang-client-0737053175
+  MC_ZONE: southamerica-east1-b
+  MC_INSTANCE: clouva-minecraft-family
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA_EMAIL }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Update startup metadata without reboot
+        run: |
+          gcloud compute instances add-metadata "$MC_INSTANCE" \
+            --project "$PROJECT_ID" \
+            --zone "$MC_ZONE" \
+            --metadata-from-file startup-script=infra/minecraft/startup.sh
+
+      - name: Confirm live VM remains running
+        run: |
+          gcloud compute instances describe "$MC_INSTANCE" \
+            --project "$PROJECT_ID" \
+            --zone "$MC_ZONE" \
+            --format="value(status)"
