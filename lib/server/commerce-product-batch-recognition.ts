@@ -339,7 +339,7 @@ async function analyzeChunk(args: {
     "Si una foto muestra el frente y otra el dorso/barcode del mismo producto, deben quedar juntas.",
     "NO agrupes artículos distintos solo porque sean de la misma marca o categoría. Color, conector, capacidad, modelo o código distinto separan variantes.",
     "packageKind debe ser box para caja/cartón de mercadería, retail_package para blister/envase comercial, loose_product para producto suelto y unknown si no se puede determinar.",
-    "unitCount es la cantidad de UNIDADES FÍSICAS del mismo producto que se ven representadas por ese grupo. Si una foto muestra 3 cajas iguales claramente separadas, unitCount=3. Si son varias fotos del mismo objeto o de las mismas 3 cajas, no sumes de nuevo. Si no podés contar con seguridad, usá 1 y needsReview=true.",
+    "unitCount es la cantidad de UNIDADES FÍSICAS del mismo producto que se ven representadas por ese grupo. Si una foto muestra 3 cajas iguales claramente separadas, unitCount=3. Si son varias fotos del mismo objeto o de las mismas 3 cajas, no sumes de nuevo. La cantidad de imágenes NO es evidencia de cantidad: si no podés demostrar que son unidades distintas, usá 1 y needsReview=true.",
     "Leé TODOS los códigos visibles y completos en visibleIdentifiers. source=box si el código está impreso/pegado en la caja, product si está en el producto o su packaging directo.",
     "En cada visibleIdentifier incluí sourceIndex con el índice EXACTO de la foto donde se leyó ese código.",
     "identifierValue/identifierType representan el código principal más confiable. Si no hay ninguno inequívoco, dejá identifierValue vacío.",
@@ -610,9 +610,15 @@ function consolidateDeterministicCommercialIdentity(groups: CommerceBatchGroup[]
 
   return Array.from(clusters.values()).map((members) => {
     if (members.length === 1) return members[0];
+    // A deterministic commercial-identity merge proves that these views belong
+    // to the same SKU/variant, but it does NOT prove that every source group is
+    // a different physical unit. Summing here was inflating stock whenever
+    // front/back/detail photos had been split across chunks. Keep the strongest
+    // existing physical count and let the visual refinement step raise it only
+    // when multiple distinct units are actually visible.
     return mergeClusterGroups(
       members,
-      members.reduce((sum, group) => sum + Math.max(1, group.unitCount), 0),
+      Math.max(...members.map((group) => Math.max(1, group.unitCount))),
       Math.min(...members.map((group) => group.confidence)),
       members.some((group) => group.needsReview),
     );
@@ -759,6 +765,9 @@ async function refineMergedGroup(args: {
       `Spot: "${args.spotName}".`,
       "Todas estas fotos fueron propuestas como el mismo producto/variante. Confirmá la identidad y contá unidades físicas sin duplicar vistas.",
       "Frente, dorso y detalle del mismo objeto cuentan como UNA unidad.",
+      "REGLA CRÍTICA: la cantidad de fotos NUNCA es la cantidad de unidades. Dos fotos del mismo producto no implican unitCount=2.",
+      "Si el mismo packaging aparece en varias fotos y no podés demostrar que son unidades físicas distintas, usá unitCount=1.",
+      "Solo usá unitCount>1 cuando la evidencia visual muestre claramente varias unidades distintas al mismo tiempo o rasgos inequívocos que prueben que son objetos distintos.",
       "Si se ven varias cajas/unidades idénticas, contalas una sola vez cada una aunque aparezcan repetidas en otras fotos.",
       "Si descubrís códigos completos distintos o una variante claramente diferente, marcá needsReview=true; no inventes datos.",
       "Elegí como Frente la foto donde mejor se vea el producto o la cara frontal de su packaging.",
