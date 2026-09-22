@@ -44,6 +44,26 @@ const IDENTIFIER_TYPES = new Set<CommerceIdentifierType>([
   "ean_13", "ean_8", "upc_a", "upc_e", "code_128", "clouva_barcode", "clouva_qr", "sku",
 ]);
 
+const INVOICE_MATCH_SCHEMA = {
+  type: "object",
+  properties: {
+    matches: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          lineNumber: { type: "integer" },
+          groupKeys: { type: "array", items: { type: "string" } },
+          confidence: { type: "number", minimum: 0, maximum: 1 },
+          reasons: { type: "array", items: { type: "string" } },
+        },
+        required: ["lineNumber", "groupKeys", "confidence", "reasons"],
+      },
+    },
+  },
+  required: ["matches"],
+} as const;
+
 const INVOICE_SCHEMA = {
   type: "object",
   properties: {
@@ -361,4 +381,107 @@ export function reconcileCommerceInvoice(args: {
       reasons: Array.from(new Set(strongSelected.flatMap((candidate) => candidate.reasons))),
     };
   });
+}
+
+
+export async function reconcileCommerceInvoiceWithAI(args: {
+  invoice: CommerceInvoiceRecognition;
+  groups: CommerceBatchGroup[];
+}): Promise<CommerceInvoiceMatch[]> {
+  const fallback = reconcileCommerceInvoice(args);
+  if (!args.invoice.lines.length || !args.groups.length) return fallback;
+
+  const prompt = [
+    "Sos el reconciliador de recepción de mercadería de CLOUVA.",
+    "Tenés renglones de una factura y productos ya agrupados desde fotos. Debés decidir qué producto agrupado corresponde a cada renglón.",
+    "Usá significado comercial, marca, modelo, conectores, cantidades y códigos. La descripción de factura puede estar abreviada.",
+    "REGLA FUERTE: un groupKey solo puede pertenecer a UN renglón de factura.",
+    "REGLA FUERTE: no uses un cable PS4 para cubrir el renglón PS4 si existe un producto controlador/joystick y además hay un renglón separado Cable PS4.",
+    "REGLA FUERTE: códigos EAN/UPC exactos y modelos exactos pesan más que similitud de palabras.",
+    "No fuerces coincidencias. Si no hay evidencia suficiente, devolvé groupKeys vacío.",
+    "La cantidad detectada se calcula después usando unitCount real; no inventes cantidades.",
+    "Podés asignar un solo grupo con unitCount > 1 para cubrir varias unidades del mismo renglón.",
+    `Factura: ${JSON.stringify(args.invoice.lines.map((line) => ({
+      lineNumber: line.lineNumber,
+      description: line.description,
+      brand: line.brand,
+      model: line.model,
+      supplierSku: line.supplierSku,
+      barcode: line.barcode,
+      quantity: line.quantity,
+    })))}`,
+    `Productos agrupados: ${JSON.stringify(args.groups.map((group) => ({
+      groupKey: group.groupKey,
+      name: group.name,
+      brand: group.brand,
+      model: group.model,
+      unitCount: group.unitCount,
+      identifier: group.identifier,
+      visibleIdentifiers: group.visibleIdentifiers,
+    })))}`,
+  ].join("\n");
+
+  try {
+    const generated = await generateGoogleCloudJson({
+      model: process.env.GOOGLE_CLOUD_PRODUCT_VISION_MODEL
+        ?? process.env.GEMINI_PRODUCT_VISION_MODEL
+        ?? "gemini-2.5-flash",
+      prompt,
+      responseJsonSchema: INVOICE_MATCH_SCHEMA,
+      temperature: 0,
+      maxOutputTokens: 4000,
+    });
+
+    const root = record(JSON.parse(generated.text));
+    const rawMatches = Array.isArray(root.matches) ? root.matches : [];
+    const groupByKey = new Map(args.groups.map((group) => [group.groupKey, group]));
+    const used = new Set<string>();
+    const aiByLine = new Map<number, { keys: string[]; confidence: number; reasons: string[] }>();
+
+    for (const raw of rawMatches) {
+      const item = record(raw);
+      const lineNumber = Math.floor(Number(item.lineNumber));
+      if (!Number.isInteger(lineNumber)) continue;
+      const keys = (Array.isArray(item.groupKeys) ? item.groupKeys : [])
+        .filter((key): key is string => typeof key === "string" && groupByKey.has(key) && !used.has(key));
+      for (const key of keys) used.add(key);
+      aiByLine.set(lineNumber, {
+        keys,
+        confidence: Math.min(1, Math.max(0, Number(item.confidence) || 0)),
+        reasons: (Array.isArray(item.reasons) ? item.reasons : [])
+          .filter((reason): reason is string => typeof reason === "string")
+          .map((reason) => reason.trim())
+          .filter(Boolean)
+          .slice(0, 6),
+      });
+    }
+
+    return args.invoice.lines.map((line, index) => {
+      const ai = aiByLine.get(line.lineNumber);
+      if (!ai) return fallback[index];
+      const selected = ai.keys.map((key) => groupByKey.get(key)!).filter(Boolean);
+      const matchedQuantity = selected.reduce(
+        (sum, group) => sum + Math.max(1, Math.floor(group.unitCount || 1)),
+        0,
+      );
+      const target = Math.max(1, Math.round(line.quantity));
+      const matchStatus: CommerceInvoiceMatch["matchStatus"] = matchedQuantity >= target
+        ? "matched"
+        : matchedQuantity > 0
+          ? "partial"
+          : "unmatched";
+      const confidence = ai.confidence;
+      return {
+        line,
+        matchedGroupKeys: selected.map((group) => group.groupKey),
+        matchedQuantity,
+        matchStatus,
+        autoChecked: matchStatus === "matched" && confidence >= 0.82,
+        confidence,
+        reasons: ai.reasons.length ? ai.reasons : ["reconciliación semántica"],
+      };
+    });
+  } catch {
+    return fallback;
+  }
 }
