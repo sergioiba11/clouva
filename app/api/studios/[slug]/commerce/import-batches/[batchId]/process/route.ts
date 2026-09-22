@@ -211,6 +211,12 @@ export async function POST(
       .maybeSingle();
     if (batchError) throw new Error(batchError.message);
     if (!batch) return NextResponse.json({ error: "El lote no existe en este Spot." }, { status: 404 });
+    if (batch.status === "analyzing") {
+      return NextResponse.json(
+        { error: "El lote todavía se está analizando. Esperá a que CLOUVA termine antes de ingresar la compra." },
+        { status: 409 },
+      );
+    }
 
     const groups = groupsFromMetadata(batch.metadata);
     if (!groups.length) return NextResponse.json({ error: "Primero analizá y agrupá las imágenes del lote." }, { status: 409 });
