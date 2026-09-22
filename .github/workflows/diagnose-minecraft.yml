@@ -39,6 +39,7 @@ jobs:
             --format="yaml(name,status,lastStartTimestamp,networkInterfaces[0].accessConfigs[0].natIP,metadata.items)"
 
       - name: Docker state and Minecraft logs
+        continue-on-error: true
         shell: bash
         run: |
           gcloud compute ssh "$MC_INSTANCE" \
@@ -62,6 +63,7 @@ jobs:
             '
 
       - name: BlueMap HTTP diagnostics
+        continue-on-error: true
         shell: bash
         run: |
           echo "===== PUBLIC CLOUVA MAP ====="
@@ -113,4 +115,5 @@ jobs:
 # diagnose SKLauncher/AuthMe failure
 
 # live status check 2026-09-19T20:35:00-03:00
-\n# resilient diagnostics trigger 2026-09-21T22:45:00-03:00\n
+
+# resilient diagnostics trigger 2026-09-21T22:45:00-03:00
