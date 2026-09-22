@@ -723,6 +723,17 @@ export function CommerceBulkProductImport({
       setStage("uploading");
       await uploadPrepared(id, prepared);
 
+      if (invoiceFile) {
+        try {
+          await uploadAndAnalyzeInvoice(id, invoiceFile);
+        } catch (invoiceError) {
+          setInvoiceData(null);
+          setError(invoiceError instanceof Error
+            ? `La factura quedó pendiente, pero las fotos continúan: ${invoiceError.message}`
+            : "La factura quedó pendiente, pero las fotos continúan.");
+        }
+      }
+
       setStage("analyzing");
       const analyzed = await analyzeWithRecovery(id);
       setGroups(analyzed.groups);
@@ -731,13 +742,11 @@ export function CommerceBulkProductImport({
 
       if (invoiceFile) {
         try {
-          await uploadAndAnalyzeInvoice(id, invoiceFile);
-        } catch (invoiceError) {
-          setInvoiceData(null);
-          setError(invoiceError instanceof Error
-            ? `Las fotos quedaron clasificadas; la factura quedó pendiente: ${invoiceError.message}`
-            : "Las fotos quedaron clasificadas; la factura quedó pendiente.");
-        }
+          const refreshedInvoice = await getJson<InvoicePayload>(
+            `/api/studios/${encodeURIComponent(studioId)}/commerce/import-batches/${encodeURIComponent(id)}/invoice`,
+          );
+          setInvoiceData(refreshedInvoice.invoice ? refreshedInvoice : null);
+        } catch {}
       }
 
       setStage("review");
