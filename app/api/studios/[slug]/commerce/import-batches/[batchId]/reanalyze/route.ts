@@ -154,7 +154,7 @@ async function reconcileStoredInvoice(args: {
   if (linesError) throw new Error(linesError.message);
 
   const sourceLines = (lines ?? []).map((line) => record(line));
-  const matches = reconcileCommerceInvoice({
+  const matches = await reconcileCommerceInvoiceWithAI({
     invoice: invoiceRecognition(record(invoice), sourceLines),
     groups: args.groups,
   });
