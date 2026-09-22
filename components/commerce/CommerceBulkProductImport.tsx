@@ -1133,9 +1133,9 @@ export function CommerceBulkProductImport({
               <span className="text-[9px] text-white/35">unidades esperadas</span>
             </div>
             <div className="rounded-xl border border-white/[0.07] bg-white/[0.025] p-2.5">
-              <p className="text-[9px] uppercase tracking-[.12em] text-white/35">Fotos</p>
+              <p className="text-[9px] uppercase tracking-[.12em] text-white/35">Unidades</p>
               <strong className="mt-1 block text-lg">{receivingSummary.detectedUnits}</strong>
-              <span className="text-[9px] text-white/35">unidades detectadas</span>
+              <span className="text-[9px] text-white/35">físicas detectadas</span>
             </div>
             <div className="rounded-xl border border-white/[0.07] bg-white/[0.025] p-2.5">
               <p className="text-[9px] uppercase tracking-[.12em] text-white/35">Faltan</p>
