@@ -429,14 +429,16 @@ export function SpotCommerceDashboard({
   studioId,
   businessSpaceId,
   directSpotId,
+  initialTab,
 }: {
   studioId: string;
   businessSpaceId?: string | null;
   directSpotId?: string | null;
+  initialTab?: Tab;
 }) {
   const router = useRouter();
   const { session, user, loading: authLoading } = useAuth();
-  const [tab, setTab] = useState<Tab>("dashboard");
+  const [tab, setTab] = useState<Tab>(initialTab ?? "dashboard");
   const [data, setData] = useState<Overview | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -1537,7 +1539,7 @@ export function SpotCommerceDashboard({
           </div> : null}
           </div> : null}
 
-          {tab === "catalog" ? <Catalog data={data} studioId={studioId} onChanged={load} bundleDraft={bundleDraft} setBundleDraft={setBundleDraft} onSaveBundle={() => void saveBundle()} busy={busy} onSell={addToCart} onCodes={(listing, variant) => { setCodeDraft({ listingId: listing.id, variantId: variant?.id || "" }); setTab("codes"); }} /> : null}
+          {tab === "catalog" ? <Catalog data={data} studioId={studioId} directSpotId={directSpotId} onChanged={load} bundleDraft={bundleDraft} setBundleDraft={setBundleDraft} onSaveBundle={() => void saveBundle()} busy={busy} onSell={addToCart} onCodes={(listing, variant) => { setCodeDraft({ listingId: listing.id, variantId: variant?.id || "" }); setTab("codes"); }} /> : null}
           {tab === "inventory" ? <Inventory data={data} draft={stockDraft} setDraft={setStockDraft} onSubmit={() => void adjustStock()} busy={busy} /> : null}
           {tab === "sales" ? <Sales data={data} cart={cart} setCart={setCart} total={cartTotal} paymentMethod={paymentMethod} setPaymentMethod={setPaymentMethod} customer={customer} setCustomer={setCustomer} onSubmit={() => void completeSale()} busy={busy} /> : null}
           {tab === "orders" ? <Orders data={data} /> : null}
@@ -1738,7 +1740,7 @@ function CreateProductForm({ value, onChange, onSubmit, busy, globalMatch, scann
 
 type BundleDraft = { bundleListingId: string; physicalSelection: string; digitalSelection: string };
 
-function Catalog({ data, studioId, onChanged, bundleDraft, setBundleDraft, onSaveBundle, busy, onSell, onCodes }: { data: Overview; studioId: string; onChanged: () => void | Promise<void>; bundleDraft: BundleDraft; setBundleDraft: React.Dispatch<React.SetStateAction<BundleDraft>>; onSaveBundle: () => void; busy: boolean; onSell: (listing: Listing, variant?: Variant | null) => void; onCodes: (listing: Listing, variant?: Variant | null) => void }) {
+function Catalog({ data, studioId, directSpotId, onChanged, bundleDraft, setBundleDraft, onSaveBundle, busy, onSell, onCodes }: { data: Overview; studioId: string; directSpotId?: string | null; onChanged: () => void | Promise<void>; bundleDraft: BundleDraft; setBundleDraft: React.Dispatch<React.SetStateAction<BundleDraft>>; onSaveBundle: () => void; busy: boolean; onSell: (listing: Listing, variant?: Variant | null) => void; onCodes: (listing: Listing, variant?: Variant | null) => void }) {
   const openBundle = (listing: Listing) => {
     const components = data.components.filter((component) => component.bundle_listing_id === listing.id);
     const physical = components.find((component) => component.component_role === "physical");
@@ -1769,7 +1771,12 @@ function Catalog({ data, studioId, onChanged, bundleDraft, setBundleDraft, onSav
             return <button key={variant?.id || "base-identifiers"} onClick={() => onCodes(listing, variant)} className="flex w-full items-center justify-between gap-3 rounded-xl border border-white/8 p-2 text-left text-xs"><span>{variant ? [variant.color, variant.size, variant.sku].filter(Boolean).join(" · ") || "Variante" : "Producto base"}</span><span className="text-white/40">{scoped.filter((identifier) => identifier.status === "active").map((identifier) => identifier.identifier_type.replace("clouva_", "").replace("code_128", "CODE 128").toUpperCase()).join(" · ") || "Sin códigos"}</span></button>;
           })}</div>
         </section>
-        <CatalogProductActions studioId={studioId} listing={listing} onChanged={onChanged} />
+        <CatalogProductActions
+          studioId={studioId}
+          listing={listing}
+          onChanged={onChanged}
+          publicationHref={directSpotId ? `/mi-spot/${directSpotId}/publicaciones?product=${listing.id}` : undefined}
+        />
       </article>;
     })}{!data.listings.length ? <p className="py-16 text-center text-white/35 lg:col-span-2">Escaneá el primer producto para empezar el catálogo.</p> : null}</div>
   </div>;
