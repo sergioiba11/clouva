@@ -1,68 +1,12 @@
 .workspace {
+  position: relative;
   min-height: 100vh;
-  background: #050507;
   overflow-x: clip;
-}
-
-.clouvaBar {
-  position: sticky;
-  top: 0;
-  z-index: 70;
-  display: flex;
-  min-height: 54px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  border-bottom: 1px solid rgba(255, 255, 255, .075);
-  background:
-    radial-gradient(circle at 12% 0, rgba(124, 58, 237, .16), transparent 42%),
-    rgba(5, 5, 7, .94);
-  padding: 8px 14px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, .24);
-  backdrop-filter: blur(22px);
-}
-
-.brand {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 9px;
-  color: #fff;
-  text-decoration: none;
-}
-
-.mark {
-  display: grid;
-  width: 36px;
-  height: 36px;
-  flex: 0 0 auto;
-  place-items: center;
-  overflow: hidden;
-}
-
-.brandCopy {
-  display: grid;
-  min-width: 0;
-  line-height: 1;
-}
-
-.brandCopy strong {
-  font-size: 13px;
-  font-weight: 850;
-  letter-spacing: .11em;
-}
-
-.brandCopy small {
-  margin-top: 4px;
-  color: rgba(255, 255, 255, .38);
-  font-size: 8px;
-  font-weight: 650;
-  letter-spacing: .08em;
-  text-transform: uppercase;
+  background: #050507;
 }
 
 .workspace main > header {
-  top: 54px;
+  top: 0;
 }
 
 .workspace > button {
@@ -79,42 +23,15 @@
 }
 
 @media (max-width: 640px) {
-  .clouvaBar {
-    min-height: 50px;
-    gap: 8px;
-    padding: 6px 10px;
-  }
-
-  .mark {
-    width: 34px;
-    height: 34px;
-  }
-
-  .brandCopy strong {
-    font-size: 12px;
-  }
-
-  .brandCopy small {
-    display: none;
-  }
-
-  .workspace main > header {
-    top: 50px;
-  }
-
   .workspace main > header > div {
     min-width: 0;
     gap: 8px;
-    padding: 8px 12px;
+    padding: 8px 10px;
   }
 
   .workspace main > header > div > div:first-child {
     min-width: 0;
     gap: 8px;
-  }
-
-  .workspace main > header > div > div:first-child > div:first-child {
-    display: none;
   }
 
   .workspace main > header > div > div:first-child p:first-child {
@@ -128,22 +45,9 @@
   .workspace main > header > div > div:first-child p:last-child {
     margin-top: 2px;
     overflow: hidden;
-    font-size: 9px;
+    font-size: 10px;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-
-  .workspace main > header > div > div:last-child > a {
-    display: none;
-  }
-
-  .workspace main > header button[aria-label="Abrir Mi cuenta"] {
-    gap: 0;
-    padding: 3px;
-  }
-
-  .workspace main > header button[aria-label="Abrir Mi cuenta"] > span:last-child {
-    display: none;
   }
 
   .workspace main section,
@@ -167,7 +71,7 @@
   .workspace main .text-white\/30,
   .workspace main .text-white\/35,
   .workspace main .text-white\/40 {
-    color: rgba(255, 255, 255, .52);
+    color: rgba(255, 255, 255, .54);
   }
 
   .workspace > button {
