@@ -1133,8 +1133,9 @@ export function SpotCommerceDashboard({
           ? `${creation.name} quedó publicado y listo para distribuir.`
           : `${creation.name} quedó guardado como borrador. Podés salir y continuarlo después.`);
         await load();
-        if (targetStatus === "published" && directSpotId) {
-          router.push(`/mi-spot/${directSpotId}/publicaciones?product=${draftListingId}`);
+        if (targetStatus === "published") {
+          if (businessSpaceId) router.push(`/businesses/${businessSpaceId}/publicador?product=${draftListingId}`);
+          else if (directSpotId) router.push(`/mi-spot/${directSpotId}/publicaciones?product=${draftListingId}`);
         }
         return payload;
       }
@@ -1229,8 +1230,9 @@ export function SpotCommerceDashboard({
         ? `${creation.name} quedó publicado y listo para distribuir.`
         : `${creation.name} quedó guardado en ${data?.spot.name}.`);
       await load();
-      if (targetStatus === "published" && directSpotId && result.listing?.id) {
-        router.push(`/mi-spot/${directSpotId}/publicaciones?product=${result.listing.id}`);
+      if (targetStatus === "published" && result.listing?.id) {
+        if (businessSpaceId) router.push(`/businesses/${businessSpaceId}/publicador?product=${result.listing.id}`);
+        else if (directSpotId) router.push(`/mi-spot/${directSpotId}/publicaciones?product=${result.listing.id}`);
       }
       return payload;
     } catch (cause) {
@@ -1599,7 +1601,7 @@ export function SpotCommerceDashboard({
           </div> : null}
           </div> : null}
 
-          {tab === "catalog" ? <Catalog data={data} studioId={studioId} directSpotId={directSpotId} onChanged={load} bundleDraft={bundleDraft} setBundleDraft={setBundleDraft} onSaveBundle={() => void saveBundle()} busy={busy} onSell={addToCart} onCodes={(listing, variant) => { setCodeDraft({ listingId: listing.id, variantId: variant?.id || "" }); setTab("codes"); }} /> : null}
+          {tab === "catalog" ? <Catalog data={data} studioId={studioId} directSpotId={directSpotId} businessSpaceId={businessSpaceId} onChanged={load} bundleDraft={bundleDraft} setBundleDraft={setBundleDraft} onSaveBundle={() => void saveBundle()} busy={busy} onSell={addToCart} onCodes={(listing, variant) => { setCodeDraft({ listingId: listing.id, variantId: variant?.id || "" }); setTab("codes"); }} /> : null}
           {tab === "inventory" ? <Inventory data={data} draft={stockDraft} setDraft={setStockDraft} onSubmit={() => void adjustStock()} busy={busy} /> : null}
           {tab === "sales" ? <Sales data={data} cart={cart} setCart={setCart} total={cartTotal} paymentMethod={paymentMethod} setPaymentMethod={setPaymentMethod} customer={customer} setCustomer={setCustomer} onSubmit={() => void completeSale()} busy={busy} /> : null}
           {tab === "orders" ? <Orders data={data} /> : null}
@@ -1800,7 +1802,7 @@ function CreateProductForm({ value, onChange, onSubmit, busy, globalMatch, scann
 
 type BundleDraft = { bundleListingId: string; physicalSelection: string; digitalSelection: string };
 
-function Catalog({ data, studioId, directSpotId, onChanged, bundleDraft, setBundleDraft, onSaveBundle, busy, onSell, onCodes }: { data: Overview; studioId: string; directSpotId?: string | null; onChanged: () => void | Promise<void>; bundleDraft: BundleDraft; setBundleDraft: React.Dispatch<React.SetStateAction<BundleDraft>>; onSaveBundle: () => void; busy: boolean; onSell: (listing: Listing, variant?: Variant | null) => void; onCodes: (listing: Listing, variant?: Variant | null) => void }) {
+function Catalog({ data, studioId, directSpotId, businessSpaceId, onChanged, bundleDraft, setBundleDraft, onSaveBundle, busy, onSell, onCodes }: { data: Overview; studioId: string; directSpotId?: string | null; businessSpaceId?: string | null; onChanged: () => void | Promise<void>; bundleDraft: BundleDraft; setBundleDraft: React.Dispatch<React.SetStateAction<BundleDraft>>; onSaveBundle: () => void; busy: boolean; onSell: (listing: Listing, variant?: Variant | null) => void; onCodes: (listing: Listing, variant?: Variant | null) => void }) {
   const openBundle = (listing: Listing) => {
     const components = data.components.filter((component) => component.bundle_listing_id === listing.id);
     const physical = components.find((component) => component.component_role === "physical");
@@ -1835,7 +1837,11 @@ function Catalog({ data, studioId, directSpotId, onChanged, bundleDraft, setBund
           studioId={studioId}
           listing={listing}
           onChanged={onChanged}
-          publicationHref={directSpotId ? `/mi-spot/${directSpotId}/publicaciones?product=${listing.id}` : undefined}
+          publicationHref={businessSpaceId
+            ? `/businesses/${businessSpaceId}/publicador?product=${listing.id}`
+            : directSpotId
+              ? `/mi-spot/${directSpotId}/publicaciones?product=${listing.id}`
+              : undefined}
         />
       </article>;
     })}{!data.listings.length ? <p className="py-16 text-center text-white/35 lg:col-span-2">Escaneá el primer producto para empezar el catálogo.</p> : null}</div>
