@@ -249,6 +249,34 @@ function sanitizeGroup(raw: unknown, allowedIndexes: Set<number>, fallbackKey: s
   };
 }
 
+function enforceUniqueImageAssignments(groups: CommerceBatchGroup[]) {
+  const claims = new Map<number, number>();
+  for (const group of groups) {
+    for (const image of group.images) {
+      claims.set(image.sourceIndex, (claims.get(image.sourceIndex) ?? 0) + 1);
+    }
+  }
+
+  const ambiguousIndexes = new Set(
+    Array.from(claims.entries())
+      .filter(([, count]) => count > 1)
+      .map(([sourceIndex]) => sourceIndex),
+  );
+
+  const cleaned = groups.flatMap((group) => {
+    const images = group.images.filter((image) => !ambiguousIndexes.has(image.sourceIndex));
+    if (!images.length) return [];
+    return [{
+      ...group,
+      images: normalizeRoles(images),
+      needsReview: group.needsReview || images.length !== group.images.length,
+    }];
+  });
+
+  return { groups: cleaned, ambiguousIndexes };
+}
+
+
 async function analyzeChunk(args: {
   images: StoredBatchImage[];
   spotName: string;
@@ -309,12 +337,14 @@ async function analyzeChunk(args: {
 
   const root = record(parsed);
   const allowed = new Set(args.images.map((image) => image.sourceIndex));
-  const groups = (Array.isArray(root.groups) ? root.groups : [])
+  const parsedGroups = (Array.isArray(root.groups) ? root.groups : [])
     .map((group, index) => sanitizeGroup(group, allowed, `chunk-${args.chunkNumber}-group-${index + 1}`))
     .filter((group): group is CommerceBatchGroup => Boolean(group));
+  const uniqueAssignments = enforceUniqueImageAssignments(parsedGroups);
+  const groups = uniqueAssignments.groups;
 
   const assigned = new Set(groups.flatMap((group) => group.images.map((image) => image.sourceIndex)));
-  const explicitContext = new Set<number>();
+  const explicitContext = new Set<number>(uniqueAssignments.ambiguousIndexes);
   for (const value of Array.isArray(root.unassignedIndexes) ? root.unassignedIndexes : []) {
     const index = Number(value);
     if (Number.isInteger(index) && allowed.has(index) && !assigned.has(index)) explicitContext.add(index);
@@ -667,7 +697,8 @@ export async function analyzeCommerceProductBatch(args: {
     });
   }
 
-  const result = refined.map((group, index) => ({
+  const finalUnique = enforceUniqueImageAssignments(refined).groups;
+  const result = finalUnique.map((group, index) => ({
     ...group,
     groupKey: `product-${String(index + 1).padStart(3, "0")}`,
     images: normalizeRoles(group.images),
