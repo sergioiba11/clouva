@@ -58,6 +58,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     const metadata = record(product.metadata);
     const recognition = record(metadata.recognition);
+    const draftFields = record(metadata.draft_fields);
     const factual = {
       name: product.name,
       description: product.description || "",
@@ -72,6 +73,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         color: recognition.color ?? null,
         size: recognition.size ?? null,
         presentation: recognition.presentation ?? null,
+        condition: draftFields.condition ?? null,
       },
     };
 
