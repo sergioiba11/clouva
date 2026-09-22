@@ -317,6 +317,8 @@ export function CommerceBulkProductImport({
   const [generatedCodeGroups, setGeneratedCodeGroups] = useState<Record<string, boolean>>({});
   const [updatingUnitGroup, setUpdatingUnitGroup] = useState("");
   const [analysisProgress, setAnalysisProgress] = useState<AnalysisProgress | null>(null);
+  const [showAllInvoiceItems, setShowAllInvoiceItems] = useState(false);
+  const [showAllDetectedGroups, setShowAllDetectedGroups] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -486,6 +488,16 @@ export function CommerceBulkProductImport({
     }
     return Array.from(rows.values()).sort((a, b) => b.quantity - a.quantity || a.name.localeCompare(b.name));
   }, [groups]);
+
+  const visibleInvoiceItems = useMemo(
+    () => showAllInvoiceItems ? (invoiceData?.items ?? []) : (invoiceData?.items ?? []).slice(0, 6),
+    [invoiceData?.items, showAllInvoiceItems],
+  );
+
+  const visibleDetectedGroups = useMemo(
+    () => showAllDetectedGroups ? groups : groups.slice(0, 8),
+    [groups, showAllDetectedGroups],
+  );
 
   function chooseFiles(list: FileList | null) {
     if (busy) return;
@@ -1270,7 +1282,7 @@ export function CommerceBulkProductImport({
           </div>
 
           <div className="mt-3 space-y-2">
-            {invoiceData.items.map((item) => (
+            {visibleInvoiceItems.map((item) => (
               <label key={item.id} className="flex cursor-pointer items-start gap-3 rounded-xl border border-white/[0.07] bg-black/15 p-3">
                 <input
                   type="checkbox"
@@ -1298,6 +1310,15 @@ export function CommerceBulkProductImport({
               </label>
             ))}
           </div>
+          {invoiceData.items.length > 6 ? (
+            <button
+              type="button"
+              onClick={() => setShowAllInvoiceItems((current) => !current)}
+              className="mt-3 w-full rounded-xl border border-white/10 bg-white/[0.025] px-3 py-2.5 text-xs font-semibold text-white/60 transition hover:border-violet-300/25 hover:text-white"
+            >
+              {showAllInvoiceItems ? "Mostrar menos" : `Ver los ${invoiceData.items.length} renglones de la factura`}
+            </button>
+          ) : null}
         </div>
       ) : null}
 
@@ -1308,7 +1329,7 @@ export function CommerceBulkProductImport({
             <span className="rounded-full border border-white/10 px-2 py-1 text-[10px] text-white/55">{groups.length}</span>
           </div>
           <div className="mt-2 grid gap-2 sm:grid-cols-2">
-            {groups.map((group) => {
+            {visibleDetectedGroups.map((group) => {
               const result = processResults.find((candidate) => candidate.groupKey === group.groupKey);
               const photos = group.images.map((image) => ({
                 ...image,
@@ -1425,6 +1446,15 @@ export function CommerceBulkProductImport({
               );
             })}
           </div>
+          {groups.length > 8 ? (
+            <button
+              type="button"
+              onClick={() => setShowAllDetectedGroups((current) => !current)}
+              className="mt-3 w-full rounded-xl border border-violet-300/15 bg-violet-300/[0.04] px-3 py-3 text-xs font-semibold text-violet-100 transition hover:bg-violet-300/[0.08]"
+            >
+              {showAllDetectedGroups ? "Mostrar menos productos" : `Ver los ${groups.length} productos detectados`}
+            </button>
+          ) : null}
         </div>
       ) : null}
     </section>
