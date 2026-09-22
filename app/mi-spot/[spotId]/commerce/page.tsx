@@ -10,6 +10,7 @@ import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
 
 type SpotScope = {
   spot: { id: string; owner_type: "user" | "studio"; studio_id: string | null };
+  space: { id: string; name: string; type: string; business_kind?: string | null } | null;
   studio: { id: string; name: string; slug: string } | null;
   canOpenCommerce: boolean;
 };
@@ -59,7 +60,11 @@ export default function SpotCommercePage() {
     const commerceScope = scope.spot.owner_type === "studio" && scope.studio?.id
       ? scope.studio.id
       : `spot:${scope.spot.id}`;
-    return <SpaceCommerceWorkspace commerceScopeId={commerceScope} initialTab={initialTab} />;
+    return <SpaceCommerceWorkspace
+      commerceScopeId={commerceScope}
+      businessSpaceId={scope.space?.type === "business" ? scope.space.id : null}
+      initialTab={initialTab}
+    />;
   }
 
   return <main className="min-h-screen bg-[#05040a] text-white"><MainNav /><div className="mx-auto max-w-3xl px-4 py-14">{loading ? <p className="flex items-center gap-2 text-sm text-white/45"><Loader2 size={16} className="animate-spin" /> Abriendo operaciones…</p> : null}{error ? <p className="rounded-2xl border border-rose-300/15 bg-rose-300/[0.06] p-4 text-sm text-rose-200">{error}</p> : null}</div></main>;
