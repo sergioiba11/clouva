@@ -1,9 +1,5 @@
 "use client";
 
-import Link from "next/link";
-import { Megaphone, ScanLine, Share2 } from "lucide-react";
-import { GlobalFlowBalance } from "@/components/GlobalFlowBalance";
-import { OfficialClouvaMark } from "@/components/clouva/OfficialClouvaMark";
 import { CommerceAiProviderCopyBridge } from "@/components/commerce/CommerceAiProviderCopyBridge";
 import { ClouvaQrEngineEventBridge } from "@/components/commerce/ClouvaQrEngineEventBridge";
 import { ClouvaQrEnginePanel } from "@/components/commerce/ClouvaQrEnginePanel";
@@ -11,12 +7,10 @@ import { SpotCommerceDashboard } from "@/components/commerce/SpotCommerceDashboa
 import styles from "./SpaceCommerceWorkspace.module.css";
 
 /**
- * Canonical operational workspace for every CLOUVA Space with commerce enabled:
- * Studio, business, Spot, club, brand or any future Space that activates Commerce.
- *
- * `commerceScopeId` can be either a Studio id or the direct Spot scope
- * `spot:<uuid>`. The commerce API resolves both through requireManagedSpot(),
- * so scanner, catalog, inventory, POS, orders, codes and QR stay on one engine.
+ * Canonical operational workspace for every CLOUVA Space with commerce enabled.
+ * The global CLOUVA shell already owns the primary navigation, so Commerce keeps
+ * a single contextual header inside SpotCommerceDashboard instead of stacking
+ * another app bar on top of it.
  */
 export function SpaceCommerceWorkspace({
   commerceScopeId,
@@ -25,33 +19,18 @@ export function SpaceCommerceWorkspace({
   commerceScopeId: string;
   businessSpaceId?: string | null;
 }) {
-  const directSpotId = commerceScopeId.startsWith("spot:") ? commerceScopeId.slice("spot:".length).trim() : null;
-  const scannerHref = `/studio-dashboard/${encodeURIComponent(commerceScopeId)}/commerce/scanner`;
+  const directSpotId = commerceScopeId.startsWith("spot:")
+    ? commerceScopeId.slice("spot:".length).trim()
+    : null;
 
   return (
     <div className={styles.workspace} data-space-commerce-workspace>
-      <header className={styles.clouvaBar} aria-label="CLOUVA · Centro Operativo">
-        <Link href="/" className={styles.brand} aria-label="Ir al inicio de CLOUVA">
-          <span className={styles.mark}>
-            <OfficialClouvaMark width={34} height={34} tone="light" />
-          </span>
-          <span className={styles.brandCopy}>
-            <strong>CLOUVA</strong>
-            <small>Centro Operativo</small>
-          </span>
-        </Link>
-        <div className="flex items-center gap-2">
-          <Link href={scannerHref} className="inline-flex items-center gap-2 rounded-xl border border-cyan-300/25 bg-cyan-400/[0.08] px-3 py-2 text-xs font-semibold text-cyan-100 transition hover:border-cyan-300/45 hover:bg-cyan-400/[0.12]">
-            <ScanLine size={14} /> Scanner
-          </Link>
-          {businessSpaceId ? <Link href={`/businesses/${businessSpaceId}/publicador`} className="inline-flex items-center gap-2 rounded-xl border border-blue-400/20 bg-blue-500/[0.06] px-3 py-2 text-xs font-semibold text-blue-100 transition hover:border-blue-400/35"><Share2 size={14} /> Publicador Facebook</Link> : null}
-          {directSpotId ? <Link href={`/mi-spot/${directSpotId}/publicaciones`} className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-semibold text-white/65 transition hover:border-violet-400/30 hover:text-white"><Megaphone size={14} /> Publicaciones</Link> : null}
-          <GlobalFlowBalance variant="header" />
-        </div>
-      </header>
-
       <CommerceAiProviderCopyBridge>
-        <SpotCommerceDashboard studioId={commerceScopeId} />
+        <SpotCommerceDashboard
+          studioId={commerceScopeId}
+          businessSpaceId={businessSpaceId}
+          directSpotId={directSpotId}
+        />
         <ClouvaQrEnginePanel studioId={commerceScopeId} />
         <ClouvaQrEngineEventBridge />
       </CommerceAiProviderCopyBridge>
