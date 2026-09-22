@@ -1,5 +1,6 @@
 "use client";
 
+import { LoaderCircle, Pause, Play } from "lucide-react";
 import { useRef, useState } from "react";
 
 type MediaTrack = {
@@ -51,7 +52,19 @@ export function IgluStreamButton({
   const [loading, setLoading] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [track, setTrack] = useState<MediaTrack | null>(null);
-  const [sourceLabel, setSourceLabel] = useState<string | null>(null);
+
+  async function playAudio(audio: HTMLAudioElement, nextTrack: MediaTrack) {
+    audio.src = nextTrack.audioUrl || "";
+    audio.load();
+    setTrack(nextTrack);
+    try {
+      await audio.play();
+      setPlaying(true);
+    } catch {
+      setPlaying(false);
+      window.location.assign(mediaHref);
+    }
+  }
 
   async function handleClick() {
     const audio = audioRef.current;
@@ -78,6 +91,9 @@ export function IgluStreamButton({
       const payload = (await response.json().catch(() => ({}))) as StreamPayload;
       if (!response.ok) throw new Error("media_unavailable");
 
+      // Live visual real first. If there is no live, the home plays one of the
+      // audios uploaded to IGLÚ Media. A configured radio stream is only the
+      // last audio fallback when the library is empty.
       const kickUrl = publicHttpUrl(payload.kickLive?.watchUrl);
       if (kickUrl) {
         window.location.assign(kickUrl);
@@ -90,46 +106,28 @@ export function IgluStreamButton({
         return;
       }
 
+      const fallback = payload.fallbackTrack || null;
+      if (fallback?.audioUrl && audio) {
+        await playAudio(audio, fallback);
+        return;
+      }
+
       const radioStream = publicHttpUrl(payload.radio?.stream_url);
       if (radioStream && audio) {
-        audio.src = radioStream;
-        audio.load();
-        setTrack({
+        await playAudio(audio, {
           id: "iglu-radio-live",
           title: payload.radio?.station_name || "IGLÚ Radio",
           artist: studioName,
-          album: "Señal en directo",
+          album: "Señal del IGLÚ",
           duration_seconds: null,
           audioUrl: radioStream,
         });
-        setSourceLabel("IGLÚ · EN DIRECTO");
-        try {
-          await audio.play();
-          setPlaying(true);
-        } catch {
-          setPlaying(false);
-        }
         return;
       }
 
       const podcastUrl = publicHttpUrl(payload.radio?.podcast_rss_url);
       if (podcastUrl) {
         window.location.assign(podcastUrl);
-        return;
-      }
-
-      const fallback = payload.fallbackTrack || null;
-      if (fallback?.audioUrl && audio) {
-        audio.src = fallback.audioUrl;
-        audio.load();
-        setTrack(fallback);
-        setSourceLabel("IGLÚ · PLAYER");
-        try {
-          await audio.play();
-          setPlaying(true);
-        } catch {
-          setPlaying(false);
-        }
         return;
       }
 
@@ -141,11 +139,17 @@ export function IgluStreamButton({
     }
   }
 
-  const artist = track?.artist || studioName;
-  const detail = [artist, track?.album].filter(Boolean).join(" · ");
+  const detail = [track?.artist || studioName, track?.album].filter(Boolean).join(" · ");
 
   return (
-    <div style={{ position: "relative", minWidth: 0 }}>
+    <div
+      style={{
+        position: "relative",
+        width: "clamp(54px, 12vw, 62px)",
+        minWidth: "54px",
+        justifySelf: "end",
+      }}
+    >
       <audio
         ref={audioRef}
         preload="none"
@@ -154,62 +158,74 @@ export function IgluStreamButton({
         onEnded={() => {
           setPlaying(false);
           setTrack(null);
-          setSourceLabel(null);
         }}
       />
+
       <button
         type="button"
         className={className}
         onClick={() => void handleClick()}
         disabled={loading}
-        aria-label={playing ? "Pausar IGLÚ" : "Reproducir IGLÚ o abrir transmisión en vivo"}
-        style={{ width: "100%", paddingInline: 14, gap: 8, font: "inherit" }}
+        aria-label={loading ? "Cargando música de IGLÚ" : playing ? "Pausar música de IGLÚ" : "Reproducir IGLÚ"}
+        title={playing ? "Pausar" : "Play"}
       >
-        <span aria-hidden="true">{loading ? "···" : playing ? "Ⅱ" : "▶"}</span>
-        {track ? (
-          <span style={{ minWidth: 0, textAlign: "left", lineHeight: 1.05 }}>
-            <small style={{ display: "block", fontSize: 8, opacity: 0.68, letterSpacing: ".1em" }}>
-              {sourceLabel}
-            </small>
-            <strong
-              style={{
-                display: "block",
-                maxWidth: 150,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-                fontSize: 10,
-              }}
-            >
-              {track.title}
-            </strong>
-          </span>
-        ) : null}
+        {loading ? (
+          <LoaderCircle aria-hidden="true" size={20} strokeWidth={2} className="animate-spin" />
+        ) : playing ? (
+          <Pause aria-hidden="true" size={21} strokeWidth={1.9} fill="currentColor" />
+        ) : (
+          <Play aria-hidden="true" size={22} strokeWidth={1.9} fill="currentColor" />
+        )}
       </button>
 
       {track ? (
         <div
           role="status"
+          aria-live="polite"
           style={{
             position: "absolute",
             zIndex: 30,
             top: "calc(100% + 8px)",
             right: 0,
-            width: "min(78vw, 300px)",
-            padding: "10px 12px",
-            border: "1px solid rgba(154,220,255,.24)",
-            borderRadius: 14,
+            width: "min(76vw, 270px)",
+            padding: "9px 11px",
+            border: "1px solid rgba(154,220,255,.2)",
+            borderRadius: 13,
             background: "rgba(1,8,16,.96)",
-            boxShadow: "0 18px 44px rgba(0,0,0,.45)",
+            boxShadow: "0 16px 38px rgba(0,0,0,.42)",
             backdropFilter: "blur(16px)",
             textAlign: "left",
+            lineHeight: 1.15,
           }}
         >
-          <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: ".15em", color: "rgba(166,224,255,.72)" }}>
-            {sourceLabel}
+          <div style={{ fontSize: 8, fontWeight: 800, letterSpacing: ".14em", color: "rgba(166,224,255,.68)" }}>
+            {playing ? "SONANDO EN EL IGLÚ" : "IGLÚ PLAYER"}
           </div>
-          <div style={{ marginTop: 3, fontSize: 12, fontWeight: 800, color: "#fff" }}>{track.title}</div>
-          <div style={{ marginTop: 2, fontSize: 10, color: "rgba(255,255,255,.58)" }}>{detail}</div>
+          <div
+            style={{
+              marginTop: 4,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              fontSize: 11,
+              fontWeight: 800,
+              color: "#fff",
+            }}
+          >
+            {track.title}
+          </div>
+          <div
+            style={{
+              marginTop: 2,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              fontSize: 9,
+              color: "rgba(255,255,255,.5)",
+            }}
+          >
+            {detail}
+          </div>
         </div>
       ) : null}
     </div>
