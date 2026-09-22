@@ -38,6 +38,7 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { IScannerControls } from "@zxing/browser";
 import { useAuth } from "@/components/auth-provider";
+import { AccountMenu } from "@/components/account/AccountMenu";
 import { CatalogProductActions } from "@/components/commerce/CatalogProductActions";
 import { CommerceBulkProductImport } from "@/components/commerce/CommerceBulkProductImport";
 import {
@@ -1432,6 +1433,7 @@ export function SpotCommerceDashboard({
             <Link href={`/studios/${data.studio.slug}/tienda`} aria-label="Ver tienda" className="grid h-9 w-9 place-items-center rounded-[11px] border border-white/[0.08] bg-white/[0.025] text-white/55 transition hover:border-violet-400/25 hover:text-white">
               <ExternalLink className="h-3.5 w-3.5" />
             </Link>
+            <AccountMenu preferUsername />
           </div>
         </div>
       </header>
