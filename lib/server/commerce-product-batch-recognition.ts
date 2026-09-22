@@ -54,6 +54,15 @@ export type CommerceBatchVisibleIdentifier = {
   type: CommerceIdentifierType;
   source: "box" | "product" | "unknown";
   confidence: number;
+  sourceIndex?: number;
+};
+
+export type CommerceBatchExpectedProduct = {
+  description: string;
+  brand?: string;
+  model?: string;
+  supplierSku?: string;
+  quantity: number;
 };
 
 export type CommerceBatchGroup = {
@@ -113,8 +122,9 @@ const GROUP_SCHEMA = {
                 },
                 source: { type: "string", enum: ["box", "product", "unknown"] },
                 confidence: { type: "number", minimum: 0, maximum: 1 },
+                sourceIndex: { type: "integer" },
               },
-              required: ["value", "type", "source", "confidence"],
+              required: ["value", "type", "source", "confidence", "sourceIndex"],
             },
           },
           confidence: { type: "number", minimum: 0, maximum: 1 },
@@ -208,11 +218,13 @@ function sanitizeGroup(raw: unknown, allowedIndexes: Set<number>, fallbackKey: s
     const type = text(code.type, 32) as CommerceIdentifierType;
     if (!value || !supported.has(type)) return [];
     const source = code.source === "box" ? "box" : code.source === "product" ? "product" : "unknown";
+    const sourceIndex = Number(code.sourceIndex);
     return [{
       value,
       type,
       source,
       confidence: number01(code.confidence),
+      ...(Number.isInteger(sourceIndex) && allowedIndexes.has(sourceIndex) ? { sourceIndex } : {}),
     } satisfies CommerceBatchVisibleIdentifier];
   });
   const primaryCandidate = identifierValue && supported.has(identifierType)
@@ -250,21 +262,40 @@ function sanitizeGroup(raw: unknown, allowedIndexes: Set<number>, fallbackKey: s
 }
 
 function enforceUniqueImageAssignments(groups: CommerceBatchGroup[]) {
-  const claims = new Map<number, number>();
-  for (const group of groups) {
+  const claims = new Map<number, Array<{ groupIndex: number; image: CommerceBatchImageRole }>>();
+  groups.forEach((group, groupIndex) => {
     for (const image of group.images) {
-      claims.set(image.sourceIndex, (claims.get(image.sourceIndex) ?? 0) + 1);
+      claims.set(image.sourceIndex, [...(claims.get(image.sourceIndex) ?? []), { groupIndex, image }]);
     }
+  });
+
+  const winners = new Map<number, number>();
+  const ambiguousIndexes = new Set<number>();
+  for (const [sourceIndex, sourceClaims] of claims) {
+    if (sourceClaims.length === 1) {
+      winners.set(sourceIndex, sourceClaims[0].groupIndex);
+      continue;
+    }
+    if (sourceClaims.length >= 3) {
+      ambiguousIndexes.add(sourceIndex);
+      continue;
+    }
+    const ranked = [...sourceClaims].sort((a, b) => {
+      const left = groups[a.groupIndex];
+      const right = groups[b.groupIndex];
+      const score = (group: CommerceBatchGroup, image: CommerceBatchImageRole) =>
+        (group.identifier ? 2 : 0)
+        + (group.needsReview ? 0 : 1)
+        + group.confidence
+        + (image.role === "Frente" ? 0.15 : 0);
+      return score(right, b.image) - score(left, a.image);
+    });
+    winners.set(sourceIndex, ranked[0].groupIndex);
   }
 
-  const ambiguousIndexes = new Set(
-    Array.from(claims.entries())
-      .filter(([, count]) => count > 1)
-      .map(([sourceIndex]) => sourceIndex),
-  );
-
-  const cleaned = groups.flatMap((group) => {
-    const images = group.images.filter((image) => !ambiguousIndexes.has(image.sourceIndex));
+  const cleaned = groups.flatMap((group, groupIndex) => {
+    const images = group.images.filter((image) =>
+      !ambiguousIndexes.has(image.sourceIndex) && winners.get(image.sourceIndex) === groupIndex);
     if (!images.length) return [];
     return [{
       ...group,
@@ -310,6 +341,7 @@ async function analyzeChunk(args: {
     "packageKind debe ser box para caja/cartón de mercadería, retail_package para blister/envase comercial, loose_product para producto suelto y unknown si no se puede determinar.",
     "unitCount es la cantidad de UNIDADES FÍSICAS del mismo producto que se ven representadas por ese grupo. Si una foto muestra 3 cajas iguales claramente separadas, unitCount=3. Si son varias fotos del mismo objeto o de las mismas 3 cajas, no sumes de nuevo. Si no podés contar con seguridad, usá 1 y needsReview=true.",
     "Leé TODOS los códigos visibles y completos en visibleIdentifiers. source=box si el código está impreso/pegado en la caja, product si está en el producto o su packaging directo.",
+    "En cada visibleIdentifier incluí sourceIndex con el índice EXACTO de la foto donde se leyó ese código.",
     "identifierValue/identifierType representan el código principal más confiable. Si no hay ninguno inequívoco, dejá identifierValue vacío.",
     "EAN/UPC requieren lectura completa. Para un barcode lineal alfanumérico claramente legible que no sea EAN/UPC, usá code_128.",
     "Cada índice debe aparecer exactamente una vez: dentro de un grupo o en unassignedIndexes.",
@@ -470,6 +502,123 @@ const REFINE_SCHEMA = {
   ],
 } as const;
 
+function normalizeIdentityText(value: string) {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\b(unknown|desconocido|generico|generic)\b/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const IDENTITY_STOP = new Set([
+  "de", "del", "la", "las", "el", "los", "y", "con", "para", "por", "the",
+  "a", "to", "for", "cable", "usb", "producto", "packaging", "caja",
+]);
+
+function identityTokens(value: string) {
+  return new Set(
+    normalizeIdentityText(value)
+      .split(" ")
+      .filter((token) => token.length >= 2 && !IDENTITY_STOP.has(token)),
+  );
+}
+
+function identitySimilarity(left: string, right: string) {
+  const a = identityTokens(left);
+  const b = identityTokens(right);
+  if (!a.size || !b.size) return 0;
+  let common = 0;
+  for (const token of a) if (b.has(token)) common += 1;
+  return common / Math.max(a.size, b.size);
+}
+
+function externalCodeKeys(group: CommerceBatchGroup) {
+  const raw = [
+    ...(group.identifier ? [group.identifier] : []),
+    ...group.visibleIdentifiers,
+  ];
+  return new Set(raw
+    .filter((code) => !["sku", "clouva_barcode", "clouva_qr"].includes(code.type))
+    .map((code) => `${code.type}:${code.value.replace(/\s/g, "").toUpperCase()}`));
+}
+
+function hasConflictingExternalCodes(left: CommerceBatchGroup, right: CommerceBatchGroup) {
+  const a = externalCodeKeys(left);
+  const b = externalCodeKeys(right);
+  if (!a.size || !b.size) return false;
+  for (const key of a) if (b.has(key)) return false;
+  return true;
+}
+
+function sameExternalCode(left: CommerceBatchGroup, right: CommerceBatchGroup) {
+  const a = externalCodeKeys(left);
+  const b = externalCodeKeys(right);
+  for (const key of a) if (b.has(key)) return true;
+  return false;
+}
+
+function shouldMergeCommercialIdentity(left: CommerceBatchGroup, right: CommerceBatchGroup) {
+  if (hasConflictingExternalCodes(left, right)) return false;
+  if (sameExternalCode(left, right)) return true;
+
+  const leftBrand = normalizeIdentityText(left.brand);
+  const rightBrand = normalizeIdentityText(right.brand);
+  const brandSame = Boolean(leftBrand && rightBrand && leftBrand === rightBrand);
+  const brandConflict = Boolean(leftBrand && rightBrand && leftBrand !== rightBrand);
+
+  const leftModel = normalizeIdentityText(left.model);
+  const rightModel = normalizeIdentityText(right.model);
+  const modelSame = Boolean(
+    leftModel && rightModel && leftModel === rightModel && leftModel.length >= 4,
+  );
+
+  const leftIdentity = [left.name, left.brand, left.model].filter(Boolean).join(" ");
+  const rightIdentity = [right.name, right.brand, right.model].filter(Boolean).join(" ");
+  const similarity = identitySimilarity(leftIdentity, rightIdentity);
+  const nameSimilarity = identitySimilarity(left.name, right.name);
+
+  if (modelSame && (!brandConflict || similarity >= 0.72)) return true;
+  if (brandSame && nameSimilarity >= 0.72) return true;
+  if (!brandConflict && similarity >= 0.84 && (!leftModel || !rightModel)) return true;
+  return false;
+}
+
+function consolidateDeterministicCommercialIdentity(groups: CommerceBatchGroup[]) {
+  if (groups.length <= 1) return groups;
+  const parent = groups.map((_, index) => index);
+  const find = (value: number): number => parent[value] === value ? value : (parent[value] = find(parent[value]));
+  const union = (left: number, right: number) => {
+    const a = find(left);
+    const b = find(right);
+    if (a !== b) parent[b] = a;
+  };
+
+  for (let left = 0; left < groups.length; left += 1) {
+    for (let right = left + 1; right < groups.length; right += 1) {
+      if (shouldMergeCommercialIdentity(groups[left], groups[right])) union(left, right);
+    }
+  }
+
+  const clusters = new Map<number, CommerceBatchGroup[]>();
+  groups.forEach((group, index) => {
+    const root = find(index);
+    clusters.set(root, [...(clusters.get(root) ?? []), group]);
+  });
+
+  return Array.from(clusters.values()).map((members) => {
+    if (members.length === 1) return members[0];
+    return mergeClusterGroups(
+      members,
+      members.reduce((sum, group) => sum + Math.max(1, group.unitCount), 0),
+      Math.min(...members.map((group) => group.confidence)),
+      members.some((group) => group.needsReview),
+    );
+  });
+}
+
 function mergeClusterGroups(groups: CommerceBatchGroup[], unitCount: number, confidence: number, needsReview: boolean) {
   const coded = groups.find((group) => group.identifier);
   const preferred = coded ?? [...groups].sort((a, b) =>
@@ -478,6 +627,18 @@ function mergeClusterGroups(groups: CommerceBatchGroup[], unitCount: number, con
   for (const group of groups) for (const image of group.images) imageMap.set(image.sourceIndex, image);
   const codeMap = new Map<string, CommerceBatchVisibleIdentifier>();
   for (const group of groups) {
+    if (group.identifier) {
+      const sourceIndex = group.visibleIdentifiers.find((code) =>
+        code.type === group.identifier?.type && code.value === group.identifier?.value)?.sourceIndex;
+      const primary = {
+        value: group.identifier.value,
+        type: group.identifier.type,
+        source: "unknown" as const,
+        confidence: group.confidence,
+        ...(sourceIndex != null ? { sourceIndex } : {}),
+      };
+      codeMap.set(`${primary.type}:${primary.value.replace(/\s/g, "").toUpperCase()}`, primary);
+    }
     for (const code of group.visibleIdentifiers) {
       codeMap.set(`${code.type}:${code.value.replace(/\s/g, "").toUpperCase()}`, code);
     }
@@ -499,7 +660,7 @@ function mergeClusterGroups(groups: CommerceBatchGroup[], unitCount: number, con
   } satisfies CommerceBatchGroup;
 }
 
-async function consolidateGroups(groups: CommerceBatchGroup[]) {
+async function consolidateGroups(groups: CommerceBatchGroup[], expectedProducts: CommerceBatchExpectedProduct[] = []) {
   if (groups.length <= 1) return groups;
   const prompt = [
     "Sos el consolidador de identidad de productos de CLOUVA.",
@@ -511,6 +672,9 @@ async function consolidateGroups(groups: CommerceBatchGroup[]) {
     "NO unas códigos completos distintos. NO unas colores, conectores, capacidades o modelos distintos.",
     "unitCount es la mejor estimación de unidades físicas distintas representadas por TODO el cluster; no sumes fotos repetidas ni frente/dorso como unidades nuevas.",
     "Cada groupKey debe aparecer una sola vez. Si no hay evidencia suficiente, dejalo como cluster individual con needsReview=true.",
+    "Si un grupo sin código coincide claramente en marca/modelo/packaging con otro grupo que sí tiene código, unilos: el código pertenece al producto agrupado completo.",
+    "La factura es CONTEXTO, no una orden de forzar coincidencias. Usala para reconocer nombres abreviados y cantidades esperadas, pero nunca unas variantes visualmente incompatibles.",
+    expectedProducts.length ? `Factura / productos esperados: ${JSON.stringify(expectedProducts)}` : "No hay factura disponible para este lote.",
     JSON.stringify(groups.map((group) => ({
       groupKey: group.groupKey,
       name: group.name,
@@ -597,6 +761,8 @@ async function refineMergedGroup(args: {
       "Frente, dorso y detalle del mismo objeto cuentan como UNA unidad.",
       "Si se ven varias cajas/unidades idénticas, contalas una sola vez cada una aunque aparezcan repetidas en otras fotos.",
       "Si descubrís códigos completos distintos o una variante claramente diferente, marcá needsReview=true; no inventes datos.",
+      "Elegí como Frente la foto donde mejor se vea el producto o la cara frontal de su packaging.",
+      "Si un código aparece en cualquier foto del grupo, conservá ese código como identifier principal y registrá sourceIndex en visibleIdentifiers.",
       `Índices: ${refs.map((ref) => ref.sourceIndex).join(", ")}.`,
     ].join("\n");
     const generated = await generateGoogleCloudJson({
@@ -636,6 +802,7 @@ async function refineMergedGroup(args: {
 export async function analyzeCommerceProductBatch(args: {
   images: StoredBatchImage[];
   spotName: string;
+  expectedProducts?: CommerceBatchExpectedProduct[];
   onProgress?: (progress: CommerceBatchAnalysisProgress) => void | Promise<void>;
 }): Promise<CommerceBatchGroup[]> {
   if (!args.images.length) throw new Error("El lote no tiene imágenes.");
@@ -667,18 +834,28 @@ export async function analyzeCommerceProductBatch(args: {
   await args.onProgress?.({
     stage: "consolidating",
     completed: 0,
-    total: 1,
+    total: 2,
     provisionalProducts: groups.length,
-    message: "Uniendo vistas repetidas y productos iguales…",
+    message: "Uniendo códigos, modelos y vistas repetidas…",
     updatedAt: new Date().toISOString(),
   });
-  const consolidated = await consolidateGroups(groups);
+  const deterministic = consolidateDeterministicCommercialIdentity(groups);
   await args.onProgress?.({
     stage: "consolidating",
     completed: 1,
-    total: 1,
+    total: 2,
+    provisionalProducts: deterministic.length,
+    message: "Contrastando identidades con la factura y la evidencia visual…",
+    updatedAt: new Date().toISOString(),
+  });
+  const aiConsolidated = await consolidateGroups(deterministic, args.expectedProducts ?? []);
+  const consolidated = consolidateDeterministicCommercialIdentity(aiConsolidated);
+  await args.onProgress?.({
+    stage: "consolidating",
+    completed: 2,
+    total: 2,
     provisionalProducts: consolidated.length,
-    message: `${consolidated.length} grupos candidatos · verificando unidades…`,
+    message: `${consolidated.length} productos candidatos · verificando frente, código y unidades…`,
     updatedAt: new Date().toISOString(),
   });
 
