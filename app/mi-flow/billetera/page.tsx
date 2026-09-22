@@ -54,6 +54,18 @@ type SpaceMoney = {
   activity: MoneyEntry[];
   adminHref: string;
   moneyRelation: "separate" | "personal_breakdown";
+  commerce?: {
+    currency?: string;
+    stock_capital_local?: number;
+    stock_retail_local?: number;
+    pending_settlement_local?: number;
+    available_local?: number;
+    stock_capital_flows?: number;
+    pending_settlement_flows?: number;
+    available_flows_equivalent?: number;
+    realized_margin_local?: number;
+    fx_rate?: { local_per_quote?: number; source?: string; quoted_at?: string } | null;
+  } | null;
 };
 
 type SummaryPayload = {
@@ -78,6 +90,18 @@ function moneyMinor(value: number, currency: string) {
     currency,
     maximumFractionDigits: 2,
   }).format(value / 100);
+}
+
+function moneyValue(value: number | undefined, currency: string) {
+  return new Intl.NumberFormat("es-AR", {
+    style: "currency",
+    currency,
+    maximumFractionDigits: 2,
+  }).format(Number(value || 0));
+}
+
+function flowValue(value: number | undefined) {
+  return new Intl.NumberFormat("es-AR", { maximumFractionDigits: 2 }).format(Number(value || 0));
 }
 
 function when(value: string) {
@@ -367,20 +391,20 @@ function SpaceMoneyCard({ space }: { space: SpaceMoney }) {
         </span>
       </div>
 
-      <div className="mt-4 grid gap-2 sm:grid-cols-2">
-        {space.summary.length ? space.summary.flatMap((summary) => [
-          <div key={`${space.id}-${summary.currency}-available`} className="rounded-xl border border-white/[0.05] bg-white/[0.025] p-3">
-            <p className="text-[10px] uppercase tracking-wider text-white/30">{summary.currency} disponible</p>
-            <b className="mt-1 block">{moneyMinor(summary.availableMinor, summary.currency)}</b>
-          </div>,
-          <div key={`${space.id}-${summary.currency}-pending`} className="rounded-xl border border-white/[0.05] bg-white/[0.025] p-3">
-            <p className="text-[10px] uppercase tracking-wider text-white/30">Pendiente</p>
-            <b className="mt-1 block">{moneyMinor(summary.pendingMinor, summary.currency)}</b>
-          </div>,
-        ]) : (
-          <div className="rounded-xl border border-white/[0.05] bg-white/[0.025] p-3 text-xs text-white/35 sm:col-span-2">Sin movimientos todavía.</div>
-        )}
-      </div>
+      {space.commerce ? (
+        <div className="mt-4 grid gap-2 sm:grid-cols-3">
+          <div className="rounded-xl border border-violet-300/10 bg-violet-300/[0.035] p-3"><p className="text-[10px] uppercase tracking-wider text-white/30">Capital en stock</p><b className="mt-1 block">{moneyValue(space.commerce.stock_capital_local, space.commerce.currency || space.summary[0]?.currency || "ARS")}</b><p className="mt-1 text-[10px] text-violet-200/55">≈ {flowValue(space.commerce.stock_capital_flows)} FLOW</p></div>
+          <div className="rounded-xl border border-amber-300/10 bg-amber-300/[0.035] p-3"><p className="text-[10px] uppercase tracking-wider text-white/30">A liquidar</p><b className="mt-1 block">{moneyValue(space.commerce.pending_settlement_local, space.commerce.currency || space.summary[0]?.currency || "ARS")}</b><p className="mt-1 text-[10px] text-amber-200/55">≈ {flowValue(space.commerce.pending_settlement_flows)} FLOW</p></div>
+          <div className="rounded-xl border border-emerald-300/10 bg-emerald-300/[0.035] p-3"><p className="text-[10px] uppercase tracking-wider text-white/30">Disponible</p><b className="mt-1 block">{moneyValue(space.commerce.available_local, space.commerce.currency || space.summary[0]?.currency || "ARS")}</b><p className="mt-1 text-[10px] text-emerald-200/55">≈ {flowValue(space.commerce.available_flows_equivalent)} FLOW</p></div>
+        </div>
+      ) : (
+        <div className="mt-4 grid gap-2 sm:grid-cols-2">
+          {space.summary.length ? space.summary.flatMap((summary) => [
+            <div key={`${space.id}-${summary.currency}-available`} className="rounded-xl border border-white/[0.05] bg-white/[0.025] p-3"><p className="text-[10px] uppercase tracking-wider text-white/30">{summary.currency} disponible</p><b className="mt-1 block">{moneyMinor(summary.availableMinor, summary.currency)}</b></div>,
+            <div key={`${space.id}-${summary.currency}-pending`} className="rounded-xl border border-white/[0.05] bg-white/[0.025] p-3"><p className="text-[10px] uppercase tracking-wider text-white/30">Pendiente</p><b className="mt-1 block">{moneyMinor(summary.pendingMinor, summary.currency)}</b></div>,
+          ]) : <div className="rounded-xl border border-white/[0.05] bg-white/[0.025] p-3 text-xs text-white/35 sm:col-span-2">Sin movimientos todavía.</div>}
+        </div>
+      )}
 
       <p className="mt-3 text-[11px] leading-5 text-white/35">
         {space.moneyRelation === "separate" ? "Este saldo no forma parte de tu dinero personal." : "Este bloque es un desglose del dinero de tu Player; no se suma una segunda vez."}

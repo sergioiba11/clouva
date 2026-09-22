@@ -132,6 +132,8 @@ export function CommercePistolScanner({ studioId, returnPath }: { studioId: stri
   const [scannedCode, setScannedCode] = useState("");
   const [scanType, setScanType] = useState<CommerceIdentifierType>("code_128");
   const [confirmAdd, setConfirmAdd] = useState(false);
+  const [priceOpen, setPriceOpen] = useState(false);
+  const [priceDraft, setPriceDraft] = useState("");
   const [saleOpen, setSaleOpen] = useState(false);
   const [paymentMethod, setPaymentMethod] = useState("cash");
   const [quantity, setQuantity] = useState(1);
@@ -460,9 +462,13 @@ export function CommercePistolScanner({ studioId, returnPath }: { studioId: stri
       if (created) {
         setMatchedListing(created);
         setMode("matched");
-        setMessage(Number(created.price) > 0
-          ? "Producto agregado. Ya está listo para vender."
-          : "Producto agregado. Falta cargarle precio antes de vender.");
+        if (Number(created.price) > 0) {
+          setMessage("Producto agregado. Ya está listo para vender.");
+        } else {
+          setPriceDraft("");
+          setPriceOpen(true);
+          setMessage("Producto agregado. Poné el precio de venta para dejarlo listo.");
+        }
       }
       if (navigator.vibrate) navigator.vibrate([55, 45, 90]);
     } catch (cause) {
@@ -471,9 +477,48 @@ export function CommercePistolScanner({ studioId, returnPath }: { studioId: stri
     }
   }
 
+  function openPriceEditor() {
+    if (!matchedListing) return;
+    setPriceDraft(Number(matchedListing.price) > 0 ? String(matchedListing.price) : "");
+    setPriceOpen(true);
+    setError("");
+  }
+
+  async function savePrice() {
+    if (!matchedListing) return;
+    const nextPrice = Number(priceDraft.replace(",", "."));
+    if (!Number.isFinite(nextPrice) || nextPrice <= 0) {
+      setError("Ingresá un precio de venta mayor a cero.");
+      return;
+    }
+    setMode("adding");
+    setError("");
+    try {
+      await authFetch(`/api/studios/${encodeURIComponent(studioId)}/commerce/products/update`, {
+        method: "POST",
+        body: JSON.stringify({ listingId: matchedListing.id, price: nextPrice, autosave: false }),
+      });
+      const nextOverview = await loadOverview();
+      const updated = nextOverview.listings.find((listing) => listing.id === matchedListing.id) ?? { ...matchedListing, price: nextPrice };
+      setMatchedListing(updated);
+      setPriceOpen(false);
+      setMode("matched");
+      setMessage(`Precio guardado · ${money(nextPrice, updated.currency || nextOverview.spot.currency)}.`);
+      if (navigator.vibrate) navigator.vibrate([45, 35, 70]);
+    } catch (cause) {
+      setMode("matched");
+      setError(cause instanceof Error ? cause.message : "No se pudo guardar el precio.");
+    }
+  }
+
   function openSale() {
     if (!matchedListing) {
       setMessage("Para venderlo primero tiene que existir en tu catálogo.");
+      return;
+    }
+    if (!(Number(matchedListing.price) > 0)) {
+      setMessage("Primero poné el precio de venta.");
+      openPriceEditor();
       return;
     }
     setSaleOpen(true);
@@ -535,6 +580,8 @@ export function CommercePistolScanner({ studioId, returnPath }: { studioId: stri
   }, [matchedListing, recognition]);
 
   const price = matchedListing ? money(matchedListing.price, matchedListing.currency || overview?.spot.currency) : "";
+  const flowRate = Number(overview?.summary.fx_rate?.local_per_quote || 0);
+  const priceInFlows = matchedListing && flowRate > 0 ? Number(matchedListing.price || 0) / flowRate : null;
   const busy = mode === "identifying" || mode === "reading_code" || mode === "adding";
 
   return (
@@ -592,7 +639,8 @@ export function CommercePistolScanner({ studioId, returnPath }: { studioId: stri
                   {matchedListing ? <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full border border-emerald-300/50 text-emerald-300"><Check className="h-3.5 w-3.5" /></span> : null}
                 </div>
                 <p className="mt-1 truncate text-sm text-white/45">{detectedInfo}</p>
-                {price ? <p className="mt-1 text-xl font-bold text-cyan-300">{price}</p> : null}
+                {price ? <div className="mt-1 flex flex-wrap items-baseline gap-x-2 gap-y-1"><p className="text-xl font-bold text-cyan-300">{price}</p>{priceInFlows != null && priceInFlows > 0 ? <span className="text-[11px] font-semibold text-violet-200/75">≈ {priceInFlows.toFixed(2)} FLOW</span> : null}</div> : null}
+                {matchedListing ? <button type="button" onClick={openPriceEditor} className="mt-1 text-[10px] font-semibold uppercase tracking-[.12em] text-white/45 underline decoration-white/20 underline-offset-4">{Number(matchedListing.price) > 0 ? "Editar precio" : "Poner precio"}</button> : null}
                 {scannedCode ? <p className="mt-1 truncate font-mono text-[10px] uppercase tracking-wide text-cyan-200/60">{scanType.replaceAll("_", " ")} · {scannedCode}</p> : null}
               </div>
               {busy ? <LoaderCircle className="h-5 w-5 shrink-0 animate-spin text-cyan-300" /> : null}
@@ -634,6 +682,23 @@ export function CommercePistolScanner({ studioId, returnPath }: { studioId: stri
           <div className="text-center">
             <LoaderCircle className="mx-auto h-8 w-8 animate-spin text-cyan-300" />
             <p className="mt-3 text-sm text-white/50">Abriendo cámara…</p>
+          </div>
+        </div>
+      ) : null}
+
+      {priceOpen && matchedListing ? (
+        <div data-scanner-control className="absolute inset-0 z-50 flex items-end bg-black/65 backdrop-blur-sm">
+          <div className="w-full rounded-t-[32px] border-t border-white/10 bg-[#090b10] px-5 pb-[max(24px,env(safe-area-inset-bottom))] pt-5">
+            <div className="mx-auto max-w-md">
+              <div className="flex items-start justify-between gap-4">
+                <div><p className="text-xs uppercase tracking-[.2em] text-emerald-300">Precio de venta</p><h2 className="mt-1 text-2xl font-semibold">{matchedListing.name}</h2><p className="mt-1 text-sm text-white/45">Queda guardado en Rapafernalia y el Scanner lo usa al vender.</p></div>
+                <button type="button" onClick={() => setPriceOpen(false)} className="grid h-10 w-10 place-items-center rounded-full border border-white/10"><X className="h-4 w-4" /></button>
+              </div>
+              <label className="mt-5 block"><span className="text-[10px] font-semibold uppercase tracking-[.15em] text-white/40">Precio · {matchedListing.currency || overview?.spot.currency || "ARS"}</span><input autoFocus type="text" inputMode="decimal" value={priceDraft} onChange={(event) => setPriceDraft(event.target.value)} placeholder="0" className="mt-2 w-full rounded-2xl border border-emerald-300/20 bg-white/[0.04] px-4 py-4 text-3xl font-bold outline-none focus:border-emerald-300/55" /></label>
+              {Number(priceDraft.replace(",", ".")) > 0 && flowRate > 0 ? <div className="mt-3 flex items-center justify-between rounded-2xl border border-violet-300/15 bg-violet-300/[0.05] px-4 py-3"><span className="text-xs text-white/45">Equivalente con la cotización guardada</span><strong className="text-violet-200">≈ {(Number(priceDraft.replace(",", ".")) / flowRate).toFixed(2)} FLOW</strong></div> : null}
+              {error ? <p className="mt-3 text-xs text-rose-300">{error}</p> : null}
+              <button type="button" onClick={() => void savePrice()} disabled={mode === "adding"} className="mt-5 flex w-full items-center justify-center gap-2 rounded-2xl bg-emerald-500 px-5 py-4 font-bold text-black disabled:opacity-35">{mode === "adding" ? <LoaderCircle className="h-5 w-5 animate-spin" /> : <DollarSign className="h-5 w-5" />}Guardar precio</button>
+            </div>
           </div>
         </div>
       ) : null}
