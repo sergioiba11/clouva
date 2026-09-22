@@ -251,7 +251,7 @@ export function ProductPublicationControls({
   async function prepareFacebookMarketplace() {
     setSavingKey("facebook_marketplace"); setError(null); setMessage(null);
     try {
-      await put({
+      const prepared = await put({
         targetType: "marketplace",
         channel: "facebook_marketplace",
         destinationKey: "default",
@@ -267,7 +267,33 @@ export function ProductPublicationControls({
         currencySnapshot: product?.currency,
         stockSnapshot: product?.stock,
       });
-      setMessage("Facebook Marketplace quedó preparado. CLOUVA conserva el producto y Facebook requiere la confirmación final.");
+      const response = await authenticatedFetch(`/api/commerce/products/${encodeURIComponent(productId)}/publication-copy`, {
+        method: "POST",
+        body: JSON.stringify({ channel: "facebook_marketplace" }),
+      });
+      const copy = await readApiJson<{ title: string; description: string; provider?: string; model?: string }>(response);
+      await put({
+        targetType: "marketplace",
+        channel: "facebook_marketplace",
+        destinationKey: prepared.destination_key || "default",
+        destinationLabel: prepared.destination_label || "Facebook Marketplace",
+        destinationUrl: prepared.destination_url || FB_MARKETPLACE_URL,
+        publicationMode: "assisted",
+        status: "needs_user_action",
+        isVisible: true,
+        placement: prepared.placement || "market",
+        channelTitle: copy.title,
+        channelDescription: copy.description,
+        priceSnapshot: product?.price,
+        currencySnapshot: product?.currency,
+        stockSnapshot: product?.stock,
+        metadata: {
+          copy_provider: copy.provider || "google_vertex_ai",
+          copy_model: copy.model || null,
+          copy_generated_at: new Date().toISOString(),
+        },
+      });
+      setMessage("Facebook Marketplace quedó preparado con título y descripción generados desde la ficha confirmada.");
       await load();
     } catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo preparar Facebook Marketplace."); }
     finally { setSavingKey(null); }
@@ -530,7 +556,7 @@ export function ProductPublicationControls({
             <div><p className="text-sm font-semibold">Facebook Marketplace</p><p className="mt-0.5 text-[10px] text-white/35">Publicación asistida · mismo stock de CLOUVA</p></div>
             <button type="button" onClick={() => void prepareFacebookMarketplace()} disabled={Boolean(savingKey)} className={BUTTON}>
               {savingKey === "facebook_marketplace" ? <Loader2 size={13} className="animate-spin" /> : <Share2 size={13} />}
-              {facebookMarketplace ? "Actualizar preparación" : "Preparar"}
+              {facebookMarketplace ? "Actualizar ficha" : "Preparar ficha + copy"}
             </button>
           </div>
           {facebookMarketplace ? <ExternalPublicationRow
