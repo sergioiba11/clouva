@@ -126,6 +126,14 @@ function normalizeText(value: string) {
     .toLowerCase()
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
+    .replace(/\bps\s*4\b/g, " playstation 4 ")
+    .replace(/\bdual\s*shock\b/g, " dualshock ")
+    .replace(/\bla[\s-]*700\b/g, " la700 ")
+    .replace(/\btype[\s-]*c\b/g, " usb c ")
+    .replace(/\btipo[\s-]*c\b/g, " usb c ")
+    .replace(/\btc\b/g, " usb c ")
+    .replace(/\biphone\b/g, " lightning ")
+    .replace(/\bnotebook\b/g, " laptop ")
     .replace(/[^a-z0-9]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -134,6 +142,7 @@ function normalizeText(value: string) {
 const STOP = new Set([
   "de", "del", "la", "las", "el", "los", "y", "con", "sin", "para", "por", "un", "una",
   "unidad", "unidades", "uni", "u", "art", "articulo", "producto", "caja", "pack",
+  "original", "generico", "generic",
 ]);
 
 function tokens(value: string) {
@@ -190,6 +199,26 @@ function scoreLineGroup(line: CommerceInvoiceLine, group: CommerceBatchGroup) {
   if (similarity > 0) {
     score += similarity * 0.62;
     reasons.push(`texto ${Math.round(similarity * 100)}%`);
+  }
+
+  const normalizedDescription = normalizeText(description);
+  const normalizedIdentity = normalizeText(identity);
+  const lineIsCable = /\bcable\b/.test(normalizedDescription);
+  const groupIsCable = /\bcable\b/.test(normalizedIdentity);
+  if (lineIsCable === groupIsCable && (lineIsCable || /\b(playstation|dualshock)\b/.test(normalizedDescription))) {
+    score += 0.12;
+    reasons.push("tipo de producto");
+  }
+  if (lineIsCable !== groupIsCable && /\bplaystation\b/.test(normalizedDescription) && /\bplaystation\b/.test(normalizedIdentity)) {
+    score -= 0.28;
+  }
+  if (/\bplaystation\b/.test(normalizedDescription) && /\b(dualshock|playstation)\b/.test(normalizedIdentity)) {
+    score += 0.2;
+    reasons.push("familia PlayStation");
+  }
+  if (/\bla700\b/.test(normalizedDescription) && /\bla700\b/.test(normalizedIdentity)) {
+    score += 0.3;
+    reasons.push("modelo LA700");
   }
 
   return {
