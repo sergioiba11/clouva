@@ -31,14 +31,14 @@ body{overflow-x:hidden}
 .shade{position:absolute;inset:0;background:linear-gradient(180deg,rgba(7,1,15,.38) 0%,rgba(7,1,15,.04) 24%,rgba(7,1,15,.06) 62%,rgba(7,1,15,.72) 100%)}
 .glow{position:absolute;inset:0;background:radial-gradient(circle at 50% 43%,rgba(217,70,239,.08),transparent 48%)}
 .wrap{position:relative;z-index:2;max-width:1700px;min-height:100svh;margin:auto;padding:14px 22px 12px;display:flex;flex-direction:column}
-.top{display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid rgba(232,121,249,.22);background:rgba(10,3,20,.70);backdrop-filter:blur(16px);border-radius:22px;padding:10px 14px;box-shadow:0 16px 54px rgba(0,0,0,.30)}
+.top{display:flex;align-items:center;justify-content:flex-end;gap:12px;border:1px solid rgba(232,121,249,.22);background:rgba(10,3,20,.70);backdrop-filter:blur(16px);border-radius:22px;padding:10px 14px;box-shadow:0 16px 54px rgba(0,0,0,.30)}
 .brand{display:flex;align-items:center;gap:10px;font-weight:1000;letter-spacing:.08em}.mark{width:40px;height:40px;border-radius:50%;display:grid;place-items:center;border:1px solid rgba(232,121,249,.3);background:rgba(217,70,239,.12);font-size:22px}.brand small{display:block;margin-top:3px;font-size:9px;letter-spacing:.22em;color:rgba(245,208,254,.72)}
 .statuses{display:flex;gap:8px;align-items:center}.pill{border:1px solid rgba(232,121,249,.25);background:rgba(0,0,0,.35);border-radius:14px;padding:9px 12px;font-size:11px;font-weight:900;display:flex;align-items:center;gap:8px}.dot{width:10px;height:10px;border-radius:50%;background:#22c55e;box-shadow:0 0 14px #22c55e}
 .center{width:100%;max-width:900px;margin:auto;display:flex;flex:1;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:12px 0 4px}
 .logo{width:min(46vw,610px);max-width:92vw;filter:drop-shadow(0 20px 50px rgba(168,85,247,.42));user-select:none}
 .tag{margin-top:-2px;font-weight:950;letter-spacing:.05em;text-shadow:0 2px 10px rgba(0,0,0,.75);font-size:16px}
 .crown{display:flex;gap:12px;align-items:center;margin:8px 0;color:#f0abfc}.crown:before,.crown:after{content:"";height:1px;width:64px;background:linear-gradient(90deg,transparent,#f0abfc)}.crown:after{transform:scaleX(-1)}
-.start{border:0;background:transparent;padding:0;margin:8px 0 0;width:min(44vw,610px);max-width:94vw;cursor:pointer;transition:.2s;filter:drop-shadow(0 0 22px rgba(217,70,239,.30))}.start:hover{transform:scale(1.018);filter:drop-shadow(0 0 34px rgba(217,70,239,.50))}.start:active{transform:scale(.985)}.start img{width:100%;display:block}
+.start{border:0;background:transparent;padding:0;margin:8px 0 0;width:min(44vw,610px);max-width:94vw;cursor:pointer;transition:.2s;filter:drop-shadow(0 0 22px rgba(217,70,239,.30))}.start:hover{transform:scale(1.018);filter:drop-shadow(0 0 34px rgba(217,70,239,.50))}.start:active{transform:scale(.985)}.start img{width:100%;display:block;transition:.22s}.start.is-disabled{cursor:not-allowed;pointer-events:none;transform:none!important;filter:grayscale(1) brightness(.62) drop-shadow(0 0 10px rgba(255,255,255,.08));opacity:.9}.start.is-disabled img{filter:grayscale(1)}
 .note{min-height:22px;margin-top:2px;font-size:11px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;color:#86efac}
 .nav{margin-top:8px;width:100%;max-width:820px;display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.nav a,.nav button{border:0;background:transparent;padding:0;cursor:pointer;transition:.2s}.nav a:hover,.nav button:hover{transform:translateY(-3px);filter:drop-shadow(0 0 22px rgba(217,70,239,.32))}.nav img{width:100%;display:block}
 .foot{display:flex;align-items:center;justify-content:center;gap:15px;color:rgba(255,255,255,.58);font-size:10px;font-weight:950;letter-spacing:.3em;text-transform:uppercase}.line{height:1px;max-width:240px;flex:1;background:linear-gradient(90deg,transparent,rgba(232,121,249,.5),transparent)}
@@ -59,7 +59,6 @@ body{overflow-x:hidden}
   <div class="shade"></div><div class="glow"></div>
   <div class="wrap">
     <header class="top">
-      <div class="brand"><span class="mark">C</span><span>CLOUVA<small>UNIVERSO GAMING</small></span></div>
       <div class="statuses">
         <div class="pill"><span id="dot" class="dot"></span><span id="serverState">Servidor en línea</span></div>
         <div class="pill">♟ <span id="players">0</span> jugadores</div>
@@ -98,7 +97,15 @@ const panel=document.getElementById("panel");
 const panelTitle=document.getElementById("panelTitle");
 const panelBody=document.getElementById("panelBody");
 const note=document.getElementById("note");
+const startBtn=document.getElementById("startBtn");
 let statusData=null;
+let startRequested=false;
+
+function setStartDisabled(disabled){
+  startBtn.disabled=disabled;
+  startBtn.setAttribute("aria-disabled",disabled?"true":"false");
+  startBtn.classList.toggle("is-disabled",disabled);
+}
 
 function showPanel(title, body){panelTitle.textContent=title;panelBody.innerHTML=body;panel.classList.add("show")}
 document.getElementById("closePanel").onclick=()=>panel.classList.remove("show");
@@ -116,26 +123,37 @@ async function load(){
     const list=Array.isArray(d.players)?d.players:(Array.isArray(d.playerList)?d.playerList:[]);
     const count=typeof d.players==="number"?d.players:(d.playerCount??d.onlinePlayers??list.length??0);
     document.getElementById("players").textContent=count||0;
-    note.textContent=online?"LISTO PARA ENTRAR":"TOCÁ PRENDER SERVER";
+    if(online){
+      startRequested=false;
+      setStartDisabled(true);
+      note.textContent="LISTO PARA ENTRAR";
+    }else{
+      setStartDisabled(startRequested);
+      note.textContent=startRequested?"ARRANCANDO SERVER...":"TOCÁ PRENDER SERVER";
+    }
   }catch(e){
     note.textContent="RATCRAFT";
   }
 }
 
-document.getElementById("startBtn").onclick=async()=>{
+startBtn.onclick=async()=>{
   const online=statusData&&(String(statusData.status||"").toLowerCase()==="running"||statusData.online===true||statusData.status===true);
-  if(online){
-    const ip=statusData.ip||statusData.host||"mc.clouva.com.ar";
-    showPanel("Entrar a Ratcraft",'<div class="code">Java: '+ip+'</div><div class="code">Bedrock: '+ip+'</div>');
-    return;
-  }
+  if(online||startRequested) return;
+
+  startRequested=true;
+  setStartDisabled(true);
   note.textContent="PRENDIENDO...";
+
   try{
     const r=await fetch("/minecraft/api/start",{method:"POST"});
     if(!r.ok) throw new Error("start");
     note.textContent="ARRANCANDO SERVER...";
     setTimeout(load,2500);
-  }catch(e){ note.textContent="ABRÍ TU ACCESO DE RATCRAFT"; }
+  }catch(e){
+    startRequested=false;
+    setStartDisabled(false);
+    note.textContent="NO SE PUDO PRENDER · TOCÁ PARA REINTENTAR";
+  }
 };
 
 document.getElementById("mapBtn").onclick=()=>showPanel("Mapa en vivo",'<div class="code">El mapa se abre cuando Ratcraft está online.</div>');
