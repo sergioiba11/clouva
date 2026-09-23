@@ -22,6 +22,11 @@ type BatchGroup = {
   confidence: number;
   needsReview: boolean;
   images: Array<{ sourceIndex: number; role: "Frente" | "Atrás" | "Detalle" }>;
+  contextReferences?: Array<{
+    sourceIndex: number;
+    label: string;
+    confidence: number;
+  }>;
 };
 
 type AnalyzeResponse = {
@@ -100,6 +105,12 @@ type BatchSourceItem = {
   recognition: {
     context_only?: boolean;
     observed_products?: string[];
+    matched_group_keys?: string[];
+    matched_products?: Array<{
+      group_key: string;
+      label: string;
+      confidence: number;
+    }>;
     context_reason?: string;
     [key: string]: unknown;
   } | null;
@@ -1417,6 +1428,17 @@ export function CommerceBulkProductImport({
                 && (!group.identifier
                   || (code.type === group.identifier.type && code.value === group.identifier.value)),
               )?.sourceIndex;
+              const sharedContextPhotos = (group.contextReferences ?? []).flatMap((reference) => {
+                const source = batchSources[reference.sourceIndex];
+                if (!source?.source_url) return [];
+                return [{
+                  sourceIndex: reference.sourceIndex,
+                  url: source.source_url,
+                  fileName: source.file_name || "",
+                  label: reference.label,
+                  confidence: reference.confidence,
+                }];
+              });
               return (
                 <div key={group.groupKey} className="rounded-xl border border-white/[0.08] bg-black/20 p-3">
                   <div className="flex items-start gap-3">
@@ -1535,6 +1557,35 @@ export function CommerceBulkProductImport({
                       ) : null)}
                     </div>
                   ) : null}
+                  {sharedContextPhotos.length ? (
+                    <div className="mt-3 border-t border-cyan-300/[0.08] pt-3">
+                      <p className="text-[9px] font-semibold uppercase tracking-[.12em] text-cyan-200/70">
+                        También aparece en fotos mixtas
+                      </p>
+                      <div className="mt-2 flex gap-2 overflow-x-auto">
+                        {sharedContextPhotos.map((photo) => (
+                          <div key={photo.sourceIndex} className="w-24 shrink-0">
+                            <div className="relative h-20 w-20 overflow-hidden rounded-lg border border-cyan-300/15 bg-black/30">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={photo.url}
+                                alt={photo.fileName || `Contexto #${photo.sourceIndex + 1}`}
+                                className="h-full w-full object-cover"
+                                loading="lazy"
+                              />
+                              <span className="absolute bottom-1 left-1 rounded bg-cyan-950/90 px-1.5 py-0.5 text-[8px] font-semibold text-cyan-100">
+                                Contexto
+                              </span>
+                              <span className="absolute right-1 top-1 rounded bg-black/80 px-1 py-0.5 text-[8px] text-white/75">
+                                #{photo.sourceIndex + 1}
+                              </span>
+                            </div>
+                            <p className="mt-1 line-clamp-2 text-[8px] leading-3 text-cyan-100/55">{photo.label}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
                   {result?.error ? <p className="mt-2 text-[10px] leading-4 text-rose-200">{result.error}</p> : null}
                   {!hasExternalCode ? (
                     <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -1585,6 +1636,9 @@ export function CommerceBulkProductImport({
               const observed = Array.isArray(photo.recognition?.observed_products)
                 ? photo.recognition.observed_products.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
                 : [];
+              const matchedProducts = Array.isArray(photo.recognition?.matched_products)
+                ? photo.recognition.matched_products.filter((value) => value && typeof value.label === "string" && value.label.trim().length > 0)
+                : [];
               return (
                 <div key={photo.id} className="flex gap-3 rounded-xl border border-white/[0.07] bg-black/20 p-3">
                   <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-lg border border-cyan-300/10 bg-black/30">
@@ -1593,10 +1647,15 @@ export function CommerceBulkProductImport({
                     <span className="absolute right-1 top-1 rounded bg-black/80 px-1 py-0.5 text-[8px] text-white/75">#{photo.source_index + 1}</span>
                   </div>
                   <div className="min-w-0">
-                    <strong className="text-xs text-cyan-100">Foto de contexto · no agrupar</strong>
-                    <p className="mt-1 text-[10px] leading-4 text-white/55">
-                      {observed.length ? `Veo: ${observed.join(" · ")}` : "Varios productos distintos en la misma foto."}
+                    <strong className="text-xs text-cyan-100">Foto mixta · no suma stock</strong>
+                    <p className="mt-1 text-[10px] leading-4 text-white/65">
+                      {observed.length ? `Veo: ${observed.join(" · ")}` : "Analizando los productos visibles de esta escena."}
                     </p>
+                    {matchedProducts.length ? (
+                      <p className="mt-1 text-[9px] leading-4 text-cyan-200/70">
+                        Vinculada con: {matchedProducts.map((item) => item.label).join(" · ")}
+                      </p>
+                    ) : null}
                     {photo.recognition?.context_reason ? (
                       <p className="mt-1 text-[9px] leading-4 text-white/30">{photo.recognition.context_reason}</p>
                     ) : null}
