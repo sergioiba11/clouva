@@ -93,13 +93,7 @@ jobs:
 
           echo "Purging CLOUVA Minecraft URLs from Cloudflare..."
           response="$(curl -fsS -X POST             "https://api.cloudflare.com/client/v4/zones/$zone/purge_cache"             -H "Authorization: Bearer $token"             -H "Content-Type: application/json"             --data '{"files":["https://clouva.com.ar/minecraft","https://www.clouva.com.ar/minecraft"]}')"
-          python3 - <<'PY' <<<"$response"
-import json, sys
-data=json.load(sys.stdin)
-print(json.dumps({"success": data.get("success"), "errors": data.get("errors")}, ensure_ascii=False))
-if not data.get("success"):
-    raise SystemExit(1)
-PY
+          python3 -c 'import json,sys; data=json.load(sys.stdin); print(json.dumps({"success": data.get("success"), "errors": data.get("errors")}, ensure_ascii=False)); raise SystemExit(0 if data.get("success") else 1)' <<<"$response"
 
       - name: Verify public Minecraft after repair
         shell: bash
