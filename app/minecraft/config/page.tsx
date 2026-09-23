@@ -26,7 +26,7 @@ import {
   Users,
   Zap,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/auth-provider";
 import { canAccessAdmin } from "@/lib/auth";
@@ -157,15 +157,6 @@ export default function MinecraftConfigPage() {
     }
     if (!isAdmin) router.replace("/minecraft");
   }, [hydrationReady, isAdmin, loading, profileReady, router, user]);
-
-  const authHeaders = useMemo(
-    () =>
-      session?.access_token
-        ? { Authorization: "Bearer " + session.access_token }
-        : {},
-    [session?.access_token],
-  );
-
   const load = useCallback(async () => {
     if (!session?.access_token || !isAdmin) return;
     try {
