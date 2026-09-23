@@ -71,6 +71,49 @@ jobs:
           echo "ip=$ip" >> "$GITHUB_OUTPUT"
           echo "Using Ratcraft VM: $name ($zone, $ip)"
 
+      - name: Ensure Ratcraft external IP is static
+        id: static_ip
+        shell: bash
+        env:
+          MC_IP: ${{ steps.mc.outputs.ip }}
+          MC_ZONE: ${{ steps.mc.outputs.zone }}
+        run: |
+          set -euo pipefail
+          region="${MC_ZONE%-*}"
+
+          reserved_name="$(
+            gcloud compute addresses list \
+              --project "$PROJECT_ID" \
+              --regions "$region" \
+              --filter="address=$MC_IP" \
+              --format="value(name)" \
+              | head -n 1
+          )"
+
+          if [ -z "$reserved_name" ]; then
+            preferred="clouva-minecraft-static-ip"
+            if gcloud compute addresses describe "$preferred" --project "$PROJECT_ID" --region "$region" >/dev/null 2>&1; then
+              existing_ip="$(gcloud compute addresses describe "$preferred" --project "$PROJECT_ID" --region "$region" --format="value(address)")"
+              if [ "$existing_ip" != "$MC_IP" ]; then
+                preferred="clouva-minecraft-static-ip-2"
+              fi
+            fi
+
+            if ! gcloud compute addresses describe "$preferred" --project "$PROJECT_ID" --region "$region" >/dev/null 2>&1; then
+              gcloud compute addresses create "$preferred" \
+                --project "$PROJECT_ID" \
+                --region "$region" \
+                --addresses "$MC_IP"
+            fi
+            reserved_name="$preferred"
+          fi
+
+          static_ip="$(gcloud compute addresses describe "$reserved_name" --project "$PROJECT_ID" --region "$region" --format="value(address)")"
+          test "$static_ip" = "$MC_IP"
+          echo "ip=$static_ip" >> "$GITHUB_OUTPUT"
+          echo "name=$reserved_name" >> "$GITHUB_OUTPUT"
+          echo "Ratcraft static IP reserved: $reserved_name -> $static_ip"
+
       - name: Ban GTrein and close Ratcraft
         shell: bash
         env:
