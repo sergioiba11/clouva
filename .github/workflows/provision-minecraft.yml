@@ -18,7 +18,7 @@ env:
   WEB_SERVICE: clouva-web
   MC_REGION: southamerica-east1
   MC_ZONE: southamerica-east1-b
-  MC_INSTANCE: clouva-minecraft-family
+  MC_INSTANCE: clouva-minecraft
   MC_DISK: clouva-minecraft-world
   MC_ADDRESS: clouva-minecraft-ip
   MC_MACHINE_TYPE: e2-standard-2
