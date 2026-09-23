@@ -34,35 +34,39 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gcloud compute ssh "$MC_INSTANCE"             --project "$PROJECT_ID"             --zone "$MC_ZONE"             --quiet             --ssh-flag="-o StrictHostKeyChecking=no"             --ssh-flag="-o UserKnownHostsFile=/dev/null"             --command="
-              set -euo pipefail
-              echo '===== RATCRAFT ROLLBACK PREFLIGHT ====='
-              sudo docker ps --filter name=clouva-minecraft
-              plugins=\$(sudo docker exec clouva-minecraft rcon-cli plugins 2>&1 || true)
-              echo "\$plugins"
+          cat > /tmp/ratcraft-rollback.sh <<'REMOTE'
+          set -euo pipefail
+          echo "===== RATCRAFT ROLLBACK PREFLIGHT ====="
+          sudo docker ps --filter name=clouva-minecraft
+          plugins="$(sudo docker exec clouva-minecraft rcon-cli plugins 2>&1 || true)"
+          echo "$plugins"
 
-              if echo "\$plugins" | grep -qi 'CoreProtect'; then
-                now=\$(date -u +%s)
-                target=\$(date -u -d '$TARGET_UTC' +%s)
-                seconds=\$((now-target))
-                if [ "\$seconds" -lt 1 ]; then
-                  echo 'Invalid rollback window.'
-                  exit 2
-                fi
+          if echo "$plugins" | grep -qi 'CoreProtect'; then
+            now="$(date -u +%s)"
+            target="$(date -u -d '2026-09-23T21:40:00Z' +%s)"
+            seconds="$((now-target))"
+            if [ "$seconds" -lt 1 ]; then
+              echo "Invalid rollback window."
+              exit 2
+            fi
 
-                echo "COREPROTECT_FOUND window=\${seconds}s target=$TARGET_UTC"
-                echo '===== BREAK SUMMARY ====='
-                sudo docker exec clouva-minecraft rcon-cli "co lookup t:\${seconds}s r:#global a:-block #summary" || true
-                echo '===== APPLYING ROLLBACK ====='
-                sudo docker exec clouva-minecraft rcon-cli "co rollback t:\${seconds}s r:#global a:-block"
-                sudo docker exec clouva-minecraft rcon-cli "save-all"
-                echo 'RATCRAFT_ROLLBACK_APPLIED'
-              else
-                echo 'COREPROTECT_NOT_AVAILABLE'
-                echo '===== RECOVERY DIRECTORIES ====='
-                sudo find /srv/minecraft/recovery -maxdepth 2 -mindepth 1 -printf '%TY-%Tm-%Td %TH:%TM:%TS %p\n' 2>/dev/null | sort -r | head -n 80 || true
-                echo '===== WORLD FILE RECENT MTIMES ====='
-                sudo find /srv/minecraft -maxdepth 2 -type f -mmin -120 -printf '%TY-%Tm-%Td %TH:%TM:%TS %p\n' 2>/dev/null | sort -r | head -n 120 || true
-                exit 3
-              fi
-            "
+            echo "COREPROTECT_FOUND window=${seconds}s target=2026-09-23T21:40:00Z"
+            echo "===== BREAK SUMMARY ====="
+            sudo docker exec clouva-minecraft rcon-cli "co lookup t:${seconds}s r:#global a:-block #summary" || true
+            echo "===== APPLYING ROLLBACK ====="
+            sudo docker exec clouva-minecraft rcon-cli "co rollback t:${seconds}s r:#global a:-block"
+            sudo docker exec clouva-minecraft rcon-cli "save-all"
+            echo "RATCRAFT_ROLLBACK_APPLIED"
+          else
+            echo "COREPROTECT_NOT_AVAILABLE"
+            echo "===== RECOVERY DIRECTORIES ====="
+            sudo find /srv/minecraft/recovery -maxdepth 2 -mindepth 1 -printf '%TY-%Tm-%Td %TH:%TM:%TS %p\n' 2>/dev/null | sort -r | head -n 80 || true
+            echo "===== WORLD FILE RECENT MTIMES ====="
+            sudo find /srv/minecraft -maxdepth 2 -type f -mmin -120 -printf '%TY-%Tm-%Td %TH:%TM:%TS %p\n' 2>/dev/null | sort -r | head -n 120 || true
+            exit 3
+          fi
+          REMOTE
+
+          gcloud compute scp /tmp/ratcraft-rollback.sh "$MC_INSTANCE:/tmp/ratcraft-rollback.sh"             --project "$PROJECT_ID"             --zone "$MC_ZONE"             --quiet             --ssh-key-expire-after=10m
+
+          gcloud compute ssh "$MC_INSTANCE"             --project "$PROJECT_ID"             --zone "$MC_ZONE"             --quiet             --ssh-flag="-o StrictHostKeyChecking=no"             --ssh-flag="-o UserKnownHostsFile=/dev/null"             --command='bash /tmp/ratcraft-rollback.sh'
