@@ -26,6 +26,16 @@ function normalize(value: string | undefined, max = 255) {
   return value?.trim().slice(0, max) || undefined;
 }
 
+async function runWorkspaceTool(
+  executor: WorkspaceExecutor,
+  name: string,
+  args: Record<string, unknown>,
+) {
+  const tool = executor.getTool(name);
+  if (!tool) throw new Error(`La herramienta '${name}' no está registrada en Workspace.`);
+  return tool.execute(args);
+}
+
 async function execute(request: NextRequest, body: Body) {
   const { user } = await requireUser(request);
   requireAdmin(user.email);
@@ -35,12 +45,12 @@ async function execute(request: NextRequest, body: Body) {
 
   try {
     if (action === "snapshot") {
-      return await executor.getTool("workspace.network.snapshot").execute({});
+      return await runWorkspaceTool(executor, "workspace.network.snapshot", {});
     }
 
     if (action === "discover") {
       const subnet = normalize(body.subnet, 64);
-      return await executor.getTool("workspace.network.discover").execute(subnet ? { subnet } : {});
+      return await runWorkspaceTool(executor, "workspace.network.discover", subnet ? { subnet } : {});
     }
 
     if (action === "inspect") {
@@ -50,7 +60,7 @@ async function execute(request: NextRequest, body: Body) {
         error.status = 400;
         throw error;
       }
-      return await executor.getTool("workspace.network.inspect").execute({ target });
+      return await runWorkspaceTool(executor, "workspace.network.inspect", { target });
     }
 
     if (action === "trace") {
@@ -60,7 +70,7 @@ async function execute(request: NextRequest, body: Body) {
         error.status = 400;
         throw error;
       }
-      return await executor.getTool("workspace.network.trace").execute({ target });
+      return await runWorkspaceTool(executor, "workspace.network.trace", { target });
     }
 
     const error = new Error("Acción de red no soportada.") as Error & { status?: number };
