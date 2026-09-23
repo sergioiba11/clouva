@@ -1,0 +1,40 @@
+name: Grant Ninotimi Admin
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/grant-ninotimi-admin.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: gen-lang-client-0737053175
+  MC_ZONE: southamerica-east1-b
+  MC_INSTANCE: clouva-minecraft
+
+jobs:
+  grant:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA_EMAIL }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Grant ninotimi OP
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud compute ssh "$MC_INSTANCE"             --project "$PROJECT_ID"             --zone "$MC_ZONE"             --quiet             --ssh-flag="-o ConnectTimeout=10"             --ssh-flag="-o StrictHostKeyChecking=no"             --ssh-flag="-o UserKnownHostsFile=/dev/null"             --command='
+              set -euo pipefail
+              sudo docker exec clouva-minecraft rcon-cli "op ninotimi"
+              echo "===== OPS ====="
+              sudo cat /srv/minecraft/ops.json || true
+            '
