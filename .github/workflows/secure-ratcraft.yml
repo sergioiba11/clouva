@@ -259,3 +259,12 @@ jobs:
           echo "LIVE_IP=${{ steps.mc.outputs.ip }}"
           printf "DNS_IPS="
           getent ahostsv4 mc.clouva.com.ar | awk "{print \$1}" | sort -u | paste -sd, - || true
+
+      - name: Inspect Minecraft infrastructure pointers
+        shell: bash
+        run: |
+          echo "===== RESERVED ADDRESSES ====="
+          gcloud compute addresses list --project "$PROJECT_ID"             --format='table(name,address,region.basename(),status,users)' || true
+
+          echo "===== CLOUVA WEB MINECRAFT ENV ====="
+          gcloud run services describe clouva-web             --project "$PROJECT_ID"             --region us-central1             --format=json             | python3 -c 'import json,sys; d=json.load(sys.stdin); env=d.get("spec",{}).get("template",{}).get("spec",{}).get("containers",[{}])[0].get("env",[]); print("\n".join(f"{x.get(\"name\")}=<secret>" if "valueFrom" in x else f"{x.get(\"name\")}={x.get(\"value\",\"\")}" for x in env if x.get("name","").startswith("MINECRAFT_")))'
