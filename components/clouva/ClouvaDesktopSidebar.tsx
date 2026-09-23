@@ -8,6 +8,7 @@ import {
   Home,
   LayoutGrid,
   ShoppingBag,
+  ShieldCheck,
   Sparkles,
   Store,
 } from "lucide-react";
@@ -52,6 +53,7 @@ export function useClouvaSidebarNavigation() {
     { key: "PLAYER", label: "Mi Player", href: playerHref, icon: CircleUserRound },
     { key: "MI_FLOW", label: "Mi Flow", href: CLOUVA_NAVIGATION.MI_FLOW.href, icon: DollarSign },
     { key: "MI_SPOT", label: "Mi Spot", href: CLOUVA_NAVIGATION.MI_SPOT.href, icon: Store },
+    { key: "SECURITY", label: "Seguridad", href: CLOUVA_NAVIGATION.SECURITY.href, icon: ShieldCheck },
   ];
 
   return { primaryNavigation, workspaceNavigation, playerHref };
