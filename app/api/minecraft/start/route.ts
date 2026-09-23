@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 const DEFAULT_PROJECT = "gen-lang-client-0737053175";
 const DEFAULT_ZONE = "southamerica-east1-b";
-const DEFAULT_INSTANCE = "clouva-minecraft-family";
+const DEFAULT_INSTANCE = "clouva-minecraft";
 const RATE_LIMIT_MS = 8_000;
 
 let lastStartRequestAt = 0;
