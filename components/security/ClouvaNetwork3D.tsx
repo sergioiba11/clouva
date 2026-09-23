@@ -414,7 +414,7 @@ function buildGraph(snapshot: ClouvaNetworkSnapshot | null, assets: PublicNetwor
       nodes.push(node);
       edges.push({
         id: "gateway-" + node.id,
-        from: snapshot.local.gateway ? "gateway" : "workspace",
+        from: snapshot.local?.gateway ? "gateway" : "workspace",
         to: node.id,
         kind: "live",
         active: true,
