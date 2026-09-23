@@ -1,0 +1,147 @@
+name: Secure Ratcraft Access
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/secure-ratcraft.yml"
+      - "infra/minecraft/startup.sh"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: ratcraft-security
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: gen-lang-client-0737053175
+
+jobs:
+  secure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA_EMAIL }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Discover the live Ratcraft VM
+        id: mc
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          found=""
+          while IFS=',' read -r name zone ip; do
+            [ -n "$name" ] || continue
+            case "$name" in
+              *minecraft*|*ratcraft*) ;;
+              *) continue ;;
+            esac
+            if [ -n "$ip" ] && timeout 3 bash -c "</dev/tcp/$ip/25565" >/dev/null 2>&1; then
+              found="$name,$zone,$ip"
+              break
+            fi
+          done < <(
+            gcloud compute instances list               --project "$PROJECT_ID"               --filter='status=RUNNING'               --format='csv[no-heading](name,zone.basename(),networkInterfaces[0].accessConfigs[0].natIP)'
+          )
+
+          if [ -z "$found" ]; then
+            found="$(
+              gcloud compute instances list                 --project "$PROJECT_ID"                 --filter='status=RUNNING AND (name~minecraft OR name~ratcraft)'                 --format='csv[no-heading](name,zone.basename(),networkInterfaces[0].accessConfigs[0].natIP)'                 | head -n 1
+            )"
+          fi
+
+          if [ -z "$found" ]; then
+            echo "::error::No running Minecraft/Ratcraft VM was found."
+            exit 1
+          fi
+
+          IFS=',' read -r name zone ip <<< "$found"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "zone=$zone" >> "$GITHUB_OUTPUT"
+          echo "ip=$ip" >> "$GITHUB_OUTPUT"
+          echo "Using Ratcraft VM: $name ($zone, $ip)"
+
+      - name: Ban GTrein and close Ratcraft
+        shell: bash
+        env:
+          MC_NAME: ${{ steps.mc.outputs.name }}
+          MC_ZONE: ${{ steps.mc.outputs.zone }}
+        run: |
+          set -euo pipefail
+
+          gcloud compute ssh "$MC_NAME"             --project "$PROJECT_ID"             --zone "$MC_ZONE"             --quiet             --ssh-flag="-o ConnectTimeout=10"             --ssh-flag="-o StrictHostKeyChecking=no"             --ssh-flag="-o UserKnownHostsFile=/dev/null"             --command='
+              set -euo pipefail
+
+              CONTAINER="$(sudo docker ps --format "{{.Names}}" | grep -E "^(clouva-minecraft|.*minecraft.*)$" | head -n 1)"
+              if [ -z "$CONTAINER" ]; then
+                echo "Minecraft container not found." >&2
+                exit 1
+              fi
+
+              echo "Container: $CONTAINER"
+
+              GT_IP="$(
+                sudo docker logs --tail 10000 "$CONTAINER" 2>&1                   | grep -Ei "GTrein\[/"                   | tail -n 1                   | sed -nE "s/.*GTrein\[\/([0-9.]+):[0-9]+\].*/\1/p"                   || true
+              )"
+
+              sudo docker exec "$CONTAINER" rcon-cli "ban GTrein Unauthorized access to Ratcraft" || true
+              if [ -n "$GT_IP" ]; then
+                sudo docker exec "$CONTAINER" rcon-cli "ban-ip $GT_IP Unauthorized access to Ratcraft" || true
+                echo "GTrein source IP banned: $GT_IP"
+              else
+                echo "GTrein IP was not present in the retained Docker log; nickname ban remains active."
+              fi
+
+              sudo docker exec "$CONTAINER" rcon-cli "whitelist add Clouva"
+              sudo docker exec "$CONTAINER" rcon-cli "whitelist add ninotimi"
+              sudo docker exec "$CONTAINER" rcon-cli "whitelist on"
+              sudo docker exec "$CONTAINER" rcon-cli "whitelist reload" || true
+              sudo docker exec "$CONTAINER" rcon-cli "kick GTrein Ratcraft is private" || true
+
+              props=/srv/minecraft/server.properties
+              if [ -f "$props" ]; then
+                if grep -q "^white-list=" "$props"; then
+                  sudo sed -i -E "s/^white-list=.*/white-list=true/" "$props"
+                else
+                  echo "white-list=true" | sudo tee -a "$props" >/dev/null
+                fi
+
+                if grep -q "^enforce-whitelist=" "$props"; then
+                  sudo sed -i -E "s/^enforce-whitelist=.*/enforce-whitelist=true/" "$props"
+                else
+                  echo "enforce-whitelist=true" | sudo tee -a "$props" >/dev/null
+                fi
+              fi
+
+              echo "===== RATCRAFT ACCESS ====="
+              sudo docker exec "$CONTAINER" rcon-cli "whitelist list" || true
+              sudo docker exec "$CONTAINER" rcon-cli "banlist players" || true
+              sudo docker exec "$CONTAINER" rcon-cli "banlist ips" || true
+            '
+
+      - name: Persist secured startup metadata on the live VM
+        shell: bash
+        env:
+          MC_NAME: ${{ steps.mc.outputs.name }}
+          MC_ZONE: ${{ steps.mc.outputs.zone }}
+        run: |
+          gcloud compute instances add-metadata "$MC_NAME"             --project "$PROJECT_ID"             --zone "$MC_ZONE"             --metadata-from-file startup-script=infra/minecraft/startup.sh
+
+      - name: Verify public listener
+        shell: bash
+        env:
+          MC_IP: ${{ steps.mc.outputs.ip }}
+        run: |
+          set -euo pipefail
+          timeout 4 bash -c "</dev/tcp/$MC_IP/25565"
+          echo "Ratcraft is online and secured by whitelist."
