@@ -21,6 +21,7 @@ const platformStructuredData = {
       inLanguage: "es-AR",
       description: "CLOUVA es una plataforma creativa que conecta música, identidad, moda, 3D, Creator, Market, Mi Spot e inteligencia artificial en un mismo universo.",
       about: { "@id": "https://clouva.com.ar/#platform" },
+      mentions: { "@id": "https://clouva.com.ar/clouva#person" },
     },
     {
       "@type": "SoftwareApplication",
@@ -33,6 +34,7 @@ const platformStructuredData = {
       isAccessibleForFree: true,
       description: "Plataforma creativa para música, identidad, moda, 3D, Creator, Market, Mi Spot e inteligencia artificial.",
       brand: { "@id": "https://clouva.com.ar/#brand" },
+      mentions: { "@id": "https://clouva.com.ar/clouva#person" },
     },
   ],
 };
