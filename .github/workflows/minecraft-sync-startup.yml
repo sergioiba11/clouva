@@ -14,7 +14,7 @@ permissions:
 env:
   PROJECT_ID: gen-lang-client-0737053175
   MC_ZONE: southamerica-east1-b
-  MC_INSTANCE: clouva-minecraft-family
+  MC_INSTANCE: clouva-minecraft
 
 jobs:
   sync:
