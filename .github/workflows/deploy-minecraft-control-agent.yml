@@ -58,3 +58,39 @@ jobs:
               sudo systemctl is-active clouva-minecraft-control-agent.service
               sudo journalctl -u clouva-minecraft-control-agent.service -n 20 --no-pager
             '
+
+      - name: Verify private command channel
+        shell: bash
+        run: |
+          set -euo pipefail
+          id="verify-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          printf '{"id":"%s","action":"list","args":{},"actorId":"github-actions","issuedAt":"%s"}' "$id" "$(date -u +%FT%TZ)" > /tmp/ratcraft-command.json
+
+          gcloud compute instances add-metadata "$MC_INSTANCE" \
+            --project "$PROJECT_ID" \
+            --zone "$MC_ZONE" \
+            --metadata-from-file ratcraft-command=/tmp/ratcraft-command.json \
+            --quiet
+
+          for attempt in $(seq 1 15); do
+            if gcloud compute ssh "$MC_INSTANCE" \
+              --project "$PROJECT_ID" \
+              --zone "$MC_ZONE" \
+              --quiet \
+              --ssh-flag="-o StrictHostKeyChecking=no" \
+              --ssh-flag="-o UserKnownHostsFile=/dev/null" \
+              --command="sudo cat /srv/minecraft/ratcraft-control-last.json 2>/dev/null" \
+              | grep -Fq "\"id\": \"$id\""; then
+              echo "Ratcraft private command channel is working."
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "::error::Control agent did not execute the verification command."
+          gcloud compute ssh "$MC_INSTANCE" \
+            --project "$PROJECT_ID" \
+            --zone "$MC_ZONE" \
+            --quiet \
+            --command='sudo journalctl -u clouva-minecraft-control-agent.service -n 80 --no-pager' || true
+          exit 1
