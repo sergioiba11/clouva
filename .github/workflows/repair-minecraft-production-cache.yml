@@ -81,6 +81,15 @@ jobs:
             printf '%s | %s | %s\n' "$name" "$code" "$markers"
           done < /tmp/run-services.txt
 
+      - name: Inspect clouva-mc-control service
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "===== MC CONTROL SERVICE ====="
+          gcloud run services describe clouva-mc-control             --project "$PROJECT_ID"             --region "$REGION"             --format='yaml(metadata.name,status.url,status.latestReadyRevisionName,status.traffic,spec.template.spec.containers,spec.template.metadata.annotations)' || true
+          echo "===== MC CONTROL REVISIONS ====="
+          gcloud run revisions list             --project "$PROJECT_ID"             --region "$REGION"             --service clouva-mc-control             --format='table(metadata.name,status.conditions[0].status,spec.containers[0].image,metadata.creationTimestamp)' || true
+
       - name: Purge Cloudflare cache if credentials are available
         shell: bash
         env:
