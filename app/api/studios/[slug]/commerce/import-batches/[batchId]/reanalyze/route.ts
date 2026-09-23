@@ -321,7 +321,7 @@ export async function POST(
       .order("line_number");
     if (expectedInvoiceRowsError) throw new Error(expectedInvoiceRowsError.message);
 
-    const groups = await analyzeCommerceProductBatch({
+    const analyzedGroups = await analyzeCommerceProductBatch({
       spotName: spot.name,
       expectedProducts: (expectedInvoiceRows ?? []).map((line) => ({
         description: line.description || "",
@@ -353,6 +353,16 @@ export async function POST(
       },
     });
 
+    const contextObservations = analyzedGroups
+      .filter((group) => group.contextOnly)
+      .map((group) => ({
+        contextKey: group.groupKey,
+        sourceIndexes: group.images.map((image) => image.sourceIndex),
+        observedProducts: group.observedProducts ?? [],
+        reason: group.contextReason ?? "Foto con varios productos distintos.",
+      }));
+    const groups = analyzedGroups.filter((group) => !group.contextOnly);
+
     const groupByIndex = new Map<number, { key: string; summary: JsonRecord }>();
     for (const group of groups) {
       for (const image of group.images) {
@@ -376,6 +386,7 @@ export async function POST(
 
     for (const item of items) {
       const grouped = groupByIndex.get(item.source_index);
+      const context = contextObservations.find((observation) => observation.sourceIndexes.includes(item.source_index));
       const previous = record(item.recognition);
       const upload = record(previous.upload);
       const { error } = await admin
@@ -395,6 +406,8 @@ export async function POST(
           recognition: {
             ...(Object.keys(upload).length ? { upload } : {}),
             context_only: true,
+            observed_products: context?.observedProducts ?? [],
+            context_reason: context?.reason ?? "Foto de contexto general.",
           },
           error: null,
           updated_at: new Date().toISOString(),
@@ -430,6 +443,7 @@ export async function POST(
           reanalyzed: true,
           deleted_stale_drafts: deletedDrafts,
           invoice_reconciled: invoice.reconciled,
+          context_observations: contextObservations,
           analysis_progress: {
             stage: "done",
             completed: groups.length,
@@ -450,6 +464,7 @@ export async function POST(
       totalImages: items.length,
       detectedProducts: groups.length,
       groups,
+      contextObservations,
       invoice,
       deletedDrafts,
       reanalysisCount,
