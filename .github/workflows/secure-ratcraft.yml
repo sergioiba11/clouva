@@ -102,9 +102,9 @@ jobs:
                 echo "GTrein IP was not present in the retained Docker log; nickname ban remains active."
               fi
 
-              sudo docker exec "$CONTAINER" rcon-cli "whitelist add Clouva"
-              sudo docker exec "$CONTAINER" rcon-cli "whitelist add ninotimi"
-              sudo docker exec "$CONTAINER" rcon-cli "whitelist add seba_1230"
+              sudo docker exec "$CONTAINER" rcon-cli "whitelist add Clouva" || true
+              sudo docker exec "$CONTAINER" rcon-cli "whitelist add ninotimi" || true
+              sudo docker exec "$CONTAINER" rcon-cli "whitelist add seba_1230" || true
               sudo docker exec "$CONTAINER" rcon-cli "whitelist on"
               sudo docker exec "$CONTAINER" rcon-cli "whitelist reload" || true
               sudo docker exec "$CONTAINER" rcon-cli "kick GTrein Ratcraft is private" || true
