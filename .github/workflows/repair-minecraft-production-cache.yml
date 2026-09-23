@@ -63,6 +63,24 @@ jobs:
             grep -Eio 'CLOUVA FAMILIA|RATCRAFT|NIÑOS RATA|PRENDER SERVER|Universo Gaming' "$file" | sort -u || true
           done
 
+      - name: Discover which Cloud Run service serves the old Minecraft page
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "===== CLOUD RUN SERVICES ====="
+          gcloud run services list --project "$PROJECT_ID" --platform managed --format='csv[no-heading](metadata.name,metadata.labels.cloud.googleapis.com/location,status.url)' > /tmp/run-services.csv || true
+          cat /tmp/run-services.csv
+
+          echo "===== MINECRAFT MARKERS BY SERVICE ====="
+          while IFS=',' read -r name region url; do
+            [ -n "$name" ] || continue
+            [ -n "$url" ] || continue
+            body="$(mktemp)"
+            code="$(curl -L -sS --max-time 15 -o "$body" -w '%{http_code}' "$url/minecraft" || true)"
+            markers="$(grep -Eio 'CLOUVA FAMILIA|RATCRAFT|NIÑOS RATA|PRENDER SERVER|Universo Gaming' "$body" | sort -u | tr '\n' ' ' || true)"
+            printf '%s | %s | %s | %s\n' "$name" "$region" "$code" "$markers"
+          done < /tmp/run-services.csv
+
       - name: Purge Cloudflare cache if credentials are available
         shell: bash
         env:
