@@ -6,6 +6,7 @@ export type ClouvaSurfaceKey =
   | "MI_FLOW"
   | "CREATE"
   | "MI_SPOT"
+  | "SECURITY"
   | "MARKET"
   | "MATRIX"
   | "STUDIOS";
@@ -23,6 +24,7 @@ export const CLOUVA_NAVIGATION: Record<ClouvaSurfaceKey, ClouvaSurface> = {
   MI_FLOW: { key: "MI_FLOW", label: "Mi Flow", href: "/mi-flow", description: "Billetera, ganancias, FLOWS, balances y objetivos." },
   CREATE: { key: "CREATE", label: "Crear", href: "/crear", description: "Hub para crear media, identidad, avatar, ropa y 3D." },
   MI_SPOT: { key: "MI_SPOT", label: "Mi Spot", href: "/mi-spot", description: "Los espacios, negocios y organizaciones que manejás." },
+  SECURITY: { key: "SECURITY", label: "Seguridad", href: "/seguridad", description: "Estado de seguridad, red, superficie pública y aprendizaje técnico." },
   MARKET: { key: "MARKET", label: "Market", href: "/market", description: "Marketplace de Players, Studios, productos físicos y assets digitales 3D." },
   MATRIX: { key: "MATRIX", label: "La Matrix", href: "/lamatrix", description: "Descubrimiento de Players, Studios y ecosistema CLOUVA." },
   STUDIOS: { key: "STUDIOS", label: "Studios", href: "/lamatrix/estudios", description: "Directorio público de Studios CLOUVA." },
