@@ -112,6 +112,21 @@ export function PlayerPublicView({
   const primaryStudio = affiliations.find((entry) => entry.is_primary && entry.studio)?.studio || affiliations.find((entry) => entry.studio)?.studio;
   const primaryStudioPublic = primaryStudio ? studioPresentation(primaryStudio) : null;
   const socialLinks = mergeSocialLinks(player);
+  const aliases = (player.alternate_names || []).filter(Boolean);
+  const identityBase =
+    player.long_bio ||
+    player.short_bio ||
+    [
+      player.display_name,
+      player.public_identity_label || player.primary_role,
+      player.origin ? `de ${player.origin}` : null,
+      player.country && !player.origin?.toLowerCase().includes(player.country.toLowerCase()) ? player.country : null,
+    ]
+      .filter(Boolean)
+      .join(" ");
+  const identityAnswer = identityBase
+    ? `${identityBase.replace(/[.\s]+$/, "")}.${aliases.length ? ` También es conocido como ${aliases.join(", ")}.` : ""}`
+    : null;
   const youtubeFeatured = media.find((item) => item.origin === "youtube" && (item.media_type === "video" || item.media_type === "embed")) || null;
   const featuredMedia = media
     .filter((item) => item.id !== youtubeFeatured?.id && (item.media_type === "audio" || item.media_type === "video" || item.media_type === "embed"))
@@ -225,8 +240,13 @@ export function PlayerPublicView({
 
       <section id="presentacion" className="mx-auto grid max-w-7xl gap-4 px-4 py-6 sm:px-6 lg:grid-cols-[minmax(0,.9fr)_minmax(0,1.4fr)_280px]">
         <article className={`border border-white/10 bg-white/[0.025] p-5 ${radiusClass}`}>
-          <p className="text-xs uppercase tracking-[0.2em] text-[color:var(--public-accent)]/70">Sobre {player.display_name}</p>
-          {player.long_bio || player.short_bio ? <p className="mt-4 whitespace-pre-line text-sm leading-6 text-white/62">{player.long_bio || player.short_bio}</p> : <p className="mt-4 text-sm text-white/40">Este Player todavía está completando su presentación.</p>}
+          <p className="text-xs uppercase tracking-[0.2em] text-[color:var(--public-accent)]/70">Identidad oficial</p>
+          <h2 className="mt-2 text-xl font-black tracking-[-0.02em]">¿Quién es {player.display_name}?</h2>
+          {identityAnswer ? (
+            <p className="mt-4 whitespace-pre-line text-sm leading-6 text-white/72">{identityAnswer}</p>
+          ) : (
+            <p className="mt-4 text-sm text-white/40">Este Player todavía está completando su presentación.</p>
+          )}
           {player.secondary_tagline ? <p className="mt-4 border-l-2 border-[color:var(--public-accent)] pl-3 text-sm italic text-[color:var(--public-accent)]">{player.secondary_tagline}</p> : null}
           {categories.length ? <div className="mt-5 flex flex-wrap gap-2">{categories.slice(0, 6).map((label) => <span key={label} className="rounded-full border border-[color:var(--public-accent)]/15 bg-[color:var(--public-accent)]/10 px-2.5 py-1 text-[10px] text-[color:var(--public-accent)]">{label}</span>)}</div> : null}
         </article>
