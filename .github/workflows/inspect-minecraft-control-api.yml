@@ -44,3 +44,36 @@ jobs:
             head -c 1200 /tmp/body || true
             echo
           done
+
+      - name: Probe authenticated API contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="$(gcloud run services describe "$API_SERVICE" --project "$PROJECT_ID" --region "$REGION" --format='value(status.url)')"
+          token="$(gcloud run services describe "$API_SERVICE" --project "$PROJECT_ID" --region "$REGION" --format=json | jq -r '.spec.template.spec.containers[0].env[]? | select(.name=="MC_TOKEN") | .value' | head -n 1)"
+          test -n "$token"
+
+          for header in authorization x-mc-token x-api-key; do
+            echo "===== AUTH $header /api/full ====="
+            case "$header" in
+              authorization) args=(-H "Authorization: Bearer $token") ;;
+              x-mc-token) args=(-H "X-MC-Token: $token") ;;
+              x-api-key) args=(-H "X-API-Key: $token") ;;
+            esac
+            code="$(curl -sS -o /tmp/body -w '%{http_code}' --max-time 10 "${args[@]}" "$url/api/full" || true)"
+            echo "HTTP=$code"
+            head -c 1200 /tmp/body || true
+            echo
+          done
+
+          echo "===== POST /api/command no-op list ====="
+          for header in authorization x-mc-token; do
+            case "$header" in
+              authorization) args=(-H "Authorization: Bearer $token") ;;
+              x-mc-token) args=(-H "X-MC-Token: $token") ;;
+            esac
+            code="$(curl -sS -o /tmp/body -w '%{http_code}' --max-time 10 -X POST "${args[@]}" -H "Content-Type: application/json" --data '{"command":"list"}' "$url/api/command" || true)"
+            echo "$header HTTP=$code"
+            head -c 1200 /tmp/body || true
+            echo
+          done
