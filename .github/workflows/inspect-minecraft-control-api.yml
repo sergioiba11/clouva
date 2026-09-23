@@ -103,3 +103,19 @@ jobs:
           echo "===== COMMAND LIST ====="
           curl -fsS -X POST "$url/api/command?token=$encoded" -H "Content-Type: application/json" --data '{"command":"list"}' | head -c 3000
           echo
+
+      - name: Inspect deployed API image source
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="$(gcloud run services describe "$API_SERVICE" --project "$PROJECT_ID" --region "$REGION" --format='value(spec.template.spec.containers[0].image)')"
+          gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+          docker pull "$image" >/dev/null
+          cid="$(docker create "$image")"
+          mkdir -p /tmp/mcapi
+          docker export "$cid" | tar -x -C /tmp/mcapi
+          docker rm "$cid" >/dev/null
+          echo "===== SOURCE FILES ====="
+          find /tmp/mcapi -type f \( -name '*.py' -o -name '*.js' -o -name '*.mjs' \) | grep -Ev '/usr/(lib|local/lib)/|/node_modules/' | head -n 100
+          echo "===== ROUTES ====="
+          grep -RniE "api/(full|status|start|stop|restart|players|command|cmd|rcon)|def .*start|def .*stop|route\(" /tmp/mcapi 2>/dev/null             --include='*.py' --include='*.js' --include='*.mjs' | grep -Ev '/usr/(lib|local/lib)/|/node_modules/' | head -n 240 || true
