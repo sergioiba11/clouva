@@ -1,0 +1,136 @@
+name: Inspect current Minecraft chat
+
+on:
+  push:
+    branches:
+      - diagnostic-minecraft-chat-20260922
+    paths:
+      - ".github/workflows/inspect-current-minecraft.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: gen-lang-client-0737053175
+  WEB_REGION: us-central1
+  WEB_SERVICE: clouva-web
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA_EMAIL }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Resolve current Minecraft runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud run services describe "$WEB_SERVICE"             --project "$PROJECT_ID"             --region "$WEB_REGION"             --format=json > /tmp/service.json
+
+          python - <<'PY'
+          import json
+          data=json.load(open('/tmp/service.json'))
+          envs=(data.get('spec',{}).get('template',{}).get('spec',{}).get('containers',[{}])[0].get('env',[]) or [])
+          vals={e.get('name'):e.get('value') for e in envs if (e.get('name') or '').startswith('MINECRAFT_')}
+          for k in sorted(vals):
+              print(f"{k}={vals[k]}")
+          PY
+
+          python - <<'PY' >/tmp/minecraft-env.sh
+          import json, shlex
+          data=json.load(open('/tmp/service.json'))
+          envs=(data.get('spec',{}).get('template',{}).get('spec',{}).get('containers',[{}])[0].get('env',[]) or [])
+          vals={e.get('name'):e.get('value') for e in envs}
+          defaults={
+            'MINECRAFT_VM_PROJECT':'gen-lang-client-0737053175',
+            'MINECRAFT_VM_ZONE':'southamerica-east1-b',
+            'MINECRAFT_VM_NAME':'clouva-minecraft-family',
+            'MINECRAFT_HOST':'',
+          }
+          for k,v in defaults.items():
+              val=vals.get(k) or v
+              print(f"export {k}={shlex.quote(val)}")
+          PY
+          cat /tmp/minecraft-env.sh
+
+      - name: Find live Minecraft VM
+        shell: bash
+        run: |
+          set -euo pipefail
+          source /tmp/minecraft-env.sh
+          project="$MINECRAFT_VM_PROJECT"
+          host="$MINECRAFT_HOST"
+
+          echo "===== CANDIDATES ====="
+          gcloud compute instances list             --project "$project"             --format="table(name,zone.basename(),status,networkInterfaces[0].networkIP,networkInterfaces[0].accessConfigs[0].natIP,tags.items)" || true
+
+          python - <<'PY' >/tmp/resolve.py
+          print(r'''
+          ''')
+          PY
+
+          candidates="$(gcloud compute instances list --project "$project" --format=json 2>/dev/null || echo '[]')"
+          printf '%s' "$candidates" >/tmp/instances.json
+
+          python - <<'PY' >/tmp/resolved.env
+          import json, os, shlex
+          items=json.load(open('/tmp/instances.json'))
+          wanted=os.environ.get('MINECRAFT_VM_NAME','')
+          host=os.environ.get('MINECRAFT_HOST','')
+          def nat(i):
+              try:
+                  return i['networkInterfaces'][0]['accessConfigs'][0].get('natIP','')
+              except Exception:
+                  return ''
+          pick=None
+          for i in items:
+              if i.get('name') == wanted:
+                  pick=i; break
+          if not pick and host:
+              for i in items:
+                  if nat(i) == host:
+                      pick=i; break
+          if not pick:
+              for i in items:
+                  if 'minecraft' in i.get('name','').lower():
+                      pick=i; break
+          if pick:
+              zone=(pick.get('zone') or '').split('/')[-1]
+              print('export RESOLVED_NAME='+shlex.quote(pick.get('name','')))
+              print('export RESOLVED_ZONE='+shlex.quote(zone))
+              print('export RESOLVED_STATUS='+shlex.quote(pick.get('status','')))
+              print('export RESOLVED_NAT='+shlex.quote(nat(pick)))
+          PY
+          cat /tmp/resolved.env || true
+
+          echo "===== MINECRAFT DISKS ====="
+          gcloud compute disks list --project "$project" --filter="name~minecraft" --format="table(name,zone.basename(),status,sizeGb,users)" || true
+
+      - name: Read recent Minecraft joins and chat
+        shell: bash
+        run: |
+          set -euo pipefail
+          source /tmp/minecraft-env.sh
+          test -f /tmp/resolved.env || { echo "No resolved VM."; exit 0; }
+          source /tmp/resolved.env
+          [ -n "${RESOLVED_NAME:-}" ] || { echo "No resolved Minecraft VM."; exit 0; }
+          [ "${RESOLVED_STATUS:-}" = "RUNNING" ] || { echo "Resolved VM is not running: ${RESOLVED_STATUS:-unknown}"; exit 0; }
+
+          gcloud compute ssh "$RESOLVED_NAME"             --project "$MINECRAFT_VM_PROJECT"             --zone "$RESOLVED_ZONE"             --quiet             --ssh-flag="-o ConnectTimeout=10"             --ssh-flag="-o StrictHostKeyChecking=no"             --ssh-flag="-o UserKnownHostsFile=/dev/null"             --command='
+              set +e
+              echo "===== CURRENT CONTAINER ====="
+              sudo docker ps -a --filter name=clouva-minecraft
+              echo "===== RECENT JOIN / LEAVE / CHAT FROM SERVER LOG ====="
+              if [ -f /srv/minecraft/logs/latest.log ]; then
+                sudo grep -E "joined the game|left the game|logged in with entity id|UUID of player|<[^>]+>|Async Chat Thread|Server thread/INFO.*:" /srv/minecraft/logs/latest.log | tail -n 500
+              fi
+              echo "===== RECENT CHAT FROM DOCKER ====="
+              sudo docker logs --since 12h clouva-minecraft 2>&1 | grep -E "joined the game|left the game|logged in with entity id|UUID of player|<[^>]+>|Async Chat Thread" | tail -n 500 || true
+            '
