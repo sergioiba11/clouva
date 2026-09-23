@@ -39,33 +39,45 @@ jobs:
         run: |
           set -euo pipefail
 
-          found=""
-          while IFS=',' read -r name zone ip; do
-            [ -n "$name" ] || continue
-            case "$name" in
-              *minecraft*|*ratcraft*) ;;
-              *) continue ;;
-            esac
-            if [ -n "$ip" ] && timeout 3 bash -c "</dev/tcp/$ip/25565" >/dev/null 2>&1; then
-              found="$name,$zone,$ip"
-              break
-            fi
-          done < <(
-            gcloud compute instances list               --project "$PROJECT_ID"               --filter='status=RUNNING'               --format='csv[no-heading](name,zone.basename(),networkInterfaces[0].accessConfigs[0].natIP)'
-          )
+          found="$(
+            gcloud compute instances list               --project "$PROJECT_ID"               --filter='name=clouva-minecraft'               --format='csv[no-heading](name,zone.basename(),status,networkInterfaces[0].accessConfigs[0].natIP)'               | head -n 1
+          )"
 
           if [ -z "$found" ]; then
             found="$(
-              gcloud compute instances list                 --project "$PROJECT_ID"                 --filter='status=RUNNING AND (name~minecraft OR name~ratcraft)'                 --format='csv[no-heading](name,zone.basename(),networkInterfaces[0].accessConfigs[0].natIP)'                 | head -n 1
+              gcloud compute instances list                 --project "$PROJECT_ID"                 --filter='(name~minecraft OR name~ratcraft)'                 --format='csv[no-heading](name,zone.basename(),status,networkInterfaces[0].accessConfigs[0].natIP)'                 | head -n 1
             )"
           fi
 
           if [ -z "$found" ]; then
-            echo "::error::No running Minecraft/Ratcraft VM was found."
+            echo "::error::No Minecraft/Ratcraft VM was found."
             exit 1
           fi
 
-          IFS=',' read -r name zone ip <<< "$found"
+          IFS=',' read -r name zone status ip <<< "$found"
+
+          if [ "$status" != "RUNNING" ]; then
+            echo "Ratcraft VM is $status; starting $name..."
+            gcloud compute instances start "$name"               --project "$PROJECT_ID"               --zone "$zone"               --quiet
+
+            for attempt in $(seq 1 48); do
+              status="$(gcloud compute instances describe "$name" --project "$PROJECT_ID" --zone "$zone" --format='value(status)')"
+              ip="$(gcloud compute instances describe "$name" --project "$PROJECT_ID" --zone "$zone" --format='value(networkInterfaces[0].accessConfigs[0].natIP)')"
+              [ "$status" = "RUNNING" ] && [ -n "$ip" ] && break
+              sleep 5
+            done
+          fi
+
+          echo "Waiting for Minecraft listener on $ip:25565..."
+          for attempt in $(seq 1 72); do
+            if timeout 3 bash -c "</dev/tcp/$ip/25565" >/dev/null 2>&1; then
+              echo "Minecraft listener is up."
+              break
+            fi
+            sleep 5
+          done
+
+          IFS=',' read -r name zone status ip <<< "$name,$zone,$status,$ip"
           echo "name=$name" >> "$GITHUB_OUTPUT"
           echo "zone=$zone" >> "$GITHUB_OUTPUT"
           echo "ip=$ip" >> "$GITHUB_OUTPUT"
