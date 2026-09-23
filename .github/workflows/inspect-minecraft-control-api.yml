@@ -94,10 +94,12 @@ jobs:
           token="$(gcloud run services describe "$API_SERVICE" --project "$PROJECT_ID" --region "$REGION" --format=json | jq -r '.spec.template.spec.containers[0].env[]? | select(.name=="MC_TOKEN") | .value' | head -n 1)"
           test -n "$token"
 
+          encoded="$(jq -rn --arg v "$token" '$v|@uri')"
+
           echo "===== FULL ====="
-          curl -fsS "$url/api/full?token=$(python3 -c 'import urllib.parse,os; print(urllib.parse.quote(os.environ["TOKEN"]))' TOKEN="$token")" | head -c 3000
+          curl -fsS "$url/api/full?token=$encoded" | head -c 3000
           echo
 
           echo "===== COMMAND LIST ====="
-          curl -fsS -X POST "$url/api/command?token=$(python3 -c 'import urllib.parse,os; print(urllib.parse.quote(os.environ["TOKEN"]))' TOKEN="$token")"             -H "Content-Type: application/json"             --data '{"command":"list"}' | head -c 3000
+          curl -fsS -X POST "$url/api/command?token=$encoded" -H "Content-Type: application/json" --data '{"command":"list"}' | head -c 3000
           echo
