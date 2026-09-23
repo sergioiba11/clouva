@@ -94,7 +94,7 @@ export async function POST(
       .order("line_number");
     if (expectedInvoiceRowsError) throw new Error(expectedInvoiceRowsError.message);
 
-    const groups = await analyzeCommerceProductBatch({
+    const analyzedGroups = await analyzeCommerceProductBatch({
       spotName: spot.name,
       expectedProducts: (expectedInvoiceRows ?? []).map((line) => ({
         description: line.description || "",
@@ -123,6 +123,16 @@ export async function POST(
           .eq("id", batch.id);
       },
     });
+
+    const contextObservations = analyzedGroups
+      .filter((group) => group.contextOnly)
+      .map((group) => ({
+        contextKey: group.groupKey,
+        sourceIndexes: group.images.map((image) => image.sourceIndex),
+        observedProducts: group.observedProducts ?? [],
+        reason: group.contextReason ?? "Foto con varios productos distintos.",
+      }));
+    const groups = analyzedGroups.filter((group) => !group.contextOnly);
 
     for (const group of groups) {
       const additions: Array<{ sourceIndex: number; role: "Detalle" }> = [];
@@ -156,13 +166,33 @@ export async function POST(
 
     for (const item of items) {
       const grouped = groupByIndex.get(item.source_index);
-      if (!grouped) continue;
+      const context = contextObservations.find((observation) => observation.sourceIndexes.includes(item.source_index));
+      const previous = item.recognition && typeof item.recognition === "object" && !Array.isArray(item.recognition)
+        ? item.recognition as Record<string, unknown>
+        : {};
+      const upload = previous.upload && typeof previous.upload === "object" && !Array.isArray(previous.upload)
+        ? previous.upload as Record<string, unknown>
+        : {};
       const { error } = await admin
         .from("commerce_product_import_items")
-        .update({
+        .update(grouped ? {
           status: "grouped",
           group_key: grouped.key,
-          recognition: grouped.summary,
+          recognition: {
+            ...(Object.keys(upload).length ? { upload } : {}),
+            grouping: grouped.summary,
+          },
+          error: null,
+          updated_at: new Date().toISOString(),
+        } : {
+          status: "uploaded",
+          group_key: null,
+          recognition: {
+            ...(Object.keys(upload).length ? { upload } : {}),
+            context_only: true,
+            observed_products: context?.observedProducts ?? [],
+            context_reason: context?.reason ?? "Foto de contexto general.",
+          },
           error: null,
           updated_at: new Date().toISOString(),
         })
@@ -254,6 +284,7 @@ export async function POST(
     const metadata = {
       ...(batch.metadata && typeof batch.metadata === "object" ? batch.metadata : {}),
       groups,
+      context_observations: contextObservations,
       analyzed_at: analyzedAt,
       reanalyzed: force,
       analysis_progress: {
@@ -283,6 +314,7 @@ export async function POST(
       totalImages: items.length,
       detectedProducts: groups.length,
       groups,
+      contextObservations,
       reanalyzed: force,
     });
   } catch (error) {
