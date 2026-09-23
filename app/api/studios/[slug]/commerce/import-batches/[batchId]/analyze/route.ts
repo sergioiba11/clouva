@@ -130,6 +130,7 @@ export async function POST(
         contextKey: group.groupKey,
         sourceIndexes: group.images.map((image) => image.sourceIndex),
         observedProducts: group.observedProducts ?? [],
+        matches: group.contextMatches ?? [],
         reason: group.contextReason ?? "Foto con varios productos distintos.",
       }));
     const groups = analyzedGroups.filter((group) => !group.contextOnly);
@@ -191,6 +192,12 @@ export async function POST(
             ...(Object.keys(upload).length ? { upload } : {}),
             context_only: true,
             observed_products: context?.observedProducts ?? [],
+            matched_group_keys: context?.matches.map((match) => match.groupKey) ?? [],
+            matched_products: context?.matches.map((match) => ({
+              group_key: match.groupKey,
+              label: match.label,
+              confidence: match.confidence,
+            })) ?? [],
             context_reason: context?.reason ?? "Foto de contexto general.",
           },
           error: null,
