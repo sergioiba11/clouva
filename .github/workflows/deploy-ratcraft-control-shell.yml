@@ -62,7 +62,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gcloud builds submit infra/minecraft/control-shell             --project "$PROJECT_ID"             --tag "$IMAGE:$GITHUB_SHA"
+          build_id="$(gcloud builds submit infra/minecraft/control-shell --project "$PROJECT_ID" --tag "$IMAGE:$GITHUB_SHA" --async --format='value(id)')"
+          test -n "$build_id"
+          echo "Cloud Build: $build_id"
+          for attempt in $(seq 1 80); do
+            status="$(gcloud builds describe "$build_id" --project "$PROJECT_ID" --format='value(status)')"
+            echo "Build status: $status"
+            case "$status" in
+              SUCCESS) exit 0 ;;
+              FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED) exit 1 ;;
+            esac
+            sleep 10
+          done
+          echo "::error::Ratcraft shell build timed out."
+          exit 1
 
       - name: Deploy Ratcraft shell to the public Minecraft control service
         shell: bash
