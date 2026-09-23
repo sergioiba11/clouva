@@ -1,0 +1,46 @@
+name: Inspect Minecraft Control API
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/inspect-minecraft-control-api.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: gen-lang-client-0737053175
+  REGION: us-central1
+  API_SERVICE: clouva-mc-control-api
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA_EMAIL }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Inspect service
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="$(gcloud run services describe "$API_SERVICE" --project "$PROJECT_ID" --region "$REGION" --format='value(status.url)')"
+          image="$(gcloud run services describe "$API_SERVICE" --project "$PROJECT_ID" --region "$REGION" --format='value(spec.template.spec.containers[0].image)')"
+          echo "URL=$url"
+          echo "IMAGE=$image"
+          echo "ENV_NAMES:"
+          gcloud run services describe "$API_SERVICE" --project "$PROJECT_ID" --region "$REGION" --format=json             | jq -r '.spec.template.spec.containers[0].env[]? | .name' | sort -u
+
+          for path in / /health /api/full /api/status /api/start /api/stop /api/restart /api/players /api/command; do
+            echo "===== $path ====="
+            code="$(curl -sS -o /tmp/body -w '%{http_code}' --max-time 10 "$url$path" || true)"
+            echo "HTTP=$code"
+            head -c 1200 /tmp/body || true
+            echo
+          done
