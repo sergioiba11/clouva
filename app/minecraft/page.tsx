@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
 import { ClouvaLogoMark } from "@/components/brand/clouva-logo";
 import { canAccessAdmin } from "@/lib/auth";
+import { RATCRAFT_PLANS } from "@/lib/ratcraft-access";
 
 type MinecraftStatus = {
   configured: boolean;
@@ -70,6 +71,9 @@ const ASSETS = {
   tienda: ASSET_ROOT + "/ratcraft_btn_tienda.png",
   mas: ASSET_ROOT + "/ratcraft_btn_mas.png",
 } as const;
+
+const PUBLIC_HOST = "mc.clouva.com.ar";
+const FALLBACK_IP = "34.39.153.27";
 
 function rounded(value: number) {
   return Number.isFinite(value) ? Math.round(value) : 0;
@@ -225,11 +229,10 @@ export default function MinecraftFamilyPage() {
   }, []);
 
   useEffect(() => {
-    if (!user) return;
     void load();
     const timer = window.setInterval(() => void load(), REFRESH_MS);
     return () => window.clearInterval(timer);
-  }, [load, user]);
+  }, [load]);
 
   useEffect(() => {
     if (!user || !status?.online) {
@@ -363,16 +366,83 @@ export default function MinecraftFamilyPage() {
   }
 
   if (!user) {
+    const publicIp = status?.host || FALLBACK_IP;
     return (
-      <main className="relative grid min-h-screen place-items-center overflow-hidden bg-[#07010d] px-5 text-white">
-        <img src={ASSETS.backgroundMobile} alt="" className="absolute inset-0 h-full w-full object-cover opacity-55" />
-        <div className="absolute inset-0 bg-gradient-to-b from-[#07010d]/35 via-[#07010d]/45 to-[#07010d]" />
-        <div className="relative z-10 max-w-xl text-center">
-          <img src={ASSETS.logo} alt="Niños Rata Server" className="mx-auto w-[min(82vw,520px)]" />
-          <p className="mt-5 text-sm text-white/70">Entrá a CLOUVA para abrir Ratcraft.</p>
-          <Link href="/login" className="mt-6 inline-flex rounded-2xl border border-fuchsia-300/30 bg-fuchsia-500/20 px-6 py-3 text-sm font-black text-white shadow-[0_0_30px_rgba(217,70,239,.18)]">
-            Entrar a CLOUVA
-          </Link>
+      <main className="relative min-h-screen overflow-hidden bg-[#07010d] px-4 py-5 text-white sm:px-6">
+        <img src={ASSETS.backgroundMobile} alt="" className="fixed inset-0 h-full w-full object-cover opacity-48 md:hidden" />
+        <img src={ASSETS.backgroundDesktop} alt="" className="fixed inset-0 hidden h-full w-full object-cover opacity-38 md:block" />
+        <div className="fixed inset-0 bg-[radial-gradient(circle_at_50%_28%,rgba(217,70,239,.16),transparent_38%),linear-gradient(180deg,rgba(7,1,13,.35),rgba(7,1,13,.94))]" />
+
+        <div className="relative z-10 mx-auto w-full max-w-6xl">
+          <header className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-fuchsia-300/15 bg-black/45 px-3 py-2.5 backdrop-blur-xl sm:px-4">
+            <div className="flex items-center gap-2.5">
+              <span className="grid h-9 w-9 place-items-center text-fuchsia-100"><ClouvaLogoMark size={32} /></span>
+              <div>
+                <p className="text-sm font-black tracking-[.08em]">CLOUVA</p>
+                <p className="text-[9px] font-black uppercase tracking-[.2em] text-fuchsia-200/50">Universo Gaming</p>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <span className={"inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-[10px] font-black " + (status?.online ? "border-emerald-300/20 bg-emerald-400/10 text-emerald-200" : "border-white/10 bg-black/35 text-white/55")}>
+                <span className={"h-2 w-2 rounded-full " + (status?.online ? "bg-emerald-400" : "bg-white/30")} />
+                {status?.online ? "ONLINE" : "INICIANDO"}
+              </span>
+              <span className="rounded-xl border border-fuchsia-300/20 bg-fuchsia-400/10 px-3 py-2 font-mono text-[10px] font-black text-fuchsia-100">
+                IP {PUBLIC_HOST}
+              </span>
+            </div>
+          </header>
+
+          <section className="mx-auto max-w-3xl pb-6 pt-8 text-center sm:pt-12">
+            <img src={ASSETS.logo} alt="Ratcraft" className="mx-auto w-[min(86vw,500px)] drop-shadow-[0_18px_50px_rgba(217,70,239,.35)]" />
+            <p className="mt-2 text-[10px] font-black uppercase tracking-[.24em] text-fuchsia-200/55">RATCRAFT × CLOUVA</p>
+            <h1 className="mt-5 text-3xl font-black leading-tight sm:text-5xl">Estamos creando e iniciando este nuevo server.</h1>
+            <p className="mx-auto mt-3 max-w-2xl text-base text-white/65 sm:text-lg">¿Querés formar parte? Elegí cómo querés entrar.</p>
+
+            <div className="mx-auto mt-5 grid max-w-xl gap-2 sm:grid-cols-2">
+              <CopyValue value={PUBLIC_HOST} label="Servidor Java" />
+              <CopyValue value={publicIp + ":25565"} label="IP directa" />
+            </div>
+          </section>
+
+          <section className="grid gap-3 lg:grid-cols-3">
+            {RATCRAFT_PLANS.map((plan) => (
+              <Link
+                key={plan.code}
+                href={"/minecraft/checkout?plan=" + encodeURIComponent(plan.code)}
+                className={"group rounded-[28px] border p-5 backdrop-blur-xl transition hover:-translate-y-1 " + (plan.code === "rata_premium"
+                  ? "border-amber-300/30 bg-amber-300/[.07] shadow-[0_0_40px_rgba(251,191,36,.08)]"
+                  : "border-fuchsia-300/15 bg-black/45 hover:border-fuchsia-300/35 hover:bg-fuchsia-400/[.07]")}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-2xl font-black">{plan.name}</p>
+                    <p className="mt-1 text-3xl font-black">USD {plan.priceUsd}</p>
+                  </div>
+                  {plan.code === "rata_premium" ? <span className="rounded-full bg-amber-300 px-2.5 py-1 text-[9px] font-black uppercase tracking-[.12em] text-black">Premium</span> : null}
+                </div>
+                <p className="mt-3 text-sm font-bold text-fuchsia-100/70">{plan.short}</p>
+                <div className="mt-4 space-y-2">
+                  {plan.benefits.map((benefit) => (
+                    <div key={benefit} className="flex items-start gap-2 text-sm text-white/55">
+                      <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-300" />
+                      <span>{benefit}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-5 rounded-xl bg-fuchsia-500 px-4 py-3 text-center text-xs font-black uppercase tracking-[.12em] text-white transition group-hover:bg-fuchsia-400">
+                  Quiero ser {plan.name}
+                </div>
+              </Link>
+            ))}
+          </section>
+
+          <div className="mt-5 flex flex-col items-center justify-center gap-3 pb-8 sm:flex-row">
+            <Link href="/login?intent=ratcraft&plan=rata" className="rounded-2xl border border-white/10 bg-white/[.04] px-5 py-3 text-sm font-black text-white/70">
+              Ya tengo CLOUVA
+            </Link>
+            <p className="font-mono text-xs font-black text-white/40">{PUBLIC_HOST} · {publicIp}:25565</p>
+          </div>
         </div>
       </main>
     );
@@ -418,6 +488,9 @@ export default function MinecraftFamilyPage() {
                 <span className="hidden sm:inline">{status?.online ? "Servidor en línea" : starting ? "Prendiendo..." : "Servidor apagado"}</span>
                 <span className="sm:hidden">{status?.online ? "Online" : starting ? "..." : "Offline"}</span>
               </div>
+              <div className="hidden items-center rounded-xl border border-fuchsia-300/20 bg-black/35 px-2.5 py-2 font-mono text-[10px] font-black text-fuchsia-100 lg:flex">
+                {PUBLIC_HOST}
+              </div>
               <div className="flex items-center gap-1.5 rounded-xl border border-fuchsia-300/20 bg-black/35 px-2.5 py-2 text-[10px] font-black text-white/85 sm:px-3 md:text-[11px]">
                 <Users className="h-3.5 w-3.5 text-fuchsia-200" />
                 <span>{onlineCount}</span>
@@ -460,6 +533,13 @@ export default function MinecraftFamilyPage() {
               <span className="text-lg leading-none">♕</span>
               <span className="h-px w-10 bg-gradient-to-l from-transparent to-fuchsia-300/80 md:w-16" />
             </div>
+
+            <Link
+              href="/minecraft/checkout"
+              className="mt-3 inline-flex items-center gap-2 rounded-full border border-fuchsia-300/25 bg-black/45 px-4 py-2 font-mono text-[10px] font-black text-fuchsia-100 backdrop-blur-md transition hover:border-fuchsia-300/50 hover:bg-fuchsia-400/10 sm:text-xs"
+            >
+              IP {PUBLIC_HOST} · Ratas desde USD 10
+            </Link>
 
             <button
               type="button"
@@ -516,6 +596,57 @@ export default function MinecraftFamilyPage() {
             <span>RATCRAFT&nbsp;&nbsp;×&nbsp;&nbsp;CLOUVA</span>
             <span className="hidden h-px flex-1 bg-gradient-to-r from-transparent via-fuchsia-300/45 to-transparent sm:block" />
           </footer>
+        </div>
+      </section>
+
+
+      <section id="acceso-ratcraft" className="relative overflow-hidden border-t border-fuchsia-300/10 bg-[#07010d]">
+        <div className="absolute inset-0 opacity-20">
+          <img src={ASSETS.backgroundDesktop} alt="" className="h-full w-full object-cover blur-[2px]" />
+        </div>
+        <div className="absolute inset-0 bg-[#07010d]/90" />
+        <div className="relative z-10 mx-auto w-full max-w-7xl px-4 py-10 sm:px-6 md:py-14">
+          <div className="mx-auto max-w-3xl text-center">
+            <p className="text-[10px] font-black uppercase tracking-[.22em] text-fuchsia-200/45">Entrar a Ratcraft</p>
+            <h2 className="mt-2 text-3xl font-black sm:text-4xl">Estamos creando e iniciando este nuevo server.</h2>
+            <p className="mt-3 text-white/60">¿Querés formar parte? Elegí tu rango y entrá con <span className="font-mono font-black text-fuchsia-100">{PUBLIC_HOST}</span>.</p>
+          </div>
+
+          <div className="mt-7 grid gap-3 lg:grid-cols-3">
+            {RATCRAFT_PLANS.map((plan) => (
+              <Link
+                key={plan.code}
+                href={"/minecraft/checkout?plan=" + encodeURIComponent(plan.code)}
+                className={"group rounded-[28px] border p-5 transition hover:-translate-y-1 " + (plan.code === "rata_premium"
+                  ? "border-amber-300/30 bg-amber-300/[.06]"
+                  : "border-fuchsia-300/15 bg-white/[.025] hover:border-fuchsia-300/35 hover:bg-fuchsia-400/[.06]")}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h3 className="text-2xl font-black">{plan.name}</h3>
+                    <p className="mt-1 text-3xl font-black">USD {plan.priceUsd}</p>
+                  </div>
+                  {plan.code === "rata_premium" ? <span className="rounded-full bg-amber-300 px-2.5 py-1 text-[9px] font-black uppercase tracking-[.12em] text-black">Premium</span> : null}
+                </div>
+                <p className="mt-3 text-sm font-bold text-fuchsia-100/70">{plan.short}</p>
+                <div className="mt-4 space-y-2">
+                  {plan.benefits.map((benefit) => (
+                    <div key={benefit} className="flex items-start gap-2 text-sm text-white/55">
+                      <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-300" />
+                      <span>{benefit}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-5 rounded-xl bg-fuchsia-500 px-4 py-3 text-center text-xs font-black uppercase tracking-[.1em] text-white group-hover:bg-fuchsia-400">
+                  Elegir {plan.name}
+                </div>
+              </Link>
+            ))}
+          </div>
+
+          <div className="mx-auto mt-5 max-w-xl">
+            <CopyValue value={(status?.host || FALLBACK_IP) + ":25565"} label={"IP directa · " + PUBLIC_HOST} />
+          </div>
         </div>
       </section>
 
@@ -712,6 +843,7 @@ export default function MinecraftFamilyPage() {
             <div>
               <p className="font-black tracking-[.22em]">RATCRAFT × CLOUVA</p>
               <p className="mt-1 text-[10px] uppercase tracking-[.24em] text-white/30">Una comunidad, infinitas aventuras</p>
+              <p className="mt-2 font-mono text-[10px] font-black text-fuchsia-100/45">IP {PUBLIC_HOST} · {status?.host || FALLBACK_IP}:25565</p>
             </div>
             <button type="button" onClick={() => scrollTo("inicio")} className="text-xs font-bold text-fuchsia-200/65 hover:text-fuchsia-100">Volver arriba ↑</button>
           </footer>
