@@ -14,9 +14,9 @@ permissions:
 env:
   PROJECT_ID: gen-lang-client-0737053175
   MC_ZONE: southamerica-east1-b
-  MC_INSTANCE: clouva-minecraft-family
+  MC_INSTANCE: clouva-minecraft
   MC_MACHINE_TYPE: e2-standard-2
-  MC_IP: 35.198.44.243
+  MC_IP: 35.199.93.13
 
 jobs:
   recover:
