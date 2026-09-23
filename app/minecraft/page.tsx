@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Check, Copy, Eye, RefreshCw, Server, Smartphone, Users, Video, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
+import { ClouvaLogoMark } from "@/components/brand/clouva-logo";
 
 type MinecraftStatus = {
   configured: boolean;
@@ -57,7 +58,8 @@ const MAP_ROOT = "/minecraft/map";
 const MINECRAFT_IDENTITY_KEY = "clouva.minecraft.identity";
 const ASSET_ROOT = "https://storage.googleapis.com/clouva-generated-media/admin-assets/brand/clouva-logo/shared/other";
 const ASSETS = {
-  background: ASSET_ROOT + "/ratcraft_background_mobile_vertical.png",
+  backgroundDesktop: ASSET_ROOT + "/ratcraft_background.png",
+  backgroundMobile: ASSET_ROOT + "/ratcraft_background_mobile_vertical.png",
   poster: ASSET_ROOT + "/ratcraft_poster_mobile.png",
   logo: ASSET_ROOT + "/ratcraft_logo_principal.png",
   start: ASSET_ROOT + "/ratcraft_boton_prender_server.png",
@@ -377,36 +379,53 @@ export default function MinecraftFamilyPage() {
 
   return (
     <main className="min-h-screen bg-[#07010d] text-white">
-      <section id="inicio" className="relative min-h-[100svh] overflow-hidden">
+      <section id="inicio" className="relative min-h-[100svh] overflow-hidden bg-[#08010e]">
         <img
-          src={ASSETS.background}
+          src={ASSETS.backgroundDesktop}
           alt=""
-          className="absolute inset-0 h-full w-full scale-[1.03] object-cover object-center md:object-[50%_48%]"
+          className="absolute inset-0 hidden h-full w-full object-cover object-center md:block"
+          onError={(event) => {
+            event.currentTarget.src = ASSETS.backgroundMobile;
+            event.currentTarget.classList.remove("hidden");
+          }}
         />
-        <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(5,0,12,.52)_0%,rgba(5,0,12,.04)_24%,rgba(5,0,12,.18)_58%,rgba(5,0,12,.92)_100%)]" />
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_38%,rgba(168,85,247,.04),transparent_52%)]" />
+        <img
+          src={ASSETS.backgroundMobile}
+          alt=""
+          className="absolute inset-0 h-full w-full object-cover object-center md:hidden"
+        />
+        <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(7,1,15,.34)_0%,rgba(7,1,15,.04)_25%,rgba(7,1,15,.08)_58%,rgba(7,1,15,.68)_100%)] md:bg-[linear-gradient(180deg,rgba(5,0,12,.30)_0%,rgba(5,0,12,.02)_24%,rgba(5,0,12,.05)_67%,rgba(5,0,12,.62)_100%)]" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_42%,rgba(192,38,211,.08),transparent_46%)]" />
 
-        <div className="relative z-10 mx-auto flex min-h-[100svh] w-full max-w-[1500px] flex-col px-3 pb-8 pt-3 sm:px-5 md:px-8 md:pt-5">
-          <header className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-[#090311]/70 px-4 py-3 shadow-[0_16px_50px_rgba(0,0,0,.24)] backdrop-blur-xl md:px-5">
-            <button type="button" onClick={() => scrollTo("inicio")} className="flex items-center gap-3 text-left">
-              <div className="grid h-10 w-10 place-items-center rounded-full border border-fuchsia-300/25 bg-fuchsia-400/10 text-xl font-black">C</div>
-              <div>
-                <p className="text-base font-black tracking-[.12em] md:text-lg">CLOUVA</p>
-                <p className="hidden text-[9px] font-bold uppercase tracking-[.26em] text-fuchsia-200/45 sm:block">Universo Gaming</p>
-              </div>
+        <div className="relative z-10 mx-auto flex min-h-[100svh] w-full max-w-[1700px] flex-col px-3 pb-3 pt-3 sm:px-5 md:px-7 md:pb-4 md:pt-4">
+          <header className="flex items-center justify-between gap-2 rounded-2xl border border-fuchsia-300/15 bg-[#090313]/72 px-3 py-2.5 shadow-[0_14px_55px_rgba(0,0,0,.34)] backdrop-blur-xl sm:px-4 md:rounded-[22px] md:px-5 md:py-3">
+            <button type="button" onClick={() => scrollTo("inicio")} className="flex min-w-0 items-center gap-2.5 text-left md:gap-3">
+              <span className="grid h-9 w-9 shrink-0 place-items-center text-fuchsia-100 md:h-10 md:w-10">
+                <ClouvaLogoMark size={34} />
+              </span>
+              <span className="min-w-0">
+                <span className="block truncate text-[15px] font-black tracking-[.08em] md:text-[18px]">CLOUVA</span>
+                <span className="hidden text-[9px] font-black uppercase tracking-[.22em] text-fuchsia-200/65 sm:inline-flex sm:items-center sm:gap-2">
+                  <span className="h-px w-4 bg-fuchsia-300/45" /> Universo Gaming
+                </span>
+              </span>
             </button>
 
-            <div className="flex items-center gap-2">
-              <div className="hidden rounded-xl border border-white/10 bg-black/30 px-4 py-2 text-right sm:block">
-                <p className={"text-[11px] font-black " + (status?.online ? "text-emerald-300" : "text-white/55")}>
-                  {status?.online ? "● Servidor en línea" : starting ? "● Prendiendo..." : "○ Servidor apagado"}
-                </p>
-                <p className="mt-0.5 text-[10px] text-white/40">{onlineCount} jugadores</p>
+            <div className="flex items-center gap-1.5 sm:gap-2">
+              <div className="flex items-center gap-2 rounded-xl border border-fuchsia-300/20 bg-black/35 px-2.5 py-2 text-[10px] font-black sm:px-3 md:text-[11px]">
+                <span className={"h-2.5 w-2.5 rounded-full shadow-[0_0_12px_currentColor] " + (status?.online ? "bg-emerald-400 text-emerald-400" : starting ? "bg-amber-300 text-amber-300" : "bg-white/30 text-white/30")} />
+                <span className="hidden sm:inline">{status?.online ? "Servidor en línea" : starting ? "Prendiendo..." : "Servidor apagado"}</span>
+                <span className="sm:hidden">{status?.online ? "Online" : starting ? "..." : "Offline"}</span>
+              </div>
+              <div className="flex items-center gap-1.5 rounded-xl border border-fuchsia-300/20 bg-black/35 px-2.5 py-2 text-[10px] font-black text-white/85 sm:px-3 md:text-[11px]">
+                <Users className="h-3.5 w-3.5 text-fuchsia-200" />
+                <span>{onlineCount}</span>
+                <span className="hidden sm:inline">jugadores</span>
               </div>
               <button
                 type="button"
                 onClick={() => void load()}
-                className="grid h-10 w-10 place-items-center rounded-xl border border-white/10 bg-black/30 text-white/65 transition hover:border-fuchsia-300/25 hover:text-white"
+                className="grid h-9 w-9 place-items-center rounded-xl border border-fuchsia-300/20 bg-black/35 text-white/65 transition hover:border-fuchsia-300/40 hover:bg-fuchsia-400/10 hover:text-white"
                 aria-label="Actualizar estado"
               >
                 <RefreshCw className={"h-4 w-4 " + (refreshing ? "animate-spin" : "")} />
@@ -414,42 +433,53 @@ export default function MinecraftFamilyPage() {
             </div>
           </header>
 
-          <div className="flex flex-1 flex-col items-center justify-center pb-3 pt-8 text-center md:pt-12">
+          <div className="mx-auto flex w-full max-w-[980px] flex-1 flex-col items-center justify-center pb-2 pt-4 text-center sm:pt-5 md:pb-0 md:pt-3">
             <img
               src={ASSETS.logo}
               alt="Niños Rata Server"
-              className="w-[min(92vw,720px)] select-none drop-shadow-[0_22px_60px_rgba(168,85,247,.35)] md:w-[min(58vw,760px)]"
+              className="w-[min(88vw,430px)] select-none drop-shadow-[0_18px_48px_rgba(168,85,247,.40)] sm:w-[min(72vw,520px)] md:w-[min(46vw,610px)]"
               draggable={false}
             />
-            <p className="mt-2 text-sm font-black uppercase tracking-[.12em] text-white/75 drop-shadow-lg sm:text-base md:text-lg">
+
+            <p className="-mt-1 text-[12px] font-black tracking-[.06em] text-white/90 drop-shadow-[0_2px_10px_rgba(0,0,0,.8)] sm:text-sm md:mt-0 md:text-[16px]">
               Más que un servidor, una banda.
             </p>
+            <div className="mt-2 flex items-center gap-3 text-fuchsia-200/90">
+              <span className="h-px w-10 bg-gradient-to-r from-transparent to-fuchsia-300/80 md:w-16" />
+              <span className="text-lg leading-none">♕</span>
+              <span className="h-px w-10 bg-gradient-to-l from-transparent to-fuchsia-300/80 md:w-16" />
+            </div>
 
             <button
               type="button"
               onClick={() => void handleStart()}
               disabled={starting}
-              className="group relative mt-5 w-[min(94vw,650px)] transition duration-200 hover:scale-[1.018] active:scale-[.985] disabled:cursor-wait disabled:opacity-70 md:mt-7"
+              className="group relative mt-3 w-[min(92vw,560px)] transition duration-200 hover:scale-[1.018] hover:drop-shadow-[0_0_34px_rgba(217,70,239,.48)] active:scale-[.985] disabled:cursor-wait disabled:opacity-75 sm:mt-4 md:mt-3 md:w-[min(43vw,610px)]"
             >
               <img
                 src={ASSETS.start}
                 alt="Prender server"
-                className="h-auto w-full select-none drop-shadow-[0_0_30px_rgba(217,70,239,.44)]"
+                className="h-auto w-full select-none"
                 draggable={false}
               />
               {starting ? (
-                <span className="absolute inset-0 grid place-items-center rounded-[24px] bg-[#130022]/68 text-lg font-black uppercase tracking-[.1em] backdrop-blur-[2px]">
+                <span className="absolute inset-[8%_5%] grid place-items-center rounded-[20px] bg-[#12001f]/80 text-sm font-black uppercase tracking-[.12em] backdrop-blur-[2px] sm:text-base">
                   Prendiendo...
                 </span>
               ) : null}
             </button>
 
-            <div className="mt-3 min-h-6">
-              {startError ? <p className="rounded-full border border-rose-300/15 bg-black/40 px-4 py-1.5 text-xs text-rose-100">{startError}</p> : null}
-              {!startError && status?.online ? <p className="text-xs font-bold text-emerald-300">Servidor online · tocá el botón para ver cómo entrar</p> : null}
+            <div className="mt-1 min-h-5">
+              {startError ? (
+                <p className="rounded-full border border-rose-300/15 bg-black/55 px-3 py-1 text-[10px] text-rose-100 sm:text-xs">{startError}</p>
+              ) : status?.online ? (
+                <p className="text-[10px] font-black uppercase tracking-[.1em] text-emerald-300 sm:text-xs">Listo para entrar · {onlineCount}/{maxPlayers} online</p>
+              ) : (
+                <p className="text-[10px] font-bold text-white/55 sm:text-xs">Prendelo desde CLOUVA y entrá cuando quede online.</p>
+              )}
             </div>
 
-            <div className="mt-5 grid w-full max-w-[900px] grid-cols-2 gap-2.5 sm:grid-cols-4 md:gap-3">
+            <div className="mt-2 grid w-full max-w-[620px] grid-cols-2 gap-1.5 px-2 sm:max-w-[720px] sm:gap-2 md:mt-3 md:max-w-[820px] md:grid-cols-4 md:gap-2.5 md:px-0">
               <AssetButton src={ASSETS.inicio} alt="Inicio" onClick={() => scrollTo("inicio")} />
               <AssetButton src={ASSETS.mapa} alt="Mapa" onClick={() => scrollTo("mapa")} />
               <AssetButton src={ASSETS.jugadores} alt="Jugadores" onClick={() => scrollTo("jugadores")} />
@@ -461,10 +491,20 @@ export default function MinecraftFamilyPage() {
               </Link>
             </div>
 
-            <button type="button" onClick={() => scrollTo("server-info")} className="mt-4 w-[min(42vw,180px)] opacity-75 transition hover:opacity-100 sm:hidden">
+            <button
+              type="button"
+              onClick={() => scrollTo("server-info")}
+              className="mt-1.5 w-[132px] opacity-75 transition hover:opacity-100 sm:w-[150px] md:hidden"
+            >
               <img src={ASSETS.mas} alt="Más" className="w-full" />
             </button>
           </div>
+
+          <footer className="mx-auto flex w-full max-w-[860px] items-center justify-center gap-4 pb-1 pt-1 text-center text-[9px] font-black uppercase tracking-[.30em] text-white/55 md:text-[10px]">
+            <span className="hidden h-px flex-1 bg-gradient-to-r from-transparent via-fuchsia-300/45 to-transparent sm:block" />
+            <span>RATCRAFT&nbsp;&nbsp;×&nbsp;&nbsp;CLOUVA</span>
+            <span className="hidden h-px flex-1 bg-gradient-to-r from-transparent via-fuchsia-300/45 to-transparent sm:block" />
+          </footer>
         </div>
       </section>
 
