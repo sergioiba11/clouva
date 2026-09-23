@@ -38,15 +38,41 @@ export async function generateMetadata({ params }: { params: Promise<{ publicAli
   const playerResult = await resolvePlayerAlias(publicAlias).catch(() => null);
   if (playerResult) {
     const { player, canonicalAlias } = playerResult;
-    const title = player.seo_title || `${player.display_name} — Perfil oficial`;
-    const description = player.seo_description || player.share_description || player.long_bio || player.short_bio || player.tagline || undefined;
+    const isClouvaArtist = canonicalAlias.toLowerCase() === "clouva";
+    const title = isClouvaArtist
+      ? player.seo_title || "CLOUVA — Artista argentino de Zapala, Neuquén | Sitio oficial"
+      : player.seo_title || `${player.display_name} — Perfil oficial`;
+    const description = isClouvaArtist
+      ? player.seo_description || "CLOUVA es un artista argentino de Zapala, Neuquén, también conocido como Clover. Música, videos y perfiles oficiales de Spotify y YouTube."
+      : player.seo_description || player.share_description || player.long_bio || player.short_bio || player.tagline || undefined;
     const canonical = `https://clouva.com.ar/${canonicalAlias}`;
     const image = player.og_image_url || player.cover_url || player.profile_image_url || undefined;
     const socialTitle = player.share_title || title;
     const socialDescription = player.share_description || description;
+    const isPublic = player.privacy_status === "public";
     return {
       title,
       description,
+      ...(isClouvaArtist
+        ? {
+            keywords: [
+              "CLOUVA",
+              "Clouva",
+              "Clouva artista",
+              "Clouva artista argentino",
+              "Clover",
+              "Clover.nlb",
+              "artista argentino",
+              "artista de Zapala",
+              "música de Neuquén",
+              "rap argentino",
+              "Vida de Flows",
+              "La 180",
+            ],
+            creator: "CLOUVA",
+            category: "Music",
+          }
+        : {}),
       alternates: { canonical },
       openGraph: {
         type: "profile",
@@ -55,7 +81,7 @@ export async function generateMetadata({ params }: { params: Promise<{ publicAli
         url: canonical,
         title: socialTitle,
         description: socialDescription,
-        images: image ? [{ url: image, alt: `${player.display_name}${player.public_identity_label ? `, ${player.public_identity_label.toLowerCase()}` : ""}` }] : undefined,
+        images: image ? [{ url: image, alt: isClouvaArtist ? "CLOUVA, artista argentino de Zapala, Neuquén" : `${player.display_name}${player.public_identity_label ? `, ${player.public_identity_label.toLowerCase()}` : ""}` }] : undefined,
       },
       twitter: {
         card: "summary_large_image",
@@ -63,7 +89,19 @@ export async function generateMetadata({ params }: { params: Promise<{ publicAli
         description: socialDescription,
         images: image ? [image] : undefined,
       },
-      robots: player.privacy_status === "public" ? { index: true, follow: true } : { index: false, follow: false },
+      robots: isPublic
+        ? {
+            index: true,
+            follow: true,
+            googleBot: {
+              index: true,
+              follow: true,
+              "max-image-preview": "large",
+              "max-snippet": -1,
+              "max-video-preview": -1,
+            },
+          }
+        : { index: false, follow: false },
     };
   }
   const spaceResult = await resolvePublicSpaceAlias(publicAlias).catch(() => null);
