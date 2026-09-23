@@ -896,8 +896,29 @@ function mergeClusterGroups(groups: CommerceBatchGroup[], unitCount: number, con
   } satisfies CommerceBatchGroup;
 }
 
-async function consolidateGroups(groups: CommerceBatchGroup[], expectedProducts: CommerceBatchExpectedProduct[] = []) {
+async function consolidateGroups(
+  groups: CommerceBatchGroup[],
+  expectedProducts: CommerceBatchExpectedProduct[] = [],
+  imagesByIndex?: Map<number, StoredBatchImage>,
+  spotName = "",
+) {
   if (groups.length <= 1) return groups;
+
+  const visualRefs = imagesByIndex && groups.length <= 24
+    ? (await Promise.all(groups.map(async (group) => {
+        const representative = group.images.find((image) => image.role === "Frente") ?? group.images[0];
+        const source = representative ? imagesByIndex.get(representative.sourceIndex) : undefined;
+        if (!source) return null;
+        const stored = await downloadGeneratedMediaObject(source.storagePath);
+        return {
+          groupKey: group.groupKey,
+          sourceIndex: representative.sourceIndex,
+          mimeType: stored.mimeType.startsWith("image/") ? stored.mimeType : source.mimeType,
+          data: stored.bytes.toString("base64"),
+        };
+      }))).filter((value): value is NonNullable<typeof value> => Boolean(value))
+    : [];
+
   const prompt = [
     "Sos el consolidador de identidad de productos de CLOUVA.",
     "Recibís grupos preliminares creados por bloques de fotos. Algunos grupos separados son en realidad el MISMO producto/variante visto en fotos distintas.",
@@ -910,6 +931,13 @@ async function consolidateGroups(groups: CommerceBatchGroup[], expectedProducts:
     "Cada groupKey debe aparecer una sola vez. Si no hay evidencia suficiente, dejalo como cluster individual con needsReview=true.",
     "Si un grupo sin código coincide claramente en marca/modelo/packaging con otro grupo que sí tiene código, unilos: el código pertenece al producto agrupado completo.",
     "La factura es CONTEXTO, no una orden de forzar coincidencias. Usala para reconocer nombres abreviados y cantidades esperadas, pero nunca unas variantes visualmente incompatibles.",
+    visualRefs.length
+      ? "También recibís una imagen representativa por grupo. Usalas como evidencia principal para decidir frente/dorso/detalle del mismo artículo. No agrupes por parecido genérico."
+      : "En este lote no se adjuntaron referencias visuales a esta pasada; sé conservador con cualquier unión.",
+    spotName ? `Spot: "${spotName}".` : "",
+    visualRefs.length
+      ? `Orden de referencias visuales: ${visualRefs.map((ref, index) => `imagen ${index + 1} = ${ref.groupKey} (sourceIndex ${ref.sourceIndex})`).join(" · ")}`
+      : "",
     expectedProducts.length ? `Factura / productos esperados: ${JSON.stringify(expectedProducts)}` : "No hay factura disponible para este lote.",
     JSON.stringify(groups.map((group) => ({
       groupKey: group.groupKey,
@@ -922,7 +950,7 @@ async function consolidateGroups(groups: CommerceBatchGroup[], expectedProducts:
       visibleIdentifiers: group.visibleIdentifiers,
       sourceIndexes: group.images.map((image) => image.sourceIndex),
     }))),
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 
   try {
     const generated = await generateGoogleCloudJson({
@@ -930,6 +958,9 @@ async function consolidateGroups(groups: CommerceBatchGroup[], expectedProducts:
         ?? process.env.GEMINI_PRODUCT_VISION_MODEL
         ?? "gemini-2.5-flash",
       prompt,
+      ...(visualRefs.length
+        ? { referenceImages: visualRefs.map((ref) => ({ mimeType: ref.mimeType, data: ref.data })) }
+        : {}),
       responseJsonSchema: CONSOLIDATION_SCHEMA,
       temperature: 0,
       maxOutputTokens: 5000,
@@ -1179,6 +1210,8 @@ export async function analyzeCommerceProductBatch(args: {
   const preclassifiedContext = groups.filter((group) => group.contextOnly);
   const productGroups = groups.filter((group) => !group.contextOnly);
 
+  const imagesByIndex = new Map(args.images.map((image) => [image.sourceIndex, image]));
+
   await args.onProgress?.({
     stage: "consolidating",
     completed: 0,
@@ -1196,7 +1229,12 @@ export async function analyzeCommerceProductBatch(args: {
     message: "Contrastando identidades con la factura y la evidencia visual…",
     updatedAt: new Date().toISOString(),
   });
-  const aiConsolidated = await consolidateGroups(deterministic, args.expectedProducts ?? []);
+  const aiConsolidated = await consolidateGroups(
+    deterministic,
+    args.expectedProducts ?? [],
+    imagesByIndex,
+    args.spotName,
+  );
   const consolidated = consolidateDeterministicCommercialIdentity(aiConsolidated);
   await args.onProgress?.({
     stage: "consolidating",
@@ -1207,7 +1245,6 @@ export async function analyzeCommerceProductBatch(args: {
     updatedAt: new Date().toISOString(),
   });
 
-  const imagesByIndex = new Map(args.images.map((image) => [image.sourceIndex, image]));
   const refined: CommerceBatchGroup[] = [];
   for (let index = 0; index < consolidated.length; index += 1) {
     const group = consolidated[index];
