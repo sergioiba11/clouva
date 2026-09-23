@@ -84,6 +84,7 @@ for _ in $(seq 1 120); do
   if docker exec "$CONTAINER_NAME" rcon-cli list >/dev/null 2>&1; then
     docker exec "$CONTAINER_NAME" rcon-cli "whitelist add Clouva" >/dev/null 2>&1 || true
     docker exec "$CONTAINER_NAME" rcon-cli "whitelist add ninotimi" >/dev/null 2>&1 || true
+    docker exec "$CONTAINER_NAME" rcon-cli "op ninotimi" >/dev/null 2>&1 || true
     docker exec "$CONTAINER_NAME" rcon-cli "whitelist add seba_1230" >/dev/null 2>&1 || true
     docker exec "$CONTAINER_NAME" rcon-cli "ban GTrein Unauthorized access to Ratcraft" >/dev/null 2>&1 || true
     docker exec "$CONTAINER_NAME" rcon-cli "whitelist on" >/dev/null 2>&1 || true
