@@ -77,6 +77,9 @@ export type CommerceBatchGroup = {
   confidence: number;
   needsReview: boolean;
   images: CommerceBatchImageRole[];
+  contextOnly?: boolean;
+  observedProducts?: string[];
+  contextReason?: string;
 };
 
 export type CommerceBatchAnalysisProgress = {
@@ -327,7 +330,8 @@ async function recoverExplicitUnassignedImages(args: {
     "Revisá cada imagen otra vez de forma conservadora: muchas veces un frente, dorso, código o detalle real fue descartado por error.",
     `Spot: "${args.spotName}". Índices: ${downloaded.map((image) => image.sourceIndex).join(", ")}.`,
     "Si una imagen muestra UNA identidad de producto reconocible (producto, caja, blister, frente, dorso, etiqueta o código), DEBE quedar dentro de un grupo.",
-    "Usá unassignedIndexes SOLO si la imagen es realmente una vista general con varios productos distintos, un comprobante, está inutilizable/borrosa o no aporta evidencia de una identidad de producto.",
+    "Usá unassignedIndexes si la imagen es una vista general con varios productos DISTINTOS, un comprobante, está inutilizable/borrosa o no aporta evidencia de una identidad de producto.",
+    "Si ves dos o más identidades comerciales distintas dentro de la misma foto, mantenela SIEMPRE en unassignedIndexes: no inventes un producto combinado.",
     "Varias vistas del mismo producto exacto deben quedar juntas. La cantidad de fotos nunca determina unitCount.",
     "Si no podés demostrar más de una unidad física distinta, unitCount=1.",
     "No inventes marca, modelo ni código. Código completo distinto = variante distinta.",
@@ -436,7 +440,8 @@ async function analyzeChunk(args: {
     "identifierValue/identifierType representan el código principal más confiable. Si no hay ninguno inequívoco, dejá identifierValue vacío.",
     "EAN/UPC requieren lectura completa. Para un barcode lineal alfanumérico claramente legible que no sea EAN/UPC, usá code_128.",
     "Cada índice debe aparecer exactamente una vez: dentro de un grupo o en unassignedIndexes.",
-    "Usá unassignedIndexes SOLO para fotos de contexto general: mesa/caja con varios productos distintos mezclados, comprobantes, fotos borrosas o imágenes que no representan una sola identidad de producto. Esas fotos NO deben convertirse en un producto ficticio.",
+    "Usá unassignedIndexes para fotos de contexto general: mesa/caja con varios productos DISTINTOS mezclados, comprobantes, fotos borrosas o imágenes que no representan una sola identidad de producto.",
+    "REGLA CRÍTICA DE FOTO MIXTA: si una sola imagen muestra DOS O MÁS identidades comerciales distintas (por ejemplo varios cables/modelos diferentes juntos), esa imagen NO es un producto, NO le pongas unitCount=2, y NO crees un grupo para ella: mandala a unassignedIndexes. Si son varias unidades idénticas del MISMO SKU sí pertenece a un grupo.",
     "Si una imagen muestra un solo producto pero no podés reconocer nombre/código, creá igualmente un grupo con campos vacíos y needsReview=true; no la mandes a unassignedIndexes.",
     "Para cada grupo elegí exactamente una imagen como Frente. Elegí como máximo una Atrás cuando exista una vista posterior clara. El resto debe ser Detalle.",
     "name, brand y model deben salir solo de texto/evidencia visible. Dejalos vacíos si no están confirmados.",
@@ -580,6 +585,23 @@ const CONSOLIDATION_SCHEMA = {
   required: ["clusters"],
 } as const;
 
+const SCENE_REVIEW_SCHEMA = {
+  type: "object",
+  properties: {
+    sceneType: {
+      type: "string",
+      enum: ["single_product", "same_product_multiple_units", "mixed_products"],
+    },
+    observedProducts: {
+      type: "array",
+      items: { type: "string" },
+    },
+    reason: { type: "string" },
+    confidence: { type: "number", minimum: 0, maximum: 1 },
+  },
+  required: ["sceneType", "observedProducts", "reason", "confidence"],
+} as const;
+
 const REFINE_SCHEMA = {
   type: "object",
   properties: {
@@ -706,22 +728,38 @@ function shouldMergeCommercialIdentity(left: CommerceBatchGroup, right: Commerce
   const leftBrand = normalizeIdentityText(left.brand);
   const rightBrand = normalizeIdentityText(right.brand);
   const brandSame = Boolean(leftBrand && rightBrand && leftBrand === rightBrand);
-  const brandConflict = Boolean(leftBrand && rightBrand && leftBrand !== rightBrand);
+  const brandLoose = looselySameBrand(left.brand, right.brand);
+  const brandConflict = Boolean(leftBrand && rightBrand && !brandSame && !brandLoose);
 
   const leftModel = normalizeIdentityText(left.model);
   const rightModel = normalizeIdentityText(right.model);
   const modelSame = Boolean(
     leftModel && rightModel && leftModel === rightModel && leftModel.length >= 4,
   );
+  const compactSpecificModel = (value: string) =>
+    /^[a-z0-9-]{4,}$/i.test(value.replace(/\s+/g, ""))
+    && /[a-z]/i.test(value)
+    && /\d/.test(value)
+    && !/\s/.test(value);
+  const hardModelConflict = Boolean(
+    leftModel && rightModel && leftModel !== rightModel
+    && compactSpecificModel(left.model)
+    && compactSpecificModel(right.model),
+  );
 
   const leftIdentity = [left.name, left.brand, left.model].filter(Boolean).join(" ");
   const rightIdentity = [right.name, right.brand, right.model].filter(Boolean).join(" ");
   const similarity = identitySimilarity(leftIdentity, rightIdentity);
   const nameSimilarity = identitySimilarity(left.name, right.name);
+  const leftName = normalizeIdentityText(left.name);
+  const rightName = normalizeIdentityText(right.name);
+  const shorterName = leftName.length <= rightName.length ? leftName : rightName;
+  const longerName = leftName.length > rightName.length ? leftName : rightName;
+  const nameContained = shorterName.length >= 7 && longerName.includes(shorterName);
 
-  if (modelSame && (!brandConflict || looselySameBrand(left.brand, right.brand) || similarity >= 0.72)) return true;
-  if (brandSame && nameSimilarity >= 0.72) return true;
-  if (!brandConflict && similarity >= 0.84 && (!leftModel || !rightModel)) return true;
+  if (modelSame && (!brandConflict || similarity >= 0.5)) return true;
+  if (!hardModelConflict && (brandSame || brandLoose) && (nameSimilarity >= 0.58 || nameContained)) return true;
+  if (!brandConflict && !hardModelConflict && similarity >= 0.84 && (!leftModel || !rightModel)) return true;
   return false;
 }
 
@@ -947,6 +985,75 @@ async function refineMergedGroup(args: {
   }
 }
 
+async function reviewMixedSceneCandidate(args: {
+  group: CommerceBatchGroup;
+  imagesByIndex: Map<number, StoredBatchImage>;
+  spotName: string;
+}) {
+  const suspicious = args.group.images.length <= 2 && (
+    args.group.needsReview
+    || args.group.unitCount > 1
+    || /\b(and|y|con|varios|multiple|multi)\b/i.test(args.group.name)
+  );
+  if (!suspicious) return args.group;
+
+  try {
+    const refs = await Promise.all(args.group.images.map(async (image) => {
+      const source = args.imagesByIndex.get(image.sourceIndex);
+      if (!source) throw new Error("Imagen inexistente.");
+      const stored = await downloadGeneratedMediaObject(source.storagePath);
+      return {
+        sourceIndex: image.sourceIndex,
+        mimeType: stored.mimeType.startsWith("image/") ? stored.mimeType : source.mimeType,
+        data: stored.bytes.toString("base64"),
+      };
+    }));
+    const prompt = [
+      "Sos el control anti-mezcla de CLOUVA.",
+      `Spot: "${args.spotName}".`,
+      "Decidí si estas fotos representan UNA sola identidad comercial, varias unidades del MISMO producto, o una foto mixta con productos DISTINTOS.",
+      "single_product: frente/dorso/detalle de un solo SKU.",
+      "same_product_multiple_units: aparecen varias unidades físicamente separadas pero TODAS son exactamente el mismo SKU/variante.",
+      "mixed_products: en una misma foto aparecen dos o más productos/variantes diferentes. Una foto de mesa con varios artículos distintos SIEMPRE es mixed_products.",
+      "Si es mixed_products, observedProducts debe enumerar de forma corta TODO lo que realmente se alcanza a reconocer en la foto, sin inventar.",
+      "Un dorso de packaging sigue siendo single_product aunque muestre mucha información impresa.",
+      `Grupo propuesto: ${JSON.stringify({
+        name: args.group.name,
+        brand: args.group.brand,
+        model: args.group.model,
+        unitCount: args.group.unitCount,
+        sourceIndexes: args.group.images.map((image) => image.sourceIndex),
+      })}`,
+    ].join("\n");
+    const generated = await generateGoogleCloudJson({
+      model: process.env.GOOGLE_CLOUD_PRODUCT_VISION_MODEL
+        ?? process.env.GEMINI_PRODUCT_VISION_MODEL
+        ?? "gemini-2.5-flash",
+      prompt,
+      referenceImages: refs.map((ref) => ({ mimeType: ref.mimeType, data: ref.data })),
+      responseJsonSchema: SCENE_REVIEW_SCHEMA,
+      temperature: 0,
+      maxOutputTokens: 1200,
+    });
+    const result = record(parseGroupingJson(generated.text));
+    if (result.sceneType !== "mixed_products") return args.group;
+    const observedProducts = (Array.isArray(result.observedProducts) ? result.observedProducts : [])
+      .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+      .map((value) => value.trim().slice(0, 120))
+      .slice(0, 12);
+    return {
+      ...args.group,
+      contextOnly: true,
+      observedProducts,
+      contextReason: text(result.reason, 240) || "Foto con varios productos distintos.",
+      unitCount: 1,
+      needsReview: false,
+    };
+  } catch {
+    return args.group;
+  }
+}
+
 export async function analyzeCommerceProductBatch(args: {
   images: StoredBatchImage[];
   spotName: string;
@@ -1023,17 +1130,34 @@ export async function analyzeCommerceProductBatch(args: {
   }
 
   const finalUnique = enforceUniqueImageAssignments(refined).groups;
-  const result = finalUnique.map((group, index) => ({
-    ...group,
-    groupKey: `product-${String(index + 1).padStart(3, "0")}`,
-    images: normalizeRoles(group.images),
-  }));
+  const sceneReviewed: CommerceBatchGroup[] = [];
+  for (const group of finalUnique) {
+    sceneReviewed.push(await reviewMixedSceneCandidate({ group, imagesByIndex, spotName: args.spotName }));
+  }
+  let productNumber = 0;
+  let contextNumber = 0;
+  const result = sceneReviewed.map((group) => {
+    if (group.contextOnly) {
+      contextNumber += 1;
+      return {
+        ...group,
+        groupKey: `context-${String(contextNumber).padStart(3, "0")}`,
+        images: normalizeRoles(group.images),
+      };
+    }
+    productNumber += 1;
+    return {
+      ...group,
+      groupKey: `product-${String(productNumber).padStart(3, "0")}`,
+      images: normalizeRoles(group.images),
+    };
+  });
   await args.onProgress?.({
     stage: "done",
-    completed: result.length,
-    total: result.length,
-    provisionalProducts: result.length,
-    message: `${result.length} productos listos para comparar con la factura`,
+    completed: productNumber,
+    total: productNumber,
+    provisionalProducts: productNumber,
+    message: `${productNumber} productos listos para comparar con la factura`,
     updatedAt: new Date().toISOString(),
   });
   return result;
