@@ -77,3 +77,11 @@ jobs:
             head -c 1200 /tmp/body || true
             echo
           done
+
+      - name: Inspect public control HTML contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          url="$(gcloud run services describe "$API_SERVICE" --project "$PROJECT_ID" --region "$REGION" --format='value(status.url)')"
+          curl -fsSL "$url/" -o /tmp/root.html
+          grep -Ein "token|authorization|x-mc|api/full|api/status|api/command|api/start|api/stop|api/restart|fetch\(" /tmp/root.html | head -n 200 || true
