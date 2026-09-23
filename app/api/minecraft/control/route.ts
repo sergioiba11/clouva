@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 const DEFAULT_PROJECT = "gen-lang-client-0737053175";
 const DEFAULT_ZONE = "southamerica-east1-b";
 const DEFAULT_INSTANCE = "clouva-minecraft";
-const COMMAND_METADATA_KEY = "ratcraft-command";
+const COMMAND_METADATA_KEY = "ratcraft-command-queue";
 
 type InstanceMetadataItem = { key?: string; value?: string };
 type InstancePayload = {
@@ -175,13 +175,34 @@ async function queueCommand(
     ? instance.metadata!.items!
     : [];
 
+  const existingQueueItem = currentItems.find(
+    (item) => item.key === COMMAND_METADATA_KEY,
+  );
+  let queue: Array<Record<string, unknown>> = [];
+  if (existingQueueItem?.value) {
+    try {
+      const parsed = JSON.parse(existingQueueItem.value) as unknown;
+      if (Array.isArray(parsed)) {
+        queue = parsed.filter(
+          (item): item is Record<string, unknown> =>
+            Boolean(item && typeof item === "object" && !Array.isArray(item)),
+        );
+      }
+    } catch {
+      queue = [];
+    }
+  }
+
+  queue.push(command);
+  queue = queue.slice(-20);
+
   const items = currentItems
     .filter((item) => item.key && item.key !== COMMAND_METADATA_KEY)
     .map((item) => ({ key: item.key!, value: item.value ?? "" }));
 
   items.push({
     key: COMMAND_METADATA_KEY,
-    value: JSON.stringify(command),
+    value: JSON.stringify(queue),
   });
 
   await computeRequest("/setMetadata", "POST", {
