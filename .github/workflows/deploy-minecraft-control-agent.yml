@@ -1,0 +1,69 @@
+name: Deploy Minecraft Control Agent
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "infra/minecraft/control-agent.py"
+      - ".github/workflows/deploy-minecraft-control-agent.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: gen-lang-client-0737053175
+  MC_ZONE: southamerica-east1-b
+  MC_INSTANCE: clouva-minecraft
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA_EMAIL }}
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Upload control agent
+        run: |
+          gcloud compute scp infra/minecraft/control-agent.py "$MC_INSTANCE:/tmp/clouva-minecraft-control-agent.py" \
+            --project "$PROJECT_ID" --zone "$MC_ZONE" --quiet
+
+      - name: Install and start control agent
+        run: |
+          gcloud compute ssh "$MC_INSTANCE" \
+            --project "$PROJECT_ID" \
+            --zone "$MC_ZONE" \
+            --quiet \
+            --ssh-flag="-o StrictHostKeyChecking=no" \
+            --ssh-flag="-o UserKnownHostsFile=/dev/null" \
+            --command='
+              set -euo pipefail
+              sudo install -m 0755 /tmp/clouva-minecraft-control-agent.py /usr/local/sbin/clouva-minecraft-control-agent.py
+              sudo tee /etc/systemd/system/clouva-minecraft-control-agent.service >/dev/null <<'"'"'EOF'"'"'
+[Unit]
+Description=CLOUVA Ratcraft private control agent
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/sbin/clouva-minecraft-control-agent.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+              sudo systemctl daemon-reload
+              sudo systemctl enable --now clouva-minecraft-control-agent.service
+              sleep 2
+              sudo systemctl is-active clouva-minecraft-control-agent.service
+              sudo journalctl -u clouva-minecraft-control-agent.service -n 20 --no-pager
+            '
