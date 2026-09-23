@@ -26,7 +26,7 @@ export async function GET(
 
     const { data: items, error: itemsError } = await admin
       .from("commerce_product_import_items")
-      .select("id,source_index,file_name,source_url,mime_type,status,group_key,listing_id,error")
+      .select("id,source_index,file_name,source_url,mime_type,status,group_key,listing_id,recognition,error")
       .eq("batch_id", batch.id)
       .eq("spot_id", spot.id)
       .order("source_index");
