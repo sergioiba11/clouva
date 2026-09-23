@@ -1,10 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { Check, Copy, Eye, RefreshCw, Server, Smartphone, Users, Video, X } from "lucide-react";
+import { Check, Copy, Eye, RefreshCw, Server, Settings, Smartphone, Users, Video, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
 import { ClouvaLogoMark } from "@/components/brand/clouva-logo";
+import { canAccessAdmin } from "@/lib/auth";
 
 type MinecraftStatus = {
   configured: boolean;
@@ -136,7 +137,7 @@ function AssetButton({
 }
 
 export default function MinecraftFamilyPage() {
-  const { user, session, loading } = useAuth();
+  const { user, session, role, loading } = useAuth();
   const [status, setStatus] = useState<MinecraftStatus | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [starting, setStarting] = useState(false);
@@ -422,6 +423,16 @@ export default function MinecraftFamilyPage() {
                 <span>{onlineCount}</span>
                 <span className="hidden sm:inline">jugadores</span>
               </div>
+              {canAccessAdmin(role) ? (
+                <Link
+                  href="/minecraft/config"
+                  className="grid h-9 w-9 place-items-center rounded-xl border border-fuchsia-300/20 bg-black/35 text-white/65 transition hover:border-fuchsia-300/40 hover:bg-fuchsia-400/10 hover:text-white"
+                  aria-label="Configurar Ratcraft"
+                  title="Config Ratcraft"
+                >
+                  <Settings className="h-4 w-4" />
+                </Link>
+              ) : null}
               <button
                 type="button"
                 onClick={() => void load()}
