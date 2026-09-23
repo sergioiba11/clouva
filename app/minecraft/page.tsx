@@ -364,7 +364,7 @@ export default function MinecraftFamilyPage() {
   if (!user) {
     return (
       <main className="relative grid min-h-screen place-items-center overflow-hidden bg-[#07010d] px-5 text-white">
-        <img src={ASSETS.background} alt="" className="absolute inset-0 h-full w-full object-cover opacity-55" />
+        <img src={ASSETS.backgroundMobile} alt="" className="absolute inset-0 h-full w-full object-cover opacity-55" />
         <div className="absolute inset-0 bg-gradient-to-b from-[#07010d]/35 via-[#07010d]/45 to-[#07010d]" />
         <div className="relative z-10 max-w-xl text-center">
           <img src={ASSETS.logo} alt="Niños Rata Server" className="mx-auto w-[min(82vw,520px)]" />
@@ -510,7 +510,7 @@ export default function MinecraftFamilyPage() {
 
       <section id="server-info" className="relative overflow-hidden border-t border-fuchsia-300/10 bg-[#08020f]">
         <div className="absolute inset-0 opacity-20">
-          <img src={ASSETS.background} alt="" className="h-full w-full object-cover blur-[2px]" />
+          <img src={ASSETS.backgroundDesktop} alt="" className="h-full w-full object-cover blur-[2px]" />
         </div>
         <div className="absolute inset-0 bg-[#08020f]/88" />
 
