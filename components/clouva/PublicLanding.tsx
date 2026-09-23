@@ -107,6 +107,12 @@ export function PublicLanding() {
               y la{" "}
               <Link href="/privacidad" className="text-violet-300">Política de Privacidad</Link>.
             </p>
+            <p className="mt-3 text-[9px] text-white/50 sm:text-[10px]">
+              Artista oficial:{" "}
+              <Link href="/clouva" className="font-semibold text-violet-300">
+                Clouva — artista argentino
+              </Link>
+            </p>
           </footer>
         </section>
       </div>
