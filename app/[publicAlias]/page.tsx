@@ -9,6 +9,7 @@ import { PublicMerchSection, loadPublicMerchProducts } from "@/components/public
 import { IGLU_PUBLIC_ALIAS, IGLU_PUBLIC_PATH } from "@/lib/iglu-radio/routes";
 import { loadIgluSiteData } from "@/lib/iglu/site-data";
 import { buildPlayerStructuredData } from "@/lib/seo/player-structured-data";
+import { siteUrl } from "@/lib/site-url";
 import { loadPublicAgendaByPlayer } from "@/lib/server/agenda/public-loader";
 import { loadPublicKnowledgeByPlayer } from "@/lib/server/knowledge/public-loader";
 import { resolvePlayerAlias } from "@/lib/server/public-identity-data";
@@ -22,7 +23,7 @@ export async function generateMetadata({ params }: { params: Promise<{ publicAli
   if (publicAlias.toLowerCase() === IGLU_PUBLIC_ALIAS) {
     const data = await loadIgluSiteData().catch(() => null);
     if (!data) return { title: "El Iglú Records — CLOUVA", robots: { index: false, follow: false } };
-    const canonical = `https://clouva.com.ar${IGLU_PUBLIC_PATH}`;
+    const canonical = `${siteUrl}${IGLU_PUBLIC_PATH}`;
     const title = data.studio.seo_title || "El Iglú Records — estudio, sello y música en CLOUVA";
     const description = data.studio.seo_description || data.studio.description || data.studio.tagline || "El Iglú Records es un sello, estudio y espacio musical dentro de CLOUVA.";
     const image = data.studio.og_image_url || data.studio.cover_url || data.publicStudio.darkLogoUrl || data.studio.logo_url || undefined;
@@ -38,41 +39,39 @@ export async function generateMetadata({ params }: { params: Promise<{ publicAli
   const playerResult = await resolvePlayerAlias(publicAlias).catch(() => null);
   if (playerResult) {
     const { player, canonicalAlias } = playerResult;
-    const isClouvaArtist = canonicalAlias.toLowerCase() === "clouva";
-    const title = isClouvaArtist
-      ? player.seo_title || "CLOUVA — Artista argentino de Zapala, Neuquén | Sitio oficial"
-      : player.seo_title || `${player.display_name} — Perfil oficial`;
-    const description = isClouvaArtist
-      ? player.seo_description || "CLOUVA es un artista argentino de Zapala, Neuquén, también conocido como Clover. Música, videos y perfiles oficiales de Spotify y YouTube."
-      : player.seo_description || player.share_description || player.long_bio || player.short_bio || player.tagline || undefined;
-    const canonical = `https://clouva.com.ar/${canonicalAlias}`;
+    const title =
+      player.seo_title ||
+      `${player.display_name} — ${player.public_identity_label || player.primary_role || "Perfil oficial"}`;
+    const description =
+      player.seo_description ||
+      player.share_description ||
+      player.long_bio ||
+      player.short_bio ||
+      player.tagline ||
+      undefined;
+    const canonical = `${siteUrl}/${canonicalAlias}`;
     const image = player.og_image_url || player.cover_url || player.profile_image_url || undefined;
     const socialTitle = player.share_title || title;
     const socialDescription = player.share_description || description;
     const isPublic = player.privacy_status === "public";
+    const keywords = [
+      player.display_name,
+      ...(player.alternate_names || []),
+      player.public_identity_label,
+      player.primary_role,
+      player.schema_job_title,
+      player.origin,
+      player.country,
+      ...(player.genres || []),
+      ...(player.disciplines || []),
+      ...(player.professional_categories || []),
+    ].filter((value): value is string => Boolean(value));
+
     return {
       title,
       description,
-      ...(isClouvaArtist
-        ? {
-            keywords: [
-              "CLOUVA",
-              "Clouva",
-              "Clouva artista",
-              "Clouva artista argentino",
-              "Clover",
-              "Clover.nlb",
-              "artista argentino",
-              "artista de Zapala",
-              "música de Neuquén",
-              "rap argentino",
-              "Vida de Flows",
-              "La 180",
-            ],
-            creator: "CLOUVA",
-            category: "Music",
-          }
-        : {}),
+      keywords: [...new Set(keywords)],
+      creator: player.display_name,
       alternates: { canonical },
       openGraph: {
         type: "profile",
@@ -81,7 +80,12 @@ export async function generateMetadata({ params }: { params: Promise<{ publicAli
         url: canonical,
         title: socialTitle,
         description: socialDescription,
-        images: image ? [{ url: image, alt: isClouvaArtist ? "CLOUVA, artista argentino de Zapala, Neuquén" : `${player.display_name}${player.public_identity_label ? `, ${player.public_identity_label.toLowerCase()}` : ""}` }] : undefined,
+        images: image
+          ? [{
+              url: image,
+              alt: `${player.display_name}${player.public_identity_label ? `, ${player.public_identity_label.toLowerCase()}` : ""}`,
+            }]
+          : undefined,
       },
       twitter: {
         card: "summary_large_image",
@@ -109,7 +113,7 @@ export async function generateMetadata({ params }: { params: Promise<{ publicAli
   const { space, spot, canonicalAlias } = spaceResult;
   const title = `${space.name} — CLOUVA`;
   const description = spot?.description || space.description || `Spot oficial de ${space.name} en CLOUVA Matrix.`;
-  const canonical = `https://clouva.com.ar/${canonicalAlias}`;
+  const canonical = `${siteUrl}/${canonicalAlias}`;
   const image = spot?.cover_url || spot?.logo_url || space.cover_url || space.logo_url || undefined;
   return { title, description, alternates: { canonical }, openGraph: { type: "website", url: canonical, title, description, images: image ? [{ url: image }] : undefined }, robots: { index: true, follow: true } };
 }
@@ -119,7 +123,7 @@ export default async function PublicAliasPage({ params }: { params: Promise<{ pu
   if (publicAlias.toLowerCase() === IGLU_PUBLIC_ALIAS) {
     const data = await loadIgluSiteData();
     if (!data) notFound();
-    const canonical = `https://clouva.com.ar${IGLU_PUBLIC_PATH}`;
+    const canonical = `${siteUrl}${IGLU_PUBLIC_PATH}`;
     const description = data.studio.seo_description || data.studio.description || data.studio.tagline || "El Iglú Records es un sello, estudio y espacio musical dentro de CLOUVA.";
     const structuredData = {
       "@context": "https://schema.org",
@@ -144,7 +148,7 @@ export default async function PublicAliasPage({ params }: { params: Promise<{ pu
           slogan: data.studio.tagline || "Del Sur para el mundo",
           logo: data.publicStudio.darkLogoUrl || data.studio.logo_url || undefined,
           image: data.studio.og_image_url || data.studio.cover_url || undefined,
-          parentOrganization: { "@type": "Organization", name: "CLOUVA", url: "https://clouva.com.ar/" },
+          parentOrganization: { "@type": "Organization", name: "CLOUVA", url: `${siteUrl}/` },
         },
       ],
     };
