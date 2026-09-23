@@ -179,6 +179,51 @@ export class WorkspaceExecutor extends BaseToolExecutor {
       execute: async (args: { limit?: number }) => (await this.connection()).request("workspace.aiAnalyzer.activity", args),
     },
     {
+      name: "workspace.network.snapshot",
+      description: "Obtiene una foto de la red vista desde la PC conectada: interfaz local, gateway, dispositivos LAN y conexiones TCP/UDP activas.",
+      risk: "read",
+      parameters: { type: "OBJECT", properties: {} },
+      execute: async () => (await this.connection()).request("workspace.network.snapshot", {}, 45_000),
+    },
+    {
+      name: "workspace.network.discover",
+      description: "Descubre equipos de la red local de la PC conectada usando el scanner local (Nmap cuando está disponible), sin escanear Internet.",
+      risk: "read",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          subnet: { type: "STRING", description: "Subred local opcional en CIDR, por ejemplo 192.168.1.0/24. Si se omite se autodetecta." },
+        },
+      },
+      execute: async (args: { subnet?: string }) => (await this.connection()).request("workspace.network.discover", args, 60_000),
+    },
+    {
+      name: "workspace.network.inspect",
+      description: "Inspecciona un host de la LAN y devuelve sus puertos/servicios visibles. El runtime Desktop debe limitar el target a direcciones privadas/locales.",
+      risk: "read",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          target: { type: "STRING", description: "IPv4/IPv6 o hostname local del equipo a inspeccionar." },
+        },
+        required: ["target"],
+      },
+      execute: async (args: { target: string }) => (await this.connection()).request("workspace.network.inspect", args, 60_000),
+    },
+    {
+      name: "workspace.network.trace",
+      description: "Traza la ruta desde la PC conectada hasta un hostname o IP elegido y devuelve los saltos observados.",
+      risk: "read",
+      parameters: {
+        type: "OBJECT",
+        properties: {
+          target: { type: "STRING", description: "Hostname o IP de destino para traceroute/tracert." },
+        },
+        required: ["target"],
+      },
+      execute: async (args: { target: string }) => (await this.connection()).request("workspace.network.trace", args, 45_000),
+    },
+    {
       name: "workspace.activity.list",
       description: "Eventos recientes de actividad en Workspace (cambios de proceso/git/analyzer).",
       risk: "read",
