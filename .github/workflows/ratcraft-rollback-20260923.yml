@@ -61,6 +61,8 @@ jobs:
             echo "COREPROTECT_NOT_AVAILABLE"
             echo "===== RECOVERY DIRECTORIES ====="
             sudo find /srv/minecraft/recovery -maxdepth 2 -mindepth 1 -printf '%TY-%Tm-%Td %TH:%TM:%TS %p\n' 2>/dev/null | sort -r | head -n 80 || true
+            echo "===== AXIOM / UNDO DATA ====="
+            sudo find /srv/minecraft/plugins -maxdepth 4 \( -iname '*axiom*' -o -iname '*undo*' -o -iname '*history*' -o -iname '*backup*' \) -printf '%TY-%Tm-%Td %TH:%TM:%TS %p\n' 2>/dev/null | sort -r | head -n 120 || true
             echo "===== WORLD FILE RECENT MTIMES ====="
             sudo find /srv/minecraft -maxdepth 2 -type f -mmin -120 -printf '%TY-%Tm-%Td %TH:%TM:%TS %p\n' 2>/dev/null | sort -r | head -n 120 || true
             exit 3
