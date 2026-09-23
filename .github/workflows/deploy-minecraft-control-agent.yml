@@ -64,12 +64,12 @@ jobs:
         run: |
           set -euo pipefail
           id="verify-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-          printf '{"id":"%s","action":"list","args":{},"actorId":"github-actions","issuedAt":"%s"}' "$id" "$(date -u +%FT%TZ)" > /tmp/ratcraft-command.json
+          printf '[{"id":"%s","action":"list","args":{},"actorId":"github-actions","issuedAt":"%s"}]' "$id" "$(date -u +%FT%TZ)" > /tmp/ratcraft-command.json
 
           gcloud compute instances add-metadata "$MC_INSTANCE" \
             --project "$PROJECT_ID" \
             --zone "$MC_ZONE" \
-            --metadata-from-file ratcraft-command=/tmp/ratcraft-command.json \
+            --metadata-from-file ratcraft-command-queue=/tmp/ratcraft-command.json \
             --quiet
 
           for attempt in $(seq 1 15); do
