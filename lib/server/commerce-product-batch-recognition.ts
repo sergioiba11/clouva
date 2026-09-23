@@ -330,12 +330,14 @@ async function recoverExplicitUnassignedImages(args: {
     "Revisá cada imagen otra vez de forma conservadora: muchas veces un frente, dorso, código o detalle real fue descartado por error.",
     `Spot: "${args.spotName}". Índices: ${downloaded.map((image) => image.sourceIndex).join(", ")}.`,
     "Si una imagen muestra UNA identidad de producto reconocible (producto, caja, blister, frente, dorso, etiqueta o código), DEBE quedar dentro de un grupo.",
-    "Usá unassignedIndexes si la imagen es una vista general con varios productos DISTINTOS, un comprobante, está inutilizable/borrosa o no aporta evidencia de una identidad de producto.",
-    "Si ves dos o más identidades comerciales distintas dentro de la misma foto, mantenela SIEMPRE en unassignedIndexes: no inventes un producto combinado.",
+    "Si la imagen es una vista general con varios productos DISTINTOS, NO la agrupes con ninguno: registrala en contextObservations.",
+    "Para cada foto mixta, observedProducts debe enumerar TODO lo que realmente se ve y se puede nombrar, como una lista corta de productos/variantes visibles. No inventes.",
+    "Si una foto mixta contiene objetos que también aparecen solos en otras fotos, la foto mixta sigue siendo SOLO contexto; las fotos individuales sí deben quedar agrupadas con la identidad comercial que les corresponde.",
+    "Comprobantes o imágenes inutilizables también van a contextObservations, con observedProducts vacío y reason explicando por qué.",
     "Varias vistas del mismo producto exacto deben quedar juntas. La cantidad de fotos nunca determina unitCount.",
     "Si no podés demostrar más de una unidad física distinta, unitCount=1.",
     "No inventes marca, modelo ni código. Código completo distinto = variante distinta.",
-    "Cada índice debe aparecer exactamente una vez: en un grupo o en unassignedIndexes.",
+    "Cada índice debe aparecer exactamente una vez: dentro de group.images o como sourceIndex de contextObservations.",
     "Elegí un Frente por grupo, máximo una Atrás, y el resto Detalle.",
   ].join("\n");
 
@@ -346,7 +348,7 @@ async function recoverExplicitUnassignedImages(args: {
         ?? "gemini-2.5-flash",
       prompt,
       referenceImages: downloaded.map((image) => ({ mimeType: image.mimeType, data: image.data })),
-      responseJsonSchema: GROUP_SCHEMA,
+      responseJsonSchema: RECOVERY_SCHEMA,
       temperature: 0,
       maxOutputTokens: 4200,
     });
@@ -358,17 +360,38 @@ async function recoverExplicitUnassignedImages(args: {
     const unique = enforceUniqueImageAssignments(parsedGroups);
     const groups = unique.groups;
     const assigned = new Set(groups.flatMap((group) => group.images.map((image) => image.sourceIndex)));
-    const confirmedContext = new Set<number>();
-    for (const value of Array.isArray(root.unassignedIndexes) ? root.unassignedIndexes : []) {
-      const sourceIndex = Number(value);
-      if (Number.isInteger(sourceIndex) && allowed.has(sourceIndex) && !assigned.has(sourceIndex)) {
-        confirmedContext.add(sourceIndex);
-      }
+    const contextIndexes = new Set<number>();
+
+    for (const rawObservation of Array.isArray(root.contextObservations) ? root.contextObservations : []) {
+      const observation = record(rawObservation);
+      const sourceIndex = Number(observation.sourceIndex);
+      if (!Number.isInteger(sourceIndex) || !allowed.has(sourceIndex) || assigned.has(sourceIndex) || contextIndexes.has(sourceIndex)) continue;
+      const observedProducts = (Array.isArray(observation.observedProducts) ? observation.observedProducts : [])
+        .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+        .map((value) => value.trim().slice(0, 120))
+        .slice(0, 20);
+      contextIndexes.add(sourceIndex);
+      groups.push({
+        groupKey: `context-recovery-${sourceIndex}`,
+        name: "",
+        brand: "",
+        model: "",
+        packageKind: "unknown",
+        unitCount: 1,
+        identifier: null,
+        visibleIdentifiers: [],
+        confidence: 1,
+        needsReview: false,
+        images: [{ sourceIndex, role: "Frente" }],
+        contextOnly: true,
+        observedProducts,
+        contextReason: text(observation.reason, 240) || "Foto con varios productos distintos.",
+      });
     }
 
     // Never silently lose a photo because the recovery model omitted it.
     for (const sourceIndex of allowed) {
-      if (assigned.has(sourceIndex) || confirmedContext.has(sourceIndex)) continue;
+      if (assigned.has(sourceIndex) || contextIndexes.has(sourceIndex)) continue;
       groups.push({
         groupKey: `recovered-single-${sourceIndex}`,
         name: "",
@@ -585,21 +608,51 @@ const CONSOLIDATION_SCHEMA = {
   required: ["clusters"],
 } as const;
 
+const RECOVERY_SCHEMA = {
+  type: "object",
+  properties: {
+    groups: GROUP_SCHEMA.properties.groups,
+    contextObservations: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          sourceIndex: { type: "integer" },
+          observedProducts: { type: "array", items: { type: "string" } },
+          reason: { type: "string" },
+        },
+        required: ["sourceIndex", "observedProducts", "reason"],
+      },
+    },
+  },
+  required: ["groups", "contextObservations"],
+} as const;
+
 const SCENE_REVIEW_SCHEMA = {
   type: "object",
   properties: {
-    sceneType: {
-      type: "string",
-      enum: ["single_product", "same_product_multiple_units", "mixed_products"],
-    },
-    observedProducts: {
+    images: {
       type: "array",
-      items: { type: "string" },
+      items: {
+        type: "object",
+        properties: {
+          sourceIndex: { type: "integer" },
+          sceneType: {
+            type: "string",
+            enum: ["single_product", "same_product_multiple_units", "mixed_products"],
+          },
+          observedProducts: {
+            type: "array",
+            items: { type: "string" },
+          },
+          reason: { type: "string" },
+          confidence: { type: "number", minimum: 0, maximum: 1 },
+        },
+        required: ["sourceIndex", "sceneType", "observedProducts", "reason", "confidence"],
+      },
     },
-    reason: { type: "string" },
-    confidence: { type: "number", minimum: 0, maximum: 1 },
   },
-  required: ["sceneType", "observedProducts", "reason", "confidence"],
+  required: ["images"],
 } as const;
 
 const REFINE_SCHEMA = {
@@ -989,13 +1042,13 @@ async function reviewMixedSceneCandidate(args: {
   group: CommerceBatchGroup;
   imagesByIndex: Map<number, StoredBatchImage>;
   spotName: string;
-}) {
+}): Promise<CommerceBatchGroup[]> {
   const suspicious = args.group.images.length <= 2 && (
     args.group.needsReview
     || args.group.unitCount > 1
     || /\b(and|y|con|varios|multiple|multi)\b/i.test(args.group.name)
   );
-  if (!suspicious) return args.group;
+  if (!suspicious) return [args.group];
 
   try {
     const refs = await Promise.all(args.group.images.map(async (image) => {
@@ -1011,12 +1064,14 @@ async function reviewMixedSceneCandidate(args: {
     const prompt = [
       "Sos el control anti-mezcla de CLOUVA.",
       `Spot: "${args.spotName}".`,
-      "Decidí si estas fotos representan UNA sola identidad comercial, varias unidades del MISMO producto, o una foto mixta con productos DISTINTOS.",
+      "Clasificá CADA FOTO por separado. No conviertas un grupo entero en contexto solo porque una de sus imágenes sea mixta.",
       "single_product: frente/dorso/detalle de un solo SKU.",
       "same_product_multiple_units: aparecen varias unidades físicamente separadas pero TODAS son exactamente el mismo SKU/variante.",
-      "mixed_products: en una misma foto aparecen dos o más productos/variantes diferentes. Una foto de mesa con varios artículos distintos SIEMPRE es mixed_products.",
-      "Si es mixed_products, observedProducts debe enumerar de forma corta TODO lo que realmente se alcanza a reconocer en la foto, sin inventar.",
+      "mixed_products: ESA FOTO contiene dos o más productos/variantes diferentes. Una foto de mesa con varios artículos distintos SIEMPRE es mixed_products.",
+      "Para cada mixed_products, observedProducts debe enumerar TODO lo que realmente se alcanza a reconocer en ESA foto, sin inventar.",
+      "Una foto mixed_products nunca pertenece a un producto y nunca suma stock. Las otras fotos individuales del grupo deben conservarse con el producto al que corresponden.",
       "Un dorso de packaging sigue siendo single_product aunque muestre mucha información impresa.",
+      `Índices disponibles: ${refs.map((ref) => ref.sourceIndex).join(", ")}.`,
       `Grupo propuesto: ${JSON.stringify({
         name: args.group.name,
         brand: args.group.brand,
@@ -1036,21 +1091,56 @@ async function reviewMixedSceneCandidate(args: {
       maxOutputTokens: 1200,
     });
     const result = record(parseGroupingJson(generated.text));
-    if (result.sceneType !== "mixed_products") return args.group;
-    const observedProducts = (Array.isArray(result.observedProducts) ? result.observedProducts : [])
-      .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
-      .map((value) => value.trim().slice(0, 120))
-      .slice(0, 12);
-    return {
-      ...args.group,
-      contextOnly: true,
-      observedProducts,
-      contextReason: text(result.reason, 240) || "Foto con varios productos distintos.",
-      unitCount: 1,
-      needsReview: false,
-    };
+    const reviews = Array.isArray(result.images) ? result.images.map(record) : [];
+    const reviewByIndex = new Map<number, Record<string, unknown>>();
+    for (const review of reviews) {
+      const sourceIndex = Number(review.sourceIndex);
+      if (Number.isInteger(sourceIndex) && args.group.images.some((image) => image.sourceIndex === sourceIndex)) {
+        reviewByIndex.set(sourceIndex, review);
+      }
+    }
+
+    const mixed: CommerceBatchGroup[] = [];
+    const productImages: CommerceBatchImageRole[] = [];
+    for (const image of args.group.images) {
+      const review = reviewByIndex.get(image.sourceIndex);
+      if (review?.sceneType !== "mixed_products") {
+        productImages.push(image);
+        continue;
+      }
+      const observedProducts = (Array.isArray(review.observedProducts) ? review.observedProducts : [])
+        .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+        .map((value) => value.trim().slice(0, 120))
+        .slice(0, 20);
+      mixed.push({
+        groupKey: `context-scene-${image.sourceIndex}`,
+        name: "",
+        brand: "",
+        model: "",
+        packageKind: "unknown",
+        unitCount: 1,
+        identifier: null,
+        visibleIdentifiers: [],
+        confidence: number01(review.confidence),
+        needsReview: false,
+        images: [{ sourceIndex: image.sourceIndex, role: "Frente" }],
+        contextOnly: true,
+        observedProducts,
+        contextReason: text(review.reason, 240) || "Foto con varios productos distintos.",
+      });
+    }
+
+    if (!mixed.length) return [args.group];
+    const productPart = productImages.length
+      ? [{
+          ...args.group,
+          images: normalizeRoles(productImages),
+          needsReview: true,
+        } satisfies CommerceBatchGroup]
+      : [];
+    return [...productPart, ...mixed];
   } catch {
-    return args.group;
+    return [args.group];
   }
 }
 
@@ -1086,15 +1176,18 @@ export async function analyzeCommerceProductBatch(args: {
     });
   }
 
+  const preclassifiedContext = groups.filter((group) => group.contextOnly);
+  const productGroups = groups.filter((group) => !group.contextOnly);
+
   await args.onProgress?.({
     stage: "consolidating",
     completed: 0,
     total: 2,
-    provisionalProducts: groups.length,
+    provisionalProducts: productGroups.length,
     message: "Uniendo códigos, modelos y vistas repetidas…",
     updatedAt: new Date().toISOString(),
   });
-  const deterministic = consolidateDeterministicCommercialIdentity(groups);
+  const deterministic = consolidateDeterministicCommercialIdentity(productGroups);
   await args.onProgress?.({
     stage: "consolidating",
     completed: 1,
@@ -1132,11 +1225,16 @@ export async function analyzeCommerceProductBatch(args: {
   const finalUnique = enforceUniqueImageAssignments(refined).groups;
   const sceneReviewed: CommerceBatchGroup[] = [];
   for (const group of finalUnique) {
-    sceneReviewed.push(await reviewMixedSceneCandidate({ group, imagesByIndex, spotName: args.spotName }));
+    sceneReviewed.push(...await reviewMixedSceneCandidate({ group, imagesByIndex, spotName: args.spotName }));
   }
+  const reviewed = [...sceneReviewed, ...preclassifiedContext].sort((left, right) => {
+    const leftIndex = Math.min(...left.images.map((image) => image.sourceIndex));
+    const rightIndex = Math.min(...right.images.map((image) => image.sourceIndex));
+    return leftIndex - rightIndex;
+  });
   let productNumber = 0;
   let contextNumber = 0;
-  const result = sceneReviewed.map((group) => {
+  const result = reviewed.map((group) => {
     if (group.contextOnly) {
       contextNumber += 1;
       return {
