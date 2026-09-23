@@ -1,0 +1,118 @@
+name: Repair Minecraft production cache
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/repair-minecraft-production-cache.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: gen-lang-client-0737053175
+  REGION: us-central1
+  SERVICE: clouva-web
+
+jobs:
+  repair:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA_EMAIL }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Inspect origin and public Minecraft route
+        shell: bash
+        run: |
+          set -euo pipefail
+          origin="$(gcloud run services describe "$SERVICE"             --project "$PROJECT_ID"             --region "$REGION"             --format='value(status.url)')"
+          echo "Cloud Run origin: $origin"
+
+          echo "===== ORIGIN HEADERS ====="
+          curl -sSIL --max-time 20 "$origin/minecraft" | sed -n '1,80p'
+
+          echo "===== PUBLIC HEADERS ====="
+          curl -sSIL --max-time 20 "https://clouva.com.ar/minecraft" | sed -n '1,100p'
+
+          echo "===== PUBLIC CACHE-BUST HEADERS ====="
+          curl -sSIL --max-time 20 "https://clouva.com.ar/minecraft?ratcraft_release=$(date +%s)" | sed -n '1,100p'
+
+          echo "===== CONTENT MARKERS ====="
+          origin_body="$(mktemp)"
+          public_body="$(mktemp)"
+          bust_body="$(mktemp)"
+          curl -fsSL --max-time 30 "$origin/minecraft" -o "$origin_body"
+          curl -fsSL --max-time 30 "https://clouva.com.ar/minecraft" -o "$public_body"
+          curl -fsSL --max-time 30 "https://clouva.com.ar/minecraft?ratcraft_release=$(date +%s%N)" -o "$bust_body"
+
+          printf 'origin sha256: '; sha256sum "$origin_body" | cut -d' ' -f1
+          printf 'public sha256: '; sha256sum "$public_body" | cut -d' ' -f1
+          printf 'bust   sha256: '; sha256sum "$bust_body" | cut -d' ' -f1
+
+          for pair in "origin:$origin_body" "public:$public_body" "bust:$bust_body"; do
+            label="${pair%%:*}"
+            file="${pair#*:}"
+            echo "-- $label markers --"
+            grep -Eio 'CLOUVA FAMILIA|RATCRAFT|NIÑOS RATA|PRENDER SERVER|Universo Gaming' "$file" | sort -u || true
+          done
+
+      - name: Purge Cloudflare cache if credentials are available
+        shell: bash
+        env:
+          CF_TOKEN_A: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_TOKEN_B: ${{ secrets.CF_API_TOKEN }}
+          CF_ZONE_A: ${{ secrets.CLOUDFLARE_ZONE_ID }}
+          CF_ZONE_B: ${{ secrets.CF_ZONE_ID }}
+        run: |
+          set -euo pipefail
+          token="${CF_TOKEN_A:-${CF_TOKEN_B:-}}"
+          zone="${CF_ZONE_A:-${CF_ZONE_B:-}}"
+
+          if [ -z "$token" ]; then
+            echo "::warning::No Cloudflare API token secret is configured; skipping API purge."
+            exit 0
+          fi
+
+          if [ -z "$zone" ]; then
+            echo "Resolving Cloudflare zone id for clouva.com.ar..."
+            response="$(curl -fsS               -H "Authorization: Bearer $token"               -H "Content-Type: application/json"               "https://api.cloudflare.com/client/v4/zones?name=clouva.com.ar&status=active")"
+            zone="$(python3 -c 'import json,sys; d=json.load(sys.stdin); r=d.get("result") or []; print((r[0] if r else {}).get("id",""))' <<<"$response")"
+          fi
+
+          if [ -z "$zone" ]; then
+            echo "::warning::Cloudflare zone id could not be resolved; skipping purge."
+            exit 0
+          fi
+
+          echo "Purging CLOUVA Minecraft URLs from Cloudflare..."
+          response="$(curl -fsS -X POST             "https://api.cloudflare.com/client/v4/zones/$zone/purge_cache"             -H "Authorization: Bearer $token"             -H "Content-Type: application/json"             --data '{"files":["https://clouva.com.ar/minecraft","https://www.clouva.com.ar/minecraft"]}')"
+          python3 - <<'PY' <<<"$response"
+import json, sys
+data=json.load(sys.stdin)
+print(json.dumps({"success": data.get("success"), "errors": data.get("errors")}, ensure_ascii=False))
+if not data.get("success"):
+    raise SystemExit(1)
+PY
+
+      - name: Verify public Minecraft after repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          sleep 5
+          echo "===== FINAL PUBLIC HEADERS ====="
+          curl -sSIL --max-time 20             -H 'Cache-Control: no-cache'             -H 'Pragma: no-cache'             "https://clouva.com.ar/minecraft?ratcraft_verify=$(date +%s)" | sed -n '1,100p'
+
+          body="$(mktemp)"
+          curl -fsSL --max-time 30             -H 'Cache-Control: no-cache'             -H 'Pragma: no-cache'             "https://clouva.com.ar/minecraft?ratcraft_verify=$(date +%s%N)" -o "$body"
+          if grep -Eqi 'RATCRAFT|NIÑOS RATA|Universo Gaming|PRENDER SERVER' "$body"; then
+            echo "Ratcraft production marker detected."
+          else
+            echo "::warning::Ratcraft marker was not detected in the returned HTML."
+          fi
