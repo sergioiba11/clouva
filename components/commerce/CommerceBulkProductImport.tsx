@@ -97,6 +97,12 @@ type BatchSourceItem = {
   status: string;
   group_key: string | null;
   listing_id: string | null;
+  recognition: {
+    context_only?: boolean;
+    observed_products?: string[];
+    context_reason?: string;
+    [key: string]: unknown;
+  } | null;
   error: string | null;
 };
 
@@ -500,6 +506,13 @@ export function CommerceBulkProductImport({
   const visibleDetectedGroups = useMemo(
     () => showAllDetectedGroups ? groups : groups.slice(0, 8),
     [groups, showAllDetectedGroups],
+  );
+
+  const contextPhotos = useMemo(
+    () => Object.values(batchSources)
+      .filter((item) => item.recognition?.context_only === true)
+      .sort((a, b) => a.source_index - b.source_index),
+    [batchSources],
   );
 
   function chooseFiles(list: FileList | null) {
@@ -1553,6 +1566,45 @@ export function CommerceBulkProductImport({
               {showAllDetectedGroups ? "Mostrar menos productos" : `Ver los ${groups.length} productos detectados`}
             </button>
           ) : null}
+        </div>
+      ) : null}
+
+      {contextPhotos.length ? (
+        <div className="mt-4 rounded-2xl border border-cyan-300/15 bg-cyan-300/[0.035] p-3 sm:p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-[.16em] text-cyan-200">Fotos mixtas / contexto</p>
+              <p className="mt-1 text-[10px] leading-4 text-white/42">
+                Estas fotos muestran varios productos distintos. Sirven como evidencia, pero no crean un producto ni suman unidades al stock.
+              </p>
+            </div>
+            <span className="rounded-full border border-cyan-300/15 px-2 py-1 text-[10px] text-cyan-100/70">{contextPhotos.length}</span>
+          </div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            {contextPhotos.map((photo) => {
+              const observed = Array.isArray(photo.recognition?.observed_products)
+                ? photo.recognition.observed_products.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+                : [];
+              return (
+                <div key={photo.id} className="flex gap-3 rounded-xl border border-white/[0.07] bg-black/20 p-3">
+                  <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-lg border border-cyan-300/10 bg-black/30">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={photo.source_url} alt={photo.file_name || `Foto mixta #${photo.source_index + 1}`} className="h-full w-full object-cover" loading="lazy" />
+                    <span className="absolute right-1 top-1 rounded bg-black/80 px-1 py-0.5 text-[8px] text-white/75">#{photo.source_index + 1}</span>
+                  </div>
+                  <div className="min-w-0">
+                    <strong className="text-xs text-cyan-100">Foto de contexto · no agrupar</strong>
+                    <p className="mt-1 text-[10px] leading-4 text-white/55">
+                      {observed.length ? `Veo: ${observed.join(" · ")}` : "Varios productos distintos en la misma foto."}
+                    </p>
+                    {photo.recognition?.context_reason ? (
+                      <p className="mt-1 text-[9px] leading-4 text-white/30">{photo.recognition.context_reason}</p>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       ) : null}
     </section>
