@@ -138,6 +138,18 @@ jobs:
         run: |
           gcloud compute instances add-metadata "$MC_NAME"             --project "$PROJECT_ID"             --zone "$MC_ZONE"             --metadata-from-file startup-script=infra/minecraft/startup.sh
 
+      - name: Sync CLOUVA web Minecraft host
+        shell: bash
+        env:
+          MC_IP: ${{ steps.mc.outputs.ip }}
+        run: |
+          set -euo pipefail
+          gcloud run services update clouva-web \
+            --project "$PROJECT_ID" \
+            --region us-central1 \
+            --update-env-vars "MINECRAFT_HOST=$MC_IP,MINECRAFT_MAP_UPSTREAM=http://$MC_IP:8100" \
+            --quiet
+
       - name: Verify public listener
         shell: bash
         env:
@@ -146,6 +158,57 @@ jobs:
           set -euo pipefail
           timeout 4 bash -c "</dev/tcp/$MC_IP/25565"
           echo "Ratcraft is online and secured by whitelist."
+
+      - name: Sync Cloudflare Minecraft DNS when credentials exist
+        shell: bash
+        env:
+          MC_IP: ${{ steps.mc.outputs.ip }}
+          CF_TOKEN_PRIMARY: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_TOKEN_ALT: ${{ secrets.CF_API_TOKEN }}
+          CF_TOKEN_ALT2: ${{ secrets.CLOUDFLARE_TOKEN }}
+        run: |
+          set -euo pipefail
+          CF_TOKEN="${CF_TOKEN_PRIMARY:-${CF_TOKEN_ALT:-${CF_TOKEN_ALT2:-}}}"
+          if [ -z "$CF_TOKEN" ]; then
+            echo "CLOUDFLARE_DNS_SYNC=SKIPPED_NO_TOKEN"
+            exit 0
+          fi
+
+          zone_id="$(
+            curl -fsS \
+              -H "Authorization: Bearer $CF_TOKEN" \
+              -H "Content-Type: application/json" \
+              "https://api.cloudflare.com/client/v4/zones?name=clouva.com.ar&status=active" \
+            | jq -r ".result[0].id // empty"
+          )"
+          test -n "$zone_id"
+
+          record_id="$(
+            curl -fsS \
+              -H "Authorization: Bearer $CF_TOKEN" \
+              -H "Content-Type: application/json" \
+              "https://api.cloudflare.com/client/v4/zones/$zone_id/dns_records?type=A&name=mc.clouva.com.ar" \
+            | jq -r ".result[0].id // empty"
+          )"
+
+          payload="$(jq -nc --arg ip "$MC_IP" "{type:\"A\",name:\"mc.clouva.com.ar\",content:\$ip,ttl:60,proxied:false}")"
+
+          if [ -n "$record_id" ]; then
+            curl -fsS -X PATCH \
+              -H "Authorization: Bearer $CF_TOKEN" \
+              -H "Content-Type: application/json" \
+              --data "$payload" \
+              "https://api.cloudflare.com/client/v4/zones/$zone_id/dns_records/$record_id" \
+              | jq -e ".success == true" >/dev/null
+          else
+            curl -fsS -X POST \
+              -H "Authorization: Bearer $CF_TOKEN" \
+              -H "Content-Type: application/json" \
+              --data "$payload" \
+              "https://api.cloudflare.com/client/v4/zones/$zone_id/dns_records" \
+              | jq -e ".success == true" >/dev/null
+          fi
+          echo "CLOUDFLARE_DNS_SYNC=OK"
 
       - name: Resolve mc.clouva.com.ar
         shell: bash
