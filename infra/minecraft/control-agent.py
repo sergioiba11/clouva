@@ -7,7 +7,7 @@ import time
 import urllib.error
 import urllib.request
 
-METADATA_URL = "http://metadata.google.internal/computeMetadata/v1/instance/attributes/ratcraft-command"
+METADATA_URL = "http://metadata.google.internal/computeMetadata/v1/instance/attributes/ratcraft-command-queue"
 METADATA_HEADERS = {"Metadata-Flavor": "Google"}
 CONTAINER = os.environ.get("RATCRAFT_CONTAINER", "clouva-minecraft")
 LAST_ID_FILE = os.environ.get("RATCRAFT_LAST_ID_FILE", "/srv/minecraft/.ratcraft-control-last-id")
@@ -57,11 +57,11 @@ def fetch_command():
         raise
 
     if not raw:
-        return None
+        return []
     data = json.loads(raw)
-    if not isinstance(data, dict):
-        return None
-    return data
+    if not isinstance(data, list):
+        return []
+    return [item for item in data if isinstance(item, dict) and item.get("id")]
 
 
 def valid_name(value):
@@ -200,26 +200,44 @@ def main():
 
     while True:
         try:
-            payload = fetch_command()
-            if payload:
-                command_id = str(payload.get("id") or "").strip()
-                if command_id and command_id != last_id:
-                    try:
-                        result = execute(payload)
-                        log(f"{result['action']} -> {result['output']}")
-                    except Exception as error:
-                        result = {
-                            "id": command_id,
-                            "action": payload.get("action"),
-                            "ok": False,
-                            "error": str(error),
-                            "executed_at": int(time.time()),
-                        }
-                        log(f"error {payload.get('action')}: {error}")
+            queue = fetch_command()
+            pending = []
+            if queue:
+                if not last_id:
+                    pending = queue
+                else:
+                    last_index = next(
+                        (index for index, item in enumerate(queue) if str(item.get("id") or "") == last_id),
+                        -1,
+                    )
+                    if last_index >= 0:
+                        pending = queue[last_index + 1 :]
+                    else:
+                        # The server was offline long enough for the rolling queue to advance.
+                        # Execute only the newest command rather than risk replaying old actions.
+                        pending = queue[-1:]
 
-                    write_result(result)
-                    write_last_id(command_id)
-                    last_id = command_id
+            for payload in pending:
+                command_id = str(payload.get("id") or "").strip()
+                if not command_id or command_id == last_id:
+                    continue
+
+                try:
+                    result = execute(payload)
+                    log(f"{result['action']} -> {result['output']}")
+                except Exception as error:
+                    result = {
+                        "id": command_id,
+                        "action": payload.get("action"),
+                        "ok": False,
+                        "error": str(error),
+                        "executed_at": int(time.time()),
+                    }
+                    log(f"error {payload.get('action')}: {error}")
+
+                write_result(result)
+                write_last_id(command_id)
+                last_id = command_id
         except Exception as error:
             log(f"poll error: {error}")
 
