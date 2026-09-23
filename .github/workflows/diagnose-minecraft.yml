@@ -38,6 +38,17 @@ jobs:
             --zone "$MC_ZONE" \
             --format="yaml(name,status,lastStartTimestamp,networkInterfaces[0].accessConfigs[0].natIP,metadata.items)"
 
+      - name: Recent Compute audit events
+        continue-on-error: true
+        shell: bash
+        run: |
+          set +e
+          instance_id="$(gcloud compute instances describe "$MC_INSTANCE" --project "$PROJECT_ID" --zone "$MC_ZONE" --format='value(id)' 2>/dev/null)"
+          echo "INSTANCE_ID=$instance_id"
+          if [ -n "$instance_id" ]; then
+            gcloud logging read               "resource.type=gce_instance AND resource.labels.instance_id=$instance_id AND timestamp>="2026-09-23T02:15:00Z""               --project "$PROJECT_ID"               --limit=100               --order=asc               --format='table(timestamp,protoPayload.methodName,protoPayload.authenticationInfo.principalEmail,protoPayload.requestMetadata.callerIp,severity)'
+          fi
+
       - name: Docker state and Minecraft logs
         continue-on-error: true
         shell: bash
