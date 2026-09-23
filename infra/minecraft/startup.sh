@@ -70,12 +70,27 @@ docker_args=(
   -e SPAWN_PROTECTION=16
   -e ONLINE_MODE=FALSE
   -e ENFORCE_SECURE_PROFILE=FALSE
-  -e ENABLE_WHITELIST=FALSE
+  -e ENABLE_WHITELIST=TRUE
+  -e ENFORCE_WHITELIST=TRUE
   -e "PLUGINS=https://download.geysermc.org/v2/projects/geyser/versions/latest/builds/latest/downloads/spigot,https://download.geysermc.org/v2/projects/floodgate/versions/latest/builds/latest/downloads/spigot,https://github.com/AuthMe/AuthMeReloaded/releases/download/6.0.1/AuthMe-6.0.1-Paper.jar,https://github.com/BlueMap-Minecraft/BlueMap/releases/download/v5.27/bluemap-5.27-paper.jar"
   -v "$WORLD_ROOT:/data"
 )
 
 docker run "${docker_args[@]}" itzg/minecraft-server:latest
+
+# Ratcraft is private. Keep offline mode for SKLauncher/AuthMe and Floodgate,
+# but only approved Minecraft names may reach authentication/gameplay.
+for _ in $(seq 1 120); do
+  if docker exec "$CONTAINER_NAME" rcon-cli list >/dev/null 2>&1; then
+    docker exec "$CONTAINER_NAME" rcon-cli "whitelist add Clouva" >/dev/null 2>&1 || true
+    docker exec "$CONTAINER_NAME" rcon-cli "whitelist add ninotimi" >/dev/null 2>&1 || true
+    docker exec "$CONTAINER_NAME" rcon-cli "ban GTrein Unauthorized access to Ratcraft" >/dev/null 2>&1 || true
+    docker exec "$CONTAINER_NAME" rcon-cli "whitelist on" >/dev/null 2>&1 || true
+    docker exec "$CONTAINER_NAME" rcon-cli "whitelist reload" >/dev/null 2>&1 || true
+    break
+  fi
+  sleep 2
+done
 
 # Floodgate lets Bedrock/Xbox Live accounts join without a Java account.
 # Geyser creates this config on the first Paper boot, so switch auth once it exists.
