@@ -191,4 +191,32 @@ systemctl daemon-reload
 systemctl enable --now clouva-minecraft-watchdog.timer
 
 
+
+# CLOUVA private control agent: receives structured commands through instance metadata.
+curl -fsSL \
+  https://raw.githubusercontent.com/sergioiba11/clouva/main/infra/minecraft/control-agent.py \
+  -o /usr/local/sbin/clouva-minecraft-control-agent.py
+chmod 0755 /usr/local/sbin/clouva-minecraft-control-agent.py
+
+cat >/etc/systemd/system/clouva-minecraft-control-agent.service <<'EOF'
+[Unit]
+Description=CLOUVA Ratcraft private control agent
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /usr/local/sbin/clouva-minecraft-control-agent.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now clouva-minecraft-control-agent.service
+
+
 # startup metadata sync v2
