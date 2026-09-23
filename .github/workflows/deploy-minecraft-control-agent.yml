@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "infra/minecraft/control-agent.py"
+      - "infra/minecraft/control-agent.service"
       - ".github/workflows/deploy-minecraft-control-agent.yml"
   workflow_dispatch:
 
@@ -31,8 +32,13 @@ jobs:
 
       - name: Upload control agent
         run: |
-          gcloud compute scp infra/minecraft/control-agent.py "$MC_INSTANCE:/tmp/clouva-minecraft-control-agent.py" \
-            --project "$PROJECT_ID" --zone "$MC_ZONE" --quiet
+          gcloud compute scp \
+            infra/minecraft/control-agent.py \
+            infra/minecraft/control-agent.service \
+            "$MC_INSTANCE:/tmp/" \
+            --project "$PROJECT_ID" \
+            --zone "$MC_ZONE" \
+            --quiet
 
       - name: Install and start control agent
         run: |
@@ -44,23 +50,8 @@ jobs:
             --ssh-flag="-o UserKnownHostsFile=/dev/null" \
             --command='
               set -euo pipefail
-              sudo install -m 0755 /tmp/clouva-minecraft-control-agent.py /usr/local/sbin/clouva-minecraft-control-agent.py
-              sudo tee /etc/systemd/system/clouva-minecraft-control-agent.service >/dev/null <<'"'"'EOF'"'"'
-[Unit]
-Description=CLOUVA Ratcraft private control agent
-After=docker.service network-online.target
-Wants=network-online.target
-Requires=docker.service
-
-[Service]
-Type=simple
-ExecStart=/usr/bin/python3 /usr/local/sbin/clouva-minecraft-control-agent.py
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-EOF
+              sudo install -m 0755 /tmp/control-agent.py /usr/local/sbin/clouva-minecraft-control-agent.py
+              sudo install -m 0644 /tmp/control-agent.service /etc/systemd/system/clouva-minecraft-control-agent.service
               sudo systemctl daemon-reload
               sudo systemctl enable --now clouva-minecraft-control-agent.service
               sleep 2
