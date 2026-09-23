@@ -131,6 +131,18 @@ jobs:
               if [ -f /srv/minecraft/logs/latest.log ]; then
                 sudo grep -E "joined the game|left the game|logged in with entity id|UUID of player|<[^>]+>|Async Chat Thread|Server thread/INFO.*:" /srv/minecraft/logs/latest.log | tail -n 500
               fi
+              echo "===== ROTATED LOG FILES ====="
+              sudo ls -lah /srv/minecraft/logs | tail -n 80 || true
+              echo "===== ROTATED JOIN / LEAVE / CHAT ====="
+              for log in /srv/minecraft/logs/*.log /srv/minecraft/logs/*.log.gz; do
+                [ -e "$log" ] || continue
+                echo "----- $log -----"
+                if [[ "$log" == *.gz ]]; then
+                  sudo zgrep -E "joined the game|left the game|logged in with entity id|UUID of player|<[^>]+>|Async Chat Thread|chat" "$log" | tail -n 400 || true
+                else
+                  sudo grep -E "joined the game|left the game|logged in with entity id|UUID of player|<[^>]+>|Async Chat Thread|chat" "$log" | tail -n 400 || true
+                fi
+              done
               echo "===== RECENT CHAT FROM DOCKER ====="
               sudo docker logs --since 12h clouva-minecraft 2>&1 | grep -E "joined the game|left the game|logged in with entity id|UUID of player|<[^>]+>|Async Chat Thread" | tail -n 500 || true
             '
