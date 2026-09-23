@@ -1,0 +1,37 @@
+name: Inspect CLOUVA Minecraft Web Permissions
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/inspect-minecraft-web-permissions.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: gen-lang-client-0737053175
+  REGION: us-central1
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA_EMAIL }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Inspect CLOUVA web service account roles
+        shell: bash
+        run: |
+          set -euo pipefail
+          sa="$(gcloud run services describe clouva-web --project "$PROJECT_ID" --region "$REGION" --format='value(spec.template.spec.serviceAccountName)')"
+          if [ -z "$sa" ]; then
+            sa="$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')-compute@developer.gserviceaccount.com"
+          fi
+          echo "SERVICE_ACCOUNT=$sa"
+          gcloud projects get-iam-policy "$PROJECT_ID"             --flatten="bindings[].members"             --filter="bindings.members:serviceAccount:$sa"             --format="table(bindings.role)"
