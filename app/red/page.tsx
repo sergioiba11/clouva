@@ -1,28 +1,38 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
   Cable,
-  CircleDot,
+  Crosshair,
   Globe2,
   Laptop,
   Loader2,
+  Minus,
   Network,
+  Plus,
   RefreshCw,
   Route,
   Router,
   ScanLine,
   Server,
   Shield,
-  ShieldCheck,
-  Waypoints,
   Wifi,
+  X,
 } from "lucide-react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+  type WheelEvent as ReactWheelEvent,
+} from "react";
+import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/auth-provider";
 import { canAccessAdmin } from "@/lib/auth";
+import styles from "./red.module.css";
 
 type Port = {
   port: number;
@@ -41,6 +51,20 @@ type Device = {
   latencyMs?: number | null;
   status?: string | null;
   ports?: Port[];
+};
+
+type Neighbor = {
+  ip: string;
+  mac?: string | null;
+  state?: string | null;
+  interface?: string | null;
+};
+
+type RouteEntry = {
+  destination?: string | null;
+  nextHop?: string | null;
+  metric?: number | null;
+  interface?: string | null;
 };
 
 type Connection = {
@@ -72,20 +96,40 @@ type Snapshot = {
     mac?: string | null;
     subnet?: string | null;
     gateway?: string | null;
+    dns?: string[];
+  };
+  activity?: {
+    foregroundProcess?: string | null;
+    foregroundPid?: number | null;
+    foregroundTitle?: string | null;
+    observedAt?: string | null;
   };
   gateway?: Device | null;
   devices?: Device[];
+  neighbors?: Neighbor[];
+  routes?: RouteEntry[];
   connections?: Connection[];
-  hops?: Hop[];
-  target?: string;
 };
 
 type ApiPayload = {
   ok?: boolean;
-  action?: string;
   result?: Snapshot | Device | { device?: Device; hops?: Hop[]; target?: string };
   error?: string;
 };
+
+type Destination = Connection & { count: number; id: string };
+
+type Detail =
+  | { kind: "pc" }
+  | { kind: "gateway" }
+  | { kind: "device"; device: Device }
+  | { kind: "destination"; destination: Destination }
+  | { kind: "neighbor"; neighbor: Neighbor };
+
+const SCENE_W = 1100;
+const SCENE_H = 700;
+const PC = { x: 120, y: 307, w: 180, h: 66 };
+const GATEWAY = { x: 430, y: 307, w: 180, h: 66 };
 
 function cn(...values: Array<string | false | null | undefined>) {
   return values.filter(Boolean).join(" ");
@@ -95,76 +139,45 @@ function titleForDevice(device: Device) {
   return device.hostname || device.vendor || device.ip;
 }
 
+function serviceFromActivity(title?: string | null, process?: string | null) {
+  const text = (title ?? "").toLowerCase();
+  if (text.includes("youtube")) return "YouTube";
+  if (text.includes("chatgpt")) return "ChatGPT";
+  if (text.includes("discord")) return "Discord";
+  if (text.includes("github")) return "GitHub";
+  if (text.includes("cloudflare")) return "Cloudflare";
+  if (text.includes("clouva")) return "CLOUVA";
+  return process || "Sin actividad identificada";
+}
+
 function mergeDevice(devices: Device[], incoming: Device) {
   const index = devices.findIndex((device) => device.ip === incoming.ip);
   if (index < 0) return [...devices, incoming];
   const next = [...devices];
-  next[index] = { ...next[index], ...incoming, ports: incoming.ports ?? next[index].ports };
+  next[index] = {
+    ...next[index],
+    ...incoming,
+    ports: incoming.ports ?? next[index].ports,
+  };
   return next;
 }
 
-function PortPills({ ports, compact = false }: { ports?: Port[]; compact?: boolean }) {
-  if (!ports?.length) {
-    return <span className="text-[11px] font-semibold uppercase tracking-[.12em] text-white/28">sin puertas leídas</span>;
-  }
-
-  return (
-    <div className="flex flex-wrap gap-1.5">
-      {ports.slice(0, compact ? 5 : 12).map((port) => (
-        <span
-          key={`${port.protocol ?? "tcp"}:${port.port}`}
-          title={[port.service, port.product, port.version].filter(Boolean).join(" · ")}
-          className="rounded-lg border border-cyan-300/20 bg-cyan-300/[.07] px-2 py-1 font-mono text-[10px] font-bold text-cyan-100"
-        >
-          {port.port}/{port.protocol ?? "tcp"}{port.service ? ` · ${port.service}` : ""}
-        </span>
-      ))}
-      {ports.length > (compact ? 5 : 12) ? (
-        <span className="rounded-lg border border-white/10 bg-white/[.04] px-2 py-1 text-[10px] font-bold text-white/45">
-          +{ports.length - (compact ? 5 : 12)}
-        </span>
-      ) : null}
-    </div>
-  );
+function isUsefulConnection(connection: Connection) {
+  const address = connection.remoteAddress;
+  if (!address || address === "127.0.0.1" || address === "::1") return false;
+  if (address === "0.0.0.0" || address === "::") return false;
+  return true;
 }
 
-function DeviceCard({
-  device,
-  selected,
-  busy,
-  onInspect,
-}: {
-  device: Device;
-  selected: boolean;
-  busy: boolean;
-  onInspect: (device: Device) => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={() => onInspect(device)}
-      disabled={busy}
-      className={cn(
-        "group w-full rounded-2xl border p-3 text-left transition",
-        selected
-          ? "border-cyan-300/45 bg-cyan-300/[.09] shadow-[0_0_30px_rgba(34,211,238,.08)]"
-          : "border-white/10 bg-black/25 hover:border-cyan-300/25 hover:bg-cyan-300/[.05]",
-        busy && "cursor-wait",
-      )}
-    >
-      <div className="flex items-start gap-3">
-        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-white/10 bg-white/[.035] text-cyan-100">
-          <Server className="h-5 w-5" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-black text-white">{titleForDevice(device)}</div>
-          <div className="mt-0.5 truncate font-mono text-[11px] text-white/45">{device.ip}</div>
-          <div className="mt-2"><PortPills ports={device.ports} compact /></div>
-        </div>
-        <span className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full bg-emerald-400 shadow-[0_0_12px_rgba(52,211,153,.7)]" />
-      </div>
-    </button>
-  );
+function curve(
+  from: { x: number; y: number },
+  to: { x: number; y: number },
+  bend = 0.45,
+) {
+  const dx = to.x - from.x;
+  const c1 = from.x + dx * bend;
+  const c2 = to.x - dx * bend;
+  return `M ${from.x} ${from.y} C ${c1} ${from.y}, ${c2} ${to.y}, ${to.x} ${to.y}`;
 }
 
 export default function NetworkMapPage() {
@@ -175,9 +188,16 @@ export default function NetworkMapPage() {
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [selectedIp, setSelectedIp] = useState<string | null>(null);
-  const [traceTarget, setTraceTarget] = useState("");
-  const [trace, setTrace] = useState<{ target?: string; hops: Hop[] } | null>(null);
+  const [detail, setDetail] = useState<Detail | null>(null);
+  const [trace, setTrace] = useState<{ target: string; hops: Hop[] } | null>(null);
+  const [camera, setCamera] = useState({ x: 0, y: 0, scale: 1 });
+  const dragRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    originX: number;
+    originY: number;
+  } | null>(null);
 
   useEffect(() => {
     if (loading || !hydrationReady || !profileReady) return;
@@ -188,21 +208,28 @@ export default function NetworkMapPage() {
     if (!isAdmin) router.replace("/");
   }, [hydrationReady, isAdmin, loading, profileReady, router, user]);
 
-  const call = useCallback(async (action: "snapshot" | "discover" | "inspect" | "trace", extra: Record<string, string> = {}) => {
-    if (!session?.access_token) throw new Error("Sesión requerida.");
-    const response = await fetch("/api/network/scan", {
-      method: "POST",
-      cache: "no-store",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${session.access_token}`,
-      },
-      body: JSON.stringify({ action, ...extra }),
-    });
-    const payload = (await response.json().catch(() => ({}))) as ApiPayload;
-    if (!response.ok) throw new Error(payload.error || "No se pudo leer la red.");
-    return payload.result;
-  }, [session?.access_token]);
+  const call = useCallback(
+    async (
+      action: "snapshot" | "discover" | "inspect" | "trace",
+      extra: Record<string, string> = {},
+    ) => {
+      if (!session?.access_token) throw new Error("Sesión requerida.");
+      const response = await fetch("/api/network/scan", {
+        method: "POST",
+        cache: "no-store",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ action, ...extra }),
+      });
+
+      const payload = (await response.json().catch(() => ({}))) as ApiPayload;
+      if (!response.ok) throw new Error(payload.error || "No se pudo leer la red.");
+      return payload.result;
+    },
+    [session?.access_token],
+  );
 
   const applySnapshot = useCallback((result: ApiPayload["result"]) => {
     if (!result || typeof result !== "object") return;
@@ -212,48 +239,49 @@ export default function NetworkMapPage() {
       "local" in maybeSnapshot ||
       "devices" in maybeSnapshot ||
       "connections" in maybeSnapshot ||
-      "gateway" in maybeSnapshot
+      "neighbors" in maybeSnapshot
     ) {
-      setSnapshot((current) => ({ ...(current ?? {}), ...maybeSnapshot }));
+      setSnapshot((current) => ({
+        ...(current ?? {}),
+        ...maybeSnapshot,
+        devices:
+          maybeSnapshot.devices?.length
+            ? maybeSnapshot.devices
+            : current?.devices ?? [],
+      }));
       return;
     }
 
     const wrapper = result as { device?: Device };
-    if (wrapper.device?.ip) {
-      setSnapshot((current) => ({
-        ...(current ?? {}),
-        devices: mergeDevice(current?.devices ?? [], wrapper.device!),
-      }));
-      setSelectedIp(wrapper.device.ip);
-      return;
-    }
-
-    const device = result as Device;
-    if (device.ip) {
+    const device = wrapper.device ?? (result as Device);
+    if (device?.ip) {
       setSnapshot((current) => ({
         ...(current ?? {}),
         devices: mergeDevice(current?.devices ?? [], device),
       }));
-      setSelectedIp(device.ip);
+      setDetail({ kind: "device", device });
     }
   }, []);
 
-  const refresh = useCallback(async (action: "snapshot" | "discover" = "snapshot") => {
-    setBusy(action);
-    setError(null);
-    try {
-      const result = await call(action);
-      applySnapshot(result);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "No se pudo leer la red.");
-    } finally {
-      setBusy(null);
-    }
-  }, [applySnapshot, call]);
+  const refresh = useCallback(
+    async (action: "snapshot" | "discover" = "snapshot") => {
+      setBusy(action);
+      try {
+        const result = await call(action);
+        applySnapshot(result);
+        setError(null);
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "No se pudo leer la red.");
+      } finally {
+        setBusy(null);
+      }
+    },
+    [applySnapshot, call],
+  );
 
   useEffect(() => {
     if (!isAdmin || !session?.access_token) return;
-    void refresh("snapshot");
+    void refresh("discover");
     const timer = window.setInterval(() => {
       void call("snapshot")
         .then((result) => {
@@ -263,324 +291,668 @@ export default function NetworkMapPage() {
         .catch((cause) => {
           setError(cause instanceof Error ? cause.message : "No se pudo leer la red.");
         });
-    }, 10_000);
+    }, 5_000);
     return () => window.clearInterval(timer);
   }, [applySnapshot, call, isAdmin, refresh, session?.access_token]);
 
-  const inspect = useCallback(async (device: Device) => {
-    setSelectedIp(device.ip);
-    setBusy(`inspect:${device.ip}`);
-    setError(null);
-    try {
-      const result = await call("inspect", { target: device.ip });
-      applySnapshot(result);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "No se pudo inspeccionar el host.");
-    } finally {
-      setBusy(null);
-    }
-  }, [applySnapshot, call]);
+  const inspect = useCallback(
+    async (device: Device) => {
+      setDetail({ kind: "device", device });
+      setBusy(`inspect:${device.ip}`);
+      try {
+        const result = await call("inspect", { target: device.ip });
+        applySnapshot(result);
+        setError(null);
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "No se pudo inspeccionar el host.");
+      } finally {
+        setBusy(null);
+      }
+    },
+    [applySnapshot, call],
+  );
 
-  const runTrace = useCallback(async () => {
-    const target = traceTarget.trim();
-    if (!target) return;
-    setBusy("trace");
-    setError(null);
-    try {
-      const result = await call("trace", { target });
-      const data = result as { hops?: Hop[]; target?: string } | undefined;
-      setTrace({ target: data?.target ?? target, hops: data?.hops ?? [] });
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "No se pudo trazar la ruta.");
-    } finally {
-      setBusy(null);
-    }
-  }, [call, traceTarget]);
+  const runTrace = useCallback(
+    async (destination: Destination) => {
+      setDetail({ kind: "destination", destination });
+      setTrace(null);
+      setBusy(`trace:${destination.id}`);
+      try {
+        const result = (await call("trace", {
+          target: destination.remoteAddress,
+        })) as { hops?: Hop[]; target?: string } | undefined;
+        setTrace({
+          target: result?.target ?? destination.remoteAddress,
+          hops: result?.hops ?? [],
+        });
+        setError(null);
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "No se pudo trazar la ruta.");
+      } finally {
+        setBusy(null);
+      }
+    },
+    [call],
+  );
 
   const devices = snapshot?.devices ?? [];
+  const neighbors = snapshot?.neighbors ?? [];
   const connections = snapshot?.connections ?? [];
-  const selected = devices.find((device) => device.ip === selectedIp) ?? null;
 
-  const destinations = useMemo(() => {
-    const map = new Map<string, Connection & { count: number }>();
-    for (const connection of connections) {
-      if (!connection.remoteAddress) continue;
-      const key = `${connection.remoteAddress}:${connection.remotePort ?? 0}:${connection.process ?? ""}`;
-      const existing = map.get(key);
-      if (existing) existing.count += 1;
-      else map.set(key, { ...connection, count: 1 });
+  const gatewayIp = snapshot?.local?.gateway || snapshot?.gateway?.ip || null;
+  const defaultRoute = (snapshot?.routes ?? []).find(
+    (entry) => entry.destination === "0.0.0.0/0",
+  );
+
+  const lanDevices = useMemo(() => {
+    const map = new Map<string, Device>();
+    for (const device of devices) {
+      if (!device.ip) continue;
+      if (device.ip === snapshot?.local?.ip || device.ip === gatewayIp) continue;
+      map.set(device.ip, device);
     }
-    return [...map.values()].slice(0, 30);
-  }, [connections]);
+
+    for (const neighbor of neighbors) {
+      if (!neighbor.ip) continue;
+      if (neighbor.ip === snapshot?.local?.ip || neighbor.ip === gatewayIp) continue;
+      if (!map.has(neighbor.ip)) {
+        map.set(neighbor.ip, {
+          ip: neighbor.ip,
+          mac: neighbor.mac,
+          status: neighbor.state,
+        });
+      }
+    }
+
+    return [...map.values()].slice(0, 8);
+  }, [devices, gatewayIp, neighbors, snapshot?.local?.ip]);
+
+  const destinations = useMemo<Destination[]>(() => {
+    const map = new Map<string, Destination>();
+    for (const connection of connections) {
+      if (!isUsefulConnection(connection)) continue;
+      const id = [
+        connection.process ?? "",
+        connection.remoteAddress,
+        connection.remotePort ?? 0,
+      ].join(":");
+      const existing = map.get(id);
+      if (existing) {
+        existing.count += 1;
+      } else {
+        map.set(id, { ...connection, count: 1, id });
+      }
+    }
+
+    return [...map.values()]
+      .sort((a, b) => {
+        if ((a.process ?? "") === (snapshot?.activity?.foregroundProcess ?? "")) return -1;
+        if ((b.process ?? "") === (snapshot?.activity?.foregroundProcess ?? "")) return 1;
+        return b.count - a.count;
+      })
+      .slice(0, 10);
+  }, [connections, snapshot?.activity?.foregroundProcess]);
+
+  const devicePositions = useMemo(() => {
+    const slots = [
+      { x: 60, y: 100 },
+      { x: 235, y: 105 },
+      { x: 45, y: 500 },
+      { x: 235, y: 515 },
+      { x: 315, y: 185 },
+      { x: 320, y: 445 },
+      { x: 70, y: 220 },
+      { x: 70, y: 410 },
+    ];
+    return lanDevices.map((device, index) => ({
+      device,
+      ...slots[index],
+    }));
+  }, [lanDevices]);
+
+  const destinationPositions = useMemo(() => {
+    const count = Math.max(destinations.length, 1);
+    const top = 92;
+    const bottom = 610;
+    const step = count === 1 ? 0 : (bottom - top) / (count - 1);
+    return destinations.map((destination, index) => ({
+      destination,
+      x: 780,
+      y: count === 1 ? 307 : top + step * index,
+    }));
+  }, [destinations]);
+
+  const selectedDestination =
+    detail?.kind === "destination" ? detail.destination : null;
+
+  const selectedDevice =
+    detail?.kind === "device" ? detail.device : null;
+
+  const clampScale = useCallback((value: number) => Math.min(2.2, Math.max(0.65, value)), []);
+
+  const zoomBy = useCallback(
+    (delta: number) => {
+      setCamera((current) => ({
+        ...current,
+        scale: clampScale(current.scale + delta),
+      }));
+    },
+    [clampScale],
+  );
+
+  const resetCamera = useCallback(() => {
+    setCamera({ x: 0, y: 0, scale: 1 });
+  }, []);
+
+  const onPointerDown = useCallback(
+    (event: ReactPointerEvent<HTMLElement>) => {
+      if (event.pointerType === "mouse" && event.button !== 0) return;
+      dragRef.current = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        originX: camera.x,
+        originY: camera.y,
+      };
+      event.currentTarget.setPointerCapture(event.pointerId);
+    },
+    [camera.x, camera.y],
+  );
+
+  const onPointerMove = useCallback((event: ReactPointerEvent<HTMLElement>) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    setCamera((current) => ({
+      ...current,
+      x: drag.originX + (event.clientX - drag.startX),
+      y: drag.originY + (event.clientY - drag.startY),
+    }));
+  }, []);
+
+  const onPointerUp = useCallback((event: ReactPointerEvent<HTMLElement>) => {
+    if (dragRef.current?.pointerId === event.pointerId) dragRef.current = null;
+    try {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    } catch {}
+  }, []);
+
+  const onWheel = useCallback(
+    (event: ReactWheelEvent<HTMLElement>) => {
+      event.preventDefault();
+      zoomBy(event.deltaY < 0 ? 0.1 : -0.1);
+    },
+    [zoomBy],
+  );
 
   if (loading || !hydrationReady || !profileReady || !user || !isAdmin) {
     return (
-      <main className="grid min-h-screen place-items-center bg-[#03070b] text-white">
-        <div className="flex items-center gap-3 text-sm font-bold text-white/55">
-          <Loader2 className="h-5 w-5 animate-spin" /> Abriendo mapa de red...
+      <main className={styles.page}>
+        <div className="grid min-h-screen place-items-center">
+          <div className="flex items-center gap-2 text-sm text-white/50">
+            <Loader2 className="h-5 w-5 animate-spin" /> Abriendo Red...
+          </div>
         </div>
       </main>
     );
   }
 
   return (
-    <main className="relative min-h-screen overflow-hidden bg-[#03070b] text-white">
-      <div
-        className="pointer-events-none fixed inset-0 opacity-80"
-        style={{
-          background:
-            "radial-gradient(circle at 48% -10%, rgba(34,211,238,.13), transparent 32%), radial-gradient(circle at 8% 40%, rgba(124,58,237,.10), transparent 28%), linear-gradient(180deg,#03070b,#05030a)",
-        }}
-      />
-      <div
-        className="pointer-events-none fixed inset-0 opacity-[.11]"
-        style={{
-          backgroundImage:
-            "linear-gradient(rgba(103,232,249,.22) 1px, transparent 1px), linear-gradient(90deg, rgba(103,232,249,.22) 1px, transparent 1px)",
-          backgroundSize: "34px 34px",
-        }}
-      />
-
-      <div className="relative mx-auto w-full max-w-[1680px] px-3 pb-16 pt-3 sm:px-5 sm:pt-5">
-        <header className="sticky top-3 z-30 flex flex-wrap items-center justify-between gap-3 rounded-[22px] border border-cyan-300/15 bg-[#050a10]/90 px-3 py-3 shadow-[0_20px_70px_rgba(0,0,0,.38)] backdrop-blur-2xl sm:px-4">
-          <div className="flex min-w-0 items-center gap-3">
-            <Link
-              href="/"
-              className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-white/10 bg-white/[.035] text-white/70 transition hover:border-cyan-300/35 hover:text-white"
-              aria-label="Volver"
-            >
-              <ArrowLeft className="h-5 w-5" />
+    <main className={styles.page}>
+      <div className={styles.shell}>
+        <header className={styles.header}>
+          <div className={styles.brand}>
+            <Link href="/" className={styles.back} aria-label="Volver">
+              <ArrowLeft className="h-4 w-4" />
             </Link>
-            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-cyan-300/20 bg-cyan-300/[.07] text-cyan-100 shadow-[0_0_30px_rgba(34,211,238,.08)]">
-              <Network className="h-6 w-6" />
+            <span className={styles.logo}>
+              <Network className="h-5 w-5" />
             </span>
-            <div className="min-w-0">
-              <div className="truncate text-sm font-black uppercase tracking-[.13em] sm:text-base">CLOUVA RED</div>
-              <div className="truncate text-[10px] font-bold uppercase tracking-[.18em] text-cyan-100/40">
-                Mi PC → puertas → LAN → Internet
-              </div>
+            <div className={styles.brandText}>
+              <strong>CLOUVA RED</strong>
+              <span>Topología real observada desde tu Workspace</span>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="hidden items-center gap-2 rounded-xl border border-emerald-300/15 bg-emerald-400/[.06] px-3 py-2 text-[11px] font-black uppercase tracking-[.1em] text-emerald-100 sm:inline-flex">
-              <ShieldCheck className="h-4 w-4" /> En vivo · 10s
-            </span>
-            <Link
-              href="/seguridad"
-              className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-white/10 bg-white/[.035] px-3 text-xs font-black uppercase tracking-[.08em] text-white/70 transition hover:border-cyan-300/30 hover:text-white"
-            >
-              <Shield className="h-4 w-4" /> Seguridad
+          <div className={styles.headerActions}>
+            <span className={styles.live}>● EN VIVO · 5s</span>
+            <Link href="/seguridad" className={styles.action}>
+              <Shield className="h-4 w-4" />
+              <span className={styles.actionText}>Seguridad</span>
             </Link>
             <button
               type="button"
-              onClick={() => void refresh("snapshot")}
+              className={cn(styles.action, styles.actionPrimary)}
               disabled={Boolean(busy)}
-              className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-white/10 bg-white/[.035] px-3 text-xs font-black uppercase tracking-[.08em] text-white/70 transition hover:border-cyan-300/30 hover:text-white disabled:opacity-40"
-            >
-              <RefreshCw className={cn("h-4 w-4", busy === "snapshot" && "animate-spin")} /> Actualizar
-            </button>
-            <button
-              type="button"
               onClick={() => void refresh("discover")}
-              disabled={Boolean(busy)}
-              className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-cyan-300/25 bg-cyan-300/[.08] px-3 text-xs font-black uppercase tracking-[.08em] text-cyan-50 transition hover:bg-cyan-300/[.13] disabled:opacity-40"
             >
-              {busy === "discover" ? <Loader2 className="h-4 w-4 animate-spin" /> : <ScanLine className="h-4 w-4" />}
-              Escanear LAN
+              {busy === "discover" ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <ScanLine className="h-4 w-4" />
+              )}
+              <span className={styles.actionText}>Escanear</span>
             </button>
           </div>
         </header>
 
-        {error ? (
-          <div className="mt-4 rounded-2xl border border-amber-300/20 bg-amber-300/[.07] p-4 text-sm leading-relaxed text-amber-50">
-            <strong className="font-black">Workspace:</strong> {error}
-            <div className="mt-1 text-xs text-amber-100/55">
-              La web ya está lista. Para datos reales, el Workspace/Desktop conectado tiene que exponer las herramientas de red locales.
-            </div>
-          </div>
-        ) : null}
+        {error ? <div className={styles.error}>{error}</div> : null}
 
-        <section className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          {[
-            ["Equipo", snapshot?.local?.hostname || "MI PC", <Laptop key="pc" className="h-5 w-5" />],
-            ["Subred", snapshot?.local?.subnet || "—", <Wifi key="lan" className="h-5 w-5" />],
-            ["Dispositivos", String(devices.length), <Server key="devices" className="h-5 w-5" />],
-            ["Conexiones", String(connections.length), <Waypoints key="connections" className="h-5 w-5" />],
-          ].map(([label, value, icon]) => (
-            <div key={String(label)} className="rounded-2xl border border-white/10 bg-black/25 p-4 backdrop-blur">
-              <div className="flex items-center gap-2 text-cyan-100/70">{icon}<span className="text-[10px] font-black uppercase tracking-[.15em]">{label}</span></div>
-              <div className="mt-2 truncate font-mono text-lg font-black text-white">{value}</div>
+        <section className={styles.hud}>
+          <div className={cn(styles.hudCard, styles.activityCard)}>
+            <div className={styles.hudLabel}>Actividad observada en mi PC</div>
+            <div className={styles.activityTitle}>
+              {serviceFromActivity(
+                snapshot?.activity?.foregroundTitle,
+                snapshot?.activity?.foregroundProcess,
+              )}
             </div>
-          ))}
-        </section>
-
-        <section className="mt-4 overflow-hidden rounded-[28px] border border-cyan-300/15 bg-[#050b11]/82 p-3 shadow-[0_30px_90px_rgba(0,0,0,.32)] backdrop-blur-xl sm:p-5">
-          <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-            <div>
-              <div className="text-[10px] font-black uppercase tracking-[.2em] text-cyan-100/45">Mapa vivo</div>
-              <h1 className="mt-1 text-2xl font-black tracking-[-.04em] sm:text-3xl">Desde mi máquina hasta todo lo que toca</h1>
-            </div>
-            <div className="font-mono text-[10px] text-white/30">
-              {snapshot?.scannedAt ? new Date(snapshot.scannedAt).toLocaleString("es-AR") : "sin captura todavía"}
+            <div className={styles.activitySub}>
+              {snapshot?.activity?.foregroundTitle ||
+                snapshot?.activity?.foregroundProcess ||
+                "sin lectura de primer plano"}
             </div>
           </div>
 
-          <div className="grid min-h-[560px] gap-4 xl:grid-cols-[minmax(260px,1fr)_320px_minmax(300px,1fr)]">
-            <div className="rounded-[24px] border border-white/8 bg-black/20 p-3">
-              <div className="mb-3 flex items-center gap-2 px-1 text-[11px] font-black uppercase tracking-[.14em] text-white/45">
-                <Server className="h-4 w-4" /> Mi red local
-              </div>
-              <div className="space-y-2">
-                {devices.length ? devices.map((device) => (
-                  <DeviceCard
-                    key={device.ip}
-                    device={device}
-                    selected={selectedIp === device.ip}
-                    busy={busy === `inspect:${device.ip}`}
-                    onInspect={(item) => void inspect(item)}
-                  />
-                )) : (
-                  <div className="grid min-h-44 place-items-center rounded-2xl border border-dashed border-white/10 p-6 text-center">
-                    <div>
-                      <ScanLine className="mx-auto h-7 w-7 text-white/20" />
-                      <div className="mt-2 text-sm font-bold text-white/50">Sin hosts detectados</div>
-                      <div className="mt-1 text-xs text-white/30">Tocá “Escanear LAN”.</div>
-                    </div>
-                  </div>
-                )}
-              </div>
+          <button
+            type="button"
+            className={styles.hudCard}
+            onClick={() => setDetail({ kind: "pc" })}
+          >
+            <div className={styles.hudLabel}>Sensor</div>
+            <div className={cn(styles.hudValue, styles.hudValueMono)}>
+              {snapshot?.local?.ip || "—"}
             </div>
+          </button>
 
-            <div className="relative flex flex-col items-center justify-center gap-5 rounded-[24px] border border-cyan-300/10 bg-[radial-gradient(circle_at_center,rgba(34,211,238,.08),transparent_58%)] p-4">
-              <div className="absolute left-1/2 top-0 h-full w-px -translate-x-1/2 bg-gradient-to-b from-transparent via-cyan-300/18 to-transparent" />
-
-              <div className="relative z-10 w-full rounded-[22px] border border-cyan-300/30 bg-[#07131a]/95 p-4 text-center shadow-[0_0_50px_rgba(34,211,238,.10)]">
-                <span className="mx-auto grid h-14 w-14 place-items-center rounded-2xl border border-cyan-200/25 bg-cyan-300/[.10] text-cyan-50">
-                  <Laptop className="h-7 w-7" />
-                </span>
-                <div className="mt-3 text-[10px] font-black uppercase tracking-[.18em] text-cyan-100/45">Origen</div>
-                <div className="mt-1 text-xl font-black">{snapshot?.local?.hostname || "MI PC"}</div>
-                <div className="mt-1 font-mono text-xs text-white/45">{snapshot?.local?.ip || "IP local pendiente"}</div>
-                {snapshot?.local?.interface ? <div className="mt-1 text-[10px] text-white/28">{snapshot.local.interface}</div> : null}
-              </div>
-
-              <div className="relative z-10 flex items-center gap-2 rounded-full border border-cyan-300/20 bg-black/55 px-3 py-1.5 text-[10px] font-black uppercase tracking-[.14em] text-cyan-100/70">
-                <Cable className="h-3.5 w-3.5" /> puerta de enlace
-              </div>
-
-              <div className="relative z-10 w-full rounded-[22px] border border-violet-300/22 bg-[#0d0918]/95 p-4 text-center">
-                <span className="mx-auto grid h-12 w-12 place-items-center rounded-2xl border border-violet-300/20 bg-violet-300/[.08] text-violet-100">
-                  <Router className="h-6 w-6" />
-                </span>
-                <div className="mt-3 text-[10px] font-black uppercase tracking-[.16em] text-violet-100/45">Router / Gateway</div>
-                <div className="mt-1 font-mono text-sm font-black text-white">{snapshot?.local?.gateway || snapshot?.gateway?.ip || "—"}</div>
-                <div className="mt-3"><PortPills ports={snapshot?.gateway?.ports} compact /></div>
-              </div>
-
-              {selected ? (
-                <div className="relative z-10 w-full rounded-[22px] border border-white/10 bg-black/50 p-4">
-                  <div className="text-[10px] font-black uppercase tracking-[.15em] text-white/35">Nodo seleccionado</div>
-                  <div className="mt-1 truncate text-base font-black">{titleForDevice(selected)}</div>
-                  <div className="mt-1 font-mono text-xs text-white/45">{selected.ip}</div>
-                  {selected.mac ? <div className="mt-1 font-mono text-[10px] text-white/30">{selected.mac}</div> : null}
-                  <div className="mt-3"><PortPills ports={selected.ports} /></div>
-                </div>
-              ) : null}
+          <button
+            type="button"
+            className={styles.hudCard}
+            onClick={() => setDetail({ kind: "gateway" })}
+          >
+            <div className={styles.hudLabel}>Gateway</div>
+            <div className={cn(styles.hudValue, styles.hudValueMono)}>
+              {gatewayIp || defaultRoute?.nextHop || "—"}
             </div>
+          </button>
 
-            <div className="rounded-[24px] border border-white/8 bg-black/20 p-3">
-              <div className="mb-3 flex items-center justify-between gap-2 px-1">
-                <div className="flex items-center gap-2 text-[11px] font-black uppercase tracking-[.14em] text-white/45">
-                  <Globe2 className="h-4 w-4" /> Salidas activas
-                </div>
-                <span className="rounded-full border border-white/10 px-2 py-1 font-mono text-[9px] text-white/35">{destinations.length}</span>
-              </div>
-              <div className="space-y-2">
-                {destinations.length ? destinations.map((connection, index) => (
-                  <div key={`${connection.remoteAddress}:${connection.remotePort ?? 0}:${connection.process ?? ""}:${index}`} className="rounded-2xl border border-white/9 bg-black/25 p-3">
-                    <div className="flex items-start gap-3">
-                      <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-violet-300/15 bg-violet-300/[.06] text-violet-100">
-                        <Globe2 className="h-4 w-4" />
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm font-black text-white">{connection.hostname || connection.remoteAddress}</div>
-                        <div className="mt-0.5 truncate font-mono text-[11px] text-white/42">
-                          {connection.remoteAddress}{connection.remotePort ? `:${connection.remotePort}` : ""}
-                        </div>
-                        <div className="mt-2 flex flex-wrap gap-1.5">
-                          {connection.process ? <span className="rounded-lg border border-white/10 bg-white/[.04] px-2 py-1 text-[10px] font-bold text-white/55">{connection.process}</span> : null}
-                          {connection.localPort ? <span className="rounded-lg border border-cyan-300/15 bg-cyan-300/[.05] px-2 py-1 font-mono text-[10px] font-bold text-cyan-100/70">mi puerta {connection.localPort}</span> : null}
-                          {connection.remotePort ? <span className="rounded-lg border border-violet-300/15 bg-violet-300/[.05] px-2 py-1 font-mono text-[10px] font-bold text-violet-100/70">destino {connection.remotePort}</span> : null}
-                        </div>
-                      </div>
-                      <CircleDot className="mt-1 h-3.5 w-3.5 shrink-0 text-emerald-300/70" />
-                    </div>
-                  </div>
-                )) : (
-                  <div className="grid min-h-44 place-items-center rounded-2xl border border-dashed border-white/10 p-6 text-center">
-                    <div>
-                      <Waypoints className="mx-auto h-7 w-7 text-white/20" />
-                      <div className="mt-2 text-sm font-bold text-white/50">Sin conexiones cargadas</div>
-                      <div className="mt-1 text-xs text-white/30">El Workspace puede leer las conexiones activas de tu PC.</div>
-                    </div>
-                  </div>
-                )}
-              </div>
+          <div className={styles.hudCard}>
+            <div className={styles.hudLabel}>Ahora</div>
+            <div className={styles.hudValue}>
+              {lanDevices.length} LAN · {destinations.length} destinos
             </div>
           </div>
         </section>
 
-        <section className="mt-4 grid gap-4 lg:grid-cols-[420px_1fr]">
-          <div className="rounded-[24px] border border-white/10 bg-black/25 p-4">
-            <div className="flex items-center gap-2 text-sm font-black"><Route className="h-5 w-5 text-cyan-100" /> Trazar un destino</div>
-            <p className="mt-1 text-xs leading-relaxed text-white/40">Muestra el camino desde tu PC hasta un host elegido, salto por salto.</p>
-            <div className="mt-4 flex gap-2">
-              <input
-                value={traceTarget}
-                onChange={(event) => setTraceTarget(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") void runTrace();
-                }}
-                placeholder="ej: clouva.com.ar"
-                className="min-w-0 flex-1 rounded-xl border border-white/10 bg-black/35 px-3 py-2.5 font-mono text-sm text-white outline-none transition placeholder:text-white/20 focus:border-cyan-300/35"
+        <section
+          className={styles.mapFrame}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={onPointerUp}
+          onWheel={onWheel}
+        >
+          <div
+            className={styles.scene}
+            style={{
+              transform: `translate(${camera.x}px,${camera.y}px) scale(${camera.scale})`,
+            }}
+          >
+            <span className={cn(styles.zoneLabel, styles.lanLabel)}>MI LAN</span>
+            <span className={cn(styles.zoneLabel, styles.edgeLabel)}>BORDE</span>
+            <span className={cn(styles.zoneLabel, styles.netLabel)}>DESTINOS ACTIVOS</span>
+
+            <svg
+              className={styles.svg}
+              viewBox={`0 0 ${SCENE_W} ${SCENE_H}`}
+              aria-hidden="true"
+            >
+              {devicePositions.map(({ device, x, y }) => (
+                <path
+                  key={`line-device-${device.ip}`}
+                  d={curve(
+                    { x: PC.x + PC.w / 2, y: PC.y + PC.h / 2 },
+                    { x: x + 78, y: y + 33 },
+                    0.38,
+                  )}
+                  className={styles.lanLine}
+                  fill="none"
+                />
+              ))}
+
+              <path
+                d={curve(
+                  { x: PC.x + PC.w, y: PC.y + PC.h / 2 },
+                  { x: GATEWAY.x, y: GATEWAY.y + GATEWAY.h / 2 },
+                  0.5,
+                )}
+                className={styles.gatewayLine}
+                fill="none"
               />
+
+              {destinationPositions.map(({ destination, x, y }) => (
+                <path
+                  key={`line-dest-${destination.id}`}
+                  d={curve(
+                    { x: GATEWAY.x + GATEWAY.w, y: GATEWAY.y + GATEWAY.h / 2 },
+                    { x, y: y + 33 },
+                    0.42,
+                  )}
+                  className={
+                    selectedDestination?.id === destination.id
+                      ? styles.trafficLine
+                      : styles.trafficLineDim
+                  }
+                  fill="none"
+                />
+              ))}
+            </svg>
+
+            <button
+              type="button"
+              className={cn(
+                styles.node,
+                styles.pcNode,
+                detail?.kind === "pc" && styles.nodeSelected,
+              )}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={() => setDetail({ kind: "pc" })}
+            >
+              <span className={styles.nodeIcon}>
+                <Laptop className="h-5 w-5 text-cyan-100" />
+              </span>
+              <span className={styles.nodeBody}>
+                <strong>{snapshot?.local?.hostname || "MI PC"}</strong>
+                <span>{snapshot?.local?.ip || "IP pendiente"}</span>
+                <small>{snapshot?.local?.interface || "interfaz pendiente"}</small>
+              </span>
+              <i className={styles.statusDot} />
+            </button>
+
+            <button
+              type="button"
+              className={cn(
+                styles.node,
+                styles.gatewayNode,
+                detail?.kind === "gateway" && styles.nodeSelected,
+              )}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={() => setDetail({ kind: "gateway" })}
+            >
+              <span className={styles.nodeIcon}>
+                <Router className="h-5 w-5 text-violet-100" />
+              </span>
+              <span className={styles.nodeBody}>
+                <strong>ROUTER / GATEWAY</strong>
+                <span>{gatewayIp || defaultRoute?.nextHop || "—"}</span>
+                <small>salida observada de tu LAN</small>
+              </span>
+              <i className={styles.statusDot} />
+            </button>
+
+            {devicePositions.map(({ device, x, y }) => (
               <button
+                key={device.ip}
                 type="button"
-                onClick={() => void runTrace()}
-                disabled={!traceTarget.trim() || Boolean(busy)}
-                className="grid h-11 w-11 shrink-0 place-items-center rounded-xl border border-cyan-300/25 bg-cyan-300/[.08] text-cyan-50 disabled:opacity-35"
-                aria-label="Trazar"
+                className={cn(
+                  styles.node,
+                  styles.deviceNode,
+                  selectedDevice?.ip === device.ip && styles.nodeSelected,
+                )}
+                style={{ left: x, top: y }}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={() => void inspect(device)}
               >
-                {busy === "trace" ? <Loader2 className="h-4 w-4 animate-spin" /> : <Route className="h-4 w-4" />}
+                <span className={styles.nodeIcon}>
+                  <Server className="h-4 w-4 text-cyan-100/80" />
+                </span>
+                <span className={styles.nodeBody}>
+                  <strong>{titleForDevice(device)}</strong>
+                  <span>{device.ip}</span>
+                  <small>{device.mac || device.status || "host observado"}</small>
+                </span>
+                <i className={styles.statusDot} />
               </button>
-            </div>
+            ))}
+
+            {destinationPositions.map(({ destination, x, y }) => (
+              <button
+                key={destination.id}
+                type="button"
+                className={cn(
+                  styles.node,
+                  styles.destNode,
+                  selectedDestination?.id === destination.id && styles.nodeSelected,
+                )}
+                style={{ left: x, top: y }}
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={() => void runTrace(destination)}
+              >
+                <span className={styles.nodeIcon}>
+                  <Globe2 className="h-4 w-4 text-emerald-100/80" />
+                </span>
+                <span className={styles.nodeBody}>
+                  <strong>
+                    {destination.hostname ||
+                      `${destination.remoteAddress}:${destination.remotePort ?? "?"}`}
+                  </strong>
+                  <span>
+                    {destination.remoteAddress}
+                    {destination.remotePort ? `:${destination.remotePort}` : ""}
+                  </span>
+                  <small className={styles.processPill}>
+                    {destination.process || "proceso no identificado"} · {destination.count} conexión
+                    {destination.count === 1 ? "" : "es"}
+                  </small>
+                </span>
+                <i className={styles.statusDot} />
+              </button>
+            ))}
           </div>
 
-          <div className="rounded-[24px] border border-white/10 bg-black/25 p-4">
-            <div className="mb-3 text-[10px] font-black uppercase tracking-[.16em] text-white/35">
-              {trace?.target ? `MI PC → ${trace.target}` : "Ruta"}
-            </div>
-            {trace?.hops?.length ? (
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="rounded-xl border border-cyan-300/20 bg-cyan-300/[.07] px-3 py-2 text-xs font-black text-cyan-50">MI PC</span>
-                {trace.hops.map((hop) => (
-                  <div key={hop.hop} className="flex items-center gap-2">
-                    <span className="text-white/18">→</span>
-                    <span className="rounded-xl border border-white/10 bg-white/[.035] px-3 py-2">
-                      <span className="block text-[9px] font-black uppercase tracking-[.12em] text-white/28">salto {hop.hop}</span>
-                      <span className="block max-w-[220px] truncate font-mono text-[11px] font-bold text-white/70">{hop.hostname || hop.address || "*"}</span>
-                      {typeof hop.latencyMs === "number" ? <span className="block text-[9px] text-white/30">{hop.latencyMs.toFixed(1)} ms</span> : null}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="flex min-h-20 items-center gap-3 text-sm text-white/35">
-                <Route className="h-5 w-5" /> Escribí un destino para ver por dónde sale tu conexión.
-              </div>
-            )}
+          <div
+            className={styles.mapControls}
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            <button type="button" onClick={() => zoomBy(0.15)} aria-label="Acercar">
+              <Plus className="h-4 w-4" />
+            </button>
+            <button type="button" onClick={() => zoomBy(-0.15)} aria-label="Alejar">
+              <Minus className="h-4 w-4" />
+            </button>
+            <button type="button" onClick={resetCamera} aria-label="Centrar">
+              <Crosshair className="h-4 w-4" />
+            </button>
+            <span className={styles.zoomText}>{Math.round(camera.scale * 100)}%</span>
           </div>
+
+          <div className={styles.legend}>
+            <span><i /> topología LAN</span>
+            <span><i className={styles.activeI} /> conexión activa</span>
+          </div>
+
+          {!snapshot && !busy ? (
+            <div className={styles.emptyMap}>
+              <div>
+                <strong>Esperando al sensor</strong>
+                CLOUVA necesita tu Workspace conectado para dibujar la red.
+              </div>
+            </div>
+          ) : null}
+
+          {detail ? (
+            <aside
+              className={styles.drawer}
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              <div className={styles.drawerHead}>
+                <div>
+                  <div className={styles.drawerKind}>
+                    {detail.kind === "pc"
+                      ? "SENSOR"
+                      : detail.kind === "gateway"
+                        ? "BORDE"
+                        : detail.kind === "device"
+                          ? "NODO LAN"
+                          : detail.kind === "neighbor"
+                            ? "VECINO LAN"
+                            : "MOVIMIENTO ACTIVO"}
+                  </div>
+
+                  <h2>
+                    {detail.kind === "pc"
+                      ? snapshot?.local?.hostname || "MI PC"
+                      : detail.kind === "gateway"
+                        ? "Router / Gateway"
+                        : detail.kind === "device"
+                          ? titleForDevice(detail.device)
+                          : detail.kind === "neighbor"
+                            ? detail.neighbor.ip
+                            : detail.destination.hostname ||
+                              `${detail.destination.remoteAddress}:${detail.destination.remotePort ?? "?"}`}
+                  </h2>
+
+                  <div className={styles.drawerSub}>
+                    {detail.kind === "pc"
+                      ? snapshot?.local?.ip || "—"
+                      : detail.kind === "gateway"
+                        ? gatewayIp || defaultRoute?.nextHop || "—"
+                        : detail.kind === "device"
+                          ? detail.device.ip
+                          : detail.kind === "neighbor"
+                            ? detail.neighbor.mac || "MAC no disponible"
+                            : `${detail.destination.process || "proceso"} → ${detail.destination.remoteAddress}:${detail.destination.remotePort ?? "?"}`}
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  className={styles.close}
+                  onClick={() => {
+                    setDetail(null);
+                    setTrace(null);
+                  }}
+                  aria-label="Cerrar"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+
+              {detail.kind === "pc" ? (
+                <>
+                  <div className={styles.drawerSection}>
+                    <div className={styles.drawerSectionTitle}>Observado</div>
+                    <div className={styles.fact}><span>Hostname</span><strong>{snapshot?.local?.hostname || "—"}</strong></div>
+                    <div className={styles.fact}><span>IP local</span><strong>{snapshot?.local?.ip || "—"}</strong></div>
+                    <div className={styles.fact}><span>Interfaz</span><strong>{snapshot?.local?.interface || "—"}</strong></div>
+                    <div className={styles.fact}><span>Subred</span><strong>{snapshot?.local?.subnet || "—"}</strong></div>
+                    <div className={styles.fact}><span>Conexiones activas</span><strong>{connections.length}</strong></div>
+                  </div>
+                  <div className={styles.securityNote}>
+                    Este equipo es el sensor. Nmap descubre la LAN y Windows aporta las conexiones activas.
+                  </div>
+                </>
+              ) : null}
+
+              {detail.kind === "gateway" ? (
+                <>
+                  <div className={styles.drawerSection}>
+                    <div className={styles.drawerSectionTitle}>Ruta de salida</div>
+                    <div className={styles.fact}><span>Gateway</span><strong>{gatewayIp || "—"}</strong></div>
+                    <div className={styles.fact}><span>Ruta por defecto</span><strong>{defaultRoute?.destination || "0.0.0.0/0"}</strong></div>
+                    <div className={styles.fact}><span>Siguiente salto</span><strong>{defaultRoute?.nextHop || gatewayIp || "—"}</strong></div>
+                    <div className={styles.fact}><span>DNS</span><strong>{snapshot?.local?.dns?.join(" · ") || "—"}</strong></div>
+                  </div>
+                  <div className={styles.securityNote}>
+                    El gateway puede observar metadatos de las conexiones que atraviesan la red. El contenido protegido por TLS no se vuelve legible sólo por pasar por él.
+                  </div>
+                </>
+              ) : null}
+
+              {detail.kind === "device" ? (
+                <>
+                  <div className={styles.drawerSection}>
+                    <div className={styles.drawerSectionTitle}>Host LAN</div>
+                    <div className={styles.fact}><span>IP</span><strong>{detail.device.ip}</strong></div>
+                    <div className={styles.fact}><span>MAC</span><strong>{detail.device.mac || "—"}</strong></div>
+                    <div className={styles.fact}><span>Fabricante</span><strong>{detail.device.vendor || "—"}</strong></div>
+                    <div className={styles.fact}><span>Estado</span><strong>{detail.device.status || "observado"}</strong></div>
+                  </div>
+
+                  <div className={styles.drawerSection}>
+                    <div className={styles.drawerSectionTitle}>Puertos observados</div>
+                    {busy === `inspect:${detail.device.ip}` ? (
+                      <div className={styles.loadingInline}>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" /> inspeccionando...
+                      </div>
+                    ) : (
+                      <div className={styles.pills}>
+                        {(devices.find((device) => device.ip === detail.device.ip)?.ports ?? []).length ? (
+                          (devices.find((device) => device.ip === detail.device.ip)?.ports ?? []).map((port) => (
+                            <span className={styles.pill} key={`${port.protocol ?? "tcp"}:${port.port}`}>
+                              {port.port}/{port.protocol ?? "tcp"}{port.service ? ` · ${port.service}` : ""}
+                            </span>
+                          ))
+                        ) : (
+                          <span className={styles.pill}>sin puertos leídos</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </>
+              ) : null}
+
+              {detail.kind === "destination" ? (
+                <>
+                  <div className={styles.drawerSection}>
+                    <div className={styles.drawerSectionTitle}>Movimiento</div>
+                    <div className={styles.fact}><span>Proceso</span><strong>{detail.destination.process || "—"}</strong></div>
+                    <div className={styles.fact}><span>PID</span><strong>{detail.destination.pid ?? "—"}</strong></div>
+                    <div className={styles.fact}><span>Mi puerto</span><strong>{detail.destination.localPort ?? "—"}</strong></div>
+                    <div className={styles.fact}><span>Destino</span><strong>{detail.destination.remoteAddress}:{detail.destination.remotePort ?? "?"}</strong></div>
+                    <div className={styles.fact}><span>Conexiones</span><strong>{detail.destination.count}</strong></div>
+                  </div>
+
+                  <div className={styles.drawerSection}>
+                    <div className={styles.drawerSectionTitle}>Camino observado</div>
+                    {busy === `trace:${detail.destination.id}` ? (
+                      <div className={styles.loadingInline}>
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" /> trazando desde tu PC...
+                      </div>
+                    ) : trace?.hops?.length ? (
+                      <div className={styles.trace}>
+                        <div className={styles.hop}>
+                          <b>{snapshot?.local?.ip || "MI PC"}</b>
+                          <span>origen</span>
+                        </div>
+                        {trace.hops.map((hop) => (
+                          <div className="contents" key={`${hop.hop}:${hop.address ?? ""}`}>
+                            <span className={styles.hopArrow}>›</span>
+                            <div className={styles.hop}>
+                              <b>{hop.address || "*"}</b>
+                              <span>
+                                hop {hop.hop}
+                                {hop.latencyMs != null ? ` · ${Math.round(hop.latencyMs)} ms` : ""}
+                              </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className={styles.securityNote}>
+                        No hubo saltos visibles. Algunos routers no responden a traceroute aunque la conexión funcione.
+                      </div>
+                    )}
+                  </div>
+
+                  <div className={styles.securityNote}>
+                    {detail.destination.remotePort === 443
+                      ? "Puerto 443: el sensor ve origen, destino, puertos, proceso y ruta; no está leyendo el contenido HTTPS cifrado."
+                      : "El sensor muestra la conexión y sus metadatos. No asume el contenido que transporta."}
+                  </div>
+                </>
+              ) : null}
+            </aside>
+          ) : null}
         </section>
       </div>
     </main>
