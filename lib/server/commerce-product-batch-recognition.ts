@@ -315,6 +315,20 @@ async function recoverExplicitUnassignedImages(args: {
   chunkNumber: number;
 }): Promise<CommerceBatchGroup[]> {
   if (!args.images.length) return [];
+  // Re-check each rejected photo by itself. When several rejected images are
+  // sent together, a true back/label photo can be mistaken for a mixed scene
+  // because another image in the same recovery batch contains many products.
+  if (args.images.length > 1) {
+    const recovered: CommerceBatchGroup[] = [];
+    for (let index = 0; index < args.images.length; index += 1) {
+      recovered.push(...await recoverExplicitUnassignedImages({
+        images: [args.images[index]],
+        spotName: args.spotName,
+        chunkNumber: args.chunkNumber * 100 + index + 1,
+      }));
+    }
+    return recovered;
+  }
   const downloaded = await Promise.all(args.images.map(async (image) => {
     const stored = await downloadGeneratedMediaObject(image.storagePath);
     const mimeType = stored.mimeType.startsWith("image/") ? stored.mimeType : image.mimeType;
@@ -330,6 +344,8 @@ async function recoverExplicitUnassignedImages(args: {
     "Revisá cada imagen otra vez de forma conservadora: muchas veces un frente, dorso, código o detalle real fue descartado por error.",
     `Spot: "${args.spotName}". Índices: ${downloaded.map((image) => image.sourceIndex).join(", ")}.`,
     "Si una imagen muestra UNA identidad de producto reconocible (producto, caja, blister, frente, dorso, etiqueta o código), DEBE quedar dentro de un grupo.",
+    "REGLA FUERTE: el DORSO de una caja, blister o packaging es una vista del producto, NO contexto. Aunque no se vea el frente, usá marca, modelo, plataforma, conector, potencia, SKU, textos y códigos para conservarlo como producto.",
+    "Ejemplo: frente 'Cable USB para PS4' y dorso 'USB Cable / for PS4' son la misma identidad comercial salvo evidencia concreta de otra variante.",
     "Si la imagen es una vista general con varios productos DISTINTOS, NO la agrupes con ninguno: registrala en contextObservations.",
     "Para cada foto mixta, observedProducts debe enumerar TODO lo que realmente se ve y se puede nombrar, como una lista corta de productos/variantes visibles. No inventes.",
     "Si una foto mixta contiene objetos que también aparecen solos en otras fotos, la foto mixta sigue siendo SOLO contexto; las fotos individuales sí deben quedar agrupadas con la identidad comercial que les corresponde.",
@@ -746,6 +762,27 @@ function looselySameBrand(left: string, right: string) {
   return Math.max(a.length, b.length) >= 5 && distance <= Math.max(1, Math.floor(Math.max(a.length, b.length) * 0.3));
 }
 
+const GENERIC_IDENTITY_TOKENS = new Set([
+  "usb", "cable", "charge", "charger", "fast", "power", "tipo", "type",
+  "data", "datos", "adapter", "adaptador", "wireless", "original", "generic",
+]);
+
+function sharedDistinctiveIdentityToken(left: CommerceBatchGroup, right: CommerceBatchGroup) {
+  const brandTokens = new Set([
+    ...identityTokens(left.brand),
+    ...identityTokens(right.brand),
+  ]);
+  const leftTokens = identityTokens([left.name, left.model].filter(Boolean).join(" "));
+  const rightTokens = identityTokens([right.name, right.model].filter(Boolean).join(" "));
+  for (const token of leftTokens) {
+    if (!rightTokens.has(token) || brandTokens.has(token) || GENERIC_IDENTITY_TOKENS.has(token)) continue;
+    const hasLetter = /[a-z]/.test(token);
+    const hasDigit = /\d/.test(token);
+    if ((hasLetter && hasDigit && token.length >= 3) || token.length >= 5) return true;
+  }
+  return false;
+}
+
 function externalCodeKeys(group: CommerceBatchGroup) {
   const raw = [
     ...(group.identifier ? [group.identifier] : []),
@@ -811,6 +848,7 @@ function shouldMergeCommercialIdentity(left: CommerceBatchGroup, right: Commerce
   const nameContained = shorterName.length >= 7 && longerName.includes(shorterName);
 
   if (modelSame && (!brandConflict || similarity >= 0.5)) return true;
+  if (!hardModelConflict && (brandSame || brandLoose) && sharedDistinctiveIdentityToken(left, right)) return true;
   if (!hardModelConflict && (brandSame || brandLoose) && (nameSimilarity >= 0.58 || nameContained)) return true;
   if (!brandConflict && !hardModelConflict && similarity >= 0.84 && (!leftModel || !rightModel)) return true;
   return false;
@@ -904,7 +942,11 @@ async function consolidateGroups(
 ) {
   if (groups.length <= 1) return groups;
 
-  const visualRefs = imagesByIndex && groups.length <= 24
+  // Keep visual evidence enabled for normal 60–80 photo imports too.
+  // After the first consolidation these batches usually have ~25–40 candidate
+  // products; disabling visuals at 25 was exactly where front/back pairs such
+  // as PS4 cable packaging stopped being joined.
+  const visualRefs = imagesByIndex && groups.length <= 40
     ? (await Promise.all(groups.map(async (group) => {
         const representative = group.images.find((image) => image.role === "Frente") ?? group.images[0];
         const source = representative ? imagesByIndex.get(representative.sourceIndex) : undefined;
@@ -1009,7 +1051,10 @@ async function refineMergedGroup(args: {
   imagesByIndex: Map<number, StoredBatchImage>;
   spotName: string;
 }) {
-  if (args.group.images.length <= 1 || args.group.images.length > 16) return args.group;
+  if (args.group.images.length > 16) return args.group;
+  // A single image can still have a bad physical-count estimate. Re-verify
+  // singles only when the first pass was uncertain or claimed >1 unit.
+  if (args.group.images.length === 1 && !args.group.needsReview && args.group.unitCount === 1) return args.group;
   try {
     const refs = await Promise.all(args.group.images.map(async (image) => {
       const source = args.imagesByIndex.get(image.sourceIndex);
