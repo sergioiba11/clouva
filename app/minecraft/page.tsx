@@ -574,12 +574,16 @@ export default function MinecraftFamilyPage() {
               <AssetButton src={ASSETS.inicio} alt="Inicio" onClick={() => scrollTo("inicio")} />
               <AssetButton src={ASSETS.mapa} alt="Mapa" onClick={() => scrollTo("mapa")} />
               <AssetButton src={ASSETS.jugadores} alt="Jugadores" onClick={() => scrollTo("jugadores")} />
-              <Link
-                href="/tienda"
-                className="group relative overflow-hidden rounded-[24px] transition duration-200 hover:-translate-y-1 hover:drop-shadow-[0_0_24px_rgba(217,70,239,.35)] active:scale-[.98]"
+              <button
+                type="button"
+                disabled
+                aria-disabled="true"
+                title="Tienda Ratcraft todavía no disponible"
+                className="relative cursor-not-allowed overflow-hidden rounded-[24px] opacity-45 grayscale"
               >
                 <img src={ASSETS.tienda} alt="Tienda" className="h-auto w-full select-none object-contain" draggable={false} />
-              </Link>
+                <span className="absolute inset-0 rounded-[24px] bg-black/25" aria-hidden="true" />
+              </button>
             </div>
 
             <button
