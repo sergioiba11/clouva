@@ -190,7 +190,7 @@ jobs:
           gcloud run services update clouva-web \
             --project "$PROJECT_ID" \
             --region us-central1 \
-            --update-env-vars "MINECRAFT_HOST=$MC_IP,MINECRAFT_PUBLIC_JAVA_HOST=$MC_IP,MINECRAFT_PUBLIC_BEDROCK_HOST=$MC_IP,MINECRAFT_MAP_UPSTREAM=http://$MC_IP:8100" \
+            --update-env-vars "MINECRAFT_VM_NAME=${{ steps.mc.outputs.name }},MINECRAFT_VM_ZONE=${{ steps.mc.outputs.zone }},MINECRAFT_HOST=$MC_IP,MINECRAFT_PUBLIC_JAVA_HOST=$MC_IP,MINECRAFT_PUBLIC_BEDROCK_HOST=$MC_IP,MINECRAFT_MAP_UPSTREAM=http://$MC_IP:8100" \
             --quiet
 
       - name: Verify public listener
