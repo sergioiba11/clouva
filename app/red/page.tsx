@@ -16,6 +16,7 @@ import {
   Router,
   ScanLine,
   Server,
+  Shield,
   ShieldCheck,
   Waypoints,
   Wifi,
@@ -253,7 +254,18 @@ export default function NetworkMapPage() {
   useEffect(() => {
     if (!isAdmin || !session?.access_token) return;
     void refresh("snapshot");
-  }, [isAdmin, refresh, session?.access_token]);
+    const timer = window.setInterval(() => {
+      void call("snapshot")
+        .then((result) => {
+          applySnapshot(result);
+          setError(null);
+        })
+        .catch((cause) => {
+          setError(cause instanceof Error ? cause.message : "No se pudo leer la red.");
+        });
+    }, 10_000);
+    return () => window.clearInterval(timer);
+  }, [applySnapshot, call, isAdmin, refresh, session?.access_token]);
 
   const inspect = useCallback(async (device: Device) => {
     setSelectedIp(device.ip);
@@ -352,8 +364,14 @@ export default function NetworkMapPage() {
 
           <div className="flex flex-wrap items-center gap-2">
             <span className="hidden items-center gap-2 rounded-xl border border-emerald-300/15 bg-emerald-400/[.06] px-3 py-2 text-[11px] font-black uppercase tracking-[.1em] text-emerald-100 sm:inline-flex">
-              <ShieldCheck className="h-4 w-4" /> Solo lectura
+              <ShieldCheck className="h-4 w-4" /> En vivo · 10s
             </span>
+            <Link
+              href="/seguridad"
+              className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-white/10 bg-white/[.035] px-3 text-xs font-black uppercase tracking-[.08em] text-white/70 transition hover:border-cyan-300/30 hover:text-white"
+            >
+              <Shield className="h-4 w-4" /> Seguridad
+            </Link>
             <button
               type="button"
               onClick={() => void refresh("snapshot")}
