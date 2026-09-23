@@ -63,6 +63,53 @@ jobs:
             --condition=None \
             --quiet
 
+      - name: Ensure runtime can access configured secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          runtime_sa="$(gcloud run services describe "$SERVICE" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --format='value(spec.template.spec.serviceAccountName)')"
+          test -n "$runtime_sa"
+
+          gcloud run services describe "$SERVICE" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --format=json > /tmp/service-secrets.json
+
+          python3 - <<'PY' > /tmp/secret-names.txt
+          import json
+          data = json.load(open("/tmp/service-secrets.json", "r", encoding="utf-8"))
+          env = data.get("spec", {}).get("template", {}).get("spec", {}).get("containers", [{}])[0].get("env", [])
+          names = set()
+          for item in env:
+              ref = item.get("valueFrom", {}).get("secretKeyRef", {})
+              name = str(ref.get("name") or "").strip()
+              if not name:
+                  continue
+              if "/secrets/" in name:
+                  name = name.split("/secrets/", 1)[1].split("/", 1)[0]
+              names.add(name)
+          for name in sorted(names):
+              print(name)
+          PY
+
+          if [ ! -s /tmp/secret-names.txt ]; then
+            echo "No Secret Manager bindings found on $SERVICE."
+            exit 0
+          fi
+
+          while IFS= read -r secret_name; do
+            echo "Granting $runtime_sa access to secret $secret_name"
+            gcloud secrets add-iam-policy-binding "$secret_name" \
+              --project "$PROJECT_ID" \
+              --member "serviceAccount:$runtime_sa" \
+              --role "roles/secretmanager.secretAccessor" \
+              --condition=None \
+              --quiet
+          done < /tmp/secret-names.txt
+
       - name: Resolve existing secret binding
         id: secret
         run: |
