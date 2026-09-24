@@ -59,6 +59,16 @@ function recognizedIdentifier(recognition: CommerceProductRecognition) {
     : null;
 }
 
+function externalIdentifierFromGroup(group: CommerceBatchGroup) {
+  const direct = safeIdentifier(group.identifier);
+  if (direct && !["sku", "clouva_barcode", "clouva_qr"].includes(direct.type)) return direct;
+  for (const candidate of group.visibleIdentifiers) {
+    const parsed = safeIdentifier(candidate);
+    if (parsed && !["sku", "clouva_barcode", "clouva_qr"].includes(parsed.type)) return parsed;
+  }
+  return null;
+}
+
 function sourceMetadata(args: {
   group: CommerceBatchGroup;
   itemsByIndex: Map<number, BatchItem>;
