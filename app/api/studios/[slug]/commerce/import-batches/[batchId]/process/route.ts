@@ -253,14 +253,63 @@ export async function POST(
       Array.isArray(line.matched_group_keys) && line.matched_group_keys.includes(groupKey),
     ) ?? null;
 
+    const hasInvoice = Boolean((purchaseLines ?? []).length);
+    const groupByKey = new Map(groups.map((group) => [group.groupKey, group]));
+    const receiptQuantityByGroup = new Map<string, number>();
+
+    // Con factura, las fotos identifican el SKU y la factura define cuántas
+    // unidades entran. Nunca usamos la cantidad visual para inflar stock.
+    for (const line of purchaseLines ?? []) {
+      const target = Math.max(1, Math.floor(Number(line.quantity) || 1));
+      const keys = Array.from(new Set(
+        (Array.isArray(line.matched_group_keys) ? line.matched_group_keys : [])
+          .filter((key): key is string => typeof key === "string" && groupByKey.has(key)),
+      ));
+      if (!keys.length) continue;
+
+      const ranked = keys
+        .map((key) => groupByKey.get(key)!)
+        .sort((left, right) => {
+          const leftScore = (left.identifier ? 10 : 0) + left.confidence + Math.min(5, left.unitCount);
+          const rightScore = (right.identifier ? 10 : 0) + right.confidence + Math.min(5, right.unitCount);
+          return rightScore - leftScore;
+        });
+      const totalWeight = ranked.reduce((sum, group) => sum + Math.max(1, group.unitCount), 0);
+      let allocated = 0;
+      ranked.forEach((group, index) => {
+        const remaining = target - allocated;
+        const isLast = index === ranked.length - 1;
+        const raw = isLast
+          ? remaining
+          : Math.floor(target * (Math.max(1, group.unitCount) / totalWeight));
+        const quantity = Math.max(0, Math.min(remaining, raw));
+        receiptQuantityByGroup.set(
+          group.groupKey,
+          (receiptQuantityByGroup.get(group.groupKey) ?? 0) + quantity,
+        );
+        allocated += quantity;
+      });
+      if (allocated < target && ranked[0]) {
+        receiptQuantityByGroup.set(
+          ranked[0].groupKey,
+          (receiptQuantityByGroup.get(ranked[0].groupKey) ?? 0) + (target - allocated),
+        );
+      }
+    }
+
     const postReceiptStock = async (args: {
       group: CommerceBatchGroup;
       listingId: string;
       variantId?: string | null;
     }) => {
       const line = purchaseLineForGroup(args.group.groupKey);
-      const quantity = Math.max(1, Math.floor(Number(args.group.unitCount) || 1));
+      const quantity = hasInvoice
+        ? Math.max(0, Math.floor(receiptQuantityByGroup.get(args.group.groupKey) ?? 0))
+        : Math.max(1, Math.floor(Number(args.group.unitCount) || 1));
       const unitCost = line?.unit_price == null ? null : Number(line.unit_price);
+      if (quantity <= 0) {
+        return { line, quantity: 0, unitCost: unitCost != null && Number.isFinite(unitCost) ? unitCost : null };
+      }
       const { error: receiptError } = await admin.rpc("adjust_commerce_spot_inventory", {
         p_spot_id: spot.id,
         p_listing_id: args.listingId,
@@ -279,6 +328,7 @@ export async function POST(
           group_key: args.group.groupKey,
           invoice_item_id: line?.id ?? null,
           unit_count: quantity,
+          quantity_source: line ? "invoice" : "visual",
         },
       });
       if (receiptError) throw new Error(receiptError.message);
