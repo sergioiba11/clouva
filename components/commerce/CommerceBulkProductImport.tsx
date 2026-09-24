@@ -433,6 +433,7 @@ export function CommerceBulkProductImport({
     let expectedUnits = 0;
     let matchedInvoiceUnits = 0;
     let codedUnits = 0;
+    let noCodeProducts = 0;
 
     for (const item of invoiceItems) {
       const quantity = Math.max(0, Number(item.quantity || 0));
@@ -447,13 +448,14 @@ export function CommerceBulkProductImport({
       // renglón del comprobante. No contamos fotos como unidades físicas.
       matchedInvoiceUnits += quantity;
       if (keys.some((key) => hasExternalCode(groupByKey.get(key)!))) codedUnits += quantity;
+      else noCodeProducts += 1;
     }
 
     const visualUnits = groups.reduce((sum, group) => sum + unitCount(group), 0);
     const detectedUnits = invoiceData?.invoice ? matchedInvoiceUnits : visualUnits;
-    const noCodeUnits = invoiceData?.invoice
-      ? Math.max(0, matchedInvoiceUnits - codedUnits)
-      : Math.max(0, visualUnits - groups.reduce((sum, group) => sum + (hasExternalCode(group) ? unitCount(group) : 0), 0));
+    if (!invoiceData?.invoice) {
+      noCodeProducts = groups.filter((group) => !hasExternalCode(group)).length;
+    }
     const missingUnits = invoiceData?.invoice
       ? Math.max(0, expectedUnits - matchedInvoiceUnits)
       : 0;
@@ -465,7 +467,7 @@ export function CommerceBulkProductImport({
     return {
       detectedUnits,
       codedUnits,
-      noCodeUnits,
+      noCodeUnits: noCodeProducts,
       expectedUnits,
       matchedInvoiceUnits,
       missingUnits,
@@ -1305,7 +1307,7 @@ export function CommerceBulkProductImport({
               <strong className={`mt-1 block text-lg ${receivingSummary.noCodeUnits ? "text-amber-200" : "text-emerald-200"}`}>
                 {receivingSummary.noCodeUnits}
               </strong>
-              <span className="text-[9px] text-white/35">para etiquetar</span>
+              <span className="text-[9px] text-white/35">productos para código</span>
             </div>
             <div className="rounded-xl border border-white/[0.07] bg-white/[0.025] p-2.5">
               <p className="text-[9px] uppercase tracking-[.12em] text-white/35">Sin asignar</p>
