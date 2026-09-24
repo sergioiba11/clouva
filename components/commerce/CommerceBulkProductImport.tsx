@@ -430,140 +430,78 @@ export function CommerceBulkProductImport({
     if (!groups.length) return null;
     const groupByKey = new Map(groups.map((group) => [group.groupKey, group]));
     const matchedKeys = new Set<string>();
+    const consumedKeys = new Set<string>();
     const unitCount = (group: BatchGroup) => Math.max(1, Math.floor(Number(group.unitCount) || 1));
     const hasExternalCode = (group: BatchGroup) => Boolean(externalIdentifierForGroup(group));
 
     const invoiceItems = invoiceData?.items ?? [];
-    let expectedUnits = 0;
+    const expectedUnits = invoiceItems.reduce((sum, item) => sum + Math.max(0, Number(item.quantity || 0)), 0);
+    const visualUnits = groups.reduce((sum, group) => sum + unitCount(group), 0);
     let matchedInvoiceUnits = 0;
-    let codedUnits = 0;
-    let noCodeProducts = 0;
+    let missingUnits = 0;
+    let extraMatchedUnits = 0;
 
     for (const item of invoiceItems) {
-      const quantity = Math.max(0, Number(item.quantity || 0));
-      expectedUnits += quantity;
+      const expected = Math.max(0, Number(item.quantity || 0));
       const keys = Array.from(new Set(
         (item.matched_group_keys ?? []).filter((key) => groupByKey.has(key)),
       ));
+      const freshKeys = keys.filter((key) => !consumedKeys.has(key));
       for (const key of keys) matchedKeys.add(key);
-      if (!keys.length) continue;
+      for (const key of freshKeys) consumedKeys.add(key);
 
-      // Con factura, una foto identifica el SKU; la cantidad real viene del
-      // renglón del comprobante. No contamos fotos como unidades físicas.
-      matchedInvoiceUnits += quantity;
-      if (keys.some((key) => hasExternalCode(groupByKey.get(key)!))) codedUnits += quantity;
-      else noCodeProducts += 1;
+      const physical = freshKeys.reduce(
+        (sum, key) => sum + unitCount(groupByKey.get(key)!),
+        0,
+      );
+      matchedInvoiceUnits += Math.min(expected, physical);
+      missingUnits += Math.max(0, expected - physical);
+      extraMatchedUnits += Math.max(0, physical - expected);
     }
 
-    const visualUnits = groups.reduce((sum, group) => sum + unitCount(group), 0);
-    const detectedUnits = invoiceData?.invoice ? matchedInvoiceUnits : visualUnits;
-    if (!invoiceData?.invoice) {
-      noCodeProducts = groups.filter((group) => !hasExternalCode(group)).length;
-    }
-    const missingUnits = invoiceData?.invoice
-      ? Math.max(0, expectedUnits - matchedInvoiceUnits)
-      : 0;
-    const extraUnits = invoiceData?.invoice
-      ? groups.filter((group) => !matchedKeys.has(group.groupKey)).length
-      : 0;
-    const complete = Boolean(invoiceData?.invoice) && missingUnits === 0;
+    const unmatchedUnits = groups
+      .filter((group) => !matchedKeys.has(group.groupKey))
+      .reduce((sum, group) => sum + unitCount(group), 0);
+    const extraUnits = invoiceData?.invoice ? extraMatchedUnits + unmatchedUnits : 0;
+    const noCodeProducts = groups.filter((group) => !hasExternalCode(group)).length;
+    const codedUnits = groups
+      .filter((group) => hasExternalCode(group))
+      .reduce((sum, group) => sum + unitCount(group), 0);
+    const covered = Boolean(invoiceData?.invoice) && missingUnits === 0;
+    const complete = covered && extraUnits === 0;
 
     return {
-      detectedUnits,
+      detectedUnits: visualUnits,
       codedUnits,
       noCodeUnits: noCodeProducts,
       expectedUnits,
       matchedInvoiceUnits,
       missingUnits,
       extraUnits,
+      covered,
       complete,
       matchedKeys,
     };
   }, [groups, invoiceData]);
 
   const productSummary = useMemo(() => {
-    const groupByKey = new Map(groups.map((group) => [group.groupKey, group]));
-    const invoiceQuantityByGroup = new Map<string, number>();
-    if (invoiceData?.invoice) {
-      for (const item of invoiceData.items) {
-        const target = Math.max(0, Math.floor(Number(item.quantity) || 0));
-        const keys = Array.from(new Set(
-          (item.matched_group_keys ?? []).filter((key) => groupByKey.has(key)),
-        ));
-        if (!target || !keys.length) continue;
-        const ranked = keys
-          .map((key) => groupByKey.get(key)!)
-          .sort((left, right) => {
-            const leftScore = (externalIdentifierForGroup(left) ? 10 : 0) + left.confidence + Math.min(5, left.unitCount);
-            const rightScore = (externalIdentifierForGroup(right) ? 10 : 0) + right.confidence + Math.min(5, right.unitCount);
-            return rightScore - leftScore;
-          });
-        const totalWeight = ranked.reduce((sum, group) => sum + Math.max(1, group.unitCount), 0);
-        let allocated = 0;
-        ranked.forEach((group, index) => {
-          const remaining = target - allocated;
-          const raw = index === ranked.length - 1
-            ? remaining
-            : Math.floor(target * (Math.max(1, group.unitCount) / totalWeight));
-          const quantity = Math.max(0, Math.min(remaining, raw));
-          invoiceQuantityByGroup.set(group.groupKey, (invoiceQuantityByGroup.get(group.groupKey) ?? 0) + quantity);
-          allocated += quantity;
-        });
-        if (allocated < target && ranked[0]) {
-          invoiceQuantityByGroup.set(
-            ranked[0].groupKey,
-            (invoiceQuantityByGroup.get(ranked[0].groupKey) ?? 0) + (target - allocated),
-          );
-        }
-      }
-    }
-
-    const rows = new Map<string, {
-      key: string;
-      name: string;
-      brand: string;
-      model: string;
-      code: string;
-      codeType: string;
-      quantity: number;
-      groupKeys: string[];
-      needsReview: boolean;
-    }>();
-    const normalize = (value: string) => value.toLowerCase().trim().replace(/\s+/g, " ");
-    for (const group of groups) {
-      const external = externalIdentifierForGroup(group);
-      const fallbackIdentity = [group.brand, group.model, group.name]
-        .map(normalize)
-        .filter(Boolean)
-        .join("|");
-      const key = external
-        ? `code:${external.type}:${external.value.replace(/\s/g, "").toUpperCase()}`
-        : `visual:${fallbackIdentity || group.groupKey}`;
-      const existing = rows.get(key);
-      const quantity = invoiceData?.invoice
-        ? Math.max(0, invoiceQuantityByGroup.get(group.groupKey) ?? 0)
-        : Math.max(1, Math.floor(Number(group.unitCount) || 1));
-      if (invoiceData?.invoice && quantity <= 0) continue;
-      if (existing) {
-        existing.quantity += quantity;
-        existing.groupKeys.push(group.groupKey);
-        existing.needsReview = existing.needsReview || group.needsReview;
-      } else {
-        rows.set(key, {
-          key,
+    return groups
+      .map((group) => {
+        const external = externalIdentifierForGroup(group);
+        return {
+          key: group.groupKey,
           name: group.name || "Producto detectado",
           brand: group.brand || "",
           model: group.model || "",
           code: external?.value || "",
           codeType: external?.type || "",
-          quantity,
+          quantity: Math.max(1, Math.floor(Number(group.unitCount) || 1)),
           groupKeys: [group.groupKey],
           needsReview: group.needsReview,
-        });
-      }
-    }
-    return Array.from(rows.values()).sort((a, b) => b.quantity - a.quantity || a.name.localeCompare(b.name));
-  }, [groups, invoiceData]);
+        };
+      })
+      .sort((a, b) => b.quantity - a.quantity || a.name.localeCompare(b.name));
+  }, [groups]);
 
   const visibleInvoiceItems = useMemo(
     () => showAllInvoiceItems ? (invoiceData?.items ?? []) : (invoiceData?.items ?? []).slice(0, 6),
@@ -1258,9 +1196,11 @@ export function CommerceBulkProductImport({
               <p className="text-[10px] font-semibold uppercase tracking-[.18em] text-violet-200">Control de compra</p>
               <h3 className="mt-1 text-base font-semibold">
                 {invoiceData?.invoice
-                  ? receivingSummary.complete
-                    ? "La factura está cubierta por lo fotografiado"
-                    : `Faltan ${receivingSummary.missingUnits} unidad${receivingSummary.missingUnits === 1 ? "" : "es"} por encontrar`
+                  ? receivingSummary.missingUnits > 0
+                    ? `Faltan ${receivingSummary.missingUnits} unidad${receivingSummary.missingUnits === 1 ? "" : "es"} por encontrar`
+                    : receivingSummary.extraUnits > 0
+                      ? `Factura cubierta · ${receivingSummary.extraUnits} unidad${receivingSummary.extraUnits === 1 ? "" : "es"} extra detectada${receivingSummary.extraUnits === 1 ? "" : "s"}`
+                      : "Factura cubierta exactamente por lo fotografiado"
                   : "Adjuntá la factura para chequear la compra"}
               </h3>
               <p className="mt-1 text-[11px] leading-5 text-white/42">
@@ -1280,7 +1220,11 @@ export function CommerceBulkProductImport({
               ) : null}
               {invoiceData?.invoice ? (
                 <span className={`w-fit rounded-full border px-2.5 py-1 text-[10px] font-semibold ${receivingSummary.complete ? "border-emerald-300/25 bg-emerald-300/[0.07] text-emerald-100" : "border-amber-300/25 bg-amber-300/[0.07] text-amber-100"}`}>
-                  {receivingSummary.complete ? "CHECK FACTURA OK" : "REVISIÓN PENDIENTE"}
+                  {receivingSummary.complete
+                    ? "CHECK FACTURA OK"
+                    : receivingSummary.covered && receivingSummary.extraUnits > 0
+                      ? "EXTRA DETECTADO"
+                      : "REVISIÓN PENDIENTE"}
                 </span>
               ) : null}
             </div>
@@ -1295,7 +1239,7 @@ export function CommerceBulkProductImport({
             <div className="rounded-xl border border-white/[0.07] bg-white/[0.025] p-2.5">
               <p className="text-[9px] uppercase tracking-[.12em] text-white/35">Unidades</p>
               <strong className="mt-1 block text-lg">{receivingSummary.detectedUnits}</strong>
-              <span className="text-[9px] text-white/35">{invoiceData?.invoice ? "cubiertas por fotos" : "físicas detectadas"}</span>
+              <span className="text-[9px] text-white/35">físicas detectadas</span>
             </div>
             <div className="rounded-xl border border-white/[0.07] bg-white/[0.025] p-2.5">
               <p className="text-[9px] uppercase tracking-[.12em] text-white/35">Faltan</p>
@@ -1312,9 +1256,9 @@ export function CommerceBulkProductImport({
               <span className="text-[9px] text-white/35">productos para código</span>
             </div>
             <div className="rounded-xl border border-white/[0.07] bg-white/[0.025] p-2.5">
-              <p className="text-[9px] uppercase tracking-[.12em] text-white/35">Sin asignar</p>
+              <p className="text-[9px] uppercase tracking-[.12em] text-white/35">Extra</p>
               <strong className="mt-1 block text-lg">{invoiceData?.invoice ? receivingSummary.extraUnits : "—"}</strong>
-              <span className="text-[9px] text-white/35">productos sin línea</span>
+              <span className="text-[9px] text-white/35">unidades vs. factura</span>
             </div>
           </div>
 
