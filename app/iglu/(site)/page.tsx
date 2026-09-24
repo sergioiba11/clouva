@@ -1,6 +1,6 @@
 import { permanentRedirect } from "next/navigation";
-import { IGLU_STUDIO_PATH } from "@/lib/iglu-radio/routes";
+import { IGLU_PUBLIC_PATH } from "@/lib/iglu-radio/routes";
 
 export default function IgluHomePage() {
-  permanentRedirect(IGLU_STUDIO_PATH);
+  permanentRedirect(IGLU_PUBLIC_PATH);
 }

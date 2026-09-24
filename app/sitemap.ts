@@ -16,6 +16,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     "/lamatrix",
     "/lamatrix/estudios",
     "/players",
+    "/eliglurecords",
     "/iglu/estudio",
     "/iglu/grabaciones",
     "/iglu/producciones",
