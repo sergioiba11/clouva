@@ -707,6 +707,24 @@ const CONTEXT_LINK_SCHEMA = {
           },
           primaryConfidence: { type: "number", minimum: 0, maximum: 1 },
           observedProducts: { type: "array", items: { type: "string" } },
+          codedProducts: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                name: { type: "string" },
+                brand: { type: "string" },
+                model: { type: "string" },
+                identifierValue: { type: "string" },
+                identifierType: {
+                  type: "string",
+                  enum: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "clouva_barcode", "clouva_qr", "sku"],
+                },
+                confidence: { type: "number", minimum: 0, maximum: 1 },
+              },
+              required: ["name", "brand", "model", "identifierValue", "identifierType", "confidence"],
+            },
+          },
           matches: {
             type: "array",
             items: {
@@ -722,7 +740,7 @@ const CONTEXT_LINK_SCHEMA = {
         },
         required: [
           "sourceIndex", "sceneType", "primaryGroupKey", "primaryRole", "primaryConfidence",
-          "observedProducts", "matches",
+          "observedProducts", "codedProducts", "matches",
         ],
       },
     },
@@ -1286,6 +1304,7 @@ async function linkContextScenesToProducts(args: {
   contextGroups: CommerceBatchGroup[];
   imagesByIndex: Map<number, StoredBatchImage>;
   spotName: string;
+  expectedProducts: CommerceBatchExpectedProduct[];
 }): Promise<{ productGroups: CommerceBatchGroup[]; contextGroups: CommerceBatchGroup[] }> {
   if (!args.contextGroups.length) {
     return { productGroups: args.productGroups, contextGroups: args.contextGroups };
@@ -1321,6 +1340,14 @@ async function linkContextScenesToProducts(args: {
       visibleIdentifiers: group.visibleIdentifiers,
       sourceIndexes: group.images.map((image) => image.sourceIndex),
     }));
+    const invoiceChecklist = args.expectedProducts.map((product, index) => ({
+      invoiceIndex: index + 1,
+      description: product.description,
+      brand: product.brand ?? "",
+      model: product.model ?? "",
+      supplierSku: product.supplierSku ?? "",
+      quantity: product.quantity,
+    }));
 
     const prompt = [
       "Sos el revisor final de fotos que CLOUVA marcó provisoriamente como contexto.",
@@ -1332,10 +1359,15 @@ async function linkContextScenesToProducts(args: {
       "Si sceneType=primary_product y el sujeto corresponde exactamente a una identidad del catálogo, primaryGroupKey DEBE ser ese groupKey. Elegí primaryRole=Frente, Atrás o Detalle según la vista real.",
       "Si no hay coincidencia segura en catálogo, dejá primaryGroupKey vacío y bajá primaryConfidence; no inventes matches.",
       "Para true_context, primaryGroupKey debe quedar vacío. observedProducts debe listar TODO producto distinguible que realmente se vea, usando marca/modelo/tipo cuando haya evidencia.",
+      "REGLA DE RECEPCIÓN: una foto jamás debe quedar como mero contexto si muestra UN código/QR completo y legible que identifica inequívocamente una caja o producto. Ese código es evidencia de stock.",
+      "codedProducts debe contener cada producto cuyo EAN/UPC/barcode/QR completo pueda leerse en la foto. Asociá el código con el nombre, marca y modelo del objeto donde está impreso; no uses códigos parciales.",
+      "Si la foto tiene un solo codedProduct inequívoco, tratá ese producto como el sujeto inventariable aunque haya otros artículos de fondo. Si ese código ya existe en catálogo, vinculalo; si no existe, CLOUVA lo va a crear como identidad nueva.",
+      "Usá la factura como checklist de lo que debería estar físicamente en la compra. Si un producto codificado todavía no existe en catálogo, la descripción de factura puede ayudarte a nombrarlo, pero nunca inventes un código.",
       "matches puede relacionar productos visibles con el catálogo, pero una coincidencia de fondo NO significa que la foto pertenezca a ese producto.",
       "No cuentes stock en este paso.",
       `Orden de imágenes: ${refs.map((ref, index) => `imagen ${index + 1} = sourceIndex ${ref.sourceIndex}`).join(" · ")}`,
       `Catálogo de productos ya detectados: ${JSON.stringify(catalog)}`,
+      `Checklist de factura: ${JSON.stringify(invoiceChecklist)}`,
     ].join("\n");
 
     const generated = await generateGoogleCloudJson({
@@ -1357,6 +1389,13 @@ async function linkContextScenesToProducts(args: {
       primaryRole: CommerceBatchImageRole["role"];
       primaryConfidence: number;
       observedProducts: string[];
+      codedProducts: Array<{
+        name: string;
+        brand: string;
+        model: string;
+        identifier: { value: string; type: CommerceIdentifierType };
+        confidence: number;
+      }>;
       matches: CommerceBatchContextMatch[];
     }>();
 
@@ -1370,6 +1409,22 @@ async function linkContextScenesToProducts(args: {
           .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
           .map((value) => value.trim().slice(0, 140)),
       )).slice(0, 24);
+
+      const codedProducts = (Array.isArray(observation.codedProducts) ? observation.codedProducts : []).flatMap((rawCoded) => {
+        const coded = record(rawCoded);
+        const identifierValue = text(coded.identifierValue, 512);
+        const identifierType = text(coded.identifierType, 32) as CommerceIdentifierType;
+        if (!identifierValue || identifierType === "sku") return [];
+        const validation = validateCommerceIdentifier(identifierType, identifierValue);
+        if (!validation.valid) return [];
+        return [{
+          name: text(coded.name, 180),
+          brand: text(coded.brand, 120),
+          model: text(coded.model, 120),
+          identifier: { value: validation.value, type: identifierType },
+          confidence: number01(coded.confidence),
+        }];
+      });
 
       const matches: CommerceBatchContextMatch[] = [];
       const seen = new Set<string>();
@@ -1399,13 +1454,28 @@ async function linkContextScenesToProducts(args: {
         primaryRole,
         primaryConfidence: number01(observation.primaryConfidence),
         observedProducts,
+        codedProducts,
         matches,
       });
     }
 
     const attachmentsByGroup = new Map<string, CommerceBatchImageRole[]>();
     const referencesByGroup = new Map<string, CommerceBatchContextReference[]>();
+    const promotedGroups: CommerceBatchGroup[] = [];
     const nextContextGroups: CommerceBatchGroup[] = [];
+
+    const normalizedCodeKey = (identifier: { value: string; type: CommerceIdentifierType }) =>
+      `${identifier.type}:${identifier.value.replace(/\\s/g, "").toUpperCase()}`;
+    const findGroupByCode = (identifier: { value: string; type: CommerceIdentifierType }) => {
+      const target = normalizedCodeKey(identifier);
+      return Array.from(knownGroups.values()).find((group) => {
+        const identifiers = [
+          ...(group.identifier ? [group.identifier] : []),
+          ...group.visibleIdentifiers.map((candidate) => ({ value: candidate.value, type: candidate.type })),
+        ];
+        return identifiers.some((candidate) => normalizedCodeKey(candidate) === target);
+      }) ?? null;
+    };
 
     for (const contextGroup of args.contextGroups) {
       for (const image of contextGroup.images) {
@@ -1414,6 +1484,54 @@ async function linkContextScenesToProducts(args: {
         if (alreadyAssigned.has(image.sourceIndex)) continue;
 
         const linked = observationByIndex.get(image.sourceIndex);
+        const uniqueCodedProducts = Array.from(new Map(
+          (linked?.codedProducts ?? []).map((product) => [normalizedCodeKey(product.identifier), product] as const),
+        ).values());
+
+        // La factura se completa con evidencia física. Si una foto que parecía
+        // "contexto" contiene un único código externo inequívoco, ese código
+        // identifica un producto inventariable: se vincula al producto existente
+        // o se promueve a un grupo nuevo. Así nunca descartamos stock por tener
+        // otros artículos visibles en el fondo.
+        if (uniqueCodedProducts.length === 1) {
+          const coded = uniqueCodedProducts[0];
+          const existingByCode = findGroupByCode(coded.identifier);
+          if (existingByCode) {
+            const target = attachmentsByGroup.get(existingByCode.groupKey) ?? [];
+            if (!target.some((candidate) => candidate.sourceIndex === image.sourceIndex)) {
+              target.push({ sourceIndex: image.sourceIndex, role: linked?.primaryRole ?? "Detalle" });
+              attachmentsByGroup.set(existingByCode.groupKey, target);
+            }
+            alreadyAssigned.set(image.sourceIndex, existingByCode.groupKey);
+            continue;
+          }
+
+          const promotedKey = `coded-context-${image.sourceIndex}`;
+          const promoted: CommerceBatchGroup = {
+            groupKey: promotedKey,
+            name: coded.name || linked?.observedProducts[0] || "",
+            brand: coded.brand,
+            model: coded.model,
+            packageKind: "unknown",
+            unitCount: 1,
+            identifier: coded.identifier,
+            visibleIdentifiers: [{
+              value: coded.identifier.value,
+              type: coded.identifier.type,
+              source: "unknown",
+              confidence: coded.confidence,
+              sourceIndex: image.sourceIndex,
+            }],
+            confidence: coded.confidence,
+            needsReview: coded.confidence < 0.9,
+            images: [{ sourceIndex: image.sourceIndex, role: linked?.primaryRole ?? "Frente" }],
+          };
+          promotedGroups.push(promoted);
+          knownGroups.set(promotedKey, promoted);
+          alreadyAssigned.set(image.sourceIndex, promotedKey);
+          continue;
+        }
+
         if (
           linked?.sceneType === "primary_product"
           && linked.primaryGroupKey
@@ -1495,7 +1613,7 @@ async function linkContextScenesToProducts(args: {
       });
     }
 
-    return { productGroups: nextProductGroups, contextGroups: nextContextGroups };
+    return { productGroups: [...nextProductGroups, ...promotedGroups], contextGroups: nextContextGroups };
   } catch {
     // Even when the provider has a transient failure, never let the exact same
     // image appear both as a product photo and as context.
@@ -1637,6 +1755,7 @@ export async function analyzeCommerceProductBatch(args: {
     contextGroups: numbered.filter((group) => group.contextOnly),
     imagesByIndex,
     spotName: args.spotName,
+    expectedProducts: args.expectedProducts ?? [],
   });
 
   const result = [...linked.productGroups, ...linked.contextGroups].sort((left, right) => {
@@ -1647,10 +1766,10 @@ export async function analyzeCommerceProductBatch(args: {
 
   await args.onProgress?.({
     stage: "done",
-    completed: productNumber,
-    total: productNumber,
-    provisionalProducts: productNumber,
-    message: `${productNumber} productos listos para comparar con la factura`,
+    completed: linked.productGroups.length,
+    total: linked.productGroups.length,
+    provisionalProducts: linked.productGroups.length,
+    message: `${linked.productGroups.length} productos listos para comparar con la factura`,
     updatedAt: new Date().toISOString(),
   });
   return result;
