@@ -341,14 +341,12 @@ export function reconcileCommerceInvoice(args: {
       .filter((candidate) => candidate.score >= 0.34)
       .sort((a, b) => b.score - a.score);
 
-    const selected: typeof candidates = [];
-    let selectedUnits = 0;
-    for (const candidate of candidates) {
-      if (reserved.has(candidate.group.groupKey)) continue;
-      if (selectedUnits >= target) break;
-      selected.push(candidate);
-      selectedUnits += Math.max(1, Math.floor(candidate.group.unitCount || 1));
-    }
+    // Cada renglón representa una identidad comercial. La cantidad del
+    // renglón no obliga a buscar N grupos visuales: una sola ficha/SKU puede
+    // representar todas las unidades compradas.
+    const selected = candidates
+      .filter((candidate) => !reserved.has(candidate.group.groupKey))
+      .slice(0, 1);
 
     const best = selected[0]?.score ?? 0;
     const second = candidates.find((candidate) => candidate.group.groupKey !== selected[0]?.group.groupKey)?.score ?? 0;
@@ -401,8 +399,8 @@ export async function reconcileCommerceInvoiceWithAI(args: {
     "REGLA FUERTE: no uses un cable PS4 para cubrir el renglón PS4 si existe un producto controlador/joystick y además hay un renglón separado Cable PS4.",
     "REGLA FUERTE: códigos EAN/UPC exactos y modelos exactos pesan más que similitud de palabras.",
     "No fuerces coincidencias. Si no hay evidencia suficiente, devolvé groupKeys vacío.",
-    "La cantidad detectada se calcula después usando unitCount real; no inventes cantidades.",
-    "Podés asignar un solo grupo con unitCount > 1 para cubrir varias unidades del mismo renglón.",
+    "La cantidad recibida viene de la factura. Las fotos identifican qué SKU/producto corresponde al renglón; NO intentes cubrir la cantidad buscando varias fotos o varios grupos.",
+    "Un solo groupKey correctamente identificado puede cubrir un renglón de cantidad 2, 3, 4 o más. Solo devolvé varios groupKeys si son evidencia fragmentada de la MISMA identidad comercial.",
     `Factura: ${JSON.stringify(args.invoice.lines.map((line) => ({
       lineNumber: line.lineNumber,
       description: line.description,
