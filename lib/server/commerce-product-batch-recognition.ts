@@ -924,7 +924,9 @@ function shouldMergeCommercialIdentity(left: CommerceBatchGroup, right: Commerce
   const longerName = leftName.length > rightName.length ? leftName : rightName;
   const nameContained = shorterName.length >= 7 && longerName.includes(shorterName);
 
-  if (modelSame && (!brandConflict || similarity >= 0.5)) return true;
+  // Exact commercial model is stronger than a noisy OCR brand read.
+  // Conflicting validated external codes were already rejected above.
+  if (modelSame && !hardModelConflict) return true;
   if (!hardModelConflict && (brandSame || brandLoose) && sharedDistinctiveIdentityToken(left, right)) return true;
   if (!hardModelConflict && (brandSame || brandLoose) && (nameSimilarity >= 0.58 || nameContained)) return true;
   if (!brandConflict && !hardModelConflict && similarity >= 0.84 && (!leftModel || !rightModel)) return true;
