@@ -1191,10 +1191,27 @@ async function refineMergedGroup(args: {
         !== `${sanitized.identifier.type}:${sanitized.identifier.value.replace(/\s/g, "").toUpperCase()}`) {
       return { ...args.group, needsReview: true };
     }
+    const sanitizedByIndex = new Map(sanitized.images.map((image) => [image.sourceIndex, image]));
+    const completeImages = normalizeRoles(args.group.images.map((original) =>
+      sanitizedByIndex.get(original.sourceIndex) ?? original,
+    ));
+
+    // Refinement may improve labels/roles, but it is never allowed to discard
+    // evidence that was already assigned to this commercial identity. Missing
+    // images here were the reason valid back/code/detail shots ended up later
+    // as "Evidencia pendiente".
+    const codeMap = new Map<string, CommerceBatchVisibleIdentifier>();
+    for (const code of [...args.group.visibleIdentifiers, ...sanitized.visibleIdentifiers]) {
+      const key = `${code.type}:${code.value.replace(/\\s/g, "").toUpperCase()}:${code.sourceIndex ?? -1}`;
+      const existing = codeMap.get(key);
+      if (!existing || code.confidence > existing.confidence) codeMap.set(key, code);
+    }
+
     return {
       ...sanitized,
       groupKey: args.group.groupKey,
-      visibleIdentifiers: sanitized.visibleIdentifiers.length ? sanitized.visibleIdentifiers : args.group.visibleIdentifiers,
+      images: completeImages,
+      visibleIdentifiers: Array.from(codeMap.values()),
       identifier: sanitized.identifier ?? args.group.identifier,
       needsReview: sanitized.needsReview || args.group.needsReview,
     };
@@ -1784,7 +1801,44 @@ export async function analyzeCommerceProductBatch(args: {
     finalProducts = consolidateDeterministicCommercialIdentity(finalProducts);
   }
 
-  const result = [...finalProducts, ...linked.contextGroups].sort((left, right) => {
+  // Coverage invariant: every uploaded image must leave analysis owned by
+  // exactly one product or an explicit true-context group. Never silently turn
+  // an omitted refinement image into generic pending evidence.
+  const coveredIndexes = new Set(
+    [...finalProducts, ...linked.contextGroups]
+      .flatMap((group) => group.images.map((image) => image.sourceIndex)),
+  );
+  const missingIndexes = args.images
+    .map((image) => image.sourceIndex)
+    .filter((sourceIndex) => !coveredIndexes.has(sourceIndex));
+
+  let coverageProducts = finalProducts;
+  let coverageContexts = linked.contextGroups;
+  if (missingIndexes.length) {
+    const recoveredMissing = await recoverExplicitUnassignedImages({
+      images: args.images.filter((image) => missingIndexes.includes(image.sourceIndex)),
+      spotName: args.spotName,
+      chunkNumber: 9000,
+    });
+    const recoveredProducts = recoveredMissing.filter((group) => !group.contextOnly);
+    const recoveredContexts = recoveredMissing.filter((group) => group.contextOnly);
+
+    coverageProducts = consolidateDeterministicCommercialIdentity([
+      ...finalProducts,
+      ...recoveredProducts,
+    ]);
+    const relinkedMissing = await linkContextScenesToProducts({
+      productGroups: coverageProducts,
+      contextGroups: [...linked.contextGroups, ...recoveredContexts],
+      imagesByIndex,
+      spotName: args.spotName,
+      expectedProducts: args.expectedProducts ?? [],
+    });
+    coverageProducts = consolidateDeterministicCommercialIdentity(relinkedMissing.productGroups);
+    coverageContexts = relinkedMissing.contextGroups;
+  }
+
+  const result = [...coverageProducts, ...coverageContexts].sort((left, right) => {
     const leftIndex = Math.min(...left.images.map((image) => image.sourceIndex));
     const rightIndex = Math.min(...right.images.map((image) => image.sourceIndex));
     return leftIndex - rightIndex;
@@ -1792,10 +1846,10 @@ export async function analyzeCommerceProductBatch(args: {
 
   await args.onProgress?.({
     stage: "done",
-    completed: finalProducts.length,
-    total: finalProducts.length,
-    provisionalProducts: finalProducts.length,
-    message: `${finalProducts.length} productos listos para comparar con la factura`,
+    completed: coverageProducts.length,
+    total: coverageProducts.length,
+    provisionalProducts: coverageProducts.length,
+    message: `${coverageProducts.length} productos listos para comparar con la factura`,
     updatedAt: new Date().toISOString(),
   });
   return result;
