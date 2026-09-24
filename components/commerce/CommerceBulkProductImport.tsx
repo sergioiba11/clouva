@@ -310,6 +310,12 @@ function batchGroups(batch: BatchStatus) {
   return Array.isArray(batch.metadata?.groups) ? batch.metadata.groups : [];
 }
 
+function externalIdentifierForGroup(group: BatchGroup) {
+  const internal = new Set(["sku", "clouva_barcode", "clouva_qr"]);
+  if (group.identifier && !internal.has(group.identifier.type)) return group.identifier;
+  return group.visibleIdentifiers.find((identifier) => !internal.has(identifier.type)) ?? null;
+}
+
 export function CommerceBulkProductImport({
   studioId,
   onCompleted,
@@ -425,9 +431,7 @@ export function CommerceBulkProductImport({
     const groupByKey = new Map(groups.map((group) => [group.groupKey, group]));
     const matchedKeys = new Set<string>();
     const unitCount = (group: BatchGroup) => Math.max(1, Math.floor(Number(group.unitCount) || 1));
-    const hasExternalCode = (group: BatchGroup) => Boolean(
-      group.identifier && !["sku", "clouva_barcode", "clouva_qr"].includes(group.identifier.type),
-    );
+    const hasExternalCode = (group: BatchGroup) => Boolean(externalIdentifierForGroup(group));
 
     const invoiceItems = invoiceData?.items ?? [];
     let expectedUnits = 0;
@@ -490,8 +494,8 @@ export function CommerceBulkProductImport({
         const ranked = keys
           .map((key) => groupByKey.get(key)!)
           .sort((left, right) => {
-            const leftScore = (left.identifier ? 10 : 0) + left.confidence + Math.min(5, left.unitCount);
-            const rightScore = (right.identifier ? 10 : 0) + right.confidence + Math.min(5, right.unitCount);
+            const leftScore = (externalIdentifierForGroup(left) ? 10 : 0) + left.confidence + Math.min(5, left.unitCount);
+            const rightScore = (externalIdentifierForGroup(right) ? 10 : 0) + right.confidence + Math.min(5, right.unitCount);
             return rightScore - leftScore;
           });
         const totalWeight = ranked.reduce((sum, group) => sum + Math.max(1, group.unitCount), 0);
@@ -527,9 +531,7 @@ export function CommerceBulkProductImport({
     }>();
     const normalize = (value: string) => value.toLowerCase().trim().replace(/\s+/g, " ");
     for (const group of groups) {
-      const external = group.identifier && !["sku", "clouva_barcode", "clouva_qr"].includes(group.identifier.type)
-        ? group.identifier
-        : null;
+      const external = externalIdentifierForGroup(group);
       const fallbackIdentity = [group.brand, group.model, group.name]
         .map(normalize)
         .filter(Boolean)
