@@ -640,6 +640,27 @@ const CONSOLIDATION_SCHEMA = {
   required: ["clusters"],
 } as const;
 
+const RECEIPT_CLUSTER_SCHEMA = {
+  type: "object",
+  properties: {
+    clusters: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          groupKeys: { type: "array", items: { type: "string" } },
+          canonicalGroupKey: { type: "string" },
+          invoiceIndex: { type: "integer", minimum: 0, maximum: 500 },
+          confidence: { type: "number", minimum: 0, maximum: 1 },
+          needsReview: { type: "boolean" },
+        },
+        required: ["groupKeys", "canonicalGroupKey", "invoiceIndex", "confidence", "needsReview"],
+      },
+    },
+  },
+  required: ["clusters"],
+} as const;
+
 const RECOVERY_SCHEMA = {
   type: "object",
   properties: {
@@ -1134,6 +1155,131 @@ async function consolidateGroups(
   }
 }
 
+async function resolveReceiptIdentityClusters(args: {
+  groups: CommerceBatchGroup[];
+  expectedProducts: CommerceBatchExpectedProduct[];
+  imagesByIndex: Map<number, StoredBatchImage>;
+  spotName: string;
+}) {
+  if (args.groups.length <= 1 || !args.expectedProducts.length) return args.groups;
+
+  const refs = (await Promise.all(args.groups.map(async (group) => {
+    const representative = group.images.find((image) => image.role === "Frente") ?? group.images[0];
+    const source = representative ? args.imagesByIndex.get(representative.sourceIndex) : undefined;
+    if (!source) return null;
+    const stored = await downloadGeneratedMediaObject(source.storagePath);
+    return {
+      groupKey: group.groupKey,
+      sourceIndex: representative.sourceIndex,
+      mimeType: stored.mimeType.startsWith("image/") ? stored.mimeType : source.mimeType,
+      data: stored.bytes.toString("base64"),
+    };
+  }))).filter((value): value is NonNullable<typeof value> => Boolean(value));
+
+  const prompt = [
+    "Sos el reconciliador GLOBAL de una recepción física de mercadería en CLOUVA.",
+    `Spot: "${args.spotName}".`,
+    "Ya hubo análisis por bloques, así que algunos grupos separados pueden ser frente/dorso/detalle del MISMO artículo y algún grupo puede tener nombre/marca OCR incorrectos.",
+    "Tu prioridad es reconstruir identidades comerciales reales usando TODA la compra: imágenes representativas, códigos, modelos y renglones de factura.",
+    "El aspecto visual del packaging manda sobre un OCR aislado cuando hay conflicto. Un dorso azul que coincide con el frente de un Cable PS4 debe agruparse con ese Cable PS4 aunque un OCR previo lo haya llamado Samsung.",
+    "No crees una identidad nueva solo porque una foto sea el dorso, lateral, etiqueta o código de un producto cuyo frente ya existe.",
+    "Agrupá groupKeys que sean el mismo artículo/variante de recepción. Conservá separados artículos realmente distintos.",
+    "La factura es el checklist esperado, NO el inventario real: puede haber unidades físicas EXTRA de una identidad que sí figura en factura. Ese excedente sigue dentro del mismo cluster/producto.",
+    "Una línea de factura puede agrupar unidades del mismo artículo que difieran solo en color/serial/código individual cuando comercialmente el proveedor las facturó bajo el mismo renglón.",
+    "invoiceIndex es 1-based según el checklist. Usá 0 solo si el cluster representa una identidad que realmente no corresponde a ningún renglón de factura.",
+    "canonicalGroupKey debe ser el grupo cuya foto/metadata represente mejor el frente o identidad correcta del artículo. No elijas un dorso mal reconocido como canónico.",
+    "Cada groupKey debe aparecer exactamente una vez entre todos los clusters.",
+    "No inventes productos faltantes: solo agrupá evidencia que existe.",
+    `Factura: ${JSON.stringify(args.expectedProducts.map((item, index) => ({ invoiceIndex: index + 1, ...item })))}`,
+    `Grupos: ${JSON.stringify(args.groups.map((group) => ({
+      groupKey: group.groupKey,
+      name: group.name,
+      brand: group.brand,
+      model: group.model,
+      unitCount: group.unitCount,
+      identifier: group.identifier,
+      visibleIdentifiers: group.visibleIdentifiers,
+      sourceIndexes: group.images.map((image) => image.sourceIndex),
+    })))}`,
+    refs.length
+      ? `Orden de imágenes: ${refs.map((ref, index) => `imagen ${index + 1} = ${ref.groupKey} (sourceIndex ${ref.sourceIndex})`).join(" · ")}`
+      : "",
+  ].filter(Boolean).join("\n");
+
+  try {
+    const generated = await generateGoogleCloudJson({
+      model: process.env.GOOGLE_CLOUD_PRODUCT_VISION_MODEL
+        ?? process.env.GEMINI_PRODUCT_VISION_MODEL
+        ?? "gemini-2.5-flash",
+      prompt,
+      ...(refs.length
+        ? { referenceImages: refs.map((ref) => ({ mimeType: ref.mimeType, data: ref.data })) }
+        : {}),
+      responseJsonSchema: RECEIPT_CLUSTER_SCHEMA,
+      temperature: 0,
+      maxOutputTokens: 5200,
+    });
+
+    const root = record(parseGroupingJson(generated.text));
+    const known = new Map(args.groups.map((group) => [group.groupKey, group]));
+    const used = new Set<string>();
+    const resolved: CommerceBatchGroup[] = [];
+
+    for (const raw of Array.isArray(root.clusters) ? root.clusters : []) {
+      const cluster = record(raw);
+      const keys = Array.from(new Set(
+        (Array.isArray(cluster.groupKeys) ? cluster.groupKeys : [])
+          .filter((key): key is string => typeof key === "string" && known.has(key) && !used.has(key)),
+      ));
+      if (!keys.length) continue;
+
+      const invoiceIndex = Math.floor(Number(cluster.invoiceIndex));
+      if (invoiceIndex < 0 || invoiceIndex > args.expectedProducts.length) continue;
+
+      const members = keys.map((key) => known.get(key)!).filter(Boolean);
+      keys.forEach((key) => used.add(key));
+
+      if (members.length === 1) {
+        resolved.push(members[0]);
+        continue;
+      }
+
+      const canonicalKey = text(cluster.canonicalGroupKey, 96);
+      const canonical = members.find((member) => member.groupKey === canonicalKey) ?? members[0];
+      const merged = mergeClusterGroups(
+        members,
+        Math.max(...members.map((member) => Math.max(1, member.unitCount))),
+        number01(cluster.confidence),
+        cluster.needsReview === true,
+      );
+
+      resolved.push({
+        ...merged,
+        groupKey: canonical.groupKey,
+        name: canonical.name || merged.name,
+        brand: canonical.brand || merged.brand,
+        model: canonical.model || merged.model,
+        packageKind: canonical.packageKind !== "unknown" ? canonical.packageKind : merged.packageKind,
+        needsReview: merged.needsReview || cluster.needsReview === true,
+      });
+    }
+
+    for (const group of args.groups) if (!used.has(group.groupKey)) resolved.push(group);
+
+    const refined: CommerceBatchGroup[] = [];
+    for (const group of resolved) {
+      refined.push(await refineMergedGroup({
+        group,
+        imagesByIndex: args.imagesByIndex,
+        spotName: args.spotName,
+      }));
+    }
+    return consolidateDeterministicCommercialIdentity(refined);
+  } catch {
+    return args.groups;
+  }
+}
+
 async function refineMergedGroup(args: {
   group: CommerceBatchGroup;
   imagesByIndex: Map<number, StoredBatchImage>;
@@ -1159,9 +1305,10 @@ async function refineMergedGroup(args: {
       `Spot: "${args.spotName}".`,
       "Todas estas fotos fueron propuestas como el mismo producto/variante. Confirmá la identidad y contá unidades físicas sin duplicar vistas.",
       "Frente, dorso y detalle del mismo objeto cuentan como UNA unidad.",
-      "REGLA CRÍTICA: la cantidad de fotos NUNCA es la cantidad de unidades. Dos fotos del mismo producto no implican unitCount=2.",
+      "REGLA CRÍTICA: la cantidad de fotos por sí sola NUNCA es la cantidad de unidades. Dos fotos del mismo objeto no implican unitCount=2.",
+      "Pero las unidades NO tienen que aparecer juntas en una sola foto: si distintas imágenes prueban objetos físicos diferentes mediante color de variante, serial/barcode distinto, etiqueta individual, caja distinta o rasgos visuales inequívocos, contá cada unidad física una vez.",
       "Si el mismo packaging aparece en varias fotos y no podés demostrar que son unidades físicas distintas, usá unitCount=1.",
-      "Solo usá unitCount>1 cuando la evidencia visual muestre claramente varias unidades distintas al mismo tiempo o rasgos inequívocos que prueben que son objetos distintos.",
+      "Frente + dorso + detalle del mismo objeto cuentan una sola vez. Cinco cajas/controladores físicamente distintos fotografiados por separado cuentan 5 aunque la factura espere 4.",
       "Si se ven varias cajas/unidades idénticas, contalas una sola vez cada una aunque aparezcan repetidas en otras fotos.",
       "Ignorá productos ajenos que aparezcan de fondo: para identidad y unitCount contá únicamente la variante propuesta por este grupo.",
       "Si descubrís códigos completos distintos o una variante claramente diferente, marcá needsReview=true; no inventes datos.",
@@ -1207,12 +1354,21 @@ async function refineMergedGroup(args: {
       if (!existing || code.confidence > existing.confidence) codeMap.set(key, code);
     }
 
+    const completeVisibleIdentifiers = Array.from(codeMap.values());
+    const externalPrimary = completeVisibleIdentifiers.find((candidate) =>
+      !["sku", "clouva_barcode", "clouva_qr"].includes(candidate.type)
+      && validateCommerceIdentifier(candidate.type, candidate.value).valid,
+    );
+    const primaryIdentifier = externalPrimary
+      ? { value: validateCommerceIdentifier(externalPrimary.type, externalPrimary.value).value, type: externalPrimary.type }
+      : sanitized.identifier ?? args.group.identifier;
+
     return {
       ...sanitized,
       groupKey: args.group.groupKey,
       images: completeImages,
-      visibleIdentifiers: Array.from(codeMap.values()),
-      identifier: sanitized.identifier ?? args.group.identifier,
+      visibleIdentifiers: completeVisibleIdentifiers,
+      identifier: primaryIdentifier,
       needsReview: sanitized.needsReview || args.group.needsReview,
     };
   } catch {
@@ -1800,6 +1956,15 @@ export async function analyzeCommerceProductBatch(args: {
     );
     finalProducts = consolidateDeterministicCommercialIdentity(finalProducts);
   }
+
+  // Final receipt-level pass: regroup wrong OCR/split backs against the
+  // complete invoice + all product anchors before computing coverage.
+  finalProducts = await resolveReceiptIdentityClusters({
+    groups: finalProducts,
+    expectedProducts: args.expectedProducts ?? [],
+    imagesByIndex,
+    spotName: args.spotName,
+  });
 
   // Coverage invariant: every uploaded image must leave analysis owned by
   // exactly one product or an explicit true-context group. Never silently turn
