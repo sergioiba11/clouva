@@ -395,26 +395,28 @@ export function reconcileCommerceInvoice(args: {
 
     for (const candidate of strongSelected) reserved.add(candidate.group.groupKey);
 
-    // La foto identifica la identidad comercial; la factura es la fuente de
-    // verdad para la cantidad recibida. No exigimos ver físicamente las N
-    // unidades en las fotos para cubrir un renglón de cantidad N.
+    // The grouped photos represent the physical receipt. The invoice target is
+    // only the expected quantity, so overages and shortages stay visible.
     const matchedQuantity = ambiguous
       ? 0
-      : strongSelected.length
-        ? target
-        : 0;
+      : strongSelected.reduce(
+          (sum, candidate) => sum + Math.max(1, Math.floor(candidate.group.unitCount || 1)),
+          0,
+        );
     const matchStatus: CommerceInvoiceMatch["matchStatus"] = ambiguous
       ? "ambiguous"
-      : matchedQuantity > 0
+      : matchedQuantity >= target
         ? "matched"
-        : "unmatched";
+        : matchedQuantity > 0
+          ? "partial"
+          : "unmatched";
 
     return {
       line,
       matchedGroupKeys: strongSelected.map((candidate) => candidate.group.groupKey),
       matchedQuantity,
       matchStatus,
-      autoChecked: matchStatus === "matched",
+      autoChecked: matchStatus === "matched" && matchedQuantity === target,
       confidence: strongSelected.length
         ? strongSelected.reduce((sum, candidate) => sum + candidate.score, 0) / strongSelected.length
         : 0,
@@ -441,8 +443,9 @@ export async function reconcileCommerceInvoiceWithAI(args: {
     "No fuerces coincidencias incompatibles. Pero recordá que el proveedor usa abreviaturas muy cortas: compará por significado y por el conjunto completo de renglones, no solo por coincidencia literal.",
     "Hacé asignación global uno-a-uno: si una línea abreviada no muestra la marca/modelo del packaging, usá categoría, conectores, resto de líneas y productos todavía no asignados para resolverla cuando sea claro.",
     "No devuelvas groupKeys vacío solo porque la descripción de factura sea abreviada si hay una identidad comercial compatible y única en el conjunto.",
-    "La cantidad recibida viene de la factura. Las fotos identifican qué SKU/producto corresponde al renglón; NO intentes cubrir la cantidad buscando varias fotos o varios grupos.",
-    "Un solo groupKey correctamente identificado puede cubrir un renglón de cantidad 2, 3, 4 o más. Solo devolvé varios groupKeys si son evidencia fragmentada de la MISMA identidad comercial.",
+    "La factura indica la cantidad ESPERADA; group.unitCount indica la cantidad FÍSICA detectada. Puede haber faltantes o extras y no debés ocultarlos.",
+    "Tu tarea acá es asignar identidad, no fabricar coincidencia de cantidades. Un groupKey puede tener unitCount mayor o menor al renglón de factura.",
+    "Solo devolvé varios groupKeys para un renglón cuando sean fragmentos/vistas de la MISMA identidad comercial que todavía no quedaron consolidados.",
     `Factura: ${JSON.stringify(args.invoice.lines.map((line) => ({
       lineNumber: line.lineNumber,
       description: line.description,
@@ -512,9 +515,14 @@ export async function reconcileCommerceInvoiceWithAI(args: {
       for (const key of selectedKeys) finalUsed.add(key);
 
       const target = Math.max(1, Math.round(line.quantity));
-      const matchedQuantity = selectedKeys.length ? target : 0;
+      const matchedQuantity = selectedKeys.reduce(
+        (sum, key) => sum + Math.max(1, Math.floor(groupByKey.get(key)?.unitCount || 1)),
+        0,
+      );
       const matchStatus: CommerceInvoiceMatch["matchStatus"] = selectedKeys.length
-        ? "matched"
+        ? matchedQuantity >= target
+          ? "matched"
+          : "partial"
         : (fallbackMatch.matchStatus === "ambiguous" ? "ambiguous" : "unmatched");
       const confidence = aiKeys.length
         ? (ai?.confidence ?? 0)
@@ -527,7 +535,9 @@ export async function reconcileCommerceInvoiceWithAI(args: {
         matchedGroupKeys: selectedKeys,
         matchedQuantity,
         matchStatus,
-        autoChecked: matchStatus === "matched" && (aiKeys.length ? confidence >= 0.82 : true),
+        autoChecked: matchStatus === "matched"
+          && matchedQuantity === target
+          && (aiKeys.length ? confidence >= 0.82 : true),
         confidence,
         reasons: aiKeys.length
           ? (ai?.reasons.length ? ai.reasons : ["reconciliación semántica"])
