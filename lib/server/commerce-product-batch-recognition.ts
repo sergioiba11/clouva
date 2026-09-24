@@ -1465,7 +1465,7 @@ async function linkContextScenesToProducts(args: {
     const nextContextGroups: CommerceBatchGroup[] = [];
 
     const normalizedCodeKey = (identifier: { value: string; type: CommerceIdentifierType }) =>
-      `${identifier.type}:${identifier.value.replace(/\\s/g, "").toUpperCase()}`;
+      `${identifier.type}:${identifier.value.replace(/\s/g, "").toUpperCase()}`;
     const findGroupByCode = (identifier: { value: string; type: CommerceIdentifierType }) => {
       const target = normalizedCodeKey(identifier);
       return Array.from(knownGroups.values()).find((group) => {
