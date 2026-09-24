@@ -357,17 +357,19 @@ export function reconcileCommerceInvoice(args: {
 
     for (const candidate of strongSelected) reserved.add(candidate.group.groupKey);
 
-    const matchedQuantity = strongSelected.reduce(
-      (sum, candidate) => sum + Math.max(1, Math.floor(candidate.group.unitCount || 1)),
-      0,
-    );
+    // La foto identifica la identidad comercial; la factura es la fuente de
+    // verdad para la cantidad recibida. No exigimos ver físicamente las N
+    // unidades en las fotos para cubrir un renglón de cantidad N.
+    const matchedQuantity = ambiguous
+      ? 0
+      : strongSelected.length
+        ? target
+        : 0;
     const matchStatus: CommerceInvoiceMatch["matchStatus"] = ambiguous
       ? "ambiguous"
-      : matchedQuantity >= target
+      : matchedQuantity > 0
         ? "matched"
-        : matchedQuantity > 0
-          ? "partial"
-          : "unmatched";
+        : "unmatched";
 
     return {
       line,
@@ -460,16 +462,13 @@ export async function reconcileCommerceInvoiceWithAI(args: {
       const ai = aiByLine.get(line.lineNumber);
       if (!ai) return fallback[index];
       const selected = ai.keys.map((key) => groupByKey.get(key)!).filter(Boolean);
-      const matchedQuantity = selected.reduce(
-        (sum, group) => sum + Math.max(1, Math.floor(group.unitCount || 1)),
-        0,
-      );
       const target = Math.max(1, Math.round(line.quantity));
-      const matchStatus: CommerceInvoiceMatch["matchStatus"] = matchedQuantity >= target
+      // Una coincidencia de identidad cubre la cantidad del renglón. La
+      // cantidad viene del comprobante, no de contar fotos/cajas visibles.
+      const matchedQuantity = selected.length ? target : 0;
+      const matchStatus: CommerceInvoiceMatch["matchStatus"] = selected.length
         ? "matched"
-        : matchedQuantity > 0
-          ? "partial"
-          : "unmatched";
+        : "unmatched";
       const confidence = ai.confidence;
       return {
         line,
