@@ -1355,13 +1355,17 @@ async function refineMergedGroup(args: {
     }
 
     const completeVisibleIdentifiers = Array.from(codeMap.values());
+    let primaryIdentifier: CommerceBatchGroup["identifier"] = sanitized.identifier ?? args.group.identifier;
     const externalPrimary = completeVisibleIdentifiers.find((candidate) =>
       !["sku", "clouva_barcode", "clouva_qr"].includes(candidate.type)
       && validateCommerceIdentifier(candidate.type, candidate.value).valid,
     );
-    const primaryIdentifier = externalPrimary
-      ? { value: validateCommerceIdentifier(externalPrimary.type, externalPrimary.value).value, type: externalPrimary.type }
-      : sanitized.identifier ?? args.group.identifier;
+    if (externalPrimary) {
+      const validatedPrimary = validateCommerceIdentifier(externalPrimary.type, externalPrimary.value);
+      if (validatedPrimary.valid && validatedPrimary.value) {
+        primaryIdentifier = { value: validatedPrimary.value, type: externalPrimary.type };
+      }
+    }
 
     return {
       ...sanitized,
