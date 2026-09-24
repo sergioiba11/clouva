@@ -154,6 +154,12 @@ function normalizeText(value: string) {
     .replace(/\btc\b/g, " usb c ")
     .replace(/\biphone\b/g, " lightning ")
     .replace(/\bnotebook\b/g, " laptop ")
+    .replace(/\bwireless\b/g, " wifi ")
+    .replace(/\bwi[\s-]*fi\b/g, " wifi ")
+    .replace(/\bpower\s+adapter\b/g, " cargador ")
+    .replace(/\bcharger\b/g, " cargador ")
+    .replace(/\bauto\b/g, " vehiculo ")
+    .replace(/\bcar\b/g, " vehiculo ")
     .replace(/[^a-z0-9]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -175,7 +181,10 @@ function tokenScore(a: string, b: string) {
   if (!left.size || !right.size) return 0;
   let intersection = 0;
   for (const token of left) if (right.has(token)) intersection += 1;
-  return intersection / Math.max(left.size, right.size);
+  // La factura usa descripciones muy cortas ("PS4", "Cargador notebook",
+  // "Cable iPhone"). Medimos cobertura del renglón contra la identidad larga
+  // del packaging; no penalizamos porque la caja tenga más palabras.
+  return intersection / left.size;
 }
 
 function groupCodes(group: CommerceBatchGroup) {
@@ -218,11 +227,42 @@ function scoreLineGroup(line: CommerceInvoiceLine, group: CommerceBatchGroup) {
   const similarity = tokenScore(description, identity);
   if (similarity > 0) {
     score += similarity * 0.62;
-    reasons.push(`texto ${Math.round(similarity * 100)}%`);
+    reasons.push(`cobertura factura ${Math.round(similarity * 100)}%`);
   }
 
   const normalizedDescription = normalizeText(description);
   const normalizedIdentity = normalizeText(identity);
+  const lineTokens = tokens(description);
+  const identityTokens = tokens(identity);
+  const distinctiveMatch = Array.from(lineTokens).some((token) =>
+    identityTokens.has(token)
+    && /[a-z]/.test(token)
+    && /\d/.test(token)
+    && token.length >= 3,
+  );
+  if (distinctiveMatch) {
+    score += 0.28;
+    reasons.push("dato distintivo");
+  }
+
+  const lineWifi = /\bwifi\b/.test(normalizedDescription);
+  const groupWifi = /\bwifi\b/.test(normalizedIdentity);
+  if (lineWifi && groupWifi) {
+    score += 0.2;
+    reasons.push("familia WiFi");
+  }
+  const lineNetworkRole = /\b(adaptador|repetidor|receptor)\b/.test(normalizedDescription);
+  const groupNetworkRole = /\b(adaptador|repetidor|receptor)\b/.test(normalizedIdentity);
+  if (lineWifi && groupWifi && lineNetworkRole && groupNetworkRole) {
+    const lineAdapter = /\badaptador\b/.test(normalizedDescription);
+    const groupAdapter = /\badaptador\b/.test(normalizedIdentity);
+    const lineRepeater = /\b(repetidor|receptor)\b/.test(normalizedDescription);
+    const groupRepeater = /\b(repetidor|receptor)\b/.test(normalizedIdentity);
+    if ((lineAdapter && groupAdapter) || (lineRepeater && groupRepeater)) {
+      score += 0.18;
+      reasons.push("tipo WiFi");
+    }
+  }
   const lineIsCable = /\bcable\b/.test(normalizedDescription);
   const groupIsCable = /\bcable\b/.test(normalizedIdentity);
   if (lineIsCable === groupIsCable && (lineIsCable || /\b(playstation|dualshock)\b/.test(normalizedDescription))) {
@@ -398,7 +438,9 @@ export async function reconcileCommerceInvoiceWithAI(args: {
     "REGLA FUERTE: un groupKey solo puede pertenecer a UN renglón de factura.",
     "REGLA FUERTE: no uses un cable PS4 para cubrir el renglón PS4 si existe un producto controlador/joystick y además hay un renglón separado Cable PS4.",
     "REGLA FUERTE: códigos EAN/UPC exactos y modelos exactos pesan más que similitud de palabras.",
-    "No fuerces coincidencias. Si no hay evidencia suficiente, devolvé groupKeys vacío.",
+    "No fuerces coincidencias incompatibles. Pero recordá que el proveedor usa abreviaturas muy cortas: compará por significado y por el conjunto completo de renglones, no solo por coincidencia literal.",
+    "Hacé asignación global uno-a-uno: si una línea abreviada no muestra la marca/modelo del packaging, usá categoría, conectores, resto de líneas y productos todavía no asignados para resolverla cuando sea claro.",
+    "No devuelvas groupKeys vacío solo porque la descripción de factura sea abreviada si hay una identidad comercial compatible y única en el conjunto.",
     "La cantidad recibida viene de la factura. Las fotos identifican qué SKU/producto corresponde al renglón; NO intentes cubrir la cantidad buscando varias fotos o varios grupos.",
     "Un solo groupKey correctamente identificado puede cubrir un renglón de cantidad 2, 3, 4 o más. Solo devolvé varios groupKeys si son evidencia fragmentada de la MISMA identidad comercial.",
     `Factura: ${JSON.stringify(args.invoice.lines.map((line) => ({
@@ -435,16 +477,16 @@ export async function reconcileCommerceInvoiceWithAI(args: {
     const root = record(JSON.parse(generated.text));
     const rawMatches = Array.isArray(root.matches) ? root.matches : [];
     const groupByKey = new Map(args.groups.map((group) => [group.groupKey, group]));
-    const used = new Set<string>();
     const aiByLine = new Map<number, { keys: string[]; confidence: number; reasons: string[] }>();
 
     for (const raw of rawMatches) {
       const item = record(raw);
       const lineNumber = Math.floor(Number(item.lineNumber));
       if (!Number.isInteger(lineNumber)) continue;
-      const keys = (Array.isArray(item.groupKeys) ? item.groupKeys : [])
-        .filter((key): key is string => typeof key === "string" && groupByKey.has(key) && !used.has(key));
-      for (const key of keys) used.add(key);
+      const keys = Array.from(new Set(
+        (Array.isArray(item.groupKeys) ? item.groupKeys : [])
+          .filter((key): key is string => typeof key === "string" && groupByKey.has(key)),
+      ));
       aiByLine.set(lineNumber, {
         keys,
         confidence: Math.min(1, Math.max(0, Number(item.confidence) || 0)),
@@ -456,26 +498,42 @@ export async function reconcileCommerceInvoiceWithAI(args: {
       });
     }
 
+    const finalUsed = new Set<string>();
     return args.invoice.lines.map((line, index) => {
       const ai = aiByLine.get(line.lineNumber);
-      if (!ai) return fallback[index];
-      const selected = ai.keys.map((key) => groupByKey.get(key)!).filter(Boolean);
+      const aiKeys = (ai?.keys ?? []).filter((key) => !finalUsed.has(key));
+      const fallbackMatch = fallback[index];
+      const fallbackKeys = fallbackMatch.matchedGroupKeys.filter((key) => !finalUsed.has(key));
+
+      // Un resultado vacío de la IA no puede borrar una coincidencia
+      // determinística válida. Primero usamos la asignación semántica de IA
+      // cuando realmente eligió un producto; si no, recuperamos el matcher local.
+      const selectedKeys = aiKeys.length ? aiKeys : fallbackKeys;
+      for (const key of selectedKeys) finalUsed.add(key);
+
       const target = Math.max(1, Math.round(line.quantity));
-      // Una coincidencia de identidad cubre la cantidad del renglón. La
-      // cantidad viene del comprobante, no de contar fotos/cajas visibles.
-      const matchedQuantity = selected.length ? target : 0;
-      const matchStatus: CommerceInvoiceMatch["matchStatus"] = selected.length
+      const matchedQuantity = selectedKeys.length ? target : 0;
+      const matchStatus: CommerceInvoiceMatch["matchStatus"] = selectedKeys.length
         ? "matched"
-        : "unmatched";
-      const confidence = ai.confidence;
+        : (fallbackMatch.matchStatus === "ambiguous" ? "ambiguous" : "unmatched");
+      const confidence = aiKeys.length
+        ? (ai?.confidence ?? 0)
+        : selectedKeys.length
+          ? fallbackMatch.confidence
+          : Math.max(ai?.confidence ?? 0, fallbackMatch.confidence);
+
       return {
         line,
-        matchedGroupKeys: selected.map((group) => group.groupKey),
+        matchedGroupKeys: selectedKeys,
         matchedQuantity,
         matchStatus,
-        autoChecked: matchStatus === "matched" && confidence >= 0.82,
+        autoChecked: matchStatus === "matched" && (aiKeys.length ? confidence >= 0.82 : true),
         confidence,
-        reasons: ai.reasons.length ? ai.reasons : ["reconciliación semántica"],
+        reasons: aiKeys.length
+          ? (ai?.reasons.length ? ai.reasons : ["reconciliación semántica"])
+          : selectedKeys.length
+            ? fallbackMatch.reasons
+            : (ai?.reasons.length ? ai.reasons : fallbackMatch.reasons),
       };
     });
   } catch {
