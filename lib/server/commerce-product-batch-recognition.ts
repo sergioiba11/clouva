@@ -994,6 +994,14 @@ function mergeClusterGroups(groups: CommerceBatchGroup[], unitCount: number, con
       codeMap.set(`${code.type}:${code.value.replace(/\s/g, "").toUpperCase()}`, code);
     }
   }
+  const contextReferenceMap = new Map<number, CommerceBatchContextReference>();
+  for (const group of groups) {
+    for (const ref of group.contextReferences ?? []) {
+      const existing = contextReferenceMap.get(ref.sourceIndex);
+      if (!existing || ref.confidence > existing.confidence) contextReferenceMap.set(ref.sourceIndex, ref);
+    }
+  }
+  const contextReferences = Array.from(contextReferenceMap.values());
   return {
     groupKey: preferred.groupKey,
     name: preferred.name || groups.find((group) => group.name)?.name || "",
@@ -1008,6 +1016,7 @@ function mergeClusterGroups(groups: CommerceBatchGroup[], unitCount: number, con
     confidence: Math.min(number01(confidence), ...groups.map((group) => group.confidence)),
     needsReview: needsReview || groups.some((group) => group.needsReview),
     images: normalizeRoles(Array.from(imageMap.values())),
+    ...(contextReferences.length ? { contextReferences } : {}),
   } satisfies CommerceBatchGroup;
 }
 
@@ -1758,7 +1767,22 @@ export async function analyzeCommerceProductBatch(args: {
     expectedProducts: args.expectedProducts ?? [],
   });
 
-  const result = [...linked.productGroups, ...linked.contextGroups].sort((left, right) => {
+  // Scene review can split an identity that had already been consolidated
+  // (for example front/back photos of the same LA-700 or RC-4801). Run one
+  // final invoice-aware consolidation after context linking so the persisted
+  // result represents commercial identities, not individual camera views.
+  let finalProducts = linked.productGroups;
+  if (finalProducts.length > 1) {
+    finalProducts = await consolidateGroups(
+      finalProducts,
+      args.expectedProducts ?? [],
+      imagesByIndex,
+      args.spotName,
+    );
+    finalProducts = consolidateDeterministicCommercialIdentity(finalProducts);
+  }
+
+  const result = [...finalProducts, ...linked.contextGroups].sort((left, right) => {
     const leftIndex = Math.min(...left.images.map((image) => image.sourceIndex));
     const rightIndex = Math.min(...right.images.map((image) => image.sourceIndex));
     return leftIndex - rightIndex;
@@ -1766,10 +1790,10 @@ export async function analyzeCommerceProductBatch(args: {
 
   await args.onProgress?.({
     stage: "done",
-    completed: linked.productGroups.length,
-    total: linked.productGroups.length,
-    provisionalProducts: linked.productGroups.length,
-    message: `${linked.productGroups.length} productos listos para comparar con la factura`,
+    completed: finalProducts.length,
+    total: finalProducts.length,
+    provisionalProducts: finalProducts.length,
+    message: `${finalProducts.length} productos listos para comparar con la factura`,
     updatedAt: new Date().toISOString(),
   });
   return result;
