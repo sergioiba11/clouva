@@ -424,31 +424,44 @@ export function CommerceBulkProductImport({
     if (!groups.length) return null;
     const groupByKey = new Map(groups.map((group) => [group.groupKey, group]));
     const matchedKeys = new Set<string>();
-    for (const item of invoiceData?.items ?? []) {
-      for (const key of item.matched_group_keys ?? []) matchedKeys.add(key);
-    }
     const unitCount = (group: BatchGroup) => Math.max(1, Math.floor(Number(group.unitCount) || 1));
     const hasExternalCode = (group: BatchGroup) => Boolean(
       group.identifier && !["sku", "clouva_barcode", "clouva_qr"].includes(group.identifier.type),
     );
-    const detectedUnits = groups.reduce((sum, group) => sum + unitCount(group), 0);
-    const codedUnits = groups.reduce((sum, group) => sum + (hasExternalCode(group) ? unitCount(group) : 0), 0);
-    const noCodeUnits = Math.max(0, detectedUnits - codedUnits);
-    const expectedUnits = (invoiceData?.items ?? []).reduce((sum, item) => sum + Number(item.quantity || 0), 0);
-    const matchedInvoiceUnits = (invoiceData?.items ?? []).reduce(
-      (sum, item) => sum + Math.min(Number(item.quantity || 0), Number(item.matched_quantity || 0)),
-      0,
-    );
-    const missingUnits = (invoiceData?.items ?? []).reduce(
-      (sum, item) => sum + Math.max(0, Number(item.quantity || 0) - Number(item.matched_quantity || 0)),
-      0,
-    );
-    const matchedPhysicalUnits = Array.from(matchedKeys).reduce(
-      (sum, key) => sum + (groupByKey.get(key) ? unitCount(groupByKey.get(key)!) : 0),
-      0,
-    );
-    const extraUnits = Math.max(0, detectedUnits - matchedPhysicalUnits);
+
+    const invoiceItems = invoiceData?.items ?? [];
+    let expectedUnits = 0;
+    let matchedInvoiceUnits = 0;
+    let codedUnits = 0;
+
+    for (const item of invoiceItems) {
+      const quantity = Math.max(0, Number(item.quantity || 0));
+      expectedUnits += quantity;
+      const keys = Array.from(new Set(
+        (item.matched_group_keys ?? []).filter((key) => groupByKey.has(key)),
+      ));
+      for (const key of keys) matchedKeys.add(key);
+      if (!keys.length) continue;
+
+      // Con factura, una foto identifica el SKU; la cantidad real viene del
+      // renglón del comprobante. No contamos fotos como unidades físicas.
+      matchedInvoiceUnits += quantity;
+      if (keys.some((key) => hasExternalCode(groupByKey.get(key)!))) codedUnits += quantity;
+    }
+
+    const visualUnits = groups.reduce((sum, group) => sum + unitCount(group), 0);
+    const detectedUnits = invoiceData?.invoice ? matchedInvoiceUnits : visualUnits;
+    const noCodeUnits = invoiceData?.invoice
+      ? Math.max(0, matchedInvoiceUnits - codedUnits)
+      : Math.max(0, visualUnits - groups.reduce((sum, group) => sum + (hasExternalCode(group) ? unitCount(group) : 0), 0));
+    const missingUnits = invoiceData?.invoice
+      ? Math.max(0, expectedUnits - matchedInvoiceUnits)
+      : 0;
+    const extraUnits = invoiceData?.invoice
+      ? groups.filter((group) => !matchedKeys.has(group.groupKey)).length
+      : 0;
     const complete = Boolean(invoiceData?.invoice) && missingUnits === 0;
+
     return {
       detectedUnits,
       codedUnits,
@@ -463,6 +476,42 @@ export function CommerceBulkProductImport({
   }, [groups, invoiceData]);
 
   const productSummary = useMemo(() => {
+    const groupByKey = new Map(groups.map((group) => [group.groupKey, group]));
+    const invoiceQuantityByGroup = new Map<string, number>();
+    if (invoiceData?.invoice) {
+      for (const item of invoiceData.items) {
+        const target = Math.max(0, Math.floor(Number(item.quantity) || 0));
+        const keys = Array.from(new Set(
+          (item.matched_group_keys ?? []).filter((key) => groupByKey.has(key)),
+        ));
+        if (!target || !keys.length) continue;
+        const ranked = keys
+          .map((key) => groupByKey.get(key)!)
+          .sort((left, right) => {
+            const leftScore = (left.identifier ? 10 : 0) + left.confidence + Math.min(5, left.unitCount);
+            const rightScore = (right.identifier ? 10 : 0) + right.confidence + Math.min(5, right.unitCount);
+            return rightScore - leftScore;
+          });
+        const totalWeight = ranked.reduce((sum, group) => sum + Math.max(1, group.unitCount), 0);
+        let allocated = 0;
+        ranked.forEach((group, index) => {
+          const remaining = target - allocated;
+          const raw = index === ranked.length - 1
+            ? remaining
+            : Math.floor(target * (Math.max(1, group.unitCount) / totalWeight));
+          const quantity = Math.max(0, Math.min(remaining, raw));
+          invoiceQuantityByGroup.set(group.groupKey, (invoiceQuantityByGroup.get(group.groupKey) ?? 0) + quantity);
+          allocated += quantity;
+        });
+        if (allocated < target && ranked[0]) {
+          invoiceQuantityByGroup.set(
+            ranked[0].groupKey,
+            (invoiceQuantityByGroup.get(ranked[0].groupKey) ?? 0) + (target - allocated),
+          );
+        }
+      }
+    }
+
     const rows = new Map<string, {
       key: string;
       name: string;
@@ -487,7 +536,10 @@ export function CommerceBulkProductImport({
         ? `code:${external.type}:${external.value.replace(/\s/g, "").toUpperCase()}`
         : `visual:${fallbackIdentity || group.groupKey}`;
       const existing = rows.get(key);
-      const quantity = Math.max(1, Math.floor(Number(group.unitCount) || 1));
+      const quantity = invoiceData?.invoice
+        ? Math.max(0, invoiceQuantityByGroup.get(group.groupKey) ?? 0)
+        : Math.max(1, Math.floor(Number(group.unitCount) || 1));
+      if (invoiceData?.invoice && quantity <= 0) continue;
       if (existing) {
         existing.quantity += quantity;
         existing.groupKeys.push(group.groupKey);
@@ -507,7 +559,7 @@ export function CommerceBulkProductImport({
       }
     }
     return Array.from(rows.values()).sort((a, b) => b.quantity - a.quantity || a.name.localeCompare(b.name));
-  }, [groups]);
+  }, [groups, invoiceData]);
 
   const visibleInvoiceItems = useMemo(
     () => showAllInvoiceItems ? (invoiceData?.items ?? []) : (invoiceData?.items ?? []).slice(0, 6),
@@ -628,22 +680,37 @@ export function CommerceBulkProductImport({
 
   async function waitForAnalyzedBatch(batch: string, requireReanalysis = false) {
     let lastStatus = "";
+    let transientFailures = 0;
+    let lastNetworkError = "";
     for (let attempt = 0; attempt < 160; attempt += 1) {
-      const current = await fetchBatchStatus(batch);
-      lastStatus = current.status;
-      const recoveredGroups = batchGroups(current);
-      const reanalysisReady = !requireReanalysis || current.metadata?.reanalyzed === true;
-      if (reanalysisReady && recoveredGroups.length && ["review", "processing", "completed", "completed_with_errors"].includes(current.status)) {
-        return {
-          batchId: current.id,
-          status: current.status,
-          totalImages: current.total_images,
-          detectedProducts: current.detected_products || recoveredGroups.length,
-          groups: recoveredGroups,
-        } satisfies AnalyzeResponse;
-      }
-      if (current.status === "failed") {
-        throw new Error(current.error || "El análisis del lote falló.");
+      try {
+        const current = await fetchBatchStatus(batch);
+        transientFailures = 0;
+        lastNetworkError = "";
+        lastStatus = current.status;
+        const recoveredGroups = batchGroups(current);
+        const reanalysisReady = !requireReanalysis || current.metadata?.reanalyzed === true;
+        if (reanalysisReady && recoveredGroups.length && ["review", "processing", "completed", "completed_with_errors"].includes(current.status)) {
+          return {
+            batchId: current.id,
+            status: current.status,
+            totalImages: current.total_images,
+            detectedProducts: current.detected_products || recoveredGroups.length,
+            groups: recoveredGroups,
+          } satisfies AnalyzeResponse;
+        }
+        if (current.status === "failed") {
+          throw new Error(current.error || "El análisis del lote falló.");
+        }
+      } catch (cause) {
+        const message = cause instanceof Error ? cause.message : String(cause ?? "");
+        const recoverable = /Failed to fetch|network|fetch|HTTP (502|503|504|524)/i.test(message);
+        if (!recoverable) throw cause;
+        transientFailures += 1;
+        lastNetworkError = message;
+        if (transientFailures > 20) {
+          throw new Error(`La conexión se cortó mientras CLOUVA seguía analizando. Último estado: ${lastStatus || "desconocido"}. ${lastNetworkError}`);
+        }
       }
       await wait(3000);
     }
@@ -1224,7 +1291,7 @@ export function CommerceBulkProductImport({
             <div className="rounded-xl border border-white/[0.07] bg-white/[0.025] p-2.5">
               <p className="text-[9px] uppercase tracking-[.12em] text-white/35">Unidades</p>
               <strong className="mt-1 block text-lg">{receivingSummary.detectedUnits}</strong>
-              <span className="text-[9px] text-white/35">físicas detectadas</span>
+              <span className="text-[9px] text-white/35">{invoiceData?.invoice ? "cubiertas por fotos" : "físicas detectadas"}</span>
             </div>
             <div className="rounded-xl border border-white/[0.07] bg-white/[0.025] p-2.5">
               <p className="text-[9px] uppercase tracking-[.12em] text-white/35">Faltan</p>
@@ -1241,9 +1308,9 @@ export function CommerceBulkProductImport({
               <span className="text-[9px] text-white/35">para etiquetar</span>
             </div>
             <div className="rounded-xl border border-white/[0.07] bg-white/[0.025] p-2.5">
-              <p className="text-[9px] uppercase tracking-[.12em] text-white/35">Extra</p>
+              <p className="text-[9px] uppercase tracking-[.12em] text-white/35">Sin asignar</p>
               <strong className="mt-1 block text-lg">{invoiceData?.invoice ? receivingSummary.extraUnits : "—"}</strong>
-              <span className="text-[9px] text-white/35">sin línea asignada</span>
+              <span className="text-[9px] text-white/35">productos sin línea</span>
             </div>
           </div>
 
