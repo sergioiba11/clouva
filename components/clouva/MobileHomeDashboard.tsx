@@ -384,12 +384,12 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
             {vipActive ? <em className={styles.vipActive}><i /> VIP ACTIVO <i /></em> : null}
           </div>
 
-          <div className={styles.vipBody}>
+          <div className={styles.vipBody} data-clouva-vip-body>
             <h2>Potenciá<br />tu experiencia</h2>
             <p>Más herramientas, identidad y experiencias exclusivas dentro de CLOUVA.</p>
           </div>
 
-          <div className={styles.vipVisual} aria-hidden="true">
+          <div className={styles.vipVisual} data-clouva-vip-visual aria-hidden="true">
             {hasVipPieces ? (
               <>
                 <img
@@ -442,7 +442,7 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
             )}
           </div>
 
-          <span className={styles.vipCta}>Ver beneficios VIP <ArrowRight size={16} /></span>
+          <span className={styles.vipCta} data-clouva-vip-cta>Ver beneficios VIP <ArrowRight size={16} /></span>
         </Link>
       );
     }
@@ -466,7 +466,7 @@ export function MobileHomeDashboard({ configOverride, previewMode = false }: Mob
           <strong>MI SPOT</strong>
         </div>
         <span className={styles.featureArrow} aria-hidden="true"><ArrowRight size={18} /></span>
-        <div className={styles.spotBody}>
+        <div className={styles.spotBody} data-clouva-spot-body>
           <h2>Entrar a mi Spot</h2>
           <p>Tu espacio. Tu música. Tu universo.</p>
         </div>
