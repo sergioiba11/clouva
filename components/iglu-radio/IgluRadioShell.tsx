@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { PersistentAudioEngine } from "@/components/iglu-radio/PersistentAudioEngine";
 import { PersistentRadioPlayer } from "@/components/iglu-radio/PersistentRadioPlayer";
 import { RadioHeader } from "@/components/iglu-radio/RadioHeader";
+import { RadioLiveData } from "@/components/iglu-radio/RadioLiveData";
 import { RadioProvider } from "@/components/iglu-radio/RadioProvider";
 import type { RadioStationConfig } from "@/lib/radio/types";
 
@@ -20,6 +21,7 @@ export function IgluRadioShell({ children, station }: { children: ReactNode; sta
         </div>
         <RadioHeader />
         <main className="iglu-radio-content">{children}</main>
+        <RadioLiveData />
         <PersistentAudioEngine />
         <PersistentRadioPlayer />
       </div>
