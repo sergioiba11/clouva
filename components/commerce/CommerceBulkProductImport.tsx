@@ -1624,9 +1624,9 @@ export function CommerceBulkProductImport({
         <div className="mt-4 rounded-2xl border border-cyan-300/15 bg-cyan-300/[0.035] p-3 sm:p-4">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-[10px] font-semibold uppercase tracking-[.16em] text-cyan-200">Fotos mixtas / contexto</p>
+              <p className="text-[10px] font-semibold uppercase tracking-[.16em] text-cyan-200">Evidencia pendiente</p>
               <p className="mt-1 text-[10px] leading-4 text-white/42">
-                Estas fotos muestran varios productos distintos. Sirven como evidencia, pero no crean un producto ni suman unidades al stock.
+                Solo quedan acá las fotos en las que CLOUVA todavía no pudo confirmar una identidad única. Si encuentra un código/QR válido, esa foto pasa a producto y entra en la recepción.
               </p>
             </div>
             <span className="rounded-full border border-cyan-300/15 px-2 py-1 text-[10px] text-cyan-100/70">{contextPhotos.length}</span>
@@ -1647,7 +1647,7 @@ export function CommerceBulkProductImport({
                     <span className="absolute right-1 top-1 rounded bg-black/80 px-1 py-0.5 text-[8px] text-white/75">#{photo.source_index + 1}</span>
                   </div>
                   <div className="min-w-0">
-                    <strong className="text-xs text-cyan-100">Foto mixta · no suma stock</strong>
+                    <strong className="text-xs text-cyan-100">Evidencia · identidad pendiente</strong>
                     <p className="mt-1 text-[10px] leading-4 text-white/65">
                       {observed.length ? `Veo: ${observed.join(" · ")}` : "Analizando los productos visibles de esta escena."}
                     </p>
