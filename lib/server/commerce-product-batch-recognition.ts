@@ -359,8 +359,9 @@ async function recoverExplicitUnassignedImages(args: {
     `Spot: "${args.spotName}". Índices: ${downloaded.map((image) => image.sourceIndex).join(", ")}.`,
     "Si una imagen muestra UNA identidad de producto reconocible (producto, caja, blister, frente, dorso, etiqueta o código), DEBE quedar dentro de un grupo.",
     "REGLA FUERTE: el DORSO de una caja, blister o packaging es una vista del producto, NO contexto. Aunque no se vea el frente, usá marca, modelo, plataforma, conector, potencia, SKU, textos y códigos para conservarlo como producto.",
+    "REGLA DE SUJETO PRINCIPAL: que haya otros productos atrás NO vuelve la foto mixta. Si una caja/producto está sostenida con la mano, centrada, ocupa gran parte del cuadro, está enfocada o es claramente el objetivo de la foto, esa imagen pertenece a ESE producto y lo demás es fondo.",
     "Ejemplo: frente 'Cable USB para PS4' y dorso 'USB Cable / for PS4' son la misma identidad comercial salvo evidencia concreta de otra variante.",
-    "Si la imagen es una vista general con varios productos DISTINTOS, NO la agrupes con ninguno: registrala en contextObservations.",
+    "Usá contextObservations SOLO para una vista general/panorámica donde varios productos distintos sean co-protagonistas y NO exista un producto principal claro.",
     "Para cada foto mixta, observedProducts debe enumerar TODO lo que realmente se ve y se puede nombrar, como una lista corta de productos/variantes visibles. No inventes.",
     "Si una foto mixta contiene objetos que también aparecen solos en otras fotos, la foto mixta sigue siendo SOLO contexto; las fotos individuales sí deben quedar agrupadas con la identidad comercial que les corresponde.",
     "Comprobantes o imágenes inutilizables también van a contextObservations, con observedProducts vacío y reason explicando por qué.",
@@ -493,8 +494,9 @@ async function analyzeChunk(args: {
     "identifierValue/identifierType representan el código principal más confiable. Si no hay ninguno inequívoco, dejá identifierValue vacío.",
     "EAN/UPC requieren lectura completa. Para un barcode lineal alfanumérico claramente legible que no sea EAN/UPC, usá code_128.",
     "Cada índice debe aparecer exactamente una vez: dentro de un grupo o en unassignedIndexes.",
-    "Usá unassignedIndexes para fotos de contexto general: mesa/caja con varios productos DISTINTOS mezclados, comprobantes, fotos borrosas o imágenes que no representan una sola identidad de producto.",
-    "REGLA CRÍTICA DE FOTO MIXTA: si una sola imagen muestra DOS O MÁS identidades comerciales distintas (por ejemplo varios cables/modelos diferentes juntos), esa imagen NO es un producto, NO le pongas unitCount=2, y NO crees un grupo para ella: mandala a unassignedIndexes. Si son varias unidades idénticas del MISMO SKU sí pertenece a un grupo.",
+    "Usá unassignedIndexes SOLO para una vista general/panorámica sin sujeto principal, comprobantes, fotos inutilizables o imágenes que realmente no representan una identidad de producto.",
+    "REGLA CRÍTICA DE SUJETO PRINCIPAL: si una caja/producto está sostenida, centrada, enfocada, ocupa la mayor parte de la imagen o claramente fue fotografiada a propósito, esa foto pertenece a ese producto AUNQUE haya otros productos distintos en el fondo.",
+    "Una foto es realmente mixta/contexto únicamente cuando hay varios productos diferentes co-protagonistas y no existe un objeto principal claro. Si son varias unidades idénticas del MISMO SKU sí pertenece a un grupo.",
     "Si una imagen muestra un solo producto pero no podés reconocer nombre/código, creá igualmente un grupo con campos vacíos y needsReview=true; no la mandes a unassignedIndexes.",
     "Para cada grupo elegí exactamente una imagen como Frente. Elegí como máximo una Atrás cuando exista una vista posterior clara. El resto debe ser Detalle.",
     "name, brand y model deben salir solo de texto/evidencia visible. Dejalos vacíos si no están confirmados.",
@@ -694,6 +696,16 @@ const CONTEXT_LINK_SCHEMA = {
         type: "object",
         properties: {
           sourceIndex: { type: "integer" },
+          sceneType: {
+            type: "string",
+            enum: ["primary_product", "true_context"],
+          },
+          primaryGroupKey: { type: "string" },
+          primaryRole: {
+            type: "string",
+            enum: ["Frente", "Atrás", "Detalle"],
+          },
+          primaryConfidence: { type: "number", minimum: 0, maximum: 1 },
           observedProducts: { type: "array", items: { type: "string" } },
           matches: {
             type: "array",
@@ -708,7 +720,10 @@ const CONTEXT_LINK_SCHEMA = {
             },
           },
         },
-        required: ["sourceIndex", "observedProducts", "matches"],
+        required: [
+          "sourceIndex", "sceneType", "primaryGroupKey", "primaryRole", "primaryConfidence",
+          "observedProducts", "matches",
+        ],
       },
     },
   },
@@ -1119,6 +1134,7 @@ async function refineMergedGroup(args: {
       "Si el mismo packaging aparece en varias fotos y no podés demostrar que son unidades físicas distintas, usá unitCount=1.",
       "Solo usá unitCount>1 cuando la evidencia visual muestre claramente varias unidades distintas al mismo tiempo o rasgos inequívocos que prueben que son objetos distintos.",
       "Si se ven varias cajas/unidades idénticas, contalas una sola vez cada una aunque aparezcan repetidas en otras fotos.",
+      "Ignorá productos ajenos que aparezcan de fondo: para identidad y unitCount contá únicamente la variante propuesta por este grupo.",
       "Si descubrís códigos completos distintos o una variante claramente diferente, marcá needsReview=true; no inventes datos.",
       "Elegí como Frente la foto donde mejor se vea el producto o la cara frontal de su packaging.",
       "Si un código aparece en cualquier foto del grupo, conservá ese código como identifier principal y registrá sourceIndex en visibleIdentifiers.",
@@ -1187,10 +1203,11 @@ async function reviewMixedSceneCandidate(args: {
       "Clasificá CADA FOTO por separado. No conviertas un grupo entero en contexto solo porque una de sus imágenes sea mixta.",
       "single_product: frente/dorso/detalle de un solo SKU.",
       "same_product_multiple_units: aparecen varias unidades físicamente separadas pero TODAS son exactamente el mismo SKU/variante.",
-      "mixed_products: ESA FOTO contiene dos o más productos/variantes diferentes. Una foto de mesa con varios artículos distintos SIEMPRE es mixed_products.",
+      "mixed_products: SOLO cuando ESA FOTO es una vista general con varios productos/variantes diferentes co-protagonistas y NO hay un sujeto principal claro.",
+      "Si hay un producto/caja sostenido, centrado, enfocado o claramente dominante y otros artículos aparecen atrás, NO es mixed_products: clasificá la foto según el producto principal.",
       "Para cada mixed_products, observedProducts debe enumerar TODO lo que realmente se alcanza a reconocer en ESA foto, sin inventar.",
       "Una foto mixed_products nunca pertenece a un producto y nunca suma stock. Las otras fotos individuales del grupo deben conservarse con el producto al que corresponden.",
-      "Un dorso de packaging sigue siendo single_product aunque muestre mucha información impresa.",
+      "Un dorso de packaging, etiqueta o código de barras sigue siendo single_product aunque haya objetos ajenos desenfocados detrás.",
       `Índices disponibles: ${refs.map((ref) => ref.sourceIndex).join(", ")}.`,
       `Grupo propuesto: ${JSON.stringify({
         name: args.group.name,
@@ -1270,13 +1287,17 @@ async function linkContextScenesToProducts(args: {
   imagesByIndex: Map<number, StoredBatchImage>;
   spotName: string;
 }): Promise<{ productGroups: CommerceBatchGroup[]; contextGroups: CommerceBatchGroup[] }> {
-  if (!args.productGroups.length || !args.contextGroups.length) {
+  if (!args.contextGroups.length) {
     return { productGroups: args.productGroups, contextGroups: args.contextGroups };
   }
 
   const contextImages = args.contextGroups.flatMap((group) =>
     group.images.map((image) => ({ sourceIndex: image.sourceIndex, groupKey: group.groupKey })),
   );
+  const alreadyAssigned = new Map<number, string>();
+  for (const group of args.productGroups) {
+    for (const image of group.images) alreadyAssigned.set(image.sourceIndex, group.groupKey);
+  }
 
   try {
     const refs = (await Promise.all(contextImages.map(async (entry) => {
@@ -1302,16 +1323,17 @@ async function linkContextScenesToProducts(args: {
     }));
 
     const prompt = [
-      "Sos el enlazador de escenas mixtas de CLOUVA.",
+      "Sos el revisor final de fotos que CLOUVA marcó provisoriamente como contexto.",
       `Spot: "${args.spotName}".`,
-      "Cada imagen de referencia es una FOTO MIXTA/DE CONTEXTO: puede mostrar varios productos distintos a la vez.",
-      "NO crees productos nuevos y NO cuentes unidades desde estas fotos.",
-      "Para CADA foto, observedProducts debe listar TODO producto distinguible que realmente se vea, aunque esté atrás, de costado, parcialmente tapado o solo se vea su dorso/packaging.",
-      "Usá nombres concretos cuando haya evidencia visible: marca + modelo + tipo de producto. Evitá respuestas genéricas como 'varios productos'.",
-      "Luego asociá cada producto visible con uno o más groupKey del catálogo SOLO cuando sea la misma identidad comercial.",
-      "Una misma foto puede quedar relacionada con varios productos del catálogo. Eso es correcto: es evidencia compartida, no una foto principal del producto.",
-      "Si se ve el dorso o lateral de una caja que coincide con un producto del catálogo por marca/modelo/texto/diseño/código, enlazalo a ese groupKey.",
-      "No enlaces por parecido genérico. Si no estás seguro, listá el producto en observedProducts pero no agregues match.",
+      "IMPORTANTE: algunas de estas fotos fueron clasificadas mal. Re-evaluá CADA FOTO contra el catálogo ya detectado.",
+      "sceneType=primary_product cuando existe UN producto/caja claramente protagonista: está sostenido con la mano, centrado, enfocado, ocupa gran parte del cuadro, o la foto muestra su dorso/etiqueta/código. Los artículos visibles atrás son solo fondo.",
+      "sceneType=true_context SOLO para una vista general/panorámica donde varios productos distintos sean co-protagonistas y NO exista un producto principal claro.",
+      "Un dorso, lateral, etiqueta o código de barras de una sola caja NUNCA es true_context por el hecho de mostrar mucho texto.",
+      "Si sceneType=primary_product y el sujeto corresponde exactamente a una identidad del catálogo, primaryGroupKey DEBE ser ese groupKey. Elegí primaryRole=Frente, Atrás o Detalle según la vista real.",
+      "Si no hay coincidencia segura en catálogo, dejá primaryGroupKey vacío y bajá primaryConfidence; no inventes matches.",
+      "Para true_context, primaryGroupKey debe quedar vacío. observedProducts debe listar TODO producto distinguible que realmente se vea, usando marca/modelo/tipo cuando haya evidencia.",
+      "matches puede relacionar productos visibles con el catálogo, pero una coincidencia de fondo NO significa que la foto pertenezca a ese producto.",
+      "No cuentes stock en este paso.",
       `Orden de imágenes: ${refs.map((ref, index) => `imagen ${index + 1} = sourceIndex ${ref.sourceIndex}`).join(" · ")}`,
       `Catálogo de productos ya detectados: ${JSON.stringify(catalog)}`,
     ].join("\n");
@@ -1324,12 +1346,16 @@ async function linkContextScenesToProducts(args: {
       referenceImages: refs.map((ref) => ({ mimeType: ref.mimeType, data: ref.data })),
       responseJsonSchema: CONTEXT_LINK_SCHEMA,
       temperature: 0,
-      maxOutputTokens: 5200,
+      maxOutputTokens: 5600,
     });
 
     const root = record(parseGroupingJson(generated.text));
     const knownGroups = new Map(args.productGroups.map((group) => [group.groupKey, group]));
     const observationByIndex = new Map<number, {
+      sceneType: "primary_product" | "true_context";
+      primaryGroupKey: string;
+      primaryRole: CommerceBatchImageRole["role"];
+      primaryConfidence: number;
       observedProducts: string[];
       matches: CommerceBatchContextMatch[];
     }>();
@@ -1360,40 +1386,127 @@ async function linkContextScenesToProducts(args: {
         });
       }
 
-      observationByIndex.set(sourceIndex, { observedProducts, matches });
+      const requestedPrimary = text(observation.primaryGroupKey, 96);
+      const primaryGroupKey = knownGroups.has(requestedPrimary) ? requestedPrimary : "";
+      const primaryRole: CommerceBatchImageRole["role"] = observation.primaryRole === "Atrás"
+        ? "Atrás"
+        : observation.primaryRole === "Detalle"
+          ? "Detalle"
+          : "Frente";
+      observationByIndex.set(sourceIndex, {
+        sceneType: observation.sceneType === "primary_product" ? "primary_product" : "true_context",
+        primaryGroupKey,
+        primaryRole,
+        primaryConfidence: number01(observation.primaryConfidence),
+        observedProducts,
+        matches,
+      });
     }
 
+    const attachmentsByGroup = new Map<string, CommerceBatchImageRole[]>();
     const referencesByGroup = new Map<string, CommerceBatchContextReference[]>();
-    const nextContextGroups = args.contextGroups.map((group) => {
-      const sourceIndex = group.images[0]?.sourceIndex;
-      const linked = sourceIndex == null ? undefined : observationByIndex.get(sourceIndex);
-      const matches = linked?.matches ?? [];
-      for (const match of matches) {
-        const refsForGroup = referencesByGroup.get(match.groupKey) ?? [];
-        if (!refsForGroup.some((ref) => ref.sourceIndex === sourceIndex)) {
-          refsForGroup.push({
-            sourceIndex,
-            label: match.label,
-            confidence: match.confidence,
-          });
-          referencesByGroup.set(match.groupKey, refsForGroup);
-        }
-      }
-      return {
-        ...group,
-        observedProducts: linked?.observedProducts.length ? linked.observedProducts : group.observedProducts,
-        contextMatches: matches,
-      };
-    });
+    const nextContextGroups: CommerceBatchGroup[] = [];
 
-    const nextProductGroups = args.productGroups.map((group) => ({
-      ...group,
-      contextReferences: referencesByGroup.get(group.groupKey) ?? [],
-    }));
+    for (const contextGroup of args.contextGroups) {
+      for (const image of contextGroup.images) {
+        // If an earlier product pass already owns this source image, product
+        // ownership wins. A photo can never be both product evidence and context.
+        if (alreadyAssigned.has(image.sourceIndex)) continue;
+
+        const linked = observationByIndex.get(image.sourceIndex);
+        if (
+          linked?.sceneType === "primary_product"
+          && linked.primaryGroupKey
+          && linked.primaryConfidence >= 0.62
+        ) {
+          const target = attachmentsByGroup.get(linked.primaryGroupKey) ?? [];
+          if (!target.some((candidate) => candidate.sourceIndex === image.sourceIndex)) {
+            target.push({ sourceIndex: image.sourceIndex, role: linked.primaryRole });
+            attachmentsByGroup.set(linked.primaryGroupKey, target);
+          }
+          alreadyAssigned.set(image.sourceIndex, linked.primaryGroupKey);
+          continue;
+        }
+
+        const matches = linked?.matches ?? contextGroup.contextMatches ?? [];
+        for (const match of matches) {
+          const refsForGroup = referencesByGroup.get(match.groupKey) ?? [];
+          if (!refsForGroup.some((ref) => ref.sourceIndex === image.sourceIndex)) {
+            refsForGroup.push({
+              sourceIndex: image.sourceIndex,
+              label: match.label,
+              confidence: match.confidence,
+            });
+            referencesByGroup.set(match.groupKey, refsForGroup);
+          }
+        }
+
+        nextContextGroups.push({
+          ...contextGroup,
+          groupKey: contextGroup.images.length === 1
+            ? contextGroup.groupKey
+            : `${contextGroup.groupKey}-${image.sourceIndex}`,
+          images: [{ sourceIndex: image.sourceIndex, role: "Frente" }],
+          observedProducts: linked?.observedProducts.length
+            ? linked.observedProducts
+            : contextGroup.observedProducts,
+          contextMatches: matches,
+          contextReason: linked?.sceneType === "true_context"
+            ? "Vista general con varios productos distintos y sin un sujeto principal."
+            : contextGroup.contextReason,
+        });
+      }
+    }
+
+    const nextProductGroups: CommerceBatchGroup[] = [];
+    for (const group of args.productGroups) {
+      const attachments = attachmentsByGroup.get(group.groupKey) ?? [];
+      const refsForGroup = [
+        ...(group.contextReferences ?? []),
+        ...(referencesByGroup.get(group.groupKey) ?? []),
+      ].filter((ref, index, all) =>
+        all.findIndex((candidate) => candidate.sourceIndex === ref.sourceIndex) === index,
+      );
+
+      if (!attachments.length) {
+        nextProductGroups.push({ ...group, contextReferences: refsForGroup });
+        continue;
+      }
+
+      const merged = {
+        ...group,
+        images: normalizeRoles([
+          ...group.images,
+          ...attachments.filter((attachment) => !group.images.some((image) => image.sourceIndex === attachment.sourceIndex)),
+        ]),
+        needsReview: true,
+        contextReferences: refsForGroup,
+      } satisfies CommerceBatchGroup;
+
+      const refined = await refineMergedGroup({
+        group: merged,
+        imagesByIndex: args.imagesByIndex,
+        spotName: args.spotName,
+      });
+      nextProductGroups.push({
+        ...refined,
+        groupKey: group.groupKey,
+        contextReferences: refsForGroup,
+      });
+    }
 
     return { productGroups: nextProductGroups, contextGroups: nextContextGroups };
   } catch {
-    return { productGroups: args.productGroups, contextGroups: args.contextGroups };
+    // Even when the provider has a transient failure, never let the exact same
+    // image appear both as a product photo and as context.
+    const assigned = new Set(args.productGroups.flatMap((group) => group.images.map((image) => image.sourceIndex)));
+    return {
+      productGroups: args.productGroups,
+      contextGroups: args.contextGroups.flatMap((group) => {
+        const images = group.images.filter((image) => !assigned.has(image.sourceIndex));
+        return images.length ? [{ ...group, images: normalizeRoles(images) }] : [];
+      }),
+    };
   }
 }
 
