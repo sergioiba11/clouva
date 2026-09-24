@@ -7,6 +7,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const staticRoutes = [
     "/",
     "/sobre-clouva",
+    "/engineering/supabase-rls-multi-role-creator-platform",
     "/clouva",
     "/vidadeflows",
     "/tienda",
