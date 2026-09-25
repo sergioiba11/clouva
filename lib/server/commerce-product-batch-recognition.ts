@@ -653,8 +653,9 @@ const RECEIPT_CLUSTER_SCHEMA = {
           invoiceIndex: { type: "integer", minimum: 0, maximum: 500 },
           confidence: { type: "number", minimum: 0, maximum: 1 },
           needsReview: { type: "boolean" },
+          physicalUnitCount: { type: "integer", minimum: 1, maximum: 100 },
         },
-        required: ["groupKeys", "canonicalGroupKey", "invoiceIndex", "confidence", "needsReview"],
+        required: ["groupKeys", "canonicalGroupKey", "invoiceIndex", "confidence", "needsReview", "physicalUnitCount"],
       },
     },
   },
@@ -1189,6 +1190,7 @@ async function resolveReceiptIdentityClusters(args: {
     "invoiceIndex es 1-based según el checklist. Usá 0 solo si el cluster representa una identidad que realmente no corresponde a ningún renglón de factura.",
     "canonicalGroupKey debe ser el grupo cuya foto/metadata represente mejor el frente o identidad correcta del artículo. No elijas un dorso mal reconocido como canónico.",
     "Cada groupKey debe aparecer exactamente una vez entre todos los clusters.",
+    "physicalUnitCount es la cantidad REAL de unidades físicas del cluster completo. No sumes fotos ni groupKeys: frente+dorso+detalle del mismo objeto = 1. Si distintas fotos demuestran cajas/unidades físicas diferentes del mismo artículo, contalas una vez cada una. Puede superar la cantidad de factura si hay un extra físico.",
     "No inventes productos faltantes: solo agrupá evidencia que existe.",
     `Factura: ${JSON.stringify(args.expectedProducts.map((item, index) => ({ invoiceIndex: index + 1, ...item })))}`,
     `Grupos: ${JSON.stringify(args.groups.map((group) => ({
@@ -1248,7 +1250,13 @@ async function resolveReceiptIdentityClusters(args: {
       const canonical = members.find((member) => member.groupKey === canonicalKey) ?? members[0];
       const merged = mergeClusterGroups(
         members,
-        Math.max(...members.map((member) => Math.max(1, member.unitCount))),
+        Math.max(
+          1,
+          Math.min(
+            100,
+            Math.floor(Number(cluster.physicalUnitCount) || Math.max(...members.map((member) => Math.max(1, member.unitCount)))),
+          ),
+        ),
         number01(cluster.confidence),
         cluster.needsReview === true,
       );
