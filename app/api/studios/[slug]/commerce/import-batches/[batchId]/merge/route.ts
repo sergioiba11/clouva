@@ -161,7 +161,7 @@ export async function POST(
     const text = (value: unknown) => typeof value === "string" ? value : "";
     const num = (value: unknown, fallback: number) =>
       Number.isFinite(Number(value)) ? Number(value) : fallback;
-    const merged = {
+    const merged: JsonRecord = {
       ...target,
       name: text(target.name) || text(source.name),
       brand: text(target.brand) || text(source.brand),
