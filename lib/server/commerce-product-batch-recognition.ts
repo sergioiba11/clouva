@@ -417,7 +417,7 @@ async function recoverExplicitUnassignedImages(args: {
   ].join("\n");
 
   try {
-    const generated = await withVertexRetry("consolidador", () => generateGoogleCloudJson({
+    const generated = await withVertexRetry("recuperador-contexto", () => generateGoogleCloudJson({
       model: process.env.GOOGLE_CLOUD_PRODUCT_VISION_MODEL
         ?? process.env.GEMINI_PRODUCT_VISION_MODEL
         ?? "gemini-2.5-flash",
@@ -1231,7 +1231,7 @@ async function consolidateGroups(
   ].filter(Boolean).join("\n");
 
   try {
-    const generated = await generateGoogleCloudJson({
+    const generated = await withVertexRetry("consolidador", () => generateGoogleCloudJson({
       model: process.env.GOOGLE_CLOUD_PRODUCT_VISION_MODEL
         ?? process.env.GEMINI_PRODUCT_VISION_MODEL
         ?? "gemini-2.5-flash",
@@ -1242,7 +1242,7 @@ async function consolidateGroups(
       responseJsonSchema: CONSOLIDATION_SCHEMA,
       temperature: 0,
       maxOutputTokens: 5000,
-    });
+    }));
     const root = record(parseGroupingJson(generated.text));
     const known = new Map(groups.map((group) => [group.groupKey, group]));
     const used = new Set<string>();
@@ -1256,7 +1256,7 @@ async function consolidateGroups(
       if (!keys.length) continue;
       const members = keys.map((key) => known.get(key)!).filter(Boolean);
       const distinctCodes = new Set(
-        members.flatMap((group) => group.identifier ? [`${group.identifier.type}:${group.identifier.value.replace(/\s/g, "").toUpperCase()}`] : []),
+        members.flatMap((group) => group.identifier ? [canonicalCodeKey(group.identifier.type, group.identifier.value)] : []),
       );
       // Conflicting validated codes always win over semantic similarity.
       if (distinctCodes.size > 1) {
@@ -1335,7 +1335,7 @@ async function resolveReceiptIdentityClusters(args: {
   ].filter(Boolean).join("\n");
 
   try {
-    const generated = await generateGoogleCloudJson({
+    const generated = await withVertexRetry("recibo-clusters", () => generateGoogleCloudJson({
       model: process.env.GOOGLE_CLOUD_PRODUCT_VISION_MODEL
         ?? process.env.GEMINI_PRODUCT_VISION_MODEL
         ?? "gemini-2.5-flash",
@@ -1346,7 +1346,7 @@ async function resolveReceiptIdentityClusters(args: {
       responseJsonSchema: RECEIPT_CLUSTER_SCHEMA,
       temperature: 0,
       maxOutputTokens: 5200,
-    });
+    }));
 
     const root = record(parseGroupingJson(generated.text));
     const known = new Map(args.groups.map((group) => [group.groupKey, group]));
@@ -1562,7 +1562,7 @@ async function reviewMixedSceneCandidate(args: {
         ?? process.env.GEMINI_PRODUCT_VISION_MODEL
         ?? "gemini-2.5-flash",
       prompt,
-      referenceImages: downloaded.map((image) => ({ mimeType: image.mimeType, data: image.data })),
+      referenceImages: refs.map((ref) => ({ mimeType: ref.mimeType, data: ref.data })),
       responseJsonSchema: RECOVERY_SCHEMA,
       temperature: 0,
       maxOutputTokens: 4200,
@@ -1692,7 +1692,7 @@ async function linkContextScenesToProducts(args: {
       `Checklist de factura: ${JSON.stringify(invoiceChecklist)}`,
     ].join("\n");
 
-    const generated = await generateGoogleCloudJson({
+    const generated = await withVertexRetry("contexto-link", () => generateGoogleCloudJson({
       model: process.env.GOOGLE_CLOUD_PRODUCT_VISION_MODEL
         ?? process.env.GEMINI_PRODUCT_VISION_MODEL
         ?? "gemini-2.5-flash",
@@ -1701,7 +1701,7 @@ async function linkContextScenesToProducts(args: {
       responseJsonSchema: CONTEXT_LINK_SCHEMA,
       temperature: 0,
       maxOutputTokens: 5600,
-    });
+    }));
 
     const root = record(parseGroupingJson(generated.text));
     const knownGroups = new Map(args.productGroups.map((group) => [group.groupKey, group]));
