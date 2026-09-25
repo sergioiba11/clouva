@@ -1583,39 +1583,68 @@ export function CommerceBulkProductImport({
             })}
             {(() => {
               const matchedKeys = new Set(invoiceData.items.flatMap((line) => line.matched_group_keys));
+              const expectedByGroup = new Map<string, number>();
+              for (const line of invoiceData.items) {
+                for (const key of line.matched_group_keys) {
+                  expectedByGroup.set(key, (expectedByGroup.get(key) ?? 0) + Math.max(0, Number(line.quantity) || 0));
+                }
+              }
               const leftovers = groups.filter((group) => !matchedKeys.has(group.groupKey));
-              if (!leftovers.length) return null;
+              const overflows = groups.flatMap((group) => {
+                const expected = expectedByGroup.get(group.groupKey) ?? 0;
+                const detected = Math.max(1, Math.floor(Number(group.unitCount) || 1));
+                return expected > 0 && detected > expected
+                  ? [{ group, extraUnits: detected - expected }]
+                  : [];
+              });
+              const unmatchedUnits = leftovers.reduce(
+                (total, group) => total + Math.max(1, Math.floor(Number(group.unitCount) || 1)),
+                0,
+              );
+              const overflowUnits = overflows.reduce((total, entry) => total + entry.extraUnits, 0);
+              if (!leftovers.length && !overflows.length) return null;
+              const row = (group: BatchGroup, units: number, extra: boolean) => {
+                const ordered = group.images.map((image) => ({
+                  role: image.role,
+                  url: batchSources[image.sourceIndex]?.source_url || previews[image.sourceIndex] || "",
+                }));
+                const cover = ordered.find((photo) => photo.role === "Frente" && photo.url)?.url
+                  ?? ordered.find((photo) => photo.url)?.url
+                  ?? "";
+                return (
+                  <div key={`${extra ? "overflow" : "leftover"}-${group.groupKey}`} className="flex items-center gap-2.5 rounded-lg border border-white/[0.06] bg-white/[0.02] px-2 py-1.5">
+                    {cover ? (
+                      /* eslint-disable-next-line @next/next/no-img-element */
+                      <img src={cover} alt={group.name || "Producto"} className="h-10 w-10 shrink-0 rounded-lg border border-white/10 object-cover" loading="lazy" />
+                    ) : (
+                      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-white/10 bg-black/30 text-[8px] text-white/30">s/foto</span>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[11px] font-semibold">{group.name || "Producto detectado"}</p>
+                      <p className="mt-0.5 truncate text-[9px] text-white/40">
+                        {group.images.length} foto{group.images.length === 1 ? "" : "s"} · {group.identifier ? `${group.identifier.type.toUpperCase()} ${group.identifier.value}` : "sin código"} · {units} un. {extra ? "extra" : "fuera de factura"}
+                      </p>
+                    </div>
+                    {extra ? (
+                      <span className="shrink-0 rounded-md border border-sky-300/25 bg-sky-300/[0.07] px-1.5 py-0.5 text-[9px] font-semibold text-sky-200">
+                        +{units}
+                      </span>
+                    ) : null}
+                  </div>
+                );
+              };
               return (
                 <div className="rounded-xl border border-sky-300/15 bg-sky-300/[0.03] p-3">
-                  <p className="text-[10px] font-semibold uppercase tracking-[.16em] text-sky-200/80">Sobras · fuera de factura ({leftovers.length})</p>
+                  <p className="text-[10px] font-semibold uppercase tracking-[.16em] text-sky-200/80">
+                    Sobras · fuera de factura ({unmatchedUnits + overflowUnits} un.)
+                  </p>
                   <div className="mt-2 space-y-1.5">
-                    {leftovers.map((group) => {
-                      const ordered = group.images.map((image) => ({
-                        role: image.role,
-                        url: batchSources[image.sourceIndex]?.source_url || previews[image.sourceIndex] || "",
-                      }));
-                      const cover = ordered.find((photo) => photo.role === "Frente" && photo.url)?.url
-                        ?? ordered.find((photo) => photo.url)?.url
-                        ?? "";
-                      return (
-                        <div key={group.groupKey} className="flex items-center gap-2.5 rounded-lg border border-white/[0.06] bg-white/[0.02] px-2 py-1.5">
-                          {cover ? (
-                            /* eslint-disable-next-line @next/next/no-img-element */
-                            <img src={cover} alt={group.name || "Producto"} className="h-10 w-10 shrink-0 rounded-lg border border-white/10 object-cover" loading="lazy" />
-                          ) : (
-                            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-white/10 bg-black/30 text-[8px] text-white/30">s/foto</span>
-                          )}
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-[11px] font-semibold">{group.name || "Producto detectado"}</p>
-                            <p className="mt-0.5 truncate text-[9px] text-white/40">
-                              {group.images.length} foto{group.images.length === 1 ? "" : "s"} · {group.identifier ? `${group.identifier.type.toUpperCase()} ${group.identifier.value}` : "sin código"} · {Math.max(1, Math.floor(Number(group.unitCount) || 1))} un.
-                            </p>
-                          </div>
-                        </div>
-                      );
-                    })}
+                    {overflows.map(({ group, extraUnits }) => row(group, extraUnits, true))}
+                    {leftovers.map((group) => row(group, Math.max(1, Math.floor(Number(group.unitCount) || 1)), false))}
                   </div>
-                  <p className="mt-2 text-[9px] leading-4 text-white/35">Si una sobra es la foto repetida de un artículo de arriba, unila con Fusionar en Productos detectados.</p>
+                  <p className="mt-2 text-[9px] leading-4 text-white/35">
+                    Los excedentes de un artículo facturado aparecen acá como unidades extra. Una vista repetida del mismo objeto no suma una unidad.
+                  </p>
                 </div>
               );
             })()}
