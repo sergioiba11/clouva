@@ -130,12 +130,15 @@ export async function decodeBarcodesFromImageBytes(
           const ch = Math.max(1, Math.min(h - crop.top, crop.height));
           if (cw < 40 || ch < 40) continue;
           const targetW = Math.min(2000, cw * scale);
+          // RGBLuminanceSource solo acepta ARGB (Int32) o luminancia gris
+          // de w*h bytes. Convertir a gris con sharp y pasar esos w*h bytes.
           const { data, info } = await sharpMod(bytes)
             .extract({ left: crop.left, top: crop.top, width: cw, height: ch })
             .resize({ width: targetW, withoutEnlargement: false })
-            .removeAlpha()
+            .grayscale()
             .raw()
             .toBuffer({ resolveWithObject: true });
+          if (info.channels !== 1 || data.length !== info.width * info.height) continue;
           const pixels = new Uint8ClampedArray(data);
           const luminance = new RGBLuminanceSource(pixels, info.width, info.height);
           const texts = await decodeOnePixels(reader, luminance, BinaryBitmap, HybridBinarizer);
@@ -168,5 +171,11 @@ export async function decodeBarcodesFromImageBytes(
   } catch {
     return [];
   }
-  return Array.from(found.values());
+  const result = Array.from(found.values());
+  if (result.length) {
+    console.log(
+      `[commerce-barcode-decode] foto #${sourceIndex ?? "?"}: ${result.map((r) => `${r.type} ${r.value}`).join(" | ")}`,
+    );
+  }
+  return result;
 }

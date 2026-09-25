@@ -24,6 +24,32 @@ class CommerceBatchGroupingParseError extends Error {
   }
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isTransientVertexError(error: unknown) {
+  const status = Number((error as Error & { status?: number })?.status || 0);
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return status === 429 || /RESOURCE_EXHAUSTED|resource exhausted|quota|rate.?limit|429/i.test(message);
+}
+
+// Un 429 de Vertex (cuota por minuto) no puede envenenar todo el lote:
+// reintenta con backoff como ya hace el process de compra masiva.
+async function withVertexRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      if (!isTransientVertexError(error) || attempt >= 3) break;
+      await sleep(2500 * (attempt + 1));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(`Vertex AI no respondió (${label}).`);
+}
+
 function parseGroupingJson(value: string) {
   const trimmed = value.trim();
   const unfenced = trimmed
@@ -391,16 +417,15 @@ async function recoverExplicitUnassignedImages(args: {
   ].join("\n");
 
   try {
-    const generated = await generateGoogleCloudJson({
+    const generated = await withVertexRetry("consolidador", () => generateGoogleCloudJson({
       model: process.env.GOOGLE_CLOUD_PRODUCT_VISION_MODEL
         ?? process.env.GEMINI_PRODUCT_VISION_MODEL
         ?? "gemini-2.5-flash",
       prompt,
-      referenceImages: downloaded.map((image) => ({ mimeType: image.mimeType, data: image.data })),
-      responseJsonSchema: RECOVERY_SCHEMA,
+      responseJsonSchema: CONSOLIDATION_SCHEMA,
       temperature: 0,
-      maxOutputTokens: 4200,
-    });
+      maxOutputTokens: 5000,
+    }));
     const root = record(parseGroupingJson(generated.text));
     const allowed = new Set(args.images.map((image) => image.sourceIndex));
     const parsedGroups = (Array.isArray(root.groups) ? root.groups : [])
@@ -552,7 +577,7 @@ async function analyzeChunk(args: {
     "No inventes precio, costo, stock ni disponibilidad.",
   ].join("\n");
 
-  const generated = await generateGoogleCloudJson({
+  const generated = await withVertexRetry("agrupador", () => generateGoogleCloudJson({
     model: process.env.GOOGLE_CLOUD_PRODUCT_VISION_MODEL
       ?? process.env.GEMINI_PRODUCT_VISION_MODEL
       ?? "gemini-2.5-flash",
@@ -561,7 +586,7 @@ async function analyzeChunk(args: {
     responseJsonSchema: GROUP_SCHEMA,
     temperature: 0.05,
     maxOutputTokens: 6000,
-  });
+  }));
 
   const parsed = parseGroupingJson(generated.text);
 
@@ -1425,7 +1450,7 @@ async function refineMergedGroup(args: {
       "Si un código aparece en cualquier foto del grupo, conservá ese código como identifier principal y registrá sourceIndex en visibleIdentifiers.",
       `Índices: ${refs.map((ref) => ref.sourceIndex).join(", ")}.`,
     ].join("\n");
-    const generated = await generateGoogleCloudJson({
+    const generated = await withVertexRetry("verificador", () => generateGoogleCloudJson({
       model: process.env.GOOGLE_CLOUD_PRODUCT_VISION_MODEL
         ?? process.env.GEMINI_PRODUCT_VISION_MODEL
         ?? "gemini-2.5-flash",
@@ -1434,7 +1459,7 @@ async function refineMergedGroup(args: {
       responseJsonSchema: REFINE_SCHEMA,
       temperature: 0,
       maxOutputTokens: 2600,
-    });
+    }));
     const allowed = new Set(args.group.images.map((image) => image.sourceIndex));
     const sanitized = sanitizeGroup({
       ...record(parseGroupingJson(generated.text)),
@@ -1532,16 +1557,16 @@ async function reviewMixedSceneCandidate(args: {
         sourceIndexes: args.group.images.map((image) => image.sourceIndex),
       })}`,
     ].join("\n");
-    const generated = await generateGoogleCloudJson({
+    const generated = await withVertexRetry("recuperador", () => generateGoogleCloudJson({
       model: process.env.GOOGLE_CLOUD_PRODUCT_VISION_MODEL
         ?? process.env.GEMINI_PRODUCT_VISION_MODEL
         ?? "gemini-2.5-flash",
       prompt,
-      referenceImages: refs.map((ref) => ({ mimeType: ref.mimeType, data: ref.data })),
-      responseJsonSchema: SCENE_REVIEW_SCHEMA,
+      referenceImages: downloaded.map((image) => ({ mimeType: image.mimeType, data: image.data })),
+      responseJsonSchema: RECOVERY_SCHEMA,
       temperature: 0,
-      maxOutputTokens: 1200,
-    });
+      maxOutputTokens: 4200,
+    }));
     const result = record(parseGroupingJson(generated.text));
     const reviews = Array.isArray(result.images) ? result.images.map(record) : [];
     const reviewByIndex = new Map<number, Record<string, unknown>>();
