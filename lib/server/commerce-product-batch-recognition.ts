@@ -104,6 +104,11 @@ export type CommerceBatchContextMatch = {
   confidence: number;
 };
 
+export type CommerceBatchPhysicalUnit = {
+  sourceIndexes: number[];
+  confidence: number;
+};
+
 export type CommerceBatchGroup = {
   groupKey: string;
   name: string;
@@ -116,6 +121,7 @@ export type CommerceBatchGroup = {
   confidence: number;
   needsReview: boolean;
   images: CommerceBatchImageRole[];
+  physicalUnits?: CommerceBatchPhysicalUnit[];
   contextOnly?: boolean;
   observedProducts?: string[];
   contextReason?: string;
@@ -307,18 +313,40 @@ function sanitizeGroup(raw: unknown, allowedIndexes: Set<number>, fallbackKey: s
         ? "loose_product"
         : "unknown";
 
+  const claimedPhysicalIndexes = new Set<number>();
+  const physicalUnits = (Array.isArray(item.physicalUnits) ? item.physicalUnits : []).flatMap((raw) => {
+    const unit = record(raw);
+    const sourceIndexes = Array.from(new Set(
+      (Array.isArray(unit.sourceIndexes) ? unit.sourceIndexes : [])
+        .map((value) => Number(value))
+        .filter((sourceIndex) => Number.isInteger(sourceIndex) && allowedIndexes.has(sourceIndex) && !claimedPhysicalIndexes.has(sourceIndex)),
+    ));
+    if (!sourceIndexes.length) return [];
+    sourceIndexes.forEach((sourceIndex) => claimedPhysicalIndexes.add(sourceIndex));
+    return [{
+      sourceIndexes,
+      confidence: number01(unit.confidence),
+    } satisfies CommerceBatchPhysicalUnit];
+  });
+  const physicalCoverageComplete = physicalUnits.length > 0
+    && uniqueImages.every((image) => claimedPhysicalIndexes.has(image.sourceIndex));
+  const unitCount = physicalUnits.length
+    ? physicalUnits.length
+    : Math.max(1, Math.min(100, Math.floor(Number(item.unitCount) || 1)));
+
   return {
     groupKey: text(item.groupKey, 96) || fallbackKey,
     name: text(item.name, 180),
     brand: text(item.brand, 120),
     model: text(item.model, 120),
     packageKind,
-    unitCount: Math.max(1, Math.min(100, Math.floor(Number(item.unitCount) || 1))),
+    unitCount: Math.max(1, Math.min(100, unitCount)),
     identifier: primary,
     visibleIdentifiers,
     confidence: number01(item.confidence),
-    needsReview: item.needsReview === true,
+    needsReview: item.needsReview === true || (physicalUnits.length > 0 && !physicalCoverageComplete),
     images: normalizeRoles(uniqueImages),
+    ...(physicalUnits.length ? { physicalUnits } : {}),
   };
 }
 
@@ -902,13 +930,24 @@ const REFINE_SCHEMA = {
       enum: ["ean_13", "ean_8", "upc_a", "upc_e", "code_128", "clouva_barcode", "clouva_qr", "sku"],
     },
     visibleIdentifiers: GROUP_SCHEMA.properties.groups.items.properties.visibleIdentifiers,
+    physicalUnits: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          sourceIndexes: { type: "array", items: { type: "integer" } },
+          confidence: { type: "number", minimum: 0, maximum: 1 },
+        },
+        required: ["sourceIndexes", "confidence"],
+      },
+    },
     confidence: { type: "number", minimum: 0, maximum: 1 },
     needsReview: { type: "boolean" },
     images: GROUP_SCHEMA.properties.groups.items.properties.images,
   },
   required: [
     "name", "brand", "model", "packageKind", "unitCount", "identifierValue", "identifierType",
-    "visibleIdentifiers", "confidence", "needsReview", "images",
+    "visibleIdentifiers", "physicalUnits", "confidence", "needsReview", "images",
   ],
 } as const;
 
@@ -1437,7 +1476,10 @@ async function refineMergedGroup(args: {
     const prompt = [
       "Sos el verificador visual final de una identidad de producto de CLOUVA.",
       `Spot: "${args.spotName}".`,
-      "Todas estas fotos fueron propuestas como el mismo producto/variante. Confirmá la identidad y contá unidades físicas sin duplicar vistas.",
+      "Todas estas fotos fueron propuestas como el mismo producto/variante. Confirmá la identidad y reconstruí las unidades físicas sin duplicar vistas.",
+      "Además de unitCount, devolvé physicalUnits: una partición de TODAS las sourceIndexes del grupo por objeto físico real. Cada sourceIndex debe aparecer exactamente una vez.",
+      "Cada physicalUnit representa un objeto físico: agrupá en la misma unidad su frente, dorso, etiqueta y detalles; separá en unidades distintas las cajas/objetos físicamente distintos.",
+      "unitCount debe ser exactamente physicalUnits.length.",
       "Frente, dorso y detalle del mismo objeto cuentan como UNA unidad.",
       "REGLA CRÍTICA: la cantidad de fotos por sí sola NUNCA es la cantidad de unidades. Dos fotos del mismo objeto no implican unitCount=2.",
       "Pero las unidades NO tienen que aparecer juntas en una sola foto: si distintas imágenes prueban objetos físicos diferentes mediante color de variante, serial/barcode distinto, etiqueta individual, caja distinta o rasgos visuales inequívocos, contá cada unidad física una vez.",
@@ -1857,7 +1899,7 @@ async function linkContextScenesToProducts(args: {
         if (
           linked?.sceneType === "primary_product"
           && linked.primaryGroupKey
-          && linked.primaryConfidence >= 0.62
+          && linked.primaryConfidence >= 0.5
         ) {
           const target = attachmentsByGroup.get(linked.primaryGroupKey) ?? [];
           if (!target.some((candidate) => candidate.sourceIndex === image.sourceIndex)) {
