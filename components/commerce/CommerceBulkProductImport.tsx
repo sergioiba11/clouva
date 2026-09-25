@@ -340,6 +340,8 @@ export function CommerceBulkProductImport({
   const [printingCodeGroup, setPrintingCodeGroup] = useState("");
   const [generatedCodeGroups, setGeneratedCodeGroups] = useState<Record<string, boolean>>({});
   const [updatingUnitGroup, setUpdatingUnitGroup] = useState("");
+  const [mergingSource, setMergingSource] = useState("");
+  const [mergingGroup, setMergingGroup] = useState("");
   const [analysisProgress, setAnalysisProgress] = useState<AnalysisProgress | null>(null);
   const [showAllInvoiceItems, setShowAllInvoiceItems] = useState(false);
   const [showAllDetectedGroups, setShowAllDetectedGroups] = useState(false);
@@ -990,6 +992,34 @@ export function CommerceBulkProductImport({
     }
   }
 
+  async function mergeGroupsInto(sourceKey: string, targetKey: string) {
+    if (!batchId || busy || mergingGroup || !sourceKey || !targetKey || sourceKey === targetKey) return;
+    const confirmed = window.confirm(
+      "Fusionar en una sola ficha: se suman las fotos, se conserva el mejor código y la mayor cantidad (después ajustás unidades con +/−). ¿Continuar?",
+    );
+    if (!confirmed) return;
+    setError("");
+    setMergingGroup(targetKey);
+    try {
+      const data = await postJson<{ groups: BatchGroup[] }>(
+        `/api/studios/${encodeURIComponent(studioId)}/commerce/import-batches/${encodeURIComponent(batchId)}/merge`,
+        { sourceGroupKey: sourceKey, targetGroupKey: targetKey },
+      );
+      setGroups(data.groups);
+      setMergingSource("");
+      try {
+        const refreshedInvoice = await getJson<InvoicePayload>(
+          `/api/studios/${encodeURIComponent(studioId)}/commerce/import-batches/${encodeURIComponent(batchId)}/invoice`,
+        );
+        setInvoiceData(refreshedInvoice.invoice ? refreshedInvoice : null);
+      } catch {}
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "No se pudo fusionar.");
+    } finally {
+      setMergingGroup("");
+    }
+  }
+
   async function generateAndPrintInternalCode(groupKey: string, listingId: string) {
     if (!listingId || printingCodeGroup) return;
     setPrintingCodeGroup(groupKey);
@@ -1604,6 +1634,40 @@ export function CommerceBulkProductImport({
                     >
                       {expandedPhotos ? "Ocultar fotos" : `Ver ${photos.filter((photo) => photo.url).length} fotos del producto`}
                     </button>
+                  ) : null}
+                  {batchId && !busy ? (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {mergingSource === "" ? (
+                        <button
+                          type="button"
+                          onClick={() => setMergingSource(group.groupKey)}
+                          className="rounded-lg border border-white/10 px-2.5 py-1.5 text-[10px] font-semibold text-white/55 transition hover:border-cyan-300/25 hover:text-white"
+                        >
+                          Fusionar
+                        </button>
+                      ) : mergingSource === group.groupKey ? (
+                        <button
+                          type="button"
+                          onClick={() => setMergingSource("")}
+                          className="rounded-lg border border-amber-300/25 bg-amber-300/[0.06] px-2.5 py-1.5 text-[10px] font-semibold text-amber-100"
+                        >
+                          Cancelar fusión
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={mergingGroup !== ""}
+                          onClick={() => void mergeGroupsInto(mergingSource, group.groupKey)}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-300/25 bg-cyan-300/[0.08] px-2.5 py-1.5 text-[10px] font-semibold text-cyan-100 disabled:opacity-45"
+                        >
+                          {mergingGroup === group.groupKey ? <LoaderCircle className="h-3 w-3 animate-spin" /> : null}
+                          Fusionar aquí
+                        </button>
+                      )}
+                    </div>
+                  ) : null}
+                  {mergingSource !== "" && mergingSource !== group.groupKey ? (
+                    <p className="mt-1 text-[9px] text-cyan-100/50">Fusionando: elegí la ficha destino con “Fusionar aquí”.</p>
                   ) : null}
                   </div>
                   </div>
