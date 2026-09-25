@@ -2001,6 +2001,54 @@ async function linkContextScenesToProducts(args: {
   }
 }
 
+async function relinkSecondaryProductViews(args: {
+  productGroups: CommerceBatchGroup[];
+  imagesByIndex: Map<number, StoredBatchImage>;
+  spotName: string;
+  expectedProducts: CommerceBatchExpectedProduct[];
+}) {
+  if (!args.expectedProducts.length || args.productGroups.length <= 1) return args.productGroups;
+  const originalByIndex = new Map<number, { groupKey: string; image: CommerceBatchImageRole }>();
+  const contextCandidates: CommerceBatchGroup[] = [];
+  const anchors = args.productGroups.map((group) => {
+    const anchor = group.images.find((image) => image.role === "Frente") ?? group.images[0];
+    const suspicious = group.needsReview || group.unitCount > 1 || group.images.length >= 5 || !group.identifier;
+    if (suspicious) for (const image of group.images) {
+      if (image.sourceIndex === anchor?.sourceIndex) continue;
+      originalByIndex.set(image.sourceIndex, { groupKey: group.groupKey, image });
+      contextCandidates.push({
+        groupKey: `relink-${image.sourceIndex}`, name: "", brand: "", model: "", packageKind: "unknown",
+        unitCount: 1, identifier: null, visibleIdentifiers: [], confidence: 0, needsReview: true,
+        images: [{ sourceIndex: image.sourceIndex, role: "Frente" }], contextOnly: true,
+      });
+    }
+    return anchor ? { ...group, images: [anchor] } : group;
+  });
+  if (!contextCandidates.length) return args.productGroups;
+  let products = anchors;
+  const unresolved: CommerceBatchGroup[] = [];
+  for (let offset = 0; offset < contextCandidates.length; offset += 12) {
+    const linked = await linkContextScenesToProducts({
+      productGroups: products, contextGroups: contextCandidates.slice(offset, offset + 12),
+      imagesByIndex: args.imagesByIndex, spotName: args.spotName, expectedProducts: args.expectedProducts,
+    });
+    products = linked.productGroups;
+    unresolved.push(...linked.contextGroups);
+  }
+  const owned = new Set(products.flatMap((group) => group.images.map((image) => image.sourceIndex)));
+  const byKey = new Map(products.map((group) => [group.groupKey, group]));
+  for (const candidate of unresolved.flatMap((group) => group.images)) {
+    if (owned.has(candidate.sourceIndex)) continue;
+    const original = originalByIndex.get(candidate.sourceIndex);
+    const target = original ? byKey.get(original.groupKey) : null;
+    if (!target || target.images.some((image) => image.sourceIndex === candidate.sourceIndex)) continue;
+    target.images = normalizeRoles([...target.images, original!.image]);
+  }
+  const refined: CommerceBatchGroup[] = [];
+  for (const group of products) refined.push(await refineMergedGroup({ group, imagesByIndex: args.imagesByIndex, spotName: args.spotName }));
+  return consolidateDeterministicCommercialIdentity(refined);
+}
+
 export async function analyzeCommerceProductBatch(args: {
   images: StoredBatchImage[];
   spotName: string;
@@ -2145,6 +2193,16 @@ export async function analyzeCommerceProductBatch(args: {
     );
     finalProducts = consolidateDeterministicCommercialIdentity(finalProducts);
   }
+
+  // Re-check secondary/back/detail photos against every detected identity.
+  // This can move a blue PS4-cable back out of a Samsung group without
+  // disturbing the canonical front of either product.
+  finalProducts = await relinkSecondaryProductViews({
+    productGroups: finalProducts,
+    imagesByIndex,
+    spotName: args.spotName,
+    expectedProducts: args.expectedProducts ?? [],
+  });
 
   // Final receipt-level pass: regroup wrong OCR/split backs against the
   // complete invoice + all product anchors before computing coverage.
