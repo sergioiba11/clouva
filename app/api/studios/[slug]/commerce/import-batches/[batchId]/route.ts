@@ -81,7 +81,7 @@ export async function PATCH(
       const group = raw as Record<string, unknown>;
       if (group.groupKey !== groupKey) return group;
       found = true;
-      return { ...group, unitCount };
+      return { ...group, unitCount, physicalUnits: [] };
     });
     if (!found) return NextResponse.json({ error: "El producto no pertenece al lote." }, { status: 404 });
 
