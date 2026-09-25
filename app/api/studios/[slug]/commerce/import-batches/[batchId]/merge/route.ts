@@ -173,7 +173,11 @@ export async function POST(
       identifier: mergedIdentifier,
       visibleIdentifiers: mergedCodes,
       confidence: Math.min(num(target.confidence, 0), num(source.confidence, 0)),
-      needsReview: target.needsReview === true || source.needsReview === true,
+      // La partición visual anterior deja de ser válida porque ahora el grupo
+      // contiene fotos de dos fichas. La cantidad manual/conservadora sigue
+      // mandando hasta el próximo reanálisis.
+      physicalUnits: [],
+      needsReview: true,
       images: mergedImages,
     };
 
