@@ -154,7 +154,7 @@ function normalizeText(value: string) {
     .replace(/\btc\b/g, " usb c ")
     .replace(/\biphone\b/g, " lightning ")
     .replace(/\bnote[\s-]*book\b/g, " laptop ")
-    .replace(/\b(auriculares?|audifonos?|earbuds?|earphones?)\b/g, " headset ")
+    .replace(/\b(auricular(?:es)?|audifonos?|earbuds?|earphones?)\b/g, " headset ")
     .replace(/\bwireless\b/g, " wifi ")
     .replace(/\bwi[\s-]*fi\b/g, " wifi ")
     .replace(/\bpower\s+adapter\b/g, " cargador ")
