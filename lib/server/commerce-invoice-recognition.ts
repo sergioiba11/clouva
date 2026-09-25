@@ -401,12 +401,12 @@ export function reconcileCommerceInvoice(args: {
     // Cada renglón representa una identidad comercial. La cantidad del
     // renglón no obliga a buscar N grupos visuales: una sola ficha/SKU puede
     // representar todas las unidades compradas.
-    const selected = candidates
-      .filter((candidate) => !reserved.has(candidate.group.groupKey))
-      .slice(0, 1);
+    const availableCandidates = candidates
+      .filter((candidate) => !reserved.has(candidate.group.groupKey));
+    const selected = availableCandidates.slice(0, 1);
 
     const best = selected[0]?.score ?? 0;
-    const second = candidates.find((candidate) => candidate.group.groupKey !== selected[0]?.group.groupKey)?.score ?? 0;
+    const second = availableCandidates.find((candidate) => candidate.group.groupKey !== selected[0]?.group.groupKey)?.score ?? 0;
     const ambiguous = best > 0 && second >= best - 0.08 && best < 0.88 && target === 1;
     const strongSelected = selected.filter((candidate) => candidate.score >= (ambiguous ? 0.56 : 0.42));
 
@@ -462,7 +462,10 @@ export async function reconcileCommerceInvoiceWithAI(args: {
     "No devuelvas groupKeys vacío solo porque la descripción de factura sea abreviada si hay una identidad comercial compatible y única en el conjunto.",
     "La factura indica la cantidad ESPERADA; group.unitCount indica la cantidad FÍSICA detectada. Puede haber faltantes o extras y no debés ocultarlos.",
     "Tu tarea acá es asignar identidad, no fabricar coincidencia de cantidades. Un groupKey puede tener unitCount mayor o menor al renglón de factura.",
-    "Solo devolvé varios groupKeys para un renglón cuando sean fragmentos/vistas de la MISMA identidad comercial que todavía no quedaron consolidados.",
+    "Una línea genérica del proveedor puede agrupar varias marcas/variantes comerciales compatibles. Si la descripción no trae un modelo/código inequívoco y la cantidad esperada lo requiere, podés devolver varios groupKeys compatibles para cubrir esa línea.",
+    "Si la línea sí trae un modelo o código comercial inequívoco, no uses otra variante incompatible solo para completar cantidad.",
+    "Palabras como 3001, rota, TC o TE pueden ser códigos internos/abreviaturas del proveedor: no exijas que aparezcan literalmente en el packaging cuando categoría, conector y asignación global resuelvan una identidad única.",
+    "También podés devolver varios groupKeys cuando sean fragmentos/vistas de la MISMA identidad comercial que todavía no quedaron consolidados.",
     `Factura: ${JSON.stringify(args.invoice.lines.map((line) => ({
       lineNumber: line.lineNumber,
       description: line.description,
