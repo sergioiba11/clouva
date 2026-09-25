@@ -1,11 +1,12 @@
 import "server-only";
 
 import { downloadGeneratedMediaObject } from "@/lib/gcs-media";
+import { decodeBarcodesFromImageBytes } from "@/lib/server/commerce-barcode-decode";
 import {
   generateGoogleCloudJson,
   GoogleCloudGenAIError,
 } from "@/lib/server/google-cloud-genai";
-import { validateCommerceIdentifier, type CommerceIdentifierType } from "@/lib/commerce/identifiers";
+import { normalizeCommerceIdentifier, validateCommerceIdentifier, type CommerceIdentifierType } from "@/lib/commerce/identifiers";
 
 const MAX_BATCH_IMAGES = 80;
 const GROUPING_CHUNK_SIZE = 8;
@@ -211,6 +212,18 @@ function normalizeRoles(images: CommerceBatchImageRole[]) {
   });
 }
 
+function canonicalCodeKey(type: CommerceIdentifierType, value: string) {
+  const normalized = normalizeCommerceIdentifier(value);
+  // Los numéricos (EAN/UPC/CODE_128 numérico) se comparan por dígitos sin
+  // ceros a la izquierda e ignorando el tipo. Así EAN_13:6950106761203 y
+  // CODE_128:6950106761203 fusionan aunque la IA haya tipado distinto.
+  if (/^\d+$/.test(normalized)) {
+    const stripped = normalized.replace(/^0+/, "") || "0";
+    return `gtin:${stripped}`;
+  }
+  return `${type}:${normalized}`;
+}
+
 function sanitizeGroup(raw: unknown, allowedIndexes: Set<number>, fallbackKey: string): CommerceBatchGroup | null {
   const item = record(raw);
   const rawImages = Array.isArray(item.images) ? item.images : [];
@@ -234,10 +247,15 @@ function sanitizeGroup(raw: unknown, allowedIndexes: Set<number>, fallbackKey: s
     const value = text(code.value, 512);
     const type = text(code.type, 32) as CommerceIdentifierType;
     if (!value || !supported.has(type)) return [];
+    // Descartar EAN/UPC con dígito verificador inválido: son transcripciones
+    // de la IA con 1 dígito mal, no códigos reales. El lector exacto los
+    // repone después con confianza 1.0.
+    const validation = validateCommerceIdentifier(type, value);
+    if (!validation.valid) return [];
     const source = code.source === "box" ? "box" : code.source === "product" ? "product" : "unknown";
     const sourceIndex = Number(code.sourceIndex);
     return [{
-      value,
+      value: validation.value,
       type,
       source,
       confidence: number01(code.confidence),
@@ -462,15 +480,36 @@ async function analyzeChunk(args: {
   spotName: string;
   chunkNumber: number;
 }) {
-  const downloaded = await Promise.all(args.images.map(async (image) => {
+  const downloadedRaw = await Promise.all(args.images.map(async (image) => {
     const stored = await downloadGeneratedMediaObject(image.storagePath);
     const mimeType = stored.mimeType.startsWith("image/") ? stored.mimeType : image.mimeType;
     return {
       sourceIndex: image.sourceIndex,
       mimeType,
+      bytes: stored.bytes,
       data: stored.bytes.toString("base64"),
     };
   }));
+  const downloaded = downloadedRaw.map(({ sourceIndex, mimeType, data }) => ({ sourceIndex, mimeType, data }));
+
+  // Lector exacto sobre el original full-res (no el thumb de Gemini).
+  // Es la verdad absoluta para códigos: si lee 8945637653460 válido, la IA
+  // no puede poner 8945637653466. Si no lee nada (Samsung blanco), queda
+  // sin código y va a SKU, que es lo correcto para tu único sin código.
+  const exactByIndex = new Map<number, { value: string; type: CommerceIdentifierType }[]>();
+  await Promise.all(downloadedRaw.map(async (image) => {
+    try {
+      const decoded = await decodeBarcodesFromImageBytes(image.bytes, image.sourceIndex);
+      if (decoded.length) {
+        exactByIndex.set(image.sourceIndex, decoded.map((d) => ({ value: d.value, type: d.type })));
+      }
+    } catch {
+      // Nunca romper el lote por el lector exacto.
+    }
+  }));
+  const exactLines = Array.from(exactByIndex.entries())
+    .map(([idx, codes]) => `foto #${idx}: ${codes.map((c) => `${c.type} ${c.value}`).join(" | ")}`)
+    .join("\n");
 
   const prompt = [
     "Sos el agrupador visual de mercadería de CLOUVA.",
@@ -493,6 +532,14 @@ async function analyzeChunk(args: {
     "En cada visibleIdentifier incluí sourceIndex con el índice EXACTO de la foto donde se leyó ese código.",
     "identifierValue/identifierType representan el código principal más confiable. Si no hay ninguno inequívoco, dejá identifierValue vacío.",
     "EAN/UPC requieren lectura completa. Para un barcode lineal alfanumérico claramente legible que no sea EAN/UPC, usá code_128.",
+    ...(exactLines
+      ? [
+          "CÓDIGOS LECTOR EXACTO POR FOTO (verdad absoluta, NO re-transcribir, copiar tal cual):",
+          exactLines,
+          "Si una foto tiene código lector exacto, ese código DEBE aparecer en visibleIdentifiers de su grupo con ese mismo sourceIndex, y debe ser el identifierValue/identifierType salvo que veas otro código distinto e inequívoco en la misma foto.",
+          "Nunca inventes un dígito distinto al lector exacto. Si el lector no trae código para una foto (ej. caja blanca sin barras), dejá identifierValue vacío para ese grupo: va a SKU, no inventes.",
+        ]
+      : []),
     "Cada índice debe aparecer exactamente una vez: dentro de un grupo o en unassignedIndexes.",
     "Usá unassignedIndexes SOLO para una vista general/panorámica sin sujeto principal, comprobantes, fotos inutilizables o imágenes que realmente no representan una identidad de producto.",
     "REGLA CRÍTICA DE SUJETO PRINCIPAL: si una caja/producto está sostenida, centrada, enfocada, ocupa la mayor parte de la imagen o claramente fue fotografiada a propósito, esa foto pertenece a ese producto AUNQUE haya otros productos distintos en el fondo.",
@@ -523,6 +570,44 @@ async function analyzeChunk(args: {
   const parsedGroups = (Array.isArray(root.groups) ? root.groups : [])
     .map((group, index) => sanitizeGroup(group, allowed, `chunk-${args.chunkNumber}-group-${index + 1}`))
     .filter((group): group is CommerceBatchGroup => Boolean(group));
+
+  // Pisar con lector exacto: si la IA puso 8809094564654 pero el lector leyó
+  // 8806090134654 válido en esa misma foto, vale el lector. Si el lector no
+  // leyó nada, no inventar (tu Samsung blanco queda SKU).
+  for (const group of parsedGroups) {
+    const byCanonical = new Map<string, CommerceBatchVisibleIdentifier>();
+    for (const code of group.visibleIdentifiers) {
+      byCanonical.set(canonicalCodeKey(code.type, code.value), code);
+    }
+    for (const image of group.images) {
+      const exacts = exactByIndex.get(image.sourceIndex) ?? [];
+      for (const exact of exacts) {
+        const key = canonicalCodeKey(exact.type, exact.value);
+        const prev = byCanonical.get(key);
+        const entry: CommerceBatchVisibleIdentifier = {
+          value: exact.value,
+          type: exact.type,
+          source: prev?.source ?? "box",
+          confidence: 1,
+          sourceIndex: image.sourceIndex,
+        };
+        // El exacto siempre gana sobre transcripciones de la IA.
+        byCanonical.set(key, entry);
+      }
+    }
+    group.visibleIdentifiers = Array.from(byCanonical.values());
+    // Si el primario es nulo o no coincide con ningún exacto del grupo pero
+    // hay exacto disponible, promover el primer exacto a primario.
+    const primaryKey = group.identifier ? canonicalCodeKey(group.identifier.type, group.identifier.value) : null;
+    const hasPrimaryInExact = primaryKey ? byCanonical.has(primaryKey) : false;
+    if (!group.identifier || !hasPrimaryInExact) {
+      const firstExact = group.images.flatMap((img) => exactByIndex.get(img.sourceIndex) ?? [])[0];
+      if (firstExact) {
+        group.identifier = { value: firstExact.value, type: firstExact.type };
+      }
+    }
+  }
+
   const uniqueAssignments = enforceUniqueImageAssignments(parsedGroups);
   const groups = uniqueAssignments.groups;
 
@@ -549,6 +634,14 @@ async function analyzeChunk(args: {
   // If the first model simply forgot an index, keep it as reviewable evidence.
   for (const sourceIndex of allowed) {
     if (assignedAfterRecovery.has(sourceIndex) || explicitUnassigned.has(sourceIndex)) continue;
+    const exacts = exactByIndex.get(sourceIndex) ?? [];
+    const visibles = exacts.map((e) => ({
+      value: e.value,
+      type: e.type,
+      source: "box" as const,
+      confidence: 1,
+      sourceIndex,
+    }));
     groups.push({
       groupKey: `single-${sourceIndex}`,
       name: "",
@@ -556,8 +649,8 @@ async function analyzeChunk(args: {
       model: "",
       packageKind: "unknown",
       unitCount: 1,
-      identifier: null,
-      visibleIdentifiers: [],
+      identifier: exacts[0] ? { value: exacts[0].value, type: exacts[0].type } : null,
+      visibleIdentifiers: visibles,
       confidence: 0,
       needsReview: true,
       images: [{ sourceIndex, role: "Frente" }],
@@ -891,7 +984,7 @@ function externalCodeKeys(group: CommerceBatchGroup) {
     if (["sku", "clouva_barcode", "clouva_qr"].includes(code.type)) return [];
     const validation = validateCommerceIdentifier(code.type, code.value);
     if (!validation.valid) return [];
-    return [`${code.type}:${validation.value.replace(/\s/g, "").toUpperCase()}`];
+    return [canonicalCodeKey(code.type, validation.value)];
   }));
 }
 
@@ -1001,10 +1094,14 @@ function mergeClusterGroups(groups: CommerceBatchGroup[], unitCount: number, con
   const imageMap = new Map<number, CommerceBatchImageRole>();
   for (const group of groups) for (const image of group.images) imageMap.set(image.sourceIndex, image);
   const codeMap = new Map<string, CommerceBatchVisibleIdentifier>();
+  // Preferir el código del lector exacto (confianza 1) sobre transcripciones
+  // de la IA cuando comparten los mismos dígitos con distinto tipo.
+  const preferExact = (prev: CommerceBatchVisibleIdentifier, next: CommerceBatchVisibleIdentifier) =>
+    next.confidence >= 1 && prev.confidence < 1 ? next : prev;
   for (const group of groups) {
     if (group.identifier) {
       const sourceIndex = group.visibleIdentifiers.find((code) =>
-        code.type === group.identifier?.type && code.value === group.identifier?.value)?.sourceIndex;
+        canonicalCodeKey(code.type, code.value) === canonicalCodeKey(group.identifier!.type, group.identifier!.value))?.sourceIndex;
       const primary = {
         value: group.identifier.value,
         type: group.identifier.type,
@@ -1012,10 +1109,14 @@ function mergeClusterGroups(groups: CommerceBatchGroup[], unitCount: number, con
         confidence: group.confidence,
         ...(sourceIndex != null ? { sourceIndex } : {}),
       };
-      codeMap.set(`${primary.type}:${primary.value.replace(/\s/g, "").toUpperCase()}`, primary);
+      const key = canonicalCodeKey(primary.type, primary.value);
+      const prev = codeMap.get(key);
+      codeMap.set(key, prev ? preferExact(prev, primary) : primary);
     }
     for (const code of group.visibleIdentifiers) {
-      codeMap.set(`${code.type}:${code.value.replace(/\s/g, "").toUpperCase()}`, code);
+      const key = canonicalCodeKey(code.type, code.value);
+      const prev = codeMap.get(key);
+      codeMap.set(key, prev ? preferExact(prev, code) : code);
     }
   }
   const contextReferenceMap = new Map<number, CommerceBatchContextReference>();

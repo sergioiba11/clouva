@@ -35,6 +35,7 @@
     "@react-three/fiber": "^9.7.0",
     "@supabase/supabase-js": "^2.49.8",
     "@zxing/browser": "0.2.1",
+    "@zxing/library": "^0.23.0",
     "bwip-js": "4.11.4",
     "clsx": "^2.1.1",
     "framer-motion": "^11.11.7",
