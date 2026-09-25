@@ -346,6 +346,7 @@ export function CommerceBulkProductImport({
   const [showAllInvoiceItems, setShowAllInvoiceItems] = useState(false);
   const [showAllDetectedGroups, setShowAllDetectedGroups] = useState(false);
   const [expandedPhotoGroup, setExpandedPhotoGroup] = useState("");
+  const [expandedArticlePhotos, setExpandedArticlePhotos] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -1481,14 +1482,14 @@ export function CommerceBulkProductImport({
               const matched = groups
                 .filter((group) => item.matched_group_keys.includes(group.groupKey))
                 .map((group) => {
-                  const ordered = group.images.map((image) => ({
-                    role: image.role,
+                  const photos = group.images.map((image) => ({
+                    ...image,
                     url: batchSources[image.sourceIndex]?.source_url || previews[image.sourceIndex] || "",
                   }));
-                  const cover = ordered.find((photo) => photo.role === "Frente" && photo.url)?.url
-                    ?? ordered.find((photo) => photo.url)?.url
+                  const cover = photos.find((photo) => photo.role === "Frente" && photo.url)?.url
+                    ?? photos.find((photo) => photo.url)?.url
                     ?? "";
-                  return { group, cover };
+                  return { group, cover, photos };
                 });
               const detectedUnits = matched.reduce(
                 (total, entry) => total + Math.max(1, Math.floor(Number(entry.group.unitCount) || 1)),
@@ -1519,22 +1520,58 @@ export function CommerceBulkProductImport({
                       </div>
                       {matched.length ? (
                         <div className="mt-2 space-y-1.5">
-                          {matched.map(({ group, cover }) => (
-                            <div key={group.groupKey} className="flex items-center gap-2.5 rounded-lg border border-white/[0.06] bg-white/[0.02] px-2 py-1.5">
-                              {cover ? (
-                                /* eslint-disable-next-line @next/next/no-img-element */
-                                <img src={cover} alt={group.name || "Producto"} className="h-10 w-10 shrink-0 rounded-lg border border-white/10 object-cover" loading="lazy" />
-                              ) : (
-                                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-white/10 bg-black/30 text-[8px] text-white/30">s/foto</span>
-                              )}
-                              <div className="min-w-0 flex-1">
-                                <p className="truncate text-[11px] font-semibold">{group.name || "Producto detectado"}</p>
-                                <p className="mt-0.5 truncate text-[9px] text-white/40">
-                                  {group.images.length} foto{group.images.length === 1 ? "" : "s"} · {group.identifier ? `${group.identifier.type.toUpperCase()} ${group.identifier.value}` : "sin código"} · {Math.max(1, Math.floor(Number(group.unitCount) || 1))} un.
-                                </p>
+                          {matched.map(({ group, cover, photos }) => {
+                            const photoCount = photos.filter((photo) => photo.url).length;
+                            const expanded = expandedArticlePhotos === group.groupKey;
+                            return (
+                              <div key={group.groupKey} className="rounded-lg border border-white/[0.06] bg-white/[0.02] px-2 py-1.5">
+                                <div className="flex items-center gap-2.5">
+                                  {cover ? (
+                                    /* eslint-disable-next-line @next/next/no-img-element */
+                                    <img src={cover} alt={group.name || "Producto"} className="h-10 w-10 shrink-0 rounded-lg border border-white/10 object-cover" loading="lazy" />
+                                  ) : (
+                                    <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-white/10 bg-black/30 text-[8px] text-white/30">s/foto</span>
+                                  )}
+                                  <div className="min-w-0 flex-1">
+                                    <p className="truncate text-[11px] font-semibold">{group.name || "Producto detectado"}</p>
+                                    <p className="mt-0.5 truncate text-[9px] text-white/40">
+                                      {group.images.length} foto{group.images.length === 1 ? "" : "s"} · {group.identifier ? `${group.identifier.type.toUpperCase()} ${group.identifier.value}` : "sin código"} · {Math.max(1, Math.floor(Number(group.unitCount) || 1))} un.
+                                    </p>
+                                  </div>
+                                  {photoCount > 1 ? (
+                                    <button
+                                      type="button"
+                                      onClick={() => setExpandedArticlePhotos((current) => current === group.groupKey ? "" : group.groupKey)}
+                                      className="shrink-0 rounded-lg border border-white/10 px-2 py-1 text-[9px] font-semibold text-white/55 transition hover:border-violet-300/25 hover:text-white"
+                                    >
+                                      {expanded ? "Ocultar" : `Ver ${photoCount}`}
+                                    </button>
+                                  ) : null}
+                                </div>
+                                {expanded ? (
+                                  <div className="mt-2 flex gap-1.5 overflow-x-auto border-t border-white/[0.06] pt-2">
+                                    {photos.map((photo) => photo.url ? (
+                                      <div key={photo.sourceIndex} className="relative h-16 w-16 shrink-0 overflow-hidden rounded-lg border border-white/10 bg-black/30">
+                                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                                        <img
+                                          src={photo.url}
+                                          alt={`${group.name || "Producto"} · ${photo.role}`}
+                                          className="h-full w-full object-cover"
+                                          loading="lazy"
+                                        />
+                                        <span className="absolute bottom-1 left-1 rounded bg-black/80 px-1 py-0.5 text-[7px] font-semibold text-white/85">
+                                          {photo.role}
+                                        </span>
+                                        <span className="absolute right-1 top-1 rounded bg-black/80 px-1 py-0.5 text-[7px] text-white/75">
+                                          #{photo.sourceIndex + 1}
+                                        </span>
+                                      </div>
+                                    ) : null)}
+                                  </div>
+                                ) : null}
                               </div>
-                            </div>
-                          ))}
+                            );
+                          })}
                         </div>
                       ) : (
                         <p className="mt-2 text-[10px] text-amber-200/70">Sin fotos asignadas — este artículo todavía no apareció.</p>
@@ -1552,16 +1589,31 @@ export function CommerceBulkProductImport({
                 <div className="rounded-xl border border-sky-300/15 bg-sky-300/[0.03] p-3">
                   <p className="text-[10px] font-semibold uppercase tracking-[.16em] text-sky-200/80">Sobras · fuera de factura ({leftovers.length})</p>
                   <div className="mt-2 space-y-1.5">
-                    {leftovers.map((group) => (
-                      <div key={group.groupKey} className="flex items-center gap-2.5 rounded-lg border border-white/[0.06] bg-white/[0.02] px-2 py-1.5">
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-[11px] font-semibold">{group.name || "Producto detectado"}</p>
-                          <p className="mt-0.5 truncate text-[9px] text-white/40">
-                            {group.images.length} foto{group.images.length === 1 ? "" : "s"} · {group.identifier ? `${group.identifier.type.toUpperCase()} ${group.identifier.value}` : "sin código"} · {Math.max(1, Math.floor(Number(group.unitCount) || 1))} un.
-                          </p>
+                    {leftovers.map((group) => {
+                      const ordered = group.images.map((image) => ({
+                        role: image.role,
+                        url: batchSources[image.sourceIndex]?.source_url || previews[image.sourceIndex] || "",
+                      }));
+                      const cover = ordered.find((photo) => photo.role === "Frente" && photo.url)?.url
+                        ?? ordered.find((photo) => photo.url)?.url
+                        ?? "";
+                      return (
+                        <div key={group.groupKey} className="flex items-center gap-2.5 rounded-lg border border-white/[0.06] bg-white/[0.02] px-2 py-1.5">
+                          {cover ? (
+                            /* eslint-disable-next-line @next/next/no-img-element */
+                            <img src={cover} alt={group.name || "Producto"} className="h-10 w-10 shrink-0 rounded-lg border border-white/10 object-cover" loading="lazy" />
+                          ) : (
+                            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-white/10 bg-black/30 text-[8px] text-white/30">s/foto</span>
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-[11px] font-semibold">{group.name || "Producto detectado"}</p>
+                            <p className="mt-0.5 truncate text-[9px] text-white/40">
+                              {group.images.length} foto{group.images.length === 1 ? "" : "s"} · {group.identifier ? `${group.identifier.type.toUpperCase()} ${group.identifier.value}` : "sin código"} · {Math.max(1, Math.floor(Number(group.unitCount) || 1))} un.
+                            </p>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                   <p className="mt-2 text-[9px] leading-4 text-white/35">Si una sobra es la foto repetida de un artículo de arriba, unila con Fusionar en Productos detectados.</p>
                 </div>
