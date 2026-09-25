@@ -319,7 +319,7 @@ function sanitizeGroup(raw: unknown, allowedIndexes: Set<number>, fallbackKey: s
     const sourceIndexes = Array.from(new Set(
       (Array.isArray(unit.sourceIndexes) ? unit.sourceIndexes : [])
         .map((value) => Number(value))
-        .filter((sourceIndex) => Number.isInteger(sourceIndex) && allowedIndexes.has(sourceIndex) && !claimedPhysicalIndexes.has(sourceIndex)),
+        .filter((sourceIndex) => Number.isInteger(sourceIndex) && allowedIndexes.has(sourceIndex)),
     ));
     if (!sourceIndexes.length) return [];
     sourceIndexes.forEach((sourceIndex) => claimedPhysicalIndexes.add(sourceIndex));
@@ -1477,8 +1477,9 @@ async function refineMergedGroup(args: {
       "Sos el verificador visual final de una identidad de producto de CLOUVA.",
       `Spot: "${args.spotName}".`,
       "Todas estas fotos fueron propuestas como el mismo producto/variante. Confirmá la identidad y reconstruí las unidades físicas sin duplicar vistas.",
-      "Además de unitCount, devolvé physicalUnits: una partición de TODAS las sourceIndexes del grupo por objeto físico real. Cada sourceIndex debe aparecer exactamente una vez.",
+      "Además de unitCount, devolvé physicalUnits: una reconstrucción de los objetos físicos reales y las sourceIndexes que demuestran cada uno. Toda sourceIndex del grupo debe aparecer al menos una vez.",
       "Cada physicalUnit representa un objeto físico: agrupá en la misma unidad su frente, dorso, etiqueta y detalles; separá en unidades distintas las cajas/objetos físicamente distintos.",
+      "Una misma sourceIndex puede aparecer en varios physicalUnits SOLO si esa foto muestra claramente varias unidades físicas separadas del mismo producto. No dupliques una foto para inventar unidades.",
       "unitCount debe ser exactamente physicalUnits.length.",
       "Frente, dorso y detalle del mismo objeto cuentan como UNA unidad.",
       "REGLA CRÍTICA: la cantidad de fotos por sí sola NUNCA es la cantidad de unidades. Dos fotos del mismo objeto no implican unitCount=2.",
