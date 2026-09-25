@@ -1469,6 +1469,14 @@ export function CommerceBulkProductImport({
                 && (!group.identifier
                   || (code.type === group.identifier.type && code.value === group.identifier.value)),
               )?.sourceIndex;
+              // Conciliación por artículo: fotos del grupo + cantidad según
+              // factura (líneas que matchean este groupKey) vs cantidad según
+              // código/QR (unidades físicas del grupo).
+              const invoiceLines = (invoiceData?.items ?? []).filter((item) =>
+                Array.isArray(item.matched_group_keys) && item.matched_group_keys.includes(group.groupKey),
+              );
+              const invoiceUnits = invoiceLines.reduce((total, item) => total + Math.max(0, Number(item.quantity) || 0), 0);
+              const physicalUnits = Math.max(1, Math.floor(Number(group.unitCount) || 1));
               const sharedContextPhotos = (group.contextReferences ?? []).flatMap((reference) => {
                 const source = batchSources[reference.sourceIndex];
                 if (!source?.source_url) return [];
@@ -1556,6 +1564,28 @@ export function CommerceBulkProductImport({
                     {group.images.length} foto{group.images.length === 1 ? "" : "s"} agrupada{group.images.length === 1 ? "" : "s"}
                     {coverPhoto ? ` · frente #${coverPhoto.sourceIndex + 1}` : ""}
                   </p>
+                  {invoiceData && invoiceData.items.length ? (
+                    <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1.5 rounded-lg border border-white/[0.07] bg-white/[0.02] px-2 py-1.5">
+                      <span className="text-[10px] text-white/55">
+                        Factura: <strong className="text-white/85">{invoiceUnits}</strong>
+                        {invoiceLines.length ? ` · línea ${invoiceLines.map((line) => line.line_number).join(", ")}` : " · no está en factura (sobra)"}
+                      </span>
+                      <span className="text-white/20">·</span>
+                      <span className="text-[10px] text-white/55">
+                        Código/QR: <strong className="text-white/85">{physicalUnits}</strong>
+                        {group.identifier ? ` · ${group.identifier.type.toUpperCase()} ${group.identifier.value}` : " · sin código"}
+                      </span>
+                      {invoiceLines.length ? (
+                        <span className={`rounded-md border px-1.5 py-0.5 text-[9px] font-semibold ${physicalUnits === invoiceUnits ? "border-emerald-300/25 bg-emerald-300/[0.07] text-emerald-200" : physicalUnits < invoiceUnits ? "border-amber-300/25 bg-amber-300/[0.07] text-amber-200" : "border-sky-300/25 bg-sky-300/[0.07] text-sky-200"}`}>
+                          {physicalUnits === invoiceUnits ? "Coincide" : physicalUnits < invoiceUnits ? `Faltan ${invoiceUnits - physicalUnits}` : `Sobran ${physicalUnits - invoiceUnits}`}
+                        </span>
+                      ) : (
+                        <span className="rounded-md border border-sky-300/25 bg-sky-300/[0.07] px-1.5 py-0.5 text-[9px] font-semibold text-sky-200">
+                          Extra
+                        </span>
+                      )}
+                    </div>
+                  ) : null}
                   {group.identifier && codePhotoIndex != null ? (
                     <p className="mt-1 text-[10px] leading-4 text-emerald-200/70">
                       Código confirmado desde foto #{codePhotoIndex + 1}
