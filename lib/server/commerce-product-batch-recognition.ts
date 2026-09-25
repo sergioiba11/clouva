@@ -1896,21 +1896,29 @@ async function linkContextScenesToProducts(args: {
           continue;
         }
 
+        const matches = linked?.matches ?? contextGroup.contextMatches ?? [];
+        const strongestMatch = [...matches].sort((left, right) => right.confidence - left.confidence)[0];
+        const resolvedPrimaryGroupKey = linked?.primaryGroupKey
+          || (linked?.sceneType === "primary_product" && strongestMatch?.confidence >= 0.55 ? strongestMatch.groupKey : "");
+        const resolvedPrimaryConfidence = Math.max(
+          linked?.primaryConfidence ?? 0,
+          strongestMatch?.groupKey === resolvedPrimaryGroupKey ? strongestMatch.confidence : 0,
+        );
+
         if (
           linked?.sceneType === "primary_product"
-          && linked.primaryGroupKey
-          && linked.primaryConfidence >= 0.5
+          && resolvedPrimaryGroupKey
+          && resolvedPrimaryConfidence >= 0.5
         ) {
-          const target = attachmentsByGroup.get(linked.primaryGroupKey) ?? [];
+          const target = attachmentsByGroup.get(resolvedPrimaryGroupKey) ?? [];
           if (!target.some((candidate) => candidate.sourceIndex === image.sourceIndex)) {
             target.push({ sourceIndex: image.sourceIndex, role: linked.primaryRole });
-            attachmentsByGroup.set(linked.primaryGroupKey, target);
+            attachmentsByGroup.set(resolvedPrimaryGroupKey, target);
           }
-          alreadyAssigned.set(image.sourceIndex, linked.primaryGroupKey);
+          alreadyAssigned.set(image.sourceIndex, resolvedPrimaryGroupKey);
           continue;
         }
 
-        const matches = linked?.matches ?? contextGroup.contextMatches ?? [];
         for (const match of matches) {
           const refsForGroup = referencesByGroup.get(match.groupKey) ?? [];
           if (!refsForGroup.some((ref) => ref.sourceIndex === image.sourceIndex)) {
