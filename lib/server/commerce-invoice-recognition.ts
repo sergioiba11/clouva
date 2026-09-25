@@ -153,7 +153,8 @@ function normalizeText(value: string) {
     .replace(/\btipo[\s-]*c\b/g, " usb c ")
     .replace(/\btc\b/g, " usb c ")
     .replace(/\biphone\b/g, " lightning ")
-    .replace(/\bnotebook\b/g, " laptop ")
+    .replace(/\bnote[\s-]*book\b/g, " laptop ")
+    .replace(/\b(auriculares?|audifonos?|earbuds?|earphones?)\b/g, " headset ")
     .replace(/\bwireless\b/g, " wifi ")
     .replace(/\bwi[\s-]*fi\b/g, " wifi ")
     .replace(/\bpower\s+adapter\b/g, " cargador ")
@@ -279,6 +280,22 @@ function scoreLineGroup(line: CommerceInvoiceLine, group: CommerceBatchGroup) {
   if (/\bla700\b/.test(normalizedDescription) && /\bla700\b/.test(normalizedIdentity)) {
     score += 0.3;
     reasons.push("modelo LA700");
+  }
+  if (/\bcargador\b/.test(normalizedDescription) && /\bcargador\b/.test(normalizedIdentity)) {
+    const sameVehicleRole = /\bvehiculo\b/.test(normalizedDescription) && /\bvehiculo\b/.test(normalizedIdentity);
+    const sameLaptopRole = /\blaptop\b/.test(normalizedDescription) && /\blaptop\b/.test(normalizedIdentity);
+    if (sameVehicleRole || sameLaptopRole) {
+      score += 0.3;
+      reasons.push(sameVehicleRole ? "cargador de vehículo" : "cargador de notebook");
+    }
+  }
+  if (/\blightning\b/.test(normalizedDescription) && /\blightning\b/.test(normalizedIdentity)) {
+    score += 0.25;
+    reasons.push("conector Lightning");
+  }
+  if (/\bheadset\b/.test(normalizedDescription) && /\bheadset\b/.test(normalizedIdentity)) {
+    score += 0.2;
+    reasons.push("familia auriculares");
   }
 
   return {
