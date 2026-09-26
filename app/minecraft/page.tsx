@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Check, Copy, Eye, RefreshCw, Server, Settings, Smartphone, Users, Video, X } from "lucide-react";
+import { Check, Copy, Eye, Loader2, RefreshCw, Server, Settings, ShieldCheck, Smartphone, UserMinus, UserPlus, Users, Video, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/components/auth-provider";
 import { ClouvaLogoMark } from "@/components/brand/clouva-logo";
@@ -151,7 +151,11 @@ export default function MinecraftFamilyPage() {
   const [myIdentity, setMyIdentity] = useState<SavedMinecraftIdentity | null>(null);
   const [spectatingUuid, setSpectatingUuid] = useState<string | null>(null);
   const [liveError, setLiveError] = useState<string | null>(null);
+  const [adminWhitelistPlayer, setAdminWhitelistPlayer] = useState("");
+  const [adminBusy, setAdminBusy] = useState<"whitelist_add" | "whitelist_remove" | null>(null);
+  const [adminNotice, setAdminNotice] = useState<{ tone: "ok" | "error"; text: string } | null>(null);
   const mapFrameRef = useRef<HTMLIFrameElement | null>(null);
+  const isAdmin = canAccessAdmin(role);
 
   const load = useCallback(async () => {
     setRefreshing(true);
@@ -295,7 +299,17 @@ export default function MinecraftFamilyPage() {
 
   const javaAddress = status?.publicJavaHost || (status?.host ? status.host + ":" + status.javaPort : "Preparando servidor");
   const bedrockAddress = status?.publicBedrockHost || status?.host || "Preparando servidor";
-  const onlineCount = status?.players?.online ?? livePlayers.length;
+  const connectedNames = useMemo(() => {
+    const names = new globalThis.Map<string, string>();
+    livePlayers.forEach((player) => names.set(player.name.toLowerCase(), player.name));
+    (status?.players?.sample ?? []).forEach((name) => {
+      const clean = String(name || "").trim();
+      if (clean) names.set(clean.toLowerCase(), clean);
+    });
+    return Array.from(names.values()).sort((a, b) => a.localeCompare(b));
+  }, [livePlayers, status?.players?.sample]);
+
+  const onlineCount = status?.players?.online ?? connectedNames.length;
   const maxPlayers = status?.players?.max ?? 100;
 
   const scrollTo = (id: string) => {
@@ -352,6 +366,44 @@ export default function MinecraftFamilyPage() {
     setSelectedUuid(player.uuid);
     setSpectatingUuid(player.uuid);
     scrollTo("mapa");
+  };
+
+  const runWhitelistAction = async (action: "whitelist_add" | "whitelist_remove") => {
+    const player = adminWhitelistPlayer.trim();
+    if (!isAdmin || !session?.access_token || !player || adminBusy) return;
+    setAdminBusy(action);
+    setAdminNotice(null);
+    try {
+      const response = await fetch("/api/minecraft/control", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer " + session.access_token,
+        },
+        body: JSON.stringify({ action, args: { player } }),
+      });
+      const payload = (await response.json().catch(() => ({}))) as { error?: string };
+      if (!response.ok) throw new Error(payload.error || "No se pudo modificar la whitelist.");
+
+      setAdminNotice({
+        tone: "ok",
+        text:
+          action === "whitelist_add"
+            ? player + " fue agregado a la whitelist."
+            : player + " fue removido de la whitelist.",
+      });
+      window.setTimeout(() => {
+        void load();
+        void loadLivePlayers();
+      }, 1200);
+    } catch (error) {
+      setAdminNotice({
+        tone: "error",
+        text: error instanceof Error ? error.message : "No se pudo modificar la whitelist.",
+      });
+    } finally {
+      setAdminBusy(null);
+    }
   };
 
   if (loading) {
@@ -496,7 +548,7 @@ export default function MinecraftFamilyPage() {
                 <span>{onlineCount}</span>
                 <span className="hidden sm:inline">jugadores</span>
               </div>
-              {canAccessAdmin(role) ? (
+              {isAdmin ? (
                 <Link
                   href="/minecraft/config"
                   className="grid h-9 w-9 place-items-center rounded-xl border border-fuchsia-300/20 bg-black/35 text-white/65 transition hover:border-fuchsia-300/40 hover:bg-fuchsia-400/10 hover:text-white"
@@ -777,7 +829,7 @@ export default function MinecraftFamilyPage() {
                   <p className="text-[10px] font-black uppercase tracking-[.2em] text-fuchsia-200/45">Banda en vivo</p>
                   <h2 className="mt-1 text-xl font-black">Jugadores</h2>
                 </div>
-                <span className="rounded-full border border-white/10 bg-white/[.035] px-3 py-1.5 text-xs text-white/50">{livePlayers.length} online</span>
+                <span className="rounded-full border border-white/10 bg-white/[.035] px-3 py-1.5 text-xs text-white/50">{onlineCount} online</span>
               </div>
 
               <div className="mt-4 grid gap-2 sm:grid-cols-2">
@@ -822,9 +874,31 @@ export default function MinecraftFamilyPage() {
                       ) : null}
                     </div>
                   );
-                }) : (
+                }) : connectedNames.length ? (
+                  connectedNames.map((name) => (
+                    <button
+                      key={name}
+                      type="button"
+                      onClick={() => {
+                        if (isAdmin) setAdminWhitelistPlayer(name);
+                      }}
+                      className="flex items-center gap-3 rounded-2xl border border-white/[.07] bg-white/[.025] p-3 text-left transition hover:border-fuchsia-300/25 hover:bg-fuchsia-400/[.05]"
+                    >
+                      <img
+                        src={"https://mc-heads.net/avatar/" + encodeURIComponent(name) + "/44"}
+                        alt=""
+                        className="h-11 w-11 rounded-lg border border-white/10 bg-black/30 [image-rendering:pixelated]"
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate font-black">{name}</span>
+                        <span className="mt-1 block text-[10px] text-white/35">Conectado ahora</span>
+                      </span>
+                      <span className="h-2.5 w-2.5 rounded-full bg-emerald-400" />
+                    </button>
+                  ))
+                ) : (
                   <div className="sm:col-span-2 rounded-2xl border border-white/[.06] bg-white/[.025] p-5 text-sm text-white/40">
-                    {liveError || (status?.online ? "BlueMap está sincronizando jugadores..." : "No hay jugadores conectados.")}
+                    {liveError || (status?.online ? "No hay jugadores conectados." : "El servidor está apagado.")}
                   </div>
                 )}
               </div>
@@ -842,6 +916,99 @@ export default function MinecraftFamilyPage() {
               ) : null}
             </div>
           </div>
+
+          {isAdmin ? (
+            <section id="whitelist-admin" className="mt-5 scroll-mt-5 overflow-hidden rounded-[30px] border border-fuchsia-300/20 bg-[linear-gradient(135deg,rgba(168,85,247,.12),rgba(0,0,0,.42))] p-5 shadow-[0_20px_70px_rgba(0,0,0,.28)]">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="flex items-start gap-3">
+                  <span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl border border-fuchsia-300/20 bg-fuchsia-500/10 text-fuchsia-100">
+                    <ShieldCheck className="h-5 w-5" />
+                  </span>
+                  <div>
+                    <p className="text-[10px] font-black uppercase tracking-[.22em] text-fuchsia-200/45">Solo admin</p>
+                    <h2 className="mt-1 text-xl font-black">Whitelist Ratcraft</h2>
+                    <p className="mt-1 text-xs leading-relaxed text-white/45">
+                      Agregá o sacá jugadores sin salir de esta página. La whitelist del server permanece activa.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center gap-2 rounded-full border border-emerald-300/15 bg-emerald-400/10 px-3 py-1.5 text-[10px] font-black uppercase tracking-[.12em] text-emerald-200">
+                    <span className="h-2 w-2 rounded-full bg-emerald-400" /> Whitelist activa
+                  </span>
+                  <Link
+                    href="/minecraft/config"
+                    className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[.04] px-3 py-1.5 text-[10px] font-black uppercase tracking-[.12em] text-white/60 transition hover:border-fuchsia-300/30 hover:text-white"
+                  >
+                    <Settings className="h-3.5 w-3.5" /> Panel completo
+                  </Link>
+                </div>
+              </div>
+
+              <div className="mt-4 grid gap-2 md:grid-cols-[1fr_auto_auto]">
+                <div>
+                  <label className="mb-1.5 block text-[10px] font-black uppercase tracking-[.16em] text-white/35">
+                    Nick Java o gamertag Bedrock
+                  </label>
+                  <input
+                    value={adminWhitelistPlayer}
+                    onChange={(event) => setAdminWhitelistPlayer(event.target.value)}
+                    list="ratcraft-connected-players"
+                    placeholder="Ej: Clouva o .GamertagBedrock"
+                    className="h-11 w-full rounded-xl border border-white/10 bg-black/30 px-3 font-mono text-sm font-bold text-white outline-none transition placeholder:text-white/25 focus:border-fuchsia-300/45"
+                  />
+                  <datalist id="ratcraft-connected-players">
+                    {connectedNames.map((name) => (
+                      <option key={name} value={name} />
+                    ))}
+                  </datalist>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void runWhitelistAction("whitelist_add")}
+                  disabled={!adminWhitelistPlayer.trim() || adminBusy !== null}
+                  className="mt-auto inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-emerald-300/20 bg-emerald-400/10 px-4 text-xs font-black uppercase tracking-[.08em] text-emerald-100 transition hover:bg-emerald-400/20 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {adminBusy === "whitelist_add" ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserPlus className="h-4 w-4" />}
+                  Agregar
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void runWhitelistAction("whitelist_remove")}
+                  disabled={!adminWhitelistPlayer.trim() || adminBusy !== null}
+                  className="mt-auto inline-flex h-11 items-center justify-center gap-2 rounded-xl border border-rose-300/20 bg-rose-400/10 px-4 text-xs font-black uppercase tracking-[.08em] text-rose-100 transition hover:bg-rose-400/20 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {adminBusy === "whitelist_remove" ? <Loader2 className="h-4 w-4 animate-spin" /> : <UserMinus className="h-4 w-4" />}
+                  Sacar
+                </button>
+              </div>
+
+              {connectedNames.length ? (
+                <div className="mt-3">
+                  <p className="text-[9px] font-black uppercase tracking-[.16em] text-white/30">Conectados ahora</p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {connectedNames.map((name) => (
+                      <button
+                        key={name}
+                        type="button"
+                        onClick={() => setAdminWhitelistPlayer(name)}
+                        className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-black/25 px-3 py-1.5 font-mono text-[10px] font-bold text-white/65 transition hover:border-fuchsia-300/30 hover:text-white"
+                      >
+                        <span className="h-2 w-2 rounded-full bg-emerald-400" />
+                        {name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              {adminNotice ? (
+                <div className={"mt-3 rounded-xl border px-3 py-2.5 text-xs font-bold " + (adminNotice.tone === "ok" ? "border-emerald-300/20 bg-emerald-400/10 text-emerald-100" : "border-rose-300/20 bg-rose-400/10 text-rose-100")}>
+                  {adminNotice.text}
+                </div>
+              ) : null}
+            </section>
+          ) : null}
 
           <footer className="mt-10 flex flex-col items-center justify-between gap-3 border-t border-white/[.07] pt-6 text-center sm:flex-row sm:text-left">
             <div>
