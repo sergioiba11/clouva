@@ -141,6 +141,21 @@ function groupsFromMetadata(metadata: unknown): CommerceBatchGroup[] {
         : group.packageKind === "loose_product"
           ? "loose_product"
           : "unknown";
+    const physicalUnits = Array.isArray(group.physicalUnits)
+      ? group.physicalUnits.flatMap((rawUnit) => {
+          const unit = record(rawUnit);
+          const sourceIndexes = Array.from(new Set(
+            (Array.isArray(unit.sourceIndexes) ? unit.sourceIndexes : [])
+              .map((value) => Number(value))
+              .filter((value) => Number.isInteger(value)),
+          ));
+          if (!sourceIndexes.length) return [];
+          return [{
+            sourceIndexes,
+            confidence: Math.max(0, Math.min(1, Number(unit.confidence || 0))),
+          }];
+        })
+      : [];
     return [{
       groupKey,
       name: typeof group.name === "string" ? group.name : "",
@@ -153,6 +168,7 @@ function groupsFromMetadata(metadata: unknown): CommerceBatchGroup[] {
       confidence: Number(group.confidence || 0),
       needsReview: group.needsReview === true,
       images,
+      ...(physicalUnits.length ? { physicalUnits } : {}),
     } satisfies CommerceBatchGroup];
   });
 }
@@ -498,6 +514,8 @@ export async function POST(
             confidence: group.confidence,
             needs_review: group.needsReview,
             source_indexes: group.images.map((image) => image.sourceIndex),
+            physical_units: group.physicalUnits ?? [],
+            physical_unit_count: Math.max(1, Math.floor(Number(group.unitCount) || 1)),
           },
         };
 
