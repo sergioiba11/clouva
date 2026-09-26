@@ -317,13 +317,29 @@ export async function PATCH(
 
     const admin = createAdminSupabase();
     const { spot } = await requireManagedSpot({ admin, userId: user.id, studioId: slug });
+    const { data: current, error: currentError } = await admin
+      .from("commerce_product_import_invoice_items")
+      .select("id,metadata")
+      .eq("id", itemId)
+      .eq("batch_id", batchId)
+      .eq("spot_id", spot.id)
+      .maybeSingle();
+    if (currentError) throw new Error(currentError.message);
+    if (!current) return NextResponse.json({ error: "El ítem de factura no existe." }, { status: 404 });
+
     const now = new Date().toISOString();
+    const currentMetadata = record(current.metadata);
     const { data, error } = await admin
       .from("commerce_product_import_invoice_items")
       .update({
         checked: body.checked,
         checked_by: body.checked ? user.id : null,
         checked_at: body.checked ? now : null,
+        metadata: {
+          ...currentMetadata,
+          manually_reviewed: body.checked,
+          manually_reviewed_at: body.checked ? now : null,
+        },
         updated_at: now,
       })
       .eq("id", itemId)
