@@ -22,6 +22,7 @@ type BatchGroup = {
   confidence: number;
   needsReview: boolean;
   images: Array<{ sourceIndex: number; role: "Frente" | "Atrás" | "Detalle" }>;
+  physicalUnits?: Array<{ sourceIndexes: number[]; confidence: number }>;
   contextReferences?: Array<{
     sourceIndex: number;
     label: string;
@@ -316,6 +317,16 @@ function externalIdentifierForGroup(group: BatchGroup) {
   return group.visibleIdentifiers.find((identifier) => !internal.has(identifier.type)) ?? null;
 }
 
+function normalizeReceiptText(value: string) {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function CommerceBulkProductImport({
   studioId,
   onCompleted,
@@ -509,6 +520,64 @@ export function CommerceBulkProductImport({
       })
       .sort((a, b) => b.quantity - a.quantity || a.name.localeCompare(b.name));
   }, [groups]);
+
+  const reviewIssues = useMemo(() => {
+    if (!invoiceData?.invoice) return [];
+    const groupByKey = new Map(groups.map((group) => [group.groupKey, group]));
+
+    return invoiceData.items.flatMap((item) => {
+      const matchedGroups = (item.matched_group_keys ?? [])
+        .map((key) => groupByKey.get(key))
+        .filter((group): group is BatchGroup => Boolean(group));
+      const physicalUnits = matchedGroups.reduce(
+        (sum, group) => sum + Math.max(1, Math.floor(Number(group.unitCount) || 1)),
+        0,
+      );
+      const expectedUnits = Math.max(0, Number(item.quantity || 0));
+      const reasons: string[] = [];
+
+      if (physicalUnits > expectedUnits) {
+        reasons.push(`Factura ${expectedUnits} · físico ${physicalUnits} · sobra ${physicalUnits - expectedUnits}`);
+      } else if (physicalUnits < expectedUnits) {
+        reasons.push(`Factura ${expectedUnits} · físico ${physicalUnits} · faltan ${expectedUnits - physicalUnits}`);
+      }
+
+      if (item.match_status === "ambiguous") {
+        reasons.push("La línea tiene más de una coincidencia posible");
+      } else if (item.match_status === "unmatched") {
+        reasons.push("Todavía no hay un producto físico confirmado para esta línea");
+      }
+
+      const invoiceBrand = normalizeReceiptText(item.brand || "");
+      const conflictingBrands = matchedGroups
+        .map((group) => group.brand)
+        .filter(Boolean)
+        .filter((brand) => invoiceBrand && normalizeReceiptText(brand) !== invoiceBrand);
+      if (conflictingBrands.length) {
+        reasons.push(`Marca en factura: ${item.brand} · producto: ${Array.from(new Set(conflictingBrands)).join(", ")}`);
+      }
+
+      if (matchedGroups.some((group) => group.needsReview)) {
+        reasons.push("CLOUVA encontró evidencia visual que conviene confirmar");
+      }
+
+      if (!reasons.length) return [];
+      return [{
+        key: item.id,
+        item,
+        matchedGroups,
+        expectedUnits,
+        physicalUnits,
+        reasons: Array.from(new Set(reasons)),
+        resolved: item.metadata?.manually_reviewed === true,
+      }];
+    });
+  }, [groups, invoiceData]);
+
+  const pendingReviewIssues = useMemo(
+    () => reviewIssues.filter((issue) => !issue.resolved),
+    [reviewIssues],
+  );
 
   const visibleInvoiceItems = useMemo(
     () => showAllInvoiceItems ? (invoiceData?.items ?? []) : (invoiceData?.items ?? []).slice(0, 6),
@@ -947,6 +1016,10 @@ export function CommerceBulkProductImport({
 
   async function confirmPurchaseImport() {
     if (!batchId || busy || !groups.length) return;
+    if (pendingReviewIssues.length) {
+      setError(`CLOUVA necesita que confirmes ${pendingReviewIssues.length} diferencia${pendingReviewIssues.length === 1 ? "" : "s"} antes de ingresar el stock.`);
+      return;
+    }
     setError("");
     setStage("creating");
     try {
@@ -1076,7 +1149,7 @@ export function CommerceBulkProductImport({
           </div>
           <h2 className="mt-2 text-lg font-semibold">Fotos → productos agrupados</h2>
           <p className="mt-1 max-w-2xl text-xs leading-5 text-white/45">
-            Subí frente, dorso, detalles y códigos mezclados. CLOUVA junta las fotos del mismo producto en una sola ficha, usa el frente como portada y hereda cualquier código leído dentro del grupo.
+            Subí frente, dorso, detalles, códigos y factura. CLOUVA reconstruye cada producto físico, junta sus vistas, lee EAN/UPC/QR y compara lo recibido contra la factura antes de tocar el stock.
           </p>
         </div>
         {files.length && !busy ? (
@@ -1157,7 +1230,7 @@ export function CommerceBulkProductImport({
               className="flex min-h-11 flex-1 items-center justify-center gap-2 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-45"
             >
               {busy ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-              {busy ? progressText : `Cargar y crear productos (${files.length})`}
+              {busy ? progressText : `Cargar y analizar lote (${files.length})`}
             </button>
             {stage === "done" && failed > 0 ? (
               <button type="button" onClick={() => void retryFailed()} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-amber-300/25 bg-amber-300/[0.06] px-4 text-sm font-semibold text-amber-100">
@@ -1250,18 +1323,14 @@ export function CommerceBulkProductImport({
         <div className="mt-4 rounded-2xl border border-violet-300/15 bg-black/20 p-3 sm:p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
-              <p className="text-[10px] font-semibold uppercase tracking-[.18em] text-violet-200">Control de compra</p>
+              <p className="text-[10px] font-semibold uppercase tracking-[.18em] text-violet-200">Recepción del lote</p>
               <h3 className="mt-1 text-base font-semibold">
                 {invoiceData?.invoice
-                  ? receivingSummary.missingUnits > 0
-                    ? `Faltan ${receivingSummary.missingUnits} unidad${receivingSummary.missingUnits === 1 ? "" : "es"} por encontrar`
-                    : receivingSummary.extraUnits > 0
-                      ? `Factura cubierta · ${receivingSummary.extraUnits} unidad${receivingSummary.extraUnits === 1 ? "" : "es"} extra detectada${receivingSummary.extraUnits === 1 ? "" : "s"}`
-                      : "Factura cubierta exactamente por lo fotografiado"
-                  : "Adjuntá la factura para chequear la compra"}
+                  ? `${receivingSummary.detectedUnits} unidades físicas · ${receivingSummary.expectedUnits} esperadas por factura`
+                  : `${receivingSummary.detectedUnits} unidades físicas detectadas`}
               </h3>
               <p className="mt-1 text-[11px] leading-5 text-white/42">
-                CLOUVA compara cantidades, costo unitario, códigos y los productos físicos que aparecen en las fotos.
+                El stock sale de lo que CLOUVA ve físicamente. La factura aporta cantidad esperada y costo; EAN/UPC/QR ayudan a identificar el producto.
               </p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
@@ -1277,11 +1346,11 @@ export function CommerceBulkProductImport({
               ) : null}
               {invoiceData?.invoice ? (
                 <span className={`w-fit rounded-full border px-2.5 py-1 text-[10px] font-semibold ${receivingSummary.complete ? "border-emerald-300/25 bg-emerald-300/[0.07] text-emerald-100" : "border-amber-300/25 bg-amber-300/[0.07] text-amber-100"}`}>
-                  {receivingSummary.complete
-                    ? "CHECK FACTURA OK"
-                    : receivingSummary.covered && receivingSummary.extraUnits > 0
-                      ? "EXTRA DETECTADO"
-                      : "REVISIÓN PENDIENTE"}
+                  {pendingReviewIssues.length
+                    ? `${pendingReviewIssues.length} CONFIRMACIÓN${pendingReviewIssues.length === 1 ? "" : "ES"}`
+                    : receivingSummary.complete
+                      ? "LISTO PARA INGRESAR"
+                      : "REVISIÓN COMPLETA"}
                 </span>
               ) : null}
             </div>
@@ -1306,11 +1375,11 @@ export function CommerceBulkProductImport({
               <span className="text-[9px] text-white/35">vs. factura</span>
             </div>
             <div className="rounded-xl border border-white/[0.07] bg-white/[0.025] p-2.5">
-              <p className="text-[9px] uppercase tracking-[.12em] text-white/35">Sin código</p>
+              <p className="text-[9px] uppercase tracking-[.12em] text-white/35">Sin código externo</p>
               <strong className={`mt-1 block text-lg ${receivingSummary.noCodeUnits ? "text-amber-200" : "text-emerald-200"}`}>
                 {receivingSummary.noCodeUnits}
               </strong>
-              <span className="text-[9px] text-white/35">productos para código</span>
+              <span className="text-[9px] text-white/35">tipos de producto</span>
             </div>
             <div className="rounded-xl border border-white/[0.07] bg-white/[0.025] p-2.5">
               <p className="text-[9px] uppercase tracking-[.12em] text-white/35">Extra</p>
@@ -1318,6 +1387,55 @@ export function CommerceBulkProductImport({
               <span className="text-[9px] text-white/35">unidades vs. factura</span>
             </div>
           </div>
+
+          {reviewIssues.length ? (
+            <div className="mt-3 rounded-xl border border-amber-300/15 bg-amber-300/[0.035] p-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <strong className="text-xs text-amber-100">
+                    CLOUVA necesita tu confirmación ({pendingReviewIssues.length})
+                  </strong>
+                  <p className="mt-1 text-[10px] leading-4 text-white/40">
+                    Solo aparecen diferencias reales de cantidad, identidad o evidencia visual. Confirmarlas no modifica la factura original.
+                  </p>
+                </div>
+                {pendingReviewIssues.length === 0 ? <CheckCircle2 className="h-4 w-4 text-emerald-300" /> : null}
+              </div>
+              <div className="mt-3 space-y-2">
+                {reviewIssues.map((issue) => (
+                  <div key={issue.key} className={`rounded-lg border p-2.5 ${issue.resolved ? "border-emerald-300/15 bg-emerald-300/[0.025]" : "border-amber-300/15 bg-black/20"}`}>
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                      <div className="min-w-0">
+                        <strong className="block text-xs">{issue.item.line_number}. {issue.item.description}</strong>
+                        <div className="mt-1 space-y-0.5">
+                          {issue.reasons.map((reason) => (
+                            <p key={reason} className="text-[10px] leading-4 text-white/48">• {reason}</p>
+                          ))}
+                        </div>
+                        {issue.item.unit_price != null ? (
+                          <p className="mt-1 text-[9px] text-white/32">
+                            Costo de factura conservado: {new Intl.NumberFormat("es-AR", { style: "currency", currency: invoiceData.invoice?.currency || "ARS" }).format(issue.item.unit_price)}
+                          </p>
+                        ) : null}
+                      </div>
+                      <button
+                        type="button"
+                        disabled={checkingInvoiceItem === issue.item.id}
+                        onClick={() => void toggleInvoiceItem(issue.item, !issue.resolved)}
+                        className={`shrink-0 rounded-lg border px-3 py-1.5 text-[10px] font-semibold disabled:opacity-45 ${issue.resolved ? "border-emerald-300/20 text-emerald-200" : "border-amber-300/25 bg-amber-300/[0.06] text-amber-100"}`}
+                      >
+                        {issue.resolved ? "Confirmado" : "Confirmar recepción"}
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : invoiceData?.invoice ? (
+            <div className="mt-3 flex items-center gap-2 rounded-xl border border-emerald-300/15 bg-emerald-300/[0.035] px-3 py-2 text-[10px] text-emerald-100">
+              <CheckCircle2 className="h-4 w-4" /> CLOUVA no encontró diferencias que requieran tu intervención.
+            </div>
+          ) : null}
 
           {productSummary.length ? (
             <div className="mt-3 overflow-hidden rounded-xl border border-white/[0.07]">
@@ -1392,14 +1510,19 @@ export function CommerceBulkProductImport({
                   Podés ingresar sin factura, pero no habrá control automático de cantidades ni costos.
                 </span>
               ) : null}
+              {invoiceData?.invoice && pendingReviewIssues.length ? (
+                <span className="mr-auto text-[10px] leading-4 text-amber-100/70">
+                  Confirmá las {pendingReviewIssues.length} diferencia{pendingReviewIssues.length === 1 ? "" : "s"} de arriba para habilitar el ingreso.
+                </span>
+              ) : null}
               <button
                 type="button"
                 onClick={() => void confirmPurchaseImport()}
-                disabled={busy}
-                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-emerald-500/90 px-4 text-sm font-semibold text-black transition hover:bg-emerald-400 disabled:opacity-45"
+                disabled={busy || Boolean(invoiceData?.invoice && pendingReviewIssues.length)}
+                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-emerald-500/90 px-4 text-sm font-semibold text-black transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-35"
               >
                 <CheckCircle2 className="h-4 w-4" />
-                {invoiceData?.invoice ? "Confirmar ingreso de compra" : "Ingresar sin factura"}
+                {invoiceData?.invoice ? `Ingresar ${receivingSummary.detectedUnits} unidades al stock` : "Ingresar sin factura"}
               </button>
             </div>
           ) : null}
@@ -1784,8 +1907,8 @@ export function CommerceBulkProductImport({
                       </span>
                       <span className="text-white/20">·</span>
                       <span className="text-[10px] text-white/55">
-                        Código/QR: <strong className="text-white/85">{physicalUnits}</strong>
-                        {group.identifier ? ` · ${group.identifier.type.toUpperCase()} ${group.identifier.value}` : " · sin código"}
+                        Stock físico: <strong className="text-white/85">{physicalUnits}</strong>
+                        {group.identifier ? ` · código ${group.identifier.type.toUpperCase()} ${group.identifier.value}` : " · sin código externo"}
                       </span>
                       {invoiceLines.length ? (
                         <span className={`rounded-md border px-1.5 py-0.5 text-[9px] font-semibold ${physicalUnits === invoiceUnits ? "border-emerald-300/25 bg-emerald-300/[0.07] text-emerald-200" : physicalUnits < invoiceUnits ? "border-amber-300/25 bg-amber-300/[0.07] text-amber-200" : "border-sky-300/25 bg-sky-300/[0.07] text-sky-200"}`}>
