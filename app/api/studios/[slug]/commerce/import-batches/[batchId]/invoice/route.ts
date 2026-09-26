@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { uploadGeneratedMediaObject } from "@/lib/gcs-media";
 import {
   recognizeCommerceInvoice,
-  reconcileCommerceInvoice,
+  reconcileCommerceInvoiceWithAI,
 } from "@/lib/server/commerce-invoice-recognition";
 import type { CommerceBatchGroup } from "@/lib/server/commerce-product-batch-recognition";
 import { validateCommerceIdentifier, type CommerceIdentifierType } from "@/lib/commerce/identifiers";
@@ -188,7 +188,7 @@ export async function POST(
       spotName: spot.name,
     });
     const groups = groupsFromMetadata(batch.metadata);
-    const reconciliation = reconcileCommerceInvoice({
+    const reconciliation = await reconcileCommerceInvoiceWithAI({
       invoice: analysis.recognition,
       groups,
     });
