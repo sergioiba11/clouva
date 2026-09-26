@@ -18,6 +18,7 @@ type StreamPayload = {
     stream_url: string | null;
     podcast_rss_url: string | null;
   } | null;
+  tracks?: MediaTrack[];
   fallbackTrack?: MediaTrack | null;
   kickLive?: {
     title: string;
@@ -37,6 +38,19 @@ function publicHttpUrl(value: string | null | undefined) {
   } catch {
     return null;
   }
+}
+
+function activeLiveUrl(payload: StreamPayload) {
+  return publicHttpUrl(payload.kickLive?.watchUrl) || publicHttpUrl(payload.youtubeLive?.watchUrl);
+}
+
+function pickRadioTrack(payload: StreamPayload, avoidTrackId?: string | null) {
+  const playable = (payload.tracks ?? []).filter((item) => Boolean(item.audioUrl));
+  const pool = avoidTrackId && playable.length > 1
+    ? playable.filter((item) => item.id !== avoidTrackId)
+    : playable;
+  if (pool.length) return pool[Math.floor(Math.random() * pool.length)];
+  return payload.fallbackTrack?.audioUrl ? payload.fallbackTrack : null;
 }
 
 export function IgluStreamButton({
@@ -66,6 +80,70 @@ export function IgluStreamButton({
     }
   }
 
+  async function loadMediaPayload() {
+    const response = await fetch("/api/iglu/media/audio", { cache: "no-store" });
+    const payload = (await response.json().catch(() => ({}))) as StreamPayload;
+    if (!response.ok) throw new Error("media_unavailable");
+    return payload;
+  }
+
+  async function startRadio({
+    resumeCurrent = false,
+    avoidTrackId = null,
+  }: {
+    resumeCurrent?: boolean;
+    avoidTrackId?: string | null;
+  } = {}) {
+    const audio = audioRef.current;
+    if (!audio) throw new Error("audio_unavailable");
+
+    const payload = await loadMediaPayload();
+
+    // A real live has absolute priority. Right now IGLÚ detects Kick and
+    // YouTube; this resolver is intentionally centralized so more networks can
+    // be added without changing the button behavior.
+    const liveUrl = activeLiveUrl(payload);
+    if (liveUrl) {
+      window.location.assign(liveUrl);
+      return;
+    }
+
+    if (resumeCurrent && track?.audioUrl && audio.src) {
+      await audio.play();
+      setPlaying(true);
+      return;
+    }
+
+    const nextTrack = pickRadioTrack(payload, avoidTrackId);
+    if (nextTrack?.audioUrl) {
+      await playAudio(audio, nextTrack);
+      return;
+    }
+
+    // If the studio has a direct radio signal configured, use it as the audio
+    // fallback only when there are no uploaded tracks.
+    const radioStream = publicHttpUrl(payload.radio?.stream_url);
+    if (radioStream) {
+      await playAudio(audio, {
+        id: "iglu-radio-live",
+        title: payload.radio?.station_name || "IGLÚ Radio",
+        artist: studioName,
+        album: "Señal del IGLÚ",
+        duration_seconds: null,
+        audioUrl: radioStream,
+      });
+      return;
+    }
+
+    const podcastUrl = publicHttpUrl(payload.radio?.podcast_rss_url);
+    if (podcastUrl) {
+      window.location.assign(podcastUrl);
+      return;
+    }
+
+    window.location.assign(mediaHref);
+  }
+
   async function handleClick() {
     const audio = audioRef.current;
 
@@ -75,65 +153,28 @@ export function IgluStreamButton({
       return;
     }
 
-    if (track?.audioUrl && audio?.src) {
-      try {
-        await audio.play();
-        setPlaying(true);
-      } catch {
-        window.location.assign(mediaHref);
-      }
-      return;
-    }
-
     setLoading(true);
     try {
-      const response = await fetch("/api/iglu/media/audio", { cache: "no-store" });
-      const payload = (await response.json().catch(() => ({}))) as StreamPayload;
-      if (!response.ok) throw new Error("media_unavailable");
-
-      // Live visual real first. If there is no live, the home plays one of the
-      // audios uploaded to IGLÚ Media. A configured radio stream is only the
-      // last audio fallback when the library is empty.
-      const kickUrl = publicHttpUrl(payload.kickLive?.watchUrl);
-      if (kickUrl) {
-        window.location.assign(kickUrl);
-        return;
-      }
-
-      const youtubeUrl = publicHttpUrl(payload.youtubeLive?.watchUrl);
-      if (youtubeUrl) {
-        window.location.assign(youtubeUrl);
-        return;
-      }
-
-      const fallback = payload.fallbackTrack || null;
-      if (fallback?.audioUrl && audio) {
-        await playAudio(audio, fallback);
-        return;
-      }
-
-      const radioStream = publicHttpUrl(payload.radio?.stream_url);
-      if (radioStream && audio) {
-        await playAudio(audio, {
-          id: "iglu-radio-live",
-          title: payload.radio?.station_name || "IGLÚ Radio",
-          artist: studioName,
-          album: "Señal del IGLÚ",
-          duration_seconds: null,
-          audioUrl: radioStream,
-        });
-        return;
-      }
-
-      const podcastUrl = publicHttpUrl(payload.radio?.podcast_rss_url);
-      if (podcastUrl) {
-        window.location.assign(podcastUrl);
-        return;
-      }
-
-      window.location.assign(mediaHref);
+      // Even when resuming a paused song, re-check live state first. If IGLÚ
+      // went live while the radio was paused, the next Play opens that stream.
+      await startRadio({ resumeCurrent: true });
     } catch {
       window.location.assign(mediaHref);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleEnded() {
+    const endedTrackId = track?.id || null;
+    setPlaying(false);
+    setLoading(true);
+    try {
+      // Radio behavior: move automatically to another uploaded song. The live
+      // check runs again between songs, so a newly started stream takes over.
+      await startRadio({ avoidTrackId: endedTrackId });
+    } catch {
+      setTrack(null);
     } finally {
       setLoading(false);
     }
@@ -155,10 +196,7 @@ export function IgluStreamButton({
         preload="none"
         onPlay={() => setPlaying(true)}
         onPause={() => setPlaying(false)}
-        onEnded={() => {
-          setPlaying(false);
-          setTrack(null);
-        }}
+        onEnded={() => void handleEnded()}
       />
 
       <button
