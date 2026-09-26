@@ -389,37 +389,52 @@ export function reconcileCommerceInvoice(args: {
   invoice: CommerceInvoiceRecognition;
   groups: CommerceBatchGroup[];
 }): CommerceInvoiceMatch[] {
-  const reserved = new Set<string>();
-
-  return args.invoice.lines.map((line) => {
-    const target = Math.max(1, Math.round(line.quantity));
-    const candidates = args.groups
+  const candidatesByLine = args.invoice.lines.map((line, lineIndex) => ({
+    line,
+    lineIndex,
+    candidates: args.groups
       .map((group) => ({ group, ...scoreLineGroup(line, group) }))
       .filter((candidate) => candidate.score >= 0.34)
-      .sort((a, b) => b.score - a.score);
+      .sort((left, right) => right.score - left.score),
+  }));
 
-    // Cada renglón representa una identidad comercial. La cantidad del
-    // renglón no obliga a buscar N grupos visuales: una sola ficha/SKU puede
-    // representar todas las unidades compradas.
-    const availableCandidates = candidates
-      .filter((candidate) => !reserved.has(candidate.group.groupKey));
-    const selected = availableCandidates.slice(0, 1);
+  // Resolver global: no reservamos productos según el orden impreso de la
+  // factura. Primero elegimos las mejores parejas línea↔producto del lote
+  // completo. Así un "Cargador notebook" no queda sin foto porque un renglón
+  // anterior y más genérico consumió el Cargador Universal NOTE BOOK.
+  const pairs = candidatesByLine
+    .flatMap(({ lineIndex, candidates }) =>
+      candidates.map((candidate) => ({ lineIndex, ...candidate })),
+    )
+    .sort((left, right) => right.score - left.score);
 
-    const best = selected[0]?.score ?? 0;
-    const second = availableCandidates.find((candidate) => candidate.group.groupKey !== selected[0]?.group.groupKey)?.score ?? 0;
-    const ambiguous = best > 0 && second >= best - 0.08 && best < 0.88 && target === 1;
-    const strongSelected = selected.filter((candidate) => candidate.score >= (ambiguous ? 0.56 : 0.42));
+  const selectedByLine = new Map<number, typeof pairs[number]>();
+  const reservedGroups = new Set<string>();
+  for (const pair of pairs) {
+    if (selectedByLine.has(pair.lineIndex) || reservedGroups.has(pair.group.groupKey)) continue;
+    if (pair.score < 0.42) continue;
+    selectedByLine.set(pair.lineIndex, pair);
+    reservedGroups.add(pair.group.groupKey);
+  }
 
-    for (const candidate of strongSelected) reserved.add(candidate.group.groupKey);
+  return candidatesByLine.map(({ line, lineIndex, candidates }) => {
+    const target = Math.max(1, Math.round(line.quantity));
+    const selected = selectedByLine.get(lineIndex);
+    const best = selected?.score ?? 0;
+    const second = candidates.find((candidate) =>
+      candidate.group.groupKey !== selected?.group.groupKey
+      && !reservedGroups.has(candidate.group.groupKey),
+    )?.score ?? 0;
+    const ambiguous = Boolean(
+      selected
+      && target === 1
+      && best < 0.88
+      && second >= best - 0.08,
+    );
 
-    // The grouped photos represent the physical receipt. The invoice target is
-    // only the expected quantity, so overages and shortages stay visible.
-    const matchedQuantity = ambiguous
-      ? 0
-      : strongSelected.reduce(
-          (sum, candidate) => sum + Math.max(1, Math.floor(candidate.group.unitCount || 1)),
-          0,
-        );
+    const matchedQuantity = selected && !ambiguous
+      ? Math.max(1, Math.floor(selected.group.unitCount || 1))
+      : 0;
     const matchStatus: CommerceInvoiceMatch["matchStatus"] = ambiguous
       ? "ambiguous"
       : matchedQuantity >= target
@@ -430,18 +445,15 @@ export function reconcileCommerceInvoice(args: {
 
     return {
       line,
-      matchedGroupKeys: strongSelected.map((candidate) => candidate.group.groupKey),
+      matchedGroupKeys: selected && !ambiguous ? [selected.group.groupKey] : [],
       matchedQuantity,
       matchStatus,
       autoChecked: matchStatus === "matched" && matchedQuantity === target,
-      confidence: strongSelected.length
-        ? strongSelected.reduce((sum, candidate) => sum + candidate.score, 0) / strongSelected.length
-        : 0,
-      reasons: Array.from(new Set(strongSelected.flatMap((candidate) => candidate.reasons))),
+      confidence: selected && !ambiguous ? selected.score : 0,
+      reasons: selected && !ambiguous ? Array.from(new Set(selected.reasons)) : [],
     };
   });
 }
-
 
 export async function reconcileCommerceInvoiceWithAI(args: {
   invoice: CommerceInvoiceRecognition;
