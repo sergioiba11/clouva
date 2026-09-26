@@ -1504,11 +1504,31 @@ async function refineMergedGroup(args: {
       maxOutputTokens: 2600,
     }));
     const allowed = new Set(args.group.images.map((image) => image.sourceIndex));
+    const parsedRefinement = record(parseGroupingJson(generated.text));
     const sanitized = sanitizeGroup({
-      ...record(parseGroupingJson(generated.text)),
+      ...parsedRefinement,
       groupKey: args.group.groupKey,
     }, allowed, args.group.groupKey);
     if (!sanitized) return args.group;
+
+    // La salida estructurada ya obliga a enumerar physicalUnits. Usamos esa
+    // enumeración como fuente de verdad del conteo: evita que unitCount quede
+    // en 4 cuando las evidencias describen 5 objetos físicos, y a la vez une
+    // frente+dorso dentro de una sola unidad.
+    const physicalUnits = (Array.isArray(parsedRefinement.physicalUnits) ? parsedRefinement.physicalUnits : [])
+      .flatMap((rawUnit) => {
+        const unit = record(rawUnit);
+        const sourceIndexes = Array.from(new Set(
+          (Array.isArray(unit.sourceIndexes) ? unit.sourceIndexes : [])
+            .map((value) => Number(value))
+            .filter((value) => Number.isInteger(value) && allowed.has(value)),
+        ));
+        return sourceIndexes.length ? [{ sourceIndexes }] : [];
+      })
+      .slice(0, 100);
+    const verifiedUnitCount = physicalUnits.length
+      ? physicalUnits.length
+      : Math.max(1, Math.floor(Number(sanitized.unitCount) || 1));
     const oldCode = args.group.identifier;
     if (oldCode && sanitized.identifier
       && `${oldCode.type}:${oldCode.value.replace(/\s/g, "").toUpperCase()}`
@@ -1550,6 +1570,7 @@ async function refineMergedGroup(args: {
       images: completeImages,
       visibleIdentifiers: completeVisibleIdentifiers,
       identifier: primaryIdentifier,
+      unitCount: verifiedUnitCount,
       needsReview: sanitized.needsReview || args.group.needsReview,
     };
   } catch {
