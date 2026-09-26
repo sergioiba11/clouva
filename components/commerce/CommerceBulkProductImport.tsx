@@ -1428,7 +1428,7 @@ export function CommerceBulkProductImport({
                         </div>
                         {issue.item.unit_price != null ? (
                           <p className="mt-1 text-[9px] text-white/32">
-                            Costo de factura conservado: {new Intl.NumberFormat("es-AR", { style: "currency", currency: invoiceData.invoice?.currency || "ARS" }).format(issue.item.unit_price)}
+                            Costo de factura conservado: {new Intl.NumberFormat("es-AR", { style: "currency", currency: invoiceData?.invoice?.currency || "ARS" }).format(issue.item.unit_price)}
                           </p>
                         ) : null}
                       </div>
