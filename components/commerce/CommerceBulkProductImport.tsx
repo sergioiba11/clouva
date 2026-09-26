@@ -524,6 +524,9 @@ export function CommerceBulkProductImport({
   const reviewIssues = useMemo(() => {
     if (!invoiceData?.invoice) return [];
     const groupByKey = new Map(groups.map((group) => [group.groupKey, group]));
+    const knownBrands = Array.from(new Set(
+      groups.map((group) => normalizeReceiptText(group.brand)).filter(Boolean),
+    ));
 
     return invoiceData.items.flatMap((item) => {
       const matchedGroups = (item.matched_group_keys ?? [])
@@ -549,12 +552,23 @@ export function CommerceBulkProductImport({
       }
 
       const invoiceBrand = normalizeReceiptText(item.brand || "");
+      const descriptionText = ` ${normalizeReceiptText(item.description || "")} `;
       const conflictingBrands = matchedGroups
         .map((group) => group.brand)
         .filter(Boolean)
         .filter((brand) => invoiceBrand && normalizeReceiptText(brand) !== invoiceBrand);
+      const descriptionBrandConflicts = matchedGroups.flatMap((group) => {
+        const detectedBrand = normalizeReceiptText(group.brand || "");
+        if (!detectedBrand) return [];
+        return knownBrands
+          .filter((brand) => brand !== detectedBrand && descriptionText.includes(` ${brand} `))
+          .map((brand) => ({ invoiceBrand: brand, detectedBrand: group.brand }));
+      });
       if (conflictingBrands.length) {
         reasons.push(`Marca en factura: ${item.brand} · producto: ${Array.from(new Set(conflictingBrands)).join(", ")}`);
+      } else if (descriptionBrandConflicts.length) {
+        const conflict = descriptionBrandConflicts[0];
+        reasons.push(`La descripción de factura menciona ${conflict.invoiceBrand}; el producto visual es ${conflict.detectedBrand}`);
       }
 
       if (matchedGroups.some((group) => group.needsReview)) {
@@ -1456,7 +1470,7 @@ export function CommerceBulkProductImport({
                       </p>
                     </div>
                     <span className={`shrink-0 rounded-md border px-1.5 py-0.5 text-[9px] ${row.code ? "border-emerald-300/20 text-emerald-200" : "border-amber-300/20 text-amber-200"}`}>
-                      {row.code ? `${row.codeType.toUpperCase()} · ${row.code}` : "SIN CÓDIGO"}
+                      {row.code ? `${row.codeType.toUpperCase()} · ${row.code}` : "SIN CÓDIGO EXTERNO"}
                     </span>
                   </div>
                 ))}
@@ -2040,7 +2054,7 @@ export function CommerceBulkProductImport({
                           {generatedCodeGroups[group.groupKey] ? "Imprimir etiqueta otra vez" : "Crear código + imprimir sticker"}
                         </button>
                       ) : (
-                        <span className="text-[10px] text-amber-100/60">Sin código: CLOUVA lo genera al ingresar el producto.</span>
+                        <span className="text-[10px] text-amber-100/60">Sin código externo: CLOUVA puede generar un código interno al ingresar el producto.</span>
                       )}
                     </div>
                   ) : null}
