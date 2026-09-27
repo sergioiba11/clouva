@@ -86,8 +86,11 @@ export function IgluMediaLive({ studioId, studioName, publicAlias }: { studioId:
 
   useEffect(() => {
     void load();
-    fetch(`/api/studios/${studioId}/dashboard`, { credentials: "include", cache: "no-store" })
-      .then((response) => setManager(response.ok))
+    fetch("/api/iglu/media/manage", { credentials: "include", cache: "no-store" })
+      .then(async (response) => {
+        const body = await response.json().catch(() => ({})) as { canManage?: boolean };
+        setManager(response.ok && body.canManage === true);
+      })
       .catch(() => setManager(false));
     fetch("/api/integrations/youtube/status", { credentials: "include", cache: "no-store" })
       .then(async (response) => {
