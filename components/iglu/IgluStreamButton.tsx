@@ -19,6 +19,7 @@ type StreamPayload = {
     podcast_rss_url: string | null;
   } | null;
   tracks?: MediaTrack[];
+  primaryTrack?: MediaTrack | null;
   fallbackTrack?: MediaTrack | null;
   kickLive?: {
     title: string;
@@ -44,12 +45,26 @@ function activeLiveUrl(payload: StreamPayload) {
   return publicHttpUrl(payload.kickLive?.watchUrl) || publicHttpUrl(payload.youtubeLive?.watchUrl);
 }
 
-function pickRadioTrack(payload: StreamPayload, avoidTrackId?: string | null) {
+function pickRadioTrack(
+  payload: StreamPayload,
+  {
+    avoidTrackId = null,
+    preferPrimary = false,
+  }: {
+    avoidTrackId?: string | null;
+    preferPrimary?: boolean;
+  } = {},
+) {
+  const primary = payload.primaryTrack?.audioUrl ? payload.primaryTrack : null;
+  if (preferPrimary && primary && primary.id !== avoidTrackId) return primary;
+
   const playable = (payload.tracks ?? []).filter((item) => Boolean(item.audioUrl));
   const pool = avoidTrackId && playable.length > 1
     ? playable.filter((item) => item.id !== avoidTrackId)
     : playable;
   if (pool.length) return pool[Math.floor(Math.random() * pool.length)];
+
+  if (primary && primary.id !== avoidTrackId) return primary;
   return payload.fallbackTrack?.audioUrl ? payload.fallbackTrack : null;
 }
 
@@ -90,9 +105,11 @@ export function IgluStreamButton({
   async function startRadio({
     resumeCurrent = false,
     avoidTrackId = null,
+    preferPrimary = true,
   }: {
     resumeCurrent?: boolean;
     avoidTrackId?: string | null;
+    preferPrimary?: boolean;
   } = {}) {
     const audio = audioRef.current;
     if (!audio) throw new Error("audio_unavailable");
@@ -114,7 +131,7 @@ export function IgluStreamButton({
       return;
     }
 
-    const nextTrack = pickRadioTrack(payload, avoidTrackId);
+    const nextTrack = pickRadioTrack(payload, { avoidTrackId, preferPrimary });
     if (nextTrack?.audioUrl) {
       await playAudio(audio, nextTrack);
       return;
@@ -172,7 +189,7 @@ export function IgluStreamButton({
     try {
       // Radio behavior: move automatically to another uploaded song. The live
       // check runs again between songs, so a newly started stream takes over.
-      await startRadio({ avoidTrackId: endedTrackId });
+      await startRadio({ avoidTrackId: endedTrackId, preferPrimary: false });
     } catch {
       setTrack(null);
     } finally {
