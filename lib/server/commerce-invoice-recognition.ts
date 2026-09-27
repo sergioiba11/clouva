@@ -1,4 +1,5 @@
 import "server-only";
+import { invoiceBrandConflict } from "@/lib/commerce/product-reconciliation";
 
 import { generateGoogleCloudJson } from "@/lib/server/google-cloud-genai";
 import { validateCommerceIdentifier, type CommerceIdentifierType } from "@/lib/commerce/identifiers";
@@ -197,6 +198,7 @@ function groupCodes(group: CommerceBatchGroup) {
 }
 
 function scoreLineGroup(line: CommerceInvoiceLine, group: CommerceBatchGroup) {
+  if (invoiceBrandConflict(line, group)) return { score: 0, reasons: ["Marca distinta: requiere confirmación"] };
   const reasons: string[] = [];
   let score = 0;
 
@@ -467,6 +469,7 @@ export async function reconcileCommerceInvoiceWithAI(args: {
     "Tenés renglones de una factura y productos ya agrupados desde fotos. Debés decidir qué producto agrupado corresponde a cada renglón.",
     "Usá significado comercial, marca, modelo, conectores, cantidades y códigos. La descripción de factura puede estar abreviada.",
     "REGLA FUERTE: un groupKey solo puede pertenecer a UN renglón de factura.",
+    "REGLA FUERTE: marcas diferentes NO se asignan automáticamente. Motorola no es Samsung aunque encajen cantidades y conectores. Dejá el extra y el déficit visibles para que la persona confirme si fue cobrado como otro.",
     "REGLA FUERTE: no uses un cable PS4 para cubrir el renglón PS4 si existe un producto controlador/joystick y además hay un renglón separado Cable PS4.",
     "REGLA FUERTE: códigos EAN/UPC exactos y modelos exactos pesan más que similitud de palabras.",
     "No fuerces coincidencias incompatibles. Pero recordá que el proveedor usa abreviaturas muy cortas: compará por significado y por el conjunto completo de renglones, no solo por coincidencia literal.",
@@ -536,7 +539,7 @@ export async function reconcileCommerceInvoiceWithAI(args: {
     const finalUsed = new Set<string>();
     return args.invoice.lines.map((line, index) => {
       const ai = aiByLine.get(line.lineNumber);
-      const aiKeys = (ai?.keys ?? []).filter((key) => !finalUsed.has(key));
+      const aiKeys = (ai?.keys ?? []).filter((key) => !finalUsed.has(key) && !invoiceBrandConflict(line, groupByKey.get(key)!, args.groups.map(group => group.brand)));
       const fallbackMatch = fallback[index];
       const fallbackKeys = fallbackMatch.matchedGroupKeys.filter((key) => !finalUsed.has(key));
 

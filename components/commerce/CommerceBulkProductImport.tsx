@@ -1,5 +1,6 @@
 "use client";
 
+import { CommerceProductReview } from "@/components/commerce/CommerceProductReview";
 import { Boxes, CheckCircle2, FileText, ImagePlus, LoaderCircle, RefreshCw, Sparkles, TriangleAlert, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
@@ -334,6 +335,7 @@ export function CommerceBulkProductImport({
   studioId: string;
   onCompleted?: () => void | Promise<void>;
 }) {
+  const [productReviewPending, setProductReviewPending] = useState<number | null>(null);
   const [files, setFiles] = useState<File[]>([]);
   const [previews, setPreviews] = useState<string[]>([]);
   const [stage, setStage] = useState<"idle" | "preparing" | "uploading" | "analyzing" | "invoice" | "review" | "creating" | "done" | "error">("idle");
@@ -1030,8 +1032,8 @@ export function CommerceBulkProductImport({
 
   async function confirmPurchaseImport() {
     if (!batchId || busy || !groups.length) return;
-    if (pendingReviewIssues.length) {
-      setError(`CLOUVA necesita que confirmes ${pendingReviewIssues.length} diferencia${pendingReviewIssues.length === 1 ? "" : "s"} antes de ingresar el stock.`);
+    if (productReviewPending == null || productReviewPending > 0) {
+      setError("Revisá las tarjetas pendientes antes de ingresar el stock.");
       return;
     }
     setError("");
@@ -1333,6 +1335,16 @@ export function CommerceBulkProductImport({
         </div>
       ) : null}
 
+      {batchId && groups.length > 0 ? <CommerceProductReview
+        studioId={studioId} batchId={batchId} busy={busy}
+        refreshKey={JSON.stringify([groups.map(group => [group.groupKey, group.unitCount]), invoiceData?.invoice?.id, stage])}
+        onPendingChange={setProductReviewPending}
+        onReceive={() => void confirmPurchaseImport()}
+        onReanalyze={() => void reanalyzeCurrentBatch()}
+        onUnitCount={updateGroupUnitCount}
+      /> : null}
+      <details className="mt-4">
+        <summary className="cursor-pointer py-3 text-sm text-white/60">Vista general y herramientas</summary>
       {groups.length && receivingSummary ? (
         <div className="mt-4 rounded-2xl border border-violet-300/15 bg-black/20 p-3 sm:p-4">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -1532,7 +1544,7 @@ export function CommerceBulkProductImport({
               <button
                 type="button"
                 onClick={() => void confirmPurchaseImport()}
-                disabled={busy || Boolean(invoiceData?.invoice && pendingReviewIssues.length)}
+                disabled={busy || productReviewPending == null || productReviewPending > 0}
                 className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-emerald-500/90 px-4 text-sm font-semibold text-black transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-35"
               >
                 <CheckCircle2 className="h-4 w-4" />
@@ -2120,6 +2132,7 @@ export function CommerceBulkProductImport({
           </div>
         </div>
       ) : null}
+      </details>
     </section>
   );
 }

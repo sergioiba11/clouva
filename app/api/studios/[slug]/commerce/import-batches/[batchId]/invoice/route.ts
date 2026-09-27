@@ -155,6 +155,7 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ slug: string; batchId: string }> },
 ) {
+  let claim: { id: string; spotId: string; at: string; status: string } | null = null;
   try {
     const { user } = await requireUser(request);
     const { slug, batchId } = await params;
@@ -167,14 +168,23 @@ export async function POST(
     const { spot } = await requireManagedSpot({ admin, userId: user.id, studioId: slug });
     const { data: batch, error: batchError } = await admin
       .from("commerce_product_import_batches")
-      .select("id,metadata")
+      .select("id,status,metadata,updated_at")
       .eq("id", batchId)
       .eq("spot_id", spot.id)
       .maybeSingle();
     if (batchError) throw new Error(batchError.message);
     if (!batch) return NextResponse.json({ error: "El lote no existe en este Spot." }, { status: 404 });
 
+    if (!["uploading", "review", "failed"].includes(batch.status)) return NextResponse.json({ error: "El lote está en proceso o ya ingresó al stock." }, { status: 409 });
     const parsed = parseDocumentDataUrl(body.dataUrl);
+    const claimAt = new Date().toISOString();
+    const { data: locked, error: lockError } = await admin.from("commerce_product_import_batches")
+      .update({ status: "analyzing", updated_at: claimAt }).eq("id", batch.id).eq("spot_id", spot.id)
+      .eq("status", batch.status).eq("updated_at", batch.updated_at).select("id").maybeSingle();
+    if (lockError) throw new Error(lockError.message);
+    if (!locked) return NextResponse.json({ error: "El lote cambió. Actualizá la revisión." }, { status: 409 });
+    claim = { id: batch.id, spotId: spot.id, at: claimAt, status: batch.status };
+
     const fileName = typeof body.fileName === "string" ? body.fileName.trim().slice(0, 240) : "factura";
     const stored = await uploadGeneratedMediaObject({
       bytes: parsed.bytes,
@@ -277,6 +287,7 @@ export async function POST(
     const { error: batchUpdateError } = await admin
       .from("commerce_product_import_batches")
       .update({
+        status: batch.status,
         metadata: {
           ...batchMetadata,
           invoice: {
@@ -292,11 +303,14 @@ export async function POST(
         },
         updated_at: now,
       })
-      .eq("id", batch.id);
+      .eq("id", batch.id).eq("spot_id", spot.id).eq("updated_at", claimAt);
     if (batchUpdateError) throw new Error(batchUpdateError.message);
 
+    claim = null;
     return NextResponse.json(await loadInvoice(admin, batch.id, spot.id), { status: 201 });
   } catch (error) {
+    if (claim) await createAdminSupabase().from("commerce_product_import_batches")
+      .update({ status: claim.status, updated_at: new Date().toISOString() }).eq("id", claim.id).eq("spot_id", claim.spotId).eq("updated_at", claim.at);
     const status = (error as Error & { status?: number })?.status ?? (isAuthError(error) ? 401 : 500);
     return NextResponse.json({ error: error instanceof Error ? error.message : "No se pudo analizar la factura." }, { status });
   }
