@@ -592,7 +592,7 @@ async function analyzeChunk(args: {
     "REGLA CRÍTICA DE SUJETO PRINCIPAL: si una caja/producto está sostenida, centrada, enfocada, ocupa la mayor parte de la imagen o claramente fue fotografiada a propósito, esa foto pertenece a ese producto AUNQUE haya otros productos distintos en el fondo.",
     "Una foto es realmente mixta/contexto únicamente cuando hay varios productos diferentes co-protagonistas y no existe un objeto principal claro. Si son varias unidades idénticas del MISMO SKU sí pertenece a un grupo.",
     "Si una imagen muestra un solo producto pero no podés reconocer nombre/código, creá igualmente un grupo con campos vacíos y needsReview=true; no la mandes a unassignedIndexes.",
-    "Para cada grupo elegí exactamente una imagen como Frente. Elegí como máximo una Atrás cuando exista una vista posterior clara. El resto debe ser Detalle.",
+    "Usá Frente SOLO cuando realmente se vea la cara frontal del producto o packaging. Si el grupo contiene únicamente dorso, lateral, etiqueta, código o detalle, puede tener CERO fotos Frente. Elegí como máximo una Atrás cuando exista una vista posterior clara; el resto debe ser Detalle.",
     "name, brand y model deben salir solo de texto/evidencia visible. Dejalos vacíos si no están confirmados.",
     "identifierValue debe estar vacío salvo que el código completo sea inequívoco carácter por carácter.",
     "needsReview=true cuando el agrupamiento no sea suficientemente seguro.",
@@ -1487,7 +1487,7 @@ async function refineMergedGroup(args: {
       "Si se ven varias cajas/unidades idénticas, contalas una sola vez cada una aunque aparezcan repetidas en otras fotos.",
       "Ignorá productos ajenos que aparezcan de fondo: para identidad y unitCount contá únicamente la variante propuesta por este grupo.",
       "Si descubrís códigos completos distintos o una variante claramente diferente, marcá needsReview=true; no inventes datos.",
-      "Elegí como Frente la foto donde mejor se vea el producto o la cara frontal de su packaging.",
+      "Marcá Frente SOLO si realmente existe una vista frontal. Si todas las fotos son dorso/lateral/etiqueta/código/detalle, NO inventes un Frente: conservá Atrás/Detalle para que CLOUVA pueda vincular esas vistas con el artículo correcto.",
       "Si un código aparece en cualquier foto del grupo, conservá ese código como identifier principal y registrá sourceIndex en visibleIdentifiers.",
       `Índices: ${refs.map((ref) => ref.sourceIndex).join(", ")}.`,
     ].join("\n");
@@ -1871,6 +1871,31 @@ async function linkContextScenesToProducts(args: {
         const uniqueCodedProducts = Array.from(new Map(
           (linked?.codedProducts ?? []).map((product) => [normalizedCodeKey(product.identifier), product] as const),
         ).values());
+        const matches = linked?.matches ?? contextGroup.contextMatches ?? [];
+        const strongestMatch = [...matches].sort((left, right) => right.confidence - left.confidence)[0];
+        const resolvedPrimaryGroupKey = linked?.primaryGroupKey
+          || (linked?.sceneType === "primary_product" && strongestMatch?.confidence >= 0.55 ? strongestMatch.groupKey : "");
+        const resolvedPrimaryConfidence = Math.max(
+          linked?.primaryConfidence ?? 0,
+          strongestMatch?.groupKey === resolvedPrimaryGroupKey ? strongestMatch.confidence : 0,
+        );
+
+        // Una vista trasera/lateral/código con coincidencia visual fuerte pertenece
+        // primero al producto ya detectado. El barcode en esa vista enriquece ese
+        // artículo; no debe crear otro artículo solo porque el frente no tenía código.
+        if (
+          linked?.sceneType === "primary_product"
+          && resolvedPrimaryGroupKey
+          && resolvedPrimaryConfidence >= 0.5
+        ) {
+          const target = attachmentsByGroup.get(resolvedPrimaryGroupKey) ?? [];
+          if (!target.some((candidate) => candidate.sourceIndex === image.sourceIndex)) {
+            target.push({ sourceIndex: image.sourceIndex, role: linked.primaryRole });
+            attachmentsByGroup.set(resolvedPrimaryGroupKey, target);
+          }
+          alreadyAssigned.set(image.sourceIndex, resolvedPrimaryGroupKey);
+          continue;
+        }
 
         // La factura se completa con evidencia física. Si una foto que parecía
         // "contexto" contiene un único código externo inequívoco, ese código
@@ -1913,29 +1938,6 @@ async function linkContextScenesToProducts(args: {
           promotedGroups.push(promoted);
           knownGroups.set(promotedKey, promoted);
           alreadyAssigned.set(image.sourceIndex, promotedKey);
-          continue;
-        }
-
-        const matches = linked?.matches ?? contextGroup.contextMatches ?? [];
-        const strongestMatch = [...matches].sort((left, right) => right.confidence - left.confidence)[0];
-        const resolvedPrimaryGroupKey = linked?.primaryGroupKey
-          || (linked?.sceneType === "primary_product" && strongestMatch?.confidence >= 0.55 ? strongestMatch.groupKey : "");
-        const resolvedPrimaryConfidence = Math.max(
-          linked?.primaryConfidence ?? 0,
-          strongestMatch?.groupKey === resolvedPrimaryGroupKey ? strongestMatch.confidence : 0,
-        );
-
-        if (
-          linked?.sceneType === "primary_product"
-          && resolvedPrimaryGroupKey
-          && resolvedPrimaryConfidence >= 0.5
-        ) {
-          const target = attachmentsByGroup.get(resolvedPrimaryGroupKey) ?? [];
-          if (!target.some((candidate) => candidate.sourceIndex === image.sourceIndex)) {
-            target.push({ sourceIndex: image.sourceIndex, role: linked.primaryRole });
-            attachmentsByGroup.set(resolvedPrimaryGroupKey, target);
-          }
-          alreadyAssigned.set(image.sourceIndex, resolvedPrimaryGroupKey);
           continue;
         }
 
@@ -2028,22 +2030,46 @@ async function relinkSecondaryProductViews(args: {
 }) {
   if (!args.expectedProducts.length || args.productGroups.length <= 1) return args.productGroups;
   const originalByIndex = new Map<number, { groupKey: string; image: CommerceBatchImageRole }>();
+  const originalGroups = new Map(args.productGroups.map((group) => [group.groupKey, group]));
   const contextCandidates: CommerceBatchGroup[] = [];
-  const anchors = args.productGroups.map((group) => {
-    const anchor = group.images.find((image) => image.role === "Frente") ?? group.images[0];
-    const suspicious = group.needsReview || group.unitCount > 1 || group.images.length >= 5 || !group.identifier;
-    if (suspicious) for (const image of group.images) {
-      if (image.sourceIndex === anchor?.sourceIndex) continue;
-      originalByIndex.set(image.sourceIndex, { groupKey: group.groupKey, image });
-      contextCandidates.push({
-        groupKey: `relink-${image.sourceIndex}`, name: "", brand: "", model: "", packageKind: "unknown",
-        unitCount: 1, identifier: null, visibleIdentifiers: [], confidence: 0, needsReview: true,
-        images: [{ sourceIndex: image.sourceIndex, role: "Frente" }], contextOnly: true,
-      });
+  const anchors: CommerceBatchGroup[] = [];
+
+  for (const group of args.productGroups) {
+    const trueFront = group.images.find((image) => image.role === "Frente");
+
+    // Un grupo sin frente es evidencia secundaria huérfana: dorso, etiqueta,
+    // barcode o detalle. No debe sobrevivir como tarjeta nueva sin antes intentar
+    // vincular TODAS sus fotos contra los productos con frente ya detectados.
+    if (!trueFront) {
+      for (const image of group.images) {
+        originalByIndex.set(image.sourceIndex, { groupKey: group.groupKey, image });
+        contextCandidates.push({
+          groupKey: `relink-${image.sourceIndex}`, name: "", brand: "", model: "", packageKind: "unknown",
+          unitCount: 1, identifier: null, visibleIdentifiers: [], confidence: 0, needsReview: true,
+          images: [{ sourceIndex: image.sourceIndex, role: "Frente" }], contextOnly: true,
+        });
+      }
+      continue;
     }
-    return anchor ? { ...group, images: [anchor] } : group;
-  });
-  if (!contextCandidates.length) return args.productGroups;
+
+    const suspicious = group.needsReview || group.unitCount > 1 || group.images.length >= 5 || !group.identifier;
+    if (suspicious) {
+      for (const image of group.images) {
+        if (image.sourceIndex === trueFront.sourceIndex) continue;
+        originalByIndex.set(image.sourceIndex, { groupKey: group.groupKey, image });
+        contextCandidates.push({
+          groupKey: `relink-${image.sourceIndex}`, name: "", brand: "", model: "", packageKind: "unknown",
+          unitCount: 1, identifier: null, visibleIdentifiers: [], confidence: 0, needsReview: true,
+          images: [{ sourceIndex: image.sourceIndex, role: "Frente" }], contextOnly: true,
+        });
+      }
+      anchors.push({ ...group, images: [trueFront] });
+    } else {
+      anchors.push(group);
+    }
+  }
+
+  if (!contextCandidates.length || !anchors.length) return args.productGroups;
   let products = anchors;
   const unresolved: CommerceBatchGroup[] = [];
   for (let offset = 0; offset < contextCandidates.length; offset += 12) {
@@ -2054,15 +2080,29 @@ async function relinkSecondaryProductViews(args: {
     products = linked.productGroups;
     unresolved.push(...linked.contextGroups);
   }
+
   const owned = new Set(products.flatMap((group) => group.images.map((image) => image.sourceIndex)));
   const byKey = new Map(products.map((group) => [group.groupKey, group]));
-  for (const candidate of unresolved.flatMap((group) => group.images)) {
-    if (owned.has(candidate.sourceIndex)) continue;
-    const original = originalByIndex.get(candidate.sourceIndex);
-    const target = original ? byKey.get(original.groupKey) : null;
-    if (!target || target.images.some((image) => image.sourceIndex === candidate.sourceIndex)) continue;
-    target.images = normalizeRoles([...target.images, original!.image]);
+  const unresolvedIndexes = new Set(unresolved.flatMap((group) => group.images.map((image) => image.sourceIndex)));
+
+  // Si una vista secundaria no consiguió otro dueño, vuelve a su grupo original.
+  // Si ese grupo era completamente huérfano, se restaura solo con las fotos que
+  // realmente quedaron sin vincular, para no perder evidencia.
+  for (const [groupKey, originalGroup] of originalGroups) {
+    const remaining = originalGroup.images.filter((image) => unresolvedIndexes.has(image.sourceIndex) && !owned.has(image.sourceIndex));
+    if (!remaining.length) continue;
+    const existing = byKey.get(groupKey);
+    if (existing) {
+      for (const image of remaining) {
+        if (!existing.images.some((candidate) => candidate.sourceIndex === image.sourceIndex)) {
+          existing.images = normalizeRoles([...existing.images, image]);
+        }
+      }
+      continue;
+    }
+    products.push({ ...originalGroup, images: normalizeRoles(remaining), needsReview: true });
   }
+
   const refined: CommerceBatchGroup[] = [];
   for (const group of products) refined.push(await refineMergedGroup({ group, imagesByIndex: args.imagesByIndex, spotName: args.spotName }));
   return consolidateDeterministicCommercialIdentity(refined);
