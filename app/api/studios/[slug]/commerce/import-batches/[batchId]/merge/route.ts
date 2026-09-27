@@ -72,7 +72,7 @@ export async function POST(
       .maybeSingle();
     if (batchError) throw new Error(batchError.message);
     if (!batch) return NextResponse.json({ error: "El lote no existe en este Spot." }, { status: 404 });
-    if (batch.status === "analyzing") {
+    if (batch.status !== "review") {
       return NextResponse.json(
         { error: "El lote se está analizando. Esperá a que termine antes de fusionar." },
         { status: 409 },

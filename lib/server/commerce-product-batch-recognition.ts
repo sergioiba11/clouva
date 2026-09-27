@@ -235,12 +235,6 @@ function normalizeRoles(images: CommerceBatchImageRole[]) {
       return image;
     }
     return { ...image, role: "Detalle" as const };
-  }).map((image, index, all) => {
-    if (!frontUsed && index === 0) {
-      frontUsed = true;
-      return { ...image, role: "Frente" as const };
-    }
-    return image;
   });
 }
 
@@ -441,7 +435,7 @@ async function recoverExplicitUnassignedImages(args: {
     "Si no podés demostrar más de una unidad física distinta, unitCount=1.",
     "No inventes marca, modelo ni código. Código completo distinto = variante distinta.",
     "Cada índice debe aparecer exactamente una vez: dentro de group.images o como sourceIndex de contextObservations.",
-    "Elegí un Frente por grupo, máximo una Atrás, y el resto Detalle.",
+    "Clasificá Frente y Atrás solo cuando esas vistas realmente existan. Si falta el frente, no conviertas un dorso o detalle en Frente. El resto es Detalle.",
   ].join("\n");
 
   try {

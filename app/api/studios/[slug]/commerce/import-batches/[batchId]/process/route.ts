@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { reconciliationBasis } from "@/lib/commerce/product-reconciliation";
+import { loadProductReconciliation } from "@/lib/server/commerce-product-reconciliation";
 import { buildSpotSku, validateCommerceIdentifier, type CommerceIdentifierType } from "@/lib/commerce/identifiers";
 import type { CommerceProductRecognition } from "@/lib/commerce/product-recognition";
 import { downloadGeneratedMediaObject } from "@/lib/gcs-media";
@@ -231,7 +233,7 @@ export async function POST(
 
     const { data: batch, error: batchError } = await admin
       .from("commerce_product_import_batches")
-      .select("id,status,metadata")
+      .select("id,status,metadata,updated_at")
       .eq("id", batchId)
       .eq("spot_id", spot.id)
       .maybeSingle();
@@ -244,8 +246,22 @@ export async function POST(
       );
     }
 
-    const groups = groupsFromMetadata(batch.metadata);
+    let groups = groupsFromMetadata(batch.metadata);
     if (!groups.length) return NextResponse.json({ error: "Primero analizá y agrupá las imágenes del lote." }, { status: 409 });
+
+    // Validate on the server too: clients cannot bypass product confirmations.
+    const receiptState = await loadProductReconciliation(admin, batch.id, spot.id);
+    groups = groupsFromMetadata(receiptState.metadata);
+    if (receiptState.batch.status === "analyzing") return NextResponse.json({ error: "El lote se está actualizando." }, { status: 409 });
+    if (receiptState.report.pending) return NextResponse.json({ error: "Revisá los productos pendientes antes de ingresar el stock.", report: receiptState.report }, { status: 409 });
+    if (receiptState.batch.status === "review") {
+      const { data: claimed, error: claimError } = await admin.from("commerce_product_import_batches")
+        .update({ status: "processing", updated_at: new Date().toISOString() })
+        .eq("id", batch.id).eq("spot_id", spot.id).eq("status", "review").eq("updated_at", receiptState.batch.updated_at)
+        .select("id").maybeSingle();
+      if (claimError) throw new Error(claimError.message);
+      if (!claimed) return NextResponse.json({ error: "La recepción cambió. Revisá de nuevo." }, { status: 409 });
+    }
 
     const { data: itemRows, error: itemsError } = await admin
       .from("commerce_product_import_items")
@@ -275,9 +291,22 @@ export async function POST(
       .eq("spot_id", spot.id);
     if (purchaseLinesError) throw new Error(purchaseLinesError.message);
 
-    const purchaseLineForGroup = (groupKey: string) => (purchaseLines ?? []).find((line) =>
-      Array.isArray(line.matched_group_keys) && line.matched_group_keys.includes(groupKey),
-    ) ?? null;
+    const receiptForGroup = (groupKey: string) => receiptState.report.products.find(product => product.groupKey === groupKey)!;
+    const purchaseLineForGroup = (groupKey: string) => {
+      const allocation = receiptForGroup(groupKey)?.allocations[0];
+      return (purchaseLines ?? []).find(line => line.id === allocation?.lineId) ?? null;
+    };
+    const purchaseCostForGroup = (groupKey: string) => {
+      const product = receiptForGroup(groupKey);
+      if (!product?.allocations.length || product.unbilled > 0) return null;
+      let total = 0;
+      for (const allocation of product.allocations) {
+        const line = purchaseLines?.find(row => row.id === allocation.lineId);
+        if (line?.unit_price == null || !Number.isFinite(Number(line.unit_price))) return null;
+        total += Number(line.unit_price) * allocation.quantity;
+      }
+      return total / product.physical;
+    };
 
     const postReceiptStock = async (args: {
       group: CommerceBatchGroup;
@@ -290,7 +319,7 @@ export async function POST(
       // checklist/cost source. If five physical units arrived against an invoice
       // line for four, stock receives five and the UI reports +1 extra.
       const quantity = Math.max(1, Math.floor(Number(args.group.unitCount) || 1));
-      const unitCost = line?.unit_price == null ? null : Number(line.unit_price);
+      const unitCost = purchaseCostForGroup(args.group.groupKey);
 
       const { error: receiptError } = await admin.rpc("adjust_commerce_spot_inventory", {
         p_spot_id: spot.id,
@@ -312,6 +341,10 @@ export async function POST(
           unit_count: quantity,
           invoice_quantity: line?.quantity == null ? null : Number(line.quantity),
           quantity_source: "physical_receipt",
+          invoice_allocations: receiptForGroup(args.group.groupKey).allocations,
+          unbilled_units: receiptForGroup(args.group.groupKey).unbilled,
+          receipt_classification: receiptForGroup(args.group.groupKey).unbilled > 0 ? "extra_gift" : "invoice",
+          reconciliation_revision: receiptState.revision,
           invoice_overage: line?.quantity == null ? null : Math.max(0, quantity - Number(line.quantity)),
           invoice_shortage: line?.quantity == null ? null : Math.max(0, Number(line.quantity) - quantity),
         },
@@ -424,8 +457,8 @@ export async function POST(
           : new Error("Google Cloud no pudo reconocer el producto.");
 
         const recognized = recognizedResult.recognition;
-        const recognizedName = recognized.name || group.name || recognized.detectedObject || "Producto";
-        const externalIdentifier = recognizedIdentifier(recognized) ?? externalIdentifierFromGroup(group);
+        const recognizedName = group.name || recognized.name || recognized.detectedObject || "Producto";
+        const externalIdentifier = externalIdentifierFromGroup(group) ?? recognizedIdentifier(recognized);
         const identifier = externalIdentifier ?? {
           value: buildSpotSku({
             spotSlug: spot.slug,
@@ -438,7 +471,7 @@ export async function POST(
         };
         const analyzedAt = new Date().toISOString();
         const purchaseLine = purchaseLineForGroup(group.groupKey);
-        const confirmedUnitCost = purchaseLine?.unit_price == null ? null : Number(purchaseLine.unit_price);
+        const confirmedUnitCost = purchaseCostForGroup(group.groupKey);
         const sources = sourceMetadata({ group, itemsByIndex });
         const frontUrl = sources.find((source) => source.label === "Frente")?.url ?? sources[0]?.url ?? "";
         const hasBack = sources.some((source) => source.label === "Atrás");
@@ -451,7 +484,7 @@ export async function POST(
           detected_object: recognized.detectedObject,
           name: recognizedName,
           description: recognized.description,
-          brand: recognized.brand,
+          brand: group.brand || recognized.brand,
           category: recognized.category,
           product_kind: recognized.productKind,
           listing_kind: recognized.listingKind,
@@ -498,7 +531,7 @@ export async function POST(
             last_saved_at: analyzedAt,
           },
           draft_fields: {
-            brand: recognized.brand,
+            brand: group.brand || recognized.brand,
             category: recognized.category,
             product_kind: recognized.productKind,
             listing_kind: recognized.listingKind,
@@ -513,20 +546,33 @@ export async function POST(
             visible_identifiers: group.visibleIdentifiers,
             confidence: group.confidence,
             needs_review: group.needsReview,
+            invoice_allocations: receiptForGroup(group.groupKey).allocations,
+            unbilled_units: receiptForGroup(group.groupKey).unbilled,
+            receipt_classification: receiptForGroup(group.groupKey).unbilled > 0 ? "extra_gift" : "invoice",
+            reconciliation_revision: receiptState.revision,
             source_indexes: group.images.map((image) => image.sourceIndex),
             physical_units: group.physicalUnits ?? [],
             physical_unit_count: Math.max(1, Math.floor(Number(group.unitCount) || 1)),
           },
         };
 
-        const { data: created, error: createError } = await admin.rpc("upsert_commerce_scanned_product", {
+        const existingLink = record(record(receiptState.metadata.existing_product_links)[group.groupKey]);
+        let existingListing: Record<string, unknown> | null = null;
+        if (existingLink.listingId && existingLink.basis === reconciliationBasis(receiptState.groups, receiptState.lines)) {
+          const { data: linked, error: linkedError } = await admin.from("commerce_products").select("*").eq("id", String(existingLink.listingId)).eq("spot_id", spot.id).maybeSingle();
+          if (linkedError || !linked) throw new Error(linkedError?.message || "El artículo seleccionado ya no existe.");
+          existingListing = linked;
+        }
+        const { data: created, error: createError } = existingListing
+          ? { data: { listing: existingListing }, error: null }
+          : await admin.rpc("upsert_commerce_scanned_product", {
           p_spot_id: spot.id,
           p_identifier_type: identifier.type,
           p_identifier_value: identifier.value,
           p_product: {
             product_kind: recognized.productKind,
             name: recognizedName,
-            brand: recognized.brand,
+            brand: group.brand || recognized.brand,
             category: recognized.category,
             description: recognized.description,
             metadata,
@@ -534,11 +580,11 @@ export async function POST(
           p_listing: {
             listing_kind: recognized.listingKind,
             price: 0,
-            cost: confirmedUnitCost != null && Number.isFinite(confirmedUnitCost) ? confirmedUnitCost : 0,
+            cost: confirmedUnitCost != null && Number.isFinite(confirmedUnitCost) ? confirmedUnitCost : null,
             initial_stock: 0,
             status: "draft",
             cover_url: frontUrl,
-            gallery: frontUrl ? [frontUrl] : [],
+            gallery: Array.from(new Set(sources.map(source => source.url))),
             metadata,
           },
           p_variant: hasVariant ? {
@@ -556,6 +602,25 @@ export async function POST(
         const createdRoot = record(created);
         const createdVariant = record(createdRoot.listing_variant);
         const listingVariantId = typeof createdVariant.id === "string" ? createdVariant.id : null;
+        // Append this receipt's evidence to an existing article without replacing its
+        // price, publication state, older photos or other receipt histories.
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const { data: listing, error: loadError } = await admin.from("commerce_products").select("metadata,gallery,updated_at").eq("id", listingId).eq("spot_id", spot.id).single();
+          if (loadError) throw new Error(loadError.message);
+          const previous = record(listing.metadata);
+          const previousImages = record(previous.product_images);
+          const previousSources = Array.isArray(previousImages.source_photos) ? previousImages.source_photos.map(record) : [];
+          const allSources = Array.from(new Map([...previousSources, ...sources].map(source => [source.url, source])).values());
+          const { data: saved, error: saveError } = await admin.from("commerce_products").update({
+            gallery: Array.from(new Set([...(Array.isArray(listing.gallery) ? listing.gallery : []), ...sources.map(source => source.url)])),
+            metadata: { ...previous, product_images: { ...previousImages, source_photos: allSources },
+              batch_import_receipts: { ...record(previous.batch_import_receipts), [`${batch.id}:${group.groupKey}`]: metadata.batch_import } },
+            updated_at: new Date().toISOString(),
+          }).eq("id", listingId).eq("spot_id", spot.id).eq("updated_at", listing.updated_at).select("id").maybeSingle();
+          if (saveError) throw new Error(saveError.message);
+          if (saved) break;
+          if (attempt === 2) throw new Error("El artículo cambió durante la recepción. Reintentá.");
+        }
         const receipt = await postReceiptStock({ group, listingId, variantId: listingVariantId });
 
         const primaryNormalized = `${identifier.type}:${identifier.value.replace(/\s/g, "").toUpperCase()}`;
@@ -600,7 +665,7 @@ export async function POST(
           group_key: group.groupKey,
           listing_id: listingId,
           name: recognizedName,
-          brand: recognized.brand,
+          brand: group.brand || recognized.brand,
           category: recognized.category,
           package_kind: group.packageKind,
           identifier,
@@ -630,7 +695,7 @@ export async function POST(
           .eq("spot_id", spot.id);
         if (invoiceMatchError) throw new Error(invoiceMatchError.message);
         const invoiceMatches = (invoiceRows ?? []).filter((row) =>
-          Array.isArray(row.matched_group_keys) && row.matched_group_keys.includes(group.groupKey),
+          receiptForGroup(group.groupKey).allocations.some(allocation => allocation.lineId === row.id),
         );
         for (const invoiceMatch of invoiceMatches) {
           const currentListings = Array.isArray(invoiceMatch.matched_listing_ids)

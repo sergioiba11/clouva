@@ -64,12 +64,14 @@ export async function PATCH(
     const { spot } = await requireManagedSpot({ admin, userId: user.id, studioId: slug });
     const { data: batch, error: batchError } = await admin
       .from("commerce_product_import_batches")
-      .select("id,metadata")
+      .select("id,status,metadata,updated_at,processed_products")
       .eq("id", batchId)
       .eq("spot_id", spot.id)
       .maybeSingle();
     if (batchError) throw new Error(batchError.message);
     if (!batch) return NextResponse.json({ error: "El lote no existe en este Spot." }, { status: 404 });
+
+    if (batch.status !== "review" || batch.processed_products > 0) return NextResponse.json({ error: "La recepción ya está en proceso o ingresada." }, { status: 409 });
 
     const metadata = batch.metadata && typeof batch.metadata === "object" && !Array.isArray(batch.metadata)
       ? batch.metadata as Record<string, unknown>
@@ -97,10 +99,11 @@ export async function PATCH(
         [groupKey]: { unit_count: unitCount, actor_id: user.id, updated_at: updatedAt },
       },
     };
-    const { error: updateError } = await admin
+    const { data: updated, error: updateError } = await admin
       .from("commerce_product_import_batches")
       .update({ metadata: nextMetadata, updated_at: updatedAt })
-      .eq("id", batch.id);
+      .eq("id", batch.id).eq("spot_id", spot.id).eq("status", "review").eq("updated_at", batch.updated_at).select("id").maybeSingle();
+    if (!updateError && !updated) return NextResponse.json({ error: "La recepción cambió. Actualizá la revisión." }, { status: 409 });
     if (updateError) throw new Error(updateError.message);
 
     return NextResponse.json({ groupKey, unitCount });

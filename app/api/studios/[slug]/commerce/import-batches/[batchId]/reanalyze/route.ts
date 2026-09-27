@@ -228,6 +228,7 @@ export async function POST(
       .maybeSingle();
     if (batchError) throw new Error(batchError.message);
     if (!batch) return NextResponse.json({ error: "El lote no existe en este Spot." }, { status: 404 });
+    if (batch.status === "processing") return NextResponse.json({ error: "La recepción se está ingresando al stock." }, { status: 409 });
     activeBatchId = batch.id;
 
     const existingMetadata = record(batch.metadata);
@@ -276,6 +277,11 @@ export async function POST(
     const reanalysisCount = Math.max(0, Number(metadata.reanalysis_count) || 0) + 1;
     const startedAt = new Date().toISOString();
     const cleanMetadata = { ...metadata };
+    if (cleanMetadata.product_reconciliation) {
+      const history = Array.isArray(cleanMetadata.reconciliation_history) ? cleanMetadata.reconciliation_history : [];
+      cleanMetadata.reconciliation_history = [...history, { ...record(cleanMetadata.product_reconciliation), archived_at: startedAt }];
+      delete cleanMetadata.product_reconciliation;
+    }
     delete cleanMetadata.groups;
     delete cleanMetadata.analyzed_at;
     delete cleanMetadata.unit_count_overrides;
