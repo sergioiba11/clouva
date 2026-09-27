@@ -13,6 +13,7 @@ type Payload = {
 const symbols: Record<EvidenceRole, string> = { front: "↑", back: "↓", code: "X", other: "O" };
 const labels: Record<EvidenceRole, string> = { front: "Frente", back: "Atrás", code: "QR / código", other: "Otras imágenes" };
 const button = "min-h-11 rounded-xl border-2 border-violet-800 px-4 py-2 text-sm font-bold disabled:opacity-40";
+const money = (value: number, currency: string) => new Intl.NumberFormat("es-AR", { style: "currency", currency }).format(value);
 export function CommerceProductReview({ studioId, batchId, refreshKey, busy, onPendingChange, onReceive, onReanalyze, onUnitCount }: {
   studioId: string; batchId: string; refreshKey: string; busy: boolean;
   onPendingChange: (pending: number | null) => void;
@@ -23,6 +24,7 @@ export function CommerceProductReview({ studioId, batchId, refreshKey, busy, onP
   const [saving, setSaving] = useState("");
   const [gallery, setGallery] = useState<{ groupKey: string; role?: EvidenceRole } | null>(null);
   const [chooseLine, setChooseLine] = useState("");
+  const [extraValues, setExtraValues] = useState<Record<string, string>>({});
   const [onlyPending, setOnlyPending] = useState(false);
   const base = `/api/studios/${encodeURIComponent(studioId)}/commerce/import-batches/${encodeURIComponent(batchId)}`;
   const accept = useCallback((payload: Payload) => { setData(payload); onPendingChange(payload.report.pending); }, [onPendingChange]);
@@ -37,11 +39,11 @@ export function CommerceProductReview({ studioId, batchId, refreshKey, busy, onP
       .catch(cause => { if (active) setError(cause instanceof Error ? cause.message : "No se pudo cargar la revisión."); });
     return () => { active = false; };
   }, [base, refreshKey, accept, onPendingChange]);
-  async function decide(kind: string, groupKey?: string, lineId?: string, quantity = 1, listingId?: string) {
+  async function decide(kind: string, groupKey?: string, lineId?: string, quantity = 1, listingId?: string, amount?: number) {
     if (!data || saving || busy) return;
     setSaving(groupKey || lineId || "review"); setError("");
     try {
-      const response = await authenticatedFetch(`${base}/reconcile`, { method: "PATCH", body: JSON.stringify({ kind, groupKey, lineId, quantity, listingId, revision: data.revision, actionId: crypto.randomUUID() }) });
+      const response = await authenticatedFetch(`${base}/reconcile`, { method: "PATCH", body: JSON.stringify({ kind, groupKey, lineId, quantity, listingId, amount, revision: data.revision, actionId: crypto.randomUUID() }) });
       accept(await readApiJson<Payload>(response)); setChooseLine("");
     } catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo confirmar."); await refresh().catch(() => {}); }
     finally { setSaving(""); }
@@ -85,6 +87,10 @@ export function CommerceProductReview({ studioId, batchId, refreshKey, busy, onP
         const suggestion = product.candidates.find(c => c.suggested);
         const unknownExtra = data.report.hasInvoice && product.expected === 0 && product.extra > product.unbilled;
         const remainingExtra = product.extra - product.unbilled;
+        const currency = data.invoice?.currency || "ARS";
+        const extraValueText = extraValues[product.groupKey] ?? "";
+        const extraValue = extraValueText.trim() === "" ? null : Number(extraValueText.replace(",", "."));
+        const validExtraValue = extraValue != null && Number.isFinite(extraValue) && extraValue >= 0;
         const relatedLines = data.report.lines.filter(line => product.allocations.some(a => a.lineId === line.id) || data.lines.find(l => l.id === line.id)?.matched_group_keys.includes(product.groupKey));
         const transferred = product.allocations.filter(a => a.reassigned);
         const ordinaryMissing = product.missingImages.filter(role => role !== "code");
@@ -109,15 +115,19 @@ export function CommerceProductReview({ studioId, batchId, refreshKey, busy, onP
             {ordinaryMissing.length > 0 && <p className="rounded-xl bg-sky-100 px-3 py-2 font-bold">{ordinaryMissing.length} FALTA IMG <span className="float-right text-sky-600">{ordinaryMissing.map(role => symbols[role]).join(" ")} ?</span></p>}
             {product.missingImages.includes("code") && <p className="rounded-xl bg-sky-100 px-3 py-2 font-bold">FALTA IMG QR <span className="float-right text-sky-600">X ?</span></p>}
             {unknownExtra && <p className="rounded-xl bg-sky-100 px-3 py-2 font-bold">NO ESTÁ EN FACTURA</p>}
-            {product.extra > 0 && !unknownExtra && <p className="rounded-xl bg-sky-100 px-3 py-2 font-bold">{product.unbilled ? "EXTRA / DE REGALO" : `${product.extra} PROD DE MÁS`}</p>}
+            {product.extra > 0 && !unknownExtra && <p className="rounded-xl bg-sky-100 px-3 py-2 font-bold">{product.unbilled ? <>EXTRA NO COBRADO{product.unbilledValue != null && <span className="float-right text-sky-600">+{money(product.unbilledValue, currency)}</span>}</> : `${product.extra} PROD DE MÁS`}</p>}
             {transferred.length > 0 && <div className="rounded-xl bg-sky-100 p-3"><b className="text-sm">EXTRA COBRADO COMO OTRO</b>{transferred.map(a => <p key={a.lineId} className="mt-1 text-sm">{data.lines.find(l => l.id === a.lineId)?.description} −{a.quantity} → {product.name} +{a.quantity}</p>)}</div>}
             {product.extra > 0 && <div className="flex flex-wrap gap-1" aria-label="Unidades recibidas">{Array.from({ length: Math.min(product.physical, 100) }, (_, i) => <span key={i} className={`rounded-lg border-2 px-2 py-1 text-xs font-bold ${i >= product.expected ? "border-sky-500 bg-sky-100" : "border-violet-200"}`}>{i >= product.expected ? `${i + 1} EXTRA` : i + 1}</span>)}</div>}
           </div>
           {unknownExtra && <div className="mt-3 space-y-2 rounded-xl border-2 border-sky-400 p-3">
             <p className="font-bold">¿Dónde se cobró?</p>
+            <label className="flex min-h-12 items-center gap-2 rounded-lg bg-sky-50 px-3">
+              <span className="text-2xl font-black text-sky-600">+$</span>
+              <input type="number" min="0" step="0.01" inputMode="decimal" aria-label={`Valor total del extra ${product.name}`} value={extraValueText} onChange={event => setExtraValues(values => ({ ...values, [product.groupKey]: event.target.value }))} placeholder="0" className="min-w-0 flex-1 bg-transparent text-xl font-black outline-none" />
+            </label>
             {suggestion && <div className="rounded-lg bg-sky-50 p-2"><p className="text-xs">Sugerencia</p><b>{suggestion.name}</b><p className="text-sm">Falta {suggestion.deficit} ↔ Extra {remainingExtra}</p><button disabled={disabled} className={`${button} mt-2 w-full bg-sky-100`} onClick={() => void decide("reassign", product.groupKey, suggestion.lineId, Math.min(remainingExtra, suggestion.deficit))}>¿SE COBRÓ ACÁ?</button></div>}
             <button disabled={disabled} className={`${button} w-full`} onClick={() => setChooseLine(chooseLine === product.groupKey ? "" : product.groupKey)}>Se cobró como otro</button>
-            <button disabled={disabled} className={`${button} w-full bg-violet-800 text-white`} onClick={() => void decide("extra", product.groupKey, undefined, remainingExtra)}>No se cobró · +{remainingExtra} stock</button>
+            <button disabled={disabled || !validExtraValue} className={`${button} w-full bg-violet-800 text-white`} onClick={() => void decide("extra", product.groupKey, undefined, remainingExtra, undefined, extraValue ?? undefined)}>No se cobró · {validExtraValue ? `+${money(extraValue, currency)}` : "+$"}</button>
           </div>}
           {chooseLine === product.groupKey && <div className="mt-2 space-y-2"><p className="text-sm font-bold">Elegí el renglón</p>{product.candidates.map(c => <button key={c.lineId} disabled={disabled} className={`${button} w-full text-left`} onClick={() => void decide("reassign", product.groupKey, c.lineId, 1)}>{c.name}<span className="block text-xs">{c.deficit > 0 ? `Falta ${c.deficit}` : "Sin faltantes"} · Reasignar 1</span></button>)}{!product.candidates.length && <p className="text-sm">No hay renglones compatibles.</p>}</div>}
           {!unknownExtra && product.pending && <button disabled={disabled} className={`${button} mt-3 w-full bg-violet-800 text-white`} onClick={() => void decide("review", product.groupKey)}>{remainingExtra > 0 ? `Confirmar +${remainingExtra} stock` : "Confirmar producto"}</button>}

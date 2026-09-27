@@ -52,7 +52,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       decisions = applyReconciliationDecision({ groups: state.groups, lines: state.lines, decisions: state.decisions,
         kind: body.kind as ReconciliationDecision["kind"], groupKey: typeof body.groupKey === "string" ? body.groupKey : undefined,
         lineId: typeof body.lineId === "string" ? body.lineId : undefined, quantity: Number(body.quantity ?? 1),
-        id: actionId, actorId: user.id, now: new Date().toISOString() });
+        amount: body.amount == null ? undefined : Number(body.amount), id: actionId, actorId: user.id, now: new Date().toISOString() });
       // Receiving an extra also explicitly confirms that physical product.
       const after = reconcileProducts(state.groups, state.lines, decisions).products.find(p => p.groupKey === body.groupKey);
       if ((body.kind === "extra" || body.kind === "reassign") && after && after.extra === after.unbilled) {

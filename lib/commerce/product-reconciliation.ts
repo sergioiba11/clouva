@@ -14,13 +14,13 @@ export type ReconciliationLine = {
 };
 export type ReconciliationDecision = {
   id: string; kind: "reassign" | "extra" | "review" | "shortage";
-  groupKey?: string; lineId?: string; quantity: number;
+  groupKey?: string; lineId?: string; quantity: number; amount?: number;
   signature: string; actorId: string; createdAt: string;
 };
 export type Allocation = { lineId: string; quantity: number; reassigned: boolean };
 export type ProductReconciliation = {
   groupKey: string; name: string; physical: number; expected: number;
-  extra: number; shortage: number; unbilled: number; allocations: Allocation[];
+  extra: number; shortage: number; unbilled: number; unbilledValue: number | null; allocations: Allocation[];
   images: Record<EvidenceRole, number[]>; missingImages: EvidenceRole[];
   pending: boolean; reviewRequired: boolean; signature: string;
   candidates: { lineId: string; name: string; deficit: number; score: number; suggested: boolean }[];
@@ -73,6 +73,8 @@ export function reconcileProducts(groups: ReconciliationGroup[], invoiceLines: R
   const remaining = new Map(invoiceLines.map(l => [l.id, units(l.quantity)]));
   const transfers = new Map<string, number>();
   const extraConfirmed = new Map<string, number>();
+  const extraValueConfirmed = new Map<string, number>();
+  const extraValueUnknown = new Set<string>();
   let staleDecisions = 0;
   // Transfers reserve invoice capacity before automatic identity matching.
   for (const d of decisions.filter(d => d.kind === "reassign" || d.kind === "extra")) {
@@ -80,7 +82,12 @@ export function reconcileProducts(groups: ReconciliationGroup[], invoiceLines: R
     if (d.signature !== basis || !group || !Number.isInteger(d.quantity) || d.quantity <= 0) { staleDecisions++; continue; }
     const assigned = (allocation.get(group.groupKey) || []).reduce((s, a) => s + a.quantity, 0) + (extraConfirmed.get(group.groupKey) || 0);
     if (assigned + d.quantity > units(group.unitCount)) { staleDecisions++; continue; }
-    if (d.kind === "extra") { extraConfirmed.set(group.groupKey, (extraConfirmed.get(group.groupKey) || 0) + d.quantity); continue; }
+    if (d.kind === "extra") {
+      extraConfirmed.set(group.groupKey, (extraConfirmed.get(group.groupKey) || 0) + d.quantity);
+      if (typeof d.amount === "number" && Number.isFinite(d.amount) && d.amount >= 0) extraValueConfirmed.set(group.groupKey, (extraValueConfirmed.get(group.groupKey) || 0) + d.amount);
+      else extraValueUnknown.add(group.groupKey);
+      continue;
+    }
     if (!d.lineId || !remaining.has(d.lineId) || remaining.get(d.lineId)! < d.quantity) { staleDecisions++; continue; }
     allocation.get(group.groupKey)!.push({ lineId: d.lineId, quantity: d.quantity, reassigned: true });
     remaining.set(d.lineId, remaining.get(d.lineId)! - d.quantity);
@@ -128,9 +135,10 @@ export function reconcileProducts(groups: ReconciliationGroup[], invoiceLines: R
     const required = group.requiredImageRoles || ["front", "back", "code"];
     const missingImages = required.filter(role => !images[role].length);
     const reviewRequired = Boolean(group.needsReview || !group.name || allocations.some(a => invoiceLines.find(l => l.id === a.lineId)?.match_status === "ambiguous"));
-    const sig = signature([basis, group.groupKey, allocations, exp, extra, reviewRequired, extraConfirmed.get(group.groupKey) || 0]);
+    const sig = signature([basis, group.groupKey, allocations, exp, extra, reviewRequired, extraConfirmed.get(group.groupKey) || 0, extraValueConfirmed.get(group.groupKey) ?? null, extraValueUnknown.has(group.groupKey)]);
     const reviewed = decisions.some(d => d.kind === "review" && d.groupKey === group.groupKey && d.signature === sig);
     const unbilled = extraConfirmed.get(group.groupKey) || 0;
+    const unbilledValue = unbilled > 0 && !extraValueUnknown.has(group.groupKey) ? (extraValueConfirmed.get(group.groupKey) || 0) : null;
     const candidates = invoiceLines.filter(line => !eligibleByLine.get(line.id)?.some(g => g.groupKey === group.groupKey))
       .map(line => ({ lineId: line.id, name: line.description, deficit: remaining.get(line.id)!, score: Math.max(compatibility(line, group), ...(eligibleByLine.get(line.id) || []).map(peer => compatibility({ ...line, description: peer.name, model: peer.model }, group))), suggested: false }))
       .filter(c => c.score >= 0.35 && units(invoiceLines.find(l => l.id === c.lineId)!.quantity) > (transfers.get(c.lineId) || 0))
@@ -138,7 +146,7 @@ export function reconcileProducts(groups: ReconciliationGroup[], invoiceLines: R
       .sort((a, b) => Number(b.suggested) - Number(a.suggested) || b.score - a.score || b.deficit - a.deficit);
     const hasIdentityLine = (exp > 0 || invoiceLines.some(l => eligibleByLine.get(l.id)?.some(g => g.groupKey === group.groupKey)));
     return { groupKey: group.groupKey, name: group.name || "Producto", physical, expected: exp, extra,
-      shortage: Math.max(0, exp - physical), allocations, images, missingImages, reviewRequired, signature: sig, unbilled,
+      shortage: Math.max(0, exp - physical), allocations, images, missingImages, reviewRequired, signature: sig, unbilled, unbilledValue,
       pending: (reviewRequired && !reviewed) || (extra > unbilled && !(hasIdentityLine && reviewed)), candidates };
   });
   return { products, lines, hasInvoice, staleDecisions,
@@ -148,7 +156,7 @@ export function reconcileProducts(groups: ReconciliationGroup[], invoiceLines: R
 }
 export function applyReconciliationDecision(args: {
   groups: ReconciliationGroup[]; lines: ReconciliationLine[]; decisions: ReconciliationDecision[];
-  kind: ReconciliationDecision["kind"]; groupKey?: string; lineId?: string; quantity?: number; id: string; actorId: string; now: string;
+  kind: ReconciliationDecision["kind"]; groupKey?: string; lineId?: string; quantity?: number; amount?: number; id: string; actorId: string; now: string;
 }) {
   const report = reconcileProducts(args.groups, args.lines, args.decisions);
   const product = report.products.find(p => p.groupKey === args.groupKey);
@@ -162,6 +170,7 @@ export function applyReconciliationDecision(args: {
     if (line.original - line.transferred < quantity) throw new Error("La línea no tiene unidades disponibles.");
   } else if (args.kind === "extra") {
     if (!product || product.extra - product.unbilled < quantity) throw new Error("No hay esa cantidad de unidades extra.");
+    if (typeof args.amount !== "number" || !Number.isFinite(args.amount) || args.amount < 0) throw new Error("Ingresá el valor del extra.");
   } else if (args.kind === "review") {
     if (!product) throw new Error("Producto inexistente.");
     if (product.extra > product.unbilled && product.expected === 0) throw new Error("Indicá dónde se cobró o ingresalo como extra.");
@@ -170,6 +179,6 @@ export function applyReconciliationDecision(args: {
     if (!line || !line.deficit) throw new Error("No hay faltante en esta línea.");
     sig = line.signature;
   } else throw new Error("Acción inválida.");
-  const decision: ReconciliationDecision = { id: args.id, kind: args.kind, groupKey: args.groupKey, lineId: args.lineId, quantity, signature: sig, actorId: args.actorId, createdAt: args.now };
+  const decision: ReconciliationDecision = { id: args.id, kind: args.kind, groupKey: args.groupKey, lineId: args.lineId, quantity, ...(args.kind === "extra" ? { amount: args.amount } : {}), signature: sig, actorId: args.actorId, createdAt: args.now };
   return [...args.decisions, decision];
 }

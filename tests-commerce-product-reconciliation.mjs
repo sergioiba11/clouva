@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { reconcileProducts, applyReconciliationDecision, invoiceBrandConflict } from './lib/commerce/product-reconciliation.ts';
 const group = (groupKey, name, brand, unitCount, images = [{sourceIndex:0,role:'Frente'},{sourceIndex:1,role:'Atrás'}]) => ({groupKey,name,brand,unitCount,images,visibleIdentifiers:[{value:'code',type:'code_128',sourceIndex:1}]});
 const line = (id, description, quantity, keys, brand = null) => ({id,line_number:1,description,brand,quantity,unit_price:100,matched_group_keys:keys});
-const action = (groups, lines, decisions, kind, groupKey, lineId, quantity=1) => applyReconciliationDecision({groups,lines,decisions,kind,groupKey,lineId,quantity,id:String(decisions.length),actorId:'admin',now:'2026-09-27'});
+const action = (groups, lines, decisions, kind, groupKey, lineId, quantity=1, amount) => applyReconciliationDecision({groups,lines,decisions,kind,groupKey,lineId,quantity,amount,id:String(decisions.length),actorId:'admin',now:'2026-09-27'});
 test('case 1: missing front is never synthesized from a back photo', () => {
   const g=group('s','Cable Samsung','Samsung',1,[{sourceIndex:1,role:'Atrás'}]);
   const p=reconcileProducts([g],[line('a','Cable Samsung',1,['s'])]).products[0];
@@ -43,8 +43,9 @@ test('case 5: a gift does not consume an invoice line or invent a cost', () => {
   const groups=[group('s','Cable Samsung','Samsung',3),group('m','Cable Motorola','Motorola',1)];
   const lines=[line('a','Cable Samsung',3,['s'],'Samsung')];
   let r=reconcileProducts(groups,lines);assert.equal(r.products[1].candidates[0].suggested,false);
-  const decisions=action(groups,lines,[],'extra','m',undefined,1);r=reconcileProducts(groups,lines,decisions);
-  assert.equal(r.pending,0);assert.equal(r.products[1].unbilled,1);assert.equal(r.products[1].allocations.length,0);
+  assert.throws(()=>action(groups,lines,[],'extra','m',undefined,1),/valor del extra/);
+  const decisions=action(groups,lines,[],'extra','m',undefined,1,5500);r=reconcileProducts(groups,lines,decisions);
+  assert.equal(r.pending,0);assert.equal(r.products[1].unbilled,1);assert.equal(r.products[1].unbilledValue,5500);assert.equal(r.products[1].allocations.length,0);
   assert.equal(r.products[0].expected,3);assert.equal(lines[0].unit_price,100);
 });
 test('manual charged elsewhere with no deficit exposes donor overage', () => {
