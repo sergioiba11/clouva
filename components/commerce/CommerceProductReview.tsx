@@ -6,7 +6,7 @@ import type { EvidenceRole, ReconciliationGroup, ReconciliationLine, Reconciliat
 type Payload = {
   report: ReconciliationReport; revision: string; editable: boolean;
   groups: ReconciliationGroup[]; lines: ReconciliationLine[];
-  sources: { source_index: number; source_url: string; file_name: string | null; listing_id: string | null }[];
+  sources: { source_index: number; source_url: string; file_name: string | null; listing_id: string | null; recognition?: { context_only?: boolean; matched_group_keys?: string[]; observed_products?: string[]; context_reason?: string; [key: string]: unknown } | null }[];
   existingProducts: { id: string; name: string }[]; existingLinks: Record<string, { listingId: string }>;
   invoice: { source_url: string; currency: string | null } | null;
 };
@@ -64,6 +64,7 @@ export function CommerceProductReview({ studioId, batchId, refreshKey, busy, onP
   const selected = gallery ? data.report.products.find(p => p.groupKey === gallery.groupKey) : null;
   const galleryIndexes = selected ? gallery?.role ? selected.images[gallery.role] : [...new Set(Object.values(selected.images).flat())] : [];
   const display = data.report.products.filter(p => !onlyPending || p.pending || p.shortage > 0 || p.missingImages.length > 0);
+  const contextSources = data.sources.filter(photo => photo.recognition?.context_only === true);
   return <section aria-label="Revisión por producto" className="mt-4 rounded-3xl border-2 border-violet-800 bg-white p-3 text-violet-950 sm:p-5">
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div><h3 className="text-xl font-black">Revisá tus productos</h3><p className="text-sm">{data.report.products.length} productos · {data.report.totals.physical} unidades</p></div>
@@ -79,6 +80,20 @@ export function CommerceProductReview({ studioId, batchId, refreshKey, busy, onP
       <button className={`${button} ${onlyPending ? "bg-violet-800 text-white" : "bg-white"}`} onClick={() => setOnlyPending(true)}>Observaciones</button>
       {data.invoice && <a href={data.invoice.source_url} target="_blank" rel="noreferrer" className={`${button} ml-auto`}>Factura</a>}
     </div>
+    {contextSources.length > 0 && <div className="mb-4 grid gap-3 lg:grid-cols-2 xl:grid-cols-3">
+      {contextSources.map(photo => {
+        const keys = Array.isArray(photo.recognition?.matched_group_keys) ? photo.recognition.matched_group_keys : [];
+        const invoiceArticles = data.lines.filter(line => line.matched_group_keys.some(key => keys.includes(key)));
+        return <article key={photo.source_index} className="overflow-hidden rounded-2xl border-2 border-sky-500 bg-sky-50 p-3">
+          <div className="flex gap-3">
+            <img src={photo.source_url} alt="Foto con varios productos" className="h-24 w-24 shrink-0 rounded-xl border-2 border-sky-300 object-cover" />
+            <div className="min-w-0"><h4 className="font-black">FOTO CON VARIOS PRODUCTOS</h4><p className="mt-1 text-xs font-bold text-sky-700">ARTÍCULOS DE LA FACTURA</p>
+              <div className="mt-2 flex flex-wrap gap-1">{invoiceArticles.length ? invoiceArticles.map(line => <span key={line.id} className="rounded-lg border-2 border-violet-800 bg-white px-2 py-1 text-xs font-bold">{line.description}</span>) : <span className="text-xs font-bold">Sin coincidencia segura en factura</span>}</div>
+            </div>
+          </div>
+        </article>;
+      })}
+    </div>}
     <div className="grid items-start gap-4 lg:grid-cols-2 xl:grid-cols-3">
       {display.map(product => {
         const front = product.images.front[0];

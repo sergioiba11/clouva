@@ -444,7 +444,7 @@ async function recoverExplicitUnassignedImages(args: {
         ?? process.env.GEMINI_PRODUCT_VISION_MODEL
         ?? "gemini-2.5-flash",
       prompt,
-      responseJsonSchema: CONSOLIDATION_SCHEMA,
+      responseJsonSchema: RECOVERY_SCHEMA,
       temperature: 0,
       maxOutputTokens: 5000,
     }));
@@ -1236,6 +1236,8 @@ async function consolidateGroups(
     "Tu tarea es devolver clusters de groupKeys que representan la misma identidad comercial exacta.",
     "Mismo producto exacto con mismo EAN/UPC/barcode: unilo, aunque sean varias unidades físicas.",
     "Frente y dorso del mismo packaging deben unirse aunque uno no tenga código visible.",
+    "Antes de dejar un grupo separado, comprobá si en realidad es DORSO, LATERAL, ETIQUETA, CÓDIGO o DETALLE de otro grupo: compará forma de la caja, bloques de color, tipografía, logo, modelo, conector, potencia/capacidad, plataforma, especificaciones impresas y disposición visual.",
+    "Un dorso no se convierte en un producto nuevo porque su OCR haya leído un nombre distinto: si packaging + especificaciones coinciden con un frente existente y no hay un código validado contradictorio, unilos.",
     "Marca + modelo + nombre equivalentes pueden confirmar identidad aun si una foto leyó un dato incompleto.",
     "NO unas códigos completos distintos. NO unas colores, conectores, capacidades o modelos distintos.",
     "unitCount es la mejor estimación de unidades físicas distintas representadas por TODO el cluster; no sumes fotos repetidas ni frente/dorso como unidades nuevas.",
@@ -1343,6 +1345,8 @@ async function resolveReceiptIdentityClusters(args: {
     "Tu prioridad es reconstruir identidades comerciales reales usando TODA la compra: imágenes representativas, códigos, modelos y renglones de factura.",
     "El aspecto visual del packaging manda sobre un OCR aislado cuando hay conflicto. Un dorso azul que coincide con el frente de un Cable PS4 debe agruparse con ese Cable PS4 aunque un OCR previo lo haya llamado Samsung.",
     "No crees una identidad nueva solo porque una foto sea el dorso, lateral, etiqueta o código de un producto cuyo frente ya existe.",
+    "REGLA DE VISTAS: antes de aceptar cualquier groupKey como producto independiente, buscá su frente correspondiente en los demás grupos usando coincidencia visual de caja/packaging Y especificaciones: marca, modelo, conector, potencia, capacidad, plataforma, textos, iconos, colores, tipografía, ubicación de barcode y diseño general.",
+    "Si una imagen es claramente una vista trasera/otra vista de un artículo existente, DEBE integrarse en ese artículo y conservar su rol Atrás/Detalle; no puede quedar como tarjeta/producto separado.",
     "Agrupá groupKeys que sean el mismo artículo/variante de recepción. Conservá separados artículos realmente distintos.",
     "La factura es el checklist esperado, NO el inventario real: puede haber unidades físicas EXTRA de una identidad que sí figura en factura. Ese excedente sigue dentro del mismo cluster/producto.",
     "Una línea de factura puede agrupar unidades del mismo artículo que difieran solo en color/serial/código individual cuando comercialmente el proveedor las facturó bajo el mismo renglón.",
@@ -1621,7 +1625,7 @@ async function reviewMixedSceneCandidate(args: {
         ?? "gemini-2.5-flash",
       prompt,
       referenceImages: refs.map((ref) => ({ mimeType: ref.mimeType, data: ref.data })),
-      responseJsonSchema: RECOVERY_SCHEMA,
+      responseJsonSchema: SCENE_REVIEW_SCHEMA,
       temperature: 0,
       maxOutputTokens: 4200,
     }));
