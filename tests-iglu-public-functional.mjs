@@ -39,6 +39,9 @@ test("IGLÚ Media uses the canonical radio bucket and real library", async () =>
   assert.match(page, /ProfileRadioSettingsCard/);
   assert.match(api, /getActiveKickLive/);
   assert.match(api, /fallbackTrack/);
+  assert.match(api, /primary_track_id: track\.id/);
+  assert.match(page, /authenticatedFetch/);
+  assert.match(page, /SUBIR Y PONER EN PLAY/);
   assert.match(page, /EN VIVO · KICK/);
   assert.match(page, /EN VIVO · YOUTUBE/);
 });

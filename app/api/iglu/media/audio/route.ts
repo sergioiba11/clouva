@@ -118,7 +118,14 @@ export async function POST(request: NextRequest) {
       await admin.storage.from(BUCKET).remove([storagePath]);
       throw new Error(insertError.message);
     }
-    return NextResponse.json({ track }, { status: 201 });
+
+    const { error: primaryError } = await admin
+      .from("profile_radio_settings")
+      .update({ primary_track_id: track.id, updated_at: new Date().toISOString() })
+      .eq("studio_id", studio.id);
+    if (primaryError) throw new Error(primaryError.message);
+
+    return NextResponse.json({ track, primaryTrackId: track.id }, { status: 201 });
   } catch (error) {
     const status = (error as Error & { status?: number }).status ?? (isAuthError(error) ? 401 : 500);
     return NextResponse.json({ error: error instanceof Error ? error.message : "No se pudo subir el audio." }, { status });
