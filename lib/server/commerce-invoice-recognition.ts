@@ -464,6 +464,38 @@ export async function reconcileCommerceInvoiceWithAI(args: {
   const fallback = reconcileCommerceInvoice(args);
   if (!args.invoice.lines.length || !args.groups.length) return fallback;
 
+  // Cuando el scanner ya ancló los productos a la factura, esa relación es
+  // canónica y no debe volver a reinterpretarse con otro matching semántico.
+  // invoice-001 corresponde al primer renglón, invoice-002 al segundo, etc.
+  const anchoredByIndex = new Map<number, CommerceBatchGroup>();
+  for (const group of args.groups) {
+    const match = group.groupKey.match(/^invoice-(\d+)$/);
+    if (!match) continue;
+    const index = Number(match[1]);
+    if (Number.isInteger(index) && index >= 1 && index <= args.invoice.lines.length) anchoredByIndex.set(index, group);
+  }
+  if (anchoredByIndex.size) {
+    return args.invoice.lines.map((line, index) => {
+      const group = anchoredByIndex.get(index + 1);
+      const target = Math.max(1, Math.round(line.quantity));
+      const matchedQuantity = group ? Math.max(1, Math.floor(group.unitCount || 1)) : 0;
+      const matchStatus: CommerceInvoiceMatch["matchStatus"] = !group
+        ? "unmatched"
+        : matchedQuantity >= target
+          ? "matched"
+          : "partial";
+      return {
+        line,
+        matchedGroupKeys: group ? [group.groupKey] : [],
+        matchedQuantity,
+        matchStatus,
+        autoChecked: Boolean(group) && matchedQuantity === target,
+        confidence: group ? 1 : 0,
+        reasons: group ? ["anclado al renglón de factura"] : [],
+      };
+    });
+  }
+
   const prompt = [
     "Sos el reconciliador de recepción de mercadería de CLOUVA.",
     "Tenés renglones de una factura y productos ya agrupados desde fotos. Debés decidir qué producto agrupado corresponde a cada renglón.",
