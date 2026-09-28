@@ -25,6 +25,27 @@ test("IGLÚ home routes public controls into functional surfaces", async () => {
   assert.match(source, /IgluMerchCarousel/);
 });
 
+test("IGLÚ desktop home follows the approved mockup and real Asset Explorer art", async () => {
+  const source = await read("./components/iglu/IgluPublicSpotHome.tsx");
+  const desktop = await read("./components/iglu/IgluDesktopHome.tsx");
+  const desktopCss = await read("./components/iglu/IgluDesktopHome.module.css");
+  assert.match(source, /IgluDesktopHome/);
+  assert.match(source, /iglu-backround\.png/);
+  assert.match(source, /iglu-records\.png/);
+  assert.match(source, /el-iglu-copo\.png/);
+  assert.match(source, /eliglu-montana\.png/);
+  assert.match(source, /01_rectangulo_original_sin_texto\.png/);
+  assert.match(source, /asset-eliglu3\.png/);
+  assert.match(source, /asset-eliglu2\.png/);
+  assert.match(source, /asset-eliglu\.png/);
+  assert.match(desktop, /Sonando ahora/i);
+  assert.match(desktop, /activeLiveUrl\(payload\)/);
+  assert.match(desktop, /window\.location\.assign\(liveUrl\)/);
+  assert.match(desktop, /IgluAdminMediaLink/);
+  assert.match(desktopCss, /@media \(min-width: 900px\)/);
+  assert.match(desktopCss, /grid-template-columns: minmax\(250px/);
+});
+
 test("IGLÚ booking binds the selected Player to the atomic Agenda booking", async () => {
   const route = await read("./app/api/studios/[slug]/bookings/route.ts");
   const migration = await read("./supabase/migrations/20260921190000_studio_player_booking_agenda.sql");
