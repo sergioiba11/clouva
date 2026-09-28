@@ -331,14 +331,29 @@ export function IgluDesktopHome({
           </article>
 
           <div className={styles.assetCards} aria-label="Accesos de IGLÚ">
-            <Link href="/iglu/artistas" className={`${styles.assetCard} ${styles.assetCardArtists}`} aria-label="Artistas">
-              <img className={styles.assetImageArtists} src={assets.cardOne} alt="Artistas de IGLÚ Records" />
+            <Link href="/iglu/artistas" className={`${styles.assetCard} ${styles.assetCardArtists}`} aria-label="Players">
+              <img className={styles.assetImageArtists} src={assets.cardOne} alt="Players de IGLÚ Records" />
+              <span className={styles.assetCardShade} aria-hidden="true" />
+              <span className={styles.assetCardMeta}>
+                <span className={styles.assetCardLabel}>PLAYERS</span>
+                <span className={styles.assetCardArrow} aria-hidden="true">→</span>
+              </span>
             </Link>
             <Link href={agendaHref} className={`${styles.assetCard} ${styles.assetCardReservations}`} aria-label="Reservas">
               <img className={styles.assetImageReservations} src={assets.cardTwo} alt="Reservas de IGLÚ Records" />
+              <span className={styles.assetCardShade} aria-hidden="true" />
+              <span className={styles.assetCardMeta}>
+                <span className={styles.assetCardLabel}>RESERVAS</span>
+                <span className={styles.assetCardArrow} aria-hidden="true">→</span>
+              </span>
             </Link>
             <Link href={merchHref} className={`${styles.assetCard} ${styles.assetCardMerch}`} aria-label="Merch">
               <img className={styles.assetImageMerch} src={assets.cardThree} alt="Merch de IGLÚ Records" />
+              <span className={styles.assetCardShade} aria-hidden="true" />
+              <span className={styles.assetCardMeta}>
+                <span className={styles.assetCardLabel}>MERCH</span>
+                <span className={styles.assetCardArrow} aria-hidden="true">→</span>
+              </span>
             </Link>
           </div>
 
