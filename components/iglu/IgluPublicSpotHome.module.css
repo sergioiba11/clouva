@@ -118,30 +118,6 @@
   -webkit-tap-highlight-color: transparent;
 }
 
-.topRight {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.adminMediaLink {
-  display: inline-flex;
-  min-height: 44px;
-  align-items: center;
-  gap: 8px;
-  padding: 0 14px;
-  border: 1px solid rgba(154, 220, 255, 0.24);
-  border-radius: 999px;
-  color: rgba(238, 249, 255, 0.92);
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-decoration: none;
-  background: rgba(3, 16, 28, 0.78);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.25);
-  backdrop-filter: blur(14px);
-}
-
 .topActions {
   display: flex;
   align-items: center;
