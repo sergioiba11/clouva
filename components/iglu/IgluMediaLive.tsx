@@ -4,6 +4,7 @@ import Link from "next/link";
 import { ExternalLink, Headphones, Podcast, Radio, Upload, Youtube } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
 import { ProfileRadioSettingsCard } from "@/components/radio/ProfileRadioSettingsCard";
+import { authenticatedFetch } from "@/lib/authenticated-fetch";
 import { IGLU_PUBLIC_PATH } from "@/lib/iglu-radio/routes";
 import styles from "./IgluFunctional.module.css";
 
@@ -86,13 +87,13 @@ export function IgluMediaLive({ studioId, studioName, publicAlias }: { studioId:
 
   useEffect(() => {
     void load();
-    fetch("/api/iglu/media/manage", { credentials: "include", cache: "no-store" })
+    authenticatedFetch("/api/iglu/media/manage", { cache: "no-store" })
       .then(async (response) => {
         const body = await response.json().catch(() => ({})) as { canManage?: boolean };
         setManager(response.ok && body.canManage === true);
       })
       .catch(() => setManager(false));
-    fetch("/api/integrations/youtube/status", { credentials: "include", cache: "no-store" })
+    authenticatedFetch("/api/integrations/youtube/status", { cache: "no-store" })
       .then(async (response) => {
         if (!response.ok) return setYoutubeConnected(false);
         const body = await response.json().catch(() => ({})) as { connection?: { connected?: boolean } };
@@ -106,7 +107,7 @@ export function IgluMediaLive({ studioId, studioName, publicAlias }: { studioId:
     const form = event.currentTarget;
     setUploading(true);
     setMessage(null);
-    const response = await fetch("/api/iglu/media/audio", { method: "POST", body: new FormData(form), credentials: "include" });
+    const response = await authenticatedFetch("/api/iglu/media/audio", { method: "POST", body: new FormData(form) });
     const payload = await response.json().catch(() => ({})) as { error?: string };
     if (!response.ok) {
       setMessage(payload.error || "No se pudo subir el audio.");
@@ -131,9 +132,8 @@ export function IgluMediaLive({ studioId, studioName, publicAlias }: { studioId:
   async function selectPrimary(trackId: string) {
     setSelectingPrimary(trackId);
     setMessage(null);
-    const response = await fetch("/api/iglu/media/audio", {
+    const response = await authenticatedFetch("/api/iglu/media/audio", {
       method: "PATCH",
-      credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ trackId }),
     });
@@ -216,6 +216,23 @@ export function IgluMediaLive({ studioId, studioName, publicAlias }: { studioId:
           </div>
         </section>
 
+        {manager ? (
+          <section className={styles.section}>
+            <div className={styles.sectionHead}><h2>Tu música</h2><span>Control del IGLÚ</span></div>
+            <form className={styles.form} onSubmit={upload}>
+              <label className={styles.file}><Upload size={18} /> Elegir canción MP3, WAV o FLAC<input name="file" type="file" accept=".mp3,.wav,.flac,audio/mpeg,audio/wav,audio/flac" required /></label>
+              <input className={styles.input} name="title" placeholder="Título" required maxLength={220} />
+              <input className={styles.input} name="artist" placeholder="Player / artista" maxLength={220} />
+              <button className={styles.primaryButton} type="submit" disabled={uploading}>{uploading ? "Subiendo…" : "SUBIR Y PONER EN PLAY"}</button>
+            </form>
+            <p className={styles.meta} style={{ marginTop: 10 }}>La canción que subís queda como principal. El botón Play la reproduce; si hay un live real en Kick o YouTube, el live toma prioridad.</p>
+            {message ? <p className={message.includes("No se pudo") ? styles.error : styles.meta}>{message}</p> : null}
+            <div style={{ marginTop: 16 }}>
+              <ProfileRadioSettingsCard ownerKind="studio" ownerId={studioId} profileName={studioName} publicAlias={publicAlias} />
+            </div>
+          </section>
+        ) : null}
+
         <section className={styles.section} id="library">
           <div className={styles.sectionHead}><h2>Biblioteca</h2><span>{loading ? "Cargando…" : `${tracks.length} audios`}</span></div>
           <div className={styles.grid}>
@@ -272,21 +289,7 @@ export function IgluMediaLive({ studioId, studioName, publicAlias }: { studioId:
           </div>
         </section>
 
-        {manager ? (
-          <section className={styles.section}>
-            <div className={styles.sectionHead}><h2>Administrar Media</h2><span>Studio manager</span></div>
-            <form className={styles.form} onSubmit={upload}>
-              <label className={styles.file}><Upload size={18} /> Subir audio MP3, WAV o FLAC<input name="file" type="file" accept=".mp3,.wav,.flac,audio/mpeg,audio/wav,audio/flac" required /></label>
-              <input className={styles.input} name="title" placeholder="Título" required maxLength={220} />
-              <input className={styles.input} name="artist" placeholder="Player / artista" maxLength={220} />
-              <button className={styles.primaryButton} type="submit" disabled={uploading}>{uploading ? "Subiendo…" : "SUBIR AUDIO"}</button>
-            </form>
-            {message ? <p className={message.includes("No se pudo") ? styles.error : styles.meta}>{message}</p> : null}
-            <div style={{ marginTop: 16 }}>
-              <ProfileRadioSettingsCard ownerKind="studio" ownerId={studioId} profileName={studioName} publicAlias={publicAlias} />
-            </div>
-          </section>
-        ) : null}
+
       </main>
     </div>
   );
