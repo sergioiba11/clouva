@@ -31,6 +31,60 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     if (!/^[a-zA-Z0-9-]{16,80}$/.test(actionId)) return NextResponse.json({ error: "Falta el identificador de confirmación." }, { status: 400 });
     if (state.decisions.some(d => d.id === actionId)) return NextResponse.json(reconciliationPayload(state));
     if (body.revision !== state.revision) return NextResponse.json({ error: "La revisión cambió. Actualizá y confirmá de nuevo." }, { status: 409 });
+    if (body.kind === "assign_evidence") {
+      const sourceIndex = Number(body.sourceIndex);
+      const lineId = typeof body.lineId === "string" ? body.lineId : "";
+      const source = state.sources.find(item => item.source_index === sourceIndex);
+      const line = state.lines.find(item => item.id === lineId);
+      if (!Number.isInteger(sourceIndex) || !source || asRecord(source.recognition).unassigned_evidence !== true) {
+        return NextResponse.json({ error: "La imagen ya no está sin asignar." }, { status: 409 });
+      }
+      if (!line) return NextResponse.json({ error: "Artículo de factura inexistente." }, { status: 400 });
+      const suggested = String(body.role || asRecord(source.recognition).suggested_role || "Detalle");
+      const role = suggested === "Frente" ? "Frente" : suggested === "Atrás" ? "Atrás" : "Detalle";
+      const targetKey = `invoice-${String(line.line_number).padStart(3, "0")}`;
+      const rawGroups = Array.isArray(state.metadata.groups) ? state.metadata.groups.map(group => ({ ...asRecord(group) })) : [];
+      let target = rawGroups.find(group => group.groupKey === targetKey);
+      if (!target) {
+        target = {
+          groupKey: targetKey, name: line.description, brand: line.brand || "", model: line.model || "", packageKind: "unknown",
+          unitCount: 1, identifier: null, visibleIdentifiers: [], confidence: 1, needsReview: true, images: [],
+        };
+        rawGroups.push(target);
+      }
+      const images = Array.isArray(target.images) ? target.images.map(image => ({ ...asRecord(image) })) : [];
+      if (!images.some(image => Number(image.sourceIndex) === sourceIndex)) images.push({ sourceIndex, role });
+      target.images = images;
+      target.name = line.description;
+      target.brand = line.brand || target.brand || "";
+      target.model = line.model || target.model || "";
+      target.needsReview = true;
+      const now = new Date().toISOString();
+      const { data: savedBatch, error: saveBatchError } = await admin.from("commerce_product_import_batches").update({
+        metadata: { ...state.metadata, groups: rawGroups }, updated_at: now,
+      }).eq("id", batchId).eq("spot_id", spot.id).eq("status", "review").eq("updated_at", state.batch.updated_at).select("id").maybeSingle();
+      if (saveBatchError) throw new Error(saveBatchError.message);
+      if (!savedBatch) return NextResponse.json({ error: "La recepción cambió. Actualizá la revisión." }, { status: 409 });
+      const previousRecognition = asRecord(source.recognition);
+      const upload = asRecord(previousRecognition.upload);
+      const { error: itemError } = await admin.from("commerce_product_import_items").update({
+        status: "grouped", group_key: targetKey,
+        recognition: {
+          ...(Object.keys(upload).length ? { upload } : {}),
+          grouping: { role, group_name: line.description, brand: line.brand || "", model: line.model || "", confidence: 1, needs_review: true },
+          manual_assignment: { line_id: line.id, group_key: targetKey, actor_id: user.id, assigned_at: now },
+        },
+        error: null, updated_at: now,
+      }).eq("id", source.id);
+      if (itemError) throw new Error(itemError.message);
+      const unitCount = Math.max(1, Math.floor(Number(target.unitCount) || 1));
+      const { error: lineError } = await admin.from("commerce_product_import_invoice_items").update({
+        matched_group_keys: [targetKey], matched_quantity: unitCount,
+        match_status: unitCount >= Number(line.quantity) ? "matched" : "partial",
+      }).eq("id", line.id).eq("batch_id", batchId).eq("spot_id", spot.id);
+      if (lineError) throw new Error(lineError.message);
+      return NextResponse.json(reconciliationPayload(await loadProductReconciliation(admin, batchId, spot.id)));
+    }
     if (body.kind === "link") {
       if (!state.groups.some(g => g.groupKey === body.groupKey)) return NextResponse.json({ error: "Producto inexistente." }, { status: 400 });
       const listingId = typeof body.listingId === "string" ? body.listingId : "";
