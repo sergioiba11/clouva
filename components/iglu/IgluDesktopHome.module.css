@@ -808,3 +808,105 @@
     object-fit: contain;
   }
 }
+
+/* IGLÚ desktop cards: editorial presence without changing hero/player/mobile. */
+@media (min-width: 1281px) {
+  .lowerGrid {
+    width: min(1500px, calc(100% - 72px));
+    grid-template-columns: 220px minmax(0, 1fr) 320px;
+    gap: 18px;
+  }
+}
+
+@media (min-width: 900px) {
+  .assetCards {
+    min-width: 0;
+    align-self: center;
+    align-content: center;
+    gap: 10px;
+  }
+
+  .assetCard {
+    position: relative;
+    overflow: hidden;
+    aspect-ratio: 2.08 / 1;
+    border: 1px solid rgba(166, 224, 255, .08);
+    border-radius: 16px;
+    background: rgba(2, 10, 18, .18);
+    box-shadow: 0 20px 44px rgba(0, 0, 0, .26);
+    transition:
+      transform 160ms ease,
+      border-color 160ms ease,
+      box-shadow 160ms ease,
+      filter 160ms ease;
+  }
+
+  .assetCard img {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 100%;
+    height: auto;
+    max-width: none;
+    object-fit: contain;
+    transform-origin: center;
+    transition: transform 180ms ease;
+  }
+
+  .assetImageArtists {
+    transform: translate(-50%, -49%) scale(1.18);
+  }
+
+  .assetImageReservations {
+    left: 52% !important;
+    transform: translate(-50%, -50%) scale(1.22);
+  }
+
+  .assetImageMerch {
+    top: 51% !important;
+    transform: translate(-50%, -50%) scale(1.15);
+  }
+
+  .assetCard:hover {
+    transform: translateY(-2px);
+    filter: brightness(1.025);
+    border-color: rgba(171, 226, 255, .18);
+    box-shadow: 0 24px 50px rgba(0, 0, 0, .3);
+  }
+
+  .assetCardArtists:hover .assetImageArtists {
+    transform: translate(-50%, -49%) scale(1.19);
+  }
+
+  .assetCardReservations:hover .assetImageReservations {
+    transform: translate(-50%, -50%) scale(1.23);
+  }
+
+  .assetCardMerch:hover .assetImageMerch {
+    transform: translate(-50%, -50%) scale(1.16);
+  }
+}
+
+@media (min-width: 1100px) and (max-width: 1280px) {
+  .lowerGrid {
+    width: calc(100% - 54px);
+    grid-template-columns: 205px minmax(0, 1fr) 290px;
+    gap: 14px;
+  }
+}
+
+@media (min-width: 900px) and (max-width: 1099px) {
+  .lowerGrid {
+    width: calc(100% - 42px);
+    grid-template-columns: 180px minmax(440px, 1fr) 250px;
+    gap: 12px;
+  }
+
+  .assetCards {
+    gap: 8px;
+  }
+
+  .assetCard {
+    border-radius: 14px;
+  }
+}
