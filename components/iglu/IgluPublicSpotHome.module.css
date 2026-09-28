@@ -1435,3 +1435,13 @@
     top: 21px;
   }
 }
+
+.mobileExperience {
+  display: block;
+}
+
+@media (min-width: 900px) {
+  .mobileExperience {
+    display: none !important;
+  }
+}

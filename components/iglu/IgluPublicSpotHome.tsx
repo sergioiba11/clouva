@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Menu, Search, ShoppingCart, UserRound } from "lucide-react";
 import { IgluAdminMediaLink } from "@/components/iglu/IgluAdminMediaLink";
+import { IgluDesktopHome, type IgluDesktopAssets } from "@/components/iglu/IgluDesktopHome";
 import { IgluMerchCarousel } from "@/components/iglu/IgluMerchCarousel";
 import { IgluStreamButton } from "@/components/iglu/IgluStreamButton";
 import { commerceProductImages } from "@/lib/commerce-store-data";
@@ -10,6 +11,19 @@ import styles from "./IgluPublicSpotHome.module.css";
 
 const PACK_ROOT =
   "https://storage.googleapis.com/clouva-generated-media/admin-assets/brand/clouva-logo/shared/other";
+
+const DESKTOP_ROOT = "https://storage.googleapis.com/clouva-generated-media/admin-assets";
+const DESKTOP_IGLU_ASSETS: IgluDesktopAssets = {
+  logo: `${DESKTOP_ROOT}/brand/clouva-logo/shared/other/logo-white.svg`,
+  background: `${DESKTOP_ROOT}/brand/clouva-logo/shared/other/iglu-backround.png`,
+  heroTitle: `${DESKTOP_ROOT}/brand/clouva-logo/shared/other/iglu-records.png`,
+  snowflake: `${DESKTOP_ROOT}/brand/clouva-logo/shared/other/el-iglu-copo.png`,
+  cta: `${DESKTOP_ROOT}/brand/clouva-logo/shared/other/01_rectangulo_original_sin_texto.png`,
+  mountain: `${DESKTOP_ROOT}/brand/clouva-logo/shared/other/eliglu-montana.png`,
+  cardOne: `${DESKTOP_ROOT}/uploads/asset-eliglu3.png`,
+  cardTwo: `${DESKTOP_ROOT}/uploads/asset-eliglu2.png`,
+  cardThree: `${DESKTOP_ROOT}/uploads/asset-eliglu.png`,
+};
 
 const LATEST_IGLU_ASSETS = {
   logo: `${PACK_ROOT}/02_logo_iglu_records_neon_hielo.png`,
@@ -32,7 +46,9 @@ export function IgluPublicSpotHome({ data }: { data: IgluSiteData }) {
   });
 
   return (
-    <div className={styles.viewport}>
+    <>
+      <div className={styles.mobileExperience}>
+      <div className={styles.viewport}>
       <main className={styles.app} aria-label="IGLÚ Records">
         <div
           className={styles.heroBackground}
@@ -174,5 +190,18 @@ export function IgluPublicSpotHome({ data }: { data: IgluSiteData }) {
         </nav>
       </section>
     </div>
+      </div>
+
+      <IgluDesktopHome
+        studioName={data.publicStudio.publicName}
+        studioDescription={data.studio.description || data.studio.tagline || "Sello, estudio y espacio musical dentro de CLOUVA."}
+        reserveHref={reserveHref}
+        agendaHref={agendaHref}
+        mediaHref={mediaHref}
+        profileHref={profileHref}
+        merchHref={merchHref}
+        assets={DESKTOP_IGLU_ASSETS}
+      />
+    </>
   );
 }
