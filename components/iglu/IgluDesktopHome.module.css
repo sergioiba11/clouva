@@ -910,3 +910,129 @@
     border-radius: 14px;
   }
 }
+
+/* Second pass: turn the three IGLÚ assets into full UI modules, not thumbnails. */
+@media (min-width: 900px) {
+  .assetCards {
+    align-self: center;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .assetCard {
+    isolation: isolate;
+    aspect-ratio: 1.58 / 1;
+    border: 1px solid rgba(170, 224, 255, .10);
+    border-radius: 16px;
+    background: #06131f;
+    box-shadow: 0 22px 46px rgba(0, 0, 0, .30);
+  }
+
+  .assetCard img {
+    z-index: 0;
+    top: 50% !important;
+    left: 50% !important;
+    width: 100%;
+    height: auto;
+    object-fit: contain;
+  }
+
+  .assetImageArtists {
+    transform: translate(-50%, -53%) scale(1.07);
+  }
+
+  .assetImageReservations {
+    transform: translate(-48.5%, -52%) scale(1.10);
+  }
+
+  .assetImageMerch {
+    transform: translate(-50%, -52%) scale(1.07);
+  }
+
+  .assetCardShade {
+    position: absolute;
+    z-index: 1;
+    inset: 0;
+    pointer-events: none;
+    background:
+      linear-gradient(180deg,
+        transparent 48%,
+        rgba(2, 10, 18, .16) 64%,
+        rgba(2, 10, 18, .82) 100%);
+  }
+
+  .assetCardMeta {
+    position: absolute;
+    z-index: 2;
+    left: 14px;
+    right: 12px;
+    bottom: 11px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    pointer-events: none;
+  }
+
+  .assetCardLabel {
+    color: rgba(248, 252, 255, .96);
+    font-size: 12px;
+    font-weight: 850;
+    letter-spacing: .10em;
+    text-shadow: 0 2px 10px rgba(0, 0, 0, .55);
+  }
+
+  .assetCardArrow {
+    display: grid;
+    width: 30px;
+    height: 30px;
+    place-items: center;
+    flex: 0 0 auto;
+    border: 1px solid rgba(186, 230, 255, .24);
+    border-radius: 999px;
+    color: rgba(248, 252, 255, .94);
+    font-size: 15px;
+    background: rgba(3, 15, 26, .54);
+    backdrop-filter: blur(8px);
+  }
+
+  .assetCard:hover {
+    transform: translateY(-2px);
+    filter: brightness(1.035);
+    border-color: rgba(179, 229, 255, .20);
+    box-shadow: 0 26px 54px rgba(0, 0, 0, .34);
+  }
+
+  .assetCardArtists:hover .assetImageArtists {
+    transform: translate(-50%, -53%) scale(1.085);
+  }
+
+  .assetCardReservations:hover .assetImageReservations {
+    transform: translate(-48.5%, -52%) scale(1.115);
+  }
+
+  .assetCardMerch:hover .assetImageMerch {
+    transform: translate(-50%, -52%) scale(1.085);
+  }
+}
+
+@media (min-width: 1281px) {
+  .lowerGrid {
+    grid-template-columns: 220px minmax(690px, 1fr) 320px;
+  }
+}
+
+@media (min-width: 1100px) and (max-width: 1280px) {
+  .assetCard {
+    aspect-ratio: 1.52 / 1;
+  }
+
+  .assetCardLabel {
+    font-size: 11px;
+  }
+
+  .assetCardArrow {
+    width: 28px;
+    height: 28px;
+  }
+}
