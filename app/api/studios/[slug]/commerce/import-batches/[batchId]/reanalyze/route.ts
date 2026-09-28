@@ -361,15 +361,15 @@ export async function POST(
 
     const contextObservations = analyzedGroups
       .filter((group) => group.contextOnly)
-      .map((group) => ({
+      .flatMap((group) => group.images.map((image) => ({
         contextKey: group.groupKey,
         unassignedEvidence: group.unassignedEvidence === true,
-        suggestedRole: group.images[0]?.role ?? "Detalle",
-        sourceIndexes: group.images.map((image) => image.sourceIndex),
+        suggestedRole: image.role,
+        sourceIndexes: [image.sourceIndex],
         observedProducts: group.observedProducts ?? [],
         matches: group.contextMatches ?? [],
         reason: group.contextReason ?? "Foto con varios productos distintos.",
-      }));
+      })));
     const groups = analyzedGroups.filter((group) => !group.contextOnly);
 
     const groupByIndex = new Map<number, { key: string; summary: JsonRecord }>();

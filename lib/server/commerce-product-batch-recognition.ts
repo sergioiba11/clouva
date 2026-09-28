@@ -1087,6 +1087,27 @@ function externalCodeKeys(group: CommerceBatchGroup) {
   }));
 }
 
+function catalogCodeKeys(group: CommerceBatchGroup) {
+  const raw = [
+    ...(group.identifier ? [group.identifier] : []),
+    ...group.visibleIdentifiers,
+  ];
+  return new Set(raw.flatMap((code) => {
+    if (!["ean_13", "ean_8", "upc_a", "upc_e"].includes(code.type)) return [];
+    const validation = validateCommerceIdentifier(code.type, code.value);
+    if (!validation.valid) return [];
+    return [canonicalCodeKey(code.type, validation.value)];
+  }));
+}
+
+function hasConflictingCatalogCodes(left: CommerceBatchGroup, right: CommerceBatchGroup) {
+  const a = catalogCodeKeys(left);
+  const b = catalogCodeKeys(right);
+  if (!a.size || !b.size) return false;
+  for (const key of a) if (b.has(key)) return false;
+  return true;
+}
+
 function hasConflictingExternalCodes(left: CommerceBatchGroup, right: CommerceBatchGroup) {
   const a = externalCodeKeys(left);
   const b = externalCodeKeys(right);
@@ -1366,17 +1387,28 @@ async function resolveReceiptIdentityClusters(args: {
 }) {
   if (args.groups.length <= 1 || !args.expectedProducts.length) return args.groups;
 
-  const refs = (await Promise.all(args.groups.map(async (group) => {
-    const representative = group.images.find((image) => image.role === "Frente") ?? group.images[0];
-    const source = representative ? args.imagesByIndex.get(representative.sourceIndex) : undefined;
-    if (!source) return null;
-    const stored = await downloadGeneratedMediaObject(source.storagePath);
-    return {
-      groupKey: group.groupKey,
-      sourceIndex: representative.sourceIndex,
-      mimeType: stored.mimeType.startsWith("image/") ? stored.mimeType : source.mimeType,
-      data: stored.bytes.toString("base64"),
+  const refsPerGroup = args.groups.length <= 18 ? 2 : 1;
+  const refs = (await Promise.all(args.groups.flatMap((group) => {
+    const selected: CommerceBatchImageRole[] = [];
+    const push = (image: CommerceBatchImageRole | undefined) => {
+      if (!image || selected.some((candidate) => candidate.sourceIndex === image.sourceIndex)) return;
+      selected.push(image);
     };
+    push(group.images.find((image) => image.role === "Frente"));
+    push(group.images.find((image) => image.role === "Atrás"));
+    for (const image of group.images) push(image);
+    return selected.slice(0, refsPerGroup).map(async (representative) => {
+      const source = args.imagesByIndex.get(representative.sourceIndex);
+      if (!source) return null;
+      const stored = await downloadGeneratedMediaObject(source.storagePath);
+      return {
+        groupKey: group.groupKey,
+        sourceIndex: representative.sourceIndex,
+        role: representative.role,
+        mimeType: stored.mimeType.startsWith("image/") ? stored.mimeType : source.mimeType,
+        data: stored.bytes.toString("base64"),
+      };
+    });
   }))).filter((value): value is NonNullable<typeof value> => Boolean(value));
 
   const prompt = [
@@ -1408,7 +1440,7 @@ async function resolveReceiptIdentityClusters(args: {
       sourceIndexes: group.images.map((image) => image.sourceIndex),
     })))}`,
     refs.length
-      ? `Orden de imágenes: ${refs.map((ref, index) => `imagen ${index + 1} = ${ref.groupKey} (sourceIndex ${ref.sourceIndex})`).join(" · ")}`
+      ? `Orden de imágenes: ${refs.map((ref, index) => `imagen ${index + 1} = ${ref.groupKey} · ${ref.role} (sourceIndex ${ref.sourceIndex})`).join(" · ")}`
       : "",
   ].filter(Boolean).join("\n");
 
@@ -1450,6 +1482,24 @@ async function resolveReceiptIdentityClusters(args: {
         continue;
       }
 
+      const clusterConfidence = number01(cluster.confidence);
+      const catalogConflict = members.some((left, leftIndex) =>
+        members.slice(leftIndex + 1).some((right) => hasConflictingCatalogCodes(left, right)),
+      );
+      const suspiciousLargeMerge = members.length > 6 && !members.every((member, index) =>
+        index === 0 || sameExternalCode(members[0], member),
+      );
+
+      // The global model may use the invoice as context, but it is never allowed
+      // to collapse physically incompatible retail identities into one article.
+      // Conflicting GTIN/UPC codes are a hard stop; low-confidence or implausibly
+      // broad clusters stay separate and can still be matched to the same invoice
+      // line later without contaminating each other's photos.
+      if (catalogConflict || clusterConfidence < 0.72 || suspiciousLargeMerge) {
+        resolved.push(...members.map((member) => ({ ...member, needsReview: true })));
+        continue;
+      }
+
       const canonicalKey = text(cluster.canonicalGroupKey, 96);
       const canonical = members.find((member) => member.groupKey === canonicalKey) ?? members[0];
       const merged = mergeClusterGroups(
@@ -1461,7 +1511,7 @@ async function resolveReceiptIdentityClusters(args: {
             Math.floor(Number(cluster.physicalUnitCount) || Math.max(...members.map((member) => Math.max(1, member.unitCount)))),
           ),
         ),
-        number01(cluster.confidence),
+        clusterConfidence,
         cluster.needsReview === true,
       );
 
@@ -2179,81 +2229,70 @@ async function anchorProductsToInvoice(args: {
 }): Promise<CommerceBatchGroup[]> {
   if (!args.expectedProducts.length || !args.productGroups.length) return args.productGroups;
 
-  // Final assignment is PHOTO-first. Earlier passes may have accidentally grouped
-  // unrelated photos; splitting here prevents one wrong image from contaminating
-  // an entire invoice article.
-  const candidates: CommerceBatchGroup[] = args.productGroups.flatMap((group) =>
-    group.images.map((image) => {
-      const ownIdentifiers = group.visibleIdentifiers.filter((identifier) =>
-        identifier.sourceIndex == null || identifier.sourceIndex === image.sourceIndex,
-      );
-      const ownsPrimaryIdentifier = Boolean(
-        group.identifier && ownIdentifiers.some((identifier) =>
-          canonicalCodeKey(identifier.type, identifier.value)
-            === canonicalCodeKey(group.identifier!.type, group.identifier!.value),
-        ),
-      );
-      return {
-        ...group,
-        groupKey: `${group.groupKey}-img-${image.sourceIndex}`,
-        unitCount: 1,
-        identifier: ownsPrimaryIdentifier ? group.identifier : null,
-        visibleIdentifiers: ownIdentifiers,
-        physicalUnits: [{ sourceIndexes: [image.sourceIndex], confidence: group.confidence }],
-        images: [image],
-        contextOnly: false,
-        unassignedEvidence: false,
-        contextMatches: undefined,
-        contextReferences: undefined,
-      };
-    }),
-  );
-
+  // Invoice matching happens only after CLOUVA has reconstructed complete
+  // physical/commercial clusters. Never split a cluster back into individual
+  // photos here: front + back + code + details are joint evidence of one object.
   const assignments = new Map<string, { invoiceIndex: number; trueExtra: boolean; confidence: number; reason: string }>();
 
-  for (let offset = 0; offset < candidates.length; offset += 10) {
-    const chunk = candidates.slice(offset, offset + 10);
-    const refs = (await Promise.all(chunk.map(async (group) => {
-      const image = group.images[0];
-      const source = image ? args.imagesByIndex.get(image.sourceIndex) : undefined;
-      if (!source) return null;
-      const stored = await downloadGeneratedMediaObject(source.storagePath);
-      return {
-        groupKey: group.groupKey,
-        sourceIndex: image.sourceIndex,
-        mimeType: stored.mimeType.startsWith("image/") ? stored.mimeType : source.mimeType,
-        data: stored.bytes.toString("base64"),
+  for (let offset = 0; offset < args.productGroups.length; offset += 5) {
+    const chunk = args.productGroups.slice(offset, offset + 5);
+    const refs = (await Promise.all(chunk.flatMap((group) => {
+      const preferredIndexes: number[] = [];
+      const add = (sourceIndex: number | undefined) => {
+        if (sourceIndex == null || preferredIndexes.includes(sourceIndex)) return;
+        preferredIndexes.push(sourceIndex);
       };
+      add(group.images.find((image) => image.role === "Frente")?.sourceIndex);
+      add(group.images.find((image) => image.role === "Atrás")?.sourceIndex);
+      for (const code of group.visibleIdentifiers) add(code.sourceIndex);
+      for (const image of group.images) add(image.sourceIndex);
+      return preferredIndexes.slice(0, 3).map(async (sourceIndex) => {
+        const source = args.imagesByIndex.get(sourceIndex);
+        if (!source) return null;
+        const stored = await downloadGeneratedMediaObject(source.storagePath);
+        return {
+          groupKey: group.groupKey,
+          sourceIndex,
+          role: group.images.find((image) => image.sourceIndex === sourceIndex)?.role ?? "Detalle",
+          mimeType: stored.mimeType.startsWith("image/") ? stored.mimeType : source.mimeType,
+          data: stored.bytes.toString("base64"),
+        };
+      });
     }))).filter((value): value is NonNullable<typeof value> => Boolean(value));
 
     const prompt = [
-      "Sos el asignador FINAL de FOTOS a renglones de factura de CLOUVA.",
-      "La factura define los artículos base. Cada groupKey de esta pasada representa UNA sola foto.",
-      "Para cada foto elegí UNA de tres salidas: (1) invoiceIndex 1-based si pertenece con evidencia suficiente a ese artículo; (2) invoiceIndex=0 y trueExtra=false si NO hay evidencia suficiente: queda SIN ASIGNAR; (3) invoiceIndex=0 y trueExtra=true SOLO si la foto demuestra inequívocamente un producto físico extra que no corresponde a ningún renglón.",
-      "NUNCA fuerces una foto al artículo más parecido solo para que todas queden asignadas.",
-      "Compará forma exacta de caja/bolsa/blister, colores, logos, marca, modelo, palabras, tipografía, conector, potencia, capacidad, plataforma, especificaciones, iconos, código y diseño.",
-      "Frente y dorso de la misma caja pertenecen al MISMO renglón aunque el texto visible sea distinto.",
-      "Un barcode visto atrás NO crea otro producto si el packaging coincide con un artículo de factura.",
-      "Si la foto es dorso/lateral/etiqueta/detalle y no podés vincularla con suficiente seguridad, dejala SIN ASIGNAR; NO la declares extra.",
-      "Una marca/modelo inequívocamente incompatible no se fuerza a ningún renglón.",
-      "La cantidad esperada de factura NO decide identidad.",
-      "Usá confidence como confianza REAL de la asignación de ESTA FOTO.",
+      "Sos el reconciliador FINAL de OBJETOS FÍSICOS contra la factura de CLOUVA.",
+      "Cada groupKey YA ES un cluster físico/comercial armado usando varias fotos. NO clasifiques fotos aisladas ni desarmes el cluster.",
+      "La factura define los lugares esperados. Decidí a qué renglón pertenece cada cluster completo.",
+      "Usá la evidencia COMBINADA del cluster: frente, dorso, etiquetas, códigos, detalles, packaging, colores, logo, marca, modelo, textos, conectores, potencia, capacidad y especificaciones.",
+      "Frente + dorso + código + detalles del mismo packaging son UN SOLO objeto/identidad, aunque cada vista tenga textos distintos.",
+      "La descripción de factura puede estar abreviada o ser poco precisa. El packaging físico y las especificaciones combinadas tienen prioridad sobre una palabra aislada.",
+      "NO fuerces una identidad físicamente incompatible para completar cantidades.",
+      "invoiceIndex es 1-based. Usá invoiceIndex=0,trueExtra=false solo si el cluster sigue genuinamente dudoso después de mirar TODAS sus vistas.",
+      "Usá invoiceIndex=0,trueExtra=true cuando el cluster representa claramente un producto físico real que no corresponde a ningún renglón de factura.",
+      "Un producto extra puede después reconciliarse contra un faltante (por ejemplo Motorola +1 vs Samsung -1); no lo conviertas artificialmente en Samsung.",
+      "La cantidad de fotos NO es cantidad de unidades. unitCount ya representa la estimación física del cluster.",
+      "confidence expresa tu confianza en la asignación DEL CLUSTER COMPLETO.",
       'Spot: "' + args.spotName + '".',
-      "Factura canónica: " + JSON.stringify(args.expectedProducts.map((item, index) => ({ invoiceIndex: index + 1, ...item }))),
-      "Fotos candidatas (el nombre/marca de agrupamientos previos se ignora porque puede estar contaminado): " + JSON.stringify(chunk.map((group) => ({
+      "Factura: " + JSON.stringify(args.expectedProducts.map((item, index) => ({ invoiceIndex: index + 1, ...item }))),
+      "Clusters físicos: " + JSON.stringify(chunk.map((group) => ({
         groupKey: group.groupKey,
-        sourceIndex: group.images[0]?.sourceIndex,
-        priorRole: group.images[0]?.role,
-        identifierVisibleEnEstaFoto: group.identifier,
+        name: group.name,
+        brand: group.brand,
+        model: group.model,
+        packageKind: group.packageKind,
+        unitCount: group.unitCount,
+        identifier: group.identifier,
         visibleIdentifiers: group.visibleIdentifiers,
+        images: group.images,
       }))),
       refs.length
-        ? "Orden de referencias: " + refs.map((ref, index) => "imagen " + (index + 1) + " = " + ref.groupKey + " (sourceIndex " + ref.sourceIndex + ")").join(" · ")
+        ? "Referencias visuales: " + refs.map((ref, index) => "imagen " + (index + 1) + " = " + ref.groupKey + " · " + ref.role + " · sourceIndex " + ref.sourceIndex).join(" · ")
         : "",
     ].filter(Boolean).join("\n");
 
     try {
-      const generated = await withVertexRetry("factura-ancla", () => generateGoogleCloudJson({
+      const generated = await withVertexRetry("factura-ancla-cluster", () => generateGoogleCloudJson({
         model: process.env.GOOGLE_CLOUD_PRODUCT_VISION_MODEL
           ?? process.env.GEMINI_PRODUCT_VISION_MODEL
           ?? "gemini-2.5-flash",
@@ -2277,7 +2316,8 @@ async function anchorProductsToInvoice(args: {
         });
       }
     } catch {
-      // Model failure must never force a random invoice assignment.
+      // If this visual pass fails, only a very strong deterministic identity
+      // match may be accepted below. Nothing is force-assigned.
     }
   }
 
@@ -2286,43 +2326,51 @@ async function anchorProductsToInvoice(args: {
   const trueExtras: CommerceBatchGroup[] = [];
   const unassigned: CommerceBatchGroup[] = [];
 
-  for (const group of candidates) {
+  for (const group of args.productGroups) {
     const ai = assignments.get(group.groupKey);
+    const fallback = bestInvoiceAnchor(group, args.expectedProducts);
     const aiInvoiceAccepted = Boolean(
       ai
       && ai.invoiceIndex >= 1
       && ai.invoiceIndex <= args.expectedProducts.length
-      && ai.confidence >= 0.72,
+      && (ai.confidence >= 0.62 || (ai.confidence >= 0.52 && fallback.score >= 0.42)),
     );
+    const deterministicAccepted = Boolean(!ai && fallback.score >= 0.86);
     const definitelyExtra = Boolean(
       ai?.trueExtra
       && ai.invoiceIndex === 0
-      && ai.confidence >= 0.995
-      && group.images[0]?.role === "Frente",
+      && ai.confidence >= 0.93
+      && group.images.some((image) => image.role === "Frente"),
     );
 
     if (definitelyExtra) {
       trueExtras.push({
         ...group,
-        groupKey: `extra-evidence-${group.images[0]?.sourceIndex ?? trueExtras.length + 1}`,
+        groupKey: `extra-${String(trueExtras.length + 1).padStart(3, "0")}`,
+        contextOnly: false,
+        unassignedEvidence: false,
         needsReview: true,
       });
       continue;
     }
 
-    const invoiceIndex = aiInvoiceAccepted ? ai!.invoiceIndex : 0;
+    const invoiceIndex = aiInvoiceAccepted
+      ? ai!.invoiceIndex
+      : deterministicAccepted
+        ? fallback.invoiceIndex
+        : 0;
 
     if (!invoiceIndex) {
       unassigned.push({
         ...group,
-        groupKey: `unassigned-${group.images[0]?.sourceIndex ?? unassigned.length + 1}`,
+        groupKey: `unassigned-${String(unassigned.length + 1).padStart(3, "0")}`,
         contextOnly: true,
         unassignedEvidence: true,
         observedProducts: [],
         contextMatches: [],
         contextReason: ai?.reason
-          ? `Sin coincidencia segura con la factura: ${ai.reason}`
-          : "Sin coincidencia segura con la factura.",
+          ? `Cluster físico sin coincidencia segura: ${ai.reason}`
+          : "Cluster físico sin coincidencia segura con la factura.",
         needsReview: true,
       });
       continue;
@@ -2331,7 +2379,7 @@ async function anchorProductsToInvoice(args: {
     buckets.set(invoiceIndex, [...(buckets.get(invoiceIndex) ?? []), group]);
     bucketConfidence.set(invoiceIndex, [
       ...(bucketConfidence.get(invoiceIndex) ?? []),
-      ai!.confidence,
+      aiInvoiceAccepted ? ai!.confidence : Math.min(1, fallback.score),
     ]);
   }
 
@@ -2341,9 +2389,13 @@ async function anchorProductsToInvoice(args: {
     const members = buckets.get(invoiceIndex) ?? [];
     if (!members.length) continue;
     const line = args.expectedProducts[index];
+    const physicalUnitCount = Math.max(
+      1,
+      Math.min(100, members.reduce((sum, group) => sum + Math.max(1, group.unitCount), 0)),
+    );
     const merged = mergeClusterGroups(
       members,
-      Math.max(...members.map((group) => Math.max(1, group.unitCount))),
+      physicalUnitCount,
       Math.min(...members.map((group) => group.confidence)),
       members.some((group) => group.needsReview),
     );
@@ -2353,7 +2405,10 @@ async function anchorProductsToInvoice(args: {
       name: line.description || merged.name,
       brand: line.brand || merged.brand,
       model: line.model || merged.model,
-      needsReview: merged.needsReview || (bucketConfidence.get(invoiceIndex) ?? []).some((confidence) => confidence < 0.72),
+      unitCount: physicalUnitCount,
+      contextOnly: false,
+      unassignedEvidence: false,
+      needsReview: merged.needsReview || (bucketConfidence.get(invoiceIndex) ?? []).some((confidence) => confidence < 0.7),
     };
     const refined = await refineMergedGroup({
       group: canonical,
@@ -2366,6 +2421,9 @@ async function anchorProductsToInvoice(args: {
       name: line.description || refined.name || merged.name,
       brand: line.brand || refined.brand || merged.brand,
       model: line.model || refined.model || merged.model,
+      unitCount: physicalUnitCount,
+      contextOnly: false,
+      unassignedEvidence: false,
       needsReview: canonical.needsReview || refined.needsReview,
     });
   }
