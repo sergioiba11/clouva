@@ -124,6 +124,9 @@ export type CommerceBatchGroup = {
   physicalUnits?: CommerceBatchPhysicalUnit[];
   contextOnly?: boolean;
   unassignedEvidence?: boolean;
+  invoiceIndex?: number;
+  invoiceMatchConfidence?: number;
+  invoiceMatchReason?: string;
   observedProducts?: string[];
   contextReason?: string;
   contextReferences?: CommerceBatchContextReference[];
@@ -1124,6 +1127,9 @@ function sameExternalCode(left: CommerceBatchGroup, right: CommerceBatchGroup) {
 }
 
 function shouldMergeCommercialIdentity(left: CommerceBatchGroup, right: CommerceBatchGroup) {
+  if (left.invoiceIndex != null || right.invoiceIndex != null) {
+    if (left.invoiceIndex !== right.invoiceIndex) return false;
+  }
   if (hasConflictingExternalCodes(left, right)) return false;
   if (sameExternalCode(left, right)) return true;
 
@@ -1247,6 +1253,15 @@ function mergeClusterGroups(groups: CommerceBatchGroup[], unitCount: number, con
     }
   }
   const contextReferences = Array.from(contextReferenceMap.values());
+  const commonInvoiceIndex = groups.every((group) => group.invoiceIndex === groups[0]?.invoiceIndex)
+    ? groups[0]?.invoiceIndex
+    : undefined;
+  const invoiceMatchConfidence = commonInvoiceIndex != null
+    ? Math.min(...groups.map((group) => group.invoiceMatchConfidence ?? 1))
+    : undefined;
+  const invoiceMatchReason = commonInvoiceIndex != null
+    ? groups.find((group) => group.invoiceMatchReason)?.invoiceMatchReason
+    : undefined;
   return {
     groupKey: preferred.groupKey,
     name: preferred.name || groups.find((group) => group.name)?.name || "",
@@ -1261,6 +1276,9 @@ function mergeClusterGroups(groups: CommerceBatchGroup[], unitCount: number, con
     confidence: Math.min(number01(confidence), ...groups.map((group) => group.confidence)),
     needsReview: needsReview || groups.some((group) => group.needsReview),
     images: normalizeRoles(Array.from(imageMap.values())),
+    ...(commonInvoiceIndex != null ? { invoiceIndex: commonInvoiceIndex } : {}),
+    ...(invoiceMatchConfidence != null ? { invoiceMatchConfidence } : {}),
+    ...(invoiceMatchReason ? { invoiceMatchReason } : {}),
     ...(contextReferences.length ? { contextReferences } : {}),
   } satisfies CommerceBatchGroup;
 }
@@ -1477,12 +1495,19 @@ async function resolveReceiptIdentityClusters(args: {
       const members = keys.map((key) => known.get(key)!).filter(Boolean);
       keys.forEach((key) => used.add(key));
 
+      const clusterConfidence = number01(cluster.confidence);
       if (members.length === 1) {
-        resolved.push(members[0]);
+        resolved.push({
+          ...members[0],
+          ...(invoiceIndex > 0 ? {
+            invoiceIndex,
+            invoiceMatchConfidence: clusterConfidence,
+            invoiceMatchReason: "Reconciliación global del objeto físico contra la factura.",
+          } : {}),
+        });
         continue;
       }
 
-      const clusterConfidence = number01(cluster.confidence);
       const catalogConflict = members.some((left, leftIndex) =>
         members.slice(leftIndex + 1).some((right) => hasConflictingCatalogCodes(left, right)),
       );
@@ -1496,7 +1521,15 @@ async function resolveReceiptIdentityClusters(args: {
       // broad clusters stay separate and can still be matched to the same invoice
       // line later without contaminating each other's photos.
       if (catalogConflict || clusterConfidence < 0.72 || suspiciousLargeMerge) {
-        resolved.push(...members.map((member) => ({ ...member, needsReview: true })));
+        resolved.push(...members.map((member) => ({
+          ...member,
+          needsReview: true,
+          ...(invoiceIndex > 0 ? {
+            invoiceIndex,
+            invoiceMatchConfidence: clusterConfidence,
+            invoiceMatchReason: "Mismo renglón de factura; identidad física conservada separada.",
+          } : {}),
+        })));
         continue;
       }
 
@@ -1523,6 +1556,11 @@ async function resolveReceiptIdentityClusters(args: {
         model: canonical.model || merged.model,
         packageKind: canonical.packageKind !== "unknown" ? canonical.packageKind : merged.packageKind,
         needsReview: merged.needsReview || cluster.needsReview === true,
+        ...(invoiceIndex > 0 ? {
+          invoiceIndex,
+          invoiceMatchConfidence: clusterConfidence,
+          invoiceMatchReason: "Reconciliación global del objeto físico contra la factura.",
+        } : {}),
       });
     }
 
@@ -1661,6 +1699,9 @@ async function refineMergedGroup(args: {
       identifier: primaryIdentifier,
       unitCount: verifiedUnitCount,
       needsReview: sanitized.needsReview || args.group.needsReview,
+      ...(args.group.invoiceIndex != null ? { invoiceIndex: args.group.invoiceIndex } : {}),
+      ...(args.group.invoiceMatchConfidence != null ? { invoiceMatchConfidence: args.group.invoiceMatchConfidence } : {}),
+      ...(args.group.invoiceMatchReason ? { invoiceMatchReason: args.group.invoiceMatchReason } : {}),
     };
   } catch {
     return { ...args.group, needsReview: true };
@@ -2233,9 +2274,19 @@ async function anchorProductsToInvoice(args: {
   // physical/commercial clusters. Never split a cluster back into individual
   // photos here: front + back + code + details are joint evidence of one object.
   const assignments = new Map<string, { invoiceIndex: number; trueExtra: boolean; confidence: number; reason: string }>();
+  const unresolvedGroups = args.productGroups.filter((group) => !(group.invoiceIndex != null
+    && group.invoiceIndex >= 1
+    && group.invoiceIndex <= args.expectedProducts.length
+    && (group.invoiceMatchConfidence ?? 0) >= 0.45));
+  const fixedCoverage = args.productGroups
+    .filter((group) => group.invoiceIndex != null
+      && group.invoiceIndex >= 1
+      && group.invoiceIndex <= args.expectedProducts.length
+      && (group.invoiceMatchConfidence ?? 0) >= 0.45)
+    .map((group) => ({ invoiceIndex: group.invoiceIndex!, unitCount: group.unitCount, groupKey: group.groupKey }));
 
-  for (let offset = 0; offset < args.productGroups.length; offset += 5) {
-    const chunk = args.productGroups.slice(offset, offset + 5);
+  for (let offset = 0; offset < unresolvedGroups.length; offset += 8) {
+    const chunk = unresolvedGroups.slice(offset, offset + 8);
     const refs = (await Promise.all(chunk.flatMap((group) => {
       const preferredIndexes: number[] = [];
       const add = (sourceIndex: number | undefined) => {
@@ -2264,6 +2315,7 @@ async function anchorProductsToInvoice(args: {
       "Sos el reconciliador FINAL de OBJETOS FÍSICOS contra la factura de CLOUVA.",
       "Cada groupKey YA ES un cluster físico/comercial armado usando varias fotos. NO clasifiques fotos aisladas ni desarmes el cluster.",
       "La factura define los lugares esperados. Decidí a qué renglón pertenece cada cluster completo.",
+      "Esta pasada recibe solamente clusters que la reconciliación global todavía no pudo ubicar con seguridad. Antes de usar 0, compará el objeto completo contra TODOS los renglones y especialmente contra los renglones todavía sin evidencia.",
       "Usá la evidencia COMBINADA del cluster: frente, dorso, etiquetas, códigos, detalles, packaging, colores, logo, marca, modelo, textos, conectores, potencia, capacidad y especificaciones.",
       "Frente + dorso + código + detalles del mismo packaging son UN SOLO objeto/identidad, aunque cada vista tenga textos distintos.",
       "La descripción de factura puede estar abreviada o ser poco precisa. El packaging físico y las especificaciones combinadas tienen prioridad sobre una palabra aislada.",
@@ -2275,7 +2327,9 @@ async function anchorProductsToInvoice(args: {
       "confidence expresa tu confianza en la asignación DEL CLUSTER COMPLETO.",
       'Spot: "' + args.spotName + '".',
       "Factura: " + JSON.stringify(args.expectedProducts.map((item, index) => ({ invoiceIndex: index + 1, ...item }))),
-      "Clusters físicos: " + JSON.stringify(chunk.map((group) => ({
+      "Cobertura ya resuelta por la reconciliación global: " + JSON.stringify(fixedCoverage),
+      "Usá esa cobertura para entender qué renglones siguen sin evidencia y qué cantidades ya están explicadas. No reasignes los grupos ya resueltos.",
+      "Clusters físicos pendientes: " + JSON.stringify(chunk.map((group) => ({
         groupKey: group.groupKey,
         name: group.name,
         brand: group.brand,
@@ -2327,13 +2381,24 @@ async function anchorProductsToInvoice(args: {
   const unassigned: CommerceBatchGroup[] = [];
 
   for (const group of args.productGroups) {
+    if (group.invoiceIndex != null
+      && group.invoiceIndex >= 1
+      && group.invoiceIndex <= args.expectedProducts.length
+      && (group.invoiceMatchConfidence ?? 0) >= 0.45) {
+      buckets.set(group.invoiceIndex, [...(buckets.get(group.invoiceIndex) ?? []), group]);
+      bucketConfidence.set(group.invoiceIndex, [
+        ...(bucketConfidence.get(group.invoiceIndex) ?? []),
+        group.invoiceMatchConfidence ?? 0.45,
+      ]);
+      continue;
+    }
     const ai = assignments.get(group.groupKey);
     const fallback = bestInvoiceAnchor(group, args.expectedProducts);
     const aiInvoiceAccepted = Boolean(
       ai
       && ai.invoiceIndex >= 1
       && ai.invoiceIndex <= args.expectedProducts.length
-      && (ai.confidence >= 0.62 || (ai.confidence >= 0.52 && fallback.score >= 0.42)),
+      && (ai.confidence >= 0.55 || (ai.confidence >= 0.48 && fallback.score >= 0.38)),
     );
     const deterministicAccepted = Boolean(!ai && fallback.score >= 0.86);
     const definitelyExtra = Boolean(
@@ -2391,7 +2456,7 @@ async function anchorProductsToInvoice(args: {
     const line = args.expectedProducts[index];
     const physicalUnitCount = Math.max(
       1,
-      Math.min(100, members.reduce((sum, group) => sum + Math.max(1, group.unitCount), 0)),
+      Math.min(100, Math.max(...members.map((group) => Math.max(1, group.unitCount)))),
     );
     const merged = mergeClusterGroups(
       members,
@@ -2421,9 +2486,12 @@ async function anchorProductsToInvoice(args: {
       name: line.description || refined.name || merged.name,
       brand: line.brand || refined.brand || merged.brand,
       model: line.model || refined.model || merged.model,
-      unitCount: physicalUnitCount,
+      unitCount: refined.unitCount,
       contextOnly: false,
       unassignedEvidence: false,
+      invoiceIndex,
+      invoiceMatchConfidence: Math.min(...(bucketConfidence.get(invoiceIndex) ?? [1])),
+      invoiceMatchReason: "Objeto físico asignado al slot de factura.",
       needsReview: canonical.needsReview || refined.needsReview,
     });
   }

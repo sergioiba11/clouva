@@ -6,6 +6,8 @@ import { sanitizeCommerceProductRecognition } from "./lib/commerce/product-recog
 const read = (path) => fs.readFileSync(new URL(path, import.meta.url), "utf8");
 const dashboard = read("./components/commerce/SpotCommerceDashboard.tsx");
 const service = read("./lib/server/commerce-product-recognition.ts");
+const batchRecognition = read("./lib/server/commerce-product-batch-recognition.ts");
+const productReview = read("./components/commerce/CommerceProductReview.tsx");
 const vertexProvider = read("./lib/server/google-cloud-genai.ts");
 const route = read("./app/api/studios/[slug]/commerce/recognize/route.ts");
 const scannerRoute = read("./app/api/studios/[slug]/commerce/scan/route.ts");
@@ -99,6 +101,17 @@ test("publication backend enforces canonical channel capabilities", () => {
   assert.match(channelCapabilities, /Groups API and publish_to_groups on 2024-04-22/);
   assert.match(publicationsRoute, /publicationModeForChannel/);
   assert.match(publicationsRoute, /const mode = publicationModeForChannel\(channel, body\.publicationMode\)/);
+});
+
+test("bulk scanner keeps physical objects intact before invoice assignment", () => {
+  assert.match(batchRecognition, /invoiceIndex\?: number/);
+  assert.match(batchRecognition, /invoiceMatchConfidence\?: number/);
+  assert.match(batchRecognition, /Reconciliación global del objeto físico contra la factura/);
+  assert.match(batchRecognition, /const unresolvedGroups = args\.productGroups\.filter/);
+  assert.match(batchRecognition, /Cobertura ya resuelta por la reconciliación global/);
+  assert.match(batchRecognition, /unitCount: refined\.unitCount/);
+  assert.doesNotMatch(batchRecognition, /const candidates: CommerceBatchGroup\[\] = args\.productGroups\.flatMap/);
+  assert.match(productReview, /REVISAR \{unassignedSources\.length\} IMÁGENES DUDOSAS/);
 });
 
 test("product capture contract supports one front, one back and many details", () => {
