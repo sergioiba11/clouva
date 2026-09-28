@@ -70,11 +70,9 @@ function pickRadioTrack(
 
 export function IgluStreamButton({
   className,
-  mediaHref,
   studioName,
 }: {
   className: string;
-  mediaHref: string;
   studioName: string;
 }) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -91,7 +89,7 @@ export function IgluStreamButton({
       setPlaying(true);
     } catch {
       setPlaying(false);
-      window.location.assign(mediaHref);
+      throw new Error("playback_failed");
     }
   }
 
@@ -152,13 +150,7 @@ export function IgluStreamButton({
       return;
     }
 
-    const podcastUrl = publicHttpUrl(payload.radio?.podcast_rss_url);
-    if (podcastUrl) {
-      window.location.assign(podcastUrl);
-      return;
-    }
-
-    window.location.assign(mediaHref);
+    setTrack(null);
   }
 
   async function handleClick() {
@@ -176,7 +168,8 @@ export function IgluStreamButton({
       // went live while the radio was paused, the next Play opens that stream.
       await startRadio({ resumeCurrent: true });
     } catch {
-      window.location.assign(mediaHref);
+      setTrack(null);
+      setPlaying(false);
     } finally {
       setLoading(false);
     }

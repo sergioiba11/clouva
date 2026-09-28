@@ -2,8 +2,8 @@ import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { getActiveKickLive } from "@/core/integrations/kick/public";
 import { getActiveYoutubeLive } from "@/core/integrations/youtube/service";
-import { requireStudioManager } from "@/lib/server/studio-permissions";
-import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
+import { requireMediaAdmin } from "@/lib/server/media-auth";
+import { createAdminSupabase, isAuthError } from "@/lib/server/supabase";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -81,10 +81,8 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   try {
-    const { user } = await requireUser(request);
-    const admin = createAdminSupabase();
+    const { user, admin } = await requireMediaAdmin(request);
     const studio = await igluStudio(admin);
-    await requireStudioManager({ admin, userId: user.id, studioId: studio.id });
 
     const form = await request.formData();
     const file = form.get("file");
@@ -135,10 +133,8 @@ export async function POST(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
   try {
-    const { user } = await requireUser(request);
-    const admin = createAdminSupabase();
+    const { user, admin } = await requireMediaAdmin(request);
     const studio = await igluStudio(admin);
-    await requireStudioManager({ admin, userId: user.id, studioId: studio.id });
 
     const body = (await request.json().catch(() => ({}))) as { trackId?: unknown };
     const trackId = typeof body.trackId === "string" && body.trackId.trim() ? body.trackId.trim() : null;

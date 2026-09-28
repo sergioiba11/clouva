@@ -217,7 +217,7 @@ export function IgluMediaLive({ studioId, studioName, publicAlias }: { studioId:
         </section>
 
         {manager ? (
-          <section className={styles.section}>
+          <section className={styles.section} id="admin-media">
             <div className={styles.sectionHead}><h2>Tu música</h2><span>Control del IGLÚ</span></div>
             <form className={styles.form} onSubmit={upload}>
               <label className={styles.file}><Upload size={18} /> Elegir canción MP3, WAV o FLAC<input name="file" type="file" accept=".mp3,.wav,.flac,audio/mpeg,audio/wav,audio/flac" required /></label>
