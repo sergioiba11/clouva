@@ -6,7 +6,7 @@ import type { EvidenceRole, ReconciliationGroup, ReconciliationLine, Reconciliat
 type Payload = {
   report: ReconciliationReport; revision: string; editable: boolean;
   groups: ReconciliationGroup[]; lines: ReconciliationLine[];
-  sources: { source_index: number; source_url: string; file_name: string | null; listing_id: string | null; recognition?: { context_only?: boolean; matched_group_keys?: string[]; observed_products?: string[]; context_reason?: string; [key: string]: unknown } | null }[];
+  sources: { source_index: number; source_url: string; file_name: string | null; listing_id: string | null; recognition?: { context_only?: boolean; unassigned_evidence?: boolean; suggested_role?: string; matched_group_keys?: string[]; matched_products?: { group_key: string; label: string; confidence: number }[]; observed_products?: string[]; context_reason?: string; [key: string]: unknown } | null }[];
   existingProducts: { id: string; name: string }[]; existingLinks: Record<string, { listingId: string }>;
   invoice: { source_url: string; currency: string | null } | null;
 };
@@ -25,9 +25,10 @@ export function CommerceProductReview({ studioId, batchId, refreshKey, busy, onP
   const [gallery, setGallery] = useState<{ groupKey: string; role?: EvidenceRole } | null>(null);
   const [chooseLine, setChooseLine] = useState("");
   const [extraValues, setExtraValues] = useState<Record<string, string>>({});
+  const [unassignedTargets, setUnassignedTargets] = useState<Record<number, string>>({});
   const [onlyPending, setOnlyPending] = useState(false);
   const base = `/api/studios/${encodeURIComponent(studioId)}/commerce/import-batches/${encodeURIComponent(batchId)}`;
-  const accept = useCallback((payload: Payload) => { setData(payload); onPendingChange(payload.report.pending); }, [onPendingChange]);
+  const accept = useCallback((payload: Payload) => { const unassigned = payload.sources.filter(photo => photo.recognition?.unassigned_evidence === true).length; setData(payload); onPendingChange(payload.report.pending + unassigned); }, [onPendingChange]);
   const refresh = useCallback(async () => {
     const response = await authenticatedFetch(`${base}/reconcile`);
     accept(await readApiJson<Payload>(response));
@@ -48,6 +49,16 @@ export function CommerceProductReview({ studioId, batchId, refreshKey, busy, onP
     } catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo confirmar."); await refresh().catch(() => {}); }
     finally { setSaving(""); }
   }
+  async function assignEvidence(sourceIndex: number, lineId: string, role?: string) {
+    if (!data || !lineId || saving || busy) return;
+    setSaving(`unassigned-${sourceIndex}`); setError("");
+    try {
+      const response = await authenticatedFetch(`${base}/reconcile`, { method: "PATCH", body: JSON.stringify({ kind: "assign_evidence", sourceIndex, lineId, role, revision: data.revision, actionId: crypto.randomUUID() }) });
+      accept(await readApiJson<Payload>(response));
+      setUnassignedTargets(values => { const next = { ...values }; delete next[sourceIndex]; return next; });
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo asignar la imagen."); await refresh().catch(() => {}); }
+    finally { setSaving(""); }
+  }
   async function addPhoto(groupKey: string, role: EvidenceRole, file?: File) {
     if (!data || !file || saving) return;
     setSaving(groupKey); setError("");
@@ -64,7 +75,9 @@ export function CommerceProductReview({ studioId, batchId, refreshKey, busy, onP
   const selected = gallery ? data.report.products.find(p => p.groupKey === gallery.groupKey) : null;
   const galleryIndexes = selected ? gallery?.role ? selected.images[gallery.role] : [...new Set(Object.values(selected.images).flat())] : [];
   const display = data.report.products.filter(p => !onlyPending || p.pending || p.shortage > 0 || p.missingImages.length > 0);
-  const contextSources = data.sources.filter(photo => photo.recognition?.context_only === true);
+  const contextSources = data.sources.filter(photo => photo.recognition?.context_only === true && photo.recognition?.unassigned_evidence !== true);
+  const unassignedSources = data.sources.filter(photo => photo.recognition?.unassigned_evidence === true);
+  const totalPending = data.report.pending + unassignedSources.length;
   return <section aria-label="Revisión por producto" className="mt-4 rounded-3xl border-2 border-violet-800 bg-white p-3 text-violet-950 sm:p-5">
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div><h3 className="text-xl font-black">Revisá tus productos</h3><p className="text-sm">{data.report.hasInvoice ? data.lines.length : data.report.products.length} artículos · {data.report.totals.physical} unidades físicas</p></div>
@@ -83,17 +96,20 @@ export function CommerceProductReview({ studioId, batchId, refreshKey, busy, onP
     {contextSources.length > 0 && <div className="mb-4 grid gap-3 lg:grid-cols-2 xl:grid-cols-3">
       {contextSources.map(photo => {
         const keys = Array.isArray(photo.recognition?.matched_group_keys) ? photo.recognition.matched_group_keys : [];
+        const directLabels = Array.isArray(photo.recognition?.matched_products) ? photo.recognition.matched_products.map(item => item.label).filter(Boolean) : [];
         const invoiceArticles = data.lines.filter(line => line.matched_group_keys.some(key => keys.includes(key)));
+        const articleLabels = directLabels.length ? directLabels : invoiceArticles.map(line => line.description);
         return <article key={photo.source_index} className="overflow-hidden rounded-2xl border-2 border-sky-500 bg-sky-50 p-3">
           <div className="flex gap-3">
             <img src={photo.source_url} alt="Foto con varios productos" className="h-24 w-24 shrink-0 rounded-xl border-2 border-sky-300 object-cover" />
             <div className="min-w-0"><h4 className="font-black">FOTO CON VARIOS PRODUCTOS</h4><p className="mt-1 text-xs font-bold text-sky-700">ARTÍCULOS DE LA FACTURA</p>
-              <div className="mt-2 flex flex-wrap gap-1">{invoiceArticles.length ? invoiceArticles.map(line => <span key={line.id} className="rounded-lg border-2 border-violet-800 bg-white px-2 py-1 text-xs font-bold">{line.description}</span>) : <span className="text-xs font-bold">Sin coincidencia segura en factura</span>}</div>
+              <div className="mt-2 flex flex-wrap gap-1">{articleLabels.length ? articleLabels.map((label, index) => <span key={`${photo.source_index}-${index}`} className="rounded-lg border-2 border-violet-800 bg-white px-2 py-1 text-xs font-bold">{label}</span>) : <span className="text-xs font-bold">Sin coincidencia segura en factura</span>}</div>
             </div>
           </div>
         </article>;
       })}
     </div>}
+    {unassignedSources.length > 0 && <div className="mb-4 rounded-2xl border-2 border-amber-400 bg-amber-50 p-3"><div className="mb-2 flex items-center justify-between gap-2"><b>IMÁGENES SIN ASIGNAR</b><span className="text-xs font-bold">{unassignedSources.length} · NO SUMAN STOCK</span></div><div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">{unassignedSources.map(photo => <div key={photo.source_index} className="flex gap-2 rounded-xl border-2 border-amber-300 bg-white p-2"><a href={photo.source_url} target="_blank" rel="noreferrer" className="shrink-0"><img src={photo.source_url} alt="Imagen sin asignar" className="h-20 w-20 rounded-lg object-cover" /></a><div className="min-w-0 flex-1"><div className="mb-1 text-[10px] font-black">SIN ASIGNAR · {photo.recognition?.suggested_role || "Detalle"}</div><select aria-label={`Asignar imagen ${photo.source_index}`} value={unassignedTargets[photo.source_index] || ""} disabled={disabled} onChange={event => setUnassignedTargets(values => ({ ...values, [photo.source_index]: event.target.value }))} className="h-9 w-full rounded-lg border-2 border-violet-800 bg-white px-2 text-xs"><option value="">Elegir artículo…</option>{data.lines.map(line => <option key={line.id} value={line.id}>{line.description}</option>)}</select><button disabled={disabled || !unassignedTargets[photo.source_index]} className="mt-1 h-9 w-full rounded-lg bg-violet-800 px-2 text-xs font-bold text-white disabled:opacity-40" onClick={() => void assignEvidence(photo.source_index, unassignedTargets[photo.source_index] || "", photo.recognition?.suggested_role)}>Asignar</button></div></div>)}</div></div>}
     <div className="grid items-start gap-4 lg:grid-cols-2 xl:grid-cols-3">
       {display.map(product => {
         const front = product.images.front[0];
@@ -155,8 +171,8 @@ export function CommerceProductReview({ studioId, batchId, refreshKey, busy, onP
       {data.report.lines.filter(line => line.deficit > 0 && !data.report.products.some(p => p.allocations.some(a => a.lineId === line.id) || data.lines.find(l => l.id === line.id)?.matched_group_keys.includes(p.groupKey))).map(line => <article key={line.id} className="overflow-hidden rounded-2xl border-2 border-violet-800 p-3"><h4 className="mb-2 text-center text-lg font-black">{line.name}</h4><div className="flex h-44 w-full items-center justify-center rounded-xl border-2 border-dashed border-violet-700 bg-violet-50"><span className="text-6xl">↑ <span className="text-sky-500">?</span></span></div><div className="my-3 grid grid-cols-4 gap-2"><span className="flex min-h-14 items-center justify-center rounded-xl border-2 border-violet-800 text-4xl font-bold">↓ <span className="text-xl text-sky-500">?</span></span><span className="flex min-h-14 items-center justify-center rounded-xl border-2 border-violet-800 text-4xl font-bold">X <span className="text-xl text-sky-500">?</span></span><span className="flex min-h-14 items-center justify-center rounded-xl border-2 border-violet-800 text-4xl font-bold">O</span><span className="mx-auto self-center text-5xl text-violet-800">●</span></div><div className="flex items-center justify-between rounded-xl border-2 border-violet-800 p-3 text-sm"><span>Factura <b>{line.original}</b></span><span>Recibido <b>0</b></span></div><p className="mt-3 rounded-xl bg-sky-100 px-3 py-2 font-bold">FALTAN {line.deficit}</p>{line.pending ? <button disabled={disabled} className="mt-3 min-h-11 w-full rounded-xl border-2 border-violet-800 px-4 py-2 text-sm font-bold disabled:opacity-40" onClick={() => void decide("shortage", undefined, line.id)}>Confirmar faltante</button> : <p className="mt-3 text-center text-sm font-bold">✓ Faltante confirmado</p>}</article>)}
     </div>
     <div className="sticky bottom-2 mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border-2 border-violet-800 bg-white p-3 shadow-lg">
-      <p className="text-sm font-bold">{data.report.pending ? `${data.report.pending} por revisar` : "Cantidades revisadas"}</p>
-      <button disabled={disabled || data.report.pending > 0} className={`${button} bg-violet-800 text-white`} onClick={onReceive}>{data.editable ? `Ingresar ${data.report.totals.physical} al stock` : "Recepción en stock / en proceso"}</button>
+      <p className="text-sm font-bold">{totalPending ? `${totalPending} por revisar` : "Cantidades revisadas"}</p>
+      <button disabled={disabled || totalPending > 0} className={`${button} bg-violet-800 text-white`} onClick={onReceive}>{data.editable ? `Ingresar ${data.report.totals.physical} al stock` : "Recepción en stock / en proceso"}</button>
     </div>
     {selected && gallery && <div role="dialog" aria-modal="true" aria-label={`Fotos de ${selected.name}`} className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-3" onClick={() => setGallery(null)}>
       <div className="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-3xl border-2 border-violet-800 bg-white p-4 text-violet-950" onClick={event => event.stopPropagation()}>

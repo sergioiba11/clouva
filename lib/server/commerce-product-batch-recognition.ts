@@ -123,6 +123,7 @@ export type CommerceBatchGroup = {
   images: CommerceBatchImageRole[];
   physicalUnits?: CommerceBatchPhysicalUnit[];
   contextOnly?: boolean;
+  unassignedEvidence?: boolean;
   observedProducts?: string[];
   contextReason?: string;
   contextReferences?: CommerceBatchContextReference[];
@@ -2175,52 +2176,76 @@ async function anchorProductsToInvoice(args: {
   expectedProducts: CommerceBatchExpectedProduct[];
   imagesByIndex: Map<number, StoredBatchImage>;
   spotName: string;
-}) {
+}): Promise<CommerceBatchGroup[]> {
   if (!args.expectedProducts.length || !args.productGroups.length) return args.productGroups;
+
+  // Final assignment is PHOTO-first. Earlier passes may have accidentally grouped
+  // unrelated photos; splitting here prevents one wrong image from contaminating
+  // an entire invoice article.
+  const candidates: CommerceBatchGroup[] = args.productGroups.flatMap((group) =>
+    group.images.map((image) => {
+      const ownIdentifiers = group.visibleIdentifiers.filter((identifier) =>
+        identifier.sourceIndex == null || identifier.sourceIndex === image.sourceIndex,
+      );
+      const ownsPrimaryIdentifier = Boolean(
+        group.identifier && ownIdentifiers.some((identifier) =>
+          canonicalCodeKey(identifier.type, identifier.value)
+            === canonicalCodeKey(group.identifier!.type, group.identifier!.value),
+        ),
+      );
+      return {
+        ...group,
+        groupKey: `${group.groupKey}-img-${image.sourceIndex}`,
+        unitCount: 1,
+        identifier: ownsPrimaryIdentifier ? group.identifier : null,
+        visibleIdentifiers: ownIdentifiers,
+        physicalUnits: [{ sourceIndexes: [image.sourceIndex], confidence: group.confidence }],
+        images: [image],
+        contextOnly: false,
+        unassignedEvidence: false,
+        contextMatches: undefined,
+        contextReferences: undefined,
+      };
+    }),
+  );
 
   const assignments = new Map<string, { invoiceIndex: number; trueExtra: boolean; confidence: number; reason: string }>();
 
-  for (let offset = 0; offset < args.productGroups.length; offset += 10) {
-    const chunk = args.productGroups.slice(offset, offset + 10);
+  for (let offset = 0; offset < candidates.length; offset += 10) {
+    const chunk = candidates.slice(offset, offset + 10);
     const refs = (await Promise.all(chunk.map(async (group) => {
-      const representative = group.images.find((image) => image.role === "Frente")
-        ?? group.images.find((image) => image.role === "Atrás")
-        ?? group.images[0];
-      const source = representative ? args.imagesByIndex.get(representative.sourceIndex) : undefined;
+      const image = group.images[0];
+      const source = image ? args.imagesByIndex.get(image.sourceIndex) : undefined;
       if (!source) return null;
       const stored = await downloadGeneratedMediaObject(source.storagePath);
       return {
         groupKey: group.groupKey,
-        sourceIndex: representative.sourceIndex,
+        sourceIndex: image.sourceIndex,
         mimeType: stored.mimeType.startsWith("image/") ? stored.mimeType : source.mimeType,
         data: stored.bytes.toString("base64"),
       };
     }))).filter((value): value is NonNullable<typeof value> => Boolean(value));
 
     const prompt = [
-      "Sos el asignador FINAL de una recepción física de CLOUVA cuando YA EXISTE FACTURA.",
-      "La FACTURA define los únicos lugares/artículos base de la recepción. No inventes tarjetas nuevas por cada foto.",
-      "Cada groupKey candidato proviene de una o más fotos y puede ser frente, dorso, lateral, etiqueta, código o detalle de un artículo de factura.",
-      "Tu tarea es asignar CADA groupKey a exactamente un renglón de factura mediante invoiceIndex 1-based.",
-      "Compará todo lo visible: forma de caja/bolsa/blister, colores, logos, marca, modelo, palabras, tipografía, conector, potencia, capacidad, plataforma, especificaciones, iconos, código y diseño.",
-      "REGLA CRÍTICA: frente y dorso de la misma caja pertenecen al MISMO renglón aunque el texto visible sea distinto o el dorso tenga más especificaciones.",
-      "REGLA CRÍTICA: un barcode que aparece solo atrás NO crea otro producto si esa caja coincide visual/comercialmente con un renglón de factura.",
-      "La descripción de factura puede estar abreviada, pero NO borres una identidad física inequívoca. Si la caja dice claramente otra marca/modelo y no existe ningún renglón compatible, eso sí puede ser un producto físico extra aunque después la reconciliación sugiera que fue cobrado como otro.",
-      "trueExtra=true e invoiceIndex=0 SOLO cuando la evidencia muestra claramente un producto físico distinto que realmente no puede corresponder a NINGÚN renglón de factura.",
-      "Sé extremadamente conservador con trueExtra: una vista trasera, lateral, etiqueta, código o una lectura OCR rara NO es suficiente para declarar un extra.",
-      "Si existe una coincidencia comercial razonable con un renglón, asignalo a ese renglón y trueExtra=false. Pero una marca/modelo inequívocamente incompatible no se fuerza solo para completar cantidades.",
-      "No uses cantidades para inventar identidad. La factura indica cantidad esperada y las fotos indican cantidad física.",
+      "Sos el asignador FINAL de FOTOS a renglones de factura de CLOUVA.",
+      "La factura define los artículos base. Cada groupKey de esta pasada representa UNA sola foto.",
+      "Para cada foto elegí UNA de tres salidas: (1) invoiceIndex 1-based si pertenece con evidencia suficiente a ese artículo; (2) invoiceIndex=0 y trueExtra=false si NO hay evidencia suficiente: queda SIN ASIGNAR; (3) invoiceIndex=0 y trueExtra=true SOLO si la foto demuestra inequívocamente un producto físico extra que no corresponde a ningún renglón.",
+      "NUNCA fuerces una foto al artículo más parecido solo para que todas queden asignadas.",
+      "Compará forma exacta de caja/bolsa/blister, colores, logos, marca, modelo, palabras, tipografía, conector, potencia, capacidad, plataforma, especificaciones, iconos, código y diseño.",
+      "Frente y dorso de la misma caja pertenecen al MISMO renglón aunque el texto visible sea distinto.",
+      "Un barcode visto atrás NO crea otro producto si el packaging coincide con un artículo de factura.",
+      "Si la foto es dorso/lateral/etiqueta/detalle y no podés vincularla con suficiente seguridad, dejala SIN ASIGNAR; NO la declares extra.",
+      "Una marca/modelo inequívocamente incompatible no se fuerza a ningún renglón.",
+      "La cantidad esperada de factura NO decide identidad.",
+      "Usá confidence como confianza REAL de la asignación de ESTA FOTO.",
       'Spot: "' + args.spotName + '".',
       "Factura canónica: " + JSON.stringify(args.expectedProducts.map((item, index) => ({ invoiceIndex: index + 1, ...item }))),
-      "Candidatos: " + JSON.stringify(chunk.map((group) => ({
+      "Fotos candidatas (el nombre/marca de agrupamientos previos se ignora porque puede estar contaminado): " + JSON.stringify(chunk.map((group) => ({
         groupKey: group.groupKey,
-        name: group.name,
-        brand: group.brand,
-        model: group.model,
-        unitCount: group.unitCount,
-        identifier: group.identifier,
+        sourceIndex: group.images[0]?.sourceIndex,
+        priorRole: group.images[0]?.role,
+        identifierVisibleEnEstaFoto: group.identifier,
         visibleIdentifiers: group.visibleIdentifiers,
-        images: group.images,
       }))),
       refs.length
         ? "Orden de referencias: " + refs.map((ref, index) => "imagen " + (index + 1) + " = " + ref.groupKey + " (sourceIndex " + ref.sourceIndex + ")").join(" · ")
@@ -2252,40 +2277,62 @@ async function anchorProductsToInvoice(args: {
         });
       }
     } catch {
-      // Deterministic fallback below keeps invoice-first behavior even if Vertex fails.
+      // Model failure must never force a random invoice assignment.
     }
   }
 
   const buckets = new Map<number, CommerceBatchGroup[]>();
   const bucketConfidence = new Map<number, number[]>();
   const trueExtras: CommerceBatchGroup[] = [];
+  const unassigned: CommerceBatchGroup[] = [];
 
-  for (const group of args.productGroups) {
-    const fallback = bestInvoiceAnchor(group, args.expectedProducts);
+  for (const group of candidates) {
     const ai = assignments.get(group.groupKey);
-    const explicitFront = group.images.some((image) => image.role === "Frente");
+    const aiInvoiceAccepted = Boolean(
+      ai
+      && ai.invoiceIndex >= 1
+      && ai.invoiceIndex <= args.expectedProducts.length
+      && ai.confidence >= 0.72,
+    );
     const definitelyExtra = Boolean(
       ai?.trueExtra
       && ai.invoiceIndex === 0
-      && ai.confidence >= 0.97
-      && explicitFront
-      && fallback.score < 0.3,
+      && ai.confidence >= 0.995
+      && group.images[0]?.role === "Frente",
     );
 
     if (definitelyExtra) {
       trueExtras.push({
         ...group,
-        groupKey: "extra-" + String(trueExtras.length + 1).padStart(3, "0"),
+        groupKey: `extra-evidence-${group.images[0]?.sourceIndex ?? trueExtras.length + 1}`,
         needsReview: true,
       });
       continue;
     }
 
-    const invoiceIndex = ai && ai.invoiceIndex >= 1 && ai.invoiceIndex <= args.expectedProducts.length
-      ? ai.invoiceIndex
-      : fallback.invoiceIndex;
+    const invoiceIndex = aiInvoiceAccepted ? ai!.invoiceIndex : 0;
+
+    if (!invoiceIndex) {
+      unassigned.push({
+        ...group,
+        groupKey: `unassigned-${group.images[0]?.sourceIndex ?? unassigned.length + 1}`,
+        contextOnly: true,
+        unassignedEvidence: true,
+        observedProducts: [],
+        contextMatches: [],
+        contextReason: ai?.reason
+          ? `Sin coincidencia segura con la factura: ${ai.reason}`
+          : "Sin coincidencia segura con la factura.",
+        needsReview: true,
+      });
+      continue;
+    }
+
     buckets.set(invoiceIndex, [...(buckets.get(invoiceIndex) ?? []), group]);
-    bucketConfidence.set(invoiceIndex, [...(bucketConfidence.get(invoiceIndex) ?? []), ai?.confidence ?? fallback.score]);
+    bucketConfidence.set(invoiceIndex, [
+      ...(bucketConfidence.get(invoiceIndex) ?? []),
+      ai!.confidence,
+    ]);
   }
 
   const anchored: CommerceBatchGroup[] = [];
@@ -2306,7 +2353,7 @@ async function anchorProductsToInvoice(args: {
       name: line.description || merged.name,
       brand: line.brand || merged.brand,
       model: line.model || merged.model,
-      needsReview: merged.needsReview || (bucketConfidence.get(invoiceIndex) ?? []).some((confidence) => confidence < 0.55),
+      needsReview: merged.needsReview || (bucketConfidence.get(invoiceIndex) ?? []).some((confidence) => confidence < 0.72),
     };
     const refined = await refineMergedGroup({
       group: canonical,
@@ -2324,7 +2371,7 @@ async function anchorProductsToInvoice(args: {
   }
 
   const consolidatedExtras = consolidateDeterministicCommercialIdentity(trueExtras);
-  return [...anchored, ...consolidatedExtras];
+  return [...anchored, ...consolidatedExtras, ...unassigned];
 }
 
 
@@ -2649,14 +2696,15 @@ export async function analyzeCommerceProductBatch(args: {
     return leftIndex - rightIndex;
   });
 
+  const finalProductCount = invoiceAnchoredProducts.filter((group) => !group.contextOnly).length;
   await args.onProgress?.({
     stage: "done",
-    completed: invoiceAnchoredProducts.length,
-    total: invoiceAnchoredProducts.length,
-    provisionalProducts: invoiceAnchoredProducts.length,
+    completed: finalProductCount,
+    total: finalProductCount,
+    provisionalProducts: finalProductCount,
     message: (args.expectedProducts ?? []).length
-      ? invoiceAnchoredProducts.length + " artículos acomodados sobre la factura"
-      : invoiceAnchoredProducts.length + " productos listos",
+      ? finalProductCount + " artículos con evidencia acomodada sobre la factura"
+      : finalProductCount + " productos listos",
     updatedAt: new Date().toISOString(),
   });
   return result;

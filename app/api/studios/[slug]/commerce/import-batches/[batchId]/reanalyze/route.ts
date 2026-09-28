@@ -363,6 +363,8 @@ export async function POST(
       .filter((group) => group.contextOnly)
       .map((group) => ({
         contextKey: group.groupKey,
+        unassignedEvidence: group.unassignedEvidence === true,
+        suggestedRole: group.images[0]?.role ?? "Detalle",
         sourceIndexes: group.images.map((image) => image.sourceIndex),
         observedProducts: group.observedProducts ?? [],
         matches: group.contextMatches ?? [],
@@ -413,6 +415,8 @@ export async function POST(
           recognition: {
             ...(Object.keys(upload).length ? { upload } : {}),
             context_only: true,
+            unassigned_evidence: context?.unassignedEvidence === true,
+            suggested_role: context?.suggestedRole ?? "Detalle",
             observed_products: context?.observedProducts ?? [],
             matched_group_keys: context?.matches.map((match) => match.groupKey) ?? [],
             matched_products: context?.matches.map((match) => ({

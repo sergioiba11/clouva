@@ -253,6 +253,8 @@ export async function POST(
     const receiptState = await loadProductReconciliation(admin, batch.id, spot.id);
     groups = groupsFromMetadata(receiptState.metadata);
     if (receiptState.batch.status === "analyzing") return NextResponse.json({ error: "El lote se está actualizando." }, { status: 409 });
+    const unassignedEvidence = receiptState.sources.filter((source) => record(source.recognition).unassigned_evidence === true).length;
+    if (unassignedEvidence) return NextResponse.json({ error: `Hay ${unassignedEvidence} imagen${unassignedEvidence === 1 ? "" : "es"} sin asignar. Resolvelas antes de ingresar el stock.` }, { status: 409 });
     if (receiptState.report.pending) return NextResponse.json({ error: "Revisá los productos pendientes antes de ingresar el stock.", report: receiptState.report }, { status: 409 });
     if (receiptState.batch.status === "review") {
       const { data: claimed, error: claimError } = await admin.from("commerce_product_import_batches")
