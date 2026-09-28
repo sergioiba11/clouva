@@ -6,9 +6,17 @@ const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
 
 test("IGLÚ home routes public controls into functional surfaces", async () => {
   const source = await read("./components/iglu/IgluPublicSpotHome.tsx");
+  const adminMedia = await read("./components/iglu/IgluAdminMediaLink.tsx");
+  const streamButton = await read("./components/iglu/IgluStreamButton.tsx");
+  const css = await read("./components/iglu/IgluPublicSpotHome.module.css");
   assert.match(source, /\/reservar/);
-  assert.match(source, /IGLU_MEDIA_PATH/);
+  assert.match(source, /IgluAdminMediaLink/);
+  assert.match(source, /#admin-media/);
   assert.match(source, /IgluStreamButton/);
+  assert.match(adminMedia, /\/api\/iglu\/media\/manage/);
+  assert.doesNotMatch(streamButton, /mediaHref/);
+  assert.match(css, /@media \(min-width: 900px\)/);
+  assert.match(css, /1180px/);
   assert.match(source, /\/perfil/);
   assert.match(source, /IgluMerchCarousel/);
 });
@@ -32,6 +40,7 @@ test("IGLÚ calendar supports mobile long press without replacing canonical Agen
 
 test("IGLÚ Media uses the canonical radio bucket and real library", async () => {
   const api = await read("./app/api/iglu/media/audio/route.ts");
+  const manage = await read("./app/api/iglu/media/manage/route.ts");
   const page = await read("./components/iglu/IgluMediaLive.tsx");
   assert.match(api, /iglu-radio/);
   assert.match(api, /radio_tracks/);
@@ -40,6 +49,8 @@ test("IGLÚ Media uses the canonical radio bucket and real library", async () =>
   assert.match(api, /getActiveKickLive/);
   assert.match(api, /fallbackTrack/);
   assert.match(api, /primary_track_id: track\.id/);
+  assert.match(api, /requireMediaAdmin/);
+  assert.match(manage, /requireMediaAdmin/);
   assert.match(page, /authenticatedFetch/);
   assert.match(page, /SUBIR Y PONER EN PLAY/);
   assert.match(page, /EN VIVO · KICK/);
@@ -60,6 +71,7 @@ test("IGLÚ canonical public route lives at /eliglurecords and legacy Matrix rou
   assert.match(legacyMedia, /IGLU_MEDIA_PATH/);
   assert.match(streamButton, /kickLive/);
   assert.match(streamButton, /youtubeLive/);
+  assert.match(streamButton, /const liveUrl = activeLiveUrl\(payload\)[\s\S]*if \(liveUrl\)[\s\S]*window\.location\.assign\(liveUrl\)[\s\S]*pickRadioTrack/);
   assert.match(streamButton, /fallbackTrack/);
   assert.match(kick, /public\/v1\/channels/);
   assert.match(kick, /is_live/);

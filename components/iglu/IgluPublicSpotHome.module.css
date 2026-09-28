@@ -92,7 +92,7 @@
   position: absolute;
   top: calc(100% + 10px);
   left: 0;
-  width: 205px;
+  width: 245px;
   display: grid;
   gap: 2px;
   padding: 10px;
@@ -116,6 +116,30 @@
   text-decoration: none;
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
+}
+
+.topRight {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.adminMediaLink {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  border: 1px solid rgba(154, 220, 255, 0.24);
+  border-radius: 999px;
+  color: rgba(238, 249, 255, 0.92);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-decoration: none;
+  background: rgba(3, 16, 28, 0.78);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(14px);
 }
 
 .topActions {
@@ -620,5 +644,131 @@
 
   .entityGrid article {
     min-height: 0;
+  }
+}
+
+@media (max-width: 699px) {
+  .topRight {
+    gap: 4px;
+  }
+
+  .adminMediaLink {
+    width: 44px;
+    min-width: 44px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .adminMediaLink span {
+    display: none;
+  }
+}
+
+@media (min-width: 900px) {
+  .viewport {
+    padding: 28px 28px 0;
+  }
+
+  .app {
+    width: min(1180px, calc(100vw - 56px));
+    height: min(760px, calc(100vh - 56px));
+    min-height: 680px;
+    aspect-ratio: auto;
+    margin: 0 auto;
+    border-radius: 34px;
+  }
+
+  .heroBackground {
+    height: 100%;
+    background-size: cover;
+    background-position: center 34%;
+  }
+
+  .heroShade {
+    background:
+      linear-gradient(90deg, rgba(0, 5, 12, 0.2), rgba(0, 5, 12, 0.04) 50%, rgba(0, 5, 12, 0.24)),
+      linear-gradient(180deg, rgba(0, 4, 10, 0.02) 0%, rgba(0, 5, 12, 0.08) 48%, rgba(0, 5, 12, 0.82) 100%);
+  }
+
+  .topBar {
+    top: 24px;
+    left: 30px;
+    right: 30px;
+  }
+
+  .brand {
+    top: 20px;
+    width: 190px;
+  }
+
+  .contentStack {
+    top: auto;
+    left: 42px;
+    right: 42px;
+    bottom: 98px;
+    display: grid;
+    grid-template-columns: minmax(0, 0.9fr) minmax(420px, 0.75fr);
+    gap: 34px;
+    align-items: end;
+  }
+
+  .heroCopy {
+    text-align: left;
+  }
+
+  .heroCopy h1 {
+    font-size: clamp(48px, 5vw, 70px);
+    letter-spacing: 0.035em;
+  }
+
+  .heroActions {
+    width: min(100%, 540px);
+    margin-top: 18px;
+    gap: 14px;
+  }
+
+  .reserveButton {
+    min-height: 58px;
+    font-size: 14px;
+  }
+
+  .playButton {
+    width: 62px;
+    height: 62px;
+  }
+
+  .cards {
+    margin-top: 0;
+  }
+
+  .cardRow {
+    gap: 14px;
+  }
+
+  .assetCard {
+    border-radius: 22px;
+  }
+
+  .merchCard {
+    margin-top: 14px;
+    border-radius: 24px;
+  }
+
+  .bottomNav {
+    left: 50%;
+    right: auto;
+    bottom: 18px;
+    width: 520px;
+    transform: translateX(-50%);
+  }
+
+  .entityFacts {
+    width: min(calc(100% - 56px), 1180px);
+    padding-top: 48px;
+  }
+
+  .adminMediaLink {
+    min-height: 42px;
+    padding-inline: 16px;
   }
 }

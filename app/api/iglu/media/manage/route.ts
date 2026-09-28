@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { requireStudioManager } from "@/lib/server/studio-permissions";
-import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
+import { requireMediaAdmin } from "@/lib/server/media-auth";
+import { isAuthError } from "@/lib/server/supabase";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -9,8 +9,7 @@ const IGLU_SLUG = "el-iglu";
 
 export async function GET(request: NextRequest) {
   try {
-    const { user } = await requireUser(request);
-    const admin = createAdminSupabase();
+    const { admin } = await requireMediaAdmin(request);
 
     const { data: studio, error: studioError } = await admin
       .from("studios")
@@ -23,14 +22,8 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ canManage: false, error: "No encontramos El Iglú." }, { status: 404 });
     }
 
-    const permission = await requireStudioManager({
-      admin,
-      userId: user.id,
-      studioId: studio.id,
-    });
-
     return NextResponse.json(
-      { canManage: true, role: permission.role },
+      { canManage: true, role: "admin" },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (error) {

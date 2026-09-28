@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Menu, Search, ShoppingCart, UserRound } from "lucide-react";
+import { IgluAdminMediaLink } from "@/components/iglu/IgluAdminMediaLink";
 import { IgluMerchCarousel } from "@/components/iglu/IgluMerchCarousel";
 import { IgluStreamButton } from "@/components/iglu/IgluStreamButton";
 import { commerceProductImages } from "@/lib/commerce-store-data";
@@ -52,6 +53,7 @@ export function IgluPublicSpotHome({ data }: { data: IgluSiteData }) {
               <Link href="/iglu/pagos-unicos">Carta/Menu</Link>
               <Link href="/iglu/sesiones">Sesiones</Link>
               <Link href={profileHref}>Perfil</Link>
+              <IgluAdminMediaLink href={`${mediaHref}#admin-media`} />
             </nav>
           </details>
 
@@ -83,7 +85,6 @@ export function IgluPublicSpotHome({ data }: { data: IgluSiteData }) {
             </Link>
             <IgluStreamButton
               className={styles.playButton}
-              mediaHref={mediaHref}
               studioName={data.publicStudio.publicName}
             />
           </div>
