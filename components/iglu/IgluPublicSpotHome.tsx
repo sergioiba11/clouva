@@ -74,10 +74,20 @@ export function IgluPublicSpotHome({ data }: { data: IgluSiteData }) {
           <img src={LATEST_IGLU_ASSETS.logo} alt="El Iglú — IGLÚ Records en CLOUVA" />
         </div>
 
+        <nav className={styles.desktopNav} aria-label="Navegación desktop de IGLÚ">
+          <Link href="/iglu/artistas">Players</Link>
+          <Link href={agendaHref}>Reservas</Link>
+          <Link href={merchHref}>Merch</Link>
+          <Link href="/iglu/sesiones">Sesiones</Link>
+          <Link href={mediaHref}>Media / Live</Link>
+          <IgluAdminMediaLink href={`${mediaHref}#admin-media`} />
+        </nav>
+
         <div className={styles.contentStack}>
         <section className={styles.heroCopy}>
+          <p className={styles.heroTag}>IGLÚ RECORDS · STUDIO · RADIO</p>
           <h1>El Iglú</h1>
-          <p className="sr-only">{data.studio.description || data.studio.tagline || "El Iglú Records es un sello, estudio y espacio musical dentro de CLOUVA."}</p>
+          <p className={styles.heroLead}>{data.studio.description || data.studio.tagline || "Sello, estudio y espacio musical dentro de CLOUVA."}</p>
           <div className={styles.heroActions}>
             <Link href={reserveHref} className={styles.reserveButton}>
               <span>RESERVAR SESIÓN</span>

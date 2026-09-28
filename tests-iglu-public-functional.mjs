@@ -15,8 +15,12 @@ test("IGLÚ home routes public controls into functional surfaces", async () => {
   assert.match(source, /IgluStreamButton/);
   assert.match(adminMedia, /\/api\/iglu\/media\/manage/);
   assert.doesNotMatch(streamButton, /mediaHref/);
-  assert.match(css, /@media \(min-width: 900px\)/);
-  assert.match(css, /1180px/);
+  assert.match(source, /desktopNav/);
+  assert.match(source, /heroLead/);
+  assert.match(css, /@media \(min-width: 700px\)/);
+  assert.match(css, /width: 100%/);
+  assert.match(css, /1400px/);
+  assert.match(css, /\.bottomNav \{\s*display: none/);
   assert.match(source, /\/perfil/);
   assert.match(source, /IgluMerchCarousel/);
 });
