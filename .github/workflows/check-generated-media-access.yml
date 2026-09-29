@@ -1,0 +1,32 @@
+name: Check CLOUVA generated media access
+
+on:
+  push:
+    branches:
+      - ops/check-generated-media-access
+    paths:
+      - ".github/workflows/check-generated-media-access.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA_EMAIL }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Inspect bucket IAM and public access prevention
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud storage buckets describe gs://clouva-generated-media --format='yaml(iamConfiguration.publicAccessPrevention,iamConfiguration.uniformBucketLevelAccess)'
+          echo '--- IAM ---'
+          gcloud storage buckets get-iam-policy gs://clouva-generated-media --format=json
