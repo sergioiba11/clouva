@@ -2394,9 +2394,10 @@ async function anchorProductsToInvoice(args: {
 
   for (const group of args.productGroups) {
     if (hasInvoiceSlot(group)) {
-      buckets.set(group.invoiceIndex, [...(buckets.get(group.invoiceIndex) ?? []), group]);
-      bucketConfidence.set(group.invoiceIndex, [
-        ...(bucketConfidence.get(group.invoiceIndex) ?? []),
+      const invoiceIndex = group.invoiceIndex!;
+      buckets.set(invoiceIndex, [...(buckets.get(invoiceIndex) ?? []), group]);
+      bucketConfidence.set(invoiceIndex, [
+        ...(bucketConfidence.get(invoiceIndex) ?? []),
         group.invoiceMatchConfidence ?? 0.35,
       ]);
       continue;
