@@ -8,8 +8,10 @@ import time
 
 import requests
 import runpod
+from runpod.serverless import VolumeCache
 
 LTX_ROOT = Path(os.environ.get("LTX_ROOT", "/opt/LTX-Video"))
+HF_CACHE = os.environ.get("HF_HOME", "/root/.cache/huggingface")
 
 
 def run(args, cwd=None):
@@ -260,9 +262,10 @@ def process(payload):
 def handler(job):
     payload = job.get("input") or {}
     try:
-        return process(payload)
+        with VolumeCache(dirs=[HF_CACHE]):
+            return process(payload)
     except Exception as exc:
-        return {"error": str(exc)[:1500]}
+        raise RuntimeError(str(exc)[:1500]) from exc
 
 
 runpod.serverless.start({"handler": handler})
