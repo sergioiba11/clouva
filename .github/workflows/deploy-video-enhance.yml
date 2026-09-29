@@ -23,7 +23,7 @@ env:
   PROJECT_ID: gen-lang-client-0737053175
   REGION: us-central1
   JOB_NAME: clouva-video-enhance-gpu
-  GPU_TYPE: nvidia-rtx-pro-6000
+  GPU_TYPE: nvidia-l4
   RUNTIME_SERVICE_ACCOUNT: clouva-web-runtime@gen-lang-client-0737053175.iam.gserviceaccount.com
 
 jobs:
@@ -86,7 +86,7 @@ jobs:
           status="$(gcloud builds describe "$build_id" --project "$PROJECT_ID" --format='value(status)')"
           test "$status" = "SUCCESS"
 
-      - name: Deploy RTX PRO 6000 Cloud Run job when quota is available
+      - name: Deploy NVIDIA L4 Cloud Run job
         id: deploy
         shell: bash
         env:
@@ -98,8 +98,8 @@ jobs:
             --region "$REGION"
             --image "$IMAGE"
             --service-account "$RUNTIME_SERVICE_ACCOUNT"
-            --cpu 20
-            --memory 80Gi
+            --cpu 4
+            --memory 16Gi
             --gpu 1
             --gpu-type "$GPU_TYPE"
             --parallelism 1
@@ -132,10 +132,10 @@ jobs:
 
           if printf '%s' "$output" | grep -Eqi 'quota|GPUs without zonal redundancy|memory.*quota|RESOURCE_EXHAUSTED|MemAllocPerProjectRegion'; then
             echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Video AI image is ready, but Cloud Run quota is still below the RTX requirement."
+            echo "::warning::Video AI image is ready, but Cloud Run L4 quota is not available yet."
             {
               echo '### Video AI image ready; Cloud Run quota pending'
-              printf '%s\n' "- Image: $IMAGE" "- GPU target: $GPU_TYPE" "- Required memory: 80Gi" "- No GPU instance was left running."
+              printf '%s\n' "- Image: $IMAGE" "- GPU target: $GPU_TYPE" "- Required memory: 16Gi" "- No GPU instance was left running."
             } >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
