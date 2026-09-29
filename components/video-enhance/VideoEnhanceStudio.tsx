@@ -25,6 +25,15 @@ type EnhanceJob = {
 };
 
 type RuntimeStatus = { ready: boolean; reason: string | null; location: string };
+type VideoProject = {
+  id: string;
+  title: string;
+  status: string;
+  outputUrl: string | null;
+  thumbnailUrl: string | null;
+  targetDurationSeconds: number;
+  createdAt: string;
+};
 const activeStatuses = new Set(["queued", "processing"]);
 
 function videoMime(file: File) {
@@ -52,8 +61,11 @@ function bytesLabel(bytes: number | null) {
 export function VideoEnhanceStudio() {
   const { user, role, loading } = useAuth();
   const inputRef = useRef<HTMLInputElement>(null);
+  const [sourceMode, setSourceMode] = useState<"upload" | "clouva">("upload");
   const [file, setFile] = useState<File | null>(null);
   const [localPreview, setLocalPreview] = useState<string | null>(null);
+  const [videoProjects, setVideoProjects] = useState<VideoProject[]>([]);
+  const [selectedProjectId, setSelectedProjectId] = useState("");
   const [title, setTitle] = useState("Video AI");
   const [prompt, setPrompt] = useState("");
   const [negativePrompt, setNegativePrompt] = useState("blurry, jittery, distorted, inconsistent motion, text, watermark");
@@ -77,14 +89,21 @@ export function VideoEnhanceStudio() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  const sourcePreview = job?.sourceUrl || localPreview;
-  const canRun = Boolean(file && prompt.trim() && runtime?.ready && !busy);
+  const selectedProject = videoProjects.find((item) => item.id === selectedProjectId) ?? null;
+  const sourcePreview = job?.sourceUrl || selectedProject?.outputUrl || localPreview;
+  const hasSource = sourceMode === "upload" ? Boolean(file) : Boolean(selectedProject?.outputUrl);
+  const canRun = Boolean(hasSource && prompt.trim() && runtime?.ready && !busy);
 
   const loadHistory = useCallback(async () => {
-    const response = await authenticatedFetch("/api/video/enhance?limit=20");
-    const payload = await readApiJson<{ items: EnhanceJob[]; runtime: RuntimeStatus }>(response);
-    setHistory(payload.items);
-    setRuntime(payload.runtime);
+    const [enhanceResponse, projectsResponse] = await Promise.all([
+      authenticatedFetch("/api/video/enhance?limit=20"),
+      authenticatedFetch("/api/video/projects"),
+    ]);
+    const enhancePayload = await readApiJson<{ items: EnhanceJob[]; runtime: RuntimeStatus }>(enhanceResponse);
+    const projectsPayload = await readApiJson<{ projects: VideoProject[] }>(projectsResponse);
+    setHistory(enhancePayload.items);
+    setRuntime(enhancePayload.runtime);
+    setVideoProjects(projectsPayload.projects.filter((item) => item.status === "completed" && item.outputUrl));
   }, []);
 
   const refreshJob = useCallback(async (jobId: string) => {
@@ -124,8 +143,21 @@ export function VideoEnhanceStudio() {
 
   const pickFile = (next: File | null) => {
     if (localPreview) URL.revokeObjectURL(localPreview);
+    setSourceMode("upload");
+    setSelectedProjectId("");
     setFile(next);
     setLocalPreview(next ? URL.createObjectURL(next) : null);
+    setJob(null);
+    setError(null);
+    setNotice(null);
+  };
+
+  const pickClouvaProject = (projectId: string) => {
+    if (localPreview) URL.revokeObjectURL(localPreview);
+    setSourceMode("clouva");
+    setFile(null);
+    setLocalPreview(null);
+    setSelectedProjectId(projectId);
     setJob(null);
     setError(null);
     setNotice(null);
@@ -147,16 +179,17 @@ export function VideoEnhanceStudio() {
     seed,
     trimStartSeconds: Math.max(0, Number(trimStart) || 0),
     trimDurationSeconds: trimDuration.trim() ? Math.max(0.1, Number(trimDuration)) : null,
-  }), [title, prompt, negativePrompt, model, mode, strength, preserveMotion, preserveCamera, preserveSubject, preserveAudio, resolution, fps, seed, trimStart, trimDuration]);
+    sourceProjectId: sourceMode === "clouva" ? selectedProjectId : null,
+  }), [title, prompt, negativePrompt, model, mode, strength, preserveMotion, preserveCamera, preserveSubject, preserveAudio, resolution, fps, seed, trimStart, trimDuration, sourceMode, selectedProjectId]);
 
   const createAndRun = async () => {
-    if (!file) return setError("Seleccioná un video base.");
+    if (!hasSource) return setError("Seleccioná un video base.");
     if (!prompt.trim()) return setError("Escribí qué transformación visual querés.");
     if (!runtime?.ready) return setError("La GPU de Video AI todavía no está habilitada.");
     setBusy(true);
     setError(null);
     setNotice(null);
-    setUploadPercent(0);
+    setUploadPercent(sourceMode === "upload" ? 0 : null);
     try {
       const createResponse = await authenticatedFetch("/api/video/enhance", {
         method: "POST",
@@ -164,32 +197,35 @@ export function VideoEnhanceStudio() {
       });
       const created = await readApiJson<{ job: EnhanceJob }>(createResponse);
       setJob(created.job);
-      const contentType = videoMime(file);
-      const prepareResponse = await authenticatedFetch(
-        `/api/video/enhance/${encodeURIComponent(created.job.id)}/upload`,
-        { method: "POST", body: JSON.stringify({ filename: file.name, size: file.size, contentType }) },
-      );
-      const prepared = await readApiJson<{ uploadUrl: string; storagePath: string; chunkBytes: number }>(prepareResponse);
-      await uploadFileResumable({
-        uploadUrl: prepared.uploadUrl,
-        file,
-        chunkBytes: prepared.chunkBytes,
-        contentType,
-        onProgress: (progress) => setUploadPercent(Math.round(progress.percent)),
-      });
 
-      const linkResponse = await authenticatedFetch(
-        `/api/video/enhance/${encodeURIComponent(created.job.id)}/upload`,
-        {
-          method: "PATCH",
-          body: JSON.stringify({
-            filename: file.name, size: file.size, contentType, storagePath: prepared.storagePath,
-          }),
-        },
-      );
-      const linked = await readApiJson<{ job: EnhanceJob }>(linkResponse);
-      setJob(linked.job);
-      setUploadPercent(100);
+      if (sourceMode === "upload" && file) {
+        const contentType = videoMime(file);
+        const prepareResponse = await authenticatedFetch(
+          `/api/video/enhance/${encodeURIComponent(created.job.id)}/upload`,
+          { method: "POST", body: JSON.stringify({ filename: file.name, size: file.size, contentType }) },
+        );
+        const prepared = await readApiJson<{ uploadUrl: string; storagePath: string; chunkBytes: number }>(prepareResponse);
+        await uploadFileResumable({
+          uploadUrl: prepared.uploadUrl,
+          file,
+          chunkBytes: prepared.chunkBytes,
+          contentType,
+          onProgress: (progress) => setUploadPercent(Math.round(progress.percent)),
+        });
+
+        const linkResponse = await authenticatedFetch(
+          `/api/video/enhance/${encodeURIComponent(created.job.id)}/upload`,
+          {
+            method: "PATCH",
+            body: JSON.stringify({
+              filename: file.name, size: file.size, contentType, storagePath: prepared.storagePath,
+            }),
+          },
+        );
+        const linked = await readApiJson<{ job: EnhanceJob }>(linkResponse);
+        setJob(linked.job);
+        setUploadPercent(100);
+      }
 
       const runResponse = await authenticatedFetch(
         `/api/video/enhance/${encodeURIComponent(created.job.id)}/run`,
@@ -231,6 +267,8 @@ export function VideoEnhanceStudio() {
   const reset = () => {
     setJob(null);
     pickFile(null);
+    setSourceMode("upload");
+    setSelectedProjectId("");
     setUploadPercent(null);
     setError(null);
     setNotice(null);
@@ -261,12 +299,33 @@ export function VideoEnhanceStudio() {
         <aside className="space-y-4 xl:sticky xl:top-20 xl:self-start">
           <section className="rounded-3xl border border-white/10 bg-white/[.035] p-4">
             <div className="mb-3 flex items-center gap-2"><Upload size={17} /><strong>Video base</strong></div>
-            <button type="button" onClick={() => inputRef.current?.click()} disabled={busy}
-              className="grid min-h-36 w-full place-items-center rounded-2xl border border-dashed border-white/15 bg-black/25 px-4 text-center text-sm text-white/45 hover:border-violet-400/50">
-              {file ? <span><strong className="block text-white">{file.name}</strong><span>{bytesLabel(file.size)}</span></span> : <span><Upload className="mx-auto mb-2" size={22} />MP4 · MOV · WebM<br />hasta 4 GB</span>}
-            </button>
-            <input ref={inputRef} type="file" className="hidden" accept="video/mp4,video/quicktime,video/webm" onChange={(event) => pickFile(event.target.files?.[0] ?? null)} />
-            {uploadPercent !== null ? <div className="mt-3"><div className="h-1.5 overflow-hidden rounded-full bg-white/10"><div className="h-full bg-violet-300 transition-all" style={{ width: `${uploadPercent}%` }} /></div><p className="mt-1 text-right text-[11px] text-white/40">{uploadPercent}%</p></div> : null}
+            <div className="mb-3 grid grid-cols-2 gap-2">
+              <button type="button" onClick={() => setSourceMode("upload")} className={`rounded-xl border px-3 py-2 text-xs font-bold ${sourceMode === "upload" ? "border-violet-400/45 bg-violet-400/15" : "border-white/10 bg-black/25 text-white/45"}`}>SUBIR VIDEO</button>
+              <button type="button" onClick={() => setSourceMode("clouva")} className={`rounded-xl border px-3 py-2 text-xs font-bold ${sourceMode === "clouva" ? "border-violet-400/45 bg-violet-400/15" : "border-white/10 bg-black/25 text-white/45"}`}>CLOUVA VIDEO</button>
+            </div>
+
+            {sourceMode === "upload" ? (
+              <>
+                <button type="button" onClick={() => inputRef.current?.click()} disabled={busy}
+                  className="grid min-h-36 w-full place-items-center rounded-2xl border border-dashed border-white/15 bg-black/25 px-4 text-center text-sm text-white/45 hover:border-violet-400/50">
+                  {file ? <span><strong className="block text-white">{file.name}</strong><span>{bytesLabel(file.size)}</span></span> : <span><Upload className="mx-auto mb-2" size={22} />MP4 · MOV · WebM<br />hasta 4 GB</span>}
+                </button>
+                <input ref={inputRef} type="file" className="hidden" accept="video/mp4,video/quicktime,video/webm" onChange={(event) => pickFile(event.target.files?.[0] ?? null)} />
+                {uploadPercent !== null ? <div className="mt-3"><div className="h-1.5 overflow-hidden rounded-full bg-white/10"><div className="h-full bg-violet-300 transition-all" style={{ width: `${uploadPercent}%` }} /></div><p className="mt-1 text-right text-[11px] text-white/40">{uploadPercent}%</p></div> : null}
+              </>
+            ) : (
+              <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
+                {videoProjects.length ? videoProjects.map((item) => (
+                  <button key={item.id} type="button" onClick={() => pickClouvaProject(item.id)}
+                    className={`flex w-full items-center gap-3 rounded-2xl border p-2 text-left ${selectedProjectId === item.id ? "border-violet-400/45 bg-violet-400/10" : "border-white/10 bg-black/25 hover:bg-white/[.06]"}`}>
+                    <div className="h-12 w-16 overflow-hidden rounded-xl bg-black">
+                      {item.thumbnailUrl ? <img src={item.thumbnailUrl} alt="" className="h-full w-full object-cover" /> : <div className="grid h-full place-items-center"><Film size={16} className="text-white/25" /></div>}
+                    </div>
+                    <div className="min-w-0 flex-1"><strong className="block truncate text-xs">{item.title}</strong><span className="text-[11px] text-white/40">{item.targetDurationSeconds}s · render final</span></div>
+                  </button>
+                )) : <p className="py-7 text-center text-xs text-white/30">No hay renders terminados en CLOUVA Video.</p>}
+              </div>
+            )}
           </section>
 
           <section className="rounded-3xl border border-white/10 bg-white/[.035] p-4">
