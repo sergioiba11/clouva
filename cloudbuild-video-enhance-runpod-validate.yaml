@@ -1,0 +1,17 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -f
+      - worker/video-enhance/Dockerfile.runpod
+      - -t
+      - us-central1-docker.pkg.dev/$PROJECT_ID/clouva/video-enhance-runpod:${_TAG}
+      - .
+images:
+  - us-central1-docker.pkg.dev/$PROJECT_ID/clouva/video-enhance-runpod:${_TAG}
+substitutions:
+  _TAG: validation
+timeout: 1800s
+options:
+  logging: CLOUD_LOGGING_ONLY
+  diskSizeGb: 100
