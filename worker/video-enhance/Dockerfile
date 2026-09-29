@@ -25,7 +25,8 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN python3 -m pip install --no-cache-dir -r requirements.txt
 COPY worker.py ./
+COPY runpod_worker.py ./
 
 ENV LTX_ROOT=/opt/LTX-Video
-ENV HF_HOME=/tmp/huggingface
-CMD ["python3", "/app/worker.py"]
+ENV HF_HOME=/root/.cache/huggingface
+CMD ["python3", "/app/runpod_worker.py"]
