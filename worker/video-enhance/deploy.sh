@@ -5,16 +5,11 @@ PROJECT_ID="${CLOUVA_GCP_PROJECT:-${GOOGLE_CLOUD_PROJECT:-gen-lang-client-073705
 REGION="${CLOUVA_VIDEO_ENHANCE_REGION:-us-central1}"
 JOB_NAME="${CLOUVA_VIDEO_ENHANCE_JOB_NAME:-clouva-video-enhance-gpu}"
 IMAGE="${CLOUVA_VIDEO_ENHANCE_IMAGE:-${REGION}-docker.pkg.dev/${PROJECT_ID}/clouva/video-enhance:latest}"
-GPU_TYPE="${CLOUVA_VIDEO_ENHANCE_GPU_TYPE:-nvidia-rtx-pro-6000}"
+GPU_TYPE="${CLOUVA_VIDEO_ENHANCE_GPU_TYPE:-nvidia-l4}"
 SERVICE_ACCOUNT="${CLOUVA_VIDEO_ENHANCE_SERVICE_ACCOUNT:-clouva-web-runtime@${PROJECT_ID}.iam.gserviceaccount.com}"
 
-if [[ "${GPU_TYPE}" == "nvidia-l4" ]]; then
-  CPU=8
-  MEMORY=32Gi
-else
-  CPU=20
-  MEMORY=80Gi
-fi
+CPU=4
+MEMORY=16Gi
 
 gcloud builds submit worker/video-enhance --project "${PROJECT_ID}" --tag "${IMAGE}"
 
