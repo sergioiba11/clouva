@@ -7,8 +7,13 @@ on:
     paths:
       - "worker/video-enhance/**"
       - "cloudbuild-video-enhance.yaml"
-      - ".github/workflows/deploy-video-enhance.yml"
   workflow_dispatch:
+    inputs:
+      image_tag:
+        description: Existing video-enhance image tag to reuse; leave empty to use the latest worker-code commit
+        required: false
+        default: ""
+        type: string
 
 permissions:
   contents: read
@@ -27,6 +32,8 @@ jobs:
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - id: auth
         uses: google-github-actions/auth@v2
@@ -36,16 +43,30 @@ jobs:
 
       - uses: google-github-actions/setup-gcloud@v2
 
-      - name: Build LTX worker image with Cloud Build
+      - name: Resolve reusable LTX worker image
         id: build
         shell: bash
+        env:
+          REQUESTED_TAG: ${{ inputs.image_tag || '' }}
         run: |
           set -euo pipefail
-          tag="${GITHUB_SHA}"
-          image="us-central1-docker.pkg.dev/${PROJECT_ID}/clouva/video-enhance:${tag}"
-          echo "image=${image}" >> "$GITHUB_OUTPUT"
+          if [ -n "$REQUESTED_TAG" ]; then
+            tag="$REQUESTED_TAG"
+          else
+            tag="$(git log -1 --format=%H -- worker/video-enhance cloudbuild-video-enhance.yaml)"
+          fi
+          test -n "$tag"
+          image="us-central1-docker.pkg.dev/$PROJECT_ID/clouva/video-enhance:$tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
 
-          build_id="$(gcloud builds submit             --project "$PROJECT_ID"             --config cloudbuild-video-enhance.yaml             --substitutions="_VIDEO_ENHANCE_TAG=${tag}"             --async             --format='value(id)'             .)"
+          if gcloud artifacts docker images describe "$image"             --project "$PROJECT_ID"             --format='value(image_summary.digest)' >/tmp/video-ai-digest 2>/dev/null             && [ -s /tmp/video-ai-digest ]; then
+            echo "Reusing existing Video AI image: $image @ $(cat /tmp/video-ai-digest)"
+            exit 0
+          fi
+
+          echo "Image does not exist yet; building $image"
+          build_id="$(gcloud builds submit             --project "$PROJECT_ID"             --config cloudbuild-video-enhance.yaml             --substitutions="_VIDEO_ENHANCE_TAG=$tag"             --async             --format='value(id)'             .)"
           test -n "$build_id"
           echo "Cloud Build: $build_id"
 
@@ -72,7 +93,6 @@ jobs:
           IMAGE: ${{ steps.build.outputs.image }}
         run: |
           set -uo pipefail
-
           common=(
             --project "$PROJECT_ID"
             --region "$REGION"
@@ -99,29 +119,28 @@ jobs:
             code=$?
           fi
           set -e
-
           printf '%s\n' "$output"
 
           if [ "$code" -eq 0 ]; then
             echo "ready=true" >> "$GITHUB_OUTPUT"
-            echo "### Video AI GPU worker deployed" >> "$GITHUB_STEP_SUMMARY"
-            echo "- Job: `$JOB_NAME`" >> "$GITHUB_STEP_SUMMARY"
-            echo "- GPU: `$GPU_TYPE`" >> "$GITHUB_STEP_SUMMARY"
-            echo "- Image: `$IMAGE`" >> "$GITHUB_STEP_SUMMARY"
+            {
+              echo '### Video AI GPU worker deployed'
+              printf '%s\n' "- Job: $JOB_NAME" "- GPU: $GPU_TYPE" "- Image: $IMAGE"
+            } >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
-          if printf '%s' "$output" | grep -Eqi 'quota|GPUs without zonal redundancy|memory.*quota|RESOURCE_EXHAUSTED'; then
+          if printf '%s' "$output" | grep -Eqi 'quota|GPUs without zonal redundancy|memory.*quota|RESOURCE_EXHAUSTED|MemAllocPerProjectRegion'; then
             echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Worker image built successfully, but Cloud Run GPU quota is not enabled yet."
-            echo "### Video AI image ready; GPU quota pending" >> "$GITHUB_STEP_SUMMARY"
-            echo "- Built image: `$IMAGE`" >> "$GITHUB_STEP_SUMMARY"
-            echo "- Requested GPU: `$GPU_TYPE`" >> "$GITHUB_STEP_SUMMARY"
-            echo "- No GPU instance was left running." >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::Video AI image is ready, but Cloud Run quota is still below the RTX requirement."
+            {
+              echo '### Video AI image ready; Cloud Run quota pending'
+              printf '%s\n' "- Image: $IMAGE" "- GPU target: $GPU_TYPE" "- Required memory: 80Gi" "- No GPU instance was left running."
+            } >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
 
-          echo "::error::Cloud Run job deployment failed for a reason other than GPU quota."
+          echo "::error::Cloud Run job deployment failed for a reason other than quota."
           exit "$code"
 
       - name: Verify deployed job configuration
