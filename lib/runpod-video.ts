@@ -147,7 +147,7 @@ export async function getRunpodVideoRuntimeStatus() {
   return {
     ready: true,
     reason: null,
-    location: "Runpod Serverless · 24 GB GPU",
+    location: "Runpod Serverless · A40/A6000 48 GB",
     provider: "runpod",
   };
 }
