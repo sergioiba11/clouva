@@ -1,0 +1,113 @@
+name: Probe Video AI Cloud Run quota
+
+on:
+  push:
+    branches:
+      - ops/video-ai-quota-probe
+    paths:
+      - ".github/workflows/video-ai-quota-probe.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: gen-lang-client-0737053175
+  REGION: us-central1
+  TARGET_MEMORY_BYTES: "85899345920"
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA_EMAIL }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Discover Cloud Run memory quota
+        id: quota
+        shell: bash
+        run: |
+          set -euo pipefail
+          token="$(gcloud auth print-access-token)"
+          curl --fail --silent --show-error             -H "Authorization: Bearer $token"             "https://cloudquotas.googleapis.com/v1/projects/$PROJECT_ID/locations/global/services/run.googleapis.com/quotaInfos?pageSize=500"             > /tmp/quota-infos.json
+
+          python3 - <<'PY' | tee /tmp/quota-result.txt
+          import json, os
+          data=json.load(open("/tmp/quota-infos.json", encoding="utf-8"))
+          region=os.environ["REGION"]
+          current=40 * 1024**3
+          candidates=[]
+          for q in data.get("quotaInfos", []):
+              text=" ".join(str(q.get(k,"")) for k in ("metric","quotaId","metricDisplayName","quotaDisplayName")).lower()
+              if "mem" not in text:
+                  continue
+              matching=[]
+              for di in q.get("dimensionsInfos", []):
+                  dims=di.get("dimensions") or {}
+                  details=di.get("details") or {}
+                  val=details.get("quotaValue")
+                  if dims.get("region")==region:
+                      matching.append({"dimensions":dims,"quotaValue":val,"details":details})
+              if matching:
+                  candidates.append({
+                      "quotaId":q.get("quotaId"),
+                      "metric":q.get("metric"),
+                      "quotaIncreaseEligibility":q.get("quotaIncreaseEligibility"),
+                      "matches":matching,
+                  })
+          print(json.dumps(candidates, indent=2))
+          exact=[]
+          for q in candidates:
+              for m in q["matches"]:
+                  try: value=int(m.get("quotaValue"))
+                  except: continue
+                  if value == current:
+                      exact.append(q)
+                      break
+          if len(exact)!=1:
+              print(f"RESULT=ambiguous:{len(exact)}")
+          else:
+              q=exact[0]
+              print("RESULT=exact")
+              print("QUOTA_ID="+str(q["quotaId"]))
+              print("METRIC="+str(q["metric"]))
+              elig=q.get("quotaIncreaseEligibility") or {}
+              print("ELIGIBILITY="+json.dumps(elig,separators=(",",":")))
+          PY
+
+          result="$(grep '^RESULT=' /tmp/quota-result.txt | tail -1 | cut -d= -f2-)"
+          echo "result=$result" >> "$GITHUB_OUTPUT"
+          if [ "$result" = "exact" ]; then
+            echo "quota_id=$(grep '^QUOTA_ID=' /tmp/quota-result.txt | tail -1 | cut -d= -f2-)" >> "$GITHUB_OUTPUT"
+            echo "metric=$(grep '^METRIC=' /tmp/quota-result.txt | tail -1 | cut -d= -f2-)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Request 80 GiB when exact quota is found
+        if: steps.quota.outputs.result == 'exact'
+        shell: bash
+        env:
+          QUOTA_ID: ${{ steps.quota.outputs.quota_id }}
+        run: |
+          set +e
+          output="$(gcloud quotas preferences create             --service=run.googleapis.com             --project="$PROJECT_ID"             --quota-id="$QUOTA_ID"             --preferred-value="$TARGET_MEMORY_BYTES"             --dimensions="region=$REGION"             --preference-id="clouva-video-ai-memory-us-central1"             --justification="CLOUVA Video AI uses one Cloud Run Job with NVIDIA RTX PRO 6000, which requires the documented minimum of 80 GiB memory. The job scales to zero and runs only on demand."             2>&1)"
+          code=$?
+          set -e
+          printf '%s\n' "$output"
+          if [ "$code" -ne 0 ]; then
+            echo "::warning::Quota preference was not accepted automatically."
+            exit 0
+          fi
+
+      - name: Show quota preference
+        if: steps.quota.outputs.result == 'exact'
+        shell: bash
+        run: |
+          gcloud quotas preferences describe "clouva-video-ai-memory-us-central1"             --project="$PROJECT_ID"             --format=yaml || true
