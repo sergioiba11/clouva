@@ -32,14 +32,14 @@ jobs:
           npx -y skills add runpod/runpod-plugins-official             --skill '*'             --agent opencode             --copy             --yes
           echo "=== installed files ==="
           git status --short
-          test -d .opencode/skills
+          test -d .agents/skills
 
       - name: Commit project skills
         run: |
           set -euo pipefail
           git config user.name "clouva-bot"
           git config user.email "admin@clouva.com.ar"
-          git add .opencode/skills skills-lock.json 2>/dev/null || true
+          git add .agents/skills skills-lock.json 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "No generated skill changes."
             exit 0
