@@ -1,4 +1,4 @@
-name: Deploy CLOUVA Video AI GPU worker
+name: Validate CLOUVA Video AI Runpod worker
 
 on:
   push:
@@ -6,144 +6,36 @@ on:
       - main
     paths:
       - "worker/video-enhance/**"
-      - "cloudbuild-video-enhance.yaml"
-  workflow_dispatch:
-    inputs:
-      image_tag:
-        description: Existing video-enhance image tag to reuse; leave empty to use the latest worker-code commit
-        required: false
-        default: ""
-        type: string
+      - "lib/runpod-video.ts"
+      - "app/api/video/enhance/**"
+      - ".github/workflows/deploy-video-enhance.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "worker/video-enhance/**"
+      - "lib/runpod-video.ts"
+      - "app/api/video/enhance/**"
+      - ".github/workflows/deploy-video-enhance.yml"
 
 permissions:
   contents: read
-  id-token: write
-
-env:
-  PROJECT_ID: gen-lang-client-0737053175
-  REGION: us-central1
-  JOB_NAME: clouva-video-enhance-gpu
-  GPU_TYPE: nvidia-l4
-  RUNTIME_SERVICE_ACCOUNT: clouva-web-runtime@gen-lang-client-0737053175.iam.gserviceaccount.com
 
 jobs:
-  build-and-deploy:
+  validate-runpod-worker:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - id: auth
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ secrets.GCP_DEPLOY_SA_EMAIL }}
+      - name: Validate Python syntax
+        run: python3 -m py_compile worker/video-enhance/runpod_worker.py
 
-      - uses: google-github-actions/setup-gcloud@v2
-
-      - name: Resolve reusable LTX worker image
-        id: build
+      - name: Validate Runpod Dockerfile contract
         shell: bash
-        env:
-          REQUESTED_TAG: ${{ inputs.image_tag || '' }}
         run: |
           set -euo pipefail
-          if [ -n "$REQUESTED_TAG" ]; then
-            tag="$REQUESTED_TAG"
-          else
-            tag="$(git log -1 --format=%H -- worker/video-enhance/Dockerfile worker/video-enhance/worker.py worker/video-enhance/requirements.txt cloudbuild-video-enhance.yaml)"
-          fi
-          test -n "$tag"
-          image="us-central1-docker.pkg.dev/$PROJECT_ID/clouva/video-enhance:$tag"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          echo "image=$image" >> "$GITHUB_OUTPUT"
-
-          if gcloud artifacts docker images describe "$image"             --project "$PROJECT_ID"             --format='value(image_summary.digest)' >/tmp/video-ai-digest 2>/dev/null             && [ -s /tmp/video-ai-digest ]; then
-            echo "Reusing existing Video AI image: $image @ $(cat /tmp/video-ai-digest)"
-            exit 0
-          fi
-
-          echo "Image does not exist yet; building $image"
-          build_id="$(gcloud builds submit             --project "$PROJECT_ID"             --config cloudbuild-video-enhance.yaml             --substitutions="_VIDEO_ENHANCE_TAG=$tag"             --async             --format='value(id)'             .)"
-          test -n "$build_id"
-          echo "Cloud Build: $build_id"
-
-          for attempt in $(seq 1 140); do
-            status="$(gcloud builds describe "$build_id" --project "$PROJECT_ID" --format='value(status)')"
-            echo "Cloud Build status: $status ($attempt/140)"
-            case "$status" in
-              SUCCESS) break ;;
-              FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
-                gcloud builds log "$build_id" --project "$PROJECT_ID" || true
-                exit 1
-                ;;
-            esac
-            sleep 15
-          done
-
-          status="$(gcloud builds describe "$build_id" --project "$PROJECT_ID" --format='value(status)')"
-          test "$status" = "SUCCESS"
-
-      - name: Deploy NVIDIA L4 Cloud Run job
-        id: deploy
-        shell: bash
-        env:
-          IMAGE: ${{ steps.build.outputs.image }}
-        run: |
-          set -uo pipefail
-          common=(
-            --project "$PROJECT_ID"
-            --region "$REGION"
-            --image "$IMAGE"
-            --service-account "$RUNTIME_SERVICE_ACCOUNT"
-            --cpu 4
-            --memory 16Gi
-            --gpu 1
-            --gpu-type "$GPU_TYPE"
-            --parallelism 1
-            --no-gpu-zonal-redundancy
-            --task-timeout 3600
-            --max-retries 0
-            --set-env-vars "SUPABASE_URL=https://dpawotcignpexkirhfsk.supabase.co,CLOUVA_GENERATED_MEDIA_BUCKET=clouva-generated-media"
-            --set-secrets "SUPABASE_SERVICE_ROLE_KEY=clouva-supabase-service-role-key:latest"
-          )
-
-          set +e
-          if gcloud run jobs describe "$JOB_NAME" --project "$PROJECT_ID" --region "$REGION" >/dev/null 2>&1; then
-            output="$(gcloud run jobs update "$JOB_NAME" "${common[@]}" --quiet 2>&1)"
-            code=$?
-          else
-            output="$(gcloud run jobs create "$JOB_NAME" "${common[@]}" --quiet 2>&1)"
-            code=$?
-          fi
-          set -e
-          printf '%s\n' "$output"
-
-          if [ "$code" -eq 0 ]; then
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-            {
-              echo '### Video AI GPU worker deployed'
-              printf '%s\n' "- Job: $JOB_NAME" "- GPU: $GPU_TYPE" "- Image: $IMAGE"
-            } >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-
-          if printf '%s' "$output" | grep -Eqi 'quota|GPUs without zonal redundancy|memory.*quota|RESOURCE_EXHAUSTED|MemAllocPerProjectRegion'; then
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Video AI image is ready, but Cloud Run L4 quota is not available yet."
-            {
-              echo '### Video AI image ready; Cloud Run quota pending'
-              printf '%s\n' "- Image: $IMAGE" "- GPU target: $GPU_TYPE" "- Required memory: 16Gi" "- No GPU instance was left running."
-            } >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-
-          echo "::error::Cloud Run job deployment failed for a reason other than quota."
-          exit "$code"
-
-      - name: Verify deployed job configuration
-        if: steps.deploy.outputs.ready == 'true'
-        run: |
-          gcloud run jobs describe "$JOB_NAME"             --project "$PROJECT_ID"             --region "$REGION"             --format='yaml(name,template.template.containers,template.template.nodeSelector,template.template.resources)'
+          grep -q 'runpod_worker.py' worker/video-enhance/Dockerfile.runpod
+          grep -q 'runpod==1.12.0' worker/video-enhance/requirements.txt
+          grep -q 'CMD \["python3", "/app/runpod_worker.py"\]' worker/video-enhance/Dockerfile.runpod
+          echo "Runpod worker contract OK"

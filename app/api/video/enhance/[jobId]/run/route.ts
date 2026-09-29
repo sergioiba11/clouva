@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { MediaApiError, publicMediaError, requireMediaAdmin } from "@/lib/server/media-auth";
 import { getVideoEnhanceJob, toPublicVideoEnhance, VIDEO_ENHANCE_COLUMNS, type VideoEnhanceRow } from "@/lib/server/video-enhance";
-import { runVideoEnhanceJob } from "@/lib/cloud-run-jobs";
+import { startRunpodVideoEnhance } from "@/lib/runpod-video";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -27,19 +27,19 @@ export async function POST(request: NextRequest, context: { params: Promise<{ jo
     }).eq("id", job.id).eq("user_id", user.id).in("status", ["draft", "failed"]).select(VIDEO_ENHANCE_COLUMNS).maybeSingle();
     if (claimError || !claimed) throw new MediaApiError("No se pudo reservar el trabajo.", 409, "enhance_claim_failed");
     try {
-      const executionName = await runVideoEnhanceJob(job.id);
+      const executionName = await startRunpodVideoEnhance(job);
       const { data, error } = await admin.from("video_enhance_jobs").update({
         execution_name: executionName,
         status: "processing",
         progress: 3,
       }).eq("id", job.id).eq("user_id", user.id).select(VIDEO_ENHANCE_COLUMNS).single();
-      if (error || !data) throw new Error("La GPU arrancó, pero no se pudo registrar la ejecución.");
+      if (error || !data) throw new Error("Runpod arrancó, pero no se pudo registrar la ejecución.");
       return NextResponse.json({ job: toPublicVideoEnhance(data as unknown as VideoEnhanceRow) }, { status: 202 });
     } catch (gpuError) {
-      const message = gpuError instanceof Error ? gpuError.message : "No se pudo iniciar la GPU.";
+      const message = gpuError instanceof Error ? gpuError.message : "No se pudo iniciar Runpod.";
       await admin.from("video_enhance_jobs").update({
         status: "failed",
-        error_code: "gpu_start_failed",
+        error_code: "runpod_start_failed",
         error_message: message.slice(0, 900),
       }).eq("id", job.id).eq("user_id", user.id);
       throw new MediaApiError(message, 503, "gpu_start_failed");

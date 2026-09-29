@@ -1,2 +1,2 @@
-google-cloud-storage==3.4.1
 requests==2.32.5
+runpod==1.12.0
