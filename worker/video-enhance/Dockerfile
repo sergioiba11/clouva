@@ -14,6 +14,11 @@ RUN python3 -m pip install --no-cache-dir --upgrade pip setuptools wheel \
   && git clone https://github.com/Lightricks/LTX-Video.git \
   && cd LTX-Video \
   && git checkout "$LTX_COMMIT" \
+  && sed -i 's/prompt_enhancement_words_threshold: 120/prompt_enhancement_words_threshold: 0/' \
+       configs/ltxv-13b-0.9.8-distilled.yaml \
+       configs/ltxv-2b-0.9.8-distilled.yaml \
+  && grep -q 'prompt_enhancement_words_threshold: 0' configs/ltxv-13b-0.9.8-distilled.yaml \
+  && grep -q 'prompt_enhancement_words_threshold: 0' configs/ltxv-2b-0.9.8-distilled.yaml \
   && python3 -m pip install --no-cache-dir ".[inference]"
 
 WORKDIR /app
