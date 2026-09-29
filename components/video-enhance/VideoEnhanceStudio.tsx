@@ -69,7 +69,7 @@ export function VideoEnhanceStudio() {
   const [title, setTitle] = useState("Video AI");
   const [prompt, setPrompt] = useState("");
   const [negativePrompt, setNegativePrompt] = useState("blurry, jittery, distorted, inconsistent motion, text, watermark");
-  const [model, setModel] = useState("ltxv-13b-0.9.8-distilled");
+  const [model, setModel] = useState("ltxv-2b-0.9.8-distilled");
   const [mode, setMode] = useState<EnhanceJob["mode"]>("balanced");
   const [strength, setStrength] = useState(0.45);
   const [preserveMotion, setPreserveMotion] = useState(true);
@@ -388,7 +388,7 @@ export function VideoEnhanceStudio() {
           <section className="rounded-3xl border border-white/10 bg-white/[.035] p-4">
             <div className="mb-4 flex items-center gap-2"><SlidersHorizontal size={17} /><strong>Salida</strong></div>
             <div className="grid gap-3">
-              <label className="grid gap-1.5 text-xs text-white/45">Modelo<select value={model} onChange={(e) => setModel(e.target.value)} className="rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-white"><option value="ltxv-13b-0.9.8-distilled">LTX 13B DISTILLED · PRO</option><option value="ltxv-2b-0.9.8-distilled">LTX 2B DISTILLED · FAST</option></select></label>
+              <label className="grid gap-1.5 text-xs text-white/45">Modelo<select value={model} onChange={(e) => setModel(e.target.value)} className="rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-white"><option value="ltxv-2b-0.9.8-distilled">LTX 2B DISTILLED · FAST · L4</option><option value="ltxv-13b-0.9.8-distilled" disabled>LTX 13B · PRO · requiere RTX</option></select></label>
               <div className="grid grid-cols-2 gap-2"><label className="grid gap-1.5 text-xs text-white/45">Resolución<select value={resolution} onChange={(e) => setResolution(e.target.value as "480p" | "720p")} className="rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-white"><option value="720p">720p PRO</option><option value="480p">480p FAST</option></select></label><label className="grid gap-1.5 text-xs text-white/45">FPS<select value={fps} onChange={(e) => setFps(Number(e.target.value) as 24 | 25 | 30)} className="rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-white"><option value={24}>24</option><option value={25}>25</option><option value={30}>30</option></select></label></div>
               <label className="grid gap-1.5 text-xs text-white/45">Seed<input type="number" value={seed} onChange={(e) => setSeed(Math.trunc(Number(e.target.value) || 0))} className="rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-white" /></label>
               <div className="grid grid-cols-2 gap-2"><label className="grid gap-1.5 text-xs text-white/45">Inicio (s)<input type="number" min={0} step={0.1} value={trimStart} onChange={(e) => setTrimStart(Math.max(0, Number(e.target.value) || 0))} className="rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-white" /></label><label className="grid gap-1.5 text-xs text-white/45">Duración<input type="number" min={0.1} step={0.1} value={trimDuration} placeholder="Todo" onChange={(e) => setTrimDuration(e.target.value)} className="rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-white" /></label></div>
