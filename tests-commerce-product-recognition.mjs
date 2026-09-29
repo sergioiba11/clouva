@@ -111,7 +111,8 @@ test("bulk scanner keeps physical objects intact before invoice assignment", () 
   assert.match(batchRecognition, /Cobertura ya resuelta por la reconciliación global/);
   assert.match(batchRecognition, /unitCount: refined\.unitCount/);
   assert.doesNotMatch(batchRecognition, /const candidates: CommerceBatchGroup\[\] = args\.productGroups\.flatMap/);
-  assert.match(productReview, /REVISAR \{unassignedSources\.length\} IMÁGENES DUDOSAS/);
+  assert.match(productReview, /REVISAR \{unresolvedObjects\.length\} OBJETO/);
+  assert.doesNotMatch(productReview, /assignEvidence\(/);
 });
 
 test("product capture contract supports one front, one back and many details", () => {

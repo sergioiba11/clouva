@@ -1441,7 +1441,9 @@ async function resolveReceiptIdentityClusters(args: {
     "Agrupá groupKeys que sean el mismo artículo/variante de recepción. Conservá separados artículos realmente distintos.",
     "La factura es el checklist esperado, NO el inventario real: puede haber unidades físicas EXTRA de una identidad que sí figura en factura. Ese excedente sigue dentro del mismo cluster/producto.",
     "Una línea de factura puede agrupar unidades del mismo artículo que difieran solo en color/serial/código individual cuando comercialmente el proveedor las facturó bajo el mismo renglón.",
-    "invoiceIndex es 1-based según el checklist. Usá 0 solo si el cluster representa una identidad que realmente no corresponde a ningún renglón de factura.",
+    "invoiceIndex es 1-based según el checklist. La factura define los SLOTS canónicos: si un objeto puede corresponder razonablemente a un renglón, asignalo a ese invoiceIndex aunque el nombre del proveedor sea corto o incorrecto.",
+    "No uses invoiceIndex=0 para expresar duda. Si dudás, elegí el mejor slot, bajá confidence y poné needsReview=true.",
+    "Usá invoiceIndex=0 solamente para una identidad física EXTRA clara, con evidencia propia, que realmente no corresponde a ningún renglón.",
     "canonicalGroupKey debe ser el grupo cuya foto/metadata represente mejor el frente o identidad correcta del artículo. No elijas un dorso mal reconocido como canónico.",
     "Cada groupKey debe aparecer exactamente una vez entre todos los clusters.",
     "physicalUnitCount es la cantidad REAL de unidades físicas del cluster completo. No sumes fotos ni groupKeys: frente+dorso+detalle del mismo objeto = 1. Si distintas fotos demuestran cajas/unidades físicas diferentes del mismo artículo, contalas una vez cada una. Puede superar la cantidad de factura si hay un extra físico.",
@@ -2246,14 +2248,22 @@ function bestInvoiceAnchor(group: CommerceBatchGroup, expectedProducts: Commerce
   let bestScore = -1;
   for (let index = 0; index < expectedProducts.length; index += 1) {
     const line = expectedProducts[index];
-    const semantic = identitySimilarity(
-      [group.name, group.brand, group.model].filter(Boolean).join(" "),
-      [line.description, line.brand ?? "", line.model ?? "", line.supplierSku ?? ""].filter(Boolean).join(" "),
-    );
+    const groupText = [group.name, group.brand, group.model].filter(Boolean).join(" ");
+    const lineText = [line.description, line.brand ?? "", line.model ?? "", line.supplierSku ?? ""].filter(Boolean).join(" ");
+    const semantic = identitySimilarity(groupText, lineText);
+    const groupTokens = identityTokens(groupText);
+    const lineTokens = identityTokens(lineText);
+    let common = 0;
+    for (const token of lineTokens) if (groupTokens.has(token)) common += 1;
+    const invoiceCoverage = lineTokens.size ? common / lineTokens.size : 0;
+    const groupCoverage = groupTokens.size ? common / groupTokens.size : 0;
     const groupBrand = normalizeIdentityText(group.brand);
     const lineBrand = normalizeIdentityText(line.brand ?? "");
     const brand = groupBrand && lineBrand ? (looselySameBrand(groupBrand, lineBrand) ? 0.35 : -0.35) : 0;
-    const score = semantic + brand;
+    // Supplier invoice names are often abbreviated ("Cable 20W", "PS4").
+    // Covering the invoice's distinctive tokens is therefore stronger evidence
+    // than requiring both strings to have the same length/details.
+    const score = Math.max(semantic, invoiceCoverage * 0.9, groupCoverage * 0.55) + brand;
     if (score > bestScore) {
       bestScore = score;
       bestIndex = index + 1;
@@ -2274,19 +2284,20 @@ async function anchorProductsToInvoice(args: {
   // physical/commercial clusters. Never split a cluster back into individual
   // photos here: front + back + code + details are joint evidence of one object.
   const assignments = new Map<string, { invoiceIndex: number; trueExtra: boolean; confidence: number; reason: string }>();
-  const unresolvedGroups = args.productGroups.filter((group) => !(group.invoiceIndex != null
+  // The receipt-level reconciler already compared the COMPLETE physical object
+  // against every invoice row. A positive invoiceIndex is therefore a slot
+  // assignment even when confidence is low; low confidence means "review this
+  // slot", not "throw all of this object's photos into unassigned".
+  const hasInvoiceSlot = (group: CommerceBatchGroup) => group.invoiceIndex != null
     && group.invoiceIndex >= 1
-    && group.invoiceIndex <= args.expectedProducts.length
-    && (group.invoiceMatchConfidence ?? 0) >= 0.45));
+    && group.invoiceIndex <= args.expectedProducts.length;
+  const unresolvedGroups = args.productGroups.filter((group) => !hasInvoiceSlot(group));
   const fixedCoverage = args.productGroups
-    .filter((group) => group.invoiceIndex != null
-      && group.invoiceIndex >= 1
-      && group.invoiceIndex <= args.expectedProducts.length
-      && (group.invoiceMatchConfidence ?? 0) >= 0.45)
+    .filter(hasInvoiceSlot)
     .map((group) => ({ invoiceIndex: group.invoiceIndex!, unitCount: group.unitCount, groupKey: group.groupKey }));
 
-  for (let offset = 0; offset < unresolvedGroups.length; offset += 8) {
-    const chunk = unresolvedGroups.slice(offset, offset + 8);
+  for (let offset = 0; offset < unresolvedGroups.length; offset += 10) {
+    const chunk = unresolvedGroups.slice(offset, offset + 10);
     const refs = (await Promise.all(chunk.flatMap((group) => {
       const preferredIndexes: number[] = [];
       const add = (sourceIndex: number | undefined) => {
@@ -2297,7 +2308,7 @@ async function anchorProductsToInvoice(args: {
       add(group.images.find((image) => image.role === "Atrás")?.sourceIndex);
       for (const code of group.visibleIdentifiers) add(code.sourceIndex);
       for (const image of group.images) add(image.sourceIndex);
-      return preferredIndexes.slice(0, 3).map(async (sourceIndex) => {
+      return preferredIndexes.slice(0, 2).map(async (sourceIndex) => {
         const source = args.imagesByIndex.get(sourceIndex);
         if (!source) return null;
         const stored = await downloadGeneratedMediaObject(source.storagePath);
@@ -2320,8 +2331,9 @@ async function anchorProductsToInvoice(args: {
       "Frente + dorso + código + detalles del mismo packaging son UN SOLO objeto/identidad, aunque cada vista tenga textos distintos.",
       "La descripción de factura puede estar abreviada o ser poco precisa. El packaging físico y las especificaciones combinadas tienen prioridad sobre una palabra aislada.",
       "NO fuerces una identidad físicamente incompatible para completar cantidades.",
-      "invoiceIndex es 1-based. Usá invoiceIndex=0,trueExtra=false solo si el cluster sigue genuinamente dudoso después de mirar TODAS sus vistas.",
-      "Usá invoiceIndex=0,trueExtra=true cuando el cluster representa claramente un producto físico real que no corresponde a ningún renglón de factura.",
+      "invoiceIndex es 1-based. Para un cluster físico real elegí SIEMPRE el renglón de factura más plausible, aunque la descripción del proveedor sea abreviada, imprecisa o tenga una marca equivocada.",
+      "NO uses invoiceIndex=0,trueExtra=false como salida de incertidumbre. Si dudás entre renglones, elegí el mejor invoiceIndex y bajá confidence; CLOUVA lo marcará para revisión dentro de ese slot.",
+      "Usá invoiceIndex=0,trueExtra=true ÚNICAMENTE cuando el cluster representa claramente un producto físico adicional que no corresponde razonablemente a ningún renglón de factura.",
       "Un producto extra puede después reconciliarse contra un faltante (por ejemplo Motorola +1 vs Samsung -1); no lo conviertas artificialmente en Samsung.",
       "La cantidad de fotos NO es cantidad de unidades. unitCount ya representa la estimación física del cluster.",
       "confidence expresa tu confianza en la asignación DEL CLUSTER COMPLETO.",
@@ -2381,14 +2393,12 @@ async function anchorProductsToInvoice(args: {
   const unassigned: CommerceBatchGroup[] = [];
 
   for (const group of args.productGroups) {
-    if (group.invoiceIndex != null
-      && group.invoiceIndex >= 1
-      && group.invoiceIndex <= args.expectedProducts.length
-      && (group.invoiceMatchConfidence ?? 0) >= 0.45) {
-      buckets.set(group.invoiceIndex, [...(buckets.get(group.invoiceIndex) ?? []), group]);
-      bucketConfidence.set(group.invoiceIndex, [
-        ...(bucketConfidence.get(group.invoiceIndex) ?? []),
-        group.invoiceMatchConfidence ?? 0.45,
+    if (hasInvoiceSlot(group)) {
+      const invoiceIndex = group.invoiceIndex!;
+      buckets.set(invoiceIndex, [...(buckets.get(invoiceIndex) ?? []), group]);
+      bucketConfidence.set(invoiceIndex, [
+        ...(bucketConfidence.get(invoiceIndex) ?? []),
+        group.invoiceMatchConfidence ?? 0.35,
       ]);
       continue;
     }
@@ -2398,13 +2408,13 @@ async function anchorProductsToInvoice(args: {
       ai
       && ai.invoiceIndex >= 1
       && ai.invoiceIndex <= args.expectedProducts.length
-      && (ai.confidence >= 0.55 || (ai.confidence >= 0.48 && fallback.score >= 0.38)),
+      && ai.confidence >= 0.3,
     );
-    const deterministicAccepted = Boolean(!ai && fallback.score >= 0.86);
+    const deterministicAccepted = Boolean(!ai && fallback.score >= 0.45);
     const definitelyExtra = Boolean(
       ai?.trueExtra
       && ai.invoiceIndex === 0
-      && ai.confidence >= 0.93
+      && ai.confidence >= 0.96
       && group.images.some((image) => image.role === "Frente"),
     );
 
