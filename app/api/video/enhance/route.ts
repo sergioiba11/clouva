@@ -6,6 +6,7 @@ import {
   VIDEO_ENHANCE_COLUMNS,
   type VideoEnhanceRow,
 } from "@/lib/server/video-enhance";
+import { getVideoProject } from "@/lib/server/video-projects";
 import { getVideoEnhanceRuntimeStatus } from "@/lib/cloud-run-jobs";
 
 export const runtime = "nodejs";
@@ -61,9 +62,27 @@ export async function POST(request: NextRequest) {
     const trimDurationRaw = Number(body.trimDurationSeconds);
     const trimDuration = Number.isFinite(trimDurationRaw) && trimDurationRaw > 0 ? trimDurationRaw : null;
 
+    let sourceStoragePath: string | null = null;
+    let sourceUrl: string | null = null;
+    let sourceFilename: string | null = null;
+    const sourceProjectId = typeof body.sourceProjectId === "string" ? body.sourceProjectId.trim() : "";
+    if (sourceProjectId) {
+      const sourceProject = await getVideoProject(admin, sourceProjectId, user.id);
+      if (!sourceProject) throw new MediaApiError("El video de CLOUVA no existe.", 404, "source_project_not_found");
+      if (sourceProject.status !== "completed" || !sourceProject.output_storage_path || !sourceProject.output_url) {
+        throw new MediaApiError("Ese proyecto todavía no tiene un render final listo.", 409, "source_project_not_ready");
+      }
+      sourceStoragePath = sourceProject.output_storage_path;
+      sourceUrl = sourceProject.output_url;
+      sourceFilename = `${sourceProject.title || "clouva-video"}.mp4`.slice(0, 240);
+    }
+
     const { data, error } = await admin.from("video_enhance_jobs").insert({
       user_id: user.id,
       title: title || "AI Enhance",
+      source_storage_path: sourceStoragePath,
+      source_url: sourceUrl,
+      source_filename: sourceFilename,
       prompt,
       negative_prompt: String(body.negativePrompt || "blurry, jittery, distorted, inconsistent motion, text, watermark").trim().slice(0, 2000),
       model,
