@@ -24,7 +24,7 @@ type EnhanceJob = {
   gpuSeconds: number | null; error: string | null; createdAt: string; updatedAt: string;
 };
 
-type RuntimeStatus = { ready: boolean; reason: string | null; location: string };
+type RuntimeStatus = { ready: boolean; reason: string | null; location: string; provider?: string };
 type VideoProject = {
   id: string;
   title: string;
@@ -356,7 +356,7 @@ export function VideoEnhanceStudio() {
               </div>
               {job?.outputUrl ? <div className="relative grid min-h-[430px] place-items-center border-l border-white/10 bg-black"><video src={job.outputUrl} controls playsInline autoPlay loop className="max-h-[68vh] w-full" /><span className="absolute left-3 top-3 rounded-full bg-violet-500/80 px-3 py-1 text-[10px] font-bold">AI RESULT</span></div> : null}
             </div>
-            {job && activeStatuses.has(job.status) ? <div className="border-t border-white/10 p-4"><div className="h-2 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-gradient-to-r from-violet-400 to-sky-300 transition-all" style={{ width: `${job.progress}%` }} /></div><div className="mt-2 flex justify-between text-[11px] text-white/40"><span>Cloud Run GPU · LTX</span><span>{job.progress}%</span></div></div> : null}
+            {job && activeStatuses.has(job.status) ? <div className="border-t border-white/10 p-4"><div className="h-2 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-gradient-to-r from-violet-400 to-sky-300 transition-all" style={{ width: `${job.progress}%` }} /></div><div className="mt-2 flex justify-between text-[11px] text-white/40"><span>Runpod Serverless · LTX</span><span>{job.progress}%</span></div></div> : null}
             {job?.status === "completed" && job.outputUrl ? <div className="flex flex-wrap gap-2 border-t border-white/10 p-4"><a href={job.outputUrl} download className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 text-sm font-bold text-black"><ArrowDownToLine size={16} />Descargar MP4</a><button type="button" onClick={reset} className="inline-flex items-center gap-2 rounded-full border border-white/15 px-4 py-2 text-sm"><RefreshCcw size={15} />Otro video</button>{job.gpuSeconds ? <span className="ml-auto self-center text-xs text-white/35">GPU {Math.round(job.gpuSeconds)}s</span> : null}</div> : null}
           </section>
 
@@ -388,7 +388,7 @@ export function VideoEnhanceStudio() {
           <section className="rounded-3xl border border-white/10 bg-white/[.035] p-4">
             <div className="mb-4 flex items-center gap-2"><SlidersHorizontal size={17} /><strong>Salida</strong></div>
             <div className="grid gap-3">
-              <label className="grid gap-1.5 text-xs text-white/45">Modelo<select value={model} onChange={(e) => setModel(e.target.value)} className="rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-white"><option value="ltxv-2b-0.9.8-distilled">LTX 2B DISTILLED · FAST · L4</option><option value="ltxv-13b-0.9.8-distilled" disabled>LTX 13B · PRO · requiere RTX</option></select></label>
+              <label className="grid gap-1.5 text-xs text-white/45">Modelo<select value={model} onChange={(e) => setModel(e.target.value)} className="rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-white"><option value="ltxv-2b-0.9.8-distilled">LTX 2B DISTILLED · RUNPOD 48GB</option><option value="ltxv-13b-0.9.8-distilled" disabled>LTX 13B · PRO · requiere RTX</option></select></label>
               <div className="grid grid-cols-2 gap-2"><label className="grid gap-1.5 text-xs text-white/45">Resolución<select value={resolution} onChange={(e) => setResolution(e.target.value as "480p" | "720p")} className="rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-white"><option value="720p">720p PRO</option><option value="480p">480p FAST</option></select></label><label className="grid gap-1.5 text-xs text-white/45">FPS<select value={fps} onChange={(e) => setFps(Number(e.target.value) as 24 | 25 | 30)} className="rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-white"><option value={24}>24</option><option value={25}>25</option><option value={30}>30</option></select></label></div>
               <label className="grid gap-1.5 text-xs text-white/45">Seed<input type="number" value={seed} onChange={(e) => setSeed(Math.trunc(Number(e.target.value) || 0))} className="rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-white" /></label>
               <div className="grid grid-cols-2 gap-2"><label className="grid gap-1.5 text-xs text-white/45">Inicio (s)<input type="number" min={0} step={0.1} value={trimStart} onChange={(e) => setTrimStart(Math.max(0, Number(e.target.value) || 0))} className="rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-white" /></label><label className="grid gap-1.5 text-xs text-white/45">Duración<input type="number" min={0.1} step={0.1} value={trimDuration} placeholder="Todo" onChange={(e) => setTrimDuration(e.target.value)} className="rounded-xl border border-white/10 bg-black/40 px-3 py-2.5 text-white" /></label></div>
@@ -397,9 +397,9 @@ export function VideoEnhanceStudio() {
 
           <section className="rounded-3xl border border-white/10 bg-white/[.035] p-4">
             <div className="flex items-center gap-2"><Cpu size={17} /><strong>GPU</strong></div>
-            <div className="mt-3 grid gap-2 text-xs text-white/45"><div className="flex justify-between"><span>Región</span><span className="text-white/75">{runtime?.location || "—"}</span></div><div className="flex justify-between"><span>Worker</span><span className={runtime?.ready ? "text-emerald-300" : "text-amber-200"}>{runtime?.ready ? "LISTO" : "CUOTA PENDIENTE"}</span></div><div className="flex justify-between"><span>Normalización IA</span><span className="text-white/75">24 FPS CFR</span></div></div>
+            <div className="mt-3 grid gap-2 text-xs text-white/45"><div className="flex justify-between"><span>Región</span><span className="text-white/75">{runtime?.location || "—"}</span></div><div className="flex justify-between"><span>Worker</span><span className={runtime?.ready ? "text-emerald-300" : "text-amber-200"}>{runtime?.ready ? "LISTO" : "CONFIGURAR RUNPOD"}</span></div><div className="flex justify-between"><span>Normalización IA</span><span className="text-white/75">24 FPS CFR</span></div></div>
             <button type="button" onClick={() => void createAndRun()} disabled={!canRun} className="mt-4 flex w-full items-center justify-center gap-2 rounded-2xl bg-white px-4 py-3.5 font-black text-black disabled:cursor-not-allowed disabled:opacity-35">{busy ? <LoaderCircle className="animate-spin" size={18} /> : <Sparkles size={18} />}TRANSFORMAR VIDEO</button>
-            {!runtime?.ready ? <p className="mt-2 text-center text-[10px] leading-4 text-amber-100/55">El front y el worker están preparados; Google Cloud todavía debe habilitar la cuota GPU del proyecto.</p> : null}
+            {!runtime?.ready ? <p className="mt-2 text-center text-[10px] leading-4 text-amber-100/55">El front y el worker están preparados; falta configurar el endpoint y la API key de Runpod.</p> : null}
           </section>
         </aside>
       </div>
