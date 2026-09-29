@@ -90,7 +90,7 @@ export function VideoEnhanceStudio() {
   const [notice, setNotice] = useState<string | null>(null);
 
   const selectedProject = videoProjects.find((item) => item.id === selectedProjectId) ?? null;
-  const sourcePreview = job?.sourceUrl || selectedProject?.outputUrl || localPreview;
+  const sourcePreview = job?.sourceUrl || (sourceMode === "clouva" ? selectedProject?.outputUrl : localPreview);
   const hasSource = sourceMode === "upload" ? Boolean(file) : Boolean(selectedProject?.outputUrl);
   const canRun = Boolean(hasSource && prompt.trim() && runtime?.ready && !busy);
 
@@ -301,7 +301,7 @@ export function VideoEnhanceStudio() {
             <div className="mb-3 flex items-center gap-2"><Upload size={17} /><strong>Video base</strong></div>
             <div className="mb-3 grid grid-cols-2 gap-2">
               <button type="button" onClick={() => setSourceMode("upload")} className={`rounded-xl border px-3 py-2 text-xs font-bold ${sourceMode === "upload" ? "border-violet-400/45 bg-violet-400/15" : "border-white/10 bg-black/25 text-white/45"}`}>SUBIR VIDEO</button>
-              <button type="button" onClick={() => setSourceMode("clouva")} className={`rounded-xl border px-3 py-2 text-xs font-bold ${sourceMode === "clouva" ? "border-violet-400/45 bg-violet-400/15" : "border-white/10 bg-black/25 text-white/45"}`}>CLOUVA VIDEO</button>
+              <button type="button" onClick={() => pickClouvaProject(selectedProjectId)} className={`rounded-xl border px-3 py-2 text-xs font-bold ${sourceMode === "clouva" ? "border-violet-400/45 bg-violet-400/15" : "border-white/10 bg-black/25 text-white/45"}`}>CLOUVA VIDEO</button>
             </div>
 
             {sourceMode === "upload" ? (
