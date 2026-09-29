@@ -1,0 +1,80 @@
+name: Probe Video AI L4 regions
+
+on:
+  push:
+    branches:
+      - ops/video-ai-l4-region-probe
+    paths:
+      - ".github/workflows/probe-video-ai-l4-regions.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: gen-lang-client-0737053175
+  JOB_NAME: clouva-video-enhance-gpu
+  IMAGE: us-central1-docker.pkg.dev/gen-lang-client-0737053175/clouva/video-enhance:2824cb1a21da70ac5f52ac6d9eec0ea3052fb255
+  RUNTIME_SERVICE_ACCOUNT: clouva-web-runtime@gen-lang-client-0737053175.iam.gserviceaccount.com
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA_EMAIL }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Try supported L4 regions
+        id: probe
+        shell: bash
+        run: |
+          set -u
+          for region in europe-west1 europe-west4 us-east4; do
+            echo "Trying $region..."
+            set +e
+            output="$(gcloud run jobs create "$JOB_NAME" \
+              --project "$PROJECT_ID" \
+              --region "$region" \
+              --image "$IMAGE" \
+              --service-account "$RUNTIME_SERVICE_ACCOUNT" \
+              --cpu 4 \
+              --memory 16Gi \
+              --gpu 1 \
+              --gpu-type nvidia-l4 \
+              --parallelism 1 \
+              --no-gpu-zonal-redundancy \
+              --task-timeout 3600 \
+              --max-retries 0 \
+              --set-env-vars "SUPABASE_URL=https://dpawotcignpexkirhfsk.supabase.co,CLOUVA_GENERATED_MEDIA_BUCKET=clouva-generated-media" \
+              --set-secrets "SUPABASE_SERVICE_ROLE_KEY=clouva-supabase-service-role-key:latest" \
+              --quiet 2>&1)"
+            code=$?
+            set -e
+            printf '%s\n' "$output"
+            if [ "$code" -eq 0 ]; then
+              echo "region=$region" >> "$GITHUB_OUTPUT"
+              echo "ready=true" >> "$GITHUB_OUTPUT"
+              echo "L4 job created in $region" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+          done
+          echo "ready=false" >> "$GITHUB_OUTPUT"
+          echo "No supported region granted L4 quota automatically." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Verify created job
+        if: steps.probe.outputs.ready == 'true'
+        env:
+          REGION: ${{ steps.probe.outputs.region }}
+        run: |
+          gcloud run jobs describe "$JOB_NAME" \
+            --project "$PROJECT_ID" \
+            --region "$REGION" \
+            --format='yaml(name,template.template.containers,template.template.nodeSelector,template.template.resources)'
