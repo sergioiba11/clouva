@@ -7,7 +7,7 @@ import {
   type VideoEnhanceRow,
 } from "@/lib/server/video-enhance";
 import { getVideoProject } from "@/lib/server/video-projects";
-import { getVideoEnhanceRuntimeStatus } from "@/lib/cloud-run-jobs";
+import { getRunpodVideoRuntimeStatus } from "@/lib/runpod-video";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -26,10 +26,11 @@ export async function GET(request: NextRequest) {
     const limit = Number(request.nextUrl.searchParams.get("limit") || 20);
     const [jobs, runtimeStatus] = await Promise.all([
       listVideoEnhanceJobs(admin, user.id, limit),
-      getVideoEnhanceRuntimeStatus().catch(() => ({
+      getRunpodVideoRuntimeStatus().catch(() => ({
         ready: false,
         reason: "runtime_status_unavailable",
-        location: process.env.CLOUVA_VIDEO_ENHANCE_REGION || process.env.CLOUVA_GCP_REGION || "us-central1",
+        location: "Runpod Serverless",
+        provider: "runpod",
       })),
     ]);
     return NextResponse.json({
