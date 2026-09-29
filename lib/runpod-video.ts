@@ -144,10 +144,59 @@ export async function getRunpodVideoRuntimeStatus() {
       provider: "runpod",
     };
   }
-  return {
-    ready: true,
-    reason: null,
-    location: "Runpod Serverless · A40/A6000 48 GB",
-    provider: "runpod",
-  };
+
+  try {
+    const response = await fetch("https://api.runpod.io/v2/serverless", {
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        Accept: "application/json",
+      },
+      cache: "no-store",
+      signal: AbortSignal.timeout(8_000),
+    });
+
+    if (response.status === 401 || response.status === 403) {
+      return {
+        ready: false,
+        reason: "runpod_auth_failed",
+        location: "Runpod Serverless",
+        provider: "runpod",
+      };
+    }
+    if (!response.ok) {
+      return {
+        ready: false,
+        reason: `runpod_management_${response.status}`,
+        location: "Runpod Serverless",
+        provider: "runpod",
+      };
+    }
+
+    const payload = await response.json() as {
+      endpoints?: Array<{ id?: string; name?: string; type?: string }>;
+    };
+    const endpoint = (payload.endpoints ?? []).find((item) => item.id === endpointId);
+    if (!endpoint) {
+      return {
+        ready: false,
+        reason: "runpod_endpoint_not_found",
+        location: "Runpod Serverless",
+        provider: "runpod",
+      };
+    }
+
+    return {
+      ready: true,
+      reason: null,
+      location: "Runpod Serverless · A40/A6000 48 GB",
+      provider: "runpod",
+    };
+  } catch {
+    return {
+      ready: false,
+      reason: "runpod_status_unavailable",
+      location: "Runpod Serverless",
+      provider: "runpod",
+    };
+  }
 }
