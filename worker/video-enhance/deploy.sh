@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# L4 deployment profile; model image is reused across deploy-only changes.
 set -euo pipefail
 
 PROJECT_ID="${CLOUVA_GCP_PROJECT:-${GOOGLE_CLOUD_PROJECT:-gen-lang-client-0737053175}}"
