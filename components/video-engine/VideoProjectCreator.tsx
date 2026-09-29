@@ -370,7 +370,12 @@ export function VideoProjectCreator() {
             <Link href="/crear/media" aria-label="Volver a Crear" className="grid h-9 w-9 place-items-center rounded-full border border-white/10 bg-white/5"><ArrowLeft size={18} /></Link>
             <div className="flex items-center gap-2"><CloverIcon size={24} /><strong>CLOUVA VIDEO</strong></div>
           </div>
-          {project ? <button type="button" onClick={reset} className="text-sm text-white/60 hover:text-white">Nuevo proyecto</button> : null}
+          <div className="flex items-center gap-2">
+            <Link href="/crear/video/pro" className="inline-flex items-center gap-2 rounded-full border border-violet-400/25 bg-violet-400/10 px-3 py-2 text-xs font-bold text-violet-100 hover:bg-violet-400/15">
+              <Sparkles size={14} />AI ENHANCE
+            </Link>
+            {project ? <button type="button" onClick={reset} className="text-sm text-white/60 hover:text-white">Nuevo proyecto</button> : null}
+          </div>
         </div>
       </header>
 

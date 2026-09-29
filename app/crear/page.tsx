@@ -10,6 +10,7 @@ import {
   ShoppingBag,
   Shirt,
   Sparkles,
+  WandSparkles,
 } from "lucide-react";
 
 export const metadata: Metadata = {
@@ -29,6 +30,12 @@ const creativeTools = [
     description: "Abrí el Media Creator actual para generar y trabajar contenido visual.",
     href: "/crear/media",
     icon: ImagePlay,
+  },
+  {
+    title: "Video AI Lab",
+    description: "Transformá un MP4 con LTX: preservá movimiento, cámara y sujeto, controlá la fuerza visual y procesalo en GPU cloud.",
+    href: "/crear/video/pro",
+    icon: WandSparkles,
   },
   {
     title: "CLOUVA AI / Trébol",

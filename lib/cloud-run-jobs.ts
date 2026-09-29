@@ -113,3 +113,56 @@ export async function runVideoRenderJob(projectId: string): Promise<string> {
   if (!executionName) throw new Error("Cloud Run no devolvió la ejecución del render de video.");
   return executionName;
 }
+
+function videoEnhanceJobConfig() {
+  const project = process.env.CLOUVA_GCP_PROJECT || process.env.GOOGLE_CLOUD_PROJECT || "gen-lang-client-0737053175";
+  const location = process.env.CLOUVA_VIDEO_ENHANCE_REGION || process.env.CLOUVA_GCP_REGION || "us-central1";
+  const job = process.env.CLOUVA_VIDEO_ENHANCE_JOB_NAME || "clouva-video-enhance-gpu";
+  return { project, location, job };
+}
+
+export async function runVideoEnhanceJob(jobId: string): Promise<string> {
+  const { project, location, job } = videoEnhanceJobConfig();
+  const token = await getAccessToken();
+  const response = await fetch(
+    `https://run.googleapis.com/v2/projects/${project}/locations/${location}/jobs/${job}:run`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        overrides: {
+          containerOverrides: [{
+            env: [{ name: "CLOUVA_VIDEO_ENHANCE_JOB_ID", value: jobId }],
+          }],
+        },
+      }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(20 * 1000),
+    },
+  );
+  if (!response.ok) {
+    const raw = await response.text().catch(() => "");
+    throw new Error(`No se pudo iniciar Video AI en Cloud Run (${response.status})${raw ? `: ${raw.slice(0, 500)}` : ""}`);
+  }
+  const operation = await response.json() as CloudRunOperation;
+  const executionName = operation.metadata?.name;
+  if (!executionName) throw new Error("Cloud Run no devolvió la ejecución de Video AI.");
+  return executionName;
+}
+
+export async function getVideoEnhanceRuntimeStatus() {
+  const { project, location, job } = videoEnhanceJobConfig();
+  const token = await getAccessToken();
+  const response = await fetch(
+    `https://run.googleapis.com/v2/projects/${project}/locations/${location}/jobs/${job}`,
+    {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+      signal: AbortSignal.timeout(10 * 1000),
+    },
+  );
+  if (response.status === 404) return { ready: false, reason: "gpu_worker_not_deployed", location };
+  if (!response.ok) return { ready: false, reason: `cloud_run_${response.status}`, location };
+  const payload = await response.json() as { name?: string };
+  return { ready: Boolean(payload.name), reason: null, location };
+}

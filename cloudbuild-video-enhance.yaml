@@ -1,0 +1,16 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --build-arg=LTX_COMMIT=${_LTX_COMMIT}
+      - -t=us-central1-docker.pkg.dev/$PROJECT_ID/clouva/video-enhance:${_VIDEO_ENHANCE_TAG}
+      - worker/video-enhance
+images:
+  - us-central1-docker.pkg.dev/$PROJECT_ID/clouva/video-enhance:${_VIDEO_ENHANCE_TAG}
+substitutions:
+  _VIDEO_ENHANCE_TAG: latest
+  _LTX_COMMIT: 4b2d053057623ddd4d0a1d3e9cd28890e9ef487f
+timeout: 1800s
+options:
+  logging: CLOUD_LOGGING_ONLY
+  diskSizeGb: 100
