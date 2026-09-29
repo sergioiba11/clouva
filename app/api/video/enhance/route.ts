@@ -13,7 +13,6 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MODELS = new Set([
-  "ltxv-13b-0.9.8-distilled",
   "ltxv-2b-0.9.8-distilled",
 ]);
 
@@ -51,7 +50,7 @@ export async function POST(request: NextRequest) {
     const prompt = String(body.prompt || "").trim().slice(0, 4000);
     if (!prompt) throw new MediaApiError("Describí cómo querés transformar el video.", 400, "prompt_required");
 
-    const model = String(body.model || "ltxv-13b-0.9.8-distilled");
+    const model = String(body.model || "ltxv-2b-0.9.8-distilled");
     if (!MODELS.has(model)) throw new MediaApiError("Modelo LTX inválido.", 400, "invalid_model");
     const mode = ["faithful", "balanced", "reimagine"].includes(String(body.mode)) ? String(body.mode) : "balanced";
     const strength = Math.max(0, Math.min(1, Number(body.transformStrength ?? 0.45)));
