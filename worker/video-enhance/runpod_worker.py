@@ -104,6 +104,7 @@ def upload_resumable_session(url, path, content_type):
             headers={
                 "Content-Type": content_type,
                 "Content-Length": str(size),
+                "Content-Range": f"bytes 0-{size - 1}/{size}",
             },
             timeout=(30, 3600),
         )
