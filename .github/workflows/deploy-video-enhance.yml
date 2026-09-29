@@ -53,7 +53,7 @@ jobs:
           if [ -n "$REQUESTED_TAG" ]; then
             tag="$REQUESTED_TAG"
           else
-            tag="$(git log -1 --format=%H -- worker/video-enhance cloudbuild-video-enhance.yaml)"
+            tag="$(git log -1 --format=%H -- worker/video-enhance/Dockerfile worker/video-enhance/worker.py worker/video-enhance/requirements.txt cloudbuild-video-enhance.yaml)"
           fi
           test -n "$tag"
           image="us-central1-docker.pkg.dev/$PROJECT_ID/clouva/video-enhance:$tag"
