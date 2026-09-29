@@ -1,0 +1,53 @@
+name: Validate Runpod image build
+
+on:
+  push:
+    branches:
+      - ops/validate-runpod-image-build
+    paths:
+      - "cloudbuild-video-enhance-runpod-validate.yaml"
+      - ".github/workflows/validate-runpod-image-build.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA_EMAIL }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Submit exact Runpod Dockerfile to Cloud Build
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="validation-${GITHUB_SHA}"
+          build_id="$(gcloud builds submit \
+            --project gen-lang-client-0737053175 \
+            --config cloudbuild-video-enhance-runpod-validate.yaml \
+            --substitutions="_TAG=$tag" \
+            --async \
+            --format='value(id)' \
+            .)"
+          test -n "$build_id"
+          echo "Cloud Build: $build_id"
+          for attempt in $(seq 1 140); do
+            status="$(gcloud builds describe "$build_id" --project gen-lang-client-0737053175 --format='value(status)')"
+            echo "status=$status ($attempt/140)"
+            case "$status" in
+              SUCCESS) exit 0 ;;
+              FAILURE|INTERNAL_ERROR|TIMEOUT|CANCELLED|EXPIRED)
+                gcloud builds log "$build_id" --project gen-lang-client-0737053175 || true
+                exit 1
+                ;;
+            esac
+            sleep 15
+          done
+          exit 1
