@@ -1,0 +1,86 @@
+name: Request Video AI L4 quota
+
+on:
+  push:
+    branches:
+      - ops/video-ai-l4-quota-request
+    paths:
+      - ".github/workflows/request-video-ai-l4-quota.yml"
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: gen-lang-client-0737053175
+  REGION: us-central1
+  QUOTA_ID: NvidiaL4GpuAllocNoZonalRedundancyPerProjectRegion
+  PREFERENCE_ID: clouva-video-ai-l4-us-central1
+
+jobs:
+  request:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SA_EMAIL }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - name: Temporarily grant Cloud Quotas admin
+        env:
+          DEPLOY_SA: ${{ secrets.GCP_DEPLOY_SA_EMAIL }}
+        run: |
+          set -euo pipefail
+          gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+            --member "serviceAccount:$DEPLOY_SA" \
+            --role "roles/cloudquotas.admin" \
+            --condition=None \
+            --quiet
+
+      - name: Request one L4 GPU quota
+        id: request
+        shell: bash
+        run: |
+          set +e
+          output="$(gcloud quotas preferences create \
+            --service=run.googleapis.com \
+            --project="$PROJECT_ID" \
+            --quota-id="$QUOTA_ID" \
+            --preferred-value=1 \
+            --dimensions="region=$REGION" \
+            --preference-id="$PREFERENCE_ID" \
+            --justification="CLOUVA Video AI uses a single on-demand Cloud Run Job with one NVIDIA L4 GPU, 4 vCPU and 16 GiB memory. The job scales to zero and runs only when a user explicitly starts a video transformation." \
+            2>&1)"
+          code=$?
+          set -e
+          printf '%s\n' "$output"
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          echo '### L4 quota request result' >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' "$output" >> "$GITHUB_STEP_SUMMARY"
+          exit 0
+
+      - name: Read quota preference
+        if: steps.request.outputs.exit_code == '0'
+        run: |
+          gcloud quotas preferences describe "$PREFERENCE_ID" \
+            --project="$PROJECT_ID" \
+            --format=yaml || true
+
+      - name: Remove temporary Cloud Quotas admin
+        if: always()
+        env:
+          DEPLOY_SA: ${{ secrets.GCP_DEPLOY_SA_EMAIL }}
+        run: |
+          set +e
+          gcloud projects remove-iam-policy-binding "$PROJECT_ID" \
+            --member "serviceAccount:$DEPLOY_SA" \
+            --role "roles/cloudquotas.admin" \
+            --condition=None \
+            --quiet
+          exit 0
