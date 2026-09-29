@@ -6,7 +6,7 @@ import type { EvidenceRole, ReconciliationGroup, ReconciliationLine, Reconciliat
 type Payload = {
   report: ReconciliationReport; revision: string; editable: boolean;
   groups: ReconciliationGroup[]; lines: ReconciliationLine[];
-  sources: { source_index: number; source_url: string; file_name: string | null; listing_id: string | null; recognition?: { context_only?: boolean; unassigned_evidence?: boolean; suggested_role?: string; matched_group_keys?: string[]; matched_products?: { group_key: string; label: string; confidence: number }[]; observed_products?: string[]; context_reason?: string; [key: string]: unknown } | null }[];
+  sources: { source_index: number; source_url: string; file_name: string | null; listing_id: string | null; recognition?: { context_only?: boolean; unassigned_evidence?: boolean; context_key?: string; suggested_role?: string; matched_group_keys?: string[]; matched_products?: { group_key: string; label: string; confidence: number }[]; observed_products?: string[]; context_reason?: string; [key: string]: unknown } | null }[];
   existingProducts: { id: string; name: string }[]; existingLinks: Record<string, { listingId: string }>;
   invoice: { source_url: string; currency: string | null } | null;
 };
@@ -25,10 +25,17 @@ export function CommerceProductReview({ studioId, batchId, refreshKey, busy, onP
   const [gallery, setGallery] = useState<{ groupKey: string; role?: EvidenceRole } | null>(null);
   const [chooseLine, setChooseLine] = useState("");
   const [extraValues, setExtraValues] = useState<Record<string, string>>({});
-  const [unassignedTargets, setUnassignedTargets] = useState<Record<number, string>>({});
   const [onlyPending, setOnlyPending] = useState(false);
   const base = `/api/studios/${encodeURIComponent(studioId)}/commerce/import-batches/${encodeURIComponent(batchId)}`;
-  const accept = useCallback((payload: Payload) => { const unassigned = payload.sources.filter(photo => photo.recognition?.unassigned_evidence === true).length; setData(payload); onPendingChange(payload.report.pending + unassigned); }, [onPendingChange]);
+  const accept = useCallback((payload: Payload) => {
+    const unresolvedObjects = new Set(
+      payload.sources
+        .filter(photo => photo.recognition?.unassigned_evidence === true)
+        .map(photo => photo.recognition?.context_key || `source-${photo.source_index}`),
+    ).size;
+    setData(payload);
+    onPendingChange(payload.report.pending + unresolvedObjects);
+  }, [onPendingChange]);
   const refresh = useCallback(async () => {
     const response = await authenticatedFetch(`${base}/reconcile`);
     accept(await readApiJson<Payload>(response));
@@ -49,16 +56,6 @@ export function CommerceProductReview({ studioId, batchId, refreshKey, busy, onP
     } catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo confirmar."); await refresh().catch(() => {}); }
     finally { setSaving(""); }
   }
-  async function assignEvidence(sourceIndex: number, lineId: string, role?: string) {
-    if (!data || !lineId || saving || busy) return;
-    setSaving(`unassigned-${sourceIndex}`); setError("");
-    try {
-      const response = await authenticatedFetch(`${base}/reconcile`, { method: "PATCH", body: JSON.stringify({ kind: "assign_evidence", sourceIndex, lineId, role, revision: data.revision, actionId: crypto.randomUUID() }) });
-      accept(await readApiJson<Payload>(response));
-      setUnassignedTargets(values => { const next = { ...values }; delete next[sourceIndex]; return next; });
-    } catch (cause) { setError(cause instanceof Error ? cause.message : "No se pudo asignar la imagen."); await refresh().catch(() => {}); }
-    finally { setSaving(""); }
-  }
   async function addPhoto(groupKey: string, role: EvidenceRole, file?: File) {
     if (!data || !file || saving) return;
     setSaving(groupKey); setError("");
@@ -77,7 +74,10 @@ export function CommerceProductReview({ studioId, batchId, refreshKey, busy, onP
   const display = data.report.products.filter(p => !onlyPending || p.pending || p.shortage > 0 || p.missingImages.length > 0);
   const contextSources = data.sources.filter(photo => photo.recognition?.context_only === true && photo.recognition?.unassigned_evidence !== true);
   const unassignedSources = data.sources.filter(photo => photo.recognition?.unassigned_evidence === true);
-  const totalPending = data.report.pending + unassignedSources.length;
+  const unresolvedObjects = Array.from(new Map(
+    unassignedSources.map(photo => [photo.recognition?.context_key || `source-${photo.source_index}`, photo] as const),
+  ).values());
+  const totalPending = data.report.pending + unresolvedObjects.length;
   return <section aria-label="Revisión por producto" className="mt-4 rounded-3xl border-2 border-violet-800 bg-white p-3 text-violet-950 sm:p-5">
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div><h3 className="text-xl font-black">Revisá tus productos</h3><p className="text-sm">{data.report.hasInvoice ? data.lines.length : data.report.products.length} artículos · {data.report.totals.physical} unidades físicas</p></div>
@@ -109,7 +109,11 @@ export function CommerceProductReview({ studioId, batchId, refreshKey, busy, onP
         </article>;
       })}
     </div>}
-    {unassignedSources.length > 0 && <details className="mb-4 rounded-2xl border-2 border-amber-400 bg-amber-50 p-3"><summary className="cursor-pointer list-none font-black">REVISAR {unassignedSources.length} IMÁGENES DUDOSAS <span className="ml-2 text-xs font-bold">· excepción · no suman stock</span></summary><p className="mt-2 text-xs font-bold">CLOUVA no pudo vincular estas imágenes después de reconstruir los objetos físicos. Abrí esta sección solamente para resolver los casos que realmente queden dudosos.</p><div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">{unassignedSources.map(photo => <div key={photo.source_index} className="flex gap-2 rounded-xl border-2 border-amber-300 bg-white p-2"><a href={photo.source_url} target="_blank" rel="noreferrer" className="shrink-0"><img src={photo.source_url} alt="Imagen dudosa" className="h-20 w-20 rounded-lg object-cover" /></a><div className="min-w-0 flex-1"><div className="mb-1 text-[10px] font-black">DUDOSA · {photo.recognition?.suggested_role || "Detalle"}</div><select aria-label={`Asignar imagen ${photo.source_index}`} value={unassignedTargets[photo.source_index] || ""} disabled={disabled} onChange={event => setUnassignedTargets(values => ({ ...values, [photo.source_index]: event.target.value }))} className="h-9 w-full rounded-lg border-2 border-violet-800 bg-white px-2 text-xs"><option value="">Elegir artículo…</option>{data.lines.map(line => <option key={line.id} value={line.id}>{line.description}</option>)}</select><button disabled={disabled || !unassignedTargets[photo.source_index]} className="mt-1 h-9 w-full rounded-lg bg-violet-800 px-2 text-xs font-bold text-white disabled:opacity-40" onClick={() => void assignEvidence(photo.source_index, unassignedTargets[photo.source_index] || "", photo.recognition?.suggested_role)}>Asignar</button></div></div>)}</div></details>}
+    {unresolvedObjects.length > 0 && <details className="mb-4 rounded-2xl border-2 border-amber-400 bg-amber-50 p-3">
+      <summary className="cursor-pointer list-none font-black">REVISAR {unresolvedObjects.length} OBJETO{unresolvedObjects.length === 1 ? "" : "S"} DUDOSO{unresolvedObjects.length === 1 ? "" : "S"} <span className="ml-2 text-xs font-bold">· excepción · no suman stock</span></summary>
+      <p className="mt-2 text-xs font-bold">Esto aparece solamente después de reconstruir el objeto completo y agotar el matching automático contra la factura. No se resuelve foto por foto.</p>
+      <div className="mt-3 flex gap-2 overflow-x-auto pb-1">{unresolvedObjects.map(photo => <a key={photo.recognition?.context_key || photo.source_index} href={photo.source_url} target="_blank" rel="noreferrer" className="w-24 shrink-0"><img src={photo.source_url} alt="Objeto dudoso" className="h-24 w-24 rounded-xl border-2 border-amber-300 bg-white object-cover" /><span className="mt-1 block truncate text-[10px] font-bold">{photo.recognition?.suggested_role || "Revisar"}</span></a>)}</div>
+    </details>}
     <div className="grid items-start gap-4 lg:grid-cols-2 xl:grid-cols-3">
       {display.map(product => {
         const front = product.images.front[0];
@@ -126,6 +130,7 @@ export function CommerceProductReview({ studioId, batchId, refreshKey, busy, onP
         const transferred = product.allocations.filter(a => a.reassigned);
         const ordinaryMissing = product.missingImages.filter(role => role !== "code");
         return <article key={product.groupKey} className={`overflow-hidden rounded-2xl border-2 border-violet-800 p-3 ${unknownExtra ? "order-10 border-sky-500 bg-sky-50" : "order-0"}`}>
+          {unknownExtra && <p className="mb-1 text-center text-xs font-black text-sky-700">EXTRA FÍSICO</p>}
           <h4 className="mb-2 text-center text-lg font-black">{product.name}</h4>
           {group.brand && !product.name.toLowerCase().includes(group.brand.toLowerCase()) && <p className="mb-2 text-center text-sm">{group.brand}</p>}
           <button type="button" className="relative flex h-44 w-full items-center justify-center rounded-xl border-2 border-dashed border-violet-700 bg-violet-50" onClick={() => setGallery({ groupKey: product.groupKey, role: "front" })} aria-label={`Frente de ${product.name}`}>
