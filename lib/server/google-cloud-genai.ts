@@ -150,7 +150,6 @@ export async function generateGoogleCloudJson(args: {
   responseJsonSchema: unknown;
   temperature?: number;
   maxOutputTokens?: number;
-  googleSearch?: boolean;
 }) {
   try {
     const { ai, project, location } = await getVertexClient();
@@ -171,11 +170,54 @@ export async function generateGoogleCloudJson(args: {
         maxOutputTokens: args.maxOutputTokens ?? 2200,
         responseMimeType: "application/json",
         responseJsonSchema: args.responseJsonSchema,
-        ...(args.googleSearch ? { tools: [{ googleSearch: {} }] } : {}),
       },
     });
     const output = responseText(response);
     if (!output) throw new GoogleCloudGenAIError("Vertex AI no devolvió contenido estructurado.", 502, "empty_response");
+    return {
+      text: output,
+      usage: usageMetadata(response),
+      provider: "google_vertex_ai" as const,
+      model: args.model,
+      project,
+      location,
+      responseId: response.responseId ?? null,
+      groundingMetadata: groundingMetadata(response),
+    };
+  } catch (error) {
+    throw normalizeProviderError(error);
+  }
+}
+
+export async function generateGoogleCloudGroundedText(args: {
+  model: string;
+  prompt: string;
+  referenceImages?: GoogleCloudReferenceImage[];
+  temperature?: number;
+  maxOutputTokens?: number;
+}) {
+  try {
+    const { ai, project, location } = await getVertexClient();
+    const response = await ai.models.generateContent({
+      model: args.model,
+      contents: [{
+        role: "user",
+        parts: [
+          { text: args.prompt },
+          ...(args.referenceImages ?? []).flatMap((image, index) => [
+            { text: `Referencia visual ${index + 1}` },
+            { inlineData: { mimeType: image.mimeType, data: image.data } },
+          ]),
+        ],
+      }],
+      config: {
+        temperature: args.temperature ?? 0.1,
+        maxOutputTokens: args.maxOutputTokens ?? 2400,
+        tools: [{ googleSearch: {} }],
+      },
+    });
+    const output = responseText(response);
+    if (!output) throw new GoogleCloudGenAIError("Google Search no devolvió información para investigar el producto.", 502, "grounded_search_empty");
     return {
       text: output,
       usage: usageMetadata(response),
