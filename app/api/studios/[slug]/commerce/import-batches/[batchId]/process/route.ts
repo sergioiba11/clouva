@@ -6,6 +6,7 @@ import type { CommerceProductRecognition } from "@/lib/commerce/product-recognit
 import { downloadGeneratedMediaObject } from "@/lib/gcs-media";
 import type { CommerceBatchGroup } from "@/lib/server/commerce-product-batch-recognition";
 import { recognizeCommerceProduct } from "@/lib/server/commerce-product-recognition";
+import { researchCommerceExtraProduct } from "@/lib/server/commerce-product-web-research";
 import { requireManagedSpot } from "@/lib/server/commerce-spot";
 import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
 
@@ -211,11 +212,18 @@ async function recognizeGroup(args: {
   const suppliedIdentifier = args.group.identifier && args.group.identifier.type !== "sku"
     ? args.group.identifier
     : null;
-  return recognizeCommerceProduct({
+  const recognized = await recognizeCommerceProduct({
     images,
     spotName: args.spotName,
     suppliedIdentifier,
   });
+  return {
+    ...recognized,
+    researchReferenceImages: images.slice(0, 6).flatMap((image) => {
+      const match = image.dataUrl.match(/^data:(image\/[a-z0-9.+-]+);base64,([a-z0-9+/=\r\n]+)$/i);
+      return match ? [{ mimeType: match[1].toLowerCase(), data: match[2].replace(/\s/g, "") }] : [];
+    }),
+  };
 }
 
 export async function POST(
@@ -461,7 +469,40 @@ export async function POST(
           : new Error("Google Cloud no pudo reconocer el producto.");
 
         const recognized = recognizedResult.recognition;
-        const recognizedName = group.name || recognized.name || recognized.detectedObject || "Producto";
+        const purchaseReceipt = receiptForGroup(group.groupKey);
+        const existingLink = record(record(receiptState.metadata.existing_product_links)[group.groupKey]);
+        const existingLinkIsCurrent = typeof existingLink.listingId === "string"
+          && existingLink.basis === reconciliationBasis(receiptState.groups, receiptState.lines);
+        const isStandaloneExtra = receiptState.report.hasInvoice
+          && purchaseReceipt.allocations.length === 0
+          && purchaseReceipt.unbilled > 0
+          && !existingLinkIsCurrent;
+
+        const webResearch = isStandaloneExtra
+          ? await researchCommerceExtraProduct({
+              spotName: spot.name,
+              recognition: recognized,
+              groupName: group.name,
+              groupBrand: group.brand,
+              groupModel: group.model,
+              identifiers: [
+                ...(group.identifier ? [group.identifier] : []),
+                ...group.visibleIdentifiers.map((candidate) => ({ value: candidate.value, type: candidate.type })),
+                ...(recognized.identifier ? [recognized.identifier] : []),
+              ],
+              referenceImages: recognizedResult.researchReferenceImages,
+            })
+          : null;
+        const researchedIdentity = webResearch?.verified && webResearch.confidence >= 0.55
+          ? webResearch
+          : null;
+        const recognizedName = isStandaloneExtra
+          ? researchedIdentity?.name || recognized.name || group.name || recognized.detectedObject || "Producto"
+          : group.name || recognized.name || recognized.detectedObject || "Producto";
+        const resolvedBrand = researchedIdentity?.brand || group.brand || recognized.brand;
+        const resolvedCategory = researchedIdentity?.category || recognized.category;
+        const resolvedDescription = researchedIdentity?.description || recognized.description;
+        const resolvedModel = researchedIdentity?.productModel || group.model || "";
         const externalIdentifier = externalIdentifierFromGroup(group) ?? recognizedIdentifier(recognized);
         const identifier = externalIdentifier ?? {
           value: buildSpotSku({
@@ -487,9 +528,9 @@ export async function POST(
           analyzed_at: analyzedAt,
           detected_object: recognized.detectedObject,
           name: recognizedName,
-          description: recognized.description,
-          brand: group.brand || recognized.brand,
-          category: recognized.category,
+          description: resolvedDescription,
+          brand: resolvedBrand,
+          category: resolvedCategory,
           product_kind: recognized.productKind,
           listing_kind: recognized.listingKind,
           size: recognized.size,
@@ -506,6 +547,22 @@ export async function POST(
         };
         const metadata = {
           recognition: recognitionMetadata,
+          ...(webResearch ? {
+            web_research: {
+              trigger: "confirmed_extra_not_in_invoice",
+              verified: webResearch.verified,
+              confidence: webResearch.confidence,
+              name: webResearch.name,
+              brand: webResearch.brand,
+              product_model: webResearch.productModel,
+              category: webResearch.category,
+              evidence_summary: webResearch.evidenceSummary,
+              provider: webResearch.provider,
+              model: webResearch.modelName,
+              researched_at: analyzedAt,
+              grounding_metadata: webResearch.groundingMetadata,
+            },
+          } : {}),
           product_images: {
             provider: recognizedResult.provider,
             model: recognizedResult.model,
@@ -535,8 +592,9 @@ export async function POST(
             last_saved_at: analyzedAt,
           },
           draft_fields: {
-            brand: group.brand || recognized.brand,
-            category: recognized.category,
+            brand: resolvedBrand,
+            model: resolvedModel,
+            category: resolvedCategory,
             product_kind: recognized.productKind,
             listing_kind: recognized.listingKind,
             size: recognized.size,
@@ -562,9 +620,8 @@ export async function POST(
           },
         };
 
-        const existingLink = record(record(receiptState.metadata.existing_product_links)[group.groupKey]);
         let existingListing: Record<string, unknown> | null = null;
-        if (existingLink.listingId && existingLink.basis === reconciliationBasis(receiptState.groups, receiptState.lines)) {
+        if (existingLinkIsCurrent) {
           const { data: linked, error: linkedError } = await admin.from("commerce_products").select("*").eq("id", String(existingLink.listingId)).eq("spot_id", spot.id).maybeSingle();
           if (linkedError || !linked) throw new Error(linkedError?.message || "El artículo seleccionado ya no existe.");
           existingListing = linked;
@@ -578,9 +635,9 @@ export async function POST(
           p_product: {
             product_kind: recognized.productKind,
             name: recognizedName,
-            brand: group.brand || recognized.brand,
-            category: recognized.category,
-            description: recognized.description,
+            brand: resolvedBrand,
+            category: resolvedCategory,
+            description: resolvedDescription,
             metadata,
           },
           p_listing: {
@@ -671,8 +728,9 @@ export async function POST(
           group_key: group.groupKey,
           listing_id: listingId,
           name: recognizedName,
-          brand: group.brand || recognized.brand,
-          category: recognized.category,
+          brand: resolvedBrand,
+          model: resolvedModel,
+          category: resolvedCategory,
           package_kind: group.packageKind,
           identifier,
           visible_identifiers: group.visibleIdentifiers,
@@ -680,6 +738,11 @@ export async function POST(
           received_quantity: receipt.quantity,
           unit_cost: receipt.unitCost,
           invoice_item_id: receipt.line?.id ?? null,
+          web_research: webResearch ? {
+            verified: webResearch.verified,
+            confidence: webResearch.confidence,
+            evidence_summary: webResearch.evidenceSummary,
+          } : null,
           analyzed_at: analyzedAt,
         };
         const { error: itemUpdateError } = await admin
