@@ -212,18 +212,11 @@ async function recognizeGroup(args: {
   const suppliedIdentifier = args.group.identifier && args.group.identifier.type !== "sku"
     ? args.group.identifier
     : null;
-  const recognized = await recognizeCommerceProduct({
+  return recognizeCommerceProduct({
     images,
     spotName: args.spotName,
     suppliedIdentifier,
   });
-  return {
-    ...recognized,
-    researchReferenceImages: images.slice(0, 6).flatMap((image) => {
-      const match = image.dataUrl.match(/^data:(image\/[a-z0-9.+-]+);base64,([a-z0-9+/=\r\n]+)$/i);
-      return match ? [{ mimeType: match[1].toLowerCase(), data: match[2].replace(/\s/g, "") }] : [];
-    }),
-  };
 }
 
 export async function POST(
@@ -490,7 +483,6 @@ export async function POST(
                 ...group.visibleIdentifiers.map((candidate) => ({ value: candidate.value, type: candidate.type })),
                 ...(recognized.identifier ? [recognized.identifier] : []),
               ],
-              referenceImages: recognizedResult.researchReferenceImages,
             })
           : null;
         const researchedIdentity = webResearch?.verified && webResearch.confidence >= 0.55
