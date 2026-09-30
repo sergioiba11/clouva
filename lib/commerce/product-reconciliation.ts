@@ -22,7 +22,7 @@ export type ProductReconciliation = {
   groupKey: string; name: string; physical: number; expected: number;
   extra: number; shortage: number; unbilled: number; unbilledValue: number | null; allocations: Allocation[];
   images: Record<EvidenceRole, number[]>; missingImages: EvidenceRole[];
-  pending: boolean; reviewRequired: boolean; signature: string;
+  pending: boolean; reviewRequired: boolean; unresolved: boolean; signature: string;
   candidates: { lineId: string; name: string; deficit: number; score: number; suggested: boolean }[];
 };
 export type ReconciliationReport = {
