@@ -121,6 +121,8 @@ export function CommerceProductReview({ studioId, batchId, refreshKey, busy, onP
         const group = data.groups.find(g => g.groupKey === product.groupKey)!;
         const suggestion = product.candidates.find(c => c.suggested);
         const unknownExtra = data.report.hasInvoice && product.expected === 0 && product.extra > product.unbilled;
+        const linkedExisting = Boolean(data.existingLinks[product.groupKey]?.listingId);
+        const confirmedNewArticle = data.report.hasInvoice && product.expected === 0 && product.unbilled > 0 && !linkedExisting;
         const remainingExtra = product.extra - product.unbilled;
         const currency = data.invoice?.currency || "ARS";
         const extraValueText = extraValues[product.groupKey] ?? "";
@@ -151,6 +153,7 @@ export function CommerceProductReview({ studioId, batchId, refreshKey, busy, onP
             {ordinaryMissing.length > 0 && <p className="rounded-xl bg-sky-100 px-3 py-2 font-bold">{ordinaryMissing.length} FALTA IMG <span className="float-right text-sky-600">{ordinaryMissing.map(role => symbols[role]).join(" ")} ?</span></p>}
             {product.missingImages.includes("code") && <p className="rounded-xl bg-sky-100 px-3 py-2 font-bold">FALTA IMG QR <span className="float-right text-sky-600">X ?</span></p>}
             {unknownExtra && <p className="rounded-xl bg-sky-100 px-3 py-2 font-bold">NO ESTÁ EN FACTURA</p>}
+            {confirmedNewArticle && <p className="rounded-xl border-2 border-sky-400 bg-white px-3 py-2 text-sm font-black text-sky-800">ARTÍCULO NUEVO · al ingresarlo, CLOUVA verifica su identidad en internet y crea la ficha correcta</p>}
             {product.extra > 0 && !unknownExtra && <p className="rounded-xl bg-sky-100 px-3 py-2 font-bold">{product.unbilled ? <>EXTRA NO COBRADO{product.unbilledValue != null && <span className="float-right text-sky-600">+{money(product.unbilledValue, currency)}</span>}</> : `${product.extra} PROD DE MÁS`}</p>}
             {transferred.length > 0 && <div className="rounded-xl bg-sky-100 p-3"><b className="text-sm">EXTRA COBRADO COMO OTRO</b>{transferred.map(a => <p key={a.lineId} className="mt-1 text-sm">{data.lines.find(l => l.id === a.lineId)?.description} −{a.quantity} → {product.name} +{a.quantity}</p>)}</div>}
             {product.extra > 0 && <div className="flex flex-wrap gap-1" aria-label="Unidades recibidas">{Array.from({ length: Math.min(product.physical, 100) }, (_, i) => <span key={i} className={`rounded-lg border-2 px-2 py-1 text-xs font-bold ${i >= product.expected ? "border-sky-500 bg-sky-100" : "border-violet-200"}`}>{i >= product.expected ? `${i + 1} EXTRA` : i + 1}</span>)}</div>}
