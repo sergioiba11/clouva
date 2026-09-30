@@ -5,6 +5,7 @@ import {
   compatibleInvoiceLine,
   compatibleProductView,
   mergeClusterGroups,
+  hasConflictingInvoiceIdentifiers,
   physicalProductName,
 } from "./lib/server/commerce-product-batch-recognition.ts";
 
@@ -48,4 +49,12 @@ test("the same barcode remains recorded on every photographed box", () => {
   const merged = mergeClusterGroups(photos, 4, 1, false);
   assert.deepEqual(merged.visibleIdentifiers.map((code) => code.sourceIndex).sort(), [48, 49, 50, 51]);
   assert.equal(merged.unitCount, 4);
+});
+
+test("an invoice line does not merge different boxed barcodes", () => {
+  const product = (value) => ({
+    identifier: { type: "ean_13", value }, visibleIdentifiers: [], images: [],
+  });
+  assert.equal(hasConflictingInvoiceIdentifiers([product("8945637653477"), product("8806090134654")]), true);
+  assert.equal(hasConflictingInvoiceIdentifiers([product("711719870258"), product("711719870258")]), false);
 });
