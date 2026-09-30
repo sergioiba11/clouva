@@ -132,6 +132,17 @@ function usageMetadata(response: GenerateContentResponse): GoogleCloudUsageMetad
     : null;
 }
 
+function groundingMetadata(response: GenerateContentResponse): Record<string, unknown> | null {
+  const candidate = response.candidates?.[0] as unknown as { groundingMetadata?: unknown } | undefined;
+  const grounding = candidate?.groundingMetadata;
+  if (!grounding || typeof grounding !== "object" || Array.isArray(grounding)) return null;
+  try {
+    return JSON.parse(JSON.stringify(grounding)) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
 export async function generateGoogleCloudJson(args: {
   model: string;
   prompt: string;
@@ -139,6 +150,7 @@ export async function generateGoogleCloudJson(args: {
   responseJsonSchema: unknown;
   temperature?: number;
   maxOutputTokens?: number;
+  googleSearch?: boolean;
 }) {
   try {
     const { ai, project, location } = await getVertexClient();
@@ -159,6 +171,7 @@ export async function generateGoogleCloudJson(args: {
         maxOutputTokens: args.maxOutputTokens ?? 2200,
         responseMimeType: "application/json",
         responseJsonSchema: args.responseJsonSchema,
+        ...(args.googleSearch ? { tools: [{ googleSearch: {} }] } : {}),
       },
     });
     const output = responseText(response);
@@ -171,6 +184,7 @@ export async function generateGoogleCloudJson(args: {
       project,
       location,
       responseId: response.responseId ?? null,
+      groundingMetadata: groundingMetadata(response),
     };
   } catch (error) {
     throw normalizeProviderError(error);
