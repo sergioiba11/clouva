@@ -2,7 +2,7 @@
 export type EvidenceRole = "front" | "back" | "code" | "other";
 export type ReconciliationGroup = {
   groupKey: string; name: string; brand: string; model?: string; unitCount: number;
-  needsReview?: boolean;
+  needsReview?: boolean; unassignedEvidence?: boolean; invoiceIndex?: number; invoiceMatchReason?: string;
   images: { sourceIndex: number; role: string; evidenceRole?: EvidenceRole }[];
   visibleIdentifiers?: { value: string; type: string; sourceIndex?: number }[];
   requiredImageRoles?: EvidenceRole[];
