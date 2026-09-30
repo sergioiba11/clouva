@@ -2,8 +2,8 @@ import "server-only";
 
 import type { CommerceProductRecognition } from "@/lib/commerce/product-recognition";
 import {
+  generateGoogleCloudGroundedText,
   generateGoogleCloudJson,
-  type GoogleCloudReferenceImage,
 } from "@/lib/server/google-cloud-genai";
 
 type ResearchIdentifier = {
@@ -97,7 +97,6 @@ export async function researchCommerceExtraProduct(args: {
   groupBrand: string;
   groupModel: string;
   identifiers: ResearchIdentifier[];
-  referenceImages?: GoogleCloudReferenceImage[];
 }): Promise<CommerceExtraProductResearch> {
   const identifiers = Array.from(new Map(
     args.identifiers
@@ -143,12 +142,31 @@ export async function researchCommerceExtraProduct(args: {
     ?? process.env.GEMINI_PRODUCT_VISION_MODEL
     ?? "gemini-2.5-flash";
 
+  // Search grounding and schema-constrained JSON are intentionally separate.
+  // Gemini 2.5 can ground with Google Search reliably, while structured output
+  // with built-in tools is model-dependent. First gather grounded evidence,
+  // then normalize that evidence into CLOUVA's catalog contract.
+  const grounded = await generateGoogleCloudGroundedText({
+    model,
+    prompt: [
+      prompt,
+      "Respondé con una investigación factual breve. Incluí el nombre más preciso que puedas sustentar y explicá qué señales lo respaldan.",
+      "No devuelvas JSON en esta etapa.",
+    ].join("\n"),
+    temperature: 0.05,
+    maxOutputTokens: 2200,
+  });
+
   const generated = await generateGoogleCloudJson({
     model,
-    prompt,
-    referenceImages: args.referenceImages,
+    prompt: [
+      "Convertí la investigación fundamentada de Google Search al contrato JSON de identidad de producto de CLOUVA.",
+      "No agregues ningún dato que no esté sustentado por la investigación o por la evidencia visual original.",
+      "verified=true solo si la investigación distingue inequívocamente el tipo de artículo físico. Si hay duda entre categorías distintas, usá verified=false.",
+      `Evidencia visual original: ${JSON.stringify(evidence)}`,
+      `Investigación fundamentada: ${grounded.text}`,
+    ].join("\n"),
     responseJsonSchema: RESEARCH_SCHEMA,
-    googleSearch: true,
     temperature: 0.05,
     maxOutputTokens: 1800,
   });
@@ -173,8 +191,8 @@ export async function researchCommerceExtraProduct(args: {
     description: cleanText(raw.description, 1200),
     evidenceSummary: cleanText(raw.evidenceSummary, 600),
     confidence: score(raw.confidence),
-    provider: generated.provider,
-    modelName: generated.model,
-    groundingMetadata: generated.groundingMetadata,
+    provider: grounded.provider,
+    modelName: grounded.model,
+    groundingMetadata: grounded.groundingMetadata,
   };
 }
