@@ -2307,7 +2307,19 @@ function productCategory(value: string) {
   const normalized = normalizeIdentityText(value);
   if (/\b(cable|cord|wire)\b/.test(normalized)) return "cable";
   if (/\b(joystick|controller|gamepad|mando|dualshock)\b/.test(normalized)) return "controller";
+  if (/\bauricular\b/.test(normalized) || /\bmipods?\b/.test(normalized)) return "earphones";
+  if (/\b(repetidor|repeater|extender)\b/.test(normalized) && /\bwifi\b/.test(normalized)) return "wifi_repeater";
+  if (/\bwifi\b/.test(normalized) && /\b(adaptador|adapter|receptor|receiver|dongle)\b/.test(normalized)) return "wifi_adapter";
+  if (/\b(bluetooth|bt)\b/.test(normalized) && /\b(adaptador|adapter|receptor|receiver|dongle|wireless)\b/.test(normalized)) return "bluetooth_adapter";
+  if (/\b(cargador|charger|carregador)\b/.test(normalized) || /\bpower adapter\b/.test(normalized)) return "charger";
   return "";
+}
+
+function hardCategoryConflict(left: string, right: string) {
+  if (!left || !right || left === right) return false;
+  const cablePower = new Set(["cable", "charger"]);
+  if (cablePower.has(left) && cablePower.has(right)) return false;
+  return true;
 }
 
 export function compatibleProductView(
@@ -2330,7 +2342,7 @@ export function compatibleProductView(
 export function compatibleInvoiceLine(group: CommerceBatchGroup, line: CommerceBatchExpectedProduct) {
   const category = productCategory([group.name, group.model].join(" "));
   const lineCategory = productCategory([line.description, line.model ?? ""].join(" "));
-  if (category && lineCategory && category !== lineCategory) return false;
+  if (hardCategoryConflict(category, lineCategory)) return false;
   // A supplier's bare "PS4" refers to the controller when it also invoices
   // "Cable PS4" separately. Do not let the shared platform token win.
   if (category === "cable" && /^\s*(ps\s*4|playstation\s*4)\s*$/i.test(line.description)) return false;
