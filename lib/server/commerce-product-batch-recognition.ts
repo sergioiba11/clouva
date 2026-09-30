@@ -2558,8 +2558,28 @@ async function anchorProductsToInvoice(args: {
   const anchored: CommerceBatchGroup[] = [];
   for (let index = 0; index < args.expectedProducts.length; index += 1) {
     const invoiceIndex = index + 1;
-    const members = buckets.get(invoiceIndex) ?? [];
+    let members = buckets.get(invoiceIndex) ?? [];
     if (!members.length) continue;
+    if (hasConflictingInvoiceIdentifiers(members)) {
+      // The invoice description may be broad (e.g. three kinds of Samsung
+      // cable). It cannot justify merging physical boxes with different codes.
+      const keyed = members.map((group) => ({ group, key: externalProductCode(group) }));
+      const ranked = keyed.filter((entry) => entry.key).sort((a, b) =>
+        keyed.filter((entry) => entry.key === b.key).length - keyed.filter((entry) => entry.key === a.key).length);
+      const selectedKey = ranked[0].key;
+      for (const entry of keyed) {
+        if (entry.key === selectedKey) continue;
+        unassigned.push({
+          ...entry.group,
+          groupKey: `unassigned-${String(unassigned.length + 1).padStart(3, "0")}`,
+          invoiceIndex: undefined,
+          unassignedEvidence: true,
+          needsReview: true,
+          invoiceMatchReason: "Código de barras distinto al de otra caja asignada al mismo renglón de factura.",
+        });
+      }
+      members = keyed.filter((entry) => entry.key === selectedKey).map((entry) => entry.group);
+    }
     const line = args.expectedProducts[index];
     const physicalUnitCount = Math.max(
       1,
@@ -2605,6 +2625,17 @@ async function anchorProductsToInvoice(args: {
 
   const consolidatedExtras = consolidateDeterministicCommercialIdentity(trueExtras);
   return [...anchored, ...consolidatedExtras, ...unassigned];
+}
+
+function externalProductCode(group: CommerceBatchGroup) {
+  const codes = [group.identifier, ...group.visibleIdentifiers].filter((code): code is NonNullable<typeof code> =>
+    Boolean(code && !["sku", "clouva_barcode", "clouva_qr"].includes(code.type)
+      && validateCommerceIdentifier(code.type, code.value).valid));
+  return codes.length ? canonicalCodeKey(codes[0].type, codes[0].value) : "";
+}
+
+export function hasConflictingInvoiceIdentifiers(groups: CommerceBatchGroup[]) {
+  return new Set(groups.map(externalProductCode).filter(Boolean)).size > 1;
 }
 
 
