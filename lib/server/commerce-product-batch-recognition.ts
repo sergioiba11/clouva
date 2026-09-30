@@ -631,12 +631,12 @@ async function analyzeChunk(args: {
   for (const group of parsedGroups) {
     const byCanonical = new Map<string, CommerceBatchVisibleIdentifier>();
     for (const code of group.visibleIdentifiers) {
-      byCanonical.set(canonicalCodeKey(code.type, code.value), code);
+      byCanonical.set(`${canonicalCodeKey(code.type, code.value)}:${code.sourceIndex ?? "unknown"}`, code);
     }
     for (const image of group.images) {
       const exacts = exactByIndex.get(image.sourceIndex) ?? [];
       for (const exact of exacts) {
-        const key = canonicalCodeKey(exact.type, exact.value);
+        const key = `${canonicalCodeKey(exact.type, exact.value)}:${image.sourceIndex}`;
         const prev = byCanonical.get(key);
         const entry: CommerceBatchVisibleIdentifier = {
           value: exact.value,
@@ -653,7 +653,7 @@ async function analyzeChunk(args: {
     // Si el primario es nulo o no coincide con ningún exacto del grupo pero
     // hay exacto disponible, promover el primer exacto a primario.
     const primaryKey = group.identifier ? canonicalCodeKey(group.identifier.type, group.identifier.value) : null;
-    const hasPrimaryInExact = primaryKey ? byCanonical.has(primaryKey) : false;
+    const hasPrimaryInExact = primaryKey ? group.visibleIdentifiers.some((code) => canonicalCodeKey(code.type, code.value) === primaryKey) : false;
     if (!group.identifier || !hasPrimaryInExact) {
       const firstExact = group.images.flatMap((img) => exactByIndex.get(img.sourceIndex) ?? [])[0];
       if (firstExact) {
@@ -1216,7 +1216,7 @@ function consolidateDeterministicCommercialIdentity(groups: CommerceBatchGroup[]
   });
 }
 
-function mergeClusterGroups(groups: CommerceBatchGroup[], unitCount: number, confidence: number, needsReview: boolean) {
+export function mergeClusterGroups(groups: CommerceBatchGroup[], unitCount: number, confidence: number, needsReview: boolean) {
   const coded = groups.find((group) => group.identifier);
   const preferred = coded ?? [...groups].sort((a, b) =>
     (b.name.length + b.brand.length + b.model.length) - (a.name.length + a.brand.length + a.model.length))[0];
@@ -1238,12 +1238,12 @@ function mergeClusterGroups(groups: CommerceBatchGroup[], unitCount: number, con
         confidence: group.confidence,
         ...(sourceIndex != null ? { sourceIndex } : {}),
       };
-      const key = canonicalCodeKey(primary.type, primary.value);
+      const key = `${canonicalCodeKey(primary.type, primary.value)}:${primary.sourceIndex ?? "unknown"}`;
       const prev = codeMap.get(key);
       codeMap.set(key, prev ? preferExact(prev, primary) : primary);
     }
     for (const code of group.visibleIdentifiers) {
-      const key = canonicalCodeKey(code.type, code.value);
+      const key = `${canonicalCodeKey(code.type, code.value)}:${code.sourceIndex ?? "unknown"}`;
       const prev = codeMap.get(key);
       codeMap.set(key, prev ? preferExact(prev, code) : code);
     }
@@ -2048,6 +2048,10 @@ async function linkContextScenesToProducts(args: {
           linked?.primaryConfidence ?? 0,
           strongestMatch?.groupKey === resolvedPrimaryGroupKey ? strongestMatch.confidence : 0,
         );
+        const primaryGroup = knownGroups.get(resolvedPrimaryGroupKey);
+        const incompatiblePrimary = primaryGroup && !compatibleProductView(
+          primaryGroup, linked?.observedProducts ?? [], uniqueCodedProducts,
+        );
 
         // Una vista trasera/lateral/código con coincidencia visual fuerte pertenece
         // primero al producto ya detectado. El barcode en esa vista enriquece ese
@@ -2056,6 +2060,7 @@ async function linkContextScenesToProducts(args: {
           linked?.sceneType === "primary_product"
           && resolvedPrimaryGroupKey
           && resolvedPrimaryConfidence >= 0.5
+          && !incompatiblePrimary
         ) {
           const target = attachmentsByGroup.get(resolvedPrimaryGroupKey) ?? [];
           if (!target.some((candidate) => candidate.sourceIndex === image.sourceIndex)) {
@@ -2253,6 +2258,8 @@ async function relinkSecondaryProductViews(args: {
   const owned = new Set(products.flatMap((group) => group.images.map((image) => image.sourceIndex)));
   const byKey = new Map(products.map((group) => [group.groupKey, group]));
   const unresolvedIndexes = new Set(unresolved.flatMap((group) => group.images.map((image) => image.sourceIndex)));
+  const unresolvedByIndex = new Map(unresolved.flatMap((group) =>
+    group.images.map((image) => [image.sourceIndex, group] as const)));
 
   // Si una vista secundaria no consiguió otro dueño, vuelve a su grupo original.
   // Si ese grupo era completamente huérfano, se restaura solo con las fotos que
@@ -2263,9 +2270,16 @@ async function relinkSecondaryProductViews(args: {
     const existing = byKey.get(groupKey);
     if (existing) {
       for (const image of remaining) {
-        if (!existing.images.some((candidate) => candidate.sourceIndex === image.sourceIndex)) {
-          existing.images = normalizeRoles([...existing.images, image]);
-        }
+        // A secondary view which failed visual linking is not proof that it
+        // belongs to its original, potentially mixed, AI cluster.
+        const observation = unresolvedByIndex.get(image.sourceIndex);
+        products.push({
+          groupKey: `unresolved-view-${image.sourceIndex}`,
+          name: observation?.observedProducts?.[0] ?? "",
+          brand: "", model: "", packageKind: "unknown", unitCount: 1,
+          identifier: null, visibleIdentifiers: [], confidence: 0,
+          needsReview: true, images: [image],
+        });
       }
       continue;
     }
@@ -2283,6 +2297,23 @@ function productCategory(value: string) {
   if (/\b(cable|cord|wire)\b/.test(normalized)) return "cable";
   if (/\b(joystick|controller|gamepad|mando|dualshock)\b/.test(normalized)) return "controller";
   return "";
+}
+
+export function compatibleProductView(
+  group: CommerceBatchGroup,
+  observedProducts: string[],
+  codedProducts: Array<{ name: string; model: string; identifier: { value: string; type: CommerceIdentifierType } }>,
+) {
+  const primaryCategory = productCategory([group.name, group.model].join(" "));
+  const observedCategory = productCategory([
+    ...observedProducts,
+    ...codedProducts.map((product) => [product.name, product.model].join(" ")),
+  ].join(" "));
+  if (primaryCategory && observedCategory && primaryCategory !== observedCategory) return false;
+  if (group.identifier && codedProducts.some((product) =>
+    canonicalCodeKey(product.identifier.type, product.identifier.value)
+      !== canonicalCodeKey(group.identifier!.type, group.identifier!.value))) return false;
+  return true;
 }
 
 export function compatibleInvoiceLine(group: CommerceBatchGroup, line: CommerceBatchExpectedProduct) {

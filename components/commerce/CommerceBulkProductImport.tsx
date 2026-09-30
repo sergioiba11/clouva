@@ -1837,7 +1837,14 @@ export function CommerceBulkProductImport({
                 Array.isArray(item.matched_group_keys) && item.matched_group_keys.includes(group.groupKey),
               );
               const invoiceUnits = invoiceLines.reduce((total, item) => total + Math.max(0, Number(item.quantity) || 0), 0);
+              const invoiceCost = invoiceLines.length === 1 && invoiceLines[0].unit_price != null
+                ? Number(invoiceLines[0].unit_price) : NaN;
+              const formatCost = (amount: number) => new Intl.NumberFormat("es-AR", {
+                style: "currency", currency: invoiceData?.invoice?.currency || "ARS",
+              }).format(amount);
               const physicalUnits = Math.max(1, Math.floor(Number(group.unitCount) || 1));
+              const codePhotos = Array.from(new Set(group.visibleIdentifiers
+                .flatMap((code) => code.sourceIndex == null ? [] : [code.sourceIndex]))).sort((a, b) => a - b);
               const sharedContextPhotos = (group.contextReferences ?? []).flatMap((reference) => {
                 const source = batchSources[reference.sourceIndex];
                 if (!source?.source_url) return [];
@@ -1947,9 +1954,15 @@ export function CommerceBulkProductImport({
                       )}
                     </div>
                   ) : null}
+                  {Number.isFinite(invoiceCost) ? (
+                    <p className="mt-1 text-[10px] font-medium text-white/65">
+                      Costo de factura: {formatCost(invoiceCost)} por unidad
+                      {invoiceLines[0].line_total != null ? ` · total ${formatCost(Number(invoiceLines[0].line_total))}` : ""}
+                    </p>
+                  ) : null}
                   {group.identifier && codePhotoIndex != null ? (
                     <p className="mt-1 text-[10px] leading-4 text-emerald-200/70">
-                      Código confirmado desde foto #{codePhotoIndex + 1}
+                      Código visible en foto{codePhotos.length === 1 ? "" : "s"} {codePhotos.map((index) => `#${index + 1}`).join(", ")}
                     </p>
                   ) : null}
                   {group.visibleIdentifiers.length > 1 ? (
