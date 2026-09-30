@@ -2343,6 +2343,15 @@ export function compatibleInvoiceLine(group: CommerceBatchGroup, line: CommerceB
   const category = productCategory([group.name, group.model].join(" "));
   const lineCategory = productCategory([line.description, line.model ?? ""].join(" "));
   if (hardCategoryConflict(category, lineCategory)) return false;
+  if (category && lineCategory && category !== lineCategory) {
+    const cablePower = new Set(["cable", "charger"]);
+    if (cablePower.has(category) && cablePower.has(lineCategory)) {
+      const groupTokens = identityTokens([group.name, group.model].join(" "));
+      const lineTokens = identityTokens([line.description, line.model ?? ""].join(" "));
+      const sharedSpecific = [...lineTokens].some((token) => groupTokens.has(token) && /\d/.test(token));
+      if (!sharedSpecific) return false;
+    }
+  }
   // A supplier's bare "PS4" refers to the controller when it also invoices
   // "Cable PS4" separately. Do not let the shared platform token win.
   if (category === "cable" && /^\s*(ps\s*4|playstation\s*4)\s*$/i.test(line.description)) return false;
