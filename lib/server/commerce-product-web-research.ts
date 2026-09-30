@@ -90,6 +90,29 @@ function score(value: unknown) {
   return Number.isFinite(number) ? Math.max(0, Math.min(1, number)) : 0;
 }
 
+function compactGrounding(value: Record<string, unknown> | null) {
+  const root = record(value);
+  const webSearchQueries = Array.isArray(root.webSearchQueries)
+    ? root.webSearchQueries.flatMap((query) => {
+        const cleaned = cleanText(query, 240);
+        return cleaned ? [cleaned] : [];
+      }).slice(0, 12)
+    : [];
+  const groundingChunks = Array.isArray(root.groundingChunks)
+    ? root.groundingChunks.flatMap((chunk) => {
+        const web = record(record(chunk).web);
+        const uri = cleanText(web.uri, 1000);
+        const title = cleanText(web.title, 300);
+        const domain = cleanText(web.domain, 240);
+        return uri || title || domain ? [{ uri, title, domain }] : [];
+      }).slice(0, 20)
+    : [];
+  return {
+    webSearchQueries,
+    groundingChunks,
+  };
+}
+
 export async function researchCommerceExtraProduct(args: {
   spotName: string;
   recognition: CommerceProductRecognition;
@@ -180,7 +203,9 @@ export async function researchCommerceExtraProduct(args: {
 
   const raw = record(parsed);
   const name = cleanText(raw.name, 180);
-  const verified = raw.verified === true && Boolean(name);
+  const grounding = compactGrounding(grounded.groundingMetadata);
+  const didSearch = grounding.webSearchQueries.length > 0 || grounding.groundingChunks.length > 0;
+  const verified = raw.verified === true && Boolean(name) && didSearch;
 
   return {
     verified,
@@ -193,6 +218,6 @@ export async function researchCommerceExtraProduct(args: {
     confidence: score(raw.confidence),
     provider: grounded.provider,
     modelName: grounded.model,
-    groundingMetadata: grounded.groundingMetadata,
+    groundingMetadata: grounding,
   };
 }
