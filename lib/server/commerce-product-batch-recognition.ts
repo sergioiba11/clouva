@@ -440,6 +440,7 @@ async function recoverExplicitUnassignedImages(args: {
     "No inventes marca, modelo ni código. Código completo distinto = variante distinta.",
     "Cada índice debe aparecer exactamente una vez: dentro de group.images o como sourceIndex de contextObservations.",
     "Clasificá Frente y Atrás solo cuando esas vistas realmente existan. Si falta el frente, no conviertas un dorso o detalle en Frente. El resto es Detalle.",
+    `Orden de imágenes: ${downloaded.map((image, index) => `imagen ${index + 1} = sourceIndex ${image.sourceIndex}`).join(" · ")}.`,
   ].join("\n");
 
   try {
@@ -448,6 +449,7 @@ async function recoverExplicitUnassignedImages(args: {
         ?? process.env.GEMINI_PRODUCT_VISION_MODEL
         ?? "gemini-2.5-flash",
       prompt,
+      referenceImages: downloaded.map((image) => ({ mimeType: image.mimeType, data: image.data })),
       responseJsonSchema: RECOVERY_SCHEMA,
       temperature: 0,
       maxOutputTokens: 5000,
@@ -598,6 +600,7 @@ async function analyzeChunk(args: {
     "Si una imagen muestra un solo producto pero no podés reconocer nombre/código, creá igualmente un grupo con campos vacíos y needsReview=true; no la mandes a unassignedIndexes.",
     "Usá Frente SOLO cuando realmente se vea la cara frontal del producto o packaging. Si el grupo contiene únicamente dorso, lateral, etiqueta, código o detalle, puede tener CERO fotos Frente. Elegí como máximo una Atrás cuando exista una vista posterior clara; el resto debe ser Detalle.",
     "name, brand y model deben salir solo de texto/evidencia visible. Dejalos vacíos si no están confirmados.",
+    "El nombre debe identificar qué objeto se vende: un cable para PS4 es 'Cable USB para PS4', no solo 'PS4'; una caja de joystick es 'Joystick/Control para PS4', no solo 'PS4'.",
     "identifierValue debe estar vacío salvo que el código completo sea inequívoco carácter por carácter.",
     "needsReview=true cuando el agrupamiento no sea suficientemente seguro.",
     "No inventes precio, costo, stock ni disponibilidad.",
@@ -1620,6 +1623,7 @@ async function refineMergedGroup(args: {
       "Si descubrís códigos completos distintos o una variante claramente diferente, marcá needsReview=true; no inventes datos.",
       "Marcá Frente SOLO si realmente existe una vista frontal. Si todas las fotos son dorso/lateral/etiqueta/código/detalle, NO inventes un Frente: conservá Atrás/Detalle para que CLOUVA pueda vincular esas vistas con el artículo correcto.",
       "Si un código aparece en cualquier foto del grupo, conservá ese código como identifier principal y registrá sourceIndex en visibleIdentifiers.",
+      "El nombre final debe describir el artículo físico visible. PS4 identifica la plataforma: distinguí joystick/control de cable USB para PS4.",
       `Índices: ${refs.map((ref) => ref.sourceIndex).join(", ")}.`,
     ].join("\n");
     const generated = await withVertexRetry("verificador", () => generateGoogleCloudJson({
@@ -1827,6 +1831,23 @@ async function linkContextScenesToProducts(args: {
   if (!args.contextGroups.length) {
     return { productGroups: args.productGroups, contextGroups: args.contextGroups };
   }
+  // Keep each visual comparison small enough to return an observation for
+  // every photo. A 30+ image response can be truncated and silently leave
+  // single-product photos in the context bucket.
+  if (args.contextGroups.length > 8) {
+    let productGroups = args.productGroups;
+    const contextGroups: CommerceBatchGroup[] = [];
+    for (let offset = 0; offset < args.contextGroups.length; offset += 8) {
+      const linked = await linkContextScenesToProducts({
+        ...args,
+        productGroups,
+        contextGroups: args.contextGroups.slice(offset, offset + 8),
+      });
+      productGroups = linked.productGroups;
+      contextGroups.push(...linked.contextGroups);
+    }
+    return { productGroups, contextGroups };
+  }
 
   const contextImages = args.contextGroups.flatMap((group) =>
     group.images.map((image) => ({ sourceIndex: image.sourceIndex, groupKey: group.groupKey })),
@@ -1848,6 +1869,18 @@ async function linkContextScenesToProducts(args: {
       };
     }))).filter((value): value is NonNullable<typeof value> => Boolean(value));
     if (!refs.length) return { productGroups: args.productGroups, contextGroups: args.contextGroups };
+    const frontRefs = (await Promise.all(args.productGroups.slice(0, 24).map(async (group) => {
+      const image = group.images.find((candidate) => candidate.role === "Frente") ?? group.images[0];
+      const source = image ? args.imagesByIndex.get(image.sourceIndex) : undefined;
+      if (!source) return null;
+      const stored = await downloadGeneratedMediaObject(source.storagePath);
+      return {
+        groupKey: group.groupKey,
+        sourceIndex: image.sourceIndex,
+        mimeType: stored.mimeType.startsWith("image/") ? stored.mimeType : source.mimeType,
+        data: stored.bytes.toString("base64"),
+      };
+    }))).filter((value): value is NonNullable<typeof value> => Boolean(value));
 
     const catalog = args.productGroups.map((group) => ({
       groupKey: group.groupKey,
@@ -1874,6 +1907,7 @@ async function linkContextScenesToProducts(args: {
       "sceneType=primary_product cuando existe UN producto/caja claramente protagonista: está sostenido con la mano, centrado, enfocado, ocupa gran parte del cuadro, o la foto muestra su dorso/etiqueta/código. Los artículos visibles atrás son solo fondo.",
       "sceneType=true_context SOLO para una vista general/panorámica donde varios productos distintos sean co-protagonistas y NO exista un producto principal claro.",
       "Un dorso, lateral, etiqueta o código de barras de una sola caja NUNCA es true_context por el hecho de mostrar mucho texto.",
+      "Compará visualmente las fotos pendientes con los frentes de referencia: diseño de caja, color, forma, pestaña, marca y textos. El dorso azul 'Cable V8 Fast Charger' pertenece al frente azul del cable USB para PS4 si el packaging coincide; no pertenece a un joystick.",
       "Si sceneType=primary_product y el sujeto corresponde exactamente a una identidad del catálogo, primaryGroupKey DEBE ser ese groupKey. Elegí primaryRole=Frente, Atrás o Detalle según la vista real.",
       "Si no hay coincidencia segura en catálogo, dejá primaryGroupKey vacío y bajá primaryConfidence; no inventes matches.",
       "Para true_context, primaryGroupKey debe quedar vacío. observedProducts debe listar TODO producto distinguible que realmente se vea, usando marca/modelo/tipo cuando haya evidencia.",
@@ -1884,6 +1918,7 @@ async function linkContextScenesToProducts(args: {
       "matches puede relacionar productos visibles con el catálogo, pero una coincidencia de fondo NO significa que la foto pertenezca a ese producto.",
       "No cuentes stock en este paso.",
       `Orden de imágenes: ${refs.map((ref, index) => `imagen ${index + 1} = sourceIndex ${ref.sourceIndex}`).join(" · ")}`,
+      `Frentes de referencia: ${frontRefs.map((ref, index) => `imagen ${refs.length + index + 1} = ${ref.groupKey} (sourceIndex ${ref.sourceIndex})`).join(" · ")}`,
       `Catálogo de productos ya detectados: ${JSON.stringify(catalog)}`,
       `Checklist de factura: ${JSON.stringify(invoiceChecklist)}`,
     ].join("\n");
@@ -1893,7 +1928,7 @@ async function linkContextScenesToProducts(args: {
         ?? process.env.GEMINI_PRODUCT_VISION_MODEL
         ?? "gemini-2.5-flash",
       prompt,
-      referenceImages: refs.map((ref) => ({ mimeType: ref.mimeType, data: ref.data })),
+      referenceImages: [...refs, ...frontRefs].map((ref) => ({ mimeType: ref.mimeType, data: ref.data })),
       responseJsonSchema: CONTEXT_LINK_SCHEMA,
       temperature: 0,
       maxOutputTokens: 5600,
@@ -2243,11 +2278,39 @@ async function relinkSecondaryProductViews(args: {
 }
 
 
-function bestInvoiceAnchor(group: CommerceBatchGroup, expectedProducts: CommerceBatchExpectedProduct[]) {
+function productCategory(value: string) {
+  const normalized = normalizeIdentityText(value);
+  if (/\b(cable|cord|wire)\b/.test(normalized)) return "cable";
+  if (/\b(joystick|controller|gamepad|mando|dualshock)\b/.test(normalized)) return "controller";
+  return "";
+}
+
+export function compatibleInvoiceLine(group: CommerceBatchGroup, line: CommerceBatchExpectedProduct) {
+  const category = productCategory([group.name, group.model].join(" "));
+  const lineCategory = productCategory([line.description, line.model ?? ""].join(" "));
+  if (category && lineCategory && category !== lineCategory) return false;
+  // A supplier's bare "PS4" refers to the controller when it also invoices
+  // "Cable PS4" separately. Do not let the shared platform token win.
+  if (category === "cable" && /^\s*(ps\s*4|playstation\s*4)\s*$/i.test(line.description)) return false;
+  return true;
+}
+
+export function physicalProductName(group: CommerceBatchGroup) {
+  const name = group.name.trim();
+  const model = group.model.trim();
+  if (/^(ps\s*4|playstation\s*4)$/i.test(name)) {
+    if (productCategory(model) === "cable") return `${model} para PS4`;
+    if (productCategory(model) === "controller") return `Joystick ${group.brand ? `${group.brand} ` : ""}${model} para PS4`;
+  }
+  return name || model;
+}
+
+export function bestInvoiceAnchor(group: CommerceBatchGroup, expectedProducts: CommerceBatchExpectedProduct[]) {
   let bestIndex = 0;
   let bestScore = -1;
   for (let index = 0; index < expectedProducts.length; index += 1) {
     const line = expectedProducts[index];
+    if (!compatibleInvoiceLine(group, line)) continue;
     const groupText = [group.name, group.brand, group.model].filter(Boolean).join(" ");
     const lineText = [line.description, line.brand ?? "", line.model ?? "", line.supplierSku ?? ""].filter(Boolean).join(" ");
     const semantic = identitySimilarity(groupText, lineText);
@@ -2263,13 +2326,16 @@ function bestInvoiceAnchor(group: CommerceBatchGroup, expectedProducts: Commerce
     // Supplier invoice names are often abbreviated ("Cable 20W", "PS4").
     // Covering the invoice's distinctive tokens is therefore stronger evidence
     // than requiring both strings to have the same length/details.
-    const score = Math.max(semantic, invoiceCoverage * 0.9, groupCoverage * 0.55) + brand;
+    const category = productCategory(groupText);
+    const lineCategory = productCategory(lineText);
+    const score = Math.max(semantic, invoiceCoverage * 0.9, groupCoverage * 0.55)
+      + brand + (category && category === lineCategory ? 0.3 : 0);
     if (score > bestScore) {
       bestScore = score;
       bestIndex = index + 1;
     }
   }
-  return { invoiceIndex: bestIndex || 1, score: Math.max(0, bestScore) };
+  return { invoiceIndex: bestIndex, score: Math.max(0, bestScore) };
 }
 
 async function anchorProductsToInvoice(args: {
@@ -2290,7 +2356,8 @@ async function anchorProductsToInvoice(args: {
   // slot", not "throw all of this object's photos into unassigned".
   const hasInvoiceSlot = (group: CommerceBatchGroup) => group.invoiceIndex != null
     && group.invoiceIndex >= 1
-    && group.invoiceIndex <= args.expectedProducts.length;
+    && group.invoiceIndex <= args.expectedProducts.length
+    && compatibleInvoiceLine(group, args.expectedProducts[group.invoiceIndex - 1]);
   const unresolvedGroups = args.productGroups.filter((group) => !hasInvoiceSlot(group));
   const fixedCoverage = args.productGroups
     .filter(hasInvoiceSlot)
@@ -2408,9 +2475,10 @@ async function anchorProductsToInvoice(args: {
       ai
       && ai.invoiceIndex >= 1
       && ai.invoiceIndex <= args.expectedProducts.length
-      && ai.confidence >= 0.3,
+      && ai.confidence >= 0.3
+      && compatibleInvoiceLine(group, args.expectedProducts[ai.invoiceIndex - 1]),
     );
-    const deterministicAccepted = Boolean(!ai && fallback.score >= 0.45);
+    const deterministicAccepted = Boolean(!aiInvoiceAccepted && fallback.score >= 0.45);
     const definitelyExtra = Boolean(
       ai?.trueExtra
       && ai.invoiceIndex === 0
@@ -2439,13 +2507,11 @@ async function anchorProductsToInvoice(args: {
       unassigned.push({
         ...group,
         groupKey: `unassigned-${String(unassigned.length + 1).padStart(3, "0")}`,
-        contextOnly: true,
+        contextOnly: false,
         unassignedEvidence: true,
         observedProducts: [],
         contextMatches: [],
-        contextReason: ai?.reason
-          ? `Cluster físico sin coincidencia segura: ${ai.reason}`
-          : "Cluster físico sin coincidencia segura con la factura.",
+        invoiceMatchReason: ai?.reason || "Artículo físico sin coincidencia segura con la factura.",
         needsReview: true,
       });
       continue;
@@ -2477,9 +2543,9 @@ async function anchorProductsToInvoice(args: {
     const canonical: CommerceBatchGroup = {
       ...merged,
       groupKey: "invoice-" + String(invoiceIndex).padStart(3, "0"),
-      name: line.description || merged.name,
-      brand: line.brand || merged.brand,
-      model: line.model || merged.model,
+      name: physicalProductName(merged) || line.description,
+      brand: merged.brand || line.brand || "",
+      model: merged.model || line.model || "",
       unitCount: physicalUnitCount,
       contextOnly: false,
       unassignedEvidence: false,
@@ -2493,9 +2559,9 @@ async function anchorProductsToInvoice(args: {
     anchored.push({
       ...refined,
       groupKey: canonical.groupKey,
-      name: line.description || refined.name || merged.name,
-      brand: line.brand || refined.brand || merged.brand,
-      model: line.model || refined.model || merged.model,
+      name: physicalProductName(refined) || physicalProductName(merged) || line.description,
+      brand: refined.brand || merged.brand || line.brand || "",
+      model: refined.model || merged.model || line.model || "",
       unitCount: refined.unitCount,
       contextOnly: false,
       unassignedEvidence: false,

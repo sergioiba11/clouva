@@ -14,6 +14,7 @@
     "test:avatar-analyzer": "node --test tests-avatar-analyzer-v32.mjs tests-avatar-analyzer-v4.mjs",
     "test:avatar-analyzer:python": "cd worker/garment-rig && python -m unittest test_avatar_analyzer_v4_contract.py test_avatar_analyzer_v41.py test_avatar_analyzer_v4_persistence.py test_avatar_analyzer_phase_coverage.py test_avatar_analyzer_v41_hand_framing.py test_avatar_analyzer_security.py",
     "test:identity-revenue": "node --import tsx --test tests-commerce-product-reconciliation.mjs tests-identity-revenue.mjs tests-multirol-studio-os.mjs tests-current-player-identity.mjs tests-commerce-canonical.mjs tests-commerce-creator.mjs tests-commerce-order-tracking.mjs tests-commerce-admin.mjs tests-commerce-legacy-compatibility.mjs tests-commerce-spot.mjs tests-commerce-identifiers-labels.mjs tests-commerce-product-recognition.mjs tests-commerce-purchase-privacy.mjs tests-clouva-qr-engine.mjs tests-clouva-lab.mjs tests-home-popovers.mjs tests-universal-mi-spot.mjs tests-player-social-youtube.mjs tests-player-location-map.mjs tests-trusted-map.mjs tests-vip-profile-job-status.mjs tests-studio-identity-assets.mjs",
+    "test:commerce-batch": "node --require ./scripts/stub-server-only.cjs --import tsx --test tests-commerce-batch-invoice-identity.mjs",
     "test:flow-reserve": "node --test tests-flow-reserve.mjs",
     "test:flow-region": "node --import tsx --test tests-flow-region.mjs",
     "test:brand-engine": "node --require ./scripts/stub-server-only.cjs --import tsx --test tests-brand-engine.mjs tests-brand-import-clearance.mjs",
@@ -22,7 +23,7 @@
     "test:media": "node --test tests-media-creator.mjs tests-gemini-image.mjs",
     "test:reference-fidelity": "node --require ./scripts/stub-server-only.cjs --import tsx --test tests-reference-fidelity-v2.mjs",
     "test:security": "node --test tests-security-profiles.mjs tests-admin-authorization.mjs",
-    "test": "npm run test:legacy && npm run test:avatar-analyzer && npm run test:identity-revenue && npm run test:flow-reserve && npm run test:flow-region && npm run test:brand-engine && npm run test:media && npm run test:reference-fidelity && npm run test:navigation && npm run test:security",
+    "test": "npm run test:legacy && npm run test:avatar-analyzer && npm run test:identity-revenue && npm run test:commerce-batch && npm run test:flow-reserve && npm run test:flow-region && npm run test:brand-engine && npm run test:media && npm run test:reference-fidelity && npm run test:navigation && npm run test:security",
     "test:navigation": "node --import tsx --test tests-canonical-navigation.mjs tests-onboarding-state.mjs tests-clouva-topbar.mjs tests-iglu-radio.mjs tests-iglu-public-functional.mjs"
   },
   "overrides": {
