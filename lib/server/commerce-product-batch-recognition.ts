@@ -998,6 +998,10 @@ function normalizeIdentityText(value: string) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .replace(/\b(unknown|desconocido|generico|generic)\b/g, " ")
+    .replace(/\b(?:auriculares?|headsets?|earphones?|earbuds?)\b/g, " auricular ")
+    .replace(/\b(?:type|tipo|usb)[\s-]?c\b/g, " usbc ")
+    .replace(/\btc\b/g, " usbc ")
+    .replace(/\bwi[\s-]?fi\b/g, " wifi ")
     .replace(/[^a-z0-9]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -1009,11 +1013,18 @@ const IDENTITY_STOP = new Set([
 ]);
 
 function identityTokens(value: string) {
-  return new Set(
-    normalizeIdentityText(value)
-      .split(" ")
-      .filter((token) => token.length >= 2 && !IDENTITY_STOP.has(token)),
-  );
+  const raw = normalizeIdentityText(value)
+    .split(" ")
+    .filter((token) => token.length >= 2 && !IDENTITY_STOP.has(token));
+  const tokens = new Set(raw);
+  for (let index = 0; index < raw.length - 1; index += 1) {
+    const left = raw[index];
+    const right = raw[index + 1];
+    if ((/[a-z]/.test(left) && /^\d+$/.test(right)) || (/^\d+$/.test(left) && /[a-z]/.test(right))) {
+      tokens.add(`${left}${right}`);
+    }
+  }
+  return tokens;
 }
 
 function identitySimilarity(left: string, right: string) {
