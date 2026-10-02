@@ -1,6 +1,7 @@
 "use client";
 
-import { useCurrentPlayer } from "@/components/current-player-provider";\nimport { PasswordSecurityCard } from "@/components/account/PasswordSecurityCard";
+import { useCurrentPlayer } from "@/components/current-player-provider";
+import { PasswordSecurityCard } from "@/components/account/PasswordSecurityCard";
 import { SpotifyHomeConnectAction } from "@/components/music/SpotifyHomeConnectAction";
 import { ProfileRadioSettingsCard } from "@/components/radio/ProfileRadioSettingsCard";
 
@@ -23,7 +24,9 @@ export default function Page() {
         <h1 className="mt-1 text-2xl font-semibold">Configuración de Perfil</h1>
       </div>
 
-      <PasswordSecurityCard />\n\n      <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
+      <PasswordSecurityCard />
+
+      <div className="rounded-2xl border border-white/10 bg-black/20 p-4">
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#78e49d]/70">Integraciones</p>
