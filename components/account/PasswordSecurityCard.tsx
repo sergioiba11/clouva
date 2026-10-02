@@ -5,7 +5,7 @@ import { CheckCircle2, KeyRound, ShieldCheck } from "lucide-react";
 import { useAuth } from "@/components/auth-provider";
 
 export function PasswordSecurityCard() {
-  const { user, refreshSession } = useAuth();
+  const { user } = useAuth();
   const [password, setPassword] = useState("");
   const [confirmation, setConfirmation] = useState("");
   const [saving, setSaving] = useState(false);
@@ -49,7 +49,6 @@ export function PasswordSecurityCard() {
       const { error: updateError } = await supabase.auth.updateUser({ password });
       if (updateError) throw updateError;
 
-      await refreshSession();
       setPassword("");
       setConfirmation("");
       setMessage("Contraseña guardada. Ya podés entrar con tu correo y esta contraseña, o seguir usando Google.");
