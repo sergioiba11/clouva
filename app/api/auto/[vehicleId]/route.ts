@@ -1,3 +1,4 @@
+import { Storage } from "@google-cloud/storage";
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
 import {
@@ -16,6 +17,7 @@ const PART_STATUSES = new Set(["good", "review", "repair", "replace", "missing",
 const PRIORITIES = new Set(["low", "normal", "high", "critical"]);
 const REPAIR_CATEGORIES = new Set(["critical", "function", "maintenance", "aesthetic", "upgrade"]);
 const REPAIR_STATUSES = new Set(["planned", "in_progress", "completed", "cancelled"]);
+const gcs = new Storage();
 
 async function resolvePlayerAudio(
   admin: ReturnType<typeof createAdminSupabase>,
@@ -86,8 +88,18 @@ async function loadDetail(admin: ReturnType<typeof createAdminSupabase>, vehicle
       .eq("id", bindingsResult.data.creator_3d_asset_id)
       .maybeSingle();
     if (error) throw new Error(error.message);
-    if (data?.storage_path) {
-      asset = { ...data, model_url: `/api/auto/${vehicleId}/model3d` };
+    if (typeof data?.storage_path === "string" && data.storage_path.startsWith("gs://")) {
+      const match = data.storage_path.match(/^gs:\/\/([^/]+)\/(.+)$/);
+      if (!match) throw new Error("Ruta 3D inválida.");
+      const [, bucket, object] = match;
+      const [buffer] = await gcs.bucket(bucket).file(object).download();
+      asset = {
+        ...data,
+        model_url: `data:model/gltf-binary;base64,${buffer.toString("base64")}`,
+      };
+    } else if (data?.storage_path) {
+      const signed = await admin.storage.from("vehicle-media").createSignedUrl(data.storage_path, 3600);
+      asset = { ...data, model_url: signed.data?.signedUrl ?? null };
     } else {
       asset = data;
     }
