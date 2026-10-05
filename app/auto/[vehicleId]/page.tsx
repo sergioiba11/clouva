@@ -31,6 +31,7 @@ import { VehicleModelViewer } from "@/components/auto/VehicleModelViewer";
 import { VehicleTuningStudio, type VehicleVisualBuild } from "@/components/auto/VehicleTuningStudio";
 import { VehicleShowStudio, type VehicleAudioTrack } from "@/components/auto/VehicleShowStudio";
 import { authenticatedFetch, readApiJson } from "@/lib/authenticated-fetch";
+import { resolveBuiltinVehicleModel } from "@/lib/auto/builtin-models";
 import {
   normalizeVehicleShow,
   normalizeVehicleTuning,
@@ -450,6 +451,11 @@ export default function VehiclePage() {
   }
 
   const vehicleTitle = data.vehicle.nickname || `${data.vehicle.make} ${data.vehicle.model}`;
+  const builtinModel = resolveBuiltinVehicleModel(data.vehicle);
+  const vehicleModelUrl = data.model3d?.asset?.model_url ?? builtinModel?.modelUrl ?? null;
+  const vehiclePartMeshMap = data.model3d?.binding.part_mesh_map ?? builtinModel?.partMeshMap ?? null;
+  const vehicleModelLevel = data.model3d?.binding.representation_level ?? builtinModel?.representationLevel ?? 1;
+  const vehicleModelName = data.model3d?.asset?.name ?? builtinModel?.name ?? null;
 
   return (
     <main className="min-h-screen bg-[#05040a] pb-28 text-white">
@@ -467,25 +473,25 @@ export default function VehiclePage() {
           <>
             <section className="relative mt-2 h-[44dvh] min-h-[330px] max-h-[560px] overflow-hidden rounded-[30px] border border-white/[0.08] bg-[#08070c]">
               <VehicleModelViewer
-                modelUrl={data.model3d?.asset?.model_url}
-                partMeshMap={data.model3d?.binding.part_mesh_map}
+                modelUrl={vehicleModelUrl}
+                partMeshMap={vehiclePartMeshMap}
                 selectedPartKey={selectedPart?.key}
                 onSelectPart={selectPartByKey}
                 tuningConfig={activeTuning}
                 showConfig={activeShow}
               />
-              <div className="pointer-events-none absolute left-4 top-4 rounded-2xl border border-white/10 bg-black/55 px-3 py-2 backdrop-blur-md"><p className="text-[9px] uppercase tracking-[.16em] text-white/35">Gemelo digital</p><p className="mt-0.5 text-xs font-semibold">Nivel {data.model3d?.binding.representation_level ?? 1}{data.model3d?.asset ? ` · ${data.model3d.asset.name}` : " · representación genérica"}</p></div>
+              <div className="pointer-events-none absolute left-4 top-4 rounded-2xl border border-white/10 bg-black/55 px-3 py-2 backdrop-blur-md"><p className="text-[9px] uppercase tracking-[.16em] text-white/35">Gemelo digital</p><p className="mt-0.5 text-xs font-semibold">Nivel {vehicleModelLevel}{vehicleModelName ? ` · ${vehicleModelName}` : " · representación genérica"}</p></div>
               <div className="pointer-events-none absolute bottom-4 left-4 right-4 flex items-end justify-between"><div className="rounded-2xl border border-white/10 bg-black/60 px-3 py-2 backdrop-blur"><p className="text-[9px] uppercase tracking-[.16em] text-white/35">Reconstrucción</p><p className="text-2xl font-semibold">{totalProgress}%</p></div><p className="max-w-[155px] rounded-2xl bg-black/55 px-3 py-2 text-right text-[10px] leading-4 text-white/45 backdrop-blur">Giralo y tocá las partes disponibles.</p></div>
             </section>
 
             <section className="mt-3 flex items-center justify-between gap-3 rounded-[22px] border border-violet-300/15 bg-violet-300/[0.045] p-4">
               <div className="min-w-0">
                 <p className="text-[10px] font-semibold uppercase tracking-[.15em] text-violet-200">Modelo 3D del auto</p>
-                <p className="mt-1 truncate text-xs text-white/42">{data.model3d?.asset ? `${data.model3d.asset.name} · nivel ${data.model3d.binding.representation_level}` : "Todavía usa la representación genérica."}</p>
+                <p className="mt-1 truncate text-xs text-white/42">{vehicleModelName ? `${vehicleModelName} · nivel ${vehicleModelLevel}` : "Todavía usa la representación genérica."}</p>
               </div>
               <label className="inline-flex shrink-0 cursor-pointer items-center gap-2 rounded-xl border border-violet-300/20 bg-violet-400/10 px-3 py-2.5 text-xs font-semibold text-violet-100">
                 {uploadingModel ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
-                {uploadingModel ? "Importando…" : data.model3d?.asset ? "Cambiar GLB" : "Importar GLB"}
+                {uploadingModel ? "Importando…" : vehicleModelUrl ? "Cambiar GLB" : "Importar GLB"}
                 <input type="file" accept=".glb,model/gltf-binary" disabled={uploadingModel} onChange={(event) => void uploadModel3d(event)} className="hidden" />
               </label>
             </section>
@@ -518,8 +524,8 @@ export default function VehiclePage() {
         {tab === "tuning" ? (
           <VehicleTuningStudio
             vehicleName={vehicleTitle}
-            modelUrl={data.model3d?.asset?.model_url}
-            partMeshMap={data.model3d?.binding.part_mesh_map}
+            modelUrl={vehicleModelUrl}
+            partMeshMap={vehiclePartMeshMap}
             builds={data.builds}
             saving={saving}
             onSave={saveVisualBuild}
@@ -529,8 +535,8 @@ export default function VehiclePage() {
         {tab === "show" ? (
           <VehicleShowStudio
             vehicleName={vehicleTitle}
-            modelUrl={data.model3d?.asset?.model_url}
-            partMeshMap={data.model3d?.binding.part_mesh_map}
+            modelUrl={vehicleModelUrl}
+            partMeshMap={vehiclePartMeshMap}
             builds={data.builds}
             audioLibrary={data.audioLibrary}
             saving={saving}
