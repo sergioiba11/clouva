@@ -452,10 +452,11 @@ export default function VehiclePage() {
 
   const vehicleTitle = data.vehicle.nickname || `${data.vehicle.make} ${data.vehicle.model}`;
   const builtinModel = resolveBuiltinVehicleModel(data.vehicle);
-  const vehicleModelUrl = data.model3d?.asset?.model_url ?? builtinModel?.modelUrl ?? null;
-  const vehiclePartMeshMap = data.model3d?.binding.part_mesh_map ?? builtinModel?.partMeshMap ?? null;
-  const vehicleModelLevel = data.model3d?.binding.representation_level ?? builtinModel?.representationLevel ?? 1;
-  const vehicleModelName = data.model3d?.asset?.name ?? builtinModel?.name ?? null;
+  // Built-in manufacturer models are curated and must win over legacy placeholder GLBs.
+  const vehicleModelUrl = builtinModel?.modelUrl ?? data.model3d?.asset?.model_url ?? null;
+  const vehiclePartMeshMap = builtinModel?.partMeshMap ?? data.model3d?.binding.part_mesh_map ?? null;
+  const vehicleModelLevel = builtinModel?.representationLevel ?? data.model3d?.binding.representation_level ?? 1;
+  const vehicleModelName = builtinModel?.name ?? data.model3d?.asset?.name ?? null;
 
   return (
     <main className="min-h-screen bg-[#05040a] pb-28 text-white">
