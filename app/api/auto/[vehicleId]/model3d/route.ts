@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { Storage } from "@google-cloud/storage";
 import { NextRequest, NextResponse } from "next/server";
 import { requireVehicleAccess } from "@/lib/auto/server";
 import { createAdminSupabase, isAuthError, requireUser } from "@/lib/server/supabase";
@@ -7,6 +8,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const MAX_BYTES = 90 * 1024 * 1024;
+const gcs = new Storage();
 
 function safeName(value: string) {
   return value
@@ -26,6 +28,71 @@ function slugify(value: string) {
     .replace(/^-+|-+$/g, "")
     .slice(0, 84);
   return slug || "vehicle-model";
+}
+
+export async function GET(request: NextRequest, context: { params: Promise<{ vehicleId: string }> }) {
+  try {
+    const { vehicleId } = await context.params;
+    const { user } = await requireUser(request);
+    const admin = createAdminSupabase();
+    await requireVehicleAccess(admin, user, vehicleId);
+
+    const { data: binding, error: bindingError } = await admin
+      .from("vehicle_3d_bindings")
+      .select("creator_3d_asset_id")
+      .eq("vehicle_id", vehicleId)
+      .eq("is_active", true)
+      .maybeSingle();
+    if (bindingError) throw new Error(bindingError.message);
+    if (!binding?.creator_3d_asset_id) {
+      return NextResponse.json({ error: "El vehículo todavía no tiene modelo 3D." }, { status: 404 });
+    }
+
+    const { data: asset, error: assetError } = await admin
+      .from("creator_3d_assets")
+      .select("model_url,storage_path")
+      .eq("id", binding.creator_3d_asset_id)
+      .maybeSingle();
+    if (assetError) throw new Error(assetError.message);
+    if (!asset) return NextResponse.json({ error: "No se encontró el modelo 3D." }, { status: 404 });
+
+    if (typeof asset.storage_path === "string" && asset.storage_path.startsWith("gs://")) {
+      const match = asset.storage_path.match(/^gs:\/\/([^/]+)\/(.+)$/);
+      if (!match) return NextResponse.json({ error: "Ruta 3D inválida." }, { status: 500 });
+      const [, bucket, object] = match;
+      const [buffer] = await gcs.bucket(bucket).file(object).download();
+      return new NextResponse(buffer, {
+        headers: {
+          "Content-Type": "model/gltf-binary",
+          "Cache-Control": "private, max-age=300",
+          "Content-Length": String(buffer.byteLength),
+        },
+      });
+    }
+
+    if (typeof asset.storage_path === "string" && asset.storage_path) {
+      const { data, error } = await admin.storage.from("vehicle-media").download(asset.storage_path);
+      if (error) throw new Error(error.message);
+      const bytes = await data.arrayBuffer();
+      return new NextResponse(bytes, {
+        headers: {
+          "Content-Type": "model/gltf-binary",
+          "Cache-Control": "private, max-age=300",
+          "Content-Length": String(bytes.byteLength),
+        },
+      });
+    }
+
+    if (typeof asset.model_url === "string" && asset.model_url) {
+      return NextResponse.redirect(asset.model_url);
+    }
+
+    return NextResponse.json({ error: "El modelo 3D no tiene archivo asociado." }, { status: 404 });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "No se pudo cargar el modelo 3D.";
+    const status = isAuthError(error) || /no autorizado/i.test(message) ? 401 : /no encontrado/i.test(message) ? 404 : 500;
+    return NextResponse.json({ error: message }, { status });
+  }
 }
 
 export async function POST(request: NextRequest, context: { params: Promise<{ vehicleId: string }> }) {
